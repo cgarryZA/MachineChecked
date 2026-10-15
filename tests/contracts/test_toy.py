@@ -91,3 +91,21 @@ def test_status_classes_are_total():
               "out of scope: literature", "formal: unspecified", "formal: malformed"]:
         assert mf.status_class(s) in {"accepted", "proved", "refuted", "open", "malformed",
                                       "out-of-scope", "unspecified"}
+
+
+@needs_lean
+@needs_tex
+def test_replay_is_not_run_without_a_log_and_blockers_explain(toy):
+    import json
+    index, body, cfg = build(toy)
+    acc = next(c for c in index["claims"] if c["id"] == "T:thm:even-add")
+    chunk = json.loads((cfg.out_dir / "site" / "data" / "claims" / acc["file"]).read_text())
+    rungs = {r["rung"]: r["state"] for r in chunk["clauses"][0]["ladder"]}
+    assert rungs["exact statement"] == "pass" and rungs["axioms"] == "pass"
+    assert rungs["kernel replay"] == "not-run"
+    # Accepted, but the release still lacks an independent replay: that is its only blocker.
+    assert chunk["status"] == "formal: accepted"
+    assert chunk["blockers"] == ["no independent kernel replay: no Comparator log for this release"]
+    bound = next(c for c in body["assessment"]["claims"] if c["id"] == "T:thm:bound")
+    assert "its proposition has no current review" in bound["blockers"]
+    assert next(c for c in body["assessment"]["claims"] if c["id"] == "T:rem:history")["blockers"] == []

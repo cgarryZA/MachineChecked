@@ -1,8 +1,8 @@
 <script>
   // The evidence ladder of a clause: each rung reports its own state, and none implies another.
   let { rungs } = $props();
-  const MARK = { pass: "✓", fail: "✗", open: "…", author: "◐", none: "–", "n/a": "–", "pdf-only": "◌" };
-  const WORD = { pass: "passed", fail: "failed", open: "open", author: "author only", none: "none", "n/a": "not applicable", "pdf-only": "PDF only" };
+  const MARK = { pass: "✓", fail: "✗", open: "…", author: "◐", none: "–", "n/a": "–", "pdf-only": "◌", "not-run": "○", unverified: "?" };
+  const WORD = { pass: "passed", fail: "failed", open: "open", author: "author only", none: "none", "n/a": "not applicable", "pdf-only": "PDF only", "not-run": "not run", unverified: "unverified" };
 </script>
 
 <ol class="ladder">
@@ -26,4 +26,6 @@
   .open .m { background: var(--st-open); }
   .author .m { background: var(--st-proved); }
   .pdf-only .m { background: var(--st-open); }
+  .not-run .m { background: transparent; color: var(--faint); border: 1.5px solid var(--faint); }
+  .unverified .m { background: var(--st-open); }
 </style>

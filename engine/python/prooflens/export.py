@@ -40,7 +40,7 @@ def public_claim(chunk: dict, pub) -> dict:
     """The fields of a claim passport that `pub` allows."""
     out = _pick(chunk, ["schema", "release", "id", "paper", "number", "title", "kind", "scope",
                         "scope_note", "scope_reviewed", "status", "class", "source_matches",
-                        "source_sha256"])
+                        "source_sha256", "blockers"])
     out["location"] = chunk.get("location") if pub.source_text else None
     out["statement_tex"] = chunk.get("statement_tex") if pub.source_text else None
     a = chunk.get("anchor")

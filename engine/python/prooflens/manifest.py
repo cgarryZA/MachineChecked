@@ -63,15 +63,20 @@ def ladder(cl: dict, anchor: dict | None, mode: str | None, src_ok: bool | None)
                       ("pass" if spec and spec["ok"] else "fail"),
                       "detail": cl.get("spec") or "no proposition written"})
         if proof is None:
-            rungs.append({"rung": "kernel proof", "state": "none", "detail": "no proof"})
+            rungs.append({"rung": "exact statement", "state": "none", "detail": "no proof"})
         else:
-            rungs.append({"rung": "kernel proof",
-                          "state": "pass" if proof["ok"] and not proof["sorry"] else "fail",
-                          "detail": "refutation" if ch.get("refute") else "exact type",
+            type_errs = [e for e in proof["errors"] if not e.startswith("axioms=")]
+            rungs.append({"rung": "exact statement",
+                          "state": "pass" if not type_errs and not proof["sorry"] else "fail",
+                          "detail": ("a theorem has exactly the negation as its type"
+                                     if ch.get("refute") else
+                                     "a theorem has exactly this proposition as its type"),
                           "errors": proof["errors"]})
             rungs.append({"rung": "axioms", "state": "pass" if not any(
                 e.startswith("axioms=") for e in proof["errors"]) and not proof["sorry"]
                 else "fail", "detail": ", ".join(proof["axioms"]) or "none"})
+            rp = ch.get("replay") or {"state": "not-run", "detail": "no Comparator log"}
+            rungs.append({"rung": "kernel replay", "state": rp["state"], "detail": rp["detail"]})
         w = ch.get("witness")
         rungs.append({"rung": "witness",
                       "state": "n/a" if w is None else ("pass" if w["ok"] else "open"),
@@ -171,6 +176,7 @@ def build(evidence: dict, release: str) -> tuple[dict, dict[str, dict]]:
             "source_sha256": c.get("source_sha256"), "status": a["status"],
             "class": status_class(a["status"]), "anchor": anchor, "source_matches": src_ok,
             "statement_tex": (anchor or {}).get("statement"),
+            "blockers": a.get("blockers", []),
             "clauses": clauses, "decls": decls, "findings": fs}
 
     prov = body["provenance"]

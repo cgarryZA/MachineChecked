@@ -44,8 +44,9 @@ Each clause shows its rungs separately. One rung passing says nothing about anot
 | Rung | Mechanical? | Passes when |
 |---|---|---|
 | locked statement | yes | the proposition is a definition of type `Prop` in the specification layer, over allowed axioms |
-| kernel proof | yes | the acceptance theorem's type is exactly the proposition (or its negation), and it has no `sorry` |
+| exact statement | yes | the acceptance theorem's type is exactly the proposition (or its negation), and it has no `sorry`; checked on the build the probe ran on, which may be a restored cache |
 | axioms | yes | its axioms are among the allowed (`propext`, `Classical.choice`, `Quot.sound` by default) |
+| kernel replay | yes | a Comparator log that names this project commit records a successful replay of this proof in a fresh kernel; without one the rung is `not run`, never `failed`, and a log not tied to the commit is `unverified` |
 | witness | yes, for the theorem; the fit to the paper is reviewed | a proposition with hypotheses has a theorem meeting them |
 | regimes | yes, for the theorems; the fit is reviewed | each regime the paper intends to cover has its witness |
 | review | no | the proposition and its definitions have current reviews; `author` if only by an author |

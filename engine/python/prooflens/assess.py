@@ -66,10 +66,11 @@ def _hashes(rec):
 
 class Assessor:
     def __init__(self, cfg, inventory, lean, tex, reviews: list[Review], dismissals,
-                 comparator_log: str | None = None):
+                 comparator_log: str | None = None, project_commit: str | None = None):
         self.cfg, self.inv, self.lean, self.tex = cfg, inventory, lean, tex
         self.reviews, self.dismissals = reviews, dismissals
         self.comparator_log = comparator_log
+        self.project_commit = project_commit
         self.findings: list[dict] = []
         self.authors = set(cfg.statement_authors)
 
@@ -108,6 +109,22 @@ class Assessor:
         return out
 
     # -- clauses --------------------------------------------------------------------------
+
+    def replay(self, thm: str) -> dict:
+        """Whether a Comparator log records a kernel replay of `thm` for this commit. Without a
+        log the replay is `not-run`, never `fail`; a log that is not tied to this commit is
+        `unverified`."""
+        log = self.comparator_log
+        if not log:
+            return {"state": "not-run", "detail": "no Comparator log for this release"}
+        if not all(m in log for m in COMPARATOR_OK):
+            return {"state": "fail", "detail": "the Comparator log records no successful replay"}
+        if not self.project_commit or self.project_commit not in log:
+            return {"state": "unverified",
+                    "detail": "the Comparator log does not name this commit"}
+        if thm not in log:
+            return {"state": "not-run", "detail": "the Comparator log does not cover this proof"}
+        return {"state": "pass", "detail": "Comparator replayed the proof in a fresh kernel"}
 
     def _proof(self, kind, name, spec):
         return self.lean["proofs"].get(f"{kind}:{name}:{spec or ''}")
@@ -177,6 +194,8 @@ class Assessor:
                                    "sorry": (p or {}).get("sorry", False),
                                    "type": (p or {}).get("type") if kind == "witness" else None}
             res[kind + "_ok"] = not perrs
+            if kind in ("accept", "refute"):
+                res["checks"]["replay"] = self.replay(thm)
             for e in perrs:
                 self.findings.append(_finding("violation", f"{kind}-" + e.split("=")[0], subj,
                                               f"{thm}: {e}"))
@@ -260,12 +279,67 @@ class Assessor:
                     else "formal: accepted")
         return "formal: open"
 
+    def blockers(self, claim: dict, status: str, clauses: list[dict]) -> list[str]:
+        """Why the claim is not accepted, in plain words, most basic first. Empty for an accepted
+        claim whose proofs were replayed, and for a claim out of scope."""
+        if claim["scope"] in OUT_OF_SCOPE:
+            return []
+        if any(c["state"] == "unchecked" for c in clauses):
+            return ["the Lean project was not checked in this build"]
+        out = []
+        if not claim.get("scope_reviewed", True):
+            out.append("its scope was set by the automatic first pass and not checked by reading")
+        if not clauses:
+            out.append("no Lean proposition has been written for it" if claim["scope"] == "formal"
+                       else "no Lean definition has been named for it")
+        for c in clauses:
+            name = f"clause “{c['name']}”: " if len(clauses) > 1 else ""
+            st = c["state"]
+            if st == "unspecified":
+                out.append(name + "no Lean proposition has been written")
+            elif st == "open":
+                failed = [k for k in ("accept", "refute") if c["checks"].get(k)
+                          and not c["checks"][k]["ok"]]
+                out.append(name + ("its proof fails a check: " + ", ".join(
+                    e for k in failed for e in c["checks"][k]["errors"]) if failed
+                    else "the proposition has no proof yet"))
+            elif st == "refuted":
+                out.append(name + "the printed statement is false (a theorem proves its negation)")
+            if c.get("spec") and c.get("spec_review"):
+                srs = c["spec_review"]["state"]
+                if srs == "author-reviewed":
+                    out.append(name + "its proposition was reviewed only by the author of the "
+                               "statements")
+                elif srs in ("pending", "stale"):
+                    out.append(name + "its proposition has no current review" +
+                               (" (it changed after the last one)" if srs == "stale" else ""))
+            counts: dict[str, int] = {}
+            for r in (c.get("def_reviews") or {}).values():
+                counts[r["state"]] = counts.get(r["state"], 0) + 1
+            for state, words in (("pending", "have no review"),
+                                 ("stale", "changed after their review"),
+                                 ("author-reviewed", "were reviewed only by the author")):
+                if counts.get(state):
+                    out.append(name + f"{counts[state]} definition"
+                               f"{'s' if counts[state] > 1 else ''} it depends on {words}")
+            if c.get("witness") and not c.get("witness_ok"):
+                out.append(name + "the witness that its hypotheses can be met fails its check")
+            if any(not r["discharged"] for r in c.get("regimes", [])):
+                out.append(name + "a regime the paper intends is not shown to be covered")
+            rp = c["checks"].get("replay")
+            if rp and rp["state"] != "pass" and st in ("proved", "refuted"):
+                out.append(name + "no independent kernel replay: " + rp["detail"])
+        if status.startswith("definition") and status != "definition: reviewed" and not out:
+            out.append("its definitions are not independently reviewed")
+        return list(dict.fromkeys(out))
+
     def run(self) -> dict:
         claims = []
         for c in self.inv["claims"]:
             clauses = [self.clause(c, cl, k) for k, cl in enumerate(c.get("clauses", []))]
-            claims.append({"id": c["id"], "status": self.claim_status(c, clauses),
-                           "clauses": clauses})
+            status = self.claim_status(c, clauses)
+            claims.append({"id": c["id"], "status": status, "clauses": clauses,
+                           "blockers": self.blockers(c, status, clauses)})
         self.inventory_checks()
         if self.lean:
             for v in self.lean.get("layering", []):
@@ -316,9 +390,8 @@ class Assessor:
                     if c.get("witness") and not c.get("witness_ok"):
                         reasons.append(f"{r['id']}: witness fails: {c['name']}")
             names = sorted({c["accept"] for r in rows for c in r["clauses"] if c.get("accept")})
-            log = self.comparator_log or ""
-            comparator = bool(log) and all(m in log for m in COMPARATOR_OK) and \
-                all(n in log for n in names)
+            comparator = all(self.replay(n)["state"] == "pass" for n in names) and \
+                bool(self.comparator_log)
             if not comparator:
                 reasons.append("comparator: no successful kernel replay covering every proof "
                                "of the paper")

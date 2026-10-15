@@ -3,28 +3,119 @@
   "$id": "https://github.com/cgarryZA/ProofLens/schema/manifest-claim.schema.json",
   "title": "ProofLens claim passport",
   "type": "object",
-  "required": ["schema", "release", "id", "paper", "status", "clauses", "findings", "decls"],
+  "required": [
+    "schema",
+    "release",
+    "id",
+    "paper",
+    "status",
+    "clauses",
+    "findings",
+    "decls"
+  ],
   "properties": {
-    "schema": {"const": "prooflens/manifest@0"},
-    "release": {"type": "string"},
-    "id": {"type": "string"},
-    "status": {"type": "string"},
-    "statement_tex": {"type": ["string", "null"]},
-    "clauses": {"type": "array", "items": {
-      "type": "object", "required": ["name", "state", "ladder"],
-      "properties": {
-        "state": {"enum": ["unspecified", "unchecked", "open", "proved", "refuted", "malformed",
-                           "stated"]},
-        "ladder": {"type": "array", "items": {
-          "type": "object", "required": ["rung", "state"],
-          "properties": {"state": {"enum": ["pass", "fail", "open", "author", "none", "n/a",
-                                            "pdf-only"]}}}}}}},
-    "findings": {"type": "array", "items": {"$ref": "#/$defs/finding"}},
-    "decls": {"type": "object"}
+    "schema": {
+      "const": "prooflens/manifest@0"
+    },
+    "release": {
+      "type": "string"
+    },
+    "id": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string"
+    },
+    "statement_tex": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "clauses": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "state",
+          "ladder"
+        ],
+        "properties": {
+          "state": {
+            "enum": [
+              "unspecified",
+              "unchecked",
+              "open",
+              "proved",
+              "refuted",
+              "malformed",
+              "stated"
+            ]
+          },
+          "ladder": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "rung",
+                "state"
+              ],
+              "properties": {
+                "state": {
+                  "enum": [
+                    "pass",
+                    "fail",
+                    "open",
+                    "author",
+                    "none",
+                    "n/a",
+                    "pdf-only",
+                    "not-run",
+                    "unverified"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/finding"
+      }
+    },
+    "decls": {
+      "type": "object"
+    },
+    "blockers": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
   },
   "$defs": {
     "finding": {
-      "type": "object", "required": ["id", "tier", "code", "subject", "message"],
-      "properties": {"tier": {"enum": ["violation", "warning", "obligation"]}}}
+      "type": "object",
+      "required": [
+        "id",
+        "tier",
+        "code",
+        "subject",
+        "message"
+      ],
+      "properties": {
+        "tier": {
+          "enum": [
+            "violation",
+            "warning",
+            "obligation"
+          ]
+        }
+      }
+    }
   }
 }

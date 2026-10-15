@@ -93,7 +93,8 @@ def build(cfg: Config, release: str | None = None, skip_lean: bool = False,
 
     comp = cfg.comparator_log
     comp_text = comp.read_text(errors="replace") if comp and comp.exists() else None
-    assessment = Assessor(cfg, inv, lean, tex, reviews, dismissals, comp_text).run()
+    assessment = Assessor(cfg, inv, lean, tex, reviews, dismissals, comp_text,
+                          git_head(cfg.lean_root)).run()
     body = {
         "provenance": {"tool": {"name": "prooflens", "version": tool_version(),
                                 "fingerprint": FINGERPRINT_VERSION},

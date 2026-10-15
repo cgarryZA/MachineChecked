@@ -48,6 +48,12 @@
       </p>
       <h1>{claim.number || claim.id}{#if claim.title}<span class="title">&nbsp;— {claim.title}</span>{/if}</h1>
       <StatusChip status={claim.status} cls={claim.class} />
+      {#if claim.blockers?.length}
+        <details class="why" open={full}>
+          <summary>Why is this claim not accepted? <span class="faint">({claim.blockers.length})</span></summary>
+          <ul>{#each claim.blockers as b}<li>{b}</li>{/each}</ul>
+        </details>
+      {/if}
       {#if claim.scope_note}<p class="muted note">{claim.scope_note}</p>{/if}
       {#if claim.scope_reviewed === false}
         <p class="faint note">The scope of this claim was set by the automatic first pass and has not been checked by reading.</p>
@@ -215,6 +221,10 @@
   .title { font-weight: 450; }
   .eyebrow { margin: 0; color: var(--muted); font-size: 13px; }
   .note { margin: 8px 0 0; font-size: 14px; }
+  .why { margin-top: 12px; padding: 8px 12px; border: 1px solid var(--border); border-left: 4px solid var(--st-open); border-radius: 8px; background: var(--surface); }
+  .why summary { cursor: pointer; font-weight: 600; }
+  .why ul { margin: 6px 0 2px; padding-left: 18px; }
+  .why li { margin: 2px 0; }
   section h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); font-weight: 600; margin-bottom: 10px; }
   h3 { font-size: 14px; font-weight: 600; margin: 14px 0 6px; }
   .clause { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
