@@ -1,0 +1,33 @@
+\documentclass[11pt]{article}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage[margin=1in]{geometry}
+\newtheorem{theorem}{Theorem}
+\newtheorem{lemma}[theorem]{Lemma}
+\newcommand{\lean}[1]{}
+
+\title{Odd Numbers, Briefly}
+\author{An ordinary Lean user}
+\date{}
+
+\begin{document}
+\maketitle
+
+\section{Results}
+
+\begin{theorem}\label{thm:odd-add}\lean{Plain.odd_add_odd}
+The sum of two odd natural numbers is even.
+\end{theorem}
+
+\begin{theorem}\label{thm:sum-odd}
+For every $n$, the sum of the first $n$ odd numbers is $n^2$.
+\end{theorem}
+
+\begin{theorem}\label{thm:square}
+The square of an odd number is odd.
+\end{theorem}
+
+\begin{lemma}\label{lem:open}
+Every odd number greater than one has an odd prime factor.
+\end{lemma}
+
+\end{document}

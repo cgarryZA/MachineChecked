@@ -3,79 +3,96 @@
   import PdfView from "./PdfView.svelte";
   import Passport from "./Passport.svelte";
 
-  let { index, paperId, claimId } = $props();
+  // The paper, a contents list of its claims, and the claim chosen.
+  let { index, paperId, claimId, editable = false } = $props();
 
   const paper = $derived(index.papers.find((p) => p.id === paperId));
   const claims = $derived(index.claims.filter((c) => c.paper === paperId));
-  const unanchored = $derived(claims.filter((c) => !c.anchor && !c.status.startsWith("out of scope")));
+  const inScope = (c) => !String(c.status).startsWith("out of scope");
+  const ordered = $derived(
+    [...claims].filter(inScope).sort((a, b) =>
+      (a.anchor ? 0 : 1) - (b.anchor ? 0 : 1) || (a.anchor?.page ?? 0) - (b.anchor?.page ?? 0) || (a.anchor?.y0 ?? 0) - (b.anchor?.y0 ?? 0)),
+  );
+  let showContents = $state(typeof window !== "undefined" && window.innerWidth > 1180);
 
-  function select(id) {
-    go(href(index.release, "read", paperId, id));
-  }
-  function close() {
-    go(href(index.release, "read", paperId));
-  }
+  function select(id) { go(href(index.release, "read", paperId, id)); }
+  function close() { go(href(index.release, "read", paperId)); }
 </script>
 
 {#if !paper}
-  <main class="msg"><p>No paper <code>{paperId}</code> in this release.</p></main>
+  <main class="msg"><p>No paper <code>{paperId}</code> here.</p></main>
 {:else}
-  <div class="reader" class:open={!!claimId}>
+  <div class="reader" class:open={!!claimId} class:contents={showContents}>
+    {#if showContents}
+      <nav class="toc" aria-label="Claims of the paper">
+        <div class="toc-head">
+          <span>Contents</span>
+          <button class="x" onclick={() => (showContents = false)} aria-label="Hide contents">‹</button>
+        </div>
+        <ol>
+          {#each ordered as c (c.id)}
+            <li>
+              <button class:sel={c.id === claimId} onclick={() => select(c.id)} title={c.status}>
+                <span class={"dot st-" + c.class} aria-hidden="true"></span>
+                <span class="n">{c.number || c.id}</span>
+                {#if c.title}<span class="t">{c.title}</span>{/if}
+                {#if !c.anchor}<span class="na" title="not located in the PDF">·</span>{/if}
+              </button>
+            </li>
+          {/each}
+        </ol>
+      </nav>
+    {:else}
+      <button class="toc-open" onclick={() => (showContents = true)} aria-label="Show contents">Contents ›</button>
+    {/if}
     <section class="paperpane" aria-label="Paper">
       {#if paper.pdf}
         <PdfView url={"data/" + paper.pdf} {claims} selected={claimId} onselect={select} />
       {:else}
-        <div class="msg">
-          <p>The PDF of this paper is not part of this site.</p>
-          <ul>
-            {#each claims as c (c.id)}
-              <li><button class="link" onclick={() => select(c.id)}>{c.number || c.id}</button> — {c.status}</li>
-            {/each}
-          </ul>
-        </div>
-      {/if}
-      {#if unanchored.length}
-        <details class="unanchored">
-          <summary>{unanchored.length} claim{unanchored.length === 1 ? " is" : "s are"} not located in the PDF</summary>
-          <ul>
-            {#each unanchored as c (c.id)}
-              <li><button class="link" onclick={() => select(c.id)}>{c.number || c.id}</button>{#if c.unplaced === "ambiguous"} <span class="faint">(ambiguous: SyncTeX places it on several pages)</span>{/if}</li>
-            {/each}
-          </ul>
-        </details>
+        <div class="msg"><p>The PDF of this paper is not part of this site; choose a claim from the contents.</p></div>
       {/if}
     </section>
     {#if claimId}
-      <aside class="side" aria-label="Formal evidence">
-        <div class="sidebar-head">
+      <aside class="side" aria-label="The claim">
+        <div class="side-head">
           <a href={href(index.release, "claim", claimId)}>Open as a page</a>
           <button class="x" onclick={close} aria-label="Close">×</button>
         </div>
-        <Passport {index} {claimId} />
+        <Passport {index} {claimId} {editable} />
       </aside>
     {/if}
   </div>
 {/if}
 
 <style>
-  .reader { display: grid; grid-template-columns: minmax(0, 1fr); height: calc(100vh - 49px); }
-  .reader.open { grid-template-columns: minmax(0, 1.05fr) minmax(380px, 0.95fr); }
-  .paperpane { overflow: auto; background: var(--surface-2); position: relative; }
+  .reader { display: grid; grid-template-columns: minmax(0, 1fr); height: calc(100vh - 49px); position: relative; }
+  .reader.contents { grid-template-columns: 260px minmax(0, 1fr); }
+  .reader.open { grid-template-columns: minmax(0, 1.1fr) minmax(380px, 0.9fr); }
+  .reader.contents.open { grid-template-columns: 260px minmax(0, 1.1fr) minmax(380px, 0.9fr); }
+  .toc { overflow: auto; border-right: 1px solid var(--border); background: var(--surface); }
+  .toc-head { position: sticky; top: 0; display: flex; justify-content: space-between; align-items: center; padding: 10px 12px; background: var(--surface); font-weight: 600; font-size: 13px; color: var(--muted); border-bottom: 1px solid var(--border); }
+  .toc ol { list-style: none; margin: 0; padding: 4px; }
+  .toc li button { display: flex; gap: 6px; align-items: baseline; width: 100%; text-align: left; border: 0; background: none; padding: 4px 8px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+  .toc li button:hover { background: var(--surface-2); }
+  .toc li button.sel { background: var(--accent-soft); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--st); flex: none; align-self: center; }
+  .n { font-weight: 600; white-space: nowrap; }
+  .t { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .na { color: var(--faint); margin-left: auto; }
+  .toc-open { position: absolute; left: 8px; top: 8px; z-index: 5; border: 1px solid var(--border); background: var(--surface); border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 13px; }
+  .paperpane { overflow: auto; background: var(--surface-2); }
   .side { overflow: auto; border-left: 1px solid var(--border); background: var(--bg); padding: 0 20px 60px; }
-  .sidebar-head {
-    position: sticky; top: 0; z-index: 2; display: flex; justify-content: space-between; align-items: center;
-    padding: 10px 0; background: var(--bg); border-bottom: 1px solid var(--border); margin-bottom: 14px;
-  }
-  .x { border: 0; background: none; font-size: 22px; line-height: 1; cursor: pointer; color: var(--muted); padding: 0 4px; }
+  .side-head { position: sticky; top: 0; z-index: 2; display: flex; justify-content: space-between; align-items: center; padding: 10px 0; background: var(--bg); border-bottom: 1px solid var(--border); margin-bottom: 14px; font-size: 14px; }
+  .x { border: 0; background: none; font-size: 20px; line-height: 1; cursor: pointer; color: var(--muted); padding: 0 4px; }
   .msg { padding: 24px; }
-  .unanchored { margin: 12px 16px 24px; color: var(--muted); }
-  .link { border: 0; background: none; color: var(--accent); cursor: pointer; padding: 0; }
-  @media (max-width: 900px) {
+  @media (max-width: 1180px) {
+    .reader.contents, .reader.contents.open { grid-template-columns: 240px minmax(0, 1fr); }
+    .reader.contents.open .side, .reader.open .side { position: fixed; right: 0; top: 49px; bottom: 0; width: min(480px, 100vw); z-index: 30; box-shadow: -8px 0 24px rgb(0 0 0 / 0.15); }
     .reader.open { grid-template-columns: minmax(0, 1fr); }
-    .side {
-      position: fixed; left: 0; right: 0; bottom: 0; height: 70vh; z-index: 30;
-      border-left: 0; border-top: 1px solid var(--border); border-radius: 14px 14px 0 0;
-      box-shadow: 0 -8px 24px rgb(0 0 0 / 0.18); padding: 0 16px 40px;
-    }
+  }
+  @media (max-width: 700px) {
+    .reader.contents { grid-template-columns: minmax(0, 1fr); }
+    .toc { position: fixed; left: 0; top: 49px; bottom: 0; width: 80vw; z-index: 31; box-shadow: 8px 0 24px rgb(0 0 0 / 0.15); }
+    .reader.open .side { top: auto; height: 70vh; width: 100vw; border-radius: 14px 14px 0 0; }
   }
 </style>

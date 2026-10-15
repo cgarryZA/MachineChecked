@@ -1,5 +1,5 @@
 <script>
-  import { loadIndex } from "./lib/data.js";
+  import { loadIndex, canEdit } from "./lib/data.js";
   import { route, href } from "./lib/route.svelte.js";
   import Coverage from "./components/Coverage.svelte";
   import Reader from "./components/Reader.svelte";
@@ -9,53 +9,59 @@
 
   let index = $state(null);
   let error = $state(null);
+  let editable = $state(false);
   loadIndex().then((i) => (index = i)).catch((e) => (error = String(e)));
+  canEdit().then((e) => (editable = e));
 
   const firstPaper = $derived(index?.papers[0]?.id);
+  const paperId = $derived(route.paper || firstPaper);
+  const paper = $derived(index?.papers.find((p) => p.id === paperId));
   const releaseMismatch = $derived(index && route.release && route.release !== index.release);
 </script>
 
 {#if error}
-  <main class="state"><h1>ProofLens</h1><p>The manifest could not be loaded: {error}</p></main>
+  <main class="state"><h1>ProofLens</h1><p>The site's data could not be loaded: {error}</p></main>
 {:else if !index}
   <main class="state"><p class="muted">Loading…</p></main>
 {:else}
   <header class="top">
-    <a class="brand" href={href(index.release, "coverage")}>
+    <a class="brand" href={href(index.release, "read", firstPaper)} title="ProofLens">
       <svg viewBox="0 0 32 32" width="20" height="20" aria-hidden="true"
         ><circle cx="13" cy="13" r="9" fill="none" stroke="currentColor" stroke-width="3" /><path
           d="M20 20l8 8" stroke="currentColor" stroke-width="3" stroke-linecap="round" /></svg
       >
-      <span>ProofLens</span>
-      <span class="proj">{index.project?.name}</span>
     </a>
-    <nav>
-      {#if firstPaper}
-        <a class:on={route.view === "read"} href={href(index.release, "read", route.paper || firstPaper)}>Read</a>
-      {/if}
-      <a class:on={route.view === "coverage"} href={href(index.release, "coverage")}>Coverage</a>
-      <a class:on={route.view === "claim"} href={route.claim ? href(index.release, "claim", route.claim) : href(index.release, "coverage")}>Audit</a>
-      <a class:on={route.view === "changes"} href={href(index.release, "changes")}>Changes</a>
-    </nav>
+    {#if index.papers.length > 1}
+      <nav class="papers">
+        {#each index.papers as p}
+          <a class:on={route.view === "read" && p.id === paperId} href={href(index.release, "read", p.id)} title={p.title}>Paper {p.id}</a>
+        {/each}
+      </nav>
+    {:else if paper}
+      <span class="ptitle" title={paper.title}>{paper.title}</span>
+    {/if}
     <Search {index} />
-    <span class="release" title={"evidence " + index.evidence}>release <code>{index.release}</code></span>
+    <a class="aux" class:on={route.view === "coverage"} href={href(index.release, "coverage")}>Overview</a>
   </header>
 
   {#if releaseMismatch}
     <div class="banner" role="alert">
-      This link names release <code>{route.release}</code>; this site shows release
+      This link names release <code>{route.release}</code>; this page shows release
       <code>{index.release}</code>. What it says about the claim may differ.
     </div>
   {/if}
+  {#if index.notes?.length}
+    <div class="banner">{#each index.notes as n}<div>{n}</div>{/each}</div>
+  {/if}
 
-  {#if route.view === "read"}
-    <Reader {index} paperId={route.paper || firstPaper} claimId={route.claim} />
-  {:else if route.view === "claim" && route.claim}
-    <main class="page"><Passport {index} claimId={route.claim} full /></main>
+  {#if route.view === "claim" && route.claim}
+    <main class="page"><Passport {index} claimId={route.claim} full {editable} /></main>
+  {:else if route.view === "coverage"}
+    <Coverage {index} />
   {:else if route.view === "changes"}
     <Changes {index} />
   {:else}
-    <Coverage {index} />
+    <Reader {index} paperId={paperId} claimId={route.claim} {editable} />
   {/if}
 {/if}
 
@@ -63,21 +69,20 @@
   .state { max-width: 640px; margin: 15vh auto; padding: 0 16px; }
   .top {
     position: sticky; top: 0; z-index: 20;
-    display: flex; align-items: center; gap: 20px; flex-wrap: wrap;
-    padding: 10px 20px; background: var(--surface); border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 16px;
+    padding: 8px 16px; background: var(--surface); border-bottom: 1px solid var(--border);
   }
-  .brand { display: flex; align-items: center; gap: 8px; color: var(--accent); font-weight: 650; }
-  .brand:hover { text-decoration: none; }
-  .proj { color: var(--muted); font-weight: 450; }
-  nav { display: flex; gap: 4px; }
-  nav a { padding: 4px 10px; border-radius: 6px; color: var(--muted); }
-  nav a:hover { background: var(--surface-2); text-decoration: none; }
-  nav a.on { background: var(--accent-soft); color: var(--text); }
-  .release { margin-left: auto; color: var(--faint); font-size: 13px; }
-  .banner { padding: 10px 20px; background: var(--surface-2); border-bottom: 1px solid var(--border); }
-  .page { max-width: 980px; margin: 0 auto; padding: 24px 16px 80px; }
+  .brand { display: flex; color: var(--accent); }
+  .ptitle { font-family: var(--serif); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 40vw; }
+  .papers { display: flex; gap: 4px; }
+  .papers a, .aux { padding: 4px 10px; border-radius: 6px; color: var(--muted); white-space: nowrap; }
+  .papers a:hover, .aux:hover { background: var(--surface-2); text-decoration: none; }
+  .papers a.on, .aux.on { background: var(--accent-soft); color: var(--text); }
+  .aux { margin-left: auto; font-size: 14px; }
+  .banner { padding: 8px 16px; background: var(--surface-2); border-bottom: 1px solid var(--border); font-size: 14px; }
+  .page { max-width: 900px; margin: 0 auto; padding: 24px 16px 80px; }
   @media (max-width: 640px) {
-    .top { gap: 10px; padding: 8px 16px; }
-    .release { display: none; }
+    .top { gap: 8px; padding: 8px 12px; flex-wrap: wrap; }
+    .ptitle { display: none; }
   }
 </style>

@@ -27,6 +27,28 @@ export function loadIndex() {
   return getJson("data/index.json");
 }
 
+// Whether the page is served by `prooflens view`, which can save links into the repository.
+export async function canEdit() {
+  if (window.__PROOFLENS__) return false;
+  try {
+    const r = await fetch("api/status");
+    return r.ok && (await r.json()).editable === true;
+  } catch {
+    return false;
+  }
+}
+
+export async function saveLink(req) {
+  const r = await fetch("api/link", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(req) });
+  const out = await r.json();
+  if (!r.ok) throw new Error(out.error || r.statusText);
+  return out;
+}
+
+export function loadLeanIndex(index) {
+  return getJson(index.lean_index || "data/lean-index.json");
+}
+
 export function loadSearch(index) {
   return getJson(index.search || "data/search.json");
 }

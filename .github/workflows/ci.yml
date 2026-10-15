@@ -31,7 +31,9 @@ jobs:
         run: pip install -e '.[test]'
       - name: Build the web app
         run: cd web && npm ci && npm run build
-      - name: Tests (contracts, mutations, security)
+      - name: Build the plain example (zero-configuration tests use it)
+        run: cd examples/plain-paper && lake build
+      - name: Tests (contracts, mutations, security, zero-configuration)
         run: pytest -q
       - name: Build the toy paper
         run: cd examples/toy-paper && prooflens build --fail-on-violation

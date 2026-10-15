@@ -101,19 +101,25 @@
   .pdf { padding: 16px; display: flex; flex-direction: column; align-items: center; gap: 16px; min-height: 100%; }
   .page { position: relative; background: white; box-shadow: 0 1px 4px rgb(0 0 0 / 0.18); }
   canvas { display: block; }
+  /* A claim is a thin marker in the margin; the paper itself stays clean. Hovering shows where
+     the claim is, selecting it outlines it. */
   .band {
     position: absolute; left: 0; right: 0; border: 0; padding: 0; cursor: pointer;
-    background: transparent; border-left: 6px solid var(--st);
+    background: transparent;
   }
-  .band:hover, .band.sel { background: color-mix(in srgb, var(--st) 12%, transparent); }
-  .band.sel { outline: 2px solid var(--st); outline-offset: -2px; }
-  .band.approximate { border-left-style: dashed; }
+  .band::before {
+    content: ""; position: absolute; left: 18px; top: 0; bottom: 0; width: 4px; border-radius: 2px;
+    background: var(--st);
+  }
+  .band.approximate::before { background: repeating-linear-gradient(to bottom, var(--st) 0 4px, transparent 4px 7px); }
+  .band:hover { background: color-mix(in srgb, var(--st) 7%, transparent); }
+  .band.sel { background: color-mix(in srgb, var(--st) 10%, transparent); outline: 1.5px solid color-mix(in srgb, var(--st) 70%, transparent); outline-offset: -1px; }
   .band.approximate.sel { outline-style: dashed; }
   .tag {
     position: absolute; right: 6px; top: -10px; font: 11px/1.4 var(--sans);
     padding: 1px 8px; border-radius: 999px; color: #1d1d1b;
     background: color-mix(in srgb, var(--st) 22%, white); border: 1px solid var(--st);
-    opacity: 0; transition: opacity 0.12s;
+    opacity: 0; transition: opacity 0.12s; pointer-events: none;
   }
   .band:hover .tag, .band.sel .tag { opacity: 1; }
   .err, .wait { padding: 24px; }
