@@ -1,0 +1,126 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/cgarryZA/ProofLens/schema/manifest-claim.schema.json",
+  "title": "ProofLens claim passport",
+  "type": "object",
+  "required": [
+    "schema",
+    "release",
+    "id",
+    "paper",
+    "status",
+    "clauses",
+    "findings",
+    "decls"
+  ],
+  "properties": {
+    "schema": {
+      "const": "prooflens/manifest@0"
+    },
+    "release": {
+      "type": "string"
+    },
+    "id": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string"
+    },
+    "statement_tex": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "clauses": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "state",
+          "ladder"
+        ],
+        "properties": {
+          "state": {
+            "enum": [
+              "unspecified",
+              "unchecked",
+              "open",
+              "proved",
+              "refuted",
+              "malformed",
+              "stated"
+            ]
+          },
+          "ladder": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "rung",
+                "state"
+              ],
+              "properties": {
+                "state": {
+                  "enum": [
+                    "pass",
+                    "fail",
+                    "open",
+                    "author",
+                    "none",
+                    "n/a",
+                    "pdf-only",
+                    "not-run",
+                    "unverified"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/finding"
+      }
+    },
+    "decls": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{24}$"
+      },
+      "description": "Each declaration of the claim's closures, by name, with the key of its record data/decls/<key>.json (the first 24 hex digits of the SHA-256 of the record)"
+    },
+    "blockers": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "$defs": {
+    "finding": {
+      "type": "object",
+      "required": [
+        "id",
+        "tier",
+        "code",
+        "subject",
+        "message"
+      ],
+      "properties": {
+        "tier": {
+          "enum": [
+            "violation",
+            "warning",
+            "obligation"
+          ]
+        }
+      }
+    }
+  }
+}

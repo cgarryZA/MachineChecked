@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/cgarryZA/ProofLens/schema/inventory.schema.json",
+  "title": "ProofLens claim inventory",
+  "description": "Every claim of the papers, with its scope and, for a formal claim, the clauses mapped to Lean declarations.",
+  "type": "object",
+  "required": ["claims"],
+  "properties": {
+    "note": {"type": "string"},
+    "papers": {"type": "object"},
+    "claims": {"type": "array", "items": {"$ref": "#/$defs/claim"}}
+  },
+  "$defs": {
+    "scope": {"enum": ["formal", "definition", "expository", "literature", "empirical",
+                       "proof-step", "part-of", "duplicate"]},
+    "claim": {
+      "type": "object",
+      "required": ["id", "paper", "scope", "clauses"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^[A-Za-z0-9]+:.+$"},
+        "paper": {"type": "string"},
+        "commit": {"type": ["string", "null"]},
+        "kind": {"type": "string"},
+        "number": {"type": "string"},
+        "title": {"type": "string"},
+        "label": {"type": ["string", "null"]},
+        "location": {"type": ["string", "null"]},
+        "source_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+        "scope": {"$ref": "#/$defs/scope"},
+        "scope_note": {"type": "string"},
+        "scope_reviewed": {"type": "boolean"},
+        "clauses": {"type": "array", "items": {"$ref": "#/$defs/clause"}}
+      }
+    },
+    "clause": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name": {"type": "string"},
+        "spec": {"type": ["string", "null"]},
+        "accept": {"type": ["string", "null"]},
+        "refute": {"type": ["string", "null"]},
+        "corrects": {"type": ["string", "null"]},
+        "witness": {"type": ["string", "null"]},
+        "defs": {"type": "array", "items": {"type": "string"}},
+        "regimes": {"type": "array", "items": {
+          "type": "object", "required": ["name"],
+          "properties": {"name": {"type": "string"}, "description": {"type": "string"},
+                         "witness": {"type": ["string", "null"]}}}}
+      },
+      "not": {"required": ["accept", "refute"],
+              "properties": {"accept": {"type": "string"}, "refute": {"type": "string"}}}
+    }
+  }
+}

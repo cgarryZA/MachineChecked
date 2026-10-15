@@ -144,7 +144,7 @@ def test_bundle_is_one_self_contained_file(toy, tmp_path):
     import json
     import re
     from prooflens.bundle import bundle
-    _, _, cfg = build(toy, web_dist=ROOT / "web" / "dist")
+    _, _, cfg = build(toy, web_dist=ROOT / "engine" / "python" / "prooflens" / "web")
     if not (cfg.out_dir / "site" / "index.html").exists():
         import pytest
         pytest.skip("web app not built")

@@ -1,0 +1,128 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/cgarryZA/ProofLens/schema/manifest-index.schema.json",
+  "title": "ProofLens manifest index",
+  "type": "object",
+  "required": [
+    "schema",
+    "release",
+    "evidence",
+    "papers",
+    "claims",
+    "summary",
+    "classes",
+    "findings"
+  ],
+  "properties": {
+    "schema": {
+      "const": "prooflens/manifest@0"
+    },
+    "release": {
+      "type": "string"
+    },
+    "evidence": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "created": {
+      "type": "string"
+    },
+    "project": {
+      "type": "object"
+    },
+    "lean": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "tool": {
+      "type": "object"
+    },
+    "papers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "mode",
+          "pdf"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "mode": {
+            "enum": [
+              "latex",
+              "pdf"
+            ]
+          },
+          "pdf": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      }
+    },
+    "summary": {
+      "type": "object"
+    },
+    "findings": {
+      "type": "object"
+    },
+    "claims": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "paper",
+          "status",
+          "class",
+          "file",
+          "counts"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "paper": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "class": {
+            "enum": [
+              "accepted",
+              "proved",
+              "refuted",
+              "open",
+              "malformed",
+              "out-of-scope",
+              "unspecified"
+            ]
+          },
+          "anchor": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "file": {
+            "type": "string"
+          },
+          "counts": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "search": {
+      "type": "string"
+    }
+  }
+}

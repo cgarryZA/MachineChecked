@@ -29,12 +29,21 @@ jobs:
           echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
       - name: Install ProofLens
         run: pip install -e '.[test]'
-      - name: Build the web app
-        run: cd web && npm ci && npm run build
+      - name: The committed reader is the build of its sources
+        run: |
+          cd web && npm ci && npm run build && cd ..
+          git status --porcelain -- engine/python/prooflens/web
+          test -z "$(git status --porcelain -- engine/python/prooflens/web)"
       - name: Build the plain example (zero-configuration tests use it)
         run: cd examples/plain-paper && lake build
       - name: Tests (contracts, mutations, security, zero-configuration)
         run: pytest -q
+      - name: An installed wheel needs no Node and no checkout
+        run: |
+          pip wheel . --no-deps -w /tmp/wheel
+          python -m venv /tmp/venv && /tmp/venv/bin/pip install /tmp/wheel/*.whl
+          cd examples/plain-paper && /tmp/venv/bin/prooflens build --out /tmp/plain.html
+          grep -q __PROOFLENS__ /tmp/plain.html
       - name: Build the toy paper
         run: cd examples/toy-paper && prooflens build --fail-on-violation
       - name: Export the demo (approved fields only, scanned)

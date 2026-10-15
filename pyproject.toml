@@ -24,7 +24,7 @@ package-dir = { "" = "engine/python" }
 where = ["engine/python"]
 
 [tool.setuptools.package-data]
-prooflens = ["data/*", "data/schema/*"]
+prooflens = ["data/*", "data/schema/*", "web/*", "web/assets/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

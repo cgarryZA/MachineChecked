@@ -25,29 +25,52 @@ passport:
 
 The status words are exactly those the engine computed. The site never rounds them up.
 
+## Use it on your Lean project
+
+Requirements: Python ≥ 3.11, the project's own Lean toolchain ([elan](https://github.com/leanprover/elan)),
+and TeX Live with `latexmk` if the paper is LaTeX. No Node: the reader ships built.
+
+From anywhere inside a Lean project whose modules are built (`lake build`):
+
+```sh
+uvx --from git+https://github.com/cgarryZA/ProofLens prooflens view          # open the reader
+uvx --from git+https://github.com/cgarryZA/ProofLens prooflens build         # ProofLens.html to share
+uvx --from git+https://github.com/cgarryZA/ProofLens prooflens check         # for CI
+```
+
+(or `pip install git+https://github.com/cgarryZA/ProofLens` and run `prooflens …`). ProofLens finds
+the paper, reads its numbered statements from the compiled LaTeX, indexes the project's built
+declarations and suggests links (from `\lean{…}` tags, docstrings citing "Theorem 3", and names).
+Confirm or reject them in the reader; they are saved to `prooflens.links.json`, the only file
+ProofLens adds to the repository. A link says which declaration formalises a claim and whether
+Lean proves it; it is not a review of whether the two say the same thing.
+
+A project with a `prooflens.toml` gets the full assessment described below instead.
+
 ## Status
 
-Phases 0 and 1 of [`PLAN.md`](PLAN.md) are done, and Phase 2 (the reader on real papers) is under
-way. The engine reproduces an existing acceptance system's statuses claim for claim on a real
-formalisation. The [toy paper](examples/toy-paper) is the public example and the test fixture.
+Phases 0–2 of [`PLAN.md`](PLAN.md) are done. The engine reproduces an existing acceptance
+system's statuses claim for claim on a real formalisation. The [toy paper](examples/toy-paper)
+is the example of the full assessment and the test fixture; the [plain paper](examples/plain-paper)
+is the example of the zero-configuration view.
 
-## Try it
-
-Requirements: Python ≥ 3.11, Node ≥ 20, [elan](https://github.com/leanprover/elan), and TeX Live
-with `latexmk`. `scripts/cloud-setup.sh` installs all of them on Ubuntu.
+## Developing
 
 ```sh
 pip install -e '.[test]'
-(cd web && npm ci && npm run build)
+pytest                                  # contracts, seeded mutations, security, zero-configuration
+(cd web && npm ci && npm run build)     # rebuilds the reader into engine/python/prooflens/web
 cd examples/toy-paper
-prooflens build              # probe the Lean project, compile the paper, assess, write the preview
-prooflens serve              # http://127.0.0.1:8017
+prooflens build              # probe the Lean project, compile the paper, assess, write the site
+prooflens view               # http://127.0.0.1:8017
 prooflens export --out site  # the public export: approved fields only, scanned for leaks
 prooflens bundle --out ProofLens.html  # the whole site in one file that opens from disk
 ```
 
-`prooflens site` rewrites the preview from stored evidence, and `prooflens reassess` assesses
-stored evidence again (new rules, new reviews) without re-running Lean or LaTeX.
+The built reader is committed, so that installing ProofLens needs no Node; CI checks that it is
+the build of the committed sources. `prooflens site` rewrites the site from stored evidence, and
+`prooflens reassess` assesses stored evidence again (new rules, new reviews) without re-running
+Lean or LaTeX.
 
 ## Private projects
 
@@ -56,8 +79,6 @@ A private project keeps its configuration, inventory, reviews and site in its ow
 committed there and opened by double-clicking, with no server and nothing hosted. Nothing of a
 private project belongs in this repository: `scripts/check_public.py` refuses a push containing
 any term of a private denylist or any line of the project's Lean or LaTeX sources.
-
-`pytest` runs the contract, seeded-mutation and security tests.
 
 ## Using it on a project
 

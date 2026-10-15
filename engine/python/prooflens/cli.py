@@ -25,14 +25,11 @@ from .schemas import validate
 
 
 def _web_dist(arg: str | None) -> Path | None:
+    """The built web app: given with --web, else the one shipped in the package."""
     if arg:
         return Path(arg).resolve()
-    here = Path(__file__).resolve()
-    for parent in here.parents:
-        cand = parent / "web" / "dist"
-        if cand.exists():
-            return cand
-    return None
+    shipped = Path(__file__).resolve().parent / "web"
+    return shipped if (shipped / "index.html").exists() else None
 
 
 # -- mode selection ---------------------------------------------------------------------------

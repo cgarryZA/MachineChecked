@@ -1,0 +1,70 @@
+% prooflens.sty -- records where every numbered claim of a paper is typeset.
+%
+% Loaded before \documentclass by `prooflens tex` (latexmk -usepretex), so the paper's source is
+% not modified. For every tracked environment it writes to \jobname.plx, one record per line:
+%
+%   paper <width> <height>                          page size in sp
+%   begin <id> <env> <line> <file>                  where the environment opens in the source
+%   number <id> <currentlabel>                      the number the environment received
+%   label <id> <name> <currentlabel>                every \label inside the environment
+%   pos <id> <begin|head|end> <page> <x> <y>        position at shipout, in sp from bottom left;
+%                                                   head is the baseline of the first line
+%
+% The environments tracked are \prooflensEnvs (a comma list), set by the caller before loading,
+% or the default list below. Requires pdfTeX or LuaTeX (\pdfsavepos) and LaTeX 2020-10 or later
+% (hooks, \CurrentFile, \ReadonlyShipoutCounter).
+\NeedsTeXFormat{LaTeX2e}[2020/10/01]
+\ProvidesPackage{prooflens}[2026/10/15 ProofLens claim anchors]
+
+\ifdefined\pdfsavepos\else
+  \ifdefined\savepos
+    \let\pdfsavepos\savepos \let\pdflastxpos\lastxpos \let\pdflastypos\lastypos
+  \fi
+\fi
+
+\ifdefined\prooflensEnvs\else
+  \def\prooflensEnvs{theorem,lemma,proposition,corollary,definition,assumption,remark,%
+    example,conjecture,claim,hypothesis,convention}
+\fi
+
+\newwrite\plx@out
+\newcount\plx@id
+\def\plx@cur{0}
+
+\AddToHook{begindocument/end}{%
+  \immediate\openout\plx@out=\jobname.plx\relax
+  \immediate\write\plx@out{paper \the\paperwidth\space\the\paperheight}}
+\AddToHook{enddocument/end}{\immediate\closeout\plx@out}
+
+% A position record, written at shipout so that the page and coordinates are final.
+\def\plx@pos#1{%
+  \edef\plx@tmp{\noexpand\write\plx@out{pos \plx@cur\space #1
+    \noexpand\the\noexpand\ReadonlyShipoutCounter\space
+    \noexpand\the\noexpand\pdflastxpos\space\noexpand\the\noexpand\pdflastypos}}%
+  \pdfsavepos\plx@tmp}
+
+\def\plx@begin#1{%
+  \global\advance\plx@id\@ne
+  \edef\plx@cur{\the\plx@id}%
+  \immediate\write\plx@out{begin \plx@cur\space #1 \the\inputlineno\space\CurrentFile}%
+  \plx@pos{begin}%
+  % The number is \@currentlabel when the first paragraph of the environment (its head) starts.
+  \AddToHookNext{para/begin}{%
+    \plx@pos{head}%
+    \protected@edef\plx@tmp{\@currentlabel}%
+    \immediate\write\plx@out{number \plx@cur\space\detokenize\expandafter{\plx@tmp}}}%
+  \let\plx@savedlabel\label
+  \def\label##1{%
+    \protected@edef\plx@tmp{\@currentlabel}%
+    \immediate\write\plx@out{label \plx@cur\space\detokenize{##1} \detokenize\expandafter{\plx@tmp}}%
+    \plx@savedlabel{##1}}}
+
+\def\plx@end{\plx@pos{end}}
+
+\@for\plx@env:=\prooflensEnvs\do{%
+  \edef\plx@tmp{%
+    \noexpand\AddToHook{env/\plx@env/begin}{\noexpand\plx@begin{\plx@env}}%
+    \noexpand\AddToHook{env/\plx@env/end}{\noexpand\plx@end}}%
+  \plx@tmp}
+
+\endinput
