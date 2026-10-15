@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install TeX Live and elan
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends latexmk texlive-latex-recommended \
+            texlive-latex-extra texlive-science texlive-fonts-recommended
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      - name: Install ProofLens
+        run: pip install -e '.[test]'
+      - name: Build the web app
+        run: cd web && npm ci && npm run build
+      - name: Tests (contracts, mutations, security)
+        run: pytest -q
+      - name: Build the toy paper
+        run: cd examples/toy-paper && prooflens build --fail-on-violation
+      - name: Export the demo (approved fields only, scanned)
+        run: cd examples/toy-paper && prooflens export --out ../../demo-site
+      - uses: actions/upload-artifact@v4
+        with:
+          name: demo-site
+          path: demo-site
+          retention-days: 14

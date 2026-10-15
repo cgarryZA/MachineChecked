@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/cgarryZA/ProofLens/schema/evidence.schema.json",
+  "title": "ProofLens evidence record",
+  "type": "object",
+  "required": ["id", "created", "body"],
+  "properties": {
+    "id": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "created": {"type": "string"},
+    "body": {
+      "type": "object",
+      "required": ["schema", "provenance", "inventory", "reviews", "lean", "tex", "assessment"],
+      "properties": {
+        "schema": {"const": "prooflens/evidence@0"},
+        "provenance": {"type": "object", "required": ["tool", "project", "papers"]},
+        "inventory": {"type": "object", "required": ["claims"]},
+        "reviews": {"type": "object", "required": ["files", "records"]},
+        "lean": {"type": ["object", "null"]},
+        "tex": {"type": "object"},
+        "assessment": {"type": "object", "required": ["claims", "findings"]}
+      }
+    }
+  }
+}

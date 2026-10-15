@@ -1,0 +1,10 @@
+[
+ {
+  "code": "totalised",
+  "subject": "Toy.PaperSpec.prop_pred_pos",
+  "trigger": "instSubNat",
+  "fingerprint": "pl-fp-v1:cd1578f08b39065fe86d850864b1b7befb7ff3d31a6ac1467335f3624671e2b8",
+  "rationale": "the hypothesis 0 < n excludes the truncated case 0 - 1",
+  "by": "statement-author"
+ }
+]

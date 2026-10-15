@@ -1,0 +1,88 @@
+\documentclass[11pt]{article}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage[margin=1in]{geometry}
+\usepackage{hyperref}
+
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{proposition}[theorem]{Proposition}
+\newtheorem{corollary}[theorem]{Corollary}
+\theoremstyle{definition}
+\newtheorem{definition}{Definition}[section]
+\theoremstyle{remark}
+\newtheorem{remark}[theorem]{Remark}
+
+\title{A Toy Paper on Even and Triangular Numbers}
+\author{ProofLens example}
+\date{}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+A synthetic paper used to develop and test ProofLens. It contains a definition, a proved
+theorem with hypotheses, a proved identity, a printed claim that is false together with its
+corrected form, a theorem with a uniform constant, a claim left open, and a remark outside the
+formal scope.
+\end{abstract}
+
+\section{Definitions}
+
+\begin{definition}[Even numbers]\label{def:even}
+A natural number $n$ is \emph{even} if $n = 2k$ for some natural number $k$. The
+\emph{triangular number} $T_n$ is $T_n = 0 + 1 + \dots + n$.
+\end{definition}
+
+\section{Results}
+
+\begin{theorem}[Closure under addition]\label{thm:even-add}
+If $a$ and $b$ are even natural numbers, then $a + b$ is even.
+\end{theorem}
+
+\begin{proof}
+Write $a = 2j$ and $b = 2k$; then $a + b = 2(j + k)$.
+\end{proof}
+
+\begin{theorem}[Gauss]\label{thm:triangle}
+For every natural number $n$,
+\begin{equation}\label{eq:gauss}
+  2\,T_n = n(n+1).
+\end{equation}
+\end{theorem}
+
+\begin{proof}
+Induction on $n$: $2T_{n+1} = 2T_n + 2(n+1) = n(n+1) + 2(n+1) = (n+1)(n+2)$.
+\end{proof}
+
+\begin{proposition}\label{prop:pred}
+Every natural number is strictly greater than its predecessor $n - 1$.
+\end{proposition}
+
+\begin{remark}\label{rem:pred}
+With truncated subtraction $0 - 1 = 0$, Proposition~\ref{prop:pred} fails at $n = 0$; it holds
+for every $n \ge 1$.
+\end{remark}
+
+\begin{theorem}[Uniform bound]\label{thm:bound}
+There is a constant $C$, independent of $n$, such that $T_n \le C n^2$ for every natural number
+$n$.
+\end{theorem}
+
+\begin{proof}
+By Theorem~\ref{thm:triangle}, $2T_n = n^2 + n \le 2n^2$, so $C = 1$ works.
+\end{proof}
+
+\begin{corollary}\label{cor:even-triangle}
+For every natural number $n$, the triangular number $T_{4n}$ is even.
+\end{corollary}
+
+\begin{proof}
+$T_{4n} = 2n(4n + 1)$ by \eqref{eq:gauss}.
+\end{proof}
+
+\section{Discussion}
+
+\begin{remark}\label{rem:history}
+The identity of Theorem~\ref{thm:triangle} is traditionally attributed to Gauss.
+\end{remark}
+
+\end{document}

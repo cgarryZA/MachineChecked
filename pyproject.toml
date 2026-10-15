@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "prooflens"
+version = "0.1.0"
+description = "Read a mathematical paper beside its Lean formalisation, with the evidence for every claim."
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.11"
+dependencies = ["jsonschema>=4"]
+
+[project.optional-dependencies]
+test = ["pytest>=7"]
+
+[project.scripts]
+prooflens = "prooflens.cli:main"
+
+[tool.setuptools]
+package-dir = { "" = "engine/python" }
+
+[tool.setuptools.packages.find]
+where = ["engine/python"]
+
+[tool.setuptools.package-data]
+prooflens = ["data/*", "data/schema/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

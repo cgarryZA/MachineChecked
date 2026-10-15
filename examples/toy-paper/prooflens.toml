@@ -1,0 +1,23 @@
+# ProofLens configuration of the synthetic toy paper.
+[project]
+name = "toy-paper"
+lean_root = "lean"
+modules = ["Toy"]
+scope_roots = ["Toy"]
+spec_prefix = "Toy.PaperSpec"
+accept_prefix = "Toy.Acceptance"
+allowed_axioms = ["propext", "Classical.choice", "Quot.sound"]
+inventory = "claims.json"
+reviews = ["reviews/T.md", "reviews/definitions.md"]
+dismissals = "reviews/dismissals.json"
+# Reviewers who wrote the statements: their reviews are not independent.
+statement_authors = ["statement-author"]
+# Reviewers recorded as AI unless a marker says otherwise.
+ai_reviewers = ["statement-author", "claude*"]
+
+[[paper]]
+id = "T"
+title = "A Toy Paper on Even and Triangular Numbers"
+source = { path = "paper" }
+root = "toy.tex"
+publish = { pdf = true, source_text = true, lean = true, reviews = true }

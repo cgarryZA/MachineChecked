@@ -1,0 +1,170 @@
+{
+ "note": "Inventory of the synthetic toy paper. Every numbered environment has an entry.",
+ "claims": [
+  {
+   "id": "T:def:even",
+   "paper": "T",
+   "kind": "definition",
+   "number": "Definition 1.1",
+   "title": "Even numbers",
+   "label": "def:even",
+   "location": "toy.tex",
+   "source_sha256": "5087ddc4fc4cd7e08f886f51e965aa0925ca11fdecbb669f2331cb13cef9dd15",
+   "scope": "definition",
+   "scope_note": "",
+   "scope_reviewed": true,
+   "clauses": [
+    {
+     "name": "definition",
+     "spec": null,
+     "defs": [
+      "Toy.IsEven",
+      "Toy.triangle"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "T:thm:even-add",
+   "paper": "T",
+   "kind": "theorem",
+   "number": "Theorem 2.1",
+   "title": "Closure under addition",
+   "label": "thm:even-add",
+   "location": "toy.tex",
+   "source_sha256": "50d67d3f6936ce366dc5aef10344224a217e728079aafcaa78e2bc5a5e733b43",
+   "scope": "formal",
+   "scope_note": "",
+   "scope_reviewed": true,
+   "clauses": [
+    {
+     "name": "statement",
+     "spec": "Toy.PaperSpec.thm_even_add",
+     "accept": "Toy.Acceptance.thm_even_add",
+     "witness": "Toy.Acceptance.thm_even_add_hypotheses",
+     "regimes": [
+      {
+       "name": "nonzero summands",
+       "description": "the paper means even numbers in general, not only 0",
+       "witness": "Toy.Acceptance.thm_even_add_hypotheses"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "T:thm:triangle",
+   "paper": "T",
+   "kind": "theorem",
+   "number": "Theorem 2.2",
+   "title": "Gauss",
+   "label": "thm:triangle",
+   "location": "toy.tex",
+   "source_sha256": "ea7a8ec080d5744d9e30134f40e4532b6a450f7e355e28de48d87b83f96d644e",
+   "scope": "formal",
+   "scope_note": "",
+   "scope_reviewed": true,
+   "clauses": [
+    {
+     "name": "statement",
+     "spec": "Toy.PaperSpec.thm_triangle",
+     "accept": "Toy.Acceptance.thm_triangle"
+    }
+   ]
+  },
+  {
+   "id": "T:prop:pred",
+   "paper": "T",
+   "kind": "proposition",
+   "number": "Proposition 2.3",
+   "title": "",
+   "label": "prop:pred",
+   "location": "toy.tex",
+   "source_sha256": "2f529f21f297f7ead61cf381fcb9a88f58c058ad23b223d6570331a9dfffc25e",
+   "scope": "formal",
+   "scope_note": "",
+   "scope_reviewed": true,
+   "clauses": [
+    {
+     "name": "as printed",
+     "spec": "Toy.PaperSpec.prop_pred",
+     "refute": "Toy.Acceptance.prop_pred"
+    },
+    {
+     "name": "corrected: positive n",
+     "spec": "Toy.PaperSpec.prop_pred_pos",
+     "accept": "Toy.Acceptance.prop_pred_pos",
+     "corrects": "as printed",
+     "witness": "Toy.Acceptance.prop_pred_pos_hypotheses"
+    }
+   ]
+  },
+  {
+   "id": "T:rem:pred",
+   "paper": "T",
+   "kind": "remark",
+   "number": "Remark 2.4",
+   "title": "",
+   "label": "rem:pred",
+   "location": "toy.tex",
+   "source_sha256": "6b5d47b292c7b723ab2d5b9ebf9c9c2a6c3337e41455d208802484a97b7bbeca",
+   "scope": "part-of",
+   "scope_note": "the correction of Proposition 2.3, covered by T:prop:pred",
+   "scope_reviewed": true,
+   "clauses": []
+  },
+  {
+   "id": "T:thm:bound",
+   "paper": "T",
+   "kind": "theorem",
+   "number": "Theorem 2.5",
+   "title": "Uniform bound",
+   "label": "thm:bound",
+   "location": "toy.tex",
+   "source_sha256": "35e47f76abd3668713f151ed972b96f0dbbeeffbdfdc62fabc5460e24ea47bb9",
+   "scope": "formal",
+   "scope_note": "",
+   "scope_reviewed": true,
+   "clauses": [
+    {
+     "name": "statement",
+     "spec": "Toy.PaperSpec.thm_bound",
+     "accept": "Toy.Acceptance.thm_bound"
+    }
+   ]
+  },
+  {
+   "id": "T:cor:even-triangle",
+   "paper": "T",
+   "kind": "corollary",
+   "number": "Corollary 2.6",
+   "title": "",
+   "label": "cor:even-triangle",
+   "location": "toy.tex",
+   "source_sha256": "004e9ef867113c34778eaf37610ebdb9f7b757eb8b6cc4f2c4256028438190e9",
+   "scope": "formal",
+   "scope_note": "",
+   "scope_reviewed": true,
+   "clauses": [
+    {
+     "name": "statement",
+     "spec": "Toy.PaperSpec.cor_even_triangle"
+    }
+   ]
+  },
+  {
+   "id": "T:rem:history",
+   "paper": "T",
+   "kind": "remark",
+   "number": "Remark 3.1",
+   "title": "",
+   "label": "rem:history",
+   "location": "toy.tex",
+   "source_sha256": "981c6a5d3f7fbc057f38be4a922e2b0e2fbb822bc24f22bd45f215e82a93cf6c",
+   "scope": "literature",
+   "scope_note": "a statement about the history of the identity",
+   "scope_reviewed": true,
+   "clauses": []
+  }
+ ]
+}
