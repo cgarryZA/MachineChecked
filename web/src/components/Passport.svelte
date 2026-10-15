@@ -100,8 +100,8 @@
         {#each claim.links as l (l.name)}
           <div class="card">
             <p class="decl"><code>{l.name}</code>{#if l.module}<span class="faint"> · {l.module}{l.range ? ":" + l.range.line : ""}</span>{/if}</p>
+            <p class="verdict top">{linkVerdict(l)}</p>
             {#if l.statement}<Statement st={l.statement} onref={showDecl} compact />{/if}
-            <p class="verdict">{linkVerdict(l)}</p>
             {#if editable}
               <button class="btn ghost" disabled={!!busy} onclick={() => act({ lean: claim.links.filter((x) => x.name !== l.name).map((x) => x.name) }, "unlink")}>Unlink</button>
             {/if}
@@ -136,12 +136,12 @@
         {#each claim.clauses as cl, k (k)}
           <div class="card" class:refuted={cl.state === "refuted"}>
             {#if claim.clauses.length > 1}<p class="cname">{cl.name}{#if cl.corrects}<span class="faint"> — corrects “{cl.corrects}”</span>{/if}</p>{/if}
+            <p class="verdict top">{verdict(cl)}</p>
             {#if cl.statement}
-              <Statement st={cl.statement} spec={cl.spec} onref={showDecl} compact={!full} />
+              <Statement st={cl.statement} spec={cl.spec} onref={showDecl} compact />
             {:else if cl.defs?.length}
               <p>{#each cl.defs as d, i}{#if i}, {/if}<button class="ref" onclick={() => showDecl(d)}>{d}</button>{/each}</p>
             {/if}
-            <p class="verdict">{verdict(cl)}</p>
           </div>
         {:else}
           <p class="muted">No Lean statement has been written for this claim.</p>
@@ -249,6 +249,7 @@
   .cname { font-weight: 600; margin: 0 0 8px; }
   .decl { margin: 0 0 6px; }
   .verdict { margin: 10px 0 0; font-size: 14px; }
+  .verdict.top { margin: 0 0 8px; }
   .row { display: flex; gap: 8px; margin-top: 10px; }
   .btn { border: 1px solid var(--accent); background: var(--accent); color: white; border-radius: 6px; padding: 4px 12px; cursor: pointer; font-size: 13px; margin-top: 8px; }
   .row .btn { margin-top: 0; }

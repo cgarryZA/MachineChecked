@@ -55,6 +55,7 @@ def build(cfg: Config, release: str | None = None, skip_lean: bool = False,
 
     lean = None
     lean_digest = None
+    probe_used = probe_digest()  # the probe this build runs, read before it runs
     if reuse_lean:
         lean = reusable_lean(cfg)
         missing = [r["name"] for r in requests_from_inventory(inv)
@@ -118,7 +119,7 @@ def build(cfg: Config, release: str | None = None, skip_lean: bool = False,
     body = {
         "provenance": {"tool": {"name": "prooflens", "version": tool_version(),
                                 "fingerprint": FINGERPRINT_VERSION},
-                       "probe_sha256": probe_digest() if lean else None,
+                       "probe_sha256": probe_used if lean else None,
                        "lean_inputs_sha256": lean_digest,
                        "lean_reused": reuse_lean,
                        "lean": (lean or {}).get("env"), "project": project_provenance(cfg),

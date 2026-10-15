@@ -14,6 +14,11 @@
       (a.anchor ? 0 : 1) - (b.anchor ? 0 : 1) || (a.anchor?.page ?? 0) - (b.anchor?.page ?? 0) || (a.anchor?.y0 ?? 0) - (b.anchor?.y0 ?? 0)),
   );
   let showContents = $state(typeof window !== "undefined" && window.innerWidth > 1180);
+  let showAllClaims = $state(false);
+  // A numbered statement ("Theorem 3.1") as against an equation, a part or a prose claim.
+  const isEnv = (c) => /^[A-Z][a-z]+ [A-Z]?[0-9][0-9.]*[a-z]?$/.test(c.number || "");
+  const listed = $derived(showAllClaims ? ordered : ordered.filter(isEnv));
+  const others = $derived(ordered.filter((c) => !isEnv(c)).length);
 
   function select(id) { go(href(index.release, "read", paperId, id)); }
   function close() { go(href(index.release, "read", paperId)); }
@@ -30,7 +35,7 @@
           <button class="x" onclick={() => (showContents = false)} aria-label="Hide contents">‹</button>
         </div>
         <ol>
-          {#each ordered as c (c.id)}
+          {#each listed as c (c.id)}
             <li>
               <button class:sel={c.id === claimId} onclick={() => select(c.id)} title={c.status}>
                 <span class={"dot st-" + c.class} aria-hidden="true"></span>
@@ -41,6 +46,11 @@
             </li>
           {/each}
         </ol>
+        {#if others}
+          <button class="more" onclick={() => (showAllClaims = !showAllClaims)}>
+            {showAllClaims ? "Only numbered statements" : `Also equations and prose claims (${others})`}
+          </button>
+        {/if}
       </nav>
     {:else}
       <button class="toc-open" onclick={() => (showContents = true)} aria-label="Show contents">Contents ›</button>
@@ -79,6 +89,7 @@
   .n { font-weight: 600; white-space: nowrap; }
   .t { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .na { color: var(--faint); margin-left: auto; }
+  .more { margin: 4px 12px 16px; border: 0; background: none; color: var(--accent); cursor: pointer; font-size: 13px; padding: 0; }
   .toc-open { position: absolute; left: 8px; top: 8px; z-index: 5; border: 1px solid var(--border); background: var(--surface); border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 13px; }
   .paperpane { overflow: auto; background: var(--surface-2); }
   .side { overflow: auto; border-left: 1px solid var(--border); background: var(--bg); padding: 0 20px 60px; }
