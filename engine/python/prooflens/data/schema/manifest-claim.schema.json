@@ -88,7 +88,12 @@
       }
     },
     "decls": {
-      "type": "object"
+      "type": "object",
+      "additionalProperties": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{24}$"
+      },
+      "description": "Each declaration of the claim's closures, by name, with the key of its record data/decls/<key>.json (the first 24 hex digits of the SHA-256 of the record)"
     },
     "blockers": {
       "type": "array",

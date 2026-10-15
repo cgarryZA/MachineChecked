@@ -26,6 +26,12 @@ export function loadClaim(index, id) {
   return getJson(`data/claims/${c.file}`);
 }
 
+// A declaration record of the shared store, by the key a claim gives for it. Records never change
+// under their key, so one download serves every claim that uses the declaration.
+export function loadDecl(key) {
+  return getJson(`data/decls/${key}.json`);
+}
+
 export const CLASS_LABEL = {
   accepted: "accepted",
   proved: "proved",

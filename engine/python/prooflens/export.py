@@ -31,8 +31,8 @@ def _pick(d: dict | None, keys: list[str]) -> dict | None:
 
 
 SEG_KEYS = ["text", "segments"]
-DECL_KEYS_LEAN = ["name", "kind", "module", "doc", "signature", "value", "uses", "fingerprint",
-                  "legacy_hash"]
+DECL_KEYS_LEAN = ["name", "kind", "module", "range", "doc", "signature", "value", "uses",
+                  "fingerprint", "legacy_hash"]
 DECL_KEYS_MIN = ["name", "kind", "module", "fingerprint", "legacy_hash"]
 
 
@@ -58,18 +58,18 @@ def public_claim(chunk: dict, pub) -> dict:
             c["witness_record"] = cl.get("witness_record")
         else:
             c["statement"] = None
-        for key in ("spec_review", "def_reviews"):
-            if key in cl:
-                c[key] = _reviews(cl[key], pub.reviews) if key == "spec_review" else \
-                    {n: _reviews(r, pub.reviews) for n, r in cl[key].items()}
+        if "spec_review" in cl:
+            c["spec_review"] = _reviews(cl["spec_review"], pub.reviews)
+        if "def_reviews" in cl:
+            c["def_reviews"] = {n: _pick(r, ["state", "by", "kind"])
+                                for n, r in cl["def_reviews"].items()}
         if not pub.source_text:
             for rung in c["ladder"]:
                 if rung["rung"] == "source" and rung["state"] == "pass":
                     rung["detail"] = "located in the compiled paper"
         clauses.append(c)
     out["clauses"] = clauses
-    keys = DECL_KEYS_LEAN if pub.lean else DECL_KEYS_MIN
-    out["decls"] = {n: _pick(d, keys) for n, d in chunk.get("decls", {}).items()}
+    out["decls"] = dict(chunk.get("decls", {}))
     out["findings"] = [_pick(f, ["id", "tier", "code", "subject", "message", "trigger",
                                  "dismissed", "dismissal_stale"]) for f in chunk["findings"]]
     return out
@@ -152,7 +152,7 @@ def export(cfg: Config, out: Path, release: str | None = None,
     relrec = read_json(cfg.out_dir / "releases" / f"{release}.json") if release \
         else read_json(rels[-1])
     record = ev.load(cfg.out_dir, relrec["evidence"])
-    index, chunks = mf.build(record, relrec["release"])
+    index, chunks, store = mf.build(record, relrec["release"])
     pubs = {p.id: p.publish for p in cfg.papers}
 
     if out.exists():
@@ -184,6 +184,22 @@ def export(cfg: Config, out: Path, release: str | None = None,
     for name, chunk in chunks.items():
         write_json(data / "claims" / name, public_claim(chunk, pubs[chunk["paper"]]),
                    indent=None)
+    # Declarations are shared between papers: their Lean text and review texts are exported only
+    # when every paper allows it. A redacted record is a different record, so it gets its own key.
+    lean_ok = all(p.publish.lean for p in cfg.papers)
+    rev_ok = all(p.publish.reviews for p in cfg.papers)
+    rekey = {}
+    for key, d in store.items():
+        q = _pick(d, DECL_KEYS_LEAN if lean_ok else DECL_KEYS_MIN)
+        q["review"] = _reviews(d.get("review"), rev_ok)
+        new = mf.record_key(q)
+        rekey[key] = new
+        write_json(data / "decls" / f"{new}.json", q, indent=None)
+    for name in chunks:
+        path = data / "claims" / name
+        c = json.loads(path.read_text(encoding="utf-8"))
+        c["decls"] = {n: rekey[k] for n, k in c["decls"].items()}
+        write_json(path, c, indent=None)
     texts, hashes = private_inputs(cfg)
     leaks = scan(out, texts, hashes)
     if leaks:

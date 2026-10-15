@@ -176,7 +176,7 @@
                   <li>
                     <button class="ref" onclick={() => showDecl(n)}>{n}</button>
                     <span class={"rv rv-" + r.state}>{r.state}</span>
-                    {#each r.current as x}<span class="faint small"> by {x.by}{x.kind === "ai" ? " (AI)" : ""}</span>{/each}
+                    {#each r.by || [] as by, i}<span class="faint small"> by {by}{r.kind?.[i] === "ai" ? " (AI)" : ""}</span>{/each}
                   </li>
                 {/each}
               </ul>
@@ -186,13 +186,16 @@
       </section>
     {/each}
 
-    {#if Object.keys(claim.decls || {}).length}
-      {@const ds = Object.entries(claim.decls)}
+    {#if Object.keys(claim.decls || {}).length || openDecl}
+      {@const ds = Object.keys(claim.decls || {})}
       <section>
         <h2>Definitions ({ds.length})</h2>
-        {#each ds as [n, d] (n)}
+        {#if openDecl && !(openDecl in (claim.decls || {}))}
+          <Decl name={openDecl} key={null} open onref={showDecl} />
+        {/if}
+        {#each ds as n (n)}
           {#if ds.length <= 40 || openDecl === n || showAll}
-            <Decl {d} open={openDecl === n} onref={showDecl} />
+            <Decl name={n} key={claim.decls[n]} open={openDecl === n} onref={showDecl} />
           {/if}
         {/each}
         {#if ds.length > 40 && !showAll}

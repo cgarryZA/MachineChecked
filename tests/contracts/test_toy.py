@@ -109,3 +109,30 @@ def test_replay_is_not_run_without_a_log_and_blockers_explain(toy):
     bound = next(c for c in body["assessment"]["claims"] if c["id"] == "T:thm:bound")
     assert "its proposition has no current review" in bound["blockers"]
     assert next(c for c in body["assessment"]["claims"] if c["id"] == "T:rem:history")["blockers"] == []
+
+
+@needs_lean
+@needs_tex
+def test_declaration_store_is_content_addressed_and_complete(toy, tmp_path):
+    import json
+    from prooflens import config as cfgmod
+    from prooflens.export import export
+    from prooflens.manifest import record_key
+    index, body, cfg = build(toy)
+    export(cfg, tmp_path / "public")
+    for site in (cfg.out_dir / "site", tmp_path / "public"):
+        data = site / "data"
+        idx = json.loads((data / "index.json").read_text())
+        seen = 0
+        for c in idx["claims"]:
+            chunk = json.loads((data / "claims" / c["file"]).read_text())
+            for name, key in chunk["decls"].items():
+                rec = json.loads((data / "decls" / f"{key}.json").read_text())
+                assert rec["name"] == name and record_key(rec) == key
+                seen += 1
+            names = set()
+            for cl in chunk["clauses"]:
+                names |= set(((cl.get("statement") or {}).get("closure")) or [])
+                names |= set(cl.get("defs") or [])
+            assert names <= set(chunk["decls"])
+        assert seen

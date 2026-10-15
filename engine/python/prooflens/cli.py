@@ -40,6 +40,13 @@ def cmd_build(a):
         sys.exit(1)
 
 
+def cmd_site(a):
+    from .pipeline import rebuild_site
+    cfg = cfgmod.load(a.config)
+    res = rebuild_site(cfg, _web_dist(a.web), a.release)
+    print(f"site of release {res['release']} written to {res['site']}")
+
+
 def cmd_export(a):
     from .export import ExportError, export
     cfg = cfgmod.load(a.config)
@@ -78,6 +85,12 @@ def main(argv=None):
     b.add_argument("--web", help="the built web app (default: web/dist of this checkout)")
     b.add_argument("--fail-on-violation", action="store_true")
     b.set_defaults(func=cmd_build)
+
+    t = sub.add_parser("site", help="rewrite the preview from a stored release, without probing")
+    t.add_argument("-c", "--config", default="prooflens.toml")
+    t.add_argument("--release")
+    t.add_argument("--web")
+    t.set_defaults(func=cmd_site)
 
     e = sub.add_parser("export", help="assemble the public site from approved fields")
     e.add_argument("-c", "--config", default="prooflens.toml")

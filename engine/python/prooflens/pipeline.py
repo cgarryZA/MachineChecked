@@ -109,9 +109,9 @@ def build(cfg: Config, release: str | None = None, skip_lean: bool = False,
     rel = release or f"r-{eid[:12]}"
     ev.record_release(cfg.out_dir, rel, eid)
     record = ev.load(cfg.out_dir, eid)
-    index, chunks = mf.build(record, rel)
+    index, chunks, store = mf.build(record, rel)
     site = cfg.out_dir / "site"
-    write_preview(site, index, chunks, pdfs, web_dist)
+    write_preview(site, index, chunks, store, pdfs, web_dist)
     log(f"evidence {eid[:12]}  release {rel}  site {site}")
     return {"evidence": eid, "release": rel, "site": site, "index": index}
 
@@ -131,7 +131,31 @@ def line_hashes(inv: dict, pid: str, src: Path) -> dict:
     return out
 
 
-def write_preview(site: Path, index: dict, chunks: dict, pdfs: dict, web_dist: Path | None):
+def rebuild_site(cfg: Config, web_dist: Path | None = None, release: str | None = None) -> dict:
+    """The preview site again from a stored release, without probing or compiling: the PDFs
+    are taken from the current preview."""
+    rels = sorted((cfg.out_dir / "releases").glob("*.json"), key=lambda p: p.stat().st_mtime)
+    if not rels:
+        raise RuntimeError("no release: run `prooflens build` first")
+    rel = read_json(cfg.out_dir / "releases" / f"{release}.json") if release else \
+        read_json(rels[-1])
+    record = ev.load(cfg.out_dir, rel["evidence"])
+    index, chunks, store = mf.build(record, rel["release"])
+    site = cfg.out_dir / "site"
+    keep = cfg.out_dir / ".pdf-keep"
+    if keep.exists():
+        shutil.rmtree(keep)
+    if (site / "data" / "papers").exists():
+        shutil.copytree(site / "data" / "papers", keep)
+    pdfs = {p.stem: p for p in keep.glob("*.pdf")} if keep.exists() else {}
+    write_preview(site, index, chunks, store, pdfs, web_dist)
+    if keep.exists():
+        shutil.rmtree(keep)
+    return {"release": rel["release"], "site": site, "index": index}
+
+
+def write_preview(site: Path, index: dict, chunks: dict, store: dict, pdfs: dict,
+                  web_dist: Path | None):
     if site.exists():
         shutil.rmtree(site)
     if web_dist and web_dist.exists():
@@ -142,6 +166,8 @@ def write_preview(site: Path, index: dict, chunks: dict, pdfs: dict, web_dist: P
     for name, chunk in chunks.items():
         validate(chunk, "manifest-claim")
         write_json(data / "claims" / name, chunk, indent=None)
+    for key, record in store.items():
+        write_json(data / "decls" / f"{key}.json", record, indent=None)
     for pid, pdf in pdfs.items():
         (data / "papers").mkdir(parents=True, exist_ok=True)
         shutil.copyfile(pdf, data / "papers" / f"{pid}.pdf")

@@ -11,7 +11,7 @@ import re
 from collections import Counter
 
 from .assess import match_anchor
-from .util import sha256_text
+from .util import content_id, sha256_text
 
 SCHEMA = "prooflens/manifest@0"
 
@@ -122,6 +122,8 @@ def build(evidence: dict, release: str) -> tuple[dict, dict[str, dict]]:
                        "pdf_sha256": prov.get("pdf_sha256"), "page_size": t.get("page_size"),
                        "note": prov.get("note", "")})
 
+    store = decl_records(body, lean)
+    keys = {n: record_key(r) for n, r in store.items()}
     index_claims, chunks, summary = [], {}, {}
     for c in inv:
         a = assessed[c["id"]]
@@ -167,7 +169,15 @@ def build(evidence: dict, release: str) -> tuple[dict, dict[str, dict]]:
             names.update(st.get("closure", []))
             names.update(cl.get("defs", []))
             names.update((cl.get("def_reviews") or {}).keys())
-        decls = {n: lean["decls"][n] for n in sorted(names) if n in lean.get("decls", {})}
+            # A definition's review belongs to the definition (shared store); the clause keeps
+            # its state and reviewer.
+            cl["def_reviews"] = {n: {"state": r["state"],
+                                     "by": [x["by"] for x in r.get("current", [])],
+                                     "kind": [x["kind"] for x in r.get("current", [])]}
+                                 for n, r in (cl.get("def_reviews") or {}).items()}
+            if st:
+                st.pop("decl", None)
+        decls = {n: keys[n] for n in sorted(names) if n in keys}
         chunks[fname] = {
             "schema": SCHEMA, "release": release, "id": c["id"], "paper": c["paper"],
             "number": c.get("number", ""), "title": c.get("title", ""), "kind": c.get("kind", ""),
@@ -192,4 +202,21 @@ def build(evidence: dict, release: str) -> tuple[dict, dict[str, dict]]:
                                       if f["subject"].split("#")[0] not in
                                       {c["id"] for c in inv}]},
              "claims": index_claims}
-    return index, chunks
+    return index, chunks, {keys[n]: r for n, r in store.items()}
+
+
+def record_key(record: dict) -> str:
+    """The key of a declaration record: the first 24 hex digits of the SHA-256 of its canonical
+    JSON. The record holds the declaration's name, kind and fingerprint, so different
+    declarations never share a key, and a record never changes under its key."""
+    return content_id(record)[:24]
+
+
+def decl_records(body: dict, lean: dict) -> dict[str, dict]:
+    """Every declaration once, with its current review."""
+    reviews: dict[str, dict] = {}
+    for c in body["assessment"]["claims"]:
+        for cl in c["clauses"]:
+            for n, r in (cl.get("def_reviews") or {}).items():
+                reviews.setdefault(n, r)
+    return {n: {**d, "review": reviews.get(n)} for n, d in lean.get("decls", {}).items()}
