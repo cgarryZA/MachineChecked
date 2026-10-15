@@ -201,6 +201,61 @@ def parse_fls(path: Path, cwd: Path) -> list[str]:
 MARGIN = 60.0  # points at the top and bottom of a page holding running heads and page numbers
 
 
+DISPLAY = re.compile(r"\\begin\{(equation|align|gather|multline|eqnarray|flalign|alignat)\*?\}")
+HEADING = re.compile(r"\\(part|chapter|section|subsection|subsubsection|paragraph)\*?[\[{]")
+
+
+def source_lines(text: list[str], line: int) -> list[list[int]]:
+    """The source lines whose boxes place a claim at `line`, best first.
+
+    SyncTeX attributes the line that opens a display to the paragraph before it, and a
+    `\\label` line after a heading to the paragraph after it; so a display is placed by its
+    body (less the boxes it shares with the opening line, see `synctex_lines`) and a labelled
+    heading by the heading."""
+    here = text[line - 1].strip() if 0 < line <= len(text) else ""
+    m = DISPLAY.match(here)
+    if m:
+        end = re.compile(r"\\end\{" + m.group(1) + r"\*?\}")
+        for j in range(line, min(len(text), line + 200)):
+            if end.search(text[j]):
+                body = list(range(line + 1, j + 2))
+                return [body, [line]] if body else [[line]]
+    if here.startswith("\\label"):
+        k = line - 2
+        while k >= 0 and not text[k].strip():
+            k -= 1
+        if k >= 0 and HEADING.match(text[k].strip()):
+            return [[k + 1], [line]]
+    return [[line]]
+
+
+def _boxes(cwd: Path, pdf: Path, rel: str, line: int) -> list[dict]:
+    for name in (rel, "./" + rel):
+        r = subprocess.run(["synctex", "view", "-i", f"{line}:0:{name}", "-o", pdf.name],
+                           cwd=cwd, capture_output=True, text=True, timeout=60)
+        boxes, rec = [], {}
+        for l in r.stdout.splitlines():
+            k, _, v = l.partition(":")
+            if k == "Page":
+                rec = {"page": int(v)}
+            elif k in ("v", "H", "W") and rec:
+                rec[k] = float(v)
+                if "v" in rec and "H" in rec and "W" in rec:
+                    boxes.append(rec)
+                    rec = {}
+        if boxes:
+            return boxes
+    return []
+
+
+def _content(boxes: list[dict], page_h: float) -> list[dict]:
+    """The boxes inside the text block with height, and with width when any has: zero-width
+    boxes are kerns and glue markers, which SyncTeX may place on a neighbouring page."""
+    boxes = [b for b in boxes if b["H"] > 0 and MARGIN < b["v"] < page_h - MARGIN]
+    wide = [b for b in boxes if b.get("W", 0) > 0]
+    return wide or boxes
+
+
 def synctex_lines(cwd: Path, pdf: Path, snap_dir: Path, locations: list[str],
                   page_h: float, anchors: list[Anchor]) -> dict:
     """Where SyncTeX puts each `<file>:<line>` of the source (paths relative to the snapshot).
@@ -210,32 +265,39 @@ def synctex_lines(cwd: Path, pdf: Path, snap_dir: Path, locations: list[str],
     margins are dropped; if the rest lie on one page, the anchor is the band covering them,
     `approximate`. If they lie on several pages, the exact anchors of the same file before and
     after the line bound the page; if that does not single one out, the line is `ambiguous`
-    and gets no band."""
+    and gets no band. The lines queried are those of `source_lines`."""
     out = {}
+    texts: dict[str, list[str]] = {}
     for loc in locations:
         path, _, line = loc.rpartition(":")
         try:
             rel = os.path.relpath(snap_dir / path, cwd)
         except ValueError:
             continue
+        if path not in texts:
+            try:
+                texts[path] = (snap_dir / path).read_text(errors="replace").splitlines()
+            except OSError:
+                texts[path] = []
         boxes = []
-        for name in (rel, "./" + rel):
-            r = subprocess.run(["synctex", "view", "-i", f"{line}:0:{name}", "-o", pdf.name],
-                               cwd=cwd, capture_output=True, text=True, timeout=60)
-            rec = {}
-            for l in r.stdout.splitlines():
-                k, _, v = l.partition(":")
-                if k == "Page":
-                    rec = {"page": int(v)}
-                elif k in ("v", "H") and rec:
-                    rec[k] = float(v)
-                    if "v" in rec and "H" in rec:
-                        boxes.append(rec)
-                        rec = {}
+        groups = source_lines(texts[path], int(line))
+        opening = set()
+        src = texts[path]
+        if len(groups) > 1 and DISPLAY.match(src[int(line) - 1].strip() if src else ""):
+            opening = {tuple(sorted(b.items())) for b in _boxes(cwd, pdf, rel, int(line))}
+        for group in groups:
+            boxes = [b for n in group for b in _boxes(cwd, pdf, rel, n)]
+            if group != [int(line)]:
+                boxes = [b for b in boxes if tuple(sorted(b.items())) not in opening]
+            boxes = _content(boxes, page_h)
             if boxes:
                 break
-        boxes = [b for b in boxes if b["H"] > 0 and MARGIN < b["v"] < page_h - MARGIN]
         pages = sorted({b["page"] for b in boxes})
+        if len(pages) > 1 and opening:
+            # A display does not break across pages: its page is that of its last line.
+            last = {b["page"] for n in groups[0][-2:] for b in _content(_boxes(cwd, pdf, rel, n), page_h)}
+            if len(last) == 1:
+                pages = [p for p in pages if p in last]
         if len(pages) > 1:
             same = sorted((a.line, a.begin[0]) for a in anchors
                           if a.begin and a.file == path)
