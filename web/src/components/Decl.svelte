@@ -3,7 +3,9 @@
   import LeanText from "./LeanText.svelte";
 
   // One Lean declaration of a closure, loaded from the shared store when it is opened.
-  let { name, key, open = false, onref } = $props();
+  // `hideReview` keeps the author's review (and the review state) out of sight, as the review
+  // queue does until the reviewer has recorded a verdict.
+  let { name, key, open = false, onref, hideReview = false } = $props();
   let expanded = $state(false);
   let d = $state(null);
   $effect(() => { if (open) expanded = true; });
@@ -21,7 +23,7 @@
     <code>{name}</code>
     {#if d}
       <span class="faint">{d.kind}{d.module ? " · " + d.module : ""}{d.range ? ":" + d.range.line : ""}</span>
-      {#if d.review}<span class={"rv rv-" + d.review.state}>{d.review.state}</span>{/if}
+      {#if d.review && !hideReview}<span class={"rv rv-" + d.review.state}>{d.review.state}</span>{/if}
     {/if}
   </summary>
   {#if expanded}
@@ -30,7 +32,10 @@
     {:else if !d}
       <p class="faint">Loading…</p>
     {:else}
-      {#if d.doc}<p class="doc">{d.doc}</p>{/if}
+      {#if d.doc}
+        {#if hideReview}<p class="lbl">docstring (the author's words, not the definition)</p>{/if}
+        <p class="doc">{d.doc}</p>
+      {/if}
       {#if d.signature}
         <p class="lbl">type</p>
         <LeanText pp={d.signature} {onref} refs={d.uses} />
@@ -39,7 +44,8 @@
         <p class="lbl">value</p>
         <LeanText pp={d.value} {onref} refs={d.uses} />
       {/if}
-      {#if d.review?.current?.length}
+      {#if hideReview}
+      {:else if d.review?.current?.length}
         {#each d.review.current as r}
           <p class="lbl">review · {r.by}{r.kind === "ai" ? " (AI)" : r.kind === "human" ? " (human)" : ""} · {r.provenance}</p>
           {#if r.text}<pre class="rtext">{r.text}</pre>{/if}

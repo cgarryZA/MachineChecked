@@ -42,6 +42,7 @@ class Anchor:
     head: tuple[int, float, float] | None = None
     statement: str | None = None
     source_sha256: str | None = None
+    title: str | None = None        # the optional argument of `\\begin{env}[…]`, as TeX
 
     @property
     def label(self) -> str | None:
@@ -57,7 +58,7 @@ class Anchor:
                 "labels": [list(x) for x in self.labels],
                 "begin": list(self.begin) if self.begin else None,
                 "end": list(self.end) if self.end else None,
-                "head": list(self.head) if self.head else None,
+                "head": list(self.head) if self.head else None, "title": self.title,
                 "source_sha256": self.source_sha256, "statement": self.statement}
 
 
@@ -84,6 +85,40 @@ def source_epoch(snap: Snapshot) -> int:
     return int(max(times)) if times else 0
 
 
+ENGINE_FLAG = {"pdflatex": "-pdf", "xelatex": "-xelatex", "lualatex": "-lualatex"}
+
+
+def tex_engine(root: Path) -> str:
+    """The TeX engine a LaTeX root needs, read without running anything from the source: a
+    `% !TEX program` comment, else the engine a `latexmkrc` beside it names (matched as text,
+    never executed), else XeLaTeX if the sources load `fontspec` or `unicode-math`."""
+    head = "\n".join(root.read_text(errors="replace").splitlines()[:30])
+    m = re.search(r"^\s*%\s*!\s*TEX\s+(?:TS-)?program\s*=\s*(pdflatex|xelatex|lualatex)",
+                  head, re.M | re.I)
+    if m:
+        return m.group(1).lower()
+    for rc in ("latexmkrc", ".latexmkrc"):
+        try:
+            t = (root.parent / rc).read_text(errors="replace")
+        except OSError:
+            continue
+        t = "\n".join(l.split("#", 1)[0] for l in t.splitlines())
+        m = re.search(r"\$pdflatex\s*=\s*['\"]\s*(xelatex|lualatex)", t)
+        if m:
+            return m.group(1)
+        m = re.search(r"\$pdf_mode\s*=\s*([45])", t)
+        if m:
+            return "lualatex" if m.group(1) == "4" else "xelatex"
+    for f in root.parent.rglob("*.tex"):
+        try:
+            if re.search(r"^[^%\n]*\\usepackage(\[[^\]]*\])?\{[^}]*\b(fontspec|unicode-math)\b",
+                         f.read_text(errors="replace"), re.M):
+                return "xelatex" if shutil.which("xelatex") else "lualatex"
+        except OSError:
+            pass
+    return "pdflatex"
+
+
 def compile_snapshot(snap: Snapshot, work: Path, envs: list[str] | None = None,
                      latexmk: str = "latexmk") -> dict:
     """Compile `snap` in `work`; return the PDF path, the `.plx` and `.fls` paths and the log."""
@@ -102,7 +137,7 @@ def compile_snapshot(snap: Snapshot, work: Path, envs: list[str] | None = None,
                SOURCE_DATE_EPOCH=str(source_epoch(snap)), FORCE_SOURCE_DATE="1")
     for k in ("TEXINPUTS",):
         env.pop(k, None)
-    cmd = [latexmk, "-norc", "-pdf", "-synctex=1", f"-jobname={root.stem}",
+    cmd = [latexmk, "-norc", ENGINE_FLAG[tex_engine(root)], "-synctex=1", f"-jobname={root.stem}",
            "-interaction=nonstopmode", "-halt-on-error", "-file-line-error",
            f"-usepretex={pretex}", root.name]
     r = subprocess.run(cmd, cwd=cwd, env=env, capture_output=True, text=True,
@@ -127,6 +162,30 @@ def matching_end(txt: str, start: int, env: str) -> int:
     return len(txt)
 
 
+def env_title(path: Path, line: int, env: str) -> str | None:
+    """The optional argument of the environment `env` opening on `line` of `path`: its title as
+    printed, in TeX (`Efficiency` for `\\begin{theorem}[Efficiency]`)."""
+    try:
+        txt = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    offs = sum(len(l) + 1 for l in txt.split("\n")[: max(line - 1, 0)])
+    m = re.compile(r"\\begin\{" + re.escape(env) + r"\}\s*\[").search(txt, offs)
+    if m is None or txt[offs:m.start()].strip():
+        return None
+    depth, brace, i = 1, 0, m.end()
+    while i < len(txt) and depth:
+        c = txt[i]
+        if c == "\\":
+            i += 2
+            continue
+        brace += (c == "{") - (c == "}")
+        if not brace:
+            depth += (c == "[") - (c == "]")
+        i += 1
+    return norm_ws(txt[m.end():i - 1]) or None if not depth else None
+
+
 def statement_at(path: Path, line: int, env: str) -> str | None:
     """The body of the environment `env` opening on `line` of `path`: after `\\begin{env}[title]`, up to the matching `\\end{env}`."""
     try:
@@ -143,6 +202,7 @@ def statement_at(path: Path, line: int, env: str) -> str | None:
 
 def parse_plx(text: str, cwd: Path, snap_dir: Path) -> tuple[list[Anchor], tuple[float, float]]:
     anchors: dict[int, Anchor] = {}
+    prev: dict[int, str] = {}
     page_h = 0.0
     page_w = 0.0
     for raw in text.splitlines():
@@ -156,6 +216,8 @@ def parse_plx(text: str, cwd: Path, snap_dir: Path) -> tuple[list[Anchor], tuple
             anchors[i] = Anchor(i, parts[2], " ".join(parts[4:]), int(parts[3]))
         elif tag == "number" and int(parts[1]) in anchors:
             anchors[int(parts[1])].number = " ".join(parts[2:])
+        elif tag == "prev" and int(parts[1]) in anchors:
+            prev[int(parts[1])] = " ".join(parts[2:])
         elif tag == "label" and int(parts[1]) in anchors:
             anchors[int(parts[1])].labels.append((parts[2], " ".join(parts[3:])))
         elif tag == "pos" and int(parts[1]) in anchors:
@@ -163,9 +225,27 @@ def parse_plx(text: str, cwd: Path, snap_dir: Path) -> tuple[list[Anchor], tuple
             pt = (page, round(x, 2), round(page_h - y, 2))
             setattr(anchors[int(parts[1])], parts[2], pt)
     out = []
+    names: dict[str, list[Path]] = {}
     for a in sorted(anchors.values(), key=lambda a: a.id):
+        if a.id in prev and a.number == prev[a.id] and not (a.labels and a.labels[0][1] ==
+                                                            a.number):
+            # The head's paragraph began before the environment stepped its counter (a run-in
+            # heading before it), or the environment is unnumbered: its own first label, if
+            # any, gives its number. (A number equal to the previous label and confirmed by the
+            # environment's own label is a coincidence of counters, as Lemma 4.1 after (4.1).)
+            a.number = a.labels[0][1] if a.labels else None
         f = (cwd / a.file)
+        if not f.exists():
+            # A TeX older than \CurrentFilePath records the name alone: take the snapshot's
+            # only file of that name.
+            if not names:
+                for p in snap_dir.rglob("*.tex"):
+                    names.setdefault(p.name, []).append(p)
+            cands = names.get(Path(a.file).name, [])
+            if len(cands) == 1:
+                f = cands[0]
         st = statement_at(f, a.line, a.env)
+        a.title = env_title(f, a.line, a.env)
         if st is not None:
             a.statement = norm_ws(st)
             a.source_sha256 = sha256_text(norm_ws(st))

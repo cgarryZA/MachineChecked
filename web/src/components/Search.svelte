@@ -1,4 +1,5 @@
 <script>
+  import TexInline from "./TexInline.svelte";
   import { loadSearch } from "../lib/data.js";
   import { href, go } from "../lib/route.svelte.js";
 
@@ -21,18 +22,16 @@
     for (const c of data.claims) {
       const head = `${c.number} ${c.title} ${c.id}`;
       const lean = c.lean.join(" ");
-      if (hit(head)) out.push({ kind: "claim", c, rank: 0, why: c.title });
+      if (hit(head)) out.push({ kind: "claim", c, rank: 0 });
       else if (hit(lean)) out.push({ kind: "claim", c, rank: 1, why: c.lean.find((n) => words.some((w) => n.toLowerCase().includes(w))) });
-      else if (hit(c.statement)) out.push({ kind: "claim", c, rank: 2, why: snippet(c.statement, words[0]) });
+      else if (hit(c.statement)) out.push({ kind: "claim", c, rank: 2, why: "matches the statement" });
     }
     for (const d of data.decls) if (hit(d.name)) out.push({ kind: "decl", d, rank: 3 });
     return out.sort((a, b) => a.rank - b.rank).slice(0, 30);
   });
 
-  function snippet(t, w) {
-    const i = t.toLowerCase().indexOf(w);
-    return (i > 40 ? "…" : "") + t.slice(Math.max(0, i - 40), i + 80) + "…";
-  }
+  const c_heading = (r) => (r.kind === "claim" ? r.c.heading || r.c.title : null);
+
   function choose(r) {
     open = false;
     q = "";
@@ -60,6 +59,7 @@
               <span class="t">{r.c.number || r.c.id}</span>
               <span class="p">Paper {r.c.paper}</span>
               <span class="s">{r.c.status}</span>
+              {#if c_heading(r)}<span class="w"><TexInline text={c_heading(r)} /></span>{/if}
               {#if r.why}<span class="w">{r.why}</span>{/if}
             {:else}
               <span class="t mono">{r.d.name}</span>

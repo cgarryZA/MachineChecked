@@ -12,6 +12,7 @@ a check that the two say the same thing. A suggestion is shown as a suggestion.
 from __future__ import annotations
 
 import datetime as _dt
+import hashlib
 import json
 import os
 import re
@@ -100,6 +101,8 @@ def find_papers(root: Path) -> list[Path]:
                     pass
             elif f.endswith(".pdf"):
                 pdf.append(p)
+    # A leanblueprint keeps the plasTeX input `web.tex` beside the LaTeX root `print.tex`.
+    tex = [p for p in tex if not (p.name == "web.tex" and (p.parent / "print.tex") in tex)]
     return sorted(tex) or sorted(pdf)
 
 
@@ -109,23 +112,37 @@ def claims_from_anchors(pid: str, anchors: list[dict], snap: Path) -> list[dict]
     claims = []
     for a in anchors:
         env = a["env"]
-        key = a.get("label") or f"{env}-{a.get('number')}"
-        title = ""
+        num = a.get("number")
+        key = a.get("label") or (f"{env}-{num}" if num else f"{env}@{a['file']}:{a['line']}")
+        title, tags = "", []
         try:
             lines = (snap / a["file"]).read_text(encoding="utf-8", errors="replace").split("\n")
-            m = re.search(r"\\begin\{" + re.escape(env) + r"\}\s*\[([^\]]*)\]",
-                          "\n".join(lines[a["line"] - 1:a["line"] + 2]))
-            title = m.group(1).strip() if m else ""
+            title = a.get("title") or ""
+            tags = source_tags(lines, a["line"], env)
         except OSError:
             pass
         claims.append({
             "id": f"{pid}:{key}", "key": key, "paper": pid, "kind": env,
-            "number": f"{env.capitalize()} {a.get('number')}", "title": title,
+            "number": f"{env.capitalize()} {num}" if num else env.capitalize(), "title": title,
             "label": a.get("label"), "location": a["file"], "source_sha256": a["source_sha256"],
             "scope": "definition" if env in DEFINITION_ENVS else "formal",
-            "scope_note": "", "scope_reviewed": True, "clauses": [],
-            "tags": re.findall(r"\\lean\{([^}]*)\}", a.get("statement") or "")})
+            "scope_note": "", "scope_reviewed": True, "clauses": [], "tags": tags})
     return claims
+
+
+def source_tags(lines: list[str], line: int, env: str) -> list[str]:
+    """The arguments of the `\\lean{…}` tags in the environment `env` opening on `line`, with
+    TeX comments removed (a commented-out tag is no tag)."""
+    out, depth = [], 0
+    pat = re.compile(r"\\(begin|end)\{" + re.escape(env) + r"\}")
+    for l in lines[line - 1:]:
+        l = re.sub(r"(?<!\\)%.*", "", l)
+        out += re.findall(r"\\lean\{([^}]*)\}", l)
+        for m in pat.finditer(l):
+            depth += 1 if m.group(1) == "begin" else -1
+        if depth <= 0:
+            break
+    return out
 
 
 # -- suggestions -----------------------------------------------------------------------------
@@ -144,13 +161,6 @@ def suggest(claim: dict, index: list[dict], limit: int = 3) -> list[dict]:
         if name in names and (name not in out or out[name]["score"] < score):
             out[name] = {"name": name, "score": score, "why": why, "kind": names[name]["kind"]}
 
-    for tag in claim.get("tags", []):
-        for name in [t.strip() for t in tag.split(",") if t.strip()]:
-            add(name, 1.0, "tagged \\lean{…} in the paper")
-            if name not in names:
-                out.setdefault(name, {"name": name, "score": 1.0, "kind": None,
-                                      "why": "tagged \\lean{…} in the paper, but not found in the "
-                                             "built modules"})
     # Name and title resemblance proposes declarations of the claim's own sort: theorems for a
     # theorem, definitions for a definition.
     wants_def = claim["kind"] in DEFINITION_ENVS
@@ -177,6 +187,25 @@ def suggest(claim: dict, index: list[dict], limit: int = 3) -> list[dict]:
         if words and nt and len(words & nt) >= 2:
             add(d["name"], 0.35, "its name shares words with the title")
     return sorted(out.values(), key=lambda x: -x["score"])[:limit]
+
+
+def tagged_names(claim: dict) -> list[str]:
+    """The declarations a claim's `\\lean{…}` tags name, in order."""
+    out = []
+    for tag in claim.get("tags", []):
+        for n in (t.strip() for t in tag.split(",")):
+            if n and n not in out:
+                out.append(n)
+    return out
+
+
+def linked_names(claim: dict, entry: dict) -> list[str]:
+    """The declarations a claim is linked to: those confirmed in the reader (the links file
+    holds the whole list, possibly empty), else those its `\\lean{…}` tags name, less the ones
+    rejected in the reader. A tag is a link its author wrote into the paper's source."""
+    if "lean" in entry:
+        return list(entry["lean"])
+    return [n for n in tagged_names(claim) if n not in entry.get("rejected", [])]
 
 
 # -- links file ------------------------------------------------------------------------------
@@ -250,6 +279,14 @@ def link_state(rec: dict | None) -> tuple[str, str]:
 
 # -- the whole view --------------------------------------------------------------------------
 
+def tex_machinery_digest() -> str:
+    """The digest of what turns LaTeX into anchors: a change to it invalidates cached anchors."""
+    h = hashlib.sha256()
+    for f in ("data/prooflens.sty", "tex.py"):
+        h.update(resources.files("prooflens").joinpath(f).read_bytes())
+    return h.hexdigest()[:16]
+
+
 def tree_digest(d: Path) -> str:
     import hashlib
     h = hashlib.sha256()
@@ -313,7 +350,7 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
         # The compiled paper is reused while its sources are unchanged (a link changes nothing
         # in the paper).
         cache = out_dir / "build" / "tex-cache.json"
-        digest = tree_digest(snap.dir)
+        digest = tree_digest(snap.dir) + ":" + tex_machinery_digest()
         cached = read_json(cache) if cache.exists() else {}
         try:
             if cached.get("digest") == digest and Path(cached.get("pdf", "")).exists():
@@ -362,9 +399,12 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
             write_json(icache, {"digest": idigest, "index": index}, indent=None)
         wanted = set()
         for c in claims:
+            entry = links.get(c["key"], {})
+            c["link_names"] = linked_names(c, entry)
             c["suggestions"] = [s for s in suggest(c, index)
-                                if s["name"] not in links.get(c["key"], {}).get("rejected", [])]
-            wanted |= set(links.get(c["key"], {}).get("lean", []))
+                                if s["name"] not in entry.get("rejected", [])
+                                and s["name"] not in c["link_names"]]
+            wanted |= set(c["link_names"])
             wanted |= {s["name"] for s in c["suggestions"][:1] if s.get("kind")}
         if wanted:
             log(f"lean: checking {len(wanted)} linked or suggested declaration(s)")
@@ -375,11 +415,13 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
 
     # Statuses.
     for c in claims:
-        confirmed = links.get(c["key"], {}).get("lean", [])
+        entry = links.get(c["key"], {})
+        source = "confirmed" if "lean" in entry else "paper"
         c["links"] = []
-        for n in confirmed:
-            status, cls = link_state(linkrecs.get(n))
-            c["links"].append({"name": n, "status": status, "class": cls,
+        for n in c.pop("link_names", None) or linked_names(c, entry):
+            status, cls = link_state(linkrecs.get(n)) if built else \
+                ("linked: Lean not checked (the project is not built)", "unspecified")
+            c["links"].append({"name": n, "status": status, "class": cls, "source": source,
                                "record": linkrecs.get(n)})
         for s in c.get("suggestions", []):
             s["record"] = linkrecs.get(s["name"])
@@ -421,7 +463,8 @@ def write_view_site(view: dict, site: Path, web_dist: Path | None) -> dict:
         top = mf.top_of({**anchor, "kind": "exact"}) if anchor and anchor.get("begin") else None
         index_claims.append({
             "id": c["id"], "paper": c["paper"], "number": c["number"], "title": c["title"],
-            "kind": c["kind"], "scope": c["scope"], "status": c["status"], "class": c["class"],
+            "heading": c["title"] or None, "kind": c["kind"], "scope": c["scope"],
+            "status": c["status"], "class": c["class"],
             "anchor": {"kind": "exact", "page": top[0], "y0": top[1],
                        "y1": anchor["end"][2] if anchor.get("end") and
                        anchor["end"][0] == anchor["begin"][0] else None,
@@ -436,7 +479,7 @@ def write_view_site(view: dict, site: Path, web_dist: Path | None) -> dict:
         chunks[fname] = {
             "schema": "prooflens/manifest@0", "mode": "simple", "release": release,
             "id": c["id"], "key": c["key"], "paper": c["paper"], "number": c["number"],
-            "title": c["title"], "kind": c["kind"], "scope": c["scope"], "scope_note": "",
+            "title": c["title"], "heading": c["title"] or None, "kind": c["kind"], "scope": c["scope"], "scope_note": "",
             "scope_reviewed": True, "location": c["location"],
             "source_sha256": c["source_sha256"], "status": c["status"], "class": c["class"],
             "anchor": {**anchor, "kind": "exact"} if anchor else None, "source_matches": None,
@@ -462,8 +505,10 @@ def write_view_site(view: dict, site: Path, web_dist: Path | None) -> dict:
              "search": "data/search.json", "lean_index": "data/lean-index.json",
              "editable": False}
     from .pipeline import write_preview
+    from .review_queue import simple_queue
     write_preview(site, index, chunks, store, {"P": view["pdf"]} if view["pdf"] else {},
-                  web_dist)
+                  web_dist, simple_queue(index, chunks))
+    index["review_queue"] = "data/review-queue.json"
     write_json(site / "data" / "lean-index.json",
                [{"name": d["name"], "kind": d["kind"], "module": d["module"],
                  "type": d["type"][:300], "doc": (d.get("doc") or "")[:300]}
@@ -474,7 +519,9 @@ def write_view_site(view: dict, site: Path, web_dist: Path | None) -> dict:
 def _link_view(l: dict) -> dict:
     rec = l.get("record") or {}
     return {"name": l["name"], "status": l.get("status"), "class": l.get("class"),
-            "why": l.get("why"), "kind": rec.get("kind") or l.get("kind"),
+            "why": l.get("why"), "source": l.get("source"),
+            "fingerprint": rec.get("fingerprint") or (rec.get("decl") or {}).get("fingerprint"),
+            "kind": rec.get("kind") or l.get("kind"),
             "axioms": rec.get("axioms"), "sorry": rec.get("sorry"),
             "errors": rec.get("errors"),
             "statement": {"binders": rec.get("binders", []), "conclusion": rec.get("conclusion"),

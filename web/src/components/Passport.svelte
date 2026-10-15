@@ -1,4 +1,5 @@
 <script>
+  import TexInline from "./TexInline.svelte";
   import { loadClaim, saveLink } from "../lib/data.js";
   import { href } from "../lib/route.svelte.js";
   import StatusChip from "./StatusChip.svelte";
@@ -80,7 +81,8 @@
         {#if index.papers.length > 1}Paper {claim.paper} · {/if}<code>{claim.id}</code>
         {#if full && meta?.anchor}· <a href={href(index.release, "read", claim.paper, claim.id)}>show in the paper</a>{/if}
       </p>
-      <h1>{claim.number || claim.id}{#if claim.title}<span class="title">&nbsp;— {claim.title}</span>{/if}</h1>
+      <h1>{claim.number || claim.id}{#if claim.heading}<span class="title">&nbsp;— <TexInline text={claim.heading} /></span>{/if}</h1>
+      {#if !claim.heading && claim.title}<p class="desc"><TexInline text={claim.title} /></p>{/if}
       <StatusChip status={claim.status} cls={claim.class} />
     </header>
 
@@ -100,6 +102,7 @@
         {#each claim.links as l (l.name)}
           <div class="card">
             <p class="decl"><code>{l.name}</code>{#if l.module}<span class="faint"> · {l.module}{l.range ? ":" + l.range.line : ""}</span>{/if}</p>
+            <p class="faint small src">{l.source === "paper" ? "Linked by a \\lean{…} tag in the paper's source" : "Linked in ProofLens (prooflens.links.json)"}</p>
             <p class="verdict top">{linkVerdict(l)}</p>
             {#if l.statement}<Statement st={l.statement} onref={showDecl} compact />{/if}
             {#if editable}
@@ -135,7 +138,7 @@
       {:else}
         {#each claim.clauses as cl, k (k)}
           <div class="card" class:refuted={cl.state === "refuted"}>
-            {#if claim.clauses.length > 1}<p class="cname">{cl.name}{#if cl.corrects}<span class="faint"> — corrects “{cl.corrects}”</span>{/if}</p>{/if}
+            {#if claim.clauses.length > 1}<p class="cname"><TexInline text={cl.label || cl.name} />{#if cl.corrects}<span class="faint"> — corrects “<TexInline text={cl.corrects_label || cl.corrects} />”</span>{/if}</p>{/if}
             <p class="verdict top">{verdict(cl)}</p>
             {#if cl.statement}
               <Statement st={cl.statement} spec={cl.spec} onref={showDecl} compact />
@@ -149,7 +152,7 @@
         {#if claim.blockers?.length}
           <details class="why">
             <summary>Why is this claim not accepted? <span class="faint">({claim.blockers.length})</span></summary>
-            <ul>{#each claim.blockers as b}<li>{b}</li>{/each}</ul>
+            <ul>{#each claim.blockers as b}<li><TexInline text={b} /></li>{/each}</ul>
           </details>
         {/if}
       {/if}
@@ -157,6 +160,10 @@
 
     <details class="tech" open={!!openDecl}>
       <summary>Technical details</summary>
+      {#if claim.number_note}
+        <h3>Number</h3>
+        <p class="summary">{claim.number} <span class="faint">({claim.number_note})</span></p>
+      {/if}
       {#if claim.statement_tex && paper?.pdf && claim.anchor?.begin}
         <h3>Source text</h3>
         <Tex text={claim.statement_tex} />
@@ -167,7 +174,7 @@
       {#if claim.scope_note}<p class="muted small">{claim.scope_note}</p>{/if}
 
       {#each claim.clauses as cl, k (k)}
-        <h3>{claim.clauses.length > 1 ? cl.name : "Evidence"}</h3>
+        <h3>{#if claim.clauses.length > 1}<TexInline text={cl.label || cl.name} />{:else}Evidence{/if}</h3>
         <Ladder rungs={cl.ladder} />
         {#if cl.proofs && Object.keys(cl.proofs).length}
           <dl class="proof">
@@ -240,6 +247,8 @@
   header h1 { font-family: var(--serif); font-size: 24px; font-weight: 600; margin: 2px 0 10px; }
   .full header h1 { font-size: 30px; }
   .title { font-weight: 450; }
+  .summary { margin: 4px 0 8px; font-size: 13px; color: var(--muted); }
+  .desc { margin: 2px 0 10px; font-size: 15px; color: var(--muted); line-height: 1.5; }
   .eyebrow { margin: 0; color: var(--muted); font-size: 13px; }
   h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); font-weight: 600; margin: 0 0 8px; }
   h3 { font-size: 14px; font-weight: 600; margin: 14px 0 6px; }

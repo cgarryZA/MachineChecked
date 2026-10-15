@@ -6,6 +6,7 @@
   import Passport from "./components/Passport.svelte";
   import Changes from "./components/Changes.svelte";
   import Search from "./components/Search.svelte";
+  import Review from "./components/Review.svelte";
 
   let index = $state(null);
   let error = $state(null);
@@ -41,6 +42,9 @@
       <span class="ptitle" title={paper.title}>{paper.title}</span>
     {/if}
     <Search {index} />
+    {#if index.review_queue}
+      <a class="aux" class:on={route.view === "review"} href={href(index.release, "review")}>Review</a>
+    {/if}
     <a class="aux" class:on={route.view === "coverage"} href={href(index.release, "coverage")}>Overview</a>
   </header>
 
@@ -60,6 +64,8 @@
     <Coverage {index} />
   {:else if route.view === "changes"}
     <Changes {index} />
+  {:else if route.view === "review" && index.review_queue}
+    <Review {index} />
   {:else}
     <Reader {index} paperId={paperId} claimId={route.claim} {editable} />
   {/if}
@@ -78,7 +84,8 @@
   .papers a, .aux { padding: 4px 10px; border-radius: 6px; color: var(--muted); white-space: nowrap; }
   .papers a:hover, .aux:hover { background: var(--surface-2); text-decoration: none; }
   .papers a.on, .aux.on { background: var(--accent-soft); color: var(--text); }
-  .aux { margin-left: auto; font-size: 14px; }
+  .aux { font-size: 14px; }
+  :global(.top .aux:first-of-type) { margin-left: auto; }
   .banner { padding: 8px 16px; background: var(--surface-2); border-bottom: 1px solid var(--border); font-size: 14px; }
   .page { max-width: 900px; margin: 0 auto; padding: 24px 16px 80px; }
   @media (max-width: 640px) {

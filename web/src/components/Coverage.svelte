@@ -1,4 +1,5 @@
 <script>
+  import TexInline from "./TexInline.svelte";
   import { CLASS_ORDER, notProved } from "../lib/data.js";
   import { href } from "../lib/route.svelte.js";
   import StatusChip from "./StatusChip.svelte";
@@ -100,7 +101,7 @@
           {#each p.shown as c (c.id)}
             <li>
               <a href={href(index.release, "claim", c.id)}>{c.number || c.id}</a>
-              {#if c.title}<span class="muted">{c.title}</span>{/if}
+              {#if c.heading || c.title}<span class="muted"><TexInline text={c.heading || c.title} /></span>{/if}
               <StatusChip status={c.status} cls={c.class} small />
             </li>
           {/each}

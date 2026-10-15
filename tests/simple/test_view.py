@@ -36,24 +36,31 @@ def test_view_suggests_then_links(plain):
     claims = {c["number"]: c for c in view["body"]["claims"]}
     assert set(claims) == {"Theorem 1", "Theorem 2", "Theorem 3", "Lemma 4"}
     why = {n: [(s["name"], s["why"]) for s in c["suggestions"]] for n, c in claims.items()}
-    assert why["Theorem 1"][0] == ("Plain.odd_add_odd", "tagged \\lean{…} in the paper")
+    # A \lean{…} tag is a link its author wrote into the source; a commented-out tag is none.
+    assert [(l["name"], l["source"]) for l in claims["Theorem 1"]["links"]] == [
+        ("Plain.odd_add_odd", "paper")]
+    assert claims["Theorem 1"]["status"] == "linked: Lean proof checked"
+    assert claims["Lemma 4"]["links"] == []
     assert why["Theorem 3"][0] == ("Plain.sq_odd", "its docstring cites Theorem 3")
     assert why["Theorem 2"][0][0] == "Plain.oddSum_eq_sq"
     assert why["Lemma 4"] == []
-    # Only suggestions until someone links: nothing claims more.
-    assert {c["status"] for c in claims.values()} == {"suggested link, not confirmed",
-                                                      "not linked"}
+    # A suggestion is only a suggestion until someone links.
+    assert claims["Theorem 2"]["status"] == "suggested link, not confirmed"
 
-    save_link(plain, "paper/main.tex", "thm:odd-add", ["Plain.odd_add_odd"])
     save_link(plain, "paper/main.tex", "thm:sum-odd", ["Plain.oddSum_eq_sq"])
     save_link(plain, "paper/main.tex", "lem:open", ["Plain.no_such_theorem"])
     view = build_view(plain, plain / "paper/main.tex", plain / ".prooflens", log=lambda m: None)
     st = {c["number"]: c["status"] for c in view["body"]["claims"]}
-    assert st["Theorem 1"] == "linked: Lean proof checked"
     assert st["Theorem 2"] == "linked: Lean proof incomplete (sorry)"
     assert st["Lemma 4"] == "linked: Lean declaration not found"
     links = json.loads((plain / "prooflens.links.json").read_text())
-    assert links["papers"]["paper/main.tex"]["thm:odd-add"]["lean"] == ["Plain.odd_add_odd"]
+    assert links["papers"]["paper/main.tex"]["thm:sum-odd"]["lean"] == ["Plain.oddSum_eq_sq"]
+
+    # Unlinking a tagged link is recorded, and wins over the tag.
+    save_link(plain, "paper/main.tex", "thm:odd-add", [])
+    view = build_view(plain, plain / "paper/main.tex", plain / ".prooflens", log=lambda m: None)
+    c = next(c for c in view["body"]["claims"] if c["number"] == "Theorem 1")
+    assert c["links"] == [] and c["status"] != "linked: Lean proof checked"
 
     index = write_view_site(view, plain / ".prooflens" / "site", None)
     assert index["mode"] == "simple" and len(index["claims"]) == 4

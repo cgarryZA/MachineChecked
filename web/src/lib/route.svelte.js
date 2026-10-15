@@ -6,6 +6,7 @@
 //   #/overview               every claim by status
 //   #/claim/<claim>          the passport alone
 //   #/changes                what changed between releases
+//   #/review                 the review queue
 
 function parse(hash) {
   let parts = hash.replace(/^#\/?/, "").split("/").map(decodeURIComponent);
@@ -18,6 +19,7 @@ function parse(hash) {
   if (view === "read") return { release, view: "read", paper: rest[0], claim: rest.slice(1).join("/") || null };
   if (view === "claim") return { release, view: "claim", claim: rest.join("/") };
   if (view === "changes") return { release, view: "changes" };
+  if (view === "review") return { release, view: "review" };
   if (view === "overview" || view === "coverage") return { release, view: "coverage" };
   return { release, view: "read", paper: null, claim: null };
 }

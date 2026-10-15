@@ -53,6 +53,8 @@ class Config:
     comparator_log: Path | None
     papers: list[Paper]
     out_dir: Path
+    review_check: str | None = None
+    display: Path | None = None
 
     @property
     def root(self) -> Path:
@@ -104,4 +106,9 @@ def load(path: str | Path) -> Config:
         if "comparator_log" in proj else None,
         papers=papers,
         out_dir=(base / proj.get("out_dir", ".prooflens")).resolve(),
+        # A command run after promoting reviews (from the configuration's directory): the
+        # project's own acceptance checker, if it has one.
+        review_check=raw.get("review", {}).get("check"),
+        # Display corrections (TeX descriptions, printed numbers), outside the inventory.
+        display=(base / proj["display"]).resolve() if "display" in proj else None,
     )

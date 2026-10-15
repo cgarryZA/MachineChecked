@@ -47,6 +47,37 @@ Lean proves it; it is not a review of whether the two say the same thing.
 
 A project with a `prooflens.toml` gets the full assessment described below instead.
 
+## Reviewing
+
+The reader's **Review** page takes a reviewer through the queue one unit at a time: a locked
+proposition, a definition its meaning depends on, or (in the zero-configuration view) a linked
+claim. Each unit is reviewed once per fingerprint, in the order of a blind review:
+
+1. **Read.** The printed claim only. The reviewer writes down what it says; the text is locked
+   when the Lean is revealed.
+2. **Compare.** The Lean statement and its definitions. The reviewer compares item by item and
+   records a verdict: matches / there's a problem / cannot determine, then the precise one
+   (faithful; with representation choices; broader; narrower; mismatched; vacuous; refutation
+   not valid; cannot determine), with the detail it needs.
+3. **Author's review.** Shown only now. Disagreements are recorded without changing the verdict.
+
+Reports stay in the browser (undo, skip, resume) and are exported as a file, so a reviewer needs
+nothing installed: the one-file HTML works. The reviewer's identity is recorded as they state it.
+A report marks nothing reviewed. The maintainer promotes it:
+
+```sh
+prooflens review promote prooflens-reviews-….json
+```
+
+Promotion refuses a report whose declaration, legacy hash or manuscript changed since the review,
+whose steps are out of order, whose verdict is not faithful / with representation choices
+(listed) / broader (with the instantiation), whose reviewer is an author of the statements, or
+whose reviewer is a model of the author's family or of unknown family (unless
+`--accept-same-family`). For the rest it archives the report and writes
+`<!-- spec-review: NAME HASH by=REVIEWER -->` after the declaration's last marker, then
+assesses again and runs `[review] check` from `prooflens.toml` (the project's own checker), if
+set.
+
 ## Status
 
 Phases 0–2 of [`PLAN.md`](PLAN.md) are done. The engine reproduces an existing acceptance

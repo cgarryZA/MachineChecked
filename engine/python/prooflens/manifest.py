@@ -110,8 +110,15 @@ def ladder(cl: dict, anchor: dict | None, mode: str | None, src_ok: bool | None)
     return rungs
 
 
-def build(evidence: dict, release: str) -> tuple[dict, dict[str, dict]]:
+def build(evidence: dict, release: str, display: dict | None = None
+          ) -> tuple[dict, dict[str, dict]]:
+    """The presentation manifest of `evidence`. `display` (the project's display overlay) gives
+    per claim a TeX `title_tex` and a printed `number` to show in place of the inventory's; it
+    changes what is shown, not what is assessed."""
     body = evidence["body"]
+    shown = (display or {}).get("claims", {})
+    clause_tex = {n: v["title_tex"] for n, v in (display or {}).get("clauses", {}).items()
+                  if v.get("title_tex")}
     inv = body["inventory"]["claims"]
     lean = body.get("lean") or {}
     tex = body.get("tex") or {}
@@ -161,14 +168,20 @@ def build(evidence: dict, release: str) -> tuple[dict, dict[str, dict]]:
                       "by": manual.get("by", ""), "head": None,
                       "begin": [manual["page"], 0, manual["y0"]],
                       "end": [manual["page"], 0, manual["y1"]]}
+        # The title the paper prints (`\\begin{theorem}[Efficiency]`), as TeX; the inventory's
+        # own description is kept as `title` and shown only as such.
+        heading = (anchor or {}).get("title") if (anchor or {}).get("kind") == "exact" else None
+        over = shown.get(c["id"], {})
+        number = over.get("number") or c.get("number", "")
+        description = over["title_tex"] if "title_tex" in over else c.get("title", "")
         fs = by_subject.get(c["id"], [])
         counts = Counter(f["tier"] for f in fs if not f.get("dismissed"))
         summary.setdefault(c["paper"], Counter())[a["status"]] += 1
         fname = claim_file(c["id"])
         index_claims.append({
-            "id": c["id"], "paper": c["paper"], "number": c.get("number", ""),
-            "title": c.get("title", ""), "kind": c.get("kind", ""), "scope": c["scope"],
-            "status": a["status"], "class": status_class(a["status"]),
+            "id": c["id"], "paper": c["paper"], "number": number,
+            "title": description, "heading": heading, "kind": c.get("kind", ""),
+            "scope": c["scope"], "status": a["status"], "class": status_class(a["status"]),
             "anchor": {"kind": anchor["kind"], "page": top_of(anchor)[0], "y0": top_of(anchor)[1],
                        "y1": anchor["end"][2] if anchor.get("end") and
                        anchor["end"][0] == anchor["begin"][0] else None,
@@ -185,7 +198,10 @@ def build(evidence: dict, release: str) -> tuple[dict, dict[str, dict]]:
                     proofs[kind] = lean.get("proofs", {}).get(f"{kind}:{cl[kind]}:{cl['spec']}")
             wit = lean.get("proofs", {}).get(f"witness:{cl.get('witness')}:") \
                 if cl.get("witness") else None
-            clauses.append({**cl, "statement": {
+            clauses.append({**cl, "label": clause_tex.get(cl["name"], cl["name"]),
+                            "corrects_label": clause_tex.get(cl.get("corrects") or "",
+                                                             cl.get("corrects")),
+                            "statement": {
                 "binders": spec.get("binders", []), "conclusion": spec.get("conclusion"),
                 "axioms": spec.get("axioms", []), "closure": spec.get("closure", []),
                 "direct": spec.get("direct", []), "legacy_hash": spec.get("legacy_hash"),
@@ -210,13 +226,14 @@ def build(evidence: dict, release: str) -> tuple[dict, dict[str, dict]]:
         decls = {n: keys[n] for n in sorted(names) if n in keys}
         chunks[fname] = {
             "schema": SCHEMA, "release": release, "id": c["id"], "paper": c["paper"],
-            "number": c.get("number", ""), "title": c.get("title", ""), "kind": c.get("kind", ""),
-            "scope": c["scope"], "scope_note": c.get("scope_note", ""),
+            "number": number, "number_note": over.get("number_note"), "title": description,
+            "heading": heading,
+            "kind": c.get("kind", ""), "scope": c["scope"], "scope_note": c.get("scope_note", ""),
             "scope_reviewed": c.get("scope_reviewed"), "location": c.get("location"),
             "source_sha256": c.get("source_sha256"), "status": a["status"],
             "class": status_class(a["status"]), "anchor": anchor, "source_matches": src_ok,
             "statement_tex": (anchor or {}).get("statement"),
-            "blockers": a.get("blockers", []),
+            "blockers": [shown_names(b, clause_tex) for b in a.get("blockers", [])],
             "clauses": clauses, "decls": decls, "findings": fs}
 
     prov = body["provenance"]
@@ -236,6 +253,14 @@ def build(evidence: dict, release: str) -> tuple[dict, dict[str, dict]]:
     return index, chunks, {keys[n]: r for n, r in store.items()}
 
 
+def shown_names(text: str, clause_tex: dict[str, str]) -> str:
+    """`text` with the clause names it quotes in their displayed (TeX) form."""
+    for n in sorted(clause_tex, key=len, reverse=True):
+        if n in text:
+            text = text.replace(n, clause_tex[n])
+    return text
+
+
 def search_index(index: dict, chunks: dict) -> dict:
     """What the reader searches: every claim (number, title, id, status, printed statement, Lean
     names of its clauses) and every declaration (with the claims whose closure holds it)."""
@@ -245,7 +270,8 @@ def search_index(index: dict, chunks: dict) -> dict:
         lean = [n for cl in ch["clauses"] for n in (cl.get("spec"), cl.get("accept"),
                                                     cl.get("refute"), *cl.get("defs", [])) if n]
         claims.append({"id": c["id"], "paper": c["paper"], "number": c.get("number", ""),
-                       "title": c.get("title", ""), "status": c["status"],
+                       "title": c.get("title", ""), "heading": c.get("heading"),
+                       "status": c["status"],
                        "statement": ch.get("statement_tex") or "", "lean": lean})
         for n in ch.get("decls", {}):
             decls.setdefault(n, []).append(c["id"])

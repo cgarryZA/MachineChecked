@@ -12,6 +12,7 @@ from pathlib import Path
 
 from . import evidence as ev
 from . import manifest as mf
+from . import review_queue as rq
 from .assess import Assessor, line_location
 from .config import Config
 from .probe import FINGERPRINT_VERSION, requests_from_inventory, run_probe
@@ -133,9 +134,10 @@ def build(cfg: Config, release: str | None = None, skip_lean: bool = False,
     rel = release or f"r-{eid[:12]}"
     ev.record_release(cfg.out_dir, rel, eid)
     record = ev.load(cfg.out_dir, eid)
-    index, chunks, store = mf.build(record, rel)
+    index, chunks, store = mf.build(record, rel, load_display(cfg))
     site = cfg.out_dir / "site"
-    write_preview(site, index, chunks, store, pdfs, web_dist)
+    write_preview(site, index, chunks, store, pdfs, web_dist,
+                  rq.assurance_queue(index, chunks, store, cfg.statement_authors))
     log(f"evidence {eid[:12]}  release {rel}  site {site}")
     return {"evidence": eid, "release": rel, "site": site, "index": index}
 
@@ -283,14 +285,21 @@ def rebuild_site(cfg: Config, web_dist: Path | None = None, release: str | None 
     rel = read_json(cfg.out_dir / "releases" / f"{release}.json") if release else \
         read_json(rels[-1])
     record = ev.load(cfg.out_dir, rel["evidence"])
-    index, chunks, store = mf.build(record, rel["release"])
+    index, chunks, store = mf.build(record, rel["release"], load_display(cfg))
     site = cfg.out_dir / "site"
-    write_preview(site, index, chunks, store, pdf_paths(cfg, record["body"]), web_dist)
+    write_preview(site, index, chunks, store, pdf_paths(cfg, record["body"]), web_dist,
+                  rq.assurance_queue(index, chunks, store, cfg.statement_authors))
     return {"release": rel["release"], "site": site, "index": index}
 
 
+def load_display(cfg: Config) -> dict | None:
+    return read_json(cfg.display) if cfg.display and cfg.display.exists() else None
+
+
 def write_preview(site: Path, index: dict, chunks: dict, store: dict, pdfs: dict,
-                  web_dist: Path | None):
+                  web_dist: Path | None, queue: dict | None = None):
+    if queue is not None:
+        index = {**index, "review_queue": "data/review-queue.json"}
     if site.exists():
         shutil.rmtree(site)
     if web_dist and web_dist.exists():
@@ -304,6 +313,8 @@ def write_preview(site: Path, index: dict, chunks: dict, store: dict, pdfs: dict
     for key, record in store.items():
         write_json(data / "decls" / f"{key}.json", record, indent=None)
     write_json(data / "search.json", mf.search_index(index, chunks), indent=None)
+    if queue is not None:
+        write_json(data / "review-queue.json", queue, indent=None)
     for pid, pdf in pdfs.items():
         (data / "papers").mkdir(parents=True, exist_ok=True)
         shutil.copyfile(pdf, data / "papers" / f"{pid}.pdf")

@@ -1,4 +1,5 @@
 <script>
+  import TexInline from "./TexInline.svelte";
   import { href, go } from "../lib/route.svelte.js";
   import PdfView from "./PdfView.svelte";
   import Passport from "./Passport.svelte";
@@ -40,7 +41,7 @@
               <button class:sel={c.id === claimId} onclick={() => select(c.id)} title={c.status}>
                 <span class={"dot st-" + c.class} aria-hidden="true"></span>
                 <span class="n">{c.number || c.id}</span>
-                {#if c.title}<span class="t">{c.title}</span>{/if}
+                {#if c.heading || c.title}<span class="t"><TexInline text={c.heading || c.title} /></span>{/if}
                 {#if !c.anchor}<span class="na" title="not located in the PDF">·</span>{/if}
               </button>
             </li>

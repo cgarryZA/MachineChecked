@@ -32,6 +32,13 @@ def _web_dist(arg: str | None) -> Path | None:
     return shipped if (shipped / "index.html").exists() else None
 
 
+MISSING = {
+    "lake": "install elan (https://github.com/leanprover/elan) and put ~/.elan/bin on PATH",
+    "latexmk": "install TeX Live with latexmk, or point ProofLens at the paper's PDF",
+    "synctex": "install TeX Live (it provides synctex)",
+}
+
+
 # -- mode selection ---------------------------------------------------------------------------
 
 def _assurance_config(a) -> Path | None:
@@ -145,8 +152,12 @@ def cmd_check(a):
         print(f"FAIL {b[0]} -> {b[1]}: {b[2]}")
     if bad:
         sys.exit(1)
-    print("every linked declaration is checked by Lean (correspondence with the paper is not "
-          "reviewed by this check)")
+    n = sum(len(c["links"]) for c in view["body"]["claims"])
+    if not n:
+        print("no claim is linked yet: confirm links in `prooflens view`")
+        return
+    print(f"all {n} linked declaration(s) are checked by Lean (whether each says what the paper "
+          "says is not reviewed by this check)")
 
 
 def cmd_build(a):
@@ -207,6 +218,52 @@ def cmd_serve(a):
     handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(site))
     print(f"serving {site} on http://127.0.0.1:{a.port}")
     http.server.ThreadingHTTPServer(("127.0.0.1", a.port), handler).serve_forever()
+
+
+def cmd_review(a):
+    import shlex
+    import subprocess
+    from . import promote as pr
+    from .pipeline import reassess
+    cfg = cfgmod.load(a.config)
+    try:
+        steps = pr.plan(cfg, pr.load_reports([Path(f) for f in a.reports]),
+                        a.accept_same_family)
+    except pr.PromoteError as e:
+        sys.exit(f"prooflens: {e}")
+    ok = []
+    for r, cur, why in steps:
+        u = r.get("unit", {})
+        head = f"{u.get('name')} ({u.get('kind')}) by {r.get('reviewer', {}).get('id')}: " \
+               f"{r.get('verdict', {}).get('value')}"
+        if why:
+            print(f"REFUSED  {head}")
+            for w in why:
+                print(f"           - {w}")
+        else:
+            print(f"OK       {head}\n           {pr.marker(r, cur)}")
+            ok.append((r, cur))
+    if not ok:
+        sys.exit("nothing to promote")
+    if not a.yes:
+        if not sys.stdin.isatty():
+            sys.exit("pass --yes to write the markers without a prompt")
+        if input(f"Write {len(ok)} marker(s) and archive the report(s)? [y/N] ").strip().lower() \
+                not in ("y", "yes"):
+            sys.exit("nothing written")
+    done = pr.apply(cfg, ok)
+    for d in done:
+        print(f"wrote {d['marker']} to {d['file']}")
+    old = {c["id"]: c["status"] for c in pr.latest_record(cfg)["body"]["assessment"]["claims"]}
+    res = reassess(cfg, _web_dist(None))
+    for c in res["index"]["claims"]:
+        if old.get(c["id"]) != c["status"]:
+            print(f"  {c['id']}: {old.get(c['id'])} -> {c['status']}")
+    if cfg.review_check:
+        print(f"running {cfg.review_check}")
+        r = subprocess.run(shlex.split(cfg.review_check), cwd=cfg.root)
+        if r.returncode:
+            sys.exit(r.returncode)
 
 
 def cmd_validate(a):
@@ -282,6 +339,16 @@ def main(argv=None):
     s.add_argument("--port", type=int, default=8017)
     s.set_defaults(func=cmd_serve)
 
+    rv = sub.add_parser("review")
+    rvs = rv.add_subparsers(dest="action", required=True)
+    pm = rvs.add_parser("promote", help="turn review reports into review markers (maintainer)")
+    pm.add_argument("reports", nargs="+", help="files exported from the review queue")
+    pm.add_argument("-c", "--config", default="prooflens.toml")
+    pm.add_argument("--yes", action="store_true", help="write without asking")
+    pm.add_argument("--accept-same-family", action="store_true",
+                    help="accept a model reviewer of the author's family, or of unknown family")
+    pm.set_defaults(func=cmd_review)
+
     v = sub.add_parser("validate")
     v.add_argument("file")
     v.add_argument("--schema", required=True,
@@ -289,7 +356,13 @@ def main(argv=None):
     v.set_defaults(func=cmd_validate)
 
     a = p.parse_args(argv)
-    a.func(a)
+    try:
+        a.func(a)
+    except FileNotFoundError as e:
+        hint = MISSING.get(Path(str(e.filename or "")).name)
+        if not hint:
+            raise
+        sys.exit(f"prooflens: `{Path(e.filename).name}` not found: {hint}")
 
 
 if __name__ == "__main__":

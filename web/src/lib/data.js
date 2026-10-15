@@ -91,3 +91,8 @@ export const CLASS_ORDER = [
 export function notProved(c) {
   return c.scope !== undefined && !String(c.status).startsWith("out of scope") && c.class !== "accepted";
 }
+
+// The review queue the engine wrote (`data/review-queue.json`), if this site has one.
+export function loadQueue(index) {
+  return getJson(index.review_queue);
+}
