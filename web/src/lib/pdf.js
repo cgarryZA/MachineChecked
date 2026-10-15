@@ -2,12 +2,29 @@
 import * as pdfjs from "pdfjs-dist";
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 
-pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
+// In a one-file bundle the worker's code and the PDFs are carried in the page.
+if (window.__PROOFLENS_WORKER__) {
+  const blob = new Blob([window.__PROOFLENS_WORKER__], { type: "text/javascript" });
+  pdfjs.GlobalWorkerOptions.workerSrc = URL.createObjectURL(blob);
+} else {
+  pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
+}
 
 const docs = new Map();
 
+function base64Bytes(b64) {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
 export function openPdf(url) {
-  if (!docs.has(url)) docs.set(url, pdfjs.getDocument({ url, isEvalSupported: false }).promise);
+  if (!docs.has(url)) {
+    const b64 = window.__PROOFLENS_PDF__?.[url];
+    const src = b64 ? { data: base64Bytes(b64) } : { url };
+    docs.set(url, pdfjs.getDocument({ ...src, isEvalSupported: false }).promise);
+  }
   return docs.get(url);
 }
 

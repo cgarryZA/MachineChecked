@@ -47,6 +47,15 @@ def cmd_site(a):
     print(f"site of release {res['release']} written to {res['site']}")
 
 
+def cmd_bundle(a):
+    from .bundle import bundle
+    cfg = cfgmod.load(a.config)
+    site = Path(a.site).resolve() if a.site else cfg.out_dir / "site"
+    res = bundle(site, Path(a.out).resolve(), a.title)
+    print(f"wrote {res['out']}: {res['size'] / 1e6:.1f} MB, {res['files']} data files, "
+          f"{res['pdfs']} PDFs; open it in a browser, no server needed")
+
+
 def cmd_export(a):
     from .export import ExportError, export
     cfg = cfgmod.load(a.config)
@@ -91,6 +100,13 @@ def main(argv=None):
     t.add_argument("--release")
     t.add_argument("--web")
     t.set_defaults(func=cmd_site)
+
+    n = sub.add_parser("bundle", help="write the site as one HTML file that opens from disk")
+    n.add_argument("-c", "--config", default="prooflens.toml")
+    n.add_argument("--site", help="the site to bundle (default: the private preview)")
+    n.add_argument("--out", required=True)
+    n.add_argument("--title")
+    n.set_defaults(func=cmd_bundle)
 
     e = sub.add_parser("export", help="assemble the public site from approved fields")
     e.add_argument("-c", "--config", default="prooflens.toml")

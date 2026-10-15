@@ -3,7 +3,14 @@
 
 const cache = new Map();
 
+// A one-file bundle (`prooflens bundle`) carries its data in `window.__PROOFLENS__`, keyed by the
+// same paths the site fetches, so it works opened straight from disk.
 async function getJson(path) {
+  const bundled = window.__PROOFLENS__;
+  if (bundled) {
+    if (!(path in bundled)) throw new Error(`${path}: not in this bundle`);
+    return bundled[path];
+  }
   if (!cache.has(path)) {
     cache.set(
       path,

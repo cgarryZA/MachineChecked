@@ -2,7 +2,7 @@
 
 import json
 
-from conftest import build, findings, needs_lean, needs_tex, status
+from conftest import ROOT, build, findings, needs_lean, needs_tex, status
 from prooflens import manifest as mf
 from prooflens.schemas import validate
 
@@ -136,3 +136,22 @@ def test_declaration_store_is_content_addressed_and_complete(toy, tmp_path):
                 names |= set(cl.get("defs") or [])
             assert names <= set(chunk["decls"])
         assert seen
+
+
+@needs_lean
+@needs_tex
+def test_bundle_is_one_self_contained_file(toy, tmp_path):
+    import json
+    import re
+    from prooflens.bundle import bundle
+    _, _, cfg = build(toy, web_dist=ROOT / "web" / "dist")
+    if not (cfg.out_dir / "site" / "index.html").exists():
+        import pytest
+        pytest.skip("web app not built")
+    res = bundle(cfg.out_dir / "site", tmp_path / "b.html")
+    html = (tmp_path / "b.html").read_text()
+    assert res["pdfs"] == 1 and res["files"] > 10
+    assert not re.search(r'(src|href)="\./assets/', html)  # nothing left to fetch
+    data = json.loads(re.search(r"window.__PROOFLENS__ = (.*?);</script>", html).group(1)
+                      .replace("<\\/", "</"))
+    assert "data/index.json" in data

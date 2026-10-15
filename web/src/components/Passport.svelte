@@ -87,7 +87,7 @@
           <span class={"state s-" + cl.state}>{cl.state}</span>
         </div>
         {#if cl.corrects}
-          <p class="muted small">Corrects <code>{cl.corrects}</code>, refuted as printed.</p>
+          <p class="muted small">Corrects the clause “{cl.corrects}”, which is refuted as printed.</p>
         {/if}
 
         <Ladder rungs={cl.ladder} />
