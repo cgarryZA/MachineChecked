@@ -65,6 +65,16 @@ The policies are in `docs/`: [threat model](docs/THREAT_MODEL.md),
 
 - **Phase 0**: done.
 - **Phase 1**: done on a private project (its integration and baseline are recorded there).
+- **Phase 2**: in progress. Done:
+  - the evidence ladder with exact statement, axioms and kernel replay apart, and "why is
+    this claim not accepted?";
+  - a content-addressed declaration store;
+  - search;
+  - grouped warnings;
+  - claims recorded by line located by SyncTeX (approximate, ambiguous when unsure) or by
+    hand;
+  - one-file bundles for private projects;
+  - the Pages workflow for the toy demo.
 - **Build cache** (`scripts/lean_cache.py`): done. A restore at a different path rebuilt no
   module; a one-file change rebuilt exactly its dependants; corrupt or mismatched archives are
   refused.
