@@ -155,3 +155,30 @@ def test_bundle_is_one_self_contained_file(toy, tmp_path):
     data = json.loads(re.search(r"window.__PROOFLENS__ = (.*?);</script>", html).group(1)
                       .replace("<\\/", "</"))
     assert "data/index.json" in data
+
+
+@needs_lean
+@needs_tex
+def test_line_claims_are_located_approximately_and_hand_placement_wins(toy):
+    import json
+    from prooflens.util import norm_ws, sha256_text
+    tex = (toy / "paper/toy.tex").read_text().split("\n")
+    line = next(i + 1 for i, l in enumerate(tex) if "T_n = n(n+1)" in l)
+    inv = json.loads((toy / "claims.json").read_text())
+    inv["claims"].append({"id": "T:eq:gauss", "paper": "T", "kind": "equation", "number": "(1)",
+                          "title": "", "location": f"toy.tex:{line}",
+                          "source_sha256": sha256_text(norm_ws(tex[line - 1])),
+                          "scope": "part-of", "scope_note": "T:thm:triangle",
+                          "scope_reviewed": True, "clauses": []})
+    (toy / "claims.json").write_text(json.dumps(inv))
+    (toy / "anchors.json").write_text(json.dumps(
+        {"T:rem:history": {"page": 1, "y0": 700, "y1": 720, "note": "test", "by": "me"}}))
+    index, body, _ = build(toy)
+    eq = next(c for c in index["claims"] if c["id"] == "T:eq:gauss")
+    assert eq["anchor"]["kind"] == "approximate" and eq["anchor"]["page"] == 1
+    thm = next(c for c in index["claims"] if c["id"] == "T:thm:triangle")
+    # The equation sits inside Theorem 2.2's band.
+    assert thm["anchor"]["y0"] < eq["anchor"]["y0"] < thm["anchor"]["y1"] + 20
+    rem = next(c for c in index["claims"] if c["id"] == "T:rem:history")
+    assert rem["anchor"]["kind"] == "manual" and rem["anchor"]["y0"] == 700
+    assert not [f for f in body["assessment"]["findings"] if f["code"] == "source-changed"]

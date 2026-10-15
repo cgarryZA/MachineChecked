@@ -28,7 +28,8 @@ def cmd_build(a):
     from .pipeline import build
     cfg = cfgmod.load(a.config)
     res = build(cfg, release=a.release, skip_lean=a.skip_lean, skip_tex=a.skip_tex, lake=a.lake,
-                web_dist=_web_dist(a.web), lean_build=not a.no_lean_build)
+                web_dist=_web_dist(a.web), lean_build=not a.no_lean_build,
+                reuse_lean=a.reuse_lean)
     idx = res["index"]
     for pid, s in idx["summary"].items():
         print(f"paper {pid}:")
@@ -98,6 +99,8 @@ def main(argv=None):
     b.add_argument("--lake", default="lake")
     b.add_argument("--no-lean-build", action="store_true",
                    help="do not run `lake build` first (the project is already built)")
+    b.add_argument("--reuse-lean", action="store_true",
+                   help="reuse the stored probe records when no Lean input changed since")
     b.add_argument("--web", help="the built web app (default: web/dist of this checkout)")
     b.add_argument("--fail-on-violation", action="store_true")
     b.set_defaults(func=cmd_build)

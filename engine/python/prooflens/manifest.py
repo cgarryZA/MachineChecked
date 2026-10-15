@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 from collections import Counter
 
-from .assess import match_anchor
+from .assess import line_location, match_anchor
 from .util import content_id, sha256_text
 
 SCHEMA = "prooflens/manifest@0"
@@ -93,12 +93,20 @@ def ladder(cl: dict, anchor: dict | None, mode: str | None, src_ok: bool | None)
                   "state": {"reviewed": "pass", "author-reviewed": "author",
                             "pending": "open"}.get(rev, "none"),
                   "detail": rev + (f" ({', '.join(kinds)})" if kinds else "")})
+    if anchor and anchor.get("kind") == "ambiguous":
+        rungs.append({"rung": "source", "state": "open" if src_ok is not False else "fail",
+                      "detail": f"{anchor['file']}:{anchor['line']} is typeset on pages "
+                                f"{', '.join(map(str, anchor['pages']))}: ambiguous, not placed "
+                                "(place it by hand in anchors.json)"})
+        return rungs
     rungs.append({"rung": "source",
                   "state": "pdf-only" if mode == "pdf" else
                   ("none" if anchor is None else ("pass" if src_ok is not False else "fail")),
                   "detail": "PDF only: statement not hashed from source" if mode == "pdf" else
                   ("not located in the compiled paper" if anchor is None else
-                   f"{anchor['file']}:{anchor['line']}")})
+                   f"{anchor.get('file', '')}:{anchor.get('line', '')}" +
+                   {"approximate": " (located approximately, by SyncTeX)",
+                    "manual": " (placed by hand)"}.get(anchor.get("kind"), ""))})
     return rungs
 
 
@@ -130,8 +138,29 @@ def build(evidence: dict, release: str) -> tuple[dict, dict[str, dict]]:
         t = tex.get(c["paper"], {})
         anchor = match_anchor(c, t.get("anchors", [])) if t.get("mode") == "latex" else None
         src_ok = None
-        if anchor and c.get("source_sha256") and anchor.get("source_sha256"):
-            src_ok = anchor["source_sha256"] == c["source_sha256"]
+        if anchor:
+            anchor = {**anchor, "kind": "exact"}
+            if c.get("source_sha256") and anchor.get("source_sha256"):
+                src_ok = anchor["source_sha256"] == c["source_sha256"]
+        elif line_location(c) is not None and t.get("mode") == "latex":
+            got = (t.get("lines") or {}).get(c["location"])
+            if c.get("source_sha256") and got:
+                src_ok = got == c["source_sha256"]
+            la = (t.get("line_anchors") or {}).get(c["location"])
+            if la and la.get("kind") == "ambiguous":
+                path, _, line = c["location"].rpartition(":")
+                anchor = {"kind": "ambiguous", "file": path, "line": int(line),
+                          "pages": la["pages"]}
+            elif la and la.get("kind", "approximate") == "approximate":
+                path, _, line = c["location"].rpartition(":")
+                anchor = {"kind": "approximate", "file": path, "line": int(line),
+                          "begin": [la["page"], 0, la["y0"]], "end": [la["page"], 0, la["y1"]]}
+        manual = (t.get("manual_anchors") or {}).get(c["id"])
+        if manual:
+            anchor = {**(anchor or {}), "kind": "manual", "note": manual.get("note", ""),
+                      "by": manual.get("by", ""), "head": None,
+                      "begin": [manual["page"], 0, manual["y0"]],
+                      "end": [manual["page"], 0, manual["y1"]]}
         fs = by_subject.get(c["id"], [])
         counts = Counter(f["tier"] for f in fs if not f.get("dismissed"))
         summary.setdefault(c["paper"], Counter())[a["status"]] += 1
@@ -140,11 +169,12 @@ def build(evidence: dict, release: str) -> tuple[dict, dict[str, dict]]:
             "id": c["id"], "paper": c["paper"], "number": c.get("number", ""),
             "title": c.get("title", ""), "kind": c.get("kind", ""), "scope": c["scope"],
             "status": a["status"], "class": status_class(a["status"]),
-            "anchor": {"page": top_of(anchor)[0], "y0": top_of(anchor)[1],
+            "anchor": {"kind": anchor["kind"], "page": top_of(anchor)[0], "y0": top_of(anchor)[1],
                        "y1": anchor["end"][2] if anchor.get("end") and
                        anchor["end"][0] == anchor["begin"][0] else None,
                        "page_end": anchor["end"][0] if anchor.get("end") else None}
             if anchor and anchor.get("begin") else None,
+            "unplaced": anchor.get("kind") if anchor and not anchor.get("begin") else None,
             "counts": dict(counts), "file": fname})
         clauses = []
         for cl in a["clauses"]:

@@ -81,7 +81,7 @@
         <canvas use:canvasAction={{ doc, no: p.no, width }} aria-label={"Page " + p.no}></canvas>
         {#each bands(p.no) as b (b.c.id + ":" + p.no)}
           <button
-            class={"band st-" + b.c.class}
+            class={"band st-" + b.c.class + (b.c.anchor?.kind && b.c.anchor.kind !== "exact" ? " " + b.c.anchor.kind : "")}
             class:sel={b.c.id === selected}
             data-claim={b.c.id}
             style:top={b.top * s + "px"}
@@ -89,7 +89,7 @@
             onclick={() => onselect(b.c.id)}
             title={`${b.c.number}: ${b.c.status}`}
           >
-            <span class="tag">{b.c.status}</span>
+            <span class="tag">{b.c.status}{b.c.anchor?.kind === "approximate" ? " · approximate location" : b.c.anchor?.kind === "manual" ? " · placed by hand" : ""}</span>
           </button>
         {/each}
       </div>
@@ -107,6 +107,8 @@
   }
   .band:hover, .band.sel { background: color-mix(in srgb, var(--st) 12%, transparent); }
   .band.sel { outline: 2px solid var(--st); outline-offset: -2px; }
+  .band.approximate { border-left-style: dashed; }
+  .band.approximate.sel { outline-style: dashed; }
   .tag {
     position: absolute; right: 6px; top: -10px; font: 11px/1.4 var(--sans);
     padding: 1px 8px; border-radius: 999px; color: #1d1d1b;

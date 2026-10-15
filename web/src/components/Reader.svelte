@@ -39,7 +39,7 @@
           <summary>{unanchored.length} claim{unanchored.length === 1 ? " is" : "s are"} not located in the PDF</summary>
           <ul>
             {#each unanchored as c (c.id)}
-              <li><button class="link" onclick={() => select(c.id)}>{c.number || c.id}</button></li>
+              <li><button class="link" onclick={() => select(c.id)}>{c.number || c.id}</button>{#if c.unplaced === "ambiguous"} <span class="faint">(ambiguous: SyncTeX places it on several pages)</span>{/if}</li>
             {/each}
           </ul>
         </details>

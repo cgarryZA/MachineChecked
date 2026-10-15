@@ -102,8 +102,9 @@ def compile_snapshot(snap: Snapshot, work: Path, envs: list[str] | None = None,
                SOURCE_DATE_EPOCH=str(source_epoch(snap)), FORCE_SOURCE_DATE="1")
     for k in ("TEXINPUTS",):
         env.pop(k, None)
-    cmd = [latexmk, "-norc", "-pdf", f"-jobname={root.stem}", "-interaction=nonstopmode",
-           "-halt-on-error", "-file-line-error", f"-usepretex={pretex}", root.name]
+    cmd = [latexmk, "-norc", "-pdf", "-synctex=1", f"-jobname={root.stem}",
+           "-interaction=nonstopmode", "-halt-on-error", "-file-line-error",
+           f"-usepretex={pretex}", root.name]
     r = subprocess.run(cmd, cwd=cwd, env=env, capture_output=True, text=True,
                        preexec_fn=_limits, timeout=1800)
     pdf = cwd / f"{root.stem}.pdf"
@@ -197,6 +198,60 @@ def parse_fls(path: Path, cwd: Path) -> list[str]:
     return out
 
 
+MARGIN = 60.0  # points at the top and bottom of a page holding running heads and page numbers
+
+
+def synctex_lines(cwd: Path, pdf: Path, snap_dir: Path, locations: list[str],
+                  page_h: float, anchors: list[Anchor]) -> dict:
+    """Where SyncTeX puts each `<file>:<line>` of the source (paths relative to the snapshot).
+
+    SyncTeX maps a line to every box typeset from it, which may lie on several pages (a macro
+    defined on the line and used elsewhere, a running head). Empty boxes and boxes in the page
+    margins are dropped; if the rest lie on one page, the anchor is the band covering them,
+    `approximate`. If they lie on several pages, the exact anchors of the same file before and
+    after the line bound the page; if that does not single one out, the line is `ambiguous`
+    and gets no band."""
+    out = {}
+    for loc in locations:
+        path, _, line = loc.rpartition(":")
+        try:
+            rel = os.path.relpath(snap_dir / path, cwd)
+        except ValueError:
+            continue
+        boxes = []
+        for name in (rel, "./" + rel):
+            r = subprocess.run(["synctex", "view", "-i", f"{line}:0:{name}", "-o", pdf.name],
+                               cwd=cwd, capture_output=True, text=True, timeout=60)
+            rec = {}
+            for l in r.stdout.splitlines():
+                k, _, v = l.partition(":")
+                if k == "Page":
+                    rec = {"page": int(v)}
+                elif k in ("v", "H") and rec:
+                    rec[k] = float(v)
+                    if "v" in rec and "H" in rec:
+                        boxes.append(rec)
+                        rec = {}
+            if boxes:
+                break
+        boxes = [b for b in boxes if b["H"] > 0 and MARGIN < b["v"] < page_h - MARGIN]
+        pages = sorted({b["page"] for b in boxes})
+        if len(pages) > 1:
+            same = sorted((a.line, a.begin[0]) for a in anchors
+                          if a.begin and a.file == path)
+            lo = max([p for l, p in same if l < int(line)], default=None)
+            hi = min([p for l, p in same if l > int(line)], default=None)
+            pages = [p for p in pages if (lo is None or p >= lo) and (hi is None or p <= hi)]
+        if len(pages) == 1:
+            on = [b for b in boxes if b["page"] == pages[0]]
+            out[loc] = {"kind": "approximate", "page": pages[0],
+                        "y0": round(min(b["v"] - b["H"] for b in on), 2),
+                        "y1": round(max(b["v"] for b in on), 2)}
+        elif boxes:
+            out[loc] = {"kind": "ambiguous", "pages": sorted({b["page"] for b in boxes})}
+    return out
+
+
 def anchors_for(snap: Snapshot, work: Path, envs: list[str] | None = None) -> dict:
     """Compile and return the anchors, page size, inputs and PDF of a LaTeX snapshot."""
     res = compile_snapshot(snap, work, envs)
@@ -206,4 +261,6 @@ def anchors_for(snap: Snapshot, work: Path, envs: list[str] | None = None) -> di
     inputs = [str((root_dir / p).resolve().relative_to(work.resolve()))
               for p in parse_fls(res["fls"], res["cwd"]) if p != "prooflens.sty"]
     return {"anchors": anchors, "page_size": size, "inputs": inputs, "pdf": res["pdf"],
-            "pdf_sha256": sha256_file(res["pdf"])}
+            "pdf_sha256": sha256_file(res["pdf"]), "cwd": res["cwd"],
+            "line_anchors": lambda locs: synctex_lines(res["cwd"], res["pdf"], work, locs,
+                                                       size[1], anchors)}

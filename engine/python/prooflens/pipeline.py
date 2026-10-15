@@ -5,19 +5,20 @@ from __future__ import annotations
 
 import os
 import shutil
+import subprocess
+from importlib import resources
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 from . import evidence as ev
 from . import manifest as mf
-from .assess import Assessor
+from .assess import Assessor, line_location
 from .config import Config
 from .probe import FINGERPRINT_VERSION, requests_from_inventory, run_probe
 from .reviews import load_dismissals, load_reviews
 from .schemas import validate
 from .sources import acquire
 from .tex import DEFAULT_ENVS, TexError, anchors_for, theorem_envs
-from .assess import line_location
 from .util import (git_dirty, git_head, norm_ws, read_json, sha256_file, sha256_text,
                    write_json)
 
@@ -45,14 +46,24 @@ def project_provenance(cfg: Config) -> dict:
 
 def build(cfg: Config, release: str | None = None, skip_lean: bool = False,
           skip_tex: bool = False, lake: str = "lake", web_dist: Path | None = None,
-          lean_build: bool = True, log=print) -> dict:
+          lean_build: bool = True, reuse_lean: bool = False, log=print) -> dict:
     inv = read_json(cfg.inventory)
     validate(inv, "inventory")
     reviews, review_hashes = load_reviews(cfg.reviews, cfg.ai_reviewers, cfg.root)
     dismissals = load_dismissals(cfg.dismissals)
 
     lean = None
-    if not skip_lean:
+    if reuse_lean:
+        lean = reusable_lean(cfg)
+        missing = [r["name"] for r in requests_from_inventory(inv)
+                   if (r["kind"] == "spec" and r["name"] not in lean["specs"])
+                   or (r["kind"] == "decl" and r["name"] not in lean["defs"])
+                   or (r["kind"] in ("accept", "refute", "witness") and
+                       f"{r['kind']}:{r['name']}:{r.get('spec') or ''}" not in lean["proofs"])]
+        if missing:
+            raise RuntimeError(f"the stored probe does not cover {missing[:5]}; run the probe")
+        log("probe: reusing the stored probe records (no Lean input changed)")
+    elif not skip_lean:
         log(f"probe: {len(requests_from_inventory(inv))} requests in {cfg.lean_root}")
         lean = run_probe(cfg, requests_from_inventory(inv), lake=lake, build=lean_build)
 
@@ -89,6 +100,11 @@ def build(cfg: Config, release: str | None = None, skip_lean: bool = False,
             pdfs[paper.id] = snap.dir / snap.pdf
         if paper.id in tex:
             tex[paper.id]["lines"] = line_hashes(inv, paper.id, snap.dir)
+            if t is not None:
+                locs = [c["location"] for c in inv["claims"]
+                        if c["paper"] == paper.id and line_location(c) is not None]
+                tex[paper.id]["line_anchors"] = t["line_anchors"](locs)
+            tex[paper.id]["manual_anchors"] = manual_anchors(cfg, paper.id)
         papers_prov[paper.id] = prov
 
     comp = cfg.comparator_log
@@ -98,6 +114,9 @@ def build(cfg: Config, release: str | None = None, skip_lean: bool = False,
     body = {
         "provenance": {"tool": {"name": "prooflens", "version": tool_version(),
                                 "fingerprint": FINGERPRINT_VERSION},
+                       "probe_sha256": sha256_text(resources.files("prooflens").joinpath(
+                           "data/ProofLensProbe.lean").read_text()),
+                       "lean_reused": reuse_lean,
                        "lean": (lean or {}).get("env"), "project": project_provenance(cfg),
                        "papers": papers_prov,
                        "comparator_log_sha256": sha256_file(comp) if comp_text else None},
@@ -114,6 +133,47 @@ def build(cfg: Config, release: str | None = None, skip_lean: bool = False,
     write_preview(site, index, chunks, store, pdfs, web_dist)
     log(f"evidence {eid[:12]}  release {rel}  site {site}")
     return {"evidence": eid, "release": rel, "site": site, "index": index}
+
+
+LEAN_INPUTS = ["*.lean", "lakefile.toml", "lakefile.lean", "lake-manifest.json", "lean-toolchain"]
+
+
+def reusable_lean(cfg: Config) -> dict:
+    """The probe records of the latest evidence, if they still describe this checkout: no Lean
+    input changed since (tracked or not), and the same probe. Otherwise an error."""
+    from importlib import resources
+    rels = sorted((cfg.out_dir / "releases").glob("*.json"), key=lambda p: p.stat().st_mtime)
+    if not rels:
+        raise RuntimeError("no stored evidence to reuse")
+    body = ev.load(cfg.out_dir, read_json(rels[-1])["evidence"])["body"]
+    lean, prov = body.get("lean"), body["provenance"]
+    old = prov["project"].get("commit")
+    if not lean or not old:
+        raise RuntimeError("the stored evidence has no probe records of a known commit")
+    root = cfg.lean_root
+    changed = subprocess.run(["git", "diff", "--name-only", old, "--", *LEAN_INPUTS], cwd=root,
+                             capture_output=True, text=True)
+    untracked = subprocess.run(["git", "ls-files", "--others", "--exclude-standard", "--",
+                                *LEAN_INPUTS], cwd=root, capture_output=True, text=True)
+    if changed.returncode != 0 or changed.stdout.strip() or untracked.stdout.strip():
+        raise RuntimeError("Lean inputs changed since the stored probe; run the probe")
+    probe = resources.files("prooflens").joinpath("data/ProofLensProbe.lean").read_text()
+    if prov.get("probe_sha256") and prov["probe_sha256"] != sha256_text(probe):
+        raise RuntimeError("the probe changed since the stored records; run the probe")
+    return lean
+
+
+def work_dir(cfg: Config, paper) -> Path:
+    return cfg.out_dir / "build" / paper.id
+
+
+def manual_anchors(cfg: Config, pid: str) -> dict:
+    """Anchors placed by hand (`anchors.json` beside the configuration, versioned with the
+    project): `{claim id: {page, y0, y1, note, by}}` for the claims of paper `pid`."""
+    path = cfg.root / "anchors.json"
+    if not path.exists():
+        return {}
+    return {cid: a for cid, a in read_json(path).items() if cid.split(":")[0] == pid}
 
 
 def line_hashes(inv: dict, pid: str, src: Path) -> dict:

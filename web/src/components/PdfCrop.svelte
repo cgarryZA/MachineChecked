@@ -13,7 +13,7 @@
     const page = top[0];
     const y0 = anchor.head ? top[2] - 12 : top[2];
     const sameEnd = anchor.end && anchor.end[0] === page;
-    const y1 = sameEnd ? Math.max(anchor.end[2] + 5, y0 + 18) : y0 + 220;
+    const y1 = sameEnd ? Math.max(anchor.end[2] + 5, y0 + 18) + (anchor.kind === "approximate" ? 40 : 0) : y0 + 220;
     openPdf(url)
       .then((doc) => renderPage(doc, page, canvas, Math.min(box.clientWidth, 760), [y0, y1]))
       .catch((e) => { console.error("crop", e); failed = true; });
@@ -25,6 +25,11 @@
     <p class="muted">The page could not be rendered.</p>
   {:else}
     <canvas bind:this={canvas} aria-label="The claim as printed"></canvas>
+  {/if}
+  {#if anchor.kind === "approximate"}
+    <p class="faint small">Located approximately (SyncTeX, from {anchor.file}:{anchor.line}); the claim may extend beyond this band.</p>
+  {:else if anchor.kind === "manual"}
+    <p class="faint small">Placed by hand{anchor.by ? " by " + anchor.by : ""}{anchor.note ? ": " + anchor.note : ""}.</p>
   {/if}
   {#if anchor.end && anchor.end[0] !== anchor.begin[0]}
     <p class="faint small">Continues on page {anchor.end[0]}.</p>
