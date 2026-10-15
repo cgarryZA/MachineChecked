@@ -202,7 +202,25 @@ def build(evidence: dict, release: str) -> tuple[dict, dict[str, dict]]:
                                       if f["subject"].split("#")[0] not in
                                       {c["id"] for c in inv}]},
              "claims": index_claims}
+    index["search"] = "data/search.json"
     return index, chunks, {keys[n]: r for n, r in store.items()}
+
+
+def search_index(index: dict, chunks: dict) -> dict:
+    """What the reader searches: every claim (number, title, id, status, printed statement, Lean
+    names of its clauses) and every declaration (with the claims whose closure holds it)."""
+    claims, decls = [], {}
+    for c in index["claims"]:
+        ch = chunks[c["file"]]
+        lean = [n for cl in ch["clauses"] for n in (cl.get("spec"), cl.get("accept"),
+                                                    cl.get("refute"), *cl.get("defs", [])) if n]
+        claims.append({"id": c["id"], "paper": c["paper"], "number": c.get("number", ""),
+                       "title": c.get("title", ""), "status": c["status"],
+                       "statement": ch.get("statement_tex") or "", "lean": lean})
+        for n in ch.get("decls", {}):
+            decls.setdefault(n, []).append(c["id"])
+    return {"claims": claims, "decls": [{"name": n, "claims": ids} for n, ids in
+                                        sorted(decls.items())]}
 
 
 def record_key(record: dict) -> str:

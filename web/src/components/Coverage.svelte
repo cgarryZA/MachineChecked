@@ -31,7 +31,7 @@
       <label><input type="checkbox" bind:checked={onlyNotProved} /> Show only what is not accepted</label>
       <span class="findings">
         {#each ["violation", "warning", "obligation"] as t}
-          <span class={"tier " + t}>{tiers[t] || 0} {t}{(tiers[t] || 0) === 1 ? "" : "s"}</span>
+          <span class={"tier " + t} title={t === "warning" ? "heuristics that may be wrong; not defects" : ""}>{tiers[t] || 0} {t}{(tiers[t] || 0) === 1 ? "" : "s"}{t === "warning" ? " (heuristic)" : ""}</span>
         {/each}
       </span>
     </div>

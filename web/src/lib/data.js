@@ -27,6 +27,10 @@ export function loadIndex() {
   return getJson("data/index.json");
 }
 
+export function loadSearch(index) {
+  return getJson(index.search || "data/search.json");
+}
+
 export function loadClaim(index, id) {
   const c = index.claims.find((x) => x.id === id);
   if (!c) return Promise.reject(new Error(`no claim ${id} in release ${index.release}`));

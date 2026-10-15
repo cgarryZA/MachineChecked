@@ -47,6 +47,13 @@ def cmd_site(a):
     print(f"site of release {res['release']} written to {res['site']}")
 
 
+def cmd_reassess(a):
+    from .pipeline import reassess
+    cfg = cfgmod.load(a.config)
+    res = reassess(cfg, _web_dist(a.web), a.release)
+    print(f"site of release {res['release']} written to {res['site']}")
+
+
 def cmd_bundle(a):
     from .bundle import bundle
     cfg = cfgmod.load(a.config)
@@ -100,6 +107,13 @@ def main(argv=None):
     t.add_argument("--release")
     t.add_argument("--web")
     t.set_defaults(func=cmd_site)
+
+    r = sub.add_parser("reassess", help="assess the stored evidence again (current rules and "
+                                        "reviews), without probing; a new evidence record")
+    r.add_argument("-c", "--config", default="prooflens.toml")
+    r.add_argument("--release")
+    r.add_argument("--web")
+    r.set_defaults(func=cmd_reassess)
 
     n = sub.add_parser("bundle", help="write the site as one HTML file that opens from disk")
     n.add_argument("-c", "--config", default="prooflens.toml")

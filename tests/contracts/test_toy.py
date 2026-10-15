@@ -107,7 +107,7 @@ def test_replay_is_not_run_without_a_log_and_blockers_explain(toy):
     assert chunk["status"] == "formal: accepted"
     assert chunk["blockers"] == ["no independent kernel replay: no Comparator log for this release"]
     bound = next(c for c in body["assessment"]["claims"] if c["id"] == "T:thm:bound")
-    assert "its proposition has no current review" in bound["blockers"]
+    assert "the proposition has no review" in bound["blockers"]
     assert next(c for c in body["assessment"]["claims"] if c["id"] == "T:rem:history")["blockers"] == []
 
 

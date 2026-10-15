@@ -27,8 +27,9 @@ The status words are exactly those the engine computed. The site never rounds th
 
 ## Status
 
-Phase 0 of [`PLAN.md`](PLAN.md): the engine, the reader and the tests work end to end on the
-synthetic [toy paper](examples/toy-paper). Integration with a real formalisation is Phase 1.
+Phases 0 and 1 of [`PLAN.md`](PLAN.md) are done, and Phase 2 (the reader on real papers) is under
+way. The engine reproduces an existing acceptance system's statuses claim for claim on a real
+formalisation. The [toy paper](examples/toy-paper) is the public example and the test fixture.
 
 ## Try it
 
@@ -42,7 +43,19 @@ cd examples/toy-paper
 prooflens build              # probe the Lean project, compile the paper, assess, write the preview
 prooflens serve              # http://127.0.0.1:8017
 prooflens export --out site  # the public export: approved fields only, scanned for leaks
+prooflens bundle --out ProofLens.html  # the whole site in one file that opens from disk
 ```
+
+`prooflens site` rewrites the preview from stored evidence, and `prooflens reassess` assesses
+stored evidence again (new rules, new reviews) without re-running Lean or LaTeX.
+
+## Private projects
+
+A private project keeps its configuration, inventory, reviews and site in its own repository.
+`prooflens bundle` writes the site as one HTML file carrying its data and PDFs, so it can be
+committed there and opened by double-clicking, with no server and nothing hosted. Nothing of a
+private project belongs in this repository: `scripts/check_public.py` refuses a push containing
+any term of a private denylist or any line of the project's Lean or LaTeX sources.
 
 `pytest` runs the contract, seeded-mutation and security tests.
 

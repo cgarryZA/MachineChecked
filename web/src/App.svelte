@@ -5,6 +5,7 @@
   import Reader from "./components/Reader.svelte";
   import Passport from "./components/Passport.svelte";
   import Changes from "./components/Changes.svelte";
+  import Search from "./components/Search.svelte";
 
   let index = $state(null);
   let error = $state(null);
@@ -36,6 +37,7 @@
       <a class:on={route.view === "claim"} href={route.claim ? href(index.release, "claim", route.claim) : href(index.release, "coverage")}>Audit</a>
       <a class:on={route.view === "changes"} href={href(index.release, "changes")}>Changes</a>
     </nav>
+    <Search {index} />
     <span class="release" title={"evidence " + index.evidence}>release <code>{index.release}</code></span>
   </header>
 

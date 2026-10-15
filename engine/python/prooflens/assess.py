@@ -53,6 +53,10 @@ TOTALISED = {
 }
 
 
+# Totalised operations so common in analysis that a warning about them is rarely informative.
+LOW_SIGNAL = {"HDiv.hDiv", "Inv.inv"}
+
+
 def _finding(tier, code, subject, message, **extra):
     f = {"tier": tier, "code": code, "subject": subject, "message": message}
     f.update(extra)
@@ -230,7 +234,8 @@ class Assessor:
 
     def add_warning(self, code, subj, name, rec, message, trigger):
         fp = rec.get("fingerprint")
-        f = _finding("warning", code, subj, message, trigger=trigger, fingerprint=fp)
+        f = _finding("warning", code, subj, message, trigger=trigger, fingerprint=fp,
+                     signal="low" if trigger in LOW_SIGNAL else "normal")
         for d in self.dismissals:
             if d.get("code") == code and d.get("subject") == name and d.get("trigger") == trigger:
                 if d.get("fingerprint") == fp:
@@ -280,8 +285,9 @@ class Assessor:
         return "formal: open"
 
     def blockers(self, claim: dict, status: str, clauses: list[dict]) -> list[str]:
-        """Why the claim is not accepted, in plain words, most basic first. Empty for an accepted
-        claim whose proofs were replayed, and for a claim out of scope."""
+        """Why the claim is not accepted, in plain words, most basic first: one line per reason,
+        saying which clauses it affects. Empty for an accepted claim whose proofs were replayed,
+        and for a claim out of scope."""
         if claim["scope"] in OUT_OF_SCOPE:
             return []
         if any(c["state"] == "unchecked" for c in clauses):
@@ -292,43 +298,59 @@ class Assessor:
         if not clauses:
             out.append("no Lean proposition has been written for it" if claim["scope"] == "formal"
                        else "no Lean definition has been named for it")
+        n = len(clauses)
+        reasons: dict[str, list[str]] = {}
+
+        def add(reason, clause):
+            reasons.setdefault(reason, []).append(clause["name"])
+
+        defs: dict[str, str] = {}
         for c in clauses:
-            name = f"clause “{c['name']}”: " if len(clauses) > 1 else ""
             st = c["state"]
             if st == "unspecified":
-                out.append(name + "no Lean proposition has been written")
+                add("no Lean proposition has been written", c)
             elif st == "open":
-                failed = [k for k in ("accept", "refute") if c["checks"].get(k)
-                          and not c["checks"][k]["ok"]]
-                out.append(name + ("its proof fails a check: " + ", ".join(
-                    e for k in failed for e in c["checks"][k]["errors"]) if failed
-                    else "the proposition has no proof yet"))
+                failed = [e for k in ("accept", "refute") if c["checks"].get(k)
+                          and not c["checks"][k]["ok"] for e in c["checks"][k]["errors"]]
+                add("its proof fails a check: " + ", ".join(failed) if failed
+                    else "the proposition has no proof yet", c)
             elif st == "refuted":
-                out.append(name + "the printed statement is false (a theorem proves its negation)")
+                add("the printed statement is false: a theorem proves its negation", c)
             if c.get("spec") and c.get("spec_review"):
                 srs = c["spec_review"]["state"]
                 if srs == "author-reviewed":
-                    out.append(name + "its proposition was reviewed only by the author of the "
-                               "statements")
-                elif srs in ("pending", "stale"):
-                    out.append(name + "its proposition has no current review" +
-                               (" (it changed after the last one)" if srs == "stale" else ""))
-            counts: dict[str, int] = {}
-            for r in (c.get("def_reviews") or {}).values():
-                counts[r["state"]] = counts.get(r["state"], 0) + 1
-            for state, words in (("pending", "have no review"),
-                                 ("stale", "changed after their review"),
-                                 ("author-reviewed", "were reviewed only by the author")):
-                if counts.get(state):
-                    out.append(name + f"{counts[state]} definition"
-                               f"{'s' if counts[state] > 1 else ''} it depends on {words}")
+                    add("the proposition was reviewed only by the author of the statements", c)
+                elif srs == "pending":
+                    add("the proposition has no review", c)
+                elif srs == "stale":
+                    add("the proposition changed after its last review", c)
+            for d, r in (c.get("def_reviews") or {}).items():
+                defs[d] = r["state"]
             if c.get("witness") and not c.get("witness_ok"):
-                out.append(name + "the witness that its hypotheses can be met fails its check")
+                add("the witness that the hypotheses can be met fails its check", c)
             if any(not r["discharged"] for r in c.get("regimes", [])):
-                out.append(name + "a regime the paper intends is not shown to be covered")
+                add("a regime the paper intends is not shown to be covered", c)
             rp = c["checks"].get("replay")
             if rp and rp["state"] != "pass" and st in ("proved", "refuted"):
-                out.append(name + "no independent kernel replay: " + rp["detail"])
+                add("no independent kernel replay: " + rp["detail"], c)
+        for reason, names in reasons.items():
+            if n == 1:
+                out.append(reason)
+            elif len(names) == n:
+                out.append(f"{reason} (all {n} clauses)")
+            elif reason.startswith("the printed statement is false") or len(names) <= 2:
+                out.append(f"{reason}: " + "; ".join(f"“{x}”" for x in names))
+            else:
+                out.append(f"{reason} ({len(names)} of {n} clauses)")
+        counts: dict[str, int] = {}
+        for state in defs.values():
+            counts[state] = counts.get(state, 0) + 1
+        for state, words in (("pending", "have no review"),
+                             ("stale", "changed after their review"),
+                             ("author-reviewed", "were reviewed only by the author")):
+            if counts.get(state):
+                out.append(f"{counts[state]} definition{'s' if counts[state] > 1 else ''} its "
+                           f"meaning depends on {words}")
         if status.startswith("definition") and status != "definition: reviewed" and not out:
             out.append("its definitions are not independently reviewed")
         return list(dict.fromkeys(out))

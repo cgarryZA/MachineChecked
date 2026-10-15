@@ -131,9 +131,56 @@ def line_hashes(inv: dict, pid: str, src: Path) -> dict:
     return out
 
 
+def reassess(cfg: Config, web_dist: Path | None = None, release: str | None = None,
+             log=print) -> dict:
+    """Assess the latest evidence again with the current rules and the current review files,
+    without probing or compiling, and store the result as a new evidence record and release."""
+    rels = sorted((cfg.out_dir / "releases").glob("*.json"), key=lambda p: p.stat().st_mtime)
+    if not rels:
+        raise RuntimeError("no release: run `prooflens build` first")
+    old = ev.load(cfg.out_dir, read_json(rels[-1])["evidence"])["body"]
+    inv = read_json(cfg.inventory)
+    validate(inv, "inventory")
+    reviews, review_hashes = load_reviews(cfg.reviews, cfg.ai_reviewers, cfg.root)
+    dismissals = load_dismissals(cfg.dismissals)
+    comp = cfg.comparator_log
+    comp_text = comp.read_text(errors="replace") if comp and comp.exists() else None
+    assessment = Assessor(cfg, inv, old["lean"], old["tex"], reviews, dismissals, comp_text,
+                          old["provenance"]["project"].get("commit")).run()
+    body = {**old, "inventory": {"file": os.path.relpath(cfg.inventory, cfg.root),
+                                 "claims": inv["claims"]},
+            "reviews": {"files": review_hashes, "records": [r.to_json() for r in reviews]},
+            "dismissals": dismissals, "assessment": assessment,
+            "provenance": {**old["provenance"],
+                           "tool": {**old["provenance"]["tool"], "version": tool_version()},
+                           "comparator_log_sha256": sha256_file(comp) if comp_text else None,
+                           "reassessed_from": read_json(rels[-1])["evidence"]}}
+    body.pop("schema", None)
+    eid = ev.store(cfg.out_dir, body)
+    rel = release or f"r-{eid[:12]}"
+    ev.record_release(cfg.out_dir, rel, eid)
+    log(f"evidence {eid[:12]}  release {rel} (reassessed)")
+    return rebuild_site(cfg, web_dist, rel)
+
+
+def pdf_paths(cfg: Config, body: dict) -> dict:
+    """The PDF each paper's evidence was built with: the compiled one, or the committed one."""
+    out = {}
+    for pid, prov in body["provenance"]["papers"].items():
+        if prov.get("pdf_origin") == "compiled" and prov.get("root"):
+            p = cfg.out_dir / "build" / pid / Path(prov["root"]).with_suffix(".pdf")
+        elif prov.get("committed_pdf"):
+            p = cfg.out_dir / "sources" / pid / prov["committed_pdf"]
+        else:
+            continue
+        if p.exists() and sha256_file(p) == prov.get("pdf_sha256"):
+            out[pid] = p
+    return out
+
+
 def rebuild_site(cfg: Config, web_dist: Path | None = None, release: str | None = None) -> dict:
-    """The preview site again from a stored release, without probing or compiling: the PDFs
-    are taken from the current preview."""
+    """The preview site again from a stored release, without probing or compiling. A PDF is
+    included only if the one on disk is the one the evidence records."""
     rels = sorted((cfg.out_dir / "releases").glob("*.json"), key=lambda p: p.stat().st_mtime)
     if not rels:
         raise RuntimeError("no release: run `prooflens build` first")
@@ -142,15 +189,7 @@ def rebuild_site(cfg: Config, web_dist: Path | None = None, release: str | None 
     record = ev.load(cfg.out_dir, rel["evidence"])
     index, chunks, store = mf.build(record, rel["release"])
     site = cfg.out_dir / "site"
-    keep = cfg.out_dir / ".pdf-keep"
-    if keep.exists():
-        shutil.rmtree(keep)
-    if (site / "data" / "papers").exists():
-        shutil.copytree(site / "data" / "papers", keep)
-    pdfs = {p.stem: p for p in keep.glob("*.pdf")} if keep.exists() else {}
-    write_preview(site, index, chunks, store, pdfs, web_dist)
-    if keep.exists():
-        shutil.rmtree(keep)
+    write_preview(site, index, chunks, store, pdf_paths(cfg, record["body"]), web_dist)
     return {"release": rel["release"], "site": site, "index": index}
 
 
@@ -168,6 +207,7 @@ def write_preview(site: Path, index: dict, chunks: dict, store: dict, pdfs: dict
         write_json(data / "claims" / name, chunk, indent=None)
     for key, record in store.items():
         write_json(data / "decls" / f"{key}.json", record, indent=None)
+    write_json(data / "search.json", mf.search_index(index, chunks), indent=None)
     for pid, pdf in pdfs.items():
         (data / "papers").mkdir(parents=True, exist_ok=True)
         shutil.copyfile(pdf, data / "papers" / f"{pid}.pdf")

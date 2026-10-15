@@ -71,7 +71,8 @@ def public_claim(chunk: dict, pub) -> dict:
     out["clauses"] = clauses
     out["decls"] = dict(chunk.get("decls", {}))
     out["findings"] = [_pick(f, ["id", "tier", "code", "subject", "message", "trigger",
-                                 "dismissed", "dismissal_stale"]) for f in chunk["findings"]]
+                                 "signal", "dismissed", "dismissal_stale"])
+                       for f in chunk["findings"]]
     return out
 
 
@@ -161,7 +162,7 @@ def export(cfg: Config, out: Path, release: str | None = None,
         shutil.copytree(web_dist, out)
     data = out / "data"
     pidx = _pick(index, ["schema", "release", "evidence", "created", "tool", "lean", "summary",
-                         "classes", "gates"])
+                         "classes", "gates", "search"])
     pidx["project"] = _pick(index["project"], ["name", "commit", "dirty", "toolchain",
                                                "lake_manifest_sha256", "dependencies"])
     pidx["papers"] = []
@@ -200,6 +201,14 @@ def export(cfg: Config, out: Path, release: str | None = None,
         c = json.loads(path.read_text(encoding="utf-8"))
         c["decls"] = {n: rekey[k] for n, k in c["decls"].items()}
         write_json(path, c, indent=None)
+    # The search index, with only what each paper allows.
+    srch = mf.search_index(index, chunks)
+    pub_search = {"claims": [], "decls": srch["decls"] if lean_ok else []}
+    for c in srch["claims"]:
+        pub = pubs[c["paper"]]
+        pub_search["claims"].append({**c, "statement": c["statement"] if pub.source_text else "",
+                                     "lean": c["lean"] if pub.lean else []})
+    write_json(data / "search.json", pub_search, indent=None)
     texts, hashes = private_inputs(cfg)
     leaks = scan(out, texts, hashes)
     if leaks:

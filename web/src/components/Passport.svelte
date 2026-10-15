@@ -55,7 +55,7 @@
         </details>
       {/if}
       {#if claim.scope_note}<p class="muted note">{claim.scope_note}</p>{/if}
-      {#if claim.scope_reviewed === false}
+      {#if claim.scope_reviewed === false && !claim.blockers?.length}
         <p class="faint note">The scope of this claim was set by the automatic first pass and has not been checked by reading.</p>
       {/if}
     </header>
