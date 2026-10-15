@@ -46,7 +46,7 @@ Each clause shows its rungs separately. One rung passing says nothing about anot
 | locked statement | yes | the proposition is a definition of type `Prop` in the specification layer, over allowed axioms |
 | exact statement | yes | the acceptance theorem's type is exactly the proposition (or its negation), and it has no `sorry`; checked on the build the probe ran on, which may be a restored cache |
 | axioms | yes | its axioms are among the allowed (`propext`, `Classical.choice`, `Quot.sound` by default) |
-| kernel replay | yes | a Comparator log that names this project commit records a successful replay of this proof in a fresh kernel; without one the rung is `not run`, never `failed`, and a log not tied to the commit is `unverified` |
+| kernel replay | yes | a structured Comparator record (`comparator_log`: JSON with the full project `commit` and the exact names of the `replayed` theorems) covers this proof for this commit; without one the rung is `not run`, never `failed`; a record of another commit, or a text log, is `unverified` |
 | witness | yes, for the theorem; the fit to the paper is reviewed | a proposition with hypotheses has a theorem meeting them |
 | regimes | yes, for the theorems; the fit is reviewed | each regime the paper intends to cover has its witness |
 | review | no | the proposition and its definitions have current reviews; `author` if only by an author |
@@ -76,6 +76,11 @@ Every evidence record contains:
 - for each paper: the source kind, revision, mode, root, compiled and committed PDF hashes, and
   the files read during compilation;
 - the hashes of the review files.
+
+`prooflens build --reuse-lean` reuses stored probe records only when a SHA-256 over every Lean input
+(the project's and every path dependency's sources, lakefiles, manifest and toolchain) and the
+probe itself are unchanged. `prooflens reassess` applies new reviews and dismissals to stored
+evidence, and refuses when the claim inventory changed.
 
 Evidence records are content-addressed and never rewritten. A release name, once given, keeps its
 evidence.

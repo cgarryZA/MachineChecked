@@ -25,7 +25,6 @@ from __future__ import annotations
 from .reviews import Review, history
 
 OUT_OF_SCOPE = {"expository", "literature", "empirical", "proof-step", "part-of", "duplicate"}
-COMPARATOR_OK = ("Lean default kernel accepts", "Your solution is okay!")
 
 # Constants whose value outside the intended domain is a junk value; a statement that uses one
 # may be weaker or different from the printed claim unless the domain is constrained.
@@ -64,6 +63,22 @@ def _finding(tier, code, subject, message, **extra):
     return f
 
 
+def parse_comparator(text: str | None) -> dict | None:
+    """The structured Comparator record, or an error saying why the text is not one."""
+    import json
+    if not text:
+        return None
+    try:
+        rec = json.loads(text)
+    except ValueError:
+        return {"error": "the Comparator log is not a structured record (JSON with commit and "
+                         "replayed theorems)"}
+    if not isinstance(rec, dict) or not isinstance(rec.get("replayed"), list) or \
+            not isinstance(rec.get("commit"), str):
+        return {"error": "the Comparator record lacks `commit` or `replayed`"}
+    return rec
+
+
 def _hashes(rec):
     return {h for h in (rec.get("legacy_hash"), rec.get("fingerprint")) if h}
 
@@ -73,7 +88,7 @@ class Assessor:
                  comparator_log: str | None = None, project_commit: str | None = None):
         self.cfg, self.inv, self.lean, self.tex = cfg, inventory, lean, tex
         self.reviews, self.dismissals = reviews, dismissals
-        self.comparator_log = comparator_log
+        self.comparator = parse_comparator(comparator_log)
         self.project_commit = project_commit
         self.findings: list[dict] = []
         self.authors = set(cfg.statement_authors)
@@ -115,20 +130,24 @@ class Assessor:
     # -- clauses --------------------------------------------------------------------------
 
     def replay(self, thm: str) -> dict:
-        """Whether a Comparator log records a kernel replay of `thm` for this commit. Without a
-        log the replay is `not-run`, never `fail`; a log that is not tied to this commit is
-        `unverified`."""
-        log = self.comparator_log
-        if not log:
-            return {"state": "not-run", "detail": "no Comparator log for this release"}
-        if not all(m in log for m in COMPARATOR_OK):
-            return {"state": "fail", "detail": "the Comparator log records no successful replay"}
-        if not self.project_commit or self.project_commit not in log:
+        """Whether a structured Comparator record shows a kernel replay of exactly `thm` for this
+        commit. The record is JSON: `{"commit": <full sha>, "replayed": [<theorem names>],
+        "checker": ..., "kernels": [...]}`. Without a record the replay is `not-run`, never
+        `fail`; a record of another commit, or a log ProofLens cannot read as such a record,
+        is `unverified`."""
+        rec = self.comparator
+        if rec is None:
+            return {"state": "not-run", "detail": "no Comparator record for this release"}
+        if "error" in rec:
+            return {"state": "unverified", "detail": rec["error"]}
+        if not self.project_commit or rec.get("commit") != self.project_commit:
             return {"state": "unverified",
-                    "detail": "the Comparator log does not name this commit"}
-        if thm not in log:
-            return {"state": "not-run", "detail": "the Comparator log does not cover this proof"}
-        return {"state": "pass", "detail": "Comparator replayed the proof in a fresh kernel"}
+                    "detail": f"the Comparator record is for commit {str(rec.get('commit'))[:12]}"
+                              f", not this one"}
+        if thm not in set(rec.get("replayed", [])):
+            return {"state": "not-run", "detail": "the Comparator record does not cover this proof"}
+        return {"state": "pass", "detail": "Comparator replayed the proof in a fresh kernel ("
+                + ", ".join(rec.get("kernels", ["lean"])) + ")"}
 
     def _proof(self, kind, name, spec):
         return self.lean["proofs"].get(f"{kind}:{name}:{spec or ''}")
@@ -412,8 +431,7 @@ class Assessor:
                     if c.get("witness") and not c.get("witness_ok"):
                         reasons.append(f"{r['id']}: witness fails: {c['name']}")
             names = sorted({c["accept"] for r in rows for c in r["clauses"] if c.get("accept")})
-            comparator = all(self.replay(n)["state"] == "pass" for n in names) and \
-                bool(self.comparator_log)
+            comparator = bool(names) and all(self.replay(n)["state"] == "pass" for n in names)
             if not comparator:
                 reasons.append("comparator: no successful kernel replay covering every proof "
                                "of the paper")

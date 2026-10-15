@@ -2,7 +2,7 @@
 
 import json
 
-from conftest import ROOT, build, findings, needs_lean, needs_tex, status
+from conftest import ROOT, build, edit, findings, needs_lean, needs_tex, status
 from prooflens import manifest as mf
 from prooflens.schemas import validate
 
@@ -105,7 +105,7 @@ def test_replay_is_not_run_without_a_log_and_blockers_explain(toy):
     assert rungs["kernel replay"] == "not-run"
     # Accepted, but the release still lacks an independent replay: that is its only blocker.
     assert chunk["status"] == "formal: accepted"
-    assert chunk["blockers"] == ["no independent kernel replay: no Comparator log for this release"]
+    assert chunk["blockers"] == ["no independent kernel replay: no Comparator record for this release"]
     bound = next(c for c in body["assessment"]["claims"] if c["id"] == "T:thm:bound")
     assert "the proposition has no review" in bound["blockers"]
     assert next(c for c in body["assessment"]["claims"] if c["id"] == "T:rem:history")["blockers"] == []
@@ -182,3 +182,56 @@ def test_line_claims_are_located_approximately_and_hand_placement_wins(toy):
     rem = next(c for c in index["claims"] if c["id"] == "T:rem:history")
     assert rem["anchor"]["kind"] == "manual" and rem["anchor"]["y0"] == 700
     assert not [f for f in body["assessment"]["findings"] if f["code"] == "source-changed"]
+
+
+@needs_lean
+@needs_tex
+def test_kernel_replay_needs_a_structured_record_for_this_commit(toy):
+    import json
+    from prooflens.util import git_head
+    import subprocess
+    subprocess.run(["git", "init", "-q"], cwd=toy, check=True)
+    subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q",
+                    "--allow-empty", "-m", "t"], cwd=toy, check=True)
+    commit = git_head(toy / "lean")
+    with open(toy / "prooflens.toml", "a") as f:
+        f.write("")
+    txt = (toy / "prooflens.toml").read_text().replace(
+        'dismissals = "reviews/dismissals.json"',
+        'dismissals = "reviews/dismissals.json"\ncomparator_log = "comparator.json"')
+    (toy / "prooflens.toml").write_text(txt)
+
+    def replay(record):
+        (toy / "comparator.json").write_text(record)
+        index, body, _ = build(toy)
+        c = next(c for c in body["assessment"]["claims"] if c["id"] == "T:thm:even-add")
+        return c["clauses"][0]["checks"]["replay"]["state"]
+
+    assert replay("Lean default kernel accepts. Toy.Acceptance.thm_even_add " + commit) == \
+        "unverified"
+    assert replay(json.dumps({"commit": "0" * 40, "replayed": ["Toy.Acceptance.thm_even_add"]})) \
+        == "unverified"
+    assert replay(json.dumps({"commit": commit, "replayed": ["Toy.Acceptance.thm_even_add_x"]})) \
+        == "not-run"
+    assert replay(json.dumps({"commit": commit, "replayed": ["Toy.Acceptance.thm_even_add"]})) \
+        == "pass"
+
+
+@needs_lean
+@needs_tex
+def test_reuse_and_reassess_refuse_changed_inputs(toy):
+    import json
+    import pytest
+    from prooflens import config as cfgmod
+    from prooflens.pipeline import build as pl_build, reassess
+    build(toy)
+    cfg = cfgmod.load(toy / "prooflens.toml")
+    pl_build(cfg, reuse_lean=True, log=lambda *a: None)          # nothing changed: reuse is fine
+    edit(toy / "lean/Toy/Defs.lean", "/-!", "-- a comment\n/-!")  # any Lean input
+    with pytest.raises(RuntimeError, match="Lean inputs changed"):
+        pl_build(cfg, reuse_lean=True, log=lambda *a: None)
+    inv = json.loads((toy / "claims.json").read_text())
+    inv["claims"][1]["clauses"][0]["accept"] = None
+    (toy / "claims.json").write_text(json.dumps(inv))
+    with pytest.raises(RuntimeError, match="inventory changed"):
+        reassess(cfg, log=lambda *a: None)

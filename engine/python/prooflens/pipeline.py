@@ -19,7 +19,8 @@ from .reviews import load_dismissals, load_reviews
 from .schemas import validate
 from .sources import acquire
 from .tex import DEFAULT_ENVS, TexError, anchors_for, theorem_envs
-from .util import (git_dirty, git_head, norm_ws, read_json, sha256_file, sha256_text,
+from .util import (canonical_json, git_dirty, git_head, norm_ws, read_json, sha256_file,
+                   sha256_text,
                    write_json)
 
 
@@ -53,6 +54,7 @@ def build(cfg: Config, release: str | None = None, skip_lean: bool = False,
     dismissals = load_dismissals(cfg.dismissals)
 
     lean = None
+    lean_digest = None
     if reuse_lean:
         lean = reusable_lean(cfg)
         missing = [r["name"] for r in requests_from_inventory(inv)
@@ -62,8 +64,10 @@ def build(cfg: Config, release: str | None = None, skip_lean: bool = False,
                        f"{r['kind']}:{r['name']}:{r.get('spec') or ''}" not in lean["proofs"])]
         if missing:
             raise RuntimeError(f"the stored probe does not cover {missing[:5]}; run the probe")
+        lean_digest = lean_inputs_digest(cfg)
         log("probe: reusing the stored probe records (no Lean input changed)")
     elif not skip_lean:
+        lean_digest = lean_inputs_digest(cfg)
         log(f"probe: {len(requests_from_inventory(inv))} requests in {cfg.lean_root}")
         lean = run_probe(cfg, requests_from_inventory(inv), lake=lake, build=lean_build)
 
@@ -114,8 +118,8 @@ def build(cfg: Config, release: str | None = None, skip_lean: bool = False,
     body = {
         "provenance": {"tool": {"name": "prooflens", "version": tool_version(),
                                 "fingerprint": FINGERPRINT_VERSION},
-                       "probe_sha256": sha256_text(resources.files("prooflens").joinpath(
-                           "data/ProofLensProbe.lean").read_text()),
+                       "probe_sha256": probe_digest() if lean else None,
+                       "lean_inputs_sha256": lean_digest,
                        "lean_reused": reuse_lean,
                        "lean": (lean or {}).get("env"), "project": project_provenance(cfg),
                        "papers": papers_prov,
@@ -138,27 +142,54 @@ def build(cfg: Config, release: str | None = None, skip_lean: bool = False,
 LEAN_INPUTS = ["*.lean", "lakefile.toml", "lakefile.lean", "lake-manifest.json", "lean-toolchain"]
 
 
+def lean_input_roots(cfg: Config) -> list[Path]:
+    """The project and every path dependency of its lake manifest: their sources are inputs of
+    the probe; remote dependencies are pinned by the manifest itself."""
+    roots = [cfg.lean_root]
+    lm = cfg.lean_root / "lake-manifest.json"
+    if lm.exists():
+        for p in read_json(lm).get("packages", []):
+            if p.get("type") == "path":
+                roots.append((cfg.lean_root / p["dir"]).resolve())
+    return roots
+
+
+def lean_inputs_digest(cfg: Config) -> str:
+    """SHA-256 over the content of every Lean input of the project and its path dependencies
+    (sources, lakefiles, manifest, toolchain), committed or not."""
+    import hashlib
+    h = hashlib.sha256()
+    for root in lean_input_roots(cfg):
+        files = []
+        for pat in LEAN_INPUTS:
+            files += [f for f in root.rglob(pat) if ".lake" not in f.parts and ".git" not in
+                      f.parts and ".prooflens" not in f.parts]
+        h.update(f"root {root.name}\n".encode())
+        for f in sorted(set(files)):
+            h.update(f"{f.relative_to(root)}\n".encode())
+            h.update(hashlib.sha256(f.read_bytes()).digest())
+    return h.hexdigest()
+
+
+def probe_digest() -> str:
+    return sha256_text(resources.files("prooflens").joinpath("data/ProofLensProbe.lean")
+                       .read_text())
+
+
 def reusable_lean(cfg: Config) -> dict:
-    """The probe records of the latest evidence, if they still describe this checkout: no Lean
-    input changed since (tracked or not), and the same probe. Otherwise an error."""
-    from importlib import resources
+    """The probe records of the latest evidence, if they still describe this checkout: the same
+    content of every Lean input (here and in every path dependency) and the same probe."""
     rels = sorted((cfg.out_dir / "releases").glob("*.json"), key=lambda p: p.stat().st_mtime)
     if not rels:
         raise RuntimeError("no stored evidence to reuse")
     body = ev.load(cfg.out_dir, read_json(rels[-1])["evidence"])["body"]
     lean, prov = body.get("lean"), body["provenance"]
-    old = prov["project"].get("commit")
-    if not lean or not old:
-        raise RuntimeError("the stored evidence has no probe records of a known commit")
-    root = cfg.lean_root
-    changed = subprocess.run(["git", "diff", "--name-only", old, "--", *LEAN_INPUTS], cwd=root,
-                             capture_output=True, text=True)
-    untracked = subprocess.run(["git", "ls-files", "--others", "--exclude-standard", "--",
-                                *LEAN_INPUTS], cwd=root, capture_output=True, text=True)
-    if changed.returncode != 0 or changed.stdout.strip() or untracked.stdout.strip():
-        raise RuntimeError("Lean inputs changed since the stored probe; run the probe")
-    probe = resources.files("prooflens").joinpath("data/ProofLensProbe.lean").read_text()
-    if prov.get("probe_sha256") and prov["probe_sha256"] != sha256_text(probe):
+    if not lean or not prov.get("lean_inputs_sha256") or not prov.get("probe_sha256"):
+        raise RuntimeError("the stored evidence does not record its Lean inputs; run the probe")
+    if prov["lean_inputs_sha256"] != lean_inputs_digest(cfg):
+        raise RuntimeError("Lean inputs changed since the stored probe (here or in a path "
+                           "dependency); run the probe")
+    if prov["probe_sha256"] != probe_digest():
         raise RuntimeError("the probe changed since the stored records; run the probe")
     return lean
 
@@ -201,6 +232,10 @@ def reassess(cfg: Config, web_dist: Path | None = None, release: str | None = No
     old = ev.load(cfg.out_dir, read_json(rels[-1])["evidence"])["body"]
     inv = read_json(cfg.inventory)
     validate(inv, "inventory")
+    if canonical_json(inv["claims"]) != canonical_json(old["inventory"]["claims"]):
+        raise RuntimeError("the claim inventory changed since the stored evidence: its Lean and "
+                           "LaTeX results may not cover it; run `prooflens build` (with "
+                           "--reuse-lean if no Lean input changed)")
     reviews, review_hashes = load_reviews(cfg.reviews, cfg.ai_reviewers, cfg.root)
     dismissals = load_dismissals(cfg.dismissals)
     comp = cfg.comparator_log
