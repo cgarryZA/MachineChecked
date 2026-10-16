@@ -143,20 +143,31 @@ def acquire(cfg: Config, paper: Paper, dest: Path) -> Snapshot:
             r"[\w.-]+/[\w.-]+", src["git"]) and not src["git"].startswith(("http", "git@")) \
             else None
         env = _git_env(paper)
+        target = rev
         if local and local.exists():
             repo = local
         else:
+            # Only the pinned revision is fetched: a manuscript repository's other branches
+            # (other papers, drafts) are neither downloaded nor copied here.
             repo = dest.parent / f".{paper.id}-repo"
-            if not repo.exists():
-                r = subprocess.run(["git", "clone", "--quiet", "--filter=blob:none", "--no-checkout",
-                                    _git_url(src["git"]), str(repo)], env=env,
-                                   capture_output=True, text=True)
+            if not (repo / ".git").exists():
+                repo.mkdir(parents=True, exist_ok=True)
+                subprocess.run(["git", "init", "--quiet"], cwd=repo, capture_output=True)
+                subprocess.run(["git", "remote", "add", "origin", _git_url(src["git"])],
+                               cwd=repo, capture_output=True)
+            r = subprocess.run(["git", "-C", str(repo), "fetch", "--quiet", "--depth", "1",
+                                "origin", rev], env=env, capture_output=True, text=True)
+            if r.returncode == 0:
+                target = "FETCH_HEAD"
+            else:
+                # A revision the server will not give by name (an abbreviated commit): fetch the
+                # history, as before, and find it there.
+                r = subprocess.run(["git", "-C", str(repo), "fetch", "--quiet", "origin"],
+                                   env=env, capture_output=True, text=True)
                 if r.returncode != 0:
-                    raise SourceError(f"paper {paper.id}: clone failed: {r.stderr.strip()}")
-            subprocess.run(["git", "-C", str(repo), "fetch", "--quiet", "origin", rev], env=env,
-                           capture_output=True)
-        full = subprocess.run(["git", "-C", str(repo), "rev-parse", "--verify", f"{rev}^{{commit}}"],
-                              capture_output=True, text=True)
+                    raise SourceError(f"paper {paper.id}: fetch failed: {r.stderr.strip()}")
+        full = subprocess.run(["git", "-C", str(repo), "rev-parse", "--verify",
+                               f"{target}^{{commit}}"], capture_output=True, text=True)
         if full.returncode != 0:
             raise SourceError(f"paper {paper.id}: revision {rev} not found")
         rev = full.stdout.strip()
