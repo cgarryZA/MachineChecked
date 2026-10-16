@@ -1,6 +1,8 @@
 // Loading of the presentation manifest. The site only reads: every status and finding comes
 // from the manifest as written by the engine.
 
+import { project, settleProject } from "./project.svelte.js";
+
 const cache = new Map();
 
 // An audit published elsewhere is read with `?audit=<address of its directory>`: the data comes
@@ -45,13 +47,14 @@ function paperIndex(p) {
   const claims = (Array.isArray(p.claims) ? p.claims : []).filter((c) => c && typeof c.id === "string").map((c) => ({
     id: c.id, paper: "P", number: String(c.number || ""), title: c.title ? String(c.title) : null,
     heading: c.title ? String(c.title) : null, kind: String(c.kind || ""), scope: "formal",
-    status: String(c.status || "not linked"), class: Array.isArray(c.links) && c.links.length ? "declared" : "unspecified", counts: {},
+    status: "not linked", class: "unspecified", counts: {},
     anchor: c.anchor && Number.isFinite(c.anchor.page) ? { kind: "approximate", page: c.anchor.page, y0: Number(c.anchor.y0) || 0,
       y1: Number.isFinite(c.anchor.y1) ? c.anchor.y1 : null, page_end: Number.isFinite(c.anchor.page_end) ? c.anchor.page_end : null } : null,
-    links: (Array.isArray(c.links) ? c.links : []).map((l) => ({
-      name: String(l.name || ""), status: String(l.status || ""), class: "unspecified",
+    allLinks: (Array.isArray(c.links) ? c.links : []).map((l) => ({
+      name: String(l.name || ""), status: String(l.status || ""), class: "declared",
       source: "formalization.yaml", repository: String(l.repository || ""), why: null, statement: null })),
   }));
+  settleProject((Array.isArray(p.formalisations) ? p.formalisations : []).map((f) => f && f.repository).filter((r) => typeof r === "string"));
   const summary = {};
   for (const c of claims) summary[c.status] = (summary[c.status] || 0) + 1;
   return {
@@ -145,8 +148,22 @@ export function loadSearch(index) {
   return getJson(index.search || "data/search.json");
 }
 
+// A paper page's claim as the chosen project sees it: only that project's links, and its status
+// from them. Another project's links never show here, and are never combined with these.
+export function inProject(c, repo) {
+  if (!c.allLinks) return c;
+  const links = c.allLinks.filter((l) => l.repository === repo);
+  return { ...c, links, status: links.length ? links[0].status : "not linked", class: links.length ? "declared" : "unspecified" };
+}
+
+// The claims of a paper page for the chosen project (reactive on the choice).
+export function projectClaims(index) {
+  return index.mode === "paper" ? index.claims.map((c) => inProject(c, project.repo)) : index.claims;
+}
+
 export function loadClaim(index, id) {
-  const c = index.claims.find((x) => x.id === id);
+  const raw = index.claims.find((x) => x.id === id);
+  const c = raw && index.mode === "paper" ? inProject(raw, project.repo) : raw;
   if (!c) return Promise.reject(new Error(`no claim ${id} in release ${index.release}`));
   if (index.mode === "paper") {
     // A paper page's claim is all there is to show: its number, place and declared links.

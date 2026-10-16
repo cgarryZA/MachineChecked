@@ -8,6 +8,7 @@ MachineChecked has a Python engine and a static Svelte reader. The reader is com
 pip install -e '.[test]'
 pytest -q
 (cd web && npm ci && npm run build)
+(cd web && node tests/reader.test.mjs)   # the built reader in a browser, laptop and phone widths
 ```
 
 The web build is committed under `engine/python/prooflens/web/`. When editing `web/src/`, rebuild the bundle and keep its output in the same commit. CI checks that the shipped assets match the sources.

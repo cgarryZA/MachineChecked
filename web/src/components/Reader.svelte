@@ -4,12 +4,13 @@
   import PdfView from "./PdfView.svelte";
   import Passport from "./Passport.svelte";
   import PaperInfo from "./PaperInfo.svelte";
+  import { projectClaims } from "../lib/data.js";
 
   // The paper, a contents list of its claims, and the claim chosen.
   let { index, paperId, claimId, editable = false } = $props();
 
   const paper = $derived(index.papers.find((p) => p.id === paperId));
-  const claims = $derived(index.claims.filter((c) => c.paper === paperId));
+  const claims = $derived(projectClaims(index).filter((c) => c.paper === paperId));
   const inScope = (c) => !String(c.status).startsWith("out of scope");
   const ordered = $derived(
     [...claims].filter(inScope).sort((a, b) =>

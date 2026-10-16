@@ -1,5 +1,6 @@
 <script>
   import { loadIndex, canEdit, auditInfo, AUDIT } from "./lib/data.js";
+  import { project, chooseProject } from "./lib/project.svelte.js";
   import { route, href } from "./lib/route.svelte.js";
   import Coverage from "./components/Coverage.svelte";
   import Reader from "./components/Reader.svelte";
@@ -43,6 +44,15 @@
       <span class="ptitle" title={paper.title}><TexInline text={paper.title} /></span>
     {/if}
     {#if index.mode === "paper"}
+      {@const repos = (index.paper.formalisations || []).map((f) => f.repository)}
+      {#if repos.length > 1}
+        <label class="project" title="Separate projects are separate evidence; the page shows one at a time">
+          <span>Formalisation</span>
+          <select value={project.repo} onchange={(e) => chooseProject(e.currentTarget.value)} aria-label="Formalisation shown">
+            {#each repos as r}<option value={r}>{r}</option>{/each}
+          </select>
+        </label>
+      {/if}
       <a class="aux" href="/papers/">Papers</a>
     {:else}
     <Search {index} />
@@ -104,4 +114,6 @@
     .top { gap: 8px; padding: 8px 12px; flex-wrap: wrap; }
     .ptitle { display: none; }
   }
+  .project { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); margin-left: auto; }
+  .project select { font: inherit; max-width: 34vw; padding: 3px 6px; border-radius: 6px; border: 1px solid var(--accent); background: var(--surface); color: var(--text); }
 </style>

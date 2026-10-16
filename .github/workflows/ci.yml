@@ -34,6 +34,9 @@ jobs:
           cd web && npm ci && npm run build && cd ..
           git status --porcelain -- engine/python/prooflens/web
           test -z "$(git status --porcelain -- engine/python/prooflens/web)"
+      - name: The reader in a browser (web/tests)
+        run: |
+          cd web && npx playwright install --with-deps chromium && node tests/reader.test.mjs
       - name: Build the plain example (zero-configuration tests use it)
         run: cd examples/plain-paper && lake build
       - name: Tests (contracts, mutations, security, zero-configuration)

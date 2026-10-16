@@ -75,6 +75,7 @@ pip install -e '.[test]'
 pytest -q                                   # ~4 min; needs elan + TeX Live for most tests
 (cd examples/plain-paper && lake build)     # the zero-configuration tests need it built
 (cd web && npm ci && npm run build)         # after any change under web/src: commit the result
+(cd web && node tests/reader.test.mjs)      # the reader in a browser (CHROMIUM=/opt/pw-browsers/chromium in cloud sessions)
 ```
 
 - After changing `web/src`, rebuild and commit `engine/python/prooflens/web/`; CI fails if the

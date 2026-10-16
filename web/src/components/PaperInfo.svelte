@@ -3,14 +3,15 @@
   // formalise it (one at a time, chosen at the top when there are several), who says so, the
   // project's own description of its review, and the audits published of it. Nothing here is a
   // judgement of the formalisation: without an audit, it says nothing about what Lean establishes.
+  import { project } from "../lib/project.svelte.js";
   let { paper } = $props();
 
   const https = (u) => typeof u === "string" && /^https:\/\/[^\s"'<>]+$/.test(u);
   const repoOk = (r) => typeof r === "string" && /^[\w.-]+\/[\w.-]+$/.test(r);
   const shaOk = (c) => typeof c === "string" && /^[0-9a-f]{40}$/.test(c);
   const fs = $derived((paper.formalisations || []).filter((f) => repoOk(f.repository) && shaOk(f.commit)));
-  let chosen = $state(0);
-  const f = $derived(fs[Math.min(chosen, fs.length - 1)]);
+  // The project chosen for the whole page (at the top of the page when there are several).
+  const f = $derived(fs.find((x) => x.repository === project.repo) || fs[0]);
   const audits = $derived((f?.audits || []).filter((a) => https(a.url)));
   const links = $derived(paper.links || {});
   const pdf = $derived([links.pdf, https(links.arxiv) ? links.arxiv.replace("/abs/", "/pdf/") : null].find(https));
@@ -39,12 +40,7 @@
     <p class="muted">No Lean formalisation of this paper is listed.</p>
   {:else}
     {#if fs.length > 1}
-      <label class="pick small">Formalisation
-        <select bind:value={chosen}>
-          {#each fs as x, i}<option value={i}>{x.repository}</option>{/each}
-        </select>
-      </label>
-      <p class="faint small">Separate projects are separate evidence; their results are never combined.</p>
+      <p class="faint small">One of {fs.length} formalisations, chosen at the top of the page. Separate projects are separate evidence; their results are never combined.</p>
     {/if}
     <div class="card">
       <p class="repo"><a href={`https://github.com/${f.repository}/tree/${f.commit}`} target="_blank" rel="noopener"><code>{f.repository}</code></a></p>
@@ -84,8 +80,6 @@
   .card { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; background: var(--surface); }
   .card p { margin: 4px 0; }
   .repo { font-size: 15px; overflow-wrap: anywhere; }
-  .pick { display: flex; flex-direction: column; gap: 4px; margin: 0 0 6px; }
-  .pick select { font: inherit; padding: 4px 6px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text); }
   .btn { display: inline-block; padding: 4px 12px; border-radius: 6px; background: var(--accent); color: var(--surface); text-decoration: none; }
   .related { margin-top: 18px; }
   .related summary { cursor: pointer; color: var(--muted); }
