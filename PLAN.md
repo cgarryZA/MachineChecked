@@ -51,7 +51,7 @@ where its author chooses (for example their GitHub Pages). The site loads it as 
 every string in it as untrusted; it never runs an audit's HTML or JavaScript. An audit the browser
 cannot load is linked instead.
 
-**One page per paper.** A selector at the top chooses whose formalisation is shown; changing it
+**One page per paper, and it is the paper.** A paper's page is the reader showing the paper itself (its PDF from its source), whether or not anything about it is formalised; what is known about its formalisations sits in a panel beside it, and an audit adds its claims to the same reader. A selector chooses whose formalisation is shown; changing it
 changes the evidence beside each claim, never the paper or its numbering. Each project shows its
 own claims. Showing another project's mapping where the selected one has none, and combined
 coverage, come later, and only between audits that pin the same paper version: claim numbers can
@@ -98,9 +98,9 @@ MachineChecked, install it with one command, and use it without asking anyone.
 | 2 ✓ | For agents: `check --json`, the Agent Skill (`skills/machinechecked`), `docs/AGENTS.md`; PyPI metadata and a release workflow | an agent can run an audit and report it without misreading a status |
 | 3 ✓ | First PyPI release (`uvx machinechecked view`); GitHub description, topics and a versioned release | `pip install machinechecked` works on a clean machine |
 | 4 ✓ | The site moves to `cgarryZA/machinechecked.org`, reusing the reader; the demo is the toy audit published by the tool's CI | the site deploys with no Lean or TeX installed |
-| 5 | Registry and **crawlable paper pages**: plain HTML per paper (`/papers/<arxiv id>/`) with title, authors, identifiers and the linked repositories and audits, then the interactive reader; `sitemap.xml`, `robots.txt` allowing search crawlers, a short `llms.txt`; Navier–Stokes as a curated entry | a paper page is found by a search engine and shows two repositories and one audit |
+| 5 ✓ | Registry and **crawlable paper pages**: plain HTML per paper (`/papers/<arxiv id>/`) with title, authors, identifiers and the linked repositories and audits, then the interactive reader; `sitemap.xml`, `robots.txt` allowing search crawlers, a short `llms.txt`; Navier–Stokes as a curated entry | a paper page is found by a search engine and shows two repositories and one audit |
 | 6 | The `machinechecked cache` commands (save, restore) and a workflow template for anyone's own repository; then the Navier–Stokes case: built under WSL2 with them, audited, published from a fork and registered; the landing page links it | a reader can go from a claim in the paper to its Lean and raise an issue |
-| 7 | Listing: the daily `formalization.yaml` job, the report button, `delisted.json`; search by arXiv identifier and OpenAlex | a repository that names an arXiv paper appears with no one approving it |
+| 7 ✓ | Listing: the daily `formalization.yaml` job, the report button, `delisted.json`; search by arXiv identifier and OpenAlex | a repository that names an arXiv paper appears with no one approving it |
 | 8 | Reader polish: collapsible contents, adjustable split, the margin label no longer covering text; README badge ("audit available") | an outside audit links back with a badge |
 
 **Launch** (people, not code): once steps 3, 5 and 6 are live, show it on the Lean Zulip and to
