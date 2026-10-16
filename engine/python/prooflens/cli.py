@@ -238,6 +238,8 @@ def cmd_build_simple(a):
 
 
 def cmd_check(a):
+    if getattr(a, "json", False):
+        return _check_json(a)
     if _assurance_config(a):
         a.config = str(_assurance_config(a))
         a.release = None; a.skip_lean = a.skip_tex = False; a.lake = "lake"
@@ -258,6 +260,53 @@ def cmd_check(a):
         return
     print(f"all {n} linked declaration(s) are checked by Lean (whether each says what the paper "
           "says is not reviewed by this check)")
+
+
+CHECK_NOTE = ("Statuses say what Lean establishes about the linked declarations. Whether a Lean "
+              "statement says what the paper says is not checked here; that takes a reviewer.")
+
+
+def _check_json(a):
+    """`check --json`: every claim with its status and links, as one JSON document on stdout
+    (progress goes to stderr). Exit 1 if a linked declaration is missing or not proved."""
+    import contextlib
+    import json
+    with contextlib.redirect_stdout(sys.stderr):
+        if _assurance_config(a):
+            from .pipeline import build
+            cfg = cfgmod.load(_assurance_config(a))
+            idx = build(cfg, web_dist=_web_dist(a.web))["index"]
+            claims = [{"id": c["id"], "paper": c["paper"], "number": c.get("number"),
+                       "title": c.get("title"), "status": c["status"], "class": c["class"]}
+                      for c in idx["claims"]]
+            out = {"mode": "full", "release": idx["release"],
+                   "project": idx.get("project", {}).get("commit"),
+                   "findings": idx["findings"]["total"]}
+            failed = bool(idx["findings"]["total"].get("violation"))
+        else:
+            root, paper = _simple_target(a)
+            site, idx, view = _simple_site(root, paper, a.web)
+            body = view["body"]
+            claims = [{"id": c["id"], "number": c["number"], "title": c["title"],
+                       "status": c["status"], "class": c["class"],
+                       "links": [{"name": l["name"], "status": l["status"], "class": l["class"],
+                                  "source": l.get("source")} for l in c["links"]],
+                       "suggestions": [{"name": x["name"], "why": x.get("why")}
+                                       for x in c.get("suggestions", [])]}
+                      for c in body["claims"]]
+            out = {"mode": "simple", "paper": body["paper"], "title": body["title"],
+                   "release": idx["release"], "commit": body.get("commit"),
+                   "modules": {"built": body["project"]["built"],
+                               "not_built": body["project"]["unbuilt"]},
+                   "notes": body["notes"]}
+            failed = any(l["class"] != "proved" for c in claims for l in c["links"])
+    summary = {}
+    for c in claims:
+        summary[c["status"]] = summary.get(c["status"], 0) + 1
+    print(json.dumps({"schema": "machinechecked/check@1", **out, "summary": summary,
+                      "claims": claims, "ok": not failed, "note": CHECK_NOTE}, indent=1))
+    if failed:
+        sys.exit(1)
 
 
 def cmd_build(a):
@@ -416,6 +465,8 @@ def main(argv=None):
     k = sub.add_parser("check", help="report what the Lean side establishes (exit 1 if a "
                                      "linked declaration is missing or unproved)")
     k.add_argument("paper", nargs="?")
+    k.add_argument("--json", action="store_true",
+                   help="print every claim's status and links as JSON (for scripts and agents)")
     k.add_argument("-c", "--config", help=argparse.SUPPRESS)
     k.add_argument("--web", help=argparse.SUPPRESS)
     k.set_defaults(func=cmd_check)

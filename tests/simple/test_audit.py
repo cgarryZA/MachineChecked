@@ -125,3 +125,34 @@ def test_an_audit_is_read_only_and_confined_to_its_directory():
     assert "if (window.__PROOFLENS__ || AUDIT) return false;" in data   # never editable
     assert 'u.protocol !== "https:"' in data
     assert "outside the audit's directory" in data
+
+
+@needs_lean
+@needs_tex
+def test_check_json_is_one_document_on_stdout(plain):
+    if not built_modules(plain, ["Plain"])[0]:
+        pytest.skip("the plain example is not built")
+    r = subprocess.run([sys.executable, "-m", "prooflens.cli", "check", "--json"], cwd=plain,
+                       capture_output=True, text=True)
+    out = json.loads(r.stdout)
+    assert out["schema"] == "machinechecked/check@1" and out["ok"] and r.returncode == 0
+    c = {x["number"]: x for x in out["claims"]}
+    assert c["Theorem 1"]["links"][0] == {"name": "Plain.odd_add_odd", "class": "proved",
+                                          "status": "linked: Lean proof checked",
+                                          "source": "paper"}
+    assert c["Theorem 2"]["status"] == "suggested link, not confirmed"
+    assert "not checked here" in out["note"]
+
+
+def test_the_skill_says_what_the_statuses_do_not_mean():
+    skill = (ROOT / "skills" / "machinechecked" / "SKILL.md").read_text()
+    head = skill.split("---")[1]
+    assert "name: machinechecked" in head and "description:" in head
+    from prooflens import simple
+    import inspect
+    src = inspect.getsource(simple)
+    # Every status the skill explains is one the engine writes.
+    for st in re.findall(r"^\| `(linked: [^`]+|suggested link, not confirmed|not linked)` \|",
+                         skill, re.M):
+        assert st.split(" (")[0] in src or st in src, st
+    assert "does **not** check that a Lean statement says what the paper" in skill

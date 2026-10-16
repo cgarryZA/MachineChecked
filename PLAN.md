@@ -88,20 +88,28 @@ audit whose terms allow it carries its pinned PDF.
 
 ## Order
 
+The aim of the next steps is that a stranger, or the coding agent helping them, can find
+MachineChecked, install it with one command, and use it without asking anyone.
+
 | Step | Work | Done when |
 |---|---|---|
-| 0 | Short README and guides; this plan; landing page with a preview of the demo reader | the docs match the code, including the limits of PDF reading |
-| 1 | The audit descriptor, written by `build` and `export`; the reader loads an audit from a URL as untrusted data | the toy audit loads from another address; HTML in a manifest is shown as text |
-| 2 | The site moves to `cgarryZA/machinechecked.org`, reusing the reader's components | the site deploys with no Lean or TeX installed; the demo is the toy audit published by the tool's CI |
-| 3 | Registry and paper pages: the three levels, the selector; Navier–Stokes as a curated entry; collapsible contents and an adjustable split in the reader | a paper page shows two repositories and one audit |
-| 4 | Search: arXiv identifier lookup and OpenAlex | an unregistered paper can be found without entering the registry |
-| 5 | Listing: the daily `formalization.yaml` job, the report button, `delisted.json`, curated entries | a repository that names an arXiv paper appears with no one approving it |
-| 6 | Raise issue on every claim of a published audit | a visitor reaches the audit's tracker with the claim filled in |
-| 7 | The `machinechecked cache` commands (save, restore) and the workflow template | another researcher produces and hosts an audit with their own resources |
-| 8 | The first real audit: OpenAI's Navier–Stokes formalisation, built under WSL2, cached, audited and published from a fork | its paper page gains an audit |
+| 0 ✓ | Short README and guides; this plan; landing page with a preview of the demo reader | the docs match the code, including the limits of PDF reading |
+| 1 ✓ | The audit descriptor, written by `build --site` and `export`; the reader loads an audit from its address as untrusted data | an audit loads from another address; HTML in it is shown as text |
+| 2 ✓ | For agents: `check --json`, the Agent Skill (`skills/machinechecked`), `docs/AGENTS.md`; PyPI metadata and a release workflow | an agent can run an audit and report it without misreading a status |
+| 3 | First PyPI release (`uvx machinechecked view`); GitHub description, topics and a versioned release | `pip install machinechecked` works on a clean machine |
+| 4 | The site moves to `cgarryZA/machinechecked.org`, reusing the reader; the demo is the toy audit published by the tool's CI | the site deploys with no Lean or TeX installed |
+| 5 | Registry and **crawlable paper pages**: plain HTML per paper (`/papers/<arxiv id>/`) with title, authors, identifiers and the linked repositories and audits, then the interactive reader; `sitemap.xml`, `robots.txt` allowing search crawlers, a short `llms.txt`; Navier–Stokes as a curated entry | a paper page is found by a search engine and shows two repositories and one audit |
+| 6 | The `machinechecked cache` commands (save, restore) and a workflow template for anyone's own repository; then the Navier–Stokes case: built under WSL2 with them, audited, published from a fork and registered; the landing page links it | a reader can go from a claim in the paper to its Lean and raise an issue |
+| 7 | Listing: the daily `formalization.yaml` job, the report button, `delisted.json`; search by arXiv identifier and OpenAlex | a repository that names an arXiv paper appears with no one approving it |
+| 8 | Reader polish: collapsible contents, adjustable split, the margin label no longer covering text; README badge ("audit available") | an outside audit links back with a badge |
+
+**Launch** (people, not code): once steps 3, 5 and 6 are live, show it on the Lean Zulip and to
+the mathlib-initiative `formalization.yaml` maintainers, approach about ten researchers with a
+paper and a Lean repository, then a Show HN with the Navier–Stokes case. No paid advertising.
 
 Deferred: claim fallback across projects and combined coverage; issue counts; a registration
-form; README badges; drift reports between releases; a Verso Blueprint adapter; live Lean.
+form; an MCP server (the CLI and the skill come first); drift reports between releases; a Verso
+Blueprint adapter; live Lean; accounts, newsletters, community features.
 
 **Other formalisation platforms.** A Prove2Me mission (or another platform's project) can be one
 more source of evidence for a paper's claims, read-only, beside GitHub repositories: its mission

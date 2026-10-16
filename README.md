@@ -6,7 +6,7 @@ MachineChecked opens a paper, finds its numbered statements and lets you explore
 
 **A Lean proof establishes a formal statement—not automatically the claim in the paper.** MachineChecked keeps those two questions separate.
 
-[Try the demo](https://machinechecked.org/demo/) · [Website](https://machinechecked.org/) · [Installation and usage](docs/GETTING_STARTED.md)
+[Try the demo](https://machinechecked.org/demo/) · [Website](https://machinechecked.org/) · [Installation and usage](https://github.com/cgarryZA/MachineChecked/blob/main/docs/GETTING_STARTED.md)
 
 ## Open your paper
 
@@ -43,7 +43,11 @@ The HTML bundle includes the paper and reader. Share it directly, commit it to a
 
 Every claim has **Copy link** and, when the audit names a repository for reports (`machinechecked view --issues owner/repo`), **Raise issue**: a GitHub issue draft in the audit's own repository, with the claim, its Lean declarations and the commits filled in. The reader sends nothing, and a report changes no status.
 
-[Full guide: installation, links, sharing and troubleshooting →](docs/GETTING_STARTED.md)
+[Full guide: installation, links, sharing and troubleshooting →](https://github.com/cgarryZA/MachineChecked/blob/main/docs/GETTING_STARTED.md)
+
+## With a coding agent
+
+`machinechecked check --json` prints every claim's status and links as JSON, for scripts and agents. The [MachineChecked skill](https://github.com/cgarryZA/MachineChecked/blob/main/skills/machinechecked/SKILL.md) teaches Claude Code and other agents to run it and to report what the statuses do and do not mean; see [Using MachineChecked with a coding agent](https://github.com/cgarryZA/MachineChecked/blob/main/docs/AGENTS.md).
 
 ## Review mathematical correspondence
 
@@ -55,7 +59,7 @@ The optional **Review** view guides a reader through one claim at a time:
 
 A report does **not** mark a claim accepted. In projects with a formal acceptance policy, the maintainer decides whether to promote a submitted review. The review's provenance, version and scope remain visible.
 
-[Review guide →](docs/REVIEWING.md)
+[Review guide →](https://github.com/cgarryZA/MachineChecked/blob/main/docs/REVIEWING.md)
 
 ## More rigorous audits
 
@@ -63,16 +67,17 @@ An ordinary Lean repository needs no configuration. Projects that already mainta
 
 This enables exact-type checks, definition-dependent review tracking, witnesses, refutations, per-claim evidence and optional independent kernel replay. It does not assume that a passing Lean build proves the manuscript is faithfully formalised.
 
-[Full-assessment setup and configuration →](docs/ASSURANCE.md)
+[Full-assessment setup and configuration →](https://github.com/cgarryZA/MachineChecked/blob/main/docs/ASSURANCE.md)
 
 ## Documentation
 
-- [Get started](docs/GETTING_STARTED.md) — install, open, link, share and troubleshoot
-- [Reviewing](docs/REVIEWING.md) — how the review queue records mathematical judgements
-- [Full assessment](docs/ASSURANCE.md) — configuration, claim inventory and acceptance
-- [Evidence policy](docs/EVIDENCE_POLICY.md) — what each check does and does not establish
-- [Data model](docs/DATA_MODEL.md) · [Publication policy](docs/PUBLICATION_POLICY.md) · [Threat model](docs/THREAT_MODEL.md)
-- [Development and roadmap](docs/DEVELOPMENT.md) · [Plan](PLAN.md)
+- [Get started](https://github.com/cgarryZA/MachineChecked/blob/main/docs/GETTING_STARTED.md) — install, open, link, share and troubleshoot
+- [With a coding agent](https://github.com/cgarryZA/MachineChecked/blob/main/docs/AGENTS.md) — the skill and `check --json`
+- [Reviewing](https://github.com/cgarryZA/MachineChecked/blob/main/docs/REVIEWING.md) — how the review queue records mathematical judgements
+- [Full assessment](https://github.com/cgarryZA/MachineChecked/blob/main/docs/ASSURANCE.md) — configuration, claim inventory and acceptance
+- [Evidence policy](https://github.com/cgarryZA/MachineChecked/blob/main/docs/EVIDENCE_POLICY.md) — what each check does and does not establish
+- [Data model](https://github.com/cgarryZA/MachineChecked/blob/main/docs/DATA_MODEL.md) · [Publication policy](https://github.com/cgarryZA/MachineChecked/blob/main/docs/PUBLICATION_POLICY.md) · [Threat model](https://github.com/cgarryZA/MachineChecked/blob/main/docs/THREAT_MODEL.md)
+- [Development and roadmap](https://github.com/cgarryZA/MachineChecked/blob/main/docs/DEVELOPMENT.md) · [Plan](https://github.com/cgarryZA/MachineChecked/blob/main/PLAN.md)
 
 MachineChecked is an **open-source tool, not a certifying authority**. Each published audit presents its author's evidence and judgements; readers can inspect and challenge them. The website currently offers the tool and a synthetic demonstration, not an independently certified catalogue of papers.
 
