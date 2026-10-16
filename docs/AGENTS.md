@@ -27,8 +27,12 @@ machinechecked check --json
 ```
 
 prints one JSON document (`machinechecked/check@1`) with every claim's number, status, links
-and suggestions, and exits 1 when a linked declaration is missing or not proved. Progress goes
-to stderr, so stdout is only the JSON.
+and suggestions. It exits 0 when every linked declaration is proved, 1 when one is missing or
+not proved, and 2 when the check could not run (a missing program such as `lake`, no Lean
+project, a paper that cannot be read, a failed Lean probe). In that last case the document has
+`"ok": false` and an `error` (`kind`: `missing-tool` with the `tool`, `error`, or `internal`;
+`message`) and no claims: nothing is known about them. Progress goes to stderr, so stdout is only
+the JSON.
 
 ## A note for your project's AGENTS.md or CLAUDE.md
 

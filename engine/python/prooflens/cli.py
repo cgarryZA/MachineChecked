@@ -472,7 +472,8 @@ def main(argv=None):
     b.set_defaults(func=cmd_build)
 
     k = sub.add_parser("check", help="report what the Lean side establishes (exit 1 if a "
-                                     "linked declaration is missing or unproved)")
+                                     "linked declaration is missing or unproved, 2 if the check "
+                                     "could not run)")
     k.add_argument("paper", nargs="?")
     k.add_argument("--json", action="store_true",
                    help="print every claim's status and links as JSON (for scripts and agents)")
@@ -535,11 +536,49 @@ def main(argv=None):
     a = p.parse_args(argv)
     try:
         a.func(a)
+    except SystemExit as e:
+        # `sys.exit("message")` is a command that could not do its job; an integer is its result.
+        if isinstance(e.code, str):
+            _could_not_run(a, "error", e.code.removeprefix("machinechecked: "))
+        raise
     except FileNotFoundError as e:
-        hint = MISSING.get(Path(str(e.filename or "")).name)
-        if not hint:
-            raise
-        sys.exit(f"machinechecked: `{Path(e.filename).name}` not found: {hint}")
+        tool = Path(str(e.filename or "")).name
+        if tool in MISSING:
+            _could_not_run(a, "missing-tool", f"`{tool}` not found: {MISSING[tool]}", tool=tool)
+        _could_not_run(a, "internal", _crash(e))
+    except (RuntimeError, ValueError, OSError) as e:
+        # The engine's own errors (the Lean probe, TeX, the paper's sources, the configuration,
+        # stored evidence) say what went wrong in their message.
+        if type(e).__module__.startswith("prooflens"):
+            _could_not_run(a, "error", str(e))
+        _could_not_run(a, "internal", _crash(e))
+    except Exception as e:
+        _could_not_run(a, "internal", _crash(e))
+
+
+# Exit codes: 0 the command did its job (and `check` found nothing wrong), 1 `check` (or
+# `build --fail-on-violation`) found a problem, 2 the command could not run.
+COULD_NOT_RUN = 2
+
+
+def _crash(e: Exception) -> str:
+    """An unexpected error: its traceback on stderr, for a bug report, and a one-line message."""
+    import traceback
+    traceback.print_exc()
+    return f"unexpected error ({type(e).__name__}: {e}); please report it with the traceback above"
+
+
+def _could_not_run(a, kind: str, message: str, **extra):
+    """Stop with exit 2: the message on stderr and, for `check --json`, one JSON document on
+    stdout saying the check did not run."""
+    print(f"machinechecked: {message}", file=sys.stderr)
+    if getattr(a, "func", None) is cmd_check and getattr(a, "json", False):
+        import json
+        print(json.dumps({"schema": "machinechecked/check@1", "ok": False,
+                          "error": {"kind": kind, "message": message, **extra},
+                          "note": "The check did not run; nothing is known about the claims."},
+                         indent=1))
+    raise SystemExit(COULD_NOT_RUN)
 
 
 if __name__ == "__main__":

@@ -40,8 +40,10 @@ there are several or it is elsewhere: `machinechecked check --json paper/main.te
 
 ## Read the result
 
-`check --json` prints one JSON document (progress goes to stderr) and exits 1 if a linked
-declaration is missing or not proved. Per claim: `number` ("Theorem 2.1"), `status`, `links`
+`check --json` prints one JSON document (progress goes to stderr). Exit 0: every linked
+declaration is proved; 1: one is missing or not proved; 2: the check could not run. On exit 2 the
+document has an `error` (`kind`, `message`, and `tool` when a program such as `lake` is missing)
+and no claims: report the error and that nothing was checked, never a status. Per claim: `number` ("Theorem 2.1"), `status`, `links`
 (each with `name`, `status`, `source`) and `suggestions` (unconfirmed candidates, with `why`).
 
 | status | meaning |
