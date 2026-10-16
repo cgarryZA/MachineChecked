@@ -53,6 +53,16 @@ checked*, *linked: Lean proof incomplete (sorry)*, *linked: Lean proof uses furt
 formalises the claim and what Lean says about it. Whether the declaration says what the paper
 says is a separate question, for a review (below).
 
+### Papers that are only a PDF, and formalization.yaml
+
+When the repository has no LaTeX paper, give the PDF's path or URL
+(`machinechecked view https://…/paper.pdf`); a URL is downloaded once into `.machinechecked/`.
+If the project has a [`formalization.yaml`](https://github.com/mathlib-initiative/formalization.yaml)
+naming its sources, MachineChecked offers those. A PDF's numbered statements are found by their bold
+headings (where each ends is estimated, and drawn as approximate). The mappings in the file's
+`alignment` become links, labelled as declared by the project, beside its own review status
+("self-assessed", …). In a project that is not built, links read *Lean not checked*, never proved.
+
 ### Share it
 
 ```sh

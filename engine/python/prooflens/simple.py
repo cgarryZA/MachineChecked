@@ -28,6 +28,7 @@ from .config import STANDARD_AXIOMS, Config, Paper, Publish
 from .probe import fingerprint
 from .sources import SourceError, acquire
 from .tex import DEFAULT_ENVS, TexError, anchors_for, theorem_envs
+from . import formalization as fz
 from .util import content_id, git_head, read_json, sha256_file, write_json
 
 LINKS = "machinechecked.links.json"
@@ -115,13 +116,14 @@ def claims_from_anchors(pid: str, anchors: list[dict], snap: Path) -> list[dict]
         env = a["env"]
         num = a.get("number")
         key = a.get("label") or (f"{env}-{num}" if num else f"{env}@{a['file']}:{a['line']}")
-        title, tags = "", []
-        try:
-            lines = (snap / a["file"]).read_text(encoding="utf-8", errors="replace").split("\n")
-            title = a.get("title") or ""
-            tags = source_tags(lines, a["line"], env)
-        except OSError:
-            pass
+        title, tags = a.get("title") or "", []
+        if a.get("file"):
+            try:
+                lines = (snap / a["file"]).read_text(encoding="utf-8",
+                                                     errors="replace").split("\n")
+                tags = source_tags(lines, a["line"], env)
+            except OSError:
+                pass
         claims.append({
             "id": f"{pid}:{key}", "key": key, "paper": pid, "kind": env,
             "number": f"{env.capitalize()} {num}" if num else env.capitalize(), "title": title,
@@ -202,11 +204,20 @@ def tagged_names(claim: dict) -> list[str]:
 
 def linked_names(claim: dict, entry: dict) -> list[str]:
     """The declarations a claim is linked to: those confirmed in the reader (the links file
-    holds the whole list, possibly empty), else those its `\\lean{…}` tags name, less the ones
-    rejected in the reader. A tag is a link its author wrote into the paper's source."""
+    holds the whole list, possibly empty), else those its `\\lean{…}` tags and the project's
+    formalization.yaml name, less the ones rejected in the reader. A tag is a link its author
+    wrote into the paper's source; a formalization.yaml mapping, one the project declared."""
     if "lean" in entry:
         return list(entry["lean"])
-    return [n for n in tagged_names(claim) if n not in entry.get("rejected", [])]
+    names = tagged_names(claim) + [n for n in claim.get("declared", [])
+                                   if n not in tagged_names(claim)]
+    return [n for n in names if n not in entry.get("rejected", [])]
+
+
+def link_source(claim: dict, entry: dict, name: str) -> str:
+    if "lean" in entry:
+        return "confirmed"
+    return "paper" if name in tagged_names(claim) else "formalization.yaml"
 
 
 # -- links file ------------------------------------------------------------------------------
@@ -346,6 +357,14 @@ def view_config(root: Path, paper_path: Path, out_dir: Path, libs: list[str]) ->
 
 
 def paper_title(p: Path) -> str:
+    side = p.with_suffix(".json")
+    if p.suffix == ".pdf" and side.exists():
+        try:
+            t = json.loads(side.read_text()).get("title")
+            if t:
+                return t
+        except ValueError:
+            pass
     if p.suffix == ".tex":
         m = re.search(r"\\title\{([^}]*)\}", p.read_text(errors="replace"))
         if m:
@@ -392,10 +411,30 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
             tex["mode"] = "pdf"
     if pdf is None and snap.pdf:
         pdf = snap.dir / snap.pdf
+    if not claims and pdf is not None:
+        # A paper that is only a PDF: its numbered statements are found by their bold heads.
+        from .pdfclaims import claims_from_pdf
+        anchors, size = claims_from_pdf(pdf)
+        tex.update(mode="pdf", anchors=anchors, page_size=size)
+        claims = claims_from_anchors(paper.id, anchors, snap.dir)
+        if anchors:
+            notes.append("the paper is a PDF: its statements were found by their bold headings, "
+                         "and where each one ends is estimated")
     paper_key = str(paper_path.relative_to(root))
+    side = paper_path.with_suffix(".json")
+    if paper_path.suffix == ".pdf" and side.exists():
+        # A paper fetched by URL is known by its URL, the same in every clone.
+        paper_key = json.loads(side.read_text()).get("url") or paper_key
 
     # The Lean project.
+    fy = fz.load(root)
+    if fy and "error" in fy:
+        notes.append(fy["error"])
     index, linkrecs, decls = [], {}, {}
+    if fy and "error" not in fy:
+        for c in claims:
+            c["declared"] = [n for st in fz.links_for(fy, c["kind"], c["number"], paper.title)
+                             for n in st["lean"]]
     links = load_links(root).get("papers", {}).get(paper_key, {})
     if not libs:
         notes.append("no Lean library found in the lakefile")
@@ -436,17 +475,17 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
     # Statuses.
     for c in claims:
         entry = links.get(c["key"], {})
-        source = "confirmed" if "lean" in entry else "paper"
         c["links"] = []
         for n in c.pop("link_names", None) or linked_names(c, entry):
             status, cls = link_state(linkrecs.get(n)) if built else \
                 ("linked: Lean not checked (the project is not built)", "unspecified")
-            c["links"].append({"name": n, "status": status, "class": cls, "source": source,
+            c["links"].append({"name": n, "status": status, "class": cls,
+                               "source": link_source(c, entry, n),
                                "record": linkrecs.get(n)})
         for s in c.get("suggestions", []):
             s["record"] = linkrecs.get(s["name"])
         if c["links"]:
-            worst = max(c["links"], key=lambda l: ["proved", "open", "malformed"]
+            worst = max(c["links"], key=lambda l: ["proved", "unspecified", "open", "malformed"]
                         .index(l["class"]))
             c["status"], c["class"] = worst["status"], worst["class"]
         elif c.get("suggestions"):
@@ -460,6 +499,7 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
             "links_sha256": sha256_file(links_file(root)) if links_file(root).exists()
             else None,
             "commit": git_head(root), "issues": load_links(root).get("issues"),
+            "formalization": fz.summary(fy),
             "site_url": load_links(root).get("site_url"),
             "pdf_sha256": sha256_file(pdf) if pdf else None, "tex": tex,
             "claims": claims, "index": index, "decls": decls}
@@ -483,12 +523,13 @@ def write_view_site(view: dict, site: Path, web_dist: Path | None) -> dict:
         anchor = next((a for a in body["tex"].get("anchors", [])
                        if (a.get("label") or f"{a['env']}-{a.get('number')}") == c["key"]), None)
         fname = mf.claim_file(c["id"])
-        top = mf.top_of({**anchor, "kind": "exact"}) if anchor and anchor.get("begin") else None
+        akind = "approximate" if anchor and anchor.get("kind") == "pdf" else "exact"
+        top = mf.top_of({**anchor, "kind": akind}) if anchor and anchor.get("begin") else None
         index_claims.append({
             "id": c["id"], "paper": c["paper"], "number": c["number"], "title": c["title"],
             "heading": c["title"] or None, "kind": c["kind"], "scope": c["scope"],
             "status": c["status"], "class": c["class"],
-            "anchor": {"kind": "exact", "page": top[0], "y0": top[1],
+            "anchor": {"kind": akind, "page": top[0], "y0": top[1],
                        "y1": anchor["end"][2] if anchor.get("end") and
                        anchor["end"][0] == anchor["begin"][0] else None,
                        "page_end": anchor["end"][0] if anchor.get("end") else None}
@@ -505,8 +546,9 @@ def write_view_site(view: dict, site: Path, web_dist: Path | None) -> dict:
             "title": c["title"], "heading": c["title"] or None, "kind": c["kind"], "scope": c["scope"], "scope_note": "",
             "scope_reviewed": True, "location": c["location"],
             "source_sha256": c["source_sha256"], "status": c["status"], "class": c["class"],
-            "anchor": {**anchor, "kind": "exact"} if anchor else None, "source_matches": None,
-            "statement_tex": (anchor or {}).get("statement"), "blockers": [],
+            "anchor": {**anchor, "kind": akind} if anchor else None, "source_matches": None,
+            "statement_tex": (anchor or {}).get("statement") if akind == "exact" else None,
+            "blockers": [],
             "links": [_link_view(l) for l in c["links"]],
             "suggestions": [_link_view(s) for s in c.get("suggestions", [])],
             "clauses": [], "decls": {n: keys[n] for n in sorted(names) if n in keys},
@@ -521,6 +563,7 @@ def write_view_site(view: dict, site: Path, web_dist: Path | None) -> dict:
              "project": {"name": body["project"]["name"], "commit": body.get("commit")},
              "tool": {"name": "machinechecked"},
              "issues": body.get("issues"), "site_url": body.get("site_url"),
+             "formalization": body.get("formalization"),
              "lean": None, "notes": body["notes"],
              "papers": [{"id": "P", "title": body["title"], "mode": body["tex"]["mode"],
                          "revision": body.get("commit"),

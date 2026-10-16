@@ -74,12 +74,16 @@
     setTimeout(() => (copied = null), 2000);
   }
 
+  // The sentence under a link restates the status the engine computed for it, and nothing more.
   function linkVerdict(l) {
-    if (!l.statement && l.status?.includes("not found")) return "Not found in the built modules.";
-    if (l.kind && l.kind !== "theorem") return `A Lean ${l.kind}.`;
-    if (l.sorry) return "Its Lean proof is incomplete (it uses sorry).";
-    if (l.errors?.length) return "Its proof uses axioms beyond the standard three: " + (l.axioms || []).join(", ") + ".";
-    return "Proved in Lean. Whether it says what the paper says has not been reviewed.";
+    const s = l.status || "";
+    if (s.includes("not checked")) return "Lean has not been run on it here: the project is not built, so whether it is proved is not known.";
+    if (s.includes("not found")) return "Not found in the built modules.";
+    if (s.includes("definition")) return `A Lean ${l.kind || "definition"}.`;
+    if (s.includes("incomplete")) return "Its Lean proof is incomplete (it uses sorry).";
+    if (s.includes("further axioms")) return "Its proof uses axioms beyond the standard three: " + (l.axioms || []).join(", ") + ".";
+    if (s === "linked: Lean proof checked") return "Proved in Lean. Whether it says what the paper says has not been reviewed.";
+    return s;
   }
 </script>
 
@@ -121,7 +125,7 @@
         {#each claim.links as l (l.name)}
           <div class="card">
             <p class="decl"><code>{l.name}</code>{#if l.module}<span class="faint"> · {l.module}{l.range ? ":" + l.range.line : ""}</span>{/if}</p>
-            <p class="faint small src">{l.source === "paper" ? "Linked by a \\lean{…} tag in the paper's source" : "Linked in the reader (machinechecked.links.json)"}</p>
+            <p class="faint small src">{l.source === "paper" ? "Linked by a \\lean{…} tag in the paper's source" : l.source === "formalization.yaml" ? "Declared in the project's formalization.yaml" + (index.formalization?.review_status ? ` (the project describes its review as “${index.formalization.review_status}”)` : "") : "Linked in the reader (machinechecked.links.json)"}</p>
             <p class="verdict top">{linkVerdict(l)}</p>
             {#if l.statement}<Statement st={l.statement} onref={showDecl} compact />{/if}
             {#if editable}

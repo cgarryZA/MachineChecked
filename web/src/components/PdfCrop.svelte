@@ -27,7 +27,11 @@
     <canvas bind:this={canvas} aria-label="The claim as printed"></canvas>
   {/if}
   {#if anchor.kind === "approximate"}
-    <p class="faint small">Located approximately (SyncTeX, from {anchor.file}:{anchor.line}); the claim may extend beyond this band.</p>
+    {#if anchor.file}
+      <p class="faint small">Located approximately (SyncTeX, from {anchor.file}:{anchor.line}); the claim may extend beyond this band.</p>
+    {:else}
+      <p class="faint small">Found by its bold heading in the PDF; where the statement ends is estimated, and it may extend beyond this band.</p>
+    {/if}
   {:else if anchor.kind === "manual"}
     <p class="faint small">Placed by hand{anchor.by ? " by " + anchor.by : ""}{anchor.note ? ": " + anchor.note : ""}.</p>
   {/if}

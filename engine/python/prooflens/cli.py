@@ -18,6 +18,7 @@ import argparse
 import functools
 import http.server
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -68,14 +69,40 @@ def _simple_target(a):
     root = find_lake_root(Path.cwd().resolve())
     if root is None:
         sys.exit("no Lean project here: run machinechecked inside a directory with a lakefile")
-    if a.paper:
+    if a.paper and re.match(r"https?://", a.paper):
+        from . import formalization as fz
+        fy = fz.load(root) or {}
+        title = next((s.get("title") for s in fz.formalized_sources(fy) if "error" not in fy
+                      and s.get("id") == a.paper), None)
+        paper = _fetch_paper(root, a.paper, title)
+    elif a.paper:
         paper = Path(a.paper).resolve()
         if not paper.exists():
             sys.exit(f"{a.paper}: no such file")
     else:
         found = find_papers(root)
         if not found:
-            sys.exit("no paper found (no .tex with \\documentclass, no .pdf): pass its path")
+            from . import formalization as fz
+            fy = fz.load(root) or {}
+            urls = [s for s in fz.formalized_sources(fy) if "error" not in fy
+                    and re.match(r"https?://", str(s.get("id") or ""))]
+            if not urls:
+                sys.exit("no paper found (no .tex with \\documentclass, no .pdf): pass its path "
+                         "or URL")
+            print("The paper is not in the repository; its formalization.yaml names:")
+            for i, s in enumerate(urls, 1):
+                print(f"  {i}. {s.get('title') or s['id']}\n     {s['id']}")
+            if len(urls) == 1:
+                k = "1"
+            elif not sys.stdin.isatty():
+                sys.exit("pass the one to use: machinechecked view <URL>")
+            else:
+                k = input("Which one? ")
+            try:
+                s = urls[int(k) - 1]
+            except (ValueError, IndexError):
+                sys.exit("no paper chosen")
+            return root, _fetch_paper(root, s["id"], s.get("title"))
         if len(found) > 1:
             print("Several papers found:")
             for i, f in enumerate(found, 1):
@@ -110,6 +137,31 @@ def _settings(a, root: Path | None):
                       site_url=url)
     except cfgmod.ConfigError as e:
         sys.exit(str(e))
+
+
+def _fetch_paper(root: Path, url: str, title: str | None = None) -> Path:
+    """A paper given by URL, downloaded once into the working directory (never into the
+    repository), with its address and title beside it."""
+    import hashlib
+    import urllib.request
+    d = root / cfgmod.work_dir_name(root) / "papers"
+    name = re.sub(r"[^\w.-]+", "_", url.rstrip("/").rsplit("/", 1)[-1]) or "paper"
+    if not name.lower().endswith(".pdf"):
+        name += ".pdf"
+    out = d / f"{hashlib.sha256(url.encode()).hexdigest()[:10]}-{name}"
+    if not out.exists():
+        d.mkdir(parents=True, exist_ok=True)
+        print(f"downloading {url}")
+        try:
+            with urllib.request.urlopen(url, timeout=120) as r:
+                data = r.read(200_000_001)
+        except Exception as e:
+            sys.exit(f"could not download {url}: {e}")
+        if len(data) > 200_000_000 or not data.startswith(b"%PDF"):
+            sys.exit(f"{url} is not a PDF (or is larger than 200 MB)")
+        out.write_bytes(data)
+    out.with_suffix(".json").write_text(json.dumps({"url": url, "title": title}))
+    return out
 
 
 def _simple_site(root: Path, paper: Path, web: str | None):
