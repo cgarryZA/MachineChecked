@@ -44,7 +44,7 @@
       <span class="ptitle" title={paper.title}><TexInline text={paper.title} /></span>
     {/if}
     {#if index.mode === "paper"}
-      {@const repos = (index.paper.formalisations || []).map((f) => f.repository)}
+      {@const repos = index.projects || []}
       {#if repos.length > 1}
         <label class="project" title="Separate projects are separate evidence; the page shows one at a time">
           <span>Formalisation</span>

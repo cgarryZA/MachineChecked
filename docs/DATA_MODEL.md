@@ -64,6 +64,14 @@ findings counts. `data/claims/<file>.json` holds one passport: the printed state
 clause's unfolded statement, proofs, witness, regimes, reviews and evidence ladder, the
 declarations of its closure, and its findings. A claim is loaded only when it is opened.
 
+A paper page (`prooflens.paper.write_paper_site`, used by machinechecked.org) is written in the
+same format, with `mode: "paper"`: the paper's registry entry (`paper`), the Lean projects that
+state they formalise it (`projects`, as `owner/repo`), and the statements found in its PDF, each
+with its links (each naming its `repository`) and, per project, the status that project's links
+give it (`by_project`). Without an audit nothing has run Lean, so a linked statement reads
+"linked: Lean not checked here (no audit published)" (class `declared`). The reader shows one
+project at a time and never combines them. No statement text is written.
+
 ## Audit descriptor (`audit.json`), written by the engine
 
 At the root of every published reader (`machinechecked build --site`, `machinechecked export`):

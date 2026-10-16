@@ -8,7 +8,7 @@ MachineChecked has a Python engine and a static Svelte reader. The reader is com
 pip install -e '.[test]'
 pytest -q
 (cd web && npm ci && npm run build)
-(cd web && node tests/reader.test.mjs)   # the built reader in a browser, laptop and phone widths
+(cd web && node tests/reader.test.mjs)   # the built reader in a browser, laptop and phone widths (needs the engine installed)
 ```
 
 The web build is committed under `engine/python/prooflens/web/`. When editing `web/src/`, rebuild the bundle and keep its output in the same commit. CI checks that the shipped assets match the sources.
@@ -23,6 +23,7 @@ To exercise the zero-configuration flow, use `examples/plain-paper/`. For the lo
 | `engine/python/prooflens/tex.py` | Compile LaTeX and extract claim positions |
 | `engine/python/prooflens/pdfclaims.py` | Find numbered statements in a PDF by their bold headings |
 | `engine/python/prooflens/formalization.py` | Read a project's `formalization.yaml` |
+| `engine/python/prooflens/paper.py` | A paper page's data (the site's paper pages), in the reader's standard format |
 | `engine/python/prooflens/data/ProofLensProbe.lean` | Elaborated Lean declarations and dependency data |
 | `engine/python/prooflens/assess.py` | Full-assessment states and findings |
 | `engine/python/prooflens/review_queue.py` | Review units and queue ordering |

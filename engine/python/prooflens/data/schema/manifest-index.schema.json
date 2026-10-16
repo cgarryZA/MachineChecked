@@ -103,7 +103,8 @@
               "open",
               "malformed",
               "out-of-scope",
-              "unspecified"
+              "unspecified",
+              "declared"
             ]
           },
           "anchor": {

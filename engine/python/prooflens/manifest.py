@@ -45,6 +45,18 @@ def top_of(anchor: dict) -> tuple[int, float]:
     return anchor["begin"][0], anchor["begin"][2]
 
 
+def index_anchor(anchor: dict | None, kind: str) -> dict | None:
+    """A located claim's place as the index lists it (for the contents and the margin): its
+    page and top, where it ends on that page, and the page it ends on."""
+    if not anchor or not anchor.get("begin"):
+        return None
+    page, y0 = top_of({**anchor, "kind": kind})
+    end = anchor.get("end")
+    return {"kind": kind, "page": page, "y0": y0,
+            "y1": end[2] if end and end[0] == anchor["begin"][0] else None,
+            "page_end": end[0] if end else None}
+
+
 def ladder(cl: dict, anchor: dict | None, mode: str | None, src_ok: bool | None) -> list[dict]:
     """The rungs of the evidence ladder of one clause, each with its own state."""
     ch = cl.get("checks", {})

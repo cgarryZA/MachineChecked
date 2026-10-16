@@ -122,7 +122,7 @@ def test_katex_runs_without_trust():
 def test_an_audit_is_read_only_and_confined_to_its_directory():
     data = (WEB / "lib" / "data.js").read_text()
     assert 'credentials: "omit"' in data
-    assert "if (window.__PROOFLENS__ || AUDIT || PAPER) return false;" in data   # never editable
+    assert "if (window.__PROOFLENS__ || AUDIT) return false;" in data   # never editable
     assert 'u.protocol !== "https:"' in data
     assert "outside the audit's directory" in data
 

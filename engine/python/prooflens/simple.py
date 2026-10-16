@@ -679,16 +679,11 @@ def write_view_site(view: dict, site: Path, web_dist: Path | None,
                        if (a.get("label") or f"{a['env']}-{a.get('number')}") == c["key"]), None)
         fname = mf.claim_file(c["id"])
         akind = "approximate" if anchor and anchor.get("kind") == "pdf" else "exact"
-        top = mf.top_of({**anchor, "kind": akind}) if anchor and anchor.get("begin") else None
         index_claims.append({
             "id": c["id"], "paper": c["paper"], "number": c["number"], "title": c["title"],
             "heading": c["title"] or None, "kind": c["kind"], "scope": c["scope"],
             "status": c["status"], "class": c["class"],
-            "anchor": {"kind": akind, "page": top[0], "y0": top[1],
-                       "y1": anchor["end"][2] if anchor.get("end") and
-                       anchor["end"][0] == anchor["begin"][0] else None,
-                       "page_end": anchor["end"][0] if anchor.get("end") else None}
-            if top else None,
+            "anchor": mf.index_anchor(anchor, akind),
             "counts": {}, "file": fname, "linked": len(c["links"]),
             "suggested": len(c.get("suggestions", []))})
         names = set()

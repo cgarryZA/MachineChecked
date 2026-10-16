@@ -28,44 +28,6 @@ function auditBase() {
 
 export const AUDIT = auditBase();
 
-// A paper page of machinechecked.org gives its paper in the page (`window.__MACHINECHECKED_PAPER__`,
-// a registry entry: the paper, its links, the Lean repositories that formalise it and their
-// audits). The reader then shows the paper with what is known about its formalisations, and no
-// claims: claims come only from an audit.
-export const PAPER = typeof window !== "undefined" && window.__MACHINECHECKED_PAPER__ &&
-  typeof window.__MACHINECHECKED_PAPER__ === "object" && !Array.isArray(window.__MACHINECHECKED_PAPER__)
-  ? window.__MACHINECHECKED_PAPER__ : null;
-
-const https = (u) => typeof u === "string" && /^https:\/\/[^\s"'<>]+$/.test(u);
-
-function paperIndex(p) {
-  const links = p.links || {};
-  const arxivPdf = https(links.arxiv) ? links.arxiv.replace("/abs/", "/pdf/") : null;
-  const pdf = [links.pdf, arxivPdf].find(https) || null;
-  // The claims the site found in the paper's PDF (approximate places), with the links each
-  // repository's formalization.yaml declares; no audit, so no claim says what Lean establishes.
-  const claims = (Array.isArray(p.claims) ? p.claims : []).filter((c) => c && typeof c.id === "string").map((c) => ({
-    id: c.id, paper: "P", number: String(c.number || ""), title: c.title ? String(c.title) : null,
-    heading: c.title ? String(c.title) : null, kind: String(c.kind || ""), scope: "formal",
-    status: "not linked", class: "unspecified", counts: {},
-    anchor: c.anchor && Number.isFinite(c.anchor.page) ? { kind: "approximate", page: c.anchor.page, y0: Number(c.anchor.y0) || 0,
-      y1: Number.isFinite(c.anchor.y1) ? c.anchor.y1 : null, page_end: Number.isFinite(c.anchor.page_end) ? c.anchor.page_end : null } : null,
-    allLinks: (Array.isArray(c.links) ? c.links : []).map((l) => ({
-      name: String(l.name || ""), status: String(l.status || ""), class: "declared",
-      source: "formalization.yaml", repository: String(l.repository || ""), why: null, statement: null })),
-  }));
-  settleProject((Array.isArray(p.formalisations) ? p.formalisations : []).map((f) => f && f.repository).filter((r) => typeof r === "string"));
-  const summary = {};
-  for (const c of claims) summary[c.status] = (summary[c.status] || 0) + 1;
-  return {
-    mode: "paper", schema: "machinechecked/paper@1", release: "paper", evidence: "",
-    project: {}, papers: [{ id: "P", title: String(p.title || ""), pdf: null, pdf_url: pdf,
-      page_size: Array.isArray(p.page_size) ? p.page_size : null }],
-    claims, summary: { P: summary }, classes: {}, findings: { total: {}, general: [] }, gates: {},
-    notes: [], paper: p,
-  };
-}
-
 // The address of one of the site's files: under the audit's directory when one is being read.
 export function resolve(path) {
   if (!AUDIT?.href) return path;
@@ -106,11 +68,12 @@ export let siteIndex = null;
 
 export async function loadIndex() {
   siteIndex = await loadIndexData();
+  // A paper page lists the Lean projects that formalise the paper; one is shown at a time.
+  if (Array.isArray(siteIndex.projects)) settleProject(siteIndex.projects.filter((r) => typeof r === "string"));
   return siteIndex;
 }
 
 async function loadIndexData() {
-  if (PAPER && !AUDIT) return paperIndex(PAPER);
   if (!AUDIT) return getJson("data/index.json");
   if (AUDIT.error) throw new Error(AUDIT.error);
   const d = await getJson("audit.json");
@@ -124,7 +87,7 @@ async function loadIndexData() {
 
 // Whether the page is served by `prooflens view`, which can save links into the repository.
 export async function canEdit() {
-  if (window.__PROOFLENS__ || AUDIT || PAPER) return false;
+  if (window.__PROOFLENS__ || AUDIT) return false;
   try {
     const r = await fetch("api/status");
     return r.ok && (await r.json()).editable === true;
@@ -148,33 +111,26 @@ export function loadSearch(index) {
   return getJson(index.search || "data/search.json");
 }
 
-// A paper page's claim as the chosen project sees it: only that project's links, and its status
-// from them. Another project's links never show here, and are never combined with these.
+// A claim as the chosen project sees it, on a page with several projects (a paper page): only
+// that project's links, with the status the engine gave it for that project. Another project's
+// links never show here, and are never combined with these.
 export function inProject(c, repo) {
-  if (!c.allLinks) return c;
-  const links = c.allLinks.filter((l) => l.repository === repo);
-  return { ...c, links, status: links.length ? links[0].status : "not linked", class: links.length ? "declared" : "unspecified" };
+  if (!c.by_project) return c;
+  const st = c.by_project[repo] || { status: "not linked", class: "unspecified" };
+  const links = c.links && c.links.filter((l) => l.repository === repo);
+  return { ...c, ...(links ? { links } : {}), status: st.status, class: st.class };
 }
 
-// The claims of a paper page for the chosen project (reactive on the choice).
+// The claims of the index for the chosen project (reactive on the choice).
 export function projectClaims(index) {
-  return index.mode === "paper" ? index.claims.map((c) => inProject(c, project.repo)) : index.claims;
+  return index.projects ? index.claims.map((c) => inProject(c, project.repo)) : index.claims;
 }
 
+// A claim's full record, as the engine wrote it (on a page with several projects, show it through
+// `inProject`).
 export function loadClaim(index, id) {
-  const raw = index.claims.find((x) => x.id === id);
-  const c = raw && index.mode === "paper" ? inProject(raw, project.repo) : raw;
+  const c = index.claims.find((x) => x.id === id);
   if (!c) return Promise.reject(new Error(`no claim ${id} in release ${index.release}`));
-  if (index.mode === "paper") {
-    // A paper page's claim is all there is to show: its number, place and declared links.
-    const a = c.anchor;
-    const anchor = a && {
-      kind: "approximate", begin: [a.page, 0, a.y0],
-      end: a.y1 != null ? [a.page, 0, a.y1] : a.page_end ? [a.page_end, 0, 0] : null,
-    };
-    return Promise.resolve({ ...c, anchor, mode: "simple", key: c.id, suggestions: [], clauses: [],
-      blockers: [], findings: [], decls: {}, statement_tex: null, source_matches: null });
-  }
   return getJson(`data/claims/${c.file}`);
 }
 

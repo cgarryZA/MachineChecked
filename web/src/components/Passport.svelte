@@ -1,7 +1,8 @@
 <script>
   import { claimLink, claimReference, issueUrl, sourceUrl, sourceLabel, sourceTitle } from "../lib/issue.js";
   import TexInline from "./TexInline.svelte";
-  import { loadClaim, saveLink } from "../lib/data.js";
+  import { loadClaim, saveLink, inProject } from "../lib/data.js";
+  import { project } from "../lib/project.svelte.js";
   import { href } from "../lib/route.svelte.js";
   import StatusChip from "./StatusChip.svelte";
   import PdfCrop from "./PdfCrop.svelte";
@@ -16,7 +17,9 @@
   // establishes; the evidence behind that line is folded into "Technical details".
   let { index, claimId, full = false, editable = false } = $props();
 
-  let claim = $state(null);
+  let loaded = $state(null);
+  // On a page with several projects, the claim as the chosen one sees it.
+  const claim = $derived(loaded && index.projects ? inProject(loaded, project.repo) : loaded);
   let error = $state(null);
   let openDecl = $state(null);
   let showAll = $state(false);
@@ -25,8 +28,8 @@
   const RANK = { stale: 0, pending: 1, "author-reviewed": 2, reviewed: 3 };
 
   $effect(() => {
-    claim = null; error = null; openDecl = null; showAll = false; saveError = null;
-    loadClaim(index, claimId).then((c) => (claim = c)).catch((e) => (error = String(e)));
+    loaded = null; error = null; openDecl = null; showAll = false; saveError = null;
+    loadClaim(index, claimId).then((c) => (loaded = c)).catch((e) => (error = String(e)));
   });
 
   const paper = $derived(claim && index.papers.find((p) => p.id === claim.paper));

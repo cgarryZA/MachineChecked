@@ -3,52 +3,56 @@
 // Set CHROMIUM to a browser binary when Playwright's own is not installed, and SHOTS to a
 // directory to keep screenshots.
 //
-// A paper page with two formalisations: the chosen project must drive every claim view, and
-// the two projects' links must never show together.
+// A paper page with two formalisations, written by the engine: the chosen project must drive
+// every claim view, and the two projects' links must never show together. Needs the engine
+// importable (`pip install -e .`); set PYTHON to choose the interpreter.
 
 import { chromium } from "playwright";
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
 import assert from "node:assert/strict";
+import os from "node:os";
+import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const reader = path.resolve(here, "../../engine/python/prooflens/web");
-const NOT_CHECKED = "linked: Lean not checked here (no audit published)";
 const A = "alpha/project-a", B = "beta/project-b";
-const link = (name, repository) => ({ name, repository, commit: "a".repeat(40), source: "formalization.yaml", status: NOT_CHECKED });
-const anchor = (page, y0) => ({ kind: "approximate", page, y0, y1: y0 + 40, page_end: page });
 
-const paper = {
-  id: "arxiv:2601.00001", title: "A paper with two formalisations", authors: ["A. Author"],
-  listing: "arxiv", links: {},
-  formalisations: [
-    { repository: A, commit: "a".repeat(40), stated_by: { source: "formalization.yaml" } },
-    { repository: B, commit: "b".repeat(40), stated_by: { source: "formalization.yaml" } },
-  ],
-  claims: [
-    { id: "P:theorem-1", number: "Theorem 1", kind: "theorem", anchor: anchor(1, 100), links: [link("A.one", A)] },
-    { id: "P:theorem-2", number: "Theorem 2", kind: "theorem", anchor: anchor(1, 300), links: [link("B.two", B)] },
-    { id: "P:theorem-3", number: "Theorem 3", kind: "theorem", anchor: anchor(2, 100), links: [link("A.three", A), link("B.three", B)] },
-    { id: "P:lemma-4", number: "Lemma 4", kind: "lemma", anchor: anchor(2, 300), links: [] },
-  ],
-};
+// The paper page is written by the engine (`prooflens.paper.write_paper_site`), as machinechecked.org
+// writes its paper pages, so the test reads exactly the data a real page has.
+const FIXTURE = String.raw`
+import sys
+from pathlib import Path
+from prooflens.paper import paper_claims, write_paper_site
+A, B = "alpha/project-a", "beta/project-b"
+def anchor(env, number, page, y0):
+    return {"env": env, "number": number, "title": None, "begin": [page, 0, y0], "end": [page, 0, y0 + 40]}
+def fy(rows):
+    return {"sources": [{"title": "A paper with two formalisations", "relationship": "formalizes"}],
+            "alignment": {"statements": [{"source": f"{k} {n}", "lean": names} for k, n, names in rows]}}
+paper = {"id": "arxiv:2601.00001", "title": "A paper with two formalisations", "authors": ["A. Author"],
+         "links": {}, "formalisations": [
+             {"repository": A, "commit": "a" * 40, "stated_by": {"source": "formalization.yaml"}},
+             {"repository": B, "commit": "b" * 40, "stated_by": {"source": "formalization.yaml"}}]}
+anchors = [anchor("theorem", "1", 1, 100), anchor("theorem", "2", 1, 300),
+           anchor("theorem", "3", 2, 100), anchor("lemma", "4", 2, 300)]
+claims = paper_claims(anchors, paper["title"], [
+    (paper["formalisations"][0], fy([("theorem", "1", ["A.one"]), ("theorem", "3", ["A.three"])])),
+    (paper["formalisations"][1], fy([("theorem", "2", ["B.two"]), ("theorem", "3", ["B.three"])]))])
+write_paper_site(Path(sys.argv[1]), paper, claims, [612, 792], None, Path(sys.argv[2]))
+`;
+const root = fs.mkdtempSync(path.join(os.tmpdir(), "mc-reader-"));
+const made = spawnSync(process.env.PYTHON || "python3", ["-c", FIXTURE, path.join(root, "paper"), reader], { encoding: "utf8" });
+if (made.status !== 0) throw new Error("the engine could not write the paper page:\n" + made.stderr);
 
-function page() {
-  const index = fs.readFileSync(path.join(reader, "index.html"), "utf8");
-  const tags = index.match(/<(?:script|link)\b[^>]*(?:src|href)="\.\/assets\/[^"]+"[^>]*>(?:<\/script>)?/g).join("\n");
-  return `<!doctype html><html><head><meta charset="utf-8">
-<script>window.__MACHINECHECKED_PAPER__ = ${JSON.stringify(paper).replace(/</g, "\\u003c")};</script>
-${tags.replaceAll('"./assets/', '"/assets/')}</head><body><div id="app"></div></body></html>`;
-}
-
-const types = { ".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css", ".woff2": "font/woff2" };
+const types = { ".html": "text/html", ".json": "application/json", ".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css", ".woff2": "font/woff2" };
 const server = http.createServer((req, res) => {
-  const url = req.url.split("?")[0];
-  if (url === "/" || url === "/paper/") { res.writeHead(200, { "content-type": "text/html" }); return res.end(page()); }
-  const p = path.join(reader, decodeURIComponent(url));
-  if (!p.startsWith(reader) || !fs.existsSync(p) || fs.statSync(p).isDirectory()) { res.writeHead(404); return res.end(); }
+  let url = decodeURIComponent(req.url.split("?")[0]);
+  if (url.endsWith("/")) url += "index.html";
+  const p = path.join(root, url);
+  if (!p.startsWith(root) || !fs.existsSync(p) || fs.statSync(p).isDirectory()) { res.writeHead(404); return res.end(); }
   res.writeHead(200, { "content-type": types[path.extname(p)] || "application/octet-stream" });
   fs.createReadStream(p).pipe(res);
 }).listen(0);
@@ -119,6 +123,7 @@ for (const width of [1300, 390]) {
 
 await browser.close();
 server.close();
+fs.rmSync(root, { recursive: true, force: true });
 if (failures) {
   console.log(`${failures} failure(s)`);
   process.exit(1);
