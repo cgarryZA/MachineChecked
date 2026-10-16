@@ -86,6 +86,17 @@ const open = async (pg, claim) => {
 };
 const dots = async (pg) => pg.locator("nav.toc li .dot").evaluateAll((ds) => ds.map((d) => d.className));
 
+await check("a static page asks for nothing outside its directory, and nothing fails", 1300, async (pg) => {
+  const outside = [], failed = [];
+  pg.on("request", (r) => { const u = new URL(r.url()); if (u.origin === origin && !u.pathname.startsWith("/paper/")) outside.push(u.pathname); });
+  pg.on("response", (r) => { if (r.status() >= 400) failed.push(`${r.status()} ${r.url()}`); });
+  await pg.goto(origin + "/paper/");
+  await pg.waitForSelector("select[aria-label='Formalisation shown']");
+  await pg.waitForLoadState("networkidle");
+  assert.deepEqual(outside, [], "requests outside the page's directory");
+  assert.deepEqual(failed, [], "failed requests");
+});
+
 for (const width of [1300, 390]) {
   await check("the first project is chosen by default, and only its links show", width, async (pg) => {
     await pg.goto(origin + "/paper/");

@@ -85,15 +85,13 @@ async function loadIndexData() {
   return getJson(d.data);
 }
 
-// Whether the page is served by `prooflens view`, which can save links into the repository.
-export async function canEdit() {
+// Whether the page is served by `machinechecked view`, which can save links into the repository:
+// that local server (on a loopback address only) marks the data index it serves `editable`. A
+// static copy of the site, an audit or a bundle never is, and asks no server anything.
+export function canEdit(index) {
   if (window.__PROOFLENS__ || AUDIT) return false;
-  try {
-    const r = await fetch("api/status");
-    return r.ok && (await r.json()).editable === true;
-  } catch {
-    return false;
-  }
+  const loopback = /^(127\.0\.0\.1|localhost|\[::1\])$/.test(location.hostname);
+  return loopback && index?.editable === true;
 }
 
 export async function saveLink(req) {

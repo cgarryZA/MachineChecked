@@ -32,6 +32,14 @@ def serve(site: Path, port: int, on_link=None, open_browser: bool = True):
         def do_GET(self):
             if self.path == "/api/status":
                 return self._json(200, {"editable": on_link is not None})
+            # The data index says the page may edit (only this local server says so; a static
+            # copy of the site never asks a server anything).
+            if self.path.split("?")[0] == "/data/index.json" and on_link is not None:
+                try:
+                    data = json.loads((site / "data" / "index.json").read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    return super().do_GET()
+                return self._json(200, {**data, "editable": True})
             return super().do_GET()
 
         def do_POST(self):

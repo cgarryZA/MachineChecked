@@ -13,8 +13,7 @@
   let index = $state(null);
   let error = $state(null);
   let editable = $state(false);
-  loadIndex().then((i) => (index = i)).catch((e) => (error = String(e)));
-  canEdit().then((e) => (editable = e));
+  loadIndex().then((i) => { index = i; editable = canEdit(i); }).catch((e) => (error = String(e)));
 
   const firstPaper = $derived(index?.papers[0]?.id);
   const paperId = $derived(route.paper || firstPaper);
