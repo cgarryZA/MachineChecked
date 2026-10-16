@@ -471,7 +471,8 @@ def main(argv=None):
     b.set_defaults(func=cmd_build)
 
     k = sub.add_parser("check", help="report what the Lean side establishes (exit 1 if a "
-                                     "linked declaration is missing or unproved)")
+                                     "linked declaration is missing or unproved, 2 if the "
+                                     "check could not run)")
     k.add_argument("paper", nargs="?")
     k.add_argument("--json", action="store_true",
                    help="print every claim's status and links as JSON (for scripts and agents)")
@@ -535,7 +536,9 @@ def main(argv=None):
         hint = MISSING.get(Path(str(e.filename or "")).name)
         if not hint:
             raise
-        sys.exit(f"machinechecked: `{Path(e.filename).name}` not found: {hint}")
+        # Exit 2, not 1: exit 1 means the check ran and found a problem (see `check --help`).
+        print(f"machinechecked: `{Path(e.filename).name}` not found: {hint}", file=sys.stderr)
+        raise SystemExit(2)
 
 
 if __name__ == "__main__":
