@@ -275,11 +275,36 @@ def save_settings(root: Path, issues: str | None = None, site_url: str | None = 
 
 # -- the Lean side ---------------------------------------------------------------------------
 
+# What an index record keeps: the reader lists a declaration's statement only to this length,
+# and suggestions read a docstring only for the statement numbers it cites.
+INDEX_TYPE_CHARS, INDEX_DOC_CHARS = 300, 4000
+
+
+def _record(line: str) -> dict:
+    """One probe record, as kept in memory: an index record trimmed to what is used, any other
+    with its canonical form replaced by its fingerprint."""
+    rec = json.loads(line)
+    if rec.get("record") == "index":
+        return {"record": "index", "name": rec["name"], "kind": rec["kind"],
+                "module": rec.get("module"), "type": (rec.get("type") or "")[:INDEX_TYPE_CHARS],
+                "doc": (rec.get("doc") or "")[:INDEX_DOC_CHARS] or None}
+    for d in [rec, rec.get("decl")]:
+        if isinstance(d, dict) and "canon" in d:
+            d["fingerprint"] = fingerprint(d.pop("canon"))
+    return rec
+
+
 def run_simple_probe(root: Path, modules: list[str], libs: list[str], requests: list[dict],
-                     lake: str = "lake", timeout: int = 3600) -> list[dict]:
+                     lake: str = "lake", timeout: int = 3600,
+                     work: Path | None = None) -> list[dict]:
+    """Run the Lean probe on `modules` in one session. Its output is read one record at a time
+    (it can be gigabytes for a large project) from a file in `work` (the working directory's
+    build folder, rather than a system temporary folder that may be in memory)."""
     body = resources.files("prooflens").joinpath("data/ProofLensProbe.lean").read_text()
     header = "import Lean\n" + "".join(f"import {m}\n" for m in modules) + "\n"
-    with tempfile.TemporaryDirectory(prefix="prooflens-view-") as tmp:
+    if work is not None:
+        work.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="prooflens-view-", dir=work) as tmp:
         tmp = Path(tmp)
         (tmp / "Probe.lean").write_text(header + body)
         (tmp / "query.json").write_text(json.dumps({
@@ -292,12 +317,8 @@ def run_simple_probe(root: Path, modules: list[str], libs: list[str], requests: 
         out = tmp / "out.jsonl"
         if r.returncode != 0 or not out.exists():
             raise ViewError(f"the Lean probe failed:\n{r.stdout[-3000:]}\n{r.stderr[-3000:]}")
-        recs = [json.loads(l) for l in out.read_text(encoding="utf-8").splitlines() if l.strip()]
-    for rec in recs:
-        for d in [rec, rec.get("decl")]:
-            if isinstance(d, dict) and "canon" in d:
-                d["fingerprint"] = fingerprint(d.pop("canon"))
-    return recs
+        with out.open(encoding="utf-8") as f:
+            return [_record(l) for l in f if l.strip()]
 
 
 def library_of(module: str, libs: list[str]) -> str:
@@ -307,7 +328,8 @@ def library_of(module: str, libs: list[str]) -> str:
 
 
 def probe_modules(root: Path, modules: list[str], libs: list[str], requests: list[dict],
-                  lake: str = "lake", log=print) -> tuple[list[dict], dict[str, str]]:
+                  lake: str = "lake", log=print,
+                  work: Path | None = None) -> tuple[list[dict], dict[str, str]]:
     """Probe the built modules without assuming they can all be imported into one Lean session.
 
     A project may build modules that do not belong together: two libraries declaring the same
@@ -320,7 +342,7 @@ def probe_modules(root: Path, modules: list[str], libs: list[str], requests: lis
 
     def run(group: list[str], label: str):
         try:
-            out = run_simple_probe(root, group, libs, requests, lake)
+            out = run_simple_probe(root, group, libs, requests, lake, work=work)
         except ViewError as e:
             if len(group) == 1:
                 failed[group[0]] = str(e)[-600:]
@@ -570,41 +592,69 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
         if unbuilt:
             notes.append(f"{len(unbuilt)} module(s) of the project are not built and are not "
                          f"indexed")
-        # The index is reused while no Lean input of the project changed.
-        icache = out_dir / "build" / "index-cache.json"
+        # The names linked before any suggestion (confirmed links, \lean tags, formalization.yaml),
+        # less those whose module is known not to be built: Lean cannot answer for those.
+        for c in claims:
+            c["link_names"] = linked_names(c, links.get(c["key"], {}))
+        unbuilt_set = set(unbuilt)
+        linked = {n for c in claims for n in c["link_names"]
+                  if c.get("declared_modules", {}).get(n) not in unbuilt_set}
+        work = out_dir / "build"
+
+        def take(recs):
+            for r in recs:
+                if r["record"] == "link":
+                    linkrecs.setdefault(r["name"], []).append(r)
+                elif r["record"] == "decl":
+                    decls.setdefault(r["name"], r)
+
+        # The index is reused while no Lean input of the project changed. Built afresh, it is
+        # made in the same sessions as the linked names' records, so the modules load once.
+        icache = work / "index-cache.json"
         idigest = lean_digest(root)
         cached = read_json(icache) if icache.exists() else {}
         failed = {}
         if cached.get("digest") == idigest:
             index, failed = cached["index"], cached.get("failed", {})
         else:
-            log(f"lean: indexing {len(built)} built module(s)")
-            recs, failed = probe_modules(root, built, libs, [{"kind": "index", "name": ""}],
-                                         lake, log)
+            log(f"lean: indexing {len(built)} built module(s)"
+                + (f" and checking {len(linked)} linked declaration(s)" if linked else ""))
+            recs, failed = probe_modules(root, built, libs, [{"kind": "index", "name": ""}]
+                                         + [{"kind": "link", "name": n} for n in sorted(linked)],
+                                         lake, log, work)
             index = [r for r in recs if r["record"] == "index"]
+            take(recs)
             write_json(icache, {"digest": idigest, "index": index, "failed": failed},
                        indent=None)
-        wanted = set()
+        wanted = set(linked)
         for c in claims:
             entry = links.get(c["key"], {})
-            c["link_names"] = linked_names(c, entry)
             c["suggestions"] = [s for s in suggest(c, index)
                                 if s["name"] not in entry.get("rejected", [])
                                 and s["name"] not in c["link_names"]]
-            wanted |= set(c["link_names"])
             wanted |= {s["name"] for s in c["suggestions"][:1] if s.get("kind")}
+        wanted -= set(linkrecs)
         if wanted:
+            # Only the modules that declare the names are loaded (with what they import). A name
+            # the index does not hold (from a dependency, say) is looked for in every loadable
+            # module, unless its source shows it in a module that is not built.
             log(f"lean: checking {len(wanted)} linked or suggested declaration(s)")
             loadable = [m for m in built if m not in failed]
-            recs, more = probe_modules(root, loadable, libs,
-                                       [{"kind": "link", "name": n} for n in sorted(wanted)],
-                                       lake, log)
-            failed.update(more)
-            for r in recs:
-                if r["record"] == "link":
-                    linkrecs.setdefault(r["name"], []).append(r)
-                elif r["record"] == "decl":
-                    decls.setdefault(r["name"], r)
+            where: dict[str, set[str]] = {}
+            for r in index:
+                if r["name"] in wanted and r.get("module") in loadable:
+                    where.setdefault(r["name"], set()).add(r["module"])
+            elsewhere = sorted(n for n in wanted if n not in where
+                               and not declaring_modules(root, unbuilt, n))
+            groups = [(sorted(set().union(*where.values())), sorted(where))] if where else []
+            if elsewhere:
+                groups.append((loadable, elsewhere))
+            for mods, names in groups:
+                recs, more = probe_modules(root, mods, libs,
+                                           [{"kind": "link", "name": n} for n in names],
+                                           lake, log, work)
+                failed.update(more)
+                take(recs)
         if failed:
             notes.append(f"{len(failed)} built module(s) could not be loaded by MachineChecked "
                          f"and are not indexed: {', '.join(sorted(failed)[:5])}"

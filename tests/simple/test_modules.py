@@ -85,3 +85,35 @@ def test_modules_that_cannot_load_together_are_told_apart(twins):
     # Only a declaration absent from the inspected modules is not found.
     assert st["Theorem 4"]["links"][0]["status"] == "linked: Lean declaration not found"
     assert not any("could not be loaded" in n for n in view["body"]["notes"])
+
+
+@needs_lean
+@needs_tex
+def test_lean_loads_only_what_it_must(twins, tmp_path, monkeypatch):
+    """The linked names are answered in the sessions that build the index; with the index
+    reused, a name is checked by loading only the modules that declare it; a name whose source
+    is in an unbuilt module is never asked of Lean. The statuses do not change."""
+    from prooflens import simple
+    sessions, real = [], simple.run_simple_probe
+
+    def spy(root, modules, libs, requests, *a, **k):
+        sessions.append((list(modules), {r["kind"] for r in requests},
+                         {r["name"] for r in requests if r["kind"] == "link"}))
+        return real(root, modules, libs, requests, *a, **k)
+    monkeypatch.setattr(simple, "run_simple_probe", spy)
+    out = tmp_path / "work"
+
+    def statuses():
+        view = build_view(twins, twins / "paper.tex", out, log=lambda m: None)
+        return {c["number"]: [l["status"] for l in c["links"]] for c in view["body"]["claims"]}
+
+    first = statuses()
+    # One session per library, each building the index and answering the linked names.
+    assert len(sessions) == 2 and all(kinds == {"index", "link"} for _, kinds, _ in sessions)
+    assert all("Later.result" in names and "Twin.target" in names for *_, names in sessions)
+
+    sessions.clear()
+    assert statuses() == first
+    target = [mods for mods, _, names in sessions if "Twin.target" in names]
+    assert sorted(target) == [["Challenge.Main"], ["Solution.Main"]]
+    assert not any("Later.result" in names for *_, names in sessions)
