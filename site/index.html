@@ -127,7 +127,7 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .use-cases li:first-child { border-top: 1px solid var(--line); }
 .use-cases strong { display: block; color: var(--ink); font-size: 14px; margin-bottom: 2px; }
 .use-cases a { font-weight: 650; text-decoration: none; }
-.contrast { background: var(--wash); }
+.contrast { background: var(--wash); border-radius: 14px; padding-inline: 32px; }
 .link-arrow { display: inline-block; margin-top: 19px; font-size: 14px; font-weight: 650; text-decoration: none; }
 .bottom-cta { display: flex; gap: 30px; justify-content: space-between; align-items: center; }
 .bottom-cta h2 { max-width: 690px; }
@@ -149,12 +149,13 @@ button, a { -webkit-tap-highlight-color: transparent; }
   .shell { width: min(100% - 32px, 1120px); }
   .top { min-height: 68px; flex-wrap: wrap; gap: 9px 15px; padding: 14px 0; }
   .nav { margin-left: auto; gap: 12px; font-size: 13px; flex-wrap: wrap; }
-  .nav a:nth-child(2) { display: none; }
+  .nav a:nth-child(1), .nav a:nth-child(4) { display: none; }
   .brand { font-size: 18px; }
   .hero { padding: 48px 0 0; }
   .hero h1 { font-size: clamp(40px, 11vw, 58px); }
   .showcase { margin: 38px 0 48px; }
   .section { padding: 48px 0; }
+  .contrast { padding-inline: 18px; }
   .steps, .evidence { grid-template-columns: 1fr; gap: 12px; }
   .evidence article { padding: 13px 0 4px; }
   .footer { flex-direction: column; }
@@ -179,6 +180,7 @@ button, a { -webkit-tap-highlight-color: transparent; }
     <a href="#how">How it works</a>
     <a href="#start">Get started</a>
     <a href="https://github.com/cgarryZA/MachineChecked/blob/main/docs/GETTING_STARTED.md">Documentation</a>
+    <a href="https://github.com/cgarryZA/MachineChecked">GitHub</a>
     <a class="nav-cta" href="demo/">Try demo ↗</a>
   </nav>
 </header>
