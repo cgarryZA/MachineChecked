@@ -1,6 +1,7 @@
 // pdf.js, loaded once, with its worker bundled beside the site.
 import * as pdfjs from "pdfjs-dist";
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
+import { resolve } from "./data.js";
 
 // In a one-file bundle the worker's code and the PDFs are carried in the page.
 if (window.__PROOFLENS_WORKER__) {
@@ -22,7 +23,12 @@ function base64Bytes(b64) {
 export function openPdf(url) {
   if (!docs.has(url)) {
     const b64 = window.__PROOFLENS_PDF__?.[url];
-    const src = b64 ? { data: base64Bytes(b64) } : { url };
+    let src;
+    try {
+      src = b64 ? { data: base64Bytes(b64) } : { url: resolve(url), withCredentials: false };
+    } catch (e) {
+      return Promise.reject(e);
+    }
     docs.set(url, pdfjs.getDocument({ ...src, isEvalSupported: false }).promise);
   }
   return docs.get(url);

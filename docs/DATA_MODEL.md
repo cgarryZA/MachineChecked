@@ -64,6 +64,18 @@ findings counts. `data/claims/<file>.json` holds one passport: the printed state
 clause's unfolded statement, proofs, witness, regimes, reviews and evidence ladder, the
 declarations of its closure, and its findings. A claim is loaded only when it is opened.
 
+## Audit descriptor (`audit.json`), written by the engine
+
+At the root of every published reader (`machinechecked build --site`, `machinechecked export`):
+`schema` (`machinechecked/audit@1`), `created`, `author` (the name the audit is published under,
+as its author gives it), `papers` (title; `id` and `version` when the paper is an arXiv paper, for
+example `arxiv:2601.01234` and `v2`; `url`; `revision`), `formalisation` (`repository` as
+`owner/repo` when the project's remote is on GitHub, `commit`, `toolchain`), `release`, `data` (the
+path of the manifest index, inside the directory), `issues` and `site_url`. It records what its
+author states; it is not evidence of anything by itself. A reader loading an audit from another
+address takes every string in it and in its data as text, reads only files inside the audit's
+directory, and never offers to edit it.
+
 ## Identifiers
 
 - Claim: `<paper>:<label>`, else `<paper>:<env>-<number>`.

@@ -1,5 +1,5 @@
 <script>
-  import { loadIndex, canEdit } from "./lib/data.js";
+  import { loadIndex, canEdit, auditInfo, AUDIT } from "./lib/data.js";
   import { route, href } from "./lib/route.svelte.js";
   import Coverage from "./components/Coverage.svelte";
   import Reader from "./components/Reader.svelte";
@@ -48,6 +48,13 @@
     <a class="aux" class:on={route.view === "coverage"} href={href(index.release, "coverage")}>Overview</a>
   </header>
 
+  {#if AUDIT && auditInfo}
+    <div class="banner">
+      An audit published by {auditInfo.author || "its author"} at
+      <code>{new URL(AUDIT.href).host}</code>. It records what its author linked, checked and
+      reviewed; MachineChecked displays it and does not endorse it.
+    </div>
+  {/if}
   {#if releaseMismatch}
     <div class="banner" role="alert">
       This link names release <code>{route.release}</code>; this page shows release

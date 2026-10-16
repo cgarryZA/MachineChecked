@@ -14,10 +14,12 @@ export function claimLink(index, claim) {
   let base = index.site_url || null;
   if (!base && /^https?:$/.test(location.protocol) &&
       !/^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname)) {
-    base = location.origin + location.pathname;
+    base = location.origin + location.pathname + location.search;
   }
   if (!base) return null;
-  return base.replace(/#.*$/, "").replace(/\/?$/, "/") + href(index.release, "read", claim.paper, claim.id);
+  const u = new URL(base.replace(/#.*$/, ""));
+  if (!u.pathname.endsWith("/")) u.pathname += "/";
+  return u.href + href(index.release, "read", claim.paper, claim.id);
 }
 
 // A reference to the claim that does not depend on where the site is served.

@@ -210,6 +210,11 @@ def export(cfg: Config, out: Path, release: str | None = None,
         pub_search["claims"].append({**c, "statement": c["statement"] if pub.source_text else "",
                                      "lean": c["lean"] if pub.lean else []})
     write_json(data / "search.json", pub_search, indent=None)
+    from . import audit
+    arx = [p.source["arxiv"] for p in cfg.papers if p.source.get("arxiv")]
+    write_json(out / audit.NAME, audit.descriptor(
+        pidx, cfg.lean_root, author=cfg.author,
+        paper_url=f"https://arxiv.org/abs/{arx[0]}" if len(cfg.papers) == 1 and arx else None))
     texts, hashes = private_inputs(cfg)
     leaks = scan(out, texts, hashes)
     if leaks:

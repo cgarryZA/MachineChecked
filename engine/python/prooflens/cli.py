@@ -129,14 +129,15 @@ def _settings(a, root: Path | None):
     """Record --issues and --site-url: in the links file (zero configuration); a full
     assessment sets them in its configuration."""
     issues, url = getattr(a, "issues", None), getattr(a, "site_url", None)
-    if not issues and not url:
+    author = getattr(a, "author", None)
+    if not issues and not url and not author:
         return
     if root is None:
-        sys.exit("set `issues` and `site_url` under [project] in machinechecked.toml")
+        sys.exit("set `issues`, `site_url` and `author` under [project] in machinechecked.toml")
     from .simple import save_settings
     try:
         save_settings(root, issues=cfgmod.issue_repo(issues, "--issues") if issues else None,
-                      site_url=url)
+                      site_url=url, author=author)
     except cfgmod.ConfigError as e:
         sys.exit(str(e))
 
@@ -171,7 +172,7 @@ def _simple_site(root: Path, paper: Path, web: str | None):
     out = root / cfgmod.work_dir_name(root)
     view = build_view(root, paper, out, log=lambda m: print("  " + m))
     site = out / "site"
-    index = write_view_site(view, site, _web_dist(web))
+    index = write_view_site(view, site, _web_dist(web), root)
     return site, index, view
 
 
@@ -218,6 +219,19 @@ def cmd_build_simple(a):
     _settings(a, root)
     site, index, _ = _simple_site(root, paper, a.web)
     _print_simple(index)
+    if a.site:
+        import shutil
+        dest = Path(a.site).resolve()
+        if dest == root.resolve() or root.resolve().is_relative_to(dest):
+            sys.exit(f"--site {a.site}: choose a new directory, not the project")
+        if dest.exists():
+            if not (dest / "audit.json").exists() and any(dest.iterdir()):
+                sys.exit(f"--site {a.site}: not empty and not a previous site; choose another")
+            shutil.rmtree(dest)
+        shutil.copytree(site, dest)
+        print(f"wrote the reader to {dest}: publish this directory as it is "
+              "(audit.json describes it)")
+        return
     out = Path(a.out or (root / "MachineChecked.html")).resolve()
     res = bundle(site, out, f"MachineChecked — {index['papers'][0]['title']}")
     print(f"wrote {res['out']} ({res['size'] / 1e6:.1f} MB): open it in a browser")
@@ -371,6 +385,7 @@ def main(argv=None):
                         help="the GitHub repository where the reader's Raise issue opens reports")
     w.add_argument("--site-url", help="the public address of the published reader, "
                         "for links to claims")
+    w.add_argument("--author", help="the name the audit is published under (in audit.json)")
     w.add_argument("-c", "--config", help=argparse.SUPPRESS)
     w.add_argument("--port", type=int, default=8017)
     w.add_argument("--no-browser", action="store_true")
@@ -383,7 +398,10 @@ def main(argv=None):
                         help="the GitHub repository where the reader's Raise issue opens reports")
     b.add_argument("--site-url", help="the public address of the published reader, "
                         "for links to claims")
-    b.add_argument("--out", help="the HTML file (default: ProofLens.html at the project root)")
+    b.add_argument("--author", help="the name the audit is published under (in audit.json)")
+    b.add_argument("--out", help="the HTML file (default: MachineChecked.html at the project root)")
+    b.add_argument("--site", metavar="DIR", help="write the reader as a directory to publish "
+                   "(for example on GitHub Pages) instead of one HTML file")
     b.add_argument("-c", "--config", help=argparse.SUPPRESS)
     b.add_argument("--release", help=argparse.SUPPRESS)
     b.add_argument("--skip-lean", action="store_true", help=argparse.SUPPRESS)

@@ -103,6 +103,13 @@ audit whose terms allow it carries its pinned PDF.
 Deferred: claim fallback across projects and combined coverage; issue counts; a registration
 form; README badges; drift reports between releases; a Verso Blueprint adapter; live Lean.
 
+**Other formalisation platforms.** A Prove2Me mission (or another platform's project) can be one
+more source of evidence for a paper's claims, read-only, beside GitHub repositories: its mission
+and theorem identifiers, its pinned Lean environment, and its own proof state shown as reported
+(a sketch that depends on open theorems is never shown as a completed proof). Review reports from
+the queue could be attached to a mission's statements; the platform still decides what it
+accepts. Built with the paper page's project selector; nothing is ever submitted automatically.
+
 The policies are in `docs/`: [threat model](docs/THREAT_MODEL.md),
 [evidence policy](docs/EVIDENCE_POLICY.md), [data model](docs/DATA_MODEL.md),
 [publication policy](docs/PUBLICATION_POLICY.md). Engine internals and the seeded-failure tests are

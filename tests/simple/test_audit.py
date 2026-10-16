@@ -1,0 +1,127 @@
+"""The audit descriptor, publishing a reader as a directory, and the reader's handling of an
+audit read from another address."""
+
+import json
+import re
+import shutil
+import subprocess
+import sys
+
+import pytest
+
+from conftest import ROOT, build, needs_lean, needs_tex
+from prooflens import audit
+from prooflens.simple import build_view, built_modules, save_settings, write_view_site
+
+PLAIN = ROOT / "examples" / "plain-paper"
+WEB = ROOT / "web" / "src"
+
+
+def test_arxiv_identifiers_and_versions():
+    assert audit.arxiv_id("https://arxiv.org/abs/2601.01234v2") == ("arxiv:2601.01234", "v2")
+    assert audit.arxiv_id("https://arxiv.org/pdf/2601.01234") == ("arxiv:2601.01234", None)
+    assert audit.arxiv_id("https://arxiv.org/abs/math/0211159v1") == ("arxiv:math/0211159", "v1")
+    assert audit.arxiv_id("https://example.org/paper.pdf") is None
+
+
+def test_github_repository_of_a_remote(tmp_path):
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    for url, want in [("https://github.com/someone/proj.git", "someone/proj"),
+                      ("git@github.com:someone/proj.git", "someone/proj"),
+                      ("https://gitlab.com/someone/proj.git", None)]:
+        subprocess.run(["git", "remote", "remove", "origin"], cwd=tmp_path, capture_output=True)
+        subprocess.run(["git", "remote", "add", "origin", url], cwd=tmp_path, check=True)
+        assert audit.github_repository(tmp_path) == want
+
+
+@pytest.fixture
+def plain(tmp_path):
+    dst = tmp_path / "plain"
+    shutil.copytree(PLAIN, dst, ignore=shutil.ignore_patterns(
+        ".prooflens", ".machinechecked", "prooflens.links.json", "machinechecked.links.json"),
+        symlinks=True)
+    return dst
+
+
+@needs_lean
+@needs_tex
+def test_a_site_carries_its_descriptor(plain):
+    if not built_modules(plain, ["Plain"])[0]:
+        pytest.skip("the plain example is not built")
+    save_settings(plain, issues="someone/audits", author="A. Reviewer")
+    view = build_view(plain, plain / "paper/main.tex", plain / ".machinechecked",
+                      log=lambda m: None)
+    site = plain / ".machinechecked" / "site"
+    index = write_view_site(view, site, None, plain)
+    d = json.loads((site / "audit.json").read_text())
+    assert d["schema"] == audit.SCHEMA and d["author"] == "A. Reviewer"
+    assert d["release"] == index["release"] and d["issues"] == "someone/audits"
+    assert (site / d["data"]).is_file()
+    assert d["formalisation"]["toolchain"] == (plain / "lean-toolchain").read_text().strip()
+    assert d["papers"][0]["title"] == index["papers"][0]["title"]
+    # A paper on disk has no arXiv identifier; the descriptor does not invent one.
+    assert d["papers"][0]["id"] is None
+
+
+@needs_lean
+@needs_tex
+def test_build_writes_a_directory_to_publish(plain, tmp_path):
+    if not built_modules(plain, ["Plain"])[0]:
+        pytest.skip("the plain example is not built")
+    out = tmp_path / "published"
+    r = subprocess.run([sys.executable, "-m", "prooflens.cli", "build", "--site", str(out),
+                        "--author", "A. Reviewer"], cwd=plain, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    assert json.loads((out / "audit.json").read_text())["author"] == "A. Reviewer"
+    assert (out / "data" / "index.json").is_file()
+    # It refuses to replace a directory that is not a previous site.
+    other = tmp_path / "other"
+    other.mkdir()
+    (other / "keep.txt").write_text("mine")
+    r = subprocess.run([sys.executable, "-m", "prooflens.cli", "build", "--site", str(other)],
+                       cwd=plain, capture_output=True, text=True)
+    assert r.returncode != 0 and (other / "keep.txt").exists()
+
+
+def test_the_export_carries_its_descriptor(toy, tmp_path):
+    from prooflens import config as cfgmod
+    from prooflens.export import export
+    build(toy, skip_lean=True, skip_tex=True)
+    cfg = cfgmod.load(toy / "machinechecked.toml")
+    export(cfg, tmp_path / "out")
+    d = json.loads((tmp_path / "out" / "audit.json").read_text())
+    assert d["schema"] == audit.SCHEMA and (tmp_path / "out" / d["data"]).is_file()
+    assert d["issues"] == cfg.issues
+
+
+# The reader displays an audit's text; it never inserts it as HTML. These checks keep it so.
+
+def _sources():
+    return [p for p in WEB.rglob("*") if p.suffix in (".svelte", ".js")]
+
+
+def test_the_reader_never_inserts_data_as_html():
+    bad = []
+    for p in _sources():
+        s = p.read_text(encoding="utf-8")
+        for pat in (r"\{@html", r"\.innerHTML\s*=", r"insertAdjacentHTML", r"outerHTML\s*=",
+                    r"document\.write", r"\beval\(", r"new Function\("):
+            if re.search(pat, s):
+                bad.append(f"{p.relative_to(WEB)}: {pat}")
+    assert bad == []
+
+
+def test_katex_runs_without_trust():
+    for p in _sources():
+        s = p.read_text(encoding="utf-8")
+        assert not re.search(r"\btrust\s*:\s*(true|\()", s), p
+    tex = (WEB / "components" / "TexInline.svelte").read_text()
+    assert "el.textContent = " in tex   # the text is set as text before KaTeX reads it
+
+
+def test_an_audit_is_read_only_and_confined_to_its_directory():
+    data = (WEB / "lib" / "data.js").read_text()
+    assert 'credentials: "omit"' in data
+    assert "if (window.__PROOFLENS__ || AUDIT) return false;" in data   # never editable
+    assert 'u.protocol !== "https:"' in data
+    assert "outside the audit's directory" in data

@@ -35,6 +35,7 @@ In the reader, select a theorem from the contents or the paper margin. MachineCh
 
 ```sh
 machinechecked build   # writes MachineChecked.html, readable without a server
+machinechecked build --site public/   # or a directory to publish, with its audit.json
 machinechecked check   # fails if a linked declaration is missing or unproved
 ```
 

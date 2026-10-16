@@ -256,14 +256,17 @@ def save_link(root: Path, paper: str, key: str, lean: list[str] | None, rejected
     return data
 
 
-def save_settings(root: Path, issues: str | None = None, site_url: str | None = None) -> dict:
-    """Record where the reader's Raise issue opens reports (`owner/repo`) and the public address
-    of the published reader, in the links file."""
+def save_settings(root: Path, issues: str | None = None, site_url: str | None = None,
+                  author: str | None = None) -> dict:
+    """Record where the reader's Raise issue opens reports (`owner/repo`), the public address
+    of the published reader, and the name the audit is published under, in the links file."""
     data = load_links(root)
     if issues:
         data["issues"] = issues
     if site_url:
         data["site_url"] = site_url
+    if author:
+        data["author"] = author
     write_json(links_file(root), data)
     return data
 
@@ -501,13 +504,16 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
             "commit": git_head(root), "issues": load_links(root).get("issues"),
             "formalization": fz.summary(fy),
             "site_url": load_links(root).get("site_url"),
+            "author": load_links(root).get("author"),
             "pdf_sha256": sha256_file(pdf) if pdf else None, "tex": tex,
             "claims": claims, "index": index, "decls": decls}
     return {"body": body, "pdf": pdf, "cfg": cfg}
 
 
-def write_view_site(view: dict, site: Path, web_dist: Path | None) -> dict:
-    """The site of a view: the same app as the full reader, in its simple mode."""
+def write_view_site(view: dict, site: Path, web_dist: Path | None,
+                    root: Path | None = None) -> dict:
+    """The site of a view: the same app as the full reader, in its simple mode, with its audit
+    descriptor (`audit.json`). `root` is the Lean project, for the descriptor's repository."""
     from . import manifest as mf
     body = view["body"]
     eid = content_id(body)
@@ -578,6 +584,11 @@ def write_view_site(view: dict, site: Path, web_dist: Path | None) -> dict:
     write_preview(site, index, chunks, store, {"P": view["pdf"]} if view["pdf"] else {},
                   web_dist, simple_queue(index, chunks))
     index["review_queue"] = "data/review-queue.json"
+    from . import audit
+    key = body.get("paper") or ""
+    write_json(site / audit.NAME, audit.descriptor(
+        index, root, author=body.get("author"),
+        paper_url=key if key.startswith(("http://", "https://")) else None))
     write_json(site / "data" / "lean-index.json",
                [{"name": d["name"], "kind": d["kind"], "module": d["module"],
                  "type": d["type"][:300], "doc": (d.get("doc") or "")[:300]}

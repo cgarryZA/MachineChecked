@@ -58,6 +58,7 @@ class Config:
     display: Path | None = None
     issues: str | None = None         # "owner/repo" where the reader's "Raise issue" opens issues
     site_url: str | None = None       # the public address of the published site, for permalinks
+    author: str | None = None         # the name the audit is published under (audit.json)
 
     @property
     def root(self) -> Path:
@@ -136,4 +137,5 @@ def load(path: str | Path) -> Config:
         display=(base / proj["display"]).resolve() if "display" in proj else None,
         issues=issue_repo(proj.get("issues"), str(path)),
         site_url=proj.get("site_url"),
+        author=proj.get("author"),
     )

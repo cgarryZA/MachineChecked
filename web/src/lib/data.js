@@ -3,6 +3,41 @@
 
 const cache = new Map();
 
+// An audit published elsewhere is read with `?audit=<address of its directory>`: the data comes
+// from there, as data only. The address must be https (or a local server, for testing).
+function auditBase() {
+  const a = new URLSearchParams(location.search).get("audit");
+  if (!a) return null;
+  let u;
+  try {
+    u = new URL(a, location.href);
+  } catch {
+    return { error: `not an address: ${a}` };
+  }
+  const local = u.protocol === "http:" && /^(localhost|127\.0\.0\.1)$/.test(u.hostname);
+  if (u.protocol !== "https:" && !local) return { error: `an audit must be at an https address: ${a}` };
+  u.search = "";
+  u.hash = "";
+  // The audit's directory: given as `…/audit/`, `…/audit` or `…/audit/index.html`.
+  if (/\.(json|html?)$/i.test(u.pathname)) u.pathname = u.pathname.replace(/[^/]*$/, "");
+  else if (!u.pathname.endsWith("/")) u.pathname += "/";
+  return { href: u.href };
+}
+
+export const AUDIT = auditBase();
+
+// The address of one of the site's files: under the audit's directory when one is being read.
+export function resolve(path) {
+  if (!AUDIT?.href) return path;
+  if (!inside(path)) throw new Error(`${path}: outside the audit's directory`);
+  return new URL(path, AUDIT.href).href;
+}
+
+// A data path an audit names must stay inside its directory.
+function inside(path) {
+  return typeof path === "string" && path && !/^[a-z][\w+.-]*:|^\/|(^|\/)\.\.(\/|$)/i.test(path);
+}
+
 // A one-file bundle (`prooflens bundle`) carries its data in `window.__PROOFLENS__`, keyed by the
 // same paths the site fetches, so it works opened straight from disk.
 async function getJson(path) {
@@ -14,22 +49,33 @@ async function getJson(path) {
   if (!cache.has(path)) {
     cache.set(
       path,
-      fetch(path).then((r) => {
+      Promise.resolve().then(() => fetch(resolve(path), AUDIT ? { credentials: "omit", referrerPolicy: "no-referrer" } : {}).then((r) => {
         if (!r.ok) throw new Error(`${path}: ${r.status}`);
         return r.json();
-      }),
+      })),
     );
   }
   return cache.get(path);
 }
 
-export function loadIndex() {
-  return getJson("data/index.json");
+// The audit's descriptor (`audit.json`), when an audit is read from elsewhere; null otherwise.
+export let auditInfo = null;
+
+export async function loadIndex() {
+  if (!AUDIT) return getJson("data/index.json");
+  if (AUDIT.error) throw new Error(AUDIT.error);
+  const d = await getJson("audit.json");
+  if (!d || typeof d !== "object" || !String(d.schema || "").startsWith("machinechecked/audit@")) {
+    throw new Error("audit.json is not a MachineChecked audit descriptor");
+  }
+  if (!inside(d.data)) throw new Error("audit.json names its data outside its directory");
+  auditInfo = d;
+  return getJson(d.data);
 }
 
 // Whether the page is served by `prooflens view`, which can save links into the repository.
 export async function canEdit() {
-  if (window.__PROOFLENS__) return false;
+  if (window.__PROOFLENS__ || AUDIT) return false;
   try {
     const r = await fetch("api/status");
     return r.ok && (await r.json()).editable === true;
