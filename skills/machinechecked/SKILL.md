@@ -73,6 +73,10 @@ or not linked. A claim's class is that of its worst link. Quote the `status`, wh
 the class never says more than the status does, and `proved` never means the Lean statement
 matches the paper.
 
+With a `machinechecked.toml` (the full assessment), `finding_details` lists each finding
+(`tier`, `code`, `subject`, `message`, and `dismissed` when a warning was dismissed): quote the
+violations and obligations by subject; `findings` holds only their totals.
+
 ## Typical tasks
 
 - **Which claims are formalised?** Run `check --json`; group claims by `status`. Report the

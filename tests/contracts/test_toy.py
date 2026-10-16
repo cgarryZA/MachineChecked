@@ -235,3 +235,21 @@ def test_reuse_and_reassess_refuse_changed_inputs(toy):
     (toy / "claims.json").write_text(json.dumps(inv))
     with pytest.raises(RuntimeError, match="inventory changed"):
         reassess(cfg, log=lambda *a: None)
+
+
+@needs_lean
+@needs_tex
+def test_check_json_lists_each_finding(toy):
+    """`check --json` (full assessment) lists each finding, with what it says and the clause it
+    concerns, besides the totals it always had."""
+    import subprocess
+    import sys
+    edit(toy / "claims.json", '"witness": "Toy.Acceptance.thm_even_add_hypotheses",\n     "regimes"',
+         '"regimes"')
+    r = subprocess.run([sys.executable, "-m", "prooflens.cli", "check", "--json"], cwd=toy,
+                       capture_output=True, text=True)
+    d = json.loads(r.stdout)
+    assert isinstance(d["findings"], dict) and d["findings"].get("obligation")
+    mine = [f for f in d["finding_details"] if f["subject"] == "T:thm:even-add#0"]
+    assert any(f["tier"] == "obligation" and "witness" in f["message"] for f in mine), mine
+    assert all({"id", "tier", "code", "subject", "message"} <= set(f) for f in d["finding_details"])

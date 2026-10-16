@@ -300,6 +300,19 @@ CHECK_NOTE = ("Statuses say what Lean establishes about the linked declarations.
               "statement says what the paper says is not checked here; that takes a reviewer.")
 
 
+FINDING_KEYS = ("id", "tier", "code", "subject", "message", "trigger", "dismissed")
+
+
+def _finding_details(cfg, eid: str) -> list[dict]:
+    """The full assessment's findings, as stored with its evidence: what each says and which
+    clause or claim it concerns (`subject`), violations first."""
+    from . import evidence as ev
+    found = ev.load(cfg.out_dir, eid)["body"]["assessment"]["findings"]
+    order = {"violation": 0, "obligation": 1, "warning": 2}
+    return [{k: f[k] for k in FINDING_KEYS if k in f}
+            for f in sorted(found, key=lambda f: (order.get(f.get("tier"), 3), f.get("id", "")))]
+
+
 def _check_json(a):
     """`check --json`: every claim with its status and links, as one JSON document on stdout
     (progress goes to stderr). Exit 1 if a linked declaration is missing or not proved."""
@@ -309,13 +322,15 @@ def _check_json(a):
         if _assurance_config(a):
             from .pipeline import build
             cfg = cfgmod.load(_assurance_config(a))
-            idx = build(cfg, web_dist=_web_dist(a.web))["index"]
+            res = build(cfg, web_dist=_web_dist(a.web))
+            idx = res["index"]
             claims = [{"id": c["id"], "paper": c["paper"], "number": c.get("number"),
                        "title": c.get("title"), "status": c["status"], "class": c["class"]}
                       for c in idx["claims"]]
             out = {"mode": "full", "release": idx["release"],
                    "project": idx.get("project", {}).get("commit"),
-                   "findings": idx["findings"]["total"]}
+                   "findings": idx["findings"]["total"],
+                   "finding_details": _finding_details(cfg, res["evidence"])}
             failed = bool(idx["findings"]["total"].get("violation"))
         else:
             root, paper = _simple_target(a)
@@ -360,6 +375,12 @@ def cmd_build(a):
             print(f"  {v:4d}  {k}")
     print("findings:", ", ".join(f"{v} {k}" for k, v in sorted(idx["findings"]["total"].items()))
           or "none")
+    # Violations and obligations, one per line: they are few, and they block acceptance.
+    for f in _finding_details(cfg, res["evidence"]):
+        if f["tier"] in ("violation", "obligation") and not f.get("dismissed"):
+            print(f"  {f['tier']}  {f['subject']}: {f['message']}")
+    if idx["findings"]["total"].get("warning"):
+        print("  (warnings: see `check --json` or the reader)")
     if a.fail_on_violation and idx["findings"]["total"].get("violation"):
         sys.exit(1)
 

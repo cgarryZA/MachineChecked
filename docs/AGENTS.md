@@ -37,6 +37,13 @@ statuses come from (it changes when the paper, the links or the Lean change). Ea
 exact; `class` is only its coarse group for colouring (`proved`, `open`, `malformed`,
 `unspecified`), and the skill explains both.
 
+In a project with a `machinechecked.toml` (the full assessment), the document also has
+`findings` (totals per tier, dismissed warnings left out) and `finding_details`: each finding
+with its `tier` (`violation`, `obligation`, `warning`), `code`, `subject` (the claim or clause,
+for example `T:thm:bound#0`), `message`, and `dismissed` (who and why) when a warning was
+dismissed. Report the violations and obligations by subject and message; they are what blocks a
+claim from being accepted.
+
 ## A note for your project's AGENTS.md or CLAUDE.md
 
 ```md
