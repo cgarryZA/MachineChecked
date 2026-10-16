@@ -20,7 +20,9 @@ from .util import norm_ws, sha256_text
 
 KINDS = ("Theorem", "Lemma", "Proposition", "Corollary", "Definition", "Remark", "Example",
          "Assumption", "Conjecture", "Claim", "Hypothesis", "Convention")
-HEAD = re.compile(r"^(" + "|".join(KINDS) + r")\s+([A-Z]?\d+(?:\.\d+)*[a-z]?)\s*(\.|\(|$)")
+# A statement's number: "3", "8.6", "A1", "4.2a", or an appendix's "A.1", "B.10".
+NUMBER = r"(?:[A-Z](?:\.\d+)+|[A-Z]?\d+(?:\.\d+)*)[a-z]?"
+HEAD = re.compile(r"^(" + "|".join(KINDS) + r")\s+(" + NUMBER + r")\s*(\.|\(|$)")
 STOP = re.compile(r"^(Proof\b|\d+(\.\d+)*\s+[A-Z])")
 
 

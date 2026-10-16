@@ -8,7 +8,7 @@
   let onlyNotProved = $state(false);
 
   // A numbered environment ("Theorem 2.1") as against an equation, part or prose claim.
-  const isEnv = (c) => /^[A-Z][a-z]+ [A-Z]?[0-9][0-9.]*[a-z]?$/.test(c.number || "");
+  const isEnv = (c) => /^[A-Z][a-z]+ (?:[A-Z](?:\.[0-9]+)+|[A-Z]?[0-9][0-9.]*)[a-z]?$/.test(c.number || "");
   const short = (c) => (isEnv(c) ? c.number.replace(/^[A-Za-z]+ /, "") : c.number || c.id);
 
   const papers = $derived(

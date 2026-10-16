@@ -22,7 +22,7 @@
   let showInfo = $state(typeof window !== "undefined" && window.innerWidth > 1180);
   let showAllClaims = $state(false);
   // A numbered statement ("Theorem 3.1") as against an equation, a part or a prose claim.
-  const isEnv = (c) => /^[A-Z][a-z]+ [A-Z]?[0-9][0-9.]*[a-z]?$/.test(c.number || "");
+  const isEnv = (c) => /^[A-Z][a-z]+ (?:[A-Z](?:\.[0-9]+)+|[A-Z]?[0-9][0-9.]*)[a-z]?$/.test(c.number || "");
   const listed = $derived(showAllClaims ? ordered : ordered.filter(isEnv));
   const others = $derived(ordered.filter((c) => !isEnv(c)).length);
 

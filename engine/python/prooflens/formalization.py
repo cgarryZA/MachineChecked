@@ -18,7 +18,8 @@ from pathlib import Path
 NAMES = ("formalization.yaml", "formalization.yml")
 KINDS = ("theorem", "lemma", "proposition", "corollary", "definition", "remark", "example",
          "conjecture", "claim", "assumption", "hypothesis", "convention")
-REF = re.compile(r"\b(" + "|".join(KINDS) + r")\s+([A-Z]?\d+(?:\.\d+)*[a-z]?)", re.I)
+REF = re.compile(r"\b(" + "|".join(KINDS) + r")\s+((?:[A-Z](?:\.\d+)+|[A-Z]?\d+(?:\.\d+)*)[a-z]?)",
+                 re.I)
 
 
 def find(root: Path) -> Path | None:
