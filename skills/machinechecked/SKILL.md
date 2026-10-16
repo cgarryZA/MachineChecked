@@ -43,7 +43,10 @@ there are several or it is elsewhere: `machinechecked check --json paper/main.te
 `check --json` prints one JSON document (progress goes to stderr). Exit 0: every linked
 declaration is proved; 1: one is missing or not proved; 2: the check could not run. On exit 2 the
 document has an `error` (`kind`, `message`, and `tool` when a program such as `lake` is missing)
-and no claims: report the error and that nothing was checked, never a status. Per claim: `number` ("Theorem 2.1"), `status`, `links`
+and no claims: report the error and that nothing was checked, never a status. `version` is the
+MachineChecked version; `release` identifies the evidence the statuses were computed from (it
+changes when the paper, the links or the Lean change), for quoting which run a report is about.
+Per claim: `number` ("Theorem 2.1"), `status`, `links`
 (each with `name`, `status`, `source`) and `suggestions` (unconfirmed candidates, with `why`).
 
 | status | meaning |
@@ -62,6 +65,13 @@ and no claims: report the error and that nothing was checked, never a status. Pe
 
 Link `source` says who made the link: `paper` (a `\lean{}` tag), `formalization.yaml` (the
 project's own mapping), or `confirmed` (saved in `machinechecked.links.json`).
+
+`class` (`proved`, `open`, `malformed`, `unspecified`) is a coarse grouping of the status, used
+for the reader's colours: `proved` for a proof checked or a definition, `open` for `sorry` or
+further axioms, `malformed` for a declaration not found, `unspecified` for everything not checked
+or not linked. A claim's class is that of its worst link. Quote the `status`, which is exact;
+the class never says more than the status does, and `proved` never means the Lean statement
+matches the paper.
 
 ## Typical tasks
 

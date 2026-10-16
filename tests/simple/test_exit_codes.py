@@ -69,3 +69,9 @@ def test_findings_still_exit_1(monkeypatch):
     with pytest.raises(SystemExit) as exc:
         cli.main(["check", "--json"])
     assert exc.value.code == 1
+
+
+def test_version_flag(capsys):
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["--version"])
+    assert exc.value.code == 0 and capsys.readouterr().out.strip().endswith(cli.tool_version())

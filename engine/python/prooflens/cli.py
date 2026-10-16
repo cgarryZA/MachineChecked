@@ -9,7 +9,8 @@ Everyday commands, run from anywhere inside a Lean project:
 A project with a `machinechecked.toml` (an acceptance layer: locked statements, reviews) gets
 the full assessment; any other project gets the zero-configuration view, whose only file in the
 repository is `machinechecked.links.json` (its working files, a downloaded paper among them, are
-in `.machinechecked/`, which Git ignores). The other commands are for that full assessment.
+in `.machinechecked/`, which Git ignores). The full assessment has further commands: reassess,
+site, bundle, export, serve, review promote and validate (each with --help).
 `prooflens` is another name for the same command.
 """
 
@@ -158,7 +159,7 @@ def _fetch_paper(root: Path, url: str, title: str | None = None) -> Path:
     out = d / f"{hashlib.sha256(url.encode()).hexdigest()[:10]}-{name}"
     if not out.exists():
         d.mkdir(parents=True, exist_ok=True)
-        print(f"downloading {url}")
+        print(f"downloading {url}", file=sys.stderr)
         try:
             with urllib.request.urlopen(url, timeout=120) as r:
                 data = r.read(200_000_001)
@@ -174,7 +175,7 @@ def _fetch_paper(root: Path, url: str, title: str | None = None) -> Path:
 def _simple_site(root: Path, paper: Path, web: str | None):
     from .simple import build_view, write_view_site
     out = root / cfgmod.work_dir_name(root)
-    view = build_view(root, paper, out, log=lambda m: print("  " + m))
+    view = build_view(root, paper, out, log=lambda m: print("  " + m, file=sys.stderr))
     site = out / "site"
     index = write_view_site(view, site, _web_dist(web), root)
     return site, index, view
@@ -307,7 +308,8 @@ def _check_json(a):
     summary = {}
     for c in claims:
         summary[c["status"]] = summary.get(c["status"], 0) + 1
-    print(json.dumps({"schema": "machinechecked/check@1", **out, "summary": summary,
+    print(json.dumps({"schema": "machinechecked/check@1", "version": tool_version(), **out,
+                      "summary": summary,
                       "claims": claims, "ok": not failed, "note": CHECK_NOTE}, indent=1))
     if failed:
         sys.exit(1)
@@ -431,10 +433,13 @@ def main(argv=None):
                                 else "machinechecked", description=__doc__.split("\n\n")[0],
                                 formatter_class=argparse.RawDescriptionHelpFormatter,
                                 epilog="\n\n".join(__doc__.split("\n\n")[1:]))
+    p.add_argument("--version", action="version", version=f"%(prog)s {tool_version()}")
     sub = p.add_subparsers(dest="cmd", required=True, metavar="{view,build,check}")
 
     w = sub.add_parser("view", help="open the reader")
-    w.add_argument("paper", nargs="?")
+    w.add_argument("paper", nargs="?",
+                   help="the paper: a .tex (its LaTeX root), a .pdf, or a URL of a PDF; "
+                   "found in the project when not given")
     w.add_argument("--issues", metavar="OWNER/REPO",
                         help="the GitHub repository where the reader's Raise issue opens reports")
     w.add_argument("--site-url", help="the public address of the published reader, "
@@ -450,7 +455,9 @@ def main(argv=None):
     w.set_defaults(func=cmd_view)
 
     b = sub.add_parser("build", help="write the reader as one HTML file to share")
-    b.add_argument("paper", nargs="?")
+    b.add_argument("paper", nargs="?",
+                   help="the paper: a .tex (its LaTeX root), a .pdf, or a URL of a PDF; "
+                   "found in the project when not given")
     b.add_argument("--issues", metavar="OWNER/REPO",
                         help="the GitHub repository where the reader's Raise issue opens reports")
     b.add_argument("--site-url", help="the public address of the published reader, "
@@ -476,7 +483,9 @@ def main(argv=None):
     k = sub.add_parser("check", help="report what the Lean side establishes (exit 1 if a "
                                      "linked declaration is missing or unproved, 2 if the check "
                                      "could not run)")
-    k.add_argument("paper", nargs="?")
+    k.add_argument("paper", nargs="?",
+                   help="the paper: a .tex (its LaTeX root), a .pdf, or a URL of a PDF; "
+                   "found in the project when not given")
     k.add_argument("--json", action="store_true",
                    help="print every claim's status and links as JSON (for scripts and agents)")
     k.add_argument("-c", "--config", help=argparse.SUPPRESS)
@@ -561,6 +570,15 @@ def main(argv=None):
 # Exit codes: 0 the command did its job (and `check` found nothing wrong), 1 `check` (or
 # `build --fail-on-violation`) found a problem, 2 the command could not run.
 COULD_NOT_RUN = 2
+
+
+def tool_version() -> str:
+    """The installed MachineChecked version."""
+    from importlib.metadata import PackageNotFoundError, version
+    try:
+        return version("machinechecked")
+    except PackageNotFoundError:
+        return "unknown"
 
 
 def _crash(e: Exception) -> str:

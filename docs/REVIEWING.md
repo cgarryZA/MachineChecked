@@ -37,7 +37,7 @@ A review may be useful before a theorem is proved, provided the formal specifica
 
 The reviewer supplies their name or model identity. On a standalone HTML bundle, identity is **self-declared**; a Git name or a typed username is not proof of authorship.
 
-Work is saved in browser storage when possible. **Export reports regularly**, especially before leaving a long review session. The JSON export contains the recorded interpretation, comparison, verdict, source revision, Lean fingerprints and reviewer attribution.
+Drafts are kept only in the browser you review in (its local storage), until you export them: clearing the site's data, a private window, or another browser or computer starts with none. **Export reports regularly**, especially before leaving a long review session. The JSON export contains the recorded interpretation, comparison, verdict, source revision, Lean fingerprints and reviewer attribution.
 
 A report is evidence for the maintainer; it does not change a claim's verification status.
 

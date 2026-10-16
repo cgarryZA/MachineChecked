@@ -32,7 +32,10 @@ not proved, and 2 when the check could not run (a missing program such as `lake`
 project, a paper that cannot be read, a failed Lean probe). In that last case the document has
 `"ok": false` and an `error` (`kind`: `missing-tool` with the `tool`, `error`, or `internal`;
 `message`) and no claims: nothing is known about them. Progress goes to stderr, so stdout is only
-the JSON.
+the JSON. `version` is MachineChecked's version, and `release` identifies the evidence the
+statuses come from (it changes when the paper, the links or the Lean change). Each `status` is
+exact; `class` is only its coarse group for colouring (`proved`, `open`, `malformed`,
+`unspecified`), and the skill explains both.
 
 ## A note for your project's AGENTS.md or CLAUDE.md
 

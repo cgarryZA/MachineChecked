@@ -72,6 +72,8 @@ def test_build_writes_a_directory_to_publish(plain, tmp_path):
     r = subprocess.run([sys.executable, "-m", "prooflens.cli", "build", "--site", str(out),
                         "--author", "A. Reviewer"], cwd=plain, capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
+    # Progress goes to stderr; stdout carries only the result.
+    assert "lean:" in r.stderr and "lean:" not in r.stdout and "wrote the reader" in r.stdout
     assert json.loads((out / "audit.json").read_text())["author"] == "A. Reviewer"
     assert (out / "data" / "index.json").is_file()
     # It refuses to replace a directory that is not a previous site.

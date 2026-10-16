@@ -123,9 +123,10 @@
     <section class="card setup">
       <h1>Review</h1>
       <p>One unit at a time: read the paper and write down what it says, then compare the Lean
-        with your reading and record a verdict, then read the author's review. Your reports stay
-        in this browser until you export them; a maintainer examines them before anything is
-        recorded as reviewed.</p>
+        with your reading and record a verdict, then read the author's review. Your drafts and
+        reports are kept only in this browser until you export them (clearing its data, or another
+        browser, starts with none); a maintainer examines them before anything is recorded as
+        reviewed.</p>
       <fieldset>
         <legend>Who is reviewing?</legend>
         <label><input type="radio" bind:group={who.kind} value="human" /> A person</label>
