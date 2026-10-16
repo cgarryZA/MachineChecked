@@ -136,3 +136,16 @@ def test_the_full_assessment_probes_each_library_apart(twins, tmp_path):
     assert any(e.startswith("ambiguous: declared in") and "Challenge.Main" in e
                and "Solution.Main" in e for e in twin["errors"])
     assert not any(e.startswith("ambiguous") for e in res["proofs"]["witness:Nat.add_comm:"]["errors"])
+
+
+@needs_lean
+def test_a_long_session_reports_its_progress(twins, monkeypatch):
+    """A Lean session announces itself and, while it runs, says how long it has run."""
+    from prooflens import probe
+    from prooflens.simple import run_simple_probe
+    monkeypatch.setattr(probe, "HEARTBEAT", 1)
+    said = []
+    run_simple_probe(twins, ["Solution.Main"], ["Solution"], [{"kind": "index", "name": ""}],
+                     log=said.append, label="Solution")
+    assert said[0] == "lean: Solution: loading 1 module(s)"
+    assert any(m.startswith("lean: Solution: 0 min") for m in said[1:])

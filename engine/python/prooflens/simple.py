@@ -342,14 +342,14 @@ def _record(line: str) -> dict:
 
 def run_simple_probe(root: Path, modules: list[str], libs: list[str], requests: list[dict],
                      lake: str = "lake", timeout: int = 3600,
-                     work: Path | None = None) -> list[dict]:
+                     work: Path | None = None, log=None, label: str = "") -> list[dict]:
     """Run the Lean probe on `modules` in one session (`probe.lean_session`), keeping each
     record as `_record` trims it."""
     query = {"scope_roots": [l.split(".")[0] for l in libs], "spec_prefix": "",
              "accept_prefix": "", "allowed_axioms": STANDARD_AXIOMS, "requests": requests}
     try:
         return lean_session(root, modules, query, lambda lines: [_record(l) for l in lines],
-                            lake, timeout, work)
+                            lake, timeout, work, log, label)
     except ProbeError as e:
         raise ViewError(str(e)) from None
 
@@ -369,7 +369,8 @@ def probe_modules(root: Path, modules: list[str], libs: list[str], requests: lis
 
     def run(group: list[str], label: str):
         try:
-            out = run_simple_probe(root, group, libs, requests, lake, work=work)
+            out = run_simple_probe(root, group, libs, requests, lake, work=work, log=log,
+                                   label=label)
         except ViewError as e:
             if len(group) == 1:
                 failed[group[0]] = str(e)[-600:]

@@ -87,12 +87,43 @@ def by_library(modules: list[str], libs: list[str]) -> list[tuple[str, list[str]
     return sorted(groups.items())
 
 
+HEARTBEAT = 60  # seconds between progress lines while a Lean session runs
+
+
+def _run_watched(cmd: list[str], cwd: Path, env: dict, timeout: int, out: Path, log, label: str):
+    """Run `cmd` like `util.run`, and while it runs, report every HEARTBEAT seconds how long it
+    has run and how much it has written, so a long module load does not look like a hang."""
+    import subprocess
+    import time
+    with tempfile.TemporaryFile("w+") as so, tempfile.TemporaryFile("w+") as se:
+        proc = subprocess.Popen(cmd, cwd=cwd, env=env, stdout=so, stderr=se, text=True)
+        start = time.monotonic()
+        while True:
+            try:
+                proc.wait(timeout=HEARTBEAT)
+                break
+            except subprocess.TimeoutExpired:
+                elapsed = time.monotonic() - start
+                if elapsed > timeout:
+                    proc.kill()
+                    proc.wait()
+                    raise ProbeError(f"the Lean probe ({label}) took longer than {timeout} s")
+                size = out.stat().st_size if out.exists() else 0
+                log(f"lean: {label}: {int(elapsed // 60)} min, "
+                    + (f"{size / 1e6:.1f} MB of records written" if size else
+                       "loading the modules"))
+        so.seek(0)
+        se.seek(0)
+        return subprocess.CompletedProcess(cmd, proc.returncode, so.read(), se.read())
+
+
 def lean_session(root: Path, modules: list[str], query: dict, read, lake: str = "lake",
-                 timeout: int = 3600, work: Path | None = None):
+                 timeout: int = 3600, work: Path | None = None, log=None, label: str = ""):
     """Run the probe in one Lean session importing `modules`, in the project at `root` with its
     own toolchain, and return `read(lines)` of its output, read as it is iterated (the output
     can be gigabytes). The output file is written in `work` when given (rather than a system
-    temporary folder, which may be in memory). Raises ProbeError if the session fails."""
+    temporary folder, which may be in memory). With `log`, the session announces itself and
+    reports its progress while it runs. Raises ProbeError if the session fails."""
     body = resources.files("prooflens").joinpath("data/ProofLensProbe.lean").read_text()
     header = "import Lean\n" + "".join(f"import {m}\n" for m in modules) + "\n"
     if work is not None:
@@ -103,9 +134,14 @@ def lean_session(root: Path, modules: list[str], query: dict, read, lake: str = 
         (tmp / "query.json").write_text(json.dumps(query))
         env = dict(os.environ, PROOFLENS_QUERY=str(tmp / "query.json"),
                    PROOFLENS_OUT=str(tmp / "out.jsonl"))
-        r = run([lake, "env", "lean", str(tmp / "Probe.lean")], cwd=root, env=env,
-                timeout=timeout)
         out = tmp / "out.jsonl"
+        cmd = [lake, "env", "lean", str(tmp / "Probe.lean")]
+        if log is None:
+            r = run(cmd, cwd=root, env=env, timeout=timeout)
+        else:
+            label = label or ", ".join(modules[:2]) + ("…" if len(modules) > 2 else "")
+            log(f"lean: {label}: loading {len(modules)} module(s)")
+            r = _run_watched(cmd, root, env, timeout, out, log, label)
         if r.returncode != 0 or not out.exists():
             raise ProbeError(f"the Lean probe failed ({r.returncode}):\n{r.stdout[-3000:]}\n"
                              f"{r.stderr[-3000:]}")
