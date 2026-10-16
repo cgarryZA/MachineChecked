@@ -47,7 +47,7 @@ def test_homepage_has_a_clear_accessible_first_run_path():
     assert p.headings.count("h1") == 1
     assert {"main", "how", "start"} <= p.ids
     assert '#main' in p.hrefs  # keyboard skip link
-    assert "/demo/" in p.hrefs
+    assert "demo/" in p.hrefs
     assert "#start" in p.hrefs
     assert "machinechecked view" in html
     assert "A link is not a proof. A proof is not a review." in html
@@ -62,9 +62,9 @@ def test_public_preview_and_discoverability_files():
     assert p.metadata["og:url"] == "https://machinechecked.org/"
     assert p.metadata["og:image"] == "https://machinechecked.org/preview-light.webp"
     assert p.metadata["twitter:card"] == "summary_large_image"
-    for src in ("/preview-light.webp", "/preview-dark.webp"):
+    for src in ("preview-light.webp", "preview-dark.webp"):
         assert src in p.images
-        assert (SITE / src.lstrip("/")).exists()
+        assert (SITE / src).exists()
     sitemap = ET.fromstring((SITE / "sitemap.xml").read_text())
     ns = "{http://www.sitemaps.org/schemas/sitemap/0.9}"
     urls = {e.text for e in sitemap.iter(f"{ns}loc")}
