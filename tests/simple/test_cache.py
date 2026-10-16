@@ -139,3 +139,85 @@ def test_publishing_attaches_the_projects_licence(tmp_path, monkeypatch):
     monkeypatch.setattr(cache, "curl", fake_curl)
     cache.publish(project, out, "someone/fork", log=lambda m: None)
     assert uploaded == [f"{name}.tar.zst", f"{name}.tar.zst.sha256", f"{name}.json", "LICENSE"]
+
+
+def rec_commit(out):
+    return json.loads(next(out.glob("*.json")).read_text())["commit"]
+
+
+def clone(src, dest, *args):
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    git(dest.parent, "clone", "-q", *args, f"file://{src}", dest.name)
+    return dest
+
+
+@needs_lean
+def test_any_clone_restores_whatever_its_folder_or_history(toy, tmp_path):
+    """Archives are named after the Lake package and hold paths relative to the project, so a
+    clone in another folder finds and unpacks them; the same Lean inputs are enough when the
+    history cannot show the archived commit (a shallow clone, an amended commit)."""
+    src, _ = toy
+    out = tmp_path / "saved"
+    cache.save(src, out, [], log=lambda m: None)
+    renamed = clone(src, tmp_path / "c" / "work")
+    cache.restore(renamed, local=out, log=lambda m: None)
+    assert built(renamed, "--rehash") == []
+    # A later commit changing no Lean file, cloned at depth 1: the archived commit is not in
+    # the clone's history, so only the inputs can say the archive fits.
+    (src / "README.md").write_text("notes\n")
+    git(src, "add", "README.md")
+    git(src, "commit", "-q", "-m", "notes")
+    shallow = clone(src, tmp_path / "d" / "toy", "--depth", "1")
+    assert subprocess.run(["git", "cat-file", "-e", f"{rec_commit(out)}^{{commit}}"],
+                          cwd=shallow, capture_output=True).returncode != 0
+    cache.restore(shallow, local=out, log=lambda m: None)
+    assert built(shallow, "--rehash") == []
+    # An amended commit that changes no Lean input still restores; one that does, does not.
+    amended = clone(src, tmp_path / "e" / "toy")
+    git(amended, "reset", "-q", "--hard", rec_commit(out))
+    (amended / "README.md").write_text("notes\n")
+    git(amended, "add", "README.md")
+    git(amended, "commit", "-q", "--amend", "-m", "toy, amended")
+    assert cache.restore(amended, local=out, log=lambda m: None)["commits_behind"] == 0
+    with open(amended / "Toy" / "Defs.lean", "a") as f:
+        f.write("\n-- changed\n")
+    git(amended, "commit", "-q", "-am", "a Lean change")
+    git(amended, "commit", "-q", "--amend", "-m", "rewritten")
+    shutil.rmtree(amended / ".lake")
+    with pytest.raises(cache.CacheError, match="no compatible"):
+        cache.restore(amended, local=out, log=lambda m: None)
+
+
+@needs_lean
+def test_an_archive_in_the_older_layout_still_restores(toy, tmp_path):
+    """Archives published before the package-named layout (paths from the checkout's parent,
+    named after its folder) restore into a checkout in a folder of that name."""
+    src, other = toy
+    subprocess.run(["lake", "build"], cwd=src, check=True, capture_output=True)
+    commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=src, capture_output=True,
+                            text=True).stdout.strip()
+    out = tmp_path / "old"
+    out.mkdir()
+    stem = cache._prefix(src.name) + commit
+    arc = out / f"{stem}.tar.zst"
+    subprocess.run(["tar", "-C", str(src.parent), "-I", "zstd -T0", "-cf", str(arc),
+                    "toy/.lake/build"], check=True)
+    (out / f"{stem}.json").write_text(json.dumps({
+        "commit": commit, "project": "toy", "dirs": ["toy/.lake/build"],
+        "sha256": cache.sha256(arc), **cache.fingerprint(src)}))
+    cache.restore(other, local=out, log=lambda m: None)
+    assert built(other, "--rehash") == []
+
+
+def test_prune_keeps_the_newest_of_each_package_platform_and_version():
+    def man(project, created, toolchain="lean4:v1"):
+        return {"project": project, "platform": "Linux-x86_64", "toolchain": toolchain,
+                "created": created}
+    manifests = {"a1": man("a", "2026-01-01"), "a2": man("a", "2026-01-02"),
+                 "a3": man("a", "2026-01-03"), "a-other": man("a", "2026-01-01", "lean4:v2"),
+                 "b1": man("b", "2026-01-01")}
+    assert cache.prune_plan(manifests, keep=2) == ["a1"]
+    assert cache.prune_plan(manifests, keep=1) == ["a1", "a2"]
+    assert cache._files_of("a1", {"parts": None}) == ["a1.tar.zst", "a1.tar.zst.sha256", "a1.json"]
+    assert cache._files_of("a1", {"parts": [{"name": "a1.tar.zst.part000"}]}) == \
+        ["a1.tar.zst.part000", "a1.json"]

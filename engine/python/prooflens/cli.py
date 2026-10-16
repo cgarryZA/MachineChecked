@@ -399,6 +399,9 @@ def cmd_export(a):
 def cmd_cache(a):
     from . import cache
     from .simple import find_lake_root
+    if a.action == "prune":
+        cache.prune(a.repo, a.keep, log=lambda m: print(m, file=sys.stderr))
+        return
     project = Path(a.project).resolve() if a.project else find_lake_root(Path.cwd().resolve())
     if project is None:
         sys.exit("no Lean project here: run machinechecked inside a directory with a lakefile")
@@ -576,6 +579,11 @@ def main(argv=None):
     cs.add_argument("--pin-file", help=argparse.SUPPRESS)
     cp = cas.add_parser("publish", help="upload the saved archive to the build-cache release")
     cp.add_argument("repo", metavar="OWNER/REPO")
+    cpr = cas.add_parser("prune", help="delete all but the newest saved builds")
+    cpr.add_argument("repo", metavar="OWNER/REPO")
+    cpr.add_argument("--keep", type=int, required=True,
+                     help="how many to keep per package, platform and Lean version")
+    cpr.add_argument("--project", help=argparse.SUPPRESS)
     cr = cas.add_parser("restore", help="restore the nearest compatible saved build")
     cr.add_argument("repo", nargs="?", metavar="OWNER/REPO")
     cr.add_argument("--from", dest="from_dir", metavar="DIR",

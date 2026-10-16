@@ -115,18 +115,94 @@ def fingerprint(project: Path) -> dict:
 
 
 def build_dirs(project: Path) -> list[str]:
+    """The build output to archive, relative to the project's parent (as recorded in the
+    manifest's `dirs`, for reading)."""
     parent = project.parent
-    out = [project / ".lake" / "build"]
+    return [str(src.relative_to(parent)) if src.is_relative_to(parent) else str(src)
+            for src, _ in _members(project)]
+
+
+def _members(project: Path) -> list[tuple[Path, str]]:
+    """Each build directory to archive and its name in the archive: `project/<path>` for the
+    project's own build and its packages' (relative to the project), `path/<name>/.lake/build`
+    for a path dependency's (found again by its name on restore, wherever it is checked out)."""
+    out = []
     skip = cache_supplied(project)
+    rels = [".lake/build"]
     pk = project / ".lake" / "packages"
     if pk.exists():
-        out += [p / ".lake" / "build" for p in sorted(pk.iterdir()) if p.name not in skip]
-    out += [d / ".lake" / "build" for d in path_deps(project)]
-    return [str(p.relative_to(parent)) for p in out if p.is_dir()]
+        rels += [f".lake/packages/{p.name}/.lake/build" for p in sorted(pk.iterdir())
+                 if p.name not in skip]
+    out += [(project / r, f"project/{r}") for r in rels]
+    out += [(d / ".lake" / "build", f"path/{d.name}/.lake/build") for d in path_deps(project)]
+    return [(src, name) for src, name in out if src.is_dir()]
+
+
+def package_name(project: Path) -> str:
+    """The Lake package's name, which every clone shares (its folder's name need not)."""
+    t = project / "lakefile.toml"
+    if t.exists():
+        import tomllib
+        name = tomllib.loads(t.read_text(encoding="utf-8")).get("name")
+        if name:
+            return str(name)
+    l = project / "lakefile.lean"
+    if l.exists():
+        import re
+        m = re.search(r"^\s*package\s+«?([\w.'-]+)»?", l.read_text(encoding="utf-8"), re.M)
+        if m:
+            return m.group(1)
+    return project.name
+
+
+def _prefix(name: str) -> str:
+    return f"{name.lower()}-{platform.system().lower()}-{platform.machine().lower()}-"
 
 
 def asset_prefix(project: Path) -> str:
-    return f"{project.name.lower()}-{platform.system().lower()}-{platform.machine().lower()}-"
+    return _prefix(package_name(project))
+
+
+def inputs_digest(project: Path) -> str | None:
+    """A digest of the project's tracked Lean inputs (their Git blob hashes): equal for any clone
+    of the same sources, shallow or not, whatever its history."""
+    r = subprocess.run(["git", "ls-files", "-s", "--", *LEAN_INPUTS], cwd=project,
+                       capture_output=True, text=True)
+    return hashlib.sha256(r.stdout.encode()).hexdigest() if r.returncode == 0 else None
+
+
+def _pack(arc: Path, members: list[tuple[Path, str]]) -> None:
+    """Write the members to a zstd-compressed tar archive."""
+    import tarfile
+    z = subprocess.Popen(["zstd", "-T0", "-6", "-q", "-f", "-o", str(arc)],
+                         stdin=subprocess.PIPE)
+    with tarfile.open(fileobj=z.stdin, mode="w|") as tf:
+        for src, name in members:
+            tf.add(src, arcname=name)
+    z.stdin.close()
+    if z.wait() != 0:
+        raise CacheError("zstd failed while writing the archive")
+
+
+def _unpack(arc: Path, project: Path) -> None:
+    """Unpack an archive written by `_pack` into the project and its path dependencies, with the
+    tar `data` filter (no absolute paths, no `..`, no links out of the destination)."""
+    import tarfile
+    deps = {d.name: d for d in path_deps(project)}
+    z = subprocess.Popen(["zstd", "-d", "-q", "-c", str(arc)], stdout=subprocess.PIPE)
+    with tarfile.open(fileobj=z.stdout, mode="r|") as tf:
+        for m in tf:
+            head, _, rest = m.name.partition("/")
+            if head == "project" and rest:
+                base, m.name = project, rest
+            elif head == "path" and rest.partition("/")[0] in deps:
+                name, _, m.name = rest.partition("/")
+                base = deps[name]
+            else:
+                raise CacheError(f"unexpected path in the archive: {m.name}")
+            tf.extract(m, base, filter="data")
+    if z.wait() != 0:
+        raise CacheError("zstd failed while reading the archive")
 
 
 def repository(project: Path) -> str | None:
@@ -178,13 +254,14 @@ def save(project: Path, out: Path, targets: list[str], pin_file: str | None = No
     name = asset_prefix(project) + commit
     dirs = build_dirs(project)
     arc = out / f"{name}.tar.zst"
-    _sh(["tar", "-C", str(project.parent), "-I", "zstd -T0 -6", "-cf", str(arc), *dirs])
+    _pack(arc, _members(project))
     digest, size = sha256(arc), arc.stat().st_size
     parts = _split(arc, part_size) if size > part_size else None
     if parts is None:
         (out / f"{name}.tar.zst.sha256").write_text(f"{digest}  {arc.name}\n")
     licences = [f for f in LICENCE_FILES if (project / f).is_file()]
-    manifest = {"commit": commit, "project": project.name, "repository": repository(project),
+    manifest = {"commit": commit, "project": package_name(project), "layout": 2,
+                "inputs_digest": inputs_digest(project), "repository": repository(project),
                 "targets": targets or ["(default)"], "dirs": dirs, "sha256": digest,
                 "size": size, "parts": parts, "licence_files": licences,
                 "created": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -282,17 +359,21 @@ def restore(project: Path, repo: str | None = None, local: Path | None = None,
     """Restore the nearest compatible cached build of `project` from the `build-cache`
     release of `repo`, or from the directory `local`."""
     here = fingerprint(project)
+    digest = inputs_digest(project)
     src = _Source(repo, local)
-    prefix = asset_prefix(project)
-    best = None
+    # Archives are named after the Lake package; older ones after the checkout's folder.
+    prefixes = (asset_prefix(project), _prefix(project.name))
+    best, no_history = None, False
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
         for name in sorted(src.assets):
-            if not (name.startswith(prefix) and name.endswith(".json")):
+            if not (name.startswith(prefixes) and name.endswith(".json")):
                 continue
             stem = name[:-5]
             src.fetch(name, tmp / name)
             man = json.loads((tmp / name).read_text())
+            if not man.get("layout") and not name.startswith(_prefix(project.name)):
+                continue  # an archive in the older layout unpacks only into a folder of its name
             wanted = [p["name"] for p in man["parts"]] if man.get("parts") else [f"{stem}.tar.zst"]
             if any(w not in src.assets for w in wanted):
                 continue
@@ -300,16 +381,28 @@ def restore(project: Path, repo: str | None = None, local: Path | None = None,
             if mismatch:
                 log(f"skip {stem}: differs in {', '.join(mismatch)}")
                 continue
-            if subprocess.run(["git", "merge-base", "--is-ancestor", man["commit"], "HEAD"],
-                              cwd=project, capture_output=True).returncode != 0:
-                log(f"skip {stem}: not an ancestor of HEAD")
+            # The same Lean inputs: usable whatever the history (a shallow clone, a rewrite).
+            if digest and man.get("inputs_digest") == digest:
+                key = (0, 0)
+            elif subprocess.run(["git", "merge-base", "--is-ancestor", man["commit"], "HEAD"],
+                                cwd=project, capture_output=True).returncode == 0:
+                key = (1, int(_sh(["git", "rev-list", "--count", f"{man['commit']}..HEAD"],
+                                  cwd=project)))
+            else:
+                no_history = no_history or subprocess.run(
+                    ["git", "rev-parse", "--is-shallow-repository"], cwd=project,
+                    capture_output=True, text=True).stdout.strip() == "true"
+                log(f"skip {stem}: not an ancestor of HEAD, and its Lean inputs differ")
                 continue
-            dist = int(_sh(["git", "rev-list", "--count", f"{man['commit']}..HEAD"], cwd=project))
-            if best is None or dist < best[0]:
-                best = (dist, stem, man)
+            if best is None or key < best[0]:
+                best = (key, stem, man)
         if best is None:
-            raise CacheError("no compatible cached build; build from source")
-        dist, stem, man = best
+            raise CacheError("no compatible cached build; build from source"
+                             + (" (this clone is shallow: with its history, `fetch-depth: 0` "
+                                "in actions/checkout, a build of an earlier commit can be used)"
+                                if no_history else ""))
+        key, stem, man = best
+        dist = key[1]
         t0 = time.time()
         arc = tmp / f"{stem}.tar.zst"
         pieces = man["parts"] if man.get("parts") else [{"name": arc.name, "sha256": man["sha256"]}]
@@ -332,8 +425,13 @@ def restore(project: Path, repo: str | None = None, local: Path | None = None,
         if got != man["sha256"]:
             raise CacheError(f"sha256 {got} is not the manifest's {man['sha256']}; "
                              "build from source")
-        _sh(["tar", "-C", str(project.parent), "-I", "zstd -T0", "-xf", str(arc)])
-    log(f"restored {stem} ({dist} commits behind HEAD, sha256 {got[:16]}…) "
+        if man.get("layout") == 2:
+            _unpack(arc, project)
+        else:
+            _sh(["tar", "-C", str(project.parent), "-I", "zstd -T0", "-xf", str(arc)])
+    log(f"restored {stem} ("
+        + ("the same Lean inputs" if key[0] == 0 else f"{dist} commits behind HEAD")
+        + f", sha256 {got[:16]}…) "
         f"in {time.time() - t0:.0f}s")
     record = {"asset": stem, "commit": man["commit"], "sha256": got, "commits_behind": dist,
               "targets": man.get("targets")}
@@ -344,3 +442,50 @@ def restore(project: Path, repo: str | None = None, local: Path | None = None,
         if subprocess.run([lake, "build", "--rehash", *targets], cwd=project).returncode != 0:
             raise CacheError("lake build after the restore failed")
     return record
+
+
+def prune_plan(manifests: dict[str, dict], keep: int) -> list[str]:
+    """The archives to delete: all but the newest `keep` of each package, platform and Lean
+    version (an older build is useful only as the nearest one to recent work)."""
+    groups: dict[tuple, list[tuple[str, str]]] = {}
+    for stem, man in manifests.items():
+        key = (man.get("project"), man.get("platform"), man.get("toolchain"))
+        groups.setdefault(key, []).append((man.get("created") or "", stem))
+    drop = []
+    for items in groups.values():
+        items.sort(reverse=True)
+        drop += [stem for _, stem in items[keep:]]
+    return sorted(drop)
+
+
+def _files_of(stem: str, man: dict) -> list[str]:
+    if man.get("parts"):
+        return [p["name"] for p in man["parts"]] + [f"{stem}.json"]
+    return [f"{stem}.tar.zst", f"{stem}.tar.zst.sha256", f"{stem}.json"]
+
+
+def prune(repo: str, keep: int, log=print) -> list[str]:
+    """Delete from the `build-cache` release of `repo` every archive (with its companions) but
+    the newest `keep` of each package, platform and Lean version. Licence files stay."""
+    if keep < 1:
+        raise CacheError("keep at least one archive")
+    if not token():
+        raise CacheError("no token: set MACHINECHECKED_GH_TOKEN to prune")
+    src = _Source(repo, None)
+    manifests = {}
+    with tempfile.TemporaryDirectory() as tmp:
+        for name in sorted(src.assets):
+            if name.endswith(".json"):
+                src.fetch(name, Path(tmp) / name)
+                manifests[name[:-5]] = json.loads((Path(tmp) / name).read_text())
+    drop = prune_plan(manifests, keep)
+    for stem in drop:
+        for f in _files_of(stem, manifests[stem]):
+            if f in src.assets:
+                r = curl(["-X", "DELETE", f"{API}/repos/{repo}/releases/assets/"
+                          f"{src.assets[f]['id']}"])
+                if r.returncode != 0:
+                    raise CacheError(f"deleting {f} failed: {r.stderr.decode()}")
+        log(f"{RELEASE}: deleted {stem}")
+    log(f"{RELEASE}: kept {len(manifests) - len(drop)} archive(s), deleted {len(drop)}")
+    return drop
