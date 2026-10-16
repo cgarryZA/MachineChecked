@@ -1,0 +1,147 @@
+# Getting started
+
+MachineChecked is a reader for mathematical papers and their Lean formalisation. You can use it without preparing a claim inventory or adopting a particular proof-review framework.
+
+## Before you start
+
+You need a Lean project with a `lakefile`, Python 3.11 or later, and a working Lean toolchain (usually installed with [elan](https://github.com/leanprover/elan)). Build the Lean modules you want to inspect:
+
+```sh
+lake build
+```
+
+MachineChecked reads the built declarations. It reports modules it cannot find; it does not quietly trigger a lengthy Lean build.
+
+For a LaTeX paper, install TeX Live with `latexmk`. Some papers also need `xelatex` or `lualatex`. For a paper that is only a PDF, install poppler (`pdftohtml`, `pdfinfo`). You do not need Node or Vite.
+
+## Open the reader
+
+Run this inside the Lean project's directory:
+
+```sh
+uvx --from git+https://github.com/cgarryZA/MachineChecked machinechecked view
+```
+
+Or install it once:
+
+```sh
+pip install git+https://github.com/cgarryZA/MachineChecked
+machinechecked view
+```
+
+Pass a specific paper when useful:
+
+```sh
+machinechecked view paper/main.tex
+machinechecked view paper/main.pdf
+```
+
+MachineChecked looks for a root LaTeX document first, otherwise a PDF. If several candidates remain, it lets you choose. Leanblueprint projects can use their existing `\lean{...}` tags; no conversion is needed: `blueprint/src/print.tex` is the paper, and an engine the blueprint's `latexmkrc` names is used (the file is read as text, never run).
+
+## Papers that are only a PDF, or at a URL
+
+A paper can be a URL: `machinechecked view https://…/paper.pdf` downloads it once into `.machinechecked/papers/`.
+
+From LaTeX, MachineChecked knows every numbered statement exactly. From a PDF it can only **try**: it reads the PDF's text and takes a bold heading such as "**Lemma 8.6.**" as the start of a statement, which tells it apart from a mention of the lemma in the text. That is a heuristic, and its limits are real:
+
+- a scanned PDF, with no text layer, yields no statements;
+- a heading in unusual formatting (not bold, or split into several pieces of text) can be missed;
+- where a statement ends is estimated (at "Proof", a section heading or the next statement), so its marker is drawn as approximate;
+- numbers are read as printed, not from the source's labels.
+
+The reader says how each such statement was found, so a missed or misplaced one is visible rather than hidden.
+
+## Projects with a formalization.yaml
+
+A project that describes itself with a [`formalization.yaml`](https://github.com/mathlib-initiative/formalization.yaml) needs nothing else:
+
+- its formalised sources are offered as papers;
+- the mappings in its `alignment` (in the shape `statements: [{source, lean}]`) become links, labelled *formalization.yaml*: they are the project's own statements, not a review;
+- its review status ("self-assessed", "peer-reviewed", …) is shown as the project's description of itself. Figures in the file, such as a count of `sorry`s, are the project's report, not a check by MachineChecked.
+
+When the file names several sources, a mapping is used for a paper only if it names that paper by a word distinctive to its title.
+
+If the Lean project is not built, linked claims read **linked: Lean not checked (the project is not built)**, never proved.
+
+The reader opens on the paper. The contents list shows numbered mathematical statements. Select one in the contents or click its margin marker to view its Lean associations.
+
+## Connect a claim to Lean
+
+MachineChecked may suggest a declaration from a `\lean{...}` tag, a Lean docstring mentioning the theorem number, or a similar name. **A suggestion is not an established correspondence.**
+
+You can:
+
+- **Link** a suggested declaration;
+- choose **Not this** to reject the suggestion;
+- search the project's declarations to choose another.
+
+The local reader saves your decisions in `machinechecked.links.json` at the repository root and refreshes the view. Commit that small file if you want the associations to travel with the project.
+
+A link records an association, **not** a mathematical review. It is possible for Lean to accept the linked theorem while its hypotheses or conclusion fail to match the paper.
+
+## Interpret the status
+
+- **Not linked / suggested:** no confirmed correspondence.
+- **Linked, proof checked:** Lean accepts the named formal theorem, subject to its axioms. It is not a certificate of correspondence with the paper.
+- **Linked, Lean definition:** the link is to a definition, which has nothing to prove.
+- **Linked, Lean not checked:** the project is not built, so Lean has not been run on the declaration here.
+- **Incomplete (`sorry`):** the formal proof has unfinished obligations.
+- **Further axioms:** the proof relies on axioms beyond the default allowlist.
+- **Definition / declaration not found:** the linked item is not a checked theorem or cannot be resolved from the built modules.
+
+For projects with a separate acceptance framework, further statuses and evidence are available. [Read the evidence policy](EVIDENCE_POLICY.md) before interpreting them.
+
+## Share or publish
+
+```sh
+machinechecked build
+```
+
+This produces `MachineChecked.html` in the project root. It includes the reader, the paper and its generated data, and opens directly from disk in a browser. It can be sent to another reader without requiring them to install anything.
+
+To check the linked declarations in automation:
+
+```sh
+machinechecked check
+```
+
+This fails when a linked declaration is missing or not proved. It does **not** independently judge whether the association matches the mathematics in the paper.
+
+Put the generated working files in `.gitignore`:
+
+```gitignore
+.machinechecked/
+MachineChecked.html
+```
+
+Keep the HTML file tracked only if you deliberately want that exact snapshot in your repository. A private paper bundled into HTML remains private content: do not publish it without checking the export.
+
+## Share a claim or report a problem
+
+A claim has **Copy link**, which copies its permanent address when the site is hosted. On an unhosted local copy, it copies a claim reference instead.
+
+To enable **Raise issue**, launch the reader with a repository for reports and the eventual public address:
+
+```sh
+machinechecked view --issues owner/repo --site-url https://example.org/audit/
+```
+
+This opens a prefilled GitHub issue *draft* with claim identifiers, relevant Lean names and revision details. The reader does not submit the issue, alter evidence, or include private statement text.
+
+Both settings are saved in `machinechecked.links.json` (a full assessment sets `issues` and `site_url` under `[project]`). There is no default: reports go to the repository the audit names, which is the audit author's choice, and without one the reader offers only **Copy link**. A report is a question for the audit's author; it changes no status.
+
+## Troubleshooting
+
+| Problem | What to do |
+|---|---|
+| No Lake project found | Run the command inside the Lean repository (or one of its subdirectories). |
+| Missing built modules | Run `lake build` for the necessary library targets and reopen the reader. |
+| No paper found | Pass the exact `.tex` or `.pdf` path. |
+| Multiple LaTeX roots | Choose the correct root or pass its path. |
+| `lake` not found | Install elan and put `~/.elan/bin` on `PATH`. |
+| TeX compilation fails | The reader still opens from the paper's PDF if there is one, and names the LaTeX error. A paper that needs XeLaTeX should say so with `% !TEX program = xelatex`, a `latexmkrc`, or by loading `fontspec`/`unicode-math`. |
+| A marker is approximate (dashed) | Numbered environments in LaTeX are placed exactly. Claims recorded by line are placed by SyncTeX, and claims from a PDF by their headings; both are approximate, and a claim whose place is ambiguous is left unplaced instead of guessed. |
+| A PDF statement is missing | It probably has no bold heading the PDF reader recognises (see above); give the LaTeX source if you have it. |
+| Reader is read-only | A hosted site or standalone HTML cannot save links to your local repository; run `machinechecked view` locally to edit. |
+
+For independent review, continue with the [Review guide](REVIEWING.md). For locked specifications and formal acceptance policies, see [Full assessment](ASSURANCE.md).

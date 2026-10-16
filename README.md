@@ -1,280 +1,78 @@
 # MachineChecked
 
-Read a mathematical paper beside its Lean formalisation, and see for every claim what has been
-established about it.
+**Read a mathematical paper with its Lean formalisation beside it.**
 
-A Lean build says that the Lean theorems are proved. It does not say they are the paper's
-theorems. MachineChecked opens the paper, marks every numbered statement, and shows beside each one
-the Lean declaration that formalises it, whether Lean proves it, and whether anyone has checked
-that the two say the same thing. It never rounds a status up.
+MachineChecked opens a paper, finds its numbered statements and lets you explore the Lean declarations linked to them. See which proofs Lean accepts, which claims are unlinked or incomplete, and which paper-to-Lean correspondences still need a mathematician's review.
 
-The site is [machinechecked.org](https://machinechecked.org) (a [demo](https://machinechecked.org/demo/)).
-MachineChecked is a tool and a place to publish audits: an audit says what its author linked,
-checked and recorded, under their name, and MachineChecked does not check or endorse its
-conclusions.
+**A Lean proof establishes a formal statement—not automatically the claim in the paper.** MachineChecked keeps those two questions separate.
 
-There are two ways to use it:
+[Try the demo](https://machinechecked.org/demo/) · [Website](https://machinechecked.org/) · [Installation and usage](docs/GETTING_STARTED.md)
 
-- **Zero configuration** (most projects): point it at a Lean project with a paper. Nothing to
-  write except, as you confirm them, the links between claims and declarations.
-- **Full assessment** (a project with a `machinechecked.toml`): locked statements, a claim inventory,
-  recorded reviews and an acceptance status per claim, reproducible and checkable in CI.
+## Open your paper
 
-## Quick start
-
-You need Python ≥ 3.11, the project's Lean toolchain ([elan](https://github.com/leanprover/elan)),
-and, for a LaTeX paper, TeX Live with `latexmk` (and `xelatex` or `lualatex` if the paper needs
-them). You do not need Node.
-
-1. Build the Lean project as usual: `lake build`. MachineChecked reads the built modules and never
-   builds behind your back.
-2. From anywhere inside the project:
-
-   ```sh
-   uvx --from git+https://github.com/cgarryZA/MachineChecked machinechecked view
-   ```
-
-   (or `pip install git+https://github.com/cgarryZA/MachineChecked`, then `machinechecked view`;
-`prooflens` is the same command under its earlier name). It finds
-   the paper (a `.tex` with `\documentclass`, else a PDF; if there are several it asks, or pass
-   the path: `machinechecked view paper/main.tex`), compiles it, and opens the reader in your browser.
-3. In the reader, the contents list the numbered statements; click one, or its marker in the
-   margin. The panel shows the statement as printed and, under **In Lean**:
-   - links: a `\lean{Name}` tag in the paper's source is a link (a commented-out tag is not);
-   - suggestions: a docstring citing the claim's number ("Theorem 3"), or a name resembling its
-     label or title. **Link** confirms one, **Not this** rejects it, and the search box links any
-     other declaration of the project.
-
-   Links are saved to `machinechecked.links.json` at the project root, and the page rebuilds.
-
-Each claim then reads one of: *not linked*, *suggested link, not confirmed*, *linked: Lean proof
-checked*, *linked: Lean proof incomplete (sorry)*, *linked: Lean proof uses further axioms*,
-*linked: Lean definition*, *linked: Lean declaration not found*. A link says which declaration
-formalises the claim and what Lean says about it. Whether the declaration says what the paper
-says is a separate question, for a review (below).
-
-### Papers that are only a PDF, and formalization.yaml
-
-When the repository has no LaTeX paper, give the PDF's path or URL
-(`machinechecked view https://…/paper.pdf`); a URL is downloaded once into `.machinechecked/`.
-If the project has a [`formalization.yaml`](https://github.com/mathlib-initiative/formalization.yaml)
-naming its sources, MachineChecked offers those. A PDF's numbered statements are found by their bold
-headings (where each ends is estimated, and drawn as approximate). The mappings in the file's
-`alignment` become links, labelled as declared by the project, beside its own review status
-("self-assessed", …). In a project that is not built, links read *Lean not checked*, never proved.
-
-### Share it
+From an existing **built** Lean project:
 
 ```sh
-machinechecked build          # writes MachineChecked.html at the project root
+lake build
+uvx --from git+https://github.com/cgarryZA/MachineChecked machinechecked view
 ```
 
-One file with the paper, the data and the reader inside: it opens from disk with a double click,
-needs no server, and can be committed to a private repository or sent by email.
-
-### Check it in CI
+MachineChecked finds the paper and opens the reader in your browser. If the project contains several papers, it asks which one to use. You can also pass a file explicitly:
 
 ```sh
-machinechecked check          # exits 1 if a linked declaration is missing or not proved
+machinechecked view paper/main.tex
 ```
 
-### Report a problem
+Requires Python 3.11+, the project's Lean toolchain and TeX Live for LaTeX compilation. No Node installation, handwritten configuration or separate acceptance framework is required.
 
-Every claim in the reader has **Copy link** (the claim at this release) and, when the audit says
-where reports go, **Raise issue**: it opens a GitHub issue draft in that repository with the claim,
-its Lean declarations, the commits and the link filled in. The reporter writes what looks wrong
-and submits it on GitHub; nothing is sent by the reader, and a report changes no status. The
-draft carries identifiers only, never the statement's text.
+A paper can also be a PDF on disk or at a URL (`machinechecked view https://…/paper.pdf`). From a PDF, MachineChecked tries to find the numbered statements by their bold headings; it can miss some, and their positions are drawn as approximate. If the project has a [`formalization.yaml`](https://github.com/mathlib-initiative/formalization.yaml), its sources are offered as papers and its mappings become links, labelled as the project's own. In a project that is not built, links read *Lean not checked*, never proved.
+
+In the reader, select a theorem from the contents or the paper margin. MachineChecked displays the printed statement and its Lean counterpart. Links can come from `\lean{...}` tags, suggested matches or a declaration you select yourself. Confirmed links are saved in `machinechecked.links.json`.
+
+**Linking a theorem is not reviewing it.** Suggested links, confirmed links, Lean proof results and mathematical reviews remain distinct.
+
+## Share your paper
 
 ```sh
-machinechecked view --issues owner/repo --site-url https://owner.github.io/audit/
+machinechecked build   # writes MachineChecked.html, readable without a server
+machinechecked check   # fails if a linked declaration is missing or unproved
 ```
 
-saves both in `machinechecked.links.json` (a full assessment sets `issues` and `site_url` under
-`[project]`). There is no default: without `issues`, the reader offers only **Copy link**.
+The HTML bundle includes the paper and reader. Share it directly, commit it to a suitable repository, or host the generated site yourself. Check its contents before making it public: private papers and Lean statements can be included.
 
-### What to commit
+Every claim has **Copy link** and, when the audit names a repository for reports (`machinechecked view --issues owner/repo`), **Raise issue**: a GitHub issue draft in the audit's own repository, with the claim, its Lean declarations and the commits filled in. The reader sends nothing, and a report changes no status.
 
-Commit `machinechecked.links.json`. Ignore the working directory:
+[Full guide: installation, links, sharing and troubleshooting →](docs/GETTING_STARTED.md)
 
-```gitignore
-.machinechecked/
-```
+## Review mathematical correspondence
 
-and `MachineChecked.html` too, unless you commit it on purpose to share it.
+The optional **Review** view guides a reader through one claim at a time:
 
-### Blueprints
+1. Read the paper and record an independent interpretation.
+2. Reveal the Lean statement, compare the assumptions and conclusion, and record a verdict.
+3. Compare with the author's review, then export a report.
 
-A [leanblueprint](https://github.com/PatrickMassot/leanblueprint) works as it is: run
-`machinechecked view` in the project, and `blueprint/src/print.tex` is the paper (its `web.tex` is not
-offered). Its `\lean{…}` tags become links, and an engine the blueprint's `latexmkrc` names
-(usually XeLaTeX) is used; the `latexmkrc` is read as text, never run.
+A report does **not** mark a claim accepted. In projects with a formal acceptance policy, the maintainer decides whether to promote a submitted review. The review's provenance, version and scope remain visible.
 
-## Reviewing
+[Review guide →](docs/REVIEWING.md)
 
-The reader's **Review** page takes a reviewer through the queue one unit at a time: a locked
-proposition, a definition its meaning depends on, or (in the zero-configuration view) a linked
-claim. Each unit is reviewed once per fingerprint, in the order of a blind review:
+## More rigorous audits
 
-1. **Read.** The printed claim only. The reviewer writes down what it says; the text is locked
-   when the Lean is revealed.
-2. **Compare.** The Lean statement and its definitions. The reviewer compares item by item and
-   records a verdict: *matches* / *there's a problem* / *cannot determine*, then the precise one
-   (faithful; with representation choices; broader; narrower; mismatched; vacuous; refutation
-   not valid; cannot determine), with the detail it needs.
-3. **Author's review.** Shown only now. Disagreements are recorded without changing the verdict.
+An ordinary Lean repository needs no configuration. Projects that already maintain **locked mathematical specifications**, a claim inventory and independent review records can opt into the full assessment using `machinechecked.toml`.
 
-Choose a paper and a section first to stay in one mathematical setting. Reports stay in the
-browser (undo, skip, resume) and are exported with **Export reports** as a file, so a reviewer
-needs nothing installed: the shared `MachineChecked.html` works. Export often: a browser's storage is
-not a safe place for an hour of work. The reviewer's identity is recorded as they state it.
+This enables exact-type checks, definition-dependent review tracking, witnesses, refutations, per-claim evidence and optional independent kernel replay. It does not assume that a passing Lean build proves the manuscript is faithfully formalised.
 
-A report marks nothing reviewed. In a full assessment the maintainer promotes it:
-
-```sh
-machinechecked review promote machinechecked-reviews-….json
-```
-
-Promotion refuses a report whose declaration, legacy hash or manuscript changed since the review,
-whose steps are out of order, whose verdict is not faithful / with representation choices
-(listed) / broader (with the instantiation), whose reviewer is an author of the statements, or
-whose reviewer is a model of the author's family or of unknown family (unless
-`--accept-same-family`). For the rest it shows what it will write, asks, archives the report next
-to the review files, writes `<!-- spec-review: NAME HASH by=REVIEWER -->` (or `def-review`) after
-the declaration's last marker, assesses again, and runs `[review] check` if the configuration
-sets one.
-
-## Full assessment
-
-A project with a `machinechecked.toml` in the directory you run from (or passed with `-c`) gets the
-full assessment. It needs no Lean dependency on MachineChecked: the probe runs with the project's own
-toolchain through `lake env lean`. The [toy paper](examples/toy-paper) is a complete example.
-
-```toml
-[project]
-name = "my-paper"
-lean_root = "."
-modules = ["MyPaper"]                    # modules to import (the propositions and their proofs)
-scope_roots = ["MyPaper"]                # whose definitions are the project's own
-spec_prefix = "MyPaper.PaperSpec"        # closed propositions written from the paper
-accept_prefix = "MyPaper.Acceptance"     # theorems whose type is exactly one of them
-inventory = "claims.json"
-reviews = ["reviews/statements.md", "reviews/definitions.md"]   # files, or directories of .md
-statement_authors = ["me"]               # their reviews are never independent
-ai_reviewers = ["claude*"]               # reviewers recorded as AI unless a marker says otherwise
-dismissals = "reviews/dismissals.json"   # optional
-comparator_log = "replay.json"           # optional: a kernel replay record
-display = "display.json"                 # optional: what the site shows in place of the inventory's text
-
-[review]
-check = "python3 tools/check.py"         # optional: run after `review promote`
-
-[[paper]]
-id = "A"
-title = "My paper"
-source = { git = "me/paper-repo", rev = "<commit>", token_env = "PAPER_TOKEN" }  # or { path = "paper" }
-root = "paper/main.tex"                  # needed when several files have \documentclass
-publish = { pdf = false, source_text = false, lean = false, reviews = false }  # the default
-```
-
-LaTeX is used when a root is found; otherwise the source's PDF, and its claims are marked
-PDF-only.
-
-**The inventory** (`claims.json`) lists every claim of the paper with a stable id, where it is,
-the hash of its source, and its scope. A formal claim has clauses, each naming its locked
-proposition, and its proof or refutation:
-
-```json
-{ "id": "A:thm:main", "paper": "A", "kind": "theorem", "number": "Theorem 2.1", "title": "",
-  "label": "thm:main", "location": "main.tex", "source_sha256": "…",
-  "scope": "formal", "scope_note": "", "scope_reviewed": true,
-  "clauses": [
-    { "name": "as printed", "spec": "MyPaper.PaperSpec.thm_main",
-      "accept": "MyPaper.Acceptance.thm_main",
-      "witness": "MyPaper.Acceptance.thm_main_hypotheses" } ] }
-```
-
-A clause may instead have `refute` (a theorem proving the printed statement false) and a further
-clause with `corrects` naming the clause it corrects. Scopes other than `formal` and `definition`
-(`part-of`, `duplicate`, `proof-step`, `expository`, `literature`, `empirical`) record why a claim
-needs no proof, and `scope_reviewed: false` marks a decision not yet checked by reading.
-
-**Reviews** are Markdown files: the review's text, then a marker with the hash it was made at.
-
-```markdown
-## Theorem 2.1: `MyPaper.PaperSpec.thm_main`
-
-The reviewer's reading, the comparison and the verdict.
-
-<!-- spec-review: MyPaper.PaperSpec.thm_main <hash> by=a.referee kind=human -->
-```
-
-The last marker of a declaration is its current review; a changed declaration makes it stale.
-A claim is *accepted* when every clause's proposition is proved over the allowed axioms, and the
-proposition and every project definition its meaning depends on are reviewed at their current
-hash by someone other than the authors of the statements.
-
-**A kernel replay record** (`comparator_log`) is JSON:
-`{"commit": "<full sha>", "replayed": ["<theorem>", …]}`. Without one, replay reads *not run*;
-a record of another commit, or a text log, reads *unverified*.
-
-**The display overlay** (`display`) changes what the site shows and nothing that is assessed:
-`{"claims": {"<id>": {"title_tex": "…", "number": "…", "number_note": "…"}}, "clauses":
-{"<clause name>": {"title_tex": "…"}}}`. Use it when the inventory's descriptions are plain text
-(`$\mathcal D_\pi$` reads better than `Dpi`) or a recorded number is wrong.
-
-The commands:
-
-```sh
-machinechecked build [--reuse-lean]   # probe Lean (or reuse it if no Lean input changed), compile, assess
-machinechecked view                   # serve the site at http://127.0.0.1:8017
-machinechecked check                  # build, exit 1 on a violation
-machinechecked reassess               # assess stored evidence again (new reviews, rules), no Lean or LaTeX
-machinechecked site                   # rewrite the site from stored evidence
-machinechecked bundle --out F.html    # the site as one file
-machinechecked export --out DIR       # the public export: approved fields only, scanned for leaks
-machinechecked review promote F.json  # record review reports (above)
-```
-
-## Private projects
-
-A private project keeps its configuration, inventory, reviews and site in its own repository.
-`machinechecked bundle` writes the site as one HTML file carrying its data and PDFs, to commit there
-and open with a double click; nothing is hosted. Nothing of a private project belongs in this
-repository: `scripts/check_public.py` refuses a push containing any term of a private denylist or
-any line of the project's Lean or LaTeX sources.
-
-## Troubleshooting
-
-- **"the Lean project is not built"**: run `lake build`; modules not built are listed as such.
-- **"`lake` not found"**: install elan and put `~/.elan/bin` on `PATH`.
-- **The paper does not compile**: the reader still opens, from the paper's PDF if there is one;
-  the message names the LaTeX error. A paper that needs XeLaTeX should say so with
-  `% !TEX program = xelatex`, a `latexmkrc`, or by loading `fontspec`/`unicode-math`.
-- **A marker is in the wrong place**: markers are exact for numbered environments, and
-  approximate (dashed) for claims recorded by line; claims on several pages are left unplaced
-  rather than guessed.
-
-## Developing
-
-```sh
-pip install -e '.[test]'
-pytest                                  # contracts, seeded mutations, security, zero-configuration
-(cd web && npm ci && npm run build)     # rebuilds the reader into the package (engine/python/prooflens/web)
-```
-
-The built reader is committed, so that installing MachineChecked needs no Node; CI checks that it is
-the build of the committed sources. See [`CLAUDE.md`](CLAUDE.md) for the conventions and
-[`PLAN.md`](PLAN.md) for the plan of record.
+[Full-assessment setup and configuration →](docs/ASSURANCE.md)
 
 ## Documentation
 
-- [Plan of record](PLAN.md)
-- [Threat model](docs/THREAT_MODEL.md)
-- [Evidence policy](docs/EVIDENCE_POLICY.md)
-- [Data model](docs/DATA_MODEL.md)
-- [Publication policy](docs/PUBLICATION_POLICY.md)
+- [Get started](docs/GETTING_STARTED.md) — install, open, link, share and troubleshoot
+- [Reviewing](docs/REVIEWING.md) — how the review queue records mathematical judgements
+- [Full assessment](docs/ASSURANCE.md) — configuration, claim inventory and acceptance
+- [Evidence policy](docs/EVIDENCE_POLICY.md) — what each check does and does not establish
+- [Data model](docs/DATA_MODEL.md) · [Publication policy](docs/PUBLICATION_POLICY.md) · [Threat model](docs/THREAT_MODEL.md)
+- [Development and roadmap](docs/DEVELOPMENT.md) · [Plan](PLAN.md)
 
-## License
+MachineChecked is an **open-source tool, not a certifying authority**. Each published audit presents its author's evidence and judgements; readers can inspect and challenge them. The website currently offers the tool and a synthetic demonstration, not an independently certified catalogue of papers.
 
-Apache-2.0
+Apache-2.0 licensed.

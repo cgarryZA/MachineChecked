@@ -1,159 +1,109 @@
-# MachineChecked (formerly ProofLens): plan of record
+# MachineChecked: plan of record
 
-ProofLens shows a mathematical paper beside its Lean formalisation and says, for every claim of
-the paper, exactly what has been established about it. It separates three things that a Lean
-build alone does not:
+MachineChecked shows a mathematical paper beside its Lean formalisation and says, claim by claim,
+what is established. It keeps three things apart that a Lean build alone does not:
 
-1. **Evidence**: what the kernel, the acceptance checks and the source checks established.
-2. **Interpretation**: whether the formal statements say what the paper says, which only a
-   reviewer can judge.
-3. **Presentation**: how a reader explores both without knowing Lean.
+1. **Evidence**: what Lean and the mechanical checks established (exact statement types, axioms,
+   fingerprints, proof status).
+2. **Interpretation**: whether a Lean statement says what the paper says. No tool can check that;
+   only a reviewer can judge it.
+3. **Presentation**: how a reader explores both without knowing Lean. A view displays a status; it
+   never computes, changes or upgrades one.
 
-The views only display evidence. They cannot compute, change or upgrade a status.
+## Two products
 
-## Architecture
+| | Where | What it does | What it never does |
+|---|---|---|---|
+| **The tool** | `cgarryZA/MachineChecked`, command `machinechecked` | runs on a researcher's machine or in their own CI: reads the paper, probes the built Lean, links claims, records reviews, writes a reader and a portable audit | needs the website |
+| **The site** | machinechecked.org (moving to its own repository, `cgarryZA/machinechecked.org`) | indexes papers and the Lean repositories that formalise them, and displays published audits | builds Lean, runs anyone's code, or endorses an audit |
 
-```
-acquire (credentials, no execution) -> extract and verify (sandboxed, no credentials)
-    -> evidence store (content-addressed, append-only)
-    -> release policy (allowlist, redaction, provenance)
-    -> presentation manifest (chunked per claim) -> web reader / PDF / PR report
-```
+The tool can be used without ever registering with the site, and the site without knowing Lean.
 
-| Part | Where | Role |
+## The site
+
+**Three levels per paper.**
+
+| Level | What the site knows | What a visitor sees |
 |---|---|---|
-| Lean probe | `engine/python/prooflens/data/ProofLensProbe.lean` | run inside a project with `lake env lean`; exact-type and axiom checks, unfolded statements, fingerprints |
-| TeX anchors | `engine/python/prooflens/data/prooflens.sty` | injected before `\documentclass`; records number, label, source line and PDF position of every claim |
-| Engine | `engine/python/prooflens/` | acquisition, compilation, assessment, evidence store, manifest, export |
-| Schemas | `engine/python/prooflens/data/schema/` | inventory, evidence, manifest |
-| Reader | `web/` | static Svelte app: Read, Coverage, Audit, Changes |
-| Example | `examples/toy-paper/` | synthetic paper and Lean project; the public demo and the test fixture |
-| Tests | `tests/` | contracts, seeded mutations, security |
+| Paper | arXiv (or a curated entry) identifies it | its metadata and a link to the original |
+| Lean repository linked | a repository states that it formalises the paper | "This repository states that it formalises this paper", and the repository |
+| Audit published | someone published a MachineChecked audit of that repository | the interactive reader: claims, Lean, statuses, reviews |
+
+A link is not an audit, and an audit is not an endorsement. A search result does not enter the
+registry. Figures a project reports about itself (a `sorry` count in `formalization.yaml`, its
+review status) are shown as the project's own, never as a check by MachineChecked.
+
+**Listing.** An arXiv paper is linked to a repository, with no approval, when the repository's
+`formalization.yaml` names the paper with `relationship: formalizes`. A daily job finds these files,
+checks that the arXiv identifier exists and that the repository is a Lean project, and rebuilds the
+registry from scratch (a repository that stops naming a paper drops off). Each listing records the
+file and commit that named the paper. Papers not on arXiv are curated by hand. Every listing has a
+report button; a bad listing is removed with one line in `delisted.json`. More machinery
+(a registration form, duplicate suppression) is added only when a real need appears.
+
+**The registry is small.** Per paper: its identifier, and per formalisation the repository, the
+commit, the paper version, and its audits as URLs. No Lean builds, caches or claim evidence are
+stored centrally. Several audits of one repository are distinct from several formalisations.
+
+**Audits live with their authors.** An audit is the tool's export plus a small descriptor
+(schema, author, paper and version, repository and commit, data path, issues repository), hosted
+where its author chooses (for example their GitHub Pages). The site loads it as data and treats
+every string in it as untrusted; it never runs an audit's HTML or JavaScript. An audit the browser
+cannot load is linked instead.
+
+**One page per paper.** A selector at the top chooses whose formalisation is shown; changing it
+changes the evidence beside each claim, never the paper or its numbering. Each project shows its
+own claims. Showing another project's mapping where the selected one has none, and combined
+coverage, come later, and only between audits that pin the same paper version: claim numbers can
+differ between versions. Claims proved in different projects are never one proof, and projects are
+not ranked.
+
+**Reports.** Every claim has Raise issue: a pre-filled GitHub issue in the audit's own repository
+(the audit author's choice), carrying identifiers and the claim's permanent link, never statement
+text. Listing and site problems go to the site's repository. A report is a question, not a finding:
+it changes no status. Counts of open issues per claim may later be added by a scheduled job.
+
+**Papers are linked, not mirrored.** The site shows arXiv metadata and links to the PDF. Only an
+audit whose terms allow it carries its pinned PDF.
+
+## The tool
+
+- **Zero configuration** in a built Lake project: the paper is found (LaTeX, else PDF, or a URL),
+  `\lean{}` tags, `formalization.yaml` mappings and suggestions become links the user confirms,
+  saved in `machinechecked.links.json`. From a PDF, statements are found by their bold headings, a
+  heuristic whose anchors are drawn as approximate.
+- **Full assessment** (optional, `machinechecked.toml`): a claim inventory, locked specifications,
+  acceptance theorems with exact types, review markers bound to fingerprints, and statuses
+  computed by `assess.py`. An existing acceptance system stays authoritative; MachineChecked reads
+  its outputs and never modifies its tools.
+- **Review queue**: reading locked before the Lean is shown, verdict recorded before the author's
+  review; a report is exported, and only `machinechecked review promote` writes a marker.
+- **Provenance is shown, never upgraded.** A Markdown marker is self-declared; a review by an
+  author of the statements is never independent; human or AI review is recorded.
+- **Links are pinned to a release** (`#/r/<release>/…`): an older link shows a banner, never newer
+  evidence silently.
+- **Expensive builds run on the user's resources**: a build cache (`machinechecked cache
+  save|restore`) and a workflow template they copy into their own repository. MachineChecked's own
+  infrastructure never builds a third party's Lean.
+
+## Order
+
+| Step | Work | Done when |
+|---|---|---|
+| 0 | Short README and guides; this plan; landing page with a preview of the demo reader | the docs match the code, including the limits of PDF reading |
+| 1 | The audit descriptor, written by `build` and `export`; the reader loads an audit from a URL as untrusted data | the toy audit loads from another address; HTML in a manifest is shown as text |
+| 2 | The site moves to `cgarryZA/machinechecked.org`, reusing the reader's components | the site deploys with no Lean or TeX installed; the demo is the toy audit published by the tool's CI |
+| 3 | Registry and paper pages: the three levels, the selector; Navier–Stokes as a curated entry; collapsible contents and an adjustable split in the reader | a paper page shows two repositories and one audit |
+| 4 | Search: arXiv identifier lookup and OpenAlex | an unregistered paper can be found without entering the registry |
+| 5 | Listing: the daily `formalization.yaml` job, the report button, `delisted.json`, curated entries | a repository that names an arXiv paper appears with no one approving it |
+| 6 | Raise issue on every claim of a published audit | a visitor reaches the audit's tracker with the claim filled in |
+| 7 | The `machinechecked cache` commands (save, restore) and the workflow template | another researcher produces and hosts an audit with their own resources |
+| 8 | The first real audit: OpenAI's Navier–Stokes formalisation, built under WSL2, cached, audited and published from a fork | its paper page gains an audit |
+
+Deferred: claim fallback across projects and combined coverage; issue counts; a registration
+form; README badges; drift reports between releases; a Verso Blueprint adapter; live Lean.
 
 The policies are in `docs/`: [threat model](docs/THREAT_MODEL.md),
 [evidence policy](docs/EVIDENCE_POLICY.md), [data model](docs/DATA_MODEL.md),
-[publication policy](docs/PUBLICATION_POLICY.md).
-
-## Decisions
-
-- **An existing acceptance system stays authoritative** until Phase 5. ProofLens reads its
-  outputs and never modifies its tools. Integrations with real projects, their fixtures and
-  baselines live in those projects' own (possibly private) repositories, pinned to exact commits.
-  This public repository holds only generic code and synthetic examples, and nothing from any
-  private repository.
-- **Paper sources**: LaTeX first; if no LaTeX root is found, use the PDF from the same source.
-  Git sources are pinned to a commit. Several candidate roots need an explicit `root`. A committed
-  PDF is a pinned artifact, not a reproducible build.
-- **Hashes**: a legacy 128-bit structural hash is kept (`legacy_hash`), so existing review
-  markers keep matching. A versioned SHA-256 fingerprint (`pl-fp-v1`) of a canonical
-  serialisation is computed beside it. Both detect structural change. Neither shows two expressions
-  are mathematically equivalent.
-- **Findings come in three tiers**:
-  - `violation`: a mechanical contradiction; it can fail CI.
-  - `warning`: a heuristic; it can be dismissed with a rationale bound to a fingerprint.
-  - `obligation`: needs a reviewer's judgement.
-- **Reviewer provenance** is shown, never upgraded. A Markdown marker is *self-declared*. A review
-  by an author of the statements is never independent, whatever it declares. Whether a review was
-  by a human or an AI is recorded.
-- **Kernel checking**: Comparator stays the high-assurance release verifier. `leanchecker` will
-  be added as a cheap diagnostic.
-- **Links are release-pinned**: `#/r/<release>/...`. A link that names an older release shows a
-  banner instead of silently showing newer evidence.
-- **Verso Blueprint**: an optional adapter in Phase 6. It is never the acceptance authority.
-
-## Progress
-
-- **Phase 0**: done.
-- **Phase 1**: done on a private project (its integration and baseline are recorded there).
-- **Phase 2**: in progress. Done:
-  - the evidence ladder with exact statement, axioms and kernel replay apart, and "why is
-    this claim not accepted?";
-  - a content-addressed declaration store;
-  - search;
-  - grouped warnings;
-  - claims recorded by line located by SyncTeX (approximate, ambiguous when unsure) or by
-    hand;
-  - one-file bundles for private projects;
-  - the Pages workflow for the toy demo.
-- **Build cache** (`scripts/lean_cache.py`): done. A restore at a different path rebuilt no
-  module; a one-file change rebuilt exactly its dependants; corrupt or mismatched archives are
-  refused.
-
-## Phases
-
-| Phase | Deliverable | Done when |
-|---|---|---|
-| **0 Foundations** | Policies; schemas; toy paper; probe (unfolded statements, exact types, axioms, both hashes); TeX anchors; evidence store; manifest; export with leak scan; reader; contract, mutation and security tests; CI; cloud setup | the toy paper works end to end in CI; schemas validate; a planted leak blocks the export; nothing private is committed |
-| **1 Read-only integration** | Read an existing acceptance layer (inventory, statuses, review files, release-gate output, Comparator logs) at a pinned commit, from the project's own repository; the probe over every proposition | every claim and clause represented; statuses equal to the existing system's; every proposition inspectable; release gate shown apart from the consistency check; the existing tools unmodified |
-| **2 Full reader** | The four views on real papers; correctable anchors; search; permalinks; toy demo published on Pages; private projects' sites stay private (`prooflens serve` or a private artifact) | every claim has a working permalink and its correct status; an anchor that may be wrong is flagged, not guessed; a mathematician audits a main theorem without opening Lean source |
-| **3 Source correspondence** | Three-way extraction: source parser (compatibility authority for `source_sha256`), TeX instrumentation, `.fls` inventory audit; pinned-vs-displayed provenance; PDF-only mode with byte and text hashes | historical hashes reproduce exactly; macro-generated material surfaces as discrepancies; a PDF from another commit is a provenance mismatch |
-| **4 Drift and assurance** | Release comparison; the drift types listed below; PR reports (no `pull_request_target`); more warning detectors with measured false-positive rates; `leanchecker` beside Comparator results; review attestations bound to (manuscript, spec, closure) fingerprints | the seeded-failure table below passes; false-positive rates measured on Papers A and B |
-| **5 Reusable engine** | Generalised CLI and Lean package; reusable GitHub Action | semantic results agree with the existing acceptance system; its report reproduces byte for byte as a compatibility check; mutation suite passes on the port |
-| **6 Publication and ecosystem** | Release approval per paper; immutable versioned public sites; "Paper with Formal Verification Audit" PDF; arXiv sources; hostile-input hardening; dependency X-ray; Blueprint adapter; notebook / live Lean last | no unapproved content can reach an export; release URLs stable; an unrelated repository adopts ProofLens |
-
-## The platform: machinechecked.org
-
-MachineChecked is a tool and a host. An audit says what its author linked, checked and recorded,
-under their name; the site indexes and displays audits and never certifies them. Contributors keep
-their Lean code, links, reviews and exported audits in their own repositories; the site holds a
-small registry that points to them.
-
-**Paper-centric.** A paper has one page, one claim inventory and one navigation; the Lean projects
-that formalise it are alternative sources of evidence for its claims, never separate entries.
-
-- **One active project.** A selector at the top of the paper chooses whose formalisation is shown.
-  Changing it changes the evidence beside each claim, never the paper, its numbering or its
-  inventory.
-- **Fallback only where a claim is missing.** If the active project does not map a claim, the
-  reader shows another project's mapping, labelled with its source. If the active project maps the
-  claim but its proof is incomplete or disputed, that is what is shown: a completed proof from
-  another project never stands in for it.
-- **Alternatives on request.** Under a claim, "N other formalisations" opens a side-by-side
-  comparison of their Lean statements, proof checks and reviews; nothing is duplicated by default.
-- **Combined coverage, never combined proof.** A "Combined coverage" choice in the selector shows
-  which claims have at least one mapping, which have none, and where mappings compete. Claims proved
-  in different projects are not one formalisation: their definitions and hypotheses need not agree,
-  so every claim names its source project, and a review stays attached to the formalisation it
-  assessed. Projects are not ranked.
-- **Loaded on demand.** The registry keeps, per paper, its inventory and an index of which
-  registered audit covers which claim ids; an audit's data is fetched only when it is shown, so a
-  paper with many projects stays light.
-- **Reports follow the source.** "Raise issue" targets the repository of the project that supplies
-  the claim being shown, including a fallback.
-
-**Order.** (1) The rename and "Raise issue" in the reader. (2) Import `formalization.yaml`
-(mathlib-initiative) as an optional source of claim–declaration links; write it only on request.
-(3) A real external audit: OpenAI's Navier–Stokes formalisation, to find what breaks before the
-registry is designed around assumptions. (4) The registry and paper pages with the model above;
-README badges ("audit available", linking to the paper page). (5) Registration by a pre-filled
-issue with technical checks only (valid manifest, size, safe links; the ability to remove spam),
-and paper search through OpenAlex and Crossref from the browser. Audits are linked where their
-authors host them; the site does not serve contributors' HTML on its own origin.
-
-The drift types for Phase 4:
-
-- proof implementation changed;
-- statement or definition changed;
-- manuscript claim changed;
-- presentation only;
-- toolchain or foundation changed;
-- branch ahead of the pin (informational).
-
-### Seeded failures
-
-| Seeded failure | Required response | Test |
-|---|---|---|
-| `sorry` in a transitive dependency | violation; claim malformed | `test_sorry_in_a_transitive_dependency` |
-| Acceptance theorem with an extra hypothesis | exact-type violation | `test_proof_with_an_extra_hypothesis` |
-| Definition changed after review | fingerprint changes; review stale; claim not accepted | `test_changed_definition_reopens_its_review` |
-| `∃ C, ∀ n` reversed to `∀ n, ∃ C` | quantifier order recorded and shown; review reopened | `test_quantifier_reversal`, `test_a_reviewed_statement_that_changes_reopens_its_review` |
-| Zero witness for a nondegenerate regime | witness passes; regime obligation stays open | `test_regime_without_a_nondegenerate_witness` |
-| Macro-generated numbered theorem not in the inventory | inventory-gap violation | `test_macro_generated_theorem_missing_from_the_inventory` |
-| Manuscript claim edited | source-changed violation | `test_changed_manuscript_claim` |
-| Author review declared human | still author-reviewed | `test_author_review_declared_human_is_still_not_independent` |
-| Justified totalised operation | warning dismissed; dismissal lapses when the statement changes | `test_dismissal_lapses_when_the_statement_changes` |
-| Specification layer imports acceptance layer | layering violation | `test_specification_layer_importing_the_acceptance_layer` |
-| Private source or PDF in an export | export blocked | `test_export_with_a_leak_is_blocked`, `test_unapproved_pdf_is_blocked` |
-| Shell escape or writes outside the build directory | refused | `test_shell_escape_is_off`, `test_tex_cannot_write_outside_its_build_directory` |
-| Manuscript and displayed PDF from different commits | provenance mismatch | Phase 3 |
-| Quantifier reversal as an explicit finding between releases | drift finding | Phase 4 |
+[publication policy](docs/PUBLICATION_POLICY.md). Engine internals and the seeded-failure tests are
+in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).

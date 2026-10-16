@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>MachineChecked</title>
-<meta name="description" content="Read a mathematical paper beside its Lean formalisation, and see claim by claim what the machine checked and what it did not.">
+<title>MachineChecked — Read the paper. Inspect the Lean.</title>
+<meta name="description" content="Read mathematical papers alongside Lean proofs. Explore linked declarations, checked proofs and the correspondence still awaiting review.">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='13' cy='13' r='9' fill='none' stroke='%232f6f73' stroke-width='3'/%3E%3Cpath d='M20 20l8 8' stroke='%232f6f73' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
 <style>
   :root {
@@ -31,15 +31,21 @@
   .brand { display: flex; align-items: center; gap: 8px; font-family: var(--serif); font-weight: 600; font-size: 20px; color: var(--text); text-decoration: none; }
   .brand svg { color: var(--accent); }
   nav { margin-left: auto; display: flex; gap: 18px; font-size: 15px; }
-  nav a { color: var(--muted); text-decoration: none; }
+  nav a { color: var(--muted); text-decoration: none; white-space: nowrap; }
   nav a:hover { color: var(--accent); }
-  .hero { padding: 56px 0 40px; }
+  .hero { padding: 62px 0 44px; }
+  .eyebrow { margin: 0 0 12px; color: var(--accent); font-size: 12px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
+  .claim-caption { grid-column: 1 / -1; margin: -4px 0 0; padding-top: 12px; border-top: 1px solid var(--border); color: var(--muted); font-size: 13px; }
   h1 { font-family: var(--serif); font-weight: 600; font-size: clamp(32px, 6vw, 52px); line-height: 1.1; margin: 0 0 18px; letter-spacing: -0.01em; }
-  .lede { font-size: 19px; color: var(--muted); max-width: 680px; margin: 0 0 28px; }
+  .lede { font-size: 19px; color: var(--muted); max-width: 700px; margin: 0 0 28px; }
   .cta { display: flex; gap: 12px; flex-wrap: wrap; }
   .btn { display: inline-block; padding: 10px 18px; border-radius: 8px; border: 1px solid var(--accent); text-decoration: none; font-weight: 500; }
   .btn.primary { background: var(--accent); color: var(--surface); }
   .btn.ghost { color: var(--accent); }
+  .preview { margin: 40px 0 0; }
+  .preview a { display: block; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; box-shadow: 0 10px 30px rgba(0,0,0,.08); }
+  .preview img { display: block; width: 100%; height: auto; }
+  .preview figcaption { font-size: 13px; color: var(--faint); margin-top: 8px; }
   .claim { margin: 44px 0 8px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 18px 20px; display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
   .claim .lbl { font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--faint); margin: 0 0 6px; }
   .claim .paper { font-family: var(--serif); }
@@ -77,63 +83,77 @@
     </a>
     <nav>
       <a href="demo/">Demo</a>
-      <a href="#use">Use it</a>
+      <a href="#use">Get started</a>
       <a href="https://github.com/cgarryZA/MachineChecked">GitHub</a>
     </nav>
   </header>
 
   <div class="hero">
-    <h1>What the machine checked, and what it didn’t.</h1>
-    <p class="lede">A Lean build says the Lean theorems are proved. It does not say they are the
-      paper’s theorems. MachineChecked opens a paper beside its formalisation and shows, claim by
-      claim, which Lean declaration it corresponds to, whether Lean proves it, and whether anyone
-      has checked that the two say the same thing.</p>
+    <p class="eyebrow">A reader for formalised mathematics</p>
+    <h1>Read the paper.<br>Inspect the Lean.</h1>
+    <p class="lede">MachineChecked puts a mathematical paper beside its Lean formalisation.
+      Select a statement to explore its Lean counterpart, see what has been proved,
+      and find what still needs review.</p>
     <div class="cta">
-      <a class="btn primary" href="demo/">Open the demo</a>
-      <a class="btn ghost" href="#use">Use it on your project</a>
+      <a class="btn primary" href="demo/">Explore the demo</a>
+      <a class="btn ghost" href="#use">Use it on your paper</a>
     </div>
+
+    <figure class="preview">
+      <a href="demo/#/read/T/T%3Aprop%3Apred">
+        <picture>
+          <source srcset="preview-dark.webp" media="(prefers-color-scheme: dark)">
+          <img src="preview-light.webp" width="1360" height="820" alt="The reader: the paper in the middle with a marker beside each claim, the contents on the left, and on the right Proposition 2.3 with its two Lean statements, the printed one refuted and the corrected one proved.">
+        </picture>
+      </a>
+      <figcaption>The demo’s synthetic paper, open at Proposition 2.3. Click to explore it.</figcaption>
+    </figure>
 
     <div class="claim" aria-label="An example claim">
       <div>
         <p class="lbl">In the paper</p>
         <p class="paper"><strong>Proposition 2.3.</strong> <em>Every natural number is strictly greater than its predecessor n − 1.</em></p>
-        <p class="note">From the demo’s synthetic paper. With truncated subtraction, 0 − 1 = 0, so the claim fails at n = 0.</p>
+        <p class="note">An intentionally false example from the synthetic demo. In Lean’s natural numbers, 0 − 1 = 0.</p>
       </div>
       <div>
         <p class="lbl">What was established</p>
         <ul class="rows">
-          <li><span class="dot no"></span>As printed: refuted in Lean (a theorem proves its negation)</li>
-          <li><span class="dot ok"></span>Corrected, for n ≥ 1: proved in Lean</li>
-          <li><span class="dot warn"></span>Both statements reviewed only by their author</li>
+          <li><span class="dot no"></span>Printed statement: refuted in Lean</li>
+          <li><span class="dot ok"></span>Corrected statement (n ≥ 1): proved in Lean</li>
+          <li><span class="dot warn"></span>Correspondence: author review only</li>
         </ul>
       </div>
+      <p class="claim-caption">A Lean proof and its correspondence to the paper are separate questions. MachineChecked shows both, without treating a link as a review.</p>
     </div>
   </div>
 
   <section>
-    <h2>How it works</h2>
+    <h2>From paper to proof</h2>
     <div class="grid">
-      <div><span class="n">1</span><h3>Point it at a Lean project</h3><p>It finds the paper, reads every numbered statement from the compiled LaTeX, and indexes the project’s built declarations. Nothing to configure.</p></div>
-      <div><span class="n">2</span><h3>Link claims to Lean</h3><p><code>\lean{…}</code> tags and suggestions become links you confirm in the reader. Each claim then says exactly what Lean establishes: proved, incomplete, extra axioms, or not found.</p></div>
-      <div><span class="n">3</span><h3>Share and report</h3><p>Write the reader as one HTML file, or publish it. Anyone reading it can raise an issue on a claim, with the claim, the Lean declaration and the commits filled in.</p></div>
+      <div><span class="n">01</span><h3>Open a paper</h3><p>Start in a built Lean project. MachineChecked finds the paper, its numbered statements and the project's Lean declarations.</p></div>
+      <div><span class="n">02</span><h3>Connect the statements</h3><p>Follow existing <code>\lean{...}</code> tags, inspect suggestions, or choose a Lean declaration yourself. A link is never presented as a mathematical review.</p></div>
+      <div><span class="n">03</span><h3>Read, review, share</h3><p>Browse the two side by side, record reviews if you wish, and export a standalone HTML reader for others. Anyone reading it can raise an issue on a claim, in the audit’s own GitHub repository, with the claim and its Lean filled in.</p></div>
     </div>
   </section>
 
   <section id="use">
-    <h2>Use it</h2>
-    <p class="small">Inside a built Lean project (<code>lake build</code>), with Python 3.11 or later and TeX Live for a LaTeX paper:</p>
-    <pre>uvx --from git+https://github.com/cgarryZA/MachineChecked machinechecked view</pre>
-    <p class="small"><code>machinechecked build</code> writes the reader as one file to share; <code>machinechecked check</code> fails CI when a linked declaration is missing or unproved. Reviews, locked statements and an acceptance status per claim are there for projects that want a full audit. <a href="https://github.com/cgarryZA/MachineChecked#readme">Read the guide</a>.</p>
+    <h2>Get started</h2>
+    <p class="small">In your Lean project's directory, build the modules you want to inspect and run:</p>
+    <pre>lake build
+uvx --from git+https://github.com/cgarryZA/MachineChecked machinechecked view</pre>
+    <p class="small">Python 3.11+, Lean and TeX Live are needed for a LaTeX paper; the compiled web reader is included. No custom claim registry or Node installation is required. Use <code>machinechecked build</code> to export a standalone HTML file.</p>
+    <p><a href="https://github.com/cgarryZA/MachineChecked/blob/main/docs/GETTING_STARTED.md">Read the setup guide →</a></p>
   </section>
 
   <section>
-    <div class="disclaimer">MachineChecked is a tool and a place to publish audits. An audit says what its author linked, checked and recorded, under their name; MachineChecked does not check or endorse its conclusions. Readers judge the evidence, and anyone can report what looks wrong.</div>
+    <div class="disclaimer">MachineChecked checks the Lean mechanically: exact statement types, axioms, fingerprints, proof status. It cannot check that a Lean statement says what the paper says; that takes a reviewer. An audit is its author’s work, recording what they linked, checked and reviewed under their name; MachineChecked does not endorse it, and anyone can report what looks wrong. The demo uses a synthetic paper.</div>
   </section>
 
   <footer>
     <span>MachineChecked · Apache-2.0</span>
     <a href="https://github.com/cgarryZA/MachineChecked">Source on GitHub</a>
     <a href="demo/">Demo</a>
+    <a href="https://github.com/cgarryZA/MachineChecked/blob/main/docs/EVIDENCE_POLICY.md">Evidence policy</a>
   </footer>
 </div>
 </body>

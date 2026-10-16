@@ -1,9 +1,12 @@
 # MachineChecked — project instructions
 
 MachineChecked (formerly ProofLens) shows a mathematical paper beside its Lean formalisation and says, per claim, what is
-established. `README.md` is the user's guide; `PLAN.md` is the plan of record; `docs/` holds the
-threat model, evidence policy, data model and publication policy. Read `docs/EVIDENCE_POLICY.md`
-before changing anything that computes or displays a status.
+established. `README.md` is the short introduction and `docs/GETTING_STARTED.md`,
+`docs/REVIEWING.md`, `docs/ASSURANCE.md` the user's guides; `docs/DEVELOPMENT.md` holds engine
+internals and the seeded-failure tests; `PLAN.md` is the plan of record (keep it to what is being
+built and the settled decisions, not a history); `docs/` also holds the threat model, evidence
+policy, data model and publication policy. Read `docs/EVIDENCE_POLICY.md` before changing anything
+that computes or displays a status. When a feature changes, update the guide that describes it.
 
 ## Rules that do not bend
 
