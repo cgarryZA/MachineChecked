@@ -133,6 +133,19 @@ MachineChecked.html
 
 Keep the HTML file tracked only if you deliberately want that exact snapshot in your repository. A private paper bundled into HTML remains private content: do not publish it without checking the export.
 
+## A badge for your README
+
+Once your paper is listed on machinechecked.org (a repository whose `formalization.yaml` names an
+arXiv paper is listed within a day), its page has a badge that says how far the site's knowledge
+of it goes ("Lean repository linked", or "audit published"):
+
+```md
+[![MachineChecked](https://machinechecked.org/papers/2601.01234/badge.svg)](https://machinechecked.org/papers/2601.01234/)
+```
+
+Use your paper's arXiv identifier. The badge says what is listed, never that anything is
+verified.
+
 ## Share a claim or report a problem
 
 A claim has **Copy link**, which copies its permanent address when the site is hosted. On an unhosted local copy, it copies a claim reference instead.
