@@ -300,6 +300,123 @@ def run_simple_probe(root: Path, modules: list[str], libs: list[str], requests: 
     return recs
 
 
+def library_of(module: str, libs: list[str]) -> str:
+    """The library a module belongs to: the one whose root is its first component."""
+    first = module.split(".")[0]
+    return next((l for l in libs if l.split(".")[0] == first), first)
+
+
+def probe_modules(root: Path, modules: list[str], libs: list[str], requests: list[dict],
+                  lake: str = "lake", log=print) -> tuple[list[dict], dict[str, str]]:
+    """Probe the built modules without assuming they can all be imported into one Lean session.
+
+    A project may build modules that do not belong together: two libraries declaring the same
+    name, for instance a statement left as a challenge and its solution. Lean may load both and
+    silently keep one, so each library is probed in its own session, always; a library that
+    fails to load is split in halves, down to single modules. Each record is tagged with the
+    group it came from, and a name found in several groups is ambiguous until its module is
+    given. Returns the records and the modules that could not be loaded, with the reason."""
+    recs, failed = [], {}
+
+    def run(group: list[str], label: str):
+        try:
+            out = run_simple_probe(root, group, libs, requests, lake)
+        except ViewError as e:
+            if len(group) == 1:
+                failed[group[0]] = str(e)[-600:]
+                return
+            log(f"lean: {label} could not be loaded in one session; splitting it")
+            half = len(group) // 2
+            run(group[:half], label + "/a")
+            run(group[half:], label + "/b")
+            return
+        for r in out:
+            r["probe_group"] = label
+        recs.extend(out)
+
+    by_lib: dict[str, list[str]] = {}
+    for m in sorted(modules):
+        by_lib.setdefault(library_of(m, libs), []).append(m)
+    for lib, ms in sorted(by_lib.items()):
+        run(ms, lib)
+    return recs, failed
+
+
+DECL_KEYWORDS = r"(?:theorem|lemma|def|abbrev|instance|structure|inductive|class|opaque|axiom)"
+
+
+def declared_names(text: str) -> set[str]:
+    """The full names a Lean source declares, as far as its text shows: each declaration's
+    identifier inside the `namespace` blocks around it."""
+    names, stack = set(), []
+    decl = re.compile(rf"^\s*(?:@\[[^\]]*\]\s*)?(?:(?:private|protected|noncomputable|nonrec|"
+                      rf"partial|unsafe)\s+)*{DECL_KEYWORDS}\s+([\w.'«»]+)")
+    for line in text.splitlines():
+        m = re.match(r"\s*(namespace|section)\b\s*([\w.'«»]*)", line)
+        if m:
+            stack.append((m.group(1), m.group(2)))
+            continue
+        m = re.match(r"\s*end\b\s*([\w.'«»]*)", line)
+        if m and stack:
+            stack.pop()
+            continue
+        m = decl.match(line)
+        if m:
+            ident = m.group(1)
+            if ident.startswith("_root_."):
+                names.add(ident[len("_root_."):])
+            else:
+                ns = [n for kind, n in stack if kind == "namespace" and n]
+                names.add(".".join(ns + [ident]))
+    return names
+
+
+def declaring_modules(root: Path, modules: list[str], name: str) -> list[str]:
+    """Modules among `modules` whose source declares `name`, as far as its text shows. Used only
+    to explain a declaration that no probed module holds; it never makes a link read as
+    checked."""
+    out = []
+    for m in modules:
+        p = root / (m.replace(".", "/") + ".lean")
+        try:
+            if p.is_file() and name in declared_names(p.read_text(encoding="utf-8", errors="replace")):
+                out.append(m)
+        except OSError:
+            continue
+    return out
+
+
+def resolve_link(name: str, records: list[dict], module: str | None, root: Path,
+                 unbuilt: list[str], failed: dict[str, str]) -> tuple[dict | None, str | None]:
+    """The probe record a link means, or why there is none.
+
+    A declaration is identified by its name and its module: when several loaded modules declare
+    the name, the module the project gave (formalization.yaml's `module`) decides, and without
+    one the link is ambiguous rather than guessed. With no record, the source says whether the
+    declaration's module is unbuilt or could not be loaded: only a declaration absent from the
+    modules that were inspected reads as not found."""
+    found = [r for r in records if "missing" not in r.get("errors", [])]
+    mod_of = lambda r: (r.get("decl") or {}).get("module") or r.get("module")
+    if module:
+        mine = [r for r in found if mod_of(r) == module]
+        if mine:
+            return mine[0], None
+        if module in unbuilt:
+            return None, f"linked: Lean not checked (its module {module} is not built)"
+        if module in failed:
+            return None, f"linked: Lean not checked (its module {module} could not be loaded)"
+    elif len({mod_of(r) for r in found}) > 1:
+        mods = ", ".join(sorted(str(mod_of(r)) for r in found))
+        return None, f"linked: Lean name is ambiguous (declared in {mods})"
+    elif found:
+        return found[0], None
+    for m in declaring_modules(root, unbuilt, name):
+        return None, f"linked: Lean not checked (its module {m} is not built)"
+    for m in declaring_modules(root, list(failed), name):
+        return None, f"linked: Lean not checked (its module {m} could not be loaded)"
+    return None, None
+
+
 def link_state(rec: dict | None) -> tuple[str, str]:
     """The status of a confirmed link from its probe record, and its class."""
     if rec is None or "missing" in rec.get("errors", []):
@@ -438,8 +555,10 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
     index, linkrecs, decls = [], {}, {}
     if fy and "error" not in fy:
         for c in claims:
-            c["declared"] = [n for st in fz.links_for(fy, c["kind"], c["number"], paper.title)
-                             for n in st["lean"]]
+            rows = fz.links_for(fy, c["kind"], c["number"], paper.title)
+            c["declared"] = [n for st in rows for n in st["lean"]]
+            c["declared_modules"] = {n: st["module"] for st in rows for n in st["lean"]
+                                     if st.get("module")}
     links = load_links(root).get("papers", {}).get(paper_key, {})
     if not libs:
         notes.append("no Lean library found in the lakefile")
@@ -454,13 +573,16 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
         icache = out_dir / "build" / "index-cache.json"
         idigest = lean_digest(root)
         cached = read_json(icache) if icache.exists() else {}
+        failed = {}
         if cached.get("digest") == idigest:
-            index = cached["index"]
+            index, failed = cached["index"], cached.get("failed", {})
         else:
             log(f"lean: indexing {len(built)} built module(s)")
-            recs = run_simple_probe(root, built, libs, [{"kind": "index", "name": ""}], lake)
+            recs, failed = probe_modules(root, built, libs, [{"kind": "index", "name": ""}],
+                                         lake, log)
             index = [r for r in recs if r["record"] == "index"]
-            write_json(icache, {"digest": idigest, "index": index}, indent=None)
+            write_json(icache, {"digest": idigest, "index": index, "failed": failed},
+                       indent=None)
         wanted = set()
         for c in claims:
             entry = links.get(c["key"], {})
@@ -472,23 +594,38 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
             wanted |= {s["name"] for s in c["suggestions"][:1] if s.get("kind")}
         if wanted:
             log(f"lean: checking {len(wanted)} linked or suggested declaration(s)")
-            recs = run_simple_probe(root, built, libs,
-                                    [{"kind": "link", "name": n} for n in sorted(wanted)], lake)
-            linkrecs = {r["name"]: r for r in recs if r["record"] == "link"}
-            decls = {r["name"]: r for r in recs if r["record"] == "decl"}
+            loadable = [m for m in built if m not in failed]
+            recs, more = probe_modules(root, loadable, libs,
+                                       [{"kind": "link", "name": n} for n in sorted(wanted)],
+                                       lake, log)
+            failed.update(more)
+            for r in recs:
+                if r["record"] == "link":
+                    linkrecs.setdefault(r["name"], []).append(r)
+                elif r["record"] == "decl":
+                    decls.setdefault(r["name"], r)
+        if failed:
+            notes.append(f"{len(failed)} built module(s) could not be loaded by MachineChecked "
+                         f"and are not indexed: {', '.join(sorted(failed)[:5])}"
+                         + ("…" if len(failed) > 5 else ""))
 
     # Statuses.
     for c in claims:
         entry = links.get(c["key"], {})
         c["links"] = []
         for n in c.pop("link_names", None) or linked_names(c, entry):
-            status, cls = link_state(linkrecs.get(n)) if built else \
-                ("linked: Lean not checked (the project is not built)", "unspecified")
+            rec = None
+            if not built:
+                status, cls = "linked: Lean not checked (the project is not built)", "unspecified"
+            else:
+                rec, why = resolve_link(n, linkrecs.get(n, []), c.get("declared_modules", {}).get(n),
+                                        root, unbuilt, failed)
+                status, cls = (why, "unspecified") if why else link_state(rec)
             c["links"].append({"name": n, "status": status, "class": cls,
-                               "source": link_source(c, entry, n),
-                               "record": linkrecs.get(n)})
+                               "source": link_source(c, entry, n), "record": rec})
         for s in c.get("suggestions", []):
-            s["record"] = linkrecs.get(s["name"])
+            found = [r for r in linkrecs.get(s["name"], []) if "missing" not in r.get("errors", [])]
+            s["record"] = found[0] if len({((r.get("decl") or {}).get("module")) for r in found}) == 1 else None
         if c["links"]:
             worst = max(c["links"], key=lambda l: ["proved", "unspecified", "open", "malformed"]
                         .index(l["class"]))

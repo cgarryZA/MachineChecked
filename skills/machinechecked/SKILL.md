@@ -5,6 +5,14 @@ description: Audit how a mathematical paper corresponds to its Lean 4 formalisat
 
 # MachineChecked
 
+MachineChecked is a command-line tool that runs locally, inside the user's Lean project: it
+reads the paper and the compiled Lean declarations and writes everything on the user's machine
+(`.machinechecked/` for generated data, `machinechecked.links.json` for confirmed links,
+`MachineChecked.html` when asked for). It uploads nothing and needs no account; machinechecked.org
+is only where audits can optionally be published. Do not upload, publish or share a paper, its
+Lean or a generated reader unless the user asks; tell them where the files are instead. Review
+drafts made in the reader's Review page live in that browser until exported.
+
 MachineChecked reads a paper beside its Lean project and reports, claim by claim, what Lean
 establishes. It checks the Lean mechanically (the linked declaration exists, its proof has no
 `sorry`, which axioms it uses). It does **not** check that a Lean statement says what the paper
@@ -44,6 +52,9 @@ declaration is missing or not proved. Per claim: `number` ("Theorem 2.1"), `stat
 | `linked: Lean declaration not found` | the name does not exist in the built project |
 | `linked: Lean definition` | the link is to a definition (nothing to prove) |
 | `linked: Lean not checked (the project is not built)` | Lean was not run |
+| `linked: Lean not checked (its module M is not built)` | the declaration's module is not built yet; build it to check |
+| `linked: Lean not checked (its module M could not be loaded)` | MachineChecked could not load that module; a tool limitation, not a finding about the mathematics |
+| `linked: Lean name is ambiguous (declared in A, B)` | several modules declare the name (e.g. a challenge statement and its solution); name the module in `formalization.yaml` |
 | `suggested link, not confirmed` | only a candidate; nobody has linked it |
 | `not linked` | no Lean counterpart is known |
 

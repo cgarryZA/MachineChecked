@@ -1,5 +1,7 @@
 # Getting started
 
+**MachineChecked runs locally, in your Lean project.** It reads your paper and your compiled Lean declarations, writes an interactive reader, and keeps its results on your computer: generated data in `.machinechecked/`, the links you confirm in `machinechecked.links.json`, and the reader as `MachineChecked.html` if you ask for one. No account, registration or upload is needed. Publishing an audit (on your own GitHub Pages, say, and listing it on machinechecked.org) is a separate step you choose to take.
+
 MachineChecked is a reader for mathematical papers and their Lean formalisation. You can use it without preparing a claim inventory or adopting a particular proof-review framework.
 
 ## Before you start
@@ -88,7 +90,8 @@ Select a claim to see the printed statement beside its Lean statement, set out a
 - **Not linked / suggested:** no confirmed correspondence.
 - **Linked, proof checked:** Lean accepts the named formal theorem, subject to its axioms. It is not a certificate of correspondence with the paper.
 - **Linked, Lean definition:** the link is to a definition, which has nothing to prove.
-- **Linked, Lean not checked:** the project is not built, so Lean has not been run on the declaration here.
+- **Linked, Lean not checked:** the project, or the declaration's own module, is not built, so Lean has not been run on it here. A project can be partly built: what is built is checked, and each link says whether its module is.
+- **Linked, Lean name is ambiguous:** several modules declare the same name (a statement left as a challenge and its solution, for instance). Name the intended module in the `formalization.yaml` row (`module: …`); MachineChecked never picks one for you. Each Lean library is inspected in its own Lean session, so libraries that cannot be loaded together are handled; a module MachineChecked cannot load at all is reported as such, never as "not found".
 - **Incomplete (`sorry`):** the formal proof has unfinished obligations.
 - **Further axioms:** the proof relies on axioms beyond the default allowlist.
 - **Definition / declaration not found:** the linked item is not a checked theorem or cannot be resolved from the built modules.

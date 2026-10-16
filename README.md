@@ -6,6 +6,8 @@ MachineChecked opens a paper, finds its numbered statements and lets you explore
 
 **A Lean proof establishes a formal statement—not automatically the claim in the paper.** MachineChecked keeps those two questions separate.
 
+**MachineChecked runs locally, in your Lean project.** It reads your paper and your compiled Lean declarations, writes an interactive reader, and keeps its results on your computer: generated data in `.machinechecked/`, the links you confirm in `machinechecked.links.json`, and the reader as `MachineChecked.html` if you ask for one. No account, registration or upload is needed. Publishing an audit (on your own GitHub Pages, say, and listing it on machinechecked.org) is a separate step you choose to take.
+
 [Try the demo](https://machinechecked.org/demo/) · [Website](https://machinechecked.org/) · [Installation and usage](https://github.com/cgarryZA/MachineChecked/blob/main/docs/GETTING_STARTED.md)
 
 ## Open your paper

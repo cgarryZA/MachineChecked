@@ -62,8 +62,10 @@ def statements(fy: dict) -> list[dict]:
         if not names or not m:
             continue
         rest = src[m.end():]
+        module = r.get("module") if isinstance(r.get("module"), str) else None
         out.append({"source": src, "kind": m.group(1).lower(), "number": m.group(2),
-                    "hint": _tokens(rest), "lean": names, "status": r.get("status")})
+                    "hint": _tokens(rest), "lean": names, "status": r.get("status"),
+                    "module": module})
     return out
 
 
