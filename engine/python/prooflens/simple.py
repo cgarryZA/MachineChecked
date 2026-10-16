@@ -668,6 +668,20 @@ def source_info(root: Path | None, libs: list[str]) -> dict:
                              links.get("repository_private", False))
 
 
+def view_release(body: dict) -> str:
+    """The release a view's evidence is: its content's identifier, so it changes when the paper,
+    the links or the Lean change."""
+    return f"v-{content_id(body)[:12]}"
+
+
+def view_summary(body: dict) -> dict[str, int]:
+    """How many claims have each status."""
+    out: dict[str, int] = {}
+    for c in body["claims"]:
+        out[c["status"]] = out.get(c["status"], 0) + 1
+    return out
+
+
 def write_view_site(view: dict, site: Path, web_dist: Path | None,
                     root: Path | None = None) -> dict:
     """The site of a view: the same app as the full reader, in its simple mode, with its audit
@@ -675,7 +689,7 @@ def write_view_site(view: dict, site: Path, web_dist: Path | None,
     from . import manifest as mf
     body = view["body"]
     eid = content_id(body)
-    release = f"v-{eid[:12]}"
+    release = view_release(body)
     store = {}
     keys = {}
     for n, d in body["decls"].items():

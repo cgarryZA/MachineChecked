@@ -75,3 +75,11 @@ def test_version_flag(capsys):
     with pytest.raises(SystemExit) as exc:
         cli.main(["--version"])
     assert exc.value.code == 0 and capsys.readouterr().out.strip().endswith(cli.tool_version())
+
+
+def test_a_missing_program_is_reported_before_a_paper_is_downloaded(tmp_path):
+    (tmp_path / "lakefile.toml").write_text('name = "p"\n')
+    code, out, err = check(tmp_path, "https://example.invalid/paper.pdf",
+                           env={**os.environ, "PATH": str(tmp_path / "nothing")})
+    assert code == 2 and not_run(out)["kind"] == "missing-tool"
+    assert "downloading" not in err and not (tmp_path / ".machinechecked").exists()

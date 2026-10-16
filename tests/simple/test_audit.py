@@ -181,3 +181,19 @@ def test_source_links_point_into_the_project_and_can_be_private(toy, tmp_path):
     assert pr["source_roots"] == ["Toy"]
     d = json.loads((tmp_path / "out" / "audit.json").read_text())["formalisation"]
     assert d["repository"] == "someone/lean-proj" and d["repository_private"] is True
+
+
+@needs_lean
+@needs_tex
+def test_check_writes_no_site_and_names_the_release_build_writes(plain, tmp_path):
+    if not built_modules(plain, ["Plain"])[0]:
+        pytest.skip("the plain example is not built")
+    r = subprocess.run([sys.executable, "-m", "prooflens.cli", "check", "--json"], cwd=plain,
+                       capture_output=True, text=True)
+    assert r.returncode in (0, 1), r.stderr
+    release = json.loads(r.stdout)["release"]
+    assert not (plain / ".machinechecked" / "site").exists()
+    out = tmp_path / "published"
+    subprocess.run([sys.executable, "-m", "prooflens.cli", "build", "--site", str(out)], cwd=plain,
+                   capture_output=True, text=True, check=True)
+    assert json.loads((out / "audit.json").read_text())["release"] == release

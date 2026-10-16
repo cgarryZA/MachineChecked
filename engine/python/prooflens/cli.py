@@ -68,6 +68,22 @@ def _assurance_config(a) -> Path | None:
     return _found_config()
 
 
+def _require(root: Path, paper_kind: str) -> None:
+    """Check, before any work, that the programs this run needs are installed: poppler for a
+    PDF, latexmk and synctex for LaTeX, and Lake when the project has built modules to inspect.
+    A missing one stops the run as `could not run` (exit 2), with how to install it."""
+    import shutil
+    from .probe import lib_names
+    from .simple import built_modules
+    need = ["pdftohtml", "pdfinfo"] if paper_kind == "pdf" else ["latexmk", "synctex"]
+    libs = lib_names(root)
+    if libs and built_modules(root, libs)[0]:
+        need.append("lake")
+    for tool in need:
+        if shutil.which(tool) is None:
+            raise FileNotFoundError(2, "not found", tool)
+
+
 def _simple_target(a):
     from .simple import find_lake_root, find_papers
     root = find_lake_root(Path.cwd().resolve())
@@ -78,6 +94,7 @@ def _simple_target(a):
         fy = fz.load(root) or {}
         title = next((s.get("title") for s in fz.formalized_sources(fy) if "error" not in fy
                       and s.get("id") == a.paper), None)
+        _require(root, "pdf")
         paper = _fetch_paper(root, a.paper, title)
     elif a.paper:
         paper = Path(a.paper).resolve()
@@ -106,6 +123,7 @@ def _simple_target(a):
                 s = urls[int(k) - 1]
             except (ValueError, IndexError):
                 sys.exit("no paper chosen")
+            _require(root, "pdf")
             return root, _fetch_paper(root, s["id"], s.get("title"))
         if len(found) > 1:
             print("Several papers found:")
@@ -124,6 +142,7 @@ def _simple_target(a):
         paper.relative_to(root)
     except ValueError:
         sys.exit(f"{paper} is not inside the Lean project {root}")
+    _require(root, "tex" if paper.suffix == ".tex" else "pdf")
     return root, paper
 
 
@@ -172,19 +191,26 @@ def _fetch_paper(root: Path, url: str, title: str | None = None) -> Path:
     return out
 
 
-def _simple_site(root: Path, paper: Path, web: str | None):
-    from .simple import build_view, write_view_site
+def _simple_view(root: Path, paper: Path) -> dict:
+    """What the reader would show, without writing it (`check` needs no site)."""
+    from .simple import build_view
     out = root / cfgmod.work_dir_name(root)
-    view = build_view(root, paper, out, log=lambda m: print("  " + m, file=sys.stderr))
-    site = out / "site"
+    return build_view(root, paper, out, log=lambda m: print("  " + m, file=sys.stderr))
+
+
+def _simple_site(root: Path, paper: Path, web: str | None):
+    from .simple import write_view_site
+    view = _simple_view(root, paper)
+    site = root / cfgmod.work_dir_name(root) / "site"
     index = write_view_site(view, site, _web_dist(web), root)
     return site, index, view
 
 
-def _print_simple(index):
-    for n in index.get("notes", []):
+def _print_simple(body):
+    from .simple import view_summary
+    for n in body.get("notes", []):
         print(f"note: {n}")
-    for s, k in sorted(index["summary"]["P"].items()):
+    for s, k in sorted(view_summary(body).items()):
         print(f"  {k:4d}  {s}")
 
 
@@ -208,7 +234,7 @@ def cmd_view(a):
     _settings(a, root)
     print(f"MachineChecked: {paper.relative_to(root)} in {root.name}")
     site, index, view = _simple_site(root, paper, a.web)
-    _print_simple(index)
+    _print_simple(view["body"])
     key = view["body"]["paper"]
 
     def on_link(req):
@@ -222,8 +248,8 @@ def cmd_build_simple(a):
     from .bundle import bundle
     root, paper = _simple_target(a)
     _settings(a, root)
-    site, index, _ = _simple_site(root, paper, a.web)
-    _print_simple(index)
+    site, index, view = _simple_site(root, paper, a.web)
+    _print_simple(view["body"])
     if a.site:
         import shutil
         dest = Path(a.site).resolve()
@@ -251,8 +277,8 @@ def cmd_check(a):
         a.no_lean_build = False; a.reuse_lean = False; a.fail_on_violation = True
         return cmd_build(a)
     root, paper = _simple_target(a)
-    site, index, view = _simple_site(root, paper, a.web)
-    _print_simple(index)
+    view = _simple_view(root, paper)
+    _print_simple(view["body"])
     bad = [(c["number"], l["name"], l["status"]) for c in view["body"]["claims"]
            for l in c["links"] if l["class"] != "proved"]
     for b in bad:
@@ -290,7 +316,8 @@ def _check_json(a):
             failed = bool(idx["findings"]["total"].get("violation"))
         else:
             root, paper = _simple_target(a)
-            site, idx, view = _simple_site(root, paper, a.web)
+            from .simple import view_release
+            view = _simple_view(root, paper)
             body = view["body"]
             claims = [{"id": c["id"], "number": c["number"], "title": c["title"],
                        "status": c["status"], "class": c["class"],
@@ -300,7 +327,7 @@ def _check_json(a):
                                        for x in c.get("suggestions", [])]}
                       for c in body["claims"]]
             out = {"mode": "simple", "paper": body["paper"], "title": body["title"],
-                   "release": idx["release"], "commit": body.get("commit"),
+                   "release": view_release(body), "commit": body.get("commit"),
                    "modules": {"built": body["project"]["built"],
                                "not_built": body["project"]["unbuilt"]},
                    "notes": body["notes"]}
