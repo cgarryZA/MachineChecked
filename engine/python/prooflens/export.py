@@ -35,6 +35,68 @@ DECL_KEYS_LEAN = ["name", "kind", "module", "range", "doc", "signature", "value"
 DECL_KEYS_MIN = ["name", "kind", "module", "fingerprint", "legacy_hash"]
 
 
+def claim_names(chunk: dict) -> set[str]:
+    """The declarations a claim depends on: the definitions its statements unfold to (`decls`)
+    and the declarations its clauses name (specification, proof, refutation, witnesses)."""
+    names = set(chunk.get("decls", {}))
+    for cl in chunk.get("clauses", []):
+        names |= {cl[k] for k in ("spec", "accept", "refute", "witness") if cl.get(k)}
+        names |= set(cl.get("defs") or [])
+        names |= {r["witness"] for r in cl.get("regimes", []) if r.get("witness")}
+    return names
+
+
+def _one_paper(index: dict, chunks: dict, store: dict, pid: str):
+    """The release restricted to paper `pid`: its claims, the declaration records of their
+    closure, and its own summary, gates and finding totals."""
+    from collections import Counter
+    kept = {name: c for name, c in chunks.items() if c["paper"] == pid}
+    names = set().union(*(claim_names(c) for c in kept.values())) if kept else set()
+    claim_ids = {c["id"] for c in kept.values()}
+    general = [f for f in index["findings"]["general"]]
+    tiers = Counter(f["tier"] for c in kept.values() for f in c.get("findings", [])
+                    if not f.get("dismissed"))
+    tiers.update(f["tier"] for f in general if not f.get("dismissed"))
+    one = {**index,
+           "papers": [p for p in index["papers"] if p["id"] == pid],
+           "claims": [c for c in index["claims"] if c["id"] in claim_ids],
+           "summary": {k: v for k, v in index["summary"].items() if k == pid},
+           "gates": {k: v for k, v in (index.get("gates") or {}).items() if k == pid},
+           "findings": {"total": dict(tiers), "general": general}}
+    one["classes"] = {st: cls for st, cls in index["classes"].items()
+                      if st in one["summary"].get(pid, {})}
+    return one, kept, {k: d for k, d in store.items() if d.get("name") in names}
+
+
+def other_papers_material(cfg: Config, pid: str, index: dict, chunks: dict,
+                          store: dict) -> list[tuple[str, str, bool]]:
+    """What belongs to the papers other than `pid` alone, as (text, what it is, whole word):
+    their claim ids, the declarations only their claims use, their review texts and their
+    statements' Lean text. A paper the configuration publishes in full (its source and Lean) may
+    appear, as a dependency, and gives nothing here. Each paper's manuscript lines are private
+    through `private_inputs` already, unless it publishes its source."""
+    public = {p.id for p in cfg.papers if p.publish.source_text and p.publish.lean}
+    mine = set().union(*(claim_names(c) for c in chunks.values() if c["paper"] == pid))
+    by_name = {d.get("name"): d for d in store.values()}
+    out = []
+    for c in chunks.values():
+        if c["paper"] == pid or c["paper"] in public:
+            continue
+        out.append((c["id"], f"a claim id of paper {c['paper']}", True))
+        for n in sorted(claim_names(c) - mine):
+            out.append((n, f"a declaration only paper {c['paper']} uses", True))
+            for ln in str((by_name.get(n) or {}).get("signature") or "").splitlines():
+                if len(ln.strip()) >= MIN_LINE:
+                    out.append((ln.strip(), f"Lean text of {n}", False))
+        for cl in c.get("clauses", []):
+            for r in ((cl.get("spec_review") or {}).get("current", []) +
+                      (cl.get("spec_review") or {}).get("stale", [])):
+                for ln in (r.get("text") or "").splitlines():
+                    if len(ln.strip()) >= MIN_LINE:
+                        out.append((ln.strip(), f"a review line of paper {c['paper']}", False))
+    return out
+
+
 def public_claim(chunk: dict, pub) -> dict:
     """The fields of a claim passport that `pub` allows."""
     out = _pick(chunk, ["schema", "release", "id", "paper", "number", "title", "kind", "scope",
@@ -102,7 +164,8 @@ def private_inputs(cfg: Config) -> tuple[list[Path], set[str]]:
 
 
 def scan(out: Path, texts: list[Path], hashes: set[str],
-         inventory: Path | None = None) -> list[str]:
+         inventory: Path | None = None,
+         strings: list[tuple[str, str, bool]] = ()) -> list[str]:
     """Every leak of a private input into the export, with the JSON field that carries it.
 
     A line of a private Lean file that the claim inventory also contains (a docstring the
@@ -111,6 +174,9 @@ def scan(out: Path, texts: list[Path], hashes: set[str],
     published = ""
     if inventory is not None and inventory.exists():
         published = "\n".join(_strings(json.loads(inventory.read_text(encoding="utf-8"))))
+    import re
+    words = [(re.compile(r"(?<![\w.'])" + re.escape(t) + r"(?![\w.'])") if whole else None, t, what)
+             for t, what, whole in strings]
     lines = {}
     for t in texts:
         for ln in t.read_text(encoding="utf-8", errors="replace").splitlines():
@@ -135,12 +201,20 @@ def scan(out: Path, texts: list[Path], hashes: set[str],
                     fields = list(_strings_at(json.loads(text)))
                 except json.JSONDecodeError:
                     pass
+            found = None
             for s, src in lines.items():
                 where = next((path for path, v in fields if s in v), None)
                 if where is not None or s in text:
-                    leaks.append(f"{f.relative_to(out)}: contains a line of {src.name}"
-                                 + (f" (in {where})" if where else ""))
+                    found = f"a line of {src.name}" + (f" (in {where})" if where else "")
                     break
+            for rx, t, what in words if found is None else ():
+                hit = (lambda v: rx.search(v)) if rx else (lambda v: t in v)
+                where = next((path for path, v in fields if hit(v)), None)
+                if where is not None or hit(text):
+                    found = f"{what}, {t}" + (f" (in {where})" if where else "")
+                    break
+            if found:
+                leaks.append(f"{f.relative_to(out)}: contains {found}")
     return leaks
 
 
@@ -168,7 +242,12 @@ def _strings(obj):
 
 
 def export(cfg: Config, out: Path, release: str | None = None,
-           web_dist: Path | None = None) -> dict:
+           web_dist: Path | None = None, paper: str | None = None) -> dict:
+    """The approved public fields of a release, scanned for private material. With `paper`, only
+    that paper: its claims, the declarations they depend on (their closure) and their reviews,
+    scanned also against what belongs to the other papers alone."""
+    if paper is not None and paper not in {p.id for p in cfg.papers}:
+        raise ExportError(f"no paper {paper} in the configuration")
     rels = ev.releases(cfg.out_dir)
     if not rels:
         raise ExportError("no release: run `prooflens build` first")
@@ -177,6 +256,9 @@ def export(cfg: Config, out: Path, release: str | None = None,
     record = ev.load(cfg.out_dir, relrec["evidence"])
     index, chunks, store = mf.build(record, relrec["release"])
     pubs = {p.id: p.publish for p in cfg.papers}
+    full_index, full_chunks, full_store = index, chunks, store
+    if paper is not None:
+        index, chunks, store = _one_paper(index, chunks, store, paper)
 
     if out.exists():
         shutil.rmtree(out)
@@ -215,8 +297,9 @@ def export(cfg: Config, out: Path, release: str | None = None,
                    indent=None)
     # Declarations are shared between papers: their Lean text and review texts are exported only
     # when every paper allows it. A redacted record is a different record, so it gets its own key.
-    lean_ok = all(p.publish.lean for p in cfg.papers)
-    rev_ok = all(p.publish.reviews for p in cfg.papers)
+    shown = [p for p in cfg.papers if paper is None or p.id == paper]
+    lean_ok = all(p.publish.lean for p in shown)
+    rev_ok = all(p.publish.reviews for p in shown)
     rekey = {}
     for key, d in store.items():
         q = _pick(d, DECL_KEYS_LEAN if lean_ok else DECL_KEYS_MIN)
@@ -238,12 +321,14 @@ def export(cfg: Config, out: Path, release: str | None = None,
                                      "lean": c["lean"] if pub.lean else []})
     write_json(data / "search.json", pub_search, indent=None)
     from . import audit
-    arx = [p.source["arxiv"] for p in cfg.papers if p.source.get("arxiv")]
+    arx = [p.source["arxiv"] for p in shown if p.source.get("arxiv")]
     write_json(out / audit.NAME, audit.descriptor(
         pidx, cfg.lean_root, author=cfg.author,
-        paper_url=f"https://arxiv.org/abs/{arx[0]}" if len(cfg.papers) == 1 and arx else None))
+        paper_url=f"https://arxiv.org/abs/{arx[0]}" if len(shown) == 1 and arx else None))
     texts, hashes = private_inputs(cfg)
-    leaks = scan(out, texts, hashes, cfg.inventory)
+    strings = (other_papers_material(cfg, paper, full_index, full_chunks, full_store)
+               if paper is not None else [])
+    leaks = scan(out, texts, hashes, cfg.inventory, strings)
     if leaks:
         shutil.rmtree(out)
         raise ExportError("export blocked; private material found:\n  " + "\n  ".join(leaks))

@@ -106,7 +106,7 @@ machinechecked bundle --out audit.html
 machinechecked export --out public-audit/
 ```
 
-`reassess` re-evaluates current reviews and dismissals against compatible stored evidence. `export` assembles only explicitly permitted public fields and scans the result for private-content leakage. The export is a complete site, reader included; with `--data-only` it holds only the audit's descriptor and data, for a site that reads it with its own reader (machinechecked.org opens it as `https://machinechecked.org/read/?audit=<its address>`).
+`reassess` re-evaluates current reviews and dismissals against compatible stored evidence. `export` assembles only explicitly permitted public fields and scans the result for private-content leakage. With several papers in one configuration, `export --paper ID` exports one of them: its claims, the declarations they depend on, and their reviews. The export is then also scanned for what belongs to the other papers alone (their claim ids, the declarations only they use and their Lean text, their reviews, and their manuscripts unless published), except a paper whose source and Lean the configuration publishes in full. The export is a complete site, reader included; with `--data-only` it holds only the audit's descriptor and data, for a site that reads it with its own reader (machinechecked.org opens it as `https://machinechecked.org/read/?audit=<its address>`).
 
 ## What the evidence says
 
