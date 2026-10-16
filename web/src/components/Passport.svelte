@@ -1,5 +1,5 @@
 <script>
-  import { claimLink, claimReference, issueUrl, sourceUrl } from "../lib/issue.js";
+  import { claimLink, claimReference, issueUrl, sourceUrl, sourceLabel, sourceTitle } from "../lib/issue.js";
   import TexInline from "./TexInline.svelte";
   import { loadClaim, saveLink } from "../lib/data.js";
   import { href } from "../lib/route.svelte.js";
@@ -148,7 +148,7 @@
         {#each claim.links as l (l.name)}
           <div class="card">
             <p class="decl"><code>{l.name}</code>{#if l.module}<span class="faint"> · {l.module}{l.range ? ":" + l.range.line : ""}</span>{/if}
-              {#if sourceUrl(index, l.path, l.range?.line)}<a class="src-link small" href={sourceUrl(index, l.path, l.range?.line)} target="_blank" rel="noopener">Lean source ↗</a>{/if}</p>
+              {#if sourceUrl(index, l.path, l.range?.line)}<a class="src-link small" href={sourceUrl(index, l.path, l.range?.line)} target="_blank" rel="noopener" title={sourceTitle(index)}>{sourceLabel(index)}</a>{/if}</p>
             <p class="faint small src">{l.source === "paper" ? "Linked by a \\lean{…} tag in the paper's source" : l.source === "formalization.yaml" ? "Declared in the project's formalization.yaml" + (index.formalization?.review_status ? ` (the project describes its review as “${index.formalization.review_status}”)` : "") : "Linked in the reader (machinechecked.links.json)"}</p>
             <p class="verdict top">{linkVerdict(l)}</p>
             {#if l.statement}<Statement st={l.statement} onref={showDecl} compact />{/if}

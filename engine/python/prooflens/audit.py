@@ -60,7 +60,9 @@ def descriptor(index: dict, lean_root: Path | None, author: str | None = None,
         "author": author,
         "papers": papers,
         "formalisation": {
-            "repository": github_repository(lean_root) if lean_root else None,
+            "repository": project.get("repository") or (github_repository(lean_root)
+                                                         if lean_root else None),
+            "repository_private": bool(project.get("repository_private")),
             "commit": project.get("commit"),
             "toolchain": project.get("toolchain") or (toolchain(lean_root) if lean_root
                                                       else None),
@@ -95,3 +97,19 @@ def source_path(lean_root: Path, module: str | None) -> str | None:
     if sr is None or not (lean_root / rel).is_file():
         return None
     return sr[1] + rel
+
+
+def source_info(lean_root: Path | None, roots: list[str], repository: str | None = None,
+                private: bool = False) -> dict:
+    """Where the reader's Lean source links point: the GitHub repository (given, else the
+    project's `origin` remote), whether it is private (the reader then does not show its name;
+    the links still name it), the project's path inside it, and the top-level module names whose
+    files are the project's own."""
+    if lean_root is None:
+        return {}
+    sr = source_root(lean_root)
+    return {"repository": repository or github_repository(lean_root),
+            "repository_private": bool(private),
+            "source_prefix": sr[1] if sr else None,
+            "source_roots": sorted(r for r in roots if (lean_root / r).is_dir()
+                                   or (lean_root / f"{r}.lean").is_file())}

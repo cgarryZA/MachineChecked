@@ -165,7 +165,11 @@ def export(cfg: Config, out: Path, release: str | None = None,
                          "classes", "gates", "search"])
     pidx["issues"], pidx["site_url"] = cfg.issues, cfg.site_url
     pidx["project"] = _pick(index["project"], ["name", "commit", "dirty", "toolchain",
+                                               "repository", "repository_private",
+                                               "source_prefix", "source_roots",
                                                "lake_manifest_sha256", "dependencies"])
+    from .pipeline import source_info
+    pidx["project"].update(source_info(cfg))
     pidx["papers"] = []
     for p in index["papers"]:
         pub = pubs[p["id"]]

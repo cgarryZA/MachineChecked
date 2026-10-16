@@ -59,6 +59,8 @@ class Config:
     issues: str | None = None         # "owner/repo" where the reader's "Raise issue" opens issues
     site_url: str | None = None       # the public address of the published site, for permalinks
     author: str | None = None         # the name the audit is published under (audit.json)
+    repository: str | None = None     # "owner/repo" of the Lean source, if not the git remote
+    repository_private: bool = False  # the reader does not show the repository's name
 
     @property
     def root(self) -> Path:
@@ -138,4 +140,6 @@ def load(path: str | Path) -> Config:
         issues=issue_repo(proj.get("issues"), str(path)),
         site_url=proj.get("site_url"),
         author=proj.get("author"),
+        repository=issue_repo(proj.get("repository"), str(path)),
+        repository_private=bool(proj.get("repository_private", False)),
     )

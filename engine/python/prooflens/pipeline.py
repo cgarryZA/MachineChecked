@@ -136,6 +136,7 @@ def build(cfg: Config, release: str | None = None, skip_lean: bool = False,
     record = ev.load(cfg.out_dir, eid)
     index, chunks, store = mf.build(record, rel, load_display(cfg))
     index.update(issues=cfg.issues, site_url=cfg.site_url)
+    index["project"].update(source_info(cfg))
     site = cfg.out_dir / "site"
     write_preview(site, index, chunks, store, pdfs, web_dist,
                   rq.assurance_queue(index, chunks, store, cfg.statement_authors))
@@ -178,6 +179,13 @@ def lean_inputs_digest(cfg: Config) -> str:
 def probe_digest() -> str:
     return sha256_text(resources.files("prooflens").joinpath("data/ProofLensProbe.lean")
                        .read_text())
+
+
+def source_info(cfg: Config) -> dict:
+    """The project's source repository, for the reader's Lean source links."""
+    from . import audit
+    return audit.source_info(cfg.lean_root, cfg.scope_roots, cfg.repository,
+                             cfg.repository_private)
 
 
 def reusable_lean(cfg: Config) -> dict:
@@ -288,6 +296,7 @@ def rebuild_site(cfg: Config, web_dist: Path | None = None, release: str | None 
     record = ev.load(cfg.out_dir, rel["evidence"])
     index, chunks, store = mf.build(record, rel["release"], load_display(cfg))
     index.update(issues=cfg.issues, site_url=cfg.site_url)
+    index["project"].update(source_info(cfg))
     site = cfg.out_dir / "site"
     write_preview(site, index, chunks, store, pdf_paths(cfg, record["body"]), web_dist,
                   rq.assurance_queue(index, chunks, store, cfg.statement_authors))

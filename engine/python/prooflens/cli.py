@@ -130,14 +130,16 @@ def _settings(a, root: Path | None):
     assessment sets them in its configuration."""
     issues, url = getattr(a, "issues", None), getattr(a, "site_url", None)
     author = getattr(a, "author", None)
-    if not issues and not url and not author:
+    private = getattr(a, "private_repository", None)
+    if not issues and not url and not author and private is None:
         return
     if root is None:
-        sys.exit("set `issues`, `site_url` and `author` under [project] in machinechecked.toml")
+        sys.exit("set `issues`, `site_url`, `author` and `repository_private` under [project] in "
+                 "machinechecked.toml")
     from .simple import save_settings
     try:
         save_settings(root, issues=cfgmod.issue_repo(issues, "--issues") if issues else None,
-                      site_url=url, author=author)
+                      site_url=url, author=author, repository_private=private)
     except cfgmod.ConfigError as e:
         sys.exit(str(e))
 
@@ -435,6 +437,9 @@ def main(argv=None):
     w.add_argument("--site-url", help="the public address of the published reader, "
                         "for links to claims")
     w.add_argument("--author", help="the name the audit is published under (in audit.json)")
+    w.add_argument("--private-repository", action=argparse.BooleanOptionalAction, default=None,
+                   help="the Lean repository is private: the reader does not show its name "
+                   "(its source links still name it, and open only for people with access)")
     w.add_argument("-c", "--config", help=argparse.SUPPRESS)
     w.add_argument("--port", type=int, default=8017)
     w.add_argument("--no-browser", action="store_true")
@@ -448,6 +453,9 @@ def main(argv=None):
     b.add_argument("--site-url", help="the public address of the published reader, "
                         "for links to claims")
     b.add_argument("--author", help="the name the audit is published under (in audit.json)")
+    b.add_argument("--private-repository", action=argparse.BooleanOptionalAction, default=None,
+                   help="the Lean repository is private: the reader does not show its name "
+                   "(its source links still name it, and open only for people with access)")
     b.add_argument("--out", help="the HTML file (default: MachineChecked.html at the project root)")
     b.add_argument("--site", metavar="DIR", help="write the reader as a directory to publish "
                    "(for example on GitHub Pages) instead of one HTML file")

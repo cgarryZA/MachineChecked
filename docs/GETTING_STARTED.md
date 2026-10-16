@@ -109,6 +109,8 @@ To publish the reader on the web instead, write it as a directory and put that d
 machinechecked build --site public/ --author "Your Name" --issues owner/repo
 ```
 
+If the Lean repository is private, add `--private-repository`: the reader then labels its source links as private instead of naming the repository. The name is still inside the links and the data, and the links open only for people with access.
+
 The directory carries `audit.json`, a short description of the audit: the paper (with its arXiv identifier and version when it was given by an arXiv URL), the Lean repository, commit and toolchain, who published it, where reports go, and where its data is. A site that lists audits, such as machinechecked.org, reads that file and the data beside it, and shows them as data: it runs nothing from the audit, and it does not endorse it. Check the directory before publishing it: like the HTML file, it contains the paper and the Lean statements.
 
 To check the linked declarations in automation:

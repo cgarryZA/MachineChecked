@@ -34,6 +34,8 @@ publish = { pdf = false, source_text = false, lean = false, reviews = false }
 
 Sources can also be a pinned Git revision (`source = { git = "owner/repo", rev = "<commit>" }`) or a versioned arXiv record. With multiple root TeX files, specify `root`. Without LaTeX, MachineChecked falls back to the paper's PDF and labels the weaker source evidence.
 
+Under `[project]`, `author` is the name the audit is published under, `issues` the GitHub repository where Raise issue opens reports, `site_url` the published reader's address, and `repository` the GitHub repository of the Lean source when it is not the project's `origin` remote. `repository_private = true` keeps the repository's name out of the reader's text; its Lean source links still name it, and open only for people with access.
+
 Optional configuration includes `dismissals` (documented advisory warnings), `comparator_log` (a structured replay record) and `display` (a text-only display overlay). Display changes never alter verification results.
 
 ## Map claims to specifications

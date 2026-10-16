@@ -1,5 +1,6 @@
 <script>
-  import { loadDecl } from "../lib/data.js";
+  import { loadDecl, siteIndex } from "../lib/data.js";
+  import { moduleSourceUrl, sourceLabel, sourceTitle } from "../lib/issue.js";
   import LeanText from "./LeanText.svelte";
 
   // One Lean declaration of a closure, loaded from the shared store when it is opened.
@@ -32,6 +33,9 @@
     {:else if !d}
       <p class="faint">Loading…</p>
     {:else}
+      {#if siteIndex && moduleSourceUrl(siteIndex, d.module, d.range?.line)}
+        <p class="small"><a href={moduleSourceUrl(siteIndex, d.module, d.range?.line)} target="_blank" rel="noopener" title={sourceTitle(siteIndex)}>{sourceLabel(siteIndex)}</a></p>
+      {/if}
       {#if d.doc}
         {#if hideReview}<p class="lbl">docstring (the author's words, not the definition)</p>{/if}
         <p class="doc">{d.doc}</p>

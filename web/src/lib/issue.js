@@ -69,3 +69,24 @@ export function sourceUrl(index, path, line) {
   const n = Number.isInteger(line) && line > 0 ? `#L${line}` : "";
   return `https://github.com/${repo}/blob/${commit}/${path.split("/").map(encodeURIComponent).join("/")}${n}`;
 }
+
+// A module's source, when the module is the project's own: its file under the project's path in
+// the repository.
+export function moduleSourceUrl(index, module, line) {
+  const pr = index.project || {};
+  if (!module || !/^[\w.']+$/.test(module) || !(pr.source_roots || []).includes(module.split(".")[0])) return null;
+  const prefix = pr.source_prefix || "";
+  if (!/^([\w.'-]+\/)*$/.test(prefix)) return null;
+  return sourceUrl(index, prefix + module.replaceAll(".", "/") + ".lean", line);
+}
+
+// The source link's words: a private repository is not named, and the link says it will open
+// only for people with access.
+export function sourceLabel(index) {
+  return index.project?.repository_private ? "Lean source (private repository) ↗" : "Lean source ↗";
+}
+export function sourceTitle(index) {
+  return index.project?.repository_private
+    ? "The repository is private: this opens only for people with access to it."
+    : `The declaration in ${index.project?.repository} at the audited commit`;
+}

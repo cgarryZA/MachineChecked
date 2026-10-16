@@ -257,7 +257,7 @@ def save_link(root: Path, paper: str, key: str, lean: list[str] | None, rejected
 
 
 def save_settings(root: Path, issues: str | None = None, site_url: str | None = None,
-                  author: str | None = None) -> dict:
+                  author: str | None = None, repository_private: bool | None = None) -> dict:
     """Record where the reader's Raise issue opens reports (`owner/repo`), the public address
     of the published reader, and the name the audit is published under, in the links file."""
     data = load_links(root)
@@ -267,6 +267,8 @@ def save_settings(root: Path, issues: str | None = None, site_url: str | None = 
         data["site_url"] = site_url
     if author:
         data["author"] = author
+    if repository_private is not None:
+        data["repository_private"] = repository_private
     write_json(links_file(root), data)
     return data
 
@@ -510,9 +512,14 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
     return {"body": body, "pdf": pdf, "cfg": cfg}
 
 
-def audit_repository(root: Path | None) -> str | None:
+def source_info(root: Path | None, libs: list[str]) -> dict:
+    """The project's source repository, for the reader's Lean source links."""
     from . import audit
-    return audit.github_repository(root) if root else None
+    if root is None:
+        return {}
+    links = load_links(root)
+    return audit.source_info(root, libs, links.get("repository"),
+                             links.get("repository_private", False))
 
 
 def write_view_site(view: dict, site: Path, web_dist: Path | None,
@@ -572,7 +579,7 @@ def write_view_site(view: dict, site: Path, web_dist: Path | None,
              "evidence": eid, "created": _dt.datetime.now(_dt.timezone.utc)
              .isoformat(timespec="seconds"),
              "project": {"name": body["project"]["name"], "commit": body.get("commit"),
-                         "repository": audit_repository(root)},
+                         **source_info(root, body["project"]["libs"])},
              "tool": {"name": "machinechecked"},
              "issues": body.get("issues"), "site_url": body.get("site_url"),
              "formalization": body.get("formalization"),

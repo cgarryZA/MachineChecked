@@ -61,7 +61,15 @@ async function getJson(path) {
 // The audit's descriptor (`audit.json`), when an audit is read from elsewhere; null otherwise.
 export let auditInfo = null;
 
+// The index this page shows, once loaded, for components that need its project details.
+export let siteIndex = null;
+
 export async function loadIndex() {
+  siteIndex = await loadIndexData();
+  return siteIndex;
+}
+
+async function loadIndexData() {
   if (!AUDIT) return getJson("data/index.json");
   if (AUDIT.error) throw new Error(AUDIT.error);
   const d = await getJson("audit.json");

@@ -156,3 +156,20 @@ def test_the_skill_says_what_the_statuses_do_not_mean():
                          skill, re.M):
         assert st.split(" (")[0] in src or st in src, st
     assert "does **not** check that a Lean statement says what the paper" in skill
+
+
+def test_source_links_point_into_the_project_and_can_be_private(toy, tmp_path):
+    from prooflens import config as cfgmod
+    from prooflens.export import export
+    toml = toy / "machinechecked.toml"
+    toml.write_text(toml.read_text().replace(
+        "[project]\n", '[project]\nrepository = "someone/lean-proj"\nrepository_private = true\n', 1))
+    build(toy, skip_lean=True, skip_tex=True)
+    cfg = cfgmod.load(toml)
+    export(cfg, tmp_path / "out")
+    pr = json.loads((tmp_path / "out" / "data" / "index.json").read_text())["project"]
+    assert pr["repository"] == "someone/lean-proj" and pr["repository_private"] is True
+    # Only the project's own top-level modules get source links.
+    assert pr["source_roots"] == ["Toy"]
+    d = json.loads((tmp_path / "out" / "audit.json").read_text())["formalisation"]
+    assert d["repository"] == "someone/lean-proj" and d["repository_private"] is True
