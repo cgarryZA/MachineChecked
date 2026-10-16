@@ -1,0 +1,98 @@
+name: MachineChecked audit
+
+# A reusable workflow for your own repository: builds your Lean project on your Actions minutes
+# (restoring a saved build when there is one, see `machinechecked cache`), writes the audit with
+# `machinechecked build --site`, and uploads it as the artifact `machinechecked-audit`, ready to
+# publish (for example on GitHub Pages). It runs only your own code; nothing is sent anywhere.
+#
+# In your repository, .github/workflows/machinechecked.yml:
+#
+#   on: { push: { branches: [main] }, workflow_dispatch: }
+#   jobs:
+#     audit:
+#       uses: cgarryZA/MachineChecked/.github/workflows/audit.yml@main
+#       with:
+#         cache-repo: you/your-project   # optional: restore from its build-cache release
+#         paper: paper/main.tex          # optional: found in the project when not given
+#         tex: true                      # the paper is LaTeX: install TeX Live
+on:
+  workflow_call:
+    inputs:
+      project-dir:
+        description: the Lean project, relative to the repository root
+        type: string
+        default: "."
+      paper:
+        description: the paper (a .tex, a .pdf or a PDF's URL); found when empty
+        type: string
+        default: ""
+      targets:
+        description: Lake targets to build, space-separated (default targets when empty)
+        type: string
+        default: ""
+      cache-repo:
+        description: OWNER/REPO whose build-cache release holds saved builds (none when empty)
+        type: string
+        default: ""
+      tex:
+        description: install TeX Live, for a paper given as LaTeX
+        type: boolean
+        default: false
+      package:
+        description: what pip installs (a version such as machinechecked==0.1.6, or a path)
+        type: string
+        default: machinechecked
+      author:
+        description: the name the audit is published under (its audit.json)
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install elan, poppler and zstd (and TeX Live)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends poppler-utils zstd \
+            ${{ inputs.tex && 'latexmk texlive-latex-recommended texlive-latex-extra texlive-science texlive-fonts-recommended' || '' }}
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      - name: Install MachineChecked
+        run: pip install "${{ inputs.package }}"
+      - name: Mathlib's cache, and a saved build of this project
+        working-directory: ${{ inputs.project-dir }}
+        env:
+          CACHE_REPO: ${{ inputs.cache-repo }}
+        run: |
+          if [ -d .lake/packages/mathlib ] || grep -q mathlib lake-manifest.json; then
+            lake exe cache get || echo "Mathlib's cache: not available; Lake builds it"
+          fi
+          if [ -n "$CACHE_REPO" ]; then
+            machinechecked cache restore "$CACHE_REPO" || echo "no saved build; building from source"
+          fi
+      - name: Build
+        working-directory: ${{ inputs.project-dir }}
+        env:
+          TARGETS: ${{ inputs.targets }}
+        run: lake build $TARGETS
+      - name: Write the audit
+        working-directory: ${{ inputs.project-dir }}
+        env:
+          PAPER: ${{ inputs.paper }}
+          AUTHOR: ${{ inputs.author }}
+        run: |
+          machinechecked build --site "$RUNNER_TEMP/machinechecked-audit" \
+            ${AUTHOR:+--author "$AUTHOR"} ${PAPER:+"$PAPER"}
+          test -f "$RUNNER_TEMP/machinechecked-audit/audit.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: machinechecked-audit
+          path: ${{ runner.temp }}/machinechecked-audit

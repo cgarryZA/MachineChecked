@@ -10,7 +10,8 @@ A project with a `machinechecked.toml` (an acceptance layer: locked statements, 
 the full assessment; any other project gets the zero-configuration view, whose only file in the
 repository is `machinechecked.links.json` (its working files, a downloaded paper among them, are
 in `.machinechecked/`, which Git ignores). The full assessment has further commands: reassess,
-site, bundle, export, serve, review promote and validate (each with --help).
+site, bundle, export, serve, review promote and validate; `cache` saves and restores the Lean
+build (each with --help).
 `prooflens` is another name for the same command.
 """
 
@@ -395,6 +396,24 @@ def cmd_export(a):
     print(f"exported release {res['release']} to {res['out']}")
 
 
+def cmd_cache(a):
+    from . import cache
+    from .simple import find_lake_root
+    project = Path(a.project).resolve() if a.project else find_lake_root(Path.cwd().resolve())
+    if project is None:
+        sys.exit("no Lean project here: run machinechecked inside a directory with a lakefile")
+    out = Path(a.out).resolve() if getattr(a, "out", None) else project / ".lean-cache"
+    if a.action == "save":
+        cache.save(project, out, a.target, a.pin_file, log=lambda m: print(m, file=sys.stderr))
+    elif a.action == "publish":
+        cache.publish(project, out, a.repo, log=lambda m: print(m, file=sys.stderr))
+    else:
+        if not a.repo and not a.from_dir:
+            sys.exit("say where to restore from: OWNER/REPO, or --from DIR")
+        cache.restore(project, a.repo, Path(a.from_dir).resolve() if a.from_dir else None,
+                      a.build, log=lambda m: print(m, file=sys.stderr))
+
+
 def cmd_serve(a):
     cfg = cfgmod.load(_config_arg(a))
     site = Path(a.dir).resolve() if a.dir else cfg.out_dir / "site"
@@ -548,6 +567,26 @@ def main(argv=None):
                    help="write the audit's data only, without the reader (for a site that "
                    "reads it with its own reader, such as machinechecked.org)")
     e.set_defaults(func=cmd_export)
+
+    ca = sub.add_parser("cache", help="save and restore the Lean build as release assets")
+    cas = ca.add_subparsers(dest="action", required=True)
+    cs = cas.add_parser("save", help="build, then archive the build output in .lean-cache/")
+    cs.add_argument("--target", action="append", default=[],
+                    help="a Lake target to build and archive (default: the default targets)")
+    cs.add_argument("--pin-file", help=argparse.SUPPRESS)
+    cp = cas.add_parser("publish", help="upload the saved archive to the build-cache release")
+    cp.add_argument("repo", metavar="OWNER/REPO")
+    cr = cas.add_parser("restore", help="restore the nearest compatible saved build")
+    cr.add_argument("repo", nargs="?", metavar="OWNER/REPO")
+    cr.add_argument("--from", dest="from_dir", metavar="DIR",
+                    help="restore from a directory of saved archives instead of a release")
+    cr.add_argument("--build", action="store_true",
+                    help="then run `lake build --rehash` (rebuilds only what changed)")
+    for x in (cs, cp, cr):
+        x.add_argument("--project", help="the Lean project (default: the one here)")
+    for x in (cs, cp):
+        x.add_argument("--out", help="where archives are saved (default: .lean-cache/)")
+    ca.set_defaults(func=cmd_cache)
 
     s = sub.add_parser("serve")
     s.add_argument("-c", "--config", default=None)

@@ -126,6 +126,34 @@ This fails when a linked declaration is missing or not proved. It does **not** i
 
 Git ignores `.machinechecked/` by itself (it holds a `.gitignore`, as Lake's `.lake/` does), so a downloaded paper or the generated reader is never committed by accident. `MachineChecked.html`, written by `build`, is yours to keep or ignore; add it to `.gitignore` unless you deliberately want that exact snapshot in your repository. A private paper bundled into HTML remains private content: do not publish it without checking the export.
 
+## Build on your own CI, and save the build
+
+A large project can take hours to build. Two things save that time, both on your own resources:
+
+**A saved build.** After `lake build`, `machinechecked cache save` archives the build output (not Mathlib's, which `lake exe cache get` supplies) with a manifest: the commit, Lean version, platform, dependencies, and every file's SHA-256. `machinechecked cache publish OWNER/REPO` uploads it, with your project's `LICENSE` and `NOTICE`, to a `build-cache` prerelease of that repository; set `MACHINECHECKED_GH_TOKEN` to a token that can write releases there. Anyone can then restore it:
+
+```sh
+machinechecked cache restore OWNER/REPO --build    # minutes instead of hours
+```
+
+Restore picks the nearest saved build of an earlier commit with the same Lean version, platform and dependencies, checks every SHA-256, and unpacks it; `--build` then runs `lake build --rehash`, which rebuilds exactly what changed since. A mismatched, incomplete or corrupt archive is refused, and the build happens from source. `--from DIR` restores from a folder of saved archives instead. A restored build is trusted as built: Lake does not re-check its proofs; that is what a kernel replay (Comparator) is for.
+
+**Your own workflow.** MachineChecked's reusable workflow builds your project on your GitHub Actions minutes, restoring a saved build when there is one, and uploads the audit (`build --site`) as an artifact you can publish:
+
+```yaml
+# .github/workflows/machinechecked.yml in your repository
+on: { push: { branches: [main] }, workflow_dispatch: }
+jobs:
+  audit:
+    uses: cgarryZA/MachineChecked/.github/workflows/audit.yml@main
+    with:
+      cache-repo: you/your-project   # optional
+      paper: paper/main.tex          # optional
+      tex: true                      # the paper is LaTeX
+```
+
+MachineChecked's own infrastructure never builds anyone's Lean.
+
 ## A badge for your README
 
 Once your paper is listed on machinechecked.org (a repository whose `formalization.yaml` names an

@@ -56,3 +56,13 @@ jobs:
           name: demo-site
           path: demo-site
           retention-days: 14
+
+  # The reusable audit workflow (audit.yml), run as a researcher's repository would run it, on the
+  # plain example with this checkout's MachineChecked.
+  audit-workflow:
+    uses: ./.github/workflows/audit.yml
+    with:
+      project-dir: examples/plain-paper
+      tex: true
+      package: "."
+      author: "MachineChecked CI"

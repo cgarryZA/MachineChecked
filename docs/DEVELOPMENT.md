@@ -47,7 +47,7 @@ acquire (credentials, no execution) -> extract and verify (sandboxed, no credent
 - **Findings come in three tiers.** A `violation` is a mechanical contradiction and can fail CI; a `warning` is a heuristic and can be dismissed with a rationale bound to a fingerprint; an `obligation` needs a reviewer's judgement.
 - **Lean sessions.** Both modes run the probe through `probe.lean_session`, one Lean session per library (`probe.by_library`): two libraries may declare the same name, and Lean can load both and silently keep one. A name two sessions find as different declarations is reported ambiguous, an error, never a choice. Modules of one library are one session, importing them in the order configured.
 - **Kernel checking.** Comparator is the high-assurance replay; a build-cache hit or a text log is not a replay record.
-- **Build cache** (`scripts/lean_cache.py`): a restore at a different path rebuilds no module, a one-file change rebuilds exactly its dependants, and corrupt or mismatched archives are refused.
+- **Build cache** (`prooflens.cache`, `machinechecked cache`; `scripts/lean_cache.py` keeps the old script's arguments): a restore into another checkout rebuilds no module, a one-file change rebuilds only what it affects, archives over 2 GiB are split, and corrupt, mismatched or incomplete archives are refused (`tests/simple/test_cache.py`). The reusable workflow `.github/workflows/audit.yml` is run by CI on the plain example.
 
 ## Seeded failures
 

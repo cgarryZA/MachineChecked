@@ -61,12 +61,12 @@ break stored evidence and exported reports for no user-visible gain.
 
 | Path | What |
 |---|---|
-| `engine/python/prooflens/` | the engine: `cli.py` (commands), `simple.py` (zero configuration), `pipeline.py` (full assessment), `assess.py` (statuses), `manifest.py` (site data), `tex.py` + `data/prooflens.sty` (LaTeX anchors), `paper.py` (the site's paper pages), `data/ProofLensProbe.lean` (the Lean probe), `review_queue.py`, `promote.py`, `bundle.py`, `export.py` |
+| `engine/python/prooflens/` | the engine: `cli.py` (commands), `simple.py` (zero configuration), `pipeline.py` (full assessment), `assess.py` (statuses), `manifest.py` (site data), `tex.py` + `data/prooflens.sty` (LaTeX anchors), `paper.py` (the site's paper pages), `cache.py` (the Lean build cache), `data/ProofLensProbe.lean` (the Lean probe), `review_queue.py`, `promote.py`, `bundle.py`, `export.py` |
 | `engine/python/prooflens/web/` | the **built** reader, committed (users need no Node) |
 | `web/src/` | the reader's sources (Svelte 5, Vite, pdf.js 4.10, KaTeX) |
 | `tests/` | `contracts/`, `mutations/`, `security/`, `simple/`; `conftest.py` copies the toy example per test |
 | `examples/` | `toy-paper` (full assessment, the main fixture), `plain-paper` (zero configuration) |
-| `scripts/` | `check_public.py`, `lean_cache.py` (Lean build cache), `cloud-setup.sh` |
+| `scripts/` | `check_public.py`, `lean_cache.py` (the build cache's old arguments, for setup scripts), `cloud-setup.sh` |
 
 ## Commands
 
@@ -106,4 +106,4 @@ downstream project, and its results are reported without its content.
 - Status words and user-facing messages are plain English, without jargon a mathematician would
   not know; no percentages of "verification".
 - Keep the command surface small: `view`, `build`, `check` (and `review promote`); other
-  commands are for the full assessment and stay out of the main help.
+  commands (the full assessment's, and `cache`) stay out of the main command list.

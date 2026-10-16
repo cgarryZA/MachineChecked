@@ -1,0 +1,141 @@
+"""The Lean build cache (`prooflens.cache`, `machinechecked cache`) on the toy example's Lean
+project: a restore into another checkout rebuilds nothing, a one-file change rebuilds only what
+it affects, and a corrupt, mismatched or incomplete archive is refused."""
+
+import json
+import shutil
+import subprocess
+
+import pytest
+
+from conftest import ROOT, needs_lean
+from prooflens import cache
+
+
+def git(cwd, *args):
+    subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True,
+                   env={"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.org",
+                        "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.org",
+                        "PATH": __import__("os").environ["PATH"]})
+
+
+def built(project, *args):
+    """The modules `lake build` compiles (its "Built" lines)."""
+    r = subprocess.run(["lake", "build", *args], cwd=project, capture_output=True, text=True)
+    assert r.returncode == 0, r.stdout + r.stderr
+    return [l for l in r.stdout.splitlines() if " Built " in l]
+
+
+@pytest.fixture
+def toy(tmp_path):
+    """The toy Lean project as a Git repository, and a second clone of it elsewhere."""
+    src = tmp_path / "a" / "toy"
+    shutil.copytree(ROOT / "examples" / "toy-paper" / "lean", src,
+                    ignore=shutil.ignore_patterns(".lake"))
+    git(src, "init", "-q")
+    git(src, "add", "-A")
+    git(src, "commit", "-q", "-m", "toy")
+    other = tmp_path / "b" / "toy"
+    other.parent.mkdir()
+    git(other.parent, "clone", "-q", str(src), "toy")
+    return src, other
+
+
+@needs_lean
+def test_a_restore_elsewhere_rebuilds_nothing_and_a_change_only_what_it_affects(toy, tmp_path):
+    src, other = toy
+    out = tmp_path / "saved"
+    man = cache.save(src, out, [], log=lambda m: None)
+    assert man["commit"] and man["dirs"] == ["toy/.lake/build"] and not man["parts"]
+    rec = cache.restore(other, local=out, log=lambda m: None)
+    assert rec["commits_behind"] == 0
+    assert built(other, "--rehash") == []
+    # A changed file is rebuilt (with what depends on it, when its interface changed); the
+    # modules it does not affect are not.
+    with open(other / "Toy" / "Acceptance.lean", "a") as f:
+        f.write("\n-- a comment\n")
+    rebuilt = {l.split(" Built ")[1].split()[0] for l in built(other)}
+    assert "Toy.Acceptance" in rebuilt and rebuilt <= {"Toy.Acceptance", "Toy"}
+
+
+@needs_lean
+def test_a_large_archive_is_saved_in_parts_and_restored_whole(toy, tmp_path):
+    src, other = toy
+    out = tmp_path / "saved"
+    man = cache.save(src, out, [], part_size=4096, log=lambda m: None)
+    assert len(man["parts"]) > 1 and not any(out.glob("*.tar.zst"))
+    cache.restore(other, local=out, log=lambda m: None)
+    assert built(other, "--rehash") == []
+
+
+@needs_lean
+def test_corrupt_mismatched_or_incomplete_archives_are_refused(toy, tmp_path):
+    src, other = toy
+    out = tmp_path / "saved"
+    man = cache.save(src, out, [], log=lambda m: None)
+    arc = next(out.glob("*.tar.zst"))
+    good = arc.read_bytes()
+    arc.write_bytes(good[:-1] + bytes([good[-1] ^ 1]))
+    with pytest.raises(cache.CacheError, match="sha256"):
+        cache.restore(other, local=out, log=lambda m: None)
+    assert not (other / ".lake" / "build").exists()
+    arc.write_bytes(good)
+    # Another toolchain: the archive is not used.
+    tc = other / "lean-toolchain"
+    tc.write_text("leanprover/lean4:v0.0.0\n")
+    with pytest.raises(cache.CacheError, match="no compatible"):
+        cache.restore(other, local=out, log=lambda m: None)
+    git(other, "checkout", "-q", "lean-toolchain")
+    # A part missing: nothing to restore.
+    arc.unlink()
+    with pytest.raises(cache.CacheError, match="no compatible"):
+        cache.restore(other, local=out, log=lambda m: None)
+    assert json.loads(next(out.glob("*.json")).read_text())["sha256"] == man["sha256"]
+
+
+@needs_lean
+def test_uncommitted_lean_inputs_are_refused(toy, tmp_path):
+    src, _ = toy
+    (src / "Toy" / "Defs.lean").write_text("-- changed\n")
+    with pytest.raises(cache.CacheError, match="uncommitted"):
+        cache.save(src, tmp_path / "saved", [], log=lambda m: None)
+
+
+def test_the_token_is_never_on_a_command_line(monkeypatch):
+    seen = {}
+
+    def fake_run(args, input=None, capture_output=False):
+        seen["args"], seen["input"] = args, input
+        return subprocess.CompletedProcess(args, 0, b"{}", b"")
+    monkeypatch.setenv("MACHINECHECKED_GH_TOKEN", "secret-token-123")
+    monkeypatch.setattr(cache.subprocess, "run", fake_run)
+    cache.curl(["https://api.github.com/x"])
+    assert not any("secret-token-123" in a for a in seen["args"])
+    assert b"secret-token-123" in seen["input"] and "--config" in seen["args"]
+
+
+def test_publishing_attaches_the_projects_licence(tmp_path, monkeypatch):
+    """`publish` uploads the archive, its manifest and the licence files the manifest names."""
+    project = tmp_path / "p"
+    out = tmp_path / "saved"
+    project.mkdir()
+    out.mkdir()
+    (project / "LICENSE").write_text("Apache License 2.0\n")
+    commit = "c" * 40
+    name = cache.asset_prefix(project) + commit
+    (out / f"{name}.tar.zst").write_bytes(b"archive")
+    (out / f"{name}.tar.zst.sha256").write_text("x\n")
+    (out / f"{name}.json").write_text(json.dumps({
+        "sha256": cache.sha256(out / f"{name}.tar.zst"), "parts": None,
+        "licence_files": ["LICENSE"]}))
+    uploaded = []
+    monkeypatch.setenv("MACHINECHECKED_GH_TOKEN", "t")
+    monkeypatch.setattr(cache, "_sh", lambda cmd, cwd=None: commit)
+    monkeypatch.setattr(cache, "_release", lambda repo: {"id": 1, "assets": []})
+
+    def fake_curl(args, auth=True, accept=None):
+        uploaded.append(args[-1].split("name=")[1])
+        return subprocess.CompletedProcess(args, 0, b"{}", b"")
+    monkeypatch.setattr(cache, "curl", fake_curl)
+    cache.publish(project, out, "someone/fork", log=lambda m: None)
+    assert uploaded == [f"{name}.tar.zst", f"{name}.tar.zst.sha256", f"{name}.json", "LICENSE"]
