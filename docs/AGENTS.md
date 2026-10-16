@@ -37,7 +37,7 @@ to stderr, so stdout is only the JSON.
 
 This project formalises `paper/main.tex`. To see which claims are linked to Lean and what Lean
 establishes about them, run `machinechecked check --json` after `lake build`
-(install: `uvx --from git+https://github.com/cgarryZA/MachineChecked machinechecked`).
+(install: `pip install machinechecked`, or run it with `uvx machinechecked`).
 Links are in `machinechecked.links.json` and `\lean{}` tags; they say which declaration
 corresponds to a claim, not that it says what the paper says. Do not describe a claim as
 verified on the strength of a "Lean proof checked" status.

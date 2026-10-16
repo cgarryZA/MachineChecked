@@ -14,7 +14,7 @@ From an existing **built** Lean project:
 
 ```sh
 lake build
-uvx --from git+https://github.com/cgarryZA/MachineChecked machinechecked view
+uvx machinechecked view
 ```
 
 MachineChecked finds the paper and opens the reader in your browser. If the project contains several papers, it asks which one to use. You can also pass a file explicitly:

@@ -18,7 +18,7 @@ Run inside the Lean project (the directory with `lakefile.toml` or `lakefile.lea
 
 ```sh
 lake build                                   # MachineChecked reads built declarations only
-uvx --from git+https://github.com/cgarryZA/MachineChecked machinechecked check --json
+uvx machinechecked check --json
 ```
 
 Needs Python 3.11+, the project's Lean toolchain (elan), TeX Live with `latexmk` for a LaTeX

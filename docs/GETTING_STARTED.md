@@ -19,13 +19,13 @@ For a LaTeX paper, install TeX Live with `latexmk`. Some papers also need `xelat
 Run this inside the Lean project's directory:
 
 ```sh
-uvx --from git+https://github.com/cgarryZA/MachineChecked machinechecked view
+uvx machinechecked view
 ```
 
 Or install it once:
 
 ```sh
-pip install git+https://github.com/cgarryZA/MachineChecked
+pip install machinechecked
 machinechecked view
 ```
 
@@ -153,6 +153,7 @@ Both settings are saved in `machinechecked.links.json` (a full assessment sets `
 | No paper found | Pass the exact `.tex` or `.pdf` path. |
 | Multiple LaTeX roots | Choose the correct root or pass its path. |
 | `lake` not found | Install elan and put `~/.elan/bin` on `PATH`. |
+| On Windows | MachineChecked runs, but LaTeX then runs without the CPU-time and file-size limits it has on Linux and macOS (only a 30-minute timeout). For a paper you did not write, use WSL. |
 | TeX compilation fails | The reader still opens from the paper's PDF if there is one, and names the LaTeX error. A paper that needs XeLaTeX should say so with `% !TEX program = xelatex`, a `latexmkrc`, or by loading `fontspec`/`unicode-math`. |
 | A marker is approximate (dashed) | Numbered environments in LaTeX are placed exactly. Claims recorded by line are placed by SyncTeX, and claims from a PDF by their headings; both are approximate, and a claim whose place is ambiguous is left unplaced instead of guessed. |
 | A PDF statement is missing | It probably has no bold heading the PDF reader recognises (see above); give the LaTeX source if you have it. |

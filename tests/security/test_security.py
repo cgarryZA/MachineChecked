@@ -108,3 +108,28 @@ def test_no_latex_falls_back_to_the_pdf(tmp_path):
     (tmp_path / "paper.pdf").write_bytes(b"%PDF-1.4\n")
     mode, root, pdf, note = choose(Paper(id="P", title="P", source={"path": "."}), tmp_path)
     assert (mode, root, pdf) == ("pdf", None, "paper.pdf") and note
+
+
+def test_the_engine_imports_where_posix_limits_are_missing(monkeypatch):
+    """On a system without the POSIX `resource` module (Windows) the engine still imports, and
+    LaTeX runs with its timeout only."""
+    import builtins
+    import importlib
+    import sys
+
+    real = builtins.__import__
+
+    def no_resource(name, *a, **k):
+        if name == "resource":
+            raise ImportError("no resource module here")
+        return real(name, *a, **k)
+
+    monkeypatch.setattr(builtins, "__import__", no_resource)
+    monkeypatch.delitem(sys.modules, "resource", raising=False)
+    import prooflens.tex as tex
+    try:
+        mod = importlib.reload(tex)
+        assert mod.resource is None
+    finally:
+        monkeypatch.setattr(builtins, "__import__", real)
+        importlib.reload(tex)

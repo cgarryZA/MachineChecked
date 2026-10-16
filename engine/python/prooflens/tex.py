@@ -9,9 +9,13 @@ from __future__ import annotations
 
 import os
 import re
-import resource
+try:
+    import resource
+except ImportError:  # Windows has no POSIX resource limits
+    resource = None
 import shutil
 import subprocess
+import sys
 import tempfile
 from dataclasses import dataclass, field
 from importlib import resources
@@ -60,6 +64,12 @@ class Anchor:
                 "end": list(self.end) if self.end else None,
                 "head": list(self.head) if self.head else None, "title": self.title,
                 "source_sha256": self.source_sha256, "statement": self.statement}
+
+
+# LaTeX is a programming language; a paper is compiled with its CPU time and the size of the files
+# it writes bounded, where the system allows it (not on Windows, which keeps only the timeout).
+LIMITS_NOTE = ("LaTeX ran without CPU and file-size limits (this system has no POSIX resource "
+               "limits); only its 30-minute timeout applies")
 
 
 def _limits():
@@ -141,7 +151,9 @@ def compile_snapshot(snap: Snapshot, work: Path, envs: list[str] | None = None,
            "-interaction=nonstopmode", "-halt-on-error", "-file-line-error",
            f"-usepretex={pretex}", root.name]
     r = subprocess.run(cmd, cwd=cwd, env=env, capture_output=True, text=True,
-                       preexec_fn=_limits, timeout=1800)
+                       preexec_fn=_limits if resource else None, timeout=1800)
+    if resource is None:
+        print(f"note: {LIMITS_NOTE}", file=sys.stderr)
     pdf = cwd / f"{root.stem}.pdf"
     plx = cwd / f"{root.stem}.plx"
     if r.returncode != 0 or not pdf.exists() or not plx.exists():
