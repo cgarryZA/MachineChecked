@@ -135,17 +135,61 @@ def _tokens(s: str) -> set[str]:
     return {t for t in re.split(r"[^A-Za-z0-9]+", s.lower()) if len(t) > 1}
 
 
-def suggest(claim: dict, index: list[dict], limit: int = 3) -> list[dict]:
-    """Candidate declarations for a claim, best first, each with the reason it is suggested."""
+class SuggestContext:
+    """What suggestions need to know about the whole index, computed once per view: how common
+    each name word is, the modules' own docstrings (`/-! … -/` in their sources), and the
+    namespaces only other papers use (`formalization.foreign_roots`)."""
+
+    def __init__(self, index: list[dict], root: Path | None = None,
+                 foreign: set[str] = frozenset()):
+        self.foreign = set(foreign)
+        self.df: dict[str, int] = {}
+        for d in index:
+            for t in _tokens(d["name"].rsplit(".", 1)[-1]):
+                self.df[t] = self.df.get(t, 0) + 1
+        # A word is rare when few declaration names use it; a shared title word must be rare.
+        self.rare = max(3, len(index) // 500)
+        self.module_docs: dict[str, str] = {}
+        if root is not None:
+            for m in sorted({d.get("module") for d in index if d.get("module")}):
+                p = root / (m.replace(".", "/") + ".lean")
+                try:
+                    text = p.read_text(encoding="utf-8", errors="replace")
+                except OSError:
+                    continue
+                docs = re.findall(r"/-!(.*?)-/", text, re.S)
+                if docs:
+                    self.module_docs[m] = "\n".join(docs)
+
+    def is_foreign(self, d: dict) -> bool:
+        roots = {d["name"].split(".")[0], str(d.get("module") or "").split(".")[0]}
+        return bool(self.foreign & roots)
+
+
+def suggest(claim: dict, index: list[dict], limit: int = 3,
+            ctx: SuggestContext | None = None) -> list[dict]:
+    """Candidate declarations for a claim, best first, each with the reason it is suggested.
+
+    A docstring that cites the claim's number is the strongest sign, for a declaration of the
+    claim's own sort (theorems for a theorem, definitions for a definition) above one of the
+    other sort; a theorem whose statement is such a cited definition ranks above both. A module
+    docstring that cites it suggests the module's last declaration of the claim's sort. Name
+    resemblance to the claim's label, and title words shared with a name (one of them rare
+    among the project's names), come after. A citation from a namespace only another paper of
+    the project uses is ranked low and says so. Ties are broken by name, never by index order."""
+    ctx = ctx or SuggestContext(index)
     out: dict[str, dict] = {}
     names = {d["name"]: d for d in index}
 
     def add(name, score, why):
-        if name in names and (name not in out or out[name]["score"] < score):
-            out[name] = {"name": name, "score": score, "why": why, "kind": names[name]["kind"]}
+        d = names.get(name)
+        if d is None:
+            return
+        if ctx.is_foreign(d):
+            score, why = score * 0.4, why + " (in a namespace this project maps to another paper)"
+        if name not in out or out[name]["score"] < score:
+            out[name] = {"name": name, "score": round(score, 3), "why": why, "kind": d["kind"]}
 
-    # Name and title resemblance proposes declarations of the claim's own sort: theorems for a
-    # theorem, definitions for a definition.
     wants_def = claim["kind"] in DEFINITION_ENVS
 
     def sort_ok(d):
@@ -155,10 +199,16 @@ def suggest(claim: dict, index: list[dict], limit: int = 3) -> list[dict]:
     num_re = re.compile(r"\b" + re.escape(number) + r"\b", re.I)
     label = set(_tokens(claim.get("label") or "")) - ENV_WORDS
     words = _tokens(claim.get("title") or "")
+    cited_defs = set()
     for d in index:
         doc = d.get("doc") or ""
         if doc and num_re.search(doc):
-            add(d["name"], 0.9, f"its docstring cites {number}")
+            if sort_ok(d):
+                add(d["name"], 0.9, f"its docstring cites {number}")
+            else:
+                add(d["name"], 0.6, f"its docstring cites {number}")
+                if d["kind"] != "theorem":
+                    cited_defs.add(d["name"])
         if not sort_ok(d):
             continue
         short = d["name"].rsplit(".", 1)[-1]
@@ -167,9 +217,24 @@ def suggest(claim: dict, index: list[dict], limit: int = 3) -> list[dict]:
             j = len(label & nt) / len(label | nt)
             if j >= 0.5:
                 add(d["name"], 0.4 + 0.4 * j, "its name resembles the label")
-        if words and nt and len(words & nt) >= 2:
+        shared = words & nt
+        if len(shared) >= 2 and any(ctx.df.get(t, 0) <= ctx.rare for t in shared):
             add(d["name"], 0.35, "its name shares words with the title")
-    return sorted(out.values(), key=lambda x: -x["score"])[:limit]
+    # A theorem whose statement is a cited definition proves what that definition states.
+    if cited_defs and not wants_def:
+        for d in index:
+            ty = (d.get("type") or "").strip()
+            if d["kind"] == "theorem" and ty and any(c == ty or c.endswith("." + ty)
+                                                     for c in cited_defs):
+                add(d["name"], 0.95, f"it proves {ty}, whose docstring cites {number}")
+    for m, doc in ctx.module_docs.items():
+        if num_re.search(doc):
+            mine = [d for d in index if d.get("module") == m and sort_ok(d)]
+            if mine:
+                last = max(mine, key=lambda d: ((d.get("range") or {}).get("line") or 0, d["name"]))
+                add(last["name"], 0.3, f"its module's docstring cites {number} (the module's "
+                    f"last {last['kind']})")
+    return sorted(out.values(), key=lambda x: (-x["score"], x["name"]))[:limit]
 
 
 def tagged_names(claim: dict) -> list[str]:
@@ -266,7 +331,8 @@ def _record(line: str) -> dict:
     rec = json.loads(line)
     if rec.get("record") == "index":
         return {"record": "index", "name": rec["name"], "kind": rec["kind"],
-                "module": rec.get("module"), "type": (rec.get("type") or "")[:INDEX_TYPE_CHARS],
+                "module": rec.get("module"), "range": rec.get("range"),
+                "type": (rec.get("type") or "")[:INDEX_TYPE_CHARS],
                 "doc": (rec.get("doc") or "")[:INDEX_DOC_CHARS] or None}
     for d in [rec, rec.get("decl")]:
         if isinstance(d, dict) and "canon" in d:
@@ -585,12 +651,14 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
             write_json(icache, {"digest": idigest, "index": index, "failed": failed},
                        indent=None)
         wanted = set(linked)
+        ctx = SuggestContext(index, root, fz.foreign_roots(fy, paper.title))
         for c in claims:
             entry = links.get(c["key"], {})
-            c["suggestions"] = [s for s in suggest(c, index)
+            c["suggestions"] = [s for s in suggest(c, index, ctx=ctx)
                                 if s["name"] not in entry.get("rejected", [])
                                 and s["name"] not in c["link_names"]]
-            wanted |= {s["name"] for s in c["suggestions"][:1] if s.get("kind")}
+            # Every suggestion shown is checked by Lean, not only the first.
+            wanted |= {s["name"] for s in c["suggestions"] if s.get("kind")}
         wanted -= set(linkrecs)
         if wanted:
             # Only the modules that declare the names are loaded (with what they import). A name

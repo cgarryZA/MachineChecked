@@ -93,6 +93,31 @@ def links_for(fy: dict, claim_kind: str, claim_number: str, paper_title: str) ->
     return [st for st in rows if st["hint"] & own]
 
 
+def foreign_roots(fy: dict | None, paper_title: str) -> set[str]:
+    """When the file formalizes several sources: the top-level namespaces that only other
+    sources' statements use (a row belongs to the source whose own title words it names, as in
+    `links_for`). A declaration there that cites "Theorem 1.1" most likely cites another paper's
+    Theorem 1.1."""
+    if not fy or "error" in fy:
+        return set()
+    srcs = [_tokens(s.get("title", "")) for s in formalized_sources(fy)]
+    if len(srcs) <= 1:
+        return set()
+    title = _tokens(paper_title)
+    best = max(range(len(srcs)), key=lambda i: len(srcs[i] & title))
+    if not srcs[best] & title:
+        return set()
+    own = [t - set().union(*(u for j, u in enumerate(srcs) if j != i)) for i, t in enumerate(srcs)]
+    mine, others = set(), set()
+    for st in statements(fy):
+        roots = {n.split(".")[0] for n in st["lean"]}
+        if st["hint"] & own[best]:
+            mine |= roots
+        elif any(st["hint"] & own[i] for i in range(len(srcs)) if i != best):
+            others |= roots
+    return others - mine
+
+
 def summary(fy: dict | None) -> dict | None:
     """What the reader shows about the file: the project's own review status and methods."""
     if not fy:
