@@ -1,14 +1,15 @@
-"""`prooflens`: read a paper beside its Lean formalisation.
+"""`machinechecked`: read a paper beside its Lean formalisation.
 
 Everyday commands, run from anywhere inside a Lean project:
 
-    prooflens view [paper]    open the reader (the paper is found if not given)
-    prooflens build [paper]   write the reader as one HTML file to share
-    prooflens check [paper]   report what the Lean side establishes, for CI
+    machinechecked view [paper]    open the reader (the paper is found if not given)
+    machinechecked build [paper]   write the reader as one HTML file to share
+    machinechecked check [paper]   report what the Lean side establishes, for CI
 
-A project with a `prooflens.toml` (an acceptance layer: locked statements, reviews) gets the
-full assessment; any other project gets the zero-configuration view, whose only file in the
-repository is `prooflens.links.json`. The other commands are for that full assessment.
+A project with a `machinechecked.toml` (an acceptance layer: locked statements, reviews) gets
+the full assessment; any other project gets the zero-configuration view, whose only file in the
+repository is `machinechecked.links.json`. The other commands are for that full assessment.
+`prooflens` is another name for the same command.
 """
 
 from __future__ import annotations
@@ -41,20 +42,32 @@ MISSING = {
 
 # -- mode selection ---------------------------------------------------------------------------
 
+def _found_config() -> Path | None:
+    return next((Path(n) for n in cfgmod.CONFIG_NAMES if Path(n).exists()), None)
+
+
+def _config_arg(a) -> Path:
+    """The configuration of the full assessment: given with -c, else the one in the current
+    directory."""
+    c = getattr(a, "config", None) or _found_config()
+    if c is None:
+        sys.exit("no machinechecked.toml here (pass one with -c)")
+    return Path(c)
+
+
 def _assurance_config(a) -> Path | None:
-    """The `prooflens.toml` that selects the full assessment: given with -c, or in the current
+    """The configuration that selects the full assessment: given with -c, or in the current
     directory."""
     if getattr(a, "config", None):
         return Path(a.config)
-    p = Path("prooflens.toml")
-    return p if p.exists() else None
+    return _found_config()
 
 
 def _simple_target(a):
     from .simple import find_lake_root, find_papers
     root = find_lake_root(Path.cwd().resolve())
     if root is None:
-        sys.exit("no Lean project here: run prooflens inside a directory with a lakefile")
+        sys.exit("no Lean project here: run machinechecked inside a directory with a lakefile")
     if a.paper:
         paper = Path(a.paper).resolve()
         if not paper.exists():
@@ -68,7 +81,7 @@ def _simple_target(a):
             for i, f in enumerate(found, 1):
                 print(f"  {i}. {f.relative_to(root)}")
             if not sys.stdin.isatty():
-                sys.exit("pass the one to use: prooflens view <paper>")
+                sys.exit("pass the one to use: machinechecked view <paper>")
             k = input("Which one? ")
             try:
                 paper = found[int(k) - 1]
@@ -83,9 +96,25 @@ def _simple_target(a):
     return root, paper
 
 
+def _settings(a, root: Path | None):
+    """Record --issues and --site-url: in the links file (zero configuration); a full
+    assessment sets them in its configuration."""
+    issues, url = getattr(a, "issues", None), getattr(a, "site_url", None)
+    if not issues and not url:
+        return
+    if root is None:
+        sys.exit("set `issues` and `site_url` under [project] in machinechecked.toml")
+    from .simple import save_settings
+    try:
+        save_settings(root, issues=cfgmod.issue_repo(issues, "--issues") if issues else None,
+                      site_url=url)
+    except cfgmod.ConfigError as e:
+        sys.exit(str(e))
+
+
 def _simple_site(root: Path, paper: Path, web: str | None):
     from .simple import build_view, write_view_site
-    out = root / ".prooflens"
+    out = root / cfgmod.work_dir_name(root)
     view = build_view(root, paper, out, log=lambda m: print("  " + m))
     site = out / "site"
     index = write_view_site(view, site, _web_dist(web))
@@ -105,6 +134,7 @@ def cmd_view(a):
     if _assurance_config(a):
         from .pipeline import build
         from .server import serve
+        _settings(a, None)
         cfg = cfgmod.load(_assurance_config(a))
         try:
             res = build(cfg, web_dist=_web_dist(a.web), reuse_lean=True)
@@ -115,7 +145,8 @@ def cmd_view(a):
     from .server import serve
     from .simple import save_link
     root, paper = _simple_target(a)
-    print(f"ProofLens: {paper.relative_to(root)} in {root.name}")
+    _settings(a, root)
+    print(f"MachineChecked: {paper.relative_to(root)} in {root.name}")
     site, index, view = _simple_site(root, paper, a.web)
     _print_simple(index)
     key = view["body"]["paper"]
@@ -130,10 +161,11 @@ def cmd_view(a):
 def cmd_build_simple(a):
     from .bundle import bundle
     root, paper = _simple_target(a)
+    _settings(a, root)
     site, index, _ = _simple_site(root, paper, a.web)
     _print_simple(index)
-    out = Path(a.out or (root / "ProofLens.html")).resolve()
-    res = bundle(site, out, f"ProofLens — {index['papers'][0]['title']}")
+    out = Path(a.out or (root / "MachineChecked.html")).resolve()
+    res = bundle(site, out, f"MachineChecked — {index['papers'][0]['title']}")
     print(f"wrote {res['out']} ({res['size'] / 1e6:.1f} MB): open it in a browser")
 
 
@@ -154,17 +186,17 @@ def cmd_check(a):
         sys.exit(1)
     n = sum(len(c["links"]) for c in view["body"]["claims"])
     if not n:
-        print("no claim is linked yet: confirm links in `prooflens view`")
+        print("no claim is linked yet: confirm links in `machinechecked view`")
         return
     print(f"all {n} linked declaration(s) are checked by Lean (whether each says what the paper "
           "says is not reviewed by this check)")
 
 
 def cmd_build(a):
-    if not getattr(a, "config", None) and not Path("prooflens.toml").exists():
+    if not _assurance_config(a):
         return cmd_build_simple(a)
     from .pipeline import build
-    cfg = cfgmod.load(a.config or "prooflens.toml")
+    cfg = cfgmod.load(_config_arg(a))
     res = build(cfg, release=a.release, skip_lean=a.skip_lean, skip_tex=a.skip_tex, lake=a.lake,
                 web_dist=_web_dist(a.web), lean_build=not a.no_lean_build,
                 reuse_lean=a.reuse_lean)
@@ -181,21 +213,21 @@ def cmd_build(a):
 
 def cmd_site(a):
     from .pipeline import rebuild_site
-    cfg = cfgmod.load(a.config)
+    cfg = cfgmod.load(_config_arg(a))
     res = rebuild_site(cfg, _web_dist(a.web), a.release)
     print(f"site of release {res['release']} written to {res['site']}")
 
 
 def cmd_reassess(a):
     from .pipeline import reassess
-    cfg = cfgmod.load(a.config)
+    cfg = cfgmod.load(_config_arg(a))
     res = reassess(cfg, _web_dist(a.web), a.release)
     print(f"site of release {res['release']} written to {res['site']}")
 
 
 def cmd_bundle(a):
     from .bundle import bundle
-    cfg = cfgmod.load(a.config)
+    cfg = cfgmod.load(_config_arg(a))
     site = Path(a.site).resolve() if a.site else cfg.out_dir / "site"
     res = bundle(site, Path(a.out).resolve(), a.title)
     print(f"wrote {res['out']}: {res['size'] / 1e6:.1f} MB, {res['files']} data files, "
@@ -204,7 +236,7 @@ def cmd_bundle(a):
 
 def cmd_export(a):
     from .export import ExportError, export
-    cfg = cfgmod.load(a.config)
+    cfg = cfgmod.load(_config_arg(a))
     try:
         res = export(cfg, Path(a.out).resolve(), a.release, _web_dist(a.web))
     except ExportError as e:
@@ -213,7 +245,7 @@ def cmd_export(a):
 
 
 def cmd_serve(a):
-    cfg = cfgmod.load(a.config)
+    cfg = cfgmod.load(_config_arg(a))
     site = Path(a.dir).resolve() if a.dir else cfg.out_dir / "site"
     handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(site))
     print(f"serving {site} on http://127.0.0.1:{a.port}")
@@ -225,12 +257,12 @@ def cmd_review(a):
     import subprocess
     from . import promote as pr
     from .pipeline import reassess
-    cfg = cfgmod.load(a.config)
+    cfg = cfgmod.load(_config_arg(a))
     try:
         steps = pr.plan(cfg, pr.load_reports([Path(f) for f in a.reports]),
                         a.accept_same_family)
     except pr.PromoteError as e:
-        sys.exit(f"prooflens: {e}")
+        sys.exit(f"machinechecked: {e}")
     ok = []
     for r, cur, why in steps:
         u = r.get("unit", {})
@@ -272,13 +304,19 @@ def cmd_validate(a):
 
 
 def main(argv=None):
-    p = argparse.ArgumentParser(prog="prooflens", description=__doc__.split("\n\n")[0],
+    name = Path(sys.argv[0]).name
+    p = argparse.ArgumentParser(prog=name if name in ("machinechecked", "prooflens")
+                                else "machinechecked", description=__doc__.split("\n\n")[0],
                                 formatter_class=argparse.RawDescriptionHelpFormatter,
                                 epilog="\n\n".join(__doc__.split("\n\n")[1:]))
     sub = p.add_subparsers(dest="cmd", required=True, metavar="{view,build,check}")
 
     w = sub.add_parser("view", help="open the reader")
     w.add_argument("paper", nargs="?")
+    w.add_argument("--issues", metavar="OWNER/REPO",
+                        help="the GitHub repository where the reader's Raise issue opens reports")
+    w.add_argument("--site-url", help="the public address of the published reader, "
+                        "for links to claims")
     w.add_argument("-c", "--config", help=argparse.SUPPRESS)
     w.add_argument("--port", type=int, default=8017)
     w.add_argument("--no-browser", action="store_true")
@@ -287,6 +325,10 @@ def main(argv=None):
 
     b = sub.add_parser("build", help="write the reader as one HTML file to share")
     b.add_argument("paper", nargs="?")
+    b.add_argument("--issues", metavar="OWNER/REPO",
+                        help="the GitHub repository where the reader's Raise issue opens reports")
+    b.add_argument("--site-url", help="the public address of the published reader, "
+                        "for links to claims")
     b.add_argument("--out", help="the HTML file (default: ProofLens.html at the project root)")
     b.add_argument("-c", "--config", help=argparse.SUPPRESS)
     b.add_argument("--release", help=argparse.SUPPRESS)
@@ -308,33 +350,33 @@ def main(argv=None):
 
     # The full assessment's own operations; not listed.
     t = sub.add_parser("site")
-    t.add_argument("-c", "--config", default="prooflens.toml")
+    t.add_argument("-c", "--config", default=None)
     t.add_argument("--release")
     t.add_argument("--web")
     t.set_defaults(func=cmd_site)
 
     r = sub.add_parser("reassess")
-    r.add_argument("-c", "--config", default="prooflens.toml")
+    r.add_argument("-c", "--config", default=None)
     r.add_argument("--release")
     r.add_argument("--web")
     r.set_defaults(func=cmd_reassess)
 
     n = sub.add_parser("bundle")
-    n.add_argument("-c", "--config", default="prooflens.toml")
+    n.add_argument("-c", "--config", default=None)
     n.add_argument("--site")
     n.add_argument("--out", required=True)
     n.add_argument("--title")
     n.set_defaults(func=cmd_bundle)
 
     e = sub.add_parser("export")
-    e.add_argument("-c", "--config", default="prooflens.toml")
+    e.add_argument("-c", "--config", default=None)
     e.add_argument("--release")
     e.add_argument("--out", required=True)
     e.add_argument("--web")
     e.set_defaults(func=cmd_export)
 
     s = sub.add_parser("serve")
-    s.add_argument("-c", "--config", default="prooflens.toml")
+    s.add_argument("-c", "--config", default=None)
     s.add_argument("--dir")
     s.add_argument("--port", type=int, default=8017)
     s.set_defaults(func=cmd_serve)
@@ -343,7 +385,7 @@ def main(argv=None):
     rvs = rv.add_subparsers(dest="action", required=True)
     pm = rvs.add_parser("promote", help="turn review reports into review markers (maintainer)")
     pm.add_argument("reports", nargs="+", help="files exported from the review queue")
-    pm.add_argument("-c", "--config", default="prooflens.toml")
+    pm.add_argument("-c", "--config", default=None)
     pm.add_argument("--yes", action="store_true", help="write without asking")
     pm.add_argument("--accept-same-family", action="store_true",
                     help="accept a model reviewer of the author's family, or of unknown family")
@@ -362,7 +404,7 @@ def main(argv=None):
         hint = MISSING.get(Path(str(e.filename or "")).name)
         if not hint:
             raise
-        sys.exit(f"prooflens: `{Path(e.filename).name}` not found: {hint}")
+        sys.exit(f"machinechecked: `{Path(e.filename).name}` not found: {hint}")
 
 
 if __name__ == "__main__":

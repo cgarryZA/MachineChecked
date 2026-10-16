@@ -1,18 +1,23 @@
-# ProofLens
+# MachineChecked
 
 Read a mathematical paper beside its Lean formalisation, and see for every claim what has been
 established about it.
 
 A Lean build says that the Lean theorems are proved. It does not say they are the paper's
-theorems. ProofLens opens the paper, marks every numbered statement, and shows beside each one
+theorems. MachineChecked opens the paper, marks every numbered statement, and shows beside each one
 the Lean declaration that formalises it, whether Lean proves it, and whether anyone has checked
 that the two say the same thing. It never rounds a status up.
+
+The site is [machinechecked.org](https://machinechecked.org) (a [demo](https://machinechecked.org/demo/)).
+MachineChecked is a tool and a place to publish audits: an audit says what its author linked,
+checked and recorded, under their name, and MachineChecked does not check or endorse its
+conclusions.
 
 There are two ways to use it:
 
 - **Zero configuration** (most projects): point it at a Lean project with a paper. Nothing to
   write except, as you confirm them, the links between claims and declarations.
-- **Full assessment** (a project with a `prooflens.toml`): locked statements, a claim inventory,
+- **Full assessment** (a project with a `machinechecked.toml`): locked statements, a claim inventory,
   recorded reviews and an acceptance status per claim, reproducible and checkable in CI.
 
 ## Quick start
@@ -21,17 +26,18 @@ You need Python ≥ 3.11, the project's Lean toolchain ([elan](https://github.co
 and, for a LaTeX paper, TeX Live with `latexmk` (and `xelatex` or `lualatex` if the paper needs
 them). You do not need Node.
 
-1. Build the Lean project as usual: `lake build`. ProofLens reads the built modules and never
+1. Build the Lean project as usual: `lake build`. MachineChecked reads the built modules and never
    builds behind your back.
 2. From anywhere inside the project:
 
    ```sh
-   uvx --from git+https://github.com/cgarryZA/ProofLens prooflens view
+   uvx --from git+https://github.com/cgarryZA/ProofLens machinechecked view
    ```
 
-   (or `pip install git+https://github.com/cgarryZA/ProofLens`, then `prooflens view`). It finds
+   (or `pip install git+https://github.com/cgarryZA/ProofLens`, then `machinechecked view`;
+`prooflens` is the same command under its earlier name). It finds
    the paper (a `.tex` with `\documentclass`, else a PDF; if there are several it asks, or pass
-   the path: `prooflens view paper/main.tex`), compiles it, and opens the reader in your browser.
+   the path: `machinechecked view paper/main.tex`), compiles it, and opens the reader in your browser.
 3. In the reader, the contents list the numbered statements; click one, or its marker in the
    margin. The panel shows the statement as printed and, under **In Lean**:
    - links: a `\lean{Name}` tag in the paper's source is a link (a commented-out tag is not);
@@ -39,7 +45,7 @@ them). You do not need Node.
      label or title. **Link** confirms one, **Not this** rejects it, and the search box links any
      other declaration of the project.
 
-   Links are saved to `prooflens.links.json` at the project root, and the page rebuilds.
+   Links are saved to `machinechecked.links.json` at the project root, and the page rebuilds.
 
 Each claim then reads one of: *not linked*, *suggested link, not confirmed*, *linked: Lean proof
 checked*, *linked: Lean proof incomplete (sorry)*, *linked: Lean proof uses further axioms*,
@@ -50,7 +56,7 @@ says is a separate question, for a review (below).
 ### Share it
 
 ```sh
-prooflens build          # writes ProofLens.html at the project root
+machinechecked build          # writes MachineChecked.html at the project root
 ```
 
 One file with the paper, the data and the reader inside: it opens from disk with a double click,
@@ -59,23 +65,38 @@ needs no server, and can be committed to a private repository or sent by email.
 ### Check it in CI
 
 ```sh
-prooflens check          # exits 1 if a linked declaration is missing or not proved
+machinechecked check          # exits 1 if a linked declaration is missing or not proved
 ```
+
+### Report a problem
+
+Every claim in the reader has **Copy link** (the claim at this release) and, when the audit says
+where reports go, **Raise issue**: it opens a GitHub issue draft in that repository with the claim,
+its Lean declarations, the commits and the link filled in. The reporter writes what looks wrong
+and submits it on GitHub; nothing is sent by the reader, and a report changes no status. The
+draft carries identifiers only, never the statement's text.
+
+```sh
+machinechecked view --issues owner/repo --site-url https://owner.github.io/audit/
+```
+
+saves both in `machinechecked.links.json` (a full assessment sets `issues` and `site_url` under
+`[project]`). There is no default: without `issues`, the reader offers only **Copy link**.
 
 ### What to commit
 
-Commit `prooflens.links.json`. Ignore the working directory:
+Commit `machinechecked.links.json`. Ignore the working directory:
 
 ```gitignore
-.prooflens/
+.machinechecked/
 ```
 
-and `ProofLens.html` too, unless you commit it on purpose to share it.
+and `MachineChecked.html` too, unless you commit it on purpose to share it.
 
 ### Blueprints
 
 A [leanblueprint](https://github.com/PatrickMassot/leanblueprint) works as it is: run
-`prooflens view` in the project, and `blueprint/src/print.tex` is the paper (its `web.tex` is not
+`machinechecked view` in the project, and `blueprint/src/print.tex` is the paper (its `web.tex` is not
 offered). Its `\lean{…}` tags become links, and an engine the blueprint's `latexmkrc` names
 (usually XeLaTeX) is used; the `latexmkrc` is read as text, never run.
 
@@ -95,13 +116,13 @@ claim. Each unit is reviewed once per fingerprint, in the order of a blind revie
 
 Choose a paper and a section first to stay in one mathematical setting. Reports stay in the
 browser (undo, skip, resume) and are exported with **Export reports** as a file, so a reviewer
-needs nothing installed: the shared `ProofLens.html` works. Export often: a browser's storage is
+needs nothing installed: the shared `MachineChecked.html` works. Export often: a browser's storage is
 not a safe place for an hour of work. The reviewer's identity is recorded as they state it.
 
 A report marks nothing reviewed. In a full assessment the maintainer promotes it:
 
 ```sh
-prooflens review promote prooflens-reviews-….json
+machinechecked review promote machinechecked-reviews-….json
 ```
 
 Promotion refuses a report whose declaration, legacy hash or manuscript changed since the review,
@@ -115,8 +136,8 @@ sets one.
 
 ## Full assessment
 
-A project with a `prooflens.toml` in the directory you run from (or passed with `-c`) gets the
-full assessment. It needs no Lean dependency on ProofLens: the probe runs with the project's own
+A project with a `machinechecked.toml` in the directory you run from (or passed with `-c`) gets the
+full assessment. It needs no Lean dependency on MachineChecked: the probe runs with the project's own
 toolchain through `lake env lean`. The [toy paper](examples/toy-paper) is a complete example.
 
 ```toml
@@ -195,20 +216,20 @@ a record of another commit, or a text log, reads *unverified*.
 The commands:
 
 ```sh
-prooflens build [--reuse-lean]   # probe Lean (or reuse it if no Lean input changed), compile, assess
-prooflens view                   # serve the site at http://127.0.0.1:8017
-prooflens check                  # build, exit 1 on a violation
-prooflens reassess               # assess stored evidence again (new reviews, rules), no Lean or LaTeX
-prooflens site                   # rewrite the site from stored evidence
-prooflens bundle --out F.html    # the site as one file
-prooflens export --out DIR       # the public export: approved fields only, scanned for leaks
-prooflens review promote F.json  # record review reports (above)
+machinechecked build [--reuse-lean]   # probe Lean (or reuse it if no Lean input changed), compile, assess
+machinechecked view                   # serve the site at http://127.0.0.1:8017
+machinechecked check                  # build, exit 1 on a violation
+machinechecked reassess               # assess stored evidence again (new reviews, rules), no Lean or LaTeX
+machinechecked site                   # rewrite the site from stored evidence
+machinechecked bundle --out F.html    # the site as one file
+machinechecked export --out DIR       # the public export: approved fields only, scanned for leaks
+machinechecked review promote F.json  # record review reports (above)
 ```
 
 ## Private projects
 
 A private project keeps its configuration, inventory, reviews and site in its own repository.
-`prooflens bundle` writes the site as one HTML file carrying its data and PDFs, to commit there
+`machinechecked bundle` writes the site as one HTML file carrying its data and PDFs, to commit there
 and open with a double click; nothing is hosted. Nothing of a private project belongs in this
 repository: `scripts/check_public.py` refuses a push containing any term of a private denylist or
 any line of the project's Lean or LaTeX sources.
@@ -229,10 +250,10 @@ any line of the project's Lean or LaTeX sources.
 ```sh
 pip install -e '.[test]'
 pytest                                  # contracts, seeded mutations, security, zero-configuration
-(cd web && npm ci && npm run build)     # rebuilds the reader into engine/python/prooflens/web
+(cd web && npm ci && npm run build)     # rebuilds the reader into the package (engine/python/prooflens/web)
 ```
 
-The built reader is committed, so that installing ProofLens needs no Node; CI checks that it is
+The built reader is committed, so that installing MachineChecked needs no Node; CI checks that it is
 the build of the committed sources. See [`CLAUDE.md`](CLAUDE.md) for the conventions and
 [`PLAN.md`](PLAN.md) for the plan of record.
 

@@ -36,10 +36,10 @@ def test_tex_cannot_write_outside_its_build_directory(toy, tmp_path):
 @needs_lean
 @needs_tex
 def test_private_paper_is_not_exported(toy, tmp_path):
-    edit(toy / "prooflens.toml", "publish = { pdf = true, source_text = true, lean = true, reviews = true }",
+    edit(toy / "machinechecked.toml", "publish = { pdf = true, source_text = true, lean = true, reviews = true }",
          "publish = { pdf = false, source_text = false, lean = true, reviews = false }")
     build(toy)
-    cfg = cfgmod.load(toy / "prooflens.toml")
+    cfg = cfgmod.load(toy / "machinechecked.toml")
     out = tmp_path / "public"
     export(cfg, out)
     files = {p.relative_to(out).as_posix() for p in out.rglob("*") if p.is_file()}
@@ -53,10 +53,10 @@ def test_private_paper_is_not_exported(toy, tmp_path):
 @needs_lean
 @needs_tex
 def test_export_with_a_leak_is_blocked(toy, tmp_path):
-    edit(toy / "prooflens.toml", "publish = { pdf = true, source_text = true, lean = true, reviews = true }",
+    edit(toy / "machinechecked.toml", "publish = { pdf = true, source_text = true, lean = true, reviews = true }",
          "publish = { pdf = true, source_text = false, lean = true, reviews = true }")
     build(toy)
-    cfg = cfgmod.load(toy / "prooflens.toml")
+    cfg = cfgmod.load(toy / "machinechecked.toml")
     web = tmp_path / "web"
     web.mkdir()
     line = next(l for l in (toy / "paper/toy.tex").read_text().splitlines() if len(l.strip()) >= 40
@@ -70,10 +70,10 @@ def test_export_with_a_leak_is_blocked(toy, tmp_path):
 @needs_lean
 @needs_tex
 def test_unapproved_pdf_is_blocked(toy, tmp_path):
-    edit(toy / "prooflens.toml", "publish = { pdf = true, source_text = true, lean = true, reviews = true }",
+    edit(toy / "machinechecked.toml", "publish = { pdf = true, source_text = true, lean = true, reviews = true }",
          "publish = { pdf = false, source_text = true, lean = true, reviews = true }")
     build(toy)
-    cfg = cfgmod.load(toy / "prooflens.toml")
+    cfg = cfgmod.load(toy / "machinechecked.toml")
     web = tmp_path / "web"
     web.mkdir()
     shutil.copyfile(cfg.out_dir / "site" / "data" / "papers" / "T.pdf", web / "paper.pdf")
@@ -83,10 +83,10 @@ def test_unapproved_pdf_is_blocked(toy, tmp_path):
 
 def test_config_requires_a_pinned_git_revision(tmp_path):
     from prooflens.sources import SourceError, acquire
-    (tmp_path / "prooflens.toml").write_text(
+    (tmp_path / "machinechecked.toml").write_text(
         '[project]\nname="x"\nmodules=["X"]\nscope_roots=["X"]\nspec_prefix="X.S"\n'
         'accept_prefix="X.A"\ninventory="c.json"\n[[paper]]\nid="P"\nsource={git="o/r"}\n')
-    cfg = cfgmod.load(tmp_path / "prooflens.toml")
+    cfg = cfgmod.load(tmp_path / "machinechecked.toml")
     with pytest.raises(SourceError, match="rev"):
         acquire(cfg, cfg.papers[0], tmp_path / "snap")
 

@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "prooflens"
+name = "machinechecked"
 version = "0.1.0"
 description = "Read a mathematical paper beside its Lean formalisation, with the evidence for every claim."
 readme = "README.md"
@@ -15,6 +15,7 @@ dependencies = ["jsonschema>=4"]
 test = ["pytest>=7"]
 
 [project.scripts]
+machinechecked = "prooflens.cli:main"
 prooflens = "prooflens.cli:main"
 
 [tool.setuptools]

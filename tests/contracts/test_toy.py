@@ -194,12 +194,12 @@ def test_kernel_replay_needs_a_structured_record_for_this_commit(toy):
     subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q",
                     "--allow-empty", "-m", "t"], cwd=toy, check=True)
     commit = git_head(toy / "lean")
-    with open(toy / "prooflens.toml", "a") as f:
+    with open(toy / "machinechecked.toml", "a") as f:
         f.write("")
-    txt = (toy / "prooflens.toml").read_text().replace(
+    txt = (toy / "machinechecked.toml").read_text().replace(
         'dismissals = "reviews/dismissals.json"',
         'dismissals = "reviews/dismissals.json"\ncomparator_log = "comparator.json"')
-    (toy / "prooflens.toml").write_text(txt)
+    (toy / "machinechecked.toml").write_text(txt)
 
     def replay(record):
         (toy / "comparator.json").write_text(record)
@@ -225,7 +225,7 @@ def test_reuse_and_reassess_refuse_changed_inputs(toy):
     from prooflens import config as cfgmod
     from prooflens.pipeline import build as pl_build, reassess
     build(toy)
-    cfg = cfgmod.load(toy / "prooflens.toml")
+    cfg = cfgmod.load(toy / "machinechecked.toml")
     pl_build(cfg, reuse_lean=True, log=lambda *a: None)          # nothing changed: reuse is fine
     edit(toy / "lean/Toy/Defs.lean", "/-!", "-- a comment\n/-!")  # any Lean input
     with pytest.raises(RuntimeError, match="Lean inputs changed"):

@@ -28,9 +28,10 @@ from .config import STANDARD_AXIOMS, Config, Paper, Publish
 from .probe import fingerprint
 from .sources import SourceError, acquire
 from .tex import DEFAULT_ENVS, TexError, anchors_for, theorem_envs
-from .util import content_id, read_json, sha256_file, write_json
+from .util import content_id, git_head, read_json, sha256_file, write_json
 
-LINKS = "prooflens.links.json"
+LINKS = "machinechecked.links.json"
+OLD_LINKS = "prooflens.links.json"
 SKIP_DIRS = {".lake", ".git", ".prooflens", "node_modules", "build", "_build", ".venv"}
 DEFINITION_ENVS = {"definition", "assumption", "convention", "hypothesis", "notation"}
 ENV_WORDS = {"thm", "theorem", "lem", "lemma", "prop", "proposition", "cor", "corollary",
@@ -210,8 +211,15 @@ def linked_names(claim: dict, entry: dict) -> list[str]:
 
 # -- links file ------------------------------------------------------------------------------
 
+def links_file(root: Path) -> Path:
+    """The project's links file: `machinechecked.links.json`, or the older
+    `prooflens.links.json` where only that one exists."""
+    new, old = root / LINKS, root / OLD_LINKS
+    return old if old.exists() and not new.exists() else new
+
+
 def load_links(root: Path) -> dict:
-    p = root / LINKS
+    p = links_file(root)
     if not p.exists():
         return {"version": 1, "papers": {}}
     return read_json(p)
@@ -233,7 +241,19 @@ def save_link(root: Path, paper: str, key: str, lean: list[str] | None, rejected
                 entry["by"] = by
         if rejected is not None:
             entry["rejected"] = sorted(set(entry.get("rejected", [])) | set(rejected))
-    write_json(root / LINKS, data)
+    write_json(links_file(root), data)
+    return data
+
+
+def save_settings(root: Path, issues: str | None = None, site_url: str | None = None) -> dict:
+    """Record where the reader's Raise issue opens reports (`owner/repo`) and the public address
+    of the published reader, in the links file."""
+    data = load_links(root)
+    if issues:
+        data["issues"] = issues
+    if site_url:
+        data["site_url"] = site_url
+    write_json(links_file(root), data)
     return data
 
 
@@ -320,7 +340,7 @@ def view_config(root: Path, paper_path: Path, out_dir: Path, libs: list[str]) ->
                   publish=Publish(pdf=True, source_text=True, lean=True, reviews=True))
     return Config(path=root / "prooflens.toml", name=root.name, lean_root=root,
                   modules=[], scope_roots=[l.split(".")[0] for l in libs], spec_prefix="",
-                  accept_prefix="", allowed_axioms=STANDARD_AXIOMS, inventory=root / LINKS,
+                  accept_prefix="", allowed_axioms=STANDARD_AXIOMS, inventory=links_file(root),
                   reviews=[], statement_authors=[], ai_reviewers=[], dismissals=None,
                   comparator_log=None, papers=[paper], out_dir=out_dir)
 
@@ -437,7 +457,10 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
     body = {"mode": "simple", "paper": paper_key, "title": paper.title, "notes": notes,
             "project": {"name": root.name, "libs": libs, "built": len(built),
                         "unbuilt": len(unbuilt)},
-            "links_sha256": sha256_file(root / LINKS) if (root / LINKS).exists() else None,
+            "links_sha256": sha256_file(links_file(root)) if links_file(root).exists()
+            else None,
+            "commit": git_head(root), "issues": load_links(root).get("issues"),
+            "site_url": load_links(root).get("site_url"),
             "pdf_sha256": sha256_file(pdf) if pdf else None, "tex": tex,
             "claims": claims, "index": index, "decls": decls}
     return {"body": body, "pdf": pdf, "cfg": cfg}
@@ -495,9 +518,12 @@ def write_view_site(view: dict, site: Path, web_dist: Path | None) -> dict:
     index = {"schema": "prooflens/manifest@0", "mode": "simple", "release": release,
              "evidence": eid, "created": _dt.datetime.now(_dt.timezone.utc)
              .isoformat(timespec="seconds"),
-             "project": {"name": body["project"]["name"]}, "tool": {"name": "prooflens"},
+             "project": {"name": body["project"]["name"], "commit": body.get("commit")},
+             "tool": {"name": "machinechecked"},
+             "issues": body.get("issues"), "site_url": body.get("site_url"),
              "lean": None, "notes": body["notes"],
              "papers": [{"id": "P", "title": body["title"], "mode": body["tex"]["mode"],
+                         "revision": body.get("commit"),
                          "pdf": "papers/P.pdf" if view["pdf"] else None,
                          "page_size": body["tex"].get("page_size"), "note": ""}],
              "summary": {"P": summary}, "classes": classes,

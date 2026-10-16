@@ -5,8 +5,8 @@
 | Artifact | Audience | Where |
 |---|---|---|
 | The demo | developers | GitHub Pages of this repository, built from the synthetic toy paper |
-| A paper audit preview | the author and invited collaborators | `prooflens serve` locally, or a private Actions artifact (retention is limited, so not an archive) |
-| An approved paper release | referees and readers | a public, version-pinned static site produced by `prooflens export` |
+| A paper audit preview | the author and invited collaborators | `machinechecked serve` locally, or a private Actions artifact (retention is limited, so not an archive) |
+| An approved paper release | referees and readers | a public, version-pinned static site produced by `machinechecked export` |
 
 ## Rules
 
@@ -22,4 +22,4 @@
 4. **Name it honestly.** A PDF with the audit appendix is a "Paper with Formal Verification Audit",
    never a "verified paper", while any claim in scope is not accepted.
 5. **The research repositories stay private** until their owner decides otherwise. Public
-   ProofLens development uses only the synthetic examples.
+   MachineChecked development uses only the synthetic examples.

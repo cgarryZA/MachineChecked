@@ -1,4 +1,5 @@
 <script>
+  import { claimLink, claimReference, issueUrl } from "../lib/issue.js";
   import TexInline from "./TexInline.svelte";
   import { loadClaim, saveLink } from "../lib/data.js";
   import { href } from "../lib/route.svelte.js";
@@ -61,6 +62,18 @@
     const rev = { reviewed: "its meaning reviewed independently", "author-reviewed": "its meaning reviewed only by its author", pending: "its meaning not yet reviewed" }[cl.review] || "";
     return (cl.state === "refuted" ? "Lean proves the printed statement false" : "Proved in Lean") + replay + (rev ? "; " + rev : "") + ".";
   }
+  let copied = $state(null);
+  async function copyLink() {
+    const text = claimLink(index, claim) || claimReference(index, claim);
+    try {
+      await navigator.clipboard.writeText(text);
+      copied = claimLink(index, claim) ? "Link copied" : "Reference copied";
+    } catch {
+      window.prompt("Copy this:", text);
+    }
+    setTimeout(() => (copied = null), 2000);
+  }
+
   function linkVerdict(l) {
     if (!l.statement && l.status?.includes("not found")) return "Not found in the built modules.";
     if (l.kind && l.kind !== "theorem") return `A Lean ${l.kind}.`;
@@ -84,6 +97,12 @@
       <h1>{claim.number || claim.id}{#if claim.heading}<span class="title">&nbsp;— <TexInline text={claim.heading} /></span>{/if}</h1>
       {#if !claim.heading && claim.title}<p class="desc"><TexInline text={claim.title} /></p>{/if}
       <StatusChip status={claim.status} cls={claim.class} />
+      <div class="actions">
+        <button class="act" onclick={copyLink} title={claimLink(index, claim) || "No public address: copies the claim's reference"}>{copied || "Copy link"}</button>
+        {#if issueUrl(index, claim)}
+          <a class="act" href={issueUrl(index, claim)} target="_blank" rel="noopener" title={"Opens a draft issue in " + index.issues + " with this claim's details filled in"}>Raise issue ↗</a>
+        {/if}
+      </div>
     </header>
 
     <section>
@@ -102,7 +121,7 @@
         {#each claim.links as l (l.name)}
           <div class="card">
             <p class="decl"><code>{l.name}</code>{#if l.module}<span class="faint"> · {l.module}{l.range ? ":" + l.range.line : ""}</span>{/if}</p>
-            <p class="faint small src">{l.source === "paper" ? "Linked by a \\lean{…} tag in the paper's source" : "Linked in ProofLens (prooflens.links.json)"}</p>
+            <p class="faint small src">{l.source === "paper" ? "Linked by a \\lean{…} tag in the paper's source" : "Linked in the reader (machinechecked.links.json)"}</p>
             <p class="verdict top">{linkVerdict(l)}</p>
             {#if l.statement}<Statement st={l.statement} onref={showDecl} compact />{/if}
             {#if editable}
@@ -125,7 +144,7 @@
                   <button class="btn ghost" disabled={!!busy} onclick={() => act({ reject: [s.name] }, "reject")}>Not this</button>
                 </div>
               {:else}
-                <p class="faint small">A suggestion, not a link. Run <code>prooflens view</code> to confirm it.</p>
+                <p class="faint small">A suggestion, not a link. Run <code>machinechecked view</code> to confirm it.</p>
               {/if}
             </div>
           {/each}
@@ -133,7 +152,7 @@
         {#if editable}
           <LinkPicker {index} disabled={!!busy} onpick={(name) => act({ lean: [...claim.links.map((x) => x.name), name] }, "link")} />
         {/if}
-        {#if busy}<p class="faint small">Saving to prooflens.links.json and rebuilding…</p>{/if}
+        {#if busy}<p class="faint small">Saving the link and rebuilding…</p>{/if}
         {#if saveError}<p class="bad small">{saveError}</p>{/if}
       {:else}
         {#each claim.clauses as cl, k (k)}
@@ -247,6 +266,9 @@
   header h1 { font-family: var(--serif); font-size: 24px; font-weight: 600; margin: 2px 0 10px; }
   .full header h1 { font-size: 30px; }
   .title { font-weight: 450; }
+  .actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+  .act { font: inherit; font-size: 13px; padding: 3px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; text-decoration: none; }
+  .act:hover { border-color: var(--accent); color: var(--accent); text-decoration: none; }
   .summary { margin: 4px 0 8px; font-size: 13px; color: var(--muted); }
   .desc { margin: 2px 0 10px; font-size: 15px; color: var(--muted); line-height: 1.5; }
   .eyebrow { margin: 0; color: var(--muted); font-size: 13px; }

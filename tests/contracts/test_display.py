@@ -14,7 +14,7 @@ def test_display_overlay(toy):
                                       "number_note": "a test correction"},
                    "T:rem:pred": {"title_tex": ""}},
         "clauses": {"corrected: positive n": {"title_tex": r"corrected: positive $n$"}}}))
-    edit(toy / "prooflens.toml", 'statement_authors = ["statement-author"]',
+    edit(toy / "machinechecked.toml", 'statement_authors = ["statement-author"]',
          'statement_authors = ["statement-author"]\ndisplay = "display.json"')
     after, body1, cfg = build(toy)
     assert body1["assessment"] == body0["assessment"]

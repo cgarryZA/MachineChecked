@@ -1,6 +1,6 @@
 # Threat model
 
-What ProofLens must not get wrong, and how each failure is kept out.
+What MachineChecked must not get wrong, and how each failure is kept out.
 
 ## What is protected
 

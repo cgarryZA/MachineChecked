@@ -45,7 +45,7 @@ Dismissals of warnings (`dismissals.json`):
 
 ## Evidence (`evidence.schema.json`), written by the engine
 
-`.prooflens/evidence/<id>.json`, with `id` the SHA-256 of the canonical JSON of `body`:
+`.machinechecked/evidence/<id>.json` (`.prooflens/` in older projects), with `id` the SHA-256 of the canonical JSON of `body`:
 
 | Field of `body` | Content |
 |---|---|

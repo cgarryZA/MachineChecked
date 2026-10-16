@@ -135,6 +135,7 @@ def build(cfg: Config, release: str | None = None, skip_lean: bool = False,
     ev.record_release(cfg.out_dir, rel, eid)
     record = ev.load(cfg.out_dir, eid)
     index, chunks, store = mf.build(record, rel, load_display(cfg))
+    index.update(issues=cfg.issues, site_url=cfg.site_url)
     site = cfg.out_dir / "site"
     write_preview(site, index, chunks, store, pdfs, web_dist,
                   rq.assurance_queue(index, chunks, store, cfg.statement_authors))
@@ -286,6 +287,7 @@ def rebuild_site(cfg: Config, web_dist: Path | None = None, release: str | None 
         read_json(rels[-1])
     record = ev.load(cfg.out_dir, rel["evidence"])
     index, chunks, store = mf.build(record, rel["release"], load_display(cfg))
+    index.update(issues=cfg.issues, site_url=cfg.site_url)
     site = cfg.out_dir / "site"
     write_preview(site, index, chunks, store, pdf_paths(cfg, record["body"]), web_dist,
                   rq.assurance_queue(index, chunks, store, cfg.statement_authors))

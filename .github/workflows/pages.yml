@@ -1,8 +1,8 @@
-name: Demo site
+name: Site
 
-# Publishes the synthetic toy paper's site (the public export: approved fields only, scanned for
-# leaks) to GitHub Pages. Runs from main only. Pages must be enabled with "GitHub Actions" as its
-# source (Settings > Pages).
+# Publishes machinechecked.org: the landing page (site/) and the synthetic toy paper's public
+# export (approved fields only, scanned for leaks) under /demo/. Runs from main only. Pages
+# must have "GitHub Actions" as its source (Settings > Pages).
 on:
   push:
     branches: [main]
@@ -33,11 +33,13 @@ jobs:
           curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain none
           echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
       - run: pip install -e .
-      - name: Build and export the toy paper
+      - name: Build the site (landing page, and the toy paper's public export under /demo/)
         run: |
           cd examples/toy-paper
-          prooflens build --fail-on-violation
-          prooflens export --out ../../public
+          machinechecked build --fail-on-violation
+          machinechecked export --out ../../public/demo
+          cd ../..
+          cp site/index.html public/index.html
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

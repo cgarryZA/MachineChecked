@@ -1,4 +1,8 @@
 .lake/
+.machinechecked/
 .prooflens/
+MachineChecked.html
 ProofLens.html
+# The example is a test fixture; a real project commits its links file.
+machinechecked.links.json
 prooflens.links.json

@@ -1,4 +1,4 @@
-# ProofLens: plan of record
+# MachineChecked (formerly ProofLens): plan of record
 
 ProofLens shows a mathematical paper beside its Lean formalisation and says, for every claim of
 the paper, exactly what has been established about it. It separates three things that a Lean
@@ -90,6 +90,45 @@ The policies are in `docs/`: [threat model](docs/THREAT_MODEL.md),
 | **4 Drift and assurance** | Release comparison; the drift types listed below; PR reports (no `pull_request_target`); more warning detectors with measured false-positive rates; `leanchecker` beside Comparator results; review attestations bound to (manuscript, spec, closure) fingerprints | the seeded-failure table below passes; false-positive rates measured on Papers A and B |
 | **5 Reusable engine** | Generalised CLI and Lean package; reusable GitHub Action | semantic results agree with the existing acceptance system; its report reproduces byte for byte as a compatibility check; mutation suite passes on the port |
 | **6 Publication and ecosystem** | Release approval per paper; immutable versioned public sites; "Paper with Formal Verification Audit" PDF; arXiv sources; hostile-input hardening; dependency X-ray; Blueprint adapter; notebook / live Lean last | no unapproved content can reach an export; release URLs stable; an unrelated repository adopts ProofLens |
+
+## The platform: machinechecked.org
+
+MachineChecked is a tool and a host. An audit says what its author linked, checked and recorded,
+under their name; the site indexes and displays audits and never certifies them. Contributors keep
+their Lean code, links, reviews and exported audits in their own repositories; the site holds a
+small registry that points to them.
+
+**Paper-centric.** A paper has one page, one claim inventory and one navigation; the Lean projects
+that formalise it are alternative sources of evidence for its claims, never separate entries.
+
+- **One active project.** A selector at the top of the paper chooses whose formalisation is shown.
+  Changing it changes the evidence beside each claim, never the paper, its numbering or its
+  inventory.
+- **Fallback only where a claim is missing.** If the active project does not map a claim, the
+  reader shows another project's mapping, labelled with its source. If the active project maps the
+  claim but its proof is incomplete or disputed, that is what is shown: a completed proof from
+  another project never stands in for it.
+- **Alternatives on request.** Under a claim, "N other formalisations" opens a side-by-side
+  comparison of their Lean statements, proof checks and reviews; nothing is duplicated by default.
+- **Combined coverage, never combined proof.** A "Combined coverage" choice in the selector shows
+  which claims have at least one mapping, which have none, and where mappings compete. Claims proved
+  in different projects are not one formalisation: their definitions and hypotheses need not agree,
+  so every claim names its source project, and a review stays attached to the formalisation it
+  assessed. Projects are not ranked.
+- **Loaded on demand.** The registry keeps, per paper, its inventory and an index of which
+  registered audit covers which claim ids; an audit's data is fetched only when it is shown, so a
+  paper with many projects stays light.
+- **Reports follow the source.** "Raise issue" targets the repository of the project that supplies
+  the claim being shown, including a fallback.
+
+**Order.** (1) The rename and "Raise issue" in the reader. (2) Import `formalization.yaml`
+(mathlib-initiative) as an optional source of claim–declaration links; write it only on request.
+(3) A real external audit: OpenAI's Navier–Stokes formalisation, to find what breaks before the
+registry is designed around assumptions. (4) The registry and paper pages with the model above;
+README badges ("audit available", linking to the paper page). (5) Registration by a pre-filled
+issue with technical checks only (valid manifest, size, safe links; the ability to remove spam),
+and paper search through OpenAlex and Crossref from the browser. Audits are linked where their
+authors host them; the site does not serve contributors' HTML on its own origin.
 
 The drift types for Phase 4:
 

@@ -1,4 +1,4 @@
-# ProofLens configuration of the synthetic toy paper.
+# MachineChecked configuration of the synthetic toy paper.
 [project]
 name = "toy-paper"
 lean_root = "lean"
@@ -14,6 +14,9 @@ dismissals = "reviews/dismissals.json"
 statement_authors = ["statement-author"]
 # Reviewers recorded as AI unless a marker says otherwise.
 ai_reviewers = ["statement-author", "claude*"]
+# Where the reader's "Raise issue" opens reports, and where the demo is published.
+issues = "cgarryZA/ProofLens"
+site_url = "https://machinechecked.org/demo/"
 
 [[paper]]
 id = "T"

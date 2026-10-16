@@ -1,6 +1,6 @@
-# ProofLens — project instructions
+# MachineChecked — project instructions
 
-ProofLens shows a mathematical paper beside its Lean formalisation and says, per claim, what is
+MachineChecked (formerly ProofLens) shows a mathematical paper beside its Lean formalisation and says, per claim, what is
 established. `README.md` is the user's guide; `PLAN.md` is the plan of record; `docs/` holds the
 threat model, evidence policy, data model and publication policy. Read `docs/EVIDENCE_POLICY.md`
 before changing anything that computes or displays a status.
@@ -27,6 +27,20 @@ before changing anything that computes or displays a status.
 - **The review queue records, the maintainer decides.** A report never writes a marker;
   `prooflens review promote` does, after its refusals (`promote.py`). Keep the protocol order:
   reading locked before the Lean is shown, verdict recorded before the author's review.
+
+- **MachineChecked is a tool and a host, not a certifier.** An audit says what its author linked,
+  checked and recorded, under their name; the site never endorses it. Reports ("Raise issue") go
+  to the repository the audit names, carry identifiers only (never statement text), and change no
+  status. A paper has one page; several Lean projects are alternative sources of evidence for its
+  claims and are never merged into one verdict (see `PLAN.md`).
+
+## Names
+
+The product, the command and the files are `machinechecked` (`machinechecked.toml`,
+`machinechecked.links.json`, `.machinechecked/`); the older `prooflens` names are still read, and
+`prooflens` is an alias of the command. The Python package directory is still
+`engine/python/prooflens` and data schema ids are still `prooflens/...@N`: renaming them would
+break stored evidence and exported reports for no user-visible gain.
 
 ## Layout
 

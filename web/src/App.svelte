@@ -21,12 +21,12 @@
 </script>
 
 {#if error}
-  <main class="state"><h1>ProofLens</h1><p>The site's data could not be loaded: {error}</p></main>
+  <main class="state"><h1>MachineChecked</h1><p>The site's data could not be loaded: {error}</p></main>
 {:else if !index}
   <main class="state"><p class="muted">Loading…</p></main>
 {:else}
   <header class="top">
-    <a class="brand" href={href(index.release, "read", firstPaper)} title="ProofLens">
+    <a class="brand" href={href(index.release, "read", firstPaper)} title="MachineChecked">
       <svg viewBox="0 0 32 32" width="20" height="20" aria-hidden="true"
         ><circle cx="13" cy="13" r="9" fill="none" stroke="currentColor" stroke-width="3" /><path
           d="M20 20l8 8" stroke="currentColor" stroke-width="3" stroke-linecap="round" /></svg

@@ -163,6 +163,7 @@ def export(cfg: Config, out: Path, release: str | None = None,
     data = out / "data"
     pidx = _pick(index, ["schema", "release", "evidence", "created", "tool", "lean", "summary",
                          "classes", "gates", "search"])
+    pidx["issues"], pidx["site_url"] = cfg.issues, cfg.site_url
     pidx["project"] = _pick(index["project"], ["name", "commit", "dirty", "toolchain",
                                                "lake_manifest_sha256", "dependencies"])
     pidx["papers"] = []

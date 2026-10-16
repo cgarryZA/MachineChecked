@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -55,6 +56,8 @@ class Config:
     out_dir: Path
     review_check: str | None = None
     display: Path | None = None
+    issues: str | None = None         # "owner/repo" where the reader's "Raise issue" opens issues
+    site_url: str | None = None       # the public address of the published site, for permalinks
 
     @property
     def root(self) -> Path:
@@ -65,6 +68,26 @@ class Config:
             if p.id == pid:
                 return p
         raise ConfigError(f"no paper {pid!r} in {self.path}")
+
+
+CONFIG_NAMES = ("machinechecked.toml", "prooflens.toml")
+
+
+def work_dir_name(base: Path) -> str:
+    """The working directory's name: `.machinechecked`, or `.prooflens` where one exists."""
+    return ".prooflens" if (base / ".prooflens").is_dir() and \
+        not (base / ".machinechecked").is_dir() else ".machinechecked"
+
+
+def issue_repo(value: str | None, where: str) -> str | None:
+    """A GitHub repository given as `owner/repo` (or its URL), checked."""
+    if not value:
+        return None
+    v = re.sub(r"^(https?://)?(www\.)?github\.com/", "", value.strip()).rstrip("/")
+    v = re.sub(r"\.git$", "", v)
+    if not re.fullmatch(r"[A-Za-z0-9][\w.-]*/[\w.-]+", v):
+        raise ConfigError(f"{where}: issues must be a GitHub repository, owner/repo: {value!r}")
+    return v
 
 
 def _req(d: dict, key: str, where: str):
@@ -105,10 +128,12 @@ def load(path: str | Path) -> Config:
         comparator_log=(base / proj["comparator_log"]).resolve()
         if "comparator_log" in proj else None,
         papers=papers,
-        out_dir=(base / proj.get("out_dir", ".prooflens")).resolve(),
+        out_dir=(base / proj.get("out_dir", work_dir_name(base))).resolve(),
         # A command run after promoting reviews (from the configuration's directory): the
         # project's own acceptance checker, if it has one.
         review_check=raw.get("review", {}).get("check"),
         # Display corrections (TeX descriptions, printed numbers), outside the inventory.
         display=(base / proj["display"]).resolve() if "display" in proj else None,
+        issues=issue_repo(proj.get("issues"), str(path)),
+        site_url=proj.get("site_url"),
     )

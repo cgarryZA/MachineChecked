@@ -132,7 +132,7 @@ export function exportFile(index, work) {
   const a = document.createElement("a");
   const who = (work.reports.at(-1)?.reviewer?.id || "reviewer").replace(/[^\w.-]+/g, "_");
   a.href = URL.createObjectURL(blob);
-  a.download = `prooflens-reviews-${who}-${body.exported_at.replace(/[:]/g, "")}.json`;
+  a.download = `machinechecked-reviews-${who}-${body.exported_at.replace(/[:]/g, "")}.json`;
   document.body.appendChild(a);
   a.click();
   a.remove();

@@ -31,13 +31,13 @@ def toy(tmp_path) -> Path:
     """A copy of the toy paper (with its built `.lake`, so a mutation rebuilds only what
     changed)."""
     dst = tmp_path / "toy"
-    shutil.copytree(TOY, dst, ignore=shutil.ignore_patterns(".prooflens"), symlinks=True)
+    shutil.copytree(TOY, dst, ignore=shutil.ignore_patterns(".prooflens", ".machinechecked"), symlinks=True)
     return dst
 
 
 def build(root: Path, **kw):
     """Build the project at `root`; return the manifest index and the evidence body."""
-    cfg = cfgmod.load(root / "prooflens.toml")
+    cfg = cfgmod.load(root / "machinechecked.toml")
     res = pl_build(cfg, log=lambda *a: None, **kw)
     rec = ev.load(cfg.out_dir, res["evidence"])
     return res["index"], rec["body"], cfg
