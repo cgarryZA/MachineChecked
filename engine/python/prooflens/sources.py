@@ -106,6 +106,7 @@ def acquire(cfg: Config, paper: Paper, dest: Path) -> Snapshot:
         if not base.is_dir():
             raise SourceError(f"paper {paper.id}: {base} is not a directory")
         shutil.copytree(base, dest, dirs_exist_ok=True, copy_function=shutil.copy2,
+                        ignore_dangling_symlinks=True,
                         ignore=shutil.ignore_patterns(".git", ".lake", ".machinechecked", ".prooflens",
                                                       "*.aux", "*.log", "*.fls"))
         kind, rev, commit_time = "path", None, None

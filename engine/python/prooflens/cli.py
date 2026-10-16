@@ -38,6 +38,8 @@ MISSING = {
     "lake": "install elan (https://github.com/leanprover/elan) and put ~/.elan/bin on PATH",
     "latexmk": "install TeX Live with latexmk, or point ProofLens at the paper's PDF",
     "synctex": "install TeX Live (it provides synctex)",
+    "pdftohtml": "install poppler (poppler-utils) to read a PDF, or give the paper's LaTeX source",
+    "pdfinfo": "install poppler (poppler-utils) to read a PDF, or give the paper's LaTeX source",
 }
 
 
