@@ -101,7 +101,7 @@ MachineChecked, install it with one command, and use it without asking anyone.
 | 5 ✓ | Registry and **crawlable paper pages**: plain HTML per paper (`/papers/<arxiv id>/`) with title, authors, identifiers and the linked repositories and audits, then the interactive reader; `sitemap.xml`, `robots.txt` allowing search crawlers, a short `llms.txt`; Navier–Stokes as a curated entry | a paper page is found by a search engine and shows two repositories and one audit |
 | 6 | The `machinechecked cache` commands (save, restore) and a workflow template for anyone's own repository; then the Navier–Stokes case: built under WSL2 with them, audited, published from a fork and registered; the landing page links it | a reader can go from a claim in the paper to its Lean and raise an issue |
 | 7 ✓ | Listing: the daily `formalization.yaml` job, the report button, `delisted.json`; search by arXiv identifier and OpenAlex | a repository that names an arXiv paper appears with no one approving it |
-| 8 | Reader polish: collapsible contents, adjustable split, the margin label no longer covering text; README badge ("audit available") | an outside audit links back with a badge |
+| 8 ✓ | Reader polish: collapsible contents, adjustable split, the margin label no longer covering text; README badge ("audit available") | an outside audit links back with a badge |
 
 **Launch** (people, not code): once steps 3, 5 and 6 are live, show it on the Lean Zulip and to
 the mathlib-initiative `formalization.yaml` maintainers, approach about ten researchers with a
