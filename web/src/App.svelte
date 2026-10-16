@@ -6,6 +6,7 @@
   import Passport from "./components/Passport.svelte";
   import Changes from "./components/Changes.svelte";
   import Search from "./components/Search.svelte";
+  import TexInline from "./components/TexInline.svelte";
   import Review from "./components/Review.svelte";
 
   let index = $state(null);
@@ -39,7 +40,7 @@
         {/each}
       </nav>
     {:else if paper}
-      <span class="ptitle" title={paper.title}>{paper.title}</span>
+      <span class="ptitle" title={paper.title}><TexInline text={paper.title} /></span>
     {/if}
     {#if index.mode === "paper"}
       <a class="aux" href="/papers/">Papers</a>

@@ -16,7 +16,7 @@
       (a.anchor ? 0 : 1) - (b.anchor ? 0 : 1) || (a.anchor?.page ?? 0) - (b.anchor?.page ?? 0) || (a.anchor?.y0 ?? 0) - (b.anchor?.y0 ?? 0)),
   );
   const paperMode = $derived(index.mode === "paper");
-  let showContents = $state(typeof window !== "undefined" && window.innerWidth > 1180 && index.mode !== "paper");
+  let showContents = $state(typeof window !== "undefined" && window.innerWidth > 1180 && (index.mode !== "paper" || index.claims.length > 0));
   // On a narrow screen the paper page's formalisation panel opens on request.
   let showInfo = $state(typeof window !== "undefined" && window.innerWidth > 1180);
   let showAllClaims = $state(false);
@@ -33,9 +33,10 @@
   <main class="msg"><p>No paper <code>{paperId}</code> here.</p></main>
 {:else}
   <div class="reader" class:open={!!claimId || (paperMode && showInfo)} class:contents={showContents} class:paper={paperMode}>
-    {#if paperMode}
-      {#if !showInfo}<button class="info-open" onclick={() => (showInfo = true)}>Formalisations ›</button>{/if}
-    {:else if showContents}
+    {#if paperMode && !showInfo && !claimId}
+      <button class="info-open" onclick={() => (showInfo = true)}>Formalisations ›</button>
+    {/if}
+    {#if showContents}
       <nav class="toc" aria-label="Claims of the paper">
         <div class="toc-head">
           <span>Contents</span>
@@ -59,7 +60,7 @@
           </button>
         {/if}
       </nav>
-    {:else}
+    {:else if claims.length}
       <button class="toc-open" onclick={() => (showContents = true)} aria-label="Show contents">Contents ›</button>
     {/if}
     <section class="paperpane" aria-label="Paper">
@@ -94,7 +95,8 @@
   .reader.contents { grid-template-columns: 260px minmax(0, 1fr); }
   .reader.open { grid-template-columns: minmax(0, 1.1fr) minmax(380px, 0.9fr); }
   .reader.contents.open { grid-template-columns: 260px minmax(0, 1.1fr) minmax(380px, 0.9fr); }
-  .reader.paper.open { grid-template-columns: minmax(0, 1fr) minmax(320px, 380px); }
+  .reader.paper.open { grid-template-columns: minmax(0, 1fr) minmax(340px, 420px); }
+  .reader.paper.contents.open { grid-template-columns: 260px minmax(0, 1fr) minmax(340px, 420px); }
   .toc { overflow: auto; border-right: 1px solid var(--border); background: var(--surface); }
   .toc-head { position: sticky; top: 0; display: flex; justify-content: space-between; align-items: center; padding: 10px 12px; background: var(--surface); font-weight: 600; font-size: 13px; color: var(--muted); border-bottom: 1px solid var(--border); }
   .toc ol { list-style: none; margin: 0; padding: 4px; }

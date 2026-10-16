@@ -40,10 +40,25 @@ function paperIndex(p) {
   const links = p.links || {};
   const arxivPdf = https(links.arxiv) ? links.arxiv.replace("/abs/", "/pdf/") : null;
   const pdf = [links.pdf, arxivPdf].find(https) || null;
+  // The claims the site found in the paper's PDF (approximate places), with the links each
+  // repository's formalization.yaml declares; no audit, so no claim says what Lean establishes.
+  const claims = (Array.isArray(p.claims) ? p.claims : []).filter((c) => c && typeof c.id === "string").map((c) => ({
+    id: c.id, paper: "P", number: String(c.number || ""), title: c.title ? String(c.title) : null,
+    heading: c.title ? String(c.title) : null, kind: String(c.kind || ""), scope: "formal",
+    status: String(c.status || "not linked"), class: Array.isArray(c.links) && c.links.length ? "declared" : "unspecified", counts: {},
+    anchor: c.anchor && Number.isFinite(c.anchor.page) ? { kind: "approximate", page: c.anchor.page, y0: Number(c.anchor.y0) || 0,
+      y1: Number.isFinite(c.anchor.y1) ? c.anchor.y1 : null, page_end: Number.isFinite(c.anchor.page_end) ? c.anchor.page_end : null } : null,
+    links: (Array.isArray(c.links) ? c.links : []).map((l) => ({
+      name: String(l.name || ""), status: String(l.status || ""), class: "unspecified",
+      source: "formalization.yaml", repository: String(l.repository || ""), why: null, statement: null })),
+  }));
+  const summary = {};
+  for (const c of claims) summary[c.status] = (summary[c.status] || 0) + 1;
   return {
     mode: "paper", schema: "machinechecked/paper@1", release: "paper", evidence: "",
-    project: {}, papers: [{ id: "P", title: String(p.title || ""), pdf: null, pdf_url: pdf }],
-    claims: [], summary: {}, classes: {}, findings: { total: {}, general: [] }, gates: {},
+    project: {}, papers: [{ id: "P", title: String(p.title || ""), pdf: null, pdf_url: pdf,
+      page_size: Array.isArray(p.page_size) ? p.page_size : null }],
+    claims, summary: { P: summary }, classes: {}, findings: { total: {}, general: [] }, gates: {},
     notes: [], paper: p,
   };
 }
@@ -133,6 +148,16 @@ export function loadSearch(index) {
 export function loadClaim(index, id) {
   const c = index.claims.find((x) => x.id === id);
   if (!c) return Promise.reject(new Error(`no claim ${id} in release ${index.release}`));
+  if (index.mode === "paper") {
+    // A paper page's claim is all there is to show: its number, place and declared links.
+    const a = c.anchor;
+    const anchor = a && {
+      kind: "approximate", begin: [a.page, 0, a.y0],
+      end: a.y1 != null ? [a.page, 0, a.y1] : a.page_end ? [a.page_end, 0, 0] : null,
+    };
+    return Promise.resolve({ ...c, anchor, mode: "simple", key: c.id, suggestions: [], clauses: [],
+      blockers: [], findings: [], decls: {}, statement_tex: null, source_matches: null });
+  }
   return getJson(`data/claims/${c.file}`);
 }
 
@@ -149,6 +174,7 @@ export const CLASS_LABEL = {
   open: "open",
   malformed: "malformed",
   unspecified: "unspecified",
+  declared: "linked, not checked",
   "out-of-scope": "out of scope",
 };
 

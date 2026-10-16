@@ -102,4 +102,6 @@ h1, h2, h3 { line-height: 1.25; margin: 0; }
 .st-open { --st: var(--st-open); }
 .st-malformed { --st: var(--st-malformed); }
 .st-unspecified { --st: var(--st-unspecified); }
+/* A claim a project's formalization.yaml links to Lean, with no audit: linked, not checked. */
+.st-declared { --st: var(--accent); }
 .st-out-of-scope { --st: var(--st-out-of-scope); }

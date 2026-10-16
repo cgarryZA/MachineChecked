@@ -97,6 +97,7 @@
   // The sentence under a link restates the status the engine computed for it, and nothing more.
   function linkVerdict(l) {
     const s = l.status || "";
+    if (s.includes("no audit")) return "Declared by the project; Lean has not been run on it here, and no audit of this formalisation is published, so whether it is proved, and whether it says what the paper says, is not shown.";
     if (s.includes("not checked")) return "Lean has not been run on it here: the project is not built, so whether it is proved is not known.";
     if (s.includes("not found")) return "Not found in the built modules.";
     if (s.includes("definition")) return `A Lean ${l.kind || "definition"}.`;
@@ -133,8 +134,8 @@
     </header>
 
     <section>
-      {#if paper?.pdf && claim.anchor?.begin}
-        <PdfCrop url={"data/" + paper.pdf} anchor={claim.anchor} />
+      {#if (paper?.pdf || paper?.pdf_url) && claim.anchor?.begin}
+        <PdfCrop url={paper.pdf_url || "data/" + paper.pdf} anchor={claim.anchor} />
       {:else if claim.statement_tex}
         <Tex text={claim.statement_tex} />
       {:else}
@@ -147,7 +148,7 @@
       {#if simple}
         {#each claim.links as l (l.name)}
           <div class="card">
-            <p class="decl"><code>{l.name}</code>{#if l.module}<span class="faint"> · {l.module}{l.range ? ":" + l.range.line : ""}</span>{/if}
+            <p class="decl"><code>{l.name}</code>{#if l.repository}<span class="faint"> · {l.repository}</span>{/if}{#if l.module}<span class="faint"> · {l.module}{l.range ? ":" + l.range.line : ""}</span>{/if}
               {#if sourceUrl(index, l.path, l.range?.line)}<a class="src-link small" href={sourceUrl(index, l.path, l.range?.line)} target="_blank" rel="noopener" title={sourceTitle(index)}>{sourceLabel(index)}</a>{/if}</p>
             <p class="faint small src">{l.source === "paper" ? "Linked by a \\lean{…} tag in the paper's source" : l.source === "formalization.yaml" ? "Declared in the project's formalization.yaml" + (index.formalization?.review_status ? ` (the project describes its review as “${index.formalization.review_status}”)` : "") : "Linked in the reader (machinechecked.links.json)"}</p>
             <p class="verdict top">{linkVerdict(l)}</p>
@@ -323,7 +324,7 @@
   .changes ul { margin: 0; padding-left: 18px; }
   .changes code { font-size: 12px; }
   .src-link { margin-left: 8px; white-space: nowrap; }
-  .decl { margin: 0 0 6px; }
+  .decl { margin: 0 0 6px; overflow-wrap: anywhere; }
   .verdict { margin: 10px 0 0; font-size: 14px; }
   .verdict.top { margin: 0 0 8px; }
   .row { display: flex; gap: 8px; margin-top: 10px; }

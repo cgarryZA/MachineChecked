@@ -115,8 +115,11 @@
   .band:hover { background: color-mix(in srgb, var(--st) 7%, transparent); }
   .band.sel { background: color-mix(in srgb, var(--st) 10%, transparent); outline: 1.5px solid color-mix(in srgb, var(--st) 70%, transparent); outline-offset: -1px; }
   .band.approximate.sel { outline-style: dashed; }
+  /* The status sits just above the claim, so it never covers the statement's own first line. */
   .tag {
-    position: absolute; right: 6px; top: -10px; font: 11px/1.4 var(--sans);
+    position: absolute; right: 6px; top: -3px; transform: translateY(-100%); z-index: 3;
+    font: 11px/1.4 var(--sans); max-width: calc(100% - 40px); white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis; box-shadow: 0 1px 3px rgb(0 0 0 / 0.12);
     padding: 1px 8px; border-radius: 999px; color: #1d1d1b;
     background: color-mix(in srgb, var(--st) 22%, white); border: 1px solid var(--st);
     opacity: 0; transition: opacity 0.12s; pointer-events: none;
