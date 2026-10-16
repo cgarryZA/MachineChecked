@@ -39,7 +39,7 @@ jobs:
           machinechecked build --fail-on-violation
           machinechecked export --out ../../public/demo
           cd ../..
-          cp site/index.html site/preview-*.webp public/
+          cp -R site/. public/
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

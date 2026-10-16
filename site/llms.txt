@@ -1,0 +1,15 @@
+# MachineChecked
+
+MachineChecked is open-source software for inspecting mathematical papers alongside their Lean 4 formalisations. It distinguishes a declared link, a proof accepted by Lean, and an independent mathematical review of whether the theorem matches the paper.
+
+## Public pages
+
+- [Home](https://machinechecked.org/): what the tool does and how to start
+- [Synthetic demo](https://machinechecked.org/demo/): interactive example, not a research audit
+- [Source repository](https://github.com/cgarryZA/MachineChecked): implementation and issue tracker
+- [Getting started](https://github.com/cgarryZA/MachineChecked/blob/main/docs/GETTING_STARTED.md): install, open a paper and save links
+- [Evidence policy](https://github.com/cgarryZA/MachineChecked/blob/main/docs/EVIDENCE_POLICY.md): exact meaning and limits of status labels
+- [Review protocol](https://github.com/cgarryZA/MachineChecked/blob/main/docs/REVIEWING.md): reviewer reports and maintainer promotion
+- [Agent skill](https://github.com/cgarryZA/MachineChecked/blob/main/skills/machinechecked/SKILL.md): machine-readable usage guidance
+
+A checked Lean proof does not establish that its proposition faithfully represents the prose of the paper. MachineChecked is not a certification authority. A searchable public catalogue of research papers is planned but is not currently hosted here.
