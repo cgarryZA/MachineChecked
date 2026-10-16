@@ -34,7 +34,8 @@ def fy(rows):
             "alignment": {"statements": [{"source": f"{k} {n}", "lean": names} for k, n, names in rows]}}
 paper = {"id": "arxiv:2601.00001", "title": "A paper with two formalisations", "authors": ["A. Author"],
          "links": {}, "formalisations": [
-             {"repository": A, "commit": "a" * 40, "stated_by": {"source": "formalization.yaml"}},
+             {"repository": A, "commit": "a" * 40, "stated_by": {"source": "formalization.yaml"},
+              "report_url": "https://github.com/cgarryZA/machinechecked.org/issues/new?title=x"},
              {"repository": B, "commit": "b" * 40, "stated_by": {"source": "formalization.yaml"}}]}
 anchors = [anchor("theorem", "1", 1, 100), anchor("theorem", "2", 1, 300),
            anchor("theorem", "3", 2, 100), anchor("lemma", "4", 2, 300)]
@@ -95,6 +96,15 @@ for (const width of [1300, 390]) {
     await open(pg, "P:theorem-2");
     assert.deepEqual(await panelNames(pg), [], "B's link does not show under A");
     assert.match(await pg.locator("aside").textContent(), /not linked/);
+  });
+
+  if (width > 1180) await check("the panel gives the site's report link for the chosen listing", width, async (pg) => {
+    await pg.goto(origin + "/paper/");
+    const report = pg.locator("a", { hasText: "Report this listing" });
+    await report.waitFor();
+    assert.equal(await report.getAttribute("href"), "https://github.com/cgarryZA/machinechecked.org/issues/new?title=x");
+    await pg.selectOption("select[aria-label='Formalisation shown']", B);
+    await pg.waitForFunction(() => !document.body.textContent.includes("Report this listing"));
   });
 
   await check("choosing the other project changes every claim view and keeps the claim", width, async (pg) => {

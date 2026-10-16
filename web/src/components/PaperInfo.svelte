@@ -8,6 +8,8 @@
 
   const https = (u) => typeof u === "string" && /^https:\/\/[^\s"'<>]+$/.test(u);
   const repoOk = (r) => typeof r === "string" && /^[\w.-]+\/[\w.-]+$/.test(r);
+  // The site gives each listing's report link (a new issue on its own repository).
+  const reportOk = (u) => typeof u === "string" && u.startsWith("https://github.com/cgarryZA/machinechecked.org/issues/new?");
   const shaOk = (c) => typeof c === "string" && /^[0-9a-f]{40}$/.test(c);
   const fs = $derived((paper.formalisations || []).filter((f) => repoOk(f.repository) && shaOk(f.commit)));
   // The project chosen for the whole page (at the top of the page when there are several).
@@ -20,11 +22,6 @@
   function provenance(f) {
     const s = f.stated_by || {};
     return s.source === "formalization.yaml" ? "Linked by the repository's formalization.yaml" : "Listed by the site's maintainer";
-  }
-  function reportUrl(f) {
-    const title = `Listing: ${f.repository} for ${paper.id}`;
-    const body = `**Paper:** ${paper.title} (\`${paper.id}\`)\n**Repository:** ${f.repository} at \`${f.commit.slice(0, 12)}\`\n\n### What is wrong with this listing\n\n`;
-    return "https://github.com/cgarryZA/machinechecked.org/issues/new?" + new URLSearchParams({ title, body });
   }
 </script>
 
@@ -56,7 +53,7 @@
       {:else}
         <p class="small">No claim-level audit is published yet.</p>
       {/if}
-      <p class="small"><a href={reportUrl(f)} target="_blank" rel="noopener">Report this listing</a></p>
+      {#if reportOk(f.report_url)}<p class="small"><a href={f.report_url} target="_blank" rel="noopener">Report this listing</a></p>{/if}
     </div>
   {/if}
 
