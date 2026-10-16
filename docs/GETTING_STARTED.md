@@ -1,6 +1,6 @@
 # Getting started
 
-**MachineChecked runs locally, in your Lean project.** It reads your paper and your compiled Lean declarations, writes an interactive reader, and keeps its results on your computer: generated data in `.machinechecked/`, the links you confirm in `machinechecked.links.json`, and the reader as `MachineChecked.html` if you ask for one. No account, registration or upload is needed. Publishing an audit (on your own GitHub Pages, say, and listing it on machinechecked.org) is a separate step you choose to take.
+**MachineChecked runs locally, in your Lean project.** It reads your paper and your compiled Lean declarations, writes an interactive reader, and keeps its results on your computer: generated data in `.machinechecked/`, the links you confirm in `machinechecked.links.json`, and the reader as `.machinechecked/MachineChecked.html` if you ask for one. No account, registration or upload is needed. Publishing an audit (on your own GitHub Pages, say, and listing it on machinechecked.org) is a separate step you choose to take.
 
 MachineChecked is a reader for mathematical papers and their Lean formalisation. You can use it without preparing a claim inventory or adopting a particular proof-review framework.
 
@@ -104,7 +104,7 @@ For projects with a separate acceptance framework, further statuses and evidence
 machinechecked build
 ```
 
-This produces `MachineChecked.html` in the project root. It includes the reader, the paper and its generated data, and opens directly from disk in a browser. It can be sent to another reader without requiring them to install anything.
+This produces `.machinechecked/MachineChecked.html` (or the file `--out` names). It includes the reader, the paper and its generated data, and opens directly from disk in a browser. It can be sent to another reader without requiring them to install anything.
 
 To publish the reader on the web instead, write it as a directory and put that directory on any static host, such as GitHub Pages:
 
@@ -124,7 +124,7 @@ machinechecked check
 
 This fails when a linked declaration is missing or not proved. It does **not** independently judge whether the association matches the mathematics in the paper.
 
-Git ignores `.machinechecked/` by itself (it holds a `.gitignore`, as Lake's `.lake/` does), so a downloaded paper or the generated reader is never committed by accident. `MachineChecked.html`, written by `build`, is yours to keep or ignore; add it to `.gitignore` unless you deliberately want that exact snapshot in your repository. A private paper bundled into HTML remains private content: do not publish it without checking the export.
+Git ignores `.machinechecked/` by itself (it holds a `.gitignore`, as Lake's `.lake/` does), so a downloaded paper, the generated reader and `MachineChecked.html` are never committed by accident. To keep the file elsewhere, say where with `--out`: it embeds the paper, so committing it is a deliberate choice. A private paper bundled into HTML remains private content: do not publish it without checking the export.
 
 ## Build on your own CI, and save the build
 

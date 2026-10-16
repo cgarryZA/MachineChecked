@@ -197,3 +197,20 @@ def test_check_writes_no_site_and_names_the_release_build_writes(plain, tmp_path
     subprocess.run([sys.executable, "-m", "prooflens.cli", "build", "--site", str(out)], cwd=plain,
                    capture_output=True, text=True, check=True)
     assert json.loads((out / "audit.json").read_text())["release"] == release
+
+
+@needs_lean
+@needs_tex
+def test_the_one_file_reader_is_written_where_git_ignores_it(plain):
+    """The file embeds the paper, so by default it goes in the ignored working directory."""
+    if not built_modules(plain, ["Plain"])[0]:
+        pytest.skip("the plain example is not built")
+    subprocess.run(["git", "init", "-q"], cwd=plain, check=True)
+    r = subprocess.run([sys.executable, "-m", "prooflens.cli", "build"], cwd=plain,
+                       capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    assert (plain / ".machinechecked" / "MachineChecked.html").is_file()
+    assert not (plain / "MachineChecked.html").exists()
+    status = subprocess.run(["git", "status", "--porcelain", "--untracked-files=all"], cwd=plain,
+                            capture_output=True, text=True).stdout
+    assert "MachineChecked.html" not in status and ".machinechecked" not in status

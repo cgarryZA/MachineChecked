@@ -8,7 +8,7 @@ description: Audit how a mathematical paper corresponds to its Lean 4 formalisat
 MachineChecked is a command-line tool that runs locally, inside the user's Lean project: it
 reads the paper and the compiled Lean declarations and writes everything on the user's machine
 (`.machinechecked/` for generated data, `machinechecked.links.json` for confirmed links,
-`MachineChecked.html` when asked for). It uploads nothing and needs no account; machinechecked.org
+`.machinechecked/MachineChecked.html` when asked for). It uploads nothing and needs no account; machinechecked.org
 is only where audits can optionally be published. Do not upload, publish or share a paper, its
 Lean or a generated reader unless the user asks; tell them where the files are instead. Review
 drafts made in the reader's Review page live in that browser until exported.
@@ -86,8 +86,8 @@ matches the paper.
   properly, and a report changes no status.
 - **Link a claim to a declaration**: the user does it in `machinechecked view` (Link / Not
   this), or you add a `\lean{Name}` tag to the statement in the LaTeX if the user agrees.
-- **A shareable report**: `machinechecked build` writes `MachineChecked.html` (one file, opens
-  from disk). `machinechecked build --site public/ --author "Name" --issues owner/repo` writes a
+- **A shareable report**: `machinechecked build` writes `.machinechecked/MachineChecked.html`
+  (one file, opens from disk; Git ignores it there, and `--out` puts it elsewhere). `machinechecked build --site public/ --author "Name" --issues owner/repo` writes a
   directory to publish (for example on GitHub Pages) with `audit.json` describing it. Both
   contain the paper and Lean statements: confirm the user may publish them.
 

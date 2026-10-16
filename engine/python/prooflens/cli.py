@@ -264,7 +264,9 @@ def cmd_build_simple(a):
         print(f"wrote the reader to {dest}: publish this directory as it is "
               "(audit.json describes it)")
         return
-    out = Path(a.out or (root / "MachineChecked.html")).resolve()
+    # By default inside the working directory, which Git ignores: the file embeds the paper,
+    # so putting it where it could be committed takes a deliberate --out.
+    out = Path(a.out or (root / cfgmod.work_dir_name(root) / "MachineChecked.html")).resolve()
     res = bundle(site, out, f"MachineChecked — {index['papers'][0]['title']}")
     print(f"wrote {res['out']} ({res['size'] / 1e6:.1f} MB): open it in a browser")
 
@@ -515,7 +517,8 @@ def main(argv=None):
     b.add_argument("--private-repository", action=argparse.BooleanOptionalAction, default=None,
                    help="the Lean repository is private: the reader does not show its name "
                    "(its source links still name it, and open only for people with access)")
-    b.add_argument("--out", help="the HTML file (default: MachineChecked.html at the project root)")
+    b.add_argument("--out", help="the HTML file (default: .machinechecked/MachineChecked.html, "
+                   "which Git ignores; it embeds the paper)")
     b.add_argument("--site", metavar="DIR", help="write the reader as a directory to publish "
                    "(for example on GitHub Pages) instead of one HTML file")
     b.add_argument("-c", "--config", help=argparse.SUPPRESS)
