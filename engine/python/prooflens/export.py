@@ -30,7 +30,6 @@ def _pick(d: dict | None, keys: list[str]) -> dict | None:
     return {k: d[k] for k in keys if k in d}
 
 
-SEG_KEYS = ["text", "segments"]
 DECL_KEYS_LEAN = ["name", "kind", "module", "range", "doc", "signature", "value", "uses",
                   "fingerprint", "legacy_hash"]
 DECL_KEYS_MIN = ["name", "kind", "module", "fingerprint", "legacy_hash"]

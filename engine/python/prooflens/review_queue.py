@@ -18,7 +18,7 @@ import re
 SCHEMA = "prooflens/review-queue@1"
 
 
-def section_of(number: str, location: str | None = None) -> str:
+def section_of(number: str) -> str:
     """The section a claim sits in, from its printed number: `Theorem 3.1`, `(4.2)`, `§8.1.3` and
     `App A.3` give `3`, `4`, `8` and `A`."""
     m = re.search(r"(?:App(?:endix)?\.?\s*|§\s*|\(|\b)([A-Z]|\d+)(?=[.\d)])", number or "")

@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import os
 import shutil
-import subprocess
 from importlib import resources
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -204,10 +203,6 @@ def reusable_lean(cfg: Config) -> dict:
     if prov["probe_sha256"] != probe_digest():
         raise RuntimeError("the probe changed since the stored records; run the probe")
     return lean
-
-
-def work_dir(cfg: Config, paper) -> Path:
-    return cfg.out_dir / "build" / paper.id
 
 
 def manual_anchors(cfg: Config, pid: str) -> dict:

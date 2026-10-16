@@ -174,15 +174,3 @@ def acquire(cfg: Config, paper: Paper, dest: Path) -> Snapshot:
         raise SourceError(f"paper {paper.id}: arXiv sources are not supported yet")
     mode, root, pdf, note = choose(paper, dest)
     return Snapshot(paper.id, dest, kind, rev, mode, root, pdf, note, commit_time)
-
-
-def branch_ahead(cfg: Config, paper: Paper, branch: str) -> int | None:
-    """How many commits `branch` has beyond the pinned revision (informational drift)."""
-    if "git" not in paper.source or not paper.source.get("rev"):
-        return None
-    local = (cfg.root / paper.source["git"]).resolve()
-    if not local.exists():
-        return None
-    r = subprocess.run(["git", "-C", str(local), "rev-list", "--count",
-                        f"{paper.source['rev']}..{branch}"], capture_output=True, text=True)
-    return int(r.stdout.strip()) if r.returncode == 0 else None

@@ -16,7 +16,6 @@ except ImportError:  # Windows has no POSIX resource limits
 import shutil
 import subprocess
 import sys
-import tempfile
 from dataclasses import dataclass, field
 from importlib import resources
 from pathlib import Path

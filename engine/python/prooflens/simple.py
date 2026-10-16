@@ -16,14 +16,12 @@ import hashlib
 import json
 import os
 import re
-import shutil
 from importlib import resources
 from pathlib import Path
 
-from . import evidence as ev
 from .config import STANDARD_AXIOMS, Config, Paper, Publish
 from .probe import ProbeError, by_library, fingerprint, lean_session, lib_names
-from .sources import SourceError, acquire
+from .sources import acquire
 from .tex import DEFAULT_ENVS, TexError, anchors_for, theorem_envs
 from . import formalization as fz
 from .util import content_id, git_head, prepare_work_dir, read_json, sha256_file, write_json
