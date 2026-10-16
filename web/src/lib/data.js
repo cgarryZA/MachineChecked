@@ -26,6 +26,28 @@ function auditBase() {
 
 export const AUDIT = auditBase();
 
+// A paper page of machinechecked.org gives its paper in the page (`window.__MACHINECHECKED_PAPER__`,
+// a registry entry: the paper, its links, the Lean repositories that formalise it and their
+// audits). The reader then shows the paper with what is known about its formalisations, and no
+// claims: claims come only from an audit.
+export const PAPER = typeof window !== "undefined" && window.__MACHINECHECKED_PAPER__ &&
+  typeof window.__MACHINECHECKED_PAPER__ === "object" && !Array.isArray(window.__MACHINECHECKED_PAPER__)
+  ? window.__MACHINECHECKED_PAPER__ : null;
+
+const https = (u) => typeof u === "string" && /^https:\/\/[^\s"'<>]+$/.test(u);
+
+function paperIndex(p) {
+  const links = p.links || {};
+  const arxivPdf = https(links.arxiv) ? links.arxiv.replace("/abs/", "/pdf/") : null;
+  const pdf = [links.pdf, arxivPdf].find(https) || null;
+  return {
+    mode: "paper", schema: "machinechecked/paper@1", release: "paper", evidence: "",
+    project: {}, papers: [{ id: "P", title: String(p.title || ""), pdf: null, pdf_url: pdf }],
+    claims: [], summary: {}, classes: {}, findings: { total: {}, general: [] }, gates: {},
+    notes: [], paper: p,
+  };
+}
+
 // The address of one of the site's files: under the audit's directory when one is being read.
 export function resolve(path) {
   if (!AUDIT?.href) return path;
@@ -70,6 +92,7 @@ export async function loadIndex() {
 }
 
 async function loadIndexData() {
+  if (PAPER && !AUDIT) return paperIndex(PAPER);
   if (!AUDIT) return getJson("data/index.json");
   if (AUDIT.error) throw new Error(AUDIT.error);
   const d = await getJson("audit.json");
@@ -83,7 +106,7 @@ async function loadIndexData() {
 
 // Whether the page is served by `prooflens view`, which can save links into the repository.
 export async function canEdit() {
-  if (window.__PROOFLENS__ || AUDIT) return false;
+  if (window.__PROOFLENS__ || AUDIT || PAPER) return false;
   try {
     const r = await fetch("api/status");
     return r.ok && (await r.json()).editable === true;

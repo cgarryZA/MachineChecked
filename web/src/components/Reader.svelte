@@ -3,6 +3,7 @@
   import { href, go } from "../lib/route.svelte.js";
   import PdfView from "./PdfView.svelte";
   import Passport from "./Passport.svelte";
+  import PaperInfo from "./PaperInfo.svelte";
 
   // The paper, a contents list of its claims, and the claim chosen.
   let { index, paperId, claimId, editable = false } = $props();
@@ -14,7 +15,10 @@
     [...claims].filter(inScope).sort((a, b) =>
       (a.anchor ? 0 : 1) - (b.anchor ? 0 : 1) || (a.anchor?.page ?? 0) - (b.anchor?.page ?? 0) || (a.anchor?.y0 ?? 0) - (b.anchor?.y0 ?? 0)),
   );
-  let showContents = $state(typeof window !== "undefined" && window.innerWidth > 1180);
+  const paperMode = $derived(index.mode === "paper");
+  let showContents = $state(typeof window !== "undefined" && window.innerWidth > 1180 && index.mode !== "paper");
+  // On a narrow screen the paper page's formalisation panel opens on request.
+  let showInfo = $state(typeof window !== "undefined" && window.innerWidth > 1180);
   let showAllClaims = $state(false);
   // A numbered statement ("Theorem 3.1") as against an equation, a part or a prose claim.
   const isEnv = (c) => /^[A-Z][a-z]+ [A-Z]?[0-9][0-9.]*[a-z]?$/.test(c.number || "");
@@ -28,8 +32,10 @@
 {#if !paper}
   <main class="msg"><p>No paper <code>{paperId}</code> here.</p></main>
 {:else}
-  <div class="reader" class:open={!!claimId} class:contents={showContents}>
-    {#if showContents}
+  <div class="reader" class:open={!!claimId || (paperMode && showInfo)} class:contents={showContents} class:paper={paperMode}>
+    {#if paperMode}
+      {#if !showInfo}<button class="info-open" onclick={() => (showInfo = true)}>Formalisations ›</button>{/if}
+    {:else if showContents}
       <nav class="toc" aria-label="Claims of the paper">
         <div class="toc-head">
           <span>Contents</span>
@@ -57,13 +63,21 @@
       <button class="toc-open" onclick={() => (showContents = true)} aria-label="Show contents">Contents ›</button>
     {/if}
     <section class="paperpane" aria-label="Paper">
-      {#if paper.pdf}
-        <PdfView url={"data/" + paper.pdf} {claims} selected={claimId} onselect={select} />
+      {#if paper.pdf_url || paper.pdf}
+        <PdfView url={paper.pdf_url || "data/" + paper.pdf} {claims} selected={claimId} onselect={select} />
       {:else}
         <div class="msg"><p>The PDF of this paper is not part of this site; choose a claim from the contents.</p></div>
       {/if}
     </section>
-    {#if claimId}
+    {#if paperMode && showInfo && !claimId}
+      <aside class="side" aria-label="Formalisations of this paper">
+        <div class="side-head">
+          <span class="muted">About this paper</span>
+          <button class="x" onclick={() => (showInfo = false)} aria-label="Close">×</button>
+        </div>
+        <PaperInfo paper={index.paper} />
+      </aside>
+    {:else if claimId}
       <aside class="side" aria-label="The claim">
         <div class="side-head">
           <a href={href(index.release, "claim", claimId)}>Open as a page</a>
@@ -80,6 +94,7 @@
   .reader.contents { grid-template-columns: 260px minmax(0, 1fr); }
   .reader.open { grid-template-columns: minmax(0, 1.1fr) minmax(380px, 0.9fr); }
   .reader.contents.open { grid-template-columns: 260px minmax(0, 1.1fr) minmax(380px, 0.9fr); }
+  .reader.paper.open { grid-template-columns: minmax(0, 1fr) minmax(320px, 380px); }
   .toc { overflow: auto; border-right: 1px solid var(--border); background: var(--surface); }
   .toc-head { position: sticky; top: 0; display: flex; justify-content: space-between; align-items: center; padding: 10px 12px; background: var(--surface); font-weight: 600; font-size: 13px; color: var(--muted); border-bottom: 1px solid var(--border); }
   .toc ol { list-style: none; margin: 0; padding: 4px; }
@@ -91,6 +106,7 @@
   .t { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .na { color: var(--faint); margin-left: auto; }
   .more { margin: 4px 12px 16px; border: 0; background: none; color: var(--accent); cursor: pointer; font-size: 13px; padding: 0; }
+  .info-open { position: absolute; right: 12px; bottom: 16px; z-index: 5; border: 1px solid var(--accent); background: var(--surface); color: var(--accent); border-radius: 18px; padding: 8px 16px; cursor: pointer; font-size: 14px; box-shadow: 0 4px 14px rgb(0 0 0 / 0.12); }
   .toc-open { position: absolute; left: 8px; top: 8px; z-index: 5; border: 1px solid var(--border); background: var(--surface); border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 13px; }
   .paperpane { overflow: auto; background: var(--surface-2); }
   .side { overflow: auto; border-left: 1px solid var(--border); background: var(--bg); padding: 0 20px 60px; }

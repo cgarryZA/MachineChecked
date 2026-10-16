@@ -26,7 +26,7 @@
   <main class="state"><p class="muted">Loading…</p></main>
 {:else}
   <header class="top">
-    <a class="brand" href={href(index.release, "read", firstPaper)} title="MachineChecked">
+    <a class="brand" href={index.mode === "paper" ? "/" : href(index.release, "read", firstPaper)} title="MachineChecked">
       <svg viewBox="0 0 32 32" width="20" height="20" aria-hidden="true"
         ><circle cx="13" cy="13" r="9" fill="none" stroke="currentColor" stroke-width="3" /><path
           d="M20 20l8 8" stroke="currentColor" stroke-width="3" stroke-linecap="round" /></svg
@@ -41,11 +41,15 @@
     {:else if paper}
       <span class="ptitle" title={paper.title}>{paper.title}</span>
     {/if}
+    {#if index.mode === "paper"}
+      <a class="aux" href="/papers/">Papers</a>
+    {:else}
     <Search {index} />
     {#if index.review_queue}
       <a class="aux" class:on={route.view === "review"} href={href(index.release, "review")}>Review</a>
     {/if}
     <a class="aux" class:on={route.view === "coverage"} href={href(index.release, "coverage")}>Overview</a>
+    {/if}
   </header>
 
   {#if AUDIT && auditInfo}
