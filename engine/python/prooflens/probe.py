@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import tempfile
+import tomllib
 from importlib import resources
 from pathlib import Path
 
@@ -54,32 +56,127 @@ def fingerprint(canon: str) -> str:
     return f"{FINGERPRINT_VERSION}:{sha256_text(canon)}"
 
 
+def lib_names(root: Path) -> list[str]:
+    """The `lean_lib` names of the project's lakefile."""
+    names = []
+    t = root / "lakefile.toml"
+    if t.exists():
+        cfg = tomllib.loads(t.read_text(encoding="utf-8"))
+        names = [lib["name"] for lib in cfg.get("lean_lib", [])]
+        if not names and cfg.get("name"):
+            names = [str(cfg["name"]).capitalize()]
+    l = root / "lakefile.lean"
+    if l.exists():
+        names += re.findall(r"^\s*lean_lib\s+«?([\w.]+)»?", l.read_text(encoding="utf-8"), re.M)
+    return list(dict.fromkeys(names))
+
+
+def library_of(module: str, libs: list[str]) -> str:
+    """The library a module belongs to: the one whose root is its first component."""
+    first = module.split(".")[0]
+    return next((l for l in libs if l.split(".")[0] == first), first)
+
+
+def by_library(modules: list[str], libs: list[str]) -> list[tuple[str, list[str]]]:
+    """The modules grouped by library, each group in the order given. Each group is probed in
+    its own Lean session: two libraries may declare the same name (a statement left as a
+    challenge and its solution), and Lean can load both and silently keep one."""
+    groups: dict[str, list[str]] = {}
+    for m in modules:
+        groups.setdefault(library_of(m, libs), []).append(m)
+    return sorted(groups.items())
+
+
+def lean_session(root: Path, modules: list[str], query: dict, read, lake: str = "lake",
+                 timeout: int = 3600, work: Path | None = None):
+    """Run the probe in one Lean session importing `modules`, in the project at `root` with its
+    own toolchain, and return `read(lines)` of its output, read as it is iterated (the output
+    can be gigabytes). The output file is written in `work` when given (rather than a system
+    temporary folder, which may be in memory). Raises ProbeError if the session fails."""
+    body = resources.files("prooflens").joinpath("data/ProofLensProbe.lean").read_text()
+    header = "import Lean\n" + "".join(f"import {m}\n" for m in modules) + "\n"
+    if work is not None:
+        work.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="prooflens-probe-", dir=work) as tmp:
+        tmp = Path(tmp)
+        (tmp / "Probe.lean").write_text(header + body)
+        (tmp / "query.json").write_text(json.dumps(query))
+        env = dict(os.environ, PROOFLENS_QUERY=str(tmp / "query.json"),
+                   PROOFLENS_OUT=str(tmp / "out.jsonl"))
+        r = run([lake, "env", "lean", str(tmp / "Probe.lean")], cwd=root, env=env,
+                timeout=timeout)
+        out = tmp / "out.jsonl"
+        if r.returncode != 0 or not out.exists():
+            raise ProbeError(f"the Lean probe failed ({r.returncode}):\n{r.stdout[-3000:]}\n"
+                             f"{r.stderr[-3000:]}")
+        with out.open(encoding="utf-8") as f:
+            return read(line for line in f if line.strip())
+
+
 def run_probe(cfg: Config, requests: list[dict], lake: str = "lake",
               timeout: int = 3600, build: bool = True) -> dict:
-    """Build the project's modules (unless `build` is false), run the probe, and return its
-    records grouped by kind, with every canonical serialisation replaced by its SHA-256
-    fingerprint."""
+    """Build the project's modules (unless `build` is false), run the probe on them, one Lean
+    session per library, and return its records grouped by kind, with every canonical
+    serialisation replaced by its SHA-256 fingerprint. When the modules are in one library this
+    is a single session importing them in the order configured."""
     if build:
         r = run([lake, "build", *cfg.modules], cwd=cfg.lean_root, timeout=timeout)
         if r.returncode != 0:
             raise ProbeError(f"lake build failed:\n{r.stdout[-4000:]}\n{r.stderr[-4000:]}")
-    body = resources.files("prooflens").joinpath("data/ProofLensProbe.lean").read_text()
-    header = "import Lean\n" + "".join(f"import {m}\n" for m in cfg.modules) + "\n"
-    with tempfile.TemporaryDirectory(prefix="prooflens-probe-") as tmp:
-        tmp = Path(tmp)
-        (tmp / "Probe.lean").write_text(header + body)
-        (tmp / "query.json").write_text(json.dumps({
-            "scope_roots": cfg.scope_roots, "spec_prefix": cfg.spec_prefix,
-            "accept_prefix": cfg.accept_prefix, "allowed_axioms": cfg.allowed_axioms,
-            "requests": requests}))
-        env = dict(os.environ, PROOFLENS_QUERY=str(tmp / "query.json"),
-                   PROOFLENS_OUT=str(tmp / "out.jsonl"))
-        r = run([lake, "env", "lean", str(tmp / "Probe.lean")], cwd=cfg.lean_root, env=env,
-                timeout=timeout)
-        out = tmp / "out.jsonl"
-        if r.returncode != 0 or not out.exists():
-            raise ProbeError(f"probe failed ({r.returncode}):\n{r.stdout[-4000:]}\n{r.stderr[-4000:]}")
-        return parse_records(out.read_text(encoding="utf-8").splitlines())
+    query = {"scope_roots": cfg.scope_roots, "spec_prefix": cfg.spec_prefix,
+             "accept_prefix": cfg.accept_prefix, "allowed_axioms": cfg.allowed_axioms,
+             "requests": requests}
+    groups = by_library(cfg.modules, lib_names(cfg.lean_root))
+    work = cfg.out_dir / "build"
+    if len(groups) == 1:
+        return lean_session(cfg.lean_root, cfg.modules, query, parse_records, lake, timeout, work)
+    parts = []
+    for lib, mods in groups:
+        try:
+            parts.append((lib, lean_session(cfg.lean_root, mods, query, parse_records, lake,
+                                            timeout, work)))
+        except ProbeError as e:
+            raise ProbeError(f"library {lib} ({', '.join(mods)}): {e}") from None
+    return merge_records(parts)
+
+
+def _module(rec: dict) -> str | None:
+    return rec.get("module") or (rec.get("decl") or {}).get("module")
+
+
+def _pick(found: list[tuple[str, dict]], missing: dict) -> dict:
+    """One request's record from several sessions: the one that found it; if sessions found
+    different declarations under the name, the name is ambiguous (an error, never a choice)."""
+    if not found:
+        return missing
+    distinct = {(_module(r), r.get("fingerprint") or r.get("legacy_hash")) for _, r in found}
+    if len(distinct) == 1:
+        return found[0][1]
+    rec = dict(found[0][1])
+    mods = ", ".join(sorted(f"{lib}: {_module(r)}" for lib, r in found))
+    rec["errors"] = list(rec.get("errors", [])) + [f"ambiguous: declared in {mods}"]
+    return rec
+
+
+def merge_records(parts: list[tuple[str, dict]]) -> dict:
+    """The records of several sessions (one per library) as one result."""
+    res = {"env": parts[0][1]["env"], "layering": [], "specs": {}, "proofs": {}, "decls": {},
+           "defs": {}, "complete": all(r["complete"] for _, r in parts)}
+    seen = set()
+    for _, r in parts:
+        for v in r["layering"]:
+            key = json.dumps(v, sort_keys=True)
+            if key not in seen:
+                seen.add(key)
+                res["layering"].append(v)
+        for name, d in r["decls"].items():
+            res["decls"].setdefault(name, d)
+    for key in ("specs", "proofs", "defs"):
+        for k in dict.fromkeys(k for _, r in parts for k in r[key]):
+            recs = [(lib, r[key][k]) for lib, r in parts if k in r[key]]
+            found = [(lib, x) for lib, x in recs if "missing" not in x.get("errors", [])]
+            res[key][k] = _pick(found, recs[0][1])
+    return res
 
 
 def _strip_decl(rec: dict) -> dict:
@@ -89,7 +186,7 @@ def _strip_decl(rec: dict) -> dict:
     return rec
 
 
-def parse_records(lines: list[str]) -> dict:
+def parse_records(lines) -> dict:
     res = {"env": None, "layering": [], "specs": {}, "proofs": {}, "decls": {}, "defs": {},
            "complete": False}
     for line in lines:

@@ -117,3 +117,22 @@ def test_lean_loads_only_what_it_must(twins, tmp_path, monkeypatch):
     target = [mods for mods, _, names in sessions if "Twin.target" in names]
     assert sorted(target) == [["Challenge.Main"], ["Solution.Main"]]
     assert not any("Later.result" in names for *_, names in sessions)
+
+
+@needs_lean
+def test_the_full_assessment_probes_each_library_apart(twins, tmp_path):
+    """The full assessment's probe (`probe.run_probe`) runs one session per library too: the
+    challenge and the solution are never loaded together, a name both declare differently is
+    reported ambiguous (an error, never a choice), and a name both see alike is one record."""
+    import dataclasses
+    from prooflens.probe import run_probe
+    from prooflens.simple import view_config
+    cfg = dataclasses.replace(view_config(twins, twins / "paper.tex", tmp_path, ["Challenge", "Solution"]),
+                              modules=["Challenge.Main", "Solution.Main"])
+    res = run_probe(cfg, [{"kind": "witness", "name": "Twin.target"},
+                          {"kind": "witness", "name": "Nat.add_comm"}], build=False)
+    assert res["complete"]
+    twin = res["proofs"]["witness:Twin.target:"]
+    assert any(e.startswith("ambiguous: declared in") and "Challenge.Main" in e
+               and "Solution.Main" in e for e in twin["errors"])
+    assert not any(e.startswith("ambiguous") for e in res["proofs"]["witness:Nat.add_comm:"]["errors"])

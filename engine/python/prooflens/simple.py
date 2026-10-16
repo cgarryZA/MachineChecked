@@ -17,15 +17,12 @@ import json
 import os
 import re
 import shutil
-import subprocess
-import tempfile
-import tomllib
 from importlib import resources
 from pathlib import Path
 
 from . import evidence as ev
 from .config import STANDARD_AXIOMS, Config, Paper, Publish
-from .probe import fingerprint
+from .probe import ProbeError, by_library, fingerprint, lean_session, lib_names
 from .sources import SourceError, acquire
 from .tex import DEFAULT_ENVS, TexError, anchors_for, theorem_envs
 from . import formalization as fz
@@ -50,21 +47,6 @@ def find_lake_root(start: Path) -> Path | None:
         if (d / "lakefile.toml").exists() or (d / "lakefile.lean").exists():
             return d
     return None
-
-
-def lib_names(root: Path) -> list[str]:
-    """The `lean_lib` names of the project's lakefile."""
-    names = []
-    t = root / "lakefile.toml"
-    if t.exists():
-        cfg = tomllib.loads(t.read_text(encoding="utf-8"))
-        names = [lib["name"] for lib in cfg.get("lean_lib", [])]
-        if not names and cfg.get("name"):
-            names = [str(cfg["name"]).capitalize()]
-    l = root / "lakefile.lean"
-    if l.exists():
-        names += re.findall(r"^\s*lean_lib\s+«?([\w.]+)»?", l.read_text(encoding="utf-8"), re.M)
-    return list(dict.fromkeys(names))
 
 
 def built_modules(root: Path, libs: list[str]) -> tuple[list[str], list[str]]:
@@ -297,34 +279,15 @@ def _record(line: str) -> dict:
 def run_simple_probe(root: Path, modules: list[str], libs: list[str], requests: list[dict],
                      lake: str = "lake", timeout: int = 3600,
                      work: Path | None = None) -> list[dict]:
-    """Run the Lean probe on `modules` in one session. Its output is read one record at a time
-    (it can be gigabytes for a large project) from a file in `work` (the working directory's
-    build folder, rather than a system temporary folder that may be in memory)."""
-    body = resources.files("prooflens").joinpath("data/ProofLensProbe.lean").read_text()
-    header = "import Lean\n" + "".join(f"import {m}\n" for m in modules) + "\n"
-    if work is not None:
-        work.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="prooflens-view-", dir=work) as tmp:
-        tmp = Path(tmp)
-        (tmp / "Probe.lean").write_text(header + body)
-        (tmp / "query.json").write_text(json.dumps({
-            "scope_roots": [l.split(".")[0] for l in libs], "spec_prefix": "",
-            "accept_prefix": "", "allowed_axioms": STANDARD_AXIOMS, "requests": requests}))
-        env = dict(os.environ, PROOFLENS_QUERY=str(tmp / "query.json"),
-                   PROOFLENS_OUT=str(tmp / "out.jsonl"))
-        r = subprocess.run([lake, "env", "lean", str(tmp / "Probe.lean")], cwd=root, env=env,
-                           capture_output=True, text=True, timeout=timeout)
-        out = tmp / "out.jsonl"
-        if r.returncode != 0 or not out.exists():
-            raise ViewError(f"the Lean probe failed:\n{r.stdout[-3000:]}\n{r.stderr[-3000:]}")
-        with out.open(encoding="utf-8") as f:
-            return [_record(l) for l in f if l.strip()]
-
-
-def library_of(module: str, libs: list[str]) -> str:
-    """The library a module belongs to: the one whose root is its first component."""
-    first = module.split(".")[0]
-    return next((l for l in libs if l.split(".")[0] == first), first)
+    """Run the Lean probe on `modules` in one session (`probe.lean_session`), keeping each
+    record as `_record` trims it."""
+    query = {"scope_roots": [l.split(".")[0] for l in libs], "spec_prefix": "",
+             "accept_prefix": "", "allowed_axioms": STANDARD_AXIOMS, "requests": requests}
+    try:
+        return lean_session(root, modules, query, lambda lines: [_record(l) for l in lines],
+                            lake, timeout, work)
+    except ProbeError as e:
+        raise ViewError(str(e)) from None
 
 
 def probe_modules(root: Path, modules: list[str], libs: list[str], requests: list[dict],
@@ -356,10 +319,7 @@ def probe_modules(root: Path, modules: list[str], libs: list[str], requests: lis
             r["probe_group"] = label
         recs.extend(out)
 
-    by_lib: dict[str, list[str]] = {}
-    for m in sorted(modules):
-        by_lib.setdefault(library_of(m, libs), []).append(m)
-    for lib, ms in sorted(by_lib.items()):
+    for lib, ms in by_library(sorted(modules), libs):
         run(ms, lib)
     return recs, failed
 

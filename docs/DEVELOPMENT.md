@@ -45,6 +45,7 @@ acquire (credentials, no execution) -> extract and verify (sandboxed, no credent
 
 - **Hashes.** A legacy 128-bit structural hash is kept (`legacy_hash`) so that existing review markers keep matching; a versioned SHA-256 fingerprint (`pl-fp-v1`) of a canonical serialisation is computed beside it. Both detect structural change; neither shows that two expressions are mathematically equivalent.
 - **Findings come in three tiers.** A `violation` is a mechanical contradiction and can fail CI; a `warning` is a heuristic and can be dismissed with a rationale bound to a fingerprint; an `obligation` needs a reviewer's judgement.
+- **Lean sessions.** Both modes run the probe through `probe.lean_session`, one Lean session per library (`probe.by_library`): two libraries may declare the same name, and Lean can load both and silently keep one. A name two sessions find as different declarations is reported ambiguous, an error, never a choice. Modules of one library are one session, importing them in the order configured.
 - **Kernel checking.** Comparator is the high-assurance replay; a build-cache hit or a text log is not a replay record.
 - **Build cache** (`scripts/lean_cache.py`): a restore at a different path rebuilds no module, a one-file change rebuilds exactly its dependants, and corrupt or mismatched archives are refused.
 

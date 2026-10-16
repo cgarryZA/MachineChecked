@@ -404,6 +404,11 @@ def linkRecord (h : IO.FS.Handle) (q : Query) (roots : Array Name) (seen : IO.Re
 
 /-- Every module of the specification layer that imports a module of the acceptance layer. -/
 def layering (h : IO.FS.Handle) (q : Query) : CoreM Unit := do
+  -- Without both layers named (the zero-configuration view) there is no layering to check;
+  -- every module would otherwise count as both layers and every import as a violation.
+  if q.spec_prefix.isEmpty || q.accept_prefix.isEmpty then
+    emit h (Json.mkObj [("record", "layering"), ("violations", Json.arr #[])])
+    return
   let env ← getEnv
   let names := env.header.moduleNames
   let mut violations : Array Json := #[]
