@@ -31,10 +31,10 @@ them). You do not need Node.
 2. From anywhere inside the project:
 
    ```sh
-   uvx --from git+https://github.com/cgarryZA/ProofLens machinechecked view
+   uvx --from git+https://github.com/cgarryZA/MachineChecked machinechecked view
    ```
 
-   (or `pip install git+https://github.com/cgarryZA/ProofLens`, then `machinechecked view`;
+   (or `pip install git+https://github.com/cgarryZA/MachineChecked`, then `machinechecked view`;
 `prooflens` is the same command under its earlier name). It finds
    the paper (a `.tex` with `\documentclass`, else a PDF; if there are several it asks, or pass
    the path: `machinechecked view paper/main.tex`), compiles it, and opens the reader in your browser.
