@@ -1,7 +1,7 @@
 <script>
   import { loadQueue, loadClaim } from "../lib/data.js";
   import { href } from "../lib/route.svelte.js";
-  import { VERDICTS, GROUPS, loadWork, saveWork, now, reviewerId, needsDetail, buildReport,
+  import { VERDICTS, GROUPS, CHECKLIST, MARKS, loadWork, saveWork, now, reviewerId, needsDetail, buildReport,
            exportFile } from "../lib/review.js";
   import PdfCrop from "./PdfCrop.svelte";
   import Tex from "./Tex.svelte";
@@ -252,6 +252,20 @@
 
           {#if draft.stage === "compare"}
             <h3>Comparison</h3>
+            <ul class="checklist" aria-label="What to compare">
+              {#each CHECKLIST[current.kind === "def" ? "def" : "statement"] as it (it.key)}
+                <li>
+                  <span class="ck-label">{it.label}<span class="faint small">&nbsp;— {it.hint}</span></span>
+                  <span class="ck-marks">
+                    {#each MARKS as m}
+                      <button class="mark" class:on={draft.checklist?.[it.key] === m.value} class:differs={m.value === "differs"}
+                        onclick={() => { draft.checklist = { ...(draft.checklist || {}), [it.key]: draft.checklist?.[it.key] === m.value ? undefined : m.value }; persist(); }}>{m.label}</button>
+                    {/each}
+                  </span>
+                </li>
+              {/each}
+            </ul>
+            <p class="faint small">A guide: mark each item if it helps, and write what you found below.</p>
             <textarea rows="6" bind:value={draft.comparison} oninput={persist} placeholder="Item by item against your reading: each hypothesis, each quantifier and its order, the conclusion, representation choices, constants."></textarea>
             {#if current.kind === "spec" && current.witness}
               <textarea rows="3" bind:value={draft.witness} oninput={persist} placeholder="The witness: does it meet the hypotheses at an instance the paper intends, and is that instance non-trivial?"></textarea>
@@ -330,4 +344,10 @@
   .closure summary { cursor: pointer; font-size: 13px; color: var(--accent); margin: 8px 0; }
   .bad { color: var(--st-malformed); }
   @media (max-width: 640px) { .who { margin-left: 0; } }
+  .checklist { list-style: none; padding: 0; margin: 6px 0; }
+  .checklist li { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; padding: 4px 0; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+  .ck-marks { display: flex; gap: 4px; flex: none; }
+  .mark { font: inherit; font-size: 12px; padding: 1px 8px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface); color: var(--muted); cursor: pointer; }
+  .mark.on { border-color: var(--accent); color: var(--accent); background: var(--accent-soft, transparent); }
+  .mark.differs.on { border-color: var(--st-open, #b7791f); color: var(--st-open, #b7791f); }
 </style>

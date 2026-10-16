@@ -58,3 +58,14 @@ export function issueUrl(index, claim) {
   const q = new URLSearchParams({ title, body: lines.join("\n") });
   return `https://github.com/${index.issues}/issues/new?${q.toString()}`;
 }
+
+// The declaration's source on GitHub, at the commit the evidence is for, when the project's
+// repository is known and the file is the project's own.
+export function sourceUrl(index, path, line) {
+  const repo = index.project?.repository;
+  const commit = index.project?.commit;
+  if (!repo || !/^[\w.-]+\/[\w.-]+$/.test(repo) || !/^[0-9a-f]{7,40}$/.test(commit || "")) return null;
+  if (!path || !/^[\w.'/-]+\.lean$/.test(path) || path.split("/").includes("..")) return null;
+  const n = Number.isInteger(line) && line > 0 ? `#L${line}` : "";
+  return `https://github.com/${repo}/blob/${commit}/${path.split("/").map(encodeURIComponent).join("/")}${n}`;
+}

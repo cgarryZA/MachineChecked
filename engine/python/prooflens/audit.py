@@ -11,6 +11,7 @@ The descriptor records what its author states; it is not evidence of anything by
 from __future__ import annotations
 
 import datetime as _dt
+import functools
 import re
 import subprocess
 from pathlib import Path
@@ -69,3 +70,28 @@ def descriptor(index: dict, lean_root: Path | None, author: str | None = None,
         "issues": index.get("issues"),
         "site_url": index.get("site_url"),
     }
+
+
+@functools.lru_cache(maxsize=None)
+def source_root(lean_root: Path) -> tuple[Path, str] | None:
+    """The Git work tree holding the Lean project, and the project's path inside it (`""` at
+    its root, else `"sub/dir/"`)."""
+    r = subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=lean_root,
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        return None
+    top = Path(r.stdout.strip()).resolve()
+    rel = lean_root.resolve().relative_to(top).as_posix()
+    return top, ("" if rel == "." else rel + "/")
+
+
+def source_path(lean_root: Path, module: str | None) -> str | None:
+    """The path of a module's file in the project's Git repository, if the file is in the
+    project rather than in a dependency."""
+    if not module or not re.fullmatch(r"[\w.']+", module):
+        return None
+    sr = source_root(lean_root)
+    rel = module.replace(".", "/") + ".lean"
+    if sr is None or not (lean_root / rel).is_file():
+        return None
+    return sr[1] + rel

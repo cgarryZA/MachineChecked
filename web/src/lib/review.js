@@ -31,6 +31,30 @@ export const VERDICTS = {
   ],
 };
 
+// What to compare, item by item. The checklist guides the comparison and is kept in the report;
+// the verdict and the written comparison remain what a maintainer reads.
+export const CHECKLIST = {
+  statement: [
+    { key: "setting", label: "Setting and objects", hint: "the spaces, structures and standing assumptions" },
+    { key: "hypotheses", label: "Each hypothesis", hint: "none missing, none added, none weakened or strengthened" },
+    { key: "quantifiers", label: "Quantifiers and their order", hint: "for all / there is, and which comes first" },
+    { key: "definitions", label: "Definitions it relies on", hint: "the Lean definitions mean what the paper's words mean" },
+    { key: "conclusion", label: "The conclusion", hint: "the same claim, not a weaker or a different one" },
+    { key: "constants", label: "Constants", hint: "what each constant may depend on" },
+    { key: "assumed", label: "Assumed results and axioms", hint: "nothing taken as a hypothesis that the paper proves" },
+  ],
+  def: [
+    { key: "object", label: "The object", hint: "it is the paper's object, built from the same parts" },
+    { key: "parameters", label: "Its parameters", hint: "the same inputs, with the same types and conditions" },
+    { key: "conventions", label: "Conventions and edge cases", hint: "junk values, truncated subtraction, division by zero" },
+  ],
+};
+export const MARKS = [
+  { value: "matches", label: "matches" },
+  { value: "differs", label: "differs" },
+  { value: "unsure", label: "unsure" },
+];
+
 export const GROUPS = [
   { key: "matches", label: "Matches the paper" },
   { key: "problem", label: "There's a problem" },
@@ -115,7 +139,7 @@ export function buildReport({ index, unit, draft, reviewer }) {
     },
     reading: { text: draft.reading, locked_at: draft.locked_at },
     comparison: { text: draft.comparison || "", witness: draft.witness || "",
-                  decided_at: draft.decided_at },
+                  checklist: draft.checklist || {}, decided_at: draft.decided_at },
     verdict: { group: draft.group, value: verdict, detail: draft.detail || "" },
     author_review: { shown_at: draft.author_shown_at, disagreements: draft.disagreements || "none" },
     submitted_at: now(),

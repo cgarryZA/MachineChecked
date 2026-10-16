@@ -1,5 +1,5 @@
 <script>
-  import { claimLink, claimReference, issueUrl } from "../lib/issue.js";
+  import { claimLink, claimReference, issueUrl, sourceUrl } from "../lib/issue.js";
   import TexInline from "./TexInline.svelte";
   import { loadClaim, saveLink } from "../lib/data.js";
   import { href } from "../lib/route.svelte.js";
@@ -47,6 +47,26 @@
       saveError = String(e.message || e);
       busy = null;
     }
+  }
+
+  // What a correcting clause changes, read off the two Lean statements as they are shown: the
+  // hypotheses one has and the other lacks, and whether the conclusion is the same text. It
+  // describes the statements; it is not a judgement of either.
+  function changes(cl) {
+    if (!cl.corrects || !cl.statement) return null;
+    const orig = claim.clauses.find((c) => c.name === cl.corrects);
+    if (!orig?.statement) return null;
+    const text = (pp) => (typeof pp === "string" ? pp : pp?.text ?? (pp?.segments || []).map((s) => s.t).join(""));
+    const hyps = (st) => (st.binders || []).filter((b) => b.role === "hypothesis").map((b) => text(b.type));
+    const vars = (st) => (st.binders || []).filter((b) => b.role !== "hypothesis").map((b) => b.role + " " + b.name + " : " + text(b.type));
+    const a = hyps(orig.statement), b = hyps(cl.statement);
+    const added = b.filter((h) => !a.includes(h)), dropped = a.filter((h) => !b.includes(h));
+    const va = vars(orig.statement), vb = vars(cl.statement);
+    return {
+      label: orig.label || orig.name, added, dropped,
+      varsSame: va.length === vb.length && va.every((v, i) => v === vb[i]),
+      conclusionSame: text(orig.statement.conclusion) === text(cl.statement.conclusion),
+    };
   }
 
   // One line on what the Lean side of a clause establishes, in words.
@@ -103,6 +123,9 @@
       <StatusChip status={claim.status} cls={claim.class} />
       <div class="actions">
         <button class="act" onclick={copyLink} title={claimLink(index, claim) || "No public address: copies the claim's reference"}>{copied || "Copy link"}</button>
+        {#if index.review_queue && claim.scope !== "out-of-scope" && !String(claim.status).startsWith("out of scope")}
+          <a class="act" href={href(index.release, "review")} title="Compare the paper's statement with the Lean, one unit at a time, and record what you find">Review it</a>
+        {/if}
         {#if issueUrl(index, claim)}
           <a class="act" href={issueUrl(index, claim)} target="_blank" rel="noopener" title={"Opens a draft issue in " + index.issues + " with this claim's details filled in"}>Raise issue ↗</a>
         {/if}
@@ -124,7 +147,8 @@
       {#if simple}
         {#each claim.links as l (l.name)}
           <div class="card">
-            <p class="decl"><code>{l.name}</code>{#if l.module}<span class="faint"> · {l.module}{l.range ? ":" + l.range.line : ""}</span>{/if}</p>
+            <p class="decl"><code>{l.name}</code>{#if l.module}<span class="faint"> · {l.module}{l.range ? ":" + l.range.line : ""}</span>{/if}
+              {#if sourceUrl(index, l.path, l.range?.line)}<a class="src-link small" href={sourceUrl(index, l.path, l.range?.line)} target="_blank" rel="noopener">Lean source ↗</a>{/if}</p>
             <p class="faint small src">{l.source === "paper" ? "Linked by a \\lean{…} tag in the paper's source" : l.source === "formalization.yaml" ? "Declared in the project's formalization.yaml" + (index.formalization?.review_status ? ` (the project describes its review as “${index.formalization.review_status}”)` : "") : "Linked in the reader (machinechecked.links.json)"}</p>
             <p class="verdict top">{linkVerdict(l)}</p>
             {#if l.statement}<Statement st={l.statement} onref={showDecl} compact />{/if}
@@ -161,8 +185,20 @@
       {:else}
         {#each claim.clauses as cl, k (k)}
           <div class="card" class:refuted={cl.state === "refuted"}>
-            {#if claim.clauses.length > 1}<p class="cname"><TexInline text={cl.label || cl.name} />{#if cl.corrects}<span class="faint"> — corrects “<TexInline text={cl.corrects_label || cl.corrects} />”</span>{/if}</p>{/if}
+            {#if claim.clauses.length > 1}<p class="cname"><TexInline text={cl.label || cl.name} />{#if cl.corrects}<span class="faint">&nbsp;— corrects “<TexInline text={cl.corrects_label || cl.corrects} />”</span>{/if}</p>{/if}
             <p class="verdict top">{verdict(cl)}</p>
+            {#if changes(cl)}
+              {@const d = changes(cl)}
+              <div class="changes">
+                <p class="small"><strong>Compared with “<TexInline text={d.label} />”</strong></p>
+                <ul class="small">
+                  {#each d.added as h}<li class="add">adds the hypothesis <code>{h}</code></li>{/each}
+                  {#each d.dropped as h}<li class="drop">drops the hypothesis <code>{h}</code></li>{/each}
+                  {#if !d.varsSame}<li>its variables or their types differ</li>{/if}
+                  <li>{d.conclusionSame ? "the same conclusion" : "a different conclusion"}</li>
+                </ul>
+              </div>
+            {/if}
             {#if cl.statement}
               <Statement st={cl.statement} spec={cl.spec} onref={showDecl} compact />
             {:else if cl.defs?.length}
@@ -282,6 +318,11 @@
   .card.refuted { border-left: 4px solid var(--st-refuted); }
   .card.suggestion { border-style: dashed; }
   .cname { font-weight: 600; margin: 0 0 8px; }
+  .changes { border-left: 3px solid var(--st-open, #b7791f); background: var(--surface-2, transparent); padding: 6px 10px; margin: 0 0 10px; border-radius: 0 6px 6px 0; }
+  .changes p { margin: 0 0 4px; }
+  .changes ul { margin: 0; padding-left: 18px; }
+  .changes code { font-size: 12px; }
+  .src-link { margin-left: 8px; white-space: nowrap; }
   .decl { margin: 0 0 6px; }
   .verdict { margin: 10px 0 0; font-size: 14px; }
   .verdict.top { margin: 0 0 8px; }

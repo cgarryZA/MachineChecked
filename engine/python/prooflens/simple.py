@@ -510,6 +510,11 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
     return {"body": body, "pdf": pdf, "cfg": cfg}
 
 
+def audit_repository(root: Path | None) -> str | None:
+    from . import audit
+    return audit.github_repository(root) if root else None
+
+
 def write_view_site(view: dict, site: Path, web_dist: Path | None,
                     root: Path | None = None) -> dict:
     """The site of a view: the same app as the full reader, in its simple mode, with its audit
@@ -555,8 +560,8 @@ def write_view_site(view: dict, site: Path, web_dist: Path | None,
             "anchor": {**anchor, "kind": akind} if anchor else None, "source_matches": None,
             "statement_tex": (anchor or {}).get("statement") if akind == "exact" else None,
             "blockers": [],
-            "links": [_link_view(l) for l in c["links"]],
-            "suggestions": [_link_view(s) for s in c.get("suggestions", [])],
+            "links": [_link_view(l, root) for l in c["links"]],
+            "suggestions": [_link_view(s, root) for s in c.get("suggestions", [])],
             "clauses": [], "decls": {n: keys[n] for n in sorted(names) if n in keys},
             "findings": []}
     summary = {}
@@ -566,7 +571,8 @@ def write_view_site(view: dict, site: Path, web_dist: Path | None,
     index = {"schema": "prooflens/manifest@0", "mode": "simple", "release": release,
              "evidence": eid, "created": _dt.datetime.now(_dt.timezone.utc)
              .isoformat(timespec="seconds"),
-             "project": {"name": body["project"]["name"], "commit": body.get("commit")},
+             "project": {"name": body["project"]["name"], "commit": body.get("commit"),
+                         "repository": audit_repository(root)},
              "tool": {"name": "machinechecked"},
              "issues": body.get("issues"), "site_url": body.get("site_url"),
              "formalization": body.get("formalization"),
@@ -596,9 +602,13 @@ def write_view_site(view: dict, site: Path, web_dist: Path | None,
     return index
 
 
-def _link_view(l: dict) -> dict:
+def _link_view(l: dict, root: Path | None = None) -> dict:
+    """A link or suggestion as the reader shows it; `path` is its file in the project's
+    repository, for a link to its source, when the project is known."""
+    from . import audit
     rec = l.get("record") or {}
-    return {"name": l["name"], "status": l.get("status"), "class": l.get("class"),
+    module = (rec.get("decl") or {}).get("module")
+    return {"path": audit.source_path(root, module) if root else None,"name": l["name"], "status": l.get("status"), "class": l.get("class"),
             "why": l.get("why"), "source": l.get("source"),
             "fingerprint": rec.get("fingerprint") or (rec.get("decl") or {}).get("fingerprint"),
             "kind": rec.get("kind") or l.get("kind"),
