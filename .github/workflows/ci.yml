@@ -49,8 +49,8 @@ jobs:
           grep -q __PROOFLENS__ /tmp/plain.html
       - name: Build the toy paper
         run: cd examples/toy-paper && prooflens build --fail-on-violation
-      - name: Export the demo (approved fields only, scanned)
-        run: cd examples/toy-paper && prooflens export --out ../../demo-site
+      - name: Export the demo (approved fields only, scanned; data only, the Demo audit workflow publishes it)
+        run: cd examples/toy-paper && prooflens export --data-only --out ../../demo-site
       - uses: actions/upload-artifact@v4
         with:
           name: demo-site

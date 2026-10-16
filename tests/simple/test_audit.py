@@ -92,6 +92,12 @@ def test_the_export_carries_its_descriptor(toy, tmp_path):
     d = json.loads((tmp_path / "out" / "audit.json").read_text())
     assert d["schema"] == audit.SCHEMA and (tmp_path / "out" / d["data"]).is_file()
     assert d["issues"] == cfg.issues
+    # With --data-only (for a site with its own reader), the data and descriptor, no reader.
+    r = subprocess.run([sys.executable, "-m", "prooflens.cli", "export", "--data-only",
+                        "--out", str(tmp_path / "data-only")], cwd=toy, capture_output=True,
+                       text=True)
+    assert r.returncode == 0, r.stderr
+    assert sorted(p.name for p in (tmp_path / "data-only").iterdir()) == ["audit.json", "data"]
 
 
 # The reader displays an audit's text; it never inserts it as HTML. These checks keep it so.

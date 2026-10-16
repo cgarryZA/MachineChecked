@@ -1,16 +1,24 @@
 name: Demo audit
 
-# Publishes the synthetic toy paper's audit (its public export: approved fields only, scanned
-# for leaks, with audit.json) at cgarryza.github.io/MachineChecked/demo/, where
-# machinechecked.org/demo/ reads it. The site itself is the cgarryZA/machinechecked.org
-# repository. Runs from main only; Pages must have "GitHub Actions" as its source.
+# Publishes the synthetic toy paper's audit at cgarryza.github.io/MachineChecked/demo/, where
+# machinechecked.org/demo/ reads it with its own reader. The audit is the one CI built and
+# exported (approved fields only, scanned for leaks, data only: audit.json and data/); this
+# workflow builds nothing. Runs after CI passes on main; Pages must have "GitHub Actions" as its
+# source.
 on:
-  push:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
     branches: [main]
   workflow_dispatch:
+    inputs:
+      run_id:
+        description: "the CI run whose demo to publish"
+        required: true
 
 permissions:
   contents: read
+  actions: read
   pages: write
   id-token: write
 
@@ -20,26 +28,19 @@ concurrency:
 
 jobs:
   build:
+    if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/download-artifact@v4
         with:
-          python-version: "3.12"
-      - name: Install TeX Live and elan
+          name: demo-site
+          path: public/demo
+          run-id: ${{ github.event.workflow_run.id || inputs.run_id }}
+          github-token: ${{ github.token }}
+      - name: The demo is data only, with its descriptor
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq --no-install-recommends latexmk texlive-latex-recommended \
-            texlive-latex-extra texlive-science texlive-fonts-recommended
-          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain none
-          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
-      - run: pip install -e .
-      - name: Build the toy paper's public export under /demo/
-        run: |
-          cd examples/toy-paper
-          machinechecked build --fail-on-violation
-          machinechecked export --out ../../public/demo
-          cd ../..
+          test -f public/demo/audit.json && test -f public/demo/data/index.json
+          test ! -e public/demo/index.html && test ! -e public/demo/assets
           printf '%s\n' '<!doctype html><meta charset="utf-8"><title>MachineChecked</title>' \
             '<meta http-equiv="refresh" content="0; url=https://machinechecked.org/">' \
             '<a href="https://machinechecked.org/">machinechecked.org</a>' > public/index.html

@@ -357,7 +357,8 @@ def cmd_export(a):
     from .export import ExportError, export
     cfg = cfgmod.load(_config_arg(a))
     try:
-        res = export(cfg, Path(a.out).resolve(), a.release, _web_dist(a.web))
+        res = export(cfg, Path(a.out).resolve(), a.release,
+                     None if a.data_only else _web_dist(a.web))
     except ExportError as e:
         sys.exit(str(e))
     print(f"exported release {res['release']} to {res['out']}")
@@ -504,6 +505,9 @@ def main(argv=None):
     e.add_argument("--release")
     e.add_argument("--out", required=True)
     e.add_argument("--web")
+    e.add_argument("--data-only", action="store_true",
+                   help="write the audit's data only, without the reader (for a site that "
+                   "reads it with its own reader, such as machinechecked.org)")
     e.set_defaults(func=cmd_export)
 
     s = sub.add_parser("serve")
