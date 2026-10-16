@@ -43,12 +43,34 @@ claims = paper_claims(anchors, paper["title"], [
     (paper["formalisations"][0], fy([("theorem", "1", ["A.one"]), ("theorem", "3", ["A.three"])])),
     (paper["formalisations"][1], fy([("theorem", "2", ["B.two"]), ("theorem", "3", ["B.three"])]))])
 write_paper_site(Path(sys.argv[1]), paper, claims, [612, 792], None, Path(sys.argv[2]))
+
+# A long paper (30 pages), with statements early, in the middle and late, and its PDF.
+def pdf(pages):
+    objs = ["<< /Type /Catalog /Pages 2 0 R >>",
+            "<< /Type /Pages /Kids [" + " ".join(f"{3 + i} 0 R" for i in range(pages)) +
+            f"] /Count {pages} >>"]
+    objs += ["<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>"] * pages
+    out, offsets = bytearray(b"%PDF-1.4\n"), []
+    for i, o in enumerate(objs, 1):
+        offsets.append(len(out))
+        out += f"{i} 0 obj\n{o}\nendobj\n".encode()
+    xref = len(out)
+    out += f"xref\n0 {len(objs) + 1}\n0000000000 65535 f \n".encode()
+    out += b"".join(f"{o:010d} 00000 n \n".encode() for o in offsets)
+    out += f"trailer\n<< /Size {len(objs) + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n".encode()
+    return bytes(out)
+long_paper = {**paper, "id": "arxiv:2601.00002", "title": "A long paper", "formalisations": []}
+long_claims = paper_claims([anchor("theorem", "2", 2, 300), anchor("theorem", "15", 15, 400),
+                            anchor("theorem", "28", 28, 200)], long_paper["title"], [])
+site = Path(sys.argv[1]).parent / "long"
+write_paper_site(site, long_paper, long_claims, [612, 792], "paper.pdf", Path(sys.argv[2]))
+(site / "paper.pdf").write_bytes(pdf(30))
 `;
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "mc-reader-"));
 const made = spawnSync(process.env.PYTHON || "python3", ["-c", FIXTURE, path.join(root, "paper"), reader], { encoding: "utf8" });
 if (made.status !== 0) throw new Error("the engine could not write the paper page:\n" + made.stderr);
 
-const types = { ".html": "text/html", ".json": "application/json", ".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css", ".woff2": "font/woff2" };
+const types = { ".pdf": "application/pdf", ".html": "text/html", ".json": "application/json", ".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css", ".woff2": "font/woff2" };
 const server = http.createServer((req, res) => {
   let url = decodeURIComponent(req.url.split("?")[0]);
   if (url.endsWith("/")) url += "index.html";
@@ -141,6 +163,34 @@ for (const width of [1300, 390]) {
     }
   });
 }
+
+// The paper pane shows a claim's band when the claim is chosen, wherever it is in a long paper,
+// even though choosing it opens the side panel and narrows the pages.
+const inView = (pg, id) => pg.evaluate((id) => {
+  const band = document.querySelector(`[data-claim="${CSS.escape(id)}"]`);
+  const pane = band?.closest(".paperpane");
+  if (!band || !pane) return false;
+  const b = band.getBoundingClientRect(), p = pane.getBoundingClientRect();
+  return b.top >= p.top - 1 && b.top <= p.bottom;
+}, id);
+const ids = ["P:theorem-2", "P:theorem-15", "P:theorem-28"];
+await check("a claim chosen in a long paper stays in view (contents and deep links)", 1300, async (pg) => {
+  await pg.goto(origin + "/long/");
+  await pg.waitForSelector("nav.toc li");
+  for (const id of [...ids, ids[0]]) {
+    await pg.locator("nav.toc .n", { hasText: new RegExp(`^Theorem ${id.split("-")[1]}$`) }).click();
+    await pg.waitForTimeout(600);
+    assert.ok(await inView(pg, id), `${id} not in view after choosing it`);
+  }
+  for (const id of ids) {
+    const cold = await browser.newPage({ viewport: { width: 1300, height: 900 } });
+    await cold.goto(origin + `/long/#/r/paper/read/P/${encodeURIComponent(id)}`);
+    await cold.waitForSelector("aside h1");
+    await cold.waitForTimeout(800);
+    assert.ok(await inView(cold, id), `${id} not in view when opened by its link`);
+    await cold.close();
+  }
+});
 
 await browser.close();
 server.close();

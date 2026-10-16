@@ -44,11 +44,37 @@
     return out;
   }
 
-  // Scroll the selected claim into view when it changes.
+  // Keep the selected claim in view. Selecting one opens the side panel, and a page loads at a
+  // provisional width, so the pages' size (which follows the width) can change after the scroll
+  // started; the claim is scrolled to again whenever it does, until the reader scrolls
+  // themselves.
+  let shown = null; // the claim last brought into view
+  let kept = null; // the claim kept in view until the reader scrolls
+  function bringIntoView() {
+    const el = host?.querySelector(`[data-claim="${CSS.escape(kept)}"]`);
+    if (el) el.scrollIntoView({ block: "center", behavior: "instant" });
+  }
   $effect(() => {
+    void width; // re-run when the pages' size changes
     if (!selected || !doc || !host) return;
-    const el = host.querySelector(`[data-claim="${CSS.escape(selected)}"]`);
-    if (el) el.scrollIntoView({ block: "center", behavior: "smooth" });
+    if (selected !== shown) { shown = selected; kept = selected; }
+    if (kept === selected) requestAnimationFrame(bringIntoView);
+  });
+  $effect(() => {
+    const pane = host?.parentElement;
+    if (!pane) return;
+    const release = () => (kept = null);
+    const onPointer = (e) => { if (e.target === pane) kept = null; }; // the scrollbar
+    pane.addEventListener("wheel", release, { passive: true });
+    pane.addEventListener("touchmove", release, { passive: true });
+    pane.addEventListener("keydown", release);
+    pane.addEventListener("pointerdown", onPointer);
+    return () => {
+      pane.removeEventListener("wheel", release);
+      pane.removeEventListener("touchmove", release);
+      pane.removeEventListener("keydown", release);
+      pane.removeEventListener("pointerdown", onPointer);
+    };
   });
 
   function canvasAction(node, args) {
