@@ -34,7 +34,8 @@ def project_provenance(cfg: Config) -> dict:
     lr = cfg.lean_root
     tc = lr / "lean-toolchain"
     lm = lr / "lake-manifest.json"
-    prov = {"name": cfg.name, "commit": git_head(cfg.root), "dirty": git_dirty(cfg.root),
+    # The Lean project's own commit, wherever the configuration file is kept.
+    prov = {"name": cfg.name, "commit": git_head(lr), "dirty": git_dirty(lr),
             "toolchain": tc.read_text().strip() if tc.exists() else None,
             "lake_manifest_sha256": sha256_file(lm) if lm.exists() else None,
             "dependencies": {}}
@@ -52,6 +53,11 @@ def build(cfg: Config, release: str | None = None, skip_lean: bool = False,
     validate(inv, "inventory")
     reviews, review_hashes = load_reviews(cfg.reviews, cfg.ai_reviewers, cfg.root)
     dismissals = load_dismissals(cfg.dismissals)
+
+    # Every paper's source is acquired and checked (one LaTeX root, the PDF present) before Lean
+    # runs: a problem there should not wait for a probe that can take hours.
+    snaps = {paper.id: acquire(cfg, paper, cfg.out_dir / "sources" / paper.id)
+             for paper in cfg.papers}
 
     lean = None
     lean_digest = None
@@ -74,12 +80,15 @@ def build(cfg: Config, release: str | None = None, skip_lean: bool = False,
 
     tex, papers_prov, pdfs = {}, {}, {}
     for paper in cfg.papers:
-        snap = acquire(cfg, paper, cfg.out_dir / "sources" / paper.id)
+        snap = snaps[paper.id]
         prov = {"title": paper.title, "kind": snap.kind, "revision": snap.revision,
                 "mode": snap.mode, "root": snap.root, "note": snap.note,
                 "committed_pdf": snap.pdf,
                 "committed_pdf_sha256": sha256_file(snap.dir / snap.pdf) if snap.pdf else None,
                 **({"published": paper.published} if paper.published else {}),
+                # A paper read from a folder: the commit of the repository that folder is in.
+                **({"source_commit": git_head(cfg.root / paper.source["path"])}
+                   if snap.kind == "path" and git_head(cfg.root / paper.source["path"]) else {}),
                 **({"published_note": paper.published_note} if paper.published_note else {})}
         t = None
         if snap.mode == "latex" and not skip_tex:
@@ -192,7 +201,7 @@ def source_info(cfg: Config) -> dict:
 def reusable_lean(cfg: Config) -> dict:
     """The probe records of the latest evidence, if they still describe this checkout: the same
     content of every Lean input (here and in every path dependency) and the same probe."""
-    rels = sorted((cfg.out_dir / "releases").glob("*.json"), key=lambda p: p.stat().st_mtime)
+    rels = ev.releases(cfg.out_dir)
     if not rels:
         raise RuntimeError("no stored evidence to reuse")
     body = ev.load(cfg.out_dir, read_json(rels[-1])["evidence"])["body"]
@@ -235,7 +244,7 @@ def reassess(cfg: Config, web_dist: Path | None = None, release: str | None = No
              log=print) -> dict:
     """Assess the latest evidence again with the current rules and the current review files,
     without probing or compiling, and store the result as a new evidence record and release."""
-    rels = sorted((cfg.out_dir / "releases").glob("*.json"), key=lambda p: p.stat().st_mtime)
+    rels = ev.releases(cfg.out_dir)
     if not rels:
         raise RuntimeError("no release: run `prooflens build` first")
     old = ev.load(cfg.out_dir, read_json(rels[-1])["evidence"])["body"]
@@ -285,7 +294,7 @@ def pdf_paths(cfg: Config, body: dict) -> dict:
 def rebuild_site(cfg: Config, web_dist: Path | None = None, release: str | None = None) -> dict:
     """The preview site again from a stored release, without probing or compiling. A PDF is
     included only if the one on disk is the one the evidence records."""
-    rels = sorted((cfg.out_dir / "releases").glob("*.json"), key=lambda p: p.stat().st_mtime)
+    rels = ev.releases(cfg.out_dir)
     if not rels:
         raise RuntimeError("no release: run `prooflens build` first")
     rel = read_json(cfg.out_dir / "releases" / f"{release}.json") if release else \

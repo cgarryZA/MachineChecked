@@ -53,3 +53,15 @@ def test_an_abbreviated_revision_still_resolves(tmp_path):
                   source={"git": f"file://{repo}", "rev": pinned[:10]})
     snap = acquire(SimpleNamespace(root=tmp_path), paper, tmp_path / "work" / "sources" / "P")
     assert snap.revision == pinned
+
+
+def test_a_local_repository_given_by_relative_path_is_read_from_disk(tmp_path):
+    """`git = "../manuscripts"` reads like `owner/repo`; a directory that exists is local."""
+    repo, pinned, _ = manuscripts(tmp_path)
+    cfg_dir = tmp_path / "audit"
+    cfg_dir.mkdir()
+    paper = Paper(id="P", title="A paper", root="paper.tex",
+                  source={"git": "../manuscripts", "rev": pinned})
+    snap = acquire(SimpleNamespace(root=cfg_dir), paper, tmp_path / "work" / "sources" / "P")
+    assert snap.revision == pinned and (snap.dir / "paper.tex").is_file()
+    assert not (tmp_path / "work" / "sources" / ".P-repo").exists()  # nothing fetched

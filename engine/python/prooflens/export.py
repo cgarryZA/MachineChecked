@@ -101,13 +101,22 @@ def private_inputs(cfg: Config) -> tuple[list[Path], set[str]]:
     return texts, hashes
 
 
-def scan(out: Path, texts: list[Path], hashes: set[str]) -> list[str]:
-    """Every leak of a private input into the export."""
+def scan(out: Path, texts: list[Path], hashes: set[str],
+         inventory: Path | None = None) -> list[str]:
+    """Every leak of a private input into the export, with the JSON field that carries it.
+
+    A line of a private Lean file that the claim inventory also contains (a docstring the
+    inventory's description repeats, say) is not a leak of the Lean: the inventory is published
+    with the audit. A line of a private manuscript stays private wherever else it appears."""
+    published = ""
+    if inventory is not None and inventory.exists():
+        published = "\n".join(_strings(json.loads(inventory.read_text(encoding="utf-8"))))
     lines = {}
     for t in texts:
         for ln in t.read_text(encoding="utf-8", errors="replace").splitlines():
             s = ln.strip()
-            if len(s) >= MIN_LINE and not s.startswith(("%", "--", "/-", "import ")):
+            if len(s) >= MIN_LINE and not s.startswith(("%", "--", "/-", "import ")) \
+                    and not (t.suffix == ".lean" and s in published):
                 lines.setdefault(s, t)
     leaks = []
     for f in sorted(out.rglob("*")):
@@ -119,18 +128,32 @@ def scan(out: Path, texts: list[Path], hashes: set[str]) -> list[str]:
             continue
         if f.suffix in (".json", ".html", ".js", ".css", ".txt", ".md", ".svg"):
             text = b.decode("utf-8", errors="replace")
-            # JSON escapes; compare against the decoded strings as well.
-            hay = text
+            # JSON escapes; compare against the decoded strings as well, and name the field.
+            fields = []
             if f.suffix == ".json":
                 try:
-                    hay = text + "\n" + "\n".join(_strings(json.loads(text)))
+                    fields = list(_strings_at(json.loads(text)))
                 except json.JSONDecodeError:
                     pass
             for s, src in lines.items():
-                if s in hay:
-                    leaks.append(f"{f.relative_to(out)}: contains a line of {src.name}")
+                where = next((path for path, v in fields if s in v), None)
+                if where is not None or s in text:
+                    leaks.append(f"{f.relative_to(out)}: contains a line of {src.name}"
+                                 + (f" (in {where})" if where else ""))
                     break
     return leaks
+
+
+def _strings_at(obj, path="$"):
+    """Every string in a JSON value, with where it is (`$.clauses[0].regimes[0].description`)."""
+    if isinstance(obj, str):
+        yield path, obj
+    elif isinstance(obj, dict):
+        for k, v in obj.items():
+            yield from _strings_at(v, f"{path}.{k}")
+    elif isinstance(obj, list):
+        for i, v in enumerate(obj):
+            yield from _strings_at(v, f"{path}[{i}]")
 
 
 def _strings(obj):
@@ -146,7 +169,7 @@ def _strings(obj):
 
 def export(cfg: Config, out: Path, release: str | None = None,
            web_dist: Path | None = None) -> dict:
-    rels = sorted((cfg.out_dir / "releases").glob("*.json"), key=lambda p: p.stat().st_mtime)
+    rels = ev.releases(cfg.out_dir)
     if not rels:
         raise ExportError("no release: run `prooflens build` first")
     relrec = read_json(cfg.out_dir / "releases" / f"{release}.json") if release \
@@ -173,7 +196,7 @@ def export(cfg: Config, out: Path, release: str | None = None,
     for p in index["papers"]:
         pub = pubs[p["id"]]
         q = _pick(p, ["id", "title", "mode", "revision", "pdf_sha256", "page_size", "note",
-                      "published", "published_note"])
+                      "published", "published_note", "source_commit"])
         q["root"] = p.get("root") if pub.source_text else None
         q["pdf"] = p["pdf"] if pub.pdf else None
         pidx["papers"].append(q)
@@ -220,7 +243,7 @@ def export(cfg: Config, out: Path, release: str | None = None,
         pidx, cfg.lean_root, author=cfg.author,
         paper_url=f"https://arxiv.org/abs/{arx[0]}" if len(cfg.papers) == 1 and arx else None))
     texts, hashes = private_inputs(cfg)
-    leaks = scan(out, texts, hashes)
+    leaks = scan(out, texts, hashes, cfg.inventory)
     if leaks:
         shutil.rmtree(out)
         raise ExportError("export blocked; private material found:\n  " + "\n  ".join(leaks))

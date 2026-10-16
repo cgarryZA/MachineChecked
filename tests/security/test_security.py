@@ -133,3 +133,27 @@ def test_the_engine_imports_where_posix_limits_are_missing(monkeypatch):
     finally:
         monkeypatch.setattr(builtins, "__import__", real)
         importlib.reload(tex)
+
+
+@needs_lean
+@needs_tex
+def test_unpublished_lean_that_the_inventory_repeats_is_not_a_leak(toy, tmp_path):
+    """With Lean unpublished, a Lean docstring line that the claim inventory also contains is
+    published through the inventory, not leaked from the Lean; a line of an unpublished
+    manuscript stays private wherever it appears, and the scan names the field carrying it."""
+    edit(toy / "machinechecked.toml", "publish = { pdf = true, source_text = true, lean = true, reviews = true }",
+         "publish = { pdf = true, source_text = false, lean = false, reviews = true }")
+    text = "the paper means even numbers in general, not only 0"
+    edit(toy / "lean/Toy/Acceptance.lean", "Each theorem has exactly", f"{text}\nEach theorem has exactly")
+    build(toy)
+    cfg = cfgmod.load(toy / "machinechecked.toml")
+    export(cfg, tmp_path / "public")
+    assert text in (tmp_path / "public" / "data" / "claims").joinpath(
+        next(p.name for p in (tmp_path / "public" / "data" / "claims").iterdir()
+             if "even-add" in p.name)).read_text()
+    line = next(l.strip() for l in (toy / "paper/toy.tex").read_text().splitlines()
+                if len(l.strip()) >= 40 and not l.strip().startswith(("%", "\\")))
+    edit(toy / "claims.json", f'"description": "{text}"', f'"description": {json.dumps(line)}')
+    build(toy)
+    with pytest.raises(ExportError, match=r"toy\.tex \(in \$\.clauses\[0\]\.regimes\[0\]\.description\)"):
+        export(cfg, tmp_path / "public2")

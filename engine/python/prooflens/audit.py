@@ -69,7 +69,8 @@ def descriptor(index: dict, lean_root: Path | None, author: str | None = None,
         ax = arxiv_id(paper_url) if len(index.get("papers", [])) == 1 else None
         entry = {"title": p.get("title"), "id": ax[0] if ax else None,
                  "version": ax[1] if ax else None, "url": paper_url,
-                 "revision": p.get("revision")}
+                 # A pinned revision, else the commit of the folder the paper was read from.
+                 "revision": p.get("revision") or p.get("source_commit")}
         # A paper whose configuration names its published version: that is the public record
         # this audit corresponds to, with how the audited revision differs from it.
         if p.get("published"):

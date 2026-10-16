@@ -45,6 +45,18 @@ def load(out_dir: Path, eid: str) -> dict:
     return rec
 
 
+def releases(out_dir: Path) -> list[Path]:
+    """The named releases, oldest first by the time recorded in each (a copied directory's file
+    times say nothing about when a release was made); ties by name."""
+    def when(p: Path):
+        try:
+            created = read_json(p).get("created") or ""
+        except (OSError, ValueError):
+            created = ""
+        return (created, p.stat().st_mtime, p.name)  # file time only breaks a same-second tie
+    return sorted((out_dir / "releases").glob("*.json"), key=when)
+
+
 def record_release(out_dir: Path, name: str, eid: str) -> Path:
     """Name a release; a release name, once given, keeps its evidence."""
     path = out_dir / "releases" / f"{name}.json"

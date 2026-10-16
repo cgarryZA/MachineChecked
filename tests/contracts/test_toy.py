@@ -2,6 +2,8 @@
 
 import json
 
+import pytest
+
 from conftest import ROOT, build, edit, findings, needs_lean, needs_tex, status
 from prooflens import manifest as mf
 from prooflens.schemas import validate
@@ -277,3 +279,46 @@ def test_a_paper_names_its_published_version(toy, tmp_path):
     assert (d["id"], d["version"], d["url"]) == \
         ("arxiv:2601.01234", "v2", "https://arxiv.org/abs/2601.01234v2")
     assert d["note"] == "This revision corrects Proposition 2.3."
+
+
+@needs_lean
+@needs_tex
+def test_a_source_problem_stops_the_build_before_lean_runs(toy, monkeypatch):
+    from prooflens import pipeline
+    from prooflens.sources import SourceError
+    edit(toy / "machinechecked.toml", 'root = "toy.tex"\n', "")
+    (toy / "paper" / "second.tex").write_text("\\documentclass{article}\\begin{document}x\\end{document}\n")
+
+    def no_probe(*a, **k):
+        raise AssertionError("Lean ran before the paper's sources were checked")
+    monkeypatch.setattr(pipeline, "run_probe", no_probe)
+    with pytest.raises(SourceError, match="several LaTeX roots"):
+        build(toy)
+
+
+@needs_lean
+@needs_tex
+def test_the_commit_is_the_lean_projects_wherever_the_configuration_is(toy):
+    """The configuration is outside any repository; the Lean project is one."""
+    import subprocess
+    env = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@x", "GIT_COMMITTER_NAME": "t",
+           "GIT_COMMITTER_EMAIL": "t@x", "PATH": __import__("os").environ["PATH"]}
+    for args in (["init", "-q"], ["add", "-A"], ["commit", "-q", "-m", "lean"]):
+        subprocess.run(["git", *args], cwd=toy / "lean", check=True, capture_output=True, env=env)
+    head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=toy / "lean", capture_output=True,
+                          text=True).stdout.strip()
+    _, body, _ = build(toy, skip_lean=True)
+    assert body["provenance"]["project"]["commit"] == head
+
+
+def test_the_latest_release_is_the_one_made_last_not_the_newest_file(tmp_path):
+    import os
+    from prooflens import evidence as ev
+    d = tmp_path / "releases"
+    d.mkdir()
+    for name, created, mtime in (("r-old", "2026-01-01T00:00:00+00:00", 2_000_000_000),
+                                 ("r-new", "2026-02-01T00:00:00+00:00", 1_000_000_000)):
+        (d / f"{name}.json").write_text(json.dumps({"release": name, "evidence": "x",
+                                                    "created": created}))
+        os.utime(d / f"{name}.json", (mtime, mtime))
+    assert [p.stem for p in ev.releases(tmp_path)] == ["r-old", "r-new"]

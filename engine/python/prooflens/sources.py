@@ -139,9 +139,12 @@ def acquire(cfg: Config, paper: Paper, dest: Path) -> Snapshot:
         if not rev:
             raise SourceError(f"paper {paper.id}: a git source needs `rev` (a commit)")
         sub = src.get("subdir")
-        local = (cfg.root / src["git"]).resolve() if not re.fullmatch(
-            r"[\w.-]+/[\w.-]+", src["git"]) and not src["git"].startswith(("http", "git@")) \
-            else None
+        # A directory that exists (relative to the configuration) is a local repository, even
+        # when it reads like `owner/repo` ("../repo"); otherwise `owner/repo` is on GitHub.
+        on_disk = (cfg.root / src["git"]).resolve()
+        local = on_disk if on_disk.is_dir() or not (
+            re.fullmatch(r"[\w.-]+/[\w.-]+", src["git"])
+            or src["git"].startswith(("http", "git@", "file://"))) else None
         env = _git_env(paper)
         target = rev
         if local and local.exists():
