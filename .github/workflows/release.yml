@@ -1,35 +1,68 @@
 name: Release
 
-# Publishes the package to PyPI when a version tag (v0.2.0, …) is pushed, by trusted publishing:
-# no token is stored. PyPI must list this repository and workflow as a trusted publisher of the
-# `machinechecked` project (pypi.org > Account > Publishing), with the environment `pypi`.
+# Releases a new version with no one tagging it by hand: when a push to main changes
+# pyproject.toml and its version has no tag yet, this tags the commit v<version>, creates its
+# GitHub release, and publishes the package to PyPI by trusted publishing (no token is stored;
+# PyPI trusts this workflow, release.yml, with the environment `pypi`). To release, bump the
+# version on main.
 on:
   push:
-    tags: ["v*"]
+    branches: [main]
+    paths: [pyproject.toml]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
   build:
     runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      new: ${{ steps.v.outputs.new }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: The tag is the package's version
+      - name: Is this version released yet?
+        id: v
         run: |
           v=$(python -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
-          test "v$v" = "$GITHUB_REF_NAME" || { echo "tag $GITHUB_REF_NAME, version $v"; exit 1; }
-      - run: pip install build && python -m build
-      - uses: actions/upload-artifact@v4
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          if git ls-remote --exit-code --tags origin "refs/tags/v$v" >/dev/null; then
+            echo "v$v is already released; nothing to do"
+            echo "new=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "new=true" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.v.outputs.new == 'true'
+        run: pip install build && python -m build
+      - if: steps.v.outputs.new == 'true'
+        uses: actions/upload-artifact@v4
         with:
           name: dist
           path: dist/
+      - name: Tag and create the GitHub release
+        if: steps.v.outputs.new == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v${{ steps.v.outputs.version }}" dist/* \
+            --target "$(git rev-parse HEAD)" --title "v${{ steps.v.outputs.version }}" \
+            --notes "MachineChecked ${{ steps.v.outputs.version }}: \`uvx machinechecked view\`. Changes: https://github.com/${{ github.repository }}/commits/v${{ steps.v.outputs.version }}"
 
   publish:
     needs: build
+    if: needs.build.outputs.new == 'true'
     runs-on: ubuntu-24.04
     environment: pypi
     permissions:

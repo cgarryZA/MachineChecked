@@ -83,3 +83,9 @@ The detailed engineering rules live in [CLAUDE.md](../CLAUDE.md). The evolving p
 The public command is `machinechecked`; `prooflens` remains an alias for compatibility. Most users need only `view`, `build` and `check`.
 
 Full-assessment users can use `reassess` (new reviews without a Lean re-probe), `site` (regenerate the reader from stored evidence), `bundle` (single-file HTML), `export` (approved public data) and `review promote` (maintainer approval).
+
+## Releasing
+
+Bump `version` in `pyproject.toml` on `main`. The `Release` workflow then tags the commit
+`v<version>`, creates the GitHub release and publishes the package to PyPI by trusted publishing;
+a version that already has a tag is left alone. Run it by hand from the Actions tab if needed.
