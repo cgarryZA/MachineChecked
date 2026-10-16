@@ -1,8 +1,9 @@
-name: Site
+name: Demo audit
 
-# Publishes machinechecked.org: the landing page (site/) and the synthetic toy paper's public
-# export (approved fields only, scanned for leaks) under /demo/. Runs from main only. Pages
-# must have "GitHub Actions" as its source (Settings > Pages).
+# Publishes the synthetic toy paper's audit (its public export: approved fields only, scanned
+# for leaks, with audit.json) at cgarryza.github.io/MachineChecked/demo/, where
+# machinechecked.org/demo/ reads it. The site itself is the cgarryZA/machinechecked.org
+# repository. Runs from main only; Pages must have "GitHub Actions" as its source.
 on:
   push:
     branches: [main]
@@ -33,13 +34,15 @@ jobs:
           curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain none
           echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
       - run: pip install -e .
-      - name: Build the site (landing page, and the toy paper's public export under /demo/)
+      - name: Build the toy paper's public export under /demo/
         run: |
           cd examples/toy-paper
           machinechecked build --fail-on-violation
           machinechecked export --out ../../public/demo
           cd ../..
-          cp site/index.html site/preview-*.webp public/
+          printf '%s\n' '<!doctype html><meta charset="utf-8"><title>MachineChecked</title>' \
+            '<meta http-equiv="refresh" content="0; url=https://machinechecked.org/">' \
+            '<a href="https://machinechecked.org/">machinechecked.org</a>' > public/index.html
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

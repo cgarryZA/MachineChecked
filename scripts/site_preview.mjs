@@ -1,7 +1,8 @@
 // Screenshots of the demo reader for the landing page, light and dark, taken with headless
 // Chromium from an exported site. Usage: node scripts/site_preview.mjs <export dir> <out dir>
 // Needs the `playwright` package; set CHROMIUM to a browser binary if Playwright has none.
-// The landing page uses them as WebP (site/preview-*.webp), converted with Pillow:
+// The landing page (repository cgarryZA/machinechecked.org) uses them as WebP
+// (site/preview-*.webp there), converted with Pillow:
 //   python3 -c "from PIL import Image as I; [I.open(f'preview-{s}.png').convert('RGB')
 //     .save(f'preview-{s}.webp', quality=82, method=6) for s in ('light', 'dark')]"
 import { chromium } from "playwright";

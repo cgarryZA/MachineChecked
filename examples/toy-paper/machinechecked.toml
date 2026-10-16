@@ -1,6 +1,7 @@
 # MachineChecked configuration of the synthetic toy paper.
 [project]
 name = "toy-paper"
+author = "MachineChecked (synthetic demo)"
 lean_root = "lean"
 modules = ["Toy"]
 scope_roots = ["Toy"]
