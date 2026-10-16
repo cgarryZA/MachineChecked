@@ -10,8 +10,8 @@ A project with a `machinechecked.toml` (an acceptance layer: locked statements, 
 the full assessment; any other project gets the zero-configuration view, whose only file in the
 repository is `machinechecked.links.json` (its working files, a downloaded paper among them, are
 in `.machinechecked/`, which Git ignores). The full assessment has further commands: reassess,
-site, bundle, export, serve, review promote and validate; `cache` saves and restores the Lean
-build (each with --help).
+site, bundle, export, serve, review promote, replay and validate; `cache` saves and restores
+the Lean build (each with --help).
 `prooflens` is another name for the same command.
 """
 
@@ -440,6 +440,20 @@ def cmd_cache(a):
                       a.build, log=lambda m: print(m, file=sys.stderr))
 
 
+def cmd_replay(a):
+    from .replay import replay
+    cfg = cfgmod.load(_config_arg(a))
+    out = Path(a.out).resolve() if a.out else cfg.comparator_log
+    if out is None:
+        sys.exit("say where to write the record: --out FILE, or `comparator_log` in "
+                 "machinechecked.toml (which the assessment then reads)")
+    rec = replay(cfg.lean_root, Path(a.comparator_config).resolve(), out, a.comparator)
+    print(f"Comparator {'passed' if rec['passed'] else 'did not pass'} on commit "
+          f"{rec['commit'][:12]}: {len(rec['replayed'])} theorem(s) replayed; record in {out}")
+    if not rec["passed"]:
+        sys.exit(1)
+
+
 def cmd_serve(a):
     cfg = cfgmod.load(_config_arg(a))
     site = Path(a.dir).resolve() if a.dir else cfg.out_dir / "site"
@@ -622,6 +636,16 @@ def main(argv=None):
     for x in (cs, cp):
         x.add_argument("--out", help="where archives are saved (default: .lean-cache/)")
     ca.set_defaults(func=cmd_cache)
+
+    rp = sub.add_parser("replay", help="run Comparator and record the replay for the "
+                        "assessment")
+    rp.add_argument("comparator_config", metavar="CONFIG",
+                    help="the Comparator configuration (its theorem_names are the proofs "
+                    "replayed)")
+    rp.add_argument("-c", "--config", default=None, help=argparse.SUPPRESS)
+    rp.add_argument("--out", help="the record (default: comparator_log in machinechecked.toml)")
+    rp.add_argument("--comparator", default="comparator", help="the Comparator program")
+    rp.set_defaults(func=cmd_replay)
 
     s = sub.add_parser("serve")
     s.add_argument("-c", "--config", default=None)

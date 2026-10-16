@@ -36,7 +36,7 @@ Sources can also be a pinned Git revision (`source = { git = "owner/repo", rev =
 
 Under `[project]`, `author` is the name the audit is published under, `issues` the GitHub repository where Raise issue opens reports, `site_url` the published reader's address, and `repository` the GitHub repository of the Lean source when it is not the project's `origin` remote. `repository_private = true` keeps the repository's name out of the reader's text; its Lean source links still name it, and open only for people with access.
 
-Optional configuration includes `dismissals` (documented advisory warnings), `comparator_log` (a structured replay record) and `display` (a text-only display overlay). Display changes never alter verification results.
+Optional configuration includes `dismissals` (documented advisory warnings), `comparator_log` (a structured replay record) and `display` (a text-only display overlay). `machinechecked replay CONFIG` runs Comparator with its configuration (`lake env comparator CONFIG`, so Comparator must be installed) on a commit whose Lean inputs have no uncommitted changes, and writes the record to `comparator_log`: the commit, the Lean version and the Lake manifest's hash, whether it passed, and the theorems it replayed. The assessment counts it only for that commit and environment. Display changes never alter verification results.
 
 ## Map claims to specifications
 

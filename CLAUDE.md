@@ -61,7 +61,7 @@ break stored evidence and exported reports for no user-visible gain.
 
 | Path | What |
 |---|---|
-| `engine/python/prooflens/` | the engine: `cli.py` (commands), `simple.py` (zero configuration), `pipeline.py` (full assessment), `assess.py` (statuses), `manifest.py` (site data), `tex.py` + `data/prooflens.sty` (LaTeX anchors), `paper.py` (the site's paper pages), `cache.py` (the Lean build cache), `data/ProofLensProbe.lean` (the Lean probe), `review_queue.py`, `promote.py`, `bundle.py`, `export.py` |
+| `engine/python/prooflens/` | the engine: `cli.py` (commands), `simple.py` (zero configuration), `pipeline.py` (full assessment), `assess.py` (statuses), `manifest.py` (site data), `tex.py` + `data/prooflens.sty` (LaTeX anchors), `paper.py` (the site's paper pages), `cache.py` (the Lean build cache), `replay.py` (Comparator replay records), `data/ProofLensProbe.lean` (the Lean probe), `review_queue.py`, `promote.py`, `bundle.py`, `export.py` |
 | `engine/python/prooflens/web/` | the **built** reader, committed (users need no Node) |
 | `web/src/` | the reader's sources (Svelte 5, Vite, pdf.js 4.10, KaTeX) |
 | `tests/` | `contracts/`, `mutations/`, `security/`, `simple/`; `conftest.py` copies the toy example per test |

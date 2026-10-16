@@ -322,3 +322,47 @@ def test_the_latest_release_is_the_one_made_last_not_the_newest_file(tmp_path):
                                                     "created": created}))
         os.utime(d / f"{name}.json", (mtime, mtime))
     assert [p.stem for p in ev.releases(tmp_path)] == ["r-old", "r-new"]
+
+
+@needs_lean
+@needs_tex
+def test_a_replay_record_counts_only_for_its_commit_environment_and_a_passing_run(toy, tmp_path):
+    """`machinechecked replay` runs Comparator (a stand-in script here) on a clean commit and
+    writes its record; the assessment counts it for the proofs it names, and refuses a record of a
+    failed run, of a dirty tree, or of another Lean version or set of dependencies."""
+    import os
+    import subprocess
+    from prooflens.replay import ReplayError, replay
+    env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@x",
+           "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@x"}
+    for args in (["init", "-q"], ["add", "-A"], ["commit", "-q", "-m", "toy"]):
+        subprocess.run(["git", *args], cwd=toy, check=True, capture_output=True, env=env)
+    edit(toy / "machinechecked.toml", 'dismissals = "reviews/dismissals.json"',
+         'dismissals = "reviews/dismissals.json"\ncomparator_log = "replay.json"')
+    fake = tmp_path / "comparator"
+    fake.write_text("#!/bin/sh\necho checked\n")
+    fake.chmod(0o755)
+    conf = toy / "comparator.json"
+    conf.write_text(json.dumps({"challenge_module": "Toy.PaperSpec",
+                                "solution_module": "Toy.Acceptance",
+                                "theorem_names": ["Toy.Acceptance.thm_even_add"],
+                                "permitted_axioms": ["propext", "Quot.sound", "Classical.choice"]}))
+    rec = replay(toy / "lean", conf, toy / "replay.json", comparator=str(fake))
+    assert rec["passed"] and rec["replayed"] == ["Toy.Acceptance.thm_even_add"] and not rec["dirty"]
+
+    def state():
+        _, body, _ = build(toy)
+        c = next(c for c in body["assessment"]["claims"] if c["id"] == "T:thm:even-add")
+        return c["clauses"][0]["checks"]["replay"]
+
+    assert state()["state"] == "pass"
+    for change, why in (({"passed": False}, "did not pass"), ({"dirty": True}, "uncommitted"),
+                        ({"toolchain": "leanprover/lean4:v0.0.0"}, "other Lean version"),
+                        ({"lake_manifest_sha256": "0" * 64}, "other Lake dependencies")):
+        (toy / "replay.json").write_text(json.dumps({**rec, **change}))
+        got = state()
+        assert got["state"] == "unverified" and why in got["detail"], (change, got)
+    # A tree whose Lean inputs differ from the commit is refused before Comparator runs.
+    edit(toy / "lean/Toy/Defs.lean", "/-!", "-- changed\n/-!")
+    with pytest.raises(ReplayError, match="uncommitted changes"):
+        replay(toy / "lean", conf, toy / "replay.json", comparator=str(fake))

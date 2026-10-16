@@ -144,10 +144,33 @@ class Assessor:
             return {"state": "unverified",
                     "detail": f"the Comparator record is for commit {str(rec.get('commit'))[:12]}"
                               f", not this one"}
+        # A record made by `machinechecked replay` also says whether the run passed, whether the
+        # tree was clean, and the environment it ran in; each must hold for the replay to count.
+        if rec.get("passed") is False:
+            return {"state": "unverified", "detail": "the Comparator run recorded did not pass"}
+        if rec.get("dirty"):
+            return {"state": "unverified",
+                    "detail": "the Comparator run was on a tree with uncommitted changes"}
+        for key, label in (("toolchain", "Lean version"),
+                           ("lake_manifest_sha256", "Lake dependencies")):
+            here = self._environment().get(key)
+            if rec.get(key) is not None and rec.get(key) != here:
+                return {"state": "unverified",
+                        "detail": f"the Comparator record was made with other {label}"}
         if thm not in set(rec.get("replayed", [])):
             return {"state": "not-run", "detail": "the Comparator record does not cover this proof"}
         return {"state": "pass", "detail": "Comparator replayed the proof in a fresh kernel ("
                 + ", ".join(rec.get("kernels", ["lean"])) + ")"}
+
+    def _environment(self) -> dict:
+        """The audited project's Lean version and Lake manifest hash."""
+        if not hasattr(self, "_env"):
+            from .util import sha256_file
+            root = self.cfg.lean_root
+            tc, lm = root / "lean-toolchain", root / "lake-manifest.json"
+            self._env = {"toolchain": tc.read_text().strip() if tc.exists() else None,
+                         "lake_manifest_sha256": sha256_file(lm) if lm.exists() else None}
+        return self._env
 
     def _proof(self, kind, name, spec):
         return self.lean["proofs"].get(f"{kind}:{name}:{spec or ''}")
