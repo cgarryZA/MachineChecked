@@ -454,6 +454,59 @@ def cmd_replay(a):
         sys.exit(1)
 
 
+def cmd_inspect(a):
+    import json
+    from .deps import inspect
+    from .simple import find_lake_root
+    root = Path(a.project).resolve() if a.project else find_lake_root(Path.cwd().resolve())
+    if root is None:
+        sys.exit("no Lean project here: run machinechecked inside a directory with a lakefile")
+    log = (lambda m: print(m, file=sys.stderr))
+    out = inspect(root, a.name, a.module, log=log, refresh=a.refresh)
+    if not a.dependencies and out.get("closure"):
+        out["closure"] = {k: v for k, v in out["closure"].items() if k != "members"}
+    if a.json:
+        print(json.dumps(out, indent=1, ensure_ascii=False))
+    else:
+        _print_inspect(out, a.dependencies)
+    if not out["ok"]:
+        sys.exit(1)
+
+
+def _print_inspect(out: dict, dependencies: bool):
+    if not out["ok"]:
+        where = ", ".join(out.get("modules") or [])
+        print(f"{out['name']}: {out['status']}" + (f" ({where})" if where else "")
+              + (f": {out['reason']}" if out.get("reason") else ""))
+        if out["status"] == "ambiguous":
+            print("  name the module that declares it with --module")
+        return
+    d = out["declaration"]
+    line = (d.get("range") or {}).get("line")
+    print(f"{d['name']}  ({d['kind']}, {d['file']}" + (f":{line}" if line else "") + ")")
+    print(f"  statement: {d['statement']}")
+    print(f"  axioms: {', '.join(d['axioms']) or 'none'}" + ("  (uses sorry)" if d["sorry"] else ""))
+    for label, key in (("statement uses", "statement_dependencies"),
+                       (f"{out['value_kind']} uses", "proof_dependencies")):
+        names = out[key]
+        shown = ", ".join(names[:12]) + (f", … ({len(names)} in all)" if len(names) > 12 else "")
+        print(f"  {label} (this project): {shown or 'nothing'}")
+    ext = out["external_dependencies"]
+    print(f"  outside this project: {len(ext['statement'])} in the statement, "
+          f"{len(ext['proof'])} in the {out['value_kind']}")
+    c = out["closure"]
+    by = ", ".join(f"{k} {v}" for k, v in list(c["external"]["by_package"].items())[:5])
+    print(f"  reaches {c['declarations']} declaration(s) of this project (deepest {c['deepest']} "
+          f"step(s)), and {c['external']['constants']} constant(s) outside it" +
+          (f": {by}" if by else ""))
+    if dependencies:
+        for m in c["members"]:
+            print(f"    {m['depth']:>3}  {m['name']}  ({m['kind']}, {m['module']})")
+    print(f"  {out['note']}")
+    if out.get("cache", {}).get("hit"):
+        print("  (from the cache: no Lean input changed)")
+
+
 def cmd_serve(a):
     cfg = cfgmod.load(_config_arg(a))
     site = Path(a.dir).resolve() if a.dir else cfg.out_dir / "site"
@@ -647,6 +700,17 @@ def main(argv=None):
     rp.add_argument("--comparator", default="comparator", help="the Comparator program")
     rp.set_defaults(func=cmd_replay)
 
+    ins = sub.add_parser("inspect", help="what a Lean declaration depends on, proofs included")
+    ins.add_argument("name", help="the declaration's full name, e.g. Foo.main_theorem")
+    ins.add_argument("--module", help="the module that declares it, when several declare the name")
+    ins.add_argument("--dependencies", action="store_true",
+                     help="list every declaration of the project it depends on")
+    ins.add_argument("--json", action="store_true",
+                     help="print one JSON document (for scripts and agents)")
+    ins.add_argument("--project", help="the Lean project (default: the one here)")
+    ins.add_argument("--refresh", action="store_true", help=argparse.SUPPRESS)
+    ins.set_defaults(func=cmd_inspect)
+
     s = sub.add_parser("serve")
     s.add_argument("-c", "--config", default=None)
     s.add_argument("--dir")
@@ -722,6 +786,13 @@ def _could_not_run(a, kind: str, message: str, **extra):
         print(json.dumps({"schema": "machinechecked/check@1", "ok": False,
                           "error": {"kind": kind, "message": message, **extra},
                           "note": "The check did not run; nothing is known about the claims."},
+                         indent=1))
+    elif getattr(a, "func", None) is cmd_inspect and getattr(a, "json", False):
+        import json
+        print(json.dumps({"schema": "machinechecked/inspect@1", "ok": False,
+                          "name": getattr(a, "name", None),
+                          "error": {"kind": kind, "message": message, **extra},
+                          "note": "Lean was not asked; nothing is known about the declaration."},
                          indent=1))
     raise SystemExit(COULD_NOT_RUN)
 

@@ -88,6 +88,14 @@ violations and obligations by subject; `findings` holds only their totals.
   quantifiers, definitions and conclusion. Present it as your reading, for the user to judge;
   the reader's Review page (`machinechecked view`, then Review) records such a review
   properly, and a report changes no status.
+- **Where is a paper statement proved, and what does a proof rest on?** `machinechecked
+  inspect NAME --dependencies --json` prints the declaration's statement, axioms and source,
+  what its statement mentions and, separately, what its proof uses, and every declaration of
+  the project reachable through both, each with its own split and its distance from NAME.
+  Start from the theorem that matches the paper's main result and follow its proof to find
+  the lemmas a paper statement may correspond to; also search the rest of the project, since
+  a lemma can be formalised without being used by that proof. If two modules declare the
+  name, pass `--module`. A dependency is a fact about Lean terms, not a correspondence.
 - **Link a claim to a declaration**: the user does it in `machinechecked view` (Link / Not
   this), or you add a `\lean{Name}` tag to the statement in the LaTeX if the user agrees.
 - **A shareable report**: `machinechecked build` writes `.machinechecked/MachineChecked.html`

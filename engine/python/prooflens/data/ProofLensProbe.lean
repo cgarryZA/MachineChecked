@@ -402,6 +402,76 @@ def linkRecord (h : IO.FS.Handle) (q : Query) (roots : Array Name) (seen : IO.Re
     ("decl", j), ("binders", Json.arr binders), ("conclusion", concl),
     ("closure", toJson closure)])
 
+/-! ## Dependencies, proofs included
+
+The closures above erase proofs, so that fingerprints see statements and data only. A `deps`
+request answers a different question, what a declaration rests on: the constants its statement
+mentions and, kept apart, those its value uses (a theorem's proof, a definition's body), without
+erasing anything. It adds records of its own and changes none of the others. -/
+
+/-- The constants a declaration's statement mentions, and those its value uses. -/
+def statementAndValueConsts (ci : ConstantInfo) : Array Name × Array Name :=
+  let value := match ci with
+    | .defnInfo d => d.value.getUsedConstants
+    | .thmInfo t => t.value.getUsedConstants
+    | .opaqueInfo o => o.value.getUsedConstants
+    | .inductInfo i => i.ctors.toArray
+    | .ctorInfo c => #[c.induct]
+    | _ => #[]
+  (ci.type.getUsedConstants, value)
+
+/-- One declaration reached from a `deps` root: what it is, how far from the root, and its own
+statement and value dependencies, split into the project's (`roots`) and the rest. -/
+def depNode (roots : Array Name) (n : Name) (ci : ConstantInfo) (depth : Nat) : MetaM Json := do
+  let env ← getEnv
+  let (st, va) := statementAndValueConsts ci
+  let inside := fun (a : Array Name) => Json.arr ((a.filter (inScope roots env)).map (Json.str ·.toString))
+  let outside := fun (a : Array Name) =>
+    Json.arr ((a.filter (!inScope roots env ·)).map (Json.str ·.toString))
+  -- Each declaration printed has its own heartbeat budget: a closure can hold thousands.
+  let ty ← withCurrHeartbeats do
+    try
+      let f ← ppExpr ci.type
+      pure (toString f)
+    catch _ => pure "(not printable)"
+  let doc ← findDocString? env n
+  return Json.mkObj [("record", "depnode"), ("name", n.toString), ("kind", kindOf ci),
+    ("module", (moduleOf env n).toString), ("range", ← rangeJson n),
+    ("user_facing", toJson (userFacing n)), ("depth", toJson depth),
+    ("doc", match doc with | some d => Json.str d | none => Json.null),
+    ("type", if ty.length > 4000 then (ty.take 4000).toString ++ " …" else ty),
+    ("statement_uses", inside st), ("value_uses", inside va),
+    ("statement_external", outside st), ("value_external", outside va)]
+
+/-- Every declaration of the project reachable from `root` through statements and values, each
+once, at its least distance from the root, then a `deps` record with the root's axioms. -/
+def depsRecords (h : IO.FS.Handle) (roots : Array Name) (root : Name) : MetaM Unit := do
+  let env ← getEnv
+  unless env.contains root do
+    emit h (Json.mkObj [("record", "deps"), ("name", root.toString), ("errors", toJson #["missing"])])
+    return
+  let mut seen : NameSet := {}
+  let mut queue : Array (Name × Nat) := #[(root, 0)]
+  let mut i := 0
+  let mut reached := 0
+  while i < queue.size do
+    let (n, d) := queue[i]!
+    i := i + 1
+    if seen.contains n then continue
+    seen := seen.insert n
+    let some ci := env.find? n | continue
+    unless n == root || inScope roots env n do continue
+    emit h (← depNode roots n ci d)
+    reached := reached + 1
+    let (st, va) := statementAndValueConsts ci
+    for c in st ++ va do
+      unless seen.contains c do
+        if inScope roots env c then queue := queue.push (c, d + 1)
+  let axs ← collectAxioms root
+  emit h (Json.mkObj [("record", "deps"), ("name", root.toString), ("errors", Json.arr #[]),
+    ("module", (moduleOf env root).toString), ("axioms", toJson (axs.map toString)),
+    ("sorry", toJson (axs.contains ``sorryAx)), ("reached", toJson reached)])
+
 /-- Every module of the specification layer that imports a module of the acceptance layer. -/
 def layering (h : IO.FS.Handle) (q : Query) : CoreM Unit := do
   -- Without both layers named (the zero-configuration view) there is no layering to check;
@@ -454,6 +524,7 @@ open ProofLensProbe in
         | "witness" => proofRecord h q "witness" r.name.toName none
         | "index" => indexRecords h roots
         | "link" => linkRecord h q roots seen r.name.toName
+        | "deps" => depsRecords h roots r.name.toName
         | "decl" => do
           let env ← getEnv
           if let some ci := env.find? r.name.toName then

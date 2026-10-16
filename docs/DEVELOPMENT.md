@@ -25,6 +25,7 @@ To exercise the zero-configuration flow, use `examples/plain-paper/`. For the lo
 | `engine/python/prooflens/formalization.py` | Read a project's `formalization.yaml` |
 | `engine/python/prooflens/paper.py` | A paper page's data (the site's paper pages), in the reader's standard format |
 | `engine/python/prooflens/data/ProofLensProbe.lean` | Elaborated Lean declarations and dependency data |
+| `engine/python/prooflens/deps.py` | `inspect`: a declaration's statement and proof dependencies, cached |
 | `engine/python/prooflens/assess.py` | Full-assessment states and findings |
 | `engine/python/prooflens/review_queue.py` | Review units and queue ordering |
 | `engine/python/prooflens/promote.py` | Maintainer-controlled review promotion |
@@ -85,7 +86,7 @@ The detailed engineering rules live in [CLAUDE.md](../CLAUDE.md). The evolving p
 
 The public command is `machinechecked`; `prooflens` remains an alias for compatibility. Most users need only `view`, `build` and `check`.
 
-Full-assessment users can use `reassess` (new reviews without a Lean re-probe), `site` (regenerate the reader from stored evidence), `bundle` (single-file HTML), `export` (approved public data) and `review promote` (maintainer approval).
+`inspect NAME [--dependencies] [--json]` reports what a declaration's statement mentions and, separately, what its proof uses, through the whole project (the probe's `deps` request; every other record stays proof-erased). Full-assessment users can use `reassess` (new reviews without a Lean re-probe), `site` (regenerate the reader from stored evidence), `bundle` (single-file HTML), `export` (approved public data) and `review promote` (maintainer approval).
 
 ## Releasing
 
