@@ -34,6 +34,10 @@ class Paper:
     commit: str | None = None
     envs: list[str] | None = None
     publish: Publish = field(default_factory=Publish)
+    # The public record the audited revision corresponds to (an arXiv identifier with version,
+    # a DOI or a URL), and how the revision differs from it. Descriptive only: no status uses it.
+    published: str | None = None
+    published_note: str | None = None
 
 
 @dataclass
@@ -113,7 +117,8 @@ def load(path: str | Path) -> Config:
         papers.append(Paper(
             id=_req(p, "id", "paper"), title=p.get("title", p["id"]), source=src,
             root=p.get("root"), pdf=p.get("pdf"), commit=src.get("rev"), envs=p.get("envs"),
-            publish=Publish(**p.get("publish", {}))))
+            publish=Publish(**p.get("publish", {})), published=p.get("published"),
+            published_note=p.get("note")))
     return Config(
         path=path,
         name=_req(proj, "name", "project"),

@@ -78,7 +78,9 @@ def build(cfg: Config, release: str | None = None, skip_lean: bool = False,
         prov = {"title": paper.title, "kind": snap.kind, "revision": snap.revision,
                 "mode": snap.mode, "root": snap.root, "note": snap.note,
                 "committed_pdf": snap.pdf,
-                "committed_pdf_sha256": sha256_file(snap.dir / snap.pdf) if snap.pdf else None}
+                "committed_pdf_sha256": sha256_file(snap.dir / snap.pdf) if snap.pdf else None,
+                **({"published": paper.published} if paper.published else {}),
+                **({"published_note": paper.published_note} if paper.published_note else {})}
         t = None
         if snap.mode == "latex" and not skip_tex:
             envs = paper.envs or sorted(set(DEFAULT_ENVS) | set(theorem_envs(snap.dir)))

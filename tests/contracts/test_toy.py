@@ -253,3 +253,27 @@ def test_check_json_lists_each_finding(toy):
     mine = [f for f in d["finding_details"] if f["subject"] == "T:thm:even-add#0"]
     assert any(f["tier"] == "obligation" and "witness" in f["message"] for f in mine), mine
     assert all({"id", "tier", "code", "subject", "message"} <= set(f) for f in d["finding_details"])
+
+
+@needs_lean
+@needs_tex
+def test_a_paper_names_its_published_version(toy, tmp_path):
+    """`published` and `note` on [[paper]] reach the reader's data and audit.json, and change no
+    status; without them the evidence is as before."""
+    from prooflens import config as cfgmod
+    from prooflens.export import export
+    before, body_before, _ = build(toy, skip_lean=True)
+    assert "published" not in body_before["provenance"]["papers"]["T"]
+    edit(toy / "machinechecked.toml", 'root = "toy.tex"\n',
+         'root = "toy.tex"\npublished = "arXiv:2601.01234v2"\n'
+         'note = "This revision corrects Proposition 2.3."\n')
+    index, _, cfg = build(toy, skip_lean=True)
+    paper = index["papers"][0]
+    assert paper["published"] == "arXiv:2601.01234v2"
+    assert paper["published_note"] == "This revision corrects Proposition 2.3."
+    assert [c["status"] for c in index["claims"]] == [c["status"] for c in before["claims"]]
+    export(cfgmod.load(toy / "machinechecked.toml"), tmp_path / "out")
+    d = json.loads((tmp_path / "out" / "audit.json").read_text())["papers"][0]
+    assert (d["id"], d["version"], d["url"]) == \
+        ("arxiv:2601.01234", "v2", "https://arxiv.org/abs/2601.01234v2")
+    assert d["note"] == "This revision corrects Proposition 2.3."

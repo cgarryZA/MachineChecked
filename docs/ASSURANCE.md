@@ -32,7 +32,7 @@ root = "main.tex"
 publish = { pdf = false, source_text = false, lean = false, reviews = false }
 ```
 
-Sources can also be a pinned Git revision (`source = { git = "owner/repo", rev = "<commit>" }`) or a versioned arXiv record. With multiple root TeX files, specify `root`. Without LaTeX, MachineChecked falls back to the paper's PDF and labels the weaker source evidence.
+Sources can also be a pinned Git revision (`source = { git = "owner/repo", rev = "<commit>" }`, of which only that revision is fetched) or a versioned arXiv record. When the audited revision is not itself the published paper, say which public record it corresponds to with `published` (an arXiv identifier with version such as `"arXiv:2601.01234v2"`, a DOI, or a URL) and how it differs with `note` (for example `"This revision corrects Proposition 2.3."`); both go into `audit.json` and the reader, and change no status. With multiple root TeX files, specify `root`. Without LaTeX, MachineChecked falls back to the paper's PDF and labels the weaker source evidence.
 
 Under `[project]`, `author` is the name the audit is published under, `issues` the GitHub repository where Raise issue opens reports, `site_url` the published reader's address, and `repository` the GitHub repository of the Lean source when it is not the project's `origin` remote. `repository_private = true` keeps the repository's name out of the reader's text; its Lean source links still name it, and open only for people with access.
 

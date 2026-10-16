@@ -24,10 +24,28 @@ ARXIV = re.compile(r"arxiv\.org/(?:abs|pdf)/([a-z-]+(?:\.[A-Z]{2})?/\d{7}|\d{4}\
 GITHUB = re.compile(r"github\.com[:/]([\w.-]+)/([\w.-]+?)(?:\.git)?/?$")
 
 
+ARXIV_ID = re.compile(r"^arxiv:\s*([a-z-]+(?:\.[A-Z]{2})?/\d{7}|\d{4}\.\d{4,5})(v\d+)?$", re.I)
+DOI = re.compile(r"^(?:doi:\s*|https?://(?:dx\.)?doi\.org/)?(10\.\d{4,9}/\S+)$", re.I)
+
+
 def arxiv_id(url: str | None) -> tuple[str, str | None] | None:
-    """The arXiv identifier and version named by a URL (`arxiv:2601.01234`, `v2`), if any."""
-    m = ARXIV.search(url or "")
+    """The arXiv identifier and version named by a URL or written `arXiv:2601.01234v2`
+    (`arxiv:2601.01234`, `v2`), if any."""
+    m = ARXIV.search(url or "") or ARXIV_ID.match((url or "").strip())
     return (f"arxiv:{m.group(1)}", m.group(2)) if m else None
+
+
+def published_record(value: str) -> dict:
+    """What a paper's `published` field names: an arXiv identifier and version, a DOI, or a URL."""
+    ax = arxiv_id(value)
+    if ax:
+        return {"id": ax[0], "version": ax[1],
+                "url": f"https://arxiv.org/abs/{ax[0].split(':', 1)[1]}{ax[1] or ''}"}
+    d = DOI.match(value.strip())
+    if d:
+        return {"id": f"doi:{d.group(1)}", "version": None, "url": f"https://doi.org/{d.group(1)}"}
+    return {"id": None, "version": None,
+            "url": value if value.startswith(("https://", "http://")) else None}
 
 
 def github_repository(path: Path) -> str | None:
@@ -49,9 +67,16 @@ def descriptor(index: dict, lean_root: Path | None, author: str | None = None,
     papers = []
     for p in index.get("papers", []):
         ax = arxiv_id(paper_url) if len(index.get("papers", [])) == 1 else None
-        papers.append({"title": p.get("title"), "id": ax[0] if ax else None,
-                       "version": ax[1] if ax else None, "url": paper_url,
-                       "revision": p.get("revision")})
+        entry = {"title": p.get("title"), "id": ax[0] if ax else None,
+                 "version": ax[1] if ax else None, "url": paper_url,
+                 "revision": p.get("revision")}
+        # A paper whose configuration names its published version: that is the public record
+        # this audit corresponds to, with how the audited revision differs from it.
+        if p.get("published"):
+            entry.update(published_record(p["published"]))
+        if p.get("published_note"):
+            entry["note"] = p["published_note"]
+        papers.append(entry)
     project = index.get("project") or {}
     return {
         "schema": SCHEMA,

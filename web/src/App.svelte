@@ -79,6 +79,12 @@
   {#if index.notes?.length}
     <div class="banner">{#each index.notes as n}<div>{n}</div>{/each}</div>
   {/if}
+  {#if paper && (paper.published || paper.published_note)}
+    <div class="banner published">
+      {#if paper.published}The published version of this paper is <strong>{paper.published}</strong>{#if paper.revision}; this audit reads revision <code>{String(paper.revision).slice(0, 12)}</code>{/if}.{/if}
+      {#if paper.published_note}<span>{paper.published_note}</span>{/if}
+    </div>
+  {/if}
 
   {#if route.view === "claim" && route.claim}
     <main class="page"><Passport {index} claimId={route.claim} full {editable} /></main>
