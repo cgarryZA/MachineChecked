@@ -79,3 +79,33 @@ def test_an_unbuilt_project_never_reads_as_proved(tmp_path):
     # An appendix statement ("Lemma A.1") is found, and formalization.yaml links it.
     assert [l["name"] for l in c["Lemma A.1"]["links"]] == ["Proj.zero_even"]
     assert any("not built" in n for n in view["body"]["notes"])
+
+
+@needs_tex
+def test_the_working_directory_is_ignored_and_holds_the_paper_once(tmp_path):
+    root = tmp_path / "proj"
+    root.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+    (root / "lakefile.toml").write_text('name = "Proj"\n\n[[lean_lib]]\nname = "Proj"\n')
+    (root / "paper.pdf").write_bytes(_pdf(tmp_path).read_bytes())
+    out = root / ".machinechecked"
+    build_view(root, root / "paper.pdf", out, log=lambda m: None)
+    # Git ignores it, as Lake's .lake/: a `git add -A` cannot commit the paper or the reader.
+    status = subprocess.run(["git", "status", "--porcelain", "--untracked-files=all"], cwd=root,
+                            capture_output=True, text=True, check=True).stdout
+    assert ".machinechecked" not in status
+    # The snapshot of a paper that is only a PDF is that file, stored once.
+    snap = out / "sources" / "P"
+    assert [p.name for p in snap.iterdir()] == ["paper.pdf"]
+    assert (snap / "paper.pdf").stat().st_ino == (root / "paper.pdf").stat().st_ino
+
+
+def test_a_working_directory_git_already_tracks_is_left_alone(tmp_path):
+    from prooflens.util import prepare_work_dir
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    d = tmp_path / ".machinechecked"
+    d.mkdir()
+    (d / "kept.json").write_text("{}")
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
+    prepare_work_dir(d)
+    assert not (d / ".gitignore").exists()

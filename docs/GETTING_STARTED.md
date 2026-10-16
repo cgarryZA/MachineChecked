@@ -124,14 +124,7 @@ machinechecked check
 
 This fails when a linked declaration is missing or not proved. It does **not** independently judge whether the association matches the mathematics in the paper.
 
-Put the generated working files in `.gitignore`:
-
-```gitignore
-.machinechecked/
-MachineChecked.html
-```
-
-Keep the HTML file tracked only if you deliberately want that exact snapshot in your repository. A private paper bundled into HTML remains private content: do not publish it without checking the export.
+Git ignores `.machinechecked/` by itself (it holds a `.gitignore`, as Lake's `.lake/` does), so a downloaded paper or the generated reader is never committed by accident. `MachineChecked.html`, written by `build`, is yours to keep or ignore; add it to `.gitignore` unless you deliberately want that exact snapshot in your repository. A private paper bundled into HTML remains private content: do not publish it without checking the export.
 
 ## A badge for your README
 

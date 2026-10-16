@@ -20,9 +20,8 @@ from .reviews import load_dismissals, load_reviews
 from .schemas import validate
 from .sources import acquire
 from .tex import DEFAULT_ENVS, TexError, anchors_for, theorem_envs
-from .util import (canonical_json, git_dirty, git_head, norm_ws, read_json, sha256_file,
-                   sha256_text,
-                   write_json)
+from .util import (canonical_json, git_dirty, git_head, link_or_copy, norm_ws, prepare_work_dir,
+                   read_json, sha256_file, sha256_text, write_json)
 
 
 def tool_version() -> str:
@@ -49,6 +48,7 @@ def project_provenance(cfg: Config) -> dict:
 def build(cfg: Config, release: str | None = None, skip_lean: bool = False,
           skip_tex: bool = False, lake: str = "lake", web_dist: Path | None = None,
           lean_build: bool = True, reuse_lean: bool = False, log=print) -> dict:
+    prepare_work_dir(cfg.out_dir)
     inv = read_json(cfg.inventory)
     validate(inv, "inventory")
     reviews, review_hashes = load_reviews(cfg.reviews, cfg.ai_reviewers, cfg.root)
@@ -328,4 +328,4 @@ def write_preview(site: Path, index: dict, chunks: dict, store: dict, pdfs: dict
         write_json(data / "review-queue.json", queue, indent=None)
     for pid, pdf in pdfs.items():
         (data / "papers").mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(pdf, data / "papers" / f"{pid}.pdf")
+        link_or_copy(pdf, data / "papers" / f"{pid}.pdf")

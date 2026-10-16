@@ -29,7 +29,7 @@ from .probe import fingerprint
 from .sources import SourceError, acquire
 from .tex import DEFAULT_ENVS, TexError, anchors_for, theorem_envs
 from . import formalization as fz
-from .util import content_id, git_head, read_json, sha256_file, write_json
+from .util import content_id, git_head, prepare_work_dir, read_json, sha256_file, write_json
 
 LINKS = "machinechecked.links.json"
 OLD_LINKS = "prooflens.links.json"
@@ -497,6 +497,7 @@ def paper_title(p: Path) -> str:
 def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
                log=print) -> dict:
     """Everything the reader shows for `paper_path` in the Lean project at `root`."""
+    prepare_work_dir(out_dir)
     libs = lib_names(root)
     built, unbuilt = built_modules(root, libs) if libs else ([], [])
     cfg = view_config(root, paper_path, out_dir, libs)

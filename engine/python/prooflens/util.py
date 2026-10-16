@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -64,3 +66,33 @@ def write_json(path: str | Path, obj, indent: int | None = 1) -> None:
 
 def read_json(path: str | Path):
     return json.loads(Path(path).read_text(encoding="utf-8"))
+
+
+def link_or_copy(src: str | Path, dst: str | Path) -> None:
+    """Put `src` at `dst` as a hard link (the file is then stored once), else as a copy."""
+    dst = Path(dst)
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    dst.unlink(missing_ok=True)
+    try:
+        os.link(src, dst)
+    except OSError:
+        shutil.copy2(src, dst)
+
+
+def prepare_work_dir(d: str | Path) -> Path:
+    """Create the working directory (`.machinechecked/`) and have Git ignore it, as Lake does
+    `.lake/`: a `.gitignore` of `*` inside it, unless it has one or Git already tracks files in
+    it."""
+    d = Path(d)
+    d.mkdir(parents=True, exist_ok=True)
+    ignore = d / ".gitignore"
+    if not ignore.exists():
+        try:
+            tracked = subprocess.run(["git", "ls-files", "--", "."], cwd=d, capture_output=True,
+                                     text=True).stdout.strip()
+        except OSError:  # no Git: nothing can be tracked
+            tracked = ""
+        if not tracked:
+            ignore.write_text("# MachineChecked's working files, never committed.\n*\n")
+    return d
+

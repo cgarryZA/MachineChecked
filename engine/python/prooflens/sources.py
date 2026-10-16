@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .config import Config, Paper
+from .util import link_or_copy
 
 
 class SourceError(RuntimeError):
@@ -47,6 +48,24 @@ def _latex_roots(d: Path) -> list[str]:
         except OSError:
             continue
     return roots
+
+
+SKIP = (".git", ".lake", ".machinechecked", ".prooflens")
+
+
+def _has_latex_root(d: Path) -> bool:
+    """Whether a copy of `d` (without the directories a snapshot leaves out) has a LaTeX root."""
+    for top, dirs, files in os.walk(d):
+        dirs[:] = [x for x in dirs if x not in SKIP]
+        for f in files:
+            if f.endswith(".tex"):
+                try:
+                    if DOCCLASS.search((Path(top) / f).read_text(encoding="utf-8",
+                                                                errors="replace")):
+                        return True
+                except OSError:
+                    continue
+    return False
 
 
 def _pdfs(d: Path) -> list[str]:
@@ -105,10 +124,15 @@ def acquire(cfg: Config, paper: Paper, dest: Path) -> Snapshot:
         base = (cfg.root / src["path"]).resolve()
         if not base.is_dir():
             raise SourceError(f"paper {paper.id}: {base} is not a directory")
-        shutil.copytree(base, dest, dirs_exist_ok=True, copy_function=shutil.copy2,
-                        ignore_dangling_symlinks=True,
-                        ignore=shutil.ignore_patterns(".git", ".lake", ".machinechecked", ".prooflens",
-                                                      "*.aux", "*.log", "*.fls"))
+        if paper.pdf and not paper.root and (base / paper.pdf).is_file() \
+                and not _has_latex_root(base):
+            # A paper that is only a PDF needs only that file, not the directory it is in (the
+            # source would be read as the same PDF either way).
+            link_or_copy(base / paper.pdf, dest / paper.pdf)
+        else:
+            shutil.copytree(base, dest, dirs_exist_ok=True, copy_function=shutil.copy2,
+                            ignore_dangling_symlinks=True,
+                            ignore=shutil.ignore_patterns(*SKIP, "*.aux", "*.log", "*.fls"))
         kind, rev, commit_time = "path", None, None
     elif "git" in src:
         rev = src.get("rev")

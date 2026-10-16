@@ -8,7 +8,8 @@ Everyday commands, run from anywhere inside a Lean project:
 
 A project with a `machinechecked.toml` (an acceptance layer: locked statements, reviews) gets
 the full assessment; any other project gets the zero-configuration view, whose only file in the
-repository is `machinechecked.links.json`. The other commands are for that full assessment.
+repository is `machinechecked.links.json` (its working files, a downloaded paper among them, are
+in `.machinechecked/`, which Git ignores). The other commands are for that full assessment.
 `prooflens` is another name for the same command.
 """
 
@@ -149,7 +150,8 @@ def _fetch_paper(root: Path, url: str, title: str | None = None) -> Path:
     repository), with its address and title beside it."""
     import hashlib
     import urllib.request
-    d = root / cfgmod.work_dir_name(root) / "papers"
+    from .util import prepare_work_dir
+    d = prepare_work_dir(root / cfgmod.work_dir_name(root)) / "papers"
     name = re.sub(r"[^\w.-]+", "_", url.rstrip("/").rsplit("/", 1)[-1]) or "paper"
     if not name.lower().endswith(".pdf"):
         name += ".pdf"
