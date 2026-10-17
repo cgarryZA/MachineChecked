@@ -65,7 +65,7 @@ When the file names several sources, a mapping is used for a paper only if it na
 
 If the Lean project is not built, linked claims read **linked: Lean not checked (the project is not built)**, never proved.
 
-The reader opens on the paper. The contents list shows numbered mathematical statements. Select one in the contents or click its margin marker to view its Lean associations.
+The reader opens on the paper. The contents list shows numbered mathematical statements. Select one in the contents or click its margin marker to view its Lean associations. A Lean statement is shown compactly, as its variables and the number of its assumptions above its conclusion, with the full statement, in order, one click away; a statement whose quantifiers choose a value (a "there is") is always shown in full, since the order is its meaning. Clicking a name opens that declaration in place of the claim, and **Back** returns to the claim as you left it.
 
 ## Connect a claim to Lean
 

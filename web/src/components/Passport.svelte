@@ -12,6 +12,7 @@
   import Decl from "./Decl.svelte";
   import Tex from "./Tex.svelte";
   import LinkPicker from "./LinkPicker.svelte";
+  import { tick } from "svelte";
 
   // One claim: the mathematics first (as printed, then in Lean), then one line on what Lean
   // establishes; the evidence behind that line is folded into "Technical details".
@@ -21,14 +22,20 @@
   // On a page with several projects, the claim as the chosen one sees it.
   const claim = $derived(loaded && index.projects ? inProject(loaded, project.repo) : loaded);
   let error = $state(null);
-  let openDecl = $state(null);
+  // The inspector: the declarations opened from this claim, in order. While it is not empty the
+  // last one replaces the claim view, which stays mounted (hidden) so its open sections and
+  // scroll position come back on Back.
+  let stack = $state([]);
+  let scrolls = [];
+  let article = $state();
   let showAll = $state(false);
   let busy = $state(null);
   let saveError = $state(null);
   const RANK = { stale: 0, pending: 1, "author-reviewed": 2, reviewed: 3 };
 
   $effect(() => {
-    loaded = null; error = null; openDecl = null; showAll = false; saveError = null;
+    claimId;
+    loaded = null; error = null; stack = []; scrolls = []; showAll = false; saveError = null;
     loadClaim(index, claimId).then((c) => (loaded = c)).catch((e) => (error = String(e)));
   });
 
@@ -36,9 +43,29 @@
   const meta = $derived(index.claims.find((c) => c.id === claimId));
   const simple = $derived(claim?.mode === "simple");
 
-  function showDecl(name) {
-    openDecl = name;
-    queueMicrotask(() => document.getElementById("decl-" + name)?.scrollIntoView({ block: "nearest", behavior: "smooth" }));
+  // The element that scrolls the panel: the side panel in the reader, the page on a claim page.
+  function scroller() {
+    for (let e = article?.parentElement; e; e = e.parentElement) {
+      const o = getComputedStyle(e).overflowY;
+      if ((o === "auto" || o === "scroll") && e.scrollHeight > e.clientHeight) return e;
+    }
+    return document.scrollingElement;
+  }
+
+  async function showDecl(name) {
+    if (stack[stack.length - 1] === name) return;
+    scrolls[stack.length] = scroller().scrollTop;
+    stack = [...stack, name];
+    await tick();
+    const sc = scroller(), top = article.getBoundingClientRect().top - (sc === document.scrollingElement ? 0 : sc.getBoundingClientRect().top);
+    if (top < 0) sc.scrollTop += top;
+  }
+
+  // Back to level `n` (0 is the claim), restoring that level's scroll position.
+  async function backTo(n) {
+    stack = stack.slice(0, n);
+    await tick();
+    scroller().scrollTop = scrolls[n] ?? 0;
   }
 
   async function act(req, label) {
@@ -116,7 +143,22 @@
 {:else if !claim}
   <p class="muted">Loading…</p>
 {:else}
-  <article class="passport" class:full>
+  <article class="passport" class:full bind:this={article}>
+    {#if stack.length}
+      {@const top = stack[stack.length - 1]}
+      <nav class="crumbs" aria-label="Opened from this claim">
+        <button class="back" onclick={() => backTo(stack.length - 1)}>← Back</button>
+        <span class="trail">
+          <button class="crumb" onclick={() => backTo(0)}>{claim.number || claim.id}</button>
+          {#each stack.slice(0, -1) as n, i}› <button class="crumb" title={n} onclick={() => backTo(i + 1)}>{n.split(".").pop()}</button>{/each}
+          › <span class="here" title={top}>{top.split(".").pop()}</span>
+        </span>
+      </nav>
+      {#key top}
+        <Decl name={top} key={claim.decls?.[top] ?? null} inspector onref={showDecl} />
+      {/key}
+    {/if}
+    <div class="view" hidden={stack.length > 0}>
     <header>
       <p class="eyebrow">
         {#if index.papers.length > 1}Paper {claim.paper} · {/if}<code>{claim.id}</code>
@@ -221,7 +263,7 @@
       {/if}
     </section>
 
-    <details class="tech" open={!!openDecl}>
+    <details class="tech">
       <summary>Technical details</summary>
       {#if claim.number_note}
         <h3>Number</h3>
@@ -275,15 +317,12 @@
         {/if}
       {/each}
 
-      {#if Object.keys(claim.decls || {}).length || openDecl}
+      {#if Object.keys(claim.decls || {}).length}
         {@const ds = Object.keys(claim.decls || {})}
         <h3>Definitions ({ds.length})</h3>
-        {#if openDecl && !(openDecl in (claim.decls || {}))}
-          <Decl name={openDecl} key={null} open onref={showDecl} />
-        {/if}
         {#each ds as n (n)}
-          {#if ds.length <= 40 || openDecl === n || showAll}
-            <Decl name={n} key={claim.decls[n]} open={openDecl === n} onref={showDecl} />
+          {#if ds.length <= 40 || showAll}
+            <Decl name={n} key={claim.decls[n]} onref={showDecl} />
           {/if}
         {/each}
         {#if ds.length > 40 && !showAll}
@@ -302,11 +341,18 @@
         {#if index.project?.commit}· project <code>{index.project.commit.slice(0, 12)}</code>{/if}
       </p>
     </details>
+    </div>
   </article>
 {/if}
 
 <style>
-  .passport { display: flex; flex-direction: column; gap: 18px; }
+  .passport, .view { display: flex; flex-direction: column; gap: 18px; }
+  .view[hidden] { display: none; }
+  .crumbs { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; font-size: 13px; color: var(--muted); }
+  .back { font: inherit; padding: 3px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; }
+  .crumb { border: 0; background: none; padding: 0; font: inherit; color: var(--accent); cursor: pointer; }
+  .trail { overflow-wrap: anywhere; }
+  .here { color: var(--text); }
   header h1 { font-family: var(--serif); font-size: 24px; font-weight: 600; margin: 2px 0 10px; }
   .full header h1 { font-size: 30px; }
   .title { font-weight: 450; }
@@ -350,4 +396,12 @@
   .rtext { white-space: pre-wrap; font: 13px/1.5 var(--sans); color: var(--muted); margin: 6px 0 0; }
   .ref { border: 0; background: none; padding: 0; color: var(--accent); cursor: pointer; font-family: var(--mono); font-size: 0.92em; max-width: 100%; text-align: left; overflow-wrap: anywhere; }
   .foot { margin-top: 16px; }
+  @media (max-width: 700px) {
+    .passport, .view { gap: 12px; }
+    header h1 { font-size: 20px; margin: 0 0 6px; }
+    .desc { font-size: 14px; margin: 0 0 6px; }
+    .actions { margin-top: 6px; gap: 6px; }
+    .act { font-size: 12px; padding: 2px 8px; }
+    .card { padding: 10px 12px; }
+  }
 </style>

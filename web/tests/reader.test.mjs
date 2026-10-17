@@ -6,6 +6,11 @@
 // A paper page with two formalisations, written by the engine: the chosen project must drive
 // every claim view, and the two projects' links must never show together. Needs the engine
 // importable (`pip install -e .`); set PYTHON to choose the interpreter.
+//
+// The claim inspector is tested on the toy example's audit data (tests/fixtures/toy/data), as
+// the engine exported it, served with the current reader. To refresh it after a change to the
+// data format: `machinechecked build && machinechecked export --out OUT` in a copy of
+// examples/toy-paper, then copy OUT/data there.
 
 import { chromium } from "playwright";
 import http from "node:http";
@@ -69,6 +74,9 @@ write_paper_site(site, long_paper, long_claims, [612, 792], "paper.pdf", Path(sy
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "mc-reader-"));
 const made = spawnSync(process.env.PYTHON || "python3", ["-c", FIXTURE, path.join(root, "paper"), reader], { encoding: "utf8" });
 if (made.status !== 0) throw new Error("the engine could not write the paper page:\n" + made.stderr);
+fs.cpSync(reader, path.join(root, "toy"), { recursive: true });
+fs.cpSync(path.join(here, "fixtures", "toy", "data"), path.join(root, "toy", "data"), { recursive: true });
+const TOY = JSON.parse(fs.readFileSync(path.join(here, "fixtures", "toy", "data", "index.json"), "utf8"));
 
 const types = { ".pdf": "application/pdf", ".html": "text/html", ".json": "application/json", ".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css", ".woff2": "font/woff2" };
 const server = http.createServer((req, res) => {
@@ -200,6 +208,52 @@ await check("a claim chosen in a long paper stays in view (contents and deep lin
     await cold.close();
   }
 });
+
+// The claim inspector on the toy audit: opening a definition replaces the panel's contents and
+// leaves the paper where it was; Back brings the claim back as it was left.
+const toyClaim = async (pg, id) => {
+  await pg.goto(origin + `/toy/#/r/${TOY.release}/read/T/${encodeURIComponent(id)}`);
+  await pg.waitForSelector("aside h1");
+};
+const scrollTops = (pg) => pg.evaluate(() => [document.querySelector("aside")?.scrollTop, document.querySelector(".paperpane")?.scrollTop]);
+
+for (const width of [1300, 390]) {
+  await check("opening a definition replaces the panel; Back restores the claim as it was", width, async (pg) => {
+    await toyClaim(pg, "T:def:even");
+    await pg.locator("aside details.tech > summary").click();
+    const ref = pg.locator("aside .card button.ref", { hasText: "Toy.IsEven" });
+    await ref.scrollIntoViewIfNeeded();
+    const [panel, paper] = await scrollTops(pg);
+    await ref.click();
+    await pg.waitForSelector("aside .decl.inspector");
+    assert.equal(await pg.locator("aside .view").isHidden(), true, "the claim view is replaced");
+    assert.match(await pg.locator("aside .crumbs").textContent(), /Back.*IsEven/s);
+    assert.equal((await scrollTops(pg))[1], paper, "the paper keeps its position");
+    await pg.locator("aside .crumbs .back").click();
+    await pg.waitForSelector("aside .view h1");
+    assert.equal(await pg.locator("aside .decl.inspector").count(), 0);
+    const [panel2, paper2] = await scrollTops(pg);
+    assert.equal(panel2, panel, "the panel's scroll position comes back");
+    assert.equal(paper2, paper, "the paper keeps its position");
+    assert.equal(await pg.locator("aside details.tech").getAttribute("open"), "", "open sections stay open");
+  });
+
+  await check("a compact statement shows its result and names its conditions", width, async (pg) => {
+    await toyClaim(pg, "T:thm:even-add");
+    const card = pg.locator("aside .card").first();
+    await card.locator(".under").waitFor();
+    assert.match(await card.locator(".under").textContent(), /For all a, b, under 2 assumptions:/);
+    assert.equal(await card.locator(".ribbon").count(), 0, "the conditions are folded");
+    await card.locator("button", { hasText: "Show the full statement" }).click();
+    assert.equal(await card.locator(".ribbon li").count(), 4, "all conditions, in order");
+    // A statement whose prefix chooses a value is never folded: the order is its meaning.
+    await toyClaim(pg, "T:thm:bound");
+    const bound = pg.locator("aside .card").first();
+    await bound.locator(".ribbon").waitFor();
+    assert.equal(await bound.locator(".under").count(), 0);
+    assert.match(await bound.locator(".ribbon li").first().textContent(), /there is/i);
+  });
+}
 
 await browser.close();
 server.close();
