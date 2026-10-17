@@ -20,6 +20,16 @@ import assert from "node:assert/strict";
 import os from "node:os";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { GLOSS, gloss } from "../src/lib/gloss.js";
+
+// Every plain-English note: a full Lean name, one short sentence or two, nothing about proofs.
+for (const [name, text] of Object.entries(GLOSS)) {
+  assert.match(name, /^[A-Z][\w.]*$/, `gloss key ${name}`);
+  assert.ok(text.length > 10 && text.length <= 220 && /[.)]$/.test(text), `gloss of ${name}: ${text}`);
+  assert.ok(!/verif|proved|proof|checked|correct/i.test(text), `gloss of ${name} speaks of proof`);
+}
+assert.equal(gloss("No.Such.Name"), null);
+assert.equal(gloss("toString"), null, "only the table's own entries");
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const reader = path.resolve(here, "../../engine/python/prooflens/web");
@@ -309,6 +319,18 @@ for (const width of [1300, 390]) {
     assert.match(rows[5], /^there is C ?: ?Nat$/i);
     assert.match(await st.locator(".concl .op").textContent(), /all of the following/);
     assert.equal(await st.locator(".concl .parts > li").count(), 2);
+  });
+
+  await check("a name's plain-English note appears only on request, beside the name", width, async (pg) => {
+    await pg.goto(origin + `/structure/#/r/${SHAPE.release}/read/P/${encodeURIComponent("P:thm:layout")}`);
+    const st = pg.locator("aside .view .stmt");
+    await st.locator(".ribbon").waitFor();
+    assert.equal(await st.locator(".note").count(), 0, "no note by default");
+    await st.locator("button.g", { hasText: "Inhabited" }).click();
+    const note = st.locator(".note");
+    assert.match(await note.textContent(), /Inhabited.*designated element.*the Lean definition is what the statement uses/s);
+    await st.locator("button.g", { hasText: "Inhabited" }).click();
+    assert.equal(await st.locator(".note").count(), 0, "a second click closes it");
   });
 
   await check("hovering a variable highlights it everywhere; a click holds it", width, async (pg) => {

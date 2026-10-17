@@ -1,5 +1,6 @@
 <script>
   import LeanText from "./LeanText.svelte";
+  import { gloss } from "../lib/gloss.js";
 
   // A locked proposition as its quantifier prefix and its conclusion.
   let { st, spec = null, onref, compact = false } = $props();
@@ -50,13 +51,16 @@
   let pinned = $state(null);
   const active = $derived(hover ?? pinned);
   function onvar(i, how) {
-    if (how === "pin") pinned = pinned === i ? null : i;
+    if (how === "pin") { pinned = pinned === i ? null : i; noted = null; }
     else hover = i;
   }
+  // A name's plain-English note, shown on request beside the name.
+  let noted = $state(null);
+  function ongloss(name) { noted = noted === name ? null : name; pinned = null; }
   const groupOf = (i) => groups.find((g) => g.head === i);
 </script>
 
-{#snippet lean(pp)}<LeanText {pp} {onref} {refs} {active} {onvar} />{/snippet}
+{#snippet lean(pp)}<LeanText {pp} {onref} {refs} {active} {onvar} {ongloss} />{/snippet}
 
 {#snippet name(i)}<span class="v" class:hl={active === i} role="button" tabindex="0" onmouseenter={() => onvar(i, "hover")} onmouseleave={() => onvar(null, "hover")} onclick={() => onvar(i, "pin")} onkeydown={(e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), onvar(i, "pin"))}>{binders[i].name}</span>{/snippet}
 
@@ -127,6 +131,13 @@
       {#each groupOf(pinned)?.members || [] as m}
         <p class="small">{@render condition(m)}</p>
       {/each}
+    </div>
+  {/if}
+  {#if noted && gloss(noted)}
+    <div class="inspect note" aria-live="polite">
+      <p><code>{noted}</code><button class="x" aria-label="Close" onclick={() => (noted = null)}>×</button></p>
+      <p class="small">{gloss(noted)}</p>
+      <p class="small faint">A plain-English note on this name; the Lean definition is what the statement uses.</p>
     </div>
   {/if}
   {#if compact && long && expanded}

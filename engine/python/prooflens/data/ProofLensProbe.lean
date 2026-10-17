@@ -189,7 +189,9 @@ partial def segments (vars : Array FVarId) (t : Widget.CodeWithInfos) (ref : Opt
 if tagging fails, and a marker if printing fails, so that one large term cannot stop the probe. -/
 def ppFields (e : Expr) (vars : Array FVarId := #[]) : MetaM (List (String × Json)) := do
   try
-    let code ← Widget.ppExprTagged e
+    -- The head of every application is tagged too (`pp.tagAppFns`), so that the function a
+    -- term applies is a constant the reader can name; the text is the same.
+    let code ← withOptions (fun o => o.setBool `pp.tagAppFns true) (Widget.ppExprTagged e)
     let text := toString (← ppExpr e)
     return [("text", Json.str text), ("segments", Json.arr (segments vars code none #[]))]
   catch _ =>

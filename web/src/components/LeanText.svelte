@@ -3,7 +3,10 @@
   // statement's variables (`var`, its binder's index) is marked, highlighted while `active` is
   // that variable, and reported to `onvar` on hover (`hover`, or null on leaving) and on click
   // (`pin`).
-  let { pp, onref = null, refs = null, active = null, onvar = null } = $props();
+  // A constant with a plain-English note (`gloss`) is selectable: `ongloss` receives it, or,
+  // without one, the note is the name's tooltip.
+  let { pp, onref = null, refs = null, active = null, onvar = null, ongloss = null } = $props();
+  import { gloss } from "../lib/gloss.js";
 
   // Names the probe could not tag are found by matching the known names in the text.
   function parts(pp) {
@@ -28,12 +31,13 @@
   const isProject = (r) => refs?.includes(r);
 </script>
 
-<code class="lean">{#each parts(pp) as s}{#if s.ref && onref && isProject(s.ref)}<button class="r" onclick={() => onref(s.ref)}>{s.t}</button>{:else if s.ref}<span class="c" title={s.ref}>{s.t}</span>{:else if s.var != null && onvar}<span class="var" class:hl={active === s.var} role="button" tabindex="0" data-var={s.var} onmouseenter={() => onvar(s.var, "hover")} onmouseleave={() => onvar(null, "hover")} onfocus={() => onvar(s.var, "hover")} onblur={() => onvar(null, "hover")} onclick={() => onvar(s.var, "pin")} onkeydown={(e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), onvar(s.var, "pin"))}>{s.t}</span>{:else}{s.t}{/if}{/each}</code>
+<code class="lean">{#each parts(pp) as s}{#if s.ref && onref && isProject(s.ref)}<button class="r" onclick={() => onref(s.ref)}>{s.t}</button>{:else if s.ref && gloss(s.ref) && ongloss}<button class="g" title={s.ref} onclick={() => ongloss(s.ref)}>{s.t}</button>{:else if s.ref}<span class="c" title={gloss(s.ref) ? s.ref + ": " + gloss(s.ref) : s.ref}>{s.t}</span>{:else if s.var != null && onvar}<span class="var" class:hl={active === s.var} role="button" tabindex="0" data-var={s.var} onmouseenter={() => onvar(s.var, "hover")} onmouseleave={() => onvar(null, "hover")} onfocus={() => onvar(s.var, "hover")} onblur={() => onvar(null, "hover")} onclick={() => onvar(s.var, "pin")} onkeydown={(e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), onvar(s.var, "pin"))}>{s.t}</span>{:else}{s.t}{/if}{/each}</code>
 
 <style>
   .lean { white-space: pre-wrap; word-break: break-word; }
   .r { border: 0; padding: 0; background: none; font: inherit; color: var(--accent); cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px; text-align: left; overflow-wrap: anywhere; }
   .c { color: inherit; }
+  .g { border: 0; padding: 0; background: none; font: inherit; color: inherit; cursor: help; text-decoration: underline dotted var(--faint); text-underline-offset: 3px; }
   .var { cursor: pointer; border-radius: 3px; }
   .var.hl { background: color-mix(in srgb, var(--accent) 22%, transparent); outline: 1px solid color-mix(in srgb, var(--accent) 45%, transparent); }
 </style>
