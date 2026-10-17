@@ -243,20 +243,38 @@ def line_hashes(inv: dict, pid: str, src: Path) -> dict:
     return out
 
 
+class StaleEvidence(RuntimeError):
+    """The stored evidence does not cover the project as it now is (or there is none): a build
+    is needed first. The message names the command."""
+
+
+NO_RELEASE = "no release: run `machinechecked build` first"
+
+
+def inventory_changed(cfg: Config, body: dict) -> str | None:
+    """Why the stored evidence `body` does not cover the current claim inventory, if it does
+    not."""
+    inv = read_json(cfg.inventory)
+    validate(inv, "inventory")
+    if canonical_json(inv["claims"]) != canonical_json(body["inventory"]["claims"]):
+        return ("the claim inventory changed since the last build: its Lean and LaTeX results "
+                "may not cover it; run `machinechecked build --reuse-lean` (or `machinechecked "
+                "build` if a Lean input changed too)")
+    return None
+
+
 def reassess(cfg: Config, web_dist: Path | None = None, release: str | None = None,
              log=print) -> dict:
     """Assess the latest evidence again with the current rules and the current review files,
     without probing or compiling, and store the result as a new evidence record and release."""
     rels = ev.releases(cfg.out_dir)
     if not rels:
-        raise RuntimeError("no release: run `prooflens build` first")
+        raise StaleEvidence(NO_RELEASE)
     old = ev.load(cfg.out_dir, read_json(rels[-1])["evidence"])["body"]
+    why = inventory_changed(cfg, old)
+    if why:
+        raise StaleEvidence(why)
     inv = read_json(cfg.inventory)
-    validate(inv, "inventory")
-    if canonical_json(inv["claims"]) != canonical_json(old["inventory"]["claims"]):
-        raise RuntimeError("the claim inventory changed since the stored evidence: its Lean and "
-                           "LaTeX results may not cover it; run `prooflens build` (with "
-                           "--reuse-lean if no Lean input changed)")
     reviews, review_hashes = load_reviews(cfg.reviews, cfg.ai_reviewers, cfg.root)
     dismissals = load_dismissals(cfg.dismissals)
     comp = cfg.comparator_log
@@ -299,7 +317,7 @@ def rebuild_site(cfg: Config, web_dist: Path | None = None, release: str | None 
     included only if the one on disk is the one the evidence records."""
     rels = ev.releases(cfg.out_dir)
     if not rels:
-        raise RuntimeError("no release: run `prooflens build` first")
+        raise StaleEvidence(NO_RELEASE)
     rel = read_json(cfg.out_dir / "releases" / f"{release}.json") if release else \
         read_json(rels[-1])
     record = ev.load(cfg.out_dir, rel["evidence"])

@@ -48,7 +48,7 @@ class PromoteError(RuntimeError):
 def latest_record(cfg: Config) -> dict:
     rels = sorted((cfg.out_dir / "releases").glob("*.json"), key=lambda p: p.stat().st_mtime)
     if not rels:
-        raise PromoteError("no release: run `prooflens build` first")
+        raise PromoteError("no release: run `machinechecked build` first")
     return ev.load(cfg.out_dir, read_json(rels[-1])["evidence"])
 
 
@@ -175,10 +175,16 @@ def plan(cfg: Config, reports: list[dict], accept_same_family: bool = False,
          allow_revealed: bool = False):
     """For each report: (report, current record, reasons it is refused)."""
     body = latest_record(cfg)["body"]
-    from .pipeline import lean_inputs_digest
+    from .pipeline import inventory_changed, lean_inputs_digest
+    # Both before anything is written: promotion reassesses at the end, and stale evidence would
+    # leave markers written and the assessment not updated.
+    why = inventory_changed(cfg, body)
+    if why:
+        raise PromoteError(why)
     if body["provenance"].get("lean_inputs_sha256") != lean_inputs_digest(cfg):
-        raise PromoteError("the Lean project changed since the last build: run `prooflens build` "
-                           "first, so the reports are checked against the current declarations")
+        raise PromoteError("the Lean project changed since the last build: run `machinechecked "
+                           "build` first, so the reports are checked against the current "
+                           "declarations")
     lean = body.get("lean") or {}
     out = []
     for r in reports:

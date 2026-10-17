@@ -124,3 +124,28 @@ def test_promotion_needs_current_evidence(toy):
     edit(toy / "lean/Toy/Defs.lean", "/-!", "-- a comment\n/-!")
     with pytest.raises(pr.PromoteError, match="changed since the last build"):
         pr.plan(cfg, [report(index, u)])
+
+
+@needs_lean
+@needs_tex
+def test_a_stale_inventory_is_refused_before_anything_is_written(toy, tmp_path, capsys):
+    """#57: promotion checks the inventory with the Lean inputs, before writing a marker."""
+    index, _, cfg = build(toy)
+    units = {u["name"]: u for u in queue(cfg)["units"]}
+    f = tmp_path / "reviews.json"
+    f.write_text(json.dumps({"schema": "prooflens/review-reports@1",
+                             "reports": [report(index, units["Toy.triangle"])]}))
+    edit(toy / "claims.json", '"scope_note": ""', '"scope_note": "changed after the build"')
+    before = (toy / "reviews/definitions.md").read_text()
+    with pytest.raises(pr.PromoteError, match="machinechecked build --reuse-lean"):
+        pr.plan(cfg, pr.load_reports([f]))
+    from prooflens import cli
+    with pytest.raises(SystemExit) as e:
+        cli.main(["review", "promote", "--yes", "-c", str(toy / "machinechecked.toml"), str(f)])
+    assert e.value.code == 2 and "Traceback" not in capsys.readouterr().err
+    assert (toy / "reviews/definitions.md").read_text() == before
+    assert not (toy / "reviews/reports").exists()
+    # The command it names refreshes the evidence, and promotion then goes ahead.
+    build(toy, reuse_lean=True)
+    (_, _, why), = pr.plan(cfg, pr.load_reports([f]))
+    assert not why

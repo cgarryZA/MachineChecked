@@ -692,7 +692,9 @@ def main(argv=None):
     b.add_argument("--skip-tex", action="store_true", help=argparse.SUPPRESS)
     b.add_argument("--lake", default="lake", help=argparse.SUPPRESS)
     b.add_argument("--no-lean-build", action="store_true", help=argparse.SUPPRESS)
-    b.add_argument("--reuse-lean", action="store_true", help=argparse.SUPPRESS)
+    b.add_argument("--reuse-lean", action="store_true",
+                   help="reuse the last Lean results when no Lean input changed (after an edit to "
+                        "the claim inventory or the reviews, say)")
     b.add_argument("--web", help=argparse.SUPPRESS)
     b.add_argument("--fail-on-violation", action="store_true", help=argparse.SUPPRESS)
     b.set_defaults(func=cmd_build)
