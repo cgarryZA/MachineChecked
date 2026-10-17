@@ -541,7 +541,7 @@ def cmd_review(a):
     cfg = cfgmod.load(_config_arg(a))
     try:
         steps = pr.plan(cfg, pr.load_reports([Path(f) for f in a.reports]),
-                        a.accept_same_family)
+                        a.accept_same_family, a.allow_revealed)
     except pr.PromoteError as e:
         sys.exit(f"machinechecked: {e}")
     ok = []
@@ -743,6 +743,9 @@ def main(argv=None):
     pm.add_argument("--yes", action="store_true", help="write without asking")
     pm.add_argument("--accept-same-family", action="store_true",
                     help="accept a model reviewer of the author's family, or of unknown family")
+    pm.add_argument("--allow-revealed", action="store_true",
+                    help="accept a report whose reviewer had seen the unit's Lean or author's "
+                         "review before writing their reading")
     pm.set_defaults(func=cmd_review)
 
     v = sub.add_parser("validate")

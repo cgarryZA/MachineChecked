@@ -137,7 +137,9 @@ export function buildReport({ index, unit, draft, reviewer }) {
       same_family_as_author: reviewer.sameFamily || "unknown",
       identity: "self-declared",
     },
-    reading: { text: draft.reading, locked_at: draft.locked_at },
+    // The units whose Lean or author's review this reviewer had seen, in this browser, before
+    // locking this reading: empty when the reading was blind as far as the page can tell.
+    reading: { text: draft.reading, locked_at: draft.locked_at, revealed_by: draft.revealed_by || [] },
     comparison: { text: draft.comparison || "", witness: draft.witness || "",
                   checklist: draft.checklist || {}, decided_at: draft.decided_at },
     verdict: { group: draft.group, value: verdict, detail: draft.detail || "" },

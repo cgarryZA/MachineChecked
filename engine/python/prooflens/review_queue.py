@@ -8,6 +8,13 @@ order. A unit is reviewed once per fingerprint, however many claims depend on it
 
 The order is a suggestion: less effort first, with a preference for units that many claims depend
 on. Reviewing a definition settles that definition only; no claim is approved by it.
+
+A unit also says what reviewing it shows of other units (`reveals`): the Lean of the definitions
+a statement uses (its phase 2), and the author's review it shares with other units (its phase 3,
+when one review section ends with several markers). A reviewer who has seen a unit's material
+before writing their reading of it is no longer blind to it. The order puts a revealed unit
+before the one that reveals it where it can; when two units reveal each other (a joint review)
+one of them cannot be blind, and the report of the later one records it.
 """
 
 from __future__ import annotations
@@ -52,6 +59,46 @@ def _author_text(review: dict | None) -> list[dict]:
              "line": r.get("line")} for r in (review or {}).get("current", [])]
 
 
+def _author_groups(units: list[dict]) -> dict[str, list[str]]:
+    """For each unit, the other units whose author review is the same review (same file and
+    text): one section closed by several markers."""
+    by: dict[tuple, list[str]] = {}
+    for u in units:
+        for r in u.get("author_review") or []:
+            if (r.get("text") or "").strip():
+                by.setdefault((r.get("file"), r["text"]), []).append(u["id"])
+    out: dict[str, list[str]] = {}
+    for ids in by.values():
+        for i in ids:
+            out.setdefault(i, [])
+            out[i] += [j for j in ids if j != i and j not in out[i]]
+    return out
+
+
+def reveal_order(units: list[dict]) -> list[dict]:
+    """`units` (already in their suggested order) reordered so that a unit another one reveals
+    comes first, keeping the suggested order otherwise. A unit revealing each other (a joint
+    review) cannot both come first; such pairs keep their suggested order."""
+    pos = {u["id"]: i for i, u in enumerate(units)}
+    before: dict[str, set] = {u["id"]: set() for u in units}
+    for u in units:
+        r = u.get("reveals") or {}
+        for v in set(r.get("lean", [])) | set(r.get("author", [])):
+            back = units[pos[v]].get("reveals") or {} if v in pos else {}
+            if v in pos and u["id"] not in set(back.get("lean", [])) | set(back.get("author", [])):
+                before[u["id"]].add(v)
+    out, done = [], set()
+    pending = list(units)
+    while pending:
+        # The first unit in suggested order whose revealed units are all placed; if none (a
+        # cycle the pairs above did not catch), the first one.
+        nxt = next((u for u in pending if before[u["id"]] <= done), pending[0])
+        pending.remove(nxt)
+        out.append(nxt)
+        done.add(nxt["id"])
+    return out
+
+
 def assurance_queue(index: dict, chunks: dict, store: dict, authors: list[str]) -> dict:
     """The queue of a full assessment: every locked proposition with a statement, and every
     definition in their closures."""
@@ -79,6 +126,7 @@ def assurance_queue(index: dict, chunks: dict, store: dict, authors: list[str]) 
                 "state": (cl.get("spec_review") or {}).get("state", "pending"),
                 "author_review": _author_text(cl.get("spec_review")),
                 "witness": cl.get("witness"), "refute": cl.get("refute"),
+                "closure": list(st.get("closure") or []),
                 "unreviewed": sum(1 for r in (cl.get("def_reviews") or {}).values()
                                   if r["state"] != "reviewed"),
                 "effort": 0.0})
@@ -106,7 +154,14 @@ def assurance_queue(index: dict, chunks: dict, store: dict, authors: list[str]) 
             "reason": f"{_size(effort)} definition; used by {len(users)} claim(s)"})
     for u in units:
         u["order"] = round(u["effort"] - math.log2(1 + len(u["claims"])), 3)
+    ids = {u["id"] for u in units}
+    shared = _author_groups(units)
+    for u in units:
+        u["reveals"] = {"lean": sorted({"def:" + n for n in u.pop("closure", [])} & ids - {u["id"]}),
+                        "author": sorted(shared.get(u["id"], []))}
     units.sort(key=lambda u: (u["state"] == "reviewed", u["order"], u["id"]))
+    units = reveal_order([u for u in units if u["state"] != "reviewed"]) + \
+        [u for u in units if u["state"] == "reviewed"]
     return {"schema": SCHEMA, "release": index["release"], "mode": "assurance",
             "authors": sorted(authors), "units": units, "needs_statement": unspecified}
 

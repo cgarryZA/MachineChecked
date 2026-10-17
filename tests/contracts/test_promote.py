@@ -71,11 +71,17 @@ def test_promotion_end_to_end(toy, tmp_path):
                                          "2026-01-01T10:06:00Z", "2026-01-01T10:07:00Z"]),
         "stale": {**report(index, u), "pins": {**report(index, u)["pins"],
                                                 "fingerprint": "pl-fp-v1:" + "0" * 64}},
+        "revealed": {**report(index, u), "reading": {**report(index, u)["reading"],
+                     "revealed_by": [{"unit": "spec:Toy.PaperSpec.thm_triangle", "what": "Lean"}]}},
     }
     for k, r in bad.items():
         (_, _, why), = pr.plan(cfg, [r])
         assert why, k
     (_, _, why), = pr.plan(cfg, [bad["family"]], accept_same_family=True)
+    assert not why
+    (_, _, why), = pr.plan(cfg, [bad["revealed"]])
+    assert any("not blind" in w for w in why)
+    (_, _, why), = pr.plan(cfg, [bad["revealed"]], allow_revealed=True)
     assert not why
 
     # Promotion of the good reports writes markers the checker reads, at the current hashes.

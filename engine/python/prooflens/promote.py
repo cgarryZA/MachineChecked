@@ -12,7 +12,11 @@ it now is, or that the acceptance rules cannot count as an independent review:
 * the reading must have been locked before the verdict, and the verdict recorded before the
   author's review was shown;
 * the reviewer must not be an author of the statements, and a model of the same family as the
-  author (or of unknown family) is refused unless the maintainer accepts it explicitly.
+  author (or of unknown family) is refused unless the maintainer accepts it explicitly;
+* the reading must have been blind: a report whose unit's Lean or author's review the reviewer
+  had already seen while reviewing another unit (`reading.revealed_by`) is refused unless the
+  maintainer accepts it explicitly. The page records this from the work kept in the reviewer's
+  browser; it cannot see what they read elsewhere.
 
 For each report it accepts, it archives the report (JSON and the protocol's text block) and
 writes `<!-- spec-review: NAME HASH by=REVIEWER -->` (or `def-review`) after the declaration's
@@ -56,7 +60,8 @@ def load_reports(paths: list[Path]) -> list[dict]:
     return out
 
 
-def check_report(r: dict, body: dict, cfg: Config, accept_same_family: bool) -> list[str]:
+def check_report(r: dict, body: dict, cfg: Config, accept_same_family: bool,
+                 allow_revealed: bool = False) -> list[str]:
     """Why `r` cannot be promoted against the evidence `body` (empty if it can)."""
     why = []
     if r.get("schema") != "prooflens/review-report@1":
@@ -98,6 +103,11 @@ def check_report(r: dict, body: dict, cfg: Config, accept_same_family: bool) -> 
             and not accept_same_family:
         why.append("a model reviewer of the same family as the author, or of unknown family "
                    "(pass --accept-same-family to accept it)")
+    seen = r["reading"].get("revealed_by") or []
+    if seen and not allow_revealed:
+        what = ", ".join(f"{s.get('what')} of it in {s.get('unit')}" for s in seen)
+        why.append(f"the reading was not blind: the reviewer had seen the {what} "
+                   "(pass --allow-revealed to accept it)")
     if not re.fullmatch(r"\S+", rid):
         why.append(f"reviewer id {rid!r} has spaces")
     return why
@@ -161,7 +171,8 @@ def reports_dir(cfg: Config) -> Path:
     return first / "reports"
 
 
-def plan(cfg: Config, reports: list[dict], accept_same_family: bool = False):
+def plan(cfg: Config, reports: list[dict], accept_same_family: bool = False,
+         allow_revealed: bool = False):
     """For each report: (report, current record, reasons it is refused)."""
     body = latest_record(cfg)["body"]
     from .pipeline import lean_inputs_digest
@@ -174,7 +185,7 @@ def plan(cfg: Config, reports: list[dict], accept_same_family: bool = False):
         u = r.get("unit", {})
         cur = (lean.get("specs" if u.get("kind") == "spec" else "decls", {}) or {}).get(
             u.get("name"))
-        out.append((r, cur, check_report(r, body, cfg, accept_same_family)))
+        out.append((r, cur, check_report(r, body, cfg, accept_same_family, allow_revealed)))
     return out
 
 

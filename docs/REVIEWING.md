@@ -18,6 +18,8 @@ Each review has three stages:
 
 The order is recorded by the application; it cannot establish that the reviewer never opened the Lean files somewhere else.
 
+**Keeping later units blind.** Reviewing one unit can show another's material: a statement's step 2 shows the Lean of the definitions it uses, and when one section of the author's reviews covers several declarations, its step 3 shows the author's review of all of them. The queue suggests an order that reviews a revealed unit first wherever it can (the definitions before the statements that use them). When it cannot (two units reviewed in one section reveal each other), the page says so before you write your reading, and the report records the units that had already shown it to you (`reading.revealed_by`). It knows only the work kept in this browser.
+
 ## What a verdict means
 
 | Verdict | What the reviewer must explain |
@@ -49,7 +51,7 @@ In a project with formal review markers, a maintainer can evaluate submitted rep
 machinechecked review promote machinechecked-reviews-....json
 ```
 
-Promotion checks that the manuscript and formal statements still match the review pins, that the review stages were recorded in the required order, and that the verdict is eligible. It displays the planned changes and requires the maintainer's decision. Model-family and author restrictions still apply.
+Promotion checks that the manuscript and formal statements still match the review pins, that the review stages were recorded in the required order, and that the verdict is eligible. It displays the planned changes and requires the maintainer's decision. Model-family and author restrictions still apply. A report whose reading was not blind is refused unless the maintainer passes `--allow-revealed`.
 
 MachineChecked does **not** decide whether a review is mathematically persuasive. The maintainer remains responsible for reading the report. A promoted review may clear only its corresponding obligation; claims with missing proofs, unreviewed definitions or other requirements remain open.
 

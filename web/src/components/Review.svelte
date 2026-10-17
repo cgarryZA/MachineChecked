@@ -73,8 +73,28 @@
   const host = $derived(claims[0]);
   const paperOf = (c) => index.papers.find((p) => p.id === c.paper);
 
+  // What this reviewer has already seen of unit `u`, in this browser: the units whose Lean
+  // (step 2) or author's review (step 3) they reached, and that show u's Lean or u's review.
+  function revealedBy(u) {
+    const byId = Object.fromEntries(queue.units.map((x) => [x.id, x]));
+    const passed = [
+      ...work.reports.map((r) => ({ id: r.unit.id, lean: true, author: true })),
+      ...Object.entries(work.drafts).map(([id, d]) => ({ id, lean: d.stage !== "read", author: d.stage === "author" })),
+    ];
+    const out = [];
+    for (const p of passed) {
+      const r = p.id !== u.id && byId[p.id]?.reveals;
+      if (!r) continue;
+      if (p.lean && r.lean?.includes(u.id) && !out.some((o) => o.unit === p.id && o.what === "Lean")) out.push({ unit: p.id, what: "Lean" });
+      if (p.author && r.author?.includes(u.id) && !out.some((o) => o.unit === p.id && o.what === "author's review")) out.push({ unit: p.id, what: "author's review" });
+    }
+    return out;
+  }
+  const seenBefore = $derived(current && draft?.stage === "read" ? revealedBy(current) : []);
+
   function lockReading() {
     if ((draft.reading || "").trim().length < 20) return;
+    draft.revealed_by = revealedBy(current);
     draft.locked_at = now(); draft.stage = "compare"; persist();
   }
   function choose(g) { draft.group = g; draft.verdict = VERDICTS[g].length === 1 ? VERDICTS[g][0].value : null; persist(); }
@@ -102,7 +122,7 @@
     const r = work.reports.pop();
     if (!r) return;
     work.drafts[r.unit.id] = {
-      stage: "author", reading: r.reading.text, locked_at: r.reading.locked_at,
+      stage: "author", reading: r.reading.text, locked_at: r.reading.locked_at, revealed_by: r.reading.revealed_by,
       comparison: r.comparison.text, witness: r.comparison.witness, decided_at: r.comparison.decided_at,
       group: r.verdict.group, verdict: r.verdict.value, detail: r.verdict.detail,
       author_shown_at: r.author_review.shown_at, disagreements: r.author_review.disagreements };
@@ -220,6 +240,9 @@
 
         <h3>Your reading{draft.stage !== "read" ? " (locked " + draft.locked_at + ")" : ""}</h3>
         {#if draft.stage === "read"}
+          {#if seenBefore.length}
+            <p class="warn">You have already seen {seenBefore.map((s) => `the ${s.what} of this unit (in ${s.unit})`).join(" and ")}. Your reading will not be blind, and the report will say so; a maintainer may refuse it.</p>
+          {/if}
           <p class="faint small">{current.kind === "def"
             ? "What is this object in the paper? Its setting, what it is built from, and anything left ambiguous."
             : "The setting; every hypothesis, with its quantifiers and where it holds; the notion of solution; the conclusion, with its quantifier order and what constants depend on; every ambiguity and its readings."}</p>
