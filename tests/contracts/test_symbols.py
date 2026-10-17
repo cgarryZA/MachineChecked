@@ -62,3 +62,22 @@ def test_a_wrong_link_is_refused(toy):
     with pytest.raises(SymbolError, match="human:NAME"):
         add(cfg, "T:thm:even-add", "a", SPEC, "someone", var="a")
     assert not (toy / "symbols.json").exists()
+
+
+@needs_lean
+@needs_tex
+def test_a_link_made_in_the_local_reader_is_checked_and_shown(toy):
+    """#60: the local reader's request goes through the checks of `symbol add`, and the site is
+    rewritten with it; removing it takes it off."""
+    from prooflens.symbols import from_reader
+    _, _, cfg = build(toy)
+    req = {"action": "add", "claim": "T:thm:even-add", "tex": "a", "decl": SPEC, "var": "a",
+           "by": WHO}
+    from_reader(cfg, req)
+    assert [s["symbol"]["tex"] for s in chunk(cfg, "T:thm:even-add")[1]["symbols"]] == ["a"]
+    with pytest.raises(SymbolError, match="does not occur"):
+        from_reader(cfg, {**req, "tex": "z"})
+    with pytest.raises(SymbolError, match="unknown action"):
+        from_reader(cfg, {**req, "action": "rewrite"})
+    from_reader(cfg, {"action": "remove", "claim": "T:thm:even-add", "tex": "a"})
+    assert chunk(cfg, "T:thm:even-add")[1]["symbols"] == []

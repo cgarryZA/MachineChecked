@@ -1,7 +1,7 @@
 # Linking symbols in the paper to Lean objects (design)
 
-Status: accepted and built (issue #48). Links are made with `machinechecked symbol add`; making
-them in the local reader is not built yet.
+Status: accepted and built (issues #48, #60). Links are made with `machinechecked symbol add`, or
+by selection in the local reader.
 
 The reader already links a claim to Lean declarations, and inside the Lean it highlights a
 variable wherever it occurs (`var` in the probe's segments). This note covers the step between:
@@ -75,7 +75,13 @@ machinechecked symbol remove P:thm:sep '\nu'
 
 `add` checks the link against the last build (the symbol occurs in the claim's mathematics, the
 statement is the claim's, the binder exists) and pins it to that build; rebuild the site to show
-it. Making links by selecting in the local reader is a later step. A published audit shows the
+it.
+
+In the local reader of a full assessment (`machinechecked view`), the paper section of a claim
+offers **Link a symbol to the Lean**: choose one of the symbols found in the claim's mathematics,
+click its variable in the Lean statement (or tick that the symbol is the variable's type), give
+your name, and save. The link goes through the same checks as `symbol add`, is written to the same
+file, and the site is rewritten with it; existing links can be removed there. A published audit shows the
 links its author recorded (when it publishes both the source text and the Lean) and never edits
 them.
 

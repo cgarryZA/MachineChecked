@@ -5,7 +5,8 @@
   // A locked proposition as its quantifier prefix and its conclusion.
   // `ext` highlights from outside (a linked symbol of the paper): a variable ({var}) or a
   // binder's type ({type}); `onactive` hears which variable is highlighted here.
-  let { st, spec = null, onref, compact = false, ext = null, onactive = null } = $props();
+  // `onpinned` hears which variable is held (clicked), for choosing one.
+  let { st, spec = null, onref, compact = false, ext = null, onactive = null, onpinned = null } = $props();
 
   // A statement is shown in full: its assumptions are what a reader compares with the paper.
   // Only a long one, in a compact view, folds to its conclusion and one line naming its
@@ -53,6 +54,7 @@
   let pinned = $state(null);
   const active = $derived(hover ?? pinned ?? ext?.var ?? null);
   $effect(() => { onactive?.(hover ?? pinned); });
+  $effect(() => { onpinned?.(pinned); });
   function onvar(i, how) {
     if (how === "pin") { pinned = pinned === i ? null : i; noted = null; }
     else hover = i;

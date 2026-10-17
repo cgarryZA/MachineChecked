@@ -101,6 +101,15 @@ export async function saveLink(req) {
   return out;
 }
 
+// A symbol link made in the local reader (full assessment): recorded with the checks of
+// `machinechecked symbol add`, under the name given.
+export async function saveSymbol(req) {
+  const r = await fetch("api/symbol", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(req) });
+  const out = await r.json();
+  if (!r.ok) throw new Error(out.error || r.statusText);
+  return out;
+}
+
 export function loadLeanIndex(index) {
   return getJson(index.lean_index || "data/lean-index.json");
 }

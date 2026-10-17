@@ -95,3 +95,23 @@ def listing(cfg: Config) -> str:
         return "no symbol links"
     return "\n".join(f"{ln['claim']}  {ln['symbol']['tex']} -> {json.dumps(ln['lean'])}  "
                      f"(by {ln['by']})" for ln in read_json(cfg.symbols).get("links", []))
+
+
+def from_reader(cfg: Config, req: dict, web_dist=None) -> None:
+    """A symbol link made or removed in the local reader (`POST /api/symbol`), with the checks
+    of `symbol add`; the site is then rewritten from the stored evidence (links are display
+    only, so nothing is probed or assessed again)."""
+    from .pipeline import rebuild_site
+
+    def text(v):
+        return None if v is None else str(v)
+    if not isinstance(req.get("claim"), str) or not isinstance(req.get("tex"), str):
+        raise SymbolError("a symbol request names a claim and a symbol")
+    if req.get("action") == "remove":
+        remove(cfg, req["claim"], req["tex"])
+    elif req.get("action") == "add":
+        add(cfg, req["claim"], req["tex"], str(req.get("decl") or ""), req.get("by"),
+            var=text(req.get("var")), type_of=text(req.get("type_of")))
+    else:
+        raise SymbolError(f"unknown action {req.get('action')!r}")
+    rebuild_site(cfg, web_dist, None)

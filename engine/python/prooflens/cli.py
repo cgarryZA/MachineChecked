@@ -228,7 +228,12 @@ def cmd_view(a):
             res = build(cfg, web_dist=_web_dist(a.web), reuse_lean=True)
         except RuntimeError:
             res = build(cfg, web_dist=_web_dist(a.web))
-        serve(res["site"], a.port, None, not a.no_browser)
+
+        def on_symbol(req):
+            from .symbols import from_reader
+            from_reader(cfg, req, _web_dist(a.web))
+
+        serve(res["site"], a.port, None, not a.no_browser, on_symbol=on_symbol)
         return
     from .server import serve
     from .simple import save_link

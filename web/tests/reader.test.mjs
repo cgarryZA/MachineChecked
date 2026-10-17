@@ -95,8 +95,22 @@ fs.cpSync(path.join(here, "fixtures", "structure", "data"), path.join(root, "str
 const SHAPE = JSON.parse(fs.readFileSync(path.join(here, "fixtures", "structure", "data", "index.json"), "utf8"));
 
 const types = { ".pdf": "application/pdf", ".html": "text/html", ".json": "application/json", ".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css", ".woff2": "font/woff2" };
+// `/toyedit/` is the toy reader as the local `view` serves it: its index says it may edit, and
+// symbol links it saves are captured here instead of written.
+const posted = [];
 const server = http.createServer((req, res) => {
   let url = decodeURIComponent(req.url.split("?")[0]);
+  if (url === "/toyedit/api/symbol" && req.method === "POST") {
+    let body = "";
+    req.on("data", (c) => (body += c));
+    req.on("end", () => { posted.push(JSON.parse(body)); res.writeHead(200, { "content-type": "application/json" }); res.end("{\"ok\": true}"); });
+    return;
+  }
+  if (url === "/toyedit/data/index.json") {
+    res.writeHead(200, { "content-type": "application/json" });
+    return res.end(JSON.stringify({ ...TOY, editable: true }));
+  }
+  if (url.startsWith("/toyedit/")) url = "/toy/" + url.slice("/toyedit/".length);
   if (url.endsWith("/")) url += "index.html";
   const p = path.join(root, url);
   if (!p.startsWith(root) || !fs.existsSync(p) || fs.statSync(p).isDirectory()) { res.writeHead(404); return res.end(); }
@@ -323,7 +337,26 @@ for (const width of [1300, 390]) {
 }
 
 for (const width of [1300, 390]) {
-await check("a statement keeps its order, with each object's own conditions beside it", width, async (pg) => {
+await check("in the local reader a symbol is linked by choosing it and clicking its variable", width, async (pg) => {
+    await pg.goto(origin + `/toyedit/#/r/${TOY.release}/read/T/${encodeURIComponent("T:thm:even-add")}`);
+    await pg.waitForSelector("aside .view h1");
+    const mk = pg.locator("aside .mklink");
+    await mk.locator("summary").click();
+    const chips = await mk.locator(".chip").evaluateAll((cs) => cs.map((c) => c.dataset.tex));
+    assert.ok(chips.includes("a") && chips.includes("b"), chips.join(","));
+    await mk.locator(".chip[data-tex='a']").click();
+    await pg.locator("aside .view .lean .ribbon .v", { hasText: /^a$/ }).click();
+    await mk.locator("input.who").fill("Test Referee");
+    await mk.locator("button", { hasText: "Save link" }).click();
+    await pg.waitForTimeout(500);
+    assert.deepEqual(posted.at(-1), { action: "add", claim: "T:thm:even-add", tex: "a",
+      decl: "Toy.PaperSpec.thm_even_add", var: "a", by: "human:Test-Referee" });
+    // A published audit offers no such control.
+    await toyClaim(pg, "T:thm:even-add");
+    assert.equal(await pg.locator("aside .mklink").count(), 0);
+  });
+
+  await check("a statement keeps its order, with each object's own conditions beside it", width, async (pg) => {
     await pg.goto(origin + `/structure/#/r/${SHAPE.release}/read/P/${encodeURIComponent("P:thm:layout")}`);
     const st = pg.locator("aside .view .stmt");
     await st.locator(".ribbon").waitFor();

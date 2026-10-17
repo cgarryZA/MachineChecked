@@ -1,7 +1,7 @@
 <script>
   import { claimLink, claimReference, issueUrl, reportsUrl, sourceUrl, sourceLabel, sourceTitle } from "../lib/issue.js";
   import TexInline from "./TexInline.svelte";
-  import { loadClaim, loadSearch, saveLink, inProject } from "../lib/data.js";
+  import { loadClaim, loadSearch, saveLink, saveSymbol, inProject } from "../lib/data.js";
   import { project } from "../lib/project.svelte.js";
   import { href } from "../lib/route.svelte.js";
   import StatusChip from "./StatusChip.svelte";
@@ -73,6 +73,30 @@
     const l = links.find((x) => x.id === symActive);
     if (!l || l.lean.decl !== spec) return null;
     return l.lean.var != null ? { var: l.lean.var } : { type: l.lean.binder };
+  }
+
+  // Making a symbol link in the local reader (full assessment, editable): choose a symbol of the
+  // claim's mathematics, then click its variable in the Lean statement, and save it under a name.
+  const GREEK = "alpha|beta|gamma|delta|epsilon|varepsilon|zeta|eta|theta|vartheta|iota|kappa|lambda|mu|nu|xi|pi|varpi|rho|varrho|sigma|tau|upsilon|phi|varphi|chi|psi|omega|Gamma|Delta|Theta|Lambda|Xi|Pi|Sigma|Upsilon|Phi|Psi|Omega";
+  function candidates(tex) {
+    const math = (tex || "").match(/\$\$[\s\S]*?\$\$|\$[\s\S]*?\$|\\\([\s\S]*?\\\)|\\\[[\s\S]*?\\\]/g) || [];
+    const re = new RegExp(`\\\\(?:mathbb|mathcal|mathfrak|mathscr|mathrm|boldsymbol)\\s*\\{?[A-Za-z]\\}?(?:\\^\\{?[A-Za-z0-9]+\\}?)?|\\\\(?:${GREEK})(?![A-Za-z])|(?<![\\\\A-Za-z])[A-Za-z](?![A-Za-z])`, "g");
+    return [...new Set(math.flatMap((m) => m.match(re) || []))];
+  }
+  let linking = $state(false);
+  let pickSym = $state(null);
+  let pickVar = $state(null);
+  let pickType = $state(false);
+  let linkErr = $state(null);
+  let author = $state((() => { try { return localStorage.getItem("machinechecked-symbol-author") || ""; } catch { return ""; } })());
+  const authorId = $derived(/^(human|llm):\S+$/.test(author.trim()) ? author.trim() : (author.trim() ? "human:" + author.trim().replace(/\s+/g, "-") : ""));
+  async function saveLinkOfSymbol(req) {
+    linkErr = null;
+    try {
+      try { localStorage.setItem("machinechecked-symbol-author", author.trim()); } catch {}
+      await saveSymbol(req);
+      location.reload();
+    } catch (e) { linkErr = String(e.message || e); }
   }
 
   // The definition claim of the paper that a declaration states, if one links it: its excerpt is
@@ -270,6 +294,30 @@
       {:else}
         <p class="muted small">The printed statement is not part of this site.</p>
       {/if}
+      {#if editable && !simple && claim.statement_tex && claim.clauses.some((c) => c.statement)}
+        <details class="mklink" bind:open={linking}>
+          <summary>Link a symbol to the Lean</summary>
+          <p class="small">1. Choose a symbol of the statement:</p>
+          <div class="chips">
+            {#each candidates(claim.statement_tex) as t}
+              <button class="chip" class:on={pickSym === t} data-tex={t} title={t} onclick={() => (pickSym = pickSym === t ? null : t)}><Tex text={"$" + t + "$"} /></button>
+            {/each}
+          </div>
+          <p class="small">2. Click its variable in the Lean statement below.
+            <label class="small"><input type="checkbox" bind:checked={pickType} /> the symbol is that variable's type</label></p>
+          {#if pickSym && pickVar}
+            {@const b = claim.clauses.find((c) => c.spec === pickVar.spec)?.statement?.binders?.[pickVar.var]}
+            <p class="small">Link <code>{pickSym}</code> to {pickType ? "the type of" : "the variable"} <code>{b?.name}</code> of <code>{pickVar.spec}</code>, as
+              <input class="who" bind:value={author} placeholder="your name" /></p>
+            <button class="act" disabled={!authorId} onclick={() => saveLinkOfSymbol({ action: "add", claim: claim.id, tex: pickSym, decl: pickVar.spec, [pickType ? "type_of" : "var"]: b?.name, by: authorId })}>Save link{authorId ? " as " + authorId : ""}</button>
+          {/if}
+          {#each (claim.symbols || []) as l}
+            <p class="small"><code>{l.symbol.tex}</code> → {l.lean.var != null ? "variable " + l.lean.var : "type of binder " + l.lean.binder} of <code>{l.lean.decl}</code>, by {l.by}{l.stale ? " (stale)" : ""}
+              <button class="act" onclick={() => saveLinkOfSymbol({ action: "remove", claim: claim.id, tex: l.symbol.tex })}>Remove</button></p>
+          {/each}
+          {#if linkErr}<p class="bad small">{linkErr}</p>{/if}
+        </details>
+      {/if}
       {#if links.length && claim.statement_tex}
         <Tex text={claim.statement_tex} symbols={links.map((l) => ({ tex: l.symbol.tex, id: l.id }))} active={litSymbols} {onsym} />
         {@const shown = links.find((l) => l.id === symActive)}
@@ -334,6 +382,7 @@
             {/if}
             {#if cl.statement}
               <Statement st={cl.statement} spec={cl.spec} onref={showDecl} compact ext={extFor(cl.spec)}
+                onpinned={(v) => { if (linking) pickVar = v == null ? (pickVar?.spec === cl.spec ? null : pickVar) : { spec: cl.spec, var: v }; }}
                 onactive={(v) => (leanActive = v == null ? (leanActive?.spec === cl.spec ? null : leanActive) : { spec: cl.spec, var: v })} />
             {:else if cl.defs?.length}
               <p class="defs">{#each cl.defs as d, i}{#if i}, {/if}<button class="ref" onclick={() => showDecl(d)}>{d}</button>{/each}</p>
@@ -466,6 +515,13 @@
   .menu > a:hover, .menu > button:hover { background: var(--surface-2); }
   .copied { margin: 4px 0 0; }
   .linkby { margin: 4px 0 0; }
+  .mklink { margin-top: 8px; border: 1px dashed var(--border); border-radius: 8px; padding: 6px 10px; }
+  .mklink > summary { cursor: pointer; font-size: 13px; color: var(--muted); }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { border: 1px solid var(--border); background: var(--surface); border-radius: 6px; padding: 0 6px; cursor: pointer; }
+  .chip.on { border-color: var(--accent); background: var(--accent-soft); }
+  .chip :global(.tex) { border: 0; padding: 0; margin: 0; background: none; font-size: 15px; }
+  .who { font: inherit; font-size: 13px; padding: 1px 6px; border: 1px solid var(--border); border-radius: 6px; width: 12em; }
   .defs { margin: 0; }
   .details h2 { margin-bottom: 4px; }
   .cname { font-weight: 600; margin: 0 0 8px; }

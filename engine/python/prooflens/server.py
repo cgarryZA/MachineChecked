@@ -2,7 +2,9 @@
 
 It listens on 127.0.0.1 only. `GET /api/status` tells the reader it may edit; `POST /api/link`
 with `{"key", "lean": [names] | null, "reject": [names]}` records a link (or removes it, or
-rejects suggestions) in `prooflens.links.json` and rebuilds the view.
+rejects suggestions) in `prooflens.links.json` and rebuilds the view. In a full assessment,
+`POST /api/symbol` with `{"action": "add" | "remove", "claim", "tex", "decl", "var" | "type_of",
+"by"}` records or removes a symbol link (docs/SYMBOL_LINKS.md) and rewrites the site.
 """
 
 from __future__ import annotations
@@ -14,8 +16,10 @@ import threading
 from pathlib import Path
 
 
-def serve(site: Path, port: int, on_link=None, open_browser: bool = True):
+def serve(site: Path, port: int, on_link=None, open_browser: bool = True, on_symbol=None):
     lock = threading.Lock()
+    editable = on_link is not None or on_symbol is not None
+    routes = {"/api/link": on_link, "/api/symbol": on_symbol}
 
     class Handler(http.server.SimpleHTTPRequestHandler):
         def log_message(self, *a):
@@ -31,10 +35,10 @@ def serve(site: Path, port: int, on_link=None, open_browser: bool = True):
 
         def do_GET(self):
             if self.path == "/api/status":
-                return self._json(200, {"editable": on_link is not None})
+                return self._json(200, {"editable": editable})
             # The data index says the page may edit (only this local server says so; a static
             # copy of the site never asks a server anything).
-            if self.path.split("?")[0] == "/data/index.json" and on_link is not None:
+            if self.path.split("?")[0] == "/data/index.json" and editable:
                 try:
                     data = json.loads((site / "data" / "index.json").read_text(encoding="utf-8"))
                 except (OSError, ValueError):
@@ -43,13 +47,14 @@ def serve(site: Path, port: int, on_link=None, open_browser: bool = True):
             return super().do_GET()
 
         def do_POST(self):
-            if self.path != "/api/link" or on_link is None:
+            handle = routes.get(self.path)
+            if handle is None:
                 return self._json(404, {"error": "not found"})
             try:
                 n = int(self.headers.get("Content-Length", "0"))
                 req = json.loads(self.rfile.read(n) or b"{}")
                 with lock:
-                    on_link(req)
+                    handle(req)
                 return self._json(200, {"ok": True})
             except Exception as e:  # the reader shows the message
                 return self._json(400, {"error": str(e)})
