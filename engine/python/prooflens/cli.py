@@ -245,6 +245,17 @@ def cmd_view(a):
     serve(site, a.port, on_link, not a.no_browser)
 
 
+def _site_dest(site: str, root: Path) -> Path:
+    """The directory `--site` names, refused when it is the project (or holds it), or when it
+    has other content than a previous site: writing the site replaces it."""
+    dest = Path(site).resolve()
+    if dest == root.resolve() or root.resolve().is_relative_to(dest):
+        sys.exit(f"--site {site}: choose a new directory, not the project")
+    if dest.exists() and not (dest / "audit.json").exists() and any(dest.iterdir()):
+        sys.exit(f"--site {site}: not empty and not a previous site; choose another")
+    return dest
+
+
 def cmd_build_simple(a):
     from .bundle import bundle
     root, paper = _simple_target(a)
@@ -253,12 +264,8 @@ def cmd_build_simple(a):
     _print_simple(view["body"])
     if a.site:
         import shutil
-        dest = Path(a.site).resolve()
-        if dest == root.resolve() or root.resolve().is_relative_to(dest):
-            sys.exit(f"--site {a.site}: choose a new directory, not the project")
+        dest = _site_dest(a.site, root)
         if dest.exists():
-            if not (dest / "audit.json").exists() and any(dest.iterdir()):
-                sys.exit(f"--site {a.site}: not empty and not a previous site; choose another")
             shutil.rmtree(dest)
         shutil.copytree(site, dest)
         print(f"wrote the reader to {dest}: publish this directory as it is "
@@ -365,6 +372,7 @@ def cmd_build(a):
         return cmd_build_simple(a)
     from .pipeline import build
     cfg = cfgmod.load(_config_arg(a))
+    dest = _site_dest(a.site, cfg.root) if getattr(a, "site", None) else None
     res = build(cfg, release=a.release, skip_lean=a.skip_lean, skip_tex=a.skip_tex, lake=a.lake,
                 web_dist=_web_dist(a.web), lean_build=not a.no_lean_build,
                 reuse_lean=a.reuse_lean)
@@ -381,6 +389,16 @@ def cmd_build(a):
             print(f"  {f['tier']}  {f['subject']}: {f['message']}")
     if idx["findings"]["total"].get("warning"):
         print("  (warnings: see `check --json` or the reader)")
+    if dest is not None:
+        # The site to publish is the audit's public export: what the configuration publishes,
+        # scanned for private material, as `export --out` writes it.
+        from .export import ExportError, export
+        try:
+            out = export(cfg, dest, res["release"], _web_dist(a.web))
+        except ExportError as e:
+            sys.exit(str(e))
+        print(f"wrote the audit to {out['out']}: publish this directory as it is "
+              "(audit.json describes it)")
     if a.fail_on_violation and idx["findings"]["total"].get("violation"):
         sys.exit(1)
 
