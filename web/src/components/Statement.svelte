@@ -3,7 +3,9 @@
   import { gloss } from "../lib/gloss.js";
 
   // A locked proposition as its quantifier prefix and its conclusion.
-  let { st, spec = null, onref, compact = false } = $props();
+  // `ext` highlights from outside (a linked symbol of the paper): a variable ({var}) or a
+  // binder's type ({type}); `onactive` hears which variable is highlighted here.
+  let { st, spec = null, onref, compact = false, ext = null, onactive = null } = $props();
 
   // A statement is shown in full: its assumptions are what a reader compares with the paper.
   // Only a long one, in a compact view, folds to its conclusion and one line naming its
@@ -49,7 +51,8 @@
   // A variable of the statement, highlighted while hovered or focused, and held by a click.
   let hover = $state(null);
   let pinned = $state(null);
-  const active = $derived(hover ?? pinned);
+  const active = $derived(hover ?? pinned ?? ext?.var ?? null);
+  $effect(() => { onactive?.(hover ?? pinned); });
   function onvar(i, how) {
     if (how === "pin") { pinned = pinned === i ? null : i; noted = null; }
     else hover = i;
@@ -102,7 +105,7 @@
             <div class="line">
               <span class="role">{ROLE[b.role] || b.role}</span>
               {@render name(g.head)}<span class="colon"> : </span>
-              {@render lean(b.type)}
+              <span class="ty" class:hl={ext?.type === g.head}>{@render lean(b.type)}</span>
             </div>
             {#each g.members as m}
               <div class="line sub">{@render condition(m)}</div>
@@ -167,6 +170,7 @@
   .sub .role { min-width: 46px; }
   .v { font-family: var(--mono); font-weight: 600; cursor: pointer; border-radius: 3px; }
   .v.hl { background: color-mix(in srgb, var(--accent) 22%, transparent); outline: 1px solid color-mix(in srgb, var(--accent) 45%, transparent); }
+  .ty.hl { background: color-mix(in srgb, var(--accent) 22%, transparent); outline: 1px solid color-mix(in srgb, var(--accent) 45%, transparent); border-radius: 3px; }
   .hn { font-family: var(--mono); color: var(--faint); font-size: 12px; }
   .colon { color: var(--faint); }
   .concl { margin-top: 6px; padding: 8px 10px; border-radius: 6px; border: 1px solid var(--border); display: flex; gap: 8px; align-items: baseline; }

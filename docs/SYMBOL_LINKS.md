@@ -1,6 +1,7 @@
 # Linking symbols in the paper to Lean objects (design)
 
-Status: proposed, for the owner to accept before any of it is built (issue #48).
+Status: accepted and built (issue #48). Links are made with `machinechecked symbol add`; making
+them in the local reader is not built yet.
 
 The reader already links a claim to Lean declarations, and inside the Lean it highlights a
 variable wherever it occurs (`var` in the probe's segments). This note covers the step between:
@@ -20,7 +21,8 @@ symbol link is an **assertion by a named person**, recorded like a review and tr
 
 ## Data
 
-A file beside the inventory, `symbols.json` (one per project), listed in `machinechecked.toml`:
+A file beside the configuration, `symbols.json` by default (`symbols = "…"` in the `[project]`
+table of `machinechecked.toml` names another):
 
 ```json
 {"schema": "machinechecked/symbols@1",
@@ -62,9 +64,20 @@ A file beside the inventory, `symbols.json` (one per project), listed in `machin
 
 ## Who makes links
 
-The local reader (`machinechecked view`), as it makes claim links: the author or a reviewer
-selects a symbol and a Lean variable or sub-term, and the link is saved to `symbols.json` with
-their name. A published audit shows the links its author recorded and never edits them.
+The author or a reviewer, under their name, from the command line:
+
+```sh
+machinechecked symbol add P:thm:sep '\nu' Foo.spec_sep --var ν --as human:Ada-Lovelace
+machinechecked symbol add P:thm:sep '\mathbb R^j' Foo.spec_sep --type-of f --as human:Ada-Lovelace
+machinechecked symbol list
+machinechecked symbol remove P:thm:sep '\nu'
+```
+
+`add` checks the link against the last build (the symbol occurs in the claim's mathematics, the
+statement is the claim's, the binder exists) and pins it to that build; rebuild the site to show
+it. Making links by selecting in the local reader is a later step. A published audit shows the
+links its author recorded (when it publishes both the source text and the Lean) and never edits
+them.
 
 ## Not in scope
 

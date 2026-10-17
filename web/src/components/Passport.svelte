@@ -55,6 +55,26 @@
     return document.scrollingElement;
   }
 
+  // Symbol links (docs/SYMBOL_LINKS.md): a symbol of the printed statement linked, by a named
+  // person, to a variable or a binder's type of the Lean statement. Only links that are not stale
+  // are drawn. Hovering either side highlights the other; a click holds a symbol.
+  const links = $derived((claim?.symbols || []).filter((l) => !l.stale).map((l, i) => ({ ...l, id: i })));
+  let symHover = $state(null);
+  let symPinned = $state(null);
+  let leanActive = $state(null);
+  const symActive = $derived(symHover ?? symPinned);
+  function onsym(id, how) {
+    if (how === "pin") symPinned = symPinned === id ? null : id;
+    else symHover = id;
+  }
+  const litSymbols = $derived(symActive != null ? [symActive]
+    : leanActive ? links.filter((l) => l.lean.decl === leanActive.spec && l.lean.var === leanActive.var).map((l) => l.id) : []);
+  function extFor(spec) {
+    const l = links.find((x) => x.id === symActive);
+    if (!l || l.lean.decl !== spec) return null;
+    return l.lean.var != null ? { var: l.lean.var } : { type: l.lean.binder };
+  }
+
   // The definition claim of the paper that a declaration states, if one links it: its excerpt is
   // shown above the Lean definition.
   let search = null;
@@ -250,6 +270,11 @@
       {:else}
         <p class="muted small">The printed statement is not part of this site.</p>
       {/if}
+      {#if links.length && claim.statement_tex}
+        <Tex text={claim.statement_tex} symbols={links.map((l) => ({ tex: l.symbol.tex, id: l.id }))} active={litSymbols} {onsym} />
+        {@const shown = links.find((l) => l.id === symActive)}
+        <p class="faint small linkby">{#if shown}Linked by {shown.by}: their reading of the symbol, not a check.{:else}Underlined symbols are linked to the Lean below, each by a named person; point at one to see what it is linked to.{/if}</p>
+      {/if}
     </section>
 
     <section class="lean">
@@ -308,7 +333,8 @@
               </div>
             {/if}
             {#if cl.statement}
-              <Statement st={cl.statement} spec={cl.spec} onref={showDecl} compact />
+              <Statement st={cl.statement} spec={cl.spec} onref={showDecl} compact ext={extFor(cl.spec)}
+                onactive={(v) => (leanActive = v == null ? (leanActive?.spec === cl.spec ? null : leanActive) : { spec: cl.spec, var: v })} />
             {:else if cl.defs?.length}
               <p class="defs">{#each cl.defs as d, i}{#if i}, {/if}<button class="ref" onclick={() => showDecl(d)}>{d}</button>{/each}</p>
             {/if}
@@ -439,6 +465,7 @@
   .menu > a, .menu > button { text-align: left; font: inherit; font-size: 14px; padding: 7px 10px; border: 0; background: none; color: var(--text); border-radius: 6px; cursor: pointer; text-decoration: none; }
   .menu > a:hover, .menu > button:hover { background: var(--surface-2); }
   .copied { margin: 4px 0 0; }
+  .linkby { margin: 4px 0 0; }
   .defs { margin: 0; }
   .details h2 { margin-bottom: 4px; }
   .cname { font-weight: 600; margin: 0 0 8px; }

@@ -60,6 +60,7 @@ class Config:
     out_dir: Path
     review_check: str | None = None
     display: Path | None = None
+    symbols: Path | None = None
     issues: str | None = None         # "owner/repo" where the reader's "Raise issue" opens issues
     site_url: str | None = None       # the public address of the published site, for permalinks
     author: str | None = None         # the name the audit is published under (audit.json)
@@ -142,6 +143,9 @@ def load(path: str | Path) -> Config:
         review_check=raw.get("review", {}).get("check"),
         # Display corrections (TeX descriptions, printed numbers), outside the inventory.
         display=(base / proj["display"]).resolve() if "display" in proj else None,
+        # Links from symbols of the paper to Lean objects, each an author's assertion (display
+        # only, docs/SYMBOL_LINKS.md).
+        symbols=(base / proj.get("symbols", "symbols.json")).resolve(),
         issues=issue_repo(proj.get("issues"), str(path)),
         site_url=proj.get("site_url"),
         author=proj.get("author"),

@@ -130,6 +130,8 @@ def public_claim(chunk: dict, pub) -> dict:
                     rung["detail"] = "located in the compiled paper"
         clauses.append(c)
     out["clauses"] = clauses
+    # A symbol link names paper TeX and a place in the Lean statement: published with both.
+    out["symbols"] = list(chunk.get("symbols", [])) if pub.source_text and pub.lean else []
     out["decls"] = dict(chunk.get("decls", {}))
     out["findings"] = [_pick(f, ["id", "tier", "code", "subject", "message", "trigger",
                                  "signal", "dismissed", "dismissal_stale"])
@@ -254,7 +256,10 @@ def export(cfg: Config, out: Path, release: str | None = None,
     relrec = read_json(cfg.out_dir / "releases" / f"{release}.json") if release \
         else read_json(rels[-1])
     record = ev.load(cfg.out_dir, relrec["evidence"])
-    index, chunks, store = mf.build(record, relrec["release"])
+    # With the display layer the site is built with (descriptions, printed numbers, symbol
+    # links): what is shown changes, never what is assessed.
+    from .pipeline import load_display
+    index, chunks, store = mf.build(record, relrec["release"], load_display(cfg))
     pubs = {p.id: p.publish for p in cfg.papers}
     full_index, full_chunks, full_store = index, chunks, store
     if paper is not None:

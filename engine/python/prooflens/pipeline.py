@@ -313,7 +313,12 @@ def rebuild_site(cfg: Config, web_dist: Path | None = None, release: str | None 
 
 
 def load_display(cfg: Config) -> dict | None:
-    return read_json(cfg.display) if cfg.display and cfg.display.exists() else None
+    """What changes what is shown and never what is assessed: the display overlay, and the
+    symbol links (docs/SYMBOL_LINKS.md)."""
+    out = read_json(cfg.display) if cfg.display and cfg.display.exists() else None
+    if cfg.symbols and cfg.symbols.exists():
+        out = {**(out or {}), "symbols": read_json(cfg.symbols).get("links", [])}
+    return out
 
 
 def write_preview(site: Path, index: dict, chunks: dict, store: dict, pdfs: dict,

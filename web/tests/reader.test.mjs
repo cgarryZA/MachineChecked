@@ -306,7 +306,24 @@ for (const width of [1300, 390]) {
 }
 
 for (const width of [1300, 390]) {
-  await check("a statement keeps its order, with each object's own conditions beside it", width, async (pg) => {
+    await check("a linked symbol of the paper and its Lean variable highlight each other", width, async (pg) => {
+    await toyClaim(pg, "T:thm:even-add");
+    const tex = pg.locator("aside .view .paper .tex");
+    await tex.locator("[data-sym]").first().waitFor();
+    assert.equal(await tex.locator("[data-sym]").count(), 4, "a and b, twice each, in the mathematics only");
+    await tex.locator("[data-sym]").first().hover();
+    const lean = pg.locator("aside .view .lean");
+    assert.ok(await lean.locator(".var.hl[data-var='0']").count() > 0, "a is highlighted in the Lean");
+    assert.equal(await lean.locator(".v.hl").textContent(), "a");
+    assert.match(await pg.locator("aside .view .linkby").textContent(), /Linked by human:A-Referee.*not a check/);
+    await pg.mouse.move(0, 0);
+    await lean.locator(".concl .var[data-var='1']").first().hover();
+    assert.equal(await tex.locator("[data-sym].hl").count(), 2, "both b in the paper");
+  });
+}
+
+for (const width of [1300, 390]) {
+await check("a statement keeps its order, with each object's own conditions beside it", width, async (pg) => {
     await pg.goto(origin + `/structure/#/r/${SHAPE.release}/read/P/${encodeURIComponent("P:thm:layout")}`);
     const st = pg.locator("aside .view .stmt");
     await st.locator(".ribbon").waitFor();

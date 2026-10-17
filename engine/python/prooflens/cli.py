@@ -526,6 +526,22 @@ def _print_inspect(out: dict, dependencies: bool):
         print("  (from the cache: no Lean input changed)")
 
 
+def cmd_symbol(a):
+    from . import symbols as sy
+    cfg = cfgmod.load(_config_arg(a))
+    try:
+        if a.action == "add":
+            ln = sy.add(cfg, a.claim, a.tex, a.decl, a.reviewer, var=a.var, type_of=a.type_of)
+            print(f"linked {a.tex} in {a.claim} to {ln['lean']} (by {ln['by']}); "
+                  "rebuild the site to show it")
+        elif a.action == "remove":
+            print(f"removed {sy.remove(cfg, a.claim, a.tex)} link(s)")
+        else:
+            print(sy.listing(cfg))
+    except (sy.SymbolError, OSError) as e:
+        sys.exit(f"machinechecked: {e}")
+
+
 def cmd_serve(a):
     cfg = cfgmod.load(_config_arg(a))
     site = Path(a.dir).resolve() if a.dir else cfg.out_dir / "site"
@@ -771,6 +787,24 @@ def main(argv=None):
     ins.add_argument("--project", help="the Lean project (default: the one here)")
     ins.add_argument("--refresh", action="store_true", help=argparse.SUPPRESS)
     ins.set_defaults(func=cmd_inspect)
+
+    sy = sub.add_parser("symbol", help="link a symbol of the paper to a Lean object (an assertion "
+                        "under your name; display only)")
+    sys_ = sy.add_subparsers(dest="action", required=True)
+    for name in ("add", "remove", "list"):
+        p_ = sys_.add_parser(name)
+        if name != "list":
+            p_.add_argument("claim", help="the claim id, e.g. P:thm:main")
+            p_.add_argument("tex", help="the symbol as the paper's TeX writes it, e.g. '\\nu'")
+        if name == "add":
+            p_.add_argument("decl", help="the claim's Lean statement")
+            p_.add_argument("--var", help="the variable it is (a binder's name or index)")
+            p_.add_argument("--type-of", dest="type_of", help="the binder whose type it is")
+            p_.add_argument("--as", dest="reviewer",
+                            default=os.environ.get("MACHINECHECKED_REVIEWER"),
+                            help="human:NAME or llm:MODEL (default: $MACHINECHECKED_REVIEWER)")
+        p_.add_argument("-c", "--config", default=None)
+        p_.set_defaults(func=cmd_symbol)
 
     s = sub.add_parser("serve")
     s.add_argument("-c", "--config", default=None)

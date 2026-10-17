@@ -122,6 +122,24 @@ def ladder(cl: dict, anchor: dict | None, mode: str | None, src_ok: bool | None)
     return rungs
 
 
+def symbol_links(display: dict | None, cid: str, tex: str | None, lean: dict) -> list[dict]:
+    """The claim's symbol links, each as its author recorded it and whether it is stale: the
+    statement it points into has another fingerprint now, or the claim's printed text changed.
+    Display only (docs/SYMBOL_LINKS.md)."""
+    out = []
+    for ln in (display or {}).get("symbols", []):
+        if ln.get("claim") != cid:
+            continue
+        target = ln.get("lean") or {}
+        spec = (lean.get("specs") or {}).get(target.get("decl")) or {}
+        pins = ln.get("pins") or {}
+        stale = (pins.get("statement") != spec.get("fingerprint")
+                 or not tex or pins.get("source") != sha256_text(tex))
+        out.append({"symbol": ln.get("symbol") or {}, "lean": target, "by": ln.get("by"),
+                    "stale": bool(stale)})
+    return out
+
+
 def build(evidence: dict, release: str, display: dict | None = None
           ) -> tuple[dict, dict[str, dict]]:
     """The presentation manifest of `evidence`. `display` (the project's display overlay) gives
@@ -248,7 +266,8 @@ def build(evidence: dict, release: str, display: dict | None = None
             "class": status_class(a["status"]), "anchor": anchor, "source_matches": src_ok,
             "statement_tex": (anchor or {}).get("statement"),
             "blockers": [shown_names(b, clause_tex) for b in a.get("blockers", [])],
-            "clauses": clauses, "decls": decls, "findings": fs}
+            "clauses": clauses, "decls": decls, "findings": fs,
+            "symbols": symbol_links(display, c["id"], (anchor or {}).get("statement"), lean)}
 
     prov = body["provenance"]
     index = {"schema": SCHEMA, "release": release, "evidence": evidence["id"],
