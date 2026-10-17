@@ -20,6 +20,22 @@ The order is recorded by the application; it cannot establish that the reviewer 
 
 **Keeping later units blind.** Reviewing one unit can show another's material: a statement's step 2 shows the Lean of the definitions it uses, and when one section of the author's reviews covers several declarations, its step 3 shows the author's review of all of them. The queue suggests an order that reviews a revealed unit first wherever it can (the definitions before the statements that use them). When it cannot (two units reviewed in one section reveal each other), the page says so before you write your reading, and the report records the units that had already shown it to you (`reading.revealed_by`). It knows only the work kept in this browser.
 
+**From the command line.** The same three steps, with the same locks, for a reviewer without a browser (a scripted or batch reviewer, say). Name yourself with `--as human:NAME` or `--as llm:MODEL` (or `MACHINECHECKED_REVIEWER`); texts are files, or `-` for standard input:
+
+```sh
+machinechecked review next                          # the next unit to review
+machinechecked review read UNIT                     # step 1: the paper's statement only
+machinechecked review lock UNIT reading.md          # locks your reading
+machinechecked review show UNIT                     # step 2 (refused before lock): the Lean
+machinechecked review decide UNIT VERDICT comparison.md [--detail detail.md]
+machinechecked review author UNIT                   # step 3 (refused before decide)
+machinechecked review submit UNIT disagreements.md  # finishes the report
+machinechecked review status
+machinechecked review export --out reports.json     # for the maintainer
+```
+
+Each step refuses to run before the one it follows and is timestamped; the reports are in the form the reader exports, and `review promote` checks them the same way. The work is kept in the project's working directory (`review-work/`).
+
 ## What a verdict means
 
 | Verdict | What the reviewer must explain |

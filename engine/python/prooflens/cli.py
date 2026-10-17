@@ -22,6 +22,7 @@ import functools
 import http.server
 import json
 import re
+import os
 import sys
 from pathlib import Path
 
@@ -533,6 +534,48 @@ def cmd_serve(a):
     http.server.ThreadingHTTPServer(("127.0.0.1", a.port), handler).serve_forever()
 
 
+def _text_arg(v: str | None) -> str:
+    if v is None:
+        return ""
+    return sys.stdin.read() if v == "-" else Path(v).read_text(encoding="utf-8")
+
+
+def cmd_review_step(a):
+    from . import review_cli as rc
+    cfg = cfgmod.load(_config_arg(a))
+    try:
+        s = rc.Session(cfg, rc.parse_reviewer(a.reviewer, a.same_family))
+        if a.action == "next":
+            u = next(iter(s.open_units()), None)
+            print(f"{u['id']}  ({u['reason']})" if u else "nothing left to review")
+        elif a.action == "status":
+            print(f"{len(s.work['reports'])} report(s), {len(s.work['drafts'])} in progress, "
+                  f"{len(s.open_units())} unit(s) left to review (release {s.index['release']})")
+            for uid, d in s.work["drafts"].items():
+                print(f"  {uid}: at step '{d['stage']}'")
+        elif a.action == "read":
+            print(s.read(a.unit))
+        elif a.action == "lock":
+            s.lock(a.unit, _text_arg(a.text))
+            print(f"reading locked; `review show {a.unit}` shows the Lean")
+        elif a.action == "show":
+            print(s.show(a.unit))
+        elif a.action == "decide":
+            s.decide(a.unit, a.verdict, _text_arg(a.comparison), _text_arg(a.detail),
+                     _text_arg(a.witness))
+            print(f"verdict recorded; `review author {a.unit}` shows the author's review")
+        elif a.action == "author":
+            print(s.author(a.unit))
+        elif a.action == "submit":
+            r = s.submit(a.unit, _text_arg(a.text).strip())
+            print(f"report recorded: {r['unit']['id']}, {r['verdict']['value']}; "
+                  "`review export --out FILE` writes your reports for the maintainer")
+        elif a.action == "export":
+            print(f"wrote {s.export(Path(a.out))}")
+    except (rc.ReviewError, OSError) as e:
+        sys.exit(f"machinechecked: {e}")
+
+
 def cmd_review(a):
     import shlex
     import subprocess
@@ -747,6 +790,37 @@ def main(argv=None):
                     help="accept a report whose reviewer had seen the unit's Lean or author's "
                          "review before writing their reading")
     pm.set_defaults(func=cmd_review)
+    # The protocol's steps, for a reviewer without a browser (`review_cli`).
+    steps = {
+        "next": "the next unit to review",
+        "read": "step 1: the paper's statement of a unit",
+        "lock": "lock your reading (a file, or - for standard input)",
+        "show": "step 2, after lock: the unit's Lean",
+        "decide": "record your verdict and comparison",
+        "author": "step 3, after decide: the author's review",
+        "submit": "record your disagreements with it and finish the report",
+        "status": "your progress on this release's queue",
+        "export": "write your reports as one file, for the maintainer",
+    }
+    for name, help_ in steps.items():
+        sp = rvs.add_parser(name, help=help_)
+        if name not in ("next", "status", "export"):
+            sp.add_argument("unit", help="a unit id of the queue, e.g. spec:Foo.thm_bar")
+        if name in ("lock", "submit"):
+            sp.add_argument("text", help="a file holding your text, or - to read it from standard input")
+        if name == "decide":
+            sp.add_argument("verdict")
+            sp.add_argument("comparison", help="a file holding your comparison, or -")
+            sp.add_argument("--detail", help="a file holding what the verdict needs said")
+            sp.add_argument("--witness", help="a file holding your note on the witness")
+        if name == "export":
+            sp.add_argument("--out", required=True)
+        sp.add_argument("--as", dest="reviewer", default=os.environ.get("MACHINECHECKED_REVIEWER"),
+                        help="human:NAME or llm:MODEL (default: $MACHINECHECKED_REVIEWER)")
+        sp.add_argument("--same-family", choices=["yes", "no", "unknown"], default="unknown",
+                        help="for a model: whether it is of the statements' author's family")
+        sp.add_argument("-c", "--config", default=None)
+        sp.set_defaults(func=cmd_review_step)
 
     v = sub.add_parser("validate")
     v.add_argument("file")
