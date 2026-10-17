@@ -40,7 +40,7 @@ paper = {"id": "arxiv:2601.00001", "title": "A paper with two formalisations", "
 anchors = [anchor("theorem", "1", 1, 100), anchor("theorem", "2", 1, 300),
            anchor("theorem", "3", 2, 100), anchor("lemma", "4", 2, 300)]
 claims = paper_claims(anchors, paper["title"], [
-    (paper["formalisations"][0], fy([("theorem", "1", ["A.one"]), ("theorem", "3", ["A.three"])])),
+    (paper["formalisations"][0], fy([("theorem", "1", ["A.Some.Rather.Long.Namespace.with_a_declaration_name_long_enough_to_overflow_a_phone"]), ("theorem", "3", ["A.three"])])),
     (paper["formalisations"][1], fy([("theorem", "2", ["B.two"]), ("theorem", "3", ["B.three"])]))])
 write_paper_site(Path(sys.argv[1]), paper, claims, [612, 792], None, Path(sys.argv[2]))
 
@@ -163,6 +163,15 @@ for (const width of [1300, 390]) {
     }
   });
 }
+
+await check("a long Lean name stays inside the claim panel on a phone", 390, async (pg) => {
+  await pg.goto(origin + "/paper/");
+  await pg.waitForSelector("select[aria-label='Formalisation shown']");
+  await open(pg, "P:theorem-1");
+  assert.deepEqual(await panelNames(pg), ["A.Some.Rather.Long.Namespace.with_a_declaration_name_long_enough_to_overflow_a_phone"]);
+  const [scroll, client] = await pg.locator("aside").evaluate((a) => [a.scrollWidth, a.clientWidth]);
+  assert.ok(scroll <= client, `the panel scrolls sideways (${scroll} > ${client})`);
+});
 
 // The paper pane shows a claim's band when the claim is chosen, wherever it is in a long paper,
 // even though choosing it opens the side panel and narrows the pages.

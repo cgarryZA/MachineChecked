@@ -348,6 +348,6 @@
   .review { border-left: 3px solid var(--border); padding-left: 10px; margin: 8px 0; }
   .pill { font-size: 11px; padding: 0 6px; border-radius: 999px; background: var(--surface-2); color: var(--muted); margin-left: 4px; }
   .rtext { white-space: pre-wrap; font: 13px/1.5 var(--sans); color: var(--muted); margin: 6px 0 0; }
-  .ref { border: 0; background: none; padding: 0; color: var(--accent); cursor: pointer; font-family: var(--mono); font-size: 0.92em; }
+  .ref { border: 0; background: none; padding: 0; color: var(--accent); cursor: pointer; font-family: var(--mono); font-size: 0.92em; max-width: 100%; text-align: left; overflow-wrap: anywhere; }
   .foot { margin-top: 16px; }
 </style>

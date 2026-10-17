@@ -29,6 +29,6 @@
 
 <style>
   .lean { white-space: pre-wrap; word-break: break-word; }
-  .r { border: 0; padding: 0; background: none; font: inherit; color: var(--accent); cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px; }
+  .r { border: 0; padding: 0; background: none; font: inherit; color: var(--accent); cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px; text-align: left; overflow-wrap: anywhere; }
   .c { color: inherit; }
 </style>
