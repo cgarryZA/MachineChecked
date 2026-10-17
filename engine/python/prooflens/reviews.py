@@ -58,8 +58,13 @@ def parse_file(path: Path, ai_patterns: list[str], rel_to: Path) -> list[Review]
         heads = [h.start() for h in HEADING.finditer(txt, prev, m.start())]
         if heads:
             start = heads[-1]
-        body = MARKER.sub("", txt[start:m.start()]).strip()
-        body = re.sub(r"\A#{1,6} [^\n]*\n", "", body).strip()
+        if out and not txt[prev:m.start()].strip():
+            # A marker straight after another closes the same review: one section reviewing
+            # several declarations ends with one marker per declaration.
+            body = out[-1].text
+        else:
+            body = MARKER.sub("", txt[start:m.start()]).strip()
+            body = re.sub(r"\A#{1,6} [^\n]*(?:\n|\Z)", "", body).strip()
         by = attrs.get("by", "unknown")
         out.append(Review(
             target=m.group(1), name=m.group(2), hash=m.group(3), by=by,

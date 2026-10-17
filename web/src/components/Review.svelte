@@ -293,7 +293,7 @@
             <h3>The author's review</h3>
             {#each current.author_review as r}
               <p class="lbl">{r.by}{r.file ? " · " + r.file + (r.line ? ":" + r.line : "") : ""}</p>
-              <pre class="author">{r.text || "(no text)"}</pre>
+              <pre class="author">{r.text || "No text was written with this review marker."}</pre>
             {:else}
               <p class="faint">No review by the author is recorded for this unit.</p>
             {/each}
