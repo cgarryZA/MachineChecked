@@ -83,3 +83,9 @@ def test_a_missing_program_is_reported_before_a_paper_is_downloaded(tmp_path):
                            env={**os.environ, "PATH": str(tmp_path / "nothing")})
     assert code == 2 and not_run(out)["kind"] == "missing-tool"
     assert "downloading" not in err and not (tmp_path / ".machinechecked").exists()
+
+
+def test_the_full_assessment_records_the_installed_release():
+    from importlib.metadata import version
+    from prooflens import pipeline
+    assert pipeline.tool_version() == version("machinechecked")

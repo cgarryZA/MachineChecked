@@ -24,10 +24,13 @@ from .util import (canonical_json, git_dirty, git_head, link_or_copy, norm_ws, p
 
 
 def tool_version() -> str:
-    try:
-        return version("prooflens")
-    except PackageNotFoundError:
-        return "0.1.0+src"
+    """The installed MachineChecked release (`prooflens` was the package's earlier name)."""
+    for dist in ("machinechecked", "prooflens"):
+        try:
+            return version(dist)
+        except PackageNotFoundError:
+            pass
+    return "0.1.0+src"
 
 
 def project_provenance(cfg: Config) -> dict:
