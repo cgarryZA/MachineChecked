@@ -65,3 +65,33 @@ def test_a_local_repository_given_by_relative_path_is_read_from_disk(tmp_path):
     snap = acquire(SimpleNamespace(root=cfg_dir), paper, tmp_path / "work" / "sources" / "P")
     assert snap.revision == pinned and (snap.dir / "paper.tex").is_file()
     assert not (tmp_path / "work" / "sources" / ".P-repo").exists()  # nothing fetched
+
+
+def test_a_versioned_arxiv_source_reads_its_cached_copy(tmp_path):
+    """arXiv's source for a version is a gzipped tar, a single gzipped file or a PDF; once
+    downloaded it is read from the cached copy (here placed by hand, so no network is used)."""
+    import gzip
+    import io
+    import tarfile
+    import pytest
+    from prooflens.sources import SourceError
+    tex = b"\\documentclass{article}\\begin{document}x\\end{document}\n"
+    tarred = io.BytesIO()
+    with tarfile.open(fileobj=tarred, mode="w:gz") as t:
+        info = tarfile.TarInfo("paper.tex")
+        info.size = len(tex)
+        t.addfile(info, io.BytesIO(tex))
+    for body, expect, mode in ((tarred.getvalue(), "paper.tex", "latex"),
+                               (gzip.compress(tex), "main.tex", "latex"),
+                               (b"%PDF-1.4\n%%EOF\n", "paper.pdf", "pdf")):
+        work = tmp_path / expect / "sources"
+        (work / ".arxiv").mkdir(parents=True)
+        (work / ".arxiv" / "2601.01234v2.eprint").write_bytes(body)
+        paper = Paper(id="P", title="A paper", source={"arxiv": "2601.01234v2"})
+        snap = acquire(SimpleNamespace(root=tmp_path), paper, work / "P")
+        assert (snap.dir / expect).is_file() and snap.mode == mode
+        assert snap.kind == "arxiv" and snap.revision == "2601.01234v2"
+    with pytest.raises(SourceError, match="needs its version"):
+        acquire(SimpleNamespace(root=tmp_path),
+                Paper(id="P", title="A paper", source={"arxiv": "2601.01234"}),
+                tmp_path / "nov" / "P")

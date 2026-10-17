@@ -115,6 +115,48 @@ def _git_env(paper: Paper) -> dict:
     return env
 
 
+ARXIV_VERSIONED = re.compile(r"(?:arxiv:)?([a-z-]+(?:\.[A-Z]{2})?/\d{7}|\d{4}\.\d{4,5})(v\d+)", re.I)
+
+
+def _arxiv(paper: Paper, dest: Path) -> str:
+    """Unpack the source arXiv serves for a versioned record (`2601.01234v2`) into `dest`, and
+    return the record. The download is kept beside the snapshots (`.arxiv/`), so a later build,
+    offline included, reads that copy. arXiv serves a gzipped tar, a single gzipped file (one
+    `.tex`), or, for a submission without source, the PDF."""
+    import gzip
+    m = ARXIV_VERSIONED.fullmatch(str(paper.source["arxiv"]).strip())
+    if not m:
+        raise SourceError(f"paper {paper.id}: an arXiv source needs its version, as in "
+                          f"2601.01234v2 (got {paper.source['arxiv']!r})")
+    rid = m.group(1) + m.group(2)
+    cached = dest.parent / ".arxiv" / (rid.replace("/", "_") + ".eprint")
+    if not cached.exists():
+        import urllib.request
+        req = urllib.request.Request(f"https://arxiv.org/e-print/{rid}",
+                                     headers={"User-Agent": "machinechecked (paper source)"})
+        try:
+            with urllib.request.urlopen(req, timeout=120) as r:
+                data = r.read(500_000_001)
+        except Exception as e:
+            raise SourceError(f"paper {paper.id}: could not download arXiv {rid}: {e}") from None
+        if len(data) > 500_000_000:
+            raise SourceError(f"paper {paper.id}: arXiv {rid}'s source is over 500 MB")
+        cached.parent.mkdir(parents=True, exist_ok=True)
+        cached.write_bytes(data)
+    data = cached.read_bytes()
+    if data[:2] == b"\x1f\x8b":
+        data = gzip.decompress(data)
+    if data.startswith(b"%PDF"):
+        (dest / "paper.pdf").write_bytes(data)
+    else:
+        try:
+            with tarfile.open(fileobj=io.BytesIO(data)) as t:
+                t.extractall(dest, filter="data")
+        except tarfile.ReadError:
+            (dest / "main.tex").write_bytes(data)  # a single-file submission
+    return rid
+
+
 def acquire(cfg: Config, paper: Paper, dest: Path) -> Snapshot:
     src = paper.source
     if dest.exists():
@@ -185,6 +227,7 @@ def acquire(cfg: Config, paper: Paper, dest: Path) -> Snapshot:
             t.extractall(dest, filter="data")
         kind = "git"
     else:
-        raise SourceError(f"paper {paper.id}: arXiv sources are not supported yet")
+        rev = _arxiv(paper, dest)
+        kind, commit_time = "arxiv", None
     mode, root, pdf, note = choose(paper, dest)
     return Snapshot(paper.id, dest, kind, rev, mode, root, pdf, note, commit_time)
