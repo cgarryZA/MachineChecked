@@ -39,3 +39,18 @@ def test_found_clean_and_could_not_run(tmp_path):
     assert gone.returncode == 2 and "could not run" in gone.stderr
     bad = run(repo, "--denylist", str(deny), "--range", "nosuchref..HEAD")
     assert bad.returncode == 2 and "could not run" in bad.stderr
+
+
+def test_an_allowed_published_string_is_not_an_occurrence(tmp_path):
+    repo = repo_with(tmp_path, "-- Formalises: Public Paper on Widgets (widgets-public-lean)\n"
+                               "-- see also widgets-private\n")
+    deny = tmp_path / "deny.txt"
+    deny.write_text("widgets\n")
+    allow = tmp_path / "allow.txt"
+    allow.write_text("Public Paper on Widgets\nwidgets-public-lean\n")
+    r = run(repo, "--denylist", str(deny), "--allow", str(allow))
+    # The published title and repository pass; the private name on the next line does not.
+    assert r.returncode == 1 and "widgets-private" in r.stdout and "Public Paper" not in r.stdout
+    (repo / "Notes.lean").write_text("-- Formalises: Public Paper on Widgets (widgets-public-lean)\n")
+    subprocess.run(["git", "commit", "-qam", "public only"], cwd=repo, check=True, env=ENV)
+    assert run(repo, "--denylist", str(deny), "--allow", str(allow)).returncode == 0

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Refuse to publish material that belongs to private repositories.
 
-    check_public.py --denylist FILE [--private-source DIR ...] [--range REV_RANGE]
+    check_public.py --denylist FILE [--allow FILE] [--private-source DIR ...] [--range REV_RANGE]
 
 Every line of FILE (blank lines and `#` comments aside) is a case-insensitive term that must not
 occur in this repository's tracked files, nor, with --range, in the diffs and messages of the
@@ -9,8 +9,10 @@ commits of REV_RANGE (e.g. origin/main..HEAD, the commits about to be pushed). W
 --private-source, every substantial line (30 characters or more, comments and imports aside) of
 the `.lean` and `.tex` files under DIR must not occur there either: the mathematics of a private
 project cannot be published even under another name. The denylist and the private sources are
-kept outside this public repository. Exit status 1 lists every occurrence; 2 means the check
-could not run (it then has not cleared anything).
+kept outside this public repository. With --allow, every line of that file is an exact string
+already published (a public paper's title, its repository's name): a denylisted term inside one
+of them is not an occurrence, while the same term anywhere else still is. Exit status 1 lists
+every occurrence; 2 means the check could not run (it then has not cleared anything).
 """
 
 import argparse
@@ -67,24 +69,34 @@ def main():
         sys.exit(2)
 
 
+def outside(line: str, term: str, allowed: list[str]) -> bool:
+    """Whether `term` occurs in `line` outside every allowed (published) string."""
+    low = line.lower()
+    for a in allowed:
+        low = low.replace(a.lower(), "\0" * len(a))
+    return term.lower() in low
+
+
 def check():
     p = argparse.ArgumentParser()
     p.add_argument("--denylist", required=True)
+    p.add_argument("--allow", help="exact strings already published, one per line")
     p.add_argument("--private-source", action="append", default=[])
     p.add_argument("--range")
     a = p.parse_args()
     root = Path(git(["rev-parse", "--show-toplevel"]).strip())
+    allowed = terms(Path(a.allow)) if a.allow else []
     hits = []
     for t in terms(Path(a.denylist)):
         out = git(["grep", "-n", "-I", "-i", "-F", t, "--", ".", ":!web/package-lock.json"],
                   cwd=root)
-        hits += [f"tree: {l}" for l in out.splitlines()]
+        hits += [f"tree: {l}" for l in out.splitlines() if outside(l, t, allowed)]
         if a.range:
             for what, args in (("diff", ["log", "-p", "--format=", a.range]),
                                ("message", ["log", "--format=%h %B", a.range])):
                 out = git(args, cwd=root)
                 hits += [f"{what}: {t!r} in {l.strip()[:120]}" for l in out.splitlines()
-                         if t.lower() in l.lower()]
+                         if outside(l, t, allowed)]
     if a.private_source:
         lines = private_lines(a.private_source)
         files = git(["ls-files"], cwd=root).splitlines()
