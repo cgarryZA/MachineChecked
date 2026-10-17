@@ -97,8 +97,13 @@ partial def deepHash (e : Expr) : StateM (Std.HashMap Expr UInt64) UInt64 := do
   modify (·.insert e h)
   return h
 
+/-- The first `n` characters of `s`. (`String.take` returns a slice on some Lean versions and a
+string on others; this is the same on all.) -/
+def prefixOf (s : String) (n : Nat) : String :=
+  (s.toList.take n).foldl String.push ""
+
 def hex (h : UInt64) : String :=
-  let s := String.ofList (Nat.toDigits 16 h.toNat)
+  let s := (Nat.toDigits 16 h.toNat).foldl String.push ""
   "".pushn '0' (16 - s.length) ++ s
 
 /-- State of the canonical serialisation: the index of every node already emitted. -/
@@ -160,33 +165,53 @@ def constPrint (ci : ConstantInfo) : MetaM (String × String × Array Name) := d
 
 /-! ## Pretty-printing with navigation -/
 
-/-- Flatten tagged code into segments; a segment carries the constant it names when the
-innermost subexpression around it is a constant. -/
-partial def segments (t : Widget.CodeWithInfos) (ref : Option Name) (acc : Array Json) : Array Json :=
+/-- Flatten tagged code into segments; a segment carries the constant it names (`ref`), or the
+index of the statement's binder it refers to (`var`, a position in `vars`), when the innermost
+subexpression around it is one. -/
+partial def segments (vars : Array FVarId) (t : Widget.CodeWithInfos) (ref : Option (String × Json))
+    (acc : Array Json) : Array Json :=
   match t with
   | Widget.TaggedText.text s =>
     match ref with
-    | some n => acc.push (Json.mkObj [("t", s), ("ref", n.toString)])
+    | some (k, v) => acc.push (Json.mkObj [("t", s), (k, v)])
     | none => acc.push (Json.mkObj [("t", s)])
-  | Widget.TaggedText.append xs => xs.foldl (fun a x => segments x ref a) acc
+  | Widget.TaggedText.append xs => xs.foldl (fun a x => segments vars x ref a) acc
   | Widget.TaggedText.tag info sub =>
     let r := match info.info.val.info with
-      | .ofTermInfo ti => if let .const n _ := ti.expr then some n else none
+      | .ofTermInfo ti => match ti.expr with
+        | .const n _ => some ("ref", Json.str n.toString)
+        | .fvar id => (vars.findIdx? (· == id)).map fun i => ("var", toJson i)
+        | _ => none
       | _ => none
-    segments sub (r <|> none) acc
+    segments vars sub r acc
 
-/-- The pretty-printed expression with navigable constants; plain text if tagging fails, and a
-marker if printing fails, so that one large term cannot stop the probe. -/
-def ppJson (e : Expr) : MetaM Json := do
+/-- The fields of a pretty-printed expression with navigable constants and binders; plain text
+if tagging fails, and a marker if printing fails, so that one large term cannot stop the probe. -/
+def ppFields (e : Expr) (vars : Array FVarId := #[]) : MetaM (List (String × Json)) := do
   try
     let code ← Widget.ppExprTagged e
     let text := toString (← ppExpr e)
-    return Json.mkObj [("text", text), ("segments", Json.arr (segments code none #[]))]
+    return [("text", Json.str text), ("segments", Json.arr (segments vars code none #[]))]
   catch _ =>
     try
-      return Json.mkObj [("text", toString (← ppExpr e))]
+      return [("text", Json.str (toString (← ppExpr e)))]
     catch err =>
-      return Json.mkObj [("text", "(not printable)"), ("error", toString (← err.toMessageData.toString))]
+      return [("text", Json.str "(not printable)"),
+        ("error", Json.str (toString (← err.toMessageData.toString)))]
+
+def ppJson (e : Expr) (vars : Array FVarId := #[]) : MetaM Json :=
+  return Json.mkObj (← ppFields e vars)
+
+/-- The logical shape of a conclusion: a conjunction, disjunction or equivalence as a tree whose
+leaves are pretty-printed propositions. Display only; it changes no record that is assessed. -/
+partial def logicJson (vars : Array FVarId) (e : Expr) : MetaM Json := do
+  let op := if e.isAppOfArity ``And 2 then some "and"
+    else if e.isAppOfArity ``Or 2 then some "or"
+    else if e.isAppOfArity ``Iff 2 then some "iff" else none
+  match op with
+  | some o => return Json.mkObj [("op", o),
+      ("args", Json.arr #[← logicJson vars e.appFn!.appArg!, ← logicJson vars e.appArg!])]
+  | none => return Json.mkObj [("leaf", ← ppJson e vars)]
 
 /-! ## The inspection representation -/
 
@@ -200,29 +225,35 @@ def isExistsApp (e : Expr) : Option (Name × Expr) :=
 /-- Split a proposition into its quantifier prefix and its conclusion. Universal binders are
 `forall` (data), `hypothesis` (a proposition) or `instance`; existential binders are `exists`.
 Definitions are not unfolded: the prefix is the one written in the specification. -/
-partial def telescope (e : Expr) (acc : Array Json) : MetaM (Array Json × Json) := do
+partial def telescope (e : Expr) (acc : Array Json) (vars : Array FVarId := #[]) :
+    MetaM (Array Json × Json) := do
   match e with
   | .forallE n t body bi =>
     let isHyp ← isProp t
     let role :=
       if bi.isInstImplicit then "instance" else if isHyp then "hypothesis" else "forall"
-    let tj ← ppJson t
+    let tj ← ppJson t vars
     withLocalDecl n bi t fun x => do
       let hyps := (acc.filter fun j => j.getObjValD "role" == Json.str "hypothesis").size
       let nm := if n.hasMacroScopes || n.isAnonymous then s!"h{hyps + 1}"
         else n.toString
       let j := Json.mkObj [("role", role), ("name", nm),
         ("type", tj), ("binder", binderStr bi)]
-      telescope (body.instantiate1 x) (acc.push j)
+      telescope (body.instantiate1 x) (acc.push j) (vars.push x.fvarId!)
   | _ =>
     match isExistsApp e with
     | some (_, .lam n t body bi) =>
-      let tj ← ppJson t
+      let tj ← ppJson t vars
       withLocalDecl n bi t fun x => do
         let j := Json.mkObj [("role", "exists"), ("name", n.eraseMacroScopes.toString),
           ("type", tj), ("binder", binderStr bi)]
-        telescope (body.instantiate1 x) (acc.push j)
-    | _ => return (acc, ← ppJson e)
+        telescope (body.instantiate1 x) (acc.push j) (vars.push x.fvarId!)
+    | _ =>
+      -- The conclusion, with its logical shape when it has one (`logic`, display only).
+      let fields ← ppFields e vars
+      let logic ← logicJson vars e
+      let shaped := (logic.getObjVal? "op").toOption.isSome
+      return (acc, Json.mkObj (if shaped then fields ++ [("logic", logic)] else fields))
 where
   binderStr : BinderInfo → String
     | .default => "explicit" | .implicit => "implicit"
@@ -377,7 +408,7 @@ def indexRecords (h : IO.FS.Handle) (roots : Array Name) : MetaM Unit := do
       emit h (Json.mkObj [("record", "index"), ("name", n.toString), ("kind", k),
         ("module", mod.toString), ("range", ← rangeJson n),
         ("doc", match doc with | some d => Json.str d | none => Json.null),
-        ("type", if ty.length > 4000 then (ty.take 4000).toString ++ " …" else ty)])
+        ("type", if ty.length > 4000 then prefixOf ty 4000 ++ " …" else ty)])
 
 /-- A theorem of a link: its statement split like a specification, and its axioms. -/
 def linkRecord (h : IO.FS.Handle) (q : Query) (roots : Array Name) (seen : IO.Ref NameSet)
@@ -439,7 +470,7 @@ def depNode (roots : Array Name) (n : Name) (ci : ConstantInfo) (depth : Nat) : 
     ("module", (moduleOf env n).toString), ("range", ← rangeJson n),
     ("user_facing", toJson (userFacing n)), ("depth", toJson depth),
     ("doc", match doc with | some d => Json.str d | none => Json.null),
-    ("type", if ty.length > 4000 then (ty.take 4000).toString ++ " …" else ty),
+    ("type", if ty.length > 4000 then prefixOf ty 4000 ++ " …" else ty),
     ("statement_uses", inside st), ("value_uses", inside va),
     ("statement_external", outside st), ("value_external", outside va)]
 

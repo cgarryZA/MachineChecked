@@ -27,6 +27,9 @@ jobs:
             texlive-latex-extra texlive-science texlive-fonts-recommended poppler-utils
           curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain none
           echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+          # An older Lean too: the probe must compile on the versions users have
+          # (tests/simple/test_structure.py runs it on both).
+          "$HOME/.elan/bin/elan" toolchain install leanprover/lean4:v4.24.0
       - name: Install ProofLens
         run: pip install -e '.[test]'
       - name: The committed reader is the build of its sources

@@ -1,0 +1,5 @@
+name = "shape"
+defaultTargets = ["Shape"]
+
+[[lean_lib]]
+name = "Shape"

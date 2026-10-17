@@ -57,6 +57,13 @@ Dismissals of warnings (`dismissals.json`):
 | `tex` | per paper: mode, page size, anchors (env, number, labels, file:line, begin/head/end positions, source hash), files read |
 | `assessment` | per claim: status and clauses; all findings |
 
+A pretty-printed Lean term (a binder's type, a conclusion, a signature) is `{text, segments}`:
+each segment is a piece of the text, with `ref` when it names a constant and `var` when it is an
+occurrence of one of the statement's own variables (the index, in `binders`, of the binder that
+introduced it). A conclusion that is a conjunction, disjunction or equivalence also has
+`logic`, a tree of `{op, args}` whose leaves are `{leaf: {text, segments}}`. Both are for
+display: no status, fingerprint or hash reads them.
+
 ## Manifest (`manifest-index.schema.json`, `manifest-claim.schema.json`), derived
 
 `data/index.json` lists the papers, every claim's status, class and anchor, the summary and the
