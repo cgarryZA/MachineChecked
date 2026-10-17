@@ -366,3 +366,22 @@ def test_a_replay_record_counts_only_for_its_commit_environment_and_a_passing_ru
     edit(toy / "lean/Toy/Defs.lean", "/-!", "-- changed\n/-!")
     with pytest.raises(ReplayError, match="uncommitted changes"):
         replay(toy / "lean", conf, toy / "replay.json", comparator=str(fake))
+
+
+@needs_lean
+@needs_tex
+def test_a_checked_refutation_needs_no_witness(toy):
+    """#56: a refutation of S exhibits an instance meeting S's hypotheses, so a refuted clause
+    raises no witness obligation; the same statement with only a proof still would."""
+    edit(toy / "lean/Toy/PaperSpec.lean", "end Toy.PaperSpec",
+         "/-- A printed claim with a hypothesis, false at n = 2. -/\n"
+         "def prop_one : Prop := ∀ n : Nat, 0 < n → n = 1\n\nend Toy.PaperSpec")
+    edit(toy / "lean/Toy/Acceptance.lean", "end Toy.Acceptance",
+         "theorem prop_one : ¬ PaperSpec.prop_one := fun h => absurd (h 2 (by decide)) "
+         "(by decide)\n\nend Toy.Acceptance")
+    edit(toy / "claims.json", '"spec": "Toy.PaperSpec.prop_pred",\n     "refute": "Toy.Acceptance.prop_pred"',
+         '"spec": "Toy.PaperSpec.prop_one",\n     "refute": "Toy.Acceptance.prop_one"')
+    index, body, _ = build(toy)
+    clause = next(c for c in body["assessment"]["claims"] if c["id"] == "T:prop:pred")["clauses"][0]
+    assert clause["state"] == "refuted"
+    assert not findings(body, "witness", "T:prop:pred"), findings(body, subject="T:prop:pred")

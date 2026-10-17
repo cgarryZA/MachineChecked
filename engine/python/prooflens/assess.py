@@ -252,7 +252,10 @@ class Assessor:
 
         if srec:
             roles = [b["role"] for b in srec.get("binders", [])]
-            if ("hypothesis" in roles or "instance" in roles) and not cl.get("witness"):
+            # A checked refutation needs no witness: a proof of ¬S exhibits an instance meeting
+            # S's hypotheses (were they never met, S would hold vacuously and not be refutable).
+            if ("hypothesis" in roles or "instance" in roles) and not cl.get("witness") \
+                    and not res.get("refute_ok"):
                 self.findings.append(_finding(
                     "obligation", "witness", subj,
                     f"{spec} has hypotheses but no witness that they can be met"))
