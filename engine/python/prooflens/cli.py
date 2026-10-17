@@ -536,7 +536,8 @@ def cmd_symbol(a):
     cfg = cfgmod.load(_config_arg(a))
     try:
         if a.action == "add":
-            ln = sy.add(cfg, a.claim, a.tex, a.decl, a.reviewer, var=a.var, type_of=a.type_of)
+            ln = sy.add(cfg, a.claim, a.tex, a.decl, a.reviewer, var=a.var, type_of=a.type_of,
+                        term=a.term)
             print(f"linked {a.tex} in {a.claim} to {ln['lean']} (by {ln['by']}); "
                   "rebuild the site to show it")
         elif a.action == "remove":
@@ -807,6 +808,8 @@ def main(argv=None):
             p_.add_argument("decl", help="the claim's Lean statement")
             p_.add_argument("--var", help="the variable it is (a binder's name or index)")
             p_.add_argument("--type-of", dest="type_of", help="the binder whose type it is")
+            p_.add_argument("--term", help="the sub-term it is, as WHERE#K: b:<binder>, c (the "
+                                           "conclusion) or l:<part>, and the sub-term's number")
             p_.add_argument("--as", dest="reviewer",
                             default=os.environ.get("MACHINECHECKED_REVIEWER"),
                             help="human:NAME or llm:MODEL (default: $MACHINECHECKED_REVIEWER)")

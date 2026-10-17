@@ -371,6 +371,20 @@ await check("in the local reader a symbol is linked by choosing it and clicking 
     assert.equal(await st.locator(".concl .parts > li").count(), 2);
   });
 
+  await check("clicking inside an expression selects it, and each click widens it", width, async (pg) => {
+    await pg.goto(origin + `/structure/#/r/${SHAPE.release}/read/P/${encodeURIComponent("P:thm:layout")}`);
+    const st = pg.locator("aside .view .stmt");
+    await st.locator(".ribbon").waitFor();
+    const plus = st.locator(".concl .parts > li").nth(1).locator(".p", { hasText: "+" }).first();
+    const text = async () => (await st.locator(".inspect.term code").textContent()).trim();
+    await plus.click();
+    assert.equal(await text(), "n + x");
+    await plus.click();
+    assert.equal(await text(), "n + x ≤ n + C");
+    await plus.click();
+    assert.equal(await st.locator(".inspect.term").count(), 0, "a click past the largest releases it");
+  });
+
   await check("a name's plain-English note appears only on request, beside the name", width, async (pg) => {
     await pg.goto(origin + `/structure/#/r/${SHAPE.release}/read/P/${encodeURIComponent("P:thm:layout")}`);
     const st = pg.locator("aside .view .stmt");

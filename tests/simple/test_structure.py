@@ -52,3 +52,7 @@ def test_variables_and_logic_are_exported(tmp_path, toolchain):
     assert logic["op"] == "and" and len(logic["args"]) == 2
     assert var_refs(logic["args"][0]["leaf"]) == [("x", 6), ("C", 7)]
     assert rec["conclusion"]["text"] == "x ≤ C ∧ n + x ≤ n + C"
+    # Each sub-term is a range of the segments, outer before inner (#59).
+    concl = rec["conclusion"]
+    shown = ["".join(s["t"] for s in concl["segments"][t["from"]:t["to"]]) for t in concl["terms"]]
+    assert shown == ["x ≤ C ∧ n + x ≤ n + C", "x ≤ C", "n + x ≤ n + C", "n + x", "n + C"]

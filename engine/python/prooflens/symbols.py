@@ -36,16 +36,41 @@ def _in_math(tex: str, symbol: str) -> bool:
     return any(re.search(pat, s) for s in spans)
 
 
+def _term_pp(spec: dict, where: str) -> dict | None:
+    """The pretty-printed term a sub-term's place names: `b:<i>` a binder's type, `c` the
+    conclusion, `l:<n>` the n-th part of a conclusion split by its logic."""
+    concl = spec.get("conclusion") or {}
+    if where == "c":
+        return concl
+    if where.startswith("b:") and where[2:].isdigit():
+        bs = spec.get("binders", [])
+        i = int(where[2:])
+        return bs[i].get("type") if i < len(bs) else None
+    if where.startswith("l:") and where[2:].isdigit():
+        leaves = []
+
+        def walk(n):
+            if "leaf" in n:
+                leaves.append(n["leaf"])
+            for a in n.get("args", []):
+                walk(a)
+        if concl.get("logic"):
+            walk(concl["logic"])
+        n = int(where[2:])
+        return leaves[n] if n < len(leaves) else None
+    return None
+
+
 def add(cfg: Config, claim: str, symbol: str, decl: str, by: str, var: str | None = None,
-        type_of: str | None = None) -> dict:
+        type_of: str | None = None, term: str | None = None) -> dict:
     """Record a link from `symbol` in `claim`'s printed statement to the variable `var` (or the
     type of the binder `type_of`) of the Lean statement `decl`, by `by`."""
     from .pipeline import lean_inputs_digest
     from .promote import latest_record
     if not re.fullmatch(r"(human|llm):\S+", by or ""):
         raise SymbolError("name the link's author as human:NAME or llm:MODEL (--as)")
-    if (var is None) == (type_of is None):
-        raise SymbolError("give exactly one of --var NAME and --type-of NAME")
+    if sum(x is not None for x in (var, type_of, term)) != 1:
+        raise SymbolError("give exactly one of --var NAME, --type-of NAME and --term WHERE#K")
     record = latest_record(cfg)
     body = record["body"]
     if body["provenance"].get("lean_inputs_sha256") != lean_inputs_digest(cfg):
@@ -62,13 +87,21 @@ def add(cfg: Config, claim: str, symbol: str, decl: str, by: str, var: str | Non
         raise SymbolError(f"{symbol!r} does not occur in the mathematics of {claim}'s printed "
                           "statement")
     spec = (body.get("lean") or {}).get("specs", {}).get(decl) or {}
-    names = [b.get("name") for b in spec.get("binders", [])]
-    want = var if var is not None else type_of
-    idx = int(want) if want.isdigit() else (names.index(want) if want in names else None)
-    if idx is None or not 0 <= idx < len(names):
-        raise SymbolError(f"{decl} has no binder {want!r} (it has {', '.join(names)})")
-    target = {"decl": decl, "var": idx} if var is not None else \
-        {"decl": decl, "binder": idx, "path": "type"}
+    if term is not None:
+        where, _, k = term.partition("#")
+        pp = _term_pp(spec, where)
+        if pp is None or not k.isdigit() or int(k) >= len(pp.get("terms") or []):
+            raise SymbolError(f"{decl} has no sub-term {term!r} (WHERE#K: b:<binder>, c or "
+                              "l:<part>, then the sub-term's number)")
+        target = {"decl": decl, "term": int(k), "in": where}
+    else:
+        names = [b.get("name") for b in spec.get("binders", [])]
+        want = var if var is not None else type_of
+        idx = int(want) if want.isdigit() else (names.index(want) if want in names else None)
+        if idx is None or not 0 <= idx < len(names):
+            raise SymbolError(f"{decl} has no binder {want!r} (it has {', '.join(names)})")
+        target = {"decl": decl, "var": idx} if var is not None else \
+            {"decl": decl, "binder": idx, "path": "type"}
     link = {"claim": claim, "symbol": {"tex": symbol, "occurrence": "all"}, "lean": target,
             "by": by, "pins": {"statement": spec.get("fingerprint"), "source": sha256_text(tex)}}
     data = read_json(cfg.symbols) if cfg.symbols.exists() else {"schema": SCHEMA, "links": []}
@@ -111,7 +144,8 @@ def from_reader(cfg: Config, req: dict, web_dist=None) -> None:
         remove(cfg, req["claim"], req["tex"])
     elif req.get("action") == "add":
         add(cfg, req["claim"], req["tex"], str(req.get("decl") or ""), req.get("by"),
-            var=text(req.get("var")), type_of=text(req.get("type_of")))
+            var=text(req.get("var")), type_of=text(req.get("type_of")),
+            term=text(req.get("term")))
     else:
         raise SymbolError(f"unknown action {req.get('action')!r}")
     rebuild_site(cfg, web_dist, None)

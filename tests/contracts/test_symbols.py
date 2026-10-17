@@ -81,3 +81,20 @@ def test_a_link_made_in_the_local_reader_is_checked_and_shown(toy):
         from_reader(cfg, {**req, "action": "rewrite"})
     from_reader(cfg, {"action": "remove", "claim": "T:thm:even-add", "tex": "a"})
     assert chunk(cfg, "T:thm:even-add")[1]["symbols"] == []
+
+
+@needs_lean
+@needs_tex
+def test_a_link_can_name_a_sub_term(toy):
+    """#59: a link's Lean end may be a sub-term, named by its place and number."""
+    _, _, cfg = build(toy)
+    st = next(c for c in chunk(cfg, "T:thm:even-add")[1]["clauses"] if c["spec"] == SPEC)["statement"]
+    concl = st["conclusion"]
+    k = next(i for i, t in enumerate(concl["terms"])
+             if "".join(s["t"] for s in concl["segments"][t["from"]:t["to"]]) == "(a + b)")
+    add(cfg, "T:thm:even-add", "a", SPEC, WHO, term=f"c#{k}")
+    _, _, cfg = build(toy, reuse_lean=True)
+    (link,) = chunk(cfg, "T:thm:even-add")[1]["symbols"]
+    assert link["lean"] == {"decl": SPEC, "term": k, "in": "c"} and not link["stale"]
+    with pytest.raises(SymbolError, match="no sub-term"):
+        add(cfg, "T:thm:even-add", "a", SPEC, WHO, term="c#999")

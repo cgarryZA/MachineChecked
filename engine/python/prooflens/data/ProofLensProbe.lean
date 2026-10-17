@@ -167,15 +167,18 @@ def constPrint (ci : ConstantInfo) : MetaM (String × String × Array Name) := d
 
 /-- Flatten tagged code into segments; a segment carries the constant it names (`ref`), or the
 index of the statement's binder it refers to (`var`, a position in `vars`), when the innermost
-subexpression around it is one. -/
+subexpression around it is one. Each tagged subexpression is also recorded as the range of
+segments it covers (`terms`, in printing order, an outer one before those inside it), so that the
+reader can select a whole sub-term. -/
 partial def segments (vars : Array FVarId) (t : Widget.CodeWithInfos) (ref : Option (String × Json))
-    (acc : Array Json) : Array Json :=
+    (acc : Array Json) (terms : Array (Nat × Nat)) : Array Json × Array (Nat × Nat) :=
   match t with
   | Widget.TaggedText.text s =>
     match ref with
-    | some (k, v) => acc.push (Json.mkObj [("t", s), (k, v)])
-    | none => acc.push (Json.mkObj [("t", s)])
-  | Widget.TaggedText.append xs => xs.foldl (fun a x => segments vars x ref a) acc
+    | some (k, v) => (acc.push (Json.mkObj [("t", s), (k, v)]), terms)
+    | none => (acc.push (Json.mkObj [("t", s)]), terms)
+  | Widget.TaggedText.append xs =>
+    xs.foldl (fun (a, ts) x => segments vars x ref a ts) (acc, terms)
   | Widget.TaggedText.tag info sub =>
     let r := match info.info.val.info with
       | .ofTermInfo ti => match ti.expr with
@@ -183,7 +186,21 @@ partial def segments (vars : Array FVarId) (t : Widget.CodeWithInfos) (ref : Opt
         | .fvar id => (vars.findIdx? (· == id)).map fun i => ("var", toJson i)
         | _ => none
       | _ => none
-    segments vars sub r acc
+    let start := acc.size
+    let slot := terms.size
+    let (acc', terms') := segments vars sub r acc (terms.push (start, start))
+    (acc', terms'.set! slot (start, acc'.size))
+
+/-- The sub-terms worth selecting: those covering two segments or more, each range once (the
+outermost tag of a range keeps it), and none for a very large term. -/
+def termsJson (terms : Array (Nat × Nat)) : Json := Id.run do
+  let mut out : Array Json := #[]
+  let mut seen : Array (Nat × Nat) := #[]
+  for (a, b) in terms do
+    if b - a ≥ 2 && !seen.contains (a, b) then
+      seen := seen.push (a, b)
+      out := out.push (Json.mkObj [("from", toJson a), ("to", toJson b)])
+  return Json.arr (if out.size > 3000 then #[] else out)
 
 /-- The fields of a pretty-printed expression with navigable constants and binders; plain text
 if tagging fails, and a marker if printing fails, so that one large term cannot stop the probe. -/
@@ -193,7 +210,8 @@ def ppFields (e : Expr) (vars : Array FVarId := #[]) : MetaM (List (String × Js
     -- term applies is a constant the reader can name; the text is the same.
     let code ← withOptions (fun o => o.setBool `pp.tagAppFns true) (Widget.ppExprTagged e)
     let text := toString (← ppExpr e)
-    return [("text", Json.str text), ("segments", Json.arr (segments vars code none #[]))]
+    let (segs, terms) := segments vars code none #[] #[]
+    return [("text", Json.str text), ("segments", Json.arr segs), ("terms", termsJson terms)]
   catch _ =>
     try
       return [("text", Json.str (toString (← ppExpr e)))]

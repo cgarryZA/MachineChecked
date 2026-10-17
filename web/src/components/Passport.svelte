@@ -72,6 +72,7 @@
   function extFor(spec) {
     const l = links.find((x) => x.id === symActive);
     if (!l || l.lean.decl !== spec) return null;
+    if (l.lean.term != null) return { term: { where: l.lean.in, k: l.lean.term } };
     return l.lean.var != null ? { var: l.lean.var } : { type: l.lean.binder };
   }
 
@@ -303,16 +304,18 @@
               <button class="chip" class:on={pickSym === t} data-tex={t} title={t} onclick={() => (pickSym = pickSym === t ? null : t)}><Tex text={"$" + t + "$"} /></button>
             {/each}
           </div>
-          <p class="small">2. Click its variable in the Lean statement below.
+          <p class="small">2. Click its variable in the Lean statement below, or click inside an expression to select it (again to widen it).
             <label class="small"><input type="checkbox" bind:checked={pickType} /> the symbol is that variable's type</label></p>
           {#if pickSym && pickVar}
-            {@const b = claim.clauses.find((c) => c.spec === pickVar.spec)?.statement?.binders?.[pickVar.var]}
-            <p class="small">Link <code>{pickSym}</code> to {pickType ? "the type of" : "the variable"} <code>{b?.name}</code> of <code>{pickVar.spec}</code>, as
+            {@const b = pickVar.var != null ? claim.clauses.find((c) => c.spec === pickVar.spec)?.statement?.binders?.[pickVar.var] : null}
+            <p class="small">Link <code>{pickSym}</code> to {#if pickVar.term}the selected sub-expression{:else}{pickType ? "the type of" : "the variable"} <code>{b?.name}</code>{/if} of <code>{pickVar.spec}</code>, as
               <input class="who" bind:value={author} placeholder="your name" /></p>
-            <button class="act" disabled={!authorId} onclick={() => saveLinkOfSymbol({ action: "add", claim: claim.id, tex: pickSym, decl: pickVar.spec, [pickType ? "type_of" : "var"]: b?.name, by: authorId })}>Save link{authorId ? " as " + authorId : ""}</button>
+            <button class="act" disabled={!authorId} onclick={() => saveLinkOfSymbol(pickVar.term
+              ? { action: "add", claim: claim.id, tex: pickSym, decl: pickVar.spec, term: pickVar.term.where + "#" + pickVar.term.k, by: authorId }
+              : { action: "add", claim: claim.id, tex: pickSym, decl: pickVar.spec, [pickType ? "type_of" : "var"]: b?.name, by: authorId })}>Save link{authorId ? " as " + authorId : ""}</button>
           {/if}
           {#each (claim.symbols || []) as l}
-            <p class="small"><code>{l.symbol.tex}</code> → {l.lean.var != null ? "variable " + l.lean.var : "type of binder " + l.lean.binder} of <code>{l.lean.decl}</code>, by {l.by}{l.stale ? " (stale)" : ""}
+            <p class="small"><code>{l.symbol.tex}</code> → {l.lean.term != null ? "sub-expression " + l.lean.in + "#" + l.lean.term : l.lean.var != null ? "variable " + l.lean.var : "type of binder " + l.lean.binder} of <code>{l.lean.decl}</code>, by {l.by}{l.stale ? " (stale)" : ""}
               <button class="act" onclick={() => saveLinkOfSymbol({ action: "remove", claim: claim.id, tex: l.symbol.tex })}>Remove</button></p>
           {/each}
           {#if linkErr}<p class="bad small">{linkErr}</p>{/if}
@@ -382,7 +385,8 @@
             {/if}
             {#if cl.statement}
               <Statement st={cl.statement} spec={cl.spec} onref={showDecl} compact ext={extFor(cl.spec)}
-                onpinned={(v) => { if (linking) pickVar = v == null ? (pickVar?.spec === cl.spec ? null : pickVar) : { spec: cl.spec, var: v }; }}
+                onpinned={(v) => { if (linking) pickVar = v == null ? (pickVar?.spec === cl.spec && pickVar.var != null ? null : pickVar) : { spec: cl.spec, var: v }; }}
+                onterm={(t) => { if (linking) pickVar = t == null ? (pickVar?.spec === cl.spec && pickVar.term ? null : pickVar) : { spec: cl.spec, term: t }; }}
                 onactive={(v) => (leanActive = v == null ? (leanActive?.spec === cl.spec ? null : leanActive) : { spec: cl.spec, var: v })} />
             {:else if cl.defs?.length}
               <p class="defs">{#each cl.defs as d, i}{#if i}, {/if}<button class="ref" onclick={() => showDecl(d)}>{d}</button>{/each}</p>

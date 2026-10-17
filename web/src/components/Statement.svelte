@@ -5,8 +5,11 @@
   // A locked proposition as its quantifier prefix and its conclusion.
   // `ext` highlights from outside (a linked symbol of the paper): a variable ({var}) or a
   // binder's type ({type}); `onactive` hears which variable is highlighted here.
-  // `onpinned` hears which variable is held (clicked), for choosing one.
-  let { st, spec = null, onref, compact = false, ext = null, onactive = null, onpinned = null } = $props();
+  // `onpinned` hears which variable is held (clicked), and `onterm` which sub-term is selected
+  // ({where, k}: `b:<binder>` for a binder's type, `c` for the conclusion, `l:<n>` for the n-th
+  // part of a conclusion split by its logic), for choosing one. `ext` may also be {term}.
+  let { st, spec = null, onref, compact = false, ext = null, onactive = null, onpinned = null,
+        onterm = null } = $props();
 
   // A statement is shown in full: its assumptions are what a reader compares with the paper.
   // Only a long one, in a compact view, folds to its conclusion and one line naming its
@@ -55,8 +58,34 @@
   const active = $derived(hover ?? pinned ?? ext?.var ?? null);
   $effect(() => { onactive?.(hover ?? pinned); });
   $effect(() => { onpinned?.(pinned); });
+
+  // A selected sub-term, and where it is.
+  let termSel = $state(null);
+  $effect(() => { onterm?.(termSel); });
+  const termAt = (where) => where == null ? null
+    : termSel?.where === where ? termSel.k : ext?.term?.where === where ? ext.term.k : null;
+  function setTerm(where, k) { termSel = k == null ? null : { where, k }; if (k != null) pinned = null; }
+  // The parts of a conclusion split by its logic, numbered in reading order.
+  const leafIds = $derived.by(() => {
+    const m = new Map();
+    const walk = (n) => { if (!n) return; if (n.leaf) m.set(n, m.size); else (n.args || []).forEach(walk); };
+    walk(st.conclusion?.logic);
+    return m;
+  });
+  function ppAt(where) {
+    if (!where) return null;
+    if (where === "c") return st.conclusion;
+    if (where.startsWith("b:")) return binders[+where.slice(2)]?.type;
+    if (where.startsWith("l:")) return [...leafIds].find(([, i]) => i === +where.slice(2))?.[0]?.leaf;
+    return null;
+  }
+  const termText = $derived.by(() => {
+    if (!termSel) return null;
+    const pp = ppAt(termSel.where), t = pp?.terms?.[termSel.k];
+    return t ? pp.segments.slice(t.from, t.to).map((x) => x.t).join("") : null;
+  });
   function onvar(i, how) {
-    if (how === "pin") { pinned = pinned === i ? null : i; noted = null; }
+    if (how === "pin") { pinned = pinned === i ? null : i; noted = null; termSel = null; }
     else hover = i;
   }
   // A name's plain-English note, shown on request beside the name.
@@ -65,20 +94,20 @@
   const groupOf = (i) => groups.find((g) => g.head === i);
 </script>
 
-{#snippet lean(pp)}<LeanText {pp} {onref} {refs} {active} {onvar} {ongloss} />{/snippet}
+{#snippet lean(pp, where = null)}<LeanText {pp} {onref} {refs} {active} {onvar} {ongloss} term={termAt(where)} onterm={where == null ? null : (k) => setTerm(where, k)} />{/snippet}
 
 {#snippet name(i)}<span class="v" class:hl={active === i} role="button" tabindex="0" onmouseenter={() => onvar(i, "hover")} onmouseleave={() => onvar(null, "hover")} onclick={() => onvar(i, "pin")} onkeydown={(e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), onvar(i, "pin"))}>{binders[i].name}</span>{/snippet}
 
-{#snippet condition(i)}
+{#snippet condition(i, where = null)}
   {@const b = binders[i]}
   <span class="role">{ROLE[b.role] || b.role}</span>
   {#if b.role === "hypothesis"}<span class="hn">({b.name})</span>{:else}<span class="hn">instance</span>{/if}
-  {@render lean(b.type)}
+  {@render lean(b.type, where)}
 {/snippet}
 
 {#snippet logic(node, depth)}
   {#if node.leaf}
-    {@render lean(node.leaf)}
+    {@render lean(node.leaf, "l:" + leafIds.get(node))}
   {:else}
     <span class="op">{OP[node.op] || node.op}</span>
     <ul class="parts">
@@ -107,14 +136,14 @@
             <div class="line">
               <span class="role">{ROLE[b.role] || b.role}</span>
               {@render name(g.head)}<span class="colon"> : </span>
-              <span class="ty" class:hl={ext?.type === g.head}>{@render lean(b.type)}</span>
+              <span class="ty" class:hl={ext?.type === g.head}>{@render lean(b.type, "b:" + g.head)}</span>
             </div>
             {#each g.members as m}
-              <div class="line sub">{@render condition(m)}</div>
+              <div class="line sub">{@render condition(m, "b:" + m)}</div>
             {/each}
           </li>
         {:else}
-          <li class={"b " + binders[g.members[0]].role}><div class="line">{@render condition(g.members[0])}</div></li>
+          <li class={"b " + binders[g.members[0]].role}><div class="line">{@render condition(g.members[0], "b:" + g.members[0])}</div></li>
         {/if}
       {/each}
     </ol>
@@ -123,7 +152,7 @@
     <div class="concl">
       {#if binders.length}<span class="role">then</span>{/if}
       <div class="body">
-        {#if st.conclusion.logic}{@render logic(st.conclusion.logic, 0)}{:else}{@render lean(st.conclusion)}{/if}
+        {#if st.conclusion.logic}{@render logic(st.conclusion.logic, 0)}{:else}{@render lean(st.conclusion, "c")}{/if}
       </div>
     </div>
   {/if}
@@ -136,6 +165,13 @@
       {#each groupOf(pinned)?.members || [] as m}
         <p class="small">{@render condition(m)}</p>
       {/each}
+    </div>
+  {/if}
+  {#if termText}
+    <div class="inspect term" aria-live="polite">
+      <p><span class="small faint">Sub-expression</span><button class="x" aria-label="Release" onclick={() => (termSel = null)}>×</button></p>
+      <p><code>{termText}</code></p>
+      <p class="small faint">Click again inside it to widen it to the expression around it.</p>
     </div>
   {/if}
   {#if noted && gloss(noted)}

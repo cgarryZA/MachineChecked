@@ -5,14 +5,18 @@
   // (`pin`).
   // A constant with a plain-English note (`gloss`) is selectable: `ongloss` receives it, or,
   // without one, the note is the name's tooltip.
-  let { pp, onref = null, refs = null, active = null, onvar = null, ongloss = null } = $props();
+  // A sub-term (`pp.terms`, ranges of segments) is selected by clicking plain text: the smallest
+  // sub-term around it, then the next larger on each click; `term` is the selected one's index,
+  // reported to `onterm` (null to release).
+  let { pp, onref = null, refs = null, active = null, onvar = null, ongloss = null, term = null,
+        onterm = null } = $props();
   import { gloss } from "../lib/gloss.js";
 
   // Names the probe could not tag are found by matching the known names in the text.
   function parts(pp) {
     const out = [];
-    for (const s of pp?.segments || [{ t: pp?.text || "" }]) {
-      if (s.ref || s.var != null || !refs?.length) { out.push(s); continue; }
+    (pp?.segments || [{ t: pp?.text || "" }]).forEach((s, i) => {
+      if (s.ref || s.var != null || !refs?.length) { out.push({ ...s, i }); return; }
       let rest = s.t;
       while (rest) {
         let best = null;
@@ -20,23 +24,35 @@
           const i = rest.indexOf(r);
           if (i >= 0 && (best === null || i < best.i || (i === best.i && r.length > best.r.length))) best = { i, r };
         }
-        if (!best) { out.push({ t: rest }); break; }
-        if (best.i) out.push({ t: rest.slice(0, best.i) });
-        out.push({ t: best.r, ref: best.r });
+        if (!best) { out.push({ t: rest, i }); break; }
+        if (best.i) out.push({ t: rest.slice(0, best.i), i });
+        out.push({ t: best.r, ref: best.r, i });
         rest = rest.slice(best.i + best.r.length);
       }
-    }
+    });
     return out;
+  }
+  const terms = $derived(pp?.terms || []);
+  const sel = $derived(term != null ? terms[term] : null);
+  const lit = (i) => !!sel && sel.from <= i && i < sel.to;
+  function pick(i) {
+    const around = terms.map((t, k) => ({ ...t, k })).filter((t) => t.from <= i && i < t.to)
+      .sort((a, b) => (a.to - a.from) - (b.to - b.from));
+    if (!around.length) return;
+    const at = around.findIndex((t) => t.k === term);
+    onterm(at < 0 ? around[0].k : around[at + 1]?.k ?? null);
   }
   const isProject = (r) => refs?.includes(r);
 </script>
 
-<code class="lean">{#each parts(pp) as s}{#if s.ref && onref && isProject(s.ref)}<button class="r" onclick={() => onref(s.ref)}>{s.t}</button>{:else if s.ref && gloss(s.ref) && ongloss}<button class="g" title={s.ref} onclick={() => ongloss(s.ref)}>{s.t}</button>{:else if s.ref}<span class="c" title={gloss(s.ref) ? s.ref + ": " + gloss(s.ref) : s.ref}>{s.t}</span>{:else if s.var != null && onvar}<span class="var" class:hl={active === s.var} role="button" tabindex="0" data-var={s.var} onmouseenter={() => onvar(s.var, "hover")} onmouseleave={() => onvar(null, "hover")} onfocus={() => onvar(s.var, "hover")} onblur={() => onvar(null, "hover")} onclick={() => onvar(s.var, "pin")} onkeydown={(e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), onvar(s.var, "pin"))}>{s.t}</span>{:else}{s.t}{/if}{/each}</code>
+<code class="lean">{#each parts(pp) as s}{#if s.ref && onref && isProject(s.ref)}<button class="r" class:in={lit(s.i)} onclick={() => onref(s.ref)}>{s.t}</button>{:else if s.ref && gloss(s.ref) && ongloss}<button class="g" class:in={lit(s.i)} title={s.ref} onclick={() => ongloss(s.ref)}>{s.t}</button>{:else if s.ref && onterm && terms.length}<span class="c p" class:in={lit(s.i)} title={gloss(s.ref) ? s.ref + ": " + gloss(s.ref) : s.ref} role="button" tabindex="-1" onclick={() => pick(s.i)} onkeydown={(e) => e.key === "Enter" && pick(s.i)}>{s.t}</span>{:else if s.ref}<span class="c" class:in={lit(s.i)} title={gloss(s.ref) ? s.ref + ": " + gloss(s.ref) : s.ref}>{s.t}</span>{:else if s.var != null && onvar}<span class="var" class:hl={active === s.var} class:in={lit(s.i)} role="button" tabindex="0" data-var={s.var} onmouseenter={() => onvar(s.var, "hover")} onmouseleave={() => onvar(null, "hover")} onfocus={() => onvar(s.var, "hover")} onblur={() => onvar(null, "hover")} onclick={() => onvar(s.var, "pin")} onkeydown={(e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), onvar(s.var, "pin"))}>{s.t}</span>{:else if onterm && terms.length}<span class="p" class:in={lit(s.i)} role="button" tabindex="-1" onclick={() => pick(s.i)} onkeydown={(e) => e.key === "Enter" && pick(s.i)}>{s.t}</span>{:else}{s.t}{/if}{/each}</code>
 
 <style>
   .lean { white-space: pre-wrap; word-break: break-word; }
   .r { border: 0; padding: 0; background: none; font: inherit; color: var(--accent); cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px; text-align: left; overflow-wrap: anywhere; }
   .c { color: inherit; }
+  .p { cursor: pointer; }
+  .in { background: color-mix(in srgb, var(--st-open) 22%, transparent); }
   .g { border: 0; padding: 0; background: none; font: inherit; color: inherit; cursor: help; text-decoration: underline dotted var(--faint); text-underline-offset: 3px; }
   .var { cursor: pointer; border-radius: 3px; }
   .var.hl { background: color-mix(in srgb, var(--accent) 22%, transparent); outline: 1px solid color-mix(in srgb, var(--accent) 45%, transparent); }

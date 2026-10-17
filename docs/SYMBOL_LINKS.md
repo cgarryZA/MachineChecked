@@ -69,6 +69,7 @@ The author or a reviewer, under their name, from the command line:
 ```sh
 machinechecked symbol add P:thm:sep '\nu' Foo.spec_sep --var ν --as human:Ada-Lovelace
 machinechecked symbol add P:thm:sep '\mathbb R^j' Foo.spec_sep --type-of f --as human:Ada-Lovelace
+machinechecked symbol add P:thm:sep 'f' Foo.spec_sep --term c#2 --as human:Ada-Lovelace   # a sub-term
 machinechecked symbol list
 machinechecked symbol remove P:thm:sep '\nu'
 ```
@@ -79,7 +80,7 @@ it.
 
 In the local reader of a full assessment (`machinechecked view`), the paper section of a claim
 offers **Link a symbol to the Lean**: choose one of the symbols found in the claim's mathematics,
-click its variable in the Lean statement (or tick that the symbol is the variable's type), give
+click its variable in the Lean statement (or tick that the symbol is the variable's type, or click inside an expression to select a sub-term), give
 your name, and save. The link goes through the same checks as `symbol add`, is written to the same
 file, and the site is rewritten with it; existing links can be removed there. A published audit shows the
 links its author recorded (when it publishes both the source text and the Lean) and never edits
