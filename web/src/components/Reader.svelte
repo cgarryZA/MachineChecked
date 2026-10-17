@@ -98,7 +98,7 @@
       <aside class="side" aria-label="The claim">
         <div class="drag" role="separator" aria-orientation="vertical" aria-label="Drag to resize" onpointerdown={drag}></div>
         <div class="side-head">
-          <a href={href(index.release, "claim", claimId)}>Open as a page</a>
+          <span></span>
           <button class="x" onclick={close} aria-label="Close">×</button>
         </div>
         <Passport {index} {claimId} {editable} />
@@ -129,7 +129,7 @@
   .toc-open { position: absolute; left: 8px; top: 8px; z-index: 5; border: 1px solid var(--border); background: var(--surface); border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 13px; }
   .paperpane { overflow: auto; background: var(--surface-2); }
   .side { overflow: auto; border-left: 1px solid var(--border); background: var(--bg); padding: 0 20px 60px; }
-  .side-head { position: sticky; top: 0; z-index: 2; display: flex; justify-content: space-between; align-items: center; padding: 10px 0; background: var(--bg); border-bottom: 1px solid var(--border); margin-bottom: 14px; font-size: 14px; }
+  .side-head { position: sticky; top: 0; z-index: 2; display: flex; justify-content: space-between; align-items: center; padding: 4px 0; background: var(--bg); margin-bottom: 4px; font-size: 14px; }
   .reader.sized.open { grid-template-columns: minmax(0, 1fr) var(--side-w); }
   .reader.sized.contents.open { grid-template-columns: 260px minmax(0, 1fr) var(--side-w); }
   .side { position: relative; }

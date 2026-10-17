@@ -59,6 +59,14 @@ export function issueUrl(index, claim) {
   return `https://github.com/${index.issues}/issues/new?${q.toString()}`;
 }
 
+// The reports already opened about the claim: a GitHub search of the audit's issue repository
+// for the claim's identifier, which every report body carries.
+export function reportsUrl(index, claim) {
+  if (!index.issues || !/^[\w.-]+\/[\w.-]+$/.test(index.issues)) return null;
+  const q = new URLSearchParams({ q: `is:issue in:body "${claim.id}"` });
+  return `https://github.com/${index.issues}/issues?${q.toString()}`;
+}
+
 // The declaration's source on GitHub, at the commit the evidence is for, when the project's
 // repository is known and the file is the project's own.
 export function sourceUrl(index, path, line) {

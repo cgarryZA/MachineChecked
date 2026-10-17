@@ -109,7 +109,7 @@ async function check(name, width, fn) {
 }
 
 // The Lean names the open claim's panel lists.
-const panelNames = async (pg) => (await pg.locator("aside .card code").allTextContents()).map((s) => s.trim());
+const panelNames = async (pg) => (await pg.locator("aside .lean .block .decl code").allTextContents()).map((s) => s.trim());
 const open = async (pg, claim) => {
   await pg.evaluate((id) => { location.hash = `#/r/paper/read/P/${encodeURIComponent(id)}`; }, claim);
   await pg.waitForSelector("aside h1");
@@ -220,8 +220,7 @@ const scrollTops = (pg) => pg.evaluate(() => [document.querySelector("aside")?.s
 for (const width of [1300, 390]) {
   await check("opening a definition replaces the panel; Back restores the claim as it was", width, async (pg) => {
     await toyClaim(pg, "T:def:even");
-    await pg.locator("aside details.tech > summary").click();
-    const ref = pg.locator("aside .card button.ref", { hasText: "Toy.IsEven" });
+    const ref = pg.locator("aside .lean button.ref", { hasText: "Toy.IsEven" });
     await ref.scrollIntoViewIfNeeded();
     const [panel, paper] = await scrollTops(pg);
     await ref.click();
@@ -235,23 +234,58 @@ for (const width of [1300, 390]) {
     const [panel2, paper2] = await scrollTops(pg);
     assert.equal(panel2, panel, "the panel's scroll position comes back");
     assert.equal(paper2, paper, "the paper keeps its position");
-    assert.equal(await pg.locator("aside details.tech").getAttribute("open"), "", "open sections stay open");
   });
 
-  await check("a compact statement shows its result and names its conditions", width, async (pg) => {
+  await check("the main view is the paper and the Lean, with the assumptions shown", width, async (pg) => {
     await toyClaim(pg, "T:thm:even-add");
-    const card = pg.locator("aside .card").first();
-    await card.locator(".under").waitFor();
-    assert.match(await card.locator(".under").textContent(), /For all a, b, under 2 assumptions:/);
-    assert.equal(await card.locator(".ribbon").count(), 0, "the conditions are folded");
-    await card.locator("button", { hasText: "Show the full statement" }).click();
-    assert.equal(await card.locator(".ribbon li").count(), 4, "all conditions, in order");
-    // A statement whose prefix chooses a value is never folded: the order is its meaning.
+    const view = pg.locator("aside .view");
+    await view.locator(".lean .ribbon").waitFor();
+    assert.deepEqual(await view.locator("h2").allTextContents(), ["Paper", "Lean"]);
+    assert.equal(await view.locator(".lean .ribbon li").count(), 4, "a short statement is shown in full");
+    assert.match(await view.locator(".chip").textContent(), /formal: accepted/, "the engine's words");
+    const text = await view.textContent();
+    for (const gone of ["not accepted", "Comparator", "a.referee", "pl-fp-v1", "Toy.Defs", "its meaning reviewed"])
+      assert.ok(!text.includes(gone), `"${gone}" is not in the main view`);
+    // A statement whose prefix chooses a value is shown in order.
     await toyClaim(pg, "T:thm:bound");
-    const bound = pg.locator("aside .card").first();
+    const bound = pg.locator("aside .view .lean .block").first();
     await bound.locator(".ribbon").waitFor();
-    assert.equal(await bound.locator(".under").count(), 0);
     assert.match(await bound.locator(".ribbon li").first().textContent(), /there is/i);
+  });
+
+  await check("the status opens the audit details, where an accepted claim's missing replay is a further check", width, async (pg) => {
+    await toyClaim(pg, "T:thm:even-add");
+    await pg.locator("aside .chipbtn").click();
+    const details = pg.locator("aside .details");
+    await details.waitFor();
+    const text = await details.textContent();
+    assert.match(text, /Checks and evidence/);
+    assert.match(text, /Independent replay: not recorded/);
+    assert.ok(!/not accepted/i.test(text), "no 'not accepted' heading on an accepted claim");
+    await pg.locator("aside .crumbs .back").click();
+    await pg.waitForSelector("aside .view h1");
+  });
+
+  await check("a definition opens beside its paper definition; reviews and provenance are under Details", width, async (pg) => {
+    await toyClaim(pg, "T:thm:even-add");
+    await pg.locator("aside .lean button.r", { hasText: "IsEven" }).first().click();
+    const insp = pg.locator("aside .decl.inspector");
+    await insp.waitFor();
+    await pg.locator("aside h2", { hasText: "Paper · Definition 1.1" }).waitFor();
+    const extra = insp.locator("details.extra");
+    assert.equal(await extra.getAttribute("open"), null, "Details is folded");
+    assert.ok(!(await insp.locator(":scope > :not(details)").allTextContents()).join(" ").includes("a.referee"));
+    await extra.locator("summary").click();
+    assert.match(await extra.textContent(), /a\.referee/);
+  });
+
+  await check("the menu holds the occasional actions", width, async (pg) => {
+    await toyClaim(pg, "T:thm:even-add");
+    await pg.locator("aside button[aria-label='More']").click();
+    const items = await pg.locator("aside .menu [role='menuitem']").allTextContents();
+    assert.ok(items.includes("Open as a page") && items.some((i) => /Copy (link|reference)/.test(i)));
+    const reports = pg.locator("aside .menu a", { hasText: "View existing reports" });
+    assert.match(await reports.getAttribute("href"), /^https:\/\/github\.com\/cgarryZA\/MachineChecked\/issues\?q=.*T%3Athm%3Aeven-add/);
   });
 }
 

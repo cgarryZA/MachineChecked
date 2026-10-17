@@ -1,7 +1,7 @@
 <script>
-  import { claimLink, claimReference, issueUrl, sourceUrl, sourceLabel, sourceTitle } from "../lib/issue.js";
+  import { claimLink, claimReference, issueUrl, reportsUrl, sourceUrl, sourceLabel, sourceTitle } from "../lib/issue.js";
   import TexInline from "./TexInline.svelte";
-  import { loadClaim, saveLink, inProject } from "../lib/data.js";
+  import { loadClaim, loadSearch, saveLink, inProject } from "../lib/data.js";
   import { project } from "../lib/project.svelte.js";
   import { href } from "../lib/route.svelte.js";
   import StatusChip from "./StatusChip.svelte";
@@ -14,8 +14,9 @@
   import LinkPicker from "./LinkPicker.svelte";
   import { tick } from "svelte";
 
-  // One claim: the mathematics first (as printed, then in Lean), then one line on what Lean
-  // establishes; the evidence behind that line is folded into "Technical details".
+  // One claim as Paper and Lean: a heading, the status the engine computed, the printed
+  // statement and the Lean statement. Everything else (reviews, evidence, provenance) is in the
+  // audit details, which open in the inspector like a declaration does.
   let { index, claimId, full = false, editable = false } = $props();
 
   let loaded = $state(null);
@@ -29,13 +30,15 @@
   let scrolls = [];
   let article = $state();
   let showAll = $state(false);
+  let menu = $state(false);
+  const DETAILS = "@details";
   let busy = $state(null);
   let saveError = $state(null);
   const RANK = { stale: 0, pending: 1, "author-reviewed": 2, reviewed: 3 };
 
   $effect(() => {
     claimId;
-    loaded = null; error = null; stack = []; scrolls = []; showAll = false; saveError = null;
+    loaded = null; error = null; stack = []; scrolls = []; showAll = false; saveError = null; menu = false;
     loadClaim(index, claimId).then((c) => (loaded = c)).catch((e) => (error = String(e)));
   });
 
@@ -52,7 +55,20 @@
     return document.scrollingElement;
   }
 
+  // The definition claim of the paper that a declaration states, if one links it: its excerpt is
+  // shown above the Lean definition.
+  let search = null;
+  async function paperOf(name) {
+    search ??= await loadSearch(index).catch(() => ({ claims: [], decls: [] }));
+    const ids = search.decls?.find((d) => d.name === name)?.claims || [];
+    const linked = (search.claims || []).filter((c) => ids.includes(c.id) && (c.lean || []).includes(name)).map((c) => c.id);
+    const meta = index.claims.find((c) => linked.includes(c.id) && c.kind === "definition" && c.anchor);
+    const rec = meta && (await loadClaim(index, meta.id).catch(() => null));
+    return rec?.anchor?.begin ? rec : null;
+  }
+
   async function showDecl(name) {
+    menu = false;
     if (stack[stack.length - 1] === name) return;
     scrolls[stack.length] = scroller().scrollTop;
     stack = [...stack, name];
@@ -63,6 +79,7 @@
 
   // Back to level `n` (0 is the claim), restoring that level's scroll position.
   async function backTo(n) {
+    menu = false;
     stack = stack.slice(0, n);
     await tick();
     scroller().scrollTop = scrolls[n] ?? 0;
@@ -99,8 +116,21 @@
     };
   }
 
+  // A sentence under a clause only when it adds to the status chip: a check that fails, a
+  // statement or proof that is missing, or, with several clauses, what each one establishes.
+  function note(cl) {
+    if (claim.clauses.length > 1) return verdict(cl, false);
+    const ch = cl.checks || {};
+    const p = ch.accept || ch.refute;
+    if (["unchecked", "unspecified"].includes(cl.state)) return verdict(cl);
+    if (cl.state !== "stated" && (!p || !p.ok)) return verdict(cl);
+    return null;
+  }
+
   // One line on what the Lean side of a clause establishes, in words.
-  function verdict(cl) {
+  // `review` adds how its meaning was reviewed, which the audit details say and the main view
+  // leaves to them.
+  function verdict(cl, review = true) {
     const ch = cl.checks || {};
     const p = ch.accept || ch.refute;
     if (cl.state === "unchecked") return "The Lean project was not checked in this build.";
@@ -110,7 +140,7 @@
     if (!p.ok) return "The Lean proof fails a check: " + p.errors.join(", ") + ".";
     const replay = ch.replay?.state === "pass" ? ", replayed independently" : "";
     const rev = { reviewed: "its meaning reviewed independently", "author-reviewed": "its meaning reviewed only by its author", pending: "its meaning not yet reviewed" }[cl.review] || "";
-    return (cl.state === "refuted" ? "Lean proves the printed statement false" : "Proved in Lean") + replay + (rev ? "; " + rev : "") + ".";
+    return (cl.state === "refuted" ? "Lean proves the printed statement false" : "Proved in Lean") + replay + (rev && review ? "; " + rev : "") + ".";
   }
   let copied = $state(null);
   async function copyLink() {
@@ -136,7 +166,21 @@
     if (s === "linked: Lean proof checked") return "Proved in Lean. Whether it says what the paper says has not been reviewed.";
     return s;
   }
+
+  // A check or piece of evidence the claim lacks, said as what it is: an independent replay is
+  // a further check, not a condition of acceptance.
+  function describe(b) {
+    if (/^no independent kernel replay/.test(b)) return "Independent replay: not recorded (" + b.replace(/^no independent kernel replay:?\s*/, "") + ")";
+    return b;
+  }
 </script>
+
+{#snippet crop(c)}
+  {@const pp = index.papers.find((p) => p.id === c.paper)}
+  {#if (pp?.pdf || pp?.pdf_url) && c.anchor?.begin}
+    <PdfCrop url={pp.pdf_url || "data/" + pp.pdf} anchor={c.anchor} />
+  {/if}
+{/snippet}
 
 {#if error}
   <p>{error}</p>
@@ -150,54 +194,72 @@
         <button class="back" onclick={() => backTo(stack.length - 1)}>← Back</button>
         <span class="trail">
           <button class="crumb" onclick={() => backTo(0)}>{claim.number || claim.id}</button>
-          {#each stack.slice(0, -1) as n, i}› <button class="crumb" title={n} onclick={() => backTo(i + 1)}>{n.split(".").pop()}</button>{/each}
-          › <span class="here" title={top}>{top.split(".").pop()}</span>
+          {#each stack.slice(0, -1) as n, i}› <button class="crumb" title={n} onclick={() => backTo(i + 1)}>{n === DETAILS ? "Audit details" : n.split(".").pop()}</button>{/each}
+          › <span class="here" title={top}>{top === DETAILS ? "Audit details" : top.split(".").pop()}</span>
         </span>
       </nav>
       {#key top}
-        <Decl name={top} key={claim.decls?.[top] ?? null} inspector onref={showDecl} />
+        {#if top === DETAILS}
+          {@render details()}
+        {:else}
+          {#await paperOf(top) then def}
+            {#if def}
+              <section class="paper"><h2>Paper · {def.number}</h2>{@render crop(def)}</section>
+              <h2>Lean</h2>
+            {/if}
+          {/await}
+          <Decl name={top} key={claim.decls?.[top] ?? null} inspector onref={showDecl} />
+        {/if}
       {/key}
     {/if}
     <div class="view" hidden={stack.length > 0}>
     <header>
-      <p class="eyebrow">
-        {#if index.papers.length > 1}Paper {claim.paper} · {/if}<code>{claim.id}</code>
-        {#if full && meta?.anchor}· <a href={href(index.release, "read", claim.paper, claim.id)}>show in the paper</a>{/if}
-      </p>
       <h1>{claim.number || claim.id}{#if claim.heading}<span class="title">&nbsp;— <TexInline text={claim.heading} /></span>{/if}</h1>
       {#if !claim.heading && claim.title}<p class="desc"><TexInline text={claim.title} /></p>{/if}
-      <StatusChip status={claim.status} cls={claim.class} />
-      <div class="actions">
-        <button class="act" onclick={copyLink} title={claimLink(index, claim) || "No public address: copies the claim's reference"}>{copied || "Copy link"}</button>
-        {#if index.review_queue && claim.scope !== "out-of-scope" && !String(claim.status).startsWith("out of scope")}
-          <a class="act" href={href(index.release, "review")} title="Compare the paper's statement with the Lean, one unit at a time, and record what you find">Review it</a>
-        {/if}
+      <div class="bar">
+        <button class="chipbtn" onclick={() => showDecl(DETAILS)} title="Audit details: what this status rests on"><StatusChip status={claim.status} cls={claim.class} /></button>
+        <span class="grow"></span>
         {#if issueUrl(index, claim)}
-          <a class="act" href={issueUrl(index, claim)} target="_blank" rel="noopener" title={"Opens a draft issue in " + index.issues + " with this claim's details filled in"}>Raise issue ↗</a>
+          <a class="act" href={issueUrl(index, claim)} target="_blank" rel="noopener" title={"Opens a draft issue in " + index.issues + " with this claim's details filled in"}>Report issue ↗</a>
         {/if}
+        <span class="menuwrap">
+          <button class="act more" aria-haspopup="menu" aria-expanded={menu} aria-label="More" onclick={() => (menu = !menu)}>⋯</button>
+          {#if menu}
+            <div class="menu" role="menu">
+              {#if !full}<a role="menuitem" href={href(index.release, "claim", claim.id)}>Open as a page</a>{/if}
+              {#if full && meta?.anchor}<a role="menuitem" href={href(index.release, "read", claim.paper, claim.id)}>Show in the paper</a>{/if}
+              <button role="menuitem" onclick={() => { copyLink(); menu = false; }}>{claimLink(index, claim) ? "Copy link" : "Copy reference"}</button>
+              {#if reportsUrl(index, claim)}<a role="menuitem" href={reportsUrl(index, claim)} target="_blank" rel="noopener">View existing reports ↗</a>{/if}
+              {#if index.review_queue && claim.scope !== "out-of-scope" && !String(claim.status).startsWith("out of scope")}
+                <a role="menuitem" href={href(index.release, "review")}>Review it</a>
+              {/if}
+              <button role="menuitem" onclick={() => showDecl(DETAILS)}>Audit details</button>
+            </div>
+          {/if}
+        </span>
       </div>
+      {#if copied}<p class="faint small copied">{copied}</p>{/if}
     </header>
 
-    <section>
+    <section class="paper">
+      <h2>Paper</h2>
       {#if (paper?.pdf || paper?.pdf_url) && claim.anchor?.begin}
         <PdfCrop url={paper.pdf_url || "data/" + paper.pdf} anchor={claim.anchor} />
       {:else if claim.statement_tex}
         <Tex text={claim.statement_tex} />
       {:else}
-        <p class="muted">The printed statement is not part of this site.</p>
+        <p class="muted small">The printed statement is not part of this site.</p>
       {/if}
     </section>
 
     <section class="lean">
-      <h2>In Lean</h2>
+      <h2>Lean</h2>
       {#if simple}
         {#each claim.links as l (l.name)}
-          <div class="card">
-            <p class="decl"><code>{l.name}</code>{#if l.repository}<span class="faint">&nbsp;· {l.repository}</span>{/if}{#if l.module}<span class="faint"> · {l.module}{l.range ? ":" + l.range.line : ""}</span>{/if}
+          <div class="block">
+            <p class="decl"><code>{l.name}</code>
               {#if sourceUrl(index, l.path, l.range?.line)}<a class="src-link small" href={sourceUrl(index, l.path, l.range?.line)} target="_blank" rel="noopener" title={sourceTitle(index)}>{sourceLabel(index)}</a>{/if}</p>
-            <p class="faint small src">{l.source === "paper" ? "Linked by a \\lean{…} tag in the paper's source" : l.source === "formalization.yaml" ? "Declared in the project's formalization.yaml" + (index.formalization?.review_status ? ` (the project describes its review as “${index.formalization.review_status}”)` : "") : "Linked in the reader (machinechecked.links.json)"}</p>
-            <p class="verdict top">{linkVerdict(l)}</p>
-            {#if l.statement}<Statement st={l.statement} onref={showDecl} compact />{/if}
+            {#if l.statement}<Statement st={l.statement} onref={showDecl} compact />{:else}<p class="verdict">{linkVerdict(l)}</p>{/if}
             {#if editable}
               <button class="btn ghost" disabled={!!busy} onclick={() => act({ lean: claim.links.filter((x) => x.name !== l.name).map((x) => x.name) }, "unlink")}>Unlink</button>
             {/if}
@@ -209,7 +271,7 @@
         {#if claim.suggestions?.some((s) => !claim.links.some((l) => l.name === s.name))}
           <h3>Suggested</h3>
           {#each claim.suggestions.filter((s) => !claim.links.some((l) => l.name === s.name)) as s (s.name)}
-            <div class="card suggestion">
+            <div class="block suggestion">
               <p class="decl"><code>{s.name}</code> <span class="faint">— {s.why}</span></p>
               {#if s.statement}<Statement st={s.statement} onref={showDecl} compact />{/if}
               {#if editable}
@@ -230,9 +292,9 @@
         {#if saveError}<p class="bad small">{saveError}</p>{/if}
       {:else}
         {#each claim.clauses as cl, k (k)}
-          <div class="card" class:refuted={cl.state === "refuted"}>
+          <div class="block" class:refuted={cl.state === "refuted"}>
             {#if claim.clauses.length > 1}<p class="cname"><TexInline text={cl.label || cl.name} />{#if cl.corrects}<span class="faint">&nbsp;— corrects “<TexInline text={cl.corrects_label || cl.corrects} />”</span>{/if}</p>{/if}
-            <p class="verdict top">{verdict(cl)}</p>
+            {#if note(cl)}<p class="verdict">{note(cl)}</p>{/if}
             {#if changes(cl)}
               {@const d = changes(cl)}
               <div class="changes">
@@ -248,38 +310,38 @@
             {#if cl.statement}
               <Statement st={cl.statement} spec={cl.spec} onref={showDecl} compact />
             {:else if cl.defs?.length}
-              <p>{#each cl.defs as d, i}{#if i}, {/if}<button class="ref" onclick={() => showDecl(d)}>{d}</button>{/each}</p>
+              <p class="defs">{#each cl.defs as d, i}{#if i}, {/if}<button class="ref" onclick={() => showDecl(d)}>{d}</button>{/each}</p>
             {/if}
           </div>
         {:else}
           <p class="muted">No Lean statement has been written for this claim.</p>
         {/each}
-        {#if claim.blockers?.length}
-          <details class="why">
-            <summary>Why is this claim not accepted? <span class="faint">({claim.blockers.length})</span></summary>
-            <ul>{#each claim.blockers as b}<li><TexInline text={b} /></li>{/each}</ul>
-          </details>
-        {/if}
       {/if}
     </section>
+    </div>
+  </article>
+{/if}
 
-    <details class="tech">
-      <summary>Technical details</summary>
-      {#if claim.number_note}
-        <h3>Number</h3>
-        <p class="summary">{claim.number} <span class="faint">({claim.number_note})</span></p>
+{#snippet details()}
+  <section class="details">
+    <h2>Audit details</h2>
+    <p class="faint small"><code>{claim.id}</code>{#if index.papers.length > 1} · paper {claim.paper}{/if}</p>
+    {#if claim.number_note}<p class="summary">{claim.number} <span class="faint">({claim.number_note})</span></p>{/if}
+    {#if claim.scope_note}<p class="muted small">{claim.scope_note}</p>{/if}
+    {#if simple}
+      {#each claim.links as l (l.name)}
+        <h3><code>{l.name}</code></h3>
+        <p class="small">{linkVerdict(l)}</p>
+        <p class="faint small">{l.source === "paper" ? "Linked by a \\lean{…} tag in the paper's source" : l.source === "formalization.yaml" ? "Declared in the project's formalization.yaml" + (index.formalization?.review_status ? ` (the project describes its review as “${index.formalization.review_status}”)` : "") : "Linked in the reader (machinechecked.links.json)"}{#if l.repository} · {l.repository}{/if}{#if l.module} · {l.module}{l.range ? ":" + l.range.line : ""}{/if}</p>
+      {/each}
+    {:else}
+      {#if claim.blockers?.length}
+        <h3>Checks and evidence</h3>
+        <ul class="small">{#each claim.blockers as b}<li><TexInline text={describe(b)} /></li>{/each}</ul>
       {/if}
-      {#if claim.statement_tex && paper?.pdf && claim.anchor?.begin}
-        <h3>Source text</h3>
-        <Tex text={claim.statement_tex} />
-        {#if claim.anchor?.file}<p class="faint small"><code>{claim.anchor.file}:{claim.anchor.line}</code>
-          {#if claim.anchor.kind === "approximate"} · located approximately{/if}
-          {#if claim.source_matches === false}<span class="bad"> · differs from the frozen inventory</span>{/if}</p>{/if}
-      {/if}
-      {#if claim.scope_note}<p class="muted small">{claim.scope_note}</p>{/if}
-
       {#each claim.clauses as cl, k (k)}
         <h3>{#if claim.clauses.length > 1}<TexInline text={cl.label || cl.name} />{:else}Evidence{/if}</h3>
+        <p class="small">{verdict(cl)}</p>
         <Ladder rungs={cl.ladder} />
         {#if cl.proofs && Object.keys(cl.proofs).length}
           <dl class="proof">
@@ -316,34 +378,37 @@
           <p class="small muted">Definitions its meaning depends on: {Object.entries(counts).map(([k, v]) => `${v} ${k}`).join(", ")}</p>
         {/if}
       {/each}
-
-      {#if Object.keys(claim.decls || {}).length}
-        {@const ds = Object.keys(claim.decls || {})}
-        <h3>Definitions ({ds.length})</h3>
-        {#each ds as n (n)}
-          {#if ds.length <= 40 || showAll}
-            <Decl name={n} key={claim.decls[n]} onref={showDecl} />
-          {/if}
-        {/each}
-        {#if ds.length > 40 && !showAll}
-          <button class="btn ghost" onclick={() => (showAll = true)}>Show all {ds.length}</button>
+    {/if}
+    {#if claim.statement_tex && paper?.pdf && claim.anchor?.begin}
+      <h3>Source text</h3>
+      <Tex text={claim.statement_tex} />
+      {#if claim.anchor?.file}<p class="faint small"><code>{claim.anchor.file}:{claim.anchor.line}</code>
+        {#if claim.anchor.kind === "approximate"} · located approximately{/if}
+        {#if claim.source_matches === false}<span class="bad"> · differs from the frozen inventory</span>{/if}</p>{/if}
+    {/if}
+    {#if Object.keys(claim.decls || {}).length}
+      {@const ds = Object.keys(claim.decls || {})}
+      <h3>Definitions ({ds.length})</h3>
+      {#each ds as n (n)}
+        {#if ds.length <= 40 || showAll}
+          <Decl name={n} key={claim.decls[n]} onref={showDecl} />
         {/if}
+      {/each}
+      {#if ds.length > 40 && !showAll}
+        <button class="btn ghost" onclick={() => (showAll = true)}>Show all {ds.length}</button>
       {/if}
-
-      {#if claim.findings?.length}
-        <h3>Findings</h3>
-        <Findings findings={claim.findings} />
-      {/if}
-
-      <p class="faint small foot">
-        Release <code>{index.release}</code> · evidence <code title={index.evidence}>{index.evidence.slice(0, 12)}</code>
-        {#if index.lean}· Lean {index.lean.lean}{/if}
-        {#if index.project?.commit}· project <code>{index.project.commit.slice(0, 12)}</code>{/if}
-      </p>
-    </details>
-    </div>
-  </article>
-{/if}
+    {/if}
+    {#if claim.findings?.length}
+      <h3>Findings</h3>
+      <Findings findings={claim.findings} />
+    {/if}
+    <p class="faint small foot">
+      Release <code>{index.release}</code> · evidence <code title={index.evidence}>{index.evidence.slice(0, 12)}</code>
+      {#if index.lean}· Lean {index.lean.lean}{/if}
+      {#if index.project?.commit}· project <code>{index.project.commit.slice(0, 12)}</code>{/if}
+    </p>
+  </section>
+{/snippet}
 
 <style>
   .passport, .view { display: flex; flex-direction: column; gap: 18px; }
@@ -356,17 +421,26 @@
   header h1 { font-family: var(--serif); font-size: 24px; font-weight: 600; margin: 2px 0 10px; }
   .full header h1 { font-size: 30px; }
   .title { font-weight: 450; }
-  .actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
   .act { font: inherit; font-size: 13px; padding: 3px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; text-decoration: none; }
   .act:hover { border-color: var(--accent); color: var(--accent); text-decoration: none; }
   .summary { margin: 4px 0 8px; font-size: 13px; color: var(--muted); }
   .desc { margin: 2px 0 10px; font-size: 15px; color: var(--muted); line-height: 1.5; }
-  .eyebrow { margin: 0; color: var(--muted); font-size: 13px; }
   h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); font-weight: 600; margin: 0 0 8px; }
   h3 { font-size: 14px; font-weight: 600; margin: 14px 0 6px; }
-  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; margin-bottom: 10px; }
-  .card.refuted { border-left: 4px solid var(--st-refuted); }
-  .card.suggestion { border-style: dashed; }
+  .block { margin-bottom: 14px; }
+  .block.refuted { border-left: 3px solid var(--st-refuted); padding-left: 10px; }
+  .block.suggestion { border: 1px dashed var(--border); border-radius: 8px; padding: 8px 10px; }
+  .bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .grow { flex: 1; }
+  .chipbtn { border: 0; background: none; padding: 0; cursor: pointer; }
+  .menuwrap { position: relative; }
+  .more { font-size: 15px; line-height: 1; padding: 3px 9px; }
+  .menu { position: absolute; right: 0; top: calc(100% + 4px); z-index: 10; min-width: 200px; display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 6px 20px rgb(0 0 0 / 0.14); padding: 4px; }
+  .menu > a, .menu > button { text-align: left; font: inherit; font-size: 14px; padding: 7px 10px; border: 0; background: none; color: var(--text); border-radius: 6px; cursor: pointer; text-decoration: none; }
+  .menu > a:hover, .menu > button:hover { background: var(--surface-2); }
+  .copied { margin: 4px 0 0; }
+  .defs { margin: 0; }
+  .details h2 { margin-bottom: 4px; }
   .cname { font-weight: 600; margin: 0 0 8px; }
   .changes { border-left: 3px solid var(--st-open, #b7791f); background: var(--surface-2, transparent); padding: 6px 10px; margin: 0 0 10px; border-radius: 0 6px 6px 0; }
   .changes p { margin: 0 0 4px; }
@@ -381,11 +455,6 @@
   .row .btn { margin-top: 0; }
   .btn.ghost { background: transparent; color: var(--accent); }
   .btn:disabled { opacity: 0.5; cursor: default; }
-  .why { margin-top: 6px; padding: 8px 12px; border: 1px solid var(--border); border-left: 4px solid var(--st-open); border-radius: 8px; background: var(--surface); }
-  .why summary { cursor: pointer; font-weight: 600; }
-  .why ul { margin: 6px 0 2px; padding-left: 18px; }
-  .tech { border-top: 1px solid var(--border); padding-top: 10px; }
-  .tech > summary { cursor: pointer; color: var(--muted); font-weight: 600; }
   .small { font-size: 13px; }
   .bad { color: var(--st-malformed); }
   .proof { margin: 10px 0 0; }
@@ -400,8 +469,7 @@
     .passport, .view { gap: 12px; }
     header h1 { font-size: 20px; margin: 0 0 6px; }
     .desc { font-size: 14px; margin: 0 0 6px; }
-    .actions { margin-top: 6px; gap: 6px; }
     .act { font-size: 12px; padding: 2px 8px; }
-    .card { padding: 10px 12px; }
+    .passport h2 { margin-bottom: 4px; }
   }
 </style>

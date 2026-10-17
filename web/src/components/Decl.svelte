@@ -26,7 +26,9 @@
 
 {#snippet head()}
   <code>{name}</code>
-  {#if d}
+  {#if d && inspector}
+    <span class="faint">{d.kind}</span>
+  {:else if d}
     <span class="faint">{d.kind}{d.module ? " · " + d.module : ""}{d.range ? ":" + d.range.line : ""}</span>
     {#if d.review && !hideReview}<span class={"rv rv-" + d.review.state}>{d.review.state}</span>{/if}
   {/if}
@@ -37,6 +39,20 @@
       <p class="err">{error}</p>
     {:else if !d}
       <p class="faint">Loading…</p>
+    {:else if inspector}
+      {#if d.signature}<LeanText pp={d.signature} {onref} refs={d.uses} />{/if}
+      {#if d.value}
+        <p class="lbl">value</p>
+        {#if showValue || textOf(d.value).length <= LONG}
+          <LeanText pp={d.value} {onref} refs={d.uses} />
+        {:else}
+          <button class="show" onclick={() => (showValue = true)}>Show the value ({textOf(d.value).length} characters)</button>
+        {/if}
+      {/if}
+      <details class="extra">
+        <summary>Details</summary>
+        {@render extra()}
+      </details>
     {:else}
       {#if siteIndex && moduleSourceUrl(siteIndex, d.module, d.range?.line)}
         <p class="small"><a href={moduleSourceUrl(siteIndex, d.module, d.range?.line)} target="_blank" rel="noopener" title={sourceTitle(siteIndex)}>{sourceLabel(siteIndex)}</a></p>
@@ -51,11 +67,7 @@
       {/if}
       {#if d.value}
         <p class="lbl">value</p>
-        {#if !inspector || showValue || textOf(d.value).length <= LONG}
-          <LeanText pp={d.value} {onref} refs={d.uses} />
-        {:else}
-          <button class="show" onclick={() => (showValue = true)}>Show the value ({textOf(d.value).length} characters)</button>
-        {/if}
+        <LeanText pp={d.value} {onref} refs={d.uses} />
       {/if}
       {#if hideReview}
       {:else if d.review?.current?.length}
@@ -68,6 +80,18 @@
       {/if}
       {#if d.fingerprint}<p class="fp faint" title={d.legacy_hash ? "legacy " + d.legacy_hash : ""}>{d.fingerprint.slice(0, 24)}…</p>{/if}
     {/if}
+{/snippet}
+
+{#snippet extra()}
+  <p class="small faint">{d.module}{d.range ? ":" + d.range.line : ""}
+    {#if siteIndex && moduleSourceUrl(siteIndex, d.module, d.range?.line)} · <a href={moduleSourceUrl(siteIndex, d.module, d.range?.line)} target="_blank" rel="noopener" title={sourceTitle(siteIndex)}>{sourceLabel(siteIndex)}</a>{/if}</p>
+  {#if d.doc}<p class="lbl">docstring</p><p class="doc">{d.doc}</p>{/if}
+  {#if d.review}<p class="lbl">review: <span class={"rv rv-" + d.review.state}>{d.review.state}</span></p>{/if}
+  {#each d.review?.current || [] as r}
+    <p class="lbl">{r.by}{r.kind === "ai" ? " (AI)" : r.kind === "human" ? " (human)" : ""} · {r.provenance}</p>
+    {#if r.text}<pre class="rtext">{r.text}</pre>{/if}
+  {/each}
+  {#if d.fingerprint}<p class="fp faint" title={d.legacy_hash ? "legacy " + d.legacy_hash : ""}>{d.fingerprint.slice(0, 24)}…</p>{/if}
 {/snippet}
 
 {#if inspector}
@@ -87,6 +111,8 @@
   summary { cursor: pointer; display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
   .inspector { padding: 10px 14px; }
   .ihead { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; margin: 0; overflow-wrap: anywhere; }
+  .extra { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 6px; }
+  .extra > summary { cursor: pointer; color: var(--muted); font-size: 13px; }
   .show { border: 0; background: none; padding: 0; color: var(--accent); cursor: pointer; font-size: 13px; }
   .doc { margin: 8px 0; color: var(--muted); }
   .lbl { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--faint); margin: 8px 0 2px; }

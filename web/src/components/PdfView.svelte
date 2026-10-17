@@ -9,8 +9,10 @@
   let width = $state(800);
   let host;
   let pages = $state([]); // [{ no, w, h }] in PDF points
+  let attempt = $state(0);
 
   $effect(() => {
+    attempt;
     error = null;
     openPdf(url)
       .then(async (d) => {
@@ -97,7 +99,10 @@
 
 <div class="pdf" bind:this={host}>
   {#if error}
-    <p class="err">The PDF could not be opened: {error}</p>
+    <div class="err">
+      <p>Paper preview unavailable. <button class="retry" onclick={() => attempt++}>Try again</button></p>
+      <details><summary>Details</summary><p class="small">{error}</p></details>
+    </div>
   {:else if !doc}
     <p class="muted wait">Opening the paper…</p>
   {:else}
@@ -152,4 +157,8 @@
   }
   .band:hover .tag, .band.sel .tag { opacity: 1; }
   .err, .wait { padding: 24px; }
+  .err p { margin: 0 0 6px; }
+  .err details { color: var(--muted); font-size: 13px; }
+  .err summary { cursor: pointer; }
+  .retry { font: inherit; font-size: 13px; border: 1px solid var(--border); background: var(--surface); border-radius: 6px; padding: 1px 8px; cursor: pointer; margin-left: 6px; }
 </style>

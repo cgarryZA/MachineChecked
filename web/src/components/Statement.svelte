@@ -4,12 +4,15 @@
   // A locked proposition as its quantifier prefix and its conclusion.
   let { st, spec = null, onref, compact = false } = $props();
 
-  // Compact, a statement shows its conclusion and one line naming its variables and counting its
-  // assumptions; the ordered statement opens on request. A prefix with a "there is" is always
-  // shown in order, since folding it would hide which choices depend on which.
+  // A statement is shown in full: its assumptions are what a reader compares with the paper.
+  // Only a long one, in a compact view, folds to its conclusion and one line naming its
+  // variables and counting its assumptions, with the ordered statement on request. A prefix with
+  // a "there is" is never folded, since that would hide which choices depend on which.
   let expanded = $state(false);
   const binders = $derived(st.binders || []);
-  const folded = $derived(compact && !expanded && binders.length > 0 && !binders.some((b) => b.role === "exists"));
+  const textOf = (pp) => (typeof pp === "string" ? pp : pp?.text ?? (pp?.segments || []).map((x) => x.t).join(""));
+  const long = $derived(binders.length > 8 || binders.reduce((n, b) => n + textOf(b.type).length, 0) > 900);
+  const folded = $derived(compact && long && !expanded && !binders.some((b) => b.role === "exists"));
   const summary = $derived.by(() => {
     const vars = binders.filter((b) => b.role === "forall").map((b) => b.name);
     const n = binders.filter((b) => b.role === "hypothesis" || b.role === "instance").length;
@@ -51,7 +54,7 @@
       <LeanText pp={st.conclusion} {onref} {refs} />
     </div>
   {/if}
-  {#if compact && expanded}
+  {#if compact && long && expanded}
     <button class="more" onclick={() => (expanded = false)}>Show less</button>
   {/if}
   {/if}
