@@ -140,10 +140,21 @@ class Assessor:
             return {"state": "not-run", "detail": "no Comparator record for this release"}
         if "error" in rec:
             return {"state": "unverified", "detail": rec["error"]}
-        if not self.project_commit or rec.get("commit") != self.project_commit:
+        since = ""
+        if not self.project_commit or not rec.get("commit"):
             return {"state": "unverified",
                     "detail": f"the Comparator record is for commit {str(rec.get('commit'))[:12]}"
                               f", not this one"}
+        if rec["commit"] != self.project_commit:
+            # A record committed to the project names the commit before the one holding it; it
+            # counts when that commit is an ancestor and no Lean input changed since.
+            from .replay import unchanged_since
+            why = unchanged_since(self.cfg.lean_root, rec["commit"], self.project_commit)
+            if why:
+                return {"state": "unverified",
+                        "detail": f"the Comparator record is for commit {rec['commit'][:12]}, not "
+                                  f"this one: {why}"}
+            since = f"; replayed at commit {rec['commit'][:12]}, no Lean input changed since"
         # A record made by `machinechecked replay` also says whether the run passed, whether the
         # tree was clean, and the environment it ran in; each must hold for the replay to count.
         if rec.get("passed") is False:
@@ -160,7 +171,7 @@ class Assessor:
         if thm not in set(rec.get("replayed", [])):
             return {"state": "not-run", "detail": "the Comparator record does not cover this proof"}
         return {"state": "pass", "detail": "Comparator replayed the proof in a fresh kernel ("
-                + ", ".join(rec.get("kernels", ["lean"])) + ")"}
+                + ", ".join(rec.get("kernels", ["lean"])) + ")" + since}
 
     def _environment(self) -> dict:
         """The audited project's Lean version and Lake manifest hash."""

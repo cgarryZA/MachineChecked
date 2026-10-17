@@ -43,6 +43,29 @@ def lean_changes(lean_root: Path) -> list[str]:
     return out
 
 
+def unchanged_since(lean_root: Path, commit: str, head: str) -> str | None:
+    """Why a replay made at `commit` does not cover `head`, or None when it does: `commit` is an
+    ancestor of `head` and no Lean input of the project differs between them. (Committing the
+    replay record makes a new commit; that alone changes nothing the replay checked.)"""
+    import subprocess
+
+    def git(*args):
+        return subprocess.run(["git", *args], cwd=lean_root, capture_output=True, text=True)
+    if git("cat-file", "-e", f"{commit}^{{commit}}").returncode != 0:
+        return (f"commit {commit[:12]} is not in this clone's history (fetch more history to "
+                "check that no Lean input changed since)")
+    if git("merge-base", "--is-ancestor", commit, head).returncode != 0:
+        return f"commit {commit[:12]} is not an ancestor of this one"
+    d = git("diff", "--name-only", commit, head, "--", ".")
+    if d.returncode != 0:
+        return f"could not compare commit {commit[:12]} with this one"
+    changed = [p for p in d.stdout.splitlines() if p.endswith(LEAN_INPUT)]
+    if changed:
+        return (f"Lean inputs changed since commit {commit[:12]} (" + ", ".join(changed[:3])
+                + (", …" if len(changed) > 3 else "") + ")")
+    return None
+
+
 def replay(lean_root: Path, config: Path, out: Path, comparator: str = "comparator",
            lake: str = "lake", timeout: int = 6 * 3600) -> dict:
     """Run Comparator on `config` in the project at `lean_root` and write its record to `out`."""

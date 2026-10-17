@@ -385,3 +385,43 @@ def test_a_checked_refutation_needs_no_witness(toy):
     clause = next(c for c in body["assessment"]["claims"] if c["id"] == "T:prop:pred")["clauses"][0]
     assert clause["state"] == "refuted"
     assert not findings(body, "witness", "T:prop:pred"), findings(body, subject="T:prop:pred")
+
+
+@needs_lean
+@needs_tex
+def test_a_committed_replay_record_counts_until_a_lean_input_changes(toy, tmp_path):
+    """#58: committing the record makes a new commit, which changes nothing the replay checked;
+    the record counts there, and stops counting once a Lean input changes."""
+    import os
+    import subprocess
+    from prooflens.replay import replay
+    env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@x",
+           "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@x"}
+
+    def git(*args):
+        subprocess.run(["git", *args], cwd=toy, check=True, capture_output=True, env=env)
+    git("init", "-q")
+    git("add", "-A")
+    git("commit", "-q", "-m", "toy")
+    edit(toy / "machinechecked.toml", 'dismissals = "reviews/dismissals.json"',
+         'dismissals = "reviews/dismissals.json"\ncomparator_log = "replay.json"')
+    fake = tmp_path / "comparator"
+    fake.write_text("#!/bin/sh\necho checked\n")
+    fake.chmod(0o755)
+    conf = toy / "comparator.json"
+    conf.write_text(json.dumps({"theorem_names": ["Toy.Acceptance.thm_even_add"]}))
+    rec = replay(toy / "lean", conf, toy / "replay.json", comparator=str(fake))
+    git("add", "-A")
+    git("commit", "-q", "-m", "the replay record")
+
+    def state():
+        _, body, _ = build(toy)
+        c = next(c for c in body["assessment"]["claims"] if c["id"] == "T:thm:even-add")
+        return c["clauses"][0]["checks"]["replay"]
+
+    got = state()
+    assert got["state"] == "pass" and f"replayed at commit {rec['commit'][:12]}" in got["detail"]
+    edit(toy / "lean/Toy/Defs.lean", "/-!", "-- changed\n/-!")
+    git("commit", "-q", "-am", "a Lean change")
+    got = state()
+    assert got["state"] == "unverified" and "Lean inputs changed" in got["detail"], got
