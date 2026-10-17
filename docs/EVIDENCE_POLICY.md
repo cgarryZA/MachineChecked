@@ -32,7 +32,7 @@ declarations Lean generates (`match_1`, `_f`): they are part of the definition's
 | Gate | Passes when |
 |---|---|
 | Consistency check | no violation: every check ran and nothing contradicts the inventory |
-| Release gate (per paper) | the source compiled and its hashes checked; consistency passes; every scope decision reviewed; every formal claim accepted and every definition claim reviewed by an independent reviewer; no printed clause refuted; every witness valid; a Comparator log shows a kernel replay of every proof of the paper |
+| Release gate (per paper) | the source compiled and its hashes checked, or, for a paper published only as a PDF, the PDF pinned by its SHA-256 (`pdf_sha256`) and matching, with every claim in scope found in it (the gate then states that the source is a PDF and claim positions are approximate); consistency passes; every scope decision reviewed; every formal claim accepted and every definition claim reviewed by an independent reviewer; no printed clause refuted; every witness valid; a Comparator log shows a kernel replay of every proof of the paper |
 
 A paper can pass the consistency check with every claim open: the check says nothing about the
 paper as a whole.

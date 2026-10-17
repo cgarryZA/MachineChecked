@@ -112,7 +112,14 @@ def build(cfg: Config, release: str | None = None, skip_lean: bool = False,
             prov["pdf_origin"] = "compiled"
             pdfs[paper.id] = t["pdf"]
         elif snap.pdf:
-            tex[paper.id] = {"mode": "pdf", "anchors": [], "page_size": None, "inputs": []}
+            # The source is a PDF: its numbered statements are found by their bold headings
+            # (positions approximate). The PDF counts as source evidence for the release gate
+            # only when the configuration pins its hash and it matches.
+            from .pdfclaims import claims_from_pdf
+            anchors, size = claims_from_pdf(snap.dir / snap.pdf)
+            tex[paper.id] = {"mode": "pdf", "anchors": anchors, "page_size": size, "inputs": [],
+                             "pdf_sha256": prov["committed_pdf_sha256"],
+                             "pdf_pinned": paper.pdf_sha256}
             prov["mode"] = "pdf"
             prov["pdf_sha256"] = prov["committed_pdf_sha256"]
             prov["pdf_origin"] = "committed"

@@ -175,9 +175,15 @@ def build(evidence: dict, release: str, display: dict | None = None
     for c in inv:
         a = assessed[c["id"]]
         t = tex.get(c["paper"], {})
-        anchor = match_anchor(c, t.get("anchors", [])) if t.get("mode") == "latex" else None
+        anchor = match_anchor(c, t.get("anchors", [])) if t.get("mode") in ("latex", "pdf") \
+            else None
         src_ok = None
-        if anchor:
+        if anchor and t.get("mode") == "pdf":
+            # Found by its heading in the PDF: where it ends is estimated.
+            anchor = {**anchor, "kind": "approximate"}
+        elif anchor:
+            # (The inventory's source hash is of the LaTeX statement; a PDF's extracted text
+            # cannot be compared with it.)
             anchor = {**anchor, "kind": "exact"}
             if c.get("source_sha256") and anchor.get("source_sha256"):
                 src_ok = anchor["source_sha256"] == c["source_sha256"]

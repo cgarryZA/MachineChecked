@@ -52,6 +52,9 @@
       {#if index.gates?.[p.id]}
         {@const g = index.gates[p.id]}
         <div class="gates">
+          {#if g.source === "pdf"}
+            <p class="source">Source: the paper's PDF, as its authors published it (no LaTeX). Its hash is pinned and checked; claims are found by their headings, so their positions are approximate.</p>
+          {/if}
           <details class={"gate " + (g.consistency.pass ? "pass" : "fail")}>
             <summary><strong>Consistency check</strong>: {g.consistency.pass ? "passed" : `failed (${g.consistency.failures.length})`}
               <span class="faint">· every check runs; open or unreviewed claims are statuses, not failures</span></summary>
@@ -127,6 +130,7 @@
   .phead h2 { font-family: var(--serif); font-size: 21px; font-weight: 600; }
   .prov { margin: 4px 0 16px; font-size: 13px; }
   .gates { display: flex; flex-direction: column; gap: 6px; margin: 0 0 16px; }
+  .source { margin: 0; color: var(--muted); font-size: 13px; }
   .gate { border: 1px solid var(--border); border-radius: 8px; padding: 6px 12px; border-left: 4px solid var(--st-unspecified); }
   .gate.pass { border-left-color: var(--st-accepted); }
   .gate.fail { border-left-color: var(--st-open); }

@@ -442,7 +442,10 @@ class Assessor:
             consistency = [f["message"] for f in mine]
             reasons = []
             t = (self.tex or {}).get(pid, {})
-            if t.get("mode") != "latex":
+            source = t.get("mode") or "none"
+            if source == "pdf":
+                reasons += self._pdf_source(pid, t)
+            elif source != "latex":
                 reasons.append("sources: manuscript source not compiled, source hashes unchecked")
             if self.lean is None:
                 reasons.append("lean: the Lean project was not checked")
@@ -472,9 +475,33 @@ class Assessor:
             if not comparator:
                 reasons.append("comparator: no successful kernel replay covering every proof "
                                "of the paper")
-            out[pid] = {"consistency": {"pass": not consistency, "failures": consistency},
+            out[pid] = {"source": source,
+                        **({"source_note": "the source is a PDF: its hash is pinned and checked, "
+                            "and claim positions are approximate"} if source == "pdf" else {}),
+                        "consistency": {"pass": not consistency, "failures": consistency},
                         "release": {"pass": not reasons, "reasons": reasons},
                         "comparator": comparator}
+        return out
+
+    def _pdf_source(self, pid: str, t: dict) -> list[str]:
+        """Why a paper whose source is a PDF does not meet the gate's source condition: the PDF
+        is pinned by the configuration (`pdf_sha256`) and matches it, and every claim in scope
+        is found in it (by its heading, or placed by hand in `anchors.json`)."""
+        out = []
+        pinned, actual = t.get("pdf_pinned"), t.get("pdf_sha256")
+        if not pinned:
+            out.append("sources: the paper is a PDF and its hash is not pinned (pdf_sha256 in "
+                       "machinechecked.toml), so it is not checked")
+        elif pinned != actual:
+            out.append(f"sources: the PDF differs from the one pinned (sha256 {str(actual)[:12]}, "
+                       f"pinned {pinned[:12]})")
+        manual = t.get("manual_anchors") or {}
+        for c in self.inv["claims"]:
+            if c["paper"] != pid or c["scope"] in OUT_OF_SCOPE:
+                continue
+            if c["id"] not in manual and match_anchor(c, t.get("anchors", [])) is None:
+                out.append(f"sources: {c['id']} ({c.get('number') or 'unnumbered'}) is not found "
+                           "in the PDF; place it by hand in anchors.json")
         return out
 
     # -- inventory against the compiled paper ---------------------------------------------

@@ -425,3 +425,38 @@ def test_a_committed_replay_record_counts_until_a_lean_input_changes(toy, tmp_pa
     git("commit", "-q", "-am", "a Lean change")
     got = state()
     assert got["state"] == "unverified" and "Lean inputs changed" in got["detail"], got
+
+
+@needs_lean
+@needs_tex
+def test_a_pinned_pdf_is_source_evidence_for_the_release_gate(toy):
+    """#63: a paper published only as a PDF meets the gate's source condition when the PDF is
+    pinned by hash and matches, and every claim in scope is found in it; the gate says the
+    source is a PDF, and claims are placed as approximate."""
+    import shutil
+    from prooflens.util import sha256_file
+    _, _, cfg = build(toy)
+    (toy / "paper-pdf").mkdir()
+    shutil.copy(cfg.out_dir / "site/data/papers/T.pdf", toy / "paper-pdf/toy.pdf")
+    edit(toy / "machinechecked.toml", 'source = { path = "paper" }\nroot = "toy.tex"',
+         'source = { path = "paper-pdf" }\npdf = "toy.pdf"')
+
+    def gate():
+        index, body, cfg = build(toy, reuse_lean=True)
+        g = body["assessment"]["gates"]["T"]
+        return g, [r for r in g["release"]["reasons"] if r.startswith("sources:")], cfg
+
+    g, src, _ = gate()
+    assert g["source"] == "pdf" and "approximate" in g["source_note"]
+    assert src == ["sources: the paper is a PDF and its hash is not pinned (pdf_sha256 in "
+                   "machinechecked.toml), so it is not checked"], src
+    edit(toy / "machinechecked.toml", 'pdf = "toy.pdf"',
+         f'pdf = "toy.pdf"\npdf_sha256 = "{sha256_file(toy / "paper-pdf/toy.pdf")}"')
+    g, src, cfg = gate()
+    assert src == [], src            # pinned, matching, every claim in scope found by heading
+    chunk = next(json.loads(p.read_text()) for p in (cfg.out_dir / "site/data/claims").iterdir()
+                 if p.name.startswith("T_thm_even-add"))
+    assert chunk["anchor"]["kind"] == "approximate" and chunk["source_matches"] is None
+    edit(toy / "machinechecked.toml", 'pdf_sha256 = "', 'pdf_sha256 = "0')
+    _, src, _ = gate()
+    assert len(src) == 1 and "differs from the one pinned" in src[0], src
