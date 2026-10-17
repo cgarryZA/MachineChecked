@@ -125,7 +125,7 @@ export function inProject(c, repo) {
   if (!c.by_project) return c;
   const st = c.by_project[repo] || { status: "not linked", class: "unspecified" };
   const links = c.links && c.links.filter((l) => l.repository === repo);
-  return { ...c, ...(links ? { links } : {}), status: st.status, class: st.class };
+  return { ...c, ...(links ? { links } : {}), status: st.status, class: st.class, audit: st.audit || null };
 }
 
 // The claims of the index for the chosen project (reactive on the choice).

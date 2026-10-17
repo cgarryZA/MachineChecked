@@ -331,6 +331,10 @@
     <section class="lean">
       <h2>Lean</h2>
       {#if simple}
+        {#if claim.audit}
+          <p class="small recorded">As recorded in the published audit{claim.audit.author ? " by " + claim.audit.author : ""}: <strong>{claim.audit.status}</strong>.
+            {#if claim.audit.link}<a href={claim.audit.link} target="_blank" rel="noopener">Open this claim in the audit ↗</a>{/if}</p>
+        {/if}
         {#each claim.links as l (l.name)}
           <div class="block">
             <p class="decl"><code>{l.name}</code>
@@ -519,6 +523,7 @@
   .menu > a:hover, .menu > button:hover { background: var(--surface-2); }
   .copied { margin: 4px 0 0; }
   .linkby { margin: 4px 0 0; }
+  .recorded { margin: 0 0 8px; }
   .mklink { margin-top: 8px; border: 1px dashed var(--border); border-radius: 8px; padding: 6px 10px; }
   .mklink > summary { cursor: pointer; font-size: 13px; color: var(--muted); }
   .chips { display: flex; flex-wrap: wrap; gap: 6px; }
