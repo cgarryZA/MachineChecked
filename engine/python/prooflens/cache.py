@@ -184,25 +184,79 @@ def _pack(arc: Path, members: list[tuple[Path, str]]) -> None:
         raise CacheError("zstd failed while writing the archive")
 
 
+def _unpacked_size(members: list[tuple[Path, str]]) -> int:
+    """The bytes of the files the archive holds, unpacked."""
+    total = 0
+    for src, _ in members:
+        for f in src.rglob("*"):
+            if f.is_file() and not f.is_symlink():
+                total += f.stat().st_size
+    return total
+
+
+def _gb(n: float) -> str:
+    return f"{n / 1e9:.1f} GB"
+
+
+def check_space(project: Path, tmp: Path, man: dict) -> None:
+    """Refuse a restore that cannot fit, before anything is downloaded: the archive needs its
+    size in `tmp`, and its unpacked build (recorded by `save`; four times the archive for an
+    older manifest) next to the project."""
+    size = int(man.get("size") or 0)
+    unpacked = int(man.get("unpacked_size") or 4 * size)
+    lake = project / ".lake"
+    where = lake if lake.exists() else project
+    need = {where: unpacked}
+    if os.stat(tmp).st_dev == os.stat(where).st_dev:
+        need[where] += size
+    else:
+        need[tmp] = size
+    for path, n in need.items():
+        free = shutil.disk_usage(path).free
+        if free < n:
+            raise CacheError(
+                f"not enough disk space to restore: {_gb(n)} needed under {path}, {_gb(free)} "
+                "free. Free some space (for example a second copy of a dependency at the same "
+                "revision, or old build output) and restore again; nothing was changed")
+
+
 def _unpack(arc: Path, project: Path) -> None:
     """Unpack an archive written by `_pack` into the project and its path dependencies, with the
-    tar `data` filter (no absolute paths, no `..`, no links out of the destination)."""
+    tar `data` filter (no absolute paths, no `..`, no links out of the destination). Everything
+    is unpacked into a staging folder first and moved into place only once the whole archive
+    has been read, so a failure (a full disk, a corrupt archive) leaves the build as it was."""
     import tarfile
     deps = {d.name: d for d in path_deps(project)}
-    z = subprocess.Popen(["zstd", "-d", "-q", "-c", str(arc)], stdout=subprocess.PIPE)
-    with tarfile.open(fileobj=z.stdout, mode="r|") as tf:
-        for m in tf:
-            head, _, rest = m.name.partition("/")
-            if head == "project" and rest:
-                base, m.name = project, rest
-            elif head == "path" and rest.partition("/")[0] in deps:
-                name, _, m.name = rest.partition("/")
-                base = deps[name]
-            else:
-                raise CacheError(f"unexpected path in the archive: {m.name}")
-            tf.extract(m, base, filter="data")
-    if z.wait() != 0:
-        raise CacheError("zstd failed while reading the archive")
+    stage = Path(tempfile.mkdtemp(prefix=".lean-cache-restore-", dir=project))
+    try:
+        bases: dict[str, Path] = {}
+        z = subprocess.Popen(["zstd", "-d", "-q", "-c", str(arc)], stdout=subprocess.PIPE)
+        with tarfile.open(fileobj=z.stdout, mode="r|") as tf:
+            for m in tf:
+                head, _, rest = m.name.partition("/")
+                if head == "project" and rest:
+                    key, base, m.name = "project", project, rest
+                elif head == "path" and rest.partition("/")[0] in deps:
+                    name, _, m.name = rest.partition("/")
+                    key, base = f"path-{name}", deps[name]
+                else:
+                    raise CacheError(f"unexpected path in the archive: {m.name}")
+                bases[key] = base
+                tf.extract(m, stage / key, filter="data")
+        if z.wait() != 0:
+            raise CacheError("zstd failed while reading the archive")
+        for key, base in bases.items():
+            root = stage / key
+            for f in sorted(root.rglob("*")):
+                if f.is_dir() and not f.is_symlink():
+                    continue
+                dest = base / f.relative_to(root)
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(f), str(dest))
+    except OSError as e:
+        raise CacheError(f"the restore failed ({e}); the build was left as it was") from e
+    finally:
+        shutil.rmtree(stage, ignore_errors=True)
 
 
 def repository(project: Path) -> str | None:
@@ -263,7 +317,8 @@ def save(project: Path, out: Path, targets: list[str], pin_file: str | None = No
     manifest = {"commit": commit, "project": package_name(project), "layout": 2,
                 "inputs_digest": inputs_digest(project), "repository": repository(project),
                 "targets": targets or ["(default)"], "dirs": dirs, "sha256": digest,
-                "size": size, "parts": parts, "licence_files": licences,
+                "size": size, "unpacked_size": _unpacked_size(_members(project)),
+                "parts": parts, "licence_files": licences,
                 "created": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                 **fingerprint(project)}
     (out / f"{name}.json").write_text(json.dumps(manifest, indent=1) + "\n")
@@ -403,6 +458,7 @@ def restore(project: Path, repo: str | None = None, local: Path | None = None,
                                 if no_history else ""))
         key, stem, man = best
         dist = key[1]
+        check_space(project, tmp, man)
         t0 = time.time()
         arc = tmp / f"{stem}.tar.zst"
         pieces = man["parts"] if man.get("parts") else [{"name": arc.name, "sha256": man["sha256"]}]

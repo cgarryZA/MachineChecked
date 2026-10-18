@@ -221,3 +221,35 @@ def test_prune_keeps_the_newest_of_each_package_platform_and_version():
     assert cache._files_of("a1", {"parts": None}) == ["a1.tar.zst", "a1.tar.zst.sha256", "a1.json"]
     assert cache._files_of("a1", {"parts": [{"name": "a1.tar.zst.part000"}]}) == \
         ["a1.tar.zst.part000", "a1.json"]
+
+
+@needs_lean
+def test_a_restore_that_cannot_fit_is_refused_and_a_failed_one_changes_nothing(toy, tmp_path,
+                                                                               monkeypatch):
+    """#100: too little free space is reported before anything is downloaded, with the sizes;
+    an unpacking that fails part way (a full disk) leaves the build as it was."""
+    src, other = toy
+    out = tmp_path / "saved"
+    man = cache.save(src, out, [], log=lambda m: None)
+    assert man["unpacked_size"] > man["size"] > 0
+    real = shutil.disk_usage
+    monkeypatch.setattr(cache.shutil, "disk_usage",
+                        lambda p: real(p)._replace(free=man["unpacked_size"] // 2))
+    with pytest.raises(cache.CacheError, match=r"not enough disk space.*GB needed.*GB free"):
+        cache.restore(other, local=out, log=lambda m: None)
+    assert not (other / ".lake" / "build").exists()
+    monkeypatch.setattr(cache.shutil, "disk_usage", real)
+    import tarfile
+    calls = {"n": 0}
+    extract = tarfile.TarFile.extract
+
+    def full_disk(self, *a, **k):
+        calls["n"] += 1
+        if calls["n"] > 3:
+            raise OSError(28, "No space left on device")
+        return extract(self, *a, **k)
+    monkeypatch.setattr(tarfile.TarFile, "extract", full_disk)
+    with pytest.raises(cache.CacheError, match="left as it was"):
+        cache.restore(other, local=out, log=lambda m: None)
+    assert not (other / ".lake" / "build").exists()
+    assert not list(other.glob(".lean-cache-restore-*"))
