@@ -6,31 +6,42 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   snapshot:
     if: github.repository == 'cgarryZA/MachineChecked'
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-      - name: Install pinned test runtimes
-        run: |
-          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain none
-          "$HOME/.elan/bin/elan" toolchain install leanprover/lean4:v4.24.0
-          "$HOME/.elan/bin/elan" toolchain install leanprover/lean4:v4.32.0
-          cd web && npm ci && npx playwright install chromium
-      - name: Archive runtimes
-        run: |
-          tar --zstd -cf /tmp/test-runtimes.tar.zst -C "$HOME" .elan .cache/ms-playwright
-      - uses: actions/upload-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
           name: machinechecked-test-runtimes
-          path: /tmp/test-runtimes.tar.zst
+          run-id: 39084489310
+          github-token: ${{ github.token }}
+          path: /tmp/runtimes
+      - run: split -b 450M /tmp/runtimes/test-runtimes.tar.zst /tmp/runtime.part-
+      - uses: actions/upload-artifact@v4
+        with:
+          name: runtime-aa
+          path: /tmp/runtime.part-aa
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: runtime-ab
+          path: /tmp/runtime.part-ab
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: runtime-ac
+          path: /tmp/runtime.part-ac
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: runtime-ad
+          path: /tmp/runtime.part-ad
           retention-days: 1
           compression-level: 0
