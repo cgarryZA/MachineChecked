@@ -2,7 +2,7 @@
 // from the manifest as written by the engine.
 
 import { statusView } from "./presentation.js";
-export { CLASS_ORDER, notProved } from "./presentation.js";
+export { notProved } from "./presentation.js";
 
 import { project, settleProject } from "./project.svelte.js";
 
@@ -150,17 +150,6 @@ export function loadClaim(index, id) {
 export function loadDecl(key) {
   return getJson(`data/decls/${key}.json`);
 }
-
-export const CLASS_LABEL = {
-  accepted: "accepted",
-  proved: "proved",
-  refuted: "refuted as printed",
-  open: "open",
-  malformed: "malformed",
-  unspecified: "unspecified",
-  declared: "linked, not checked",
-  "out-of-scope": "out of scope",
-};
 
 // The review queue the engine wrote (`data/review-queue.json`), if this site has one.
 export function loadQueue(index) {

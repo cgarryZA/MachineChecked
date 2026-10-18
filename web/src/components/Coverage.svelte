@@ -26,6 +26,7 @@
     <h1>Coverage</h1>
     <p class="muted">
       Every listed claim, with the status recorded by the engine.
+      For claims marked “{statusView({ status_code: "formal.accepted" }).label}”:
       {statusView({ status_code: "formal.accepted" }).explanation}
     </p>
     <div class="tools">

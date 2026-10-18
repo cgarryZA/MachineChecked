@@ -433,6 +433,7 @@ for (const width of [1300, 390]) {
     ];
     for (const [name, number, code, review, replay] of cases) {
       await pg.goto(origin + "/states/#/r/states/coverage");
+      assert.match(await pg.locator(".cov .intro").textContent(), /For claims marked “formal: accepted”/);
       const cov = pg.locator(".cov .paper").filter({ has: pg.locator("h2", { hasText: new RegExp(`^${name}$`) }) });
       const chip = cov.locator(`.sum [data-status='${code}']`);
       await chip.waitFor();
