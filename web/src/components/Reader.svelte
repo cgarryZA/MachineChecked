@@ -31,7 +31,7 @@
   function resize(w) { sideWidth = Math.min(maxWidth, Math.max(320, w)); }
   function remember() { try { localStorage.setItem("mc-side-width", String(sideWidth)); } catch {} }
   let dragging;
-  let focusClaim = $state(null);
+  let focusClaim = $state(null), contentsOpen = $state(false);
   function drag(e) {
     e.preventDefault(); dragging?.abort(); dragging = new AbortController();
     const move = (ev) => resize(layout.getBoundingClientRect().right - ev.clientX);
@@ -49,7 +49,7 @@
     remember();
   }
   function contents() {
-    if (narrow) contentsDialog.showModal();
+    if (narrow) { contentsOpen = true; contentsDialog.showModal(); }
     else showContents = !showContents;
   }
   $effect(() => { if (!narrow) contentsDialog?.close(); });
@@ -58,7 +58,7 @@
     if (narrow) focusClaim = id;
     go(withQuery(href(index.release, "read", paperId, id), { compare: comparing ? "1" : null }));
   }
-  $effect(() => { if (focusClaim === claimId && side) { side.focus({ preventScroll: true }); focusClaim = null; } });
+  $effect(() => { if (focusClaim && focusClaim === claimId && side) { side.focus({ preventScroll: true }); focusClaim = null; } });
   function close() { go(href(index.release, "read", paperId)); }
 </script>
 <svelte:window bind:innerWidth={viewport} />
@@ -82,7 +82,7 @@
 {:else}
   <div class="reader">
     <div class="reader-tools">
-      {#if claims.length}<button onclick={contents} aria-expanded={!narrow && showContents}>Contents</button>{/if}
+      {#if claims.length}<button onclick={contents} aria-expanded={narrow ? contentsOpen : showContents}>Contents</button>{/if}
       {#if index.editions?.length}
         <label class="edition">PDF <select aria-label="Paper revision" value={paper.edition || "original"} onchange={(e) => chooseEdition(e.currentTarget.value)}>
           <option value="original">Original paper</option>
@@ -113,7 +113,7 @@
       {/if}
     </div>
   </div>
-  <dialog class="contents-dialog" bind:this={contentsDialog} aria-label="Contents" onclick={(e) => { if (e.target === contentsDialog) contentsDialog.close(); }} onkeydown={() => {}}>
+  <dialog class="contents-dialog" bind:this={contentsDialog} onclose={() => contentsOpen = false} aria-label="Contents" onclick={(e) => { if (e.target === contentsDialog) contentsDialog.close(); }} onkeydown={() => {}}>
     {@render contentsList()}
   </dialog>
 {/if}

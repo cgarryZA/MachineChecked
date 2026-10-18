@@ -640,6 +640,7 @@ await check("failed claim loads can be retried", 1300, async (pg) => {
 await check("contents close after a mobile selection", 390, async (pg) => {
   await pg.goto(origin + "/paper/");
   await pg.getByRole("button", { name: "Contents", exact: true }).click();
+  assert.equal(await pg.getByRole("button", { name: "Contents", exact: true }).getAttribute("aria-expanded"), "true");
   await pg.locator("dialog[open] a", { hasText: "Theorem 3" }).click();
   await pg.locator("aside h1").waitFor();
   assert.equal(await pg.locator("dialog[open]").count(), 0);
@@ -698,6 +699,11 @@ await check("search retries after a failed index request", 1300, async (pg) => {
 });
 
 await check("review opens the selected claim, keeps protocol order and exports a saved report", 390, async (pg) => {
+  await pg.addInitScript(([unit, next]) => localStorage.setItem("prooflens-review:toy-paper", JSON.stringify({
+    selection: { paper: "unrelated-paper", group: "sec:unrelated:1" },
+    drafts: { [unit]: { stage: "read", reading: "A previously started blind draft." },
+      [next]: { stage: "read", reading: "Preserve this other unfinished reading." } }
+  })), [reviewUnits[1].id, reviewUnits[0].id]);
   await pg.goto(origin + `/review/#/r/${TOY.release}/read/T/T%3Athm%3Aeven-add`);
   await pg.getByRole("button", { name: "More", exact: true }).click();
   await pg.getByRole("link", { name: "Review it", exact: true }).click();
@@ -723,6 +729,7 @@ await check("review opens the selected claim, keeps protocol order and exports a
   assert.deepEqual(report.unit.claims, ["T:thm:even-add"]);
   assert.equal(report.reading.revealed_by[0].what, "Lean");
   assert.equal(report.verdict.value, "faithful");
+  assert.equal(await pg.evaluate((id) => JSON.parse(localStorage.getItem("prooflens-review:toy-paper")).drafts[id].reading, reviewUnits[0].id), "Preserve this other unfinished reading.");
   const download = pg.waitForEvent("download");
   await pg.getByRole("button", { name: "Export reports (1 new)", exact: true }).click();
   const file = await download; const exported = JSON.parse(fs.readFileSync(await file.path()));

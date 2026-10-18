@@ -31,8 +31,8 @@
   }
 
   // What to review: a paper, then a section of statements or a group of definitions.
-  let paper = $state(work.selection?.paper || "all");
-  let group = $state(work.selection?.group || "all");
+  let paper = $state(route.target ? "all" : work.selection?.paper || "all");
+  let group = $state(route.target ? "all" : work.selection?.group || "all");
   function select() { work.selection = { paper, group }; go(withQuery(location.hash, { claim: null, seen: null })); persist(); }
 
   const fpOf = (u) => u.fingerprint || JSON.stringify(u.fingerprints || {});
@@ -56,7 +56,13 @@
 
   // The card's draft, kept as it is typed.
   $effect(() => {
-    if (current && !work.drafts[current.id]) work.drafts[current.id] = { stage: "read", reading: "", reader_exposure: !!(route.readerSeen && current.claims.some((c) => c.id === route.target)) };
+    if (!current) return;
+    if (!work.drafts[current.id]) work.drafts[current.id] = { stage: "read", reading: "" };
+    const d = work.drafts[current.id];
+    if (d.stage === "read" && !d.reader_exposure && route.readerSeen && current.claims.some((c) => c.id === route.target)) {
+      d.reader_exposure = true;
+      persist();
+    }
   });
   const draft = $derived(current ? work.drafts[current.id] || null : null);
 
@@ -107,10 +113,11 @@
     draft.decided_at = now(); draft.stage = "author"; draft.author_shown_at = now(); persist();
   }
   function saveReport() {
+    const unitId = current.id;
     const r = buildReport({ index, unit: current, draft: $state.snapshot(draft), reviewer: work.reviewer });
     work.reports.push(r);
-    work.skipped = work.skipped.filter((id) => id !== current.id);
-    delete work.drafts[current.id];
+    work.skipped = work.skipped.filter((id) => id !== unitId);
+    delete work.drafts[unitId];
     lastIssue = r.issue_draft;
     persist();
   }

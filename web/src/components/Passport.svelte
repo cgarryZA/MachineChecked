@@ -138,7 +138,7 @@
       if (!article) return;
       scroller().scrollTop = next.length < previous.length ? scrolls[next.length] || 0 : 0;
       if (next.length) article.querySelector(".crumbs .back")?.focus({ preventScroll: true });
-      else returnFocus[0]?.focus({ preventScroll: true });
+      else (returnFocus[0]?.isConnected ? returnFocus[0] : menuButton)?.focus({ preventScroll: true });
     });
   });
   $effect(() => {
