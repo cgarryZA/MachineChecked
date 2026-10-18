@@ -98,3 +98,14 @@ def test_a_link_can_name_a_sub_term(toy):
     assert link["lean"] == {"decl": SPEC, "term": k, "in": "c"} and not link["stale"]
     with pytest.raises(SymbolError, match="no sub-term"):
         add(cfg, "T:thm:even-add", "a", SPEC, WHO, term="c#999")
+    # A sub-term is found by numbers that depend on how the statement is printed: a link whose
+    # number now names other text, or an older one made without its text, is stale (#67).
+    data = json.loads((toy / "symbols.json").read_text())
+    data["links"][0]["pins"]["target"] = "(b + a)"
+    (toy / "symbols.json").write_text(json.dumps(data))
+    _, _, cfg = build(toy, reuse_lean=True)
+    assert chunk(cfg, "T:thm:even-add")[1]["symbols"][0]["stale"]
+    del data["links"][0]["pins"]["target"]
+    (toy / "symbols.json").write_text(json.dumps(data))
+    _, _, cfg = build(toy, reuse_lean=True)
+    assert chunk(cfg, "T:thm:even-add")[1]["symbols"][0]["stale"]

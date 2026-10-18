@@ -36,16 +36,33 @@ def _in_math(tex: str, symbol: str) -> bool:
     return any(re.search(pat, s) for s in spans)
 
 
+def variables(spec: dict) -> list[dict]:
+    """The statement's variables by number: the prefix's binders, then each "there is" inside
+    the conclusion at the number the probe gave it."""
+    out: list[dict] = list(spec.get("binders", []))
+
+    def walk(n):
+        if n.get("op") == "exists" and isinstance(n.get("var"), int):
+            out.extend({} for _ in range(n["var"] + 1 - len(out)))
+            out[n["var"]] = {"role": "exists", "name": n.get("name"), "type": n.get("type")}
+        for a in n.get("args", []):
+            walk(a)
+    walk((spec.get("conclusion") or {}).get("logic") or {})
+    return out
+
+
 def _term_pp(spec: dict, where: str) -> dict | None:
-    """The pretty-printed term a sub-term's place names: `b:<i>` a binder's type, `c` the
+    """The pretty-printed term a sub-term's place names: `b:<i>` a binder's type, `x:<i>` the
+    type of the i-th variable (a "there is" inside the conclusion included), `c` the
     conclusion, `l:<n>` the n-th part of a conclusion split by its logic."""
     concl = spec.get("conclusion") or {}
     if where == "c":
         return concl
-    if where.startswith("b:") and where[2:].isdigit():
-        bs = spec.get("binders", [])
-        i = int(where[2:])
-        return bs[i].get("type") if i < len(bs) else None
+    for tag, items in (("b:", spec.get("binders", [])), ("x:", None)):
+        if where.startswith(tag) and where[2:].isdigit():
+            items = items if items is not None else variables(spec)
+            i = int(where[2:])
+            return (items[i] or {}).get("type") if i < len(items) else None
     if where.startswith("l:") and where[2:].isdigit():
         leaves = []
 
@@ -59,6 +76,31 @@ def _term_pp(spec: dict, where: str) -> dict | None:
         n = int(where[2:])
         return leaves[n] if n < len(leaves) else None
     return None
+
+
+def _text(pp) -> str:
+    if not isinstance(pp, dict):
+        return pp or ""
+    return pp.get("text") or "".join(x.get("t", "") for x in pp.get("segments", []))
+
+
+def target_text(spec: dict, target: dict) -> str | None:
+    """What a link's Lean side shows, pinned with the link so that a change in how the statement
+    is printed or split (which renumbers sub-terms and parts while the statement stays the same)
+    makes the link stale instead of pointing it at another object."""
+    vs = variables(spec)
+    if "term" in target:
+        pp = _term_pp(spec, target.get("in", ""))
+        terms = (pp or {}).get("terms") or []
+        k = target["term"]
+        if not isinstance(k, int) or k >= len(terms):
+            return None
+        return "".join(x.get("t", "") for x in pp["segments"][terms[k]["from"]:terms[k]["to"]])
+    i = target.get("var", target.get("binder"))
+    if not isinstance(i, int) or i >= len(vs) or not vs[i]:
+        return None
+    return f"{vs[i].get('name')} : {_text(vs[i].get('type'))}" if "binder" in target \
+        else str(vs[i].get("name"))
 
 
 def add(cfg: Config, claim: str, symbol: str, decl: str, by: str, var: str | None = None,
@@ -91,19 +133,21 @@ def add(cfg: Config, claim: str, symbol: str, decl: str, by: str, var: str | Non
         where, _, k = term.partition("#")
         pp = _term_pp(spec, where)
         if pp is None or not k.isdigit() or int(k) >= len(pp.get("terms") or []):
-            raise SymbolError(f"{decl} has no sub-term {term!r} (WHERE#K: b:<binder>, c or "
-                              "l:<part>, then the sub-term's number)")
+            raise SymbolError(f"{decl} has no sub-term {term!r} (WHERE#K: b:<binder>, x:<variable>, "
+                              "c or l:<part>, then the sub-term's number)")
         target = {"decl": decl, "term": int(k), "in": where}
     else:
-        names = [b.get("name") for b in spec.get("binders", [])]
+        names = [b.get("name") for b in variables(spec)]
         want = var if var is not None else type_of
         idx = int(want) if want.isdigit() else (names.index(want) if want in names else None)
         if idx is None or not 0 <= idx < len(names):
-            raise SymbolError(f"{decl} has no binder {want!r} (it has {', '.join(names)})")
+            raise SymbolError(f"{decl} has no binder {want!r} (it has "
+                              f"{', '.join(str(n) for n in names if n)})")
         target = {"decl": decl, "var": idx} if var is not None else \
             {"decl": decl, "binder": idx, "path": "type"}
     link = {"claim": claim, "symbol": {"tex": symbol, "occurrence": "all"}, "lean": target,
-            "by": by, "pins": {"statement": spec.get("fingerprint"), "source": sha256_text(tex)}}
+            "by": by, "pins": {"statement": spec.get("fingerprint"), "source": sha256_text(tex),
+                               "target": target_text(spec, target)}}
     data = read_json(cfg.symbols) if cfg.symbols.exists() else {"schema": SCHEMA, "links": []}
     data["links"] = [ln for ln in data.get("links", [])
                      if not (ln.get("claim") == claim and (ln.get("symbol") or {}).get("tex") == symbol)]

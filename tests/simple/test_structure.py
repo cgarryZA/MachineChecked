@@ -14,11 +14,10 @@ from prooflens.simple import build_view
 SRC = ROOT / "tests" / "fixtures" / "structure"
 
 
-def statement(root):
+def statement(root, name="Shape.layout"):
     view = build_view(root, root / "paper/main.tex", root / ".machinechecked", log=lambda m: None)
-    (claim,) = view["body"]["claims"]
-    link = next(l for l in claim["links"] if l["name"] == "Shape.layout")
-    return link["record"]
+    return next(l["record"] for c in view["body"]["claims"] for l in c["links"]
+                if l["name"] == name)
 
 
 def var_refs(pp):
@@ -58,3 +57,36 @@ def test_variables_and_logic_are_exported(tmp_path, toolchain):
     concl = rec["conclusion"]
     shown = ["".join(s["t"] for s in concl["segments"][t["from"]:t["to"]]) for t in concl["terms"]]
     assert shown == ["x ≤ C ∧ n + x ≤ n + C", "x ≤ C", "n + x ≤ n + C", "n + x", "n + C"]
+    # A "there is" inside the conclusion shows its witness's type, and each witness is a
+    # variable of its own: the two `x` of sibling parts are different variables, and the one
+    # `x` of `x j = j ∧ j ≤ x j` is the same in both of its parts (#67).
+    rec = statement(root, "Shape.witnesses")
+    assert rec["conclusion"]["text"] == \
+        "(∃ (x : Nat → Nat), x j = j ∧ j ≤ x j) ∧ ∃ (x : Bool), x = true"
+    left, right = rec["conclusion"]["logic"]["args"]
+    assert (left["op"], left["name"], left["type"]["text"], left["var"]) == \
+        ("exists", "x", "Nat → Nat", 1)
+    assert (right["op"], right["name"], right["type"]["text"], right["var"]) == \
+        ("exists", "x", "Bool", 2)
+    a, b = left["args"][0]["args"]
+    assert var_refs(a["leaf"]) == [("x", 1), ("j", 0), ("j", 0)]
+    assert var_refs(b["leaf"]) == [("j", 0), ("x", 1), ("j", 0)]
+    assert var_refs(right["args"][0]["leaf"]) == [("x", 2)]
+    assert rec["exact"]["text"].startswith("∀ (j : Nat), (∃ (x : Nat → Nat)")
+    # Negation, implication and "for every" inside a part keep their scope; an instance says
+    # whether it supplies data or a proposition (#67).
+    assert [x.get("supplies") for x in statement(root)["binders"]
+            if x["role"] == "instance"] == ["data"]
+    rec = statement(root, "Shape.shapes")
+    assert [(x["role"], x["supplies"]) for x in rec["binders"]] == \
+        [("forall", "data"), ("instance", "proposition")]
+    neg, alt = rec["conclusion"]["logic"]["args"]
+    assert neg["op"] == "not" and neg["args"][0]["op"] == "exists"
+    assert neg["args"][0]["type"]["text"] == "Nat"
+    assert alt["op"] == "or"
+    every, cond = alt["args"]
+    assert (every["op"], every["name"], every["type"]["text"]) == ("forall", "n", "Nat")
+    assert cond["op"] == "implies" and cond["args"][0]["leaf"]["text"] == "1 = 1"
+    assert cond["args"][1]["op"] == "exists" and cond["args"][1]["name"] == "m"
+    numbers = [neg["args"][0]["var"], every["var"], cond["args"][1]["var"]]
+    assert len(set(numbers)) == 3 and min(numbers) == len(rec["binders"])

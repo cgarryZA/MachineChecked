@@ -96,7 +96,7 @@ assumptions, definitions and conclusion; see [Reviewing](REVIEWING.md).
 
 ## Read a claim
 
-Select a claim to see the printed statement beside its Lean statement, set out as its variables, its hypotheses in order, and its conclusion. When the project's repository is on GitHub, **Lean source** opens the declaration at the exact commit and line. Where a corrected statement stands beside the printed one, a box says what the correction changes: the hypotheses it adds or drops, and whether the conclusion is the same. **Review it** opens the review queue, and **Raise issue** a report to the audit's repository.
+Select a claim to see the printed statement beside its Lean statement, set out as its variables, its hypotheses in order, and its conclusion. A “there is” inside the conclusion shows its witness with its type, and the parts that use that witness beneath it; two witnesses of the same name in different parts are different variables. When the project's repository is on GitHub, **Lean source** opens the declaration at the exact commit and line. Where a corrected statement stands beside the printed one, a box says what the correction changes: the hypotheses it adds or drops, and whether the conclusion is the same. **Review it** opens the review queue, and **Raise issue** a report to the audit's repository.
 
 ## Interpret the status
 
