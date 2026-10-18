@@ -23,6 +23,7 @@ valid, and a Comparator replay of every proof).
 from __future__ import annotations
 
 from .reviews import Review, history
+from .source_regions import SCHEME as SOURCE_SCHEME, matches as source_matches
 
 OUT_OF_SCOPE = {"expository", "literature", "empirical", "proof-step", "part-of", "duplicate"}
 
@@ -476,8 +477,8 @@ class Assessor:
                 reasons.append("comparator: no successful kernel replay covering every proof "
                                "of the paper")
             out[pid] = {"source": source,
-                        **({"source_note": "the source is a PDF: its hash is pinned and checked, "
-                            "and claim positions are approximate"} if source == "pdf" else {}),
+                        **({"source_note": "PDF source; statement positions are approximate. "
+                            "Coverage is checked against detected headings, not guaranteed complete."} if source == "pdf" else {}),
                         "consistency": {"pass": not consistency, "failures": consistency},
                         "release": {"pass": not reasons, "reasons": reasons},
                         "comparator": comparator}
@@ -507,8 +508,18 @@ class Assessor:
     # -- inventory against the compiled paper ---------------------------------------------
 
     def inventory_checks(self):
-        """Compare the inventory with the environments the compiled papers contain."""
+        """Check coverage against the detected paper statements, and LaTeX source pins."""
         for pid, t in (self.tex or {}).items():
+            if t.get("mode") == "pdf":
+                claims = [c for c in self.inv["claims"] if c["paper"] == pid]
+                for anchor in t.get("anchors", []):
+                    if not any(match_anchor(c, [anchor]) is not None for c in claims):
+                        label = f"{anchor['env'].capitalize()} {anchor.get('number', '')}"
+                        self.findings.append(_finding(
+                            "violation", "inventory-gap",
+                            f"{pid}:{anchor['env']}:{anchor.get('number', '')}:{anchor['id']}",
+                            f"{label} is detected in the PDF but not in the inventory"))
+                continue
             if t.get("mode") != "latex":
                 continue
             anchors = t["anchors"]
@@ -516,15 +527,20 @@ class Assessor:
             for c in [c for c in self.inv["claims"] if c["paper"] == pid]:
                 line = line_location(c)
                 if line is not None:
-                    # A claim recorded by file and line (an equation, a part, a prose claim): its
-                    # hash is the hash of that source line, as in `acceptance.py`.
-                    got = (t.get("lines") or {}).get(c["location"])
-                    if c.get("source_sha256") and got != c["source_sha256"]:
+                    region = (t.get("regions") or {}).get(c["id"], {})
+                    if c.get("source_hash_scheme") != SOURCE_SCHEME:
+                        self.findings.append(_finding(
+                            "violation", "source-hash-scheme", c["id"],
+                            f"{c['location']}: source regions must be pinned at the original "
+                            "revision (python -m prooflens.source_regions --config FILE "
+                            f"--paper {pid}); then rebuild"))
+                    elif not source_matches(c, t):
+                        detail = region.get("error") or (
+                            "is missing; rebuild the source evidence" if not region else
+                            "differs from the frozen source region")
                         self.findings.append(_finding(
                             "violation", "source-changed", c["id"],
-                            f"the source line {c['location']} of {c.get('number', c['id'])} "
-                            + ("is missing" if got is None else
-                               "differs from the frozen inventory")))
+                            f"the source region at {c['location']} {detail}"))
                     continue
                 a = match_anchor(c, anchors)
                 if a is None:

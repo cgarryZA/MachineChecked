@@ -18,8 +18,9 @@ from .probe import FINGERPRINT_VERSION, requests_from_inventory, run_probe
 from .reviews import load_dismissals, load_reviews
 from .schemas import validate
 from .sources import acquire
+from .source_regions import collect as collect_source_regions
 from .tex import DEFAULT_ENVS, TexError, anchors_for, theorem_envs
-from .util import (canonical_json, git_dirty, git_head, link_or_copy, norm_ws, prepare_work_dir,
+from .util import (canonical_json, git_dirty, git_head, link_or_copy, prepare_work_dir,
                    read_json, sha256_file, sha256_text, write_json)
 
 
@@ -125,8 +126,8 @@ def build(cfg: Config, release: str | None = None, skip_lean: bool = False,
             prov["pdf_origin"] = "committed"
             pdfs[paper.id] = snap.dir / snap.pdf
         if paper.id in tex:
-            tex[paper.id]["lines"] = line_hashes(inv, paper.id, snap.dir)
             if t is not None:
+                tex[paper.id]["regions"] = collect_source_regions(inv, paper.id, snap.dir)
                 locs = [c["location"] for c in inv["claims"]
                         if c["paper"] == paper.id and line_location(c) is not None]
                 tex[paper.id]["line_anchors"] = t["line_anchors"](locs)
@@ -233,21 +234,6 @@ def manual_anchors(cfg: Config, pid: str) -> dict:
     if not path.exists():
         return {}
     return {cid: a for cid, a in read_json(path).items() if cid.split(":")[0] == pid}
-
-
-def line_hashes(inv: dict, pid: str, src: Path) -> dict:
-    """The hash of every source line a claim of the paper is recorded at."""
-    out = {}
-    for c in inv["claims"]:
-        if c["paper"] != pid or line_location(c) is None:
-            continue
-        path, _, n = c["location"].rpartition(":")
-        try:
-            lines = (src / path).read_text(encoding="utf-8").split("\n")
-            out[c["location"]] = sha256_text(norm_ws(lines[int(n) - 1]))
-        except (OSError, IndexError):
-            pass
-    return out
 
 
 class StaleEvidence(RuntimeError):

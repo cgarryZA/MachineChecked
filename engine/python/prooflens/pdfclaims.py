@@ -1,15 +1,15 @@
-"""Claims of a paper that is only a PDF: its numbered statements, found by their bold heads.
+"""Claims of a paper that is only a PDF: its numbered statements, found by styled headings.
 
 A typeset theorem starts with its head in bold ("Lemma 8.6."), which distinguishes it from a
 reference to it in the text ("by Lemma 8.6"). The PDF is read with poppler's `pdftohtml -xml`,
 which keeps bold runs and positions. Each claim is placed from its head to the next head or
 proof on the same page; the end is an estimate (a PDF does not record where a statement ends),
-so its anchor is `approximate`.
+so its anchor is `approximate`. Remark-like heads may be italic. These are typography
+heuristics, not a guarantee that every statement in an arbitrary PDF will be found.
 """
 
 from __future__ import annotations
 
-import html
 import re
 import subprocess
 import tempfile
@@ -19,7 +19,7 @@ from pathlib import Path
 from .util import norm_ws, sha256_text
 
 KINDS = ("Theorem", "Lemma", "Proposition", "Corollary", "Definition", "Remark", "Example",
-         "Assumption", "Conjecture", "Claim", "Hypothesis", "Convention")
+         "Assumption", "Conjecture", "Claim", "Hypothesis", "Convention", "Note")
 # A statement's number: "3", "8.6", "A1", "4.2a", or an appendix's "A.1", "B.10".
 NUMBER = r"(?:[A-Z](?:\.\d+)+|[A-Z]?\d+(?:\.\d+)*)[a-z]?"
 HEAD = re.compile(r"^(" + "|".join(KINDS) + r")\s+(" + NUMBER + r")\s*(\.|\(|$)")
@@ -27,34 +27,96 @@ STOP = re.compile(r"^(Proof\b|\d+(\.\d+)*\s+[A-Z])")
 
 
 BOLD_FONT = re.compile(r"bold|black|heavy|semibold|demi|cmbx|-bd\b|bx\d", re.I)
+ITALIC_FONT = re.compile(r"italic|oblique|cmti|cmsl", re.I)
+ITALIC_KINDS = {"Remark", "Example", "Note", "Claim"}
+
+
+def _prefix(element: ET.Element, tag: str, whole: bool) -> str:
+    """The leading text in one style; later emphasis does not turn a reference into a head."""
+    if whole:
+        return "".join(element.itertext()).strip()
+    fragments = []
+
+    def visit(node, active=False):
+        active = active or node.tag == tag
+        if node.text:
+            fragments.append((node.text, active))
+        for child in node:
+            visit(child, active)
+            if child.tail:
+                fragments.append((child.tail, active))
+
+    visit(element)
+    prefix = []
+    for text, active in fragments:
+        if text.strip() and not active:
+            break
+        prefix.append(text)
+    return "".join(prefix).strip()
 
 
 def _lines(xml_text: str) -> list[dict]:
-    """Every text run, in reading order: page, top and bottom in PDF points, text, bold. A run
-    is bold when it is marked so, or when its font's name says so (Computer Modern's bold,
-    CMBX, is not marked)."""
+    """Join nearby same-baseline font runs, retaining each row's leading styled text.
+
+    amsthm can print an italic 'Remark' and an upright number as separate PDF runs. Large
+    horizontal gaps (such as a column boundary) are not joined.
+    """
     root = ET.fromstring(xml_text)
     bold_fonts = {f.get("id") for f in root.iter("fontspec")
                   if BOLD_FONT.search(f.get("family", ""))}
+    italic_fonts = {f.get("id") for f in root.iter("fontspec")
+                    if ITALIC_FONT.search(f.get("family", ""))}
     out = []
     for page in root.iter("page"):
         pno = int(page.get("number"))
-        h = float(page.get("height"))
-        scale = 1.0
-        if page.get("pt_height"):
-            scale = float(page.get("pt_height")) / h
-        for t in page.iter("text"):
-            raw = ET.tostring(t, encoding="unicode", method="xml")
-            whole = t.get("font") in bold_fonts
-            bold = "<b>" in raw or whole
-            txt = html.unescape(re.sub(r"<[^>]+>", "", raw))
-            top, height = float(t.get("top")), float(t.get("height"))
-            out.append({"page": pno, "y0": top * scale, "y1": (top + height) * scale,
-                        "text": txt.strip(), "bold": bold,
-                        "head": txt.strip() if whole else html.unescape(re.sub(
-                            r"<[^>]+>", "", "".join(ET.tostring(b, encoding="unicode")
-                                                    for b in t.iter("b")))).strip()})
+        height = float(page.get("height"))
+        scale = float(page.get("pt_height")) / height if page.get("pt_height") else 1.0
+        for node in page.iter("text"):
+            text = "".join(node.itertext()).strip()
+            if not text:
+                continue
+            y = float(node.get("top")) * scale
+            h = float(node.get("height")) * scale
+            x = float(node.get("left", "0")) * scale
+            right = x + float(node.get("width", "0")) * scale
+            bold = node.get("font") in bold_fonts
+            italic = node.get("font") in italic_fonts
+            row = {"page": pno, "y0": y, "y1": y + h, "x0": x, "x1": right,
+                   "text": text, "bold": bold or any(True for _ in node.iter("b")),
+                   "italic": italic or any(True for _ in node.iter("i")),
+                   "head": _prefix(node, "b", bold), "italic_head": _prefix(node, "i", italic)}
+            previous = out[-1] if out else None
+            gap = x - previous["x1"] if previous else 0
+            if (previous and previous["page"] == pno and abs(previous["y0"] - y) <= scale
+                    and -2 * scale <= gap <= 1.5 * h):
+                separator = "" if gap <= max(scale, 0.15 * h) else " "
+                for key in ("head", "italic_head"):
+                    if previous[key] == previous["text"] and row[key]:
+                        previous[key] += separator + row[key]
+                previous["text"] += separator + text
+                previous["x1"] = right
+                previous["y1"] = max(previous["y1"], row["y1"])
+                previous["bold"] |= row["bold"]
+                previous["italic"] |= row["italic"]
+            else:
+                out.append(row)
     return out
+
+
+def heading(line: dict):
+    """A heading must start the text run; italic style is allowed only for remark-like kinds."""
+    match = HEAD.match(line["text"])
+    if match is None:
+        return None
+    styles = [(line.get("bold"), line.get("head", ""))]
+    if match.group(1) in ITALIC_KINDS:
+        styles.append((line.get("italic"), line.get("italic_head", "")))
+    for enabled, text in styles:
+        styled = HEAD.match(text) if enabled else None
+        if enabled and (text.strip() == match.group(1)
+                        or styled and styled.group(1, 2) == match.group(1, 2)):
+            return match
+    return None
 
 
 def page_heights(pdf: Path) -> dict[int, float]:
@@ -94,7 +156,7 @@ def claims_from_pdf(pdf: Path) -> tuple[list[dict], tuple[float, float] | None]:
 
     heads = []
     for i, l in enumerate(lines):
-        m = HEAD.match(l["head"]) if l["bold"] else None
+        m = heading(l)
         if m:
             heads.append((i, m))
     anchors, seen = [], set()
@@ -114,7 +176,8 @@ def claims_from_pdf(pdf: Path) -> tuple[list[dict], tuple[float, float] | None]:
             if l["page"] == lines[i]["page"]:
                 end = l
         text = norm_ws(" ".join(body))
-        rest = text[len(m.group(0)):].lstrip() if text.startswith(m.group(0)) else text
+        offset = m.start(3) if m.group(3) == "(" else m.end()
+        rest = text[offset:].lstrip()
         title = None
         tm = re.match(r"\(([^)]{1,120})\)\s*\.?", rest) if m.group(3) == "(" or \
             rest.startswith("(") else None
