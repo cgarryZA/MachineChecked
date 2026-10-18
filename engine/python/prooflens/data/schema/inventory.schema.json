@@ -26,6 +26,15 @@
         "label": {"type": ["string", "null"]},
         "location": {"type": ["string", "null"]},
         "source_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+        "source_hash_scheme": {"const": "tex-region-v1"},
+        "source_region": {
+          "type": "object", "required": ["end_line"], "additionalProperties": false,
+          "properties": {
+            "end_line": {"type": "integer", "minimum": 1},
+            "start_column": {"type": "integer", "minimum": 1},
+            "end_column": {"type": "integer", "minimum": 1}
+          }
+        },
         "scope": {"$ref": "#/$defs/scope"},
         "scope_note": {"type": "string"},
         "scope_reviewed": {"type": "boolean"},
