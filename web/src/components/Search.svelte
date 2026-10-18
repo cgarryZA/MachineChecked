@@ -56,7 +56,7 @@
   {#if open && q}
     <div class="results">
       {#if error}
-        <p role="status">Search unavailable. <button onclick={() => attempt++}>Try again</button></p>
+        <p role="status">Search unavailable. <button onclick={() => { host.querySelector("input").focus(); attempt++; }}>Try again</button></p>
       {:else if !data}<p role="status">Searching…</p>
       {:else if !results.length}<p role="status">No matching claims or definitions.</p>{/if}
       <ul id={id} role="listbox" aria-label="Search results">

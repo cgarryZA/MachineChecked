@@ -169,7 +169,7 @@ async function check(name, width, fn) {
   const pg = await browser.newPage({ viewport: { width, height: 900 } });
   pg.setDefaultTimeout(10000);
   const errors = [];
-  pg.on("pageerror", (e) => errors.push(String(e)));
+  pg.on("pageerror", (e) => { errors.push(String(e)); console.log(`PAGE ERROR ${name}: ${e.stack || e}`); });
   try {
     await fn(pg);
     assert.deepEqual(errors, [], "no page errors");
@@ -177,7 +177,10 @@ async function check(name, width, fn) {
   } catch (e) {
     failures++;
     console.log(`FAIL ${name} (${width}px): ${e.message}`);
-    if (process.env.SHOTS) await pg.screenshot({ path: path.join(process.env.SHOTS, `failure-${failures}-${width}.png`) });
+    if (process.env.SHOTS) {
+      await pg.screenshot({ path: path.join(process.env.SHOTS, `failure-${failures}-${width}.png`) });
+      fs.writeFileSync(path.join(process.env.SHOTS, `failure-${failures}.json`), JSON.stringify({ name, errors, message: e.message, storage: await pg.evaluate(() => Object.fromEntries(Object.entries(localStorage))) }, null, 2));
+    }
   } finally {
     await pg.close();
   }

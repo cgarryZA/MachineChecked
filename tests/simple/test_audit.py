@@ -152,7 +152,8 @@ def test_check_json_is_one_document_on_stdout(plain):
     assert c["Theorem 1"]["status_code"] == "link.checked"
     assert c["Theorem 2"]["status_code"] == "link.suggested"
     assert c["Theorem 2"]["status"] == "suggested link, not confirmed"
-    assert "not checked here" in out["note"]
+    assert "linked Lean declarations" in out["note"]
+    assert "correspondence reviews compare them with the paper" in out["note"]
 
 
 def test_the_skill_defines_evidence_and_machine_statuses():

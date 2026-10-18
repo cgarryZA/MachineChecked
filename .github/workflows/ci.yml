@@ -32,32 +32,10 @@ jobs:
           "$HOME/.elan/bin/elan" toolchain install leanprover/lean4:v4.24.0
       - name: Install ProofLens
         run: pip install -e '.[test]'
-      - name: The committed reader is the build of its sources
-        run: |
-          cd web && npm ci && npm run build && cd ..
-          git status --porcelain -- engine/python/prooflens/web
-          test -z "$(git status --porcelain -- engine/python/prooflens/web)"
-      - name: The reader in a browser (web/tests)
-        id: reader
-        continue-on-error: true
-        run: |
-          cd web && npx playwright install --with-deps chromium && SHOTS="$RUNNER_TEMP/reader-shots" node tests/reader.test.mjs
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: reader-screenshots
-          path: ${{ runner.temp }}/reader-shots
-          retention-days: 7
       - name: Build the plain example (zero-configuration tests use it)
         run: cd examples/plain-paper && lake build
-      - name: Tests (contracts, mutations, security, zero-configuration)
-        run: pytest -q
-      - name: An installed wheel needs no Node and no checkout
-        run: |
-          pip wheel . --no-deps -w /tmp/wheel
-          python -m venv /tmp/venv && /tmp/venv/bin/pip install /tmp/wheel/*.whl
-          cd examples/plain-paper && /tmp/venv/bin/prooflens build --out /tmp/plain.html
-          grep -q __PROOFLENS__ /tmp/plain.html
+      - name: Prepare the preview browser
+        run: cd web && npm ci && npx playwright install --with-deps chromium
       - name: Build the toy paper
         run: cd examples/toy-paper && prooflens build --fail-on-violation
       - name: Export the demo (approved fields only, scanned; data only, the Demo audit workflow publishes it)
@@ -75,9 +53,43 @@ jobs:
           path: demo-site
           retention-days: 14
 
-      - name: Require the browser checks to pass
-        if: always() && steps.reader.outcome != 'success'
-        run: exit 1
+      - name: Tests (contracts, mutations, security, zero-configuration)
+        run: pytest -q
+      - name: An installed wheel needs no Node and no checkout
+        run: |
+          pip wheel . --no-deps -w /tmp/wheel
+          python -m venv /tmp/venv && /tmp/venv/bin/pip install /tmp/wheel/*.whl
+          cd examples/plain-paper && /tmp/venv/bin/prooflens build --out /tmp/plain.html
+          grep -q __PROOFLENS__ /tmp/plain.html
+
+
+  reader:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: pip install -e .
+      - name: The committed reader is the build of its sources
+        run: |
+          cd web && npm ci && npm run build && cd ..
+          git status --porcelain -- engine/python/prooflens/web
+          test -z "$(git status --porcelain -- engine/python/prooflens/web)"
+      - name: The reader in a browser (web/tests)
+        run: |
+          cd web && npx playwright install --with-deps chromium && SHOTS="$RUNNER_TEMP/reader-shots" node tests/reader.test.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: reader-screenshots
+          path: ${{ runner.temp }}/reader-shots
+          retention-days: 7
 
   # The reusable audit workflow (audit.yml), run as a researcher's repository would run it, on the
   # plain example with this checkout's MachineChecked.
