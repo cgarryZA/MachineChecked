@@ -1,0 +1,28 @@
+import assert from "node:assert/strict";
+import { clauseVerdict, clauseNote, linkVerdict, inScope, notAccepted } from "../src/lib/status.js";
+
+const checked = { status_code: "link.checked", status: "Anything at all" };
+assert.equal(linkVerdict(checked), linkVerdict({ ...checked, status: "not checked" }));
+assert.match(linkVerdict({ status_code: "link.not-in-audit" }), /does not include/);
+assert.doesNotMatch(linkVerdict({ status_code: "link.not-in-audit" }), /project is not built/);
+assert.match(linkVerdict({ status_code: "link.module-failed" }), /could not be loaded/);
+assert.match(linkVerdict({ status_code: "link.ambiguous" }), /More than one module/);
+assert.match(linkVerdict({ status: "linked: Lean proof checked" }), /No recognised/);
+assert.match(linkVerdict({ status_code: "toString" }), /No recognised/);
+assert.match(linkVerdict({ status_code: "published-audit", status: "proved" }), /not checked by this page/);
+assert.match(linkVerdict({ status_code: "link.axioms", axioms: ["Synthetic.extra"] }), /Synthetic.extra/);
+assert.equal(inScope({ scope: "literature", status: "formal: accepted" }), false);
+assert.equal(inScope({ scope: "formal", status: "out of scope", class: "open" }), true);
+assert.equal(notAccepted({ scope: "formal", status: "Anything", class: "accepted" }), false);
+assert.equal(notAccepted({ scope: "formal", status: "formal: accepted", class: "open" }), true);
+const cl = { state: "proved", review: "author-reviewed", checks: { accept: { ok: true } } };
+assert.equal(clauseNote(cl, 1), null, "Do not repeat a successful status");
+assert.match(clauseVerdict(cl), /only by its author/);
+assert.doesNotMatch(clauseVerdict(cl, false), /correspondence/);
+assert.doesNotMatch(clauseVerdict(cl), /replayed/);
+assert.match(clauseVerdict({ ...cl, checks: { ...cl.checks, replay: { state: "pass" } } }), /replayed independently/);
+assert.match(clauseVerdict({ ...cl, state: "refuted" }), /negation of the formal statement/);
+assert.doesNotMatch(clauseVerdict({ ...cl, state: "refuted" }), /printed statement false/);
+assert.match(clauseVerdict({ state: "unknown", checks: { accept: { ok: true } } }), /No recognised/);
+assert.match(linkVerdict({ status_code: "link.failed", status: "proved" }), /No proof result/);
+console.log("status presentation tests passed");

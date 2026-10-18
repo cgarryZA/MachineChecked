@@ -1,0 +1,66 @@
+name: Validate status implementation on scratch branch
+
+on:
+  push:
+    branches: [build/epic86-status-implementation]
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    if: github.repository == 'cgarryZA/MachineChecked'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Apply to the fixed reviewed base, without helper files
+        run: |
+          cp -r .scratch /tmp/status-change
+          git switch --detach 80b417a2f42db5d75031e232ed4d226e9dac968b
+          python /tmp/status-change/apply.py
+      - name: Install test dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends latexmk texlive-latex-recommended texlive-latex-extra texlive-science texlive-fonts-recommended poppler-utils
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+          "$HOME/.elan/bin/elan" toolchain install leanprover/lean4:v4.24.0
+          pip install -e '.[test]'
+          cd web && npm ci && npx playwright install --with-deps chromium
+      - name: Build and test
+        run: |
+          cd web && npm run build && node tests/reader.test.mjs && cd ..
+          (cd examples/plain-paper && lake build)
+          pytest -q
+      - name: Stage and check the intended code only
+        run: |
+          git add -A
+          test -z "$(git diff --cached --name-only -- .github .scratch)"
+          printf '%s\n' '-----BEGIN OPENSSH PRIVATE KEY-----' '-----BEGIN RSA PRIVATE KEY-----' > /tmp/private-markers.txt
+          python scripts/check_public.py --denylist /tmp/private-markers.txt
+          git diff --cached --check
+          git diff --cached --stat
+      - name: Commit on a new implementation branch only
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'fix: separate result codes from display prose' -m 'Fixes #82. Preserve assessment policy, expose code-based link states, and share reader explanations. Regenerate the packaged reader and test fixtures.'
+          python - <<'PY'
+          import base64, os, subprocess
+          header = 'AUTHORIZATION: basic ' + base64.b64encode(('x-access-token:' + os.environ['GH_TOKEN']).encode()).decode()
+          env = dict(os.environ, GIT_CONFIG_COUNT='1', GIT_CONFIG_KEY_0='http.https://github.com/.extraheader', GIT_CONFIG_VALUE_0=header)
+          subprocess.run(['git', 'push', '--force-with-lease=refs/heads/fix/epic86-status-codes:', 'https://github.com/cgarryZA/MachineChecked.git', 'HEAD:refs/heads/fix/epic86-status-codes'], env=env, check=True)
+          PY
+          git log -1 --format='Implementation commit: %H%nTree: %T'
