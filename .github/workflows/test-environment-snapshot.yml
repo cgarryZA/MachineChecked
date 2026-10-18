@@ -11,25 +11,26 @@ jobs:
   snapshot:
     if: github.repository == 'cgarryZA/MachineChecked'
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Install the pinned frontend dependencies
-        run: cd web && npm ci
-      - name: Archive the public checkout and dependencies
+      - name: Install pinned test runtimes
         run: |
-          git bundle create /tmp/MachineChecked.bundle --all
-          tar -czf /tmp/frontend-dependencies.tar.gz web/node_modules
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain none
+          "$HOME/.elan/bin/elan" toolchain install leanprover/lean4:v4.24.0
+          "$HOME/.elan/bin/elan" toolchain install leanprover/lean4:v4.32.0
+          cd web && npm ci && npx playwright install chromium
+      - name: Archive runtimes
+        run: |
+          tar --zstd -cf /tmp/test-runtimes.tar.zst -C "$HOME" .elan .cache/ms-playwright
       - uses: actions/upload-artifact@v4
         with:
-          name: machinechecked-test-environment
-          path: |
-            /tmp/MachineChecked.bundle
-            /tmp/frontend-dependencies.tar.gz
+          name: machinechecked-test-runtimes
+          path: /tmp/test-runtimes.tar.zst
           retention-days: 1
+          compression-level: 0
