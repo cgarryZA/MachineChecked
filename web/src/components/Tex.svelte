@@ -5,7 +5,7 @@
   // know are shown as source. Linked symbols (`symbols`, [{tex, id}]) are marked in the
   // mathematics, highlighted while `active` holds their id, and reported to `onsym` on hover
   // (`hover`, or null on leaving) and on click (`pin`).
-  let { text, symbols = [], active = [], onsym = null } = $props();
+  let { text, symbols = [], active = [], onsym = null, onstatus = null, macros = {} } = $props();
   let el;
 
   const escape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -28,10 +28,12 @@
 
   $effect(() => {
     if (!el) return;
-    el.textContent = marked(text
+    const source = text
       .replace(/\\label\{[^}]*\}/g, "")
       .replace(/\\(emph|textit|textbf)\{([^}]*)\}/g, "$2")
-      .replace(/~/g, " "));
+      .replace(/~/g, " ");
+    el.textContent = marked(source);
+    let failed = false;
     renderMathInElement(el, {
       delimiters: [
         { left: "\\[", right: "\\]", display: true },
@@ -40,8 +42,12 @@
         { left: "\\(", right: "\\)", display: false },
         { left: "$", right: "$", display: false },
       ],
-      throwOnError: false,
+      throwOnError: true,
+      macros,
+      trust: false,
+      errorCallback: () => { failed = true; },
     });
+    onstatus?.(!failed && !/\\[A-Za-z]/.test(source.replace(MATH, "")));
     for (const s of symbols.slice(0, 256)) {
       const want = `rgb(1, 254, ${s.id})`;
       for (const node of el.querySelectorAll(".katex [style*='color']")) {
@@ -53,6 +59,8 @@
       const id = Number(node.dataset.sym);
       node.setAttribute("tabindex", "0");
       node.setAttribute("role", "button");
+      node.setAttribute("aria-label", "Inspect symbol " + (symbols.find((s) => s.id === id)?.tex || node.textContent));
+      node.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onsym(id, "pin"); } });
       node.addEventListener("mouseenter", () => onsym(id, "hover"));
       node.addEventListener("mouseleave", () => onsym(null, "hover"));
       node.addEventListener("focus", () => onsym(id, "hover"));
@@ -70,7 +78,7 @@
 <div class="tex" bind:this={el}></div>
 
 <style>
-  .tex { font-family: var(--serif); font-size: 16px; line-height: 1.6; padding: 10px 14px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; margin-top: 6px; }
+  .tex { font-family: var(--serif); font-size: 16px; line-height: 1.6; padding: 10px 14px; background: var(--surface); border-radius: var(--radius); margin-top: 6px; }
   .tex :global([data-sym]) { cursor: pointer; border-bottom: 1px dotted var(--accent); }
   .tex :global([data-sym].hl) { background: color-mix(in srgb, var(--accent) 22%, transparent); outline: 1px solid color-mix(in srgb, var(--accent) 45%, transparent); border-radius: 3px; }
 </style>

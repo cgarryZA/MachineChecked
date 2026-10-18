@@ -3,6 +3,8 @@
 // (contents, margin bands, the claim panel) and kept in the page's address, `?project=owner/repo`,
 // so a copied link keeps it.
 
+import { route, withQuery } from "./route.svelte.js";
+
 const REPO = /^[\w.-]+\/[\w.-]+$/;
 
 function fromAddress() {
@@ -10,7 +12,15 @@ function fromAddress() {
   return r && REPO.test(r) ? r : null;
 }
 
-export const project = $state({ repo: fromAddress() });
+export const project = $state({ repo: fromAddress(), edition: new URLSearchParams(location.search).get("edition") || "original" });
+
+export function chooseEdition(edition) {
+  project.edition = edition;
+  const u = new URL(location.href);
+  if (edition === "original") u.searchParams.delete("edition");
+  else u.searchParams.set("edition", edition);
+  history.replaceState(history.state, "", u);
+}
 
 // Choose a project: every claim view follows, and the address records it (without reloading,
 // so the paper and its scroll position stay where they are).
@@ -19,6 +29,8 @@ export function chooseProject(repo) {
   project.repo = repo;
   const u = new URL(location.href);
   u.searchParams.set("project", repo);
+  u.hash = withQuery(u.hash, { inspect: null });
+  route.inspection = [];
   history.replaceState(history.state, "", u);
 }
 

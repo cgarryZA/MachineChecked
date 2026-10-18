@@ -41,6 +41,6 @@
   li:last-child { border-bottom: 0; }
   .info { min-width: 0; }
   .ty { font-family: var(--mono); font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .btn { flex: none; border: 1px solid var(--accent); background: var(--accent); color: white; border-radius: 6px; padding: 3px 10px; cursor: pointer; font-size: 13px; }
+  .btn { flex: none; border: 1px solid var(--accent); background: var(--accent); color: var(--on-accent); border-radius: 6px; padding: 3px 10px; cursor: pointer; font-size: 13px; }
   .small { font-size: 13px; }
 </style>

@@ -8,12 +8,12 @@
     "formal.accepted": {
       "label": "formal: accepted",
       "class": "accepted",
-      "explanation": "The formal propositions and their proofs pass the checks, with current independent correspondence reviews. Source verification and independent replay are separate evidence."
+      "explanation": "The propositions and proofs pass the checks, with current independent correspondence reviews."
     },
     "formal.author-reviewed": {
       "label": "formal: proved, author-reviewed",
       "class": "proved",
-      "explanation": "The formal propositions are proved; at least one correspondence review is only by an author of the statements."
+      "explanation": "The propositions are proved; at least one correspondence review has author provenance."
     },
     "formal.review-pending": {
       "label": "formal: proved, review pending",
@@ -58,12 +58,12 @@
     "definition.author-reviewed": {
       "label": "definition: author-reviewed",
       "class": "proved",
-      "explanation": "At least one definition was reviewed only by an author of the statements."
+      "explanation": "At least one definition review has author provenance."
     },
     "definition.reviewed": {
       "label": "definition: reviewed",
       "class": "accepted",
-      "explanation": "The definitions have current independent correspondence reviews. This is not a theorem proof."
+      "explanation": "The definitions have current independent correspondence reviews."
     },
     "link.missing": {
       "label": "linked: Lean declaration not found",
@@ -73,7 +73,7 @@
     "link.definition": {
       "label": "linked: Lean definition",
       "class": "proved",
-      "explanation": "The linked declaration is a definition, not a theorem proof. Its correspondence with the paper has not been reviewed here."
+      "explanation": "The link names a Lean definition."
     },
     "link.incomplete": {
       "label": "linked: Lean proof incomplete (sorry)",
@@ -88,7 +88,7 @@
     "link.checked": {
       "label": "linked: Lean proof checked",
       "class": "proved",
-      "explanation": "Lean checked the linked theorem. Its correspondence with the paper has not been reviewed here; independent replay is not recorded."
+      "explanation": "Lean checked the linked theorem."
     },
     "link.unbuilt": {
       "label": "linked: Lean not checked (the project is not built)",
@@ -113,17 +113,17 @@
     "link.no-audit": {
       "label": "linked: Lean not checked here (no audit published)",
       "class": "declared",
-      "explanation": "The project declares this link. No published audit establishes a proof or correspondence review here."
+      "explanation": "The project declares this link; an audit is awaiting publication."
     },
     "link.not-in-audit": {
       "label": "linked: Lean not checked here (the published audit does not list it)",
       "class": "declared",
-      "explanation": "The published audit does not list this claim, so it supplies no proof or correspondence evidence for it."
+      "explanation": "This link comes from the project’s alignment file; the claim is absent from its published audit."
     },
     "link.suggested": {
       "label": "suggested link, not confirmed",
       "class": "unspecified",
-      "explanation": "A possible correspondence has been suggested but not confirmed."
+      "explanation": "Confirm this candidate in the local reader."
     },
     "link.none": {
       "label": "not linked",
@@ -133,22 +133,22 @@
     "formal.refuted": {
       "label": "refuted as printed",
       "class": "refuted",
-      "explanation": "Lean proves the negation of an original formal proposition. Correspondence with the printed claim is a separate review."
+      "explanation": "Lean proves the negation of an original formal proposition."
     },
     "formal.refuted.open": {
       "label": "refuted as printed; other clauses open",
       "class": "refuted",
-      "explanation": "Lean proves the negation of an original formal proposition. Other original clauses remain open. Correspondence with the printed claim is a separate review."
+      "explanation": "Lean proves the negation of an original formal proposition. Other original clauses remain open."
     },
     "formal.refuted.corrected": {
       "label": "refuted as printed; corrected statement proved",
       "class": "refuted",
-      "explanation": "Lean proves the negation of an original formal proposition. A correcting proposition is proved. Correspondence with the printed claim is a separate review."
+      "explanation": "Lean proves the negation of an original formal proposition. A correcting proposition is proved."
     },
     "formal.refuted.corrected.open": {
       "label": "refuted as printed; corrected statement proved; other clauses open",
       "class": "refuted",
-      "explanation": "Lean proves the negation of an original formal proposition. A correcting proposition is proved. Other original clauses remain open. Correspondence with the printed claim is a separate review."
+      "explanation": "Lean proves the negation of an original formal proposition. A correcting proposition is proved. Other original clauses remain open."
     },
     "scope.expository": {
       "label": "out of scope: expository",
@@ -183,7 +183,17 @@
     "link.claim-audit": {
       "label": "linked: claim audit published",
       "class": "declared",
-      "explanation": "The published audit assesses the claim. That claim verdict does not establish that each named declaration has been proved."
+      "explanation": "The published audit records this claim’s result."
+    },
+    "audit.unavailable": {
+      "label": "Audit unavailable",
+      "class": "unspecified",
+      "explanation": "The registered audit could not be downloaded. Try its publication link or retry later."
+    },
+    "audit.incompatible": {
+      "label": "Audit update required",
+      "class": "unspecified",
+      "explanation": "The audit needs compatible data and matching paper and project identifiers."
     }
   },
   "dimensions": {
@@ -212,7 +222,7 @@
         },
         "stated": {
           "label": "definition",
-          "explanation": "A definition is recorded; this is not a theorem proof."
+          "explanation": "The audit records a Lean definition."
         },
         "malformed": {
           "label": "malformed",
@@ -225,11 +235,11 @@
       "states": {
         "reviewed": {
           "label": "independent",
-          "explanation": "Current reviews of the proposition and its definitions are recorded by someone other than their authors. Reviewer identity is self-declared."
+          "explanation": "The proposition and its definitions have current reviews by people other than their authors."
         },
         "author-reviewed": {
-          "label": "author only",
-          "explanation": "At least one review is only by an author of the statements."
+          "label": "author review",
+          "explanation": "At least one current review has author provenance."
         },
         "pending": {
           "label": "pending",
@@ -267,7 +277,7 @@
       "states": {
         "pass": {
           "label": "matched",
-          "explanation": "The claim’s source hash matches the inventory. This does not establish paper-to-Lean correspondence."
+          "explanation": "The claim’s source hash matches the inventory."
         },
         "fail": {
           "label": "mismatch",
@@ -283,7 +293,7 @@
         },
         "pdf-only": {
           "label": "PDF only",
-          "explanation": "There is no LaTeX statement hash; PDF integrity and placement are reported separately."
+          "explanation": "Source evidence comes from a PDF. Its integrity and placement are reported separately."
         }
       }
     },

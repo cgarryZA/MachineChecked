@@ -1,5 +1,6 @@
 // pdf.js, loaded once, with its worker bundled beside the site.
 import * as pdfjs from "pdfjs-dist";
+import "pdfjs-dist/web/pdf_viewer.css";
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import { resolve } from "./data.js";
 
@@ -39,8 +40,9 @@ export function openPdf(url) {
 
 // Render a page, or the band of it between y0 and y1 (PDF points from the top), into `canvas`
 // at `cssWidth` pixels wide.
-export async function renderPage(doc, pageNo, canvas, cssWidth, band = null) {
+export async function renderPage(doc, pageNo, canvas, cssWidth, band = null, signal = null) {
   const page = await doc.getPage(pageNo);
+  if (signal?.aborted) return;
   const base = page.getViewport({ scale: 1 });
   const scale = cssWidth / base.width;
   const dpr = Math.min(window.devicePixelRatio || 1, 3);
@@ -53,14 +55,17 @@ export async function renderPage(doc, pageNo, canvas, cssWidth, band = null) {
   canvas.style.height = canvas.height / dpr + "px";
   const ctx = canvas.getContext("2d");
   ctx.setTransform(1, 0, 0, 1, 0, -top);
-  await page.render({ canvasContext: ctx, viewport: vp, canvas }).promise;
+  const task = page.render({ canvasContext: ctx, viewport: vp, canvas });
+  const cancel = () => task.cancel();
+  signal?.addEventListener("abort", cancel, { once: true });
+  try { await task.promise; } finally { signal?.removeEventListener("abort", cancel); }
   return { width: base.width, height: base.height, scale };
 }
 
 // A horizontal band of a page (`band`, in PDF points from the top), trimmed of its blank margins
 // so the text fills `cssWidth`: the claim reads at a useful size in a narrow panel. The scale is
 // capped at `maxScale` (CSS pixels per point), so a short line is not blown up.
-export async function renderBand(doc, pageNo, canvas, cssWidth, band, maxScale = 1.6) {
+export async function renderBand(doc, pageNo, canvas, cssWidth, band, maxScale = 1.6, signal = null) {
   const page = await doc.getPage(pageNo);
   const base = page.getViewport({ scale: 1 });
   const dpr = Math.min(window.devicePixelRatio || 1, 3);
@@ -75,7 +80,12 @@ export async function renderBand(doc, pageNo, canvas, cssWidth, band, maxScale =
   octx.fillStyle = "white";
   octx.fillRect(0, 0, off.width, off.height);
   octx.setTransform(1, 0, 0, 1, 0, -top);
-  await page.render({ canvasContext: octx, viewport: vp, canvas: off }).promise;
+  if (signal?.aborted) return;
+  const task = page.render({ canvasContext: octx, viewport: vp, canvas: off });
+  const cancel = () => task.cancel();
+  signal?.addEventListener("abort", cancel, { once: true });
+  try { await task.promise; } finally { signal?.removeEventListener("abort", cancel); }
+  if (signal?.aborted) return;
   octx.setTransform(1, 0, 0, 1, 0, 0);
   // The columns holding ink.
   const { data } = octx.getImageData(0, 0, off.width, off.height);
@@ -105,4 +115,71 @@ export async function renderBand(doc, pageNo, canvas, cssWidth, band, maxScale =
   canvas.style.height = cssH + "px";
   canvas.getContext("2d").drawImage(off, x0, 0, x1 - x0 + 1, h, 0, 0, canvas.width, canvas.height);
   return { scale };
+}
+
+
+const originals = new Map();
+export function pdfUrl(url) {
+  const encoded = window.__PROOFLENS_PDF__?.[url];
+  if (!encoded) return resolve(url);
+  if (!originals.has(url)) originals.set(url, URL.createObjectURL(new Blob([base64Bytes(encoded)], { type: "application/pdf" })));
+  return originals.get(url);
+}
+
+// Render nearby pages with PDF.js's selectable text and the PDF's link annotations.
+export function documentPage(node, initial) {
+  let args = initial, visible = false, rendered = null, controller, textLayer;
+  const canvas = node.querySelector("canvas"), text = node.querySelector(".textLayer"), links = node.querySelector(".pdf-links");
+  function cancel() { controller?.abort(); textLayer?.cancel(); }
+  async function draw() {
+    const key = `${args.no}:${args.width}`;
+    if (!visible || !args.doc || rendered === key) return;
+    cancel(); controller = new AbortController();
+    const signal = controller.signal, current = args;
+    rendered = key;
+    try {
+      const page = await current.doc.getPage(current.no);
+      if (signal.aborted) return;
+      await renderPage(current.doc, current.no, canvas, current.width, null, signal);
+      if (signal.aborted) return;
+      const viewport = page.getViewport({ scale: current.width / page.getViewport({ scale: 1 }).width });
+      node.style.setProperty("--scale-factor", viewport.scale);
+      text.replaceChildren(); links.replaceChildren();
+      const content = await page.getTextContent();
+      if (signal.aborted) return;
+      textLayer = new pdfjs.TextLayer({ textContentSource: content, container: text, viewport });
+      await textLayer.render();
+      if (signal.aborted) return;
+      for (const a of await page.getAnnotations({ intent: "display" })) {
+        if (signal.aborted) return;
+        if (a.subtype !== "Link" || (!a.url && !a.dest)) continue;
+        let destination = null;
+        if (a.dest) {
+          const dest = typeof a.dest === "string" ? await current.doc.getDestination(a.dest) : a.dest;
+          if (dest?.length) destination = typeof dest[0] === "number" ? dest[0] + 1 : (await current.doc.getPageIndex(dest[0])) + 1;
+        }
+        if (signal.aborted) return;
+        if (a.url && !/^(https?:|mailto:)/i.test(a.url)) continue;
+        const link = document.createElement("a");
+        link.href = a.url || `${current.original}#page=${destination}`;
+        link.setAttribute("aria-label", a.url ? `Open ${a.url}` : `Go to page ${destination}`);
+        if (a.url) { link.target = "_blank"; link.rel = "noopener noreferrer"; }
+        else link.addEventListener("click", (e) => { if (!e.ctrlKey && !e.metaKey && !e.shiftKey && destination) { e.preventDefault(); current.onpage(destination); } });
+        const rect = viewport.convertToViewportRectangle(a.rect);
+        Object.assign(link.style, { left: Math.min(rect[0], rect[2]) + "px", top: Math.min(rect[1], rect[3]) + "px", width: Math.abs(rect[2] - rect[0]) + "px", height: Math.abs(rect[3] - rect[1]) + "px" });
+        links.append(link);
+      }
+      if (!signal.aborted) current.onrender?.();
+    } catch (e) {
+      if (!signal.aborted && e.name !== "RenderingCancelledException" && e.name !== "AbortException") {
+        rendered = null; current.onerror?.(String(e.message || e));
+      }
+    }
+  }
+  const observer = new IntersectionObserver((entries) => { visible = entries.some((e) => e.isIntersecting); if (visible) draw(); }, { rootMargin: "600px" });
+  observer.observe(node);
+  return {
+    update(next) { const changed = args.doc !== next.doc || args.width !== next.width || args.no !== next.no; args = next; if (changed) { cancel(); rendered = null; draw(); } },
+    destroy() { cancel(); observer.disconnect(); }
+  };
 }

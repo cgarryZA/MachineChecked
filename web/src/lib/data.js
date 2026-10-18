@@ -52,13 +52,12 @@ async function getJson(path) {
     return bundled[path];
   }
   if (!cache.has(path)) {
-    cache.set(
-      path,
-      Promise.resolve().then(() => fetch(resolve(path), AUDIT ? { credentials: "omit", referrerPolicy: "no-referrer" } : {}).then((r) => {
+    const pending = Promise.resolve().then(() => fetch(resolve(path), AUDIT ? { credentials: "omit", referrerPolicy: "no-referrer" } : {}).then((r) => {
         if (!r.ok) throw new Error(`${path}: ${r.status}`);
         return r.json();
-      })),
-    );
+      }));
+    cache.set(path, pending);
+    pending.catch(() => { if (cache.get(path) === pending) cache.delete(path); });
   }
   return cache.get(path);
 }
@@ -118,8 +117,9 @@ export function loadLeanIndex(index) {
   return getJson(index.lean_index || "data/lean-index.json");
 }
 
-export function loadSearch(index) {
-  return getJson(index.search || "data/search.json");
+export async function loadSearch(index) {
+  const data = await getJson(index.search || "data/search.json");
+  return data.by_project?.[project.repo] || data;
 }
 
 // A claim as the chosen project sees it, on a page with several projects (a paper page): only
@@ -129,12 +129,23 @@ export function inProject(c, repo) {
   if (!c.by_project) return c;
   const st = c.by_project[repo] || { status_code: "link.none" };
   const links = c.links && c.links.filter((l) => l.repository === repo);
-  return { ...c, ...(links ? { links } : {}), status_code: st.status_code, status: statusView(st).label, class: statusView(st).class, audit: st.audit || null };
+  const { record, audit, ...facts } = st;
+  return { ...c, ...(links ? { links } : {}), ...facts, ...(record || {}),
+    id: c.id, paper: c.paper, mode: record ? (record.mode || "full") : c.mode, audit: audit || null,
+    status_code: st.status_code, status: statusView(st).label, class: statusView(st).class };
+
 }
 
 // The claims of the index for the chosen project (reactive on the choice).
 export function projectClaims(index) {
-  return index.projects ? index.claims.map((c) => inProject(c, project.repo)) : index.claims;
+  if (!index.projects) return index.claims;
+  return index.claims.filter((c) => !c.projects || c.projects.includes(project.repo)).map((c) => {
+    const row = inProject(c, project.repo);
+    if (project.edition !== "original") {
+      return { ...row, anchor: row.audit?.edition === project.edition ? row.audit.audit_anchor : null };
+    }
+    return row;
+  });
 }
 
 // A claim's full record, as the engine wrote it (on a page with several projects, show it through

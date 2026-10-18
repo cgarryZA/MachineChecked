@@ -1,8 +1,7 @@
 <script>
   // What is known about a paper's formalisations, beside the paper: the Lean repositories that
   // formalise it (one at a time, chosen at the top when there are several), who says so, the
-  // project's own description of its review, and the audits published of it. Nothing here is a
-  // judgement of the formalisation: without an audit, it says nothing about what Lean establishes.
+  // project's description of its review, and its published audits.
   import { project } from "../lib/project.svelte.js";
   let { paper } = $props();
 
@@ -37,19 +36,21 @@
     <p class="muted">No Lean formalisation of this paper is listed.</p>
   {:else}
     {#if fs.length > 1}
-      <p class="faint small">One of {fs.length} formalisations, chosen at the top of the page. Separate projects are separate evidence; their results are never combined.</p>
+      <p class="faint small">Choose from {fs.length} formalisations at the top of the page.</p>
     {/if}
     <div class="card">
       <p class="repo"><a href={`https://github.com/${f.repository}/tree/${f.commit}`} target="_blank" rel="noopener"><code>{f.repository}</code></a></p>
       <p class="small muted">
         {provenance(f)}{#if f.stated_by?.source === "formalization.yaml"}&nbsp;· <a href={`https://github.com/${f.repository}/blob/${f.commit}/formalization.yaml`} target="_blank" rel="noopener">view it</a>{/if}&nbsp;· at <code>{f.commit.slice(0, 12)}</code>
       </p>
-      {#if f.review_status}<p class="small muted">The project describes its own review as “{f.review_status}”.</p>{/if}
+      {#if f.review_status}<p class="small muted">Project review: {f.review_status}</p>{/if}
+      {#if f.audit_state?.state === "unavailable" || f.audit_state?.state === "incompatible"}
+        <p class="small">Audit {f.audit_state.state}: {f.audit_state.detail}</p>
+      {/if}
       {#if audits.length}
         {#each audits as a}
           <p><a class="btn" href={"/read/?audit=" + encodeURIComponent(a.url)}>Open the audit</a> <span class="small">by {a.author}</span></p>
         {/each}
-        <p class="faint small">An audit records what its author linked, checked and reviewed; MachineChecked does not endorse it.</p>
       {:else}
         <p class="small">No claim-level audit is published yet.</p>
       {/if}

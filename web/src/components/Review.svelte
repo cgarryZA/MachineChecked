@@ -1,6 +1,6 @@
 <script>
   import { loadQueue, loadClaim } from "../lib/data.js";
-  import { href } from "../lib/route.svelte.js";
+  import { href, route, go, withQuery } from "../lib/route.svelte.js";
   import { VERDICTS, GROUPS, CHECKLIST, MARKS, loadWork, saveWork, now, reviewerId, needsDetail, buildReport,
            exportFile } from "../lib/review.js";
   import PdfCrop from "./PdfCrop.svelte";
@@ -33,7 +33,7 @@
   // What to review: a paper, then a section of statements or a group of definitions.
   let paper = $state(work.selection?.paper || "all");
   let group = $state(work.selection?.group || "all");
-  function select() { work.selection = { paper, group }; persist(); }
+  function select() { work.selection = { paper, group }; go(withQuery(location.hash, { claim: null, seen: null })); persist(); }
 
   const fpOf = (u) => u.fingerprint || JSON.stringify(u.fingerprints || {});
   const reportFor = (u) => work.reports.find((r) => r.unit.id === u.id &&
@@ -48,14 +48,15 @@
   const open = $derived(selected.filter((u) => u.state !== "reviewed" && !reportFor(u)));
   const fresh = $derived(open.filter((u) => !work.skipped.includes(u.id)));
   const skippedHere = $derived(open.filter((u) => work.skipped.includes(u.id)));
-  const current = $derived(fresh[0] || skippedHere[0] || null);
-  const submittedHere = $derived(selected.filter((u) => reportFor(u)).length);
+  const requested = $derived(queue?.units.find((u) => u.claims.some((c) => c.id === route.target) && !reportFor(u) && !work.skipped.includes(u.id)));
+  const current = $derived(requested || fresh[0] || skippedHere[0] || null);
+  const savedHere = $derived(selected.filter((u) => reportFor(u)).length);
   const doneBefore = $derived(selected.filter((u) => u.state === "reviewed").length);
   const unexported = $derived(work.reports.length - (work.exported || 0));
 
   // The card's draft, kept as it is typed.
   $effect(() => {
-    if (current && !work.drafts[current.id]) work.drafts[current.id] = { stage: "read", reading: "" };
+    if (current && !work.drafts[current.id]) work.drafts[current.id] = { stage: "read", reading: "", reader_exposure: !!(route.readerSeen && current.claims.some((c) => c.id === route.target)) };
   });
   const draft = $derived(current ? work.drafts[current.id] || null : null);
 
@@ -81,7 +82,7 @@
       ...work.reports.map((r) => ({ id: r.unit.id, lean: true, author: true })),
       ...Object.entries(work.drafts).map(([id, d]) => ({ id, lean: d.stage !== "read", author: d.stage === "author" })),
     ];
-    const out = [];
+    const out = work.drafts[u.id]?.reader_exposure ? [{ unit: u.id, what: "Lean" }] : [];
     for (const p of passed) {
       const r = p.id !== u.id && byId[p.id]?.reveals;
       if (!r) continue;
@@ -105,7 +106,7 @@
     if (!canDecide) return;
     draft.decided_at = now(); draft.stage = "author"; draft.author_shown_at = now(); persist();
   }
-  function submit() {
+  function saveReport() {
     const r = buildReport({ index, unit: current, draft: $state.snapshot(draft), reviewer: work.reviewer });
     work.reports.push(r);
     work.skipped = work.skipped.filter((id) => id !== current.id);
@@ -142,11 +143,8 @@
   {:else if !work.reviewer}
     <section class="card setup">
       <h1>Review</h1>
-      <p>One unit at a time: read the paper and write down what it says, then compare the Lean
-        with your reading and record a verdict, then read the author's review. Your drafts and
-        reports are kept only in this browser until you export them (clearing its data, or another
-        browser, starts with none); a maintainer examines them before anything is recorded as
-        reviewed.</p>
+      <p>Read the paper, compare the Lean, then read the author’s review.
+        Export your reports to share them with the maintainer.</p>
       <fieldset>
         <legend>Who is reviewing?</legend>
         <label><input type="radio" bind:group={who.kind} value="human" /> A person</label>
@@ -160,7 +158,7 @@
           <select bind:value={who.sameFamily}><option value="yes">yes</option><option value="no">no</option><option value="unknown">don't know</option></select>
         </label>
       {/if}
-      <p class="faint small">This is recorded as you state it (self-declared); nothing here verifies it.</p>
+      <p class="faint small">Reviewer identity is self-declared.</p>
       <button class="btn" onclick={setReviewer}>Start</button>
     </section>
   {:else}
@@ -178,22 +176,22 @@
         </select>
       </label>
       <span class="progress">
-        {submittedHere} submitted · {skippedHere.length} skipped · {fresh.length} to review{doneBefore ? ` · ${doneBefore} already independently reviewed` : ""}
+        {savedHere} saved · {skippedHere.length} skipped · {fresh.length} to review{doneBefore ? ` · ${doneBefore} already independently reviewed` : ""}
       </span>
       <span class="who faint" title="self-declared">{reviewerId(work.reviewer)}</span>
       <button class="btn ghost" disabled={!work.reports.length} onclick={undo}>Undo last</button>
       <button class="btn" disabled={!work.reports.length} onclick={doExport}>Export reports{unexported > 0 ? ` (${unexported} new)` : ""}</button>
     </div>
     {#if unexported > 0 || !stored}
-      <p class="warn">{!stored ? "This browser is not keeping your work: export after every report." : `${unexported} report(s) are only in this browser until you export them.`}</p>
+      <p class="warn" role="status">{!stored ? "Browser storage unavailable. Export after every report." : `${unexported} report(s) saved in this browser. Export to keep a copy.`}</p>
     {/if}
     {#if queue.needs_statement.length && (paper === "all" || queue.needs_statement.some((c) => c.paper === paper))}
-      <p class="faint small">{queue.needs_statement.filter((c) => paper === "all" || c.paper === paper).length} claim(s) need a formal statement before they can be reviewed; they are not in the queue.</p>
+      <p class="faint small">{queue.needs_statement.filter((c) => paper === "all" || c.paper === paper).length} claim(s) await a formal statement before review.</p>
     {/if}
 
     {#if lastIssue}
       <section class="card issue">
-        <p class="lbl">Issue draft ({lastIssue.kind}) — for the maintainer; nothing is filed</p>
+        <p class="lbl">Issue draft ({lastIssue.kind}) — ready to copy</p>
         <p><strong>{lastIssue.title}</strong></p>
         <pre>{lastIssue.body}</pre>
         <button class="btn ghost" onclick={() => navigator.clipboard?.writeText(lastIssue.title + "\n\n" + lastIssue.body)}>Copy</button>
@@ -202,7 +200,7 @@
     {/if}
 
     {#if !current}
-      <section class="card"><p>Nothing left to review in this selection.</p></section>
+      <section class="card"><p>Review complete for this selection.</p></section>
     {:else if !draft}
       <p class="muted">Loading…</p>
     {:else}
@@ -228,7 +226,7 @@
             {:else if c.statement_tex}
               <Tex text={c.statement_tex} />
             {/if}
-            <p class="small"><a href={href(index.release, "read", c.paper, c.id)} target="_blank" rel="noopener" title="Opens the reader, where the Lean side is not hidden">Open in the paper ↗</a></p>
+            <p class="small"><a href={href(index.release, "read", c.paper, c.id)} target="_blank" rel="noopener" title="Opens the paper and Lean reader">Open in the paper ↗</a></p>
           {/snippet}
           {#if claims[0]}{@render printed(claims[0])}{/if}
           {#if claims.length > 1}
@@ -238,15 +236,15 @@
           {/if}
         {/if}
 
-        <h3>Your reading{draft.stage !== "read" ? " (locked " + draft.locked_at + ")" : ""}</h3>
+        <h3 id="reading-label">Your reading{draft.stage !== "read" ? " (locked " + draft.locked_at + ")" : ""}</h3>
         {#if draft.stage === "read"}
           {#if seenBefore.length}
-            <p class="warn">You have already seen {seenBefore.map((s) => `the ${s.what} of this unit (in ${s.unit})`).join(" and ")}. Your reading will not be blind, and the report will say so; a maintainer may refuse it.</p>
+            <p class="warn">You have already seen {seenBefore.map((s) => `the ${s.what} of this unit (in ${s.unit})`).join(" and ")}. The report records this prior exposure.</p>
           {/if}
           <p class="faint small">{current.kind === "def"
             ? "What is this object in the paper? Its setting, what it is built from, and anything left ambiguous."
             : "The setting; every hypothesis, with its quantifiers and where it holds; the notion of solution; the conclusion, with its quantifier order and what constants depend on; every ambiguity and its readings."}</p>
-          <textarea rows="8" bind:value={draft.reading} oninput={persist}></textarea>
+          <textarea aria-labelledby="reading-label" rows="8" bind:value={draft.reading} oninput={persist}></textarea>
           <div class="row">
             <button class="btn" disabled={(draft.reading || "").trim().length < 20} onclick={lockReading}>Lock my reading and show the Lean</button>
             <button class="btn ghost" onclick={skip}>Skip</button>
@@ -275,14 +273,14 @@
           {/if}
 
           {#if draft.stage === "compare"}
-            <h3>Comparison</h3>
+            <h3 id="comparison-label">Comparison</h3>
             <ul class="checklist" aria-label="What to compare">
               {#each CHECKLIST[current.kind === "def" ? "def" : "statement"] as it (it.key)}
                 <li>
                   <span class="ck-label">{it.label}<span class="faint small">&nbsp;— {it.hint}</span></span>
                   <span class="ck-marks">
                     {#each MARKS as m}
-                      <button class="mark" class:on={draft.checklist?.[it.key] === m.value} class:differs={m.value === "differs"}
+                      <button class="mark" class:on={draft.checklist?.[it.key] === m.value} class:differs={m.value === "differs"} aria-pressed={draft.checklist?.[it.key] === m.value} aria-label={it.label + ": " + m.label}
                         onclick={() => { draft.checklist = { ...(draft.checklist || {}), [it.key]: draft.checklist?.[it.key] === m.value ? undefined : m.value }; persist(); }}>{m.label}</button>
                     {/each}
                   </span>
@@ -290,21 +288,23 @@
               {/each}
             </ul>
             <p class="faint small">A guide: mark each item if it helps, and write what you found below.</p>
-            <textarea rows="6" bind:value={draft.comparison} oninput={persist} placeholder="Item by item against your reading: each hypothesis, each quantifier and its order, the conclusion, representation choices, constants."></textarea>
+            <textarea aria-labelledby="comparison-label" rows="6" bind:value={draft.comparison} oninput={persist} placeholder="Item by item against your reading: each hypothesis, each quantifier and its order, the conclusion, representation choices, constants."></textarea>
             {#if current.kind === "spec" && current.witness}
-              <textarea rows="3" bind:value={draft.witness} oninput={persist} placeholder="The witness: does it meet the hypotheses at an instance the paper intends, and is that instance non-trivial?"></textarea>
+              <label for="witness-note">Witness comparison</label>
+              <textarea id="witness-note" rows="3" bind:value={draft.witness} oninput={persist} placeholder="The witness: does it meet the hypotheses at an instance the paper intends, and is that instance non-trivial?"></textarea>
             {/if}
-            <div class="groups">
-              {#each GROUPS as g}<button class="choice" class:on={draft.group === g.key} onclick={() => choose(g.key)}>{g.label}</button>{/each}
+            <div class="groups" role="group" aria-label="Overall correspondence">
+              {#each GROUPS as g}<button class="choice" class:on={draft.group === g.key} aria-pressed={draft.group === g.key} onclick={() => choose(g.key)}>{g.label}</button>{/each}
             </div>
             {#if draft.group}
-              <div class="verdicts">
+              <fieldset class="verdicts"><legend>Verdict</legend>
                 {#each VERDICTS[draft.group].filter((v) => !v.refuteOnly || current.refute) as v}
                   <label><input type="radio" bind:group={draft.verdict} value={v.value} onchange={persist} /> {v.label}</label>
                 {/each}
-              </div>
+              </fieldset>
               {#if detailWanted}
-                <textarea rows="3" bind:value={draft.detail} oninput={persist} placeholder={detailWanted}></textarea>
+                <label for="verdict-detail">{detailWanted}</label>
+                <textarea id="verdict-detail" rows="3" bind:value={draft.detail} oninput={persist} placeholder={detailWanted}></textarea>
               {/if}
             {/if}
             <div class="row">
@@ -320,9 +320,10 @@
             {:else}
               <p class="faint">No review by the author is recorded for this unit.</p>
             {/each}
-            <textarea rows="3" bind:value={draft.disagreements} oninput={persist} placeholder="Where you disagree with the author's review, or where it claims more than the Lean shows (or “none”). Your verdict stays as recorded."></textarea>
+            <label for="author-response">Response to the author’s review</label>
+            <textarea id="author-response" rows="3" bind:value={draft.disagreements} oninput={persist} placeholder="Where you disagree with the author's review, or where it claims more than the Lean shows (or “none”). Your verdict stays as recorded."></textarea>
             <div class="row">
-              <button class="btn" onclick={submit}>Submit report</button>
+              <button class="btn" onclick={saveReport}>Save report</button>
               <button class="btn ghost" onclick={skip}>Skip</button>
             </div>
           {/if}
@@ -338,7 +339,7 @@
   .setup h1 { margin-top: 0; }
   fieldset { border: 0; padding: 0; margin: 12px 0; display: flex; gap: 16px; }
   .field { display: flex; flex-direction: column; gap: 4px; margin: 8px 0; font-size: 14px; }
-  input:not([type]), input[type="text"], select, textarea { font: inherit; font-size: 14px; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; }
+  input:not([type]), select, textarea { font: inherit; font-size: 16px; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; }
   textarea { width: 100%; box-sizing: border-box; margin: 6px 0; font-family: var(--sans); }
   .bar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; font-size: 14px; }
   .bar label { display: flex; gap: 6px; align-items: center; }
@@ -355,7 +356,7 @@
   h3 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin: 18px 0 6px; }
   .locked, .author, .issue pre { white-space: pre-wrap; font: 14px/1.5 var(--sans); background: var(--surface-2); padding: 8px 10px; border-radius: 6px; margin: 0; }
   .row { display: flex; gap: 8px; margin-top: 8px; }
-  .btn { border: 1px solid var(--accent); background: var(--accent); color: white; border-radius: 6px; padding: 5px 12px; cursor: pointer; font-size: 14px; }
+  .btn { border: 1px solid var(--accent); background: var(--accent); color: var(--on-accent); border-radius: 6px; padding: 5px 12px; cursor: pointer; font-size: 14px; }
   .btn.ghost { background: none; color: var(--accent); }
   .btn:disabled { opacity: 0.45; cursor: default; }
   .groups { display: flex; gap: 8px; margin: 12px 0 6px; flex-wrap: wrap; }

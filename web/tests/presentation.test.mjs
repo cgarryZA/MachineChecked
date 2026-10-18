@@ -30,3 +30,9 @@ assert.doesNotMatch(clauseNote({ evidence: { formal: { state: "refuted" } } }, 2
 assert.match(evidenceView("source", { state: "pdf-only", placement: "approximate", pdf_integrity: "matched" }).word,
   /PDF only · PDF hash matched · approximate location/);
 console.log("all structured presentation contracts passed");
+
+const { evidenceFacts } = await import("../src/lib/presentation.js");
+assert.deepEqual(evidenceFacts({ clauses: [
+  { evidence: { formal: { state: "proved" }, review: { state: "author-reviewed" } } },
+  { evidence: { formal: { state: "refuted" }, review: { state: "pending" } } },
+] }).map((f) => f.word), ["proved · refuted", "author review · pending"]);

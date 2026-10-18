@@ -26,12 +26,15 @@
 {:else if !index}
   <main class="state"><p class="muted">Loading…</p></main>
 {:else}
+  <div class="app-shell" class:reading={route.view === "read"}>
+  <div class="shell-top">
   <header class="top">
-    <a class="brand" href={index.mode === "paper" ? "/" : href(index.release, "read", firstPaper)} title="MachineChecked">
+    <a class="brand" href={index.mode === "paper" ? "/" : href(index.release, "read", firstPaper)} aria-label={index.mode === "paper" ? "MachineChecked home" : "Back to the paper"}>
       <svg viewBox="0 0 32 32" width="20" height="20" aria-hidden="true"
         ><circle cx="13" cy="13" r="9" fill="none" stroke="currentColor" stroke-width="3" /><path
           d="M20 20l8 8" stroke="currentColor" stroke-width="3" stroke-linecap="round" /></svg
       >
+      <span>MachineChecked</span>
     </a>
     {#if index.papers.length > 1}
       <nav class="papers">
@@ -45,7 +48,7 @@
     {#if index.mode === "paper"}
       {@const repos = index.projects || []}
       {#if repos.length > 1}
-        <label class="project" title="Separate projects are separate evidence; the page shows one at a time">
+        <label class="project" title="Choose the project whose evidence to show">
           <span>Formalisation</span>
           <select value={project.repo} onchange={(e) => chooseProject(e.currentTarget.value)} aria-label="Formalisation shown">
             {#each repos as r}<option value={r}>{r}</option>{/each}
@@ -54,37 +57,31 @@
       {/if}
       <a class="aux" href="/papers/">Papers</a>
     {:else}
-    <Search {index} />
     {#if index.review_queue}
       <a class="aux" class:on={route.view === "review"} href={href(index.release, "review")}>Review</a>
     {/if}
     <a class="aux" class:on={route.view === "coverage"} href={href(index.release, "coverage")}>Overview</a>
     {/if}
+    <Search {index} />
   </header>
 
   {#if AUDIT && auditInfo}
-    <div class="banner">
-      An audit published by {auditInfo.author || "its author"} at
-      <code>{new URL(AUDIT.href).host}</code>. It records what its author linked, checked and
-      reviewed; MachineChecked displays it and does not endorse it.
+    <div class="banner attribution">
+      <span>Audit by {auditInfo.author || "the project"}</span>
+      <a href={href(index.release, "changes")}>Details</a>
     </div>
   {/if}
   {#if releaseMismatch}
     <div class="banner" role="alert">
-      This link names release <code>{route.release}</code>; this page shows release
-      <code>{index.release}</code>. What it says about the claim may differ.
+      Showing release <code>{index.release}</code>. The link requests <code>{route.release}</code>.
     </div>
   {/if}
   {#if index.notes?.length}
     <div class="banner">{#each index.notes as n}<div>{n}</div>{/each}</div>
   {/if}
-  {#if paper && (paper.published || paper.published_note)}
-    <div class="banner published">
-      {#if paper.published}The published version of this paper is <strong>{paper.published}</strong>{#if paper.revision}; this audit reads revision <code>{String(paper.revision).slice(0, 12)}</code>{/if}.{/if}
-      {#if paper.published_note}<span>{paper.published_note}</span>{/if}
-    </div>
-  {/if}
 
+  </div>
+  <div class="workspace">
   {#if route.view === "claim" && route.claim}
     <main class="page"><Passport {index} claimId={route.claim} full {editable} /></main>
   {:else if route.view === "coverage"}
@@ -96,16 +93,23 @@
   {:else}
     <Reader {index} paperId={paperId} claimId={route.claim} {editable} />
   {/if}
+  </div>
+  </div>
 {/if}
 
 <style>
+  .app-shell { min-height: 100dvh; display: grid; grid-template-rows: auto minmax(0, 1fr); }
+  .app-shell.reading { height: 100dvh; }
+  .shell-top { min-width: 0; z-index: 20; }
+  .workspace { min-width: 0; min-height: 0; }
+  .reading .workspace { overflow: hidden; }
   .state { max-width: 640px; margin: 15vh auto; padding: 0 16px; }
   .top {
     position: sticky; top: 0; z-index: 20;
-    display: flex; align-items: center; gap: 16px;
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px;
     padding: 8px 16px; background: var(--surface); border-bottom: 1px solid var(--border);
   }
-  .brand { display: flex; color: var(--accent); }
+  .brand { display: flex; align-items: center; gap: 6px; color: var(--accent); font-family: var(--serif); font-weight: 600; }
   .ptitle { font-family: var(--serif); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 40vw; }
   .papers { display: flex; gap: 4px; }
   .papers a, .aux { padding: 4px 10px; border-radius: 6px; color: var(--muted); white-space: nowrap; }
@@ -114,11 +118,13 @@
   .aux { font-size: 14px; }
   :global(.top .aux:first-of-type) { margin-left: auto; }
   .banner { padding: 8px 16px; background: var(--surface-2); border-bottom: 1px solid var(--border); font-size: 14px; }
-  .page { max-width: 900px; margin: 0 auto; padding: 24px 16px 80px; }
+  .attribution { display: flex; gap: 12px; align-items: baseline; font-size: 13px; }
+  .page { max-width: 1560px; margin: 0 auto; padding: 24px 16px 80px; }
   @media (max-width: 640px) {
     .top { gap: 8px; padding: 8px 12px; flex-wrap: wrap; }
-    .ptitle { display: none; }
+    .ptitle { max-width: 100%; flex: 1 1 180px; font-size: 14px; }
+    .brand span { display: none; }
   }
   .project { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); margin-left: auto; }
-  .project select { font: inherit; max-width: 34vw; padding: 3px 6px; border-radius: 6px; border: 1px solid var(--accent); background: var(--surface); color: var(--text); }
+  .project select { font: inherit; max-width: min(42vw, 320px); padding: 3px 6px; border-radius: 6px; border: 1px solid var(--accent); background: var(--surface); color: var(--text); }
 </style>

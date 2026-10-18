@@ -7,9 +7,13 @@
   --surface-2: #f0ede6;
   --text: #1d1d1b;
   --muted: #5f5d57;
-  --faint: #8d8a82;
+  --faint: #6c6962;
   --border: #dcd8ce;
   --accent: #2f6f73;
+  --on-accent: #ffffff;
+  --radius: 6px;
+  --control-height: 36px;
+  --space: 8px;
   --accent-soft: #d9ebe9;
   --focus: #2f6f73;
 
@@ -23,7 +27,7 @@
   --st-out-of-scope: #c9c5bb;
 
   --tier-violation: #b33a3a;
-  --tier-warning: #b7791f;
+  --tier-warning: #8a5b14;
   --tier-obligation: #2f5f9e;
 
   --serif: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
@@ -39,9 +43,10 @@
     --surface-2: #272b2a;
     --text: #e8e6e1;
     --muted: #b0ada6;
-    --faint: #85827b;
+    --faint: #aaa69e;
     --border: #3a3f3d;
     --accent: #7fc3c0;
+    --on-accent: #162a29;
     --accent-soft: #23403f;
     --focus: #7fc3c0;
     --st-accepted: #5cbf86;
@@ -63,9 +68,10 @@
   --surface-2: #272b2a;
   --text: #e8e6e1;
   --muted: #b0ada6;
-  --faint: #85827b;
+  --faint: #aaa69e;
   --border: #3a3f3d;
   --accent: #7fc3c0;
+    --on-accent: #162a29;
   --accent-soft: #23403f;
   --focus: #7fc3c0;
   --st-accepted: #5cbf86;
