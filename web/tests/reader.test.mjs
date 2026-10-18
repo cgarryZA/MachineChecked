@@ -124,7 +124,7 @@ const reviewUnits = ["T:thm:bound", "T:thm:even-add"].map((id, i) => {
     author_review: [{ by: "Synthetic author", text: "Synthetic author review kept until the verdict." }] };
 });
 fs.writeFileSync(path.join(root, "review/data/index.json"), JSON.stringify(reviewIndex));
-fs.writeFileSync(path.join(root, "review/data/review-queue.json"), JSON.stringify({ authors: ["Synthetic author"], units: reviewUnits }));
+fs.writeFileSync(path.join(root, "review/data/review-queue.json"), JSON.stringify({ authors: ["Synthetic author"], needs_statement: [], units: reviewUnits }));
 
 fs.cpSync(path.join(root, "toy"), path.join(root, "long-statement"), { recursive: true });
 const longFile = TOY.claims.find((c) => c.id === "T:thm:even-add").file;

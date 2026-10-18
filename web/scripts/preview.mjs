@@ -44,7 +44,7 @@ const url = `http://127.0.0.1:${port}/#/r/${encodeURIComponent(index.release)}/r
 const browser = await chromium.launch({ executablePath: process.env.CHROMIUM || undefined });
 fs.mkdirSync(out, { recursive: true });
 for (const width of [1360, 390]) for (const scheme of ["light", "dark"]) {
-  const page = await browser.newPage({ viewport: { width, height: 900 },
+  const page = await browser.newPage({ viewport: { width, height: width < 500 ? 900 : 620 },
     deviceScaleFactor: 2, colorScheme: scheme });
   await page.goto(url);
   await page.locator(".exact pre").waitFor();
