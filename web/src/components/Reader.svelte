@@ -1,4 +1,5 @@
 <script>
+  import { inScope, statusView } from "../lib/presentation.js";
   import TexInline from "./TexInline.svelte";
   import { href, go } from "../lib/route.svelte.js";
   import PdfView from "./PdfView.svelte";
@@ -11,7 +12,6 @@
 
   const paper = $derived(index.papers.find((p) => p.id === paperId));
   const claims = $derived(projectClaims(index).filter((c) => c.paper === paperId));
-  const inScope = (c) => !String(c.status).startsWith("out of scope");
   const ordered = $derived(
     [...claims].filter(inScope).sort((a, b) =>
       (a.anchor ? 0 : 1) - (b.anchor ? 0 : 1) || (a.anchor?.page ?? 0) - (b.anchor?.page ?? 0) || (a.anchor?.y0 ?? 0) - (b.anchor?.y0 ?? 0)),
@@ -60,8 +60,8 @@
         <ol>
           {#each listed as c (c.id)}
             <li>
-              <button class:sel={c.id === claimId} onclick={() => select(c.id)} title={c.status}>
-                <span class={"dot st-" + c.class} aria-hidden="true"></span>
+              <button class:sel={c.id === claimId} onclick={() => select(c.id)} title={statusView(c).label}>
+                <span class={"dot st-" + statusView(c).class} aria-hidden="true"></span>
                 <span class="n">{c.number || c.id}</span>
                 {#if c.heading || c.title}<span class="t"><TexInline text={c.heading || c.title} /></span>{/if}
                 {#if !c.anchor}<span class="na" title="not located in the PDF">·</span>{/if}

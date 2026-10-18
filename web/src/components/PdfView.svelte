@@ -1,4 +1,5 @@
 <script>
+  import { statusView } from "../lib/presentation.js";
   import { openPdf, renderPage } from "../lib/pdf.js";
 
   // The paper's PDF, page by page, with a band over every claim located by the anchors.
@@ -112,15 +113,15 @@
         <canvas use:canvasAction={{ doc, no: p.no, width }} aria-label={"Page " + p.no}></canvas>
         {#each bands(p.no) as b (b.c.id + ":" + p.no)}
           <button
-            class={"band st-" + b.c.class + (b.c.anchor?.kind && b.c.anchor.kind !== "exact" ? " " + b.c.anchor.kind : "")}
+            class={"band st-" + statusView(b.c).class + (b.c.anchor?.kind && b.c.anchor.kind !== "exact" ? " " + b.c.anchor.kind : "")}
             class:sel={b.c.id === selected}
             data-claim={b.c.id}
             style:top={b.top * s + "px"}
             style:height={((b.bottom ?? p.h - 36) - b.top) * s + "px"}
             onclick={() => onselect(b.c.id)}
-            title={`${b.c.number}: ${b.c.status}`}
+            title={`${b.c.number}: ${statusView(b.c).label}`}
           >
-            <span class="tag">{b.c.status}{b.c.anchor?.kind === "approximate" ? " · approximate location" : b.c.anchor?.kind === "manual" ? " · placed by hand" : ""}</span>
+            <span class="tag">{statusView(b.c).label}{b.c.anchor?.kind === "approximate" ? " · approximate location" : b.c.anchor?.kind === "manual" ? " · placed by hand" : ""}</span>
           </button>
         {/each}
       </div>

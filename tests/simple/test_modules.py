@@ -78,10 +78,10 @@ def test_modules_that_cannot_load_together_are_told_apart(twins):
     # Without a module the name is ambiguous, and nothing is claimed.
     b = st["Theorem 2"]["links"][0]
     assert b["status"].startswith("linked: Lean name is ambiguous")
-    assert "Challenge.Main" in b["status"] and "Solution.Main" in b["status"]
+    assert "Challenge.Main" in b["status_detail"] and "Solution.Main" in b["status_detail"]
     # A declaration in a module that is not built is not built, not missing.
-    assert st["Theorem 3"]["links"][0]["status"] == \
-        "linked: Lean not checked (its module Later.Main is not built)"
+    assert st["Theorem 3"]["links"][0]["status_code"] == "link.module-unbuilt"
+    assert st["Theorem 3"]["links"][0]["status_detail"] == "Module Later.Main is not built."
     # Only a declaration absent from the inspected modules is not found.
     assert st["Theorem 4"]["links"][0]["status"] == "linked: Lean declaration not found"
     assert not any("could not be loaded" in n for n in view["body"]["notes"])

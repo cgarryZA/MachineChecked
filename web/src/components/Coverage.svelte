@@ -1,6 +1,7 @@
 <script>
   import TexInline from "./TexInline.svelte";
-  import { CLASS_ORDER, notProved } from "../lib/data.js";
+  import { notProved, projectClaims } from "../lib/data.js";
+  import { statusView, statusSummary } from "../lib/presentation.js";
   import { href } from "../lib/route.svelte.js";
   import StatusChip from "./StatusChip.svelte";
 
@@ -13,7 +14,7 @@
 
   const papers = $derived(
     index.papers.map((p) => {
-      const claims = index.claims.filter((c) => c.paper === p.id);
+      const claims = projectClaims(index).filter((c) => c.paper === p.id);
       return { ...p, claims, shown: onlyNotProved ? claims.filter(notProved) : claims };
     }),
   );
@@ -24,9 +25,9 @@
   <section class="intro">
     <h1>Coverage</h1>
     <p class="muted">
-      Every numbered claim of each paper, by what has been established about it. Accepted means
-      a kernel-checked proof of a locked statement whose meaning was reviewed by someone other
-      than its author; anything less is shown as what it is.
+      Every listed claim, with the status recorded by the engine.
+      For claims marked “{statusView({ status_code: "formal.accepted" }).label}”:
+      {statusView({ status_code: "formal.accepted" }).explanation}
     </p>
     <div class="tools">
       <label><input type="checkbox" bind:checked={onlyNotProved} /> Show only what is not accepted</label>
@@ -77,8 +78,8 @@
           <h3 class="glabel">{label} <span class="faint">({group.length})</span></h3>
           <div class="grid" role="list">
             {#each group as c (c.id)}
-              <a role="listitem" class={"cell st-" + c.class} href={href(index.release, "read", p.id, c.id)}
-                title={`${c.number || c.id}: ${c.status}`}>
+              <a role="listitem" class={"cell st-" + statusView(c).class} href={href(index.release, "read", p.id, c.id)}
+                title={`${c.number || c.id}: ${statusView(c).label}`}>
                 <span class="num">{short(c)}</span>
                 <span class="kind">{isEnv(c) ? (c.number || "").split(" ")[0] : c.kind}</span>
               </a>
@@ -92,8 +93,8 @@
       <table class="sum">
         <thead><tr><th>Status</th><th class="n">Claims</th></tr></thead>
         <tbody>
-          {#each Object.entries(index.summary[p.id] || {}).sort((a, b) => CLASS_ORDER.indexOf(index.classes[a[0]]) - CLASS_ORDER.indexOf(index.classes[b[0]])) as [s, n]}
-            <tr><td><StatusChip status={s} cls={index.classes[s]} /></td><td class="n">{n}</td></tr>
+          {#each statusSummary(p.claims) as s}
+            <tr><td><StatusChip record={s} /></td><td class="n">{s.count}</td></tr>
           {/each}
         </tbody>
       </table>
@@ -105,7 +106,7 @@
             <li>
               <a href={href(index.release, "claim", c.id)}>{c.number || c.id}</a>
               {#if c.heading || c.title}<span class="muted"><TexInline text={c.heading || c.title} /></span>{/if}
-              <StatusChip status={c.status} cls={c.class} small />
+              <StatusChip record={c} small />
             </li>
           {/each}
         </ul>

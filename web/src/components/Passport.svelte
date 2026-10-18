@@ -4,6 +4,7 @@
   import { loadClaim, loadSearch, saveLink, saveSymbol, inProject } from "../lib/data.js";
   import { project } from "../lib/project.svelte.js";
   import { href } from "../lib/route.svelte.js";
+  import { statusView, inScope, clauseNote, evidenceView } from "../lib/presentation.js";
   import StatusChip from "./StatusChip.svelte";
   import PdfCrop from "./PdfCrop.svelte";
   import Statement from "./Statement.svelte";
@@ -161,32 +162,6 @@
     };
   }
 
-  // A sentence under a clause only when it adds to the status chip: a check that fails, a
-  // statement or proof that is missing, or, with several clauses, what each one establishes.
-  function note(cl) {
-    if (claim.clauses.length > 1) return verdict(cl, false);
-    const ch = cl.checks || {};
-    const p = ch.accept || ch.refute;
-    if (["unchecked", "unspecified"].includes(cl.state)) return verdict(cl);
-    if (cl.state !== "stated" && (!p || !p.ok)) return verdict(cl);
-    return null;
-  }
-
-  // One line on what the Lean side of a clause establishes, in words.
-  // `review` adds how its meaning was reviewed, which the audit details say and the main view
-  // leaves to them.
-  function verdict(cl, review = true) {
-    const ch = cl.checks || {};
-    const p = ch.accept || ch.refute;
-    if (cl.state === "unchecked") return "The Lean project was not checked in this build.";
-    if (cl.state === "unspecified") return "No Lean statement has been written for it yet.";
-    if (cl.state === "stated") return "Stated in Lean as definitions.";
-    if (!p) return "A Lean statement exists; it has no proof yet.";
-    if (!p.ok) return "The Lean proof fails a check: " + p.errors.join(", ") + ".";
-    const replay = ch.replay?.state === "pass" ? ", replayed independently" : "";
-    const rev = { reviewed: "its meaning reviewed independently", "author-reviewed": "its meaning reviewed only by its author", pending: "its meaning not yet reviewed" }[cl.review] || "";
-    return (cl.state === "refuted" ? "Lean proves the printed statement false" : "Proved in Lean") + replay + (rev && review ? "; " + rev : "") + ".";
-  }
   let copied = $state(null);
   async function copyLink() {
     const text = claimLink(index, claim) || claimReference(index, claim);
@@ -199,25 +174,6 @@
     setTimeout(() => (copied = null), 2000);
   }
 
-  // The sentence under a link restates the status the engine computed for it, and nothing more.
-  function linkVerdict(l) {
-    const s = l.status || "";
-    if (s.includes("no audit")) return "Declared by the project; Lean has not been run on it here, and no audit of this formalisation is published, so whether it is proved, and whether it says what the paper says, is not shown.";
-    if (s.includes("not checked")) return "Lean has not been run on it here: the project is not built, so whether it is proved is not known.";
-    if (s.includes("not found")) return "Not found in the built modules.";
-    if (s.includes("definition")) return `A Lean ${l.kind || "definition"}.`;
-    if (s.includes("incomplete")) return "Its Lean proof is incomplete (it uses sorry).";
-    if (s.includes("further axioms")) return "Its proof uses axioms beyond the standard three: " + (l.axioms || []).join(", ") + ".";
-    if (s === "linked: Lean proof checked") return "Proved in Lean. Whether it says what the paper says has not been reviewed.";
-    return s;
-  }
-
-  // A check or piece of evidence the claim lacks, said as what it is: an independent replay is
-  // a further check, not a condition of acceptance.
-  function describe(b) {
-    if (/^no independent kernel replay/.test(b)) return "Independent replay: not recorded (" + b.replace(/^no independent kernel replay:?\s*/, "") + ")";
-    return b;
-  }
 </script>
 
 {#snippet crop(c)}
@@ -262,7 +218,7 @@
       <h1>{claim.number || claim.id}{#if claim.heading}<span class="title">&nbsp;— <TexInline text={claim.heading} /></span>{/if}</h1>
       {#if !claim.heading && claim.title}<p class="desc"><TexInline text={claim.title} /></p>{/if}
       <div class="bar">
-        <button class="chipbtn" onclick={() => showDecl(DETAILS)} title="Audit details: what this status rests on"><StatusChip status={claim.status} cls={claim.class} /></button>
+        <button class="chipbtn" onclick={() => showDecl(DETAILS)} title="Audit details: what this status rests on"><StatusChip record={claim} /></button>
         <span class="grow"></span>
         {#if issueUrl(index, claim)}
           <a class="act" href={issueUrl(index, claim)} target="_blank" rel="noopener" title={"Opens a draft issue in " + index.issues + " with this claim's details filled in"}>Report issue ↗</a>
@@ -275,7 +231,7 @@
               {#if full && meta?.anchor}<a role="menuitem" href={href(index.release, "read", claim.paper, claim.id)}>Show in the paper</a>{/if}
               <button role="menuitem" onclick={() => { copyLink(); menu = false; }}>{claimLink(index, claim) ? "Copy link" : "Copy reference"}</button>
               {#if reportsUrl(index, claim)}<a role="menuitem" href={reportsUrl(index, claim)} target="_blank" rel="noopener">View existing reports ↗</a>{/if}
-              {#if index.review_queue && claim.scope !== "out-of-scope" && !String(claim.status).startsWith("out of scope")}
+              {#if index.review_queue && inScope(claim)}
                 <a role="menuitem" href={href(index.release, "review")}>Review it</a>
               {/if}
               <button role="menuitem" onclick={() => showDecl(DETAILS)}>Audit details</button>
@@ -332,14 +288,15 @@
       <h2>Lean</h2>
       {#if simple}
         {#if claim.audit}
-          <p class="small recorded">As recorded in the published audit{claim.audit.author ? " by " + claim.audit.author : ""}: <strong>{claim.audit.status}</strong>.
+          <p class="small recorded">As recorded in the published audit{claim.audit.author ? " by " + claim.audit.author : ""}.
             {#if claim.audit.link}<a href={claim.audit.link} target="_blank" rel="noopener">Open this claim in the audit ↗</a>{/if}</p>
         {/if}
         {#each claim.links as l (l.name)}
           <div class="block">
             <p class="decl"><code>{l.name}</code>
               {#if sourceUrl(index, l.path, l.range?.line)}<a class="src-link small" href={sourceUrl(index, l.path, l.range?.line)} target="_blank" rel="noopener" title={sourceTitle(index)}>{sourceLabel(index)}</a>{/if}</p>
-            {#if l.statement}<Statement st={l.statement} onref={showDecl} compact />{:else}<p class="verdict">{linkVerdict(l)}</p>{/if}
+            {#if l.statement}<Statement st={l.statement} onref={showDecl} compact />{/if}
+            {#if claim.links.length > 1}<StatusChip record={l} small />{/if}
             {#if editable}
               <button class="btn ghost" disabled={!!busy} onclick={() => act({ lean: claim.links.filter((x) => x.name !== l.name).map((x) => x.name) }, "unlink")}>Unlink</button>
             {/if}
@@ -374,7 +331,7 @@
         {#each claim.clauses as cl, k (k)}
           <div class="block" class:refuted={cl.state === "refuted"}>
             {#if claim.clauses.length > 1}<p class="cname"><TexInline text={cl.label || cl.name} />{#if cl.corrects}<span class="faint">&nbsp;— corrects “<TexInline text={cl.corrects_label || cl.corrects} />”</span>{/if}</p>{/if}
-            {#if note(cl)}<p class="verdict">{note(cl)}</p>{/if}
+            {#if clauseNote(cl, claim.clauses.length)}<p class="verdict">{clauseNote(cl, claim.clauses.length)}</p>{/if}
             {#if changes(cl)}
               {@const d = changes(cl)}
               <div class="changes">
@@ -412,20 +369,21 @@
     {#if claim.number_note}<p class="summary">{claim.number} <span class="faint">({claim.number_note})</span></p>{/if}
     {#if claim.scope_note}<p class="muted small">{claim.scope_note}</p>{/if}
     {#if simple}
+      <Ladder evidence={{ source: claim.source_evidence }} />
       {#each claim.links as l (l.name)}
         <h3><code>{l.name}</code></h3>
-        <p class="small">{linkVerdict(l)}</p>
+        <p class="small">{statusView(l).explanation}</p>
+        {#if l.status_detail}<p class="small">{l.status_detail}</p>{/if}
         <p class="faint small">{l.source === "paper" ? "Linked by a \\lean{…} tag in the paper's source" : l.source === "formalization.yaml" ? "Declared in the project's formalization.yaml" + (index.formalization?.review_status ? ` (the project describes its review as “${index.formalization.review_status}”)` : "") : "Linked in the reader (machinechecked.links.json)"}{#if l.repository} · {l.repository}{/if}{#if l.module} · {l.module}{l.range ? ":" + l.range.line : ""}{/if}</p>
       {/each}
     {:else}
       {#if claim.blockers?.length}
         <h3>Checks and evidence</h3>
-        <ul class="small">{#each claim.blockers as b}<li><TexInline text={describe(b)} /></li>{/each}</ul>
+        <ul class="small">{#each claim.blockers as b}<li><TexInline text={b} /></li>{/each}</ul>
       {/if}
       {#each claim.clauses as cl, k (k)}
         <h3>{#if claim.clauses.length > 1}<TexInline text={cl.label || cl.name} />{:else}Evidence{/if}</h3>
-        <p class="small">{verdict(cl)}</p>
-        <Ladder rungs={cl.ladder} />
+        <Ladder evidence={cl.evidence} />
         {#if cl.proofs && Object.keys(cl.proofs).length}
           <dl class="proof">
             {#each Object.entries(cl.proofs) as [kind, p]}
@@ -458,7 +416,7 @@
         {#if cl.def_reviews && Object.keys(cl.def_reviews).length}
           {@const entries = Object.entries(cl.def_reviews).sort((a, b) => RANK[a[1].state] - RANK[b[1].state] || a[0].localeCompare(b[0]))}
           {@const counts = entries.reduce((m, [, r]) => ((m[r.state] = (m[r.state] || 0) + 1), m), {})}
-          <p class="small muted">Definitions its meaning depends on: {Object.entries(counts).map(([k, v]) => `${v} ${k}`).join(", ")}</p>
+          <p class="small muted">Definitions its meaning depends on: {Object.entries(counts).map(([k, v]) => `${v} ${evidenceView("review", { state: k }).word}`).join(", ")}</p>
         {/if}
       {/each}
     {/if}
@@ -541,7 +499,6 @@
   .src-link { margin-left: 8px; white-space: nowrap; }
   .decl { margin: 0 0 6px; overflow-wrap: anywhere; }
   .verdict { margin: 10px 0 0; font-size: 14px; }
-  .verdict.top { margin: 0 0 8px; }
   .row { display: flex; gap: 8px; margin-top: 10px; }
   .btn { border: 1px solid var(--accent); background: var(--accent); color: white; border-radius: 6px; padding: 4px 12px; cursor: pointer; font-size: 13px; margin-top: 8px; }
   .row .btn { margin-top: 0; }

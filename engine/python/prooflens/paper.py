@@ -21,8 +21,9 @@ from pathlib import Path
 from . import formalization as fz
 from . import manifest as mf
 from .util import content_id
+from .status import fields, source_evidence, STATUSES
 
-SCHEMA = "prooflens/manifest@0"
+SCHEMA = mf.SCHEMA
 NOT_CHECKED = "linked: Lean not checked here (no audit published)"
 NOT_IN_AUDIT = "linked: Lean not checked here (the published audit does not list it)"
 NOT_LINKED = "not linked"
@@ -54,9 +55,9 @@ def paper_claims(anchors: list[dict], title: str,
 def apply_audits(claims: list[dict], audits: dict[str, dict]) -> list[dict]:
     """Each statement (from `paper_claims`) with, for every project whose published audit lists
     exactly one claim of the same printed number, that claim as the audit records it (`audit`:
-    status, class, claim id, link, author). When the project's formalization.yaml declares no
+    status_code, derived label/class, claim id, link, author). When the project's formalization.yaml declares no
     link for the statement, the audit's Lean names are its links. `audits` maps a repository to
-    `{"author", "url", "commit", "claims": [{"id", "number", "status", "class", "lean",
+    `{"author", "url", "commit", "claims": [{"id", "number", "status_code", "lean",
     "link"}]}`, read from the audit's own data; the claims are not changed otherwise."""
     for c in claims:
         c["audit"] = {}
@@ -65,7 +66,9 @@ def apply_audits(claims: list[dict], audits: dict[str, dict]) -> list[dict]:
             if len(same) != 1:
                 continue
             x = same[0]
-            c["audit"][repo] = {"status": x["status"], "class": x["class"], "claim": x["id"],
+            code = x.get("status_code")
+            c["audit"][repo] = {**fields(code if code in STATUSES else "unknown"),
+                                "claim": x["id"],
                                 "link": x.get("link"), "author": au.get("author"),
                                 "audit": au.get("url")}
             if not any(l["repository"] == repo for l in c["links"]):
@@ -75,20 +78,13 @@ def apply_audits(claims: list[dict], audits: dict[str, dict]) -> list[dict]:
     return claims
 
 
-def _state(links: list[dict], audit: dict | None = None,
-           audited: bool = False) -> tuple[str, str]:
-    """A statement's status for one project: the audit's own, when its published audit lists
-    the statement; otherwise what the page can say without Lean."""
+def _state(links: list[dict], audit: dict | None = None, audited: bool = False) -> dict:
+    """Copy the audit's code; a link alone establishes no proof or review."""
     if audit:
-        return audit["status"], audit["class"]
+        return fields(audit["status_code"])
     if not links:
-        return NOT_LINKED, "unspecified"
-    return (NOT_IN_AUDIT if audited else NOT_CHECKED), "declared"
-
-
-def _link_state(link: dict, audit: dict | None, audited: bool) -> dict:
-    status, cls = _state([link], audit, audited)
-    return {"status": status, "class": cls}
+        return fields("link.none")
+    return fields("link.not-in-audit" if audited else "link.no-audit")
 
 
 def write_paper_site(site: Path, paper: dict, claims: list[dict],
@@ -109,25 +105,26 @@ def write_paper_site(site: Path, paper: dict, claims: list[dict],
         by_project = {}
         audits = c.get("audit") or {}
         for r in projects:
-            status, cls = _state([l for l in c["links"] if l["repository"] == r], audits.get(r),
+            state = _state([l for l in c["links"] if l["repository"] == r], audits.get(r),
                                  r in audited)
-            by_project[r] = {"status": status, "class": cls,
+            by_project[r] = {**state,
                              **({"audit": audits[r]} if r in audits else {})}
         first = projects[0] if projects else None
-        status, cls = _state([l for l in c["links"] if not projects or l["repository"] == first],
+        state = _state([l for l in c["links"] if not projects or l["repository"] == first],
                              audits.get(first), first in audited)
         common = {"id": cid, "paper": "P", "number": c["number"], "title": c.get("title"),
                   "heading": c.get("title") or None, "kind": c["kind"], "scope": "formal",
-                  "status": status, "class": cls, "by_project": by_project}
+                  **state, "by_project": by_project}
         index_claims.append({**common, "anchor": mf.index_anchor(anchor, "approximate"),
                              "counts": {}, "file": fname, "linked": len(c["links"]),
                              "suggested": 0})
         chunks[fname] = {
             **common, "schema": SCHEMA, "mode": "simple", "release": "paper", "key": c["key"],
             "scope_note": "", "scope_reviewed": True, "anchor": anchor,
-            "source_matches": None, "statement_tex": None, "blockers": [],
-            "links": [{**l, **_link_state(l, audits.get(l["repository"]),
-                                          l["repository"] in audited),
+            "source_matches": None, "source_evidence": source_evidence(anchor, "pdf"),
+            "statement_tex": None, "blockers": [],
+            "links": [{**l, **fields("link.claim-audit" if l["repository"] in audits else
+                                               "link.not-in-audit" if l["repository"] in audited else "link.no-audit"),
                        "why": None, "statement": None, "path": None} for l in c["links"]],
             "suggestions": [], "clauses": [], "decls": {}, "findings": []}
     summary = {}

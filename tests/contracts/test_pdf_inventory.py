@@ -30,7 +30,7 @@ def check(claims, anchors, **tex):
     # Proof replay is outside this source-coverage test; isolate the gate's source conditions.
     assessor.replay = lambda name: {"state": "pass"}
     assessor.inventory_checks()
-    rows = [{"id": c["id"], "status": "formal: accepted", "clauses": [{"accept": "Synthetic.proof"}]}
+    rows = [{"id": c["id"], "status": "formal: accepted", "status_code": "formal.accepted", "clauses": [{"accept": "Synthetic.proof"}]}
             for c in claims]
     return assessor.findings, assessor.gates(rows)["T"]
 

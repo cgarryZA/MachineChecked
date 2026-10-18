@@ -1,4 +1,5 @@
 <script>
+  import { statusView } from "../lib/presentation.js";
   import TexInline from "./TexInline.svelte";
   import { loadSearch } from "../lib/data.js";
   import { href, go } from "../lib/route.svelte.js";
@@ -58,7 +59,7 @@
             {#if r.kind === "claim"}
               <span class="t">{r.c.number || r.c.id}</span>
               <span class="p">Paper {r.c.paper}</span>
-              <span class="s">{r.c.status}</span>
+              <span class="s">{statusView(r.c).label}</span>
               {#if c_heading(r)}<span class="w"><TexInline text={c_heading(r)} /></span>{/if}
               {#if r.why}<span class="w">{r.why}</span>{/if}
             {:else}

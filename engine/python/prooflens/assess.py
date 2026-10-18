@@ -22,6 +22,8 @@ valid, and a Comparator replay of every proof).
 
 from __future__ import annotations
 
+from .status import fields
+
 from .reviews import Review, history
 from .source_regions import SCHEME as SOURCE_SCHEME, matches as source_matches
 
@@ -304,44 +306,48 @@ class Assessor:
     # -- claims ---------------------------------------------------------------------------
 
     @staticmethod
-    def claim_status(claim: dict, clauses: list[dict]) -> str:
+    def claim_code(claim: dict, clauses: list[dict]) -> str:
         """The status of a claim from its clauses: a refuted original clause never hides another
         original clause."""
         scope = claim["scope"]
         if scope in OUT_OF_SCOPE:
-            return "out of scope: " + scope
+            return "scope." + scope
         if any(c["state"] == "unchecked" for c in clauses):
-            return ("definition" if scope == "definition" else "formal") + ": unchecked"
+            return ("definition" if scope == "definition" else "formal") + ".unchecked"
         if scope == "definition":
             if not clauses:
-                return "definition: not yet stated"
+                return "definition.unstated"
             if not all(c["review"] in ("reviewed", "author-reviewed") for c in clauses):
-                return "definition: review pending"
-            return ("definition: author-reviewed"
+                return "definition.review-pending"
+            return ("definition.author-reviewed"
                     if any(c["review"] == "author-reviewed" for c in clauses)
-                    else "definition: reviewed")
+                    else "definition.reviewed")
         if not clauses:
-            return "formal: unspecified"
+            return "formal.unspecified"
         originals = [c for c in clauses if not c.get("corrects")]
         if not originals:
-            return "formal: malformed"
+            return "formal.malformed"
         refuted = [c for c in originals if c.get("refute_ok")]
         rest = [c for c in originals if not c.get("refute_ok")]
         rest_proved = all(c.get("accept_ok") for c in rest)
         if refuted:
             fixed = all(any(k.get("accept_ok") for k in clauses if k.get("corrects") == c["name"])
                         for c in refuted)
-            return ("refuted as printed" + ("; corrected statement proved" if fixed else "")
-                    + ("" if rest_proved else "; other clauses open"))
+            return ("formal.refuted" + (".corrected" if fixed else "")
+                    + ("" if rest_proved else ".open"))
         if rest_proved:
             if not all(c["review"] in ("reviewed", "author-reviewed") for c in rest):
-                return "formal: proved, review pending"
-            return ("formal: proved, author-reviewed"
+                return "formal.review-pending"
+            return ("formal.author-reviewed"
                     if any(c["review"] == "author-reviewed" for c in rest)
-                    else "formal: accepted")
-        return "formal: open"
+                    else "formal.accepted")
+        return "formal.open"
 
-    def blockers(self, claim: dict, status: str, clauses: list[dict]) -> list[str]:
+    @staticmethod
+    def claim_status(claim: dict, clauses: list[dict]) -> str:
+        return fields(Assessor.claim_code(claim, clauses))["status"]
+
+    def blockers(self, claim: dict, clauses: list[dict]) -> list[str]:
         """Why the claim is not accepted, in plain words, most basic first: one line per reason,
         saying which clauses it affects. Empty for an accepted claim whose proofs were replayed,
         and for a claim out of scope."""
@@ -389,7 +395,7 @@ class Assessor:
                 add("a regime the paper intends is not shown to be covered", c)
             rp = c["checks"].get("replay")
             if rp and rp["state"] != "pass" and st in ("proved", "refuted"):
-                add("no independent kernel replay: " + rp["detail"], c)
+                add("Independent replay: not recorded (" + rp["detail"] + ")", c)
         for reason, names in reasons.items():
             if n == 1:
                 out.append(reason)
@@ -408,7 +414,7 @@ class Assessor:
             if counts.get(state):
                 out.append(f"{counts[state]} definition{'s' if counts[state] > 1 else ''} its "
                            f"meaning depends on {words}")
-        if status.startswith("definition") and status != "definition: reviewed" and not out:
+        if claim["scope"] == "definition" and self.claim_code(claim, clauses) != "definition.reviewed" and not out:
             out.append("its definitions are not independently reviewed")
         return list(dict.fromkeys(out))
 
@@ -416,9 +422,9 @@ class Assessor:
         claims = []
         for c in self.inv["claims"]:
             clauses = [self.clause(c, cl, k) for k, cl in enumerate(c.get("clauses", []))]
-            status = self.claim_status(c, clauses)
-            claims.append({"id": c["id"], "status": status, "clauses": clauses,
-                           "blockers": self.blockers(c, status, clauses)})
+            state = fields(self.claim_code(c, clauses))
+            claims.append({"id": c["id"], **state, "clauses": clauses,
+                           "blockers": self.blockers(c, clauses)})
         self.inventory_checks()
         if self.lean:
             for v in self.lean.get("layering", []):
@@ -460,10 +466,10 @@ class Assessor:
                 if e["scope"] in OUT_OF_SCOPE:
                     continue
                 if e["scope"] == "definition":
-                    if r["status"] != "definition: reviewed":
+                    if r["status_code"] != "definition.reviewed":
                         reasons.append(f"{r['id']}: {r['status']}")
                     continue
-                if r["status"] != "formal: accepted":
+                if r["status_code"] != "formal.accepted":
                     reasons.append(f"{r['id']}: {r['status']}")
                 for c in r["clauses"]:
                     if c.get("refute_ok"):

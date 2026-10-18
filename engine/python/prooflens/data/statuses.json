@@ -1,0 +1,429 @@
+{
+  "statuses": {
+    "unknown": {
+      "label": "Status unavailable",
+      "class": "unspecified",
+      "explanation": "This status is unknown to this reader. Rebuild the audit with the current MachineChecked version."
+    },
+    "formal.accepted": {
+      "label": "formal: accepted",
+      "class": "accepted",
+      "explanation": "The formal propositions and their proofs pass the checks, with current independent correspondence reviews. Source verification and independent replay are separate evidence."
+    },
+    "formal.author-reviewed": {
+      "label": "formal: proved, author-reviewed",
+      "class": "proved",
+      "explanation": "The formal propositions are proved; at least one correspondence review is only by an author of the statements."
+    },
+    "formal.review-pending": {
+      "label": "formal: proved, review pending",
+      "class": "proved",
+      "explanation": "The formal propositions are proved; at least one correspondence review is missing or stale."
+    },
+    "formal.open": {
+      "label": "formal: open",
+      "class": "open",
+      "explanation": "A formal proposition exists, but a required proof is missing or fails a check."
+    },
+    "formal.unspecified": {
+      "label": "formal: unspecified",
+      "class": "unspecified",
+      "explanation": "No Lean proposition has been written for this claim."
+    },
+    "formal.malformed": {
+      "label": "formal: malformed",
+      "class": "malformed",
+      "explanation": "Corrections are listed without an original clause."
+    },
+    "formal.unchecked": {
+      "label": "formal: unchecked",
+      "class": "unspecified",
+      "explanation": "The Lean project was not checked in this build."
+    },
+    "definition.unchecked": {
+      "label": "definition: unchecked",
+      "class": "unspecified",
+      "explanation": "The Lean definitions were not checked in this build."
+    },
+    "definition.unstated": {
+      "label": "definition: not yet stated",
+      "class": "unspecified",
+      "explanation": "No Lean definition has been named for this claim."
+    },
+    "definition.review-pending": {
+      "label": "definition: review pending",
+      "class": "open",
+      "explanation": "At least one definition has a missing or stale correspondence review."
+    },
+    "definition.author-reviewed": {
+      "label": "definition: author-reviewed",
+      "class": "proved",
+      "explanation": "At least one definition was reviewed only by an author of the statements."
+    },
+    "definition.reviewed": {
+      "label": "definition: reviewed",
+      "class": "accepted",
+      "explanation": "The definitions have current independent correspondence reviews. This is not a theorem proof."
+    },
+    "link.missing": {
+      "label": "linked: Lean declaration not found",
+      "class": "malformed",
+      "explanation": "The linked declaration was not found in the built modules."
+    },
+    "link.definition": {
+      "label": "linked: Lean definition",
+      "class": "proved",
+      "explanation": "The linked declaration is a definition, not a theorem proof. Its correspondence with the paper has not been reviewed here."
+    },
+    "link.incomplete": {
+      "label": "linked: Lean proof incomplete (sorry)",
+      "class": "open",
+      "explanation": "The linked theorem uses sorry. Its proof is incomplete."
+    },
+    "link.axioms": {
+      "label": "linked: Lean proof uses further axioms",
+      "class": "open",
+      "explanation": "The linked proof uses axioms beyond the allowed set."
+    },
+    "link.checked": {
+      "label": "linked: Lean proof checked",
+      "class": "proved",
+      "explanation": "Lean checked the linked theorem. Its correspondence with the paper has not been reviewed here; independent replay is not recorded."
+    },
+    "link.unbuilt": {
+      "label": "linked: Lean not checked (the project is not built)",
+      "class": "unspecified",
+      "explanation": "The project is not built, so the linked declaration has not been checked."
+    },
+    "link.module-unbuilt": {
+      "label": "linked: Lean not checked (module not built)",
+      "class": "unspecified",
+      "explanation": "The declaration’s module is not built, so the link has not been checked."
+    },
+    "link.module-failed": {
+      "label": "linked: Lean not checked (module could not be loaded)",
+      "class": "unspecified",
+      "explanation": "The declaration’s module could not be loaded, so the link has not been checked."
+    },
+    "link.ambiguous": {
+      "label": "linked: Lean name is ambiguous",
+      "class": "unspecified",
+      "explanation": "Several modules declare this name. Choose a module before checking the link."
+    },
+    "link.no-audit": {
+      "label": "linked: Lean not checked here (no audit published)",
+      "class": "declared",
+      "explanation": "The project declares this link. No published audit establishes a proof or correspondence review here."
+    },
+    "link.not-in-audit": {
+      "label": "linked: Lean not checked here (the published audit does not list it)",
+      "class": "declared",
+      "explanation": "The published audit does not list this claim, so it supplies no proof or correspondence evidence for it."
+    },
+    "link.suggested": {
+      "label": "suggested link, not confirmed",
+      "class": "unspecified",
+      "explanation": "A possible correspondence has been suggested but not confirmed."
+    },
+    "link.none": {
+      "label": "not linked",
+      "class": "unspecified",
+      "explanation": "No Lean declaration is linked to this claim."
+    },
+    "formal.refuted": {
+      "label": "refuted as printed",
+      "class": "refuted",
+      "explanation": "Lean proves the negation of an original formal proposition. Correspondence with the printed claim is a separate review."
+    },
+    "formal.refuted.open": {
+      "label": "refuted as printed; other clauses open",
+      "class": "refuted",
+      "explanation": "Lean proves the negation of an original formal proposition. Other original clauses remain open. Correspondence with the printed claim is a separate review."
+    },
+    "formal.refuted.corrected": {
+      "label": "refuted as printed; corrected statement proved",
+      "class": "refuted",
+      "explanation": "Lean proves the negation of an original formal proposition. A correcting proposition is proved. Correspondence with the printed claim is a separate review."
+    },
+    "formal.refuted.corrected.open": {
+      "label": "refuted as printed; corrected statement proved; other clauses open",
+      "class": "refuted",
+      "explanation": "Lean proves the negation of an original formal proposition. A correcting proposition is proved. Other original clauses remain open. Correspondence with the printed claim is a separate review."
+    },
+    "scope.expository": {
+      "label": "out of scope: expository",
+      "class": "out-of-scope",
+      "explanation": "This claim is classified as expository and is outside the formal proof assessment."
+    },
+    "scope.literature": {
+      "label": "out of scope: literature",
+      "class": "out-of-scope",
+      "explanation": "This claim is classified as literature and is outside the formal proof assessment."
+    },
+    "scope.empirical": {
+      "label": "out of scope: empirical",
+      "class": "out-of-scope",
+      "explanation": "This claim is classified as empirical and is outside the formal proof assessment."
+    },
+    "scope.proof-step": {
+      "label": "out of scope: proof-step",
+      "class": "out-of-scope",
+      "explanation": "This claim is classified as proof-step and is outside the formal proof assessment."
+    },
+    "scope.part-of": {
+      "label": "out of scope: part-of",
+      "class": "out-of-scope",
+      "explanation": "This claim is classified as part-of and is outside the formal proof assessment."
+    },
+    "scope.duplicate": {
+      "label": "out of scope: duplicate",
+      "class": "out-of-scope",
+      "explanation": "This claim is classified as duplicate and is outside the formal proof assessment."
+    },
+    "link.claim-audit": {
+      "label": "linked: claim audit published",
+      "class": "declared",
+      "explanation": "The published audit assesses the claim. That claim verdict does not establish that each named declaration has been proved."
+    }
+  },
+  "dimensions": {
+    "formal": {
+      "label": "Formal proof",
+      "states": {
+        "proved": {
+          "label": "proved",
+          "explanation": "Lean proves this formal proposition."
+        },
+        "refuted": {
+          "label": "refuted",
+          "explanation": "Lean proves the negation of this formal proposition."
+        },
+        "open": {
+          "label": "open",
+          "explanation": "A formal proposition exists; a proof is missing or fails a check."
+        },
+        "unspecified": {
+          "label": "not stated",
+          "explanation": "No formal proposition is recorded."
+        },
+        "unchecked": {
+          "label": "not checked",
+          "explanation": "Lean was not checked in this build."
+        },
+        "stated": {
+          "label": "definition",
+          "explanation": "A definition is recorded; this is not a theorem proof."
+        },
+        "malformed": {
+          "label": "malformed",
+          "explanation": "The formal claim is malformed."
+        }
+      }
+    },
+    "review": {
+      "label": "Correspondence review",
+      "states": {
+        "reviewed": {
+          "label": "independent",
+          "explanation": "Current reviews of the proposition and its definitions are recorded by someone other than their authors. Reviewer identity is self-declared."
+        },
+        "author-reviewed": {
+          "label": "author only",
+          "explanation": "At least one review is only by an author of the statements."
+        },
+        "pending": {
+          "label": "pending",
+          "explanation": "At least one review is missing or stale."
+        },
+        "stale": {
+          "label": "stale",
+          "explanation": "The declaration changed since its review."
+        },
+        "unknown": {
+          "label": "not assessed",
+          "explanation": "No correspondence review was assessed here."
+        }
+      }
+    },
+    "replay": {
+      "label": "Independent replay",
+      "states": {
+        "pass": {
+          "label": "passed",
+          "explanation": "A structured Comparator record covers this proof and its Lean inputs."
+        },
+        "not-run": {
+          "label": "not run",
+          "explanation": "No independent kernel replay is recorded for this proof."
+        },
+        "unverified": {
+          "label": "unverified",
+          "explanation": "The supplied replay record does not establish replay for this proof and build."
+        }
+      }
+    },
+    "source": {
+      "label": "Source verification",
+      "states": {
+        "pass": {
+          "label": "matched",
+          "explanation": "The claim’s source hash matches the inventory. This does not establish paper-to-Lean correspondence."
+        },
+        "fail": {
+          "label": "mismatch",
+          "explanation": "The source differs from the pinned source."
+        },
+        "none": {
+          "label": "not checked",
+          "explanation": "The claim’s source has not been verified."
+        },
+        "open": {
+          "label": "ambiguous",
+          "explanation": "The source location is ambiguous."
+        },
+        "pdf-only": {
+          "label": "PDF only",
+          "explanation": "There is no LaTeX statement hash; PDF integrity and placement are reported separately."
+        }
+      }
+    },
+    "locked-statement": {
+      "label": "Locked statement",
+      "states": {
+        "pass": {
+          "label": "passed",
+          "explanation": "Locked statement check passed."
+        },
+        "fail": {
+          "label": "failed",
+          "explanation": "Locked statement check failed."
+        },
+        "none": {
+          "label": "none",
+          "explanation": "No locked statement evidence is recorded."
+        },
+        "open": {
+          "label": "open",
+          "explanation": "Locked statement obligation is open."
+        },
+        "n/a": {
+          "label": "not applicable",
+          "explanation": "Locked statement is not required for this clause."
+        }
+      }
+    },
+    "exact-statement": {
+      "label": "Exact statement",
+      "states": {
+        "pass": {
+          "label": "passed",
+          "explanation": "Exact statement check passed."
+        },
+        "fail": {
+          "label": "failed",
+          "explanation": "Exact statement check failed."
+        },
+        "none": {
+          "label": "none",
+          "explanation": "No exact statement evidence is recorded."
+        },
+        "open": {
+          "label": "open",
+          "explanation": "Exact statement obligation is open."
+        },
+        "n/a": {
+          "label": "not applicable",
+          "explanation": "Exact statement is not required for this clause."
+        }
+      }
+    },
+    "axioms": {
+      "label": "Allowed axioms",
+      "states": {
+        "pass": {
+          "label": "passed",
+          "explanation": "Allowed axioms check passed."
+        },
+        "fail": {
+          "label": "failed",
+          "explanation": "Allowed axioms check failed."
+        },
+        "none": {
+          "label": "none",
+          "explanation": "No allowed axioms evidence is recorded."
+        },
+        "open": {
+          "label": "open",
+          "explanation": "Allowed axioms obligation is open."
+        },
+        "n/a": {
+          "label": "not applicable",
+          "explanation": "Allowed axioms is not required for this clause."
+        }
+      }
+    },
+    "witness": {
+      "label": "Witness",
+      "states": {
+        "pass": {
+          "label": "passed",
+          "explanation": "Witness check passed."
+        },
+        "fail": {
+          "label": "failed",
+          "explanation": "Witness check failed."
+        },
+        "none": {
+          "label": "none",
+          "explanation": "No witness evidence is recorded."
+        },
+        "open": {
+          "label": "open",
+          "explanation": "Witness obligation is open."
+        },
+        "n/a": {
+          "label": "not applicable",
+          "explanation": "Witness is not required for this clause."
+        }
+      }
+    },
+    "regimes": {
+      "label": "Regimes",
+      "states": {
+        "pass": {
+          "label": "passed",
+          "explanation": "Regimes check passed."
+        },
+        "fail": {
+          "label": "failed",
+          "explanation": "Regimes check failed."
+        },
+        "none": {
+          "label": "none",
+          "explanation": "No regimes evidence is recorded."
+        },
+        "open": {
+          "label": "open",
+          "explanation": "Regimes obligation is open."
+        },
+        "n/a": {
+          "label": "not applicable",
+          "explanation": "Regimes is not required for this clause."
+        }
+      }
+    }
+  },
+  "placement": {
+    "exact": "exact location",
+    "approximate": "approximate location",
+    "manual": "placed by hand",
+    "ambiguous": "ambiguous location",
+    "unlocated": "not located"
+  },
+  "pdf_integrity": {
+    "matched": "PDF hash matched",
+    "mismatch": "PDF hash mismatch",
+    "unpinned": "PDF hash not pinned",
+    "unknown": "PDF hash not checked"
+  }
+}

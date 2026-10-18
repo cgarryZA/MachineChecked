@@ -102,12 +102,12 @@ def test_replay_is_not_run_without_a_log_and_blockers_explain(toy):
     index, body, cfg = build(toy)
     acc = next(c for c in index["claims"] if c["id"] == "T:thm:even-add")
     chunk = json.loads((cfg.out_dir / "site" / "data" / "claims" / acc["file"]).read_text())
-    rungs = {r["rung"]: r["state"] for r in chunk["clauses"][0]["ladder"]}
-    assert rungs["exact statement"] == "pass" and rungs["axioms"] == "pass"
-    assert rungs["kernel replay"] == "not-run"
+    rungs = {k: r["state"] for k, r in chunk["clauses"][0]["evidence"].items()}
+    assert rungs["exact-statement"] == "pass" and rungs["axioms"] == "pass"
+    assert rungs["replay"] == "not-run"
     # Accepted, but the release still lacks an independent replay: that is its only blocker.
     assert chunk["status"] == "formal: accepted"
-    assert chunk["blockers"] == ["no independent kernel replay: no Comparator record for this release"]
+    assert chunk["blockers"] == ["Independent replay: not recorded (no Comparator record for this release)"]
     bound = next(c for c in body["assessment"]["claims"] if c["id"] == "T:thm:bound")
     assert "the proposition has no review" in bound["blockers"]
     assert next(c for c in body["assessment"]["claims"] if c["id"] == "T:rem:history")["blockers"] == []

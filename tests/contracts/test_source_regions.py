@@ -218,7 +218,7 @@ def test_source_edit_fails_gates_and_reader_source_match_not_the_lean_proof(tmp_
     _, chunks, _ = build(after, "synthetic-release")
     shown = next(iter(chunks.values()))
     assert shown["source_matches"] is False
-    assert next(r for r in shown["clauses"][0]["ladder"] if r["rung"] == "source")["state"] == "fail"
+    assert shown["clauses"][0]["evidence"]["source"]["state"] == "fail"
     assert "regions" not in shown
 
 

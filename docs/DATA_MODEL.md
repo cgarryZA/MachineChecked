@@ -66,9 +66,12 @@ display: no status, fingerprint or hash reads them.
 
 ## Manifest (`manifest-index.schema.json`, `manifest-claim.schema.json`), derived
 
-`data/index.json` lists the papers, every claim's status, class and anchor, the summary and the
+The current format is `prooflens/manifest@1`; older display data must be rebuilt.
+See [the structured status contract](STATUS_CONTRACT.md) for the complete code inventory.
+
+`data/index.json` lists the papers, every claim's `status_code`, derived status/class and anchor, the summary and the
 findings counts. `data/claims/<file>.json` holds one passport: the printed statement, each
-clause's unfolded statement, proofs, witness, regimes, reviews and evidence ladder, the
+clause's unfolded statement, proofs, witness, regimes, reviews and structured `evidence`, the
 declarations of its closure, and its findings. A claim is loaded only when it is opened.
 
 A paper page (`prooflens.paper.write_paper_site`, used by machinechecked.org) is written in the

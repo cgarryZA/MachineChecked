@@ -338,7 +338,7 @@ def _check_json(a):
             res = build(cfg, web_dist=_web_dist(a.web))
             idx = res["index"]
             claims = [{"id": c["id"], "paper": c["paper"], "number": c.get("number"),
-                       "title": c.get("title"), "status": c["status"], "class": c["class"]}
+                       "title": c.get("title"), "status": c["status"], "status_code": c["status_code"], "class": c["class"]}
                       for c in idx["claims"]]
             out = {"mode": "full", "release": idx["release"],
                    "project": idx.get("project", {}).get("commit"),
@@ -351,8 +351,8 @@ def _check_json(a):
             view = _simple_view(root, paper)
             body = view["body"]
             claims = [{"id": c["id"], "number": c["number"], "title": c["title"],
-                       "status": c["status"], "class": c["class"],
-                       "links": [{"name": l["name"], "status": l["status"], "class": l["class"],
+                       "status": c["status"], "status_code": c["status_code"], "class": c["class"],
+                       "links": [{"name": l["name"], "status": l["status"], "status_code": l["status_code"], "class": l["class"],
                                   "source": l.get("source")} for l in c["links"]],
                        "suggestions": [{"name": x["name"], "why": x.get("why")}
                                        for x in c.get("suggestions", [])]}

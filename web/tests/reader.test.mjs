@@ -12,6 +12,7 @@
 // data format: `machinechecked build && machinechecked export --out OUT` in a copy of
 // examples/toy-paper, then copy OUT/data there.
 
+import "./presentation.test.mjs";
 import { chromium } from "playwright";
 import http from "node:http";
 import fs from "node:fs";
@@ -93,6 +94,9 @@ const TOY = JSON.parse(fs.readFileSync(path.join(here, "fixtures", "toy", "data"
 fs.cpSync(reader, path.join(root, "structure"), { recursive: true });
 fs.cpSync(path.join(here, "fixtures", "structure", "data"), path.join(root, "structure", "data"), { recursive: true });
 const SHAPE = JSON.parse(fs.readFileSync(path.join(here, "fixtures", "structure", "data", "index.json"), "utf8"));
+
+const states = spawnSync(process.env.PYTHON || "python3", [path.join(here, "fixtures", "make_status.py"), root, reader], { encoding: "utf8" });
+if (states.status !== 0) throw new Error(states.stderr);
 
 const types = { ".pdf": "application/pdf", ".html": "text/html", ".json": "application/json", ".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css", ".woff2": "font/woff2" };
 // `/toyedit/` is the toy reader as the local `view` serves it: its index says it may edit, and
@@ -413,6 +417,50 @@ await check("in the local reader a symbol is linked by choosing it and clicking 
     assert.match((await insp.textContent()).replace(/\s+/g, " "), /j ?: ?Nat.*1 ≤ j/);
     await st.locator(".ribbon .v", { hasText: "C" }).click();
     assert.match(await insp.textContent(), /Chosen by the statement \(there is\)/);
+  });
+}
+
+for (const width of [1300, 390]) {
+  await check("structured statuses agree across coverage, passport, evidence and public paper", width, async (pg) => {
+    const cases = [
+      ["pending", 1, "formal.review-pending", "pending", "not-run"],
+      ["author", 2, "formal.author-reviewed", "author-reviewed", "not-run"],
+      ["accepted", 3, "formal.accepted", "reviewed", "not-run"],
+      ["replayed", 4, "formal.review-pending", "pending", "pass"],
+      ["stale-replay", 5, "formal.accepted", "reviewed", "unverified"],
+      ["pdf", 6, "formal.accepted", "reviewed", "pass"],
+      ["source-mismatch", 7, "formal.accepted", "reviewed", "pass"],
+    ];
+    for (const [name, number, code, review, replay] of cases) {
+      await pg.goto(origin + "/states/#/r/states/coverage");
+      assert.match(await pg.locator(".cov .intro").textContent(), /For claims marked “formal: accepted”/);
+      const cov = pg.locator(".cov .paper").filter({ has: pg.locator("h2", { hasText: new RegExp(`^${name}$`) }) });
+      const chip = cov.locator(`.sum [data-status='${code}']`);
+      await chip.waitFor();
+      const label = await chip.textContent();
+      await pg.goto(origin + `/states/#/r/states/claim/${encodeURIComponent(name + ":claim")}`);
+      const passport = pg.locator(".view .chipbtn .chip");
+      await passport.waitFor();
+      assert.equal(await passport.textContent(), label);
+      assert.equal(await passport.getAttribute("data-status"), code);
+      assert.ok(!/deliberately misleading/.test(await pg.locator(".view").textContent()));
+      assert.equal(await pg.locator(".view .verdict").count(), 0, "single proved clause adds no redundant verdict");
+      await pg.locator(".view .chipbtn").click();
+      for (const [dim, state] of [["formal", "proved"], ["review", review], ["replay", replay]]) {
+        const rung = pg.locator(`.details [data-dimension='${dim}']`);
+        assert.equal(await rung.getAttribute("data-state"), state);
+      }
+      if (name === "pdf") assert.match(await pg.locator("[data-dimension='source']").textContent(), /PDF hash matched.*approximate location/);
+      if (name === "source-mismatch") assert.equal(await pg.locator("[data-dimension='source']").getAttribute("data-state"), "fail");
+      await pg.goto(origin + `/states-public/#/r/paper/claim/${encodeURIComponent("P:" + name + ":claim")}`);
+      await pg.locator(".view .chipbtn .chip").waitFor();
+      assert.equal(await pg.locator(".view .chipbtn .chip").textContent(), label);
+      assert.match(await pg.locator(".recorded").textContent(), /Synthetic reviewer/);
+      assert.ok(!(await pg.locator(".recorded").textContent()).includes(label), "attribution does not repeat the verdict");
+    }
+    await pg.goto(origin + "/states-public/?project=b%2Fproject#/r/paper/claim/P%3Aunlisted");
+    await pg.locator(".view .chipbtn .chip").waitFor();
+    assert.equal(await pg.locator(".view .chipbtn .chip").getAttribute("data-status"), "link.no-audit");
   });
 }
 
