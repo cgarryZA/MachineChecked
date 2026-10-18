@@ -156,9 +156,8 @@ def test_the_skill_says_what_the_statuses_do_not_mean():
     skill = (ROOT / "skills" / "machinechecked" / "SKILL.md").read_text()
     head = skill.split("---")[1]
     assert "name: machinechecked" in head and "description:" in head
-    from prooflens import simple
-    import inspect
-    src = inspect.getsource(simple)
+    from prooflens.status import STATUSES
+    src = "\n".join(v["label"] for v in STATUSES.values())
     # Every status the skill explains is one the engine writes.
     for st in re.findall(r"^\| `(linked: [^`]+|suggested link, not confirmed|not linked)` \|",
                          skill, re.M):

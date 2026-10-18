@@ -2,6 +2,9 @@
 
 What each piece of evidence means, and what it does not.
 
+The [structured status contract](STATUS_CONTRACT.md) lists the machine-readable codes and
+independent evidence dimensions. Labels never control acceptance or reader behaviour.
+
 ## The levels of a claim
 
 A claim of a paper is in the inventory with a scope. Out-of-scope claims (`expository`,

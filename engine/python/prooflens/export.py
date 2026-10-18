@@ -100,17 +100,17 @@ def other_papers_material(cfg: Config, pid: str, index: dict, chunks: dict,
 def public_claim(chunk: dict, pub) -> dict:
     """The fields of a claim passport that `pub` allows."""
     out = _pick(chunk, ["schema", "release", "id", "paper", "number", "title", "kind", "scope",
-                        "scope_note", "scope_reviewed", "status", "class", "source_matches",
+                        "scope_note", "scope_reviewed", "status", "status_code", "class", "source_matches", "source_evidence",
                         "source_sha256", "blockers"])
     out["location"] = chunk.get("location") if pub.source_text else None
     out["statement_tex"] = chunk.get("statement_tex") if pub.source_text else None
     a = chunk.get("anchor")
-    out["anchor"] = _pick(a, ["id", "env", "number", "label", "begin", "end", "source_sha256"] +
+    out["anchor"] = _pick(a, ["id", "env", "number", "label", "begin", "end", "kind", "source_sha256"] +
                           (["file", "line"] if pub.source_text else [])) if a else None
     clauses = []
     for cl in chunk["clauses"]:
         c = _pick(cl, ["name", "spec", "accept", "refute", "corrects", "witness", "defs", "state",
-                       "review", "checks", "ladder"])
+                       "review", "checks", "evidence"])
         c["regimes"] = [_pick(r, ["name", "description", "witness", "discharged"] +
                               (["type"] if pub.lean else [])) for r in cl.get("regimes", [])]
         if pub.lean and cl.get("statement"):
@@ -124,10 +124,6 @@ def public_claim(chunk: dict, pub) -> dict:
         if "def_reviews" in cl:
             c["def_reviews"] = {n: _pick(r, ["state", "by", "kind"])
                                 for n, r in cl["def_reviews"].items()}
-        if not pub.source_text:
-            for rung in c["ladder"]:
-                if rung["rung"] == "source" and rung["state"] == "pass":
-                    rung["detail"] = "located in the compiled paper"
         clauses.append(c)
     out["clauses"] = clauses
     # A symbol link names paper TeX and a place in the Lean statement: published with both.
@@ -295,7 +291,7 @@ def export(cfg: Config, out: Path, release: str | None = None,
                         "general": [_pick(f, ["id", "tier", "code", "subject", "message"])
                                     for f in index["findings"]["general"]]}
     pidx["claims"] = [_pick(c, ["id", "paper", "number", "title", "kind", "scope", "status",
-                                "class", "anchor", "counts", "file"]) for c in index["claims"]]
+                                "status_code", "class", "anchor", "counts", "file"]) for c in index["claims"]]
     write_json(data / "index.json", pidx, indent=None)
     for name, chunk in chunks.items():
         write_json(data / "claims" / name, public_claim(chunk, pubs[chunk["paper"]]),

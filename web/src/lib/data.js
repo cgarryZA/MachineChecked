@@ -1,6 +1,9 @@
 // Loading of the presentation manifest. The site only reads: every status and finding comes
 // from the manifest as written by the engine.
 
+import { statusView } from "./presentation.js";
+export { CLASS_ORDER, notProved } from "./presentation.js";
+
 import { project, settleProject } from "./project.svelte.js";
 
 const cache = new Map();
@@ -68,6 +71,7 @@ export let siteIndex = null;
 
 export async function loadIndex() {
   siteIndex = await loadIndexData();
+  if (siteIndex.schema !== "prooflens/manifest@1") throw new Error("Old reader data: rebuild the audit with the current MachineChecked version.");
   // A paper page lists the Lean projects that formalise the paper; one is shown at a time.
   if (Array.isArray(siteIndex.projects)) settleProject(siteIndex.projects.filter((r) => typeof r === "string"));
   return siteIndex;
@@ -123,9 +127,9 @@ export function loadSearch(index) {
 // links never show here, and are never combined with these.
 export function inProject(c, repo) {
   if (!c.by_project) return c;
-  const st = c.by_project[repo] || { status: "not linked", class: "unspecified" };
+  const st = c.by_project[repo] || { status_code: "link.none" };
   const links = c.links && c.links.filter((l) => l.repository === repo);
-  return { ...c, ...(links ? { links } : {}), status: st.status, class: st.class, audit: st.audit || null };
+  return { ...c, ...(links ? { links } : {}), status_code: st.status_code, status: statusView(st).label, class: statusView(st).class, audit: st.audit || null };
 }
 
 // The claims of the index for the chosen project (reactive on the choice).
@@ -157,23 +161,6 @@ export const CLASS_LABEL = {
   declared: "linked, not checked",
   "out-of-scope": "out of scope",
 };
-
-// The order classes are listed in, from established to not.
-export const CLASS_ORDER = [
-  "accepted",
-  "proved",
-  "refuted",
-  "open",
-  "unspecified",
-  "malformed",
-  "out-of-scope",
-];
-
-// A claim is "not proved" when its paper claim is not established at the strongest level:
-// anything but accepted, among claims in scope.
-export function notProved(c) {
-  return c.scope !== undefined && !String(c.status).startsWith("out of scope") && c.class !== "accepted";
-}
 
 // The review queue the engine wrote (`data/review-queue.json`), if this site has one.
 export function loadQueue(index) {

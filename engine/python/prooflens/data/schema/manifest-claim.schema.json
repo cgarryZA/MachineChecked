@@ -11,11 +11,13 @@
     "status",
     "clauses",
     "findings",
-    "decls"
+    "decls",
+    "status_code",
+    "source_evidence"
   ],
   "properties": {
     "schema": {
-      "const": "prooflens/manifest@0"
+      "const": "prooflens/manifest@1"
     },
     "release": {
       "type": "string"
@@ -39,7 +41,7 @@
         "required": [
           "name",
           "state",
-          "ladder"
+          "evidence"
         ],
         "properties": {
           "state": {
@@ -53,27 +55,167 @@
               "stated"
             ]
           },
-          "ladder": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "required": [
-                "rung",
-                "state"
-              ],
-              "properties": {
-                "state": {
-                  "enum": [
-                    "pass",
-                    "fail",
-                    "open",
-                    "author",
-                    "none",
-                    "n/a",
-                    "pdf-only",
-                    "not-run",
-                    "unverified"
-                  ]
+          "evidence": {
+            "type": "object",
+            "required": [
+              "formal",
+              "review",
+              "replay",
+              "source"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "formal": {
+                "type": "object",
+                "required": [
+                  "state"
+                ],
+                "properties": {
+                  "state": {
+                    "enum": [
+                      "proved",
+                      "refuted",
+                      "open",
+                      "unspecified",
+                      "unchecked",
+                      "stated",
+                      "malformed"
+                    ]
+                  }
+                }
+              },
+              "review": {
+                "type": "object",
+                "required": [
+                  "state"
+                ],
+                "properties": {
+                  "state": {
+                    "enum": [
+                      "reviewed",
+                      "author-reviewed",
+                      "pending",
+                      "stale",
+                      "unknown"
+                    ]
+                  }
+                }
+              },
+              "replay": {
+                "type": "object",
+                "required": [
+                  "state"
+                ],
+                "properties": {
+                  "state": {
+                    "enum": [
+                      "pass",
+                      "not-run",
+                      "unverified"
+                    ]
+                  }
+                }
+              },
+              "source": {
+                "type": "object",
+                "required": [
+                  "state"
+                ],
+                "properties": {
+                  "state": {
+                    "enum": [
+                      "pass",
+                      "fail",
+                      "none",
+                      "open",
+                      "pdf-only"
+                    ]
+                  }
+                }
+              },
+              "locked-statement": {
+                "type": "object",
+                "required": [
+                  "state"
+                ],
+                "properties": {
+                  "state": {
+                    "enum": [
+                      "pass",
+                      "fail",
+                      "none",
+                      "open",
+                      "n/a"
+                    ]
+                  }
+                }
+              },
+              "exact-statement": {
+                "type": "object",
+                "required": [
+                  "state"
+                ],
+                "properties": {
+                  "state": {
+                    "enum": [
+                      "pass",
+                      "fail",
+                      "none",
+                      "open",
+                      "n/a"
+                    ]
+                  }
+                }
+              },
+              "axioms": {
+                "type": "object",
+                "required": [
+                  "state"
+                ],
+                "properties": {
+                  "state": {
+                    "enum": [
+                      "pass",
+                      "fail",
+                      "none",
+                      "open",
+                      "n/a"
+                    ]
+                  }
+                }
+              },
+              "witness": {
+                "type": "object",
+                "required": [
+                  "state"
+                ],
+                "properties": {
+                  "state": {
+                    "enum": [
+                      "pass",
+                      "fail",
+                      "none",
+                      "open",
+                      "n/a"
+                    ]
+                  }
+                }
+              },
+              "regimes": {
+                "type": "object",
+                "required": [
+                  "state"
+                ],
+                "properties": {
+                  "state": {
+                    "enum": [
+                      "pass",
+                      "fail",
+                      "none",
+                      "open",
+                      "n/a"
+                    ]
+                  }
                 }
               }
             }
@@ -100,6 +242,55 @@
       "items": {
         "type": "string"
       }
+    },
+    "status_code": {
+      "type": "string",
+      "enum": [
+        "unknown",
+        "formal.accepted",
+        "formal.author-reviewed",
+        "formal.review-pending",
+        "formal.open",
+        "formal.unspecified",
+        "formal.malformed",
+        "formal.unchecked",
+        "definition.unchecked",
+        "definition.unstated",
+        "definition.review-pending",
+        "definition.author-reviewed",
+        "definition.reviewed",
+        "link.missing",
+        "link.definition",
+        "link.incomplete",
+        "link.axioms",
+        "link.checked",
+        "link.unbuilt",
+        "link.module-unbuilt",
+        "link.module-failed",
+        "link.ambiguous",
+        "link.no-audit",
+        "link.not-in-audit",
+        "link.suggested",
+        "link.none",
+        "formal.refuted",
+        "formal.refuted.open",
+        "formal.refuted.corrected",
+        "formal.refuted.corrected.open",
+        "scope.expository",
+        "scope.literature",
+        "scope.empirical",
+        "scope.proof-step",
+        "scope.part-of",
+        "scope.duplicate",
+        "link.claim-audit"
+      ]
+    },
+    "source_evidence": {
+      "type": "object",
+      "required": [
+        "state",
+        "placement"
+      ]
     }
   },
   "$defs": {

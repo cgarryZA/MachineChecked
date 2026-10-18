@@ -33,8 +33,8 @@ project, a paper that cannot be read, a failed Lean probe). In that last case th
 `"ok": false` and an `error` (`kind`: `missing-tool` with the `tool`, `error`, or `internal`;
 `message`) and no claims: nothing is known about them. Progress goes to stderr, so stdout is only
 the JSON. `version` is MachineChecked's version, and `release` identifies the evidence the
-statuses come from (it changes when the paper, the links or the Lean change). Each `status` is
-exact; `class` is only its coarse group for colouring (`proved`, `open`, `malformed`,
+statuses come from (it changes when the paper, the links or the Lean change). Each `status_code` is a stable machine-readable result; `status` is its display label.
+`class` is only its coarse group for colouring (`proved`, `open`, `malformed`,
 `unspecified`), and the skill explains both.
 
 In a project with a `machinechecked.toml` (the full assessment), the document also has

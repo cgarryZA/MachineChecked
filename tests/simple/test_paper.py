@@ -3,6 +3,7 @@ statuses kept apart, and no statement text."""
 
 import json
 
+from prooflens.status import fields
 from prooflens.paper import NOT_CHECKED, NOT_LINKED, paper_claims, write_paper_site
 
 A, B = "alpha/project-a", "beta/project-b"
@@ -39,11 +40,11 @@ def test_each_project_has_its_own_status(tmp_path):
     index, _ = build(tmp_path)
     assert index["mode"] == "paper" and index["projects"] == [A, B]
     by = {c["number"]: c["by_project"] for c in index["claims"]}
-    assert by["Theorem 1"] == {A: {"status": NOT_CHECKED, "class": "declared"},
-                               B: {"status": NOT_CHECKED, "class": "declared"}}
+    assert by["Theorem 1"] == {A: fields("link.no-audit"),
+                               B: fields("link.no-audit")}
     assert by["Theorem 2"][A]["status"] == NOT_LINKED and by["Theorem 2"][B]["status"] == NOT_CHECKED
-    assert by["Lemma 3"] == {A: {"status": NOT_LINKED, "class": "unspecified"},
-                             B: {"status": NOT_LINKED, "class": "unspecified"}}
+    assert by["Lemma 3"] == {A: fields("link.none"),
+                             B: fields("link.none")}
     # The default status is the first project's, never one combined from both.
     assert {c["number"]: c["status"] for c in index["claims"]}["Theorem 2"] == NOT_LINKED
 
@@ -82,20 +83,20 @@ def test_a_published_audit_gives_its_own_status_credited_to_it(tmp_path):
          (paper["formalisations"][1], fy([("theorem", "1", ["B.one"])]))])
     apply_audits(claims, {A: {"author": "A. Author", "url": "https://a.example/audit/",
                               "commit": "c" * 40, "claims": [
-        {"id": "X:thm:one", "number": "Theorem 1", "status": "formal: accepted",
+        {"id": "X:thm:one", "number": "Theorem 1", **fields("formal.accepted"),
          "class": "accepted", "lean": ["A.Accept.one"], "link": "https://a.example/audit/#one"},
-        {"id": "X:thm:two", "number": "Theorem 2", "status": "formal: proved, author-reviewed",
+        {"id": "X:thm:two", "number": "Theorem 2", **fields("formal.author-reviewed"),
          "class": "proved", "lean": ["A.Accept.two"], "link": "https://a.example/audit/#two"}]}})
     index = write_paper_site(tmp_path / "site", paper, claims, (612, 792), None)
     by = {c["number"]: c["by_project"] for c in index["claims"]}
     assert by["Theorem 1"][A]["status"] == "formal: accepted"
     assert by["Theorem 1"][A]["audit"]["author"] == "A. Author"
     assert by["Theorem 1"][A]["audit"]["link"] == "https://a.example/audit/#one"
-    assert by["Theorem 1"][B] == {"status": NOT_CHECKED, "class": "declared"}
+    assert by["Theorem 1"][B] == fields("link.no-audit")
     # The audit's names link a statement formalization.yaml leaves out.
     assert by["Theorem 2"][A]["status"] == "formal: proved, author-reviewed"
     c2 = next(c for c in index["claims"] if c["number"] == "Theorem 2")
     chunk = json.loads((tmp_path / "site/data/claims" / c2["file"]).read_text())
     assert [(l["name"], l["source"]) for l in chunk["links"]] == [("A.Accept.two", "audit")]
     # Linked, but the published audit does not list it.
-    assert by["Lemma 3"][A] == {"status": NOT_IN_AUDIT, "class": "declared"}
+    assert by["Lemma 3"][A] == fields("link.not-in-audit")

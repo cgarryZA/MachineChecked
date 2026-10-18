@@ -34,6 +34,8 @@ ENV_WORDS = {"thm", "theorem", "lem", "lemma", "prop", "proposition", "cor", "co
              "def", "definition", "rem", "remark", "ex", "example", "eq", "ass", "assumption"}
 
 
+from .status import fields, source_evidence
+
 class ViewError(RuntimeError):
     pass
 
@@ -434,7 +436,7 @@ def declaring_modules(root: Path, modules: list[str], name: str) -> list[str]:
 
 
 def resolve_link(name: str, records: list[dict], module: str | None, root: Path,
-                 unbuilt: list[str], failed: dict[str, str]) -> tuple[dict | None, str | None]:
+                 unbuilt: list[str], failed: dict[str, str]) -> tuple[dict | None, dict | None]:
     """The probe record a link means, or why there is none.
 
     A declaration is identified by its name and its module: when several loaded modules declare
@@ -449,32 +451,32 @@ def resolve_link(name: str, records: list[dict], module: str | None, root: Path,
         if mine:
             return mine[0], None
         if module in unbuilt:
-            return None, f"linked: Lean not checked (its module {module} is not built)"
+            return None, fields("link.module-unbuilt", f"Module {module} is not built.")
         if module in failed:
-            return None, f"linked: Lean not checked (its module {module} could not be loaded)"
+            return None, fields("link.module-failed", f"Module {module} could not be loaded.")
     elif len({mod_of(r) for r in found}) > 1:
         mods = ", ".join(sorted(str(mod_of(r)) for r in found))
-        return None, f"linked: Lean name is ambiguous (declared in {mods})"
+        return None, fields("link.ambiguous", f"Declared in {mods}.")
     elif found:
         return found[0], None
     for m in declaring_modules(root, unbuilt, name):
-        return None, f"linked: Lean not checked (its module {m} is not built)"
+        return None, fields("link.module-unbuilt", f"Module {m} is not built.")
     for m in declaring_modules(root, list(failed), name):
-        return None, f"linked: Lean not checked (its module {m} could not be loaded)"
+        return None, fields("link.module-failed", f"Module {m} could not be loaded.")
     return None, None
 
 
-def link_state(rec: dict | None) -> tuple[str, str]:
-    """The status of a confirmed link from its probe record, and its class."""
+def link_state(rec: dict | None) -> dict:
+    """The structured status of a confirmed link from its probe record."""
     if rec is None or "missing" in rec.get("errors", []):
-        return "linked: Lean declaration not found", "malformed"
+        return fields("link.missing")
     if rec.get("kind") != "theorem":
-        return "linked: Lean definition", "proved"
+        return fields("link.definition")
     if rec.get("sorry"):
-        return "linked: Lean proof incomplete (sorry)", "open"
+        return fields("link.incomplete")
     if rec.get("errors"):
-        return "linked: Lean proof uses further axioms", "open"
-    return "linked: Lean proof checked", "proved"
+        return fields("link.axioms")
+    return fields("link.checked")
 
 
 # -- the whole view --------------------------------------------------------------------------
@@ -694,12 +696,12 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
         for n in c.pop("link_names", None) or linked_names(c, entry):
             rec = None
             if not built:
-                status, cls = "linked: Lean not checked (the project is not built)", "unspecified"
+                state = fields("link.unbuilt")
             else:
                 rec, why = resolve_link(n, linkrecs.get(n, []), c.get("declared_modules", {}).get(n),
                                         root, unbuilt, failed)
-                status, cls = (why, "unspecified") if why else link_state(rec)
-            c["links"].append({"name": n, "status": status, "class": cls,
+                state = why or link_state(rec)
+            c["links"].append({"name": n, **state,
                                "source": link_source(c, entry, n), "record": rec})
         for s in c.get("suggestions", []):
             found = [r for r in linkrecs.get(s["name"], []) if "missing" not in r.get("errors", [])]
@@ -707,11 +709,11 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
         if c["links"]:
             worst = max(c["links"], key=lambda l: ["proved", "unspecified", "open", "malformed"]
                         .index(l["class"]))
-            c["status"], c["class"] = worst["status"], worst["class"]
+            c.update(fields(worst["status_code"], worst.get("status_detail")))
         elif c.get("suggestions"):
-            c["status"], c["class"] = "suggested link, not confirmed", "unspecified"
+            c.update(fields("link.suggested"))
         else:
-            c["status"], c["class"] = "not linked", "unspecified"
+            c.update(fields("link.none"))
 
     body = {"mode": "simple", "paper": paper_key, "title": paper.title, "notes": notes,
             "project": {"name": root.name, "libs": libs, "built": len(built),
@@ -774,7 +776,7 @@ def write_view_site(view: dict, site: Path, web_dist: Path | None,
         index_claims.append({
             "id": c["id"], "paper": c["paper"], "number": c["number"], "title": c["title"],
             "heading": c["title"] or None, "kind": c["kind"], "scope": c["scope"],
-            "status": c["status"], "class": c["class"],
+            **fields(c["status_code"], c.get("status_detail")),
             "anchor": mf.index_anchor(anchor, akind),
             "counts": {}, "file": fname, "linked": len(c["links"]),
             "suggested": len(c.get("suggestions", []))})
@@ -783,13 +785,14 @@ def write_view_site(view: dict, site: Path, web_dist: Path | None,
             rec = l.get("record") or {}
             names |= set(rec.get("closure", []))
         chunks[fname] = {
-            "schema": "prooflens/manifest@0", "mode": "simple", "release": release,
+            "schema": mf.SCHEMA, "mode": "simple", "release": release,
             "id": c["id"], "key": c["key"], "paper": c["paper"], "number": c["number"],
             "title": c["title"], "heading": c["title"] or None, "kind": c["kind"], "scope": c["scope"], "scope_note": "",
             "scope_reviewed": True, "location": c["location"],
-            "source_sha256": c["source_sha256"], "status": c["status"], "class": c["class"],
+            "source_sha256": c["source_sha256"], **fields(c["status_code"], c.get("status_detail")),
             "anchor": {**anchor, "kind": akind} if anchor else None, "source_matches": None,
             "statement_tex": (anchor or {}).get("statement") if akind == "exact" else None,
+            "source_evidence": source_evidence({"kind": akind} if anchor else None, body["tex"]["mode"], paper=body["tex"]),
             "blockers": [],
             "links": [_link_view(l, root) for l in c["links"]],
             "suggestions": [_link_view(s, root) for s in c.get("suggestions", [])],
@@ -799,7 +802,7 @@ def write_view_site(view: dict, site: Path, web_dist: Path | None,
     for c in index_claims:
         summary[c["status"]] = summary.get(c["status"], 0) + 1
     classes = {c["status"]: c["class"] for c in index_claims}
-    index = {"schema": "prooflens/manifest@0", "mode": "simple", "release": release,
+    index = {"schema": mf.SCHEMA, "mode": "simple", "release": release,
              "evidence": eid, "created": _dt.datetime.now(_dt.timezone.utc)
              .isoformat(timespec="seconds"),
              "project": {"name": body["project"]["name"], "commit": body.get("commit"),
@@ -839,7 +842,7 @@ def _link_view(l: dict, root: Path | None = None) -> dict:
     from . import audit
     rec = l.get("record") or {}
     module = (rec.get("decl") or {}).get("module")
-    return {"path": audit.source_path(root, module) if root else None,"name": l["name"], "status": l.get("status"), "class": l.get("class"),
+    return {"path": audit.source_path(root, module) if root else None,"name": l["name"], **fields(l.get("status_code", "link.suggested"), l.get("status_detail")),
             "why": l.get("why"), "source": l.get("source"),
             "fingerprint": rec.get("fingerprint") or (rec.get("decl") or {}).get("fingerprint"),
             "kind": rec.get("kind") or l.get("kind"),

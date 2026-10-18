@@ -1,4 +1,5 @@
 <script>
+  import { evidenceView } from "../lib/presentation.js";
   import { loadDecl, siteIndex } from "../lib/data.js";
   import { moduleSourceUrl, sourceLabel, sourceTitle } from "../lib/issue.js";
   import LeanText from "./LeanText.svelte";
@@ -30,7 +31,7 @@
     <span class="faint">{d.kind}</span>
   {:else if d}
     <span class="faint">{d.kind}{d.module ? " · " + d.module : ""}{d.range ? ":" + d.range.line : ""}</span>
-    {#if d.review && !hideReview}<span class={"rv rv-" + d.review.state}>{d.review.state}</span>{/if}
+    {#if d.review && !hideReview}<span class={"rv rv-" + d.review.state} title={evidenceView("review", d.review).detail}>{evidenceView("review", d.review).word}</span>{/if}
   {/if}
 {/snippet}
 
@@ -86,7 +87,7 @@
   <p class="small faint">{d.module}{d.range ? ":" + d.range.line : ""}
     {#if siteIndex && moduleSourceUrl(siteIndex, d.module, d.range?.line)} · <a href={moduleSourceUrl(siteIndex, d.module, d.range?.line)} target="_blank" rel="noopener" title={sourceTitle(siteIndex)}>{sourceLabel(siteIndex)}</a>{/if}</p>
   {#if d.doc}<p class="lbl">docstring</p><p class="doc">{d.doc}</p>{/if}
-  {#if d.review}<p class="lbl">review: <span class={"rv rv-" + d.review.state}>{d.review.state}</span></p>{/if}
+  {#if d.review}<p class="lbl">review: <span class={"rv rv-" + d.review.state} title={evidenceView("review", d.review).detail}>{evidenceView("review", d.review).word}</span></p>{/if}
   {#each d.review?.current || [] as r}
     <p class="lbl">{r.by}{r.kind === "ai" ? " (AI)" : r.kind === "human" ? " (human)" : ""} · {r.provenance}</p>
     {#if r.text}<pre class="rtext">{r.text}</pre>{/if}

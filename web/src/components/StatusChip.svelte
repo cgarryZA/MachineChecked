@@ -1,9 +1,10 @@
 <script>
-  // The status text, verbatim from the manifest, with its class colour as a marker.
-  let { status, cls, small = false } = $props();
+  import { statusView } from "../lib/presentation.js";
+  let { record, small = false } = $props();
+  const view = $derived(statusView(record));
 </script>
 
-<span class={"chip st-" + cls} class:small><span class="dot" aria-hidden="true"></span>{status}</span>
+<span class={"chip st-" + view.class} class:small title={view.explanation} data-status={record?.status_code || "unknown"}><span class="dot" aria-hidden="true"></span>{view.label}</span>
 
 <style>
   .chip {

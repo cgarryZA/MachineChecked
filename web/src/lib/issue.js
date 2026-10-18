@@ -1,3 +1,4 @@
+import { statusView } from "./presentation.js";
 // Reporting a problem with a claim: a pre-filled GitHub issue in the audit's own repository, and
 // a link to the claim pinned to its release.
 //
@@ -44,7 +45,7 @@ export function issueUrl(index, claim) {
     `**Paper:** ${paper.title || claim.paper}${paper.revision ? ` (revision \`${String(paper.revision).slice(0, 12)}\`)` : ""}`,
     `**Lean:** ${lean.length ? lean.map((n) => "`" + n + "`").join(", ") : "(no declaration linked)"}`,
     `**Project commit:** ${index.project?.commit ? "`" + index.project.commit.slice(0, 12) + "`" : "(unknown)"}`,
-    `**Status shown:** ${claim.status} (release \`${index.release}\`)`,
+    `**Status shown:** ${statusView(claim).label} (release \`${index.release}\`)`,
     `**Claim in the reader:** ${link || "(not published: " + claimReference(index, claim) + ")"}`,
     "",
     "### What looks wrong",

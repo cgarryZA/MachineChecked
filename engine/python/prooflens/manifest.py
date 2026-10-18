@@ -12,8 +12,9 @@ from collections import Counter
 
 from .assess import line_location, match_anchor
 from .util import content_id, sha256_text
+from .status import fields, STATUSES, source_evidence
 
-SCHEMA = "prooflens/manifest@0"
+SCHEMA = "prooflens/manifest@1"
 
 
 def claim_file(cid: str) -> str:
@@ -21,20 +22,8 @@ def claim_file(cid: str) -> str:
 
 
 def status_class(status: str) -> str:
-    """A coarse class for colouring; the status text is always shown verbatim beside it."""
-    if status in ("formal: accepted", "definition: reviewed"):
-        return "accepted"
-    if status.startswith("formal: proved") or status == "definition: author-reviewed":
-        return "proved"
-    if status.startswith("refuted"):
-        return "refuted"
-    if status in ("formal: open", "definition: review pending"):
-        return "open"
-    if status.endswith("malformed"):
-        return "malformed"
-    if status.startswith("out of scope"):
-        return "out-of-scope"
-    return "unspecified"
+    """Coarse colour for CLI summaries; reader logic uses status_code."""
+    return next((v["class"] for v in STATUSES.values() if v["label"] == status), "unspecified")
 
 
 def top_of(anchor: dict) -> tuple[int, float]:
@@ -57,69 +46,48 @@ def index_anchor(anchor: dict | None, kind: str) -> dict | None:
             "page_end": end[0] if end else None}
 
 
-def ladder(cl: dict, anchor: dict | None, mode: str | None, src_ok: bool | None) -> list[dict]:
+def clause_evidence(cl: dict, anchor: dict | None, mode: str | None, src_ok: bool | None,
+                    paper: dict | None = None) -> dict:
     """The rungs of the evidence ladder of one clause, each with its own state."""
     ch = cl.get("checks", {})
     proof = ch.get("accept") or ch.get("refute")
-    rungs = []
-    if cl["state"] == "unchecked":
-        rungs.append({"rung": "Lean", "state": "none",
-                      "detail": "the Lean project was not checked in this build"})
-    elif cl.get("defs") and not cl.get("spec"):
-        rungs.append({"rung": "stated", "state": "pass" if cl["state"] == "stated" else "fail",
-                      "detail": ", ".join(cl["defs"])})
-    else:
+    rungs = [{"dimension": "formal", "state": cl["state"]}]
+    if cl["state"] != "unchecked" and not (cl.get("defs") and not cl.get("spec")):
         spec = ch.get("spec")
-        rungs.append({"rung": "locked statement",
+        rungs.append({"dimension": "locked-statement",
                       "state": "none" if not cl.get("spec") else
                       ("pass" if spec and spec["ok"] else "fail"),
                       "detail": cl.get("spec") or "no proposition written"})
         if proof is None:
-            rungs.append({"rung": "exact statement", "state": "none", "detail": "no proof"})
+            rungs.append({"dimension": "exact-statement", "state": "none", "detail": "no proof"})
         else:
             type_errs = [e for e in proof["errors"] if not e.startswith("axioms=")]
-            rungs.append({"rung": "exact statement",
+            rungs.append({"dimension": "exact-statement",
                           "state": "pass" if not type_errs and not proof["sorry"] else "fail",
                           "detail": ("a theorem has exactly the negation as its type"
                                      if ch.get("refute") else
-                                     "a theorem has exactly this proposition as its type"),
+                                     "a theorem has exactly this proposition as its type")
+                                    if not type_errs and not proof["sorry"] else
+                                    "the exact-type or proof-completeness check failed",
                           "errors": proof["errors"]})
-            rungs.append({"rung": "axioms", "state": "pass" if not any(
+            rungs.append({"dimension": "axioms", "state": "pass" if not any(
                 e.startswith("axioms=") for e in proof["errors"]) and not proof["sorry"]
                 else "fail", "detail": ", ".join(proof["axioms"]) or "none"})
-            rp = ch.get("replay") or {"state": "not-run", "detail": "no Comparator log"}
-            rungs.append({"rung": "kernel replay", "state": rp["state"], "detail": rp["detail"]})
         w = ch.get("witness")
-        rungs.append({"rung": "witness",
+        rungs.append({"dimension": "witness",
                       "state": "n/a" if w is None else ("pass" if w["ok"] else "open"),
                       "detail": cl.get("witness") or ("not needed" if w is None else "missing")})
         regs = cl.get("regimes", [])
-        rungs.append({"rung": "regimes",
+        rungs.append({"dimension": "regimes",
                       "state": "n/a" if not regs else
                       ("pass" if all(r["discharged"] for r in regs) else "open"),
                       "detail": f"{sum(r['discharged'] for r in regs)}/{len(regs)} covered"
                       if regs else "none declared"})
-    rev = cl.get("review", "unknown")
-    kinds = sorted({r["kind"] for r in (cl.get("spec_review") or {}).get("current", [])})
-    rungs.append({"rung": "review",
-                  "state": {"reviewed": "pass", "author-reviewed": "author",
-                            "pending": "open"}.get(rev, "none"),
-                  "detail": rev + (f" ({', '.join(kinds)})" if kinds else "")})
-    if anchor and anchor.get("kind") == "ambiguous":
-        rungs.append({"rung": "source", "state": "open" if src_ok is not False else "fail",
-                      "detail": f"{anchor['file']}:{anchor['line']} is typeset on pages "
-                                f"{', '.join(map(str, anchor['pages']))}: ambiguous, not placed "
-                                "(place it by hand in anchors.json)"})
-        return rungs
-    rungs.append({"rung": "source",
-                  "state": "pdf-only" if mode == "pdf" else
-                  ("none" if anchor is None else ("pass" if src_ok is not False else "fail")),
-                  "detail": "PDF only: statement not hashed from source" if mode == "pdf" else
-                  ("not located in the compiled paper" if anchor is None else
-                   f"{anchor.get('file', '')}:{anchor.get('line', '')}" +
-                   {"approximate": " (located approximately, by SyncTeX)",
-                    "manual": " (placed by hand)"}.get(anchor.get("kind"), ""))})
-    return rungs
+    result = {r.pop("dimension"): r for r in rungs}
+    result["review"] = {"state": cl.get("review", "unknown")}
+    result["replay"] = ch.get("replay") or {"state": "not-run"}
+    result["source"] = source_evidence(anchor, mode, src_ok, paper)
+    return result
 
 
 def symbol_links(display: dict | None, cid: str, tex: str | None, lean: dict) -> list[dict]:
@@ -174,6 +142,9 @@ def build(evidence: dict, release: str, display: dict | None = None
     index_claims, chunks, summary = [], {}, {}
     for c in inv:
         a = assessed[c["id"]]
+        if "status_code" not in a:
+            raise ValueError("Old assessment: rebuild the audit with the current MachineChecked version")
+        status = fields(a["status_code"])
         t = tex.get(c["paper"], {})
         anchor = match_anchor(c, t.get("anchors", [])) if t.get("mode") in ("latex", "pdf") \
             else None
@@ -219,7 +190,7 @@ def build(evidence: dict, release: str, display: dict | None = None
         index_claims.append({
             "id": c["id"], "paper": c["paper"], "number": number,
             "title": description, "heading": heading, "kind": c.get("kind", ""),
-            "scope": c["scope"], "status": a["status"], "class": status_class(a["status"]),
+            "scope": c["scope"], **status,
             "anchor": {"kind": anchor["kind"], "page": top_of(anchor)[0], "y0": top_of(anchor)[1],
                        "y1": anchor["end"][2] if anchor.get("end") and
                        anchor["end"][0] == anchor["begin"][0] else None,
@@ -246,7 +217,7 @@ def build(evidence: dict, release: str, display: dict | None = None
                 "fingerprint": spec.get("fingerprint"),
                 "decl": lean.get("decls", {}).get(cl["spec"])} if spec else None,
                 "proofs": proofs, "witness_record": wit,
-                "ladder": ladder(cl, anchor, t.get("mode"), src_ok)})
+                "evidence": clause_evidence(cl, anchor, t.get("mode"), src_ok, t)})
         names = set()
         for cl in clauses:
             st = cl.get("statement") or {}
@@ -268,8 +239,8 @@ def build(evidence: dict, release: str, display: dict | None = None
             "heading": heading,
             "kind": c.get("kind", ""), "scope": c["scope"], "scope_note": c.get("scope_note", ""),
             "scope_reviewed": c.get("scope_reviewed"), "location": c.get("location"),
-            "source_sha256": c.get("source_sha256"), "status": a["status"],
-            "class": status_class(a["status"]), "anchor": anchor, "source_matches": src_ok,
+            "source_sha256": c.get("source_sha256"), **status, "anchor": anchor, "source_matches": src_ok,
+            "source_evidence": source_evidence(anchor, t.get("mode"), src_ok, t),
             "statement_tex": (anchor or {}).get("statement"),
             "blockers": [shown_names(b, clause_tex) for b in a.get("blockers", [])],
             "clauses": clauses, "decls": decls, "findings": fs,
@@ -310,7 +281,7 @@ def search_index(index: dict, chunks: dict) -> dict:
                                                     cl.get("refute"), *cl.get("defs", [])) if n]
         claims.append({"id": c["id"], "paper": c["paper"], "number": c.get("number", ""),
                        "title": c.get("title", ""), "heading": c.get("heading"),
-                       "status": c["status"],
+                       "status": c["status"], "status_code": c["status_code"],
                        "statement": ch.get("statement_tex") or "", "lean": lean})
         for n in ch.get("decls", {}):
             decls.setdefault(n, []).append(c["id"])
