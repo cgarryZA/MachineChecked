@@ -11,6 +11,7 @@ import re
 from collections import Counter
 
 from .assess import line_location, match_anchor
+from .source_regions import matches as source_matches
 from .util import content_id, sha256_text
 from .status import fields, STATUSES, source_evidence
 
@@ -159,9 +160,6 @@ def build(evidence: dict, release: str, display: dict | None = None
             if c.get("source_sha256") and anchor.get("source_sha256"):
                 src_ok = anchor["source_sha256"] == c["source_sha256"]
         elif line_location(c) is not None and t.get("mode") == "latex":
-            got = (t.get("lines") or {}).get(c["location"])
-            if c.get("source_sha256") and got:
-                src_ok = got == c["source_sha256"]
             la = (t.get("line_anchors") or {}).get(c["location"])
             if la and la.get("kind") == "ambiguous":
                 path, _, line = c["location"].rpartition(":")
@@ -171,6 +169,8 @@ def build(evidence: dict, release: str, display: dict | None = None
                 path, _, line = c["location"].rpartition(":")
                 anchor = {"kind": "approximate", "file": path, "line": int(line),
                           "begin": [la["page"], 0, la["y0"]], "end": [la["page"], 0, la["y1"]]}
+        if line_location(c) is not None and t.get("mode") == "latex":
+            src_ok = source_matches(c, t)
         manual = (t.get("manual_anchors") or {}).get(c["id"])
         if manual:
             anchor = {**(anchor or {}), "kind": "manual", "note": manual.get("note", ""),

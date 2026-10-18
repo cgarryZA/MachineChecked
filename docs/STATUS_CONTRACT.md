@@ -81,7 +81,8 @@ unknown published audit codes remain unavailable until rebuilt.
 
 PR #87 owns source-region matching and PDF heading coverage. This change consumes the resulting
 `source_matches` and PDF pins; it does not implement those checks or change their acceptance
-policy. The two branches can be integrated without sharing implementation commits.
+policy. The PR is based on #87 so its source regression fixtures can adopt the new evidence
+contract and both changes can be tested together. Merge #87 first.
 
 ## Regression coverage
 
