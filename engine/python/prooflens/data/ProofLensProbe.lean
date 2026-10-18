@@ -295,9 +295,7 @@ def declRecord (roots : Array Name) (n : Name) (ci : ConstantInfo) : MetaM (Json
   let value ← match ci with
     | .defnInfo d =>
       if (← isProp ci.type) then pure Json.null
-      else do
-        let v ← ppJson d.value
-        pure (if v.compress.length > 20000 then Json.null else v)
+      else ppJson d.value
     | _ => pure Json.null
   let doc ← findDocString? env n
   let j := Json.mkObj [

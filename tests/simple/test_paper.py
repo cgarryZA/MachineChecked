@@ -100,3 +100,11 @@ def test_a_published_audit_gives_its_own_status_credited_to_it(tmp_path):
     assert [(l["name"], l["source"]) for l in chunk["links"]] == [("A.Accept.two", "audit")]
     # Linked, but the published audit does not list it.
     assert by["Lemma 3"][A] == fields("link.not-in-audit")
+
+
+def test_search_includes_only_the_selected_projects_link_names(tmp_path):
+    _, data = build(tmp_path)
+    search = json.loads((data / 'search.json').read_text())['by_project']
+    names = lambda repo: {n for claim in search[repo]['claims'] for n in claim['lean']}
+    assert names(A) == {'A.one'}
+    assert names(B) == {'B.one', 'B.two'}

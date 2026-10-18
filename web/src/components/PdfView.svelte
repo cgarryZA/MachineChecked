@@ -4,6 +4,7 @@
   import { openPdf, documentPage, pdfUrl } from "../lib/pdf.js";
   let { url, claims = [], selected = null, onselect } = $props();
   let doc = $state(null), error = $state(null), width = $state(800), host = $state(), pages = $state([]), attempt = $state(0);
+  let toolbar = $state();
   let zoom = $state(1), pageNo = $state(1), query = $state(""), matches = $state([]), match = $state(0), searching = $state(false), searched = $state(false);
   let searchError = $state(null), searchGeneration = 0;
   const original = $derived(pdfUrl(url));
@@ -37,7 +38,9 @@
   }
   function jump(no) {
     pageNo = Math.max(1, Math.min(doc?.numPages || 1, Number(no) || 1));
-    host?.querySelector(`[data-page="${pageNo}"]`)?.scrollIntoView({ block: "start", behavior: "instant" });
+    stopKeeping();
+    const target = host?.querySelector(`[data-page="${pageNo}"]`), pane = host?.parentElement;
+    if (target && pane) pane.scrollTop += target.getBoundingClientRect().top - pane.getBoundingClientRect().top - (toolbar?.offsetHeight || 0) - 16;
   }
   let kept = null, shown = null;
   function reveal() { if (kept) host?.querySelector(`[data-claim="${CSS.escape(kept)}"]`)?.scrollIntoView({ block: "center", behavior: "instant" }); }
@@ -48,8 +51,12 @@
     tick().then(reveal);
   });
   function stopKeeping() { kept = null; }
-  function pageObserver(node, no) {
-    const io = new IntersectionObserver((es) => { for (const e of es) if (e.isIntersecting) pageNo = no; }, { root: host?.parentElement, rootMargin: "-10% 0px -70% 0px" });
+  function pageObserver(node) {
+    const io = new IntersectionObserver(() => {
+      const line = (toolbar?.getBoundingClientRect().bottom || host?.parentElement.getBoundingClientRect().top || 0) + 8;
+      const current = [...host.querySelectorAll("[data-page]")].find((p) => p.getBoundingClientRect().bottom > line);
+      if (current) pageNo = Number(current.dataset.page);
+    }, { root: host?.parentElement, rootMargin: "-10% 0px -70% 0px" });
     io.observe(node); return { destroy() { io.disconnect(); } };
   }
   async function find() {
@@ -72,7 +79,7 @@
   }
   function next(delta) { match = (match + delta + matches.length) % matches.length; jump(matches[match]); }
 </script>
-<div class="pdf-toolbar" aria-label="Paper controls">
+<div class="pdf-toolbar" bind:this={toolbar} aria-label="Paper controls">
   <label>Page <input type="number" min="1" max={doc?.numPages || 1} bind:value={pageNo} onchange={() => jump(pageNo)} aria-label="Page number" /></label><span class="muted">of {doc?.numPages || "…"}</span>
   <label class="zoom">Zoom <select bind:value={zoom} aria-label="PDF zoom"><option value={1}>Fit width</option><option value={1.25}>125%</option><option value={1.5}>150%</option><option value={2}>200%</option></select></label>
   <a href={original} target="_blank" rel="noopener">Open original PDF ↗</a>

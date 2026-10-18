@@ -85,6 +85,7 @@ def pdf(pages):
 long_paper = {**paper, "id": "arxiv:2601.00002", "title": "A long paper", "formalisations": []}
 long_claims = paper_claims([anchor("theorem", "2", 2, 300), anchor("theorem", "15", 15, 400),
                             anchor("theorem", "28", 28, 200)], long_paper["title"], [])
+long_claims[0]["anchor"]["end"] = [3, 0, 150]
 site = Path(sys.argv[1]).parent / "long"
 write_paper_site(site, long_paper, long_claims, [612, 792], "paper.pdf", Path(sys.argv[2]))
 (site / "paper.pdf").write_bytes(pdf(30))
@@ -109,6 +110,21 @@ if (states.status !== 0) throw new Error(states.stderr);
 const publication = spawnSync(process.env.PYTHON || "python3", [path.join(here, "../../tests/published_fixture.py"), path.join(root, "published"), reader], { encoding: "utf8" });
 if (publication.status !== 0) throw new Error(publication.stderr);
 const PUB = JSON.parse(fs.readFileSync(path.join(root, "published/data/index.json")));
+
+// A synthetic review queue with a reviewed target after an unrelated pending unit.
+fs.cpSync(path.join(root, "toy"), path.join(root, "review"), { recursive: true });
+const reviewIndex = structuredClone(TOY);
+reviewIndex.review_queue = "data/review-queue.json";
+const reviewUnits = ["T:thm:bound", "T:thm:even-add"].map((id, i) => {
+  const c = TOY.claims.find((c) => c.id === id);
+  const claim = JSON.parse(fs.readFileSync(path.join(root, "toy/data/claims", c.file)));
+  return { id: `spec:${claim.clauses[0].spec}`, kind: "spec", name: claim.clauses[0].spec,
+    state: i ? "reviewed" : "pending", reason: "Synthetic review", fingerprint: "synthetic-" + i,
+    claims: [{ id }], papers: ["T"], paper: "T", section: "2", reveals: { lean: [], author: [] },
+    author_review: [{ by: "Synthetic author", text: "Synthetic author review kept until the verdict." }] };
+});
+fs.writeFileSync(path.join(root, "review/data/index.json"), JSON.stringify(reviewIndex));
+fs.writeFileSync(path.join(root, "review/data/review-queue.json"), JSON.stringify({ authors: ["Synthetic author"], units: reviewUnits }));
 
 fs.cpSync(path.join(root, "toy"), path.join(root, "long-statement"), { recursive: true });
 const longFile = TOY.claims.find((c) => c.id === "T:thm:even-add").file;
@@ -283,13 +299,14 @@ for (const width of [1300, 390]) {
     await ref.scrollIntoViewIfNeeded();
     const [panel, paper] = await scrollTops(pg);
     await ref.click();
+    await pg.waitForSelector("aside .crumbs");
     await pg.waitForSelector("aside .decl.inspector");
     assert.equal(await pg.locator("aside .view").isHidden(), true, "the claim view is replaced");
     assert.match(await pg.locator("aside .crumbs").textContent(), /Back.*IsEven/s);
     assert.equal((await scrollTops(pg))[1], paper, "the paper keeps its position");
     await pg.locator("aside .crumbs .back").click();
     await pg.waitForSelector("aside .view h1");
-    assert.equal(await pg.locator("aside .decl.inspector:visible").count(), 1, "the exact definition remains in the claim comparison");
+    assert.equal(await pg.locator("aside .decl.inspector:visible").count(), 2, "both exact definitions remain in the claim comparison");
     const [panel2, paper2] = await scrollTops(pg);
     assert.equal(panel2, panel, "the panel's scroll position comes back");
     assert.equal(paper2, paper, "the paper keeps its position");
@@ -626,6 +643,7 @@ await check("contents close after a mobile selection", 390, async (pg) => {
   await pg.locator("dialog[open] a", { hasText: "Theorem 3" }).click();
   await pg.locator("aside h1").waitFor();
   assert.equal(await pg.locator("dialog[open]").count(), 0);
+  assert.equal(await pg.locator("aside").evaluate((e) => e === document.activeElement), true);
 });
 
 await check("PDF text, links, page search and zoom work together", 1300, async (pg) => {
@@ -656,11 +674,59 @@ for (const scheme of ["light", "dark"]) await check(`${scheme} theme text meets 
   await pg.emulateMedia({ colorScheme: scheme }); await toyClaim(pg, "T:thm:even-add");
   const ratios = await pg.evaluate(() => {
     const style = getComputedStyle(document.documentElement);
-    const luminance = (hex) => { const rgb = hex.trim().replace("#", "").match(/../g).map((s) => parseInt(s, 16) / 255).map((v) => v <= .04045 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4); return rgb[0] * .2126 + rgb[1] * .7152 + rgb[2] * .0722; };
+    const luminance = (hex) => { const rgb = hex.trim().replace("#", "").replace(/^([0-9a-f])([0-9a-f])([0-9a-f])$/i, "$1$1$2$2$3$3").match(/../g).map((s) => parseInt(s, 16) / 255).map((v) => v <= .04045 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4); return rgb[0] * .2126 + rgb[1] * .7152 + rgb[2] * .0722; };
     return [["--faint", "--bg"], ["--faint", "--surface-2"], ["--on-accent", "--accent"]].map(([a,b]) => { const x = luminance(style.getPropertyValue(a)), y = luminance(style.getPropertyValue(b)); return (Math.max(x,y)+.05)/(Math.min(x,y)+.05); });
   });
   assert.ok(ratios.every((r) => r >= 4.5), JSON.stringify(ratios));
   if (process.env.SHOTS) await pg.screenshot({ path: path.join(process.env.SHOTS, `theme-${scheme}.png`) });
+});
+
+await check("multi-page excerpts include both pages", 390, async (pg) => {
+  await pg.goto(origin + "/long/#/r/paper/read/P/P%3Atheorem-2?compare=1");
+  await pg.locator("aside .crop canvas").last().waitFor();
+  assert.equal(await pg.locator("aside .crop canvas").count(), 2);
+  assert.deepEqual(await pg.locator("aside .crop .page-label").allTextContents(), ["Page 2", "Page 3"]);
+});
+
+await check("search retries after a failed index request", 1300, async (pg) => {
+  let attempts = 0;
+  await pg.route("**/toy/data/search.json", (r) => ++attempts === 1 ? r.fulfill({ status: 503 }) : r.continue());
+  await pg.goto(origin + "/toy/");
+  await pg.getByRole("combobox", { name: "Search claims and definitions" }).fill("even");
+  await pg.locator(".search").getByRole("button", { name: "Try again" }).click();
+  await pg.locator(".search [role=option]").first().waitFor(); assert.equal(attempts, 2);
+});
+
+await check("review opens the selected claim, keeps protocol order and exports a saved report", 390, async (pg) => {
+  await pg.goto(origin + `/review/#/r/${TOY.release}/read/T/T%3Athm%3Aeven-add`);
+  await pg.getByRole("button", { name: "More", exact: true }).click();
+  await pg.getByRole("link", { name: "Review it", exact: true }).click();
+  await pg.getByRole("textbox", { name: "Your name" }).fill("Synthetic reviewer");
+  await pg.getByRole("button", { name: "Start", exact: true }).click();
+  await pg.locator(".review .unit h2").waitFor();
+  assert.match(await pg.locator(".review .unit h2").textContent(), /Theorem 2.1/);
+  assert.match(await pg.locator(".review .warn").textContent(), /prior exposure/);
+  assert.equal(await pg.locator(".review .stmt").count(), 0);
+  assert.equal(await pg.locator(".review .author").count(), 0);
+  await pg.getByRole("textbox", { name: "Your reading", exact: true }).fill("Every pair of even natural numbers has an even sum.");
+  await pg.getByRole("button", { name: "Lock my reading and show the Lean" }).click();
+  await pg.locator(".review .stmt").waitFor();
+  assert.equal(await pg.locator(".review .author").count(), 0);
+  await pg.getByRole("textbox", { name: "Comparison", exact: true }).fill("The quantifiers and conclusion agree in this synthetic example.");
+  await pg.getByRole("button", { name: "Matches the paper", exact: true }).click();
+  await pg.getByRole("radio", { name: "Faithful", exact: true }).check();
+  await pg.getByRole("button", { name: "Record verdict and show the author's review" }).click();
+  await pg.locator(".review .author").waitFor();
+  await pg.getByRole("button", { name: "Save report", exact: true }).click();
+  await pg.getByRole("button", { name: "Export reports (1 new)", exact: true }).waitFor();
+  const report = await pg.evaluate(() => JSON.parse(localStorage.getItem("prooflens-review:toy-paper")).reports[0]);
+  assert.deepEqual(report.unit.claims, ["T:thm:even-add"]);
+  assert.equal(report.reading.revealed_by[0].what, "Lean");
+  assert.equal(report.verdict.value, "faithful");
+  const download = pg.waitForEvent("download");
+  await pg.getByRole("button", { name: "Export reports (1 new)", exact: true }).click();
+  const file = await download; const exported = JSON.parse(fs.readFileSync(await file.path()));
+  assert.deepEqual(exported.reports[0], report);
 });
 
 await browser.close();

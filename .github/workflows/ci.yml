@@ -38,6 +38,8 @@ jobs:
           git status --porcelain -- engine/python/prooflens/web
           test -z "$(git status --porcelain -- engine/python/prooflens/web)"
       - name: The reader in a browser (web/tests)
+        id: reader
+        continue-on-error: true
         run: |
           cd web && npx playwright install --with-deps chromium && SHOTS="$RUNNER_TEMP/reader-shots" node tests/reader.test.mjs
       - uses: actions/upload-artifact@v4
@@ -72,6 +74,10 @@ jobs:
           name: demo-site
           path: demo-site
           retention-days: 14
+
+      - name: Require the browser checks to pass
+        if: always() && steps.reader.outcome != 'success'
+        run: exit 1
 
   # The reusable audit workflow (audit.yml), run as a researcher's repository would run it, on the
   # plain example with this checkout's MachineChecked.

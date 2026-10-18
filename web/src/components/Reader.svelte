@@ -1,5 +1,5 @@
 <script>
-  import { onDestroy, tick } from "svelte";
+  import { onDestroy } from "svelte";
   import { inScope, statusView } from "../lib/presentation.js";
   import TexInline from "./TexInline.svelte";
   import { href, go, route, withQuery } from "../lib/route.svelte.js";
@@ -31,6 +31,7 @@
   function resize(w) { sideWidth = Math.min(maxWidth, Math.max(320, w)); }
   function remember() { try { localStorage.setItem("mc-side-width", String(sideWidth)); } catch {} }
   let dragging;
+  let focusClaim = $state(null);
   function drag(e) {
     e.preventDefault(); dragging?.abort(); dragging = new AbortController();
     const move = (ev) => resize(layout.getBoundingClientRect().right - ev.clientX);
@@ -52,12 +53,12 @@
     else showContents = !showContents;
   }
   $effect(() => { if (!narrow) contentsDialog?.close(); });
-  async function select(id) {
+  function select(id) {
     contentsDialog?.close();
+    if (narrow) focusClaim = id;
     go(withQuery(href(index.release, "read", paperId, id), { compare: comparing ? "1" : null }));
-    await tick();
-    if (narrow) side?.focus({ preventScroll: true });
   }
+  $effect(() => { if (focusClaim === claimId && side) { side.focus({ preventScroll: true }); focusClaim = null; } });
   function close() { go(href(index.release, "read", paperId)); }
 </script>
 <svelte:window bind:innerWidth={viewport} />

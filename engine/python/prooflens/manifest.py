@@ -283,6 +283,7 @@ def search_index(index: dict, chunks: dict) -> dict:
         ch = chunks[c["file"]]
         lean = [n for cl in ch["clauses"] for n in (cl.get("spec"), cl.get("accept"),
                                                     cl.get("refute"), *cl.get("defs", [])) if n]
+        lean += [l["name"] for l in ch.get("links", []) if l.get("name")]
         claims.append({"id": c["id"], "paper": c["paper"], "number": c.get("number", ""),
                        "title": c.get("title", ""), "heading": c.get("heading"),
                        "status": c["status"], "status_code": c["status_code"],

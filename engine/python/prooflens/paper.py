@@ -188,8 +188,9 @@ def write_paper_site(site: Path, paper: dict, claims: list[dict],
             if chunk.get("projects") and repo not in chunk["projects"]:
                 continue
             variant = chunk["by_project"][repo]
-            selected[name] = {**chunk, **variant.get("record", {}),
-                              "id": chunk["id"], "paper": "P"}
+            selected[name] = {**chunk,
+                              "links": [l for l in chunk.get("links", []) if l.get("repository") == repo],
+                              **variant.get("record", {}), "id": chunk["id"], "paper": "P"}
         rows = [{**c, **c["by_project"][repo]} for c in index["claims"] if c["file"] in selected]
         search["by_project"][repo] = mf.search_index({**index, "claims": rows}, selected)
     write_json(site / "data" / "search.json", search, indent=None)

@@ -32,7 +32,7 @@
   // scroll position come back on Back.
   const stack = $derived(route.inspection || []);
   setContext("declarationHref", (name) => inspectionHref([...stack, name]));
-  let scrolls = [];
+  let scrolls = [], returnFocus = [];
   let article = $state();
   let showAll = $state(false);
   let menu = $state(false), menuWrap = $state(), menuButton = $state();
@@ -122,12 +122,13 @@
   }
 
   function showDecl(name) {
+    if (article?.contains(document.activeElement)) returnFocus[stack.length] = document.activeElement;
     menu = false;
     if (stack.at(-1) !== name) go(inspectionHref([...stack, name]));
   }
   function backTo(n) { menu = false; go(inspectionHref(stack.slice(0, n))); }
   let previousStack = [];
-  $effect(() => {
+  $effect.pre(() => {
     const next = [...stack];
     if (!article) return;
     const previous = previousStack;
@@ -137,6 +138,7 @@
       if (!article) return;
       scroller().scrollTop = next.length < previous.length ? scrolls[next.length] || 0 : 0;
       if (next.length) article.querySelector(".crumbs .back")?.focus({ preventScroll: true });
+      else returnFocus[0]?.focus({ preventScroll: true });
     });
   });
   $effect(() => {
