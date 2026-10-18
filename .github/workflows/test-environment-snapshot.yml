@@ -1,0 +1,35 @@
+name: Prepare test environment snapshot
+
+on:
+  push:
+    branches: [build/epic86-test-environment]
+
+permissions:
+  contents: read
+
+jobs:
+  snapshot:
+    if: github.repository == 'cgarryZA/MachineChecked'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install the pinned frontend dependencies
+        run: cd web && npm ci
+      - name: Archive the public checkout and dependencies
+        run: |
+          git bundle create /tmp/MachineChecked.bundle --all
+          tar -czf /tmp/frontend-dependencies.tar.gz web/node_modules
+      - uses: actions/upload-artifact@v4
+        with:
+          name: machinechecked-test-environment
+          path: |
+            /tmp/MachineChecked.bundle
+            /tmp/frontend-dependencies.tar.gz
+          retention-days: 1
