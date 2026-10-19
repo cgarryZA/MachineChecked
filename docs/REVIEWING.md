@@ -2,7 +2,7 @@
 
 **A linked Lean theorem is not automatically a faithful formalisation of the paper.** MachineChecked's Review view helps a mathematician examine the correspondence one unit at a time and record a reproducible judgement.
 
-The queue supports two settings: ordinary projects with linked statements, and projects with locked paper specifications, dependency-level definition reviews and an acceptance policy. It uses the same reader in both.
+The queue supports two settings: ordinary projects with linked statements, and projects with locked paper specifications, dependency-level definition reviews and an acceptance policy. It uses the same reader in both. In both, the steps of printed proofs have units of their own (see [Proof steps](#proof-steps)).
 
 ## One claim at a time
 
@@ -170,6 +170,43 @@ determine*, with the reviewer's question. The review page and the command line w
 drafts.
 
 A review may be useful before a theorem is proved, provided the formal specification exists. Claims without a formal statement cannot yet undergo comparison; the queue lists them separately.
+
+## Proof steps
+
+An equation or passage inside a printed proof has its own unit in the queue (`step:<claim id>`),
+whether or not any Lean is linked to it. Its question is whether the printed step holds, in its
+context: step 1 shows the step and the proof up to it and the sentence after it; step 2 shows the
+Lean linked as establishing it and the formal route used instead, if any. The checklist covers
+what the proof has fixed before the step, its premises, the ranges and order of its quantifiers,
+its constants and its conclusion. Its verdicts are its own:
+
+| Verdict | What the reviewer must explain |
+|---|---|
+| Holds as printed | Nothing more |
+| Holds, with a gap in the argument | The argument the printed proof leaves out |
+| False as printed | The counterexample or the failing case, and what would repair the step |
+| Cannot determine | What would decide it |
+
+A report on a step pins the hash of the step's source text, and follows the same protocol as
+any other: reading locked before the Lean is shown, verdict recorded before the author's review.
+In a full assessment, `review promote` turns an accepted step report into a marker, with the same
+refusals (out-of-order steps, an author of the statements, a reading that was not blind, a
+manuscript at another revision), and refuses a report whose step's source changed since, or
+whose verdict is *cannot determine*:
+
+```
+<!-- step-review: T:eq:bound-range <source sha256> verdict=false by=a.referee -->
+```
+
+The marker is stored evidence: the assessment records the step's review from it (its last
+marker, current while its hash is the step's source hash). In zero configuration, put the report
+in `machinechecked-reviews/` and build again. Either way the step shows its finding beside the
+equation and lists its earlier reviews; a review made on other text is kept and shown, and the
+step reads **source changed**. The scope decision `proof-step` records
+formal coverage only; it is never a reading of the step, so a step with no report reads
+**not reviewed**. A step's finding belongs to the step: the enclosing result's status and review
+are unchanged by it. An issue draft names the step and its proof (“Equation (3) in the proof of
+Theorem 2.5: false as printed”).
 
 ## Review records and identity
 

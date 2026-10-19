@@ -78,6 +78,7 @@ def build(cfg: Config, release: str | None = None, skip_lean: bool = False,
         missing = [r["name"] for r in requests_from_inventory(inv)
                    if (r["kind"] == "spec" and r["name"] not in lean["specs"])
                    or (r["kind"] == "decl" and r["name"] not in lean["defs"])
+                   or (r["kind"] == "link" and r["name"] not in lean.get("links", {}))
                    or (r["kind"] in ("accept", "refute", "witness") and
                        f"{r['kind']}:{r['name']}:{r.get('spec') or ''}" not in lean["proofs"])]
         if missing:
@@ -139,6 +140,11 @@ def build(cfg: Config, release: str | None = None, skip_lean: bool = False,
         if paper.id in tex:
             if t is not None:
                 tex[paper.id]["regions"] = collect_source_regions(inv, paper.id, snap.dir)
+                # The text of each proof step and its context in the proof, for the reader and
+                # the review packet (published only with the source text).
+                from .steps import step_texts
+                tex[paper.id]["step_text"] = step_texts(inv, paper.id, snap.dir,
+                                                        tex[paper.id]["regions"])
                 locs = [c["location"] for c in inv["claims"]
                         if c["paper"] == paper.id and line_location(c) is not None]
                 tex[paper.id]["line_anchors"] = t["line_anchors"](locs)

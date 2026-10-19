@@ -1,12 +1,16 @@
 <script>
   import TexInline from "./TexInline.svelte";
   import { projectClaims } from "../lib/data.js";
-  import { statusView, statusSummary } from "../lib/presentation.js";
+  import { statusView, statusSummary, evidenceView } from "../lib/presentation.js";
   import { href } from "../lib/route.svelte.js";
   import EvidenceSummary from "./EvidenceSummary.svelte";
   let { index } = $props();
-  let query = $state(""), filter = $state("all");
-  const claims = $derived(projectClaims(index));
+  let query = $state(""), filter = $state("all"), unit = $state("all");
+  // Statements and proof steps are distinct units: counted apart, and filtered apart.
+  const isStep = (c) => !!c.unit && c.unit !== "statement";
+  const all = $derived(projectClaims(index));
+  const stepCount = $derived(all.filter(isStep).length);
+  const claims = $derived(all.filter((c) => unit === "all" || (unit === "steps") === isStep(c)));
   const counts = $derived(statusSummary(claims));
   const shown = $derived(claims.filter((c) => (filter === "all" || c.status_code === filter) &&
     query.toLowerCase().trim().split(/\s+/).every((w) => `${c.number} ${c.heading || ""} ${c.title || ""} ${c.id}`.toLowerCase().includes(w))));
@@ -15,6 +19,13 @@
   <h1>Overview</h1>
   <p class="muted">Claims, proof results and correspondence reviews.</p>
   <label class="search">Find a claim <input type="search" bind:value={query} placeholder="Number or mathematical title" /></label>
+  {#if stepCount}
+    <div class="filters" aria-label="Filter by kind of unit">
+      <button class:on={unit === "all"} aria-pressed={unit === "all"} onclick={() => { unit = "all"; filter = "all"; }}>Statements and proof steps ({all.length})</button>
+      <button class:on={unit === "statements"} aria-pressed={unit === "statements"} onclick={() => { unit = "statements"; filter = "all"; }}>Statements ({all.length - stepCount})</button>
+      <button class:on={unit === "steps"} aria-pressed={unit === "steps"} onclick={() => { unit = "steps"; filter = "all"; }}>Proof steps ({stepCount})</button>
+    </div>
+  {/if}
   <div class="filters" aria-label="Filter claims by status">
     <button class:on={filter === "all"} aria-pressed={filter === "all"} onclick={() => filter = "all"}>All ({claims.length})</button>
     {#each counts as row}<button class:on={filter === row.status_code} aria-pressed={filter === row.status_code} onclick={() => filter = row.status_code}>{statusView(row).label} ({row.count})</button>{/each}
@@ -27,13 +38,13 @@
         <div class="phead"><h2><TexInline text={paper.title} /></h2><a href={href(index.release, "read", paper.id)}>Read paper →</a></div>
         <ul class="claims">
           {#each rows as c (c.id)}
-            <li data-status={c.status_code}><a class="claim" href={href(index.release, "read", c.paper, c.id)}><strong>{c.number || c.id}</strong>{#if c.heading || c.title}<span><TexInline text={c.heading || c.title} /></span>{/if}</a><EvidenceSummary record={c} /></li>
+            <li data-status={c.status_code}><a class="claim" href={href(index.release, "read", c.paper, c.id)}><strong>{c.number || c.id}</strong>{#if c.heading || c.title}<span><TexInline text={c.heading || c.title} /></span>{/if}</a><span class="facts"><EvidenceSummary record={c} />{#if isStep(c)}<span class="small step">Review of the printed step: {evidenceView("step", { state: c.step_review || "unreviewed" }).word}</span>{/if}</span></li>
           {/each}
         </ul>
       </section>
     {/if}
   {/each}
-  {#if !shown.length}<p>No claims match this selection. <button class="reset" onclick={() => { filter = "all"; query = ""; }}>Show all claims</button></p>{/if}
+  {#if !shown.length}<p>No claims match this selection. <button class="reset" onclick={() => { filter = "all"; unit = "all"; query = ""; }}>Show all claims</button></p>{/if}
   {#if index.gates && Object.keys(index.gates).length}
     <details class="checks"><summary>Paper checks</summary>
       {#each index.papers as p}
@@ -65,6 +76,8 @@
   .claims li { display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, .7fr); gap: 12px 28px; padding: 14px 0; border-bottom: 1px solid var(--border); align-items: baseline; }
   .claim { display: flex; gap: 6px; flex-direction: column; overflow-wrap: anywhere; }
   .claim span { color: var(--text); font-family: var(--serif); font-size: 17px; }
+  .facts { display: flex; flex-direction: column; gap: 4px; }
+  .step { color: var(--muted); font-size: 13px; }
   .checks { margin-top: 32px; padding-top: 16px; border-top: 1px solid var(--border); }
   summary { cursor: pointer; padding: 6px 0; }
   @media (max-width: 700px) { .claims li { grid-template-columns: minmax(0, 1fr); } input { font-size: 16px; } }

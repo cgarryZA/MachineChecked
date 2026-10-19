@@ -86,6 +86,23 @@ def test_toy_requirements_align_with_its_lean_and_change_no_status(toy):
     assert [(w["binds"], w["before"]) for w in bd["witnesses"]] == [(["C"], ["n"])]
     assert all(r["currency"]["state"] == "current"
                for c in v["claims"].values() for r in c["reading"]["requirements"])
+    # A proof step is a target of its own: Equation (3)'s quantifier is suggested from its
+    # passage, and the proof's later choice k = 1 stays a use.
+    from prooflens import requirements as rq
+    step = "T:eq:bound-range"
+    wsp.update(p, [put({"kind": "requirement", "claim": "Equation (3)", "local_id": "k",
+                        "form": "for every", "binds": ["k"], "text": "for every natural k ≥ 0"})],
+               snap)
+    wsp.update(p, rq.suggestion_ops(wsp.read(p), snap, step, "k"), snap)
+    use = next(i for i, t in enumerate(tex, 1) if "the choice $k = 1$" in t)
+    wsp.update(p, [put({"kind": "fragment", "claim": step, "requirement": "k",
+                        "role": "later use", "region": {"file": "toy.tex", "start_line": use}})],
+               snap)
+    k = wsp.view(wsp.read(p), snap)["claims"][step]["reading"]["requirements"][0]
+    assert any(f["role"] == "quantifier domain" and "For every natural number $k \\ge 0$"
+               in f["region"]["text"] for f in k["fragments"]["proposed"])
+    assert not any(f["region"]["start_line"] == use for f in k["fragments"]["proposed"])
+    assert [f["region"]["start_line"] for f in k["fragments"]["later_uses"]] == [use]
     # The informed packet carries it; nothing is assessed again and no status moves.
     rd = v["claims"]["T:def:even"]["reading"]
     pk = cmp.claim_packet(cmp.Site(data), "Definition 1.1", "informed",

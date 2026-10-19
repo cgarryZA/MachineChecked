@@ -171,6 +171,45 @@ An `unresolved` reading records the question and what would decide it:
 
 The reader shows **Unresolved** with the question. It records an open question, not a difference.
 
+## Proof steps
+
+A numbered equation inside a printed proof is a target of its own. In zero configuration,
+every numbered display with one `\label` inside a `proof` environment is listed as **Equation (n)**
+under the result whose proof holds it (the result the proof's optional argument names, else the
+statement just before the proof). Its passport shows the equation, its context in the proof and
+its own review; the enclosing result lists its steps.
+
+A step is linked in two ways, kept apart:
+
+- **Lean that establishes this step**: the declarations that state the step as printed, with the
+  same `coverage`, `basis` and `note` as a statement's link;
+- **Different formal route used instead**: the declarations that reach the enclosing result by
+  another argument and do not state the step.
+
+The local reader saves both in the step's entry of `machinechecked.links.json`:
+
+```json
+"eq:bound-range": {"route": {"lean": ["Toy.Acceptance.thm_bound"],
+                             "note": "Lean bounds n by n * n and does not use the printed family.",
+                             "by": "A. Auditor"}}
+```
+
+From the terminal, `machinechecked link` records both (the step by its label or number):
+
+```sh
+machinechecked link eq:bound-sum Toy.Acceptance.thm_triangle --coverage full
+machinechecked link "Equation (3)" Toy.Acceptance.thm_bound --route --note "Lean bounds n by n * n."
+machinechecked link eq:bound-range --route        # clears the recorded route
+```
+
+A row of `formalization.yaml` can name a step (`source: Equation (3)`) and, with
+`route: different`, its formal route. A step linked only to a formal route reads **linked: a
+different formal route** (in the warning colour: Lean reaches this by a different route than the
+printed step); nothing is suggested for a step. A step never takes its enclosing
+result's status, coverage or review: until a reviewer reports on it, it reads **not reviewed**.
+In a full assessment, a step is an inventory entry with `unit` and `parent` (see the
+[data model](DATA_MODEL.md)).
+
 ## Read a claim
 
 Select a claim to see the printed statement beside its Lean statement. For a LaTeX paper the statement is typeset from its source when the whole passage can be, under the paper's own macros and with its printed reference and equation numbers; otherwise it is the excerpt of the PDF, which is always available under **As printed in the PDF** ([what decides](SOURCE_REGIONS.md#display-excerpts)). The Lean statement is set out as its variables, its hypotheses in order, and its conclusion. A “there is” inside the conclusion shows its witness with its type, and the parts that use that witness beneath it; two witnesses of the same name in different parts are different variables. When the project's repository is on GitHub, **Lean source** opens the declaration at the exact commit and line. Where a corrected statement stands beside the printed one, a box says what the correction changes: the hypotheses it adds or drops, and whether the conclusion is the same. **Review it** opens the review queue, and **Raise issue** a report to the audit's repository.
