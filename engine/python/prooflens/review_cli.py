@@ -22,6 +22,7 @@ import re
 from pathlib import Path
 
 from . import compare as cmp
+from .simple import reading_text
 from . import workspace as wsp
 from .config import Config
 
@@ -222,11 +223,10 @@ class Session:
                + (r.get("text") or "No text was written with this review marker.") for r in revs]
         for c in u.get("claims") or []:
             note = (self.site.chunk(c["id"]) or {}).get("correspondence") or {}
-            if note.get("note"):
-                out.append(f"Note on the correspondence of {c['id']}"
-                           + (f" by {note['by']}" if note.get("by") else "")
-                           + (f" (coverage: {note['coverage']})" if note.get("coverage") else "")
-                           + f"\n{note['note']}")
+            text = reading_text(note)
+            if text:
+                out.append(f"Reading of the correspondence of {c['id']}"
+                           + (f" by {note['by']}" if note.get("by") else "") + f"\n{text}")
         return "\n\n".join(out) or "No review by the author is recorded for this unit."
 
     def submit(self, uid: str, disagreements: str) -> dict:
@@ -248,13 +248,30 @@ class Session:
         return out
 
 
+# The kind of issue each verdict's draft is: a note explaining an accepted difference, a
+# defect the reviewer found, or a question the reviewer could not decide. A faithful verdict,
+# or one this table does not know, has no draft.
+DRAFT_KIND = {"faithful with representation choices": "explanatory note",
+              "broader": "explanatory note",
+              **{v: "defect" for v in VERDICTS["problem"]},
+              "cannot determine": "unresolved question"}
+UNRESOLVED_BODY = ("The reviewer could not determine whether the Lean statement says what the "
+                   "paper says. This is an open question, not a difference that was found.")
+
+
 def issue_draft(u: dict, verdict: str, detail: str) -> dict | None:
-    if verdict == "faithful":
+    """The issue a maintainer may file for a verdict, as the reader's `issueDraft` writes it."""
+    kind = DRAFT_KIND.get(verdict)
+    if kind is None:
         return None
-    note = verdict in ("faithful with representation choices", "broader")
     claims = ", ".join(c.get("number") or c["id"] for c in u["claims"])
-    return {"kind": "explanatory note" if note else "defect",
-            "title": f"{u['name']}: {verdict}" + (f" ({claims})" if claims else ""),
+    suffix = f" ({claims})" if claims else ""
+    detail = (detail or "").strip()
+    if kind == "unresolved question":
+        return {"kind": kind, "title": f"{u['name']}: open question{suffix}",
+                "body": f"Review unit `{u['id']}`, verdict **{verdict}**. {UNRESOLVED_BODY}"
+                        + (f"\n\n**Open question.** {detail}" if detail else "")}
+    return {"kind": kind, "title": f"{u['name']}: {verdict}{suffix}",
             "body": f"Review unit `{u['id']}`, verdict **{verdict}**.\n\n{detail}".strip()}
 
 

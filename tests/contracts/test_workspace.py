@@ -127,6 +127,15 @@ def test_records_are_validated_and_a_refused_edit_writes_nothing(work):
         [put({"kind": "finding", "claim": "1", "coverage": "full", "evidence": ["e-x"]})],
         [put({"kind": "question", "claim": "1", "text": " "})],
         [put({"kind": "evidence", "claim": "1", "ref": {"decl": "Ex.main"}, "role": "maybe"})],
+        # A basis and its fields go with the coverage they support (the links file's rules).
+        [put({"kind": "finding", "claim": "1", "basis": "direct"})],
+        [put({"kind": "finding", "claim": "1", "coverage": "full", "basis": "checked"})],
+        [put({"kind": "finding", "claim": "1", "coverage": "full", "basis": "direct",
+              "argument": "x"})],
+        [put({"kind": "finding", "claim": "1", "coverage": "full",
+              "basis": "reviewed_composition", "bridge": {"theorem": "A", "target": "B"}})],
+        [put({"kind": "finding", "claim": "1", "coverage": "full", "question": "Which?"})],
+        [put({"kind": "finding", "claim": "1", "coverage": "composed", "basis": "direct"})],
     ]
     for ops in bad:
         with pytest.raises(wsp.WorkspaceError):
@@ -392,3 +401,25 @@ def test_the_reader_and_the_cli_share_one_workspace(work, monkeypatch, capsys):
         assert [w["id"] for w in lst["workspaces"]] == [wid]
     finally:
         httpd.shutdown()
+
+
+def test_a_finding_uses_the_links_file_reading(work):
+    """A finding records coverage and, separately, its basis with the same words as the links
+    file; `composed` is recorded as full coverage by the auditor's composition."""
+    p = opened(work, mode="informed")
+    wsp.update(p, [
+        put({"id": "f-comp", "kind": "finding", "claim": "1", "coverage": "composed",
+             "argument": "Combine the two bounds.", "note": "n"}),
+        put({"id": "f-bridge", "kind": "finding", "claim": "1", "coverage": "full",
+             "basis": "checked_bridge", "bridge": {"theorem": "Ex.main", "target": "Ex.Spec"},
+             "note": "n"}),
+        put({"id": "f-open", "kind": "finding", "claim": "1", "coverage": "unresolved",
+             "question": "Which norm?", "would_decide": "Section 2's conventions."})],
+        snap_of(work))
+    recs = wsp.read(p)["records"]
+    assert (recs["f-comp"]["coverage"], recs["f-comp"]["basis"], recs["f-comp"]["argument"]) == \
+        ("full", "reviewed_composition", "Combine the two bounds.")
+    assert recs["f-bridge"]["bridge"] == {"theorem": "Ex.main", "target": "Ex.Spec"}
+    assert (recs["f-open"]["question"], recs["f-open"]["would_decide"]) == \
+        ("Which norm?", "Section 2's conventions.")
+    assert "next_step" not in recs["f-comp"]

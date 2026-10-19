@@ -19,6 +19,7 @@ NOTE = "AUTHORED-NOTE: the bound is read with the constant chosen first."
 REVIEW = "PRIOR-REVIEW-READING: the authors' reading of the claim."
 MARKER = "AUTHOR-MARKER: reviewed against the definition."
 SYMBOL = "AUTHORED-SYMBOL-LINK"
+ARGUMENT = "AUTHORED-ARGUMENT: chain the two bounds."
 
 
 def seg(text, refs=()):
@@ -80,7 +81,10 @@ def write_site(tmp: Path, n_claims: int = 8) -> Path:
               "status": "linked: Lean proof checked", "status_code": "link.checked",
               "class": "proved", "links": [link], "suggestions": [], "clauses": [],
               "decls": {n: keys[n] for n in ("Syn.Jet", "Syn.Jet._f")},
-              "correspondence": {"note": NOTE, "coverage": "full", "by": "author"},
+              "correspondence": {"note": NOTE, "coverage": "full",
+                                 "basis": "reviewed_composition", "argument": ARGUMENT,
+                                 "next_step": "State the combination as one Lean result.",
+                                 "by": "author"},
               "reviews": [{"reading": REVIEW, "verdict": {"value": "faithful"}}],
               "symbols": [{"tex": "C", "lean": SYMBOL}], "findings": [], "blockers": []}
         f = f"S_thm_t{i}.json"
@@ -161,7 +165,8 @@ def test_reading_receives_the_paper_only(site):
     text = dump(pk)
     assert len(pk["paper"]["passages"]) == 8      # every claim of the unit, not the first six
     assert pk["paper"]["complete"]
-    for leak in ("Syn.", "fp-big", NOTE, REVIEW, MARKER, SYMBOL, "Lean proof checked"):
+    for leak in ("Syn.", "fp-big", NOTE, ARGUMENT, REVIEW, MARKER, SYMBOL,
+                 "Lean proof checked", "reviewed_composition"):
         assert leak not in text, leak
     assert "lean" not in pk and "interpretations" not in pk
     assert pk["paper"]["passages"][0]["removed"]   # the \lean tag was taken out, and said so
@@ -173,12 +178,17 @@ def test_comparison_receives_no_prior_interpretation(site):
     pk = cmp.unit_packet(site, unit, "compare")
     text = dump(pk)
     assert unit["name"] in text and "Syn.Jet._f m n" in text
-    for leak in (NOTE, REVIEW, MARKER, SYMBOL, "Lean proof checked", "link.checked"):
+    for leak in (NOTE, ARGUMENT, REVIEW, MARKER, SYMBOL, "Lean proof checked", "link.checked",
+                 "reviewed_composition"):
         assert leak not in text, leak
     assert "\\lean{" in pk["paper"]["passages"][0]["text"]
     later = dump(cmp.unit_packet(site, unit, "informed"))
-    for shown in (NOTE, REVIEW, MARKER, SYMBOL):
+    for shown in (NOTE, ARGUMENT, REVIEW, MARKER, SYMBOL):
         assert shown in later
+    # The informed packet carries the reading whole: coverage and, separately, its basis.
+    cor = cmp.claim_packet(site, "thm:t0", "informed")["interpretations"]["correspondence"]
+    assert (cor["coverage"], cor["basis"], cor["argument"]) == ("full", "reviewed_composition",
+                                                                ARGUMENT)
     assert cmp.claim_packet(site, "thm:t0", "informed")["contains"][-1] == \
         "prior interpretations"
 
@@ -193,7 +203,11 @@ def test_the_review_session_follows_the_stages(site, tmp_path):
     s.lock(uid, "Every statement bounds the jet uniformly in n.")
     assert NOTE not in dump(s.show(uid, as_json=True))
     s.decide(uid, "faithful", "Same statement.")
-    assert NOTE in s.author(uid) and MARKER in s.author(uid)
+    author = s.author(uid)
+    assert NOTE in author and MARKER in author and ARGUMENT in author
+    assert "Every clause, by the auditor's composition" in author
+    assert "Lean has not checked this combination. Next step: State the combination as one " \
+        "Lean result." in author
 
 
 def test_queries_answer_with_provenance_and_change_nothing(site):
@@ -269,7 +283,7 @@ def test_zero_configuration_review_from_the_terminal(plain, tmp_path, monkeypatc
         pytest.skip("the plain example is not built")
     (plain / "machinechecked.links.json").write_text(json.dumps({"version": 1, "papers": {
         "paper/main.tex": {"thm:odd-add": {"lean": ["Plain.odd_add_odd"], "note": NOTE,
-                                           "coverage": "full", "by": "author"}}}}))
+                                           "coverage": "composed", "by": "author"}}}}))
     monkeypatch.chdir(plain)
     monkeypatch.setenv("MACHINECHECKED_REVIEWER", "human:Test-Referee")
     assert not (plain / "machinechecked.toml").exists()
@@ -324,4 +338,8 @@ def test_zero_configuration_review_from_the_terminal(plain, tmp_path, monkeypatc
     # The packet of a general comparison is an informed one, and says so.
     pk = run_json(capsys, "compare", "thm:odd-add", "--json")
     assert pk["contains"][-1] == "prior interpretations"
-    assert pk["interpretations"]["correspondence"]["note"] == NOTE
+    cor = pk["interpretations"]["correspondence"]
+    # A stored `composed` reaches the packet as full coverage by the auditor's composition, its
+    # note as the argument.
+    assert (cor["coverage"], cor["basis"], cor["argument"], cor["next_step"]) == (
+        "full", "reviewed_composition", NOTE, "State the combination as one Lean result.")
