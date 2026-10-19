@@ -527,6 +527,21 @@ def view_config(root: Path, paper_path: Path, out_dir: Path, libs: list[str]) ->
                   comparator_log=None, papers=[paper], out_dir=out_dir)
 
 
+def view_excerpts(snap, cwd: Path, anchors: list[dict], envs: list[str]) -> dict:
+    """The passage of each statement environment, typeset from the source when it can be
+    typeset whole (excerpt.py), by the key its claim has here."""
+    from .excerpt import excerpt_for, read_aux
+    aux = read_aux(cwd, Path(snap.root).stem)
+    out = {}
+    for a in anchors:
+        rec = excerpt_for(snap.dir, snap.root, aux, snap.revision, set(envs), a, None, None)
+        if rec is not None:
+            num = a.get("number")
+            out[a.get("label") or (f"{a['env']}-{num}" if num else
+                                   f"{a['env']}@{a['file']}:{a['line']}")] = rec
+    return out
+
+
 def paper_title(p: Path) -> str:
     side = p.with_suffix(".json")
     if p.suffix == ".pdf" and side.exists():
@@ -574,7 +589,8 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
                 write_json(cache, {"digest": digest, "page_size": t["page_size"],
                                    "anchors": t["anchors"], "pdf": str(t["pdf"])}, indent=None)
             anchors = t["anchors"]
-            tex.update(page_size=t["page_size"], anchors=anchors, envs=envs)
+            tex.update(page_size=t["page_size"], anchors=anchors, envs=envs,
+                       excerpts=view_excerpts(snap, Path(t["pdf"]).parent, anchors, envs))
             pdf = t["pdf"]
             claims = claims_from_anchors(paper.id, anchors, snap.dir)
         except TexError as e:
@@ -792,6 +808,8 @@ def write_view_site(view: dict, site: Path, web_dist: Path | None,
             "source_sha256": c["source_sha256"], **fields(c["status_code"], c.get("status_detail")),
             "anchor": {**anchor, "kind": akind} if anchor else None, "source_matches": None,
             "statement_tex": (anchor or {}).get("statement") if akind == "exact" else None,
+            "excerpt": (body["tex"].get("excerpts") or {}).get(c["key"]) if akind == "exact"
+            else None,
             "source_evidence": source_evidence({"kind": akind} if anchor else None, body["tex"]["mode"], paper=body["tex"]),
             "blockers": [],
             "links": [_link_view(l, root) for l in c["links"]],

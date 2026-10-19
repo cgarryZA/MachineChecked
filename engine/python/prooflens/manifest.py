@@ -253,6 +253,8 @@ def build(evidence: dict, release: str, display: dict | None = None
             "source_sha256": c.get("source_sha256"), **status, "anchor": anchor, "source_matches": src_ok,
             "source_evidence": source_evidence(anchor, t.get("mode"), src_ok, t),
             "statement_tex": (anchor or {}).get("statement"),
+            # The passage the reader typesets, when it can be typeset faithfully (display only).
+            "excerpt": (t.get("excerpts") or {}).get(c["id"]),
             "blockers": [shown_names(b, clause_tex) for b in a.get("blockers", [])],
             "clauses": clauses, "decls": decls, "findings": fs,
             "symbols": symbol_links(display, c["id"], (anchor or {}).get("statement"), lean)}

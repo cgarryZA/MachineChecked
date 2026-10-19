@@ -48,6 +48,7 @@ def test_private_paper_is_not_exported(toy, tmp_path):
         d = json.loads(p.read_text())
         if "statement_tex" in d:
             assert d["statement_tex"] is None
+            assert d["excerpt"] is None, "the typeset passage is manuscript text"
 
 
 @needs_lean

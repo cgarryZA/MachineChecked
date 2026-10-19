@@ -18,6 +18,7 @@ from .probe import FINGERPRINT_VERSION, requests_from_inventory, run_probe
 from .reviews import load_dismissals, load_reviews
 from .schemas import validate
 from .sources import acquire
+from .excerpt import collect as collect_excerpts, read_aux
 from .source_regions import collect as collect_source_regions
 from .tex import DEFAULT_ENVS, TexError, anchors_for, theorem_envs
 from .util import (canonical_json, git_dirty, git_head, link_or_copy, prepare_work_dir,
@@ -83,6 +84,7 @@ def build(cfg: Config, release: str | None = None, skip_lean: bool = False,
         lean = run_probe(cfg, requests_from_inventory(inv), lake=lake, build=lean_build)
 
     tex, papers_prov, pdfs = {}, {}, {}
+    display = load_display(cfg)
     for paper in cfg.papers:
         snap = snaps[paper.id]
         prov = {"title": paper.title, "kind": snap.kind, "revision": snap.revision,
@@ -131,6 +133,14 @@ def build(cfg: Config, release: str | None = None, skip_lean: bool = False,
                 locs = [c["location"] for c in inv["claims"]
                         if c["paper"] == paper.id and line_location(c) is not None]
                 tex[paper.id]["line_anchors"] = t["line_anchors"](locs)
+                # Display only: the passages the reader typesets, read from this snapshot and
+                # its compilation, so that a later rebuild of this release shows the same text.
+                selectors = {cid: v["excerpt"] for cid, v in
+                             ((display or {}).get("claims") or {}).items() if "excerpt" in v}
+                tex[paper.id]["excerpts"] = collect_excerpts(
+                    inv["claims"], paper.id, snap.dir, snap.root,
+                    read_aux(t["cwd"], Path(snap.root).stem), snap.revision, envs,
+                    tex[paper.id]["anchors"], tex[paper.id]["regions"], selectors)
             tex[paper.id]["manual_anchors"] = manual_anchors(cfg, paper.id)
         papers_prov[paper.id] = prov
 
@@ -155,7 +165,7 @@ def build(cfg: Config, release: str | None = None, skip_lean: bool = False,
     rel = release or f"r-{eid[:12]}"
     ev.record_release(cfg.out_dir, rel, eid)
     record = ev.load(cfg.out_dir, eid)
-    index, chunks, store = mf.build(record, rel, load_display(cfg))
+    index, chunks, store = mf.build(record, rel, display)
     index.update(issues=cfg.issues, site_url=cfg.site_url)
     index["project"].update(source_info(cfg))
     site = cfg.out_dir / "site"

@@ -104,6 +104,7 @@ def public_claim(chunk: dict, pub) -> dict:
                         "source_sha256", "blockers"])
     out["location"] = chunk.get("location") if pub.source_text else None
     out["statement_tex"] = chunk.get("statement_tex") if pub.source_text else None
+    out["excerpt"] = chunk.get("excerpt") if pub.source_text else None
     a = chunk.get("anchor")
     out["anchor"] = _pick(a, ["id", "env", "number", "label", "begin", "end", "kind", "source_sha256"] +
                           (["file", "line"] if pub.source_text else [])) if a else None
