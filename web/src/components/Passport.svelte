@@ -275,7 +275,7 @@
       {#if claim.correspondence}
         {@const cor = claim.correspondence}
         <div class="coverage" data-coverage={cor.coverage || "note"}>
-          <p class="small">{#if cor.coverage}<strong>{COVERAGE[cor.coverage]}</strong>{#if cor.confidence}<span class="faint"> ({cor.confidence} confidence)</span>{/if}{#if cor.note}. {/if}{/if}{cor.note}</p>
+          <p class="small">{#if cor.coverage}<strong>{COVERAGE[cor.coverage]}</strong>{#if cor.confidence}{" "}<span class="faint">({cor.confidence} confidence)</span>{/if}{#if cor.note}{". "}{/if}{/if}{cor.note}</p>
           <p class="faint small">{cor.source === "formalization.yaml" ? "The project's note in formalization.yaml" : "The auditor's reading" + (cor.by ? ", by " + cor.by : "")}: how far the linked Lean states this claim. It is not a review and does not change the status.</p>
         </div>
       {/if}
