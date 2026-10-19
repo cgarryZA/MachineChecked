@@ -36,7 +36,15 @@ structure Query where
   accept_prefix : String
   allowed_axioms : Array String
   requests : Array Request
+  /-- Each request's heartbeat budget, in thousands as `maxHeartbeats`; Lean's default if none. -/
+  max_heartbeats : Option Nat := none
   deriving FromJson, Inhabited
+
+/-- Runs `x` with a heartbeat budget of `n` thousand heartbeats when one is given. -/
+def withBudget (n? : Option Nat) (x : MetaM α) : MetaM α :=
+  match n? with
+  | some n => withTheReader Core.Context (fun c => { c with maxHeartbeats := n * 1000 }) x
+  | none => x
 
 /-! ## Environment helpers -/
 
@@ -631,7 +639,7 @@ open ProofLensProbe in
       -- Each request has its own heartbeat budget. A request that fails, including by running
       -- out of heartbeats (a runtime exception, which `try` does not catch), emits an error
       -- record for itself and the probe goes on.
-      tryCatchRuntimeEx (withCurrHeartbeats do
+      tryCatchRuntimeEx (withBudget q.max_heartbeats <| withCurrHeartbeats do
         match r.kind with
         | "spec" => specRecord h q roots seen r.name.toName
         | "accept" | "refute" => proofRecord h q r.kind r.name.toName (r.spec.map (·.toName))
