@@ -10,8 +10,9 @@ Findings come in three tiers:
   inventory). A violation fails the consistency check; it does not change a status, which
   records what is proved: a proof that fails its check is not a proof, so its clause is open.
 * `warning`: a pattern that may change the meaning of a statement (a totalised operation, for
-  instance). It asks for investigation, may be wrong, and can be dismissed with a recorded
-  rationale tied to the subject's fingerprint.
+  instance), or a name a module docstring lists that nothing declares. It asks for
+  investigation, may be wrong, and can be dismissed with a recorded rationale tied to the
+  subject's fingerprint.
 * `obligation`: a judgement only a reviewer can make (a review of a proposition or definition, a
   witness that the hypotheses can be met, a regime the paper intends to cover).
 
@@ -173,8 +174,15 @@ class Assessor:
                         "detail": f"the Comparator record was made with other {label}"}
         if thm not in set(rec.get("replayed", [])):
             return {"state": "not-run", "detail": "the Comparator record does not cover this proof"}
-        return {"state": "pass", "detail": "Comparator replayed the proof in a fresh kernel ("
-                + ", ".join(rec.get("kernels", ["lean"])) + ")" + since}
+        # A replay without Comparator's sandbox guard still counts; the fact says so.
+        how = rec.get("conditions")
+        guard = ("unrecorded" if not isinstance(how, dict) else
+                 "guarded" if how.get("guard") not in (None, "none") else "unguarded")
+        note = {"guarded": "", "unguarded": "; replayed without the sandbox guard",
+                "unrecorded": "; the record does not say whether the sandbox guard was used"}
+        return {"state": "pass", "guard": guard,
+                "detail": "Comparator replayed the proof in a fresh kernel ("
+                + ", ".join(rec.get("kernels", ["lean"])) + ")" + since + note[guard]}
 
     def _environment(self) -> dict:
         """The audited project's Lean version and Lake manifest hash."""
@@ -441,8 +449,21 @@ class Assessor:
                 self.findings.append(_finding(
                     "violation", "layering", v["module"],
                     f"the specification module {v['module']} imports {v['imports']}"))
+            self.module_doc_checks()
         gates = self.gates(claims)
         return {"claims": claims, "findings": self.findings, "gates": gates}
+
+    def module_doc_checks(self):
+        """A warning for each name a module docstring lists that nothing declares: prose that
+        advertises a result the project does not contain. It never changes a status, and an
+        auditor can dismiss it (code `module-doc-name`, the module as subject, the name as
+        trigger)."""
+        from .moddocs import stale_doc_fingerprint, stale_doc_message, stale_doc_names
+        for d in stale_doc_names(self.lean.get("moddocs", [])):
+            self.add_warning("module-doc-name", d["module"], d["module"],
+                             {"fingerprint": stale_doc_fingerprint(d)},
+                             stale_doc_message(d), d["name"])
+            self.findings[-1].update(file=d["file"], line=d["line"])
 
     # -- gates ----------------------------------------------------------------------------
 

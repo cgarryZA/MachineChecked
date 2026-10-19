@@ -212,11 +212,19 @@ def _simple_site(root: Path, paper: Path, web: str | None):
 
 
 def _print_simple(body):
+    from .moddocs import stale_doc_message
     from .simple import view_summary
     for n in body.get("notes", []):
         print(f"note: {n}")
+    for d in body.get("module_docs", []):
+        print(f"warning: {stale_doc_message(d)}")
     for s, k in sorted(view_summary(body).items()):
         print(f"  {k:4d}  {s}")
+    for c in body.get("claims", []):
+        cor = c.get("correspondence") or {}
+        if cor.get("basis") == "reviewed_composition":
+            print(f"composition {c.get('number') or c['id']}: every clause by the auditor's "
+                  f"composition, which Lean has not checked. Next step: {cor['next_step']}")
 
 
 # -- everyday commands ------------------------------------------------------------------------
@@ -285,12 +293,22 @@ def cmd_link(a):
         sys.exit(f"the last build is of another paper ({built_title}); run "
                  f"`machinechecked view {paper.relative_to(root)}` first")
     note = _text_arg(a.note_file) if a.note_file else a.note
+    argument = _text_arg(a.argument_file) if a.argument_file else a.argument
+    bridge = None
+    if a.bridge:
+        bridge = {"theorem": a.bridge[0], "target": a.bridge[1]}
+        if a.bridge_pins:
+            bridge.update(target_fingerprint=a.bridge_pins[0], source_sha256=a.bridge_pins[1])
+    elif a.bridge_pins:
+        sys.exit("--bridge-pins goes with --bridge THEOREM TARGET")
     try:
         change = authoring.plan(root, links_key(root, paper), snap, a.claim,
                                 lean=None if a.route else a.decls or None, add=a.add, reject=a.reject or None,
                                 clear=a.clear, note=note, coverage=a.coverage,
                                 confidence=a.confidence, reason=a.reason, by=a.reviewer,
-                                external=a.external,
+                                external=a.external, basis=a.basis, refs=a.refs,
+                                argument=argument, bridge=bridge, question=a.question,
+                                would_decide=a.would_decide,
                                 route=(a.decls or []) if a.route else None)
         if not a.dry_run:
             authoring.write(root, change)
@@ -325,6 +343,9 @@ def cmd_link(a):
     else:
         print(f"recorded for {c['id']} ({c['number']}) in {authoring.simple.links_file(root).name}"
               "; `machinechecked view` or `build` shows it")
+    if (change["after"] or {}).get("basis") == "reviewed_composition":
+        print("a composition: Lean has not checked the combination. Next step: "
+              + authoring.simple.COMPOSITION_NEXT_STEP)
 
 
 def _workspace_place(a):
@@ -366,11 +387,18 @@ def _print_workspace(v: dict) -> None:
         for f in c["findings"]:
             tag = f["state"] + ("" if f["in_force"] else ", superseded")
             print(f"  finding  {f['id']}  {tag}: coverage {f.get('coverage') or '-'}"
-                  f"  [{f['currency']['state']}]" + (f"  supersedes {f['supersedes']}: "
+                  + (f", basis {f['basis']}" if f.get("basis") else "")
+                  + f"  [{f['currency']['state']}]" + (f"  supersedes {f['supersedes']}: "
                                                      f"{f['reason']}" if f.get("supersedes")
                                                      else ""))
             if f.get("question"):
                 print(f"           question: {f['question']}")
+            if f.get("would_decide"):
+                print(f"           would decide it: {f['would_decide']}")
+            if f.get("basis") == "reviewed_composition":
+                from .simple import COMPOSITION_NEXT_STEP
+                print("           Lean has not checked this combination. Next step: "
+                      + COMPOSITION_NEXT_STEP)
         for q in c["questions"]:
             print(f"  question {q['id']}  {q['state']}: {q['text']}")
 
@@ -524,7 +552,8 @@ def _step_json(c: dict) -> dict:
 CHECK_NOTE = "Results describe the linked Lean declarations; correspondence reviews compare them with the paper."
 
 
-FINDING_KEYS = ("id", "tier", "code", "subject", "message", "trigger", "dismissed")
+FINDING_KEYS = ("id", "tier", "code", "subject", "message", "trigger", "file", "line",
+                "dismissed")
 
 
 def _finding_details(cfg, eid: str) -> list[dict]:
@@ -535,6 +564,12 @@ def _finding_details(cfg, eid: str) -> list[dict]:
     order = {"violation": 0, "obligation": 1, "warning": 2}
     return [{k: f[k] for k in FINDING_KEYS if k in f}
             for f in sorted(found, key=lambda f: (order.get(f.get("tier"), 3), f.get("id", "")))]
+
+
+def _replay_guard(cfg, eid: str) -> dict | None:
+    from . import evidence as ev
+    from .replay import guard_summary
+    return guard_summary(ev.load(cfg.out_dir, eid)["body"]["assessment"])
 
 
 def _check_json(a):
@@ -556,10 +591,12 @@ def _check_json(a):
             out = {"mode": "full", "release": idx["release"],
                    "project": idx.get("project", {}).get("commit"),
                    "findings": idx["findings"]["total"],
-                   "finding_details": _finding_details(cfg, res["evidence"])}
+                   "finding_details": _finding_details(cfg, res["evidence"]),
+                   "replay": _replay_guard(cfg, res["evidence"])}
             failed = bool(idx["findings"]["total"].get("violation"))
         else:
             root, paper = _simple_target(a)
+            from .moddocs import stale_doc_message
             from .simple import view_release
             view = _simple_view(root, paper)
             body = view["body"]
@@ -580,7 +617,10 @@ def _check_json(a):
                    "release": view_release(body), "commit": body.get("commit"),
                    "modules": {"built": body["project"]["built"],
                                "not_built": body["project"]["unbuilt"]},
-                   "notes": body["notes"]}
+                   "notes": body["notes"],
+                   "warnings": [{"kind": "module-doc-name", "file": d["file"], "line": d["line"],
+                                 "name": d["name"], "message": stale_doc_message(d)}
+                                for d in body.get("module_docs", [])]}
             failed = any(l["class"] != "proved" for c in claims for l in c["links"])
     summary = {}
     for c in claims:
@@ -609,11 +649,19 @@ def cmd_build(a):
     print("findings:", ", ".join(f"{v} {k}" for k, v in sorted(idx["findings"]["total"].items()))
           or "none")
     # Violations and obligations, one per line: they are few, and they block acceptance.
-    for f in _finding_details(cfg, res["evidence"]):
+    details = _finding_details(cfg, res["evidence"])
+    for f in details:
         if f["tier"] in ("violation", "obligation") and not f.get("dismissed"):
             print(f"  {f['tier']}  {f['subject']}: {f['message']}")
+    # Names in module docstrings that nothing declares, with file and line.
+    for f in details:
+        if f["code"] == "module-doc-name" and not f.get("dismissed"):
+            print(f"  warning  {f['message']}")
     if idx["findings"]["total"].get("warning"):
         print("  (warnings: see `check --json` or the reader)")
+    rg = _replay_guard(cfg, res["evidence"])
+    if rg and rg["message"]:
+        print(f"note: independent replay: {rg['message']}")
     if dest is not None:
         # The site to publish is the audit's public export: what the configuration publishes,
         # scanned for private material, as `export --out` writes it.
@@ -690,13 +738,19 @@ def cmd_replay(a):
     if out is None:
         sys.exit("say where to write the record: --out FILE, or `comparator_log` in "
                  "machinechecked.toml (which the assessment then reads)")
-    rec = replay(cfg.lean_root, Path(a.comparator_config).resolve(), out, a.comparator)
-    print(f"Comparator {'passed' if rec['passed'] else 'did not pass'} on commit "
-          f"{rec['commit'][:12]}: {len(rec['replayed'])} theorem(s) replayed; record in {out}")
+    rec = replay(cfg.lean_root, Path(a.comparator_config).resolve(), out, a.comparator,
+                 guard=not a.no_guard)
     how = rec["conditions"]
+    print(f"Comparator {'passed' if rec['passed'] else 'did not pass'} on commit "
+          f"{rec['commit'][:12]}: {len(rec['replayed'])} theorem(s) replayed"
+          + (" under the sandbox guard" if how["guard"] != "none" else "")
+          + f"; record in {out}")
     if how["guard"] == "none":
-        print("note: Comparator ran without the guard its README requires (this process could "
-              "open a Unix socket); the record says so. See `machinechecked replay --help`.",
+        why = ("--no-guard was given" if how["guard_mode"] == "opted-out" else
+               "this machine cannot start it: it needs `systemd-run` and a user systemd manager "
+               "that applies RestrictAddressFamilies")
+        print(f"note: replayed without the sandbox guard ({why}); the replay still counts, and "
+              "the record and the audit say so. See `machinechecked replay --help`.",
               file=sys.stderr)
     if how["landrun"] is None:
         print("note: no `landrun` was found; the record says so.", file=sys.stderr)
@@ -1074,17 +1128,21 @@ def main(argv=None):
         description="Run Comparator (`lake env comparator CONFIG`) in the Lean project and record "
         "the replay. Comparator's trust model asks for a checking environment in which the "
         "solution was not compiled before, `landrun` on PATH, and the whole run under "
-        "`systemd-run --user --property=RestrictAddressFamilies=~AF_UNIX --pipe --wait "
-        "-E PATH=\"$PATH\" --working-directory \"$PWD\" -- machinechecked replay CONFIG`. "
-        "This command does not start that guard; the record says whether this process ran "
-        "under it, which systemd unit and Landlock ABI it had, and which comparator, landrun, "
-        "lean4export and nanoda_bin it used, with their SHA-256.")
+        "`systemd-run --user --property=RestrictAddressFamilies=~AF_UNIX`. This command starts "
+        "that sandbox guard itself when the machine has `systemd-run` and a user systemd "
+        "manager that applies it (or runs directly when it is already under it); --no-guard "
+        "opts out. A replay without the guard still counts, and the audit says it was replayed "
+        "without the sandbox guard. The record says how the run went: the guard, the systemd "
+        "unit, the Landlock ABI, and which comparator, landrun, lean4export and nanoda_bin it "
+        "used, with their SHA-256.")
     rp.add_argument("comparator_config", metavar="CONFIG",
                     help="the Comparator configuration (its theorem_names are the proofs "
                     "replayed)")
     rp.add_argument("-c", "--config", default=None, help=argparse.SUPPRESS)
     rp.add_argument("--out", help="the record (default: comparator_log in machinechecked.toml)")
     rp.add_argument("--comparator", default="comparator", help="the Comparator program")
+    rp.add_argument("--no-guard", action="store_true",
+                    help="run Comparator without the systemd-run sandbox guard")
     rp.set_defaults(func=cmd_replay)
 
     ins = sub.add_parser("inspect", help="what a Lean declaration depends on, proofs included")
@@ -1156,7 +1214,22 @@ def main(argv=None):
     lk.add_argument("--reason", help="why they are rejected")
     lk.add_argument("--clear", action="store_true", help="remove the confirmed list (the "
                     "paper's \\lean tags and formalization.yaml apply again)")
-    lk.add_argument("--coverage", help="how far the declarations state the claim")
+    lk.add_argument("--coverage", help="how far the declarations state the claim: full, "
+                    "partial, changed, related or unresolved")
+    lk.add_argument("--basis", help="how full coverage is supported: direct (one Lean "
+                    "statement), reviewed_composition (your argument) or checked_bridge")
+    lk.add_argument("--refs", nargs="+", metavar="DECL", help="the linked declarations the "
+                    "basis rests on (default: all)")
+    lk.add_argument("--argument", help="a reviewed composition's argument")
+    lk.add_argument("--argument-file", help="a file holding the argument, or - for standard "
+                    "input")
+    lk.add_argument("--bridge", nargs=2, metavar=("THEOREM", "TARGET"), help="a checked "
+                    "bridge: a linked theorem whose type is exactly TARGET")
+    lk.add_argument("--bridge-pins", nargs=2, metavar=("TARGET_FINGERPRINT", "SOURCE_SHA256"),
+                    help="the versions of the target and the passage you read (`check --json` "
+                    "gives them as correspondence.bridge.current)")
+    lk.add_argument("--question", help="an unresolved reading's open question")
+    lk.add_argument("--would-decide", help="what would decide the open question")
     lk.add_argument("--confidence", help="high, medium or low")
     lk.add_argument("--note", help="the note on the correspondence")
     lk.add_argument("--note-file", help="a file holding the note, or - for standard input")

@@ -238,11 +238,11 @@ def _choice(v, allowed, what: str, optional: bool = True):
     return v
 
 
-def _vocab() -> tuple[tuple, tuple]:
-    """The correspondence vocabulary of the links file (coverage, confidence): a finding uses
-    the same words, so it means what a link's note means."""
+def _vocab() -> tuple[tuple, tuple, tuple]:
+    """The correspondence vocabulary of the links file (coverage, basis, confidence): a finding
+    uses the same words, so it means what a link's reading means."""
     from . import simple
-    return tuple(simple.COVERAGE), tuple(simple.CONFIDENCE)
+    return tuple(simple.COVERAGE), tuple(simple.BASIS), tuple(simple.CONFIDENCE)
 
 
 def _ref(ref, snap, root) -> dict:
@@ -327,13 +327,44 @@ def _content(kind: str, rec: dict, ws: dict, snap, root) -> dict:
         if out["role"] == "rejected" and rec.get("reason"):
             out["why_rejected"] = _text(rec["reason"], "the reason")
     elif kind == "finding":
-        coverage, confidence = _vocab()
-        out["coverage"] = _choice(rec.get("coverage"), coverage, "coverage")
+        coverage, bases, confidence = _vocab()
+        cov, basis = rec.get("coverage"), rec.get("basis")
+        if cov == "composed":
+            # The earlier single value for full coverage by the auditor's composition.
+            if basis not in (None, "reviewed_composition"):
+                raise WorkspaceError("coverage `composed` is full coverage with basis "
+                                     "reviewed_composition; give one of them")
+            cov, basis = "full", "reviewed_composition"
+        out["coverage"] = _choice(cov, coverage, "coverage")
+        basis = _choice(basis, bases, "the basis")
+        if basis:
+            if not out["coverage"]:
+                raise WorkspaceError("a basis says how a coverage is supported: give the "
+                                     "coverage too")
+            out["basis"] = basis
         if rec.get("confidence") is not None:
             out["confidence"] = _choice(rec["confidence"], confidence, "confidence")
-        if rec.get("question") is not None:
-            out["question"] = _text(rec["question"], "the open question")
-        if out["coverage"] == "unresolved" and not out.get("question"):
+        if rec.get("argument") is not None:
+            if basis != "reviewed_composition":
+                raise WorkspaceError("an argument belongs to a reviewed composition (`basis`: "
+                                     "reviewed_composition)")
+            out["argument"] = _text(rec["argument"], "the argument")
+        if rec.get("bridge") is not None:
+            b = rec["bridge"]
+            if basis != "checked_bridge":
+                raise WorkspaceError("a bridge belongs to a checked bridge (`basis`: "
+                                     "checked_bridge)")
+            if not isinstance(b, dict) or set(b) - {"theorem", "target"}:
+                raise WorkspaceError("a bridge is {theorem, target}")
+            out["bridge"] = {k: _text(b.get(k), f"the bridge's {k}", True).strip()
+                             for k in ("theorem", "target")}
+        for k, what in (("question", "the open question"), ("would_decide",
+                                                            "what would decide it")):
+            if rec.get(k) not in (None, ""):
+                if out["coverage"] != "unresolved":
+                    raise WorkspaceError(f"{what} belongs to an unresolved finding")
+                out[k] = _text(rec[k], what)
+        if out["coverage"] == "unresolved" and not (out.get("question") or "").strip():
             raise WorkspaceError("an unresolved finding states its open question (`question`)")
     elif kind == "question":
         out["text"] = _text(rec.get("text"), "the question", True)

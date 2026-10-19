@@ -331,7 +331,8 @@ def export(cfg: Config, out: Path, release: str | None = None,
             (data / "papers").mkdir(parents=True, exist_ok=True)
             shutil.copyfile(src, data / p["pdf"])
     pidx["findings"] = {"total": index["findings"]["total"],
-                        "general": [_pick(f, ["id", "tier", "code", "subject", "message"])
+                        "general": [_pick(f, ["id", "tier", "code", "subject", "message",
+                                              "trigger", "dismissed", "dismissal_stale"])
                                     for f in index["findings"]["general"]]}
     pidx["claims"] = [_pick(c, ["id", "paper", "number", "title", "kind", "scope", "unit",
                                 "parent", "step_review", "status", "status_code", "class", "anchor", "counts",

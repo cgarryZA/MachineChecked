@@ -97,6 +97,8 @@ last `view` or `build`):
 ```sh
 machinechecked link "Lemma 2.3" Example.inverse_bound Example.inverse_solves \
   --coverage changed --confidence high --note-file note.md --as "A. Auditor"
+machinechecked link "Theorem 4" --coverage full --basis reviewed_composition \
+  --argument-file argument.md          # also --bridge THEOREM TARGET, --question, --would-decide
 machinechecked link "Lemma 2.3" --reject Example.other --reason "a different estimate"
 machinechecked link "Lemma 2.3" --clear     # the paper's \lean tags apply again
 ```
@@ -119,15 +121,55 @@ they state it, in the claim's entry of `machinechecked.links.json`:
               "by": "A. Auditor"}
 ```
 
-`coverage` is `full` (the declarations' statements together give every clause), `composed` (every
-clause follows, but only by combining the declarations through reasoning no Lean statement
-records, such as chaining estimates: the auditor's argument), `partial` (some clauses have no
-counterpart), `changed` (a clause is stated with other hypotheses, bound or setting), `related`
-(a comparable result) or `unresolved` (the note states the open question); `confidence` is
-`high`, `medium` or `low`. The reader shows the
-note under the claim's status, as the auditor's reading, and `check --json` reports it as the
-claim's `correspondence`. A note changes no status. It describes the declarations it was written
-for: when the list changes, it moves to `earlier_notes` in the file and is no longer shown.
+`coverage` says how far the claim and the declarations agree: `full` (every clause), `partial`
+(some clauses have no counterpart), `changed` (a clause is stated with other hypotheses, bound or
+setting), `related` (a comparable result) or `unresolved` (an open question). `confidence` is
+`high`, `medium` or `low`. The reader shows the reading under the claim's status, as the
+auditor's, and `check --json` reports it as the claim's `correspondence`. A reading changes no
+status. It describes the declarations it was written for: when the list changes, it moves to
+`earlier_notes` in the file and is no longer shown. A value other than these is ignored.
+
+**How the coverage is supported.** The optional `basis` records it separately from the coverage
+itself. Three claims of the synthetic project `tests/fixtures/coverage` show the three bases of
+full coverage:
+
+```json
+"thm:two":   {"lean": ["Cover.even_add"], "coverage": "full", "basis": "direct"},
+"thm:four":  {"lean": ["Cover.even_add"], "coverage": "full",
+              "basis": "reviewed_composition",
+              "argument": "Apply Cover.even_add to a and b, to c and d, then to the two sums."},
+"thm:three": {"lean": ["Cover.three_even"], "coverage": "full", "basis": "checked_bridge",
+              "bridge": {"theorem": "Cover.three_even", "target": "Cover.Spec.three_even",
+                         "target_fingerprint": "…", "source_sha256": "…"}}
+```
+
+- `direct`: the linked declarations state the claim. The reader shows **States every clause**.
+- `reviewed_composition`: the claim follows by combining the linked declarations through the
+  auditor's `argument`. The reader shows **Every clause, by the auditor's composition**, with the
+  argument, its author, and that Lean has not checked the combination. Beside it the reader and
+  `check` give the next step: state the combination as one Lean result. A composition never reads
+  as a direct result. A stored `"coverage": "composed"` reads as `full` with this basis, its note
+  as the argument.
+- `checked_bridge`: a linked theorem whose type Lean checks is exactly `target`, a proposition
+  stated as a definition, which the auditor read against the paper. The reader shows **Every
+  clause, through a checked bridge** only when that check passes, the proof has no `sorry` and only
+  the standard axioms, and the target and the paper's passage are the versions the auditor read:
+  `target_fingerprint` and `source_sha256` pin them, and `check --json` gives their current values
+  (`correspondence.bridge.current`) to copy. A changed target, a change to a definition it uses, or
+  a changed passage reads as out of date until the auditor reads it again and updates the pins.
+
+`refs` may list the linked declarations a basis rests on (all of them by default). Without a
+`basis`, the reading reads **Every clause**, and its support is not recorded.
+
+An `unresolved` reading records the question and what would decide it:
+
+```json
+"thm:double": {"lean": ["Cover.even_two_mul"], "coverage": "unresolved",
+               "question": "Does 'number' mean a natural number or an integer?",
+               "would_decide": "The paper's standing conventions."}
+```
+
+The reader shows **Unresolved** with the question. It records an open question, not a difference.
 
 ## Proof steps
 
@@ -212,6 +254,8 @@ machinechecked check
 ```
 
 The command exits with an error when a linked declaration is missing or unproved.
+
+It also warns, with the file and line, about each name a module docstring lists that the project and its dependencies do not declare: a dotted name such as `Widget.foo_le_bar`, or the name a list item begins with under a "Main …" heading. A deleted or renamed declaration often leaves such a name behind. The reader's banner lists them too. A warning does not change the exit code.
 
 Generated files in `.machinechecked/` are Git-ignored. Use `--out` to save the HTML elsewhere.
 The bundle contains the paper and Lean statements; share it with an appropriate audience.

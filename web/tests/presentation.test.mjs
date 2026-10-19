@@ -36,6 +36,11 @@ for (const row of Object.values(vocabulary.statuses)) assert.match(css, new RegE
 assert.equal(statusView({ status_code: "link.other-route" }).class, "caution");
 assert.match(css, /\.st-caution \{ --st: var\(--tier-warning\); \}/);
 assert.match(statusView({ status_code: "link.other-route" }).explanation, /different route than the printed step/);
+assert.equal(evidenceView("replay", { state: "pass", guard: "unguarded" }).word,
+  "passed · replayed without the sandbox guard");
+assert.equal(evidenceView("replay", { state: "pass", guard: "guarded" }).word,
+  "passed · under the sandbox guard");
+assert.equal(evidenceView("replay", { state: "pass" }).word, "passed");
 console.log("all structured presentation contracts passed");
 
 const { evidenceFacts } = await import("../src/lib/presentation.js");
