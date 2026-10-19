@@ -161,3 +161,42 @@ def test_a_version_the_inventory_does_not_pin_is_refused_before_lean_runs(toy, m
     with pytest.raises(versions.VersionError, match="pins arXiv v1, but its inventory is pinned "
                                                     "to commit abcdef0"):
         build(toy)
+
+
+def test_a_paper_page_offers_its_versions_with_their_own_labels(tmp_path):
+    """#121: the site gives a page every version of its paper; the page labels each from its kind
+    and identifier, offers only addresses on the site, and shows only audits of its version."""
+    from published_fixture import REPO, snapshot
+    from prooflens.paper import apply_audits, page_versions, write_paper_site
+    later = "abc1234" + "0" * 33
+    entries = [{"id": "arxiv:2601.01234v1", "kind": "published", "href": "/papers/2601.01234/v1/",
+                "pdf": "https://arxiv.org/pdf/2601.01234v1", "label": "anything",
+                "audits": [{"url": BASE, "author": "A. Author", "repository": REPO},
+                           {"url": "javascript:alert(1)"}]},
+               {"id": "manuscript:abc1234", "kind": "manuscript", "revision": later,
+                "href": "../latest/", "label": "arXiv v2"}]
+    out = page_versions(entries, "manuscript:abc1234")
+    assert [v["label"] for v in out] == ["arXiv v1", "Latest manuscript (commit abc1234)"]
+    assert out[0]["audits"] == [{"url": BASE, "author": "A. Author", "repository": REPO}]
+    for bad in ("https://elsewhere.example/v1/", "//elsewhere.example/", "javascript:x", ""):
+        with pytest.raises(ValueError, match="href"):
+            page_versions([{**entries[0], "href": bad}], entries[0]["id"])
+    with pytest.raises(ValueError, match="include this page's"):
+        page_versions(entries, "arxiv:2601.01234v2")
+    with pytest.raises(ValueError, match="Invalid manuscript version"):
+        page_versions([{**entries[1], "id": "manuscript:v2"}], "manuscript:v2")
+
+    d = files()
+    for part in (d["audit.json"]["papers"][0], d["data/index.json"]["papers"][0]):
+        part["paper_version"] = versions.published_version("arXiv:2601.01234v1")
+    audit = load_published_audit(PAPER, PAPER["formalisations"][0], {"url": BASE}, fetcher(d))
+    claims = [{"key": "theorem-1", "number": "Theorem 1", "kind": "theorem", "links": [],
+               "anchor": None}]
+    apply_audits(claims, {REPO: audit})
+    index = write_paper_site(tmp_path / "v1", PAPER, claims, None, None, audits={REPO: audit},
+                             versions=entries, version="arxiv:2601.01234v1")
+    assert index["version"] == "arxiv:2601.01234v1" and len(index["versions"]) == 2
+    assert index["audits"][REPO]["paper_version"]["label"] == "arXiv v1"
+    with pytest.raises(ValueError, match="does not pin manuscript:abc1234"):
+        write_paper_site(tmp_path / "latest", PAPER, claims, None, None, audits={REPO: audit},
+                         versions=entries, version="manuscript:abc1234")
