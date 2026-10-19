@@ -142,7 +142,8 @@
 {#snippet carried(o, how)}
   {@const ps = o?.properties || []}
   {#if ps.length || o?.properties_error}
-    {@const props = ps.filter((p) => p.kind === "proposition"), data = ps.filter((p) => p.kind === "data")}
+    {@const props = ps.filter((p) => p.kind === "proposition")}
+    {@const data = ps.filter((p) => p.kind === "data")}
     <details class={"carried " + how} data-carried={how} open={ps.length <= FOLD}>
       <summary class="small faint basis">{BASIS[how]}{#if ps.length > FOLD}{" "}({props.length} propert{props.length === 1 ? "y" : "ies"}, {data.length} data field{data.length === 1 ? "" : "s"}){/if}</summary>
       {#each props as p (p.field)}

@@ -236,7 +236,7 @@ def test_properties_carried_by_types(tmp_path, toolchain):
         ("instance", "data", "instance", "proposition")
     assert [f for f, _ in props(ms, "data")] == ["measurable", "measure"]
     assert [f for f, _ in props(ms)] == ["measurable_compl", "measure_empty"]
-    assert props(prob) == [("measure_univ", "MeasureData.measure (fun (x : Ω) => True) = 1")]
+    assert props(prob) == [("measure_univ", "(Shape.MeasureData.measure fun (x : Ω) => True) = 1")]
     # A conjunction or an equivalence assumed is not a structure to list.
     assert all("properties" not in x for x in statement(root, "Shape.both")["binders"])
     # Inside a negation, the solution is the negated claim's: its properties are on its node.
