@@ -800,7 +800,17 @@ await check("PDF text, links, page search and zoom work together", 1300, async (
   await pg.waitForFunction(() => document.querySelector(".find-status")?.textContent.includes("1 of 1"));
   assert.equal(await pg.getByRole("spinbutton", { name: "Page number" }).inputValue(), "15");
   await pg.getByRole("combobox", { name: "PDF zoom" }).selectOption("1.5");
+  // The zoom keeps the page the reader was on.
+  await pg.locator('[data-page="15"] .textLayer span').first().waitFor();
+  await pg.waitForTimeout(300);
+  assert.equal(await pg.getByRole("spinbutton", { name: "Page number" }).inputValue(), "15", "the zoom keeps the page");
+  const top15 = await pg.locator('[data-page="15"]').evaluate((e) => e.getBoundingClientRect().top - e.closest(".pdf").parentElement.getBoundingClientRect().top);
+  assert.ok(top15 >= 0 && top15 < 300, `page 15 stays at the top of the view (${top15})`);
+  // A page number typed while the view moves is the one opened.
   await pg.getByRole("spinbutton", { name: "Page number" }).fill("2");
+  await pg.locator(".pdf").evaluate((e) => { e.parentElement.scrollTop += 40; });
+  await pg.waitForTimeout(300);
+  assert.equal(await pg.getByRole("spinbutton", { name: "Page number" }).inputValue(), "2", "the page tracker leaves a typed number alone");
   await pg.getByRole("spinbutton", { name: "Page number" }).press("Tab");
   await pg.locator('[data-page="2"] .textLayer span').first().waitFor();
   assert.ok((await pg.locator(".band").first().boundingBox()).width <= 32, "claim marker occupies the margin");
