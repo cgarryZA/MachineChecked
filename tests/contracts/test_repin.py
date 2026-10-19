@@ -342,3 +342,64 @@ def test_text_after_a_closed_block_is_printed(tmp_path):
     assert all(not a <= text.index(C) < b for a, b in dead_ranges(text))
     assert all(not a <= text.index("shown") < b for a, b in dead_ranges(text))
     assert any(a <= text.index("hidden") < b for a, b in dead_ranges(text))
+
+
+def test_display_excerpts_move_or_are_invalidated_separately(project, capsys):
+    """An excerpt selected by its place moves with its text, or selects nothing at the new
+    revision; one selected by a label is read again at the next build. The inventory's audited
+    pins are handled as before, whatever happens to the excerpts (#62, #69)."""
+    from prooflens.excerpt import excerpt_for
+    repo, proj, first = project
+    commit(repo, A, B, E, C)
+    first = git(repo, "rev-parse", "HEAD")
+    inv = {"papers": {"T": {"commit": first[:7]}},
+           "claims": [pinned(repo, "a", A), pinned(repo, "b", B), pinned(repo, "e", E)]}
+    (proj / "claims.json").write_text(json.dumps(inv, indent=1) + "\n", encoding="utf-8")
+    toml = (proj / "machinechecked.toml").read_text(encoding="utf-8")
+    toml = toml.replace('inventory = "claims.json"', 'inventory = "claims.json"\n'
+                        'display = "display.json"').replace(git(repo, "rev-parse", "HEAD~1"), first)
+    (proj / "machinechecked.toml").write_text(toml, encoding="utf-8")
+    at_c = line_of(repo, C)
+    display = {"claims": {
+        "T:a": {"excerpt": {"label": "eq:a"}},
+        "T:b": {"excerpt": {"location": f"paper.tex:{line_of(repo, B)}", "end_line": at_c,
+                            "end_column": 21}},
+        "T:e": {"excerpt": {"location": f"paper.tex:{at_c}", "end_line": at_c,
+                            "end_column": 21}, "title_tex": "kept"}}}
+    (proj / "display.json").write_text(json.dumps(display), encoding="utf-8")
+    # Lines are added before every passage; the prose after B's display changes, C does not.
+    second = commit(repo, "Added.\n\n", A, B, E, "Inserted.\n", C)
+    before = files(proj)
+    code, out, _ = run(proj, "--to", second, capsys=capsys)
+    assert code == 0 and files(proj) == before, "a plan writes nothing"
+    plan = json.loads(out)
+    assert plan["counts"] == {"moved": 3}
+    ex = {e["claim"]: e for e in plan["excerpts"]}
+    assert ex["T:a"]["class"] == "follows-label"
+    assert ex["T:b"]["class"] == "invalidated" and "select the passage again" in ex["T:b"]["reason"]
+    assert ex["T:e"]["class"] == "moved" and ex["T:e"]["to"] == {
+        "location": f"paper.tex:{line_of(repo, C)}", "end_line": line_of(repo, C),
+        "end_column": 21}
+    assert ex["T:e"]["context_changed"] is True
+    code, out, _ = run(proj, "--to", second, "--write", capsys=capsys)
+    assert code == 0 and json.loads(out)["written"] is True
+    shown = json.loads((proj / "display.json").read_text(encoding="utf-8"))["claims"]
+    assert shown["T:a"] == display["claims"]["T:a"]
+    assert shown["T:e"] == {"excerpt": ex["T:e"]["to"], "title_tex": "kept"}
+    assert shown["T:b"]["excerpt"] == {**display["claims"]["T:b"]["excerpt"], "revision": first}
+    # The invalidated selector selects nothing at the new revision; the moved one is the same
+    # passage there.
+    aux = {"labels": {}, "cites": {}}
+    stale = excerpt_for(repo, "paper.tex", aux, second, set(), None, None,
+                        shown["T:b"]["excerpt"])
+    assert stale["ready"] is False and "selected at revision" in stale["reasons"][0]
+    moved = excerpt_for(repo, "paper.tex", aux, second, set(), None, None,
+                        shown["T:e"]["excerpt"])
+    assert moved["ready"], moved["reasons"]
+    assert moved["text"] == C[:20]
+    # Again: nothing more is written.
+    after = files(proj)
+    code, out, _ = run(proj, "--to", second, "--write", capsys=capsys)
+    assert code == 0 and files(proj) == after
+    again = {e["claim"]: e["class"] for e in json.loads(out)["excerpts"]}
+    assert again == {"T:a": "follows-label", "T:b": "stale", "T:e": "unchanged"}

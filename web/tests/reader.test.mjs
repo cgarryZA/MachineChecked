@@ -131,6 +131,11 @@ fs.cpSync(reader, path.join(root, "structure"), { recursive: true });
 fs.cpSync(path.join(here, "fixtures", "structure", "data"), path.join(root, "structure", "data"), { recursive: true });
 const SHAPE = JSON.parse(fs.readFileSync(path.join(here, "fixtures", "structure", "data", "index.json"), "utf8"));
 
+// Synthetic display excerpts as the engine writes them (fixtures/make_excerpt.py).
+const excerpts = spawnSync(process.env.PYTHON || "python3", [path.join(here, "fixtures", "make_excerpt.py")], { encoding: "utf8" });
+if (excerpts.status !== 0) throw new Error(excerpts.stderr);
+const EXCERPTS = JSON.parse(excerpts.stdout);
+
 const states = spawnSync(process.env.PYTHON || "python3", [path.join(here, "fixtures", "make_status.py"), root, reader], { encoding: "utf8" });
 if (states.status !== 0) throw new Error(states.stderr);
 
@@ -389,6 +394,48 @@ const toyClaim = async (pg, id) => {
 };
 const scrollTops = (pg) => pg.evaluate(() => [document.querySelector("aside")?.scrollTop, document.querySelector(".paperpane")?.scrollTop]);
 
+// The paper's statement is typeset from its source only when all of it can be; otherwise the
+// PDF excerpt is shown, never a partial rendering.
+const withExcerpt = async (pg, excerpt) => {
+  await pg.route("**/toy/data/claims/*even-add*", async (route) => {
+    const response = await route.fetch();
+    route.fulfill({ response, json: { ...(await response.json()), excerpt } });
+  });
+  await toyClaim(pg, "T:thm:even-add");
+};
+for (const width of [1300, 390]) {
+  await check("a statement is typeset whole from its source, with the PDF and source on request", width, async (pg) => {
+    await withExcerpt(pg, EXCERPTS.complete);
+    const ex = pg.locator("aside .view .paper .excerpt");
+    await ex.locator(".katex").first().waitFor();
+    assert.equal(await ex.locator(".katex").count(), 3, "both inline formulas and the display");
+    const text = (await ex.textContent()).replace(/\s+/g, " ");
+    assert.match(text, /Then, as in \[1, Lemma 3\],/, "a citation with its note; the line after a comment is kept");
+    assert.match(text, /Proposition 1\.2 applies to \(1\.1\)\./, "references as printed");
+    assert.match(await ex.locator(".display .tag").textContent(), /\(1\.1\)/, "the equation's printed number");
+    assert.ok(!(await pg.locator("aside .paper .crop").isVisible()), "the PDF excerpt is folded");
+    await pg.locator("aside .paper summary", { hasText: "As printed in the PDF" }).click();
+    await pg.locator("aside .paper .crop canvas").waitFor();
+    await pg.locator("aside .paper summary", { hasText: "LaTeX source" }).click();
+    assert.match(await pg.locator("aside .paper .rawsrc pre").textContent(), /% not printed\nThen/);
+  });
+}
+for (const [name, why] of [["katex-refuses", "the reader cannot typeset its mathematics"], ["engine-refuses", "the engine found a command it does not reproduce"]]) {
+  await check(`a statement falls back to the PDF whole when ${why}`, 1300, async (pg) => {
+    await withExcerpt(pg, EXCERPTS[name]);
+    await pg.locator("aside .paper .crop canvas").waitFor();
+    assert.ok(await pg.locator("aside .paper .crop").isVisible());
+    assert.equal(await pg.locator("aside .paper .excerpt:visible").count(), 0, "no partial rendering");
+    assert.equal(await pg.locator("aside .paper summary", { hasText: "As printed in the PDF" }).count(), 0);
+  });
+}
+await check("a theorem of the toy paper is typeset with its equation number", 1300, async (pg) => {
+  await toyClaim(pg, "T:thm:triangle");
+  const ex = pg.locator("aside .view .paper .excerpt");
+  await ex.locator(".katex").first().waitFor();
+  assert.match(await ex.locator(".display .tag").textContent(), /\(1\)/);
+});
+
 for (const width of [1300, 390]) {
   await check("opening a definition replaces the panel; Back restores the claim as it was", width, async (pg) => {
     await toyClaim(pg, "T:def:even");
@@ -445,6 +492,9 @@ for (const width of [1300, 390]) {
     const insp = pg.locator("aside .decl.inspector");
     await insp.waitFor();
     await pg.locator("aside h2", { hasText: "Paper · Definition 1.1" }).waitFor();
+    const def = pg.locator("aside section.paper", { has: pg.locator("h2", { hasText: "Paper · Definition 1.1" }) });
+    await def.locator(".excerpt .katex").first().waitFor();
+    assert.match(await def.locator(".excerpt").textContent(), /triangular number/, "the paper's definition, typeset from its source");
     const extra = insp.locator("details.extra");
     assert.equal(await extra.getAttribute("open"), null, "Details is folded");
     assert.ok(!(await insp.locator(":scope > :not(details)").allTextContents()).join(" ").includes("a.referee"));
@@ -855,6 +905,8 @@ await check("review opens the selected claim, keeps protocol order and exports a
   await pg.getByRole("button", { name: "Start", exact: true }).click();
   await pg.locator(".review .unit h2").waitFor();
   assert.match(await pg.locator(".review .unit h2").textContent(), /Theorem 2.1/);
+  await pg.locator(".review .unit .excerpt .katex").first().waitFor();
+  assert.match(await pg.locator(".review .unit .excerpt").textContent(), /are even natural numbers/, "the statement as typeset from its source");
   assert.match(await pg.locator(".review .warn").textContent(), /prior exposure/);
   assert.equal(await pg.locator(".review .stmt").count(), 0);
   assert.equal(await pg.locator(".review .author").count(), 0);
