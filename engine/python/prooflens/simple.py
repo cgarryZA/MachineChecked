@@ -711,6 +711,7 @@ class LeanFacts:
                 continue
             for m in mods:
                 st.remove("attempt", m)
+                st.remove("failed", m)
             if indexed:
                 per_mod: dict[str, list[dict]] = {}
                 for r in rs:

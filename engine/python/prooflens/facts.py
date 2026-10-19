@@ -300,6 +300,21 @@ def _unlock(f) -> None:
     fcntl.flock(f, fcntl.LOCK_UN)
 
 
+def load_failures(work: Path) -> dict[str, str]:
+    """The modules the last extraction in `work` could not load, with the reason: those stored
+    as failed and those whose last attempt failed. A module that later loads is removed from
+    both."""
+    out: dict[str, str] = {}
+    for kind in ("failed", "attempt"):
+        for f in sorted((work / DIR / kind).glob("*.json")):
+            try:
+                e = json.loads(f.read_text(encoding="utf-8"))
+                out.setdefault(e["key"], e.get("reason", ""))
+            except (OSError, ValueError, KeyError, TypeError):
+                continue
+    return out
+
+
 def graphs(recs: list[dict]) -> dict[str, dict[str, list[str]]]:
     """The import graph each probe session reported (`module` records), by session label."""
     out: dict[str, dict[str, list[str]]] = {}

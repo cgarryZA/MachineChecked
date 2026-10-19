@@ -270,6 +270,8 @@ def test_an_error_in_a_module_is_kept_with_the_others_facts(plain, monkeypatch):
     assert any("2 built module(s) could not be loaded by MachineChecked" in n
                for n in v["body"]["notes"])
     assert statuses(v)["Theorem 1"] == "linked: Lean proof checked"
+    # What `link` reads to say a declaration's module was not loaded.
+    assert set(facts.load_failures(root / ".machinechecked" / "build")) == {"Plain", "Plain.Sums"}
 
     monkeypatch.setattr(probe, "_run_watched", real)
     sessions.clear()
@@ -285,6 +287,7 @@ def test_an_error_in_a_module_is_kept_with_the_others_facts(plain, monkeypatch):
     v = view(root)
     assert not any("could not be loaded" in n for n in v["body"]["notes"])
     assert sessions and all(set(s["modules"]) <= {"Plain", "Plain.Sums"} for s in sessions)
+    assert facts.load_failures(root / ".machinechecked" / "build") == {}
 
 
 @needs_lean
@@ -307,6 +310,7 @@ def test_a_failure_of_resources_or_of_the_session_is_tried_again(plain, monkeypa
     with pytest.raises(StaleLean) as e:
         view(root, reuse_only=True)
     assert "an earlier attempt failed" in str(e.value)
+    assert set(facts.load_failures(root / ".machinechecked" / "build")) == {"Plain", "Plain.Sums"}
 
     monkeypatch.setattr(probe, "_run_watched", real)
     sessions.clear()
@@ -315,6 +319,7 @@ def test_a_failure_of_resources_or_of_the_session_is_tried_again(plain, monkeypa
     assert not any("could not be loaded" in n for n in v["body"]["notes"])
     assert sessions and all(set(s["modules"]) <= {"Plain", "Plain.Sums"} for s in sessions)
     assert any("an earlier attempt failed" in m for m in said), said
+    assert facts.load_failures(root / ".machinechecked" / "build") == {}
     sessions.clear()
     view(root)
     assert sessions == []
