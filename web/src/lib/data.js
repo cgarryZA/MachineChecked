@@ -166,3 +166,26 @@ export function loadDecl(key) {
 export function loadQueue(index) {
   return getJson(index.review_queue);
 }
+
+// The reverse references of a declaration (`data/uses.json`, written by the zero-configuration
+// build): for the module that declares it, the declarations that use it and how. Null when the
+// build holds none; `{ ambiguous }` when several modules declare the name and none is given.
+export async function loadUsers(index, name, module) {
+  if (!index?.uses) return null;
+  const data = await getJson(index.uses);
+  const entries = data?.by_name?.[name] || [];
+  if (!entries.length) return { users: [] };
+  const mine = module ? entries.find((e) => e.module === module) : entries.length === 1 ? entries[0] : null;
+  if (!mine) return module ? { users: [] } : { ambiguous: entries.map((e) => e.module) };
+  return mine;
+}
+
+// Where a declaration is used, with each application's arguments and the source of each premise,
+// from `machinechecked view`'s local server: the document `compare --query uses` gives.
+export async function askUses(name, module) {
+  const q = `name=${encodeURIComponent(name)}${module ? `&module=${encodeURIComponent(module)}` : ""}`;
+  const r = await fetch(`api/uses?${q}`, { cache: "no-store" });
+  const out = await r.json().catch(() => ({ error: r.statusText }));
+  if (!r.ok) throw new Error(out.error || r.statusText);
+  return out;
+}

@@ -907,7 +907,7 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
     fy = fz.load(root)
     if fy and "error" in fy:
         notes.append(fy["error"])
-    index, linkrecs, decls, acceptrecs, module_docs = [], {}, {}, {}, []
+    index, linkrecs, decls, acceptrecs, module_docs, refs = [], {}, {}, {}, [], []
     if fy and "error" not in fy:
         for c in claims:
             rows = fz.links_for(fy, c["kind"], c["number"], paper.title)
@@ -959,20 +959,24 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
         idigest = lean_digest(root)
         cached = read_json(icache) if icache.exists() else {}
         failed = {}
-        if cached.get("digest") == idigest and "moddocs" in cached:
+        if cached.get("digest") == idigest and "moddocs" in cached and "refs" in cached:
             index, failed = cached["index"], cached.get("failed", {})
-            moddocs = cached["moddocs"]
+            moddocs, refs = cached["moddocs"], cached["refs"]
         else:
             log(f"lean: indexing {len(built)} built module(s)"
                 + (f" and checking {len(linked)} linked declaration(s)" if linked else ""))
-            recs, failed = probe_modules(root, built, libs, [{"kind": "index", "name": ""}]
+            # The reverse references of every declaration (what the reader's "Used by" shows)
+            # are read in the same sessions.
+            recs, failed = probe_modules(root, built, libs, [{"kind": "index", "name": ""},
+                                                             {"kind": "refs", "name": ""}]
                                          + [{"kind": "link", "name": n} for n in sorted(linked)]
                                          + accepts(linked), lake, log, work)
             index = [r for r in recs if r["record"] == "index"]
             moddocs = [r for r in recs if r["record"] == "moddoc"]
+            refs = [r for r in recs if r["record"] == "refs"]
             take(recs)
             write_json(icache, {"digest": idigest, "index": index, "failed": failed,
-                                "moddocs": moddocs}, indent=None)
+                                "moddocs": moddocs, "refs": refs}, indent=None)
         module_docs = stale_doc_names(moddocs)
         if module_docs:
             notes.append(stale_docs_note(module_docs))
@@ -1058,7 +1062,8 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
             "author": load_links(root).get("author"),
             "pdf_sha256": sha256_file(pdf) if pdf else None, "tex": tex,
             "claims": claims, "index": index, "decls": decls, "module_docs": module_docs}
-    return {"body": body, "pdf": pdf, "cfg": cfg}
+    from .uses import site_index
+    return {"body": body, "pdf": pdf, "cfg": cfg, "uses": site_index(refs) if refs else None}
 
 
 def source_info(root: Path | None, libs: list[str]) -> dict:
@@ -1155,6 +1160,7 @@ def write_view_site(view: dict, site: Path, web_dist: Path | None,
              "summary": {"P": summary}, "classes": classes,
              "findings": {"total": {}, "general": []}, "gates": {}, "claims": index_claims,
              "search": "data/search.json", "lean_index": "data/lean-index.json",
+             **({"uses": "data/uses.json"} if view.get("uses") else {}),
              "editable": False}
     from .pipeline import write_preview
     from .review_queue import simple_queue
@@ -1166,6 +1172,8 @@ def write_view_site(view: dict, site: Path, web_dist: Path | None,
     write_json(site / audit.NAME, audit.descriptor(
         index, root, author=body.get("author"),
         paper_url=key if key.startswith(("http://", "https://")) else None))
+    if view.get("uses"):
+        write_json(site / "data" / "uses.json", view["uses"], indent=None)
     write_json(site / "data" / "lean-index.json",
                [{"name": d["name"], "kind": d["kind"], "module": d["module"],
                  "type": d["type"][:300], "doc": (d.get("doc") or "")[:300]}

@@ -108,8 +108,10 @@ def test_lean_loads_only_what_it_must(twins, tmp_path, monkeypatch):
         return {c["number"]: [l["status"] for l in c["links"]] for c in view["body"]["claims"]}
 
     first = statuses()
-    # One session per library, each building the index and answering the linked names.
-    assert len(sessions) == 2 and all(kinds == {"index", "link"} for _, kinds, _ in sessions)
+    # One session per library, each building the index (with the reverse references) and
+    # answering the linked names.
+    assert len(sessions) == 2 and all(kinds == {"index", "refs", "link"}
+                                      for _, kinds, _ in sessions)
     assert all("Later.result" in names and "Twin.target" in names for *_, names in sessions)
 
     sessions.clear()

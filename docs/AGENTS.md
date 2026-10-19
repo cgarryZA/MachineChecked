@@ -100,7 +100,8 @@ prints one JSON document (`machinechecked/compare@1`) for one claim, read from t
 - `interpretations` (stage `informed`, the default): the correspondence note, review reports,
   author's review markers, symbol links, the status and the assessment's findings.
 - `retrieval`: what is `included`, what the stage `withheld`, what is `unavailable` because it
-  is not extracted yet (with the issue that owns it), and the cursor of the definitions list.
+  is not extracted yet (with the issue that owns it), what a targeted query gives `on_request`
+  (`uses`, which runs Lean), and the cursor of the definitions list.
 
 `--stage read` holds the paper only and `--stage compare` adds the Lean without any recorded
 interpretation; the review protocol's `--json` output uses the same stages. Passages and linked
@@ -114,12 +115,37 @@ Targeted queries have one shape (`machinechecked/query@1`: `op`, `target`, `cont
 machinechecked compare --query definition Toy.triangle --json   # its type, value, equations
 machinechecked compare --query mentions Toy.triangle --json     # statements that use it
 machinechecked compare --query dependencies Toy.Acceptance.thm_bound --json   # runs inspect
+machinechecked compare --query uses Toy.IsEven --json          # where it is used, and how
 ```
 
 `mentions` searches the statements of the build in full and the project's index by a preview
-of each type (`complete: false` on such a result: get its statement with `dependencies`). The
-queries `uses`, `proof-facts`, `composition` and `impact` answer `available: false` with the
-issue that owns their extraction. An error is `{"ok": false, "error": {kind, message,
+of each type (`complete: false` on such a result: get its statement with `dependencies`).
+
+`uses` (also `machinechecked inspect NAME --used-by`) answers with one document
+(`machinechecked/uses@1`) read from Lean's elaborated terms:
+
+- `users`: the declarations that refer to it, each with how (`statement`, `proof`, `definition
+  body`); a constant Lean generated is named under `via` beside the declaration it belongs to.
+  `claims` lists the claims a user is linked to.
+- `further`: the declarations that reach it through its users, nearest first, with the user
+  each one goes `through`; a general result that uses a specialised helper is found here.
+- `imports_without_use`: modules that import its module and use none of it (not uses).
+- `applications`: each application inside a user's proof or body. `params` pairs every binder
+  of the declaration (implicit and instance binders included) with the argument supplied and its
+  instantiated type; a premise's `origin` says where its proof comes from (the caller's
+  hypothesis, a hypothesis introduced in the proof, a theorem applied there, a constructor, a
+  projection of a structure, an instance, or a term built in place) and `discharge` sums it up:
+  `assumed` by the caller, `proved` in the caller, or `local`. `result` is the conclusion the
+  application obtains; `unsupplied` the binders it leaves open. Printed expressions mark each
+  variable by its index in `locals`, whose `id` is the position of its binder, so two variables
+  printed alike in different scopes stay distinct. `location.path` is the application's
+  position in the elaborated term; its line is the enclosing declaration's.
+- `scope`, `complete` and `answer`: the modules searched, those not built or not loaded, and
+  `used`, `no use found in this scope`, or `not traced` when some modules were not searched.
+
+The first `uses` query after a change runs Lean once over the project; later queries reuse the
+answers until a Lean input changes. The queries `proof-facts`, `composition` and `impact`
+answer `available: false` with the issue that owns their extraction. An error is `{"ok": false, "error": {kind, message,
 candidates}}` with exit 1 (exit 2, kind `no-build`, when there is no build to read: run
 `view` or `build`); `candidates` lists the claims or declarations you may have meant.
 

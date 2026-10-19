@@ -28,6 +28,8 @@ structure Request where
   kind : String
   name : String
   spec : Option String := none
+  /-- For `apps`: the declarations to look in; every declaration of the project if none. -/
+  callers : Option (Array String) := none
   deriving FromJson, Inhabited
 
 structure Query where
@@ -663,6 +665,16 @@ def depsRecords (h : IO.FS.Handle) (roots : Array Name) (root : Name) : MetaM Un
     ("module", (moduleOf env root).toString), ("axioms", toJson (axs.map toString)),
     ("sorry", toJson (axs.contains ``sorryAx)), ("reached", toJson reached)])
 
+/-- Every module of the environment with the modules it imports directly: what a record
+extracted in this environment can depend on. -/
+def moduleRecords (h : IO.FS.Handle) : CoreM Unit := do
+  let env ← getEnv
+  let names := env.header.moduleNames
+  for i in [:names.size] do
+    let imports := env.header.moduleData[i]!.imports.map (·.module.toString)
+    emit h (Json.mkObj [("record", "module"), ("name", names[i]!.toString),
+      ("imports", toJson imports)])
+
 /-- Every module of the specification layer that imports a module of the acceptance layer. -/
 def layering (h : IO.FS.Handle) (q : Query) : CoreM Unit := do
   -- Without both layers named (the zero-configuration view) there is no layering to check;
@@ -690,6 +702,449 @@ def layering (h : IO.FS.Handle) (q : Query) : CoreM Unit := do
         stack := stack.push imp.module
   emit h (Json.mkObj [("record", "layering"), ("violations", Json.arr violations)])
 
+/-! ## Uses and applications
+
+`refs` reports, for every declaration of the project, the project's constants its statement
+mentions and those its value uses (a proof, a definition's body): the reverse references of every
+declaration follow from it. `apps` reports where one declaration is used and, inside each user's
+value, every application of it: the actual argument supplied for each binder, the premise each
+proof argument instantiates and where that proof comes from, and the conclusion obtained. The
+arguments are read from the elaborated terms, never from the source text.
+
+Both are bounded so that a large project stays fast: a value is entered only along subterms that
+mention the declaration (each shared subterm examined once, at most `scanNodes` of them), at most
+`appsPerUser` applications are described in each of at most `appsUsers` users, and a term larger
+than `termNodes` is shown by its head constant only. What a bound leaves out is reported. -/
+
+def scanNodes : Nat := 1000000
+def appsUsers : Nat := 30
+def appsPerUser : Nat := 8
+def termNodes : Nat := 600
+
+/-- The last component of a name. -/
+def lastStr : Name → String
+  | .str _ s => s | .num _ k => toString k | .anonymous => ""
+
+/-- The inductive type a generated part of it (a constructor, recursor, projection or the lemmas
+Lean derives for them) belongs to. -/
+def partOf (env : Environment) (n : Name) : Option Name :=
+  let p := n.getPrefix
+  if p.isAnonymous then none else
+  match env.find? n with
+  | some (.ctorInfo c) => some c.induct
+  | some (.recInfo _) => some p
+  | _ =>
+    if isAuxRecursor env n || isNoConfusion env n || (env.getProjectionFnInfo? n).isSome then
+      some p
+    else match env.find? p with
+      | some (.ctorInfo c) => some c.induct
+      | some (.inductInfo _) =>
+        if ["sizeOf_spec", "noConfusionType", "ext", "ext_iff", "inj", "injEq"].contains
+          (lastStr n) then some p else none
+      | _ => none
+
+/-- The declaration a reader knows a constant by: a generated constant (`foo.proof_1`, a
+matcher, an equation lemma, a constructor's derived lemma) stands for the declaration it was
+generated for, when that is a declaration. -/
+partial def ownerOf (env : Environment) (n : Name) : Name :=
+  let go := fun (m : Name) =>
+    let rec strip (m : Name) : Name :=
+      if m.isAnonymous then m
+      else if !userFacing m then strip m.getPrefix
+      else match partOf env m with
+        | some o => if o == m then m else strip o
+        | none => m
+    strip m
+  let o := go (privateToUserName n)
+  if !o.isAnonymous && env.contains o then o else n
+
+def valueOf : ConstantInfo → Option Expr
+  | .defnInfo d => some d.value | .thmInfo t => some t.value | .opaqueInfo o => some o.value
+  | _ => none
+
+/-- What a declaration's value is to a reader. -/
+def valueKind : ConstantInfo → String
+  | .thmInfo _ => "proof" | .defnInfo _ => "definition body" | .opaqueInfo _ => "definition body"
+  | _ => "none"
+
+/-- The constants a declaration's statement mentions and those its value uses, computed once
+per session. -/
+abbrev UsedCache := IO.Ref (Std.HashMap Name (Array Name × Array Name))
+
+/-- The number of leading `∀` of a type: the parameters a declaration's value begins with. -/
+def arity : Expr → Nat
+  | .forallE _ _ b _ => arity b + 1
+  | .mdata _ b => arity b
+  | _ => 0
+
+/-- A value without the types of its leading `n` parameters, which repeat the statement. -/
+def stripParams : Nat → Expr → Expr
+  | n + 1, .lam _ _ b _ => stripParams n b
+  | n + 1, .mdata _ b => stripParams (n + 1) b
+  | _, e => e
+
+def usedOf (cache : UsedCache) (n : Name) (ci : ConstantInfo) : IO (Array Name × Array Name) := do
+  if let some r := (← cache.get)[n]? then return r
+  let r := (ci.type.getUsedConstants, match valueOf ci with
+    | some v => (stripParams (arity ci.type) v).getUsedConstants | none => #[])
+  cache.modify (·.insert n r)
+  return r
+
+/-- Every constant declared in the modules of `roots`. -/
+def projectConstants (roots : Array Name) : CoreM (Array Name) := do
+  let env ← getEnv
+  let mut out := #[]
+  for i in [:env.header.moduleNames.size] do
+    if roots.contains env.header.moduleNames[i]!.getRoot then
+      out := out ++ env.header.moduleData[i]!.constNames
+  return out
+
+/-- For every declaration of the project, the project's constants its statement and its value
+mention. -/
+def refsRecords (h : IO.FS.Handle) (roots : Array Name) (cache : UsedCache) : MetaM Unit := do
+  let env ← getEnv
+  for n in ← projectConstants roots do
+    let some ci := env.find? n | continue
+    let (st, va) ← usedOf cache n ci
+    let inside := fun (a : Array Name) =>
+      Json.arr ((a.filter fun c => c != n && inScope roots env c).map (Json.str ·.toString))
+    emit h (Json.mkObj [("record", "refs"), ("name", n.toString),
+      ("owner", (ownerOf env n).toString), ("module", (moduleOf env n).toString),
+      ("kind", kindOf ci), ("user_facing", toJson (userFacing n)),
+      ("value_kind", valueKind ci), ("statement", inside st), ("value", inside va)])
+
+/-- A binder around an occurrence inside a value: a `fun` (one of the declaration's own
+parameters when it is one of the value's leading binders), a `let`, a `have` (a `fun` applied
+to the proof of its premise) or a `∀`. Its type and value have loose bound variables for the
+binders outside it. -/
+structure Binder where
+  name : Name
+  type : Expr
+  bi : BinderInfo
+  value : Option Expr := none
+  pos : SubExpr.Pos
+  param : Bool := false
+  kind : String
+  deriving Inhabited
+
+structure Occ where
+  e : Expr
+  pos : SubExpr.Pos
+  binders : Array Binder
+
+structure ScanState where
+  memo : Std.HashMap Expr Bool := {}
+  visited : Nat := 0
+  occs : Array Occ := #[]
+  /-- Some occurrence is not described: the budget of subterms or of applications ran out. -/
+  cut : Bool := false
+
+/-- Whether `e` mentions the constant `f`; each shared subterm is examined once. -/
+partial def mentions (f : Name) (e : Expr) : StateM ScanState Bool := do
+  match e with
+  | .const n _ => return n == f
+  | .app .. | .lam .. | .forallE .. | .letE .. | .mdata .. | .proj .. =>
+    if let some b := (← get).memo[e]? then return b
+    if (← get).visited ≥ scanNodes then
+      modify fun s => { s with cut := true }
+      return false
+    modify fun s => { s with visited := s.visited + 1 }
+    let b ← match e with
+      | .app g a => do if ← mentions f g then pure true else mentions f a
+      | .lam _ t b _ | .forallE _ t b _ => do
+        if ← mentions f t then pure true else mentions f b
+      | .letE _ t v b _ => do
+        if ← mentions f t then pure true
+        else if ← mentions f v then pure true else mentions f b
+      | .mdata _ b | .proj _ _ b => mentions f b
+      | _ => pure false
+    modify fun s => { s with memo := s.memo.insert e b }
+    return b
+  | _ => return false
+
+/-- The applications of `f` in `e` (at position `pos`, under binders `bs`), at most `cap`.
+`params` counts the leading binders still to be read as the declaration's own parameters. -/
+partial def collect (f : Name) (cap : Nat) (e : Expr) (pos : SubExpr.Pos) (bs : Array Binder)
+    (params : Nat) : StateM ScanState Unit := do
+  unless ← mentions f e do return
+  if (← get).occs.size ≥ cap then
+    modify fun s => { s with cut := true }
+    return
+  let record := modify fun (s : ScanState) => { s with occs := s.occs.push ⟨e, pos, bs⟩ }
+  match e with
+  | .const n _ => if n == f then record
+  | .app .. =>
+    let args := e.getAppArgs
+    if e.getAppFn.consumeMData.isConstOf f then
+      record
+      for i in [:args.size] do
+        collect f cap args[i]! (pos.pushNaryArg args.size i) bs 0
+    else match e with
+      | .app (.lam n t b bi) v =>
+        collect f cap v pos.pushAppArg bs 0
+        collect f cap t pos.pushAppFn.pushBindingDomain bs 0
+        collect f cap b pos.pushAppFn.pushBindingBody
+          (bs.push { name := n, type := t, bi, value := some v, pos := pos.pushAppFn,
+                     kind := "have" }) 0
+      | .app g a =>
+        collect f cap g pos.pushAppFn bs 0
+        collect f cap a pos.pushAppArg bs 0
+      | _ => pure ()
+  | .lam n t b bi =>
+    -- The type of one of the declaration's own parameters repeats its statement.
+    unless params > 0 do collect f cap t pos.pushBindingDomain bs 0
+    collect f cap b pos.pushBindingBody
+      (bs.push { name := n, type := t, bi, pos, param := params > 0, kind := "fun" }) (params - 1)
+  | .forallE n t b bi =>
+    collect f cap t pos.pushBindingDomain bs 0
+    collect f cap b pos.pushBindingBody (bs.push { name := n, type := t, bi, pos, kind := "forall" }) 0
+  | .letE n t v b _ =>
+    collect f cap t pos.pushLetVarType bs 0
+    collect f cap v pos.pushLetValue bs 0
+    collect f cap b pos.pushLetBody
+      (bs.push { name := n, type := t, bi := .default, value := some v, pos, kind := "let" }) 0
+  | .mdata _ b => collect f cap b pos bs params
+  | .proj _ _ b => collect f cap b pos.pushProj bs 0
+  | _ => pure ()
+
+/-- Runs `k` with the binders `bs` as local declarations of the context, and their variables. -/
+def withBinders : List Binder → Array Expr → (Array Expr → MetaM α) → MetaM α
+  | [], xs, k => k xs
+  | b :: bs, xs, k => do
+    let ty := b.type.instantiateRev xs
+    match b.value with
+    | some v => withLetDecl b.name ty (v.instantiateRev xs) fun x => withBinders bs (xs.push x) k
+    | none => withLocalDecl b.name b.bi ty fun x => withBinders bs (xs.push x) k
+
+/-- The number of nodes of `e`, counted without sharing, up to just past `cap`. -/
+def sizeUpTo (e : Expr) (cap : Nat) : Nat := Id.run do
+  let mut stack := #[e]
+  let mut n := 0
+  while !stack.isEmpty && n ≤ cap do
+    let x := stack.back!
+    stack := stack.pop
+    n := n + 1
+    match x with
+    | .app f a => stack := (stack.push f).push a
+    | .lam _ t b _ | .forallE _ t b _ => stack := (stack.push t).push b
+    | .letE _ t v b _ => stack := ((stack.push t).push v).push b
+    | .mdata _ b | .proj _ _ b => stack := stack.push b
+    | _ => pure ()
+  return n
+
+/-- A term printed with its variables marked, or, when it is larger than `cap` nodes, its head
+constant only. -/
+def ppBounded (e : Expr) (vars : Array FVarId) (cap : Nat := termNodes) : MetaM Json := do
+  if sizeUpTo e cap > cap then
+    let head := match e.getAppFn.consumeMData with
+      | .const c _ => Json.str c.toString | _ => Json.null
+    return Json.mkObj [("text", Json.str "(a large term)"), ("large", toJson true),
+      ("head", head)]
+  withCurrHeartbeats (ppJson e vars)
+
+def binderInfoStr : BinderInfo → String
+  | .default => "explicit" | .implicit => "implicit"
+  | .strictImplicit => "strict-implicit" | .instImplicit => "instance"
+
+/-- Where the term `e` that supplies an argument comes from, as far as the term shows: one of
+the caller's own hypotheses, parameters or instances; a hypothesis or fact introduced inside the
+value; a theorem or definition applied there; a constructor; a projection of a structure; an
+instance; or a term built in place. Transports (`Eq.mpr`, `cast`, `id`) are looked through and
+named. `depth` bounds how far the origin of a part is followed. -/
+partial def originJson (xs : Array Expr) (bs : Array Binder) (helper : Bool) (depth : Nat)
+    (e : Expr) (through : Array Name := #[]) : MetaM Json := do
+  let e := e.consumeMData
+  let env ← getEnv
+  let fn := e.getAppFn.consumeMData
+  let nargs := e.getAppNumArgs
+  let tail := (if through.isEmpty then [] else [("through", toJson (through.map toString))])
+    ++ (if nargs > 0 && !(fn matches .const ..) then [("applied", toJson true)] else [])
+  let sub := fun (x : Expr) => if depth == 0 then pure Json.null
+    else originJson xs bs helper (depth - 1) x
+  match fn with
+  | .fvar _ =>
+    match xs.findIdx? (· == fn) with
+    | some j =>
+      let b := bs[j]!
+      let prop ← try isProp (← inferType fn) catch _ => pure false
+      let kind :=
+        if b.param then
+          if helper then "helper parameter"
+          else if b.bi.isInstImplicit then "caller instance"
+          else if prop then "caller hypothesis" else "caller parameter"
+        else if b.value.isSome then (if prop then "local fact" else "local definition")
+        else if prop then "local hypothesis" else "local variable"
+      let by_ ← match b.value with
+        | some v => sub (v.instantiateRevRange 0 j xs)
+        | none => pure Json.null
+      return Json.mkObj ([("kind", Json.str kind), ("local", toJson j),
+        ("name", Json.str b.name.eraseMacroScopes.toString), ("id", Json.str (toString b.pos)),
+        ("binder", Json.str b.kind)] ++ (if by_.isNull then [] else [("by", by_)]) ++ tail)
+    | none => return Json.mkObj ([("kind", Json.str "local hypothesis")] ++ tail)
+  | .const c _ =>
+    if (c == ``id || c == ``Eq.mpr || c == ``Eq.mp || c == ``cast) && nargs ≥ 2 then
+      return ← originJson xs bs helper depth e.appArg! (through.push c)
+    if c == ``Eq.ndrec && nargs == 6 then
+      return ← originJson xs bs helper depth (e.getArg! 3) (through.push c)
+    match env.find? c with
+    | some (.ctorInfo ci) =>
+      let parts ← if depth == 0 then pure #[] else
+        (e.getAppArgs.extract ci.numParams nargs).filterMapM fun a => do
+          if ← (try isProof a catch _ => pure false) then some <$> sub a else pure none
+      return Json.mkObj ([("kind", Json.str "construction"), ("name", Json.str c.toString),
+        ("parts", Json.arr parts)] ++ tail)
+    | _ =>
+      if let some info := env.getProjectionFnInfo? c then
+        let of_ ← if nargs > info.numParams then sub (e.getArg! info.numParams)
+          else pure Json.null
+        return Json.mkObj ([("kind", Json.str "projection"), ("name", Json.str c.toString),
+          ("field", Json.str (lastStr c)), ("of", of_)] ++ tail)
+      if ← isInstance c then
+        return Json.mkObj ([("kind", Json.str "instance"), ("name", Json.str c.toString)] ++ tail)
+      let k := match env.find? c with
+        | some (.thmInfo _) => "theorem application" | _ => "application"
+      return Json.mkObj ([("kind", Json.str k), ("name", Json.str c.toString),
+        ("owner", Json.str (ownerOf env c).toString)] ++ tail)
+  | .proj s i b =>
+    let field := ((getStructureFields env s)[i]?).map (·.toString) |>.getD (toString (i + 1))
+    return Json.mkObj ([("kind", Json.str "projection"), ("structure", Json.str s.toString),
+      ("field", Json.str field), ("of", ← sub b)] ++ tail)
+  | .lam .. | .letE .. => return Json.mkObj ([("kind", Json.str "built in place")] ++ tail)
+  | .lit _ => return Json.mkObj ([("kind", Json.str "literal")] ++ tail)
+  | .mvar _ => return Json.mkObj ([("kind", Json.str "unassigned")] ++ tail)
+  | _ => return Json.mkObj ([("kind", Json.str "other")] ++ tail)
+
+/-- Where a data argument comes from: a variable of the context (as `originJson` says), a field
+of a structure (not of a class instance), or a term built in the caller, with its head. -/
+def termOrigin (xs : Array Expr) (bs : Array Binder) (helper : Bool) (e : Expr) : MetaM Json := do
+  let e := e.consumeMData
+  let env ← getEnv
+  let fn := e.getAppFn.consumeMData
+  let field := match fn with
+    | .proj s .. => !isClass env s
+    | .const c _ => match env.getProjectionFnInfo? c with
+      | some info => !info.fromClass
+      | none => false
+    | _ => false
+  if fn.isFVar || field then return ← originJson xs bs helper 1 e
+  let head := match fn with | .const c _ => Json.str c.toString | _ => Json.null
+  return Json.mkObj [("kind", Json.str "term"), ("head", head)]
+
+/-- One application of `f`: each binder of `f`'s type paired with the argument supplied for it,
+the premise each proof argument instantiates and where it comes from, the binders left
+unsupplied, and the type of the application, all in the context of the binders around it. -/
+def appJson (f : Name) (caller : Name) (helper : Bool) (k : Nat) (occ : Occ) : MetaM Json :=
+  withBinders occ.binders.toList #[] fun xs => do
+    let env ← getEnv
+    let vars := xs.map (·.fvarId!)
+    let a := occ.e.instantiateRev xs
+    let some fci := env.find? f | return Json.null
+    let args := a.getAppArgs
+    let ls := match a.getAppFn.consumeMData with | .const _ ls => ls | _ => []
+    let mut ty := fci.instantiateTypeLevelParams ls
+    let mut params : Array Json := #[]
+    let mut extra := 0
+    for i in [:args.size] do
+      let arg := args[i]!
+      unless ty.isForall do
+        ty ← try withCurrHeartbeats (whnf ty) catch _ => pure ty
+      match ty with
+      | .forallE bn bt bb bbi =>
+        let prop ← try isProp bt catch _ => pure false
+        let role := if bbi.isInstImplicit then "instance" else if prop then "premise"
+          else "parameter"
+        let origin ← try
+            if role == "parameter" then termOrigin xs occ.binders helper arg
+            else originJson xs occ.binders helper 2 arg
+          catch _ => pure (Json.mkObj [("kind", Json.str "other")])
+        let shown ← if role == "premise" then pure Json.null else ppBounded arg vars
+        params := params.push (Json.mkObj [("index", toJson i),
+          ("binder", Json.str bn.eraseMacroScopes.toString),
+          ("binder_info", Json.str (binderInfoStr bbi)), ("role", Json.str role),
+          ("type", ← ppBounded bt vars (termNodes * 5)), ("argument", shown),
+          ("origin", origin)])
+        ty := bb.instantiate1 arg
+      | _ =>
+        extra := args.size - i
+        break
+    -- The binders the application leaves to its context: premises not supplied here.
+    let open_ ← forallTelescope ty fun ys _ => ys.mapM fun y => do
+      let d ← y.fvarId!.getDecl
+      let prop ← try isProp d.type catch _ => pure false
+      return Json.mkObj [("binder", Json.str d.userName.eraseMacroScopes.toString),
+        ("role", Json.str (if d.binderInfo.isInstImplicit then "instance"
+          else if prop then "premise" else "parameter"))]
+    let used := (collectFVars {} a).fvarIds
+    let locals ← (List.range xs.size).toArray.filterMapM fun j => do
+      unless used.contains vars[j]! do return none
+      let b := occ.binders[j]!
+      return some (Json.mkObj [("local", toJson j),
+        ("name", Json.str b.name.eraseMacroScopes.toString), ("id", Json.str (toString b.pos)),
+        ("binder", Json.str b.kind), ("parameter", toJson b.param),
+        ("type", ← ppBounded (← inferType xs[j]!) vars)])
+    return Json.mkObj [("record", "app"), ("name", f.toString), ("caller", caller.toString),
+      ("index", toJson k), ("path", Json.str (toString occ.pos)),
+      ("args", toJson args.size), ("params", Json.arr params), ("extra_args", toJson extra),
+      ("open", Json.arr open_), ("result", ← ppBounded ty vars (termNodes * 5)),
+      ("locals", Json.arr locals)]
+
+/-- Where `target` is used in the project (or in `callers`), and its applications there. -/
+def appsRecords (h : IO.FS.Handle) (roots : Array Name) (cache : UsedCache) (target : Name)
+    (callers : Option (Array String)) : MetaM Unit := do
+  let env ← getEnv
+  let some tci := env.find? target
+    | emit h (Json.mkObj [("record", "uses"), ("name", target.toString),
+        ("errors", toJson #["missing"])])
+  let candidates ← match callers with
+    | some cs => pure (cs.map (·.toName))
+    | none => projectConstants roots
+  let mut users : Array Name := #[]
+  for n in candidates do
+    if n == target then continue
+    let some ci := env.find? n | continue
+    let (st, va) ← usedOf cache n ci
+    let inSt := st.contains target
+    let inVa := va.contains target
+    unless inSt || inVa do continue
+    if inVa then users := users.push n
+    emit h (Json.mkObj [("record", "user"), ("name", target.toString), ("user", n.toString),
+      ("owner", (ownerOf env n).toString), ("module", (moduleOf env n).toString),
+      ("kind", kindOf ci), ("user_facing", toJson (userFacing n)),
+      ("value_kind", valueKind ci), ("statement", toJson inSt), ("value", toJson inVa)])
+  -- Applications: user-facing users first, then generated ones, each in its own budget.
+  let ordered := users.filter userFacing ++ users.filter (!userFacing ·)
+  let mut described := 0
+  let mut skipped := 0
+  for n in ordered do
+    let some ci := env.find? n | continue
+    let some v := valueOf ci | continue
+    if described ≥ appsUsers then
+      skipped := skipped + 1
+      continue
+    described := described + 1
+    let helper := !userFacing n
+    tryCatchRuntimeEx (withCurrHeartbeats do
+        let ((), s) := (collect target appsPerUser v .root #[] (arity ci.type)).run {}
+        let mut k := 0
+        for occ in s.occs do
+          let j ← tryCatchRuntimeEx (withCurrHeartbeats (appJson target n helper k occ))
+            (fun err => do return Json.mkObj [("record", "app"), ("name", target.toString),
+              ("caller", n.toString), ("index", toJson k), ("path", Json.str (toString occ.pos)),
+              ("errors", toJson #[s!"probe-error: {← err.toMessageData.toString}"])])
+          unless j.isNull do emit h j
+          k := k + 1
+        emit h (Json.mkObj [("record", "appscan"), ("name", target.toString),
+          ("caller", n.toString), ("found", toJson s.occs.size), ("cut", toJson s.cut),
+          ("range", ← rangeJson (ownerOf env n))]))
+      (fun err => do
+        emit h (Json.mkObj [("record", "appscan"), ("name", target.toString),
+          ("caller", n.toString), ("cut", toJson true),
+          ("errors", toJson #[s!"probe-error: {← err.toMessageData.toString}"])]))
+  emit h (Json.mkObj [("record", "uses"), ("name", target.toString), ("errors", Json.arr #[]),
+    ("module", (moduleOf env target).toString), ("kind", kindOf tci),
+    ("searched", toJson candidates.size), ("described", toJson described),
+    ("not_described", toJson skipped)])
+
 end ProofLensProbe
 
 open ProofLensProbe in
@@ -701,6 +1156,7 @@ open ProofLensProbe in
     | .error e => throwError s!"bad query: {e}"
   let roots := q.scope_roots.map (·.toName)
   let seen ← IO.mkRef ({} : NameSet)
+  let used : UsedCache ← IO.mkRef {}
   let h ← IO.FS.Handle.mk opath .write
   do
     emit h (Json.mkObj [("record", "env"), ("lean", Lean.versionString),
@@ -719,6 +1175,7 @@ open ProofLensProbe in
         | "moddocs" => moduleDocRecords h roots
         | "link" => linkRecord h q roots seen r.name.toName
         | "deps" => depsRecords h roots r.name.toName
+        | "modules" => moduleRecords h
         | "decl" => do
           let env ← getEnv
           if let some ci := env.find? r.name.toName then
@@ -731,6 +1188,8 @@ open ProofLensProbe in
           else
             emit h (Json.mkObj [("record", "defclosure"), ("name", r.name),
               ("errors", toJson #["missing"])])
+        | "refs" => refsRecords h roots used
+        | "apps" => appsRecords h roots used r.name.toName r.callers
         | _ => pure ())
         (fun err => do
           emit h (Json.mkObj [("record", if r.kind == "decl" then "defclosure" else r.kind),

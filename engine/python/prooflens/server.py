@@ -5,7 +5,8 @@ with `{"key", "lean": [names] | null, "reject": [names]}` records a link (or rem
 rejects suggestions) in `prooflens.links.json` and rebuilds the view. In a full assessment,
 `POST /api/symbol` with `{"action": "add" | "remove", "claim", "tex", "decl", "var" | "type_of",
 "by"}` records or removes a symbol link (docs/SYMBOL_LINKS.md) and rewrites the site. The
-workspace routes (`workspace.api`) read and update the auditor's saved investigation. A refused
+workspace routes (`workspace.api`) read and update the auditor's saved investigation, and `GET
+/api/uses?name=` answers where a declaration is used (`uses.route`). A refused
 edit answers 400 with its message (and `candidates` when a name did not resolve); an edit of a
 record changed meanwhile answers 409 with `conflicts`, each holding both versions.
 """
@@ -68,7 +69,9 @@ def make_server(site: Path, port: int, on_link=None, on_symbol=None,
         def do_GET(self):
             path, _, query = self.path.partition("?")
             if path == "/api/status":
-                return self._json(200, {"editable": editable, "workspace": bool(gets)})
+                return self._json(200, {"editable": editable,
+                                        "workspace": "/api/workspace" in gets,
+                                        "uses": "/api/uses" in gets})
             if path in gets:
                 try:
                     with lock:

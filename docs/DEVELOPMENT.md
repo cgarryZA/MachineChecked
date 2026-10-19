@@ -26,6 +26,7 @@ To exercise the zero-configuration flow, use `examples/plain-paper/`. For the lo
 | `engine/python/prooflens/paper.py` | A paper page's data (the site's paper pages), in the reader's standard format |
 | `engine/python/prooflens/data/ProofLensProbe.lean` | Elaborated Lean declarations and dependency data |
 | `engine/python/prooflens/deps.py` | `inspect`: a declaration's statement and proof dependencies, cached |
+| `engine/python/prooflens/uses.py` | `inspect --used-by` and `compare --query uses`: reverse references and applications with the source of each premise, cached |
 | `engine/python/prooflens/assess.py` | Full-assessment states and findings |
 | `engine/python/prooflens/review_queue.py` | Review units and queue ordering |
 | `engine/python/prooflens/promote.py` | Maintainer-controlled review promotion |
@@ -86,7 +87,7 @@ The detailed engineering rules live in [CLAUDE.md](../CLAUDE.md). The evolving p
 
 The public command is `machinechecked`; `prooflens` remains an alias for compatibility. Most users need only `view`, `build` and `check`.
 
-`inspect NAME [--dependencies] [--json]` reports what a declaration's statement mentions and, separately, what its proof uses, through the whole project (the probe's `deps` request; every other record stays proof-erased). Full-assessment users can use `reassess` (new reviews without a Lean re-probe), `site` (regenerate the reader from stored evidence), `bundle` (single-file HTML), `export` (approved public data) and `review promote` (maintainer approval).
+`inspect NAME [--dependencies] [--json]` reports what a declaration's statement mentions and, separately, what its proof uses, through the whole project (the probe's `deps` request; every other record stays proof-erased). `inspect NAME --used-by` reports the other direction: the probe's `apps` request lists the declarations whose statement or value mentions NAME (`user` records) and describes each application of it in their values (`app` records: each binder with its actual argument, the instantiated premise, the origin of the proof supplied, and the type of the application). The search enters a value only along subterms that mention NAME, examines each shared subterm once (at most a million per user), describes at most 8 applications in each of at most 30 users, and prints a term above 600 nodes by its head only; `appscan` and `uses` records say what a bound left out. The `refs` request gives every declaration's references to the project's constants, from which `uses.py` derives further callers and the reader's `data/uses.json` (the zero-configuration build asks it in the indexing sessions). Full-assessment users can use `reassess` (new reviews without a Lean re-probe), `site` (regenerate the reader from stored evidence), `bundle` (single-file HTML), `export` (approved public data) and `review promote` (maintainer approval).
 
 ## Releasing
 

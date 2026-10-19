@@ -72,6 +72,14 @@ widen the selection. Dotted names open short mathematical notes. A Lean declarat
 its complete definition; **Back** and browser Back restore the claim view and reading position.
 Definition links can be copied or opened in another tab.
 
+**Used by**, under a declaration, lists the declarations that refer to it and how (in their
+statement, proof or definition body); a user opens like any declaration, so a specialised lemma
+leads to the general result that applies it. In the reader `view` serves, **Show each
+application** asks Lean for every application: the argument supplied for each binder, whether
+the caller assumes each premise or proves it (and with what), and the conclusion obtained. From
+a terminal: `machinechecked inspect NAME --used-by`, or `machinechecked compare --query uses
+NAME --json`.
+
 Click the evidence summary for proof checks, reviews and provenance. The ⋯ menu contains
 **Copy link**, **Report issue** and **Review it**; reviewing opens the selected claim.
 

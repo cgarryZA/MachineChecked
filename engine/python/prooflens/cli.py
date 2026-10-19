@@ -246,7 +246,8 @@ def cmd_view(a):
 
         from .workspace import api
         serve(res["site"], a.port, None, not a.no_browser, on_symbol=on_symbol,
-              api=api(cfg.out_dir, res["site"] / "data", cfg.root))
+              api=_with_uses(api(cfg.out_dir, res["site"] / "data", cfg.root), cfg.lean_root,
+                             res["site"] / "data"))
         return
     from . import authoring
     from .server import serve
@@ -265,7 +266,15 @@ def cmd_view(a):
         return {"claim": change["claim"], "changed": change["changed"]}
 
     serve(site, a.port, on_link, not a.no_browser,
-          api=api(root / cfgmod.work_dir_name(root), site / "data", root))
+          api=_with_uses(api(root / cfgmod.work_dir_name(root), site / "data", root), root,
+                         site / "data"))
+
+
+def _with_uses(api: tuple[dict, dict], root: Path, data: Path) -> tuple[dict, dict]:
+    """The local server's routes, with the reader's question of where a declaration is used."""
+    from .uses import route
+    gets, posts = api
+    return {**gets, "/api/uses": route(root, data)}, posts
 
 
 # -- recording links and investigations -------------------------------------------------------
@@ -750,6 +759,13 @@ def cmd_inspect(a):
     if root is None:
         sys.exit("no Lean project here: run machinechecked inside a directory with a lakefile")
     log = (lambda m: print(m, file=sys.stderr))
+    if a.used_by:
+        from .uses import text, uses
+        out = uses(root, a.name, a.module, log=log, refresh=a.refresh)
+        print(json.dumps(out, indent=1, ensure_ascii=False) if a.json else text(out))
+        if not out["ok"]:
+            sys.exit(1)
+        return
     out = inspect(root, a.name, a.module, log=log, refresh=a.refresh)
     if not a.dependencies and out.get("closure"):
         out["closure"] = {k: v for k, v in out["closure"].items() if k != "members"}
@@ -855,6 +871,12 @@ def cmd_compare(a):
                 return _print_json(out)
             if not out["available"]:
                 print(out["reason"])
+                return
+            if op == "uses":
+                from .uses import text
+                claims = cmp.linked_claims(site)
+                for r in out["results"]:
+                    print(text(r, claims))
                 return
             for r in out["results"]:
                 print("\n".join(cmp.statement_lines(r)) if "statement" not in r
@@ -1134,6 +1156,9 @@ def main(argv=None):
     ins.add_argument("--module", help="the module that declares it, when several declare the name")
     ins.add_argument("--dependencies", action="store_true",
                      help="list every declaration of the project it depends on")
+    ins.add_argument("--used-by", action="store_true",
+                     help="where it is used instead: the declarations that use it, each "
+                          "application's arguments and the source of each premise")
     ins.add_argument("--json", action="store_true",
                      help="print one JSON document (for scripts and agents)")
     ins.add_argument("--project", help="the Lean project (default: the one here)")
@@ -1148,9 +1173,10 @@ def main(argv=None):
                     help="read: the paper only; compare: and the Lean; informed (default): and "
                     "what people have recorded (notes, reviews, statuses)")
     co.add_argument("--query", nargs=2, metavar=("OP", "TARGET"),
-                    help="a targeted query: definition NAME, mentions NAME, dependencies NAME "
-                    "(and uses, proof-facts, composition, impact, which say what is not "
-                    "extracted yet)")
+                    help="a targeted query: definition NAME, mentions NAME, dependencies NAME, "
+                    "uses NAME (where it is applied, with the source of each premise; runs Lean "
+                    "once per snapshot); proof-facts, composition and impact say what is not "
+                    "extracted yet")
     co.add_argument("--limit", type=int, help="return at most this many definitions or results")
     co.add_argument("--after", metavar="ID", help="continue a list after this item")
     co.add_argument("--json", action="store_true", help="print one JSON document")
