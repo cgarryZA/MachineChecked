@@ -104,15 +104,55 @@ they state it, in the claim's entry of `machinechecked.links.json`:
               "by": "A. Auditor"}
 ```
 
-`coverage` is `full` (the declarations' statements together give every clause), `composed` (every
-clause follows, but only by combining the declarations through reasoning no Lean statement
-records, such as chaining estimates: the auditor's argument), `partial` (some clauses have no
-counterpart), `changed` (a clause is stated with other hypotheses, bound or setting), `related`
-(a comparable result) or `unresolved` (the note states the open question); `confidence` is
-`high`, `medium` or `low`. The reader shows the
-note under the claim's status, as the auditor's reading, and `check --json` reports it as the
-claim's `correspondence`. A note changes no status, and linking other declarations in the reader
-removes it, since it described the old ones.
+`coverage` says how far the claim and the declarations agree: `full` (every clause), `partial`
+(some clauses have no counterpart), `changed` (a clause is stated with other hypotheses, bound or
+setting), `related` (a comparable result) or `unresolved` (an open question). `confidence` is
+`high`, `medium` or `low`. The reader shows the reading under the claim's status, as the
+auditor's, and `check --json` reports it as the claim's `correspondence`. A reading changes no
+status, and linking other declarations in the reader removes it, since it described the old
+ones. A value other than these is ignored.
+
+**How the coverage is supported.** The optional `basis` records it separately from the coverage
+itself. Three claims of the synthetic project `tests/fixtures/coverage` show the three bases of
+full coverage:
+
+```json
+"thm:two":   {"lean": ["Cover.even_add"], "coverage": "full", "basis": "direct"},
+"thm:four":  {"lean": ["Cover.even_add"], "coverage": "full",
+              "basis": "reviewed_composition",
+              "argument": "Apply Cover.even_add to a and b, to c and d, then to the two sums."},
+"thm:three": {"lean": ["Cover.three_even"], "coverage": "full", "basis": "checked_bridge",
+              "bridge": {"theorem": "Cover.three_even", "target": "Cover.Spec.three_even",
+                         "target_fingerprint": "…", "source_sha256": "…"}}
+```
+
+- `direct`: the linked declarations state the claim. The reader shows **States every clause**.
+- `reviewed_composition`: the claim follows by combining the linked declarations through the
+  auditor's `argument`. The reader shows **Every clause, by the auditor's composition**, with the
+  argument, its author, and that Lean has not checked the combination. Beside it the reader and
+  `check` give the next step: state the combination as one Lean result. A composition never reads
+  as a direct result. A stored `"coverage": "composed"` reads as `full` with this basis, its note
+  as the argument.
+- `checked_bridge`: a linked theorem whose type Lean checks is exactly `target`, a proposition
+  stated as a definition, which the auditor read against the paper. The reader shows **Every
+  clause, through a checked bridge** only when that check passes, the proof has no `sorry` and only
+  the standard axioms, and the target and the paper's passage are the versions the auditor read:
+  `target_fingerprint` and `source_sha256` pin them, and `check --json` gives their current values
+  (`correspondence.bridge.current`) to copy. A changed target, a change to a definition it uses, or
+  a changed passage reads as out of date until the auditor reads it again and updates the pins.
+
+`refs` may list the linked declarations a basis rests on (all of them by default). Without a
+`basis`, the reading reads **Every clause**, and its support is not recorded.
+
+An `unresolved` reading records the question and what would decide it:
+
+```json
+"thm:double": {"lean": ["Cover.even_two_mul"], "coverage": "unresolved",
+               "question": "Does 'number' mean a natural number or an integer?",
+               "would_decide": "The paper's standing conventions."}
+```
+
+The reader shows **Unresolved** with the question. It records an open question, not a difference.
 
 ## Read a claim
 

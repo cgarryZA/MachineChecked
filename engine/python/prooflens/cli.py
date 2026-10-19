@@ -214,6 +214,11 @@ def _print_simple(body):
         print(f"note: {n}")
     for s, k in sorted(view_summary(body).items()):
         print(f"  {k:4d}  {s}")
+    for c in body.get("claims", []):
+        cor = c.get("correspondence") or {}
+        if cor.get("basis") == "reviewed_composition":
+            print(f"composition {c.get('number') or c['id']}: every clause by the auditor's "
+                  f"composition, which Lean has not checked. Next step: {cor['next_step']}")
 
 
 # -- everyday commands ------------------------------------------------------------------------

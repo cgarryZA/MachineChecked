@@ -73,10 +73,20 @@ See [the structured status contract](STATUS_CONTRACT.md) for the complete code i
 findings counts. `data/claims/<file>.json` holds one passport: the printed statement, each
 clause's unfolded statement, proofs, witness, regimes, reviews and structured `evidence`, the
 declarations of its closure, and its findings. A claim is loaded only when it is opened.
-In zero configuration a passport also has `correspondence` (or `null`): the mapper's note on how
-far the linked declarations state the claim, `{source, coverage, confidence, note, by}`, where
-`source` is `confirmed` (the auditor's, from `machinechecked.links.json`) or `formalization.yaml`
-(the project's row notes). It is displayed beside the links and is never an input to a status.
+In zero configuration a passport also has `correspondence` (or `null`): the mapper's reading of how
+far the linked declarations state the claim, `{source, coverage, basis, refs, argument, next_step,
+bridge, question, would_decide, confidence, note, by}`, where `source` is `confirmed` (the
+auditor's, from `machinechecked.links.json`) or `formalization.yaml` (the project's row notes).
+`coverage` is `full`, `partial`, `changed`, `related`, `unresolved` or `null`; `basis`, how the
+coverage is supported, is `direct`, `reviewed_composition`, `checked_bridge` or `null`
+(unspecified), with `refs` the linked declarations it rests on. A reviewed composition has the
+auditor's `argument` and the `next_step`, stating the combination as one Lean result (a stored
+`composed` coverage reads as `full` with this basis); a checked bridge has `bridge`, `{theorem,
+target, state, reasons, pinned, current}`, where `state` is `checked`, `stale` or `unchecked` and
+`pinned`/`current` hold the target's and the passage's digests (`target_fingerprint`,
+`source_sha256`) as read and as now. An unresolved reading has its `question` and `would_decide`.
+Values outside these are dropped. It is displayed beside the links and is never an input to a
+status.
 
 A paper page (`prooflens.paper.write_paper_site`, used by machinechecked.org) is written in the
 same format, with `mode: "paper"`: the paper's registry entry (`paper`), the Lean projects that
