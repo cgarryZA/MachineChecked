@@ -13,6 +13,7 @@
 // examples/toy-paper, then copy OUT/data there.
 
 import "./presentation.test.mjs";
+import "./review.test.mjs";
 import { chromium } from "playwright";
 import http from "node:http";
 import fs from "node:fs";

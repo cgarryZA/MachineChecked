@@ -26,7 +26,8 @@ export const VERDICTS = {
       detail: "Say how the refuted proposition is stronger than the printed claim." },
   ],
   cannot: [
-    { value: "cannot determine", label: "Cannot determine", detail: "Say what would decide it." },
+    { value: "cannot determine", label: "Cannot determine",
+      detail: "State the open question, and what would decide it." },
   ],
 };
 
@@ -102,16 +103,35 @@ export function needsDetail(verdict) {
   return Object.values(VERDICTS).flat().find((v) => v.value === verdict)?.detail || null;
 }
 
-// An issue the maintainer may file. A representation choice or a broader statement is a note
-// explaining an accepted difference; the other verdicts other than faithful describe a defect.
+// The kind of issue each verdict's draft is: a note explaining an accepted difference, a defect
+// the reviewer found, or a question the reviewer could not decide. A faithful verdict, or one
+// this table does not know, has no draft. The command line writes the same drafts
+// (`review_cli.issue_draft`).
+const DRAFT_KIND = {
+  "faithful with representation choices": "explanatory note",
+  broader: "explanatory note",
+  ...Object.fromEntries(VERDICTS.problem.map((v) => [v.value, "defect"])),
+  "cannot determine": "unresolved question",
+};
+const UNRESOLVED_BODY = "The reviewer could not determine whether the Lean statement says what the "
+  + "paper says. This is an open question, not a difference that was found.";
+
 export function issueDraft(unit, verdict, detail) {
-  if (verdict === "faithful") return null;
-  const note = verdict === "faithful with representation choices" || verdict === "broader";
+  const kind = Object.hasOwn(DRAFT_KIND, verdict) ? DRAFT_KIND[verdict] : null;
+  if (!kind) return null;
   const claims = unit.claims.map((c) => c.number || c.id).join(", ");
+  const suffix = claims ? ` (${claims})` : "";
+  const text = String(detail || "").trim();
+  if (kind === "unresolved question") {
+    return {
+      kind, title: `${unit.name}: open question${suffix}`,
+      body: `Review unit \`${unit.id}\`, verdict **${verdict}**. ${UNRESOLVED_BODY}`
+        + (text ? `\n\n**Open question.** ${text}` : ""),
+    };
+  }
   return {
-    kind: note ? "explanatory note" : "defect",
-    title: `${unit.name}: ${verdict}${claims ? ` (${claims})` : ""}`,
-    body: `Review unit \`${unit.id}\`, verdict **${verdict}**.\n\n${detail || ""}`.trim(),
+    kind, title: `${unit.name}: ${verdict}${suffix}`,
+    body: `Review unit \`${unit.id}\`, verdict **${verdict}**.\n\n${text}`.trim(),
   };
 }
 

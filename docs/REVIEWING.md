@@ -49,7 +49,12 @@ Each step refuses to run before the one it follows and is timestamped; the repor
 | Mismatched | What the Lean statement actually establishes |
 | Vacuous | Why hypotheses fail to hold, or a witness is inadequate |
 | Refutation not valid | Why the formal refutation does not refute the printed claim |
-| Cannot determine | What evidence would settle the question |
+| Cannot determine | The open question, and what evidence would settle it |
+
+A saved report carries an issue draft for the maintainer: an explanatory note for representation
+choices or a broader statement, a defect for a problem verdict, and an open question for *Cannot
+determine*, with the reviewer's question. The review page and the command line write the same
+drafts.
 
 A review may be useful before a theorem is proved, provided the formal specification exists. Claims without a formal statement cannot yet undergo comparison; the queue lists them separately.
 
