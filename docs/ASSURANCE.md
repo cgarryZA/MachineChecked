@@ -33,7 +33,14 @@ root = "main.tex"
 publish = { pdf = false, source_text = false, lean = false, reviews = false }
 ```
 
-Sources can also be a pinned Git revision (`source = { git = "owner/repo", rev = "<commit>" }`, of which only that revision is fetched) or a versioned arXiv record (`source = { arxiv = "2601.01234v2" }`: its source is downloaded from arXiv once and kept in the working directory, so later builds work offline; the version is required). When the audited revision is not itself the published paper, say which public record it corresponds to with `published` (an arXiv identifier with version such as `"arXiv:2601.01234v2"`, a DOI, or a URL) and how it differs with `note` (for example `"This revision corrects Proposition 2.3."`); both go into `audit.json` and the reader, and change no status.
+Sources can also be a pinned Git revision (`source = { git = "owner/repo", rev = "<commit>" }`, of which only that revision is fetched) or a versioned arXiv record (`source = { arxiv = "2601.01234v2" }`: its source is downloaded from arXiv once and kept in the working directory, so later builds work offline; the version is required). Say which public record the paper is with `published` (an arXiv identifier with version such as `"arXiv:2601.01234v2"`, a DOI, or a URL) and, if the audited revision differs from it, how with `note` (for example `"This revision corrects Proposition 2.3."`); both go into `audit.json` and the reader, and change no status.
+
+**The version an audit pins.** An audit pins exactly one version of its paper, and `audit.json` names it (`paper_version`, see the [data model](DATA_MODEL.md)):
+
+- **A published version**: `published = "arXiv:2601.01234v1"` (or an arXiv source). It is labelled "arXiv v1". The inventory is pinned to it by its identifier: `"papers": {"T": {"commit": "2601.01234v1"}}`, or a claim's `"commit"`.
+- **An unpublished manuscript**: `version = "manuscript"` with the manuscript's commit as the source's `rev` (`source = { git = "owner/manuscript", rev = "<commit>" }`; a folder in the project may state its `rev`, checked against the folder's history when it is a repository of its own). It is labelled "Latest manuscript (commit abc1234)", never with a version number, even when `published` names the paper's earlier arXiv version. The inventory is pinned to that commit.
+
+`build` refuses an audit whose inventory is pinned to another version than the one it declares (for example `published` says arXiv v1 while the claims are pinned to a later manuscript commit), before Lean runs. A paper that declares no version is described by its source's commit when the inventory agrees, and by nothing otherwise. To publish an audit of each version, see [several audits of one repository](GETTING_STARTED.md#several-audits-of-one-repository).
 
 With multiple root TeX files, specify `root`. Without LaTeX, MachineChecked falls back to the paper's PDF and labels the weaker source evidence.
 

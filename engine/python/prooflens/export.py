@@ -283,7 +283,8 @@ def export(cfg: Config, out: Path, release: str | None = None,
     for p in index["papers"]:
         pub = pubs[p["id"]]
         q = _pick(p, ["id", "title", "mode", "revision", "pdf_sha256", "page_size", "note",
-                      "published", "published_note", "source_commit"])
+                      "published", "published_note", "source_commit",
+                      "paper_version"])
         q["root"] = p.get("root") if pub.source_text else None
         q["pdf"] = p["pdf"] if pub.pdf else None
         pidx["papers"].append(q)
