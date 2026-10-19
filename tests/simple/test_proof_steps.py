@@ -183,3 +183,30 @@ def test_check_json_reports_a_step_review_apart():
     assert out["route"] == [{"name": BOUND, "status_code": "link.checked"}]
     assert _step_json({**c, "source_sha256": "b"})["step_review"] == "stale"
     assert _step_json({**c, "step_reports": []})["step_review"] == "unreviewed"
+
+
+@needs_lean
+@needs_tex
+def test_link_records_a_step_and_its_route_from_the_terminal(proj, monkeypatch, capsys):
+    from prooflens import cli
+    from prooflens.simple import load_links
+    write_view_site(view(proj), proj / ".machinechecked/site", None, proj)
+    monkeypatch.chdir(proj)
+    cli.main(["link", "Equation (3)", BOUND, "--route", "--note", "Lean bounds n by n * n.",
+              "--as", "human:A-Referee"])
+    cli.main(["link", "eq:bound-sum", TRI, "--coverage", "full", "--as", "human:A-Referee"])
+    entries = load_links(proj)["papers"][PAPER]
+    assert entries["eq:bound-range"]["route"]["lean"] == [BOUND]
+    assert entries["eq:bound-range"]["route"]["note"] == "Lean bounds n by n * n."
+    assert "lean" not in entries["eq:bound-range"]
+    assert entries["eq:bound-sum"]["lean"] == [TRI]
+    claims = {c["id"]: c for c in view(proj)["body"]["claims"]}
+    assert claims["P:eq:bound-range"]["status_code"] == "link.other-route"
+    assert claims["P:eq:bound-sum"]["status_code"] == "link.checked"
+    # A route belongs to a proof step only.
+    with pytest.raises(SystemExit):
+        cli.main(["link", "thm:bound", BOUND, "--route"])
+    assert "not a proof step" in capsys.readouterr().err
+    # Without declarations, --route clears the step's route.
+    cli.main(["link", "eq:bound-range", "--route"])
+    assert load_links(proj)["papers"][PAPER]["eq:bound-range"]["route"]["lean"] == []

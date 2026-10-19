@@ -92,10 +92,14 @@ def clause_evidence(cl: dict, anchor: dict | None, mode: str | None, src_ok: boo
     return result
 
 
-def symbol_links(display: dict | None, cid: str, tex: str | None, lean: dict) -> list[dict]:
+def symbol_links(display: dict | None, cid: str, tex: str | None, lean: dict,
+                 excerpt: dict | None = None) -> list[dict]:
     """The claim's symbol links, each as its author recorded it and whether it is stale: the
     statement it points into has another fingerprint now, or the claim's printed text changed.
-    Display only (docs/SYMBOL_LINKS.md)."""
+    A link made on a typeset excerpt (`pins.excerpt`) is also stale when that excerpt, or the
+    macros and references it is typeset with, changed or can no longer be typeset. Display
+    only (docs/SYMBOL_LINKS.md)."""
+    ready = excerpt if excerpt and excerpt.get("ready") else None
     out = []
     for ln in (display or {}).get("symbols", []):
         if ln.get("claim") != cid:
@@ -107,8 +111,12 @@ def symbol_links(display: dict | None, cid: str, tex: str | None, lean: dict) ->
         # printed, so it also needs the text it was made on (older links have none).
         from .symbols import target_text
         shown = target_text(spec, target)
-        stale = (pins.get("statement") != spec.get("fingerprint")
-                 or not tex or pins.get("source") != sha256_text(tex)
+        if "excerpt" in pins:
+            moved = (ready is None or pins["excerpt"] != ready.get("fingerprint")
+                     or pins.get("source") != sha256_text(ready.get("text") or ""))
+        else:
+            moved = not tex or pins.get("source") != sha256_text(tex)
+        stale = (pins.get("statement") != spec.get("fingerprint") or moved
                  or shown is None
                  or ("target" in pins and pins["target"] != shown)
                  or (("term" in target or "at" in target) and "target" not in pins))
@@ -150,7 +158,6 @@ def build(evidence: dict, release: str, display: dict | None = None
     keys = {n: record_key(r) for n, r in store.items()}
     index_claims, chunks, summary = [], {}, {}
     inv_by_id = {c["id"]: c for c in inv}
-    step_reports = (display or {}).get("step_reports") or {}
     for c in inv:
         a = assessed[c["id"]]
         if "status_code" not in a:
@@ -254,7 +261,7 @@ def build(evidence: dict, release: str, display: dict | None = None
                 c, {"id": par["id"], "number": shown.get(par["id"], {}).get("number")
                     or par.get("number", ""), "title": par.get("title", ""), "heading": None,
                     "file": claim_file(par["id"])} if par else None,
-                lean, step_reports.get(steps.unit_id(c["id"]), []), unit)
+                lean, a.get("step_review"), unit)
             names.update(more)
             names.update(l["name"] for l in step["links"] + (step["route"] or {}).get(
                 "links", []))
@@ -268,9 +275,12 @@ def build(evidence: dict, release: str, display: dict | None = None
             "source_sha256": c.get("source_sha256"), **status, "anchor": anchor, "source_matches": src_ok,
             "source_evidence": source_evidence(anchor, t.get("mode"), src_ok, t),
             "statement_tex": (anchor or {}).get("statement"),
+            # The passage the reader typesets, when it can be typeset faithfully (display only).
+            "excerpt": (t.get("excerpts") or {}).get(c["id"]),
             "blockers": [shown_names(b, clause_tex) for b in a.get("blockers", [])],
             "clauses": clauses, "decls": decls, "findings": fs,
-            "symbols": symbol_links(display, c["id"], (anchor or {}).get("statement"), lean),
+            "symbols": symbol_links(display, c["id"], (anchor or {}).get("statement"), lean,
+                                    (t.get("excerpts") or {}).get(c["id"])),
             "unit": unit, "parent": c.get("parent"),
             **({"step": step} if step else {})}
         if step and (t.get("step_text") or {}).get(c["id"]):
@@ -318,7 +328,8 @@ def search_index(index: dict, chunks: dict) -> dict:
         claims.append({"id": c["id"], "paper": c["paper"], "number": c.get("number", ""),
                        "title": c.get("title", ""), "heading": c.get("heading"),
                        "status": c["status"], "status_code": c["status_code"],
-                       "statement": ch.get("statement_tex") or "", "lean": lean})
+                       "statement": ch.get("statement_tex") or (ch.get("excerpt") or {}).get("text")
+                       or "", "lean": lean})
         for n in ch.get("decls", {}):
             decls.setdefault(n, []).append(c["id"])
     return {"claims": claims, "decls": [{"name": n, "claims": ids} for n, ids in

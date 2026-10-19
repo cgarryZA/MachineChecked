@@ -2,7 +2,7 @@
 import vocabulary from "../../../engine/python/prooflens/data/statuses.json" with { type: "json" };
 
 const own = (table, key) => Object.hasOwn(table, key) ? table[key] : null;
-export const CLASS_ORDER = ["accepted", "proved", "refuted", "open", "unspecified", "declared", "malformed", "out-of-scope"];
+export const CLASS_ORDER = ["accepted", "proved", "refuted", "open", "caution", "unspecified", "declared", "malformed", "out-of-scope"];
 
 export function statusView(record) {
   return own(vocabulary.statuses, record?.status_code) || vocabulary.statuses.unknown;

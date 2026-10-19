@@ -106,6 +106,7 @@ def public_claim(chunk: dict, pub) -> dict:
     out["location"] = chunk.get("location") if pub.source_text else None
     out["statement_tex"] = chunk.get("statement_tex") if pub.source_text else None
     out["context_tex"] = chunk.get("context_tex") if pub.source_text else None
+    out["excerpt"] = chunk.get("excerpt") if pub.source_text else None
     a = chunk.get("anchor")
     # `head` (the baseline of the first line) is what the index's top is computed from, so the
     # published claim must keep it for its location to agree with the index.
@@ -160,7 +161,7 @@ def public_step(st: dict, pub) -> dict:
     for r in rv.get("reports") or []:
         q = dict(r)
         if not pub.reviews:
-            q["reading"] = q["comparison"] = ""
+            q["reading"] = q["comparison"] = q["text"] = ""
             q["verdict"] = {**q["verdict"], "detail": ""}
         reports.append(q)
     finding = next((q for q in reversed(reports) if q.get("current")), None)

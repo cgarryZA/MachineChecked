@@ -91,6 +91,21 @@ You can:
 
 The local reader saves your decisions in `machinechecked.links.json` at the repository root and refreshes the view. Commit that small file if you want the associations to travel with the project.
 
+The same from a terminal, with the same checks and no Lean run (it resolves names against the
+last `view` or `build`):
+
+```sh
+machinechecked link "Lemma 2.3" Example.inverse_bound Example.inverse_solves \
+  --coverage changed --confidence high --note-file note.md --as "A. Auditor"
+machinechecked link "Lemma 2.3" --reject Example.other --reason "a different estimate"
+machinechecked link "Lemma 2.3" --clear     # the paper's \lean tags apply again
+```
+
+A claim is named by its id, its key (`lem:bound`) or its number; a number two claims share, or a
+name the build does not have, is refused with the candidates, and nothing is written. A
+declaration whose module is not built is recorded and reads as such until it is built.
+`--dry-run` shows the change and `--json` prints it as one document.
+
 A link records the declaration associated with a claim. A correspondence review compares their
 assumptions, definitions and conclusion; see [Reviewing](REVIEWING.md).
 
@@ -111,8 +126,8 @@ counterpart), `changed` (a clause is stated with other hypotheses, bound or sett
 (a comparable result) or `unresolved` (the note states the open question); `confidence` is
 `high`, `medium` or `low`. The reader shows the
 note under the claim's status, as the auditor's reading, and `check --json` reports it as the
-claim's `correspondence`. A note changes no status, and linking other declarations in the reader
-removes it, since it described the old ones.
+claim's `correspondence`. A note changes no status. It describes the declarations it was written
+for: when the list changes, it moves to `earlier_notes` in the file and is no longer shown.
 
 ## Proof steps
 
@@ -137,16 +152,25 @@ The local reader saves both in the step's entry of `machinechecked.links.json`:
                              "by": "A. Auditor"}}
 ```
 
+From the terminal, `machinechecked link` records both (the step by its label or number):
+
+```sh
+machinechecked link eq:bound-sum Toy.Acceptance.thm_triangle --coverage full
+machinechecked link "Equation (3)" Toy.Acceptance.thm_bound --route --note "Lean bounds n by n * n."
+machinechecked link eq:bound-range --route        # clears the recorded route
+```
+
 A row of `formalization.yaml` can name a step (`source: Equation (3)`) and, with
 `route: different`, its formal route. A step linked only to a formal route reads **linked: a
-different formal route**; nothing is suggested for a step. A step never takes its enclosing
+different formal route** (in the warning colour: Lean reaches this by a different route than the
+printed step); nothing is suggested for a step. A step never takes its enclosing
 result's status, coverage or review: until a reviewer reports on it, it reads **not reviewed**.
 In a full assessment, a step is an inventory entry with `unit` and `parent` (see the
 [data model](DATA_MODEL.md)).
 
 ## Read a claim
 
-Select a claim to see the printed statement beside its Lean statement, set out as its variables, its hypotheses in order, and its conclusion. A “there is” inside the conclusion shows its witness with its type, and the parts that use that witness beneath it; two witnesses of the same name in different parts are different variables. When the project's repository is on GitHub, **Lean source** opens the declaration at the exact commit and line. Where a corrected statement stands beside the printed one, a box says what the correction changes: the hypotheses it adds or drops, and whether the conclusion is the same. **Review it** opens the review queue, and **Raise issue** a report to the audit's repository.
+Select a claim to see the printed statement beside its Lean statement. For a LaTeX paper the statement is typeset from its source when the whole passage can be, under the paper's own macros and with its printed reference and equation numbers; otherwise it is the excerpt of the PDF, which is always available under **As printed in the PDF** ([what decides](SOURCE_REGIONS.md#display-excerpts)). The Lean statement is set out as its variables, its hypotheses in order, and its conclusion. A “there is” inside the conclusion shows its witness with its type, and the parts that use that witness beneath it; two witnesses of the same name in different parts are different variables. When the project's repository is on GitHub, **Lean source** opens the declaration at the exact commit and line. Where a corrected statement stands beside the printed one, a box says what the correction changes: the hypotheses it adds or drops, and whether the conclusion is the same. **Review it** opens the review queue, and **Raise issue** a report to the audit's repository.
 
 ## Interpret the status
 

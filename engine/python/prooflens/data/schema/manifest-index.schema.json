@@ -105,7 +105,8 @@
               "malformed",
               "out-of-scope",
               "unspecified",
-              "declared"
+              "declared",
+              "caution"
             ]
           },
           "anchor": {

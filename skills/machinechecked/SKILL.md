@@ -75,11 +75,13 @@ violations and obligations by subject; `findings` holds only their totals.
   unlinked ones by number, and suggestions as candidates.
 - **Do the proofs compile?** The `linked: …` statuses answer it for linked claims. Quote the
   declaration names that are incomplete, use further axioms, or are missing.
-- **Does a Lean statement match the paper?** Read the claim in the paper and the Lean
-  declaration's statement (`#check` it, or open its source), and compare hypotheses,
-  quantifiers, definitions and conclusion. Present it as your reading, for the user to judge;
-  the reader's Review page (`machinechecked view`, then Review) records such a review
-  with source revisions and reviewer attribution.
+- **Does a Lean statement match the paper?** `machinechecked compare CLAIM --json` (after
+  `view` or `build`) gives the claim's complete passage, its linked declarations' complete
+  statements and the definitions they use, with the release and commit they come from; compare
+  hypotheses, quantifiers, definitions and conclusion. `compare --query definition NAME` and
+  `compare --query mentions NAME` answer the next question. Present it as your reading, for
+  the user to judge; `machinechecked review` (or the reader's Review page) records a review
+  with source revisions and reviewer attribution, and shows the paper before the Lean.
 - **Where is a paper statement proved, and what does a proof rest on?** `machinechecked
   inspect NAME --dependencies --json` prints the declaration's statement, axioms and source,
   what its statement mentions and, separately, what its proof uses, and every declaration of
@@ -89,7 +91,12 @@ violations and obligations by subject; `findings` holds only their totals.
   a lemma can be formalised without being used by that proof. If two modules declare the
   name, pass `--module`. A dependency identifies constants used by Lean terms.
 - **Link a claim to a declaration**: the user does it in `machinechecked view` (Link / Not
-  this), or you add a `\lean{Name}` tag to the statement in the LaTeX if the user agrees.
+  this); with the user's agreement, `machinechecked link "Theorem 2" Pkg.name --as NAME --json`
+  records it (`--reject NAME`, `--clear`; `--dry-run` first), or a `\lean{Name}` tag in the
+  LaTeX. An unknown or ambiguous claim or name is refused with candidates.
+- **Record what establishes a clause**: `machinechecked workspace update FILE` with evidence and
+  finding records (docs/REVIEWING.md, "Saved investigations"); `workspace show --json` resumes
+  it. A finding is your reading, attributed to you; it changes no status.
 - **A shareable report**: `machinechecked build` writes `.machinechecked/MachineChecked.html`
   (one file, opens from disk; Git ignores it there, and `--out` puts it elsewhere). `machinechecked build --site public/ --author "Name" --issues owner/repo` writes a
   directory to publish (for example on GitHub Pages) with `audit.json` describing it. Both
@@ -100,7 +107,8 @@ violations and obligations by subject; `findings` holds only their totals.
 - Name the formal proposition and proof result. Attribute mathematical correspondence to reviews
   with their recorded scope and provenance.
 - In a non-interactive session, use `check --json` and `build`. `view` starts a local browser session.
-- Save links through the reader or an authorized source tag, preserving who made the association.
+- Save links through the reader, `machinechecked link` or an authorized source tag, preserving who
+  made the association.
 - Write concise, affirmative prose. Explain what happened or what the user can do next.
 
 More: https://github.com/cgarryZA/MachineChecked/blob/main/docs/GETTING_STARTED.md

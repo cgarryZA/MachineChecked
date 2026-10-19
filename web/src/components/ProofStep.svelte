@@ -25,7 +25,12 @@
   function who(r) {
     const x = r.reviewer || {};
     return (x.kind === "model" ? "the AI model " + (x.model || x.id) : (x.name || x.id))
-      + (x.identity === "self-declared" ? " (self-declared)" : "");
+      + (x.identity === "self-declared" ? " (self-declared)" : "")
+      + (x.author ? ", an author of the statements" : "");
+  }
+  // When a review was made: its date, or where its marker is recorded.
+  function when(r) {
+    return r.submitted_at ? ", " + r.submitted_at.slice(0, 10) : r.file ? " (" + r.file + (r.line ? ":" + r.line : "") + ")" : "";
   }
   const reviewHref = $derived(index.review_queue ? withQuery(href(index.release, "review"), { claim: claim.id }) : null);
 </script>
@@ -33,16 +38,17 @@
 {#if part === "finding" && st}
   <div class="finding" data-review={rv.state}>
     <p class="small kind">{UNIT[st.unit] || "Proof step"}{#if st.parent}{" of "}<a href={href(index.release, "read", claim.paper, st.parent.id)}>{st.parent.number || st.parent.id}</a>{/if}</p>
-    <p class="word"><strong>{evidenceView("step", rv).word}</strong>{#if rv.finding?.verdict?.detail}<span class="pre">{" — " + rv.finding.verdict.detail}</span>{/if}</p>
+    <p class="word"><strong>{evidenceView("step", rv).word}</strong>{#if rv.finding?.verdict?.detail || rv.finding?.text}<span class="pre">{" — " + (rv.finding.verdict.detail || rv.finding.text)}</span>{/if}</p>
     {#if rv.finding}
-      <p class="faint small">Review of the printed step by {who(rv.finding)}, {(rv.finding.submitted_at || "").slice(0, 10)}. The status of {st.parent?.number || "the enclosing result"} is assessed separately.</p>
+      <p class="faint small">Review of the printed step by {who(rv.finding)}{when(rv.finding)}. The status of {st.parent?.number || "the enclosing result"} is assessed separately.</p>
     {:else}
       <p class="faint small">{evidenceView("step", rv).detail}{rv.state === "unreviewed" ? " Its scope decision records formal coverage only." : ""}</p>
     {/if}
     {#each rv.reports || [] as r}
       <details class="report">
-        <summary class="small">{LABEL[r.verdict.value] || r.verdict.value}, by {who(r)}, {(r.submitted_at || "").slice(0, 10)}{r.current ? "" : " · made on other source text"}</summary>
+        <summary class="small">{LABEL[r.verdict.value] || r.verdict.value}, by {who(r)}{when(r)}{r.current ? "" : " · made on other source text"}</summary>
         {#if r.comparison}<p class="small pre">{r.comparison}</p>{/if}
+        {#if r.text && r !== rv.finding}<p class="small pre">{r.text}</p>{/if}
         {#if r.reading}<details><summary class="faint small">The reading, locked {r.locked_at}</summary><p class="small pre">{r.reading}</p></details>{/if}
       </details>
     {/each}

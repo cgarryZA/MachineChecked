@@ -18,6 +18,7 @@ from .probe import FINGERPRINT_VERSION, requests_from_inventory, run_probe
 from .reviews import load_dismissals, load_reviews
 from .schemas import validate
 from .sources import acquire
+from .excerpt import collect as collect_excerpts, read_aux
 from .source_regions import collect as collect_source_regions
 from .tex import DEFAULT_ENVS, TexError, anchors_for, theorem_envs
 from . import versions as paper_versions
@@ -91,6 +92,7 @@ def build(cfg: Config, release: str | None = None, skip_lean: bool = False,
         lean = run_probe(cfg, requests_from_inventory(inv), lake=lake, build=lean_build)
 
     tex, papers_prov, pdfs = {}, {}, {}
+    display = load_display(cfg)
     for paper in cfg.papers:
         snap = snaps[paper.id]
         prov = {"title": paper.title, "kind": snap.kind, "revision": snap.revision,
@@ -145,6 +147,14 @@ def build(cfg: Config, release: str | None = None, skip_lean: bool = False,
                 locs = [c["location"] for c in inv["claims"]
                         if c["paper"] == paper.id and line_location(c) is not None]
                 tex[paper.id]["line_anchors"] = t["line_anchors"](locs)
+                # Display only: the passages the reader typesets, read from this snapshot and
+                # its compilation, so that a later rebuild of this release shows the same text.
+                selectors = {cid: v["excerpt"] for cid, v in
+                             ((display or {}).get("claims") or {}).items() if "excerpt" in v}
+                tex[paper.id]["excerpts"] = collect_excerpts(
+                    inv["claims"], paper.id, snap.dir, snap.root,
+                    read_aux(t["cwd"], Path(snap.root).stem), snap.revision, envs,
+                    tex[paper.id]["anchors"], tex[paper.id]["regions"], selectors)
             tex[paper.id]["manual_anchors"] = manual_anchors(cfg, paper.id)
         papers_prov[paper.id] = prov
 
@@ -169,7 +179,7 @@ def build(cfg: Config, release: str | None = None, skip_lean: bool = False,
     rel = release or f"r-{eid[:12]}"
     ev.record_release(cfg.out_dir, rel, eid)
     record = ev.load(cfg.out_dir, eid)
-    index, chunks, store = mf.build(record, rel, load_display(cfg))
+    index, chunks, store = mf.build(record, rel, display)
     index.update(issues=cfg.issues, site_url=cfg.site_url)
     index["project"].update(source_info(cfg))
     site = cfg.out_dir / "site"
@@ -340,17 +350,11 @@ def rebuild_site(cfg: Config, web_dist: Path | None = None, release: str | None 
 
 
 def load_display(cfg: Config) -> dict | None:
-    """What changes what is shown and never what is assessed: the display overlay, the symbol
-    links (docs/SYMBOL_LINKS.md), and the review reports of proof steps kept in the project's
-    `machinechecked-reviews/` folder (`steps.py`)."""
+    """What changes what is shown and never what is assessed: the display overlay, and the
+    symbol links (docs/SYMBOL_LINKS.md)."""
     out = read_json(cfg.display) if cfg.display and cfg.display.exists() else None
     if cfg.symbols and cfg.symbols.exists():
         out = {**(out or {}), "symbols": read_json(cfg.symbols).get("links", [])}
-    from .simple import load_review_reports
-    reports = {u: rs for u, rs in load_review_reports(cfg.root)[0].items()
-               if u.startswith("step:")}
-    if reports:
-        out = {**(out or {}), "step_reports": reports}
     return out
 
 

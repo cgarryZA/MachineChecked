@@ -29,6 +29,13 @@ assert.match(clauseNote({ evidence: { formal: { state: "refuted" } } }, 2), /for
 assert.doesNotMatch(clauseNote({ evidence: { formal: { state: "refuted" } } }, 2), /printed statement false/);
 assert.match(evidenceView("source", { state: "pdf-only", placement: "approximate", pdf_integrity: "matched" }).word,
   /PDF only · PDF hash matched · approximate location/);
+// Every class a status can have is drawn with a colour of its own; a proof step linked only to
+// a different formal route is a caution (the warning colour), neither a failure nor grey.
+const css = (await import("node:fs")).readFileSync(new URL("../src/app.css", import.meta.url), "utf8");
+for (const row of Object.values(vocabulary.statuses)) assert.match(css, new RegExp(`\\.st-${row.class} \\{`), row.class);
+assert.equal(statusView({ status_code: "link.other-route" }).class, "caution");
+assert.match(css, /\.st-caution \{ --st: var\(--tier-warning\); \}/);
+assert.match(statusView({ status_code: "link.other-route" }).explanation, /different route than the printed step/);
 console.log("all structured presentation contracts passed");
 
 const { evidenceFacts } = await import("../src/lib/presentation.js");

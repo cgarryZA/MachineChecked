@@ -12,7 +12,8 @@ from prooflens.export import export
 from prooflens.manifest import claim_file
 from test_toy import EXPECTED, STEPS
 
-REPORTS = "machinechecked-reviews/proof-steps.json"
+MARK = ("<!-- step-review: T:eq:bound-range "
+        "4640c8e3da3aba8d9a9e58abd761bf9c41ec8d0bafd25609f0d143cf9f3e62ef verdict=false")
 
 
 def chunk(cfg, cid, site="site"):
@@ -56,7 +57,13 @@ def test_a_proof_step_has_its_own_links_route_and_review(toy, tmp_path):
         ("Toy.Acceptance.thm_bound", "link.checked")]
     assert "Nat.le_mul_self" in s["route"]["note"]
     assert s["review"]["state"] == "false" and s["review"]["finding"]["current"]
-    assert "k = 0" in s["review"]["finding"]["verdict"]["detail"]
+    # It is the step's review marker, assessed with the evidence.
+    assert "k = 0" in s["review"]["finding"]["text"]
+    assert s["review"]["finding"]["reviewer"]["id"] == "a.referee"
+    rec = next(c for c in body["assessment"]["claims"] if c["id"] == "T:eq:bound-range")
+    assert rec["step_review"]["state"] == "false"
+    assert "step_review" not in next(c for c in body["assessment"]["claims"]
+                                     if c["id"] == "T:thm:bound")
     assert "Toy.Acceptance.thm_bound" in r["decls"]
 
     # The parent lists its steps, keeps its own status and has no step record.
@@ -78,6 +85,26 @@ def test_a_proof_step_has_its_own_links_route_and_review(toy, tmp_path):
     # Open steps follow the other open units; reviewed units come last.
     order = [(u["state"] == "reviewed", u["kind"] == "step") for u in q["units"]]
     assert order == sorted(order)
+
+    # A comparison packet of a step: the step in its proof, then its Lean and formal route;
+    # its review only at the informed stage.
+    from prooflens import compare as cmp
+    site = cmp.Site(cfg.out_dir / "site/data")
+    read = cmp.claim_packet(site, "T:eq:bound-range", "read")
+    p0 = read["paper"]["passages"][0]
+    assert p0["step"]["parent"] == {"id": "T:thm:bound", "number": "Theorem 2.5"}
+    assert "the choice $k = 1$" in p0["context"] and "lean" not in read
+    comp = cmp.claim_packet(site, "T:eq:bound-range", "compare")
+    assert [(d["name"], d["role"]) for d in comp["lean"]["declarations"]] == [
+        ("Toy.Acceptance.thm_bound", "formal route used instead")]
+    assert "interpretations" not in comp
+    info = cmp.claim_packet(site, "T:eq:bound-range", "informed")
+    assert info["interpretations"]["step"]["review"]["state"] == "false"
+    up = cmp.unit_packet(site, units["step:T:eq:bound-range"], "compare")
+    assert up["unit"]["route"] == ["Toy.Acceptance.thm_bound"]
+    assert "different formal route" in cmp.packet_text(up)
+    none = cmp.unit_packet(site, {**units["step:T:eq:bound-range"], "id": "step:x"}, "read")
+    assert "route" not in none["unit"] and "lean" not in none
 
     # The export keeps the unit kind, the parent, the evidence identity and the review.
     out = export(cfg, tmp_path / "pub")["out"]
@@ -102,19 +129,15 @@ def test_a_proof_step_has_its_own_links_route_and_review(toy, tmp_path):
 @needs_tex
 def test_a_step_finding_belongs_to_its_source_text_and_never_to_its_parent(toy):
     build(toy)
-    # A report made on other source text is kept and shown, and no longer is the finding.
-    rep = json.loads((toy / REPORTS).read_text())
-    rep["reports"][0]["pins"]["fingerprints"]["source"] = "0" * 64
-    (toy / REPORTS).write_text(json.dumps(rep))
+    # A review made on other source text is kept and shown, and no longer is the finding.
+    edit(toy / "reviews/T.md", MARK, MARK.replace("4640c8e3", "00000000"))
     index, _, cfg = build(toy, reuse_lean=True)
     s = chunk(cfg, "T:eq:bound-range")["step"]
     assert s["review"]["state"] == "stale" and s["review"]["finding"] is None
     assert s["review"]["reports"][0]["current"] is False
-    # A report whose verdict is not a step verdict is not a finding.
-    rep["reports"][0]["pins"]["fingerprints"]["source"] = chunk(cfg, "T:eq:bound-range")[
-        "source_sha256"]
-    rep["reports"][0]["verdict"]["value"] = "faithful"
-    (toy / REPORTS).write_text(json.dumps(rep))
+    # A marker whose verdict is not a step verdict is not a finding.
+    edit(toy / "reviews/T.md", MARK.replace("4640c8e3", "00000000"),
+         MARK.replace("verdict=false", "verdict=faithful"))
     _, _, cfg = build(toy, reuse_lean=True)
     assert chunk(cfg, "T:eq:bound-range")["step"]["review"]["state"] == "unreviewed"
     # A stored `composed` coverage reads as full by the auditor's composition.
@@ -197,13 +220,41 @@ def test_a_proof_step_is_reviewed_from_the_command_line(toy, tmp_path, monkeypat
     assert r["unit"]["lean"] == ["Toy.Acceptance.thm_triangle"]
     assert r["pins"]["fingerprints"]["source"] == chunk(cfg, "T:eq:bound-sum")["source_sha256"]
     assert r["issue_draft"] is None
-    # A step report is not a review marker: promotion refuses it.
-    (_, _, why), = pr.plan(cfg, [r])
-    assert why
-    # Kept in the project's review folder, it becomes the step's finding, and only the step's.
-    (toy / "machinechecked-reviews" / "cli.json").write_text(out.read_text())
-    index, _, cfg = build(toy, reuse_lean=True)
+    # The review steps were saved in the reviewer's workspace, as any other unit's.
+    ws = json.loads(next((cfg.out_dir / "review-work").glob("*.json")).read_text())
+    assert unit in json.dumps(ws["review"])
+
+    # Promotion refuses what it refuses for any review, and a changed source or an open
+    # question; it accepts the report as it is.
+    def why(**change):
+        x = json.loads(json.dumps(r))
+        for path, v in change.items():
+            *keys, last = path.split("__")
+            d = x
+            for k in keys:
+                d = d[k]
+            d[last] = v
+        (_, _, reasons), = pr.plan(cfg, [x])
+        return " ".join(reasons)
+    assert "source changed" in why(pins__fingerprints__source="0" * 64)
+    assert "not one that is recorded" in why(verdict__value="cannot determine")
+    assert "needs its detail" in why(verdict__value="false as printed")
+    assert "not recorded in order" in why(reading__locked_at="2999-01-01T00:00:00Z")
+    assert "author of the statements" in why(reviewer__id="statement-author")
+    assert "not blind" in why(reading__revealed_by=[{"unit": "x", "what": "Lean"}])
+    (_, _, reasons), = pr.plan(cfg, [r])
+    assert reasons == []
+    capsys.readouterr()
+    cli.main(["review", "promote", str(out), "--yes"])
+    text = (toy / "reviews/T.md").read_text()
+    sha = chunk(cfg, "T:eq:bound-sum")["source_sha256"]
+    assert f"<!-- step-review: T:eq:bound-sum {sha} verdict=holds by=human:Test-Referee -->" \
+        in text
+    # The marker is evidence: the step's review comes from it, and only the step's.
+    index, body, cfg = build(toy, reuse_lean=True)
     assert chunk(cfg, "T:eq:bound-sum")["step"]["review"]["state"] == "holds"
+    assert any(m["target"] == "step" and m["name"] == "T:eq:bound-sum"
+               for m in body["reviews"]["records"])
     assert {c["id"]: c["status"] for c in index["claims"]} == {**EXPECTED, **STEPS}
 
 

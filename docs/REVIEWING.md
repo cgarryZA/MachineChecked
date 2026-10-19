@@ -36,7 +36,86 @@ machinechecked review status
 machinechecked review export --out reports.json     # for the maintainer
 ```
 
-Each step refuses to run before the one it follows and is timestamped; the reports are in the form the reader exports, and `review promote` checks them the same way. The work is kept in the project's working directory (`review-work/`).
+The commands work in both kinds of project. With a `machinechecked.toml` they review the full
+assessment's queue; in any other Lean project they review the zero-configuration queue of the
+last `machinechecked view` or `machinechecked build`, one unit per linked claim
+(`link:<claim key>`). Each step refuses to run before the one it follows and is timestamped; the
+reports are in the form the reader exports, and `review promote` checks them the same way. The
+work is kept in your workspace in the project's working directory (`review-work/`; see below).
+In zero configuration, export into `machinechecked-reviews/` to publish the reports with the
+audit.
+
+`read` gives every passage of the unit in full: a statement stated in several places, or a
+definition used by many claims, is read in all of them. Each passage says where it is and how it
+was obtained (the LaTeX source, or text extracted from the PDF at an approximate position). A
+passage the build does not hold is marked UNAVAILABLE with its source reference, and PDF text
+cut by the extraction is marked INCOMPLETE: read those in the paper. The paper's `\lean{...}`
+tags are removed from the reading, since they name declarations.
+
+`next`, `status`, `read`, `show` and `author` take `--json`: one document holding only what
+that step shows, in the form of `machinechecked compare` (below). `read` holds the paper;
+`show` adds the Lean (complete statements, binders, the definitions they use, Lean's checks);
+`author` adds what has been recorded about the correspondence: the author's review, notes,
+earlier reports, symbol links and statuses.
+
+**Informed investigation.** Outside the three steps, `machinechecked compare CLAIM` gives a
+claim's passage, its linked statements, its definitions and everything recorded about it, and
+`compare --query` answers targeted questions (see [AGENTS.md](AGENTS.md)). That is an informed
+inspection: someone who has used it on a claim has seen its Lean and its interpretations, and a
+later review of that claim is not blind. Say so in the reading, and record it in your
+workspace (an `exposure` operation, below) so that the report lists it.
+
+## Saved investigations
+
+A workspace keeps an investigation of the paper against the Lean so that you, or another auditor
+or agent, can continue it: the evidence chosen for each claim (and the candidates rejected), the
+findings, the open questions, and where you stopped. It lives in the project's working directory
+(`.machinechecked/review-work/`), survives rebuilds and browser restarts, and changes no status.
+Its format is in [the data model](DATA_MODEL.md#workspace-prooflensworkspace1-written-by-the-reader-and-the-command-line).
+
+**In the reader.** Under `machinechecked view`, a claim page has an **Investigation** section:
+start one under your name, record a finding (its coverage and note, citing the linked
+declarations), ask a question, submit a draft finding. A claim page shows the Lean, so a
+workspace started there is an *informed investigation*: it records that you saw the Lean and
+earlier interpretations, and it has no blind reading. Independent review uses the review page or
+`machinechecked review`, with the locks above.
+
+**From the command line.** The same records, with the same checks:
+
+```sh
+machinechecked workspace open --mode informed --as human:NAME   # start or resume
+machinechecked workspace show [--claim "Lemma 2.3"] [--json]    # evidence, findings, questions
+machinechecked workspace update ops.json [--dry-run]            # apply operations (- for stdin)
+machinechecked workspace export --out work.json                 # hand it on
+machinechecked workspace import work.json                       # continue it elsewhere
+```
+
+An update file lists operations, applied together or not at all; claims may be named by id, key
+or number:
+
+```json
+{"op_id": "2026-10-19-lemma-2.3", "ops": [
+  {"op": "put", "record": {"id": "e-bound", "kind": "evidence", "claim": "Lemma 2.3",
+   "ref": {"decl": "Example.inverse_bound"}, "role": "supports"}},
+  {"op": "put", "record": {"id": "f-bound", "kind": "finding", "claim": "Lemma 2.3",
+   "clause": "the bound", "coverage": "changed", "evidence": ["e-bound"],
+   "note": "The bound needs one more derivative of the input."}},
+  {"op": "resume", "state": {"claim": "Lemma 2.3"}}]}
+```
+
+To edit a record, `put` it again with `base_rev`, the revision `show --json` gave it. If someone
+changed it meanwhile, nothing is written and both versions are returned (and kept under
+`conflicts`); edits of different records are all kept. Repeating a request with the same `op_id`
+changes nothing. A finding is a draft until `{"op": "submit", "id", "base_rev"}`; a submitted
+finding is never edited, but `{"op": "supersede", "id", "base_rev", "reason", "record"}` records a
+later one with its reason, and both remain.
+
+When a declaration that evidence cites changes (its statement, or a definition's equations), or a
+claim's printed text changes, `show` marks that evidence and the findings that cite it as
+`stale`; the others stay current. Re-pin a record with `"repin": true` once you have checked it
+again. Changing to independent mode, or importing, keeps what the workspace records you had seen,
+so an informed investigation never becomes a blind review: a report made with `machinechecked
+review` lists that exposure, and `review promote` refuses it without `--allow-revealed`.
 
 ## What a verdict means
 
@@ -69,15 +148,26 @@ its constants and its conclusion. Its verdicts are its own:
 | False as printed | The counterexample or the failing case, and what would repair the step |
 | Cannot determine | What would decide it |
 
-A report on a step pins the hash of the step's source text. Put it in `machinechecked-reviews/`
-(in both workflows) and build again: the step shows the latest report made on its current text
-as its finding, beside the equation, and lists every report. A report made on other text is
-kept and shown, and the step reads **source changed**. The scope decision `proof-step` records
+A report on a step pins the hash of the step's source text, and follows the same protocol as
+any other: reading locked before the Lean is shown, verdict recorded before the author's review.
+In a full assessment, `review promote` turns an accepted step report into a marker, with the same
+refusals (out-of-order steps, an author of the statements, a reading that was not blind, a
+manuscript at another revision), and refuses a report whose step's source changed since, or
+whose verdict is *cannot determine*:
+
+```
+<!-- step-review: T:eq:bound-range <source sha256> verdict=false by=a.referee -->
+```
+
+The marker is stored evidence: the assessment records the step's review from it (its last
+marker, current while its hash is the step's source hash). In zero configuration, put the report
+in `machinechecked-reviews/` and build again. Either way the step shows its finding beside the
+equation and lists its earlier reviews; a review made on other text is kept and shown, and the
+step reads **source changed**. The scope decision `proof-step` records
 formal coverage only; it is never a reading of the step, so a step with no report reads
 **not reviewed**. A step's finding belongs to the step: the enclosing result's status and review
 are unchanged by it. An issue draft names the step and its proof (“Equation (3) in the proof of
-Theorem 2.5: false as printed”); `review promote` does not turn a step report into a review
-marker.
+Theorem 2.5: false as printed”).
 
 ## Review records and identity
 
@@ -104,6 +194,8 @@ In a project with formal review markers, a maintainer can evaluate saved reports
 ```sh
 machinechecked review promote machinechecked-reviews-....json
 ```
+
+A directory of reports may be given instead of the files: it stands for the `*.json` files directly in it, in name order.
 
 Promotion checks that the manuscript and formal statements still match the review pins, that the review stages were recorded in the required order, and that the verdict is eligible. It displays the planned changes and requires the maintainer's decision. Model-family and author restrictions still apply. A report whose reading was not blind is refused unless the maintainer passes `--allow-revealed`.
 

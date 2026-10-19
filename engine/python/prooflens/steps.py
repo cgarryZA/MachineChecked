@@ -12,8 +12,11 @@ A proof step carries its own correspondence and its own review, apart from its p
   reads as `full` with basis `reviewed_composition`.
 * `route` lists the Lean declarations of a different formal route used instead: they reach the
   enclosing result by another argument and do not state the step.
-* Review reports of the unit `step:<claim id>` (the review queue's) record whether the printed
-  step holds. A report counts for the step's current text only when it pinned that text's hash.
+* A review records whether the printed step holds. In a full assessment it is a `step-review`
+  marker, written by `review promote` from a report of the queue's unit `step:<claim id>`, and
+  assessed with the evidence (`marker_review`); in zero configuration it is such a report, kept
+  in the project's `machinechecked-reviews/` folder (`review`). Either counts for the step's
+  current text only when it was made at that text's hash.
 
 None of this is an input to an assessed status. A proof step never takes its parent's coverage,
 and a scope decision (`proof-step`) is a decision about formal coverage, never a reading of the
@@ -140,6 +143,30 @@ def report_view(r: dict, source_sha256: str | None) -> dict | None:
             "current": bool(source_sha256) and pinned == source_sha256}
 
 
+MARK = {v: k for k, v in STATE.items()}
+
+
+def marker_review(marks: list, source_sha256: str | None, authors=frozenset()) -> dict:
+    """The review of a printed step from its `step-review` markers (`reviews.Review`, in file
+    order): the last marker is its record; it is the finding while its hash is the step's
+    current source hash, and `stale` otherwise."""
+    views = []
+    for m in marks:
+        if m.verdict not in MARK:
+            continue
+        views.append({"reviewer": {"id": m.by, "kind": m.kind, "identity": m.provenance,
+                                   "author": m.by in authors},
+                      "verdict": {"value": MARK[m.verdict], "detail": ""},
+                      "state": m.verdict, "text": m.text[:TEXT_CHARS], "file": m.file,
+                      "line": m.line, "source_sha256": m.hash,
+                      "current": bool(source_sha256) and m.hash == source_sha256})
+    if not views:
+        return {"state": "unreviewed", "finding": None, "reports": []}
+    last = views[-1]
+    return {"state": last["state"] if last["current"] else "stale",
+            "finding": last if last["current"] else None, "reports": views}
+
+
 def review(reports: list[dict], source_sha256: str | None) -> dict:
     """The review of a printed step: `unreviewed` when no report covers it, the latest current
     report's finding otherwise, `stale` when every report was made on other source text."""
@@ -162,7 +189,7 @@ def parent_ref(parent: dict | None) -> dict | None:
 
 
 def block(claim: dict, parent: dict | None, links: list[dict], route: list[dict],
-          corr: dict | None, rnote: dict | None, reports: list[dict],
+          corr: dict | None, rnote: dict | None, reviewed: dict,
           unit: str | None = None) -> dict:
     """What a claim record says about a proof step: its kind, its parent, the Lean that
     establishes it, the formal route used instead, and its own review."""
@@ -174,7 +201,7 @@ def block(claim: dict, parent: dict | None, links: list[dict], route: list[dict]
             "route": {"links": route, "note": (rnote or {}).get("note", ""),
                       "by": (rnote or {}).get("by"), "source": (rnote or {}).get("source")}
             if route else None,
-            "review": review(reports, claim.get("source_sha256"))}
+            "review": reviewed}
 
 
 def attach_parents(index_claims: list[dict], chunks: dict) -> None:
@@ -330,7 +357,7 @@ def step_claims(pid: str, statements: list[dict], snap: Path, files: list[str],
 
 # -- the full assessment ----------------------------------------------------------------------
 
-def full_block(claim: dict, parent: dict | None, lean: dict, reports: list[dict],
+def full_block(claim: dict, parent: dict | None, lean: dict, reviewed: dict | None,
                unit: str) -> tuple[dict, set[str]]:
     """The step block of an inventory claim, from the probe's link records, and the names of
     the declarations its links' statements use (for the claim's declaration map)."""
@@ -351,7 +378,8 @@ def full_block(claim: dict, parent: dict | None, lean: dict, reports: list[dict]
     links = [view(n) for n in lean_names(claim)]
     route = [view(n) for n in route_names(claim)]
     return block(claim, parent, links, route, correspondence(claim, "inventory"),
-                 route_note(claim, "inventory"), reports, unit), names
+                 route_note(claim, "inventory"),
+                 reviewed or {"state": "unreviewed", "finding": None, "reports": []}, unit), names
 
 
 def step_texts(inv: dict, paper: str, root: Path, regions: dict) -> dict[str, dict]:

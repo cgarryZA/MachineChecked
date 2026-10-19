@@ -132,8 +132,8 @@
     },
     "link.other-route": {
       "label": "linked: a different formal route",
-      "class": "unspecified",
-      "explanation": "The linked Lean reaches the enclosing result by another argument. No linked declaration states this step."
+      "class": "caution",
+      "explanation": "Lean reaches this by a different route than the printed step: the linked Lean establishes the enclosing result by another argument, and no linked declaration states this step."
     },
     "formal.refuted": {
       "label": "refuted as printed",
