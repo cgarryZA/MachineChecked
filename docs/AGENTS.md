@@ -36,12 +36,17 @@ the JSON. `version` is MachineChecked's version, and `release` identifies the ev
 statuses come from (it changes when the paper, the links or the Lean change). Each `status_code` is a stable machine-readable result; `status` is its display label.
 `class` is only its coarse group for colouring (`proved`, `open`, `malformed`,
 `unspecified`), and the skill explains both.
+Without a `machinechecked.toml`, `warnings` lists names in module docstrings that the project
+and its dependencies do not declare (`kind` `module-doc-name`, with `file`, `line`, `name` and
+`message`); they do not change the exit code.
 
 In a project with a `machinechecked.toml` (the full assessment), the document also has
 `findings` (totals per tier, dismissed warnings left out) and `finding_details`: each finding
 with its `tier` (`violation`, `obligation`, `warning`), `code`, `subject` (the claim or clause,
 for example `T:thm:bound#0`), `message`, and `dismissed` (who and why) when a warning was
-dismissed. Report the violations and obligations by subject and message; they are what blocks a
+dismissed. A warning with code `module-doc-name` is a name a module docstring lists that nothing
+declares: its `subject` is the module, its `trigger` the name, and it has `file` and `line`.
+Report the violations and obligations by subject and message; they are what blocks a
 claim from being accepted. `replay` is null when no Comparator replay counts; otherwise it
 gives the record's `guard` (`guarded`, `unguarded`, or `unrecorded` for an older record), the
 number of proofs `replayed`, and a `message` when they were not shown to run under the sandbox

@@ -212,9 +212,12 @@ def _simple_site(root: Path, paper: Path, web: str | None):
 
 
 def _print_simple(body):
+    from .moddocs import stale_doc_message
     from .simple import view_summary
     for n in body.get("notes", []):
         print(f"note: {n}")
+    for d in body.get("module_docs", []):
+        print(f"warning: {stale_doc_message(d)}")
     for s, k in sorted(view_summary(body).items()):
         print(f"  {k:4d}  {s}")
     for c in body.get("claims", []):
@@ -537,7 +540,8 @@ def cmd_check(a):
 CHECK_NOTE = "Results describe the linked Lean declarations; correspondence reviews compare them with the paper."
 
 
-FINDING_KEYS = ("id", "tier", "code", "subject", "message", "trigger", "dismissed")
+FINDING_KEYS = ("id", "tier", "code", "subject", "message", "trigger", "file", "line",
+                "dismissed")
 
 
 def _finding_details(cfg, eid: str) -> list[dict]:
@@ -578,6 +582,7 @@ def _check_json(a):
             failed = bool(idx["findings"]["total"].get("violation"))
         else:
             root, paper = _simple_target(a)
+            from .moddocs import stale_doc_message
             from .simple import view_release
             view = _simple_view(root, paper)
             body = view["body"]
@@ -596,7 +601,10 @@ def _check_json(a):
                    "release": view_release(body), "commit": body.get("commit"),
                    "modules": {"built": body["project"]["built"],
                                "not_built": body["project"]["unbuilt"]},
-                   "notes": body["notes"]}
+                   "notes": body["notes"],
+                   "warnings": [{"kind": "module-doc-name", "file": d["file"], "line": d["line"],
+                                 "name": d["name"], "message": stale_doc_message(d)}
+                                for d in body.get("module_docs", [])]}
             failed = any(l["class"] != "proved" for c in claims for l in c["links"])
     summary = {}
     for c in claims:
@@ -625,9 +633,14 @@ def cmd_build(a):
     print("findings:", ", ".join(f"{v} {k}" for k, v in sorted(idx["findings"]["total"].items()))
           or "none")
     # Violations and obligations, one per line: they are few, and they block acceptance.
-    for f in _finding_details(cfg, res["evidence"]):
+    details = _finding_details(cfg, res["evidence"])
+    for f in details:
         if f["tier"] in ("violation", "obligation") and not f.get("dismissed"):
             print(f"  {f['tier']}  {f['subject']}: {f['message']}")
+    # Names in module docstrings that nothing declares, with file and line.
+    for f in details:
+        if f["code"] == "module-doc-name" and not f.get("dismissed"):
+            print(f"  warning  {f['message']}")
     if idx["findings"]["total"].get("warning"):
         print("  (warnings: see `check --json` or the reader)")
     rg = _replay_guard(cfg, res["evidence"])
