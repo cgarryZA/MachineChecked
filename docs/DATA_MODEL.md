@@ -1,6 +1,7 @@
 # Data model
 
-Three documents, each with a JSON Schema in `engine/python/prooflens/data/schema/`.
+Three documents, each with a JSON Schema in `engine/python/prooflens/data/schema/`, and the
+files auditors write (reviews, the links file and workspaces), described below.
 
 ## Inventory (`inventory.schema.json`), written by people
 
@@ -143,6 +144,83 @@ states it. Readers show an unchecked version as declared by the author and not c
 claims. A site loading an audit (`load_published_audit`)
 rebuilds the label from `kind` and `id`, checks that the descriptor and the data name the same
 version, and, given a listing's `version`, refuses an audit that pins another one.
+
+## Workspace (`prooflens/workspace@1`), written by the reader and the command line
+
+An auditor's saved investigation: `<work dir>/review-work/<file>.json` (Git ignores the working
+directory). The file's name is not its identity; `id` is. `engine/python/prooflens/workspace.py`
+reads and writes it for `machinechecked workspace`, for the reader under `machinechecked view`
+(`/api/workspace…` on the loopback server) and for `machinechecked review`, with one validation
+path. A workspace records evidence and readings and is never an input to a status.
+
+| Field | Content |
+|---|---|
+| `schema`, `id` | `prooflens/workspace@1`; `ws-` and 12 hex digits |
+| `reviewer` | the reviewer record of the review protocol (`human:NAME` or `llm:MODEL`, self-declared) |
+| `mode` | `independent` (blind reading first, through the review protocol) or `informed` |
+| `exposure` | what the auditor had seen, append-only: `{what: ["Lean", "author's review", "prior interpretations", "external material"], claims: [ids] or null for every claim, at, how}` |
+| `revision` | increases with each saved change |
+| `selection`, `sources` | the paper and project selected; the build it was made against (`release`, project `commit`/`repository`, each paper's `revision` and `pdf_sha256`) |
+| `records` | evidence, findings and questions, by record id (below) |
+| `resume` | where to continue: `claim`, `clause`, `question`, `pinned` references, `at`, `by`; kept apart from the evidence |
+| `review` | the review protocol's `drafts` (locked reading, verdict, author-review step) and submitted `reports` (`prooflens/review-report@1`) |
+| `conflicts` | refused edits, each with the saved record (`current`) and the proposal (`proposed`) |
+| `provenance` | upgrades, mode changes and imports, with time and person |
+| `ops` | acknowledgements of requests by their `op_id`, so a repeated request changes nothing (not exported) |
+
+Every record has `id`, `kind`, `claim` (a claim id, resolved from a key or a number when written),
+optional `clause` and `note`, `rev`, `created_at`/`created_by`, `updated_at`/`updated_by`, and
+`pins` (`release`, `statement_sha256`: the claim's printed-text hash when written).
+
+- **`evidence`**: `ref` is one of `{decl, module, build, fingerprint, digest}` (a declaration of
+  the selected build; `build` is `built`, `unbuilt`, `not loaded` or `external`), `{source:
+  {file, line}}` or `{paper: {claim, quote}}`. `role` is `candidate` (the default), `supports`,
+  `context` or `rejected` (with `why_rejected`). A candidate is a candidate until the auditor
+  gives it another role.
+- **`finding`**: `coverage` (the links file's words: `full`, `composed`, `partial`, `changed`,
+  `related`, `unresolved`), optional `confidence`, `evidence` (ids of evidence records of the
+  same claim) and, when unresolved, `question`. `state` is `draft`
+  or `submitted` (`submitted_at`). A submitted finding is never edited or deleted: a later
+  finding names it in `supersedes`, with its `reason`, and both are kept.
+- **`question`**: `text`, `state` (`open`, `answered`, `withdrawn`), optional `answer` and
+  `evidence`.
+
+An update is a list of operations applied together or not at all: `put` (create, or replace a
+record's content, given `base_rev`, the revision it was read at), `delete` (a draft or an unused
+record), `submit` (a draft finding), `supersede` (a submitted finding, with `reason` and the new
+`record`), `resume`, `mode` and `exposure`. An edit made from an older revision of a record is a
+conflict: nothing is applied, and the answer (and `conflicts`) holds both versions; edits of
+different records are both kept. Writes replace the file atomically under a lock file beside it.
+
+**Currency.** Evidence on a declaration is pinned to its `fingerprint` and to a `digest` of that
+fingerprint with those of the constants Lean generated for it (`N._f`, `N.match_1`, `N.eq_1`), which
+carry a definition's equations. Against a later build, evidence whose digest changed is `stale`,
+and so is every finding or question that cites it, and every finding whose claim's printed text
+changed; the others stay `current` (`unchecked` when the build shows no fingerprint). The saved
+records are not re-pinned silently: a `put` with `repin: true` re-pins a record to the current
+build.
+
+**Mode and exposure.** An informed workspace records at its creation that the Lean and prior
+interpretations were open to its auditor; it has no locked reading. A mode change and an import
+add exposure and never remove it. A report made with `machinechecked review` lists that exposure in
+`reading.revealed_by`, so `review promote` refuses it unless the maintainer passes
+`--allow-revealed`.
+
+**Export and import.** `workspace export` writes the whole workspace (less `ops`) as one file;
+`workspace import` keeps its id, authors, pins, mode and exposure. Into a workspace already
+present, it adds the records that are missing and keeps a record both hold in different versions
+as it is, listing the other under `conflicts`. References the current build cannot resolve are
+reported as `problems`. A workspace is not part of a published audit.
+
+## Links file (`machinechecked.links.json`), written by people, the reader and `link`
+
+Per paper key (the paper's path in the project, or its URL), per claim key: `lean` (the confirmed
+list), `rejected` (suggestions declined) with optional `rejected_reasons` (`{name: {reason, by,
+at}}`), the correspondence note (`note`, `coverage`, `confidence`), `by` and `at`. When the
+confirmed list changes, the note written for the old list moves to `earlier_notes` (with the list
+it described), where it is kept and no longer shown. `machinechecked link` and the reader's
+buttons write it through the same checks (`authoring.py`), refusing a write when the claim's entry
+changed after the request was prepared.
 
 ## Identifiers
 

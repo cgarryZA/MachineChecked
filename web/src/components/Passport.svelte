@@ -15,6 +15,7 @@
   import Decl from "./Decl.svelte";
   import Tex from "./Tex.svelte";
   import LinkPicker from "./LinkPicker.svelte";
+  import Investigation from "./Investigation.svelte";
   import { VERDICTS } from "../lib/review.js";
   import { tick, setContext } from "svelte";
 
@@ -427,6 +428,7 @@
       {/if}
     </section>
     </div>
+    {#if editable}<Investigation {index} {claim} />{/if}
     </div>
   </article>
 {/if}

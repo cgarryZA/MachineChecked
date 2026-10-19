@@ -374,6 +374,16 @@ def links_file(root: Path) -> Path:
     return old if old.exists() and not new.exists() else new
 
 
+def links_key(root: Path, paper_path: Path) -> str:
+    """The key of a paper in the links file: its path in the project, or for a paper fetched by
+    URL, its URL (the same in every clone)."""
+    key = str(paper_path.relative_to(root))
+    side = paper_path.with_suffix(".json")
+    if paper_path.suffix == ".pdf" and side.exists():
+        key = json.loads(side.read_text()).get("url") or key
+    return key
+
+
 def load_links(root: Path) -> dict:
     p = links_file(root)
     if not p.exists():
@@ -392,9 +402,12 @@ def save_link(root: Path, paper: str, key: str, lean: list[str] | None, rejected
         entry = links.setdefault(key, {})
         if lean is not None:
             if entry.get("lean") != lean:
-                # A note describes the declarations it was written for.
-                for k in ("note", "coverage", "confidence"):
-                    entry.pop(k, None)
+                # A note describes the declarations it was written for: it is kept, no longer
+                # shown, under `earlier_notes`.
+                old = {k: entry.pop(k) for k in ("note", "coverage", "confidence") if k in entry}
+                if old:
+                    entry.setdefault("earlier_notes", []).append(
+                        {**old, "lean": entry.get("lean"), "by": entry.get("by")})
             entry["lean"] = lean
             entry["at"] = _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds")
             if by:
@@ -710,11 +723,7 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
         if anchors:
             notes.append("the paper is a PDF: its statements were found by their bold headings, "
                          "and where each one ends is estimated")
-    paper_key = str(paper_path.relative_to(root))
-    side = paper_path.with_suffix(".json")
-    if paper_path.suffix == ".pdf" and side.exists():
-        # A paper fetched by URL is known by its URL, the same in every clone.
-        paper_key = json.loads(side.read_text()).get("url") or paper_key
+    paper_key = links_key(root, paper_path)
 
     # The Lean project.
     fy = fz.load(root)
