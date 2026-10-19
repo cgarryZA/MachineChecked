@@ -154,7 +154,11 @@ def add(cfg: Config, claim: str, symbol: str, decl: str, by: str, var: str | Non
         raise SymbolError(f"no claim {claim}")
     if decl not in {cl.get("spec") for cl in chunk["clauses"]}:
         raise SymbolError(f"{decl} is not a statement of {claim}")
-    tex = chunk.get("statement_tex")
+    # The link is made on the passage the reader typesets, when it typesets one, and is pinned
+    # to its rendering context too; otherwise on the statement's source text.
+    excerpt = chunk.get("excerpt") or {}
+    shown = excerpt.get("text") if excerpt.get("ready") else None
+    tex = shown or chunk.get("statement_tex")
     if not tex or not _in_math(tex, symbol):
         raise SymbolError(f"{symbol!r} does not occur in the mathematics of {claim}'s printed "
                           "statement")
@@ -184,7 +188,8 @@ def add(cfg: Config, claim: str, symbol: str, decl: str, by: str, var: str | Non
             {"decl": decl, "binder": idx, "path": "type"}
     link = {"claim": claim, "symbol": {"tex": symbol, "occurrence": "all"}, "lean": target,
             "by": by, "pins": {"statement": spec.get("fingerprint"), "source": sha256_text(tex),
-                               "target": target_text(spec, target)}}
+                               "target": target_text(spec, target),
+                               **({"excerpt": excerpt["fingerprint"]} if shown else {})}}
     data = read_json(cfg.symbols) if cfg.symbols.exists() else {"schema": SCHEMA, "links": []}
     data["links"] = [ln for ln in data.get("links", [])
                      if not (ln.get("claim") == claim and (ln.get("symbol") or {}).get("tex") == symbol)]
