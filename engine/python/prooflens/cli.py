@@ -1086,7 +1086,7 @@ def main(argv=None):
     rv = sub.add_parser("review")
     rvs = rv.add_subparsers(dest="action", required=True)
     pm = rvs.add_parser("promote", help="turn review reports into review markers (maintainer)")
-    pm.add_argument("reports", nargs="+", help="files exported from the review queue")
+    pm.add_argument("reports", nargs="+", help="files exported from the review queue, or directories of them")
     pm.add_argument("-c", "--config", default=None)
     pm.add_argument("--yes", action="store_true", help="write without asking")
     pm.add_argument("--accept-same-family", action="store_true",
