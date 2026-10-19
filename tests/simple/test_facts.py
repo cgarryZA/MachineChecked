@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import sys
 import threading
+from pathlib import Path
 
 import pytest
 
@@ -208,38 +209,115 @@ def test_deleting_the_store_reproduces_the_same_facts(plain):
     assert (root / "machinechecked.links.json").read_bytes() == links
 
 
+# How a Lean session that loads `Plain.Sums` fails, for each kind of failure: the exit code and
+# what Lean printed, as the session reports them, or None for a session the probe stops itself.
+DETERMINISTIC = (1, "Probe.lean:3:0: error: object file Plain/Sums.olean of module Plain.Sums "
+                    "does not exist")
+TRANSIENT = {
+    "out of memory": (1, "INTERNAL PANIC: out of memory"),
+    "heartbeat budget": (1, "Probe.lean:1:0: error: (deterministic) timeout at `whnf`, maximum "
+                            "number of heartbeats (200000) has been reached"),
+    "killed by a signal": (-9, ""),
+    "killed through a shell": (137, "Killed"),
+    "no output": (0, ""),
+    "unfinished output": (0, None),
+    "timeout": None,
+}
+
+
+def fail_sums(monkeypatch, how):
+    """Make every Lean session that imports `Plain.Sums` or `Plain` (which imports it) fail as
+    `how` says; the others run."""
+    from prooflens import probe
+    real = probe._run_watched
+
+    def fake(cmd, cwd, env, timeout, out, log, label):
+        imports = set(Path(cmd[-1]).read_text().splitlines())
+        if not imports & {"import Plain.Sums", "import Plain"}:
+            return real(cmd, cwd, env, timeout, out, log, label)
+        if how is None:                       # the time limit: the probe stops the session
+            beat, probe.HEARTBEAT = probe.HEARTBEAT, 0.01
+            try:
+                return real(cmd, cwd, env, 0, out, log, label)
+            finally:
+                probe.HEARTBEAT = beat
+        code, text = how
+        if text is None:                      # Lean exits having written only part of its output
+            out.write_text('{"record": "module", "name": "Plain.Sums", "imports": []}\n')
+            code, text = 0, ""
+        return subprocess.CompletedProcess(cmd, code, text, "")
+    monkeypatch.setattr(probe, "_run_watched", fake)
+    return real
+
+
+def test_failures_are_told_apart():
+    from prooflens.probe import failure_is_deterministic
+    assert failure_is_deterministic(*DETERMINISTIC)
+    for kind, how in TRANSIENT.items():
+        if how is not None and how[1] is not None:
+            assert not failure_is_deterministic(*how), kind
+
+
 @needs_lean
 @needs_tex
-def test_a_module_that_fails_to_load_keeps_the_others_facts(plain, monkeypatch):
+def test_an_error_in_a_module_is_kept_with_the_others_facts(plain, monkeypatch):
+    """Lean reports an error in the module: the same inputs fail the same way, so the failure is
+    stored with the facts that were extracted, and the next build starts no session."""
+    from prooflens import probe
     root, sessions = plain
-    real = simple.run_simple_probe
-
-    def failing(root_, modules, *a, **k):
-        if {"Plain", "Plain.Sums"} & set(modules):
-            raise simple.ViewError("the Lean probe failed (1):\nerror: synthetic failure")
-        return real(root_, modules, *a, **k)
-    monkeypatch.setattr(simple, "run_simple_probe", failing)
+    real = fail_sums(monkeypatch, DETERMINISTIC)
     v = view(root)
-    assert any("2 built module(s) could not be loaded" in n for n in v["body"]["notes"])
+    assert any("2 built module(s) could not be loaded by MachineChecked" in n
+               for n in v["body"]["notes"])
     assert statuses(v)["Theorem 1"] == "linked: Lean proof checked"
 
-    # The failure is recorded with the facts that were extracted: the next build starts no
-    # session, and still reports the modules it could not load.
-    monkeypatch.setattr(simple, "run_simple_probe", real)
+    monkeypatch.setattr(probe, "_run_watched", real)
     sessions.clear()
     v = view(root)
-    assert v["lean"]["sessions"] == 0
-    assert any("2 built module(s) could not be loaded" in n for n in v["body"]["notes"])
+    assert v["lean"]["sessions"] == 0 and sessions == []
+    assert any("2 built module(s) could not be loaded by MachineChecked" in n
+               for n in v["body"]["notes"])
     assert statuses(v)["Theorem 1"] == "linked: Lean proof checked"
 
     # Forgetting the recorded failures loads those modules again, and only those.
     facts.Store(root, [], root / ".machinechecked" / "build", []).drop("failed")
-    spied = []
-    monkeypatch.setattr(simple, "run_simple_probe",
-                        lambda r, m, *a, **k: spied.append(sorted(m)) or real(r, m, *a, **k))
+    sessions.clear()
     v = view(root)
     assert not any("could not be loaded" in n for n in v["body"]["notes"])
-    assert spied and all(set(m) <= {"Plain", "Plain.Sums"} for m in spied)
+    assert sessions and all(set(s["modules"]) <= {"Plain", "Plain.Sums"} for s in sessions)
+
+
+@needs_lean
+@needs_tex
+@pytest.mark.parametrize("kind", list(TRANSIENT))
+def test_a_failure_of_resources_or_of_the_session_is_tried_again(plain, monkeypatch, kind):
+    """Out of memory, a heartbeat budget, a killed process, a session with no or unfinished
+    output, a time limit: none is stored as the module's failure. The other modules' facts are
+    kept; the next build loads the failed modules again, and only those, and says that the
+    earlier attempt failed."""
+    from prooflens import probe
+    root, sessions = plain
+    real = fail_sums(monkeypatch, TRANSIENT[kind])
+    v = view(root)
+    assert any("2 built module(s) could not be loaded this time" in n and
+               "tries them again" in n for n in v["body"]["notes"]), v["body"]["notes"]
+    assert statuses(v)["Theorem 1"] == "linked: Lean proof checked"
+
+    # Stored facts alone do not cover the next build: the failed modules must be loaded again.
+    with pytest.raises(StaleLean) as e:
+        view(root, reuse_only=True)
+    assert "an earlier attempt failed" in str(e.value)
+
+    monkeypatch.setattr(probe, "_run_watched", real)
+    sessions.clear()
+    said = []
+    v = view(root, said)
+    assert not any("could not be loaded" in n for n in v["body"]["notes"])
+    assert sessions and all(set(s["modules"]) <= {"Plain", "Plain.Sums"} for s in sessions)
+    assert any("an earlier attempt failed" in m for m in said), said
+    sessions.clear()
+    view(root)
+    assert sessions == []
 
 
 @needs_lean

@@ -37,7 +37,12 @@ ENV_WORDS = {"thm", "theorem", "lem", "lemma", "prop", "proposition", "cor", "co
 from .status import fields, source_evidence
 
 class ViewError(RuntimeError):
-    pass
+    """A failure the view reports. `deterministic` (for a failed Lean session) as in
+    `probe.ProbeError`: true only for an error Lean reported in its input."""
+
+    def __init__(self, message: str = "", deterministic: bool = False):
+        super().__init__(message)
+        self.deterministic = deterministic
 
 
 # -- discovery -------------------------------------------------------------------------------
@@ -454,15 +459,20 @@ def run_simple_probe(root: Path, modules: list[str], libs: list[str], requests: 
     query = {"scope_roots": [l.split(".")[0] for l in libs], "spec_prefix": "",
              "accept_prefix": "", "allowed_axioms": STANDARD_AXIOMS, "requests": requests}
     try:
-        return lean_session(root, modules, query, lambda lines: [_record(l) for l in lines],
+        recs = lean_session(root, modules, query, lambda lines: [_record(l) for l in lines],
                             lake, timeout, work, log, label)
     except ProbeError as e:
-        raise ViewError(str(e)) from None
+        raise ViewError(str(e), deterministic=e.deterministic) from None
+    if not any(r.get("record") == "done" for r in recs):
+        raise ViewError("the Lean session ended before it finished (its output has no `done` "
+                        "record)")
+    return recs
 
 
 def probe_modules(root: Path, modules: list[str], libs: list[str], requests: list[dict],
                   lake: str = "lake", log=print, work: Path | None = None,
-                  sessions: dict[str, list[str]] | None = None
+                  sessions: dict[str, list[str]] | None = None,
+                  retry: set[str] | None = None
                   ) -> tuple[list[dict], dict[str, str]]:
     """Probe the built modules without assuming they can all be imported into one Lean session.
 
@@ -472,7 +482,9 @@ def probe_modules(root: Path, modules: list[str], libs: list[str], requests: lis
     fails to load is split in halves, down to single modules. Each record is tagged with the
     group it came from, and a name found in several groups is ambiguous until its module is
     given. Returns the records and the modules that could not be loaded, with the reason;
-    `sessions`, when given, receives the modules of each session started, by its label."""
+    `sessions`, when given, receives the modules of each session started, by its label, and
+    `retry` the failed modules whose failure was not an error Lean reported in them (out of
+    memory, a timeout, a killed or unfinished session): another attempt may load them."""
     recs, failed = [], {}
 
     def run(group: list[str], label: str):
@@ -484,6 +496,8 @@ def probe_modules(root: Path, modules: list[str], libs: list[str], requests: lis
         except ViewError as e:
             if len(group) == 1:
                 failed[group[0]] = str(e)[-600:]
+                if retry is not None and not getattr(e, "deterministic", False):
+                    retry.add(group[0])
                 return
             errors = [l.strip() for l in str(e).splitlines() if "error" in l]
             reason = errors[0].split("error:", 1)[-1].strip()[:200] if errors else "no error message"
@@ -615,7 +629,13 @@ class LeanFacts:
     a linked or suggested declaration's record per declaration and module (with the records of
     its closure, each stored once), so an edit outside Lean starts no Lean session and an edit to
     a module reopens only what that module's importers extracted. With `reuse_only`, nothing is
-    extracted: a build that would need Lean stops with `StaleLean`."""
+    extracted: a build that would need Lean stops with `StaleLean`.
+
+    A module that fails to load is stored as failed only when Lean reported an error in it (it
+    does not import or elaborate), a failure the same inputs repeat. A failure of resources or of
+    the session (out of memory, a timeout, a heartbeat budget, a killed or unfinished session) is
+    stored only as an attempt: the next build loads the module again and says that the earlier
+    attempt failed."""
 
     def __init__(self, root: Path, libs: list[str], built: list[str], unbuilt: list[str],
                  work: Path, lake: str = "lake", log=print, reuse_only: bool = False):
@@ -627,6 +647,7 @@ class LeanFacts:
         self.fresh: dict[str, list[dict]] = {}       # link records extracted in this build
         self.fresh_decls: dict[str, dict] = {}
         self.fresh_index: dict[str, list[dict]] = {}
+        self.retry: set[str] = set()                 # failures of this build to try again
 
     # -- probing and storing ----------------------------------------------------------------
 
@@ -639,7 +660,7 @@ class LeanFacts:
         sessions: dict[str, list[str]] = {}
         recs, failed = probe_modules(self.root, modules, self.libs,
                                      requests + [{"kind": "modules", "name": ""}], self.lake,
-                                     self.log, self.work, sessions=sessions)
+                                     self.log, self.work, sessions=sessions, retry=self.retry)
         self.sessions += len(sessions)
         self._store(recs, sessions, failed, any(r["kind"] == "index" for r in requests))
         for r in recs:
@@ -669,6 +690,8 @@ class LeanFacts:
             graph = graph_of.get(label)
             if not graph or not any(r["record"] == "done" for r in rs):
                 continue
+            for m in mods:
+                st.remove("attempt", m)
             if indexed:
                 per_mod: dict[str, list[dict]] = {}
                 for r in rs:
@@ -699,7 +722,12 @@ class LeanFacts:
         if failed:
             project = {m: d for m in self.built if (d := st.own(m)) is not None}
             for m, reason in failed.items():
-                st.put("failed", m, project, reason=reason)
+                if m in self.retry:
+                    st.put("attempt", m, {}, reason=reason)
+                    st.remove("failed", m)
+                else:
+                    st.put("failed", m, project, reason=reason)
+                    st.remove("attempt", m)
 
     def _answers(self, name: str, where: dict[str, set[str]],
                  groups: list[list[str]]) -> tuple[list[dict] | None, str | None]:
@@ -736,7 +764,9 @@ class LeanFacts:
             if f is not None:
                 failed[m] = f["reason"]
                 continue
-            stale[m] = why
+            earlier = st.peek("attempt", m)
+            stale[m] = f"an earlier attempt failed: {_first_line(earlier['reason'])}" \
+                if earlier else why
         if stale:
             self._need(f"{len(stale)} module(s) to index ({_reasons(stale)})")
             where = _where(linked, by_mod.values(), self.built)
@@ -816,6 +846,17 @@ class LeanFacts:
             self.log(f"lean: reusing the stored records of {len(linkrecs)} linked or suggested "
                      f"declaration(s)")
         return linkrecs, decls
+
+
+def _first_line(reason: str) -> str:
+    """The line of a failure's text that names it: a sign of running out of a resource where
+    there is one, else its first line."""
+    from .probe import RESOURCE_SIGNS
+    lines = [l.strip() for l in str(reason).splitlines() if l.strip()]
+    for l in lines:
+        if any(sign in l.lower() for sign in RESOURCE_SIGNS):
+            return l[:160]
+    return (lines[0] if lines else "no message")[:160].rstrip(":")
 
 
 def _clean(rec: dict) -> dict:
@@ -987,10 +1028,17 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
                 wanted |= {s["name"] for s in c["suggestions"] if s.get("kind")}
             linkrecs, decls = lean.links(wanted, index, failed)
         facts_used = {"sessions": lean.sessions, **lean.store.stats}
-        if failed:
-            notes.append(f"{len(failed)} built module(s) could not be loaded by MachineChecked "
-                         f"and are not indexed: {', '.join(sorted(failed)[:5])}"
-                         + ("…" if len(failed) > 5 else ""))
+        again = sorted(m for m in failed if m in lean.retry)
+        kept = sorted(m for m in failed if m not in lean.retry)
+        if kept:
+            notes.append(f"{len(kept)} built module(s) could not be loaded by MachineChecked "
+                         f"and are not indexed: {', '.join(kept[:5])}"
+                         + ("…" if len(kept) > 5 else ""))
+        if again:
+            notes.append(f"{len(again)} built module(s) could not be loaded this time (out of "
+                         "memory, a time limit or an interrupted Lean session) and are not "
+                         f"indexed; the next build tries them again: {', '.join(again[:5])}"
+                         + ("…" if len(again) > 5 else ""))
 
     # Statuses.
     for c in claims:

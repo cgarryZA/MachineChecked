@@ -18,6 +18,10 @@ paper changes none of them. The modules of other packages (Mathlib, say) are pin
 manifest and the toolchain. The store is derived data: deleting it costs only the time to
 extract the facts again, and it holds nothing authored.
 
+A module that fails to load is stored as failed only when Lean reported an error in it; a
+failure of resources or of the session is stored only as an attempt, which the next build
+retries (see `simple.LeanFacts`).
+
 Writes are atomic, and `lock` serialises extraction between processes, so concurrent requests
 for the same facts make one extraction: the later request finds the stored answer.
 """
@@ -197,6 +201,18 @@ class Store:
         _atomic_write(self._path(kind, key), json.dumps(entry, ensure_ascii=False))
         self.stats["stored"] += 1
         return entry
+
+    def peek(self, kind: str, key: str) -> dict | None:
+        """The stored entry `kind`/`key` whether or not it is current."""
+        try:
+            entry = json.loads(self._path(kind, key).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        return entry if entry.get("key") == key else None
+
+    def remove(self, kind: str, key: str) -> None:
+        with contextlib.suppress(OSError):
+            self._path(kind, key).unlink()
 
     def drop(self, kind: str) -> None:
         """Forget every stored entry of one kind (a targeted refresh)."""
