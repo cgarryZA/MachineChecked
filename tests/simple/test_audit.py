@@ -218,3 +218,40 @@ def test_the_one_file_reader_is_written_where_git_ignores_it(plain):
     status = subprocess.run(["git", "status", "--porcelain", "--untracked-files=all"], cwd=plain,
                             capture_output=True, text=True).stdout
     assert "MachineChecked.html" not in status and ".machinechecked" not in status
+
+
+@needs_lean
+@needs_tex
+def test_the_canonical_importer_reads_a_zero_configuration_audit(plain):
+    """machinechecked.org loads an audit on its paper page through `load_published_audit`, which
+    checks the PDF the audit ships against the `pdf_sha256` of its data."""
+    from prooflens.published import load_published_audit
+    if not built_modules(plain, ["Plain"])[0]:
+        pytest.skip("the plain example is not built")
+    git = ["git", "-c", "user.name=t", "-c", "user.email=t@example.org"]
+    subprocess.run(git + ["init", "-q"], cwd=plain, check=True)
+    subprocess.run(git + ["remote", "add", "origin", "https://github.com/synthetic/plain"],
+                   cwd=plain, check=True)
+    subprocess.run(git + ["add", "-A"], cwd=plain, check=True)
+    subprocess.run(git + ["commit", "-q", "-m", "plain"], cwd=plain, check=True)
+    view = build_view(plain, plain / "paper/main.tex", plain / ".machinechecked",
+                      log=lambda m: None)
+    site = plain / ".machinechecked" / "site"
+    write_view_site(view, site, None, plain)
+    desc = json.loads((site / "audit.json").read_text())
+    # A paper on disk has no public identifier; the author's listing names one.
+    desc["papers"][0]["id"] = "arxiv:2601.00001"
+    (site / "audit.json").write_text(json.dumps(desc))
+    commit = desc["formalisation"]["commit"]
+    paper = {"id": "arxiv:2601.00001", "title": "Plain", "authors": [], "links": {}}
+    project = {"repository": "synthetic/plain", "commit": commit}
+    base = "https://audit.example/plain/"
+
+    def fetch(url, limit):
+        return (site / url[len(base):]).read_bytes()
+    got = load_published_audit(paper, project, {"url": base, "author": "A. Auditor"}, fetch)
+    assert got["claims"]
+    # A PDF that is not the one the data describes is refused.
+    (site / "data" / "papers" / "P.pdf").write_bytes(b"%PDF-1.4 other")
+    with pytest.raises(Exception, match="PDF|pdf"):
+        load_published_audit(paper, project, {"url": base, "author": "A. Auditor"}, fetch)

@@ -73,6 +73,10 @@ See [the structured status contract](STATUS_CONTRACT.md) for the complete code i
 findings counts. `data/claims/<file>.json` holds one passport: the printed statement, each
 clause's unfolded statement, proofs, witness, regimes, reviews and structured `evidence`, the
 declarations of its closure, and its findings. A claim is loaded only when it is opened.
+In zero configuration a passport also has `correspondence` (or `null`): the mapper's note on how
+far the linked declarations state the claim, `{source, coverage, confidence, note, by}`, where
+`source` is `confirmed` (the auditor's, from `machinechecked.links.json`) or `formalization.yaml`
+(the project's row notes). It is displayed beside the links and is never an input to a status.
 
 A paper page (`prooflens.paper.write_paper_site`, used by machinechecked.org) is written in the
 same format, with `mode: "paper"`: the paper's registry entry (`paper`), the Lean projects that
@@ -82,17 +86,62 @@ give it (`by_project`). Without an audit nothing has run Lean, so a linked state
 "linked: Lean not checked here (no audit published)" (class `declared`). The reader shows one
 project at a time and never combines them. No statement text is written.
 
+**Versions of a paper.** A paper with several versions (published `vN`, an unpublished
+manuscript at a commit) has one page per version, each written by `write_paper_site` with its own
+PDF, claims and audits, and with `versions` (every version) and `version` (this page's `id`).
+The site supplies each version as:
+
+| Field | What |
+|---|---|
+| `id` | the version's identifier, as an audit's `paper_version.id` gives it: `arxiv:2601.01234v1`, `manuscript:abc1234` |
+| `kind` | `published` or `manuscript` |
+| `revision` | a manuscript's commit (required for a manuscript) |
+| `href` | the address of that version's page on the same site, such as `/papers/2601.01234/v1/` (absolute path or relative; never another site) |
+| `pdf` | the version's PDF (https, or on the site); optional |
+| `audits` | the audits of that version: `url` (https), `author`, `repository`; optional |
+
+`page_versions` checks the list and sets each `label` from `kind` and `id` ("arXiv v1", "Latest
+manuscript (commit abc1234)"), ignoring a label the site gives. Every audit loaded for a page
+must pin that page's version: load it with the listing's `version` (`load_published_audit`), and
+`write_paper_site` refuses one that pins another. The reader shows a version drop-down beside the
+project selector when there are several versions: choosing one opens that version's page, with
+the chosen project and without the claim (claim numbers can differ between versions); a link to
+a claim opens it in its own version's page. Statuses belong to each version's page, so switching
+never changes one.
+
 ## Audit descriptor (`audit.json`), written by the engine
 
 At the root of every published reader (`machinechecked build --site`, `machinechecked export`):
 `schema` (`machinechecked/audit@1`), `created`, `author` (the name the audit is published under,
 as its author gives it), `papers` (title; `id` and `version` when the paper is an arXiv paper, for
-example `arxiv:2601.01234` and `v2`; `url`; `revision`), `formalisation` (`repository` as
+example `arxiv:2601.01234` and `v2`, with `version` null when the audit pins an unpublished
+manuscript; `url`; `revision`; `paper_version`, below), `formalisation` (`repository` as
 `owner/repo` when the project's remote is on GitHub, `commit`, `toolchain`), `release`, `data` (the
 path of the manifest index, inside the directory), `issues` and `site_url`. It records what its
 author states; it is not evidence of anything by itself. A reader loading an audit from another
 address takes every string in it and in its data as text, reads only files inside the audit's
 directory, and never offers to edit it.
+
+`paper_version` is the one version of the paper the audit pins (`versions.py`), or null when none
+is known:
+
+| Field | Published version | Unpublished manuscript |
+|---|---|---|
+| `kind` | `published` | `manuscript` |
+| `id` | `arxiv:2601.01234v1` (or `doi:…`, or the URL) | `manuscript:<first 7 hex of the commit>` |
+| `revision` | the commit of the source read, if known | the manuscript's commit |
+| `label` | `arXiv v1` | `Latest manuscript (commit abc1234)` |
+
+An arXiv version also has `arxiv` (`arxiv:2601.01234`) and `number` (`v1`). A manuscript is never
+given a version number. `build` refuses an audit whose inventory pins (`papers.<id>.commit`, a
+claim's `commit`) name another version: a published version is pinned by its identifier
+(`2601.01234v1`), a manuscript by its commit. `checked` is true when every claim carries a pin and
+the pins name this version (a zero-configuration audit reads its claims from the version itself, so
+it is always true); false when some claim carries no pin, so the version is only as the configuration
+states it. Readers show an unchecked version as declared by the author and not checked against the
+claims. A site loading an audit (`load_published_audit`)
+rebuilds the label from `kind` and `id`, checks that the descriptor and the data name the same
+version, and, given a listing's `version`, refuses an audit that pins another one.
 
 ## Identifiers
 

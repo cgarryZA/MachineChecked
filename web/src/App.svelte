@@ -2,6 +2,7 @@
   import { loadIndex, canEdit, auditInfo, AUDIT } from "./lib/data.js";
   import { project, chooseProject } from "./lib/project.svelte.js";
   import { route, href } from "./lib/route.svelte.js";
+  import { pageVersions, versionHref, versionLabel } from "./lib/versions.js";
   import Coverage from "./components/Coverage.svelte";
   import Reader from "./components/Reader.svelte";
   import Passport from "./components/Passport.svelte";
@@ -18,6 +19,17 @@
   const firstPaper = $derived(index?.papers[0]?.id);
   const paperId = $derived(route.paper || firstPaper);
   const paper = $derived(index?.papers.find((p) => p.id === paperId));
+  const versions = $derived(pageVersions(index));
+  const thisVersion = $derived(versions.find((v) => v.id === index?.version));
+  // The chosen project's audit pins this version; when some of its claims carry no revision,
+  // the version is only as its author declares it, and the page says so.
+  const unchecked = $derived(thisVersion && index?.audits?.[project.repo]?.paper_version &&
+                             index.audits[project.repo].paper_version.checked !== true);
+  function chooseVersion(id) {
+    const v = versions.find((x) => x.id === id);
+    const to = v && v.id !== index.version ? versionHref(v, project.repo) : null;
+    if (to) location.assign(to);
+  }
   const releaseMismatch = $derived(index && route.release && route.release !== index.release);
 </script>
 
@@ -47,6 +59,21 @@
     {/if}
     {#if index.mode === "paper"}
       {@const repos = index.projects || []}
+      {#if thisVersion || repos.length > 1}
+      <div class="choices">
+      {#if versions.length > 1 && thisVersion}
+        <label class="project" title="Choose the version of the paper: each has its own PDF, claim numbers and audits">
+          <span>Version</span>
+          <select value={thisVersion.id} onchange={(e) => chooseVersion(e.currentTarget.value)} aria-label="Paper version shown">
+            {#each versions as v}<option value={v.id}>{versionLabel(v)}</option>{/each}
+          </select>
+        </label>
+      {:else if thisVersion}
+        <span class="version" title="The version of the paper shown">{versionLabel(thisVersion)}</span>
+      {/if}
+      {#if unchecked}
+        <span class="version unchecked" title="Some of this audit's claims record no revision of the paper, so the version is as the audit's author declares it">Version declared by the audit's author, not checked against its claims</span>
+      {/if}
       {#if repos.length > 1}
         <label class="project" title="Choose the project whose evidence to show">
           <span>Formalisation</span>
@@ -54,6 +81,8 @@
             {#each repos as r}<option value={r}>{r}</option>{/each}
           </select>
         </label>
+      {/if}
+      </div>
       {/if}
       <a class="aux" href="/papers/">Papers</a>
     {:else}
@@ -125,6 +154,9 @@
     .ptitle { max-width: 100%; flex: 1 1 180px; font-size: 14px; }
     .brand span { display: none; }
   }
-  .project { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); margin-left: auto; }
-  .project select { font: inherit; max-width: min(42vw, 320px); padding: 3px 6px; border-radius: 6px; border: 1px solid var(--accent); background: var(--surface); color: var(--text); }
+  .choices { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-left: auto; min-width: 0; }
+  .project { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); min-width: 0; }
+  .version { font-size: 13px; color: var(--muted); white-space: nowrap; }
+  .version.unchecked { white-space: normal; font-style: italic; }
+  .project select { font: inherit; min-width: 0; max-width: min(42vw, 320px); padding: 3px 6px; border-radius: 6px; border: 1px solid var(--accent); background: var(--surface); color: var(--text); }
 </style>
