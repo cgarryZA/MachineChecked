@@ -77,7 +77,8 @@ Every evidence record contains:
 
 `machinechecked build --reuse-lean` reuses stored probe records only when a SHA-256 over every Lean input
 (the project's and every path dependency's sources, lakefiles, manifest and toolchain) and the
-probe itself are unchanged. `machinechecked reassess` applies new reviews and dismissals to stored
+probe itself are unchanged; otherwise it stops with exit code 2 and says to run `machinechecked
+build` without `--reuse-lean`. `machinechecked reassess` applies new reviews and dismissals to stored
 evidence, and refuses when the claim inventory changed.
 
 Evidence records are content-addressed and never rewritten. A release name, once given, keeps its

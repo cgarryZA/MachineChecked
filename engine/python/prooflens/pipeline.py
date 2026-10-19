@@ -74,7 +74,8 @@ def build(cfg: Config, release: str | None = None, skip_lean: bool = False,
                    or (r["kind"] in ("accept", "refute", "witness") and
                        f"{r['kind']}:{r['name']}:{r.get('spec') or ''}" not in lean["proofs"])]
         if missing:
-            raise RuntimeError(f"the stored probe does not cover {missing[:5]}; run the probe")
+            raise StaleEvidence(f"the stored Lean results do not cover {', '.join(missing[:5])}"
+                                + (", …" if len(missing) > 5 else "") + "; " + RUN_PROBE)
         lean_digest = lean_inputs_digest(cfg)
         log("probe: reusing the stored probe records (no Lean input changed)")
     elif not skip_lean:
@@ -214,16 +215,17 @@ def reusable_lean(cfg: Config) -> dict:
     content of every Lean input (here and in every path dependency) and the same probe."""
     rels = ev.releases(cfg.out_dir)
     if not rels:
-        raise RuntimeError("no stored evidence to reuse")
+        raise StaleEvidence("no stored Lean results to reuse; " + RUN_PROBE)
     body = ev.load(cfg.out_dir, read_json(rels[-1])["evidence"])["body"]
     lean, prov = body.get("lean"), body["provenance"]
     if not lean or not prov.get("lean_inputs_sha256") or not prov.get("probe_sha256"):
-        raise RuntimeError("the stored evidence does not record its Lean inputs; run the probe")
+        raise StaleEvidence("the stored Lean results do not record their Lean inputs; "
+                            + RUN_PROBE)
     if prov["lean_inputs_sha256"] != lean_inputs_digest(cfg):
-        raise RuntimeError("Lean inputs changed since the stored probe (here or in a path "
-                           "dependency); run the probe")
+        raise StaleEvidence("Lean inputs changed since the stored Lean results (here or in a "
+                            "path dependency); " + RUN_PROBE)
     if prov["probe_sha256"] != probe_digest():
-        raise RuntimeError("the probe changed since the stored records; run the probe")
+        raise StaleEvidence("the Lean probe changed since the stored Lean results; " + RUN_PROBE)
     return lean
 
 
@@ -242,6 +244,7 @@ class StaleEvidence(RuntimeError):
 
 
 NO_RELEASE = "no release: run `machinechecked build` first"
+RUN_PROBE = "run `machinechecked build` without `--reuse-lean`"
 
 
 def inventory_changed(cfg: Config, body: dict) -> str | None:
