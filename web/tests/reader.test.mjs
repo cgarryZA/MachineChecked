@@ -131,6 +131,11 @@ fs.cpSync(reader, path.join(root, "structure"), { recursive: true });
 fs.cpSync(path.join(here, "fixtures", "structure", "data"), path.join(root, "structure", "data"), { recursive: true });
 const SHAPE = JSON.parse(fs.readFileSync(path.join(here, "fixtures", "structure", "data", "index.json"), "utf8"));
 
+// Synthetic display excerpts as the engine writes them (fixtures/make_excerpt.py).
+const excerpts = spawnSync(process.env.PYTHON || "python3", [path.join(here, "fixtures", "make_excerpt.py")], { encoding: "utf8" });
+if (excerpts.status !== 0) throw new Error(excerpts.stderr);
+const EXCERPTS = JSON.parse(excerpts.stdout);
+
 const states = spawnSync(process.env.PYTHON || "python3", [path.join(here, "fixtures", "make_status.py"), root, reader], { encoding: "utf8" });
 if (states.status !== 0) throw new Error(states.stderr);
 
@@ -389,6 +394,48 @@ const toyClaim = async (pg, id) => {
 };
 const scrollTops = (pg) => pg.evaluate(() => [document.querySelector("aside")?.scrollTop, document.querySelector(".paperpane")?.scrollTop]);
 
+// The paper's statement is typeset from its source only when all of it can be; otherwise the
+// PDF excerpt is shown, never a partial rendering.
+const withExcerpt = async (pg, excerpt) => {
+  await pg.route("**/toy/data/claims/*even-add*", async (route) => {
+    const response = await route.fetch();
+    route.fulfill({ response, json: { ...(await response.json()), excerpt } });
+  });
+  await toyClaim(pg, "T:thm:even-add");
+};
+for (const width of [1300, 390]) {
+  await check("a statement is typeset whole from its source, with the PDF and source on request", width, async (pg) => {
+    await withExcerpt(pg, EXCERPTS.complete);
+    const ex = pg.locator("aside .view .paper .excerpt");
+    await ex.locator(".katex").first().waitFor();
+    assert.equal(await ex.locator(".katex").count(), 3, "both inline formulas and the display");
+    const text = (await ex.textContent()).replace(/\s+/g, " ");
+    assert.match(text, /Then, as in \[1, Lemma 3\],/, "a citation with its note; the line after a comment is kept");
+    assert.match(text, /Proposition 1\.2 applies to \(1\.1\)\./, "references as printed");
+    assert.match(await ex.locator(".display .tag").textContent(), /\(1\.1\)/, "the equation's printed number");
+    assert.ok(!(await pg.locator("aside .paper .crop").isVisible()), "the PDF excerpt is folded");
+    await pg.locator("aside .paper summary", { hasText: "As printed in the PDF" }).click();
+    await pg.locator("aside .paper .crop canvas").waitFor();
+    await pg.locator("aside .paper summary", { hasText: "LaTeX source" }).click();
+    assert.match(await pg.locator("aside .paper .rawsrc pre").textContent(), /% not printed\nThen/);
+  });
+}
+for (const [name, why] of [["katex-refuses", "the reader cannot typeset its mathematics"], ["engine-refuses", "the engine found a command it does not reproduce"]]) {
+  await check(`a statement falls back to the PDF whole when ${why}`, 1300, async (pg) => {
+    await withExcerpt(pg, EXCERPTS[name]);
+    await pg.locator("aside .paper .crop canvas").waitFor();
+    assert.ok(await pg.locator("aside .paper .crop").isVisible());
+    assert.equal(await pg.locator("aside .paper .excerpt:visible").count(), 0, "no partial rendering");
+    assert.equal(await pg.locator("aside .paper summary", { hasText: "As printed in the PDF" }).count(), 0);
+  });
+}
+await check("a theorem of the toy paper is typeset with its equation number", 1300, async (pg) => {
+  await toyClaim(pg, "T:thm:triangle");
+  const ex = pg.locator("aside .view .paper .excerpt");
+  await ex.locator(".katex").first().waitFor();
+  assert.match(await ex.locator(".display .tag").textContent(), /\(1\)/);
+});
+
 for (const width of [1300, 390]) {
   await check("opening a definition replaces the panel; Back restores the claim as it was", width, async (pg) => {
     await toyClaim(pg, "T:def:even");
@@ -478,6 +525,9 @@ for (const width of [1300, 390]) {
     const insp = pg.locator("aside .decl.inspector");
     await insp.waitFor();
     await pg.locator("aside h2", { hasText: "Paper · Definition 1.1" }).waitFor();
+    const def = pg.locator("aside section.paper", { has: pg.locator("h2", { hasText: "Paper · Definition 1.1" }) });
+    await def.locator(".excerpt .katex").first().waitFor();
+    assert.match(await def.locator(".excerpt").textContent(), /triangular number/, "the paper's definition, typeset from its source");
     const extra = insp.locator("details.extra");
     assert.equal(await extra.getAttribute("open"), null, "Details is folded");
     assert.ok(!(await insp.locator(":scope > :not(details)").allTextContents()).join(" ").includes("a.referee"));
@@ -960,7 +1010,17 @@ await check("PDF text, links, page search and zoom work together", 1300, async (
   await pg.waitForFunction(() => document.querySelector(".find-status")?.textContent.includes("1 of 1"));
   assert.equal(await pg.getByRole("spinbutton", { name: "Page number" }).inputValue(), "15");
   await pg.getByRole("combobox", { name: "PDF zoom" }).selectOption("1.5");
+  // The zoom keeps the page the reader was on.
+  await pg.locator('[data-page="15"] .textLayer span').first().waitFor();
+  await pg.waitForTimeout(300);
+  assert.equal(await pg.getByRole("spinbutton", { name: "Page number" }).inputValue(), "15", "the zoom keeps the page");
+  const top15 = await pg.locator('[data-page="15"]').evaluate((e) => e.getBoundingClientRect().top - e.closest(".pdf").parentElement.getBoundingClientRect().top);
+  assert.ok(top15 >= 0 && top15 < 300, `page 15 stays at the top of the view (${top15})`);
+  // A page number typed while the view moves is the one opened.
   await pg.getByRole("spinbutton", { name: "Page number" }).fill("2");
+  await pg.locator(".pdf").evaluate((e) => { e.parentElement.scrollTop += 40; });
+  await pg.waitForTimeout(300);
+  assert.equal(await pg.getByRole("spinbutton", { name: "Page number" }).inputValue(), "2", "the page tracker leaves a typed number alone");
   await pg.getByRole("spinbutton", { name: "Page number" }).press("Tab");
   await pg.locator('[data-page="2"] .textLayer span').first().waitFor();
   assert.ok((await pg.locator(".band").first().boundingBox()).width <= 32, "claim marker occupies the margin");
@@ -1015,6 +1075,8 @@ await check("review opens the selected claim, keeps protocol order and exports a
   await pg.getByRole("button", { name: "Start", exact: true }).click();
   await pg.locator(".review .unit h2").waitFor();
   assert.match(await pg.locator(".review .unit h2").textContent(), /Theorem 2.1/);
+  await pg.locator(".review .unit .excerpt .katex").first().waitFor();
+  assert.match(await pg.locator(".review .unit .excerpt").textContent(), /are even natural numbers/, "the statement as typeset from its source");
   assert.match(await pg.locator(".review .warn").textContent(), /prior exposure/);
   assert.equal(await pg.locator(".review .stmt").count(), 0);
   assert.equal(await pg.locator(".review .author").count(), 0);
@@ -1039,6 +1101,78 @@ await check("review opens the selected claim, keeps protocol order and exports a
   const file = await download; const exported = JSON.parse(fs.readFileSync(await file.path()));
   assert.deepEqual(exported.reports[0], report);
 });
+
+// A saved investigation, under the engine's own local server: started in the reader, resumed
+// and edited through the engine's workspace service (as `machinechecked workspace` does), and
+// reopened in the reader with the same question and finding.
+{
+  fs.cpSync(path.join(root, "toy"), path.join(root, "toyws"), { recursive: true });
+  const work = path.join(root, "toyws-work");
+  const { spawn } = await import("node:child_process");
+  const py = spawn(process.env.PYTHON || "python3", [path.join(here, "fixtures", "workspace_server.py"), path.join(root, "toyws"), work]);
+  const port = await new Promise((ok, fail) => {
+    py.stdout.once("data", (d) => ok(String(d).trim()));
+    py.once("exit", (c) => fail(new Error("the workspace server stopped: " + c)));
+  });
+  const engine = (code) => {
+    const r = spawnSync(process.env.PYTHON || "python3", ["-c", code, work], { encoding: "utf8" });
+    if (r.status !== 0) throw new Error(r.stderr);
+    return r.stdout ? JSON.parse(r.stdout) : null;
+  };
+  const claimUrl = `http://127.0.0.1:${port}/#/r/${TOY.release}/claim/${encodeURIComponent("T:thm:even-add")}`;
+  try {
+    await check("an investigation started in the reader is resumed and edited from the terminal", 1300, async (pg) => {
+      await pg.goto(claimUrl);
+      const inv = pg.locator("section.investigation");
+      await inv.waitFor();
+      assert.match(await inv.textContent(), /informed investigation/);
+      await inv.getByRole("textbox", { name: "Your name" }).fill("Test Auditor");
+      await inv.getByRole("button", { name: "Start an investigation" }).click();
+      await inv.locator("summary", { hasText: "Ask a question" }).click();
+      await inv.getByRole("textbox", { name: "Question" }).fill("Does “even” mean ∃ k, n = 2k here?\nCheck the definition.");
+      await inv.getByRole("button", { name: "Save question" }).click();
+      await inv.locator("[data-kind=question]").waitFor();
+      await inv.locator("summary", { hasText: "Record a finding" }).click();
+      await inv.getByRole("combobox").selectOption("changed");
+      await inv.getByRole("textbox", { name: "Note" }).fill("The Lean adds a hypothesis.");
+      await inv.getByRole("button", { name: "Save draft" }).click();
+      await inv.locator("[data-kind=finding]").waitFor();
+
+      // The terminal sees the same records, and edits the finding.
+      const saved = engine(String.raw`
+import json, sys
+from pathlib import Path
+from prooflens import workspace as wsp
+from prooflens.targets import Snapshot
+(p, ws), = wsp.list_all(Path(sys.argv[1]))
+f = next(r for r in ws["records"].values() if r["kind"] == "finding")
+wsp.update(p, [{"op": "put", "base_rev": f["rev"], "record": {**{k: f[k] for k in ("id", "claim", "note")}, "kind": "finding", "coverage": "full", "note": "Edited in the terminal: the hypothesis is implied."}}], Snapshot(Path(sys.argv[1]).parent / "toyws" / "data"))
+print(json.dumps(wsp.read(p)))`);
+      assert.equal(saved.mode, "informed");
+      assert.equal(saved.reviewer.id, "human:Test-Auditor");
+      assert.equal(saved.resume.claim, "T:thm:even-add");
+      const q = Object.values(saved.records).find((r) => r.kind === "question");
+      assert.equal(q.text, "Does “even” mean ∃ k, n = 2k here?\nCheck the definition.");
+      assert.equal(saved.resume.question, q.id);
+
+      // Reopened in a new browser context (nothing kept in the page), the edit is there.
+      const pg2 = await browser.newPage({ viewport: { width: 1300, height: 900 } });
+      try {
+        await pg2.goto(claimUrl);
+        const inv2 = pg2.locator("section.investigation");
+        await inv2.getByRole("button", { name: /^Continue ws-/ }).click();
+        await inv2.locator("[data-kind=finding]").waitFor();
+        assert.match(await inv2.locator("[data-kind=finding]").textContent(), /Every clause[\s\S]*Edited in the terminal/);
+        assert.match(await inv2.locator("[data-kind=question] .text").textContent(), /Check the definition/);
+        // A stale edit from the first page is refused, and the terminal's version shown.
+        await inv.getByRole("button", { name: "Submit" }).click();
+        await inv.locator("[role=alert]").waitFor();
+        assert.match(await inv.locator("[role=alert]").textContent(), /changed elsewhere/);
+        await inv.locator("[data-kind=finding]", { hasText: "Edited in the terminal" }).waitFor();
+      } finally { await pg2.close(); }
+    });
+  } finally { py.kill(); }
+}
 
 await browser.close();
 server.close();
