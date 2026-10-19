@@ -435,5 +435,10 @@
     "mismatch": "PDF hash mismatch",
     "unpinned": "PDF hash not pinned",
     "unknown": "PDF hash not checked"
+  },
+  "replay_guard": {
+    "guarded": "under the sandbox guard",
+    "unguarded": "replayed without the sandbox guard",
+    "unrecorded": "sandbox guard not recorded"
   }
 }

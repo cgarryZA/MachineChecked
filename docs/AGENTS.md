@@ -42,7 +42,10 @@ In a project with a `machinechecked.toml` (the full assessment), the document al
 with its `tier` (`violation`, `obligation`, `warning`), `code`, `subject` (the claim or clause,
 for example `T:thm:bound#0`), `message`, and `dismissed` (who and why) when a warning was
 dismissed. Report the violations and obligations by subject and message; they are what blocks a
-claim from being accepted.
+claim from being accepted. `replay` is null when no Comparator replay counts; otherwise it
+gives the record's `guard` (`guarded`, `unguarded`, or `unrecorded` for an older record), the
+number of proofs `replayed`, and a `message` when they were not shown to run under the sandbox
+guard.
 
 ### What a declaration rests on
 

@@ -65,7 +65,10 @@ mechanical checks. Their complete state vocabularies are in `statuses.json` and 
   Definitions use the `stated` state.
 - `review` reports correspondence review independently of proof. The original `spec_review`
   and `def_reviews` retain individual stale/current reviews and self-declared provenance.
-- `replay` reports passed, not run or unverified.
+- `replay` reports passed, not run or unverified. A passed replay also has `guard`: `guarded`
+  (under Comparator's sandbox guard), `unguarded` (shown as "replayed without the sandbox
+  guard") or `unrecorded` (a record that does not state its conditions). The guard never changes
+  the state.
 - `source` records hash verification independently of `placement` (exact, approximate,
   manual, ambiguous or unlocated). For PDF-only sources, `pdf_integrity` separately records
   matched, mismatch, unpinned or unknown. PDF identity and location precision have independent values.

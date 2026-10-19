@@ -173,8 +173,15 @@ class Assessor:
                         "detail": f"the Comparator record was made with other {label}"}
         if thm not in set(rec.get("replayed", [])):
             return {"state": "not-run", "detail": "the Comparator record does not cover this proof"}
-        return {"state": "pass", "detail": "Comparator replayed the proof in a fresh kernel ("
-                + ", ".join(rec.get("kernels", ["lean"])) + ")" + since}
+        # A replay without Comparator's sandbox guard still counts; the fact says so.
+        how = rec.get("conditions")
+        guard = ("unrecorded" if not isinstance(how, dict) else
+                 "guarded" if how.get("guard") not in (None, "none") else "unguarded")
+        note = {"guarded": "", "unguarded": "; replayed without the sandbox guard",
+                "unrecorded": "; the record does not say whether the sandbox guard was used"}
+        return {"state": "pass", "guard": guard,
+                "detail": "Comparator replayed the proof in a fresh kernel ("
+                + ", ".join(rec.get("kernels", ["lean"])) + ")" + since + note[guard]}
 
     def _environment(self) -> dict:
         """The audited project's Lean version and Lake manifest hash."""
