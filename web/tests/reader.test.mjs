@@ -13,6 +13,8 @@
 // examples/toy-paper, then copy OUT/data there.
 
 import "./presentation.test.mjs";
+import "./review.test.mjs";
+import "./coverage.test.mjs";
 import { chromium } from "playwright";
 import http from "node:http";
 import fs from "node:fs";
@@ -130,6 +132,25 @@ fs.writeFileSync(path.join(root, "toy/audit.json"), JSON.stringify({ schema: "ma
 fs.cpSync(reader, path.join(root, "structure"), { recursive: true });
 fs.cpSync(path.join(here, "fixtures", "structure", "data"), path.join(root, "structure", "data"), { recursive: true });
 const SHAPE = JSON.parse(fs.readFileSync(path.join(here, "fixtures", "structure", "data", "index.json"), "utf8"));
+// The same claims with auditors' readings in the form the engine writes them (#138; see
+// tests/simple/test_coverage_basis.py): full by composition, full through a checked bridge, and
+// an unresolved question.
+fs.cpSync(path.join(root, "structure"), path.join(root, "basis"), { recursive: true });
+const READINGS = {
+  "P:thm:layout": { coverage: "full", basis: "reviewed_composition", refs: ["Shape.layout"],
+                    argument: "Apply Shape.layout twice, once for each bound." },
+  "P:thm:witnesses": { coverage: "full", basis: "checked_bridge", refs: ["Shape.witnesses"],
+                       bridge: { theorem: "Shape.witnesses", target: "Shape.Spec.witnesses", state: "checked", reasons: [],
+                                 pinned: {}, current: {} } },
+  "P:thm:shapes": { coverage: "unresolved", question: "Is the paper's set finite?", would_decide: "Its Section 1." },
+};
+for (const c of SHAPE.claims) {
+  const f = path.join(root, "basis", "data", "claims", c.file);
+  const chunk = JSON.parse(fs.readFileSync(f, "utf8"));
+  chunk.correspondence = { source: "confirmed", basis: null, refs: [], argument: null, bridge: null, question: null,
+                           would_decide: null, confidence: null, note: "", by: "A. Auditor", ...READINGS[c.id] };
+  fs.writeFileSync(f, JSON.stringify(chunk));
+}
 
 // Synthetic display excerpts as the engine writes them (fixtures/make_excerpt.py).
 const excerpts = spawnSync(process.env.PYTHON || "python3", [path.join(here, "fixtures", "make_excerpt.py")], { encoding: "utf8" });
@@ -562,6 +583,35 @@ await check("in the local reader a symbol is linked by choosing it and clicking 
     assert.match(rows[5], /^there is C ?: ?Nat$/i);
     assert.match(await st.locator(".concl .op").textContent(), /all of the following/);
     assert.equal(await st.locator(".concl .parts > li").count(), 2);
+  });
+
+  await check("a reading shows its coverage and, separately, its basis", width, async (pg) => {
+    const reading = async (id) => {
+      await pg.goto(origin + `/basis/#/r/${SHAPE.release}/read/P/${encodeURIComponent(id)}`);
+      const box = pg.locator(".coverage[data-basis]");
+      await box.waitFor();
+      return { text: (await box.textContent()).replace(/\s+/g, " ").trim(), basis: await box.getAttribute("data-basis"),
+               tone: await box.getAttribute("data-tone") };
+    };
+    const comp = await reading("P:thm:layout");
+    assert.equal(comp.basis, "reviewed_composition");
+    assert.match(comp.text, /^Every clause, by the auditor's composition/);
+    assert.match(comp.text, /The auditor's argument: Apply Shape\.layout twice, once for each bound\. Lean has not checked this combination\.\s*Next step: State the combination as one Lean result\./);
+    assert.match(comp.text, /The auditor's reading, by A\. Auditor/);
+    assert.notEqual(comp.tone, "full", "a composition is not drawn as a Lean result");
+    const bridge = await reading("P:thm:witnesses");
+    assert.equal(bridge.basis, "checked_bridge");
+    assert.match(bridge.text, /^Every clause, through a checked bridge/);
+    assert.match(bridge.text, /Bridge: Shape\.witnesses\. Lean checks its proof and that its type is exactly the target\./);
+    assert.match(bridge.text, /Target: Shape\.Spec\.witnesses\. The auditor read it against the paper\./);
+    const open = await reading("P:thm:shapes");
+    assert.equal(open.basis, "unspecified");
+    assert.match(open.text, /^Unresolved/);
+    assert.match(open.text, /Open question: Is the paper's set finite\?\s*Would decide it: Its Section 1\./);
+    // A referenced declaration opens in the inspector.
+    await reading("P:thm:layout");
+    await pg.locator(".coverage[data-basis] button.ref").first().click();
+    await pg.waitForFunction(() => decodeURIComponent(location.hash).includes("Shape.layout"));
   });
 
   await check("a \"there is\" inside a conclusion shows its witness's type and scope", width, async (pg) => {
@@ -1009,6 +1059,18 @@ print(json.dumps(wsp.read(p)))`);
         await inv.locator("[role=alert]").waitFor();
         assert.match(await inv.locator("[role=alert]").textContent(), /changed elsewhere/);
         await inv.locator("[data-kind=finding]", { hasText: "Edited in the terminal" }).waitFor();
+        // A finding by composition is recorded as full coverage with its basis, and never
+        // reads as a direct result.
+        const add = inv.locator("details.add", { hasText: "Record a finding" });
+        if (!(await add.evaluate((d) => d.open))) await add.locator("summary").click();
+        await inv.getByRole("combobox").selectOption("composition");
+        await inv.getByRole("textbox", { name: "Argument" }).fill("Apply it to each summand.");
+        await inv.getByRole("textbox", { name: "Note" }).fill("Two results combined.");
+        await inv.getByRole("button", { name: "Save draft" }).click();
+        const comp = inv.locator("[data-kind=finding]", { hasText: "Apply it to each summand." });
+        await comp.waitFor();
+        assert.match((await comp.textContent()).replace(/\s+/g, " "),
+          /^Every clause, by the auditor's composition.*Lean has not checked this combination\..*Next step: State the combination as one Lean result\./);
       } finally { await pg2.close(); }
     });
   } finally { py.kill(); }

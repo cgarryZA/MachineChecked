@@ -75,10 +75,20 @@ findings counts. `data/claims/<file>.json` holds one passport: the printed state
 display `excerpt`, when the paper publishes its source text), each
 clause's unfolded statement, proofs, witness, regimes, reviews and structured `evidence`, the
 declarations of its closure, and its findings. A claim is loaded only when it is opened.
-In zero configuration a passport also has `correspondence` (or `null`): the mapper's note on how
-far the linked declarations state the claim, `{source, coverage, confidence, note, by}`, where
-`source` is `confirmed` (the auditor's, from `machinechecked.links.json`) or `formalization.yaml`
-(the project's row notes). It is displayed beside the links and is never an input to a status.
+In zero configuration a passport also has `correspondence` (or `null`): the mapper's reading of how
+far the linked declarations state the claim, `{source, coverage, basis, refs, argument, next_step,
+bridge, question, would_decide, confidence, note, by}`, where `source` is `confirmed` (the
+auditor's, from `machinechecked.links.json`) or `formalization.yaml` (the project's row notes).
+`coverage` is `full`, `partial`, `changed`, `related`, `unresolved` or `null`; `basis`, how the
+coverage is supported, is `direct`, `reviewed_composition`, `checked_bridge` or `null`
+(unspecified), with `refs` the linked declarations it rests on. A reviewed composition has the
+auditor's `argument` and the `next_step`, stating the combination as one Lean result (a stored
+`composed` coverage reads as `full` with this basis); a checked bridge has `bridge`, `{theorem,
+target, state, reasons, pinned, current}`, where `state` is `checked`, `stale` or `unchecked` and
+`pinned`/`current` hold the target's and the passage's digests (`target_fingerprint`,
+`source_sha256`) as read and as now. An unresolved reading has its `question` and `would_decide`.
+Values outside these are dropped. It is displayed beside the links and is never an input to a
+status.
 
 A paper page (`prooflens.paper.write_paper_site`, used by machinechecked.org) is written in the
 same format, with `mode: "paper"`: the paper's registry entry (`paper`), the Lean projects that
@@ -177,9 +187,12 @@ optional `clause` and `note`, `rev`, `created_at`/`created_by`, `updated_at`/`up
   {file, line}}` or `{paper: {claim, quote}}`. `role` is `candidate` (the default), `supports`,
   `context` or `rejected` (with `why_rejected`). A candidate is a candidate until the auditor
   gives it another role.
-- **`finding`**: `coverage` (the links file's words: `full`, `composed`, `partial`, `changed`,
-  `related`, `unresolved`), optional `confidence`, `evidence` (ids of evidence records of the
-  same claim) and, when unresolved, `question`. `state` is `draft`
+- **`finding`**: `coverage` (the links file's words: `full`, `partial`, `changed`, `related`,
+  `unresolved`), optional `basis` (`direct`, `reviewed_composition` with an optional `argument`,
+  or `checked_bridge` with `bridge: {theorem, target}`), optional `confidence`, `evidence` (ids
+  of evidence records of the same claim, which the basis rests on) and, when unresolved,
+  `question` and optional `would_decide`. A `composed` coverage is recorded as `full` with basis
+  `reviewed_composition`. `state` is `draft`
   or `submitted` (`submitted_at`). A submitted finding is never edited or deleted: a later
   finding names it in `supersedes`, with its `reason`, and both are kept.
 - **`question`**: `text`, `state` (`open`, `answered`, `withdrawn`), optional `answer` and
@@ -216,9 +229,10 @@ reported as `problems`. A workspace is not part of a published audit.
 
 Per paper key (the paper's path in the project, or its URL), per claim key: `lean` (the confirmed
 list), `rejected` (suggestions declined) with optional `rejected_reasons` (`{name: {reason, by,
-at}}`), the correspondence note (`note`, `coverage`, `confidence`), `by` and `at`. When the
-confirmed list changes, the note written for the old list moves to `earlier_notes` (with the list
-it described), where it is kept and no longer shown. `machinechecked link` and the reader's
+at}}`), the correspondence reading (`note`, `coverage`, `confidence`, `basis`, `refs`,
+`argument`, `bridge`, `question`, `would_decide`; see above), `by` and `at`. When the confirmed
+list changes, the reading written for the old list moves to `earlier_notes` (with the list it
+described), where it is kept and no longer shown. `machinechecked link` and the reader's
 buttons write it through the same checks (`authoring.py`), refusing a write when the claim's entry
 changed after the request was prepared.
 

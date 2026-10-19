@@ -1,0 +1,97 @@
+{
+ "note": "Issue drafts the reader (web/src/lib/review.js issueDraft) and the command line (review_cli.issue_draft) must both write, for a synthetic unit of the toy example.",
+ "unit": {
+  "id": "thm:Toy.even_add",
+  "name": "Toy.even_add",
+  "claims": [
+   {
+    "id": "T:thm:even-add",
+    "number": "Theorem 2.1"
+   }
+  ]
+ },
+ "cases": [
+  {
+   "verdict": "faithful",
+   "detail": "",
+   "draft": null
+  },
+  {
+   "verdict": "faithful with representation choices",
+   "detail": "Evenness is stated with a witness k, a + b = 2 * k.",
+   "draft": {
+    "kind": "explanatory note",
+    "title": "Toy.even_add: faithful with representation choices (Theorem 2.1)",
+    "body": "Review unit `thm:Toy.even_add`, verdict **faithful with representation choices**.\n\nEvenness is stated with a witness k, a + b = 2 * k."
+   }
+  },
+  {
+   "verdict": "broader",
+   "detail": "Take n := 0.",
+   "draft": {
+    "kind": "explanatory note",
+    "title": "Toy.even_add: broader (Theorem 2.1)",
+    "body": "Review unit `thm:Toy.even_add`, verdict **broader**.\n\nTake n := 0."
+   }
+  },
+  {
+   "verdict": "narrower",
+   "detail": "Adds the hypothesis 0 < n.",
+   "draft": {
+    "kind": "defect",
+    "title": "Toy.even_add: narrower (Theorem 2.1)",
+    "body": "Review unit `thm:Toy.even_add`, verdict **narrower**.\n\nAdds the hypothesis 0 < n."
+   }
+  },
+  {
+   "verdict": "mismatched",
+   "detail": "States a + b = b + a instead.",
+   "draft": {
+    "kind": "defect",
+    "title": "Toy.even_add: mismatched (Theorem 2.1)",
+    "body": "Review unit `thm:Toy.even_add`, verdict **mismatched**.\n\nStates a + b = b + a instead."
+   }
+  },
+  {
+   "verdict": "vacuous",
+   "detail": "The hypothesis a < 0 cannot hold for a natural number.",
+   "draft": {
+    "kind": "defect",
+    "title": "Toy.even_add: vacuous (Theorem 2.1)",
+    "body": "Review unit `thm:Toy.even_add`, verdict **vacuous**.\n\nThe hypothesis a < 0 cannot hold for a natural number."
+   }
+  },
+  {
+   "verdict": "refutation not valid",
+   "detail": "The refuted proposition also requires n > 0.",
+   "draft": {
+    "kind": "defect",
+    "title": "Toy.even_add: refutation not valid (Theorem 2.1)",
+    "body": "Review unit `thm:Toy.even_add`, verdict **refutation not valid**.\n\nThe refuted proposition also requires n > 0."
+   }
+  },
+  {
+   "verdict": "cannot determine",
+   "detail": "Does the paper's 'number' mean a natural number or an integer? The paper's Section 1 would decide it.",
+   "draft": {
+    "kind": "unresolved question",
+    "title": "Toy.even_add: open question (Theorem 2.1)",
+    "body": "Review unit `thm:Toy.even_add`, verdict **cannot determine**. The reviewer could not determine whether the Lean statement says what the paper says. This is an open question, not a difference that was found.\n\n**Open question.** Does the paper's 'number' mean a natural number or an integer? The paper's Section 1 would decide it."
+   }
+  },
+  {
+   "verdict": "cannot determine",
+   "detail": "  ",
+   "draft": {
+    "kind": "unresolved question",
+    "title": "Toy.even_add: open question (Theorem 2.1)",
+    "body": "Review unit `thm:Toy.even_add`, verdict **cannot determine**. The reviewer could not determine whether the Lean statement says what the paper says. This is an open question, not a difference that was found."
+   }
+  },
+  {
+   "verdict": "no such verdict",
+   "detail": "x",
+   "draft": null
+  }
+ ]
+}
