@@ -485,6 +485,43 @@ def review_view(r: dict, links: list[dict]) -> dict:
             "project_commit": pins.get("project_commit"), "current": current}
 
 
+COVERAGE_WORDS = {"full": "every clause", "partial": "part of the claim",
+                  "changed": "stated differently", "related": "a related result, not this claim",
+                  "unresolved": "unresolved"}
+BASIS_WORDS = {"direct": "in one Lean statement", "reviewed_composition":
+               "by the auditor's composition", "checked_bridge": "through a bridge"}
+
+
+def reading_text(cor: dict | None) -> str:
+    """A correspondence reading (`correspondence`) for the terminal: its coverage and basis,
+    note, the composition's argument with what Lean has not checked and the next step, a
+    bridge's state, and an unresolved reading's question. Empty when nothing is recorded."""
+    cor = cor or {}
+    if not (cor.get("note") or cor.get("coverage")):
+        return ""
+    head = COVERAGE_WORDS.get(cor.get("coverage"), "")
+    if head and cor.get("basis") in BASIS_WORDS:
+        head += ", " + BASIS_WORDS[cor["basis"]]
+    lines = [head.capitalize()] if head else []
+    if cor.get("note"):
+        lines.append(cor["note"])
+    if cor.get("basis") == "reviewed_composition":
+        lines.append("The auditor's argument: " + (cor.get("argument") or "not written."))
+        lines.append("Lean has not checked this combination. Next step: "
+                     + (cor.get("next_step") or COMPOSITION_NEXT_STEP))
+    b = cor.get("bridge") or {}
+    if cor.get("basis") == "checked_bridge" and b:
+        lines.append(f"Bridge {b.get('theorem')} to target {b.get('target')}: "
+                     + {"checked": "Lean checks it", "stale": "out of date: "
+                        + "; ".join(b.get("reasons") or [])}.get(b.get("state"), "not checked: "
+                        + "; ".join(b.get("reasons") or [])))
+    if cor.get("coverage") == "unresolved":
+        lines.append("Open question: " + (cor.get("question") or "not stated."))
+        if cor.get("would_decide"):
+            lines.append("Would decide it: " + cor["would_decide"])
+    return "\n".join(lines)
+
+
 def link_source(claim: dict, entry: dict, name: str) -> str:
     if "lean" in entry:
         return "confirmed"

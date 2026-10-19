@@ -21,9 +21,10 @@ import json
 import re
 from pathlib import Path
 
+from . import compare as cmp
+from .simple import reading_text
 from . import workspace as wsp
 from .config import Config
-from .review_queue import _text
 
 REPORT_SCHEMA = "prooflens/review-report@1"
 REPORTS_SCHEMA = "prooflens/review-reports@1"
@@ -59,17 +60,24 @@ def parse_reviewer(who: str, same_family: str = "unknown") -> dict:
 
 
 class Session:
-    """One reviewer's work on the current release's queue."""
+    """One reviewer's work on the queue of the last build.
 
-    def __init__(self, cfg: Config, reviewer: dict):
-        self.data = cfg.out_dir / "site" / "data"
+    `target` is the full assessment's configuration, or the working directory of the build
+    (`<project>/.machinechecked` for the zero-configuration view): the session reads that
+    build's site data and keeps the work beside it."""
+
+    def __init__(self, target: Config | Path, reviewer: dict):
+        work = Path(getattr(target, "out_dir", target))
+        self.data = work / "site" / "data"
         if not (self.data / "review-queue.json").exists():
-            raise ReviewError("no review queue: run `machinechecked build` first")
-        self.index = json.loads((self.data / "index.json").read_text(encoding="utf-8"))
+            raise ReviewError("no review queue: run `machinechecked view` or `machinechecked "
+                              "build` first")
+        self.site = cmp.Site(self.data)
+        self.index = self.site.index
         self.queue = json.loads((self.data / "review-queue.json").read_text(encoding="utf-8"))
         self.units = {u["id"]: u for u in self.queue["units"]}
         self.reviewer = reviewer
-        self.path = wsp.store(cfg.out_dir) / f"{wsp.reviewer_slug(reviewer['id'])}.json"
+        self.path = wsp.store(work) / f"{wsp.reviewer_slug(reviewer['id'])}.json"
         try:
             self.workspace = wsp.read(self.path) if self.path.exists() else \
                 wsp.new(reviewer, "independent")
@@ -133,67 +141,22 @@ class Session:
 
     # -- what each step shows --------------------------------------------------------------
 
-    def claim(self, cid: str) -> dict | None:
-        meta = next((c for c in self.index["claims"] if c["id"] == cid), None)
-        p = meta and self.data / "claims" / meta["file"]
-        return json.loads(p.read_text(encoding="utf-8")) if p and p.exists() else None
-
-    def decl(self, key: str | None) -> dict | None:
-        p = key and self.data / "decls" / f"{key}.json"
-        return json.loads(p.read_text(encoding="utf-8")) if p and p.exists() else None
+    def packet(self, u: dict, stage: str) -> dict:
+        """What a step shows, as data: the unit's packet filtered to the stage (`compare.py`),
+        so that nothing a later step shows is delivered before it."""
+        return cmp.unit_packet(self.site, u, stage)
 
     def paper_text(self, u: dict) -> str:
-        """Step 1: the paper's statements only."""
-        out = []
-        for c in u["claims"][:6]:
-            ch = self.claim(c["id"])
-            if not ch:
-                continue
-            head = ch.get("number") or ch["id"]
-            if ch.get("heading"):
-                head += f" ({ch['heading']})"
-            out.append(f"{head}  [{ch['id']}]\n{ch.get('statement_tex') or '(the printed text is not part of this site)'}")
-        if u["kind"] == "def":
-            out.insert(0, f"A definition used by {len(u['claims'])} claim(s): "
-                          + ", ".join(c["id"] for c in u["claims"][:12]))
-        return "\n\n".join(out)
+        """Step 1: the paper's statements only, every one of the unit's claims in full."""
+        return cmp.packet_text(self.packet(u, "read"))
 
     def lean_text(self, u: dict) -> str:
         """Step 2: the Lean of the unit, with what it uses."""
-        if u["kind"] == "def":
-            return self._decl_text(u["name"], self.decl(u.get("key")))
-        lines = []
-        for c in u["claims"]:
-            ch = self.claim(c["id"])
-            cl = next((x for x in (ch or {}).get("clauses", []) if x.get("spec") == u["name"]), None)
-            if not cl:
-                continue
-            st = cl["statement"]
-            lines.append(u["name"])
-            for b in st.get("binders") or []:
-                role = {"forall": "for all", "exists": "there is", "hypothesis": "assume",
-                        "instance": "instance"}.get(b["role"], b["role"])
-                lines.append(f"  {role:9} {b['name']} : {_text(b['type'])}")
-            lines.append(f"  {'then' if st.get('binders') else '':9} {_text(st.get('conclusion'))}")
-            if u.get("witness"):
-                lines.append(f"\nWitness: {u['witness']}")
-            for n in st.get("closure") or []:
-                lines.append("\n" + self._decl_text(n, self.decl((ch.get("decls") or {}).get(n))))
-            break
-        return "\n".join(lines) or "(the statement is not in this release)"
-
-    @staticmethod
-    def _decl_text(name: str, d: dict | None) -> str:
-        if d is None:
-            return f"{name}: (not in this release)"
-        out = [f"{name}  ({d.get('kind')})", f"  type : {_text(d.get('signature'))}"]
-        if d.get("value"):
-            out.append(f"  value: {_text(d.get('value'))}")
-        return "\n".join(out)
+        return cmp.packet_text(self.packet(u, "compare"))
 
     # -- the steps -------------------------------------------------------------------------
 
-    def read(self, uid: str) -> str:
+    def read(self, uid: str, as_json: bool = False) -> str | dict:
         u = self.unit(uid)
         if self.reported(u):
             raise ReviewError(f"{uid} is already reported by {self.reviewer['id']}")
@@ -207,6 +170,8 @@ class Session:
         warn = ("\n\nNOTE: you have already seen " + " and ".join(
             f"the {s['what']} of this unit (in {s['unit']})" for s in seen)
             + ". Your reading will not be blind, and the report will say so.") if seen else ""
+        if as_json:
+            return {**self.packet(u, "read"), "review": {"step": "read", "seen_before": seen}}
         return self.paper_text(u) + warn
 
     def lock(self, uid: str, reading: str) -> None:
@@ -217,12 +182,14 @@ class Session:
         d.update(reading=reading, revealed_by=self.revealed_by(u), locked_at=now(), stage="compare")
         self.save()
 
-    def show(self, uid: str) -> str:
+    def show(self, uid: str, as_json: bool = False) -> str | dict:
         u = self.unit(uid)
         d = self.draft(u)
         if d is None or d["stage"] == "read":
             raise ReviewError(f"{uid}: lock your reading first (`review lock`); the Lean is shown "
                               "only after it")
+        if as_json:
+            return {**self.packet(u, "compare"), "review": {"step": "compare"}}
         return self.lean_text(u)
 
     def decide(self, uid: str, verdict: str, comparison: str, detail: str = "",
@@ -243,17 +210,24 @@ class Session:
                  witness=witness, decided_at=now(), stage="author")
         self.save()
 
-    def author(self, uid: str) -> str:
+    def author(self, uid: str, as_json: bool = False) -> str | dict:
         u = self.unit(uid)
         d = self.draft(u, "author")
         d.setdefault("author_shown_at", now())
         self.save()
+        if as_json:
+            return {**self.packet(u, "informed"),
+                    "review": {"step": "author", "shown_at": d["author_shown_at"]}}
         revs = u.get("author_review") or []
-        if not revs:
-            return "No review by the author is recorded for this unit."
-        return "\n\n".join(f"{r.get('by')} · {r.get('file')}:{r.get('line')}\n"
-                           + (r.get("text") or "No text was written with this review marker.")
-                           for r in revs)
+        out = [f"{r.get('by')} · {r.get('file')}:{r.get('line')}\n"
+               + (r.get("text") or "No text was written with this review marker.") for r in revs]
+        for c in u.get("claims") or []:
+            note = (self.site.chunk(c["id"]) or {}).get("correspondence") or {}
+            text = reading_text(note)
+            if text:
+                out.append(f"Reading of the correspondence of {c['id']}"
+                           + (f" by {note['by']}" if note.get("by") else "") + f"\n{text}")
+        return "\n\n".join(out) or "No review by the author is recorded for this unit."
 
     def submit(self, uid: str, disagreements: str) -> dict:
         u = self.unit(uid)
