@@ -675,6 +675,13 @@ def cmd_replay(a):
     rec = replay(cfg.lean_root, Path(a.comparator_config).resolve(), out, a.comparator)
     print(f"Comparator {'passed' if rec['passed'] else 'did not pass'} on commit "
           f"{rec['commit'][:12]}: {len(rec['replayed'])} theorem(s) replayed; record in {out}")
+    how = rec["conditions"]
+    if how["guard"] == "none":
+        print("note: Comparator ran without the guard its README requires (this process could "
+              "open a Unix socket); the record says so. See `machinechecked replay --help`.",
+              file=sys.stderr)
+    if how["landrun"] is None:
+        print("note: no `landrun` was found; the record says so.", file=sys.stderr)
     if not rec["passed"]:
         sys.exit(1)
 
@@ -976,8 +983,16 @@ def main(argv=None):
         x.add_argument("--out", help="where archives are saved (default: .lean-cache/)")
     ca.set_defaults(func=cmd_cache)
 
-    rp = sub.add_parser("replay", help="run Comparator and record the replay for the "
-                        "assessment")
+    rp = sub.add_parser(
+        "replay", help="run Comparator and record the replay for the assessment",
+        description="Run Comparator (`lake env comparator CONFIG`) in the Lean project and record "
+        "the replay. Comparator's trust model asks for a checking environment in which the "
+        "solution was not compiled before, `landrun` on PATH, and the whole run under "
+        "`systemd-run --user --property=RestrictAddressFamilies=~AF_UNIX --pipe --wait "
+        "-E PATH=\"$PATH\" --working-directory \"$PWD\" -- machinechecked replay CONFIG`. "
+        "This command does not start that guard; the record says whether this process ran "
+        "under it, which systemd unit and Landlock ABI it had, and which comparator, landrun, "
+        "lean4export and nanoda_bin it used, with their SHA-256.")
     rp.add_argument("comparator_config", metavar="CONFIG",
                     help="the Comparator configuration (its theorem_names are the proofs "
                     "replayed)")
