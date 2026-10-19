@@ -209,9 +209,11 @@ def _simple_site(root: Path, paper: Path, web: str | None):
 
 
 def _print_simple(body):
-    from .simple import view_summary
+    from .simple import stale_doc_message, view_summary
     for n in body.get("notes", []):
         print(f"note: {n}")
+    for d in body.get("module_docs", []):
+        print(f"warning: {stale_doc_message(d)}")
     for s, k in sorted(view_summary(body).items()):
         print(f"  {k:4d}  {s}")
 
@@ -345,7 +347,7 @@ def _check_json(a):
             failed = bool(idx["findings"]["total"].get("violation"))
         else:
             root, paper = _simple_target(a)
-            from .simple import view_release
+            from .simple import stale_doc_message, view_release
             view = _simple_view(root, paper)
             body = view["body"]
             claims = [{"id": c["id"], "number": c["number"], "title": c["title"],
@@ -359,7 +361,10 @@ def _check_json(a):
                    "release": view_release(body), "commit": body.get("commit"),
                    "modules": {"built": body["project"]["built"],
                                "not_built": body["project"]["unbuilt"]},
-                   "notes": body["notes"]}
+                   "notes": body["notes"],
+                   "warnings": [{"kind": "module-doc-name", "file": d["file"], "line": d["line"],
+                                 "name": d["name"], "message": stale_doc_message(d)}
+                                for d in body.get("module_docs", [])]}
             failed = any(l["class"] != "proved" for c in claims for l in c["links"])
     summary = {}
     for c in claims:
