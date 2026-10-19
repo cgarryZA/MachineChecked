@@ -78,6 +78,33 @@ def _term_pp(spec: dict, where: str) -> dict | None:
     return None
 
 
+def printed(spec: dict):
+    """Every printed expression of a statement record: the binders' types, the conclusion, the
+    parts and quantifiers of its logic, and the exact proposition."""
+    for b in spec.get("binders", []):
+        yield b.get("type")
+    concl = spec.get("conclusion") or {}
+    yield concl
+
+    def walk(n):
+        yield n.get("leaf")
+        yield n.get("type")
+        for a in n.get("args", []):
+            yield from walk(a)
+    yield from walk(concl.get("logic") or {})
+    yield spec.get("exact")
+
+
+def term_by_id(spec: dict, at: str) -> str | None:
+    """The text of the sub-term whose identity is `at` (its position in the whole proposition,
+    as the probe records it), wherever the statement prints it."""
+    for pp in printed(spec):
+        for t in (pp or {}).get("terms") or [] if isinstance(pp, dict) else []:
+            if t.get("id") == at:
+                return "".join(x.get("t", "") for x in pp["segments"][t["from"]:t["to"]])
+    return None
+
+
 def _text(pp) -> str:
     if not isinstance(pp, dict):
         return pp or ""
@@ -89,6 +116,8 @@ def target_text(spec: dict, target: dict) -> str | None:
     is printed or split (which renumbers sub-terms and parts while the statement stays the same)
     makes the link stale instead of pointing it at another object."""
     vs = variables(spec)
+    if "at" in target:
+        return term_by_id(spec, target["at"]) if isinstance(target["at"], str) else None
     if "term" in target:
         pp = _term_pp(spec, target.get("in", ""))
         terms = (pp or {}).get("terms") or []
@@ -104,15 +133,16 @@ def target_text(spec: dict, target: dict) -> str | None:
 
 
 def add(cfg: Config, claim: str, symbol: str, decl: str, by: str, var: str | None = None,
-        type_of: str | None = None, term: str | None = None) -> dict:
+        type_of: str | None = None, term: str | None = None, at: str | None = None) -> dict:
     """Record a link from `symbol` in `claim`'s printed statement to the variable `var` (or the
     type of the binder `type_of`) of the Lean statement `decl`, by `by`."""
     from .pipeline import lean_inputs_digest
     from .promote import latest_record
     if not re.fullmatch(r"(human|llm):\S+", by or ""):
         raise SymbolError("name the link's author as human:NAME or llm:MODEL (--as)")
-    if sum(x is not None for x in (var, type_of, term)) != 1:
-        raise SymbolError("give exactly one of --var NAME, --type-of NAME and --term WHERE#K")
+    if sum(x is not None for x in (var, type_of, term, at)) != 1:
+        raise SymbolError("give exactly one of --var NAME, --type-of NAME, --term WHERE#K and "
+                          "--at ID")
     record = latest_record(cfg)
     body = record["body"]
     if body["provenance"].get("lean_inputs_sha256") != lean_inputs_digest(cfg):
@@ -135,7 +165,14 @@ def add(cfg: Config, claim: str, symbol: str, decl: str, by: str, var: str | Non
         if pp is None or not k.isdigit() or int(k) >= len(pp.get("terms") or []):
             raise SymbolError(f"{decl} has no sub-term {term!r} (WHERE#K: b:<binder>, x:<variable>, "
                               "c or l:<part>, then the sub-term's number)")
-        target = {"decl": decl, "term": int(k), "in": where}
+        # A sub-term is recorded by its identity in the proposition when the probe gives one,
+        # which no change in how the statement is printed or split can move.
+        tid = pp["terms"][int(k)].get("id")
+        target = {"decl": decl, "at": tid} if tid else {"decl": decl, "term": int(k), "in": where}
+    elif at is not None:
+        if term_by_id(spec, at) is None:
+            raise SymbolError(f"{decl} has no sub-term with the identity {at!r}")
+        target = {"decl": decl, "at": at}
     else:
         names = [b.get("name") for b in variables(spec)]
         want = var if var is not None else type_of
@@ -189,7 +226,7 @@ def from_reader(cfg: Config, req: dict, web_dist=None) -> None:
     elif req.get("action") == "add":
         add(cfg, req["claim"], req["tex"], str(req.get("decl") or ""), req.get("by"),
             var=text(req.get("var")), type_of=text(req.get("type_of")),
-            term=text(req.get("term")))
+            term=text(req.get("term")), at=text(req.get("at")))
     else:
         raise SymbolError(f"unknown action {req.get('action')!r}")
     rebuild_site(cfg, web_dist, None)

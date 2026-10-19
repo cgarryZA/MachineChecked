@@ -45,9 +45,13 @@ table of `machinechecked.toml` names another):
   statement, and every occurrence there takes the link (`occurrence: "all"`), unless the link
   names occurrences by index. Two different ν (in two claims, or two scopes of one claim) are two
   links and are never merged.
-- **The Lean side** is a variable (`var`, the binder index the probe already exports) or a whole
-  sub-term: a binder's type (`binder`, `path: "type"`), or the conclusion. Selecting an arbitrary
-  sub-term needs sub-expression identities from the probe, which do not exist yet (#46).
+- **The Lean side** is a variable (`var`, the binder index the probe already exports), a
+  binder's type (`binder`, `path: "type"`), or any sub-term (`at`). A sub-term is named by its
+  identity: its position in the whole proposition (Lean's `SubExpr.Pos`, written like `/1/0/1`),
+  which the probe records for every selectable sub-term (`terms[].id`). It depends only on the
+  proposition, so no change in how the statement is printed or split for display moves it, and
+  the same sub-term has the same identity in the readable statement and in the exact Lean, which
+  is how a selection in one is shown in the other.
 - **Pins**: the statement's fingerprint (it already covers the definitions the statement uses),
   the hash of the claim's TeX source, and the text of the Lean object as it was shown (`target`).
   When any differs, the link is stale. The last one matters because a sub-term or a part is
@@ -76,6 +80,7 @@ The author or a reviewer, under their name, from the command line:
 machinechecked symbol add P:thm:sep '\nu' Foo.spec_sep --var ν --as human:Ada-Lovelace
 machinechecked symbol add P:thm:sep '\mathbb R^j' Foo.spec_sep --type-of f --as human:Ada-Lovelace
 machinechecked symbol add P:thm:sep 'f' Foo.spec_sep --term c#2 --as human:Ada-Lovelace   # a sub-term
+machinechecked symbol add P:thm:sep 'f' Foo.spec_sep --at /1/1/0 --as human:Ada-Lovelace  # by identity
 machinechecked symbol list
 machinechecked symbol remove P:thm:sep '\nu'
 ```

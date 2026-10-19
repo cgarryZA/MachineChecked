@@ -84,6 +84,7 @@
   function extFor(spec) {
     const l = links.find((x) => x.id === symActive);
     if (!l || l.lean.decl !== spec) return null;
+    if (l.lean.at != null) return { at: l.lean.at };
     if (l.lean.term != null) return { term: { where: l.lean.in, k: l.lean.term } };
     return l.lean.var != null ? { var: l.lean.var } : { type: l.lean.binder };
   }
@@ -95,6 +96,16 @@
     const math = (tex || "").match(/\$\$[\s\S]*?\$\$|\$[\s\S]*?\$|\\\([\s\S]*?\\\)|\\\[[\s\S]*?\\\]/g) || [];
     const re = new RegExp(`\\\\(?:mathbb|mathcal|mathfrak|mathscr|mathrm|boldsymbol)\\s*\\{?[A-Za-z]\\}?(?:\\^\\{?[A-Za-z0-9]+\\}?)?|\\\\(?:${GREEK})(?![A-Za-z])|(?<![\\\\A-Za-z])[A-Za-z](?![A-Za-z])`, "g");
     return [...new Set(math.flatMap((m) => m.match(re) || []))];
+  }
+  // The sub-term selected in a statement, by its identity in the proposition: shared between
+  // the readable statement and its exact Lean ({spec, id}).
+  let selAt = $state(null);
+  const selFor = (spec) => (spec != null && selAt && selAt.spec === spec ? selAt.id : null);
+  function select(spec, id) {
+    if (spec == null) return;
+    if (id == null) { if (selAt?.spec === spec) selAt = null; }
+    else if (selAt?.spec !== spec || selAt.id !== id) selAt = { spec, id };
+    if (linking) pickVar = id == null ? (pickVar?.spec === spec && pickVar.at ? null : pickVar) : { spec, at: id };
   }
   let linking = $state(false);
   let pickSym = $state(null);
@@ -299,14 +310,14 @@
             <label class="small"><input type="checkbox" bind:checked={pickType} /> the symbol is that variable's type</label></p>
           {#if pickSym && pickVar}
             {@const b = pickVar.var != null ? claim.clauses.find((c) => c.spec === pickVar.spec)?.statement?.binders?.[pickVar.var] : null}
-            <p class="small">Link <code>{pickSym}</code> to {#if pickVar.term}the selected sub-expression{:else}{pickType ? "the type of" : "the variable"} <code>{b?.name}</code>{/if} of <code>{pickVar.spec}</code>, as
+            <p class="small">Link <code>{pickSym}</code> to {#if pickVar.at}the selected sub-expression{:else}{pickType ? "the type of" : "the variable"} <code>{b?.name}</code>{/if} of <code>{pickVar.spec}</code>, as
               <input class="who" bind:value={author} placeholder="your name" /></p>
-            <button class="act" disabled={!authorId} onclick={() => saveLinkOfSymbol(pickVar.term
-              ? { action: "add", claim: claim.id, tex: pickSym, decl: pickVar.spec, term: pickVar.term.where + "#" + pickVar.term.k, by: authorId }
+            <button class="act" disabled={!authorId} onclick={() => saveLinkOfSymbol(pickVar.at
+              ? { action: "add", claim: claim.id, tex: pickSym, decl: pickVar.spec, at: pickVar.at, by: authorId }
               : { action: "add", claim: claim.id, tex: pickSym, decl: pickVar.spec, [pickType ? "type_of" : "var"]: b?.name, by: authorId })}>Save link{authorId ? " as " + authorId : ""}</button>
           {/if}
           {#each (claim.symbols || []) as l}
-            <p class="small"><code>{l.symbol.tex}</code> → {l.lean.term != null ? "sub-expression " + l.lean.in + "#" + l.lean.term : l.lean.var != null ? "variable " + l.lean.var : "type of binder " + l.lean.binder} of <code>{l.lean.decl}</code>, by {l.by}{l.stale ? " (stale)" : ""}
+            <p class="small"><code>{l.symbol.tex}</code> → {l.lean.at != null ? "sub-expression " + l.lean.at : l.lean.term != null ? "sub-expression " + l.lean.in + "#" + l.lean.term : l.lean.var != null ? "variable " + l.lean.var : "type of binder " + l.lean.binder} of <code>{l.lean.decl}</code>, by {l.by}{l.stale ? " (stale)" : ""}
               <button class="act" onclick={() => saveLinkOfSymbol({ action: "remove", claim: claim.id, tex: l.symbol.tex })}>Remove</button></p>
           {/each}
           {#if linkErr}<p class="bad small">{linkErr}</p>{/if}
@@ -329,7 +340,7 @@
           <div class="block">
             <p class="decl"><code>{l.name}</code>
               {#if sourceUrl(evidenceIndex, l.path, l.range?.line)}<a class="src-link small" href={sourceUrl(evidenceIndex, l.path, l.range?.line)} target="_blank" rel="noopener" title={sourceTitle(evidenceIndex)}>{sourceLabel(evidenceIndex)}</a>{/if}</p>
-            {#if l.statement}<Statement st={l.statement} onref={showDecl} compact />{/if}
+            {#if l.statement}<Statement st={l.statement} onref={showDecl} compact selId={selFor(l.name)} onselect={(id) => select(l.name, id)} />{/if}
             {#if claim.links.length > 1}<StatusChip record={l} small />{/if}
             {#if editable}
               <button class="btn ghost" disabled={!!busy} onclick={() => act({ lean: claim.links.filter((x) => x.name !== l.name).map((x) => x.name) }, "unlink")}>Unlink</button>
@@ -380,8 +391,8 @@
             {/if}
             {#if cl.statement}
               <Statement st={cl.statement} spec={cl.spec} onref={showDecl} compact ext={extFor(cl.spec)}
+                selId={selFor(cl.spec)} onselect={(id) => select(cl.spec, id)}
                 onpinned={(v) => { if (linking) pickVar = v == null ? (pickVar?.spec === cl.spec && pickVar.var != null ? null : pickVar) : { spec: cl.spec, var: v }; }}
-                onterm={(t) => { if (linking) pickVar = t == null ? (pickVar?.spec === cl.spec && pickVar.term ? null : pickVar) : { spec: cl.spec, term: t }; }}
                 onactive={(v) => (leanActive = v == null ? (leanActive?.spec === cl.spec ? null : leanActive) : { spec: cl.spec, var: v })} />
             {:else if cl.defs?.length}
               <p class="defs">{#each cl.defs as d, i}{#if i}, {/if}<button class="ref" onclick={() => showDecl(d)}>{d}</button>{/each}</p>
@@ -395,10 +406,10 @@
     <section class="exact-pane">
       <h2>Exact Lean</h2>
       {#if simple}
-        {#each claim.links || [] as l}<ExactLean st={l.statement} name={l.name} onref={showDecl} />{:else}<p class="muted">Choose a Lean declaration to compare.</p>{/each}
+        {#each claim.links || [] as l}<ExactLean st={l.statement} name={l.name} onref={showDecl} selId={selFor(l.name)} onselect={(id) => select(l.name, id)} />{:else}<p class="muted">Choose a Lean declaration to compare.</p>{/each}
       {:else}
         {#each claim.clauses || [] as cl}
-          {#if cl.statement}<ExactLean st={cl.statement} name={cl.spec} onref={showDecl} />
+          {#if cl.statement}<ExactLean st={cl.statement} name={cl.spec} onref={showDecl} selId={selFor(cl.spec)} onselect={(id) => select(cl.spec, id)} />
           {:else if cl.defs?.length}{#each cl.defs as name}<Decl {name} key={claim.decls?.[name]} index={evidenceIndex} inspector onref={showDecl} />{/each}{/if}
         {/each}
       {/if}

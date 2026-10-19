@@ -7,9 +7,12 @@
   // binder's type ({type}); `onactive` hears which variable is highlighted here.
   // `onpinned` hears which variable is held (clicked), and `onterm` which sub-term is selected
   // ({where, k}: `b:<binder>` for a binder's type, `c` for the conclusion, `l:<n>` for the n-th
-  // part of a conclusion split by its logic), for choosing one. `ext` may also be {term}.
+  // part of a conclusion split by its logic), for choosing one. `ext` may also be {term}, or
+  // {at}: a sub-term by its identity in the proposition. `selId` is the sub-term selected in
+  // another view of the same statement (the exact Lean), by that identity; `onselect` hears the
+  // identity of the one selected here.
   let { st, spec = null, onref, compact = false, ext = null, onactive = null, onpinned = null,
-        onterm = null } = $props();
+        onterm = null, selId = null, onselect = null } = $props();
 
   const binders = $derived(st.binders || []);
   const refs = $derived([...(st.closure || []), ...(st.direct || [])].sort((a, b) => b.length - a.length));
@@ -61,9 +64,19 @@
   // A selected sub-term, and where it is.
   let termSel = $state(null);
   $effect(() => { onterm?.(termSel); });
+  const idOf = (sel) => (sel ? ppAt(sel.where)?.terms?.[sel.k]?.id ?? null : null);
+  // A selection made in another view replaces the one made here.
+  $effect(() => { if (selId != null && termSel && idOf(termSel) !== selId) termSel = null; });
+  const outerId = $derived(termSel ? null : selId ?? ext?.at ?? null);
   const termAt = (where) => where == null ? null
     : termSel?.where === where ? termSel.k : ext?.term?.where === where ? ext.term.k : null;
-  function setTerm(where, k) { termSel = k == null ? null : { where, k }; if (k != null) pinned = null; }
+  // Only a choice made here is reported: dropping this view's selection for one made in another
+  // view must not clear that one.
+  function setTerm(where, k) {
+    termSel = k == null ? null : { where, k };
+    if (k != null) pinned = null;
+    onselect?.(idOf(termSel));
+  }
   // The parts of a conclusion split by its logic, numbered in reading order.
   const leafIds = $derived.by(() => {
     const m = new Map();
@@ -94,7 +107,7 @@
   const groupOf = (i) => groups.find((g) => g.head === i);
 </script>
 
-{#snippet lean(pp, where = null)}<LeanText {pp} {onref} {refs} {active} {onvar} {ongloss} term={termAt(where)} onterm={where == null ? null : (k) => setTerm(where, k)} />{/snippet}
+{#snippet lean(pp, where = null)}<LeanText {pp} {onref} {refs} {active} {onvar} {ongloss} term={termAt(where)} selId={outerId} onterm={where == null ? null : (k) => setTerm(where, k)} />{/snippet}
 
 {#snippet name(i)}<span class="v" class:hl={active === i} role="button" tabindex="0" onmouseenter={() => onvar(i, "hover")} onmouseleave={() => onvar(null, "hover")} onclick={() => onvar(i, "pin")} onkeydown={(e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), onvar(i, "pin"))}>{vars[i].name}</span>{/snippet}
 

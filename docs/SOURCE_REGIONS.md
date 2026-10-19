@@ -1,9 +1,14 @@
 # Pinning manuscript source regions
 
 A `file:line` location identifies where a claim starts. It is not, by itself, the whole claim.
-Line-located claims use `source_hash_scheme: "tex-region-v1"` and a `source_sha256` of their
-selected original source text. The evidence stores the resolved bounds and digest per **claim**,
-so two passages that start on the same line do not overwrite one another.
+Line-located claims use `source_hash_scheme: "tex-region-v1"`, a `source_sha256` of their
+selected original source text, and `source_line_sha256`, one digest per source line the passage spans (each whole
+line, raw). The
+whole-passage digest decides whether the passage matches; the line digests say where it
+changed. A `source-changed` finding names the first changed line, by its place in the passage
+and in the file, or says that lines were added or removed at its end. The evidence stores the
+resolved bounds and digests per **claim**, so two passages that start on the same line do not
+overwrite one another.
 
 When the selected line opens `equation`, `align`, `gather`, `multline`, `eqnarray`, `flalign` or
 `alignat` (including starred forms), the region runs from that opening command through its
@@ -20,7 +25,8 @@ For prose or a display with accompanying prose, specify its end:
   "location": "paper/main.tex:20",
   "source_region": {"end_line": 28, "end_column": 37},
   "source_hash_scheme": "tex-region-v1",
-  "source_sha256": "<64-character SHA-256>"
+  "source_sha256": "<64-character SHA-256>",
+  "source_line_sha256": ["<SHA-256 of line 1>", "…"]
 }
 ```
 
@@ -48,14 +54,16 @@ machinechecked build --reuse-lean
 ```
 
 The first command prints a plan only. It requires a full pinned Git commit or a versioned arXiv
-source, checks it against each claim's recorded paper revision, verifies the old one-line hash
+source, checks it against each claim's recorded paper revision (an abbreviated commit hash of
+at least seven digits names that commit), verifies the old one-line hash
 in that snapshot, and calculates the new region hash there. A working folder, branch name,
 missing original revision or failed baseline check is refused. No target-revision rehashing or
 fuzzy relocation is performed. The operation is idempotent and the write is atomic; all
 claims must validate before anything is written. An inventory edited during planning is
 not overwritten.
 
-Only `source_sha256` and `source_hash_scheme` change. Paper revisions, Lean fingerprints,
+Only `source_sha256`, `source_hash_scheme` and `source_line_sha256` change. A claim already on
+`tex-region-v1` whose passage still matches gains its line digests. Paper revisions, Lean fingerprints,
 review markers and historical evidence are not rewritten. The command does not grant a new
 review or silently accept an enlarged mathematical scope. A genuinely changed statement
 needs a new source review, not a migration against the changed version.
@@ -68,3 +76,64 @@ passage being presented as the unchanged reviewed source.
 
 This audited source pin is separate from any display excerpt or its rendering-context
 fingerprint. Editing a display overlay cannot refresh an audited source check.
+
+## Moving to a new revision of the paper
+
+When the manuscript gains a revision, move the inventory to it:
+
+```sh
+python -m prooflens.repin --config machinechecked.toml --paper P --to NEW
+python -m prooflens.repin --config machinechecked.toml --paper P --to NEW --write
+machinechecked build
+```
+
+`NEW` is a Git commit of the paper's repository (a branch or tag is resolved to its commit) or
+a versioned arXiv identifier. The configuration must name the original revision as a full Git
+commit or a versioned arXiv identifier, and every claim must already be on `tex-region-v1`
+(migrate first, above). The first command prints a plan only.
+
+The command reads both snapshots. It first checks each claim's passage at the original
+revision against its digests; a claim that does not match there stops the plan, and an
+original revision that cannot be read is an error, not a reason to use another baseline.
+It then looks for each passage's exact text in every `.tex` file of the new revision and
+classifies the claim:
+
+| Class | Meaning | What `--write` does |
+|---|---|---|
+| `unchanged` | the passage is found once, at the same place | takes the new revision |
+| `moved` | the passage is found once, with the same text, elsewhere | takes the new place and revision; digests unchanged |
+| `changed` | its text is not found, and its label leads to one passage with other text | takes the new place; keeps its digests and its revision (`commit`) |
+| `removed` | its text is not found, and its label is not in the new revision | keeps its place, digests and revision |
+| `not-found` | its text is not found, and it has no label to find a changed version by | keeps its place, digests and revision |
+| `ambiguous` | its text or its label occurs more than once, or its text occurs only where the paper may not print it | nothing is written |
+| `pending-review` | its pin is of another revision (a passage that changed in an earlier repin) | nothing |
+
+A claim that keeps its revision records it in its own `commit`, so a later repin reports it
+as `pending-review` rather than comparing it with text it was not pinned to.
+
+A changed passage is reported with the first line that changed and a diff of the old and new
+lines. It keeps the digests it was reviewed at, so the source check at the new revision
+reports it (`source-changed`) until it is reviewed again and pinned to its new text by hand.
+A label locates a changed passage; it never certifies its text. Two equally good places are
+never chosen between, by the nearest line or otherwise: a repeated opening line is not a
+match, an identical passage that occurs twice or a label that occurs twice is ambiguous, a
+passage whose only copy is in a comment, an `\iffalse` block or a `comment` environment is
+ambiguous, and an environment without its end is a change with no new place. A passage
+found in another file is moved with a note to check that the paper still reads that file.
+The plan also lists labels that are new in the new revision (`new_passages`): passages that
+may need an inventory entry.
+
+For an `unchanged` or `moved` passage the plan says whether the lines beside it changed
+(`context_changed`). The audited text is the same; an excerpt, a description or a symbol link
+that rests on the surrounding text needs checking. The plan counts the symbol links of each
+claim that changed or whose surroundings changed; a symbol link keeps the printed text it was
+made on and shows as stale in the reader when that text changes.
+
+`--write` refuses while any claim is ambiguous. It writes atomically and only if neither the
+inventory nor the configuration changed during planning. It changes only the selected paper's
+claims (`location`, `source_region`, `commit`, and line digests a claim was pinned without),
+the paper's `commit` under `papers`, and the paper's source revision in the configuration.
+Reviews, clauses, dismissals, Lean and other papers are not touched; free text such as notes
+or URLs naming the old revision is left to edit by hand. Rerunning the same command writes
+nothing more. Evidence and releases built before the repin keep the snapshot they were
+built from.

@@ -220,13 +220,18 @@ def check_space(project: Path, tmp: Path, man: dict) -> None:
                 "revision, or old build output) and restore again; nothing was changed")
 
 
-def _unpack(arc: Path, project: Path) -> None:
+def _unpack(arc: Path, project: Path, older: bool = False) -> None:
     """Unpack an archive written by `_pack` into the project and its path dependencies, with the
     tar `data` filter (no absolute paths, no `..`, no links out of the destination). Everything
     is unpacked into a staging folder first and moved into place only once the whole archive
-    has been read, so a failure (a full disk, a corrupt archive) leaves the build as it was."""
+    has been read, so a failure (a full disk, a corrupt archive) leaves the build as it was.
+
+    An archive in the older layout (`older`) holds paths from the checkout's parent, under the
+    folder names of the checkout it was made in; each top folder is mapped onto the project or a
+    path dependency whose folder has that name in any case, and any other path is refused."""
     import tarfile
     deps = {d.name: d for d in path_deps(project)}
+    folded = {d.name.lower(): d for d in deps.values()}
     stage = Path(tempfile.mkdtemp(prefix=".lean-cache-restore-", dir=project))
     try:
         bases: dict[str, Path] = {}
@@ -234,7 +239,17 @@ def _unpack(arc: Path, project: Path) -> None:
         with tarfile.open(fileobj=z.stdout, mode="r|") as tf:
             for m in tf:
                 head, _, rest = m.name.partition("/")
-                if head == "project" and rest:
+                if older and not rest.strip("/") and m.isdir():
+                    continue  # the top folder itself
+                if older and rest and head.lower() == project.name.lower():
+                    key, base, m.name = "project", project, rest
+                elif older and rest and head.lower() in folded:
+                    base = folded[head.lower()]
+                    key, m.name = f"path-{base.name}", rest
+                elif older:
+                    raise CacheError(f"the archive's path {m.name} is not in this project or a "
+                                     "path dependency of it; build from source")
+                elif head == "project" and rest:
                     key, base, m.name = "project", project, rest
                 elif head == "path" and rest.partition("/")[0] in deps:
                     name, _, m.name = rest.partition("/")
@@ -251,28 +266,6 @@ def _unpack(arc: Path, project: Path) -> None:
                 if f.is_dir() and not f.is_symlink():
                     continue
                 dest = base / f.relative_to(root)
-                dest.parent.mkdir(parents=True, exist_ok=True)
-                shutil.move(str(f), str(dest))
-    except OSError as e:
-        raise CacheError(f"the restore failed ({e}); the build was left as it was") from e
-    finally:
-        shutil.rmtree(stage, ignore_errors=True)
-
-
-def _unpack_older(arc: Path, project: Path) -> None:
-    """Unpack an archive in the older layout: paths from the checkout's parent, the project's
-    under its folder's name (which may differ from this checkout's in case), a path
-    dependency's under its own. The project's folder goes into this checkout, the others
-    beside it, after the whole archive has been read."""
-    stage = Path(tempfile.mkdtemp(prefix=".lean-cache-restore-", dir=project))
-    try:
-        _sh(["tar", "-C", str(stage), "-I", "zstd -T0", "-xf", str(arc)])
-        for top in sorted(stage.iterdir()):
-            base = project if top.name.lower() == project.name.lower() else project.parent / top.name
-            for f in sorted(top.rglob("*")):
-                if f.is_dir() and not f.is_symlink():
-                    continue
-                dest = base / f.relative_to(top)
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 shutil.move(str(f), str(dest))
     except OSError as e:
@@ -450,7 +443,7 @@ def restore(project: Path, repo: str | None = None, local: Path | None = None,
             src.fetch(name, tmp / name)
             man = json.loads((tmp / name).read_text())
             if not man.get("layout") and not name.startswith(_prefix(project.name)):
-                continue  # an archive in the older layout unpacks only into a folder of its name
+                continue  # an archive in the older layout is named after the checkout's folder
             wanted = [p["name"] for p in man["parts"]] if man.get("parts") else [f"{stem}.tar.zst"]
             if any(w not in src.assets for w in wanted):
                 continue
@@ -503,10 +496,7 @@ def restore(project: Path, repo: str | None = None, local: Path | None = None,
         if got != man["sha256"]:
             raise CacheError(f"sha256 {got} is not the manifest's {man['sha256']}; "
                              "build from source")
-        if man.get("layout") == 2:
-            _unpack(arc, project)
-        else:
-            _unpack_older(arc, project)
+        _unpack(arc, project, older=man.get("layout") != 2)
     log(f"restored {stem} ("
         + ("the same Lean inputs" if key[0] == 0 else f"{dist} commits behind HEAD")
         + f", sha256 {got[:16]}…) "

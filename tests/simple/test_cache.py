@@ -191,7 +191,8 @@ def test_any_clone_restores_whatever_its_folder_or_history(toy, tmp_path):
 @needs_lean
 def test_an_archive_in_the_older_layout_still_restores(toy, tmp_path):
     """Archives published before the package-named layout (paths from the checkout's parent,
-    named after its folder) restore into a checkout in a folder of that name."""
+    named after its folder) restore into a checkout in a folder of that name, in any case (#115),
+    and nothing is written beside the checkout; a path outside the project is refused."""
     src, other = toy
     subprocess.run(["lake", "build"], cwd=src, check=True, capture_output=True)
     commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=src, capture_output=True,
@@ -207,14 +208,22 @@ def test_an_archive_in_the_older_layout_still_restores(toy, tmp_path):
         "sha256": cache.sha256(arc), **cache.fingerprint(src)}))
     cache.restore(other, local=out, log=lambda m: None)
     assert built(other, "--rehash") == []
-
-    # A checkout whose folder's name differs in case gets the build itself, not a sibling folder.
-    upper = tmp_path / "c" / "Toy"
-    upper.parent.mkdir()
-    git(upper.parent, "clone", "-q", str(src), "Toy")
-    cache.restore(upper, local=out, log=lambda m: None)
-    assert sorted(p.name for p in upper.parent.iterdir()) == ["Toy"]
-    assert built(upper, "--rehash") == []
+    cased = clone(src, tmp_path / "c" / "Toy")
+    cache.restore(cased, local=out, log=lambda m: None)
+    assert built(cased, "--rehash") == []
+    assert sorted(p.name for p in cased.parent.iterdir()) == ["Toy"]
+    # An archive with a folder that is neither the project nor a path dependency is refused.
+    (src.parent / "elsewhere").mkdir()
+    (src.parent / "elsewhere" / "f").write_text("x")
+    subprocess.run(["tar", "-C", str(src.parent), "-I", "zstd -T0", "-cf", str(arc),
+                    "toy/.lake/build", "elsewhere"], check=True)
+    man = json.loads((out / f"{stem}.json").read_text())
+    (out / f"{stem}.json").write_text(json.dumps({**man, "sha256": cache.sha256(arc)}))
+    fresh = clone(src, tmp_path / "d" / "TOY")
+    with pytest.raises(cache.CacheError, match="elsewhere/f is not in this project"):
+        cache.restore(fresh, local=out, log=lambda m: None)
+    assert sorted(p.name for p in fresh.parent.iterdir()) == ["TOY"]
+    assert not (fresh / ".lake" / "build").exists()
 
 
 def test_prune_keeps_the_newest_of_each_package_platform_and_version():
