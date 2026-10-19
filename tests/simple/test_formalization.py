@@ -6,7 +6,7 @@ import pytest
 
 from conftest import ROOT, needs_lean, needs_tex
 from prooflens import formalization as fz
-from prooflens.simple import build_view, built_modules, save_link
+from prooflens.simple import build_view, built_modules, correspondence, load_links, save_link
 
 PLAIN = ROOT / "examples" / "plain-paper"
 
@@ -79,3 +79,61 @@ def test_declared_links_reach_the_view(plain):
                       log=lambda m: None)
     c = next(c for c in view["body"]["claims"] if c["number"] == "Theorem 2")
     assert c["links"] == []
+
+
+def test_a_rows_note_is_kept():
+    fy = {"alignment": {"statements": [
+        {"source": "Lemma 2.1", "lean": "A.b", "note": " Partial: the bound has one more derivative. "},
+        {"source": "Lemma 2.2", "lean": "A.c", "note": 3}]}}
+    assert [s["note"] for s in fz.statements(fy)] == [
+        "Partial: the bound has one more derivative.", ""]
+
+
+def test_the_auditors_note_comes_before_the_projects():
+    claim = {"declared_notes": ["The project's note."]}
+    entry = {"lean": ["A.b"], "coverage": "changed", "confidence": "high",
+             "note": "The bound needs n + 5 derivatives where the paper has m + 4.", "by": "A. Auditor"}
+    assert correspondence(claim, entry) == {
+        "source": "confirmed", "coverage": "changed", "confidence": "high",
+        "note": "The bound needs n + 5 derivatives where the paper has m + 4.", "by": "A. Auditor"}
+    # Unknown words are dropped, never shown as given.
+    odd = correspondence(claim, {"lean": ["A.b"], "coverage": "verified", "confidence": "sure",
+                                 "note": "x"})
+    assert (odd["coverage"], odd["confidence"]) == (None, None)
+    # Without an auditor's entry, the project's formalization.yaml notes are shown as the project's.
+    assert correspondence(claim, {})["source"] == "formalization.yaml"
+    assert correspondence({}, {}) is None
+    assert correspondence(claim, {"lean": ["A.b"]}) is None
+
+
+@needs_lean
+@needs_tex
+def test_a_note_is_shown_beside_the_links_and_changes_no_status(plain):
+    if not built_modules(plain, ["Plain"])[0]:
+        pytest.skip("the plain example is not built")
+    (plain / "formalization.yaml").write_text(
+        'version: "v0.4"\nalignment:\n  statements:\n'
+        '    - source: "Theorem 2"\n      lean: "Plain.oddSum_eq_sq"\n'
+        '      note: "States the sum formula for n >= 1 only."\n')
+
+    def theorem2():
+        view = build_view(plain, plain / "paper/main.tex", plain / ".machinechecked",
+                          log=lambda m: None)
+        return next(c for c in view["body"]["claims"] if c["number"] == "Theorem 2")
+
+    c = theorem2()
+    status = c["status"]
+    assert c["correspondence"]["source"] == "formalization.yaml"
+    assert c["correspondence"]["note"] == "States the sum formula for n >= 1 only."
+    data = load_links(plain)
+    data.setdefault("papers", {})["paper/main.tex"] = {"thm:sum-odd": {
+        "lean": ["Plain.oddSum_eq_sq"], "coverage": "partial", "confidence": "medium",
+        "note": "The case n = 0 is not stated.", "by": "A. Auditor"}}
+    (plain / "machinechecked.links.json").write_text(__import__("json").dumps(data))
+    c = theorem2()
+    assert (c["correspondence"]["source"], c["correspondence"]["coverage"]) == ("confirmed", "partial")
+    assert c["status"] == status
+    # Linking other declarations drops the note written for the old ones.
+    save_link(plain, "paper/main.tex", "thm:sum-odd", ["Plain.oddSum_eq_sq", "Plain.oddSum"])
+    entry = load_links(plain)["papers"]["paper/main.tex"]["thm:sum-odd"]
+    assert "note" not in entry and "coverage" not in entry

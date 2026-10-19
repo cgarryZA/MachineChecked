@@ -261,6 +261,33 @@ def linked_names(claim: dict, entry: dict) -> list[str]:
     return [n for n in names if n not in entry.get("rejected", [])]
 
 
+COVERAGE = ("full", "partial", "changed", "related")
+CONFIDENCE = ("high", "medium", "low")
+NOTE_CHARS = 2000
+
+
+def correspondence(claim: dict, entry: dict) -> dict | None:
+    """The mapper's note on how far a claim's linked declarations state it: the auditor's, from
+    the links file (with its coverage and confidence when given), else the notes of the
+    project's formalization.yaml rows. It is a reading shown beside the links and changes no
+    status."""
+    if "lean" in entry:
+        note = entry["note"].strip() if isinstance(entry.get("note"), str) else ""
+        cov = entry.get("coverage") if entry.get("coverage") in COVERAGE else None
+        if not (note or cov):
+            return None
+        return {"source": "confirmed", "coverage": cov,
+                "confidence": entry.get("confidence") if entry.get("confidence") in CONFIDENCE
+                else None,
+                "note": note[:NOTE_CHARS],
+                "by": entry["by"] if isinstance(entry.get("by"), str) else None}
+    notes = claim.get("declared_notes") or []
+    if not notes:
+        return None
+    return {"source": "formalization.yaml", "coverage": None, "confidence": None,
+            "note": " ".join(notes)[:NOTE_CHARS], "by": None}
+
+
 def link_source(claim: dict, entry: dict, name: str) -> str:
     if "lean" in entry:
         return "confirmed"
@@ -293,6 +320,10 @@ def save_link(root: Path, paper: str, key: str, lean: list[str] | None, rejected
     else:
         entry = links.setdefault(key, {})
         if lean is not None:
+            if entry.get("lean") != lean:
+                # A note describes the declarations it was written for.
+                for k in ("note", "coverage", "confidence"):
+                    entry.pop(k, None)
             entry["lean"] = lean
             entry["at"] = _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds")
             if by:
@@ -377,7 +408,9 @@ def probe_modules(root: Path, modules: list[str], libs: list[str], requests: lis
             if len(group) == 1:
                 failed[group[0]] = str(e)[-600:]
                 return
-            log(f"lean: {label} could not be loaded in one session; splitting it")
+            errors = [l.strip() for l in str(e).splitlines() if "error" in l]
+            reason = errors[0].split("error:", 1)[-1].strip()[:200] if errors else "no error message"
+            log(f"lean: {label} could not be loaded in one session ({reason}); splitting it")
             half = len(group) // 2
             run(group[:half], label + "/a")
             run(group[half:], label + "/b")
@@ -609,6 +642,7 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
             c["declared"] = [n for st in rows for n in st["lean"]]
             c["declared_modules"] = {n: st["module"] for st in rows for n in st["lean"]
                                      if st.get("module")}
+            c["declared_notes"] = [st["note"] for st in rows if st.get("note")]
     links = load_links(root).get("papers", {}).get(paper_key, {})
     if not libs:
         notes.append("no Lean library found in the lakefile")
@@ -706,6 +740,7 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
         for s in c.get("suggestions", []):
             found = [r for r in linkrecs.get(s["name"], []) if "missing" not in r.get("errors", [])]
             s["record"] = found[0] if len({((r.get("decl") or {}).get("module")) for r in found}) == 1 else None
+        c["correspondence"] = correspondence(c, entry) if c["links"] else None
         if c["links"]:
             worst = max(c["links"], key=lambda l: ["proved", "unspecified", "open", "malformed"]
                         .index(l["class"]))
@@ -795,6 +830,7 @@ def write_view_site(view: dict, site: Path, web_dist: Path | None,
             "source_evidence": source_evidence({"kind": akind} if anchor else None, body["tex"]["mode"], paper=body["tex"]),
             "blockers": [],
             "links": [_link_view(l, root) for l in c["links"]],
+            "correspondence": c.get("correspondence"),
             "suggestions": [_link_view(s, root) for s in c.get("suggestions", [])],
             "clauses": [], "decls": {n: keys[n] for n in sorted(names) if n in keys},
             "findings": []}
@@ -814,6 +850,7 @@ def write_view_site(view: dict, site: Path, web_dist: Path | None,
              "papers": [{"id": "P", "title": body["title"], "mode": body["tex"]["mode"],
                          "revision": body.get("commit"),
                          "pdf": "papers/P.pdf" if view["pdf"] else None,
+                         "pdf_sha256": body.get("pdf_sha256") if view["pdf"] else None,
                          "page_size": body["tex"].get("page_size"), "note": ""}],
              "summary": {"P": summary}, "classes": classes,
              "findings": {"total": {}, "general": []}, "gates": {}, "claims": index_claims,
