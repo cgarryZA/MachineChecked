@@ -22,6 +22,7 @@ from pathlib import Path
 from .config import STANDARD_AXIOMS, Config, Paper, Publish
 from .probe import ProbeError, by_library, fingerprint, lean_session, lib_names
 from .sources import acquire
+from .moddocs import stale_doc_names
 from .tex import DEFAULT_ENVS, TexError, anchors_for, theorem_envs
 from . import formalization as fz
 from .util import content_id, git_head, prepare_work_dir, read_json, sha256_file, write_json
@@ -634,6 +635,12 @@ def run_simple_probe(root: Path, modules: list[str], libs: list[str], requests: 
         raise ViewError(str(e)) from None
 
 
+def stale_docs_note(found: list[dict]) -> str:
+    shown = ", ".join(f"{d['name']} ({d['file']}:{d['line']})" for d in found[:5])
+    return (f"{len(found)} name(s) in module docstrings are not declared in the project or its "
+            f"dependencies: {shown}" + (", …" if len(found) > 5 else ""))
+
+
 def probe_modules(root: Path, modules: list[str], libs: list[str], requests: list[dict],
                   lake: str = "lake", log=print,
                   work: Path | None = None) -> tuple[list[dict], dict[str, str]]:
@@ -900,7 +907,7 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
     fy = fz.load(root)
     if fy and "error" in fy:
         notes.append(fy["error"])
-    index, linkrecs, decls, acceptrecs = [], {}, {}, {}
+    index, linkrecs, decls, acceptrecs, module_docs = [], {}, {}, {}, []
     if fy and "error" not in fy:
         for c in claims:
             rows = fz.links_for(fy, c["kind"], c["number"], paper.title)
@@ -952,8 +959,9 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
         idigest = lean_digest(root)
         cached = read_json(icache) if icache.exists() else {}
         failed = {}
-        if cached.get("digest") == idigest:
+        if cached.get("digest") == idigest and "moddocs" in cached:
             index, failed = cached["index"], cached.get("failed", {})
+            moddocs = cached["moddocs"]
         else:
             log(f"lean: indexing {len(built)} built module(s)"
                 + (f" and checking {len(linked)} linked declaration(s)" if linked else ""))
@@ -961,9 +969,13 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
                                          + [{"kind": "link", "name": n} for n in sorted(linked)]
                                          + accepts(linked), lake, log, work)
             index = [r for r in recs if r["record"] == "index"]
+            moddocs = [r for r in recs if r["record"] == "moddoc"]
             take(recs)
-            write_json(icache, {"digest": idigest, "index": index, "failed": failed},
-                       indent=None)
+            write_json(icache, {"digest": idigest, "index": index, "failed": failed,
+                                "moddocs": moddocs}, indent=None)
+        module_docs = stale_doc_names(moddocs)
+        if module_docs:
+            notes.append(stale_docs_note(module_docs))
         wanted = set(linked)
         ctx = SuggestContext(index, root, fz.foreign_roots(fy, paper.title))
         for c in claims:
@@ -1045,7 +1057,7 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
             "site_url": load_links(root).get("site_url"),
             "author": load_links(root).get("author"),
             "pdf_sha256": sha256_file(pdf) if pdf else None, "tex": tex,
-            "claims": claims, "index": index, "decls": decls}
+            "claims": claims, "index": index, "decls": decls, "module_docs": module_docs}
     return {"body": body, "pdf": pdf, "cfg": cfg}
 
 

@@ -881,6 +881,21 @@ await check("failed claim loads can be retried", 1300, async (pg) => {
   await pg.locator("aside h1").waitFor(); assert.equal(attempts, 2);
 });
 
+await check("names in module docstrings that nothing declares are listed, dismissals shown", 1300, async (pg) => {
+  const mk = (name, line, dismissed) => ({ id: `module-doc-name:Toy.Defs:${name}`, tier: "warning", code: "module-doc-name", subject: "Toy.Defs", trigger: name,
+    message: `Toy/Defs.lean:${line}: module docstring names ${name}, which is not declared`, ...(dismissed ? { dismissed } : {}) });
+  const general = [mk("Toy.gone_lemma", 7), mk("Toy.old_bound", 8, { by: "auditor", rationale: "kept as a pointer" })];
+  await pg.route("**/toy/data/index.json", (r) => r.fulfill({ contentType: "application/json", body: JSON.stringify({ ...TOY, findings: { ...TOY.findings, general } }) }));
+  await pg.goto(origin + "/toy/");
+  const banner = pg.locator("details.docnames");
+  assert.match(await banner.locator("summary").textContent(), /^Warning: 1 name\(s\) in module docstrings are not declared .*\(1 dismissed\)$/);
+  await banner.locator("summary").click();
+  const items = await banner.locator("li").allTextContents();
+  assert.equal(items.length, 2);
+  assert.match(items[0], /Toy\/Defs.lean:7: module docstring names Toy.gone_lemma, which is not declared/);
+  assert.match(items[1], /dismissed by auditor: “kept as a pointer”/);
+});
+
 await check("contents close after a mobile selection", 390, async (pg) => {
   await pg.goto(origin + "/paper/");
   await pg.getByRole("button", { name: "Contents", exact: true }).click();
