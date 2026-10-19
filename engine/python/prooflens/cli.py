@@ -352,6 +352,7 @@ def _check_json(a):
                        "status": c["status"], "status_code": c["status_code"], "class": c["class"],
                        "links": [{"name": l["name"], "status": l["status"], "status_code": l["status_code"], "class": l["class"],
                                   "source": l.get("source")} for l in c["links"]],
+                       "correspondence": c.get("correspondence"),
                        "suggestions": [{"name": x["name"], "why": x.get("why")}
                                        for x in c.get("suggestions", [])]}
                       for c in body["claims"]]
