@@ -169,16 +169,19 @@ def constPrint (ci : ConstantInfo) : MetaM (String × String × Array Name) := d
 index of the statement's binder it refers to (`var`, a position in `vars`), when the innermost
 subexpression around it is one. Each tagged subexpression is also recorded as the range of
 segments it covers (`terms`, in printing order, an outer one before those inside it), so that the
-reader can select a whole sub-term. -/
-partial def segments (vars : Array FVarId) (t : Widget.CodeWithInfos) (ref : Option (String × Json))
-    (acc : Array Json) (terms : Array (Nat × Nat)) : Array Json × Array (Nat × Nat) :=
+reader can select a whole sub-term, with its position in the whole proposition (`root`, the
+position of the printed expression, extended by the tag's own `subexprPos`): the identity of a
+sub-term, which depends on the proposition only, not on how it is printed or split. -/
+partial def segments (vars : Array FVarId) (root : SubExpr.Pos) (t : Widget.CodeWithInfos)
+    (ref : Option (String × Json)) (acc : Array Json) (terms : Array (Nat × Nat × String)) :
+    Array Json × Array (Nat × Nat × String) :=
   match t with
   | Widget.TaggedText.text s =>
     match ref with
     | some (k, v) => (acc.push (Json.mkObj [("t", s), (k, v)]), terms)
     | none => (acc.push (Json.mkObj [("t", s)]), terms)
   | Widget.TaggedText.append xs =>
-    xs.foldl (fun (a, ts) x => segments vars x ref a ts) (acc, terms)
+    xs.foldl (fun (a, ts) x => segments vars root x ref a ts) (acc, terms)
   | Widget.TaggedText.tag info sub =>
     let r := match info.info.val.info with
       | .ofTermInfo ti => match ti.expr with
@@ -188,23 +191,26 @@ partial def segments (vars : Array FVarId) (t : Widget.CodeWithInfos) (ref : Opt
       | _ => none
     let start := acc.size
     let slot := terms.size
-    let (acc', terms') := segments vars sub r acc (terms.push (start, start))
-    (acc', terms'.set! slot (start, acc'.size))
+    let id := toString (root.append info.subexprPos)
+    let (acc', terms') := segments vars root sub r acc (terms.push (start, start, id))
+    (acc', terms'.set! slot (start, acc'.size, id))
 
 /-- The sub-terms worth selecting: those covering two segments or more, each range once (the
 outermost tag of a range keeps it), and none for a very large term. -/
-def termsJson (terms : Array (Nat × Nat)) : Json := Id.run do
+def termsJson (terms : Array (Nat × Nat × String)) : Json := Id.run do
   let mut out : Array Json := #[]
   let mut seen : Array (Nat × Nat) := #[]
-  for (a, b) in terms do
+  for (a, b, id) in terms do
     if b - a ≥ 2 && !seen.contains (a, b) then
       seen := seen.push (a, b)
-      out := out.push (Json.mkObj [("from", toJson a), ("to", toJson b)])
+      out := out.push (Json.mkObj [("from", toJson a), ("to", toJson b), ("id", Json.str id)])
   return Json.arr (if out.size > 3000 then #[] else out)
 
 /-- The fields of a pretty-printed expression with navigable constants and binders; plain text
-if tagging fails, and a marker if printing fails, so that one large term cannot stop the probe. -/
-def ppFields (e : Expr) (vars : Array FVarId := #[]) : MetaM (List (String × Json)) := do
+if tagging fails, and a marker if printing fails, so that one large term cannot stop the probe.
+`root` is the position of `e` in the whole proposition (`id`). -/
+def ppFields (e : Expr) (vars : Array FVarId := #[]) (root : SubExpr.Pos := .root) :
+    MetaM (List (String × Json)) := do
   try
     -- The type of a bound variable is printed (`pp.funBinderTypes`): `∃ Φ : T, …` says what Φ
     -- is. The head of every application is tagged too (`pp.tagAppFns`), so that the function a
@@ -213,8 +219,9 @@ def ppFields (e : Expr) (vars : Array FVarId := #[]) : MetaM (List (String × Js
     let typed := fun (o : Options) => o.setBool `pp.funBinderTypes true
     let code ← withOptions (fun o => (typed o).setBool `pp.tagAppFns true) (Widget.ppExprTagged e)
     let text := toString (← withOptions typed (ppExpr e))
-    let (segs, terms) := segments vars code none #[] #[]
-    return [("text", Json.str text), ("segments", Json.arr segs), ("terms", termsJson terms)]
+    let (segs, terms) := segments vars root code none #[] #[]
+    return [("text", Json.str text), ("segments", Json.arr segs), ("terms", termsJson terms),
+      ("id", Json.str (toString root))]
   catch _ =>
     try
       return [("text", Json.str (toString (← ppExpr e)))]
@@ -222,8 +229,8 @@ def ppFields (e : Expr) (vars : Array FVarId := #[]) : MetaM (List (String × Js
       return [("text", Json.str "(not printable)"),
         ("error", Json.str (toString (← err.toMessageData.toString)))]
 
-def ppJson (e : Expr) (vars : Array FVarId := #[]) : MetaM Json :=
-  return Json.mkObj (← ppFields e vars)
+def ppJson (e : Expr) (vars : Array FVarId := #[]) (root : SubExpr.Pos := .root) : MetaM Json :=
+  return Json.mkObj (← ppFields e vars root)
 
 def isExistsApp (e : Expr) : Option (Name × Expr) :=
   if e.isAppOfArity ``Exists 2 then
@@ -237,77 +244,89 @@ implication, "for every" or "there is" as a tree whose leaves are pretty-printed
 quantifier inside the conclusion is a node (`forall`, `exists`) with its variable's name, type and
 number, and its body as its one part. `vars` is
 threaded through the tree, so that every witness has a variable of its own: two witnesses in
-sibling parts never share one. Display only; it changes no record that is assessed. -/
-partial def logicJson (vars : Array FVarId) (e : Expr) : MetaM (Json × Array FVarId) := do
+sibling parts never share one. `pos` is the position of `e` in the whole proposition; each
+node and variable carries its own (`id`). Display only; it changes no record that is assessed. -/
+partial def logicJson (vars : Array FVarId) (e : Expr) (pos : SubExpr.Pos) :
+    MetaM (Json × Array FVarId) := do
   let op := if e.isAppOfArity ``And 2 then some "and"
     else if e.isAppOfArity ``Or 2 then some "or"
     else if e.isAppOfArity ``Iff 2 then some "iff" else none
   match op with
   | some o =>
-    let (a, vars) ← logicJson vars e.appFn!.appArg!
-    let (b, vars) ← logicJson vars e.appArg!
-    return (Json.mkObj [("op", o), ("args", Json.arr #[a, b])], vars)
+    let (a, vars) ← logicJson vars e.appFn!.appArg! pos.pushAppFn.pushAppArg
+    let (b, vars) ← logicJson vars e.appArg! pos.pushAppArg
+    return (Json.mkObj [("op", o), ("id", Json.str (toString pos)),
+      ("args", Json.arr #[a, b])], vars)
   | none =>
     if e.isAppOfArity ``Not 1 then
-      let (a, vars) ← logicJson vars e.appArg!
-      return (Json.mkObj [("op", "not"), ("args", Json.arr #[a])], vars)
+      let (a, vars) ← logicJson vars e.appArg! pos.pushAppArg
+      return (Json.mkObj [("op", "not"), ("id", Json.str (toString pos)),
+        ("args", Json.arr #[a])], vars)
     if let .forallE n t body bi := e then
       if (← isProp t) && !body.hasLooseBVars then
         -- An implication inside a part: its premise is a part of its own, not an assumption
         -- of the whole statement.
-        let (a, vars) ← logicJson vars t
-        let (b, vars) ← logicJson vars body
-        return (Json.mkObj [("op", "implies"), ("args", Json.arr #[a, b])], vars)
-      let tj ← ppJson t vars
+        let (a, vars) ← logicJson vars t pos.pushBindingDomain
+        let (b, vars) ← logicJson vars body pos.pushBindingBody
+        return (Json.mkObj [("op", "implies"), ("id", Json.str (toString pos)),
+          ("args", Json.arr #[a, b])], vars)
+      let tj ← ppJson t vars pos.pushBindingDomain
       return ← withLocalDecl n bi t fun x => do
         let idx := vars.size
-        let (b, vars') ← logicJson (vars.push x.fvarId!) (body.instantiate1 x)
+        let (b, vars') ←
+          logicJson (vars.push x.fvarId!) (body.instantiate1 x) pos.pushBindingBody
         return (Json.mkObj [("op", "forall"), ("name", n.eraseMacroScopes.toString),
-          ("var", toJson idx), ("type", tj), ("args", Json.arr #[b])], vars')
+          ("var", toJson idx), ("id", Json.str (toString pos)), ("type", tj),
+          ("args", Json.arr #[b])], vars')
     match isExistsApp e with
     | some (_, .lam n t body bi) =>
-      let tj ← ppJson t vars
+      -- The witness is bound by the predicate `fun x => …`, the second argument of `Exists`.
+      let lam := pos.pushAppArg
+      let tj ← ppJson t vars lam.pushBindingDomain
       withLocalDecl n bi t fun x => do
         let idx := vars.size
-        let (b, vars') ← logicJson (vars.push x.fvarId!) (body.instantiate1 x)
+        let (b, vars') ←
+          logicJson (vars.push x.fvarId!) (body.instantiate1 x) lam.pushBindingBody
         return (Json.mkObj [("op", "exists"), ("name", n.eraseMacroScopes.toString),
-          ("var", toJson idx), ("type", tj), ("args", Json.arr #[b])], vars')
-    | _ => return (Json.mkObj [("leaf", ← ppJson e vars)], vars)
+          ("var", toJson idx), ("id", Json.str (toString lam)), ("type", tj),
+          ("args", Json.arr #[b])], vars')
+    | _ => return (Json.mkObj [("leaf", ← ppJson e vars pos)], vars)
 
 /-! ## The inspection representation -/
 
 /-- Split a proposition into its quantifier prefix and its conclusion. Universal binders are
 `forall` (data), `hypothesis` (a proposition) or `instance`; existential binders are `exists`.
 Definitions are not unfolded: the prefix is the one written in the specification. -/
-partial def telescope (e : Expr) (acc : Array Json) (vars : Array FVarId := #[]) :
-    MetaM (Array Json × Json) := do
+partial def telescope (e : Expr) (acc : Array Json) (vars : Array FVarId := #[])
+    (pos : SubExpr.Pos := .root) : MetaM (Array Json × Json) := do
   match e with
   | .forallE n t body bi =>
     let isHyp ← isProp t
     let role :=
       if bi.isInstImplicit then "instance" else if isHyp then "hypothesis" else "forall"
-    let tj ← ppJson t vars
+    let tj ← ppJson t vars pos.pushBindingDomain
     withLocalDecl n bi t fun x => do
       let hyps := (acc.filter fun j => j.getObjValD "role" == Json.str "hypothesis").size
       let nm := if n.hasMacroScopes || n.isAnonymous then s!"h{hyps + 1}"
         else n.toString
       -- What an instance supplies: a proposition (`[Nonempty E]`) or data (`[Inhabited E]`).
       let supplies := if isHyp then "proposition" else "data"
-      let j := Json.mkObj [("role", role), ("name", nm),
+      let j := Json.mkObj [("role", role), ("name", nm), ("id", Json.str (toString pos)),
         ("type", tj), ("binder", binderStr bi), ("supplies", supplies)]
-      telescope (body.instantiate1 x) (acc.push j) (vars.push x.fvarId!)
+      telescope (body.instantiate1 x) (acc.push j) (vars.push x.fvarId!) pos.pushBindingBody
   | _ =>
     match isExistsApp e with
     | some (_, .lam n t body bi) =>
-      let tj ← ppJson t vars
+      let lam := pos.pushAppArg
+      let tj ← ppJson t vars lam.pushBindingDomain
       withLocalDecl n bi t fun x => do
         let j := Json.mkObj [("role", "exists"), ("name", n.eraseMacroScopes.toString),
-          ("type", tj), ("binder", binderStr bi)]
-        telescope (body.instantiate1 x) (acc.push j) (vars.push x.fvarId!)
+          ("id", Json.str (toString lam)), ("type", tj), ("binder", binderStr bi)]
+        telescope (body.instantiate1 x) (acc.push j) (vars.push x.fvarId!) lam.pushBindingBody
     | _ =>
       -- The conclusion, with its logical shape when it has one (`logic`, display only).
-      let fields ← ppFields e vars
-      let (logic, _) ← logicJson vars e
+      let fields ← ppFields e vars pos
+      let (logic, _) ← logicJson vars e pos
       let shaped := (logic.getObjVal? "op").toOption.isSome
       return (acc, Json.mkObj (if shaped then fields ++ [("logic", logic)] else fields))
 where

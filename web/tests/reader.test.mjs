@@ -462,6 +462,25 @@ await check("in the local reader a symbol is linked by choosing it and clicking 
     assert.equal(await st.locator(".inspect.term").count(), 0, "a click past the largest releases it");
   });
 
+  await check("a sub-term selected in one view of a statement is selected in the other", width, async (pg) => {
+    await pg.goto(origin + `/structure/#/r/${SHAPE.release}/read/P/${encodeURIComponent("P:thm:layout")}`);
+    const st = pg.locator("aside .view .stmt").first();
+    await st.locator(".ribbon").waitFor();
+    const exact = pg.locator("aside .exact pre").first();
+    await exact.waitFor();
+    const lit = async (loc) => (await loc.locator(".in").allTextContents()).join("").trim();
+    // Chosen in the readable statement: the same sub-term, found by its identity in the
+    // proposition, is lit in the exact Lean (#73).
+    await st.locator(".concl .parts > li").nth(1).locator(".p", { hasText: "+" }).first().click();
+    assert.equal(await lit(st), "n + x", "readable: " + await lit(st));
+    assert.equal(await lit(exact), "n + x", "exact: " + await lit(exact));
+    // And the reverse: chosen in the exact Lean, lit in the readable statement.
+    await exact.locator(".c.p, .p", { hasText: "≤" }).first().click();
+    const there = await lit(exact);
+    assert.ok(there.includes("≤"), there);
+    assert.equal(await lit(st), there);
+  });
+
   await check("a name's plain-English note appears only on request, beside the name", width, async (pg) => {
     await pg.goto(origin + `/structure/#/r/${SHAPE.release}/read/P/${encodeURIComponent("P:thm:layout")}`);
     const st = pg.locator("aside .view .stmt");

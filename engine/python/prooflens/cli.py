@@ -535,7 +535,7 @@ def cmd_symbol(a):
     try:
         if a.action == "add":
             ln = sy.add(cfg, a.claim, a.tex, a.decl, a.reviewer, var=a.var, type_of=a.type_of,
-                        term=a.term)
+                        term=a.term, at=a.at)
             print(f"linked {a.tex} in {a.claim} to {ln['lean']} (by {ln['by']}); "
                   "rebuild the site to show it")
         elif a.action == "remove":
@@ -808,6 +808,8 @@ def main(argv=None):
             p_.add_argument("--type-of", dest="type_of", help="the binder whose type it is")
             p_.add_argument("--term", help="the sub-term it is, as WHERE#K: b:<binder>, c (the "
                                            "conclusion) or l:<part>, and the sub-term's number")
+            p_.add_argument("--at", help="the sub-term it is, by its identity in the proposition "
+                                         "(the `id` the reader's data gives it)")
             p_.add_argument("--as", dest="reviewer",
                             default=os.environ.get("MACHINECHECKED_REVIEWER"),
                             help="human:NAME or llm:MODEL (default: $MACHINECHECKED_REVIEWER)")

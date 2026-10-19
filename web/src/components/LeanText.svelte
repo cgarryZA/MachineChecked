@@ -7,9 +7,10 @@
   // without one, the note is the name's tooltip.
   // A sub-term (`pp.terms`, ranges of segments) is selected by clicking plain text: the smallest
   // sub-term around it, then the next larger on each click; `term` is the selected one's index,
-  // reported to `onterm` (null to release).
+  // reported to `onterm` (null to release). `selId` selects a sub-term by its identity in the
+  // proposition (`id`), as another view of the same statement selected it.
   let { pp, onref = null, refs = null, active = null, onvar = null, ongloss = null, term = null,
-        onterm = null } = $props();
+        onterm = null, selId = null } = $props();
   import { getContext } from "svelte";
   const refHref = getContext("declarationHref");
   const meaningful = (s) => /[\p{L}\p{N}∀∃∈≤≥=+×→↔∧∨¬]/u.test(s.t);
@@ -37,13 +38,14 @@
     return out;
   }
   const terms = $derived(pp?.terms || []);
-  const sel = $derived(term != null ? terms[term] : null);
+  const cur = $derived(term ?? (selId != null ? terms.findIndex((t) => t.id === selId) : -1));
+  const sel = $derived(cur != null && cur >= 0 ? terms[cur] : null);
   const lit = (i) => !!sel && sel.from <= i && i < sel.to;
   function pick(i) {
     const around = terms.map((t, k) => ({ ...t, k })).filter((t) => t.from <= i && i < t.to)
       .sort((a, b) => (a.to - a.from) - (b.to - b.from));
     if (!around.length) return;
-    const at = around.findIndex((t) => t.k === term);
+    const at = around.findIndex((t) => t.k === cur);
     onterm(at < 0 ? around[0].k : around[at + 1]?.k ?? null);
   }
   const isProject = (r) => refs?.includes(r);

@@ -110,7 +110,7 @@ def symbol_links(display: dict | None, cid: str, tex: str | None, lean: dict) ->
                  or not tex or pins.get("source") != sha256_text(tex)
                  or shown is None
                  or ("target" in pins and pins["target"] != shown)
-                 or ("term" in target and "target" not in pins))
+                 or (("term" in target or "at" in target) and "target" not in pins))
         out.append({"symbol": ln.get("symbol") or {}, "lean": target, "by": ln.get("by"),
                     "stale": bool(stale)})
     return out
