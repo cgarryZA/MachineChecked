@@ -5,11 +5,13 @@ A reviewer takes a unit of the review queue through three steps: read the paper 
 reading; then see the Lean and record a verdict; then see the author's review and record any
 disagreement. Each step refuses to run before the one it follows, and each is timestamped, so
 the report is in exactly the form the reader exports and `review promote` checks. The work is
-kept in `<work dir>/review-work/<reviewer>.json`; `export` writes the reports as one file.
+kept in the reviewer's workspace (`workspace.py`, `<work dir>/review-work/<reviewer>.json`);
+`export` writes the reports as one file.
 
 As on the page, the order is what this program recorded: it cannot show that the reviewer did
 not read the Lean elsewhere. What other units had already shown a unit's material to this
-reviewer is recorded in the report (`reading.revealed_by`).
+reviewer is recorded in the report (`reading.revealed_by`), and so is what the workspace
+records the reviewer had seen (an informed investigation has seen the Lean of every claim).
 """
 
 from __future__ import annotations
@@ -20,6 +22,7 @@ import re
 from pathlib import Path
 
 from . import compare as cmp
+from . import workspace as wsp
 from .config import Config
 
 REPORT_SCHEMA = "prooflens/review-report@1"
@@ -63,7 +66,7 @@ class Session:
     build's site data and keeps the work beside it."""
 
     def __init__(self, target: Config | Path, reviewer: dict):
-        work = target.out_dir if isinstance(target, Config) else Path(target)
+        work = Path(getattr(target, "out_dir", target))
         self.data = work / "site" / "data"
         if not (self.data / "review-queue.json").exists():
             raise ReviewError("no review queue: run `machinechecked view` or `machinechecked "
@@ -73,14 +76,16 @@ class Session:
         self.queue = json.loads((self.data / "review-queue.json").read_text(encoding="utf-8"))
         self.units = {u["id"]: u for u in self.queue["units"]}
         self.reviewer = reviewer
-        slug = re.sub(r"[^\w.-]+", "_", reviewer["id"])
-        self.path = work / "review-work" / f"{slug}.json"
-        self.work = (json.loads(self.path.read_text(encoding="utf-8")) if self.path.exists()
-                     else {"reviewer": reviewer, "drafts": {}, "reports": []})
+        self.path = wsp.store(work) / f"{wsp.reviewer_slug(reviewer['id'])}.json"
+        try:
+            self.workspace = wsp.read(self.path) if self.path.exists() else \
+                wsp.new(reviewer, "independent")
+        except (ValueError, wsp.WorkspaceError) as e:
+            raise ReviewError(f"{self.path}: {e}") from None
+        self.work = self.workspace["review"]
 
     def save(self):
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(json.dumps(self.work, indent=1, ensure_ascii=False), encoding="utf-8")
+        wsp.save_review(self.path, self.work, self.reviewer)
 
     # -- the queue -------------------------------------------------------------------------
 
@@ -117,6 +122,13 @@ class Session:
         passed += [(i, d["stage"] != "read", d["stage"] == "author")
                    for i, d in self.work["drafts"].items()]
         out = []
+        for e in wsp.exposed(self.workspace, [c["id"] for c in u.get("claims") or []]):
+            for what in e["what"]:
+                what = {"prior interpretations": "author's review"}.get(what, what)
+                item = {"unit": f"workspace {self.workspace['id']} ({e.get('how')})",
+                        "what": what}
+                if what in ("Lean", "author's review") and item not in out:
+                    out.append(item)
         for i, lean, author in passed:
             r = (self.units.get(i) or {}).get("reveals") or {}
             if i == u["id"]:

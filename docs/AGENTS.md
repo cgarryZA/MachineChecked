@@ -150,7 +150,47 @@ machinechecked review export --out machinechecked-reviews/my-reviews.json
 ```
 
 Run `compare` on a claim only after its review, or say in the reading that you had: its default
-stage shows the Lean and what others recorded.
+stage shows the Lean and what others recorded. The steps are saved in your workspace
+(`review-work/`, below); record an informed `compare` there before reviewing the same claim with
+`{"op": "exposure", "what": ["Lean", "prior interpretations"], "claims": ["thm:bound"],
+"how": "compare"}`, so the report lists it.
+
+### Recording links and findings
+
+```sh
+machinechecked link "Theorem 2" Plain.oddSum_eq_sq --coverage full --note-file note.md \
+  --as "llm:MODEL" --json
+```
+
+checks the claim and the declarations against the last build (no Lean runs) and prints one
+JSON document (`machinechecked/link@1`): the resolved `claim` (`id`, `key`, `number`), each
+declaration's `build` state (`built`, `unbuilt`, `not loaded`, `external`), the links-file entry
+`before` and `after`, and `written`. An unknown or ambiguous claim, or a name the project does not
+declare, exits 1 with `ok: false` and `error.candidates`, and writes nothing. `--dry-run` writes
+nothing.
+
+Evidence, findings and open questions for a claim or a clause go into a workspace
+(`machinechecked workspace`, described in [Reviewing](REVIEWING.md#saved-investigations)):
+
+```sh
+machinechecked workspace open --mode informed --as llm:MODEL
+machinechecked workspace update - --as llm:MODEL <<'JSON'
+{"op_id": "req-1", "ops": [
+ {"op": "put", "record": {"id": "e-1", "kind": "evidence", "claim": "Theorem 2",
+  "ref": {"decl": "Plain.oddSum_eq_sq"}, "role": "supports"}},
+ {"op": "put", "record": {"id": "f-1", "kind": "finding", "claim": "Theorem 2",
+  "coverage": "full", "evidence": ["e-1"],
+  "note": "The recursion states the paper's sum."}}]}
+JSON
+machinechecked workspace show --json
+```
+
+`update` prints the acknowledgement (`changed`, `revisions`, `revision`) or `ok: false` with the
+`error` (exit 1); an edit of a record changed since its `base_rev` returns `conflicts` with both
+versions. Repeat a request with its `op_id` after a lost answer: it changes nothing. `show
+--json` gives every record with its `currency` (`current`, `stale` with the `changes`, or
+`unchecked`) and the `resume` point. A workspace started in informed mode records that the Lean
+was seen; `{"op": "exposure", "what": "external material"}` records anything else you read.
 
 ## A note for your project's AGENTS.md or CLAUDE.md
 

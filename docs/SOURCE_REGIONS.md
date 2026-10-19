@@ -77,6 +77,67 @@ passage being presented as the unchanged reviewed source.
 This audited source pin is separate from any display excerpt or its rendering-context
 fingerprint. Editing a display overlay cannot refresh an audited source check.
 
+## Display excerpts
+
+The reader shows a claim's statement typeset from the paper's source when the **whole** passage
+can be typeset faithfully, and the PDF excerpt otherwise. A display excerpt is display only: no
+status, finding or review reads it, and its fingerprint (`tex-excerpt-v1:…`) is separate from
+`source_sha256`. A passage whose audited source no longer matches its pin is shown from the
+PDF.
+
+Which passage is shown:
+
+- a theorem-like environment: its body (the heading is shown by the reader);
+- a line-located claim whose audited region is a whole display or an explicit span: that region;
+- otherwise, or to choose another passage, an `excerpt` entry in the display overlay:
+
+```json
+{"claims": {
+  "P:eq:sample": {"excerpt": {"label": "eq:sample"}},
+  "P:prop:sample": {"excerpt": {"location": "paper/main.tex:20", "end_line": 22, "end_column": 37}},
+  "P:rem:sample": {"excerpt": false}}}
+```
+
+A `label` selects the innermost display or theorem-like environment carrying that label; the
+label must occur exactly once. A `location` uses the bounds of an audited region
+(`end_line`, `start_column`, `end_column`, as above), so prose can stop before the next claim on
+the same line; its optional `revision` names the paper revision its lines belong to, and at any
+other revision it selects nothing. `false` shows the PDF. A missing, ambiguous or reversed
+selector is refused, and the claim is shown from the PDF.
+
+The excerpt is read when the release is built, from the snapshot that was compiled, and stored
+with that release's evidence: rebuilding an old release shows its original passage, and a
+changed overlay or paper takes effect at the next `machinechecked build`. Each excerpt records
+the source revision, file and bounds, the raw passage (newlines and comments kept), and its
+rendering context:
+
+- the paper's own `\newcommand`, `\renewcommand`, `\def`, `\gdef` and `\DeclareMathOperator`
+  definitions **in effect at the passage**, read in the order TeX reads them, through `\input`,
+  `\include` and the snapshot's own packages and class; a later `\renewcommand` replaces an
+  earlier definition, and a definition after the passage does not apply to it;
+- the printed numbers of `\ref`, `\eqref`, `\cite` (with its optional note) and of numbered
+  equations, from the compilation's `.aux` files.
+
+A comment ends with its line, so `% comment` followed by a new line keeps that line. The whole
+passage falls back to the PDF when anything in it cannot be reproduced exactly; the reasons are
+listed under the claim's audit details. The causes include: a text command or environment the
+reader does not typeset; a macro used in the text (other than one that prints nothing); a
+definition the passage uses that has an optional argument, delimited parameters, `\let`,
+`\edef` or `xparse`, or that is made inside a group or a conditional; a passage that is not
+part of the compiled document; a reference or citation that is not resolved, or that prints TeX
+(an author–year citation style, `\cref`); a numbered equation row without a label (its number
+is not recorded); `multline`, `flalign` and `eqnarray`; a citation of several works when the
+paper loads a package that prints citations its own way (`cite`, `natbib`, `biblatex`); a
+paper that loads a package giving standard mathematics commands another meaning (`physics`,
+`unicode-math`, `mathabx`, `MnSymbol`). In the reader, every piece of
+mathematics is typeset by KaTeX in strict mode under those definitions; one error shows the PDF
+instead. Packages from the TeX distribution are not read: a command they define that KaTeX does
+not know shows the PDF, and a package that changes the meaning of a standard command is not
+detected.
+
+`publish.source_text = false` leaves the excerpt out of the export, as it does the statement's
+source text.
+
 ## Moving to a new revision of the paper
 
 When the manuscript gains a revision, move the inventory to it:
@@ -137,3 +198,14 @@ Reviews, clauses, dismissals, Lean and other papers are not touched; free text s
 or URLs naming the old revision is left to edit by hand. Rerunning the same command writes
 nothing more. Evidence and releases built before the repin keep the snapshot they were
 built from.
+
+The display excerpts of the paper's claims ([above](#display-excerpts)) are handled
+separately, under `excerpts` in the plan; the audited pins above do not depend on them. A
+selector by `label` is read again at the next build (`follows-label`, or `label-not-unique`
+when the label is missing or repeated in the new revision, and the claim is then shown from the
+PDF). A selector by `location` is `moved` (or `unchanged`) when its text occurs exactly once,
+where the paper prints it, in the new revision; `--write` gives it the new place, with
+`context_changed` saying whether the lines beside it changed. Any other is `invalidated`:
+`--write` adds the original revision to it, so it selects nothing at the new revision until it
+is chosen again (`stale` in a later plan). The display overlay is written atomically with the
+inventory, and only for the selected paper's claims.

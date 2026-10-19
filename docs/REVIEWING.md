@@ -41,8 +41,9 @@ assessment's queue; in any other Lean project they review the zero-configuration
 last `machinechecked view` or `machinechecked build`, one unit per linked claim
 (`link:<claim key>`). Each step refuses to run before the one it follows and is timestamped; the
 reports are in the form the reader exports, and `review promote` checks them the same way. The
-work is kept in the project's working directory (`review-work/`). In zero configuration, export
-into `machinechecked-reviews/` to publish the reports with the audit.
+work is kept in your workspace in the project's working directory (`review-work/`; see below).
+In zero configuration, export into `machinechecked-reviews/` to publish the reports with the
+audit.
 
 `read` gives every passage of the unit in full: a statement stated in several places, or a
 definition used by many claims, is read in all of them. Each passage says where it is and how it
@@ -61,7 +62,60 @@ earlier reports, symbol links and statuses.
 claim's passage, its linked statements, its definitions and everything recorded about it, and
 `compare --query` answers targeted questions (see [AGENTS.md](AGENTS.md)). That is an informed
 inspection: someone who has used it on a claim has seen its Lean and its interpretations, and a
-later review of that claim is not blind. Say so in the reading.
+later review of that claim is not blind. Say so in the reading, and record it in your
+workspace (an `exposure` operation, below) so that the report lists it.
+
+## Saved investigations
+
+A workspace keeps an investigation of the paper against the Lean so that you, or another auditor
+or agent, can continue it: the evidence chosen for each claim (and the candidates rejected), the
+findings, the open questions, and where you stopped. It lives in the project's working directory
+(`.machinechecked/review-work/`), survives rebuilds and browser restarts, and changes no status.
+Its format is in [the data model](DATA_MODEL.md#workspace-prooflensworkspace1-written-by-the-reader-and-the-command-line).
+
+**In the reader.** Under `machinechecked view`, a claim page has an **Investigation** section:
+start one under your name, record a finding (its coverage and note, citing the linked
+declarations), ask a question, submit a draft finding. A claim page shows the Lean, so a
+workspace started there is an *informed investigation*: it records that you saw the Lean and
+earlier interpretations, and it has no blind reading. Independent review uses the review page or
+`machinechecked review`, with the locks above.
+
+**From the command line.** The same records, with the same checks:
+
+```sh
+machinechecked workspace open --mode informed --as human:NAME   # start or resume
+machinechecked workspace show [--claim "Lemma 2.3"] [--json]    # evidence, findings, questions
+machinechecked workspace update ops.json [--dry-run]            # apply operations (- for stdin)
+machinechecked workspace export --out work.json                 # hand it on
+machinechecked workspace import work.json                       # continue it elsewhere
+```
+
+An update file lists operations, applied together or not at all; claims may be named by id, key
+or number:
+
+```json
+{"op_id": "2026-10-19-lemma-2.3", "ops": [
+  {"op": "put", "record": {"id": "e-bound", "kind": "evidence", "claim": "Lemma 2.3",
+   "ref": {"decl": "Example.inverse_bound"}, "role": "supports"}},
+  {"op": "put", "record": {"id": "f-bound", "kind": "finding", "claim": "Lemma 2.3",
+   "clause": "the bound", "coverage": "changed", "evidence": ["e-bound"],
+   "note": "The bound needs one more derivative of the input."}},
+  {"op": "resume", "state": {"claim": "Lemma 2.3"}}]}
+```
+
+To edit a record, `put` it again with `base_rev`, the revision `show --json` gave it. If someone
+changed it meanwhile, nothing is written and both versions are returned (and kept under
+`conflicts`); edits of different records are all kept. Repeating a request with the same `op_id`
+changes nothing. A finding is a draft until `{"op": "submit", "id", "base_rev"}`; a submitted
+finding is never edited, but `{"op": "supersede", "id", "base_rev", "reason", "record"}` records a
+later one with its reason, and both remain.
+
+When a declaration that evidence cites changes (its statement, or a definition's equations), or a
+claim's printed text changes, `show` marks that evidence and the findings that cite it as
+`stale`; the others stay current. Re-pin a record with `"repin": true` once you have checked it
+again. Changing to independent mode, or importing, keeps what the workspace records you had seen,
+so an informed investigation never becomes a blind review: a report made with `machinechecked
+review` lists that exposure, and `review promote` refuses it without `--allow-revealed`.
 
 ## What a verdict means
 

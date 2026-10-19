@@ -315,6 +315,12 @@ def test_zero_configuration_review_from_the_terminal(plain, tmp_path, monkeypatc
     run("export", "--out", str(out))
     report, = json.loads(out.read_text())["reports"]
     assert report["unit"]["id"] == uid and report["pins"]["fingerprints"]["Plain.odd_add_odd"]
+    # The steps were saved in the reviewer's workspace, the one `workspace` commands open.
+    saved = json.loads((plain / ".machinechecked" / "review-work"
+                        / "human_Test-Referee.json").read_text())
+    assert saved["schema"] == "prooflens/workspace@1" and len(saved["review"]["reports"]) == 1
+    ws, = run_json(capsys, "workspace", "list", "--json")["workspaces"]
+    assert ws["id"] == saved["id"] and ws["mode"] == "independent" and ws["reports"] == 1
     # The packet of a general comparison is an informed one, and says so.
     pk = run_json(capsys, "compare", "thm:odd-add", "--json")
     assert pk["contains"][-1] == "prior interpretations"
