@@ -58,13 +58,18 @@ table of `machinechecked.toml` names another):
   located by numbers that depend on how the statement is printed and split: a change in the
   display can renumber them while the statement stays the same, and the link must then go stale
   rather than point at another object. A link to a sub-term made without that pin is stale.
+  A link made while the reader typesets the claim's passage from its source
+  ([display excerpts](SOURCE_REGIONS.md#display-excerpts)) is made on that passage: `source`
+  is the hash of its text and `excerpt` its fingerprint, which covers the macros and reference
+  numbers it is typeset with. Such a link is stale when the excerpt's fingerprint changes or the
+  passage is shown from the PDF.
 - A "there is" inside the conclusion is a variable too: the probe numbers it after the prefix's
   binders, each witness its own number, so `--var` and `--type-of` accept it by name or number.
 
 ## Display
 
-- Only in mathematics the reader renders itself: the claim's TeX (KaTeX) in the panel, never the
-  PDF. KaTeX output can carry an id per symbol; a PDF has glyphs, and positioned targets would
+- Only in mathematics the reader renders itself: the claim's passage typeset from its source
+  (KaTeX) in the panel, never the PDF. KaTeX output can carry an id per symbol; a PDF has glyphs, and positioned targets would
   need per-symbol anchors from the LaTeX (a macro in `prooflens.sty`), which is a later and
   separate decision, if ever.
 - The same selection model as the Lean view: hovering a linked symbol highlights it and the Lean

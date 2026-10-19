@@ -34,6 +34,60 @@
         "null"
       ]
     },
+    "excerpt": {
+      "description": "Display only: the passage the reader typesets from the pinned LaTeX source, or the reasons it cannot (docs/SOURCE_REGIONS.md). Its fingerprint is separate from source_sha256.",
+      "type": [
+        "object",
+        "null"
+      ],
+      "required": [
+        "scheme",
+        "ready",
+        "reasons",
+        "fingerprint"
+      ],
+      "properties": {
+        "scheme": {
+          "const": "tex-excerpt-v1"
+        },
+        "ready": {
+          "type": "boolean"
+        },
+        "reasons": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "fingerprint": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "text": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "blocks": {
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "macros": {
+          "type": "object"
+        },
+        "revision": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
     "clauses": {
       "type": "array",
       "items": {

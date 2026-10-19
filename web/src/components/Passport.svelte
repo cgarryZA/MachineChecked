@@ -9,7 +9,6 @@
   import EvidenceSummary from "./EvidenceSummary.svelte";
   import PaperStatement from "./PaperStatement.svelte";
   import StatusChip from "./StatusChip.svelte";
-  import PdfCrop from "./PdfCrop.svelte";
   import Statement from "./Statement.svelte";
   import Ladder from "./Ladder.svelte";
   import Findings from "./Findings.svelte";
@@ -142,7 +141,7 @@
     const meta = projectClaims(index).find((c) => linked.includes(c.id) && c.kind === "definition");
     const raw = meta && (await loadClaim(index, meta.id).catch(() => null));
     const rec = raw && inProject(raw, project.repo);
-    return rec?.anchor?.begin ? rec : null;
+    return rec && (rec.anchor?.begin || rec.excerpt?.ready) ? rec : null;
   }
 
   function showDecl(name) {
@@ -228,13 +227,6 @@
 
 </script>
 
-{#snippet crop(c)}
-  {@const pp = c.audit?.paper || index.papers.find((p) => p.id === c.paper)}
-  {#if (pp?.pdf || pp?.pdf_url) && c.anchor?.begin}
-    <PdfCrop url={pp.pdf_url || "data/" + pp.pdf} anchor={c.anchor} />
-  {/if}
-{/snippet}
-
 {#if error}
   <p role="alert">{error} <button class="act" onclick={() => attempt++}>Try again</button></p>
 {:else if !claim}
@@ -257,7 +249,7 @@
         {:else}
           {#await paperOf(top) then def}
             {#if def}
-              <section class="paper"><h2>Paper · {def.number}</h2>{@render crop(def)}</section>
+              <section class="paper"><h2>Paper · {def.number}</h2><PaperStatement claim={def} paper={def.audit?.paper || index.papers.find((p) => p.id === def.paper)} evidence={false} /></section>
               <h2>Lean</h2>
             {/if}
           {/await}
@@ -502,9 +494,11 @@
         {/if}
       {/each}
     {/if}
-    {#if claim.statement_tex && paper?.pdf && claim.anchor?.begin}
+    {#if (claim.excerpt?.text || claim.statement_tex) && paper?.pdf && claim.anchor?.begin}
       <h3>Source text</h3>
-      <Tex text={claim.statement_tex} />
+      <pre class="srctext">{claim.excerpt?.text ?? claim.statement_tex}</pre>
+      {#if claim.excerpt && !claim.excerpt.ready}<p class="faint small excerpt-why">Shown from the PDF: {claim.excerpt.reasons[0]}.</p>
+      {:else if claim.excerpt}<p class="faint small">Typeset from <code>{claim.excerpt.file}</code>, lines {claim.excerpt.start_line}–{claim.excerpt.end_line}{claim.excerpt.revision ? " at revision " + claim.excerpt.revision.slice(0, 12) : ""}.</p>{/if}
       {#if claim.anchor?.file}<p class="faint small"><code>{claim.anchor.file}:{claim.anchor.line}</code>
         {#if claim.anchor.kind === "approximate"} · located approximately{/if}
         {#if claim.source_matches === false}<span class="bad"> · differs from the frozen inventory</span>{/if}</p>{/if}
@@ -614,6 +608,7 @@
   .proof dd { margin: 0 0 6px; }
   .review { border-left: 3px solid var(--border); padding-left: 10px; margin: 8px 0; }
   .pill { font-size: 11px; padding: 0 6px; border-radius: 999px; background: var(--surface-2); color: var(--muted); margin-left: 4px; }
+  .srctext { white-space: pre-wrap; overflow-wrap: anywhere; font: 13px/1.5 var(--mono); background: var(--surface); padding: 8px 10px; border-radius: var(--radius); }
   .rtext { white-space: pre-wrap; font: 13px/1.5 var(--sans); color: var(--muted); margin: 6px 0 0; }
   .ref { border: 0; background: none; padding: 0; color: var(--accent); cursor: pointer; font-family: var(--mono); font-size: 0.92em; max-width: 100%; text-align: left; overflow-wrap: anywhere; }
   .foot { margin-top: 16px; }

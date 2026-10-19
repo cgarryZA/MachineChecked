@@ -3,8 +3,7 @@
   import { href, route, go, withQuery } from "../lib/route.svelte.js";
   import { VERDICTS, GROUPS, CHECKLIST, MARKS, loadWork, saveWork, now, reviewerId, needsDetail, buildReport,
            exportFile } from "../lib/review.js";
-  import PdfCrop from "./PdfCrop.svelte";
-  import Tex from "./Tex.svelte";
+  import PaperStatement from "./PaperStatement.svelte";
   import Statement from "./Statement.svelte";
   import Decl from "./Decl.svelte";
   import TexInline from "./TexInline.svelte";
@@ -228,11 +227,7 @@
           {#snippet printed(c)}
             <h2>{c.number}{#if c.heading}<span class="ht">&nbsp;— <TexInline text={c.heading} /></span>{/if}</h2>
             {#if !c.heading && c.title}<p class="desc"><TexInline text={c.title} /></p>{/if}
-            {#if paperOf(c)?.pdf && c.anchor?.begin}
-              <PdfCrop url={"data/" + paperOf(c).pdf} anchor={c.anchor} />
-            {:else if c.statement_tex}
-              <Tex text={c.statement_tex} />
-            {/if}
+            <PaperStatement claim={c} paper={paperOf(c)} evidence={false} />
             <p class="small"><a href={href(index.release, "read", c.paper, c.id)} target="_blank" rel="noopener" title="Opens the paper and Lean reader">Open in the paper ↗</a></p>
           {/snippet}
           {#if claims[0]}{@render printed(claims[0])}{/if}

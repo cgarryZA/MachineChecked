@@ -55,7 +55,7 @@ Dismissals of warnings (`dismissals.json`):
 | `reviews` | the review files' hashes and every parsed marker |
 | `dismissals` | as read |
 | `lean` | the probe records: specifications (binders, conclusion, closure, constants, hashes), proofs (exact-type check, axioms), declarations (signature, value, doc, hashes), layering |
-| `tex` | per paper: mode, page size, anchors (env, number, labels, file:line, begin/head/end positions, source hash), files read |
+| `tex` | per paper: mode, page size, anchors (env, number, labels, file:line, begin/head/end positions, source hash), files read, source regions, and the display excerpts of its claims (`excerpts`, [SOURCE_REGIONS.md](SOURCE_REGIONS.md#display-excerpts)) |
 | `assessment` | per claim: status and clauses; all findings |
 
 A pretty-printed Lean term (a binder's type, a conclusion, a signature) is `{text, segments}`:
@@ -71,7 +71,8 @@ The current format is `prooflens/manifest@1`; older display data must be rebuilt
 See [the structured status contract](STATUS_CONTRACT.md) for the complete code inventory.
 
 `data/index.json` lists the papers, every claim's `status_code`, derived status/class and anchor, the summary and the
-findings counts. `data/claims/<file>.json` holds one passport: the printed statement, each
+findings counts. `data/claims/<file>.json` holds one passport: the printed statement (and its
+display `excerpt`, when the paper publishes its source text), each
 clause's unfolded statement, proofs, witness, regimes, reviews and structured `evidence`, the
 declarations of its closure, and its findings. A claim is loaded only when it is opened.
 In zero configuration a passport also has `correspondence` (or `null`): the mapper's note on how
