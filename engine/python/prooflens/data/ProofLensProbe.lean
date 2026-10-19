@@ -206,10 +206,13 @@ def termsJson (terms : Array (Nat × Nat)) : Json := Id.run do
 if tagging fails, and a marker if printing fails, so that one large term cannot stop the probe. -/
 def ppFields (e : Expr) (vars : Array FVarId := #[]) : MetaM (List (String × Json)) := do
   try
-    -- The head of every application is tagged too (`pp.tagAppFns`), so that the function a
-    -- term applies is a constant the reader can name; the text is the same.
-    let code ← withOptions (fun o => o.setBool `pp.tagAppFns true) (Widget.ppExprTagged e)
-    let text := toString (← ppExpr e)
+    -- The type of a bound variable is printed (`pp.funBinderTypes`): `∃ Φ : T, …` says what Φ
+    -- is. The head of every application is tagged too (`pp.tagAppFns`), so that the function a
+    -- term applies is a constant the reader can name. The text and the tagged code are printed
+    -- with the same options.
+    let typed := fun (o : Options) => o.setBool `pp.funBinderTypes true
+    let code ← withOptions (fun o => (typed o).setBool `pp.tagAppFns true) (Widget.ppExprTagged e)
+    let text := toString (← withOptions typed (ppExpr e))
     let (segs, terms) := segments vars code none #[] #[]
     return [("text", Json.str text), ("segments", Json.arr segs), ("terms", termsJson terms)]
   catch _ =>
@@ -222,25 +225,56 @@ def ppFields (e : Expr) (vars : Array FVarId := #[]) : MetaM (List (String × Js
 def ppJson (e : Expr) (vars : Array FVarId := #[]) : MetaM Json :=
   return Json.mkObj (← ppFields e vars)
 
-/-- The logical shape of a conclusion: a conjunction, disjunction or equivalence as a tree whose
-leaves are pretty-printed propositions. Display only; it changes no record that is assessed. -/
-partial def logicJson (vars : Array FVarId) (e : Expr) : MetaM Json := do
-  let op := if e.isAppOfArity ``And 2 then some "and"
-    else if e.isAppOfArity ``Or 2 then some "or"
-    else if e.isAppOfArity ``Iff 2 then some "iff" else none
-  match op with
-  | some o => return Json.mkObj [("op", o),
-      ("args", Json.arr #[← logicJson vars e.appFn!.appArg!, ← logicJson vars e.appArg!])]
-  | none => return Json.mkObj [("leaf", ← ppJson e vars)]
-
-/-! ## The inspection representation -/
-
 def isExistsApp (e : Expr) : Option (Name × Expr) :=
   if e.isAppOfArity ``Exists 2 then
     match e.appArg! with
     | .lam n _ _ _ => some (n, e.appArg!)
     | _ => none
   else none
+
+/-- The logical shape of a conclusion: a conjunction, disjunction, equivalence, negation,
+implication, "for every" or "there is" as a tree whose leaves are pretty-printed propositions. A
+quantifier inside the conclusion is a node (`forall`, `exists`) with its variable's name, type and
+number, and its body as its one part. `vars` is
+threaded through the tree, so that every witness has a variable of its own: two witnesses in
+sibling parts never share one. Display only; it changes no record that is assessed. -/
+partial def logicJson (vars : Array FVarId) (e : Expr) : MetaM (Json × Array FVarId) := do
+  let op := if e.isAppOfArity ``And 2 then some "and"
+    else if e.isAppOfArity ``Or 2 then some "or"
+    else if e.isAppOfArity ``Iff 2 then some "iff" else none
+  match op with
+  | some o =>
+    let (a, vars) ← logicJson vars e.appFn!.appArg!
+    let (b, vars) ← logicJson vars e.appArg!
+    return (Json.mkObj [("op", o), ("args", Json.arr #[a, b])], vars)
+  | none =>
+    if e.isAppOfArity ``Not 1 then
+      let (a, vars) ← logicJson vars e.appArg!
+      return (Json.mkObj [("op", "not"), ("args", Json.arr #[a])], vars)
+    if let .forallE n t body bi := e then
+      if (← isProp t) && !body.hasLooseBVars then
+        -- An implication inside a part: its premise is a part of its own, not an assumption
+        -- of the whole statement.
+        let (a, vars) ← logicJson vars t
+        let (b, vars) ← logicJson vars body
+        return (Json.mkObj [("op", "implies"), ("args", Json.arr #[a, b])], vars)
+      let tj ← ppJson t vars
+      return ← withLocalDecl n bi t fun x => do
+        let idx := vars.size
+        let (b, vars') ← logicJson (vars.push x.fvarId!) (body.instantiate1 x)
+        return (Json.mkObj [("op", "forall"), ("name", n.eraseMacroScopes.toString),
+          ("var", toJson idx), ("type", tj), ("args", Json.arr #[b])], vars')
+    match isExistsApp e with
+    | some (_, .lam n t body bi) =>
+      let tj ← ppJson t vars
+      withLocalDecl n bi t fun x => do
+        let idx := vars.size
+        let (b, vars') ← logicJson (vars.push x.fvarId!) (body.instantiate1 x)
+        return (Json.mkObj [("op", "exists"), ("name", n.eraseMacroScopes.toString),
+          ("var", toJson idx), ("type", tj), ("args", Json.arr #[b])], vars')
+    | _ => return (Json.mkObj [("leaf", ← ppJson e vars)], vars)
+
+/-! ## The inspection representation -/
 
 /-- Split a proposition into its quantifier prefix and its conclusion. Universal binders are
 `forall` (data), `hypothesis` (a proposition) or `instance`; existential binders are `exists`.
@@ -257,8 +291,10 @@ partial def telescope (e : Expr) (acc : Array Json) (vars : Array FVarId := #[])
       let hyps := (acc.filter fun j => j.getObjValD "role" == Json.str "hypothesis").size
       let nm := if n.hasMacroScopes || n.isAnonymous then s!"h{hyps + 1}"
         else n.toString
+      -- What an instance supplies: a proposition (`[Nonempty E]`) or data (`[Inhabited E]`).
+      let supplies := if isHyp then "proposition" else "data"
       let j := Json.mkObj [("role", role), ("name", nm),
-        ("type", tj), ("binder", binderStr bi)]
+        ("type", tj), ("binder", binderStr bi), ("supplies", supplies)]
       telescope (body.instantiate1 x) (acc.push j) (vars.push x.fvarId!)
   | _ =>
     match isExistsApp e with
@@ -271,7 +307,7 @@ partial def telescope (e : Expr) (acc : Array Json) (vars : Array FVarId := #[])
     | _ =>
       -- The conclusion, with its logical shape when it has one (`logic`, display only).
       let fields ← ppFields e vars
-      let logic ← logicJson vars e
+      let (logic, _) ← logicJson vars e
       let shaped := (logic.getObjVal? "op").toOption.isSome
       return (acc, Json.mkObj (if shaped then fields ++ [("logic", logic)] else fields))
 where

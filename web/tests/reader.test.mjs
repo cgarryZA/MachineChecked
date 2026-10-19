@@ -411,13 +411,41 @@ await check("in the local reader a symbol is linked by choosing it and clicking 
     await st.locator(".ribbon").waitFor();
     const rows = (await st.locator(".ribbon > li").allTextContents()).map((t) => t.replace(/\s+/g, " ").trim());
     assert.equal(rows.length, 7, rows.join(" | "));
-    assert.match(rows[0], /^for all E ?: ?Type assume instance Inhabited E$/i);
+    assert.match(rows[0], /^for all E ?: ?Type given instance Inhabited E$/i, "an instance that supplies data is given");
     assert.match(rows[1], /^for all j ?: ?Nat assume \(hj\) 1 ≤ j$/i);
     assert.match(rows[2], /^for all k ?: ?Nat$/i);
     assert.match(rows[3], /^assume \(hjk\) j ≤ k$/i, "a condition on two objects stays a row of its own");
     assert.match(rows[5], /^there is C ?: ?Nat$/i);
     assert.match(await st.locator(".concl .op").textContent(), /all of the following/);
     assert.equal(await st.locator(".concl .parts > li").count(), 2);
+  });
+
+  await check("a \"there is\" inside a conclusion shows its witness's type and scope", width, async (pg) => {
+    await pg.goto(origin + `/structure/#/r/${SHAPE.release}/read/P/${encodeURIComponent("P:thm:witnesses")}`);
+    const st = pg.locator("aside .view .stmt").first();
+    await st.locator(".concl").waitFor();
+    const parts = (await st.locator(".concl .body > .parts > li").allTextContents()).map((t) => t.replace(/\s+/g, ""));
+    assert.equal(parts.length, 2, parts.join(" | "));
+    assert.equal(parts[0], "thereisx:Nat→Natsuchthatallofthefollowingxj=jj≤xj");
+    assert.equal(parts[1], "thereisx:Boolsuchthatx=true");
+    // The two x are different variables: pointing at one highlights only its own occurrences.
+    await st.locator(".concl .var[data-var='1']").first().hover();
+    assert.equal(await st.locator(".concl .var.hl").count(), 2, "both occurrences of the first x");
+    assert.equal(await st.locator(".var.hl[data-var='2']").count(), 0, "not the other x");
+    await st.locator(".concl .var[data-var='2']").first().click();
+    await pg.mouse.move(0, 0);
+    assert.match((await st.locator(".inspect").textContent()).replace(/\s+/g, " "), /x ?: ?Bool.*there is/);
+  });
+
+  await check("negation, implication and \"for every\" inside a conclusion keep their scope", width, async (pg) => {
+    await pg.goto(origin + `/structure/#/r/${SHAPE.release}/read/P/${encodeURIComponent("P:thm:shapes")}`);
+    const st = pg.locator("aside .view .stmt").first();
+    await st.locator(".concl").waitFor();
+    assert.match((await st.locator(".ribbon").textContent()).replace(/\s+/g, " "), /assume instance Nonempty E/);
+    const parts = (await st.locator(".concl .body > .parts > li").allTextContents()).map((t) => t.replace(/\s+/g, ""));
+    assert.equal(parts.length, 2, parts.join(" | "));
+    assert.equal(parts[0], "itisnotthecasethatthereisx:Natsuchthatx<0");
+    assert.equal(parts[1], "atleastoneofthefollowingforeveryn:Nat,0≤nif1=1thenthereism:Natsuchthatm=1");
   });
 
   await check("clicking inside an expression selects it, and each click widens it", width, async (pg) => {

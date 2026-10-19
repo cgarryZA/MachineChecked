@@ -48,8 +48,14 @@ table of `machinechecked.toml` names another):
 - **The Lean side** is a variable (`var`, the binder index the probe already exports) or a whole
   sub-term: a binder's type (`binder`, `path: "type"`), or the conclusion. Selecting an arbitrary
   sub-term needs sub-expression identities from the probe, which do not exist yet (#46).
-- **Pins**: the statement's fingerprint (it already covers the definitions the statement uses)
-  and the hash of the claim's TeX source. When either differs, the link is stale.
+- **Pins**: the statement's fingerprint (it already covers the definitions the statement uses),
+  the hash of the claim's TeX source, and the text of the Lean object as it was shown (`target`).
+  When any differs, the link is stale. The last one matters because a sub-term or a part is
+  located by numbers that depend on how the statement is printed and split: a change in the
+  display can renumber them while the statement stays the same, and the link must then go stale
+  rather than point at another object. A link to a sub-term made without that pin is stale.
+- A "there is" inside the conclusion is a variable too: the probe numbers it after the prefix's
+  binders, each witness its own number, so `--var` and `--type-of` accept it by name or number.
 
 ## Display
 

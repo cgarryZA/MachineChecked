@@ -102,8 +102,15 @@ def symbol_links(display: dict | None, cid: str, tex: str | None, lean: dict) ->
         target = ln.get("lean") or {}
         spec = (lean.get("specs") or {}).get(target.get("decl")) or {}
         pins = ln.get("pins") or {}
+        # A link to a sub-term is located by numbers that depend on how the statement is
+        # printed, so it also needs the text it was made on (older links have none).
+        from .symbols import target_text
+        shown = target_text(spec, target)
         stale = (pins.get("statement") != spec.get("fingerprint")
-                 or not tex or pins.get("source") != sha256_text(tex))
+                 or not tex or pins.get("source") != sha256_text(tex)
+                 or shown is None
+                 or ("target" in pins and pins["target"] != shown)
+                 or ("term" in target and "target" not in pins))
         out.append({"symbol": ln.get("symbol") or {}, "lean": target, "by": ln.get("by"),
                     "stale": bool(stale)})
     return out
