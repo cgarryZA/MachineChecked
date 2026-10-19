@@ -95,7 +95,12 @@ def test_a_link_can_name_a_sub_term(toy):
     add(cfg, "T:thm:even-add", "a", SPEC, WHO, term=f"c#{k}")
     _, _, cfg = build(toy, reuse_lean=True)
     (link,) = chunk(cfg, "T:thm:even-add")[1]["symbols"]
-    assert link["lean"] == {"decl": SPEC, "term": k, "in": "c"} and not link["stale"]
+    # It is recorded by the sub-term's identity in the proposition, not its printed position
+    # (#73), and the same identity can be given directly.
+    assert link["lean"] == {"decl": SPEC, "at": concl["terms"][k]["id"]} and not link["stale"]
+    add(cfg, "T:thm:even-add", "a", SPEC, WHO, at=concl["terms"][k]["id"])
+    with pytest.raises(SymbolError, match="no sub-term with the identity"):
+        add(cfg, "T:thm:even-add", "a", SPEC, WHO, at="/9/9/9")
     with pytest.raises(SymbolError, match="no sub-term"):
         add(cfg, "T:thm:even-add", "a", SPEC, WHO, term="c#999")
     # A sub-term is found by numbers that depend on how the statement is printed: a link whose

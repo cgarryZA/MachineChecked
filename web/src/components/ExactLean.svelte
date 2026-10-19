@@ -1,6 +1,9 @@
 <script>
   import LeanText from "./LeanText.svelte";
-  let { st, name = null, onref = null } = $props();
+  // `selId` and `onselect`: the sub-term selected, by its identity in the proposition, shared
+  // with the readable statement of the same proposition.
+  let { st, name = null, onref = null, selId = null, onselect = null } = $props();
+  const terms = $derived(typeof st?.exact === "object" ? st.exact?.terms || [] : []);
   let copied = $state(false), error = $state(null);
   const text = $derived(typeof st?.exact === "string" ? st.exact : st?.exact?.text || st?.exact?.segments?.map((s) => s.t).join(""));
   async function copy() {
@@ -11,7 +14,7 @@
 <div class="exact">
   {#if name}<p class="name"><code>{name}</code></p>{/if}
   {#if text}
-    <pre><LeanText pp={typeof st.exact === "string" ? { text } : st.exact} {onref} refs={[...(st.closure || []), ...(st.direct || [])]} /></pre>
+    <pre><LeanText pp={typeof st.exact === "string" ? { text } : st.exact} {onref} refs={[...(st.closure || []), ...(st.direct || [])]} {selId} onterm={onselect ? (k) => onselect(k == null ? null : terms[k]?.id ?? null) : null} /></pre>
     <button class="copy" onclick={copy}>{copied ? "Copied" : "Copy Lean"}</button>
     {#if error}<p role="status">{error}</p>{/if}
   {:else}<p class="muted">Rebuild this audit to include the exact Lean statement.</p>{/if}

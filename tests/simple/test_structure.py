@@ -20,6 +20,12 @@ def statement(root, name="Shape.layout"):
                 if l["name"] == name)
 
 
+def texts(pp):
+    """Each selectable sub-term's text, by its identity."""
+    return {t["id"]: "".join(s["t"] for s in pp["segments"][t["from"]:t["to"]])
+            for t in pp.get("terms", [])}
+
+
 def var_refs(pp):
     return [(s["t"], s["var"]) for s in pp.get("segments", []) if "var" in s]
 
@@ -90,3 +96,24 @@ def test_variables_and_logic_are_exported(tmp_path, toolchain):
     assert cond["args"][1]["op"] == "exists" and cond["args"][1]["name"] == "m"
     numbers = [neg["args"][0]["var"], every["var"], cond["args"][1]["var"]]
     assert len(set(numbers)) == 3 and min(numbers) == len(rec["binders"])
+    # Each sub-term has an identity: its position in the whole proposition, independent of
+    # how the statement is printed or split. The same sub-term has the same identity in the
+    # readable parts and in the exact proposition, identities are unique, and the two `x` of
+    # sibling parts are bound at different places (#73).
+    for name in ("Shape.layout", "Shape.witnesses", "Shape.shapes"):
+        rec = statement(root, name)
+        exact = texts(rec["exact"])
+        assert len(exact) == len(rec["exact"]["terms"]), "identities are unique"
+        tree = {}
+        for b in rec["binders"]:
+            tree.update(texts(b["type"]))
+        stack = [rec["conclusion"].get("logic") or {"leaf": rec["conclusion"]}]
+        while stack:
+            n = stack.pop()
+            for pp in (n.get("leaf"), n.get("type")):
+                if pp:
+                    tree.update(texts(pp))
+            stack += n.get("args", [])
+        assert tree and all(exact.get(i) == t for i, t in tree.items()), (name, tree, exact)
+    left, right = statement(root, "Shape.witnesses")["conclusion"]["logic"]["args"]
+    assert left["id"] != right["id"] and left["type"]["id"] != right["type"]["id"]
