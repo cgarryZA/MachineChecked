@@ -134,3 +134,63 @@ detected.
 `publish.source_text = false` leaves the excerpt out of the export, as it does the statement's
 source text.
 
+## Moving to a new revision of the paper
+
+When the manuscript gains a revision, move the inventory to it:
+
+```sh
+python -m prooflens.repin --config machinechecked.toml --paper P --to NEW
+python -m prooflens.repin --config machinechecked.toml --paper P --to NEW --write
+machinechecked build
+```
+
+`NEW` is a Git commit of the paper's repository (a branch or tag is resolved to its commit) or
+a versioned arXiv identifier. The configuration must name the original revision as a full Git
+commit or a versioned arXiv identifier, and every claim must already be on `tex-region-v1`
+(migrate first, above). The first command prints a plan only.
+
+The command reads both snapshots. It first checks each claim's passage at the original
+revision against its digests; a claim that does not match there stops the plan, and an
+original revision that cannot be read is an error, not a reason to use another baseline.
+It then looks for each passage's exact text in every `.tex` file of the new revision and
+classifies the claim:
+
+| Class | Meaning | What `--write` does |
+|---|---|---|
+| `unchanged` | the passage is found once, at the same place | takes the new revision |
+| `moved` | the passage is found once, with the same text, elsewhere | takes the new place and revision; digests unchanged |
+| `changed` | its text is not found, and its label leads to one passage with other text | takes the new place; keeps its digests and its revision (`commit`) |
+| `removed` | its text is not found, and its label is not in the new revision | keeps its place, digests and revision |
+| `not-found` | its text is not found, and it has no label to find a changed version by | keeps its place, digests and revision |
+| `ambiguous` | its text or its label occurs more than once, or its text occurs only where the paper may not print it | nothing is written |
+| `pending-review` | its pin is of another revision (a passage that changed in an earlier repin) | nothing |
+
+A claim that keeps its revision records it in its own `commit`, so a later repin reports it
+as `pending-review` rather than comparing it with text it was not pinned to.
+
+A changed passage is reported with the first line that changed and a diff of the old and new
+lines. It keeps the digests it was reviewed at, so the source check at the new revision
+reports it (`source-changed`) until it is reviewed again and pinned to its new text by hand.
+A label locates a changed passage; it never certifies its text. Two equally good places are
+never chosen between, by the nearest line or otherwise: a repeated opening line is not a
+match, an identical passage that occurs twice or a label that occurs twice is ambiguous, a
+passage whose only copy is in a comment, an `\iffalse` block or a `comment` environment is
+ambiguous, and an environment without its end is a change with no new place. A passage
+found in another file is moved with a note to check that the paper still reads that file.
+The plan also lists labels that are new in the new revision (`new_passages`): passages that
+may need an inventory entry.
+
+For an `unchanged` or `moved` passage the plan says whether the lines beside it changed
+(`context_changed`). The audited text is the same; an excerpt, a description or a symbol link
+that rests on the surrounding text needs checking. The plan counts the symbol links of each
+claim that changed or whose surroundings changed; a symbol link keeps the printed text it was
+made on and shows as stale in the reader when that text changes.
+
+`--write` refuses while any claim is ambiguous. It writes atomically and only if neither the
+inventory nor the configuration changed during planning. It changes only the selected paper's
+claims (`location`, `source_region`, `commit`, and line digests a claim was pinned without),
+the paper's `commit` under `papers`, and the paper's source revision in the configuration.
+Reviews, clauses, dismissals, Lean and other papers are not touched; free text such as notes
+or URLs naming the old revision is left to edit by hand. Rerunning the same command writes
+nothing more. Evidence and releases built before the repin keep the snapshot they were
+built from.

@@ -18,6 +18,16 @@ def test_build_site_writes_the_export_there(toy, tmp_path, monkeypatch, capsys):
     assert (out / "audit.json").exists() and (out / "data" / "index.json").exists()
     assert json.loads((out / "data" / "index.json").read_text())["claims"]
     assert f"wrote the audit to {out}" in capsys.readouterr().out
+    # Every published claim's location agrees with the index, as a reader of the published
+    # audit checks it (the index's top comes from the anchor's `head`).
+    from prooflens import manifest as mf
+    index = json.loads((out / "data" / "index.json").read_text())
+    located = 0
+    for row in index["claims"]:
+        anchor = json.loads((out / "data" / "claims" / row["file"]).read_text()).get("anchor")
+        assert row.get("anchor") == mf.index_anchor(anchor, (anchor or {}).get("kind", "unlocated"))
+        located += bool(anchor)
+    assert located
     # A previous site is replaced; a directory holding anything else is refused untouched.
     cli.main(["build", "--site", str(out), "--reuse-lean"])
     other = tmp_path / "other"

@@ -106,7 +106,10 @@ def public_claim(chunk: dict, pub) -> dict:
     out["statement_tex"] = chunk.get("statement_tex") if pub.source_text else None
     out["excerpt"] = chunk.get("excerpt") if pub.source_text else None
     a = chunk.get("anchor")
-    out["anchor"] = _pick(a, ["id", "env", "number", "label", "begin", "end", "kind", "source_sha256"] +
+    # `head` (the baseline of the first line) is what the index's top is computed from, so the
+    # published claim must keep it for its location to agree with the index.
+    out["anchor"] = _pick(a, ["id", "env", "number", "label", "begin", "head", "end", "kind",
+                              "source_sha256"] +
                           (["file", "line"] if pub.source_text else [])) if a else None
     clauses = []
     for cl in chunk["clauses"]:
