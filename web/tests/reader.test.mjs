@@ -39,7 +39,7 @@ const A = "alpha/project-a", B = "beta/project-b";
 // The paper page is written by the engine (`prooflens.paper.write_paper_site`), as machinechecked.org
 // writes its paper pages, so the test reads exactly the data a real page has.
 const FIXTURE = String.raw`
-import sys
+import json, sys
 from pathlib import Path
 from prooflens.paper import paper_claims, write_paper_site
 A, B = "alpha/project-a", "beta/project-b"
@@ -109,6 +109,13 @@ for (name, (anchors, a_rows, b_rows, text)), v in zip(pages.items(), versions):
     write_paper_site(site, two, cl, [612, 792], "paper.pdf", Path(sys.argv[2]),
                      versions=versions, version=v["id"])
     (site / "paper.pdf").write_bytes(pdf(1, text))
+    # On v1, project A's audit pins the version without pinning every claim; B's checks it.
+    if name == "v1":
+        idx = json.loads((site / "data" / "index.json").read_text())
+        rec = {"kind": "published", "id": v["id"], "label": "arXiv v1"}
+        idx["audits"] = {two["formalisations"][0]["repository"]: {"paper_version": {**rec, "checked": False}},
+                         two["formalisations"][1]["repository"]: {"paper_version": {**rec, "checked": True}}}
+        (site / "data" / "index.json").write_text(json.dumps(idx))
 `;
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "mc-reader-"));
 const made = spawnSync(process.env.PYTHON || "python3", ["-c", FIXTURE, path.join(root, "paper"), reader], { encoding: "utf8" });
@@ -330,7 +337,11 @@ for (const width of [1300, 390]) {
     await pg.waitForFunction(() => document.querySelector(".paperpane")?.textContent.includes("Version one text."));
     const v1 = await statuses(pg, ["P:theorem-1", "P:theorem-2"]);
     assert.deepEqual(v1, ["link.no-audit", "link.none"]);
+    await pg.selectOption("select[aria-label='Formalisation shown']", A);
+    await pg.waitForSelector(".version.unchecked");
+    assert.match(await pg.locator(".version.unchecked").textContent(), /not checked against its claims/);
     await pg.selectOption("select[aria-label='Formalisation shown']", B);
+    assert.equal(await pg.locator(".version.unchecked").count(), 0, "a checked version carries no note");
     const v1b = await statuses(pg, ["P:theorem-1", "P:theorem-2"]);
     if (process.env.SHOTS) await pg.screenshot({ path: path.join(process.env.SHOTS, `versions-${width}.png`) });
 
