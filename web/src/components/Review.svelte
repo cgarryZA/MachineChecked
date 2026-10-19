@@ -71,7 +71,8 @@
     const u = current;
     claims = [];
     if (!u) return;
-    Promise.all(u.claims.slice(0, 6).map((c) => loadClaim(index, c.id).catch(() => null)))
+    // Every claim of the unit: a statement stated in several places is read in all of them.
+    Promise.all(u.claims.map((c) => loadClaim(index, c.id).catch(() => null)))
       .then((cs) => { if (current === u) claims = cs.filter(Boolean); });
   });
   const clause = $derived(current?.kind === "spec"
@@ -221,7 +222,7 @@
         {#if current.kind === "def"}
           <h2>A definition used by {current.claims.length} claim(s)</h2>
           <p class="small">Used by:
-            {#each current.claims.slice(0, 12) as c, i}{i ? ", " : ""}<a href={href(index.release, "read", c.id.split(":")[0], c.id)} target="_blank" rel="noopener">{c.id}</a>{/each}{current.claims.length > 12 ? ", …" : ""}
+            {#each current.claims as c, i}{i ? ", " : ""}<a href={href(index.release, "read", c.id.split(":")[0], c.id)} target="_blank" rel="noopener">{c.id}</a>{/each}
           </p>
         {:else}
           {#snippet printed(c)}
@@ -231,6 +232,9 @@
             <p class="small"><a href={href(index.release, "read", c.paper, c.id)} target="_blank" rel="noopener" title="Opens the paper and Lean reader">Open in the paper ↗</a></p>
           {/snippet}
           {#if claims[0]}{@render printed(claims[0])}{/if}
+          {#if claims.length < current.claims.length}
+            <p class="warn">{current.claims.length - claims.length} of this unit's {current.claims.length} claims could not be loaded from this build.</p>
+          {/if}
           {#if claims.length > 1}
             <details class="also"><summary>Also stated in {claims.length - 1} other place(s)</summary>
               {#each claims.slice(1) as c (c.id)}{@render printed(c)}{/each}
