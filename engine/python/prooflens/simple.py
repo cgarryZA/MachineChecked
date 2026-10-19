@@ -356,6 +356,17 @@ def run_simple_probe(root: Path, modules: list[str], libs: list[str], requests: 
         raise ViewError(str(e)) from None
 
 
+def session_error(message: str) -> str:
+    """The first error a failed Lean session reported, without the probe file's position, or
+    the last line of its output when it reported none."""
+    lines = [l.strip() for l in message.splitlines() if l.strip()]
+    for l in lines:
+        m = re.search(r"\berror(?:\([\w.]+\))?: (.*)", l)
+        if m:
+            return m.group(1)[:300]
+    return lines[-1][:300] if lines else "no output"
+
+
 def probe_modules(root: Path, modules: list[str], libs: list[str], requests: list[dict],
                   lake: str = "lake", log=print,
                   work: Path | None = None) -> tuple[list[dict], dict[str, str]]:
@@ -377,7 +388,8 @@ def probe_modules(root: Path, modules: list[str], libs: list[str], requests: lis
             if len(group) == 1:
                 failed[group[0]] = str(e)[-600:]
                 return
-            log(f"lean: {label} could not be loaded in one session; splitting it")
+            log(f"lean: {label} could not be loaded in one session ({session_error(str(e))}); "
+                "splitting it")
             half = len(group) // 2
             run(group[:half], label + "/a")
             run(group[half:], label + "/b")
