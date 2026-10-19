@@ -89,7 +89,12 @@ violations and obligations by subject; `findings` holds only their totals.
   a lemma can be formalised without being used by that proof. If two modules declare the
   name, pass `--module`. A dependency identifies constants used by Lean terms.
 - **Link a claim to a declaration**: the user does it in `machinechecked view` (Link / Not
-  this), or you add a `\lean{Name}` tag to the statement in the LaTeX if the user agrees.
+  this); with the user's agreement, `machinechecked link "Theorem 2" Pkg.name --as NAME --json`
+  records it (`--reject NAME`, `--clear`; `--dry-run` first), or a `\lean{Name}` tag in the
+  LaTeX. An unknown or ambiguous claim or name is refused with candidates.
+- **Record what establishes a clause**: `machinechecked workspace update FILE` with evidence and
+  finding records (docs/REVIEWING.md, "Saved investigations"); `workspace show --json` resumes
+  it. A finding is your reading, attributed to you; it changes no status.
 - **A shareable report**: `machinechecked build` writes `.machinechecked/MachineChecked.html`
   (one file, opens from disk; Git ignores it there, and `--out` puts it elsewhere). `machinechecked build --site public/ --author "Name" --issues owner/repo` writes a
   directory to publish (for example on GitHub Pages) with `audit.json` describing it. Both
@@ -100,7 +105,8 @@ violations and obligations by subject; `findings` holds only their totals.
 - Name the formal proposition and proof result. Attribute mathematical correspondence to reviews
   with their recorded scope and provenance.
 - In a non-interactive session, use `check --json` and `build`. `view` starts a local browser session.
-- Save links through the reader or an authorized source tag, preserving who made the association.
+- Save links through the reader, `machinechecked link` or an authorized source tag, preserving who
+  made the association.
 - Write concise, affirmative prose. Explain what happened or what the user can do next.
 
 More: https://github.com/cgarryZA/MachineChecked/blob/main/docs/GETTING_STARTED.md

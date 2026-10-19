@@ -900,7 +900,17 @@ await check("PDF text, links, page search and zoom work together", 1300, async (
   await pg.waitForFunction(() => document.querySelector(".find-status")?.textContent.includes("1 of 1"));
   assert.equal(await pg.getByRole("spinbutton", { name: "Page number" }).inputValue(), "15");
   await pg.getByRole("combobox", { name: "PDF zoom" }).selectOption("1.5");
+  // The zoom keeps the page the reader was on.
+  await pg.locator('[data-page="15"] .textLayer span').first().waitFor();
+  await pg.waitForTimeout(300);
+  assert.equal(await pg.getByRole("spinbutton", { name: "Page number" }).inputValue(), "15", "the zoom keeps the page");
+  const top15 = await pg.locator('[data-page="15"]').evaluate((e) => e.getBoundingClientRect().top - e.closest(".pdf").parentElement.getBoundingClientRect().top);
+  assert.ok(top15 >= 0 && top15 < 300, `page 15 stays at the top of the view (${top15})`);
+  // A page number typed while the view moves is the one opened.
   await pg.getByRole("spinbutton", { name: "Page number" }).fill("2");
+  await pg.locator(".pdf").evaluate((e) => { e.parentElement.scrollTop += 40; });
+  await pg.waitForTimeout(300);
+  assert.equal(await pg.getByRole("spinbutton", { name: "Page number" }).inputValue(), "2", "the page tracker leaves a typed number alone");
   await pg.getByRole("spinbutton", { name: "Page number" }).press("Tab");
   await pg.locator('[data-page="2"] .textLayer span').first().waitFor();
   assert.ok((await pg.locator(".band").first().boundingBox()).width <= 32, "claim marker occupies the margin");
@@ -981,6 +991,90 @@ await check("review opens the selected claim, keeps protocol order and exports a
   const file = await download; const exported = JSON.parse(fs.readFileSync(await file.path()));
   assert.deepEqual(exported.reports[0], report);
 });
+
+// A saved investigation, under the engine's own local server: started in the reader, resumed
+// and edited through the engine's workspace service (as `machinechecked workspace` does), and
+// reopened in the reader with the same question and finding.
+{
+  fs.cpSync(path.join(root, "toy"), path.join(root, "toyws"), { recursive: true });
+  const work = path.join(root, "toyws-work");
+  const { spawn } = await import("node:child_process");
+  const py = spawn(process.env.PYTHON || "python3", [path.join(here, "fixtures", "workspace_server.py"), path.join(root, "toyws"), work]);
+  const port = await new Promise((ok, fail) => {
+    py.stdout.once("data", (d) => ok(String(d).trim()));
+    py.once("exit", (c) => fail(new Error("the workspace server stopped: " + c)));
+  });
+  const engine = (code) => {
+    const r = spawnSync(process.env.PYTHON || "python3", ["-c", code, work], { encoding: "utf8" });
+    if (r.status !== 0) throw new Error(r.stderr);
+    return r.stdout ? JSON.parse(r.stdout) : null;
+  };
+  const claimUrl = `http://127.0.0.1:${port}/#/r/${TOY.release}/claim/${encodeURIComponent("T:thm:even-add")}`;
+  try {
+    await check("an investigation started in the reader is resumed and edited from the terminal", 1300, async (pg) => {
+      await pg.goto(claimUrl);
+      const inv = pg.locator("section.investigation");
+      await inv.waitFor();
+      assert.match(await inv.textContent(), /informed investigation/);
+      await inv.getByRole("textbox", { name: "Your name" }).fill("Test Auditor");
+      await inv.getByRole("button", { name: "Start an investigation" }).click();
+      await inv.locator("summary", { hasText: "Ask a question" }).click();
+      await inv.getByRole("textbox", { name: "Question" }).fill("Does “even” mean ∃ k, n = 2k here?\nCheck the definition.");
+      await inv.getByRole("button", { name: "Save question" }).click();
+      await inv.locator("[data-kind=question]").waitFor();
+      await inv.locator("summary", { hasText: "Record a finding" }).click();
+      await inv.getByRole("combobox").selectOption("changed");
+      await inv.getByRole("textbox", { name: "Note" }).fill("The Lean adds a hypothesis.");
+      await inv.getByRole("button", { name: "Save draft" }).click();
+      await inv.locator("[data-kind=finding]").waitFor();
+
+      // The terminal sees the same records, and edits the finding.
+      const saved = engine(String.raw`
+import json, sys
+from pathlib import Path
+from prooflens import workspace as wsp
+from prooflens.targets import Snapshot
+(p, ws), = wsp.list_all(Path(sys.argv[1]))
+f = next(r for r in ws["records"].values() if r["kind"] == "finding")
+wsp.update(p, [{"op": "put", "base_rev": f["rev"], "record": {**{k: f[k] for k in ("id", "claim", "note")}, "kind": "finding", "coverage": "full", "note": "Edited in the terminal: the hypothesis is implied."}}], Snapshot(Path(sys.argv[1]).parent / "toyws" / "data"))
+print(json.dumps(wsp.read(p)))`);
+      assert.equal(saved.mode, "informed");
+      assert.equal(saved.reviewer.id, "human:Test-Auditor");
+      assert.equal(saved.resume.claim, "T:thm:even-add");
+      const q = Object.values(saved.records).find((r) => r.kind === "question");
+      assert.equal(q.text, "Does “even” mean ∃ k, n = 2k here?\nCheck the definition.");
+      assert.equal(saved.resume.question, q.id);
+
+      // Reopened in a new browser context (nothing kept in the page), the edit is there.
+      const pg2 = await browser.newPage({ viewport: { width: 1300, height: 900 } });
+      try {
+        await pg2.goto(claimUrl);
+        const inv2 = pg2.locator("section.investigation");
+        await inv2.getByRole("button", { name: /^Continue ws-/ }).click();
+        await inv2.locator("[data-kind=finding]").waitFor();
+        assert.match(await inv2.locator("[data-kind=finding]").textContent(), /Every clause[\s\S]*Edited in the terminal/);
+        assert.match(await inv2.locator("[data-kind=question] .text").textContent(), /Check the definition/);
+        // A stale edit from the first page is refused, and the terminal's version shown.
+        await inv.getByRole("button", { name: "Submit" }).click();
+        await inv.locator("[role=alert]").waitFor();
+        assert.match(await inv.locator("[role=alert]").textContent(), /changed elsewhere/);
+        await inv.locator("[data-kind=finding]", { hasText: "Edited in the terminal" }).waitFor();
+        // A finding by composition is recorded as full coverage with its basis, and never
+        // reads as a direct result.
+        const add = inv.locator("details.add", { hasText: "Record a finding" });
+        if (!(await add.evaluate((d) => d.open))) await add.locator("summary").click();
+        await inv.getByRole("combobox").selectOption("composition");
+        await inv.getByRole("textbox", { name: "Argument" }).fill("Apply it to each summand.");
+        await inv.getByRole("textbox", { name: "Note" }).fill("Two results combined.");
+        await inv.getByRole("button", { name: "Save draft" }).click();
+        const comp = inv.locator("[data-kind=finding]", { hasText: "Apply it to each summand." });
+        await comp.waitFor();
+        assert.match((await comp.textContent()).replace(/\s+/g, " "),
+          /^Every clause, by the auditor's composition.*Lean has not checked this combination\..*Next step: State the combination as one Lean result\./);
+      } finally { await pg2.close(); }
+    });
+  } finally { py.kill(); }
+}
 
 await browser.close();
 server.close();

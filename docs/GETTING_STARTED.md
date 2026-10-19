@@ -91,6 +91,23 @@ You can:
 
 The local reader saves your decisions in `machinechecked.links.json` at the repository root and refreshes the view. Commit that small file if you want the associations to travel with the project.
 
+The same from a terminal, with the same checks and no Lean run (it resolves names against the
+last `view` or `build`):
+
+```sh
+machinechecked link "Lemma 2.3" Example.inverse_bound Example.inverse_solves \
+  --coverage changed --confidence high --note-file note.md --as "A. Auditor"
+machinechecked link "Theorem 4" --coverage full --basis reviewed_composition \
+  --argument-file argument.md          # also --bridge THEOREM TARGET, --question, --would-decide
+machinechecked link "Lemma 2.3" --reject Example.other --reason "a different estimate"
+machinechecked link "Lemma 2.3" --clear     # the paper's \lean tags apply again
+```
+
+A claim is named by its id, its key (`lem:bound`) or its number; a number two claims share, or a
+name the build does not have, is refused with the candidates, and nothing is written. A
+declaration whose module is not built is recorded and reads as such until it is built.
+`--dry-run` shows the change and `--json` prints it as one document.
+
 A link records the declaration associated with a claim. A correspondence review compares their
 assumptions, definitions and conclusion; see [Reviewing](REVIEWING.md).
 
@@ -109,8 +126,8 @@ they state it, in the claim's entry of `machinechecked.links.json`:
 setting), `related` (a comparable result) or `unresolved` (an open question). `confidence` is
 `high`, `medium` or `low`. The reader shows the reading under the claim's status, as the
 auditor's, and `check --json` reports it as the claim's `correspondence`. A reading changes no
-status, and linking other declarations in the reader removes it, since it described the old
-ones. A value other than these is ignored.
+status. It describes the declarations it was written for: when the list changes, it moves to
+`earlier_notes` in the file and is no longer shown. A value other than these is ignored.
 
 **How the coverage is supported.** The optional `basis` records it separately from the coverage
 itself. Three claims of the synthetic project `tests/fixtures/coverage` show the three bases of

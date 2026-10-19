@@ -186,10 +186,16 @@ def test_unknown_values_and_an_unspecified_basis():
     assert c["refs"] == ["A.c"]
 
 
-def test_linking_other_declarations_drops_the_reading(tmp_path):
+def test_linking_other_declarations_retires_the_whole_reading(tmp_path):
+    """Every field of the reading leaves the entry and is kept, with the list it described,
+    under `earlier_notes`."""
     (tmp_path / "machinechecked.links.json").write_text(json.dumps(
         {"version": 1, "papers": {PAPER: readings()}}))
     save_link(tmp_path, PAPER, "thm:three", ["Cover.even_add"])
     entry = json.loads((tmp_path / "machinechecked.links.json").read_text())["papers"][PAPER][
         "thm:three"]
-    assert set(entry) == {"lean", "at", "by"}
+    assert set(entry) == {"lean", "at", "by", "earlier_notes"}
+    old = readings()["thm:three"]
+    assert entry["earlier_notes"] == [{"coverage": "full", "basis": "checked_bridge",
+                                       "bridge": old["bridge"], "lean": old["lean"],
+                                       "by": "A. Auditor"}]
