@@ -71,6 +71,8 @@ In a project with formal review markers, a maintainer can evaluate saved reports
 machinechecked review promote machinechecked-reviews-....json
 ```
 
+A directory of reports may be given instead of the files: it stands for the `*.json` files directly in it, in name order.
+
 Promotion checks that the manuscript and formal statements still match the review pins, that the review stages were recorded in the required order, and that the verdict is eligible. It displays the planned changes and requires the maintainer's decision. Model-family and author restrictions still apply. A report whose reading was not blind is refused unless the maintainer passes `--allow-revealed`.
 
 Promotion records the maintainer’s decision for the reviewed proposition or definition.

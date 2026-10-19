@@ -53,10 +53,27 @@ def latest_record(cfg: Config) -> dict:
 
 
 def load_reports(paths: list[Path]) -> list[dict]:
+    """The reports in the given files; a directory stands for the `*.json` files directly in
+    it, in name order."""
+    files = []
+    for p in map(Path, paths):
+        if p.is_dir():
+            found = sorted(f for f in p.glob("*.json") if f.is_file())
+            if not found:
+                raise PromoteError(f"{p} is a directory with no report files (*.json) in it")
+            files += found
+        elif not p.is_file():
+            raise PromoteError(f"{p}: no such report file")
+        else:
+            files.append(p)
     out = []
-    for p in paths:
-        d = json.loads(Path(p).read_text(encoding="utf-8"))
-        out += d["reports"] if "reports" in d else [d]
+    for p in files:
+        try:
+            d = json.loads(p.read_text(encoding="utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as e:
+            raise PromoteError(f"{p} is not a report file exported from the review queue "
+                               f"(not JSON: {e})") from e
+        out += d["reports"] if isinstance(d, dict) and "reports" in d else [d]
     return out
 
 
