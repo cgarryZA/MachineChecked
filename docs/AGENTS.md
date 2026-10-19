@@ -114,12 +114,30 @@ Targeted queries have one shape (`machinechecked/query@1`: `op`, `target`, `cont
 machinechecked compare --query definition Toy.triangle --json   # its type, value, equations
 machinechecked compare --query mentions Toy.triangle --json     # statements that use it
 machinechecked compare --query dependencies Toy.Acceptance.thm_bound --json   # runs inspect
+machinechecked compare --query proof-facts Example.bound --json  # facts inside its proof
+machinechecked compare --query proof-facts Example.bound --match "C * h"   # ranked by symbols
 ```
 
 `mentions` searches the statements of the build in full and the project's index by a preview
-of each type (`complete: false` on such a result: get its statement with `dependencies`). The
-queries `uses`, `proof-facts`, `composition` and `impact` answer `available: false` with the
-issue that owns their extraction. An error is `{"ok": false, "error": {kind, message,
+of each type (`complete: false` on such a result: get its statement with `dependencies`).
+
+`proof-facts NAME` asks Lean, for that one declaration, for the propositions its proof establishes
+along the way: each `have` (and `let` of a proposition), each goal a `show` states, and each
+application of a theorem of the project or of a theorem to a local fact. Each result has its
+`type`, the locals it needs (`assumptions`: the hypotheses and variables its type and its proof
+mention), the `cases` of the proof it lies in (a branch of a case split, a witness of an
+`obtain`), the `premises` of an applied theorem with the local that supplies each, `used_by`, its
+`source` line (`located` says how it was found) and its `ref`, the reference a workspace cites.
+`subject` holds the exported statement (`basis: "exported theorem"`), the proof's hash and what
+was inspected, `source_only` (a `have` or `show` of the source with no typed counterpart, for
+instance inside a lemma Lean generated, listed under `proof.auxiliary` and asked about by its own
+name), and `proof.complete: false` when the walk reached its limit (200,000 nodes, 200 facts). A
+fact's `basis` is always "established inside this proof under this context": it is not an
+exported theorem, and `--match` ranks facts by shared symbols without deciding that one bound
+gives another. Lean runs once per declaration; the answer is cached in
+`.machinechecked/build/proof-facts/` until a Lean input or built module changes. The queries
+`uses`, `composition` and `impact` answer `available: false` with the issue that owns their
+extraction. An error is `{"ok": false, "error": {kind, message,
 candidates}}` with exit 1 (exit 2, kind `no-build`, when there is no build to read: run
 `view` or `build`); `candidates` lists the claims or declarations you may have meant.
 
@@ -197,7 +215,10 @@ machinechecked workspace show --json
 `error` (exit 1); an edit of a record changed since its `base_rev` returns `conflicts` with both
 versions. Repeat a request with its `op_id` after a lost answer: it changes nothing. `show
 --json` gives every record with its `currency` (`current`, `stale` with the `changes`, or
-`unchecked`) and the `resume` point. A workspace started in informed mode records that the Lean
+`unchecked`) and the `resume` point. To cite a fact inside a proof, put its `ref` from
+`compare --query proof-facts` as `"ref": {"fact": REF}`; a finding resting on it takes basis
+`reviewed_composition` (it is not `direct` coverage), and `show` marks it `stale` once that proof
+changes. A workspace started in informed mode records that the Lean
 was seen; `{"op": "exposure", "what": "external material"}` records anything else you read.
 
 ## A note for your project's AGENTS.md or CLAUDE.md

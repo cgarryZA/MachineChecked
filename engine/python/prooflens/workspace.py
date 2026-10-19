@@ -245,15 +245,52 @@ def _vocab() -> tuple[tuple, tuple, tuple]:
     return tuple(simple.COVERAGE), tuple(simple.BASIS), tuple(simple.CONFIDENCE)
 
 
+FACT_KEPT = ("decl", "module", "at", "fact_hash", "proof_hash", "kind", "name", "head", "type",
+             "basis", "assumptions", "variables", "cases", "source")
+
+
+def _fact_ref(f, root) -> dict:
+    """A fact inside a proof (`fact`: `{decl, at, fact_hash?, module?}`, as `compare --query
+    proof-facts` gives it in each fact's `ref`). With the Lean project it is looked up (the
+    answer is cached) and kept with its proposition, assumptions, cases and pins; its basis is
+    always that it is established inside that proof under that context."""
+    if not isinstance(f, dict) or not isinstance(f.get("decl"), str) or \
+            not isinstance(f.get("at"), str):
+        raise WorkspaceError("a fact reference is {decl, at} (and fact_hash), as "
+                             "`compare --query proof-facts` gives it")
+    from . import proof_facts as pf
+    if root is None:
+        if not (f.get("fact_hash") and f.get("proof_hash")):
+            raise WorkspaceError("without the Lean project a fact reference carries its "
+                                 "fact_hash and proof_hash")
+        return {k: f[k] for k in FACT_KEPT if f.get(k) is not None} | {"basis": pf.BASIS}
+    from .simple import ViewError
+    try:
+        doc = pf.extract(Path(root), f["decl"], f.get("module"))
+    except ViewError as e:
+        raise WorkspaceError(str(e)) from None
+    if not doc.get("ok"):
+        raise WorkspaceError(f"{f['decl']}: {doc.get('status')}"
+                             + (f": {doc['reason']}" if doc.get("reason") else ""))
+    found = pf.find_fact(doc, f)
+    if found is None:
+        raise WorkspaceError(f"no fact at {f['at']} in the proof of {f['decl']}"
+                             + (" with that proposition" if f.get("fact_hash") else "")
+                             + ": ask `compare --query proof-facts` again")
+    return pf.citation(found)
+
+
 def _ref(ref, snap, root) -> dict:
     """An evidence reference: exactly one of a declaration (`decl`, optional `module`), a
-    source location (`source`: `{file, line}`), or a passage of the paper (`paper`:
-    `{claim, quote}`)."""
+    fact inside a proof (`fact`), a source location (`source`: `{file, line}`), or a passage
+    of the paper (`paper`: `{claim, quote}`)."""
     if not isinstance(ref, dict):
         raise WorkspaceError("an evidence record needs a `ref`")
-    kinds = [k for k in ("decl", "source", "paper") if ref.get(k)]
+    kinds = [k for k in ("decl", "fact", "source", "paper") if ref.get(k)]
     if len(kinds) != 1:
-        raise WorkspaceError("an evidence `ref` names exactly one of decl, source, paper")
+        raise WorkspaceError("an evidence `ref` names exactly one of decl, fact, source, paper")
+    if kinds == ["fact"]:
+        return {"fact": _fact_ref(ref["fact"], root)}
     if kinds == ["decl"]:
         out = {"decl": _text(ref["decl"], "the declaration", True).strip()}
         if ref.get("module"):
@@ -320,6 +357,8 @@ def _content(kind: str, rec: dict, ws: dict, snap, root) -> dict:
             raise WorkspaceError(f"{e} is evidence for {er['claim']}, not {out['claim']}")
     if refs:
         out["evidence"] = list(dict.fromkeys(refs))
+    local = [e for e in refs if "fact" in (ws["records"][e].get("ref") or {})
+             and ws["records"][e].get("role") == "supports"]
     if kind == "evidence":
         out["ref"] = _ref(rec.get("ref"), snap, root)
         out["role"] = _choice(rec.get("role") or "candidate", ROLES, "the role", False)
@@ -337,6 +376,11 @@ def _content(kind: str, rec: dict, ws: dict, snap, root) -> dict:
             cov, basis = "full", "reviewed_composition"
         out["coverage"] = _choice(cov, coverage, "coverage")
         basis = _choice(basis, bases, "the basis")
+        if basis == "direct" and local:
+            raise WorkspaceError(f"{local[0]} is a fact inside a proof, established under that "
+                                 "proof's context: it is not an exported statement, so it is not "
+                                 "direct coverage. Record the coverage with basis "
+                                 "reviewed_composition, citing the fact")
         if basis:
             if not out["coverage"]:
                 raise WorkspaceError("a basis says how a coverage is supported: give the "
@@ -418,6 +462,12 @@ def _record_op(ws, op, snap, root, by, at, changed):
             # The evidence keeps the fingerprint it was recorded at until it is re-pinned.
             for k in ("fingerprint", "digest"):
                 content["ref"][k] = cur["ref"].get(k)
+        was = (cur.get("ref") or {}).get("fact") or {}
+        if cur["kind"] == "evidence" and not repin and content["ref"].get("fact") and \
+                (content["ref"]["fact"]["decl"], content["ref"]["fact"]["at"]) == \
+                (was.get("decl"), was.get("at")):
+            # A cited fact keeps the proof it was recorded from until it is re-pinned.
+            content["ref"]["fact"] = was
         kept = {k: v for k, v in cur.items() if k not in MANAGED and k != "id"}
         if cur["kind"] == "question":
             kept["state"] = cur.get("state")
@@ -615,17 +665,24 @@ def current_findings(ws: dict) -> list[dict]:
             if r.get("kind") == "finding" and r["id"] not in later]
 
 
-def currency(ws: dict, snap) -> dict[str, dict]:
+def currency(ws: dict, snap, root: Path | None = None, check_facts: bool = False) \
+        -> dict[str, dict]:
     """Whether each record's evidence is still what the current build shows. A declaration
     whose fingerprint changed makes its evidence `stale`, and so every finding and question
-    that cites it; a finding is also stale when its claim's printed text changed. A record the
-    build cannot check is `unchecked`; nothing here changes a status."""
+    that cites it; a finding is also stale when its claim's printed text changed. A fact inside
+    a proof is stale when that proof changed: it is read from the cache of `compare --query
+    proof-facts`, or asked of Lean when `check_facts` is set. A record the build cannot check is
+    `unchecked`; nothing here changes a status."""
     digests = snap.digests() if snap is not None else {}
     out = {}
     for r in ws["records"].values():
         if r.get("kind") != "evidence":
             continue
         ref = r.get("ref") or {}
+        if "fact" in ref:
+            from .proof_facts import currency as fact_currency
+            out[r["id"]] = fact_currency(Path(root) if root else None, ref["fact"], check_facts)
+            continue
         if "decl" not in ref:
             out[r["id"]] = {"state": "unchecked", "changes": []}
             continue
@@ -652,11 +709,13 @@ def currency(ws: dict, snap) -> dict[str, dict]:
     return out
 
 
-def view(ws: dict, snap=None, claim: str | None = None) -> dict:
+def view(ws: dict, snap=None, claim: str | None = None, root: Path | None = None,
+         check_facts: bool = False) -> dict:
     """The workspace as the reader and `workspace show` present it: its summary and, per
     claim, the evidence, findings (current and superseded) and questions, each with its
-    currency against the current build."""
-    cur = currency(ws, snap)
+    currency against the current build (and, for cited facts inside proofs, the Lean project
+    at `root`)."""
+    cur = currency(ws, snap, root, check_facts)
     in_force = {r["id"] for r in current_findings(ws)}
     claims: dict[str, dict] = {}
     for r in sorted(ws["records"].values(), key=lambda r: (r["created_at"], r["id"])):
@@ -770,7 +829,8 @@ def import_(work_dir: Path, data: dict, snap=None, by: str | None = None,
 def api(work_dir: Path, data_dir: Path, root: Path | None = None) -> tuple[dict, dict]:
     """The routes `machinechecked view`'s local server answers for the reader: GET
     `/api/workspaces` (the list), `/api/workspace?id=&claim=` (one, as `view` gives it) and
-    `/api/workspace/export?id=`; POST `/api/workspace` with `action` `open` (`reviewer`,
+    `/api/workspace/export?id=`, and `/api/proof-facts?name=&match=` (the facts inside one
+    proof, as `compare --query proof-facts` gives them); POST `/api/workspace` with `action` `open` (`reviewer`,
     `mode`, `id`), `update` (`id`, `ops`, `op_id`, `base` ignored) or `import` (`data`). They
     call the functions the command line calls."""
     from .review_cli import ReviewError, parse_reviewer
@@ -784,7 +844,7 @@ def api(work_dir: Path, data_dir: Path, root: Path | None = None) -> tuple[dict,
 
     def one(q):
         p = find(work_dir, (q.get("id") or [""])[0])
-        return view(read(p), snap(), (q.get("claim") or [None])[0])
+        return view(read(p), snap(), (q.get("claim") or [None])[0], root)
 
     def post(req):
         action = req.get("action")
@@ -812,8 +872,20 @@ def api(work_dir: Path, data_dir: Path, root: Path | None = None) -> tuple[dict,
             return import_(work_dir, req.get("data") or {}, snap(), req.get("by"), "reader")
         raise WorkspaceError(f"unknown action {action!r}")
 
+    def facts(q):
+        # The facts inside one proof, on request (`compare --query proof-facts`); cached.
+        if root is None:
+            raise WorkspaceError("no Lean project to read the proof from")
+        from .compare import CompareError, Site, query
+        try:
+            return query(Site(data_dir), "proof-facts", (q.get("name") or [""])[0], root=root,
+                         match=(q.get("match") or [None])[0] or None)
+        except CompareError as e:
+            raise WorkspaceError(str(e)) from None
+
     get = {"/api/workspaces": lambda q: {"workspaces": [summary(ws) for _, ws in
                                                         list_all(work_dir)]},
+           "/api/proof-facts": facts,
            "/api/workspace": one,
            "/api/workspace/export": lambda q: export(find(work_dir, (q.get("id") or [""])[0]))}
     return get, {"/api/workspace": post}

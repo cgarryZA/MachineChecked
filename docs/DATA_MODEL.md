@@ -184,14 +184,22 @@ optional `clause` and `note`, `rev`, `created_at`/`created_by`, `updated_at`/`up
 
 - **`evidence`**: `ref` is one of `{decl, module, build, fingerprint, digest}` (a declaration of
   the selected build; `build` is `built`, `unbuilt`, `not loaded` or `external`), `{source:
-  {file, line}}` or `{paper: {claim, quote}}`. `role` is `candidate` (the default), `supports`,
+  {file, line}}`, `{paper: {claim, quote}}`, or `{fact: {...}}`: a fact inside a proof, as
+  `compare --query proof-facts` gives it (`decl`, `module`, `at` its position in the proof term,
+  `fact_hash` its proposition with the locals it needs, `proof_hash` the whole proof, and to read
+  it without Lean `kind`, `name` or `head`, `type`, `assumptions`, `variables`, `cases`, `source`
+  and `basis`, always "established inside this proof under this context"). A cited fact is
+  `stale` once the proof's hash changes, and `unchecked` until the proof is read again after a
+  Lean change. `role` is `candidate` (the default), `supports`,
   `context` or `rejected` (with `why_rejected`). A candidate is a candidate until the auditor
   gives it another role.
 - **`finding`**: `coverage` (the links file's words: `full`, `partial`, `changed`, `related`,
   `unresolved`), optional `basis` (`direct`, `reviewed_composition` with an optional `argument`,
   or `checked_bridge` with `bridge: {theorem, target}`), optional `confidence`, `evidence` (ids
   of evidence records of the same claim, which the basis rests on) and, when unresolved,
-  `question` and optional `would_decide`. A `composed` coverage is recorded as `full` with basis
+  `question` and optional `would_decide`. A finding that rests on a fact inside a proof (a
+  `supports` evidence with a `fact` reference) cannot have basis `direct`: that fact is not an
+  exported statement. A `composed` coverage is recorded as `full` with basis
   `reviewed_composition`. `state` is `draft`
   or `submitted` (`submitted_at`). A submitted finding is never edited or deleted: a later
   finding names it in `supersedes`, with its `reason`, and both are kept.

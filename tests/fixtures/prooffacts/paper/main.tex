@@ -1,0 +1,25 @@
+\documentclass[11pt]{article}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage[margin=1in]{geometry}
+\newtheorem{theorem}{Theorem}
+\newtheorem{lemma}[theorem]{Lemma}
+\newcommand{\lean}[1]{}
+
+\title{Bounds Sharper Than Their Statements}
+\author{A synthetic example}
+\date{}
+
+\begin{document}
+\maketitle
+
+\begin{lemma}\label{lem:sharp}\lean{Facts.bound}
+Let $x$, $C$ and $h$ be integers with $C \ge 0$, $h \ge 0$ and $x + 1 \le C h$. Then
+$x \le C h$.
+\end{lemma}
+
+\begin{theorem}\label{thm:cases}\lean{Facts.bound_cases}
+Let $x$, $C$ and $h$ be integers with $C \ge 0$ and $x + 1 \le C h$. If $h \ge 0$ then
+$x \le 2 C h$.
+\end{theorem}
+
+\end{document}

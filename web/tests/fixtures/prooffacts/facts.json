@@ -1,0 +1,1755 @@
+{
+ "Facts.bound": {
+  "schema": "machinechecked/query@1",
+  "op": "proof-facts",
+  "target": "Facts.bound",
+  "limit": null,
+  "after": null,
+  "context": {
+   "release": "v-e72c3885d1ef",
+   "evidence": "e72c3885d1ef0e8960720652b8a277770f23a6be19425080139c7afeff66e8a9",
+   "mode": "simple",
+   "project": {
+    "name": "prooffacts"
+   },
+   "papers": [
+    {
+     "id": "P",
+     "title": "Bounds Sharper Than Their Statements",
+     "pdf_sha256": "81e9fede0a5b493ceb6578b582bf6a180272dc6f03bddfdd4f808efd9e61785f"
+    }
+   ]
+  },
+  "subject": {
+   "declaration": {
+    "name": "Facts.bound",
+    "kind": "theorem",
+    "module": "Facts.Main",
+    "file": "Facts/Main.lean",
+    "range": {
+     "end_line": 21,
+     "line": 16
+    },
+    "statement": {
+     "id": "/",
+     "segments": [
+      {
+       "t": "∀ ("
+      },
+      {
+       "t": "x "
+      },
+      {
+       "t": "C "
+      },
+      {
+       "t": "h"
+      },
+      {
+       "t": " : "
+      },
+      {
+       "ref": "Int",
+       "t": "Int"
+      },
+      {
+       "t": "), "
+      },
+      {
+       "t": "0"
+      },
+      {
+       "ref": "LE.le",
+       "t": " ≤ "
+      },
+      {
+       "t": "C"
+      },
+      {
+       "t": " → "
+      },
+      {
+       "t": "0"
+      },
+      {
+       "ref": "LE.le",
+       "t": " ≤ "
+      },
+      {
+       "t": "h"
+      },
+      {
+       "t": " → "
+      },
+      {
+       "t": "x"
+      },
+      {
+       "ref": "HAdd.hAdd",
+       "t": " + "
+      },
+      {
+       "t": "1"
+      },
+      {
+       "ref": "LE.le",
+       "t": " ≤ "
+      },
+      {
+       "t": "C"
+      },
+      {
+       "ref": "HMul.hMul",
+       "t": " * "
+      },
+      {
+       "t": "h"
+      },
+      {
+       "t": " → "
+      },
+      {
+       "t": "x"
+      },
+      {
+       "ref": "LE.le",
+       "t": " ≤ "
+      },
+      {
+       "t": "C"
+      },
+      {
+       "ref": "HMul.hMul",
+       "t": " * "
+      },
+      {
+       "ref": "HAdd.hAdd",
+       "t": "("
+      },
+      {
+       "t": "h"
+      },
+      {
+       "ref": "HAdd.hAdd",
+       "t": " + "
+      },
+      {
+       "t": "h"
+      },
+      {
+       "ref": "HAdd.hAdd",
+       "t": ")"
+      }
+     ],
+     "terms": [
+      {
+       "from": 0,
+       "id": "/",
+       "to": 32
+      },
+      {
+       "from": 7,
+       "id": "/1/1/1",
+       "to": 32
+      },
+      {
+       "from": 7,
+       "id": "/1/1/1/0/0/0/0/0",
+       "to": 10
+      },
+      {
+       "from": 11,
+       "id": "/1/1/1/1",
+       "to": 32
+      },
+      {
+       "from": 11,
+       "id": "/1/1/1/1/0/0/0/0/0",
+       "to": 14
+      },
+      {
+       "from": 15,
+       "id": "/1/1/1/1/1",
+       "to": 32
+      },
+      {
+       "from": 15,
+       "id": "/1/1/1/1/1/0/0/0/0/0",
+       "to": 22
+      },
+      {
+       "from": 15,
+       "id": "/1/1/1/1/1/0/0/1/0/0/0/0/0/0",
+       "to": 18
+      },
+      {
+       "from": 19,
+       "id": "/1/1/1/1/1/0/1/0/0/0/0/0/0",
+       "to": 22
+      },
+      {
+       "from": 23,
+       "id": "/1/1/1/1/1/1/0/0/0/0",
+       "to": 32
+      },
+      {
+       "from": 25,
+       "id": "/1/1/1/1/1/1/1/0/0/0/0/0/0",
+       "to": 32
+      },
+      {
+       "from": 27,
+       "id": "/1/1/1/1/1/1/1/1/0/0/0/0/0/0",
+       "to": 32
+      }
+     ],
+     "text": "∀ (x C h : Int), 0 ≤ C → 0 ≤ h → x + 1 ≤ C * h → x ≤ C * (h + h)"
+    },
+    "basis": "exported theorem",
+    "axioms": [
+     "propext",
+     "Quot.sound"
+    ],
+    "sorry": false
+   },
+   "proof": {
+    "hash": "c1c4947da25a67b1",
+    "visited": 20,
+    "complete": true,
+    "cut": [],
+    "limits": {
+     "facts": 200,
+     "nodes": 200000
+    },
+    "auxiliary": [
+     "Facts.bound._proof_1_1"
+    ],
+    "inspected": [
+     "the declaration's elaborated proof term, from its compiled module",
+     "the declaration's source lines, to place named facts"
+    ],
+    "not_inspected": [
+     "tactic states between steps (Lean keeps them only while it elaborates a file)",
+     "lemmas Lean generated for parts of the proof (listed under `auxiliary`; each can be asked about by its own name)"
+    ]
+   },
+   "locals": [
+    {
+     "generated_name": false,
+     "id": "l0",
+     "name": "x",
+     "origin": "statement",
+     "role": "variable",
+     "scope": [],
+     "type": {
+      "id": "/",
+      "segments": [
+       {
+        "ref": "Int",
+        "t": "Int"
+       }
+      ],
+      "terms": [],
+      "text": "Int"
+     }
+    },
+    {
+     "generated_name": false,
+     "id": "l1",
+     "name": "C",
+     "origin": "statement",
+     "role": "variable",
+     "scope": [],
+     "type": {
+      "id": "/",
+      "segments": [
+       {
+        "ref": "Int",
+        "t": "Int"
+       }
+      ],
+      "terms": [],
+      "text": "Int"
+     }
+    },
+    {
+     "generated_name": false,
+     "id": "l2",
+     "name": "h",
+     "origin": "statement",
+     "role": "variable",
+     "scope": [],
+     "type": {
+      "id": "/",
+      "segments": [
+       {
+        "ref": "Int",
+        "t": "Int"
+       }
+      ],
+      "terms": [],
+      "text": "Int"
+     }
+    },
+    {
+     "generated_name": false,
+     "id": "l3",
+     "name": "hC",
+     "origin": "statement",
+     "role": "hypothesis",
+     "scope": [],
+     "type": {
+      "id": "/",
+      "segments": [
+       {
+        "t": "0"
+       },
+       {
+        "ref": "LE.le",
+        "t": " ≤ "
+       },
+       {
+        "t": "C",
+        "var": 1
+       }
+      ],
+      "terms": [
+       {
+        "from": 0,
+        "id": "/0/0/0/0",
+        "to": 3
+       }
+      ],
+      "text": "0 ≤ C"
+     }
+    },
+    {
+     "generated_name": false,
+     "id": "l4",
+     "name": "hh",
+     "origin": "statement",
+     "role": "hypothesis",
+     "scope": [],
+     "type": {
+      "id": "/",
+      "segments": [
+       {
+        "t": "0"
+       },
+       {
+        "ref": "LE.le",
+        "t": " ≤ "
+       },
+       {
+        "t": "h",
+        "var": 2
+       }
+      ],
+      "terms": [
+       {
+        "from": 0,
+        "id": "/0/0/0/0",
+        "to": 3
+       }
+      ],
+      "text": "0 ≤ h"
+     }
+    },
+    {
+     "generated_name": false,
+     "id": "l5",
+     "name": "hx",
+     "origin": "statement",
+     "role": "hypothesis",
+     "scope": [],
+     "type": {
+      "id": "/",
+      "segments": [
+       {
+        "t": "x",
+        "var": 0
+       },
+       {
+        "ref": "HAdd.hAdd",
+        "t": " + "
+       },
+       {
+        "t": "1"
+       },
+       {
+        "ref": "LE.le",
+        "t": " ≤ "
+       },
+       {
+        "t": "C",
+        "var": 1
+       },
+       {
+        "ref": "HMul.hMul",
+        "t": " * "
+       },
+       {
+        "t": "h",
+        "var": 2
+       }
+      ],
+      "terms": [
+       {
+        "from": 0,
+        "id": "/0/0/0/0",
+        "to": 7
+       },
+       {
+        "from": 0,
+        "id": "/0/1/0/0/0/0/0/0",
+        "to": 3
+       },
+       {
+        "from": 4,
+        "id": "/1/0/0/0/0/0/0",
+        "to": 7
+       }
+      ],
+      "text": "x + 1 ≤ C * h"
+     }
+    },
+    {
+     "generated_name": false,
+     "id": "l7",
+     "name": "strong",
+     "origin": "have",
+     "role": "hypothesis",
+     "scope": [],
+     "type": {
+      "id": "/",
+      "segments": [
+       {
+        "t": "x",
+        "var": 0
+       },
+       {
+        "ref": "LE.le",
+        "t": " ≤ "
+       },
+       {
+        "t": "C",
+        "var": 1
+       },
+       {
+        "ref": "HMul.hMul",
+        "t": " * "
+       },
+       {
+        "t": "h",
+        "var": 2
+       }
+      ],
+      "terms": [
+       {
+        "from": 0,
+        "id": "/0/0/0/0",
+        "to": 5
+       },
+       {
+        "from": 2,
+        "id": "/1/0/0/0/0/0/0",
+        "to": 5
+       }
+      ],
+      "text": "x ≤ C * h"
+     }
+    }
+   ],
+   "scopes": [],
+   "source_only": [],
+   "note": "A fact inside a proof holds in its context only, under the assumptions listed with it. It is not an exported theorem, and a search ranks candidates without deciding whether one bound implies another.",
+   "cache": {
+    "hit": false,
+    "key": "4361db21b7f67c63"
+   }
+  },
+  "available": true,
+  "results": [
+   {
+    "at": "/1/1/1/1/1/1",
+    "context": [
+     "l0",
+     "l1",
+     "l2",
+     "l3",
+     "l4",
+     "l5"
+    ],
+    "fact_hash": "f25fbe5a3cc9caea",
+    "generated_name": false,
+    "head": null,
+    "id": "f0",
+    "kind": "have",
+    "local": "l7",
+    "name": "strong",
+    "needs": [
+     "l0",
+     "l1",
+     "l2",
+     "l5"
+    ],
+    "premises": [],
+    "scope": [],
+    "standalone": {
+     "text": "∀ (x C h : Int), x + 1 ≤ C * h → x ≤ C * h"
+    },
+    "type": {
+     "id": "/",
+     "segments": [
+      {
+       "t": "x",
+       "var": 0
+      },
+      {
+       "ref": "LE.le",
+       "t": " ≤ "
+      },
+      {
+       "t": "C",
+       "var": 1
+      },
+      {
+       "ref": "HMul.hMul",
+       "t": " * "
+      },
+      {
+       "t": "h",
+       "var": 2
+      }
+     ],
+     "terms": [
+      {
+       "from": 0,
+       "id": "/0/0/0/0",
+       "to": 5
+      },
+      {
+       "from": 2,
+       "id": "/1/0/0/0/0/0/0",
+       "to": 5
+      }
+     ],
+     "text": "x ≤ C * h"
+    },
+    "uses": [
+     "l0",
+     "l1",
+     "l2",
+     "l5"
+    ],
+    "basis": "established inside this proof under this context",
+    "what": "stated in the proof",
+    "assumptions": [
+     {
+      "id": "l0",
+      "name": "x",
+      "role": "variable",
+      "origin": "statement",
+      "type": "Int"
+     },
+     {
+      "id": "l1",
+      "name": "C",
+      "role": "variable",
+      "origin": "statement",
+      "type": "Int"
+     },
+     {
+      "id": "l2",
+      "name": "h",
+      "role": "variable",
+      "origin": "statement",
+      "type": "Int"
+     },
+     {
+      "id": "l5",
+      "name": "hx",
+      "role": "hypothesis",
+      "origin": "statement",
+      "type": "x + 1 ≤ C * h"
+     }
+    ],
+    "cases": [],
+    "uses_facts": [],
+    "ref": {
+     "decl": "Facts.bound",
+     "module": "Facts.Main",
+     "at": "/1/1/1/1/1/1",
+     "fact_hash": "f25fbe5a3cc9caea",
+     "proof_hash": "c1c4947da25a67b1"
+    },
+    "used_by": [
+     "f1",
+     "f2"
+    ],
+    "source": {
+     "file": "Facts/Main.lean",
+     "line": 19,
+     "located": "by its name in the source"
+    }
+   },
+   {
+    "at": "/1/1/1/1/1/1/2",
+    "context": [
+     "l0",
+     "l1",
+     "l2",
+     "l3",
+     "l4",
+     "l5",
+     "l7"
+    ],
+    "fact_hash": "7a38a39ec1575585",
+    "generated_name": false,
+    "head": null,
+    "id": "f1",
+    "kind": "show",
+    "local": null,
+    "name": null,
+    "needs": [
+     "l0",
+     "l1",
+     "l2",
+     "l3",
+     "l4",
+     "l7"
+    ],
+    "premises": [],
+    "scope": [],
+    "standalone": {
+     "text": "∀ (x C h : Int), 0 ≤ C → 0 ≤ h → x ≤ C * h → x ≤ C * (h + h)"
+    },
+    "type": {
+     "id": "/",
+     "segments": [
+      {
+       "t": "x",
+       "var": 0
+      },
+      {
+       "ref": "LE.le",
+       "t": " ≤ "
+      },
+      {
+       "t": "C",
+       "var": 1
+      },
+      {
+       "ref": "HMul.hMul",
+       "t": " * "
+      },
+      {
+       "ref": "HAdd.hAdd",
+       "t": "("
+      },
+      {
+       "t": "h",
+       "var": 2
+      },
+      {
+       "ref": "HAdd.hAdd",
+       "t": " + "
+      },
+      {
+       "t": "h",
+       "var": 2
+      },
+      {
+       "ref": "HAdd.hAdd",
+       "t": ")"
+      }
+     ],
+     "terms": [
+      {
+       "from": 0,
+       "id": "/0/0/0/0",
+       "to": 9
+      },
+      {
+       "from": 2,
+       "id": "/1/0/0/0/0/0/0",
+       "to": 9
+      },
+      {
+       "from": 4,
+       "id": "/1/1/0/0/0/0/0/0",
+       "to": 9
+      }
+     ],
+     "text": "x ≤ C * (h + h)"
+    },
+    "uses": [
+     "l0",
+     "l1",
+     "l2",
+     "l3",
+     "l4",
+     "l7"
+    ],
+    "basis": "established inside this proof under this context",
+    "what": "goal restated in the proof",
+    "assumptions": [
+     {
+      "id": "l0",
+      "name": "x",
+      "role": "variable",
+      "origin": "statement",
+      "type": "Int"
+     },
+     {
+      "id": "l1",
+      "name": "C",
+      "role": "variable",
+      "origin": "statement",
+      "type": "Int"
+     },
+     {
+      "id": "l2",
+      "name": "h",
+      "role": "variable",
+      "origin": "statement",
+      "type": "Int"
+     },
+     {
+      "id": "l3",
+      "name": "hC",
+      "role": "hypothesis",
+      "origin": "statement",
+      "type": "0 ≤ C"
+     },
+     {
+      "id": "l4",
+      "name": "hh",
+      "role": "hypothesis",
+      "origin": "statement",
+      "type": "0 ≤ h"
+     },
+     {
+      "id": "l7",
+      "name": "strong",
+      "role": "hypothesis",
+      "origin": "have",
+      "type": "x ≤ C * h"
+     }
+    ],
+    "cases": [],
+    "uses_facts": [
+     "f0"
+    ],
+    "ref": {
+     "decl": "Facts.bound",
+     "module": "Facts.Main",
+     "at": "/1/1/1/1/1/1/2",
+     "fact_hash": "7a38a39ec1575585",
+     "proof_hash": "c1c4947da25a67b1"
+    },
+    "used_by": [],
+    "source": {
+     "file": "Facts/Main.lean",
+     "line": 20,
+     "located": "by its order in the source"
+    }
+   },
+   {
+    "at": "/1/1/1/1/1/1/2/1",
+    "context": [
+     "l0",
+     "l1",
+     "l2",
+     "l3",
+     "l4",
+     "l5",
+     "l7"
+    ],
+    "fact_hash": "7a38a39ec1575585",
+    "generated_name": false,
+    "head": "Facts.weaken",
+    "id": "f2",
+    "kind": "application",
+    "local": null,
+    "name": "Facts.weaken",
+    "needs": [
+     "l0",
+     "l1",
+     "l2",
+     "l3",
+     "l4",
+     "l7"
+    ],
+    "premises": [
+     {
+      "arg": 3,
+      "name": "hC",
+      "supplied_by": "l3",
+      "type": {
+       "text": "0 ≤ C"
+      }
+     },
+     {
+      "arg": 4,
+      "name": "hh",
+      "supplied_by": "l4",
+      "type": {
+       "text": "0 ≤ h"
+      }
+     },
+     {
+      "arg": 5,
+      "name": "hx",
+      "supplied_by": "l7",
+      "type": {
+       "text": "x ≤ C * h"
+      }
+     }
+    ],
+    "scope": [],
+    "standalone": {
+     "text": "∀ (x C h : Int), 0 ≤ C → 0 ≤ h → x ≤ C * h → x ≤ C * (h + h)"
+    },
+    "type": {
+     "id": "/",
+     "segments": [
+      {
+       "t": "x",
+       "var": 0
+      },
+      {
+       "ref": "LE.le",
+       "t": " ≤ "
+      },
+      {
+       "t": "C",
+       "var": 1
+      },
+      {
+       "ref": "HMul.hMul",
+       "t": " * "
+      },
+      {
+       "ref": "HAdd.hAdd",
+       "t": "("
+      },
+      {
+       "t": "h",
+       "var": 2
+      },
+      {
+       "ref": "HAdd.hAdd",
+       "t": " + "
+      },
+      {
+       "t": "h",
+       "var": 2
+      },
+      {
+       "ref": "HAdd.hAdd",
+       "t": ")"
+      }
+     ],
+     "terms": [
+      {
+       "from": 0,
+       "id": "/0/0/0/0",
+       "to": 9
+      },
+      {
+       "from": 2,
+       "id": "/1/0/0/0/0/0/0",
+       "to": 9
+      },
+      {
+       "from": 4,
+       "id": "/1/1/0/0/0/0/0/0",
+       "to": 9
+      }
+     ],
+     "text": "x ≤ C * (h + h)"
+    },
+    "uses": [
+     "l0",
+     "l1",
+     "l2",
+     "l3",
+     "l4",
+     "l7"
+    ],
+    "basis": "established inside this proof under this context",
+    "what": "theorem applied in the proof",
+    "assumptions": [
+     {
+      "id": "l0",
+      "name": "x",
+      "role": "variable",
+      "origin": "statement",
+      "type": "Int"
+     },
+     {
+      "id": "l1",
+      "name": "C",
+      "role": "variable",
+      "origin": "statement",
+      "type": "Int"
+     },
+     {
+      "id": "l2",
+      "name": "h",
+      "role": "variable",
+      "origin": "statement",
+      "type": "Int"
+     },
+     {
+      "id": "l3",
+      "name": "hC",
+      "role": "hypothesis",
+      "origin": "statement",
+      "type": "0 ≤ C"
+     },
+     {
+      "id": "l4",
+      "name": "hh",
+      "role": "hypothesis",
+      "origin": "statement",
+      "type": "0 ≤ h"
+     },
+     {
+      "id": "l7",
+      "name": "strong",
+      "role": "hypothesis",
+      "origin": "have",
+      "type": "x ≤ C * h"
+     }
+    ],
+    "cases": [],
+    "uses_facts": [
+     "f0"
+    ],
+    "ref": {
+     "decl": "Facts.bound",
+     "module": "Facts.Main",
+     "at": "/1/1/1/1/1/1/2/1",
+     "fact_hash": "7a38a39ec1575585",
+     "proof_hash": "c1c4947da25a67b1"
+    },
+    "used_by": [],
+    "source": {
+     "file": "Facts/Main.lean",
+     "line": 21,
+     "located": "by its name in the source"
+    }
+   }
+  ],
+  "provenance": "Lean (the declaration's elaborated proof), cached until a Lean input changes",
+  "retrieval": {
+   "total": 3,
+   "returned": 3,
+   "complete": true,
+   "after": null,
+   "next": null
+  }
+ },
+ "Facts.bound_cases": {
+  "schema": "machinechecked/query@1",
+  "op": "proof-facts",
+  "target": "Facts.bound_cases",
+  "limit": null,
+  "after": null,
+  "context": {
+   "release": "v-e72c3885d1ef",
+   "evidence": "e72c3885d1ef0e8960720652b8a277770f23a6be19425080139c7afeff66e8a9",
+   "mode": "simple",
+   "project": {
+    "name": "prooffacts"
+   },
+   "papers": [
+    {
+     "id": "P",
+     "title": "Bounds Sharper Than Their Statements",
+     "pdf_sha256": "81e9fede0a5b493ceb6578b582bf6a180272dc6f03bddfdd4f808efd9e61785f"
+    }
+   ]
+  },
+  "subject": {
+   "declaration": {
+    "name": "Facts.bound_cases",
+    "kind": "theorem",
+    "module": "Facts.Main",
+    "file": "Facts/Main.lean",
+    "range": {
+     "end_line": 34,
+     "line": 28
+    },
+    "statement": {
+     "id": "/",
+     "segments": [
+      {
+       "t": "∀ ("
+      },
+      {
+       "t": "x "
+      },
+      {
+       "t": "C "
+      },
+      {
+       "t": "h"
+      },
+      {
+       "t": " : "
+      },
+      {
+       "ref": "Int",
+       "t": "Int"
+      },
+      {
+       "t": "), "
+      },
+      {
+       "t": "0"
+      },
+      {
+       "ref": "LE.le",
+       "t": " ≤ "
+      },
+      {
+       "t": "C"
+      },
+      {
+       "t": " → "
+      },
+      {
+       "t": "x"
+      },
+      {
+       "ref": "HAdd.hAdd",
+       "t": " + "
+      },
+      {
+       "t": "1"
+      },
+      {
+       "ref": "LE.le",
+       "t": " ≤ "
+      },
+      {
+       "t": "C"
+      },
+      {
+       "ref": "HMul.hMul",
+       "t": " * "
+      },
+      {
+       "t": "h"
+      },
+      {
+       "t": " → "
+      },
+      {
+       "t": "x"
+      },
+      {
+       "ref": "LE.le",
+       "t": " ≤ "
+      },
+      {
+       "t": "C"
+      },
+      {
+       "ref": "HMul.hMul",
+       "t": " * "
+      },
+      {
+       "ref": "HAdd.hAdd",
+       "t": "("
+      },
+      {
+       "t": "h"
+      },
+      {
+       "ref": "HAdd.hAdd",
+       "t": " + "
+      },
+      {
+       "t": "h"
+      },
+      {
+       "ref": "HAdd.hAdd",
+       "t": ")"
+      },
+      {
+       "ref": "Or",
+       "t": " ∨ "
+      },
+      {
+       "t": "h"
+      },
+      {
+       "ref": "LT.lt",
+       "t": " < "
+      },
+      {
+       "t": "0"
+      }
+     ],
+     "terms": [
+      {
+       "from": 0,
+       "id": "/",
+       "to": 32
+      },
+      {
+       "from": 7,
+       "id": "/1/1/1",
+       "to": 32
+      },
+      {
+       "from": 7,
+       "id": "/1/1/1/0/0/0/0/0",
+       "to": 10
+      },
+      {
+       "from": 11,
+       "id": "/1/1/1/1",
+       "to": 32
+      },
+      {
+       "from": 11,
+       "id": "/1/1/1/1/0/0/0/0/0",
+       "to": 18
+      },
+      {
+       "from": 11,
+       "id": "/1/1/1/1/0/0/1/0/0/0/0/0/0",
+       "to": 14
+      },
+      {
+       "from": 15,
+       "id": "/1/1/1/1/0/1/0/0/0/0/0/0",
+       "to": 18
+      },
+      {
+       "from": 19,
+       "id": "/1/1/1/1/1/0/0",
+       "to": 32
+      },
+      {
+       "from": 19,
+       "id": "/1/1/1/1/1/0/1/0/0/0/0",
+       "to": 28
+      },
+      {
+       "from": 21,
+       "id": "/1/1/1/1/1/0/1/1/0/0/0/0/0/0",
+       "to": 28
+      },
+      {
+       "from": 23,
+       "id": "/1/1/1/1/1/0/1/1/1/0/0/0/0/0/0",
+       "to": 28
+      },
+      {
+       "from": 29,
+       "id": "/1/1/1/1/1/1/0/0/0/0",
+       "to": 32
+      }
+     ],
+     "text": "∀ (x C h : Int), 0 ≤ C → x + 1 ≤ C * h → x ≤ C * (h + h) ∨ h < 0"
+    },
+    "basis": "exported theorem",
+    "axioms": [
+     "propext",
+     "Quot.sound"
+    ],
+    "sorry": false
+   },
+   "proof": {
+    "hash": "8355d55669e74691",
+    "visited": 35,
+    "complete": true,
+    "cut": [],
+    "limits": {
+     "facts": 200,
+     "nodes": 200000
+    },
+    "auxiliary": [
+     "Facts.bound_cases._proof_1_1",
+     "Facts.bound_cases._proof_1_2"
+    ],
+    "inspected": [
+     "the declaration's elaborated proof term, from its compiled module",
+     "the declaration's source lines, to place named facts"
+    ],
+    "not_inspected": [
+     "tactic states between steps (Lean keeps them only while it elaborates a file)",
+     "lemmas Lean generated for parts of the proof (listed under `auxiliary`; each can be asked about by its own name)"
+    ]
+   },
+   "locals": [
+    {
+     "generated_name": false,
+     "id": "l0",
+     "name": "x",
+     "origin": "statement",
+     "role": "variable",
+     "scope": [],
+     "type": {
+      "id": "/",
+      "segments": [
+       {
+        "ref": "Int",
+        "t": "Int"
+       }
+      ],
+      "terms": [],
+      "text": "Int"
+     }
+    },
+    {
+     "generated_name": false,
+     "id": "l1",
+     "name": "C",
+     "origin": "statement",
+     "role": "variable",
+     "scope": [],
+     "type": {
+      "id": "/",
+      "segments": [
+       {
+        "ref": "Int",
+        "t": "Int"
+       }
+      ],
+      "terms": [],
+      "text": "Int"
+     }
+    },
+    {
+     "generated_name": false,
+     "id": "l2",
+     "name": "h",
+     "origin": "statement",
+     "role": "variable",
+     "scope": [],
+     "type": {
+      "id": "/",
+      "segments": [
+       {
+        "ref": "Int",
+        "t": "Int"
+       }
+      ],
+      "terms": [],
+      "text": "Int"
+     }
+    },
+    {
+     "generated_name": false,
+     "id": "l3",
+     "name": "hC",
+     "origin": "statement",
+     "role": "hypothesis",
+     "scope": [],
+     "type": {
+      "id": "/",
+      "segments": [
+       {
+        "t": "0"
+       },
+       {
+        "ref": "LE.le",
+        "t": " ≤ "
+       },
+       {
+        "t": "C",
+        "var": 1
+       }
+      ],
+      "terms": [
+       {
+        "from": 0,
+        "id": "/0/0/0/0",
+        "to": 3
+       }
+      ],
+      "text": "0 ≤ C"
+     }
+    },
+    {
+     "generated_name": false,
+     "id": "l4",
+     "name": "hx",
+     "origin": "statement",
+     "role": "hypothesis",
+     "scope": [],
+     "type": {
+      "id": "/",
+      "segments": [
+       {
+        "t": "x",
+        "var": 0
+       },
+       {
+        "ref": "HAdd.hAdd",
+        "t": " + "
+       },
+       {
+        "t": "1"
+       },
+       {
+        "ref": "LE.le",
+        "t": " ≤ "
+       },
+       {
+        "t": "C",
+        "var": 1
+       },
+       {
+        "ref": "HMul.hMul",
+        "t": " * "
+       },
+       {
+        "t": "h",
+        "var": 2
+       }
+      ],
+      "terms": [
+       {
+        "from": 0,
+        "id": "/0/0/0/0",
+        "to": 7
+       },
+       {
+        "from": 0,
+        "id": "/0/1/0/0/0/0/0/0",
+        "to": 3
+       },
+       {
+        "from": 4,
+        "id": "/1/0/0/0/0/0/0",
+        "to": 7
+       }
+      ],
+      "text": "x + 1 ≤ C * h"
+     }
+    },
+    {
+     "generated_name": false,
+     "id": "l5",
+     "name": "hh",
+     "origin": "bound",
+     "role": "hypothesis",
+     "scope": [
+      "s0"
+     ],
+     "type": {
+      "id": "/",
+      "segments": [
+       {
+        "t": "0"
+       },
+       {
+        "ref": "LE.le",
+        "t": " ≤ "
+       },
+       {
+        "t": "h",
+        "var": 2
+       }
+      ],
+      "terms": [
+       {
+        "from": 0,
+        "id": "/0/0/0/0",
+        "to": 3
+       }
+      ],
+      "text": "0 ≤ h"
+     }
+    }
+   ],
+   "scopes": [
+    {
+     "arg": 3,
+     "head": "dite",
+     "id": "s0",
+     "binds": [
+      "l5"
+     ],
+     "text": "in the case hh : 0 ≤ h (argument 3 of dite)"
+    }
+   ],
+   "source_only": [],
+   "note": "A fact inside a proof holds in its context only, under the assumptions listed with it. It is not an exported theorem, and a search ranks candidates without deciding whether one bound implies another.",
+   "cache": {
+    "hit": false,
+    "key": "9ba033acc28f182b"
+   }
+  },
+  "available": true,
+  "results": [
+   {
+    "at": "/1/1/1/1/1/0/1/1/1",
+    "context": [
+     "l0",
+     "l1",
+     "l2",
+     "l3",
+     "l4",
+     "l5"
+    ],
+    "fact_hash": "a74cbf549b2fc936",
+    "generated_name": false,
+    "head": "Facts.weaken",
+    "id": "f0",
+    "kind": "application",
+    "local": null,
+    "name": "Facts.weaken",
+    "needs": [
+     "l0",
+     "l1",
+     "l2",
+     "l3",
+     "l4",
+     "l5"
+    ],
+    "premises": [
+     {
+      "arg": 3,
+      "name": "hC",
+      "supplied_by": "l3",
+      "type": {
+       "text": "0 ≤ C"
+      }
+     },
+     {
+      "arg": 4,
+      "name": "hh",
+      "supplied_by": "l5",
+      "type": {
+       "text": "0 ≤ h"
+      }
+     },
+     {
+      "arg": 5,
+      "name": "hx",
+      "supplied_by": null,
+      "type": {
+       "text": "x ≤ C * h"
+      }
+     }
+    ],
+    "scope": [
+     "s0"
+    ],
+    "standalone": {
+     "text": "∀ (x C h : Int), 0 ≤ C → x + 1 ≤ C * h → 0 ≤ h → x ≤ C * (h + h)"
+    },
+    "type": {
+     "id": "/",
+     "segments": [
+      {
+       "t": "x",
+       "var": 0
+      },
+      {
+       "ref": "LE.le",
+       "t": " ≤ "
+      },
+      {
+       "t": "C",
+       "var": 1
+      },
+      {
+       "ref": "HMul.hMul",
+       "t": " * "
+      },
+      {
+       "ref": "HAdd.hAdd",
+       "t": "("
+      },
+      {
+       "t": "h",
+       "var": 2
+      },
+      {
+       "ref": "HAdd.hAdd",
+       "t": " + "
+      },
+      {
+       "t": "h",
+       "var": 2
+      },
+      {
+       "ref": "HAdd.hAdd",
+       "t": ")"
+      }
+     ],
+     "terms": [
+      {
+       "from": 0,
+       "id": "/0/0/0/0",
+       "to": 9
+      },
+      {
+       "from": 2,
+       "id": "/1/0/0/0/0/0/0",
+       "to": 9
+      },
+      {
+       "from": 4,
+       "id": "/1/1/0/0/0/0/0/0",
+       "to": 9
+      }
+     ],
+     "text": "x ≤ C * (h + h)"
+    },
+    "uses": [
+     "l0",
+     "l1",
+     "l2",
+     "l3",
+     "l4",
+     "l5"
+    ],
+    "basis": "established inside this proof under this context",
+    "what": "theorem applied in the proof",
+    "assumptions": [
+     {
+      "id": "l0",
+      "name": "x",
+      "role": "variable",
+      "origin": "statement",
+      "type": "Int"
+     },
+     {
+      "id": "l1",
+      "name": "C",
+      "role": "variable",
+      "origin": "statement",
+      "type": "Int"
+     },
+     {
+      "id": "l2",
+      "name": "h",
+      "role": "variable",
+      "origin": "statement",
+      "type": "Int"
+     },
+     {
+      "id": "l3",
+      "name": "hC",
+      "role": "hypothesis",
+      "origin": "statement",
+      "type": "0 ≤ C"
+     },
+     {
+      "id": "l4",
+      "name": "hx",
+      "role": "hypothesis",
+      "origin": "statement",
+      "type": "x + 1 ≤ C * h"
+     },
+     {
+      "id": "l5",
+      "name": "hh",
+      "role": "hypothesis",
+      "origin": "bound",
+      "type": "0 ≤ h"
+     }
+    ],
+    "cases": [
+     "in the case hh : 0 ≤ h (argument 3 of dite)"
+    ],
+    "uses_facts": [],
+    "ref": {
+     "decl": "Facts.bound_cases",
+     "module": "Facts.Main",
+     "at": "/1/1/1/1/1/0/1/1/1",
+     "fact_hash": "a74cbf549b2fc936",
+     "proof_hash": "8355d55669e74691"
+    },
+    "used_by": [],
+    "source": {
+     "file": "Facts/Main.lean",
+     "line": 32,
+     "located": "by its name in the source"
+    }
+   },
+   {
+    "at": "/1/1/1/1/1/0/1/1",
+    "context": [
+     "l0",
+     "l1",
+     "l2",
+     "l3",
+     "l4",
+     "l5"
+    ],
+    "fact_hash": "a74cbf549b2fc936",
+    "generated_name": false,
+    "head": null,
+    "id": "f1",
+    "kind": "have",
+    "local": "l7",
+    "name": "doubled",
+    "needs": [
+     "l0",
+     "l1",
+     "l2",
+     "l3",
+     "l4",
+     "l5"
+    ],
+    "premises": [],
+    "scope": [
+     "s0"
+    ],
+    "standalone": {
+     "text": "∀ (x C h : Int), 0 ≤ C → x + 1 ≤ C * h → 0 ≤ h → x ≤ C * (h + h)"
+    },
+    "type": {
+     "id": "/",
+     "segments": [
+      {
+       "t": "x",
+       "var": 0
+      },
+      {
+       "ref": "LE.le",
+       "t": " ≤ "
+      },
+      {
+       "t": "C",
+       "var": 1
+      },
+      {
+       "ref": "HMul.hMul",
+       "t": " * "
+      },
+      {
+       "ref": "HAdd.hAdd",
+       "t": "("
+      },
+      {
+       "t": "h",
+       "var": 2
+      },
+      {
+       "ref": "HAdd.hAdd",
+       "t": " + "
+      },
+      {
+       "t": "h",
+       "var": 2
+      },
+      {
+       "ref": "HAdd.hAdd",
+       "t": ")"
+      }
+     ],
+     "terms": [
+      {
+       "from": 0,
+       "id": "/0/0/0/0",
+       "to": 9
+      },
+      {
+       "from": 2,
+       "id": "/1/0/0/0/0/0/0",
+       "to": 9
+      },
+      {
+       "from": 4,
+       "id": "/1/1/0/0/0/0/0/0",
+       "to": 9
+      }
+     ],
+     "text": "x ≤ C * (h + h)"
+    },
+    "uses": [
+     "l0",
+     "l1",
+     "l2",
+     "l3",
+     "l4",
+     "l5"
+    ],
+    "basis": "established inside this proof under this context",
+    "what": "stated in the proof",
+    "assumptions": [
+     {
+      "id": "l0",
+      "name": "x",
+      "role": "variable",
+      "origin": "statement",
+      "type": "Int"
+     },
+     {
+      "id": "l1",
+      "name": "C",
+      "role": "variable",
+      "origin": "statement",
+      "type": "Int"
+     },
+     {
+      "id": "l2",
+      "name": "h",
+      "role": "variable",
+      "origin": "statement",
+      "type": "Int"
+     },
+     {
+      "id": "l3",
+      "name": "hC",
+      "role": "hypothesis",
+      "origin": "statement",
+      "type": "0 ≤ C"
+     },
+     {
+      "id": "l4",
+      "name": "hx",
+      "role": "hypothesis",
+      "origin": "statement",
+      "type": "x + 1 ≤ C * h"
+     },
+     {
+      "id": "l5",
+      "name": "hh",
+      "role": "hypothesis",
+      "origin": "bound",
+      "type": "0 ≤ h"
+     }
+    ],
+    "cases": [
+     "in the case hh : 0 ≤ h (argument 3 of dite)"
+    ],
+    "uses_facts": [],
+    "ref": {
+     "decl": "Facts.bound_cases",
+     "module": "Facts.Main",
+     "at": "/1/1/1/1/1/0/1/1",
+     "fact_hash": "a74cbf549b2fc936",
+     "proof_hash": "8355d55669e74691"
+    },
+    "used_by": [],
+    "source": {
+     "file": "Facts/Main.lean",
+     "line": 32,
+     "located": "by its name in the source"
+    }
+   }
+  ],
+  "provenance": "Lean (the declaration's elaborated proof), cached until a Lean input changes",
+  "retrieval": {
+   "total": 2,
+   "returned": 2,
+   "complete": true,
+   "after": null,
+   "next": null
+  }
+ }
+}

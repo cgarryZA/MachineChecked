@@ -33,6 +33,11 @@ export const showWorkspace = (id, claim) =>
 export const updateWorkspace = (id, ops) =>
   call("api/workspace", { action: "update", id, ops, op_id: newId("req") });
 
+// The typed facts inside one declaration's proof (`compare --query proof-facts`), ranked by
+// `match` when given. Lean reads the proof on the first request; the engine caches the answer.
+export const proofFacts = (name, match) =>
+  call(`api/proof-facts?name=${encodeURIComponent(name)}${match ? `&match=${encodeURIComponent(match)}` : ""}`);
+
 export function newId(prefix) {
   const r = globalThis.crypto?.randomUUID?.() || Math.random().toString(16).slice(2) + Date.now().toString(16);
   return `${prefix}-${r.replace(/-/g, "").slice(0, 12)}`;
