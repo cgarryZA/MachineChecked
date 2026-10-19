@@ -134,6 +134,66 @@
    ]
   },
   {
+   "id": "T:eq:bound-sum",
+   "paper": "T",
+   "kind": "equation",
+   "number": "Equation (2)",
+   "title": "",
+   "unit": "proof-equation",
+   "parent": "T:thm:bound",
+   "location": "toy.tex:72",
+   "source_hash_scheme": "tex-region-v1",
+   "source_sha256": "4ecdbfd5c2be9358f2aa928e22b89e522aa9a36402fe897c83c99c6f7fb69acb",
+   "source_line_sha256": [
+    "b559c49dbfd9d6640386ec4f5e62221bdbc5ebf7b1e2d9f98728011e5cd729a7",
+    "84eb78299a631c28c63265f07da4979225ff4f6deda39db6720cf64741dab02f",
+    "6cee40f3ff5bb96ad2230717ad60ec600c5ad7f6d86ea8c45156d4853dd9fb60"
+   ],
+   "scope": "proof-step",
+   "scope_note": "a step of the proof of Theorem 2.5",
+   "scope_reviewed": true,
+   "clauses": [],
+   "lean": [
+    "Toy.Acceptance.thm_triangle"
+   ],
+   "coverage": "full",
+   "basis": "direct",
+   "note": "Theorem 2.2 in Lean states 2 T_n = n (n + 1), the same identity with the product expanded differently.",
+   "by": "human:A-Referee"
+  },
+  {
+   "id": "T:eq:bound-range",
+   "paper": "T",
+   "kind": "equation",
+   "number": "Equation (3)",
+   "title": "",
+   "unit": "proof-equation",
+   "parent": "T:thm:bound",
+   "location": "toy.tex:75",
+   "source_region": {
+    "end_line": 78
+   },
+   "source_hash_scheme": "tex-region-v1",
+   "source_sha256": "4640c8e3da3aba8d9a9e58abd761bf9c41ec8d0bafd25609f0d143cf9f3e62ef",
+   "source_line_sha256": [
+    "2e03afa8fe9533fa16f498aaae89cc72c782cf5c187d7fe5521018faf916d066",
+    "0f4af828f4ed0b39f1e2cbaead1a5c4c08b6cd756cac304cf9e0062769c3ff16",
+    "1363a8e7c51a37b4c28229466698136c8d0b8eecbebf0335256bd8cc16d23b41",
+    "6cee40f3ff5bb96ad2230717ad60ec600c5ad7f6d86ea8c45156d4853dd9fb60"
+   ],
+   "scope": "proof-step",
+   "scope_note": "a step of the proof of Theorem 2.5",
+   "scope_reviewed": true,
+   "clauses": [],
+   "route": {
+    "lean": [
+     "Toy.Acceptance.thm_bound"
+    ],
+    "note": "The Lean proof of Theorem 2.5 bounds n by n * n (Nat.le_mul_self) and does not use the printed family of inequalities.",
+    "by": "human:A-Referee"
+   }
+  },
+  {
    "id": "T:cor:even-triangle",
    "paper": "T",
    "kind": "corollary",

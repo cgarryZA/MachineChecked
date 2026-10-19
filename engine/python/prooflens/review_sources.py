@@ -63,10 +63,43 @@ def attribute(values: dict[str, str]) -> str:
     return " ".join(f"source={cid}@{sha}" for cid, sha in sorted(values.items()))
 
 
-def parse(attrs: str) -> dict[str, str] | None:
-    """The digests recorded by a marker's attributes, by claim; None when it records none."""
-    found = SOURCE.findall(attrs or "")
-    return dict(found) if found else None
+def parse(attrs: str, step: str | None = None, step_hash: str | None = None
+          ) -> dict[str, str] | None:
+    """The digests recorded by a marker's attributes, by claim; None when it records none. A
+    `step-review` marker of the step `step` records its own passage as its hash `step_hash`; a
+    `source` attribute that gives that step another digest leaves the step without one."""
+    found = dict(SOURCE.findall(attrs or ""))
+    if step is not None:
+        if found.get(step, step_hash) == step_hash:
+            found[step] = step_hash
+        else:
+            found.pop(step)
+        return found
+    return found or None
+
+
+def marker_state(review, cid: str, sha: str, history: "History | None" = None) -> str:
+    """Whether the marker `review` read claim `cid`'s current passage `sha`: `current`,
+    `changed` (an earlier text), `unread` (it records no reading of that passage) or
+    `unrecorded` (a marker without digests whose history does not show the passage unchanged,
+    or no history to ask)."""
+    if review.source is not None:
+        got = review.source.get(cid)
+        return "current" if got == sha else "unread" if got is None else "changed"
+    return history.state(review.file, review.line, cid) if history is not None else "unrecorded"
+
+
+def report_digests(report: dict) -> dict[str, str] | None:
+    """The digests a review report pinned, by claim. A step report made before reports pinned
+    them by claim gives its step's source hash (`pins.fingerprints.source`)."""
+    pins = report.get("pins") or {}
+    if isinstance(pins.get("source_sha256"), dict):
+        return pins["source_sha256"]
+    uid = str((report.get("unit") or {}).get("id") or "")
+    old = (pins.get("fingerprints") or {}).get("source")
+    if uid.startswith("step:") and isinstance(old, str):
+        return {uid[len("step:"):]: old}
+    return None
 
 
 # -- markers written before the attribute -------------------------------------------------------

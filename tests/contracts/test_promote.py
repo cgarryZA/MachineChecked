@@ -136,6 +136,32 @@ def test_promotion_end_to_end(toy, tmp_path):
 
 @needs_lean
 @needs_tex
+def test_a_unit_added_to_a_section_after_promotion_shows_the_section(toy, tmp_path):
+    """#162: a section whose first unit was promoted, then given a second unit: the second
+    unit's author review is the section's reading, not the reviewer's line promote wrote."""
+    index, _, cfg = build(toy)
+    units = {u["name"]: u for u in queue(cfg)["units"]}
+    tri = "Toy.PaperSpec.thm_triangle"
+    reading = units[tri]["author_review"][-1]["text"]
+    assert reading.startswith("Manuscript:")
+    steps = pr.plan(cfg, [report(index, units[tri])])
+    assert all(not why for _, _, why in steps)
+    pr.apply(cfg, [(r, cur) for r, cur, _ in steps])
+    marker = next(m.group(0) for m in CHECKER.finditer((toy / "reviews/T.md").read_text())
+                  if m.group(2) == tri and m.group(4) == "human:Test-Referee")
+    h = units["Toy.PaperSpec.thm_bound"]["legacy_hash"]
+    src = " ".join(f"source={c}@{d}"
+                   for c, d in units["Toy.PaperSpec.thm_bound"]["source_sha256"].items())
+    edit(toy / "reviews/T.md", marker,
+         f"{marker}\n<!-- spec-review: Toy.PaperSpec.thm_bound {h} by=statement-author {src} -->")
+    _, _, cfg = build(toy, reuse_lean=True)
+    q = {u["name"]: u for u in queue(cfg)["units"]}
+    assert q["Toy.PaperSpec.thm_bound"]["author_review"][-1]["text"] == reading
+    assert q[tri]["author_review"][-1]["text"].startswith("Review by human:Test-Referee: faithful")
+
+
+@needs_lean
+@needs_tex
 def test_promotion_needs_current_evidence(toy):
     index, _, cfg = build(toy)
     u = next(u for u in queue(cfg)["units"] if u["name"] == "Toy.triangle")

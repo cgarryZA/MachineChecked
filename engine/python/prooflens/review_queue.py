@@ -1,11 +1,13 @@
 """The review queue: what a reviewer can review, in a suggested order.
 
-A unit of review is a locked proposition (`spec`), a definition its meaning depends on (`def`), or,
-in the zero-configuration view, a confirmed link between a claim and a declaration (`link`). Each
-unit carries the fingerprints it would be reviewed at, the digests of the paper passages a review
-of it reads, by claim (`source_sha256`, `review_sources.py`), its current review state, the
-author's review (shown to the reviewer only after their own verdict) and why it sits where it
-does in the order. A unit is reviewed once per fingerprint, however many claims depend on it.
+A unit of review is a locked proposition (`spec`), a definition its meaning depends on (`def`), in
+the zero-configuration view a confirmed link between a claim and a declaration (`link`), or, in
+both, a proof step (`step`: an equation or passage of a printed proof, reviewed as printed whether
+or not any Lean is linked to it). Each unit carries the fingerprints it would be reviewed at, the
+digests of the paper passages a review of it reads, by claim (`source_sha256`,
+`review_sources.py`), its current review state, the author's review (shown to the reviewer only
+after their own verdict) and why it sits where it does in the order. A unit is reviewed once per
+fingerprint, however many claims depend on it.
 
 The order is a suggestion: less effort first, with a preference for units that many claims depend
 on. Reviewing a definition settles that definition only; no claim is approved by it.
@@ -167,7 +169,53 @@ def assurance_queue(index: dict, chunks: dict, store: dict, authors: list[str]) 
     units = reveal_order([u for u in units if u["state"] != "reviewed"]) + \
         [u for u in units if u["state"] == "reviewed"]
     return {"schema": SCHEMA, "release": index["release"], "mode": "assurance",
-            "authors": sorted(authors), "units": units, "needs_statement": unspecified}
+            "authors": sorted(authors), "units": with_steps(units, step_units(index, chunks)),
+            "needs_statement": unspecified}
+
+
+def with_steps(units: list[dict], steps: list[dict]) -> list[dict]:
+    """The queue's units with the proof steps after the other open units, and every reviewed
+    unit last."""
+    return ([u for u in units if u["state"] != "reviewed"]
+            + [u for u in steps if u["state"] != "reviewed"]
+            + [u for u in units if u["state"] == "reviewed"]
+            + [u for u in steps if u["state"] == "reviewed"])
+
+
+def step_units(index: dict, chunks: dict) -> list[dict]:
+    """One unit per proof step: is the printed step valid, and what does the Lean linked to it
+    (if any) state? Its fingerprints are those of its source text (`source`) and of the linked
+    declarations, so a report is made at, and current for, exactly that text. The parent's scope
+    decision and coverage play no part: a step no report covers is pending."""
+    units = []
+    for c in index["claims"]:
+        ch = chunks[c["file"]]
+        st = ch.get("step")
+        if not st:
+            continue
+        links = st.get("links") or []
+        route = (st.get("route") or {}).get("links") or []
+        parent = st.get("parent") or {}
+        fps = {"source": ch.get("source_sha256")}
+        fps.update({l["name"]: l.get("fingerprint") for l in links + route})
+        units.append({
+            "id": "step:" + c["id"], "kind": "step", "unit": st.get("unit"), "key": ch.get("key"),
+            "name": c["number"] or c["id"], "lean": [l["name"] for l in links],
+            "route": [l["name"] for l in route], "fingerprints": fps,
+            "source_sha256": {c["id"]: ch["source_sha256"]} if ch.get("source_sha256") else {},
+            "parent": {k: parent.get(k) for k in ("id", "number")} if parent else None,
+            "paper": c["paper"], "papers": [c["paper"]],
+            "section": section_of(parent.get("number") or c["number"]),
+            "claims": [{"id": c["id"], "number": c["number"], "title": c["title"],
+                        "file": c["file"], "status": c["status"]}],
+            "state": "reviewed" if (st.get("review") or {}).get("state") not in
+            ("unreviewed", "stale", None) else "pending",
+            "author_review": [], "reveals": {"lean": [], "author": []},
+            "effort": 1.0, "order": 1.0,
+            "reason": ("Proof step of " + parent["number"] if parent.get("number")
+                       else "Proof step") + ("; no Lean is linked to it" if not links else "")})
+    units.sort(key=lambda u: (u["state"] == "reviewed", u["id"]))
+    return units
 
 
 def simple_queue(index: dict, chunks: dict) -> dict:
@@ -177,7 +225,8 @@ def simple_queue(index: dict, chunks: dict) -> dict:
     for c in index["claims"]:
         ch = chunks[c["file"]]
         links = ch.get("links") or []
-        if not links:
+        if not links or ch.get("step"):
+            # A proof step's links are compared in its own unit (`step_units`).
             continue
         size = sum(len(_text((l.get("statement") or {}).get("conclusion"))) +
                    sum(len(_text(b.get("type"))) for b in (l.get("statement") or {})
@@ -194,4 +243,4 @@ def simple_queue(index: dict, chunks: dict) -> dict:
             "effort": effort, "order": effort, "reason": f"{_size(effort)} statement"})
     units.sort(key=lambda u: (u["state"] == "reviewed", u["order"], u["id"]))
     return {"schema": SCHEMA, "release": index["release"], "mode": "simple", "authors": [],
-            "units": units, "needs_statement": []}
+            "units": with_steps(units, step_units(index, chunks)), "needs_statement": []}

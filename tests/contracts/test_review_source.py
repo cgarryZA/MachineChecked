@@ -224,3 +224,30 @@ def test_a_proposition_stated_by_two_claims_reopens_only_for_the_changed_one():
     sr = one["P:b"]["clauses"][0]["spec_review"]
     assert sr["why"] == "source-unread" and sr["source_claim"] == "P:b"
     assert "did not read this claim's passage" in " ".join(one["P:b"]["blockers"])
+
+
+def test_a_step_marker_follows_the_same_rule(tmp_path):
+    """A step-review marker's hash is the digest of the passage it read; a `source` attribute
+    for the step must agree with it, and the marker is current by the rule of every marker."""
+    from prooflens.reviews import parse_file
+    from prooflens.steps import marker_review
+    a, b = "a" * 64, "b" * 64
+    f = tmp_path / "r.md"
+    f.write_text(f"## S\n\nIt holds.\n\n<!-- step-review: P:eq:s {a} verdict=holds by=r -->\n\n"
+                 f"## S again\n\nIt holds.\n\n<!-- step-review: P:eq:s {a} verdict=holds by=r "
+                 f"source=P:eq:s@{a} -->\n\n## S, disagreeing\n\nIt holds.\n\n"
+                 f"<!-- step-review: P:eq:s {a} verdict=holds by=r source=P:eq:s@{b} -->\n")
+    plain, same, other = parse_file(f, [], tmp_path)
+    assert plain.source == same.source == {"P:eq:s": a} and other.source == {}
+    assert rs.marker_state(plain, "P:eq:s", a) == "current"
+    assert rs.marker_state(plain, "P:eq:s", b) == "changed"
+    assert rs.marker_state(other, "P:eq:s", a) == "unread"
+    assert marker_review([plain], "P:eq:s", a)["state"] == "holds"
+    assert marker_review([plain], "P:eq:s", b)["state"] == "stale"
+    assert marker_review([plain, other], "P:eq:s", a)["state"] == "stale"
+    # A step report pins its passage by claim like any report; an older one by its source hash.
+    assert rs.report_digests({"unit": {"id": "step:P:eq:s"},
+                              "pins": {"fingerprints": {"source": a}}}) == {"P:eq:s": a}
+    assert rs.report_digests({"unit": {"id": "step:P:eq:s"},
+                              "pins": {"source_sha256": {"P:eq:s": b},
+                                       "fingerprints": {"source": a}}}) == {"P:eq:s": b}

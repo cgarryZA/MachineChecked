@@ -19,9 +19,15 @@ it now is, or that the acceptance rules cannot count as an independent review:
   maintainer accepts it explicitly. The page records this from the work kept in the reviewer's
   browser; it cannot see what they read elsewhere.
 
+A report on a proof step (unit `step:<claim id>`) is checked the same way, against the step's
+source text instead of a declaration: the step's pinned source hash must be the one the report
+was made at, and match the manuscript; its verdict must be holds as printed, holds with a gap
+(with the argument), or false as printed (with the failing case). Its marker is
+`<!-- step-review: CLAIM SOURCE-SHA256 verdict=holds|gap|false by=REVIEWER -->`.
+
 For each report it accepts, it archives the report (JSON and the protocol's text block) and
-writes `<!-- spec-review: NAME HASH by=REVIEWER source=CLAIM@DIGEST... -->` (or `def-review`;
-no `source` when no claim's passage is read) after the declaration's
+writes `<!-- spec-review: NAME HASH by=REVIEWER source=CLAIM@DIGEST... -->` (or `def-review`,
+`step-review`; no `source` when no claim's passage is read) after the declaration's (or step's)
 last marker, in the exact form the acceptance checker reads, then assesses the stored evidence
 again. A promoted marker records the reviewer the report names; who they are is as the report
 states it.
@@ -41,6 +47,9 @@ from .util import read_json
 
 ACCEPTABLE = {"faithful", "faithful with representation choices", "broader"}
 NEEDS_DETAIL = {"faithful with representation choices", "broader"}
+# A review of a printed step records a finding; an open question is not one.
+STEP_ACCEPTABLE = {"holds as printed", "holds, with a gap in the argument", "false as printed"}
+STEP_NEEDS_DETAIL = {"holds, with a gap in the argument", "false as printed"}
 HEX32 = re.compile(r"^[0-9a-f]{32}$")
 
 
@@ -88,21 +97,33 @@ def check_report(r: dict, body: dict, cfg: Config, accept_same_family: bool,
         return [f"not a review report (schema {r.get('schema')!r})"]
     u, pins, rev = r["unit"], r["pins"], r["reviewer"]
     lean = body.get("lean") or {}
+    step = u["kind"] == "step"
     if u["kind"] == "spec":
         cur = lean.get("specs", {}).get(u["name"])
     elif u["kind"] == "def":
         cur = lean.get("decls", {}).get(u["name"])
+    elif step:
+        cur = step_claim(body, u)
     else:
         return [f"a {u['kind']} unit has no review marker in this project"]
     if cur is None:
-        return [f"{u['name']} is not in the current evidence"]
-    if pins.get("fingerprint") != cur.get("fingerprint"):
-        why.append("the declaration changed since the review (fingerprint differs)")
-    if pins.get("legacy_hash") != cur.get("legacy_hash") or not HEX32.match(
-            cur.get("legacy_hash") or ""):
-        why.append("the legacy hash differs from the current one")
-    want = expected_source(body, u)
-    have = pins.get("source_sha256")
+        return [f"{u['name']} is not in the current evidence" if not step else
+                f"{u['id']} is not a proof step of the current evidence"]
+    if step:
+        from .source_regions import matches
+        if (pins.get("fingerprints") or {}).get("source") != cur.get("source_sha256"):
+            why.append("the step's source changed since the review (source hash differs)")
+        if not matches(cur, (body.get("tex") or {}).get(cur["paper"], {})):
+            why.append("the step's pinned source does not match the manuscript")
+    else:
+        if pins.get("fingerprint") != cur.get("fingerprint"):
+            why.append("the declaration changed since the review (fingerprint differs)")
+        if pins.get("legacy_hash") != cur.get("legacy_hash") or not HEX32.match(
+                cur.get("legacy_hash") or ""):
+            why.append("the legacy hash differs from the current one")
+    # The passages read: one rule for every kind of unit.
+    want = expected_source(body, u, cur)
+    have = report_source(r)
     if have is None and want:
         why.append("the report does not record the paper text it was made against (source "
                    "digests); review the unit again from a current build")
@@ -113,10 +134,13 @@ def check_report(r: dict, body: dict, cfg: Config, accept_same_family: bool,
         if pid in papers and papers[pid].get("revision") != revn:
             why.append(f"paper {pid} is at another revision than the one reviewed")
     v = r["verdict"]["value"]
-    if v not in ACCEPTABLE:
+    if v not in (STEP_ACCEPTABLE if step else ACCEPTABLE):
         why.append(f"verdict {v!r} is not one that is recorded as a review")
-    elif v in NEEDS_DETAIL and not r["verdict"].get("detail", "").strip():
-        why.append(f"verdict {v!r} needs its detail (representation choices or instantiation)")
+    elif v in (STEP_NEEDS_DETAIL if step else NEEDS_DETAIL) and \
+            not r["verdict"].get("detail", "").strip():
+        why.append(f"verdict {v!r} needs its detail ("
+                   + ("the argument or the failing case" if step else
+                      "representation choices or instantiation") + ")")
     if not r["reading"].get("text", "").strip():
         why.append("the report has no reading of the paper")
     t = [r["reading"].get("locked_at"), r["comparison"].get("decided_at"),
@@ -140,19 +164,48 @@ def check_report(r: dict, body: dict, cfg: Config, accept_same_family: bool,
     return why
 
 
-def expected_source(body: dict, unit: dict) -> list[str]:
-    """The digests of the passages a review of `unit` reads, from the inventory of the
-    evidence (which promotion checks is the current one)."""
+def step_claim(body: dict, u: dict) -> dict | None:
+    """The inventory entry of the proof step a step unit reviews, if it is one."""
+    from .steps import is_step
+    cid = u["id"][len("step:"):] if str(u.get("id", "")).startswith("step:") else None
+    c = next((c for c in body["inventory"]["claims"] if c["id"] == cid), None)
+    if c is None:
+        return None
+    region = ((body.get("tex") or {}).get(c["paper"], {}).get("regions") or {}).get(cid)
+    return c if is_step(c, region) else None
+
+
+def expected_source(body: dict, unit: dict, cur: dict | None = None) -> dict[str, str]:
+    """The digests of the passages a review of `unit` reads, by claim, from the inventory of
+    the evidence (which promotion checks is the current one): a step's own passage, or those of
+    the claims that state the proposition or name the definition."""
+    if unit.get("kind") == "step":
+        return {cur["id"]: cur["source_sha256"]} if cur and cur.get("source_sha256") else {}
     inv = {"claims": (body.get("inventory") or {}).get("claims", [])}
     return review_sources.digests(inv, unit.get("kind"), unit.get("name"))
+
+
+def report_source(r: dict) -> dict[str, str] | None:
+    """The digests a report pinned, by claim (`review_sources.report_digests`)."""
+    return review_sources.report_digests(r)
+
+
+def marker_name(r: dict) -> str:
+    u = r["unit"]
+    return u["id"][len("step:"):] if u["kind"] == "step" else u["name"]
 
 
 def marker(r: dict, cur: dict, source: dict[str, str] | None = None) -> str:
     """The marker of a promoted report; `source` is the digests of the passages it read, by
     claim."""
     attr = review_sources.attribute(source or {})
+    attr = " " + attr if attr else ""
+    if r["unit"]["kind"] == "step":
+        from .steps import STATE
+        return (f"<!-- step-review: {marker_name(r)} {cur['source_sha256']} "
+                f"verdict={STATE[r['verdict']['value']]} by={r['reviewer']['id']}{attr} -->")
     return (f"<!-- {r['unit']['kind']}-review: {r['unit']['name']} {cur['legacy_hash']} "
-            f"by={r['reviewer']['id']}{' ' + attr if attr else ''} -->")
+            f"by={r['reviewer']['id']}{attr} -->")
 
 
 def report_text(r: dict, cur: dict) -> str:
@@ -162,8 +215,9 @@ def report_text(r: dict, cur: dict) -> str:
     return "\n".join([
         f"### {', '.join(u['claims']) or u['id']}: {u['name']}",
         f"Pins: manuscript {ms}; project {p.get('project_commit')}; "
-        f"hash {cur['legacy_hash']} ({p.get('fingerprint')}); source "
-        f"{review_sources.attribute(p.get('source_sha256') or {}) or '—'}",
+        + (f"source {cur['source_sha256']}" if u["kind"] == "step" else
+           f"hash {cur['legacy_hash']} ({p.get('fingerprint')}); source "
+           f"{review_sources.attribute(p.get('source_sha256') or {}) or '—'}"),
         f"Reviewer: {rv['id']} ({rv['kind']}{', ' + rv['model'] if rv.get('model') else ''}, "
         f"self-declared); {r['submitted_at']}; same model family as the author: "
         f"{rv.get('same_family_as_author')}",
@@ -181,7 +235,7 @@ def target_file(cfg: Config, r: dict, reviews) -> tuple[Path, int | None]:
     """Where the marker goes: after the declaration's last marker, else at the end of the
     paper's review file (specs) or of the definitions' review file."""
     u = r["unit"]
-    hist = history(reviews, u["kind"], u["name"])
+    hist = history(reviews, u["kind"], marker_name(r))
     if hist:
         return (cfg.root / hist[-1].file).resolve(), hist[-1].line
     files = review_files(cfg.reviews)
@@ -227,8 +281,9 @@ def plan(cfg: Config, reports: list[dict], accept_same_family: bool = False,
     out = []
     for r in reports:
         u = r.get("unit", {})
-        cur = (lean.get("specs" if u.get("kind") == "spec" else "decls", {}) or {}).get(
-            u.get("name"))
+        cur = step_claim(body, u) if u.get("kind") == "step" else \
+            (lean.get("specs" if u.get("kind") == "spec" else "decls", {}) or {}).get(
+                u.get("name"))
         out.append((r, cur, check_report(r, body, cfg, accept_same_family, allow_revealed)))
     return out
 
@@ -240,7 +295,7 @@ def apply(cfg: Config, accepted: list[tuple[dict, dict]]) -> list[dict]:
     rdir.mkdir(parents=True, exist_ok=True)
     done = []
     for r, cur in accepted:
-        stem = re.sub(r"[^\w.-]+", "_", f"{r['unit']['name']}--{r['reviewer']['id']}--"
+        stem = re.sub(r"[^\w.-]+", "_", f"{marker_name(r)}--{r['reviewer']['id']}--"
                       f"{r['submitted_at']}")
         (rdir / f"{stem}.json").write_text(json.dumps(r, indent=1, ensure_ascii=False) + "\n",
                                            encoding="utf-8")
@@ -251,9 +306,9 @@ def apply(cfg: Config, accepted: list[tuple[dict, dict]]) -> list[dict]:
             rel = rel.relative_to(path.parent.resolve())
         except ValueError:
             pass
-        mk = marker(r, cur, r["pins"].get("source_sha256"))
+        mk = marker(r, cur, report_source(r))
         insert_after(path, line, [f"Review by {r['reviewer']['id']}: {r['verdict']['value']} "
                                   f"(report `{rel.as_posix()}`).", mk])
         reviews, _ = load_reviews(cfg.reviews, cfg.ai_reviewers, cfg.root)
-        done.append({"name": r["unit"]["name"], "file": str(path), "marker": mk})
+        done.append({"name": marker_name(r), "file": str(path), "marker": mk})
     return done

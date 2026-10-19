@@ -8,7 +8,11 @@ independent evidence dimensions. Labels never control acceptance or reader behav
 ## The levels of a claim
 
 A claim of a paper is in the inventory with a scope. Out-of-scope claims (`expository`,
-`literature`, `empirical`, `proof-step`, `part-of`, `duplicate`) are listed with the reason. A
+`literature`, `empirical`, `proof-step`, `part-of`, `duplicate`) are listed with the reason.
+A scope decision is about formal coverage: `proof-step` says the step is outside the formal proof
+assessment, never that anyone read it. A proof step has its own links and its own review, shown
+beside it and never taken from, or given to, its enclosing result; a step no report covers is
+shown as not reviewed. Neither changes a status. A
 `formal` claim has clauses; a `definition` claim has Lean definitions.
 
 A formal claim's status, from strongest to weakest:
@@ -77,7 +81,7 @@ Each clause reports a result for every evidence dimension.
 | locked statement | yes | the proposition is a definition of type `Prop` in the specification layer, over allowed axioms |
 | exact statement | yes | the acceptance theorem's type is exactly the proposition (or its negation), and it has no `sorry`; checked on the build the probe ran on, which may be a restored cache |
 | axioms | yes | its axioms are among the allowed (`propext`, `Classical.choice`, `Quot.sound` by default) |
-| kernel replay | yes | a structured Comparator record (`comparator_log`: JSON with the full project `commit` and the exact names of the `replayed` theorems, as `machinechecked replay` writes it) covers this proof for this commit, or for an ancestor of it with no Lean input changed since; without one the rung is `not run`, never `failed`; a record of another commit, of a run that did not pass, of a tree with uncommitted Lean changes, or of another Lean version or set of Lake dependencies (when it names them), or a text log, is `unverified` |
+| kernel replay | yes | a structured Comparator record (`comparator_log`: JSON with the full project `commit` and the exact names of the `replayed` theorems, as `machinechecked replay` writes it) covers this proof for this commit, or for an ancestor of it with no Lean input changed since; without one the rung is `not run`, never `failed`; a record of another commit, of a run that did not pass, of a tree with uncommitted Lean changes, or of another Lean version or set of Lake dependencies (when it names them), or a text log, is `unverified`; a replay made without Comparator's sandbox guard still passes, and the rung says "replayed without the sandbox guard" (or "sandbox guard not recorded" for a record that does not state its conditions) |
 | witness | yes, for the theorem; the fit to the paper is reviewed | a proposition with hypotheses has a theorem meeting them (not needed for a clause whose refutation checks: a proof of ¬S exhibits an instance meeting S's hypotheses) |
 | regimes | yes, for the theorems; the fit is reviewed | each regime the paper intends to cover has its witness |
 | review | no | the proposition and its definitions have current reviews of their current Lean and paper text; `author` if only by an author |
@@ -91,7 +95,8 @@ Each clause reports a result for every evidence dimension.
   digests of the paper passages read.
 - **Witness:** a checked example establishes that the formal hypotheses can be met.
 - **Source verification:** hashes identify the manuscript region or PDF being audited.
-- **Replay:** a structured Comparator record identifies the proofs and build replayed.
+- **Replay:** a structured Comparator record identifies the proofs and build replayed, and
+  states whether the run was under Comparator's sandbox guard.
 
 ## Provenance of a release
 

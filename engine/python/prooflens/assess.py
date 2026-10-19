@@ -10,8 +10,9 @@ Findings come in three tiers:
   inventory). A violation fails the consistency check; it does not change a status, which
   records what is proved: a proof that fails its check is not a proof, so its clause is open.
 * `warning`: a pattern that may change the meaning of a statement (a totalised operation, for
-  instance). It asks for investigation, may be wrong, and can be dismissed with a recorded
-  rationale tied to the subject's fingerprint.
+  instance), or a name a module docstring lists that nothing declares. It asks for
+  investigation, may be wrong, and can be dismissed with a recorded rationale tied to the
+  subject's fingerprint.
 * `obligation`: a judgement only a reviewer can make (a review of a proposition or definition, a
   witness that the hypotheses can be met, a regime the paper intends to cover).
 
@@ -87,6 +88,15 @@ def _hashes(rec):
     return {h for h in (rec.get("legacy_hash"), rec.get("fingerprint")) if h}
 
 
+def unread(rec: dict | None) -> bool:
+    """Whether a probe record holds no declaration: none was found under the name, or the probe
+    failed on the request. Such a record has only `name` and `errors`."""
+    if rec is None:
+        return True
+    errs = rec.get("errors") or []
+    return "missing" in errs or any(str(e).startswith("probe-error") for e in errs)
+
+
 class Assessor:
     def __init__(self, cfg, inventory, lean, tex, reviews: list[Review], dismissals,
                  comparator_log: str | None = None, project_commit: str | None = None):
@@ -97,6 +107,31 @@ class Assessor:
         self.findings: list[dict] = []
         self.authors = set(cfg.statement_authors)
         self._history = None
+        self._unlisted: list[str] | None = None
+
+    # -- declarations the probe did not find ------------------------------------------------
+
+    def not_found(self, name: str) -> str:
+        """Why the probe has no record of `name`, for a finding: the declaration is not in any
+        module the probe loaded. When a project module that is not listed in `modules` declares
+        it (as far as its source text shows), that module is named."""
+        mods = []
+        try:
+            if self._unlisted is None:
+                from .probe import lib_names
+                from .simple import built_modules
+                root = self.cfg.lean_root
+                built, unbuilt = built_modules(root, lib_names(root))
+                listed = set(self.cfg.modules)
+                self._unlisted = [m for m in built + unbuilt if m not in listed]
+            from .simple import declaring_modules
+            mods = declaring_modules(self.cfg.lean_root, self._unlisted, name)
+        except (OSError, ValueError, AttributeError):
+            mods = []
+        if mods:
+            return (f"{name}: not found by the probe; it is declared in "
+                    f"{', '.join(mods)}, which is not listed in `modules`")
+        return f"{name}: not found by the probe; is its module listed in `modules`?"
 
     # -- reviews --------------------------------------------------------------------------
 
@@ -141,16 +176,12 @@ class Assessor:
         return out
 
     def _read_one(self, review: Review, cid: str, sha: str) -> str:
-        """Whether `review` read the current passage `sha` of claim `cid`: `current`,
-        `changed` (an earlier text), `unread` (not recorded) or `unrecorded` (a marker without
-        digests whose history does not show the passage unchanged)."""
-        if review.source is not None:
-            got = review.source.get(cid)
-            return "current" if got == sha else "unread" if got is None else "changed"
-        if self._history is None:
+        """Whether `review` read the current passage `sha` of claim `cid`
+        (`review_sources.marker_state`)."""
+        if review.source is None and self._history is None:
             self._history = review_sources.History(getattr(self.cfg, "root", None),
                                                    getattr(self.cfg, "inventory", None), self.inv)
-        return self._history.state(review.file, review.line, cid)
+        return review_sources.marker_state(review, cid, sha, self._history)
 
     def _reads(self, review: Review, need: dict[str, str]) -> bool:
         return all(self._read_one(review, c, s) == "current" for c, s in sorted(need.items()))
@@ -200,8 +231,9 @@ class Assessor:
         lean = self.lean
         out = {}
         for n in names:
-            clos = lean["specs"][n]["closure"] if n in lean["specs"] else \
-                lean["defs"].get(n, {}).get("closure", [])
+            # A record of a declaration the probe did not find has no closure.
+            clos = (lean["specs"][n] if n in lean["specs"] else
+                    lean["defs"].get(n, {})).get("closure") or []
             for d in clos:
                 if d in lean["specs"] or d in out:
                     continue
@@ -251,8 +283,15 @@ class Assessor:
                         "detail": f"the Comparator record was made with other {label}"}
         if thm not in set(rec.get("replayed", [])):
             return {"state": "not-run", "detail": "the Comparator record does not cover this proof"}
-        return {"state": "pass", "detail": "Comparator replayed the proof in a fresh kernel ("
-                + ", ".join(rec.get("kernels", ["lean"])) + ")" + since}
+        # A replay without Comparator's sandbox guard still counts; the fact says so.
+        how = rec.get("conditions")
+        guard = ("unrecorded" if not isinstance(how, dict) else
+                 "guarded" if how.get("guard") not in (None, "none") else "unguarded")
+        note = {"guarded": "", "unguarded": "; replayed without the sandbox guard",
+                "unrecorded": "; the record does not say whether the sandbox guard was used"}
+        return {"state": "pass", "guard": guard,
+                "detail": "Comparator replayed the proof in a fresh kernel ("
+                + ", ".join(rec.get("kernels", ["lean"])) + ")" + since + note[guard]}
 
     def _environment(self) -> dict:
         """The audited project's Lean version and Lake manifest hash."""
@@ -283,8 +322,10 @@ class Assessor:
             errs = (srec or {}).get("errors", ["missing"])
             res["checks"]["spec"] = {"ok": not errs, "errors": errs}
             for e in errs:
-                self.findings.append(_finding("violation", "spec-" + e.split("=")[0], subj,
-                                              f"proposition {spec}: {e}"))
+                self.findings.append(_finding(
+                    "violation", "spec-" + e.split("=")[0], subj,
+                    "proposition " + self.not_found(spec) if e == "missing" else
+                    f"proposition {spec}: {e}"))
             sr = self.review_state("spec", spec, srec, claim["id"])
             dr = self.closure_reviews([spec]) if srec else {}
             res["spec_review"] = sr
@@ -300,7 +341,7 @@ class Assessor:
             missing = [d for d in names if d not in lean["decls"]]
             for d in missing:
                 self.findings.append(_finding("violation", "def-missing", subj,
-                                              f"definition {d} is not in the environment"))
+                                              "definition " + self.not_found(d)))
             dr = {d: self.review_state("def", d, lean["decls"].get(d), claim["id"])
                   for d in names}
             dr.update({d: r for d, r in self.closure_reviews(names).items() if d not in dr})
@@ -337,6 +378,7 @@ class Assessor:
                 res["checks"]["replay"] = self.replay(thm)
             for e in perrs:
                 self.findings.append(_finding("violation", f"{kind}-" + e.split("=")[0], subj,
+                                              self.not_found(thm) if e == "missing" else
                                               f"{thm}: {e}"))
         res["state"] = ("proved" if res.get("accept_ok") else
                         "refuted" if res.get("refute_ok") else
@@ -363,9 +405,11 @@ class Assessor:
             ok = bool(p) and not p.get("errors")
             regs.append({**r, "discharged": ok, "type": (p or {}).get("type")})
             if not ok:
+                why = (f" (its witness {self.not_found(w)})"
+                       if w and "missing" in (p or {}).get("errors", ["missing"]) else "")
                 self.findings.append(_finding(
                     "obligation", "regime", subj,
-                    f"regime not shown to be covered: {r.get('name', '')}",
+                    f"regime not shown to be covered: {r.get('name', '')}{why}",
                     trigger=r.get("name", "")))
         res["regimes"] = regs
         return res
@@ -511,21 +555,45 @@ class Assessor:
             out.append("its definitions are not independently reviewed")
         return list(dict.fromkeys(out))
 
+    def step_review(self, claim: dict) -> dict:
+        """A proof step's own review, from its `step-review` markers: recorded beside its status,
+        never an input to it (`steps.py`)."""
+        from .steps import is_step, marker_review
+        region = ((self.tex or {}).get(claim["paper"], {}).get("regions") or {}).get(claim["id"])
+        if not is_step(claim, region):
+            return {}
+        marks = [r for r in self.reviews if r.target == "step" and r.name == claim["id"]]
+        return {"step_review": marker_review(marks, claim["id"], claim.get("source_sha256"),
+                                             self.authors)}
+
     def run(self) -> dict:
         claims = []
         for c in self.inv["claims"]:
             clauses = [self.clause(c, cl, k) for k, cl in enumerate(c.get("clauses", []))]
             state = fields(self.claim_code(c, clauses))
             claims.append({"id": c["id"], **state, "clauses": clauses,
-                           "blockers": self.blockers(c, clauses)})
+                           "blockers": self.blockers(c, clauses), **self.step_review(c)})
         self.inventory_checks()
         if self.lean:
             for v in self.lean.get("layering", []):
                 self.findings.append(_finding(
                     "violation", "layering", v["module"],
                     f"the specification module {v['module']} imports {v['imports']}"))
+            self.module_doc_checks()
         gates = self.gates(claims)
         return {"claims": claims, "findings": self.findings, "gates": gates}
+
+    def module_doc_checks(self):
+        """A warning for each name a module docstring lists that nothing declares: prose that
+        advertises a result the project does not contain. It never changes a status, and an
+        auditor can dismiss it (code `module-doc-name`, the module as subject, the name as
+        trigger)."""
+        from .moddocs import stale_doc_fingerprint, stale_doc_message, stale_doc_names
+        for d in stale_doc_names(self.lean.get("moddocs", [])):
+            self.add_warning("module-doc-name", d["module"], d["module"],
+                             {"fingerprint": stale_doc_fingerprint(d)},
+                             stale_doc_message(d), d["name"])
+            self.findings[-1].update(file=d["file"], line=d["line"])
 
     # -- gates ----------------------------------------------------------------------------
 

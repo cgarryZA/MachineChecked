@@ -498,6 +498,77 @@ def indexRecords (h : IO.FS.Handle) (roots : Array Name) : MetaM Unit := do
         ("doc", match doc with | some d => Json.str d | none => Json.null),
         ("type", if ty.length > 4000 then prefixOf ty 4000 ++ " …" else ty)])
 
+/-! ## Names in module docstrings -/
+
+def charsToString (s : List Char) : String :=
+  s.foldl String.push ""
+
+/-- The parts of `s` between occurrences of `c`. -/
+def splitChars (c : Char) (s : List Char) : Array (List Char) :=
+  let (done, cur) := s.foldl (fun (acc : Array (List Char) × List Char) x =>
+    if x == c then (acc.1.push acc.2.reverse, []) else (acc.1, x :: acc.2)) (#[], [])
+  done.push cur.reverse
+
+/-- Whether a backticked piece of a docstring has the shape of a declaration name. -/
+def nameLike (s : List Char) : Bool :=
+  let ok := fun (c : Char) => c.isAlphanum || c == '_' || c == '\'' || c == '!' || c == '?'
+    || c.toNat > 127
+  match s with
+  | [] => false
+  | c :: _ => !c.isDigit && c != '.' && s.getLast? != some '.'
+    && (splitChars '.' s).all (fun p => !p.isEmpty && p.all ok)
+
+/-- Every backticked name in the docstrings of the modules of `roots` that is no declaration,
+namespace or module: its module, its line, the heading it is under and whether it begins a list
+item. A name is tried as written and inside each namespace the module declares into. -/
+def moduleDocRecords (h : IO.FS.Handle) (roots : Array Name) : MetaM Unit := do
+  let env ← getEnv
+  let names := env.header.moduleNames
+  for i in [:names.size] do
+    let mod := names[i]!
+    unless roots.contains mod.getRoot do continue
+    let some docs := getModuleDoc? env mod | continue
+    if docs.isEmpty then continue
+    let mut declared : NameSet := {}
+    let mut spaces : Array Name := #[]
+    for c in env.header.moduleData[i]!.constNames do
+      let u := privateToUserName c
+      declared := declared.insert u
+      let mut p := u.getPrefix
+      while !p.isAnonymous do
+        unless spaces.contains p do spaces := spaces.push p
+        p := p.getPrefix
+    let known := fun (n : Name) => env.contains n || declared.contains n || env.isNamespace n
+      || (env.getModuleIdx? n).isSome
+    for d in docs do
+      let mut heading : List Char := []
+      let mut fence := false
+      -- Lean stores the text without its leading whitespace, so its first line is counted back
+      -- from the closing `-/`.
+      let mut line := d.declarationRange.endPos.line - (d.doc.toList.filter (· == '\n')).length
+      for l in splitChars '\n' d.doc.toList do
+        let t := l.dropWhile Char.isWhitespace
+        if "```".toList.isPrefixOf t then
+          fence := !fence
+        else if !fence then
+          if t.head? == some '#' then
+            heading := (t.dropWhile (· == '#')).dropWhile Char.isWhitespace
+          let item := t.length ≥ 2 && ['*', '-', '+'].contains t[0]! && t[1]! == ' '
+          let parts := splitChars '`' l
+          let mut k := 1
+          while k + 1 < parts.size do
+            let tok := parts[k]!
+            if nameLike tok then
+              let n := (splitChars '.' tok).foldl (fun n p => Name.str n (charsToString p))
+                .anonymous
+              unless known n || spaces.any (fun ns => known (ns ++ n)) do
+                emit h (Json.mkObj [("record", "moddoc"), ("module", mod.toString),
+                  ("line", toJson line), ("name", Json.str (charsToString tok)),
+                  ("heading", Json.str (charsToString heading)),
+                  ("item_lead", toJson (item && k == 1))])
+            k := k + 2
+        line := line + 1
+
 /-- A theorem of a link: its statement split like a specification, and its axioms. -/
 def linkRecord (h : IO.FS.Handle) (q : Query) (roots : Array Name) (seen : IO.Ref NameSet)
     (n : Name) : MetaM Unit := do
@@ -644,7 +715,8 @@ open ProofLensProbe in
         | "spec" => specRecord h q roots seen r.name.toName
         | "accept" | "refute" => proofRecord h q r.kind r.name.toName (r.spec.map (·.toName))
         | "witness" => proofRecord h q "witness" r.name.toName none
-        | "index" => indexRecords h roots
+        | "index" => do indexRecords h roots; moduleDocRecords h roots
+        | "moddocs" => moduleDocRecords h roots
         | "link" => linkRecord h q roots seen r.name.toName
         | "deps" => depsRecords h roots r.name.toName
         | "decl" => do

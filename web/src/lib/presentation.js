@@ -2,7 +2,7 @@
 import vocabulary from "../../../engine/python/prooflens/data/statuses.json" with { type: "json" };
 
 const own = (table, key) => Object.hasOwn(table, key) ? table[key] : null;
-export const CLASS_ORDER = ["accepted", "proved", "refuted", "open", "unspecified", "declared", "malformed", "out-of-scope"];
+export const CLASS_ORDER = ["accepted", "proved", "refuted", "open", "caution", "unspecified", "declared", "malformed", "out-of-scope"];
 
 export function statusView(record) {
   return own(vocabulary.statuses, record?.status_code) || vocabulary.statuses.unknown;
@@ -36,6 +36,7 @@ export function evidenceView(dimension, fact) {
     extras.push(own(vocabulary.pdf_integrity, fact?.pdf_integrity));
     extras.push(own(vocabulary.placement, fact?.placement));
   }
+  if (dimension === "replay") extras.push(own(vocabulary.replay_guard, fact?.guard));
   const word = [row.label, ...extras.filter(Boolean)].join(" · ");
   const detail = [row.explanation, fact?.detail, ...(fact?.errors || [])].filter(Boolean).join(" ");
   return { label: dim?.label || "Unknown evidence", word, detail, state: state ? fact.state : "unknown" };

@@ -22,8 +22,10 @@ from pathlib import Path
 from .config import STANDARD_AXIOMS, Config, Paper, Publish
 from .probe import ProbeError, by_library, fingerprint, lean_session, lib_names
 from .sources import acquire
+from .moddocs import stale_doc_names
 from .tex import DEFAULT_ENVS, TexError, anchors_for, theorem_envs
 from . import formalization as fz
+from . import steps
 from .util import content_id, git_head, prepare_work_dir, read_json, sha256_file, write_json
 
 LINKS = "machinechecked.links.json"
@@ -115,10 +117,22 @@ def claims_from_anchors(pid: str, anchors: list[dict], snap: Path) -> list[dict]
         claims.append({
             "id": f"{pid}:{key}", "key": key, "paper": pid, "kind": env,
             "number": f"{env.capitalize()} {num}" if num else env.capitalize(), "title": title,
-            "label": a.get("label"), "location": a["file"], "source_sha256": a["source_sha256"],
+            "label": a.get("label"), "location": a["file"], "line": a.get("line"),
+            "source_sha256": a["source_sha256"],
             "scope": "definition" if env in DEFINITION_ENVS else "formal",
             "scope_note": "", "scope_reviewed": True, "clauses": [], "tags": tags})
     return claims
+
+
+STEPS_VERSION = "steps-1"
+
+
+def proof_steps(pid: str, anchors: list[dict], snap: Path, numbers: dict[str, str]) -> list[dict]:
+    """The numbered equations inside the paper's proofs, as claims of their own
+    (`steps.step_claims`), each under the statement whose proof holds it."""
+    statements = claims_from_anchors(pid, anchors, snap)
+    files = sorted({a["file"] for a in anchors if a.get("file")})
+    return steps.step_claims(pid, statements, snap, files, numbers)
 
 
 def source_tags(lines: list[str], line: int, env: str) -> list[str]:
@@ -485,6 +499,16 @@ def review_view(r: dict, links: list[dict]) -> dict:
             "project_commit": pins.get("project_commit"), "current": current}
 
 
+def route_link_names(claim: dict, entry: dict) -> list[str]:
+    """The declarations of the different formal route a proof step records: those confirmed in
+    the reader (the links file's `route`), else those formalization.yaml names."""
+    if not steps.is_step(claim):
+        return []
+    if "route" in entry:
+        return steps.route_names(entry)
+    return list(claim.get("declared_route") or [])
+
+
 COVERAGE_WORDS = {"full": "every clause", "partial": "part of the claim",
                   "changed": "stated differently", "related": "a related result, not this claim",
                   "unresolved": "unresolved"}
@@ -581,6 +605,32 @@ def save_link(root: Path, paper: str, key: str, lean: list[str] | None, rejected
     return data
 
 
+def save_route(root: Path, paper: str, key: str, lean: list[str] | None, note: str = "",
+               by: str = "") -> dict:
+    """Record (or with `lean=None`, remove) the different formal route of the proof step `key`
+    of `paper`: the declarations that reach its enclosing result by another argument. A note
+    describes the declarations it was written for."""
+    data = load_links(root)
+    links = data.setdefault("papers", {}).setdefault(paper, {})
+    entry = links.setdefault(key, {})
+    if lean is None:
+        entry.pop("route", None)
+    else:
+        old = entry.get("route") or {}
+        route = {"lean": lean}
+        n = note.strip()[:NOTE_CHARS] or (old.get("note") if old.get("lean") == lean else "")
+        if n:
+            route["note"] = n
+        if by or old.get("by"):
+            route["by"] = by or old["by"]
+        route["at"] = _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds")
+        entry["route"] = route
+    if not entry:
+        links.pop(key, None)
+    write_json(links_file(root), data)
+    return data
+
+
 def save_settings(root: Path, issues: str | None = None, site_url: str | None = None,
                   author: str | None = None, repository_private: bool | None = None) -> dict:
     """Record where the reader's Raise issue opens reports (`owner/repo`), the public address
@@ -632,6 +682,12 @@ def run_simple_probe(root: Path, modules: list[str], libs: list[str], requests: 
                             lake, timeout, work, log, label)
     except ProbeError as e:
         raise ViewError(str(e)) from None
+
+
+def stale_docs_note(found: list[dict]) -> str:
+    shown = ", ".join(f"{d['name']} ({d['file']}:{d['line']})" for d in found[:5])
+    return (f"{len(found)} name(s) in module docstrings are not declared in the project or its "
+            f"dependencies: {shown}" + (", …" if len(found) > 5 else ""))
 
 
 def probe_modules(root: Path, modules: list[str], libs: list[str], requests: list[dict],
@@ -862,23 +918,37 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
         # The compiled paper is reused while its sources are unchanged (a link changes nothing
         # in the paper).
         cache = out_dir / "build" / "tex-cache.json"
-        digest = tree_digest(snap.dir) + ":" + tex_machinery_digest()
+        digest = tree_digest(snap.dir) + ":" + tex_machinery_digest() + ":" + STEPS_VERSION
         cached = read_json(cache) if cache.exists() else {}
         try:
             if cached.get("digest") == digest and Path(cached.get("pdf", "")).exists():
                 t = {"page_size": cached["page_size"], "anchors": cached["anchors"],
-                     "pdf": Path(cached["pdf"])}
+                     "pdf": Path(cached["pdf"]), "numbers": cached.get("numbers") or {},
+                     "step_anchors": cached.get("step_anchors") or {}}
             else:
                 r = anchors_for(snap, out_dir / "build" / paper.id, envs)
                 t = {"page_size": r["page_size"], "anchors": [a.to_json() for a in r["anchors"]],
                      "pdf": r["pdf"]}
+                # The printed numbers of the labels, and where the proof equations are placed,
+                # are read while the compiled paper is at hand.
+                aux = Path(r["pdf"]).with_suffix(".aux")
+                t["numbers"] = steps.aux_numbers(aux.read_text(errors="replace")) \
+                    if aux.exists() else {}
+                found = proof_steps(paper.id, t["anchors"], snap.dir, t["numbers"])
+                t["step_anchors"] = r["line_anchors"]([c["location"] for c in found]) \
+                    if found else {}
                 write_json(cache, {"digest": digest, "page_size": t["page_size"],
-                                   "anchors": t["anchors"], "pdf": str(t["pdf"])}, indent=None)
+                                   "anchors": t["anchors"], "pdf": str(t["pdf"]),
+                                   "numbers": t["numbers"], "step_anchors": t["step_anchors"]},
+                           indent=None)
             anchors = t["anchors"]
             tex.update(page_size=t["page_size"], anchors=anchors, envs=envs,
                        excerpts=view_excerpts(snap, Path(t["pdf"]).parent, anchors, envs))
             pdf = t["pdf"]
             claims = claims_from_anchors(paper.id, anchors, snap.dir)
+            for c in proof_steps(paper.id, anchors, snap.dir, t["numbers"]):
+                c["line_anchor"] = t["step_anchors"].get(c["location"])
+                claims.append(c)
         except TexError as e:
             notes.append("the paper did not compile, so its claims are not listed: "
                          + str(e).splitlines()[0])
@@ -900,14 +970,20 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
     fy = fz.load(root)
     if fy and "error" in fy:
         notes.append(fy["error"])
-    index, linkrecs, decls, acceptrecs = [], {}, {}, {}
+    index, linkrecs, decls, acceptrecs, module_docs = [], {}, {}, {}, []
     if fy and "error" not in fy:
         for c in claims:
             rows = fz.links_for(fy, c["kind"], c["number"], paper.title)
+            # A proof step's row may name the different formal route used instead of it.
+            route = [st for st in rows if st.get("route") and steps.is_step(c)]
+            rows = [st for st in rows if st not in route]
             c["declared"] = [n for st in rows for n in st["lean"]]
-            c["declared_modules"] = {n: st["module"] for st in rows for n in st["lean"]
+            c["declared_modules"] = {n: st["module"] for st in rows + route for n in st["lean"]
                                      if st.get("module")}
             c["declared_notes"] = [st["note"] for st in rows if st.get("note")]
+            if route:
+                c["declared_route"] = [n for st in route for n in st["lean"]]
+                c["declared_route_notes"] = [st["note"] for st in route if st.get("note")]
     links = load_links(root).get("papers", {}).get(paper_key, {})
     reports, review_notes = load_review_reports(root)
     notes += review_notes
@@ -925,7 +1001,8 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
         for c in claims:
             c["link_names"] = linked_names(c, links.get(c["key"], {}))
         unbuilt_set = set(unbuilt)
-        linked = {n for c in claims for n in c["link_names"]
+        linked = {n for c in claims for n in c["link_names"] + route_link_names(
+                      c, links.get(c["key"], {}))
                   if c.get("declared_modules", {}).get(n) not in unbuilt_set}
         # A checked bridge's theorem is checked against its target, whose own record gives the
         # version of the target the auditor's reading is compared with.
@@ -952,8 +1029,9 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
         idigest = lean_digest(root)
         cached = read_json(icache) if icache.exists() else {}
         failed = {}
-        if cached.get("digest") == idigest:
+        if cached.get("digest") == idigest and "moddocs" in cached:
             index, failed = cached["index"], cached.get("failed", {})
+            moddocs = cached["moddocs"]
         else:
             log(f"lean: indexing {len(built)} built module(s)"
                 + (f" and checking {len(linked)} linked declaration(s)" if linked else ""))
@@ -961,13 +1039,21 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
                                          + [{"kind": "link", "name": n} for n in sorted(linked)]
                                          + accepts(linked), lake, log, work)
             index = [r for r in recs if r["record"] == "index"]
+            moddocs = [r for r in recs if r["record"] == "moddoc"]
             take(recs)
-            write_json(icache, {"digest": idigest, "index": index, "failed": failed},
-                       indent=None)
+            write_json(icache, {"digest": idigest, "index": index, "failed": failed,
+                                "moddocs": moddocs}, indent=None)
+        module_docs = stale_doc_names(moddocs)
+        if module_docs:
+            notes.append(stale_docs_note(module_docs))
         wanted = set(linked)
         ctx = SuggestContext(index, root, fz.foreign_roots(fy, paper.title))
         for c in claims:
             entry = links.get(c["key"], {})
+            if steps.is_step(c):
+                # A proof step is linked by someone who read it; nothing is suggested for it.
+                c["suggestions"] = []
+                continue
             c["suggestions"] = [s for s in suggest(c, index, ctx=ctx)
                                 if s["name"] not in entry.get("rejected", [])
                                 and s["name"] not in c["link_names"]]
@@ -1001,19 +1087,29 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
                          + ("…" if len(failed) > 5 else ""))
 
     # Statuses.
+    def checked(c, n, source):
+        rec = None
+        if not built:
+            state = fields("link.unbuilt")
+        else:
+            rec, why = resolve_link(n, linkrecs.get(n, []), c.get("declared_modules", {}).get(n),
+                                    root, unbuilt, failed)
+            state = why or link_state(rec)
+        return {"name": n, **state, "source": source, "record": rec}
+
     for c in claims:
         entry = links.get(c["key"], {})
-        c["links"] = []
-        for n in c.pop("link_names", None) or linked_names(c, entry):
-            rec = None
-            if not built:
-                state = fields("link.unbuilt")
-            else:
-                rec, why = resolve_link(n, linkrecs.get(n, []), c.get("declared_modules", {}).get(n),
-                                        root, unbuilt, failed)
-                state = why or link_state(rec)
-            c["links"].append({"name": n, **state,
-                               "source": link_source(c, entry, n), "record": rec})
+        c["links"] = [checked(c, n, link_source(c, entry, n))
+                      for n in c.pop("link_names", None) or linked_names(c, entry)]
+        if steps.is_step(c):
+            c["route_links"] = [checked(c, n, "confirmed" if "route" in entry
+                                        else "formalization.yaml")
+                                for n in route_link_names(c, entry)]
+            c["route_note"] = steps.route_note(entry, "confirmed") if "route" in entry else (
+                {"source": "formalization.yaml",
+                 "note": " ".join(c.get("declared_route_notes") or [])[:NOTE_CHARS], "by": None}
+                if c.get("declared_route") else None)
+            c["step_reports"] = reports.get(steps.unit_id(c["id"]), [])
         for s in c.get("suggestions", []):
             found = [r for r in linkrecs.get(s["name"], []) if "missing" not in r.get("errors", [])]
             s["record"] = found[0] if len({((r.get("decl") or {}).get("module")) for r in found}) == 1 else None
@@ -1030,6 +1126,8 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
             worst = max(c["links"], key=lambda l: ["proved", "unspecified", "open", "malformed"]
                         .index(l["class"]))
             c.update(fields(worst["status_code"], worst.get("status_detail")))
+        elif c.get("route_links"):
+            c.update(fields("link.other-route"))
         elif c.get("suggestions"):
             c.update(fields("link.suggested"))
         else:
@@ -1045,7 +1143,7 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
             "site_url": load_links(root).get("site_url"),
             "author": load_links(root).get("author"),
             "pdf_sha256": sha256_file(pdf) if pdf else None, "tex": tex,
-            "claims": claims, "index": index, "decls": decls}
+            "claims": claims, "index": index, "decls": decls, "module_docs": module_docs}
     return {"body": body, "pdf": pdf, "cfg": cfg}
 
 
@@ -1088,20 +1186,28 @@ def write_view_site(view: dict, site: Path, web_dist: Path | None,
         k = mf.record_key(rec)
         keys[n], store[k] = k, rec
     index_claims, chunks = [], {}
+    by_id = {c["id"]: c for c in body["claims"]}
     for c in body["claims"]:
         anchor = next((a for a in body["tex"].get("anchors", [])
                        if (a.get("label") or f"{a['env']}-{a.get('number')}") == c["key"]), None)
         fname = mf.claim_file(c["id"])
         akind = "approximate" if anchor and anchor.get("kind") == "pdf" else "exact"
+        la = c.get("line_anchor")
+        if anchor is None and la and la.get("kind") == "approximate":
+            # A proof equation is placed by SyncTeX: approximately.
+            path, _, line = c["location"].rpartition(":")
+            anchor, akind = {"file": path, "line": int(line), "begin": [la["page"], 0, la["y0"]],
+                             "end": [la["page"], 0, la["y1"]]}, "approximate"
         index_claims.append({
             "id": c["id"], "paper": c["paper"], "number": c["number"], "title": c["title"],
             "heading": c["title"] or None, "kind": c["kind"], "scope": c["scope"],
+            "unit": steps.unit_of(c), "parent": c.get("parent"),
             **fields(c["status_code"], c.get("status_detail")),
             "anchor": mf.index_anchor(anchor, akind),
             "counts": {}, "file": fname, "linked": len(c["links"]),
             "suggested": len(c.get("suggestions", []))})
         names = set()
-        for l in c["links"] + c.get("suggestions", []):
+        for l in c["links"] + c.get("suggestions", []) + c.get("route_links", []):
             rec = l.get("record") or {}
             names |= set(rec.get("closure", []))
         chunks[fname] = {
@@ -1111,7 +1217,8 @@ def write_view_site(view: dict, site: Path, web_dist: Path | None,
             "scope_reviewed": True, "location": c["location"],
             "source_sha256": c["source_sha256"], **fields(c["status_code"], c.get("status_detail")),
             "anchor": {**anchor, "kind": akind} if anchor else None, "source_matches": None,
-            "statement_tex": (anchor or {}).get("statement") if akind == "exact" else None,
+            "statement_tex": (anchor or {}).get("statement") if akind == "exact"
+            else c.get("statement_tex"),
             "excerpt": (body["tex"].get("excerpts") or {}).get(c["key"]) if akind == "exact"
             else None,
             "source_evidence": source_evidence({"kind": akind} if anchor else None, body["tex"]["mode"], paper=body["tex"]),
@@ -1120,7 +1227,16 @@ def write_view_site(view: dict, site: Path, web_dist: Path | None,
             "correspondence": c.get("correspondence"), "reviews": c.get("reviews", []),
             "suggestions": [_link_view(s, root) for s in c.get("suggestions", [])],
             "clauses": [], "decls": {n: keys[n] for n in sorted(names) if n in keys},
-            "findings": []}
+            "findings": [], "unit": steps.unit_of(c), "parent": c.get("parent")}
+        if steps.is_step(c):
+            chunks[fname].update(
+                context_tex=c.get("context_tex"),
+                step=steps.block(c, _parent_row(by_id.get(c.get("parent") or "")),
+                                 [_link_view(l, root) for l in c["links"]],
+                                 [_link_view(l, root) for l in c.get("route_links", [])],
+                                 c.get("correspondence"), c.get("route_note"),
+                                 steps.review(c.get("step_reports", []), c["source_sha256"])))
+    steps.attach_parents(index_claims, chunks)
     summary = {}
     for c in index_claims:
         summary[c["status"]] = summary.get(c["status"], 0) + 1
@@ -1140,7 +1256,8 @@ def write_view_site(view: dict, site: Path, web_dist: Path | None,
                          "pdf": "papers/P.pdf" if view["pdf"] else None,
                          "pdf_sha256": body.get("pdf_sha256") if view["pdf"] else None,
                          "page_size": body["tex"].get("page_size"), "note": ""}],
-             "summary": {"P": summary}, "classes": classes,
+             "summary": {"P": summary}, "units": steps.unit_counts(index_claims),
+             "classes": classes,
              "findings": {"total": {}, "general": []}, "gates": {}, "claims": index_claims,
              "search": "data/search.json", "lean_index": "data/lean-index.json",
              "editable": False}
@@ -1159,6 +1276,12 @@ def write_view_site(view: dict, site: Path, web_dist: Path | None,
                  "type": d["type"][:300], "doc": (d.get("doc") or "")[:300]}
                 for d in body["index"]], indent=None)
     return index
+
+
+def _parent_row(c: dict | None) -> dict | None:
+    from . import manifest as mf
+    return {"id": c["id"], "number": c["number"], "heading": c["title"] or None,
+            "title": c["title"], "file": mf.claim_file(c["id"])} if c else None
 
 
 def _paper_version(body: dict) -> dict:
