@@ -38,6 +38,10 @@ class Paper:
     # a DOI or a URL), and how the revision differs from it. Descriptive only: no status uses it.
     published: str | None = None
     published_note: str | None = None
+    # The version of the paper this audit pins: "published" (the version `published` names) or
+    # "manuscript" (the unpublished source at its pinned revision, `source.rev`). When absent, a
+    # paper with `published` (or an arXiv source) pins that published version (docs/ASSURANCE.md).
+    version: str | None = None
     # A paper whose source is a PDF: the PDF's SHA-256, pinned by the configuration. The release
     # gate accepts a PDF as source evidence only when it is pinned and matches (EVIDENCE_POLICY).
     pdf_sha256: str | None = None
@@ -118,11 +122,14 @@ def load(path: str | Path) -> Config:
         src = _req(p, "source", "paper")
         if not any(k in src for k in ("path", "git", "arxiv")):
             raise ConfigError(f"paper {p.get('id')}: source needs one of path, git, arxiv")
+        if p.get("version") not in (None, "published", "manuscript"):
+            raise ConfigError(f"paper {p.get('id')}: version must be \"published\" or "
+                              f"\"manuscript\", not {p.get('version')!r}")
         papers.append(Paper(
             id=_req(p, "id", "paper"), title=p.get("title", p["id"]), source=src,
             root=p.get("root"), pdf=p.get("pdf"), pdf_sha256=p.get("pdf_sha256"), commit=src.get("rev"), envs=p.get("envs"),
             publish=Publish(**p.get("publish", {})), published=p.get("published"),
-            published_note=p.get("note")))
+            published_note=p.get("note"), version=p.get("version")))
     return Config(
         path=path,
         name=_req(proj, "name", "project"),

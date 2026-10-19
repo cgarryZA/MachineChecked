@@ -261,7 +261,7 @@ def linked_names(claim: dict, entry: dict) -> list[str]:
     return [n for n in names if n not in entry.get("rejected", [])]
 
 
-COVERAGE = ("full", "partial", "changed", "related")
+COVERAGE = ("full", "composed", "partial", "changed", "related", "unresolved")
 CONFIDENCE = ("high", "medium", "low")
 NOTE_CHARS = 2000
 
@@ -286,6 +286,71 @@ def correspondence(claim: dict, entry: dict) -> dict | None:
         return None
     return {"source": "formalization.yaml", "coverage": None, "confidence": None,
             "note": " ".join(notes)[:NOTE_CHARS], "by": None}
+
+
+REVIEWS_DIR = "machinechecked-reviews"
+REVIEW_TEXT_CHARS = 20000
+
+
+def load_review_reports(root: Path) -> tuple[dict[str, list[dict]], list[str]]:
+    """The review reports exported by the reader's Review page and kept in the project's
+    `machinechecked-reviews/` folder, by review unit (`link:<claim key>`), and a note for each
+    file that could not be read. A report's text is the reviewer's and is shown as text."""
+    out: dict[str, list[dict]] = {}
+    notes: list[str] = []
+    seen = set()
+    d = root / REVIEWS_DIR
+    for f in sorted(d.glob("*.json")) if d.is_dir() else []:
+        try:
+            data = json.loads(f.read_text(encoding="utf-8"))
+            reports = data["reports"] if data.get("schema") == "prooflens/review-reports@1" else None
+            if not isinstance(reports, list):
+                raise ValueError("not a review export")
+        except (OSError, ValueError, KeyError, AttributeError) as e:
+            notes.append(f"{REVIEWS_DIR}/{f.name} was skipped: {e}")
+            continue
+        for r in reports:
+            if not isinstance(r, dict) or r.get("schema") != "prooflens/review-report@1":
+                continue
+            unit = (r.get("unit") or {}).get("id")
+            key = (unit, (r.get("reviewer") or {}).get("id"), r.get("submitted_at"))
+            if not isinstance(unit, str) or key in seen:
+                continue
+            seen.add(key)
+            out.setdefault(unit, []).append(r)
+    return out, notes
+
+
+def _text(x) -> str:
+    return x[:REVIEW_TEXT_CHARS] if isinstance(x, str) else ""
+
+
+def review_view(r: dict, links: list[dict]) -> dict:
+    """A report as the reader shows it, and whether it is current: it reviewed exactly the
+    claim's linked declarations, with the statements they have now (`None` when the Lean was
+    not checked, so their statements are unknown)."""
+    pins = r.get("pins") or {}
+    fps = pins.get("fingerprints") or {}
+    now = {}
+    for l in links:
+        rec = l.get("record") or {}
+        now[l["name"]] = rec.get("fingerprint") or (rec.get("decl") or {}).get("fingerprint")
+    if not links or any(v is None for v in now.values()):
+        current = None
+    else:
+        current = set(fps) == set(now) and all(fps[n] == now[n] for n in now)
+    rv, verdict = r.get("reviewer") or {}, r.get("verdict") or {}
+    return {"reviewer": {k: rv.get(k) for k in ("id", "kind", "name", "model", "identity",
+                                                 "same_family_as_author")},
+            "verdict": {"group": verdict.get("group"), "value": verdict.get("value"),
+                        "detail": _text(verdict.get("detail"))},
+            "reading": _text((r.get("reading") or {}).get("text")),
+            "comparison": _text((r.get("comparison") or {}).get("text")),
+            "checklist": (r.get("comparison") or {}).get("checklist") or {},
+            "locked_at": (r.get("reading") or {}).get("locked_at"),
+            "submitted_at": r.get("submitted_at"),
+            "reviewed": sorted(fps), "release": pins.get("release"),
+            "project_commit": pins.get("project_commit"), "current": current}
 
 
 def link_source(claim: dict, entry: dict, name: str) -> str:
@@ -652,6 +717,8 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
                                      if st.get("module")}
             c["declared_notes"] = [st["note"] for st in rows if st.get("note")]
     links = load_links(root).get("papers", {}).get(paper_key, {})
+    reports, review_notes = load_review_reports(root)
+    notes += review_notes
     if not libs:
         notes.append("no Lean library found in the lakefile")
     elif not built:
@@ -749,6 +816,7 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
             found = [r for r in linkrecs.get(s["name"], []) if "missing" not in r.get("errors", [])]
             s["record"] = found[0] if len({((r.get("decl") or {}).get("module")) for r in found}) == 1 else None
         c["correspondence"] = correspondence(c, entry) if c["links"] else None
+        c["reviews"] = [review_view(r, c["links"]) for r in reports.get("link:" + c["key"], [])]
         if c["links"]:
             worst = max(c["links"], key=lambda l: ["proved", "unspecified", "open", "malformed"]
                         .index(l["class"]))
@@ -838,7 +906,7 @@ def write_view_site(view: dict, site: Path, web_dist: Path | None,
             "source_evidence": source_evidence({"kind": akind} if anchor else None, body["tex"]["mode"], paper=body["tex"]),
             "blockers": [],
             "links": [_link_view(l, root) for l in c["links"]],
-            "correspondence": c.get("correspondence"),
+            "correspondence": c.get("correspondence"), "reviews": c.get("reviews", []),
             "suggestions": [_link_view(s, root) for s in c.get("suggestions", [])],
             "clauses": [], "decls": {n: keys[n] for n in sorted(names) if n in keys},
             "findings": []}
@@ -857,6 +925,7 @@ def write_view_site(view: dict, site: Path, web_dist: Path | None,
              "lean": None, "notes": body["notes"],
              "papers": [{"id": "P", "title": body["title"], "mode": body["tex"]["mode"],
                          "revision": body.get("commit"),
+                         **_paper_version(body),
                          "pdf": "papers/P.pdf" if view["pdf"] else None,
                          "pdf_sha256": body.get("pdf_sha256") if view["pdf"] else None,
                          "page_size": body["tex"].get("page_size"), "note": ""}],
@@ -879,6 +948,23 @@ def write_view_site(view: dict, site: Path, web_dist: Path | None,
                  "type": d["type"][:300], "doc": (d.get("doc") or "")[:300]}
                 for d in body["index"]], indent=None)
     return index
+
+
+def _paper_version(body: dict) -> dict:
+    """The version of the paper the view reads: the arXiv version its URL names, else the
+    project's commit (the paper is a file of the project). Its claims are read from that
+    version itself, so the version is checked."""
+    from . import versions
+    from .audit import arxiv_id
+    key = body.get("paper") or ""
+    ax = arxiv_id(key) if key.startswith(("http://", "https://")) else None
+    if ax and ax[1]:
+        return {"paper_version": {**versions.published_version(f"arXiv:{ax[0][6:]}{ax[1]}"),
+                                  "checked": True}}
+    commit = body.get("commit") or ""
+    if versions.COMMIT.fullmatch(commit) and len(commit) == 40:
+        return {"paper_version": {**versions.manuscript_record(commit), "checked": True}}
+    return {}
 
 
 def _link_view(l: dict, root: Path | None = None) -> dict:
