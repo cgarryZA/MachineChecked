@@ -10,6 +10,10 @@
   // reported to `onterm` (null to release).
   let { pp, onref = null, refs = null, active = null, onvar = null, ongloss = null, term = null,
         onterm = null } = $props();
+  import { getContext } from "svelte";
+  const refHref = getContext("declarationHref");
+  const meaningful = (s) => /[\p{L}\p{N}∀∃∈≤≥=+×→↔∧∨¬]/u.test(s.t);
+  function follow(e, name) { if (!e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) { e.preventDefault(); onref(name); } }
   import { gloss } from "../lib/gloss.js";
 
   // Names the probe could not tag are found by matching the known names in the text.
@@ -45,11 +49,11 @@
   const isProject = (r) => refs?.includes(r);
 </script>
 
-<code class="lean">{#each parts(pp) as s}{#if s.ref && onref && isProject(s.ref)}<button class="r" class:in={lit(s.i)} onclick={() => onref(s.ref)}>{s.t}</button>{:else if s.ref && gloss(s.ref) && ongloss}<button class="g" class:in={lit(s.i)} title={s.ref} onclick={() => ongloss(s.ref)}>{s.t}</button>{:else if s.ref && onterm && terms.length}<span class="c p" class:in={lit(s.i)} title={gloss(s.ref) ? s.ref + ": " + gloss(s.ref) : s.ref} role="button" tabindex="-1" onclick={() => pick(s.i)} onkeydown={(e) => e.key === "Enter" && pick(s.i)}>{s.t}</span>{:else if s.ref}<span class="c" class:in={lit(s.i)} title={gloss(s.ref) ? s.ref + ": " + gloss(s.ref) : s.ref}>{s.t}</span>{:else if s.var != null && onvar}<span class="var" class:hl={active === s.var} class:in={lit(s.i)} role="button" tabindex="0" data-var={s.var} onmouseenter={() => onvar(s.var, "hover")} onmouseleave={() => onvar(null, "hover")} onfocus={() => onvar(s.var, "hover")} onblur={() => onvar(null, "hover")} onclick={() => onvar(s.var, "pin")} onkeydown={(e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), onvar(s.var, "pin"))}>{s.t}</span>{:else if onterm && terms.length}<span class="p" class:in={lit(s.i)} role="button" tabindex="-1" onclick={() => pick(s.i)} onkeydown={(e) => e.key === "Enter" && pick(s.i)}>{s.t}</span>{:else}{s.t}{/if}{/each}</code>
+<code class="lean">{#each parts(pp) as s}{#if s.ref && onref && isProject(s.ref)}{#if refHref}<a class="r" class:in={lit(s.i)} href={refHref(s.ref)} onclick={(e) => follow(e, s.ref)}>{s.t}</a>{:else}<button class="r" class:in={lit(s.i)} onclick={() => onref(s.ref)}>{s.t}</button>{/if}{:else if s.ref && gloss(s.ref) && ongloss}<button class="g" class:in={lit(s.i)} title={s.ref} onclick={() => ongloss(s.ref)}>{s.t}</button>{:else if s.ref && onterm && terms.length && meaningful(s)}<span class="c p" class:in={lit(s.i)} title={gloss(s.ref) ? s.ref + ": " + gloss(s.ref) : s.ref} role="button" tabindex="0" aria-label={"Inspect expression " + s.t.trim()} onclick={() => pick(s.i)} onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(s.i); } }}>{s.t}</span>{:else if s.ref}<span class="c" class:in={lit(s.i)} title={gloss(s.ref) ? s.ref + ": " + gloss(s.ref) : s.ref}>{s.t}</span>{:else if s.var != null && onvar}<span class="var" class:hl={active === s.var} class:in={lit(s.i)} role="button" tabindex="0" data-var={s.var} onmouseenter={() => onvar(s.var, "hover")} onmouseleave={() => onvar(null, "hover")} onfocus={() => onvar(s.var, "hover")} onblur={() => onvar(null, "hover")} onclick={() => onvar(s.var, "pin")} onkeydown={(e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), onvar(s.var, "pin"))}>{s.t}</span>{:else if onterm && terms.length && meaningful(s)}<span class="p" class:in={lit(s.i)} role="button" tabindex="0" aria-label={"Inspect expression " + s.t.trim()} onclick={() => pick(s.i)} onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(s.i); } }}>{s.t}</span>{:else}{s.t}{/if}{/each}</code>
 
 <style>
-  .lean { white-space: pre-wrap; word-break: break-word; }
-  .r { border: 0; padding: 0; background: none; font: inherit; color: var(--accent); cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px; text-align: left; overflow-wrap: anywhere; }
+  .lean { user-select: text; white-space: pre-wrap; word-break: break-word; }
+  .r { border: 0; padding: 0; background: none; font: inherit; min-height: 0; color: var(--accent); cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px; text-align: left; overflow-wrap: anywhere; }
   .c { color: inherit; }
   .p { cursor: pointer; }
   .in { background: color-mix(in srgb, var(--st-open) 22%, transparent); }

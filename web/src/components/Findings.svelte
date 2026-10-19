@@ -33,7 +33,7 @@
 
 {#if obligations.length}
   <div class="tier obligation">
-    <h3>Review obligations <span class="faint">· judgements only a reviewer can make</span></h3>
+    <h3>Review obligations <span class="faint">· mathematical judgements</span></h3>
     <ul>{#each obligations as f (f.id)}<li>{f.message}</li>{/each}</ul>
   </div>
 {/if}

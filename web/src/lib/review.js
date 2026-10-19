@@ -2,9 +2,8 @@
 //
 // A report records what the reviewer did, in the order the queue let them do it: their own
 // reading of the paper (locked before the Lean was shown), their comparison and verdict, then
-// their response to the author's review. It is evidence for a maintainer to examine; nothing here
-// marks a claim reviewed. The order is recorded by this page; it cannot show that the reviewer
-// did not look at the Lean elsewhere.
+// their response to the author’s review. The maintainer evaluates the exported report.
+// The report records the steps and prior exposure observed in this browser.
 
 export const REPORT_SCHEMA = "prooflens/review-report@1";
 
@@ -14,7 +13,7 @@ export const VERDICTS = {
     { value: "faithful", label: "Faithful" },
     { value: "faithful with representation choices", label: "Faithful with representation choices",
       detail: "List the representation choices, and say why each is harmless." },
-    { value: "broader", label: "Broader, but implies the printed claim",
+    { value: "broader", label: "Broader; implies the printed claim",
       detail: "State the instantiation that gives the printed claim." },
   ],
   problem: [
@@ -36,12 +35,12 @@ export const VERDICTS = {
 export const CHECKLIST = {
   statement: [
     { key: "setting", label: "Setting and objects", hint: "the spaces, structures and standing assumptions" },
-    { key: "hypotheses", label: "Each hypothesis", hint: "none missing, none added, none weakened or strengthened" },
+    { key: "hypotheses", label: "Each hypothesis", hint: "compare each hypothesis and its strength" },
     { key: "quantifiers", label: "Quantifiers and their order", hint: "for all / there is, and which comes first" },
     { key: "definitions", label: "Definitions it relies on", hint: "the Lean definitions mean what the paper's words mean" },
-    { key: "conclusion", label: "The conclusion", hint: "the same claim, not a weaker or a different one" },
+    { key: "conclusion", label: "The conclusion", hint: "compare the conclusion and its strength" },
     { key: "constants", label: "Constants", hint: "what each constant may depend on" },
-    { key: "assumed", label: "Assumed results and axioms", hint: "nothing taken as a hypothesis that the paper proves" },
+    { key: "assumed", label: "Assumed results and axioms", hint: "compare which results each statement assumes and proves" },
   ],
   def: [
     { key: "object", label: "The object", hint: "it is the paper's object, built from the same parts" },

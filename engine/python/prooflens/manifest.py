@@ -212,12 +212,16 @@ def build(evidence: dict, release: str, display: dict | None = None
                                                              cl.get("corrects")),
                             "statement": {
                 "binders": spec.get("binders", []), "conclusion": spec.get("conclusion"),
+                "exact": spec.get("exact") or (spec.get("decl") or lean.get("decls", {}).get(cl["spec"]) or {}).get("value"),
                 "axioms": spec.get("axioms", []), "closure": spec.get("closure", []),
                 "direct": spec.get("direct", []), "legacy_hash": spec.get("legacy_hash"),
                 "fingerprint": spec.get("fingerprint"),
                 "decl": lean.get("decls", {}).get(cl["spec"])} if spec else None,
                 "proofs": proofs, "witness_record": wit,
                 "evidence": clause_evidence(cl, anchor, t.get("mode"), src_ok, t)})
+        index_claims[-1]["evidence_summary"] = [
+            {k: cl["evidence"][k] for k in ("formal", "review") if k in cl["evidence"]}
+            for cl in clauses]
         names = set()
         for cl in clauses:
             st = cl.get("statement") or {}
@@ -279,6 +283,7 @@ def search_index(index: dict, chunks: dict) -> dict:
         ch = chunks[c["file"]]
         lean = [n for cl in ch["clauses"] for n in (cl.get("spec"), cl.get("accept"),
                                                     cl.get("refute"), *cl.get("defs", [])) if n]
+        lean += [l["name"] for l in ch.get("links", []) if l.get("name")]
         claims.append({"id": c["id"], "paper": c["paper"], "number": c.get("number", ""),
                        "title": c.get("title", ""), "heading": c.get("heading"),
                        "status": c["status"], "status_code": c["status_code"],

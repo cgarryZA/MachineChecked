@@ -1,86 +1,87 @@
 # MachineChecked
 
-**Read a mathematical paper with its Lean formalisation beside it.**
+**Read a mathematical paper beside its Lean formalisation.**
 
-MachineChecked opens a paper, finds its numbered statements and lets you explore the Lean declarations linked to them. See which proofs Lean accepts, which claims are unlinked or incomplete, and which paper-to-Lean correspondences still need a mathematician's review.
+Select a statement to inspect its Lean counterpart, proof results and correspondence reviews.
+MachineChecked runs locally in your Lean project and saves the links you choose.
 
-**A Lean proof establishes a formal statement—not automatically the claim in the paper.** MachineChecked keeps those two questions separate.
-
-**MachineChecked runs locally, in your Lean project.** It reads your paper and your compiled Lean declarations, writes an interactive reader, and keeps its results on your computer: generated data in `.machinechecked/`, the links you confirm in `machinechecked.links.json`, and the reader as `.machinechecked/MachineChecked.html` if you ask for one. No account, registration or upload is needed. Publishing an audit (on your own GitHub Pages, say, and listing it on machinechecked.org) is a separate step you choose to take.
-
-[Try the demo](https://machinechecked.org/demo/) · [Website](https://machinechecked.org/) · [Installation and usage](https://github.com/cgarryZA/MachineChecked/blob/main/docs/GETTING_STARTED.md)
+[Try the demo](https://machinechecked.org/demo/) · [Browse papers](https://machinechecked.org/papers/) · [Setup guide](docs/GETTING_STARTED.md)
 
 ## Open your paper
 
-From an existing **built** Lean project:
+From your Lean project's directory:
 
 ```sh
 lake build
 uvx machinechecked view
 ```
 
-MachineChecked finds the paper and opens the reader in your browser. If the project contains several papers, it asks which one to use. You can also pass a file explicitly:
+MachineChecked finds the paper and opens the reader. You can also name a LaTeX file, PDF or URL:
 
 ```sh
-machinechecked view paper/main.tex
+uvx machinechecked view paper/main.tex
 ```
 
-Requires Python 3.11+, the project's Lean toolchain and TeX Live for LaTeX compilation. No Node installation, handwritten configuration or separate acceptance framework is required.
+Requires Python 3.11+, your project's Lean toolchain, and TeX Live for LaTeX or Poppler for PDFs.
+The web reader is included. For a persistent command, run `uv tool install machinechecked`;
+then use `machinechecked` directly.
 
-A paper can also be a PDF on disk or at a URL (`machinechecked view https://…/paper.pdf`). From a PDF, MachineChecked tries to find the numbered statements by their bold headings; it can miss some, and their positions are drawn as approximate. If the project has a [`formalization.yaml`](https://github.com/mathlib-initiative/formalization.yaml), its sources are offered as papers and its mappings become links, labelled as the project's own. In a project that is not built, links read *Lean not checked*, never proved.
+Select a claim from the contents or paper margin. **Expand comparison** shows the paper,
+complete readable statement and exact Lean together. Follow existing `\lean{...}` tags, confirm a
+suggestion, or choose a declaration. The reader saves your choices in `machinechecked.links.json`.
+Projects with a `formalization.yaml` supply their paper sources and declared links automatically.
 
-In the reader, select a theorem from the contents or the paper margin. MachineChecked displays the printed statement and its Lean counterpart. Links can come from `\lean{...}` tags, suggested matches or a declaration you select yourself. Confirmed links are saved in `machinechecked.links.json`.
+## Read the evidence
 
-**Linking a theorem is not reviewing it.** Suggested links, confirmed links, Lean proof results and mathematical reviews remain distinct.
+A Lean proof establishes a formal proposition. A correspondence review compares that proposition
+and its definitions with the paper. Source checks identify the audited text; independent kernel
+replay checks the proof again. The reader shows each result and its provenance in **Audit details**.
 
-## Share your paper
+The optional **Review** view guides you through three steps:
+
+1. Read the paper and record your interpretation.
+2. Compare the Lean statement's assumptions and conclusion; record a verdict.
+3. Read the author's review, save your report in the browser, and export it.
+
+The maintainer evaluates reports and promotes reviews into the project's acceptance records.
+[Review guide →](docs/REVIEWING.md)
+
+## Share the reader
 
 ```sh
-machinechecked build   # writes .machinechecked/MachineChecked.html, readable without a server
-machinechecked build --site public/   # or a directory to publish, with its audit.json
-machinechecked check   # fails if a linked declaration is missing or unproved
+uvx machinechecked build                 # .machinechecked/MachineChecked.html
+uvx machinechecked build --site public/  # a static site with audit.json
+uvx machinechecked check                 # check linked declarations for automation
 ```
 
-The HTML bundle includes the paper and reader. Share it directly, commit it to a suitable repository, or host the generated site yourself. Check its contents before making it public: private papers and Lean statements can be included.
+The HTML file opens directly in a browser. It includes the paper, Lean statements and audit data;
+review those contents before publishing. Host the site directory on GitHub Pages or another static
+host. Published audits carry their author's name, project commit and paper revision.
 
-Every claim has **Copy link** and, when the audit names a repository for reports (`machinechecked view --issues owner/repo`), **Raise issue**: a GitHub issue draft in the audit's own repository, with the claim, its Lean declarations and the commits filled in. The reader sends nothing, and a report changes no status.
-
-[Full guide: installation, links, sharing and troubleshooting →](https://github.com/cgarryZA/MachineChecked/blob/main/docs/GETTING_STARTED.md)
+**Copy link** shares a claim. **Report issue** opens a draft in the audit's GitHub repository,
+with the claim identifier, declarations and commits filled in. Set that repository with
+`--issues owner/repo`.
 
 ## With a coding agent
 
-`machinechecked check --json` prints every claim's status and links as JSON, for scripts and agents. The [MachineChecked skill](https://github.com/cgarryZA/MachineChecked/blob/main/skills/machinechecked/SKILL.md) teaches Claude Code and other agents to run it and to report what the statuses do and do not mean; see [Using MachineChecked with a coding agent](https://github.com/cgarryZA/MachineChecked/blob/main/docs/AGENTS.md).
+`machinechecked check --json` prints structured results for scripts and agents. The
+[MachineChecked skill](skills/machinechecked/SKILL.md) covers commands, status codes and evidence.
+[Agent guide →](docs/AGENTS.md)
 
-## Review mathematical correspondence
+## Full assessment
 
-The optional **Review** view guides a reader through one claim at a time:
-
-1. Read the paper and record an independent interpretation.
-2. Reveal the Lean statement, compare the assumptions and conclusion, and record a verdict.
-3. Compare with the author's review, then export a report.
-
-A report does **not** mark a claim accepted. In projects with a formal acceptance policy, the maintainer decides whether to promote a submitted review. The review's provenance, version and scope remain visible.
-
-[Review guide →](https://github.com/cgarryZA/MachineChecked/blob/main/docs/REVIEWING.md)
-
-## More rigorous audits
-
-An ordinary Lean repository needs no configuration. Projects that already maintain **locked mathematical specifications**, a claim inventory and independent review records can opt into the full assessment using `machinechecked.toml`.
-
-This enables exact-type checks, definition-dependent review tracking, witnesses, refutations, per-claim evidence and optional independent kernel replay. It does not assume that a passing Lean build proves the manuscript is faithfully formalised.
-
-[Full-assessment setup and configuration →](https://github.com/cgarryZA/MachineChecked/blob/main/docs/ASSURANCE.md)
+Projects with locked specifications, a claim inventory and review records can configure
+`machinechecked.toml`. Full assessment adds exact-type checks, definition-dependent reviews,
+witnesses, refutations and independent kernel replay.
+[Configuration guide →](docs/ASSURANCE.md)
 
 ## Documentation
 
-- [Get started](https://github.com/cgarryZA/MachineChecked/blob/main/docs/GETTING_STARTED.md) — install, open, link, share and troubleshoot
-- [With a coding agent](https://github.com/cgarryZA/MachineChecked/blob/main/docs/AGENTS.md) — the skill and `check --json`
-- [Reviewing](https://github.com/cgarryZA/MachineChecked/blob/main/docs/REVIEWING.md) — how the review queue records mathematical judgements
-- [Full assessment](https://github.com/cgarryZA/MachineChecked/blob/main/docs/ASSURANCE.md) — configuration, claim inventory and acceptance
-- [Evidence policy](https://github.com/cgarryZA/MachineChecked/blob/main/docs/EVIDENCE_POLICY.md) — what each check does and does not establish
-- [Data model](https://github.com/cgarryZA/MachineChecked/blob/main/docs/DATA_MODEL.md) · [Publication policy](https://github.com/cgarryZA/MachineChecked/blob/main/docs/PUBLICATION_POLICY.md) · [Threat model](https://github.com/cgarryZA/MachineChecked/blob/main/docs/THREAT_MODEL.md)
-- [Development and roadmap](https://github.com/cgarryZA/MachineChecked/blob/main/docs/DEVELOPMENT.md) · [Plan](https://github.com/cgarryZA/MachineChecked/blob/main/PLAN.md)
-
-MachineChecked is an **open-source tool, not a certifying authority**. Each published audit presents its author's evidence and judgements; readers can inspect and challenge them. The website currently offers the tool and a synthetic demonstration, not an independently certified catalogue of papers.
+- [Get started](docs/GETTING_STARTED.md) — install, open, link, share and troubleshoot
+- [Reviewing](docs/REVIEWING.md) — record mathematical judgements
+- [Full assessment](docs/ASSURANCE.md) — configuration and acceptance
+- [Evidence policy](docs/EVIDENCE_POLICY.md) — what each check establishes
+- [Data model](docs/DATA_MODEL.md) · [Publication policy](docs/PUBLICATION_POLICY.md) · [Threat model](docs/THREAT_MODEL.md)
+- [Development](docs/DEVELOPMENT.md) · [Plan](PLAN.md)
 
 Apache-2.0 licensed.

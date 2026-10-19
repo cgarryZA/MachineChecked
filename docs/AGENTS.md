@@ -7,7 +7,7 @@ can run it like any other. Two things help it do so well.
 
 [`skills/machinechecked/SKILL.md`](../skills/machinechecked/SKILL.md) is an
 [Agent Skill](https://agentskills.io): it tells an agent when to use MachineChecked, which
-commands to run, how to read their output, and what the statuses do and do not mean. Copy the
+commands to run, how to read their output, and what each status establishes. Copy the
 `skills/machinechecked` folder into the agent's skills directory; for Claude Code that is
 `.claude/skills/` in a project, or `~/.claude/skills/` for every project:
 
@@ -28,10 +28,10 @@ machinechecked check --json
 
 prints one JSON document (`machinechecked/check@1`) with every claim's number, status, links
 and suggestions. It exits 0 when every linked declaration is proved, 1 when one is missing or
-not proved, and 2 when the check could not run (a missing program such as `lake`, no Lean
-project, a paper that cannot be read, a failed Lean probe). In that last case the document has
+not proved, and 2 when the check could not run (a missing program such as `lake`, missing Lean
+project, unreadable paper or failed Lean probe). In that last case the document has
 `"ok": false` and an `error` (`kind`: `missing-tool` with the `tool`, `error`, or `internal`;
-`message`) and no claims: nothing is known about them. Progress goes to stderr, so stdout is only
+`message`) and an empty claims list: report the execution error. Progress goes to stderr, so stdout is only
 the JSON. `version` is MachineChecked's version, and `release` identifies the evidence the
 statuses come from (it changes when the paper, the links or the Lean change). Each `status_code` is a stable machine-readable result; `status` is its display label.
 `class` is only its coarse group for colouring (`proved`, `open`, `malformed`,
@@ -66,8 +66,7 @@ The other records MachineChecked keeps erase proofs, so that fingerprints see st
 `not built` (its module is not built), or `not found`. It exits 0 when found, 1 for any other
 answer, and 2 when it could not run (with an `error`, as `check --json`). The answer is cached in
 `.machinechecked/build/inspect/` until a Lean input or built module changes (`cache.hit`). A
-dependency says what Lean's terms mention; it does not say a declaration formalises a paper's
-statement.
+dependency identifies the constants used by Lean’s terms.
 
 ## A note for your project's AGENTS.md or CLAUDE.md
 
@@ -77,7 +76,6 @@ statement.
 This project formalises `paper/main.tex`. To see which claims are linked to Lean and what Lean
 establishes about them, run `machinechecked check --json` after `lake build`
 (install: `pip install machinechecked`, or run it with `uvx machinechecked`).
-Links are in `machinechecked.links.json` and `\lean{}` tags; they say which declaration
-corresponds to a claim, not that it says what the paper says. Do not describe a claim as
-verified on the strength of a "Lean proof checked" status.
+Links are in `machinechecked.links.json` and `\lean{}` tags. Report proof results for the
+formal statement, and correspondence reviews with their recorded provenance.
 ```

@@ -12,6 +12,7 @@ import { href } from "./route.svelte.js";
 // The public address of the claim at this release, if the site has one: the configured
 // `site_url`, else the page's own address when it is served from a public host.
 export function claimLink(index, claim) {
+  if (claim.audit?.link) return new URL(claim.audit.link, location.href).href;
   let base = index.site_url || null;
   if (!base && /^https?:$/.test(location.protocol) &&
       !/^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname)) {
@@ -36,6 +37,7 @@ function leanNames(claim) {
 }
 
 export function issueUrl(index, claim) {
+  if (claim.audit?.claim) claim = { ...claim, id: claim.audit.claim, paper: claim.audit.paper?.id || claim.paper };
   if (!index.issues || !/^[\w.-]+\/[\w.-]+$/.test(index.issues)) return null;
   const paper = (index.papers || []).find((p) => p.id === claim.paper) || {};
   const link = claimLink(index, claim);
@@ -53,7 +55,7 @@ export function issueUrl(index, claim) {
     "<!-- Which hypothesis, quantifier, definition or conclusion differs between the paper and the Lean, and where. -->",
     "",
     "---",
-    "_Opened from the MachineChecked reader. A report changes no status in the audit._",
+    "_Drafted from the MachineChecked reader._",
   ];
   const title = `[${claim.number || claim.id}] Possible paper/Lean mismatch`;
   const q = new URLSearchParams({ title, body: lines.join("\n") });
@@ -63,6 +65,7 @@ export function issueUrl(index, claim) {
 // The reports already opened about the claim: a GitHub search of the audit's issue repository
 // for the claim's identifier, which every report body carries.
 export function reportsUrl(index, claim) {
+  if (claim.audit?.claim) claim = { ...claim, id: claim.audit.claim, paper: claim.audit.paper?.id || claim.paper };
   if (!index.issues || !/^[\w.-]+\/[\w.-]+$/.test(index.issues)) return null;
   const q = new URLSearchParams({ q: `is:issue in:body "${claim.id}"` });
   return `https://github.com/${index.issues}/issues?${q.toString()}`;

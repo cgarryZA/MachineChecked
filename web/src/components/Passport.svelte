@@ -1,10 +1,13 @@
 <script>
   import { claimLink, claimReference, issueUrl, reportsUrl, sourceUrl, sourceLabel, sourceTitle } from "../lib/issue.js";
   import TexInline from "./TexInline.svelte";
-  import { loadClaim, loadSearch, saveLink, saveSymbol, inProject } from "../lib/data.js";
+  import { loadClaim, loadSearch, saveLink, saveSymbol, inProject, projectClaims } from "../lib/data.js";
   import { project } from "../lib/project.svelte.js";
-  import { href } from "../lib/route.svelte.js";
+  import { href, route, go, withQuery, inspectionHref } from "../lib/route.svelte.js";
   import { statusView, inScope, clauseNote, evidenceView } from "../lib/presentation.js";
+  import ExactLean from "./ExactLean.svelte";
+  import EvidenceSummary from "./EvidenceSummary.svelte";
+  import PaperStatement from "./PaperStatement.svelte";
   import StatusChip from "./StatusChip.svelte";
   import PdfCrop from "./PdfCrop.svelte";
   import Statement from "./Statement.svelte";
@@ -13,12 +16,12 @@
   import Decl from "./Decl.svelte";
   import Tex from "./Tex.svelte";
   import LinkPicker from "./LinkPicker.svelte";
-  import { tick } from "svelte";
+  import { tick, setContext } from "svelte";
 
   // One claim as Paper and Lean: a heading, the status the engine computed, the printed
   // statement and the Lean statement. Everything else (reviews, evidence, provenance) is in the
   // audit details, which open in the inspector like a declaration does.
-  let { index, claimId, full = false, editable = false } = $props();
+  let { index, claimId, full = false, editable = false, comparison = false } = $props();
 
   let loaded = $state(null);
   // On a page with several projects, the claim as the chosen one sees it.
@@ -27,23 +30,28 @@
   // The inspector: the declarations opened from this claim, in order. While it is not empty the
   // last one replaces the claim view, which stays mounted (hidden) so its open sections and
   // scroll position come back on Back.
-  let stack = $state([]);
-  let scrolls = [];
+  const stack = $derived(route.inspection || []);
+  setContext("declarationHref", (name) => inspectionHref([...stack, name]));
+  let scrolls = [], returnFocus = [];
   let article = $state();
   let showAll = $state(false);
-  let menu = $state(false);
+  let menu = $state(false), menuWrap = $state(), menuButton = $state();
+  let attempt = $state(0);
   const DETAILS = "@details";
   let busy = $state(null);
   let saveError = $state(null);
   const RANK = { stale: 0, pending: 1, "author-reviewed": 2, reviewed: 3 };
 
   $effect(() => {
-    claimId;
-    loaded = null; error = null; stack = []; scrolls = []; showAll = false; saveError = null; menu = false;
-    loadClaim(index, claimId).then((c) => (loaded = c)).catch((e) => (error = String(e)));
+    claimId; project.repo; attempt;
+    let current = true;
+    loaded = null; error = null; scrolls = []; showAll = false; saveError = null; menu = false;
+    loadClaim(index, claimId).then((c) => { if (current) loaded = c; }).catch((e) => { if (current) error = String(e); });
+    return () => { current = false; };
   });
 
-  const paper = $derived(claim && index.papers.find((p) => p.id === claim.paper));
+  const paper = $derived(claim?.audit?.paper || (claim && index.papers.find((p) => p.id === claim.paper)));
+  const evidenceIndex = $derived(claim?.audit?.context ? { ...index, ...claim.audit.context, papers: [paper] } : index);
   const meta = $derived(index.claims.find((c) => c.id === claimId));
   const simple = $derived(claim?.mode === "simple");
 
@@ -103,33 +111,53 @@
 
   // The definition claim of the paper that a declaration states, if one links it: its excerpt is
   // shown above the Lean definition.
-  let search = null;
   async function paperOf(name) {
-    search ??= await loadSearch(index).catch(() => ({ claims: [], decls: [] }));
+    const search = await loadSearch(index).catch(() => ({ claims: [], decls: [] }));
     const ids = search.decls?.find((d) => d.name === name)?.claims || [];
     const linked = (search.claims || []).filter((c) => ids.includes(c.id) && (c.lean || []).includes(name)).map((c) => c.id);
-    const meta = index.claims.find((c) => linked.includes(c.id) && c.kind === "definition" && c.anchor);
-    const rec = meta && (await loadClaim(index, meta.id).catch(() => null));
+    const meta = projectClaims(index).find((c) => linked.includes(c.id) && c.kind === "definition");
+    const raw = meta && (await loadClaim(index, meta.id).catch(() => null));
+    const rec = raw && inProject(raw, project.repo);
     return rec?.anchor?.begin ? rec : null;
   }
 
-  async function showDecl(name) {
+  function showDecl(name) {
+    if (article?.contains(document.activeElement)) returnFocus[stack.length] = document.activeElement;
     menu = false;
-    if (stack[stack.length - 1] === name) return;
-    scrolls[stack.length] = scroller().scrollTop;
-    stack = [...stack, name];
-    await tick();
-    const sc = scroller(), top = article.getBoundingClientRect().top - (sc === document.scrollingElement ? 0 : sc.getBoundingClientRect().top);
-    if (top < 0) sc.scrollTop += top;
+    if (stack.at(-1) !== name) go(inspectionHref([...stack, name]));
   }
-
-  // Back to level `n` (0 is the claim), restoring that level's scroll position.
-  async function backTo(n) {
-    menu = false;
-    stack = stack.slice(0, n);
-    await tick();
-    scroller().scrollTop = scrolls[n] ?? 0;
-  }
+  function backTo(n) { menu = false; go(inspectionHref(stack.slice(0, n))); }
+  let previousStack = [];
+  $effect.pre(() => {
+    const next = [...stack];
+    if (!article) return;
+    const previous = previousStack;
+    scrolls[previous.length] = scroller().scrollTop;
+    previousStack = next;
+    tick().then(() => {
+      if (!article) return;
+      scroller().scrollTop = next.length < previous.length ? scrolls[next.length] || 0 : 0;
+      if (next.length) article.querySelector(".crumbs .back")?.focus({ preventScroll: true });
+      else if (previous.length > next.length) (returnFocus[0]?.isConnected ? returnFocus[0] : menuButton)?.focus({ preventScroll: true });
+    });
+  });
+  $effect(() => {
+    if (!menu) return;
+    const dismiss = (e) => {
+      if (e.type === "keydown") {
+        if (e.key !== "Escape") return;
+        e.preventDefault(); menu = false; menuButton?.focus();
+      } else if (!menuWrap?.contains(e.target)) menu = false;
+    };
+    document.addEventListener("keydown", dismiss);
+    document.addEventListener("pointerdown", dismiss);
+    document.addEventListener("focusin", dismiss);
+    return () => {
+      document.removeEventListener("keydown", dismiss);
+      document.removeEventListener("pointerdown", dismiss);
+      document.removeEventListener("focusin", dismiss);
+    };
+  });
 
   async function act(req, label) {
     busy = label; saveError = null;
@@ -177,18 +205,18 @@
 </script>
 
 {#snippet crop(c)}
-  {@const pp = index.papers.find((p) => p.id === c.paper)}
+  {@const pp = c.audit?.paper || index.papers.find((p) => p.id === c.paper)}
   {#if (pp?.pdf || pp?.pdf_url) && c.anchor?.begin}
     <PdfCrop url={pp.pdf_url || "data/" + pp.pdf} anchor={c.anchor} />
   {/if}
 {/snippet}
 
 {#if error}
-  <p>{error}</p>
+  <p role="alert">{error} <button class="act" onclick={() => attempt++}>Try again</button></p>
 {:else if !claim}
   <p class="muted">Loading…</p>
 {:else}
-  <article class="passport" class:full bind:this={article}>
+  <article class="passport" class:full class:comparison={comparison || full} bind:this={article}>
     {#if stack.length}
       {@const top = stack[stack.length - 1]}
       <nav class="crumbs" aria-label="Opened from this claim">
@@ -209,7 +237,7 @@
               <h2>Lean</h2>
             {/if}
           {/await}
-          <Decl name={top} key={claim.decls?.[top] ?? null} inspector onref={showDecl} />
+          <Decl name={top} key={claim.decls?.[top] ?? null} index={evidenceIndex} inspector onref={showDecl} />
         {/if}
       {/key}
     {/if}
@@ -218,23 +246,24 @@
       <h1>{claim.number || claim.id}{#if claim.heading}<span class="title">&nbsp;— <TexInline text={claim.heading} /></span>{/if}</h1>
       {#if !claim.heading && claim.title}<p class="desc"><TexInline text={claim.title} /></p>{/if}
       <div class="bar">
-        <button class="chipbtn" onclick={() => showDecl(DETAILS)} title="Audit details: what this status rests on"><StatusChip record={claim} /></button>
+        <button class="chipbtn" onclick={() => showDecl(DETAILS)} title="Audit details: what this status rests on"><EvidenceSummary record={claim} /></button>
         <span class="grow"></span>
-        {#if issueUrl(index, claim)}
-          <a class="act" href={issueUrl(index, claim)} target="_blank" rel="noopener" title={"Opens a draft issue in " + index.issues + " with this claim's details filled in"}>Report issue ↗</a>
-        {/if}
-        <span class="menuwrap">
-          <button class="act more" aria-haspopup="menu" aria-expanded={menu} aria-label="More" onclick={() => (menu = !menu)}>⋯</button>
+        <span class="menuwrap" bind:this={menuWrap}>
+          <button class="act more" bind:this={menuButton} aria-expanded={menu} aria-controls="claim-actions" aria-label="More" onclick={() => (menu = !menu)}>⋯</button>
           {#if menu}
-            <div class="menu" role="menu">
-              {#if !full}<a role="menuitem" href={href(index.release, "claim", claim.id)}>Open as a page</a>{/if}
-              {#if full && meta?.anchor}<a role="menuitem" href={href(index.release, "read", claim.paper, claim.id)}>Show in the paper</a>{/if}
-              <button role="menuitem" onclick={() => { copyLink(); menu = false; }}>{claimLink(index, claim) ? "Copy link" : "Copy reference"}</button>
-              {#if reportsUrl(index, claim)}<a role="menuitem" href={reportsUrl(index, claim)} target="_blank" rel="noopener">View existing reports ↗</a>{/if}
+            <div class="menu" id="claim-actions" role="group" aria-label="Claim actions">
+        {#if issueUrl(evidenceIndex, claim)}
+          <a class="act" href={issueUrl(evidenceIndex, claim)} target="_blank" rel="noopener" title={"Opens a draft issue in " + evidenceIndex.issues + " with this claim's details filled in"}>Report issue ↗</a>
+        {/if}
+
+              {#if !full}<a href={href(index.release, "claim", claim.id)}>Open as a page</a>{/if}
+              {#if full && meta?.anchor}<a href={href(index.release, "read", claim.paper, claim.id)}>Show in the paper</a>{/if}
+              <button onclick={() => { copyLink(); menu = false; }}>{claimLink(index, claim) ? "Copy link" : "Copy reference"}</button>
+              {#if reportsUrl(evidenceIndex, claim)}<a href={reportsUrl(evidenceIndex, claim)} target="_blank" rel="noopener">View existing reports ↗</a>{/if}
               {#if index.review_queue && inScope(claim)}
-                <a role="menuitem" href={href(index.release, "review")}>Review it</a>
+                <a href={withQuery(href(index.release, "review"), { claim: claim.id, seen: "lean" })}>Review it</a>
               {/if}
-              <button role="menuitem" onclick={() => showDecl(DETAILS)}>Audit details</button>
+              <button onclick={() => showDecl(DETAILS)}>Audit details</button>
             </div>
           {/if}
         </span>
@@ -242,15 +271,11 @@
       {#if copied}<p class="faint small copied">{copied}</p>{/if}
     </header>
 
+    <div class="comparison-grid">
     <section class="paper">
-      <h2>Paper</h2>
-      {#if (paper?.pdf || paper?.pdf_url) && claim.anchor?.begin}
-        <PdfCrop url={paper.pdf_url || "data/" + paper.pdf} anchor={claim.anchor} />
-      {:else if claim.statement_tex}
-        <Tex text={claim.statement_tex} />
-      {:else}
-        <p class="muted small">The printed statement is not part of this site.</p>
-      {/if}
+      <h2>Paper{claim.audit?.paper ? " · audited revision" : ""}</h2>
+      {#if claim.audit?.paper}<p class="small faint">Revision <code>{claim.audit.paper.revision.slice(0, 12)}</code> · <a href={claim.audit.link}>Open audit</a></p>{/if}
+      <PaperStatement {claim} {paper} symbols={links.map((l) => ({ tex: l.symbol.tex, id: l.id }))} active={litSymbols} {onsym} />
       {#if editable && !simple && claim.statement_tex && claim.clauses.some((c) => c.statement)}
         <details class="mklink" bind:open={linking}>
           <summary>Link a symbol to the Lean</summary>
@@ -278,14 +303,13 @@
         </details>
       {/if}
       {#if links.length && claim.statement_tex}
-        <Tex text={claim.statement_tex} symbols={links.map((l) => ({ tex: l.symbol.tex, id: l.id }))} active={litSymbols} {onsym} />
         {@const shown = links.find((l) => l.id === symActive)}
-        <p class="faint small linkby">{#if shown}Linked by {shown.by}: their reading of the symbol, not a check.{:else}Underlined symbols are linked to the Lean below, each by a named person; point at one to see what it is linked to.{/if}</p>
+        <p class="faint small linkby">{#if shown}Symbol correspondence by {shown.by}.{:else}Select an underlined symbol to see its Lean correspondence and author.{/if}</p>
       {/if}
     </section>
 
     <section class="lean">
-      <h2>Lean</h2>
+      <h2>Readable Lean</h2>
       {#if simple}
         {#if claim.audit}
           <p class="small recorded">As recorded in the published audit{claim.audit.author ? " by " + claim.audit.author : ""}.
@@ -294,7 +318,7 @@
         {#each claim.links as l (l.name)}
           <div class="block">
             <p class="decl"><code>{l.name}</code>
-              {#if sourceUrl(index, l.path, l.range?.line)}<a class="src-link small" href={sourceUrl(index, l.path, l.range?.line)} target="_blank" rel="noopener" title={sourceTitle(index)}>{sourceLabel(index)}</a>{/if}</p>
+              {#if sourceUrl(evidenceIndex, l.path, l.range?.line)}<a class="src-link small" href={sourceUrl(evidenceIndex, l.path, l.range?.line)} target="_blank" rel="noopener" title={sourceTitle(evidenceIndex)}>{sourceLabel(evidenceIndex)}</a>{/if}</p>
             {#if l.statement}<Statement st={l.statement} onref={showDecl} compact />{/if}
             {#if claim.links.length > 1}<StatusChip record={l} small />{/if}
             {#if editable}
@@ -317,7 +341,7 @@
                   <button class="btn ghost" disabled={!!busy} onclick={() => act({ reject: [s.name] }, "reject")}>Not this</button>
                 </div>
               {:else}
-                <p class="faint small">A suggestion, not a link. Run <code>machinechecked view</code> to confirm it.</p>
+                <p class="faint small">Confirm this suggestion with <code>machinechecked view</code>.</p>
               {/if}
             </div>
           {/each}
@@ -358,6 +382,18 @@
         {/each}
       {/if}
     </section>
+    <section class="exact-pane">
+      <h2>Exact Lean</h2>
+      {#if simple}
+        {#each claim.links || [] as l}<ExactLean st={l.statement} name={l.name} onref={showDecl} />{:else}<p class="muted">Choose a Lean declaration to compare.</p>{/each}
+      {:else}
+        {#each claim.clauses || [] as cl}
+          {#if cl.statement}<ExactLean st={cl.statement} name={cl.spec} onref={showDecl} />
+          {:else if cl.defs?.length}{#each cl.defs as name}<Decl {name} key={claim.decls?.[name]} index={evidenceIndex} inspector onref={showDecl} />{/each}{/if}
+        {/each}
+      {/if}
+    </section>
+    </div>
     </div>
   </article>
 {/if}
@@ -365,6 +401,9 @@
 {#snippet details()}
   <section class="details">
     <h2>Audit details</h2>
+    <StatusChip record={claim} />
+    {#if claim.audit?.author}<p class="small">Audit by {claim.audit.author}</p>{/if}
+    {#if claim.audit?.detail}<p class="small">{claim.audit.detail}</p>{/if}
     <p class="faint small"><code>{claim.id}</code>{#if index.papers.length > 1} · paper {claim.paper}{/if}</p>
     {#if claim.number_note}<p class="summary">{claim.number} <span class="faint">({claim.number_note})</span></p>{/if}
     {#if claim.scope_note}<p class="muted small">{claim.scope_note}</p>{/if}
@@ -432,7 +471,7 @@
       <h3>Definitions ({ds.length})</h3>
       {#each ds as n (n)}
         {#if ds.length <= 40 || showAll}
-          <Decl name={n} key={claim.decls[n]} onref={showDecl} />
+          <Decl name={n} key={claim.decls[n]} index={evidenceIndex} onref={showDecl} />
         {/if}
       {/each}
       {#if ds.length > 40 && !showAll}
@@ -444,14 +483,27 @@
       <Findings findings={claim.findings} />
     {/if}
     <p class="faint small foot">
-      Release <code>{index.release}</code> · evidence <code title={index.evidence}>{index.evidence.slice(0, 12)}</code>
-      {#if index.lean}· Lean {index.lean.lean}{/if}
-      {#if index.project?.commit}· project <code>{index.project.commit.slice(0, 12)}</code>{/if}
+      Release <code>{evidenceIndex.release}</code> · evidence <code title={evidenceIndex.evidence}>{evidenceIndex.evidence.slice(0, 12)}</code>
+      {#if evidenceIndex.lean}· Lean {evidenceIndex.lean.lean}{/if}
+      {#if evidenceIndex.project?.commit}· project <code>{evidenceIndex.project.commit.slice(0, 12)}</code>{/if}
     </p>
   </section>
 {/snippet}
 
 <style>
+  .comparison-grid { display: grid; gap: 24px; min-width: 0; }
+  .comparison-grid > section { min-width: 0; }
+  .comparison .comparison-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: start; }
+  .comparison .comparison-grid > section { padding: 0 18px; border-left: 1px solid var(--border); }
+  .comparison .comparison-grid > section:first-child { padding-left: 0; border: 0; }
+  @media (max-width: 1250px) and (min-width: 851px) {
+    .comparison .comparison-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .comparison .paper { grid-row: span 2; }
+  }
+  @media (max-width: 850px) {
+    .comparison .comparison-grid { grid-template-columns: minmax(0, 1fr); }
+    .comparison .comparison-grid > section { padding: 0; border: 0; }
+  }
   .passport, .view { display: flex; flex-direction: column; gap: 18px; }
   .view[hidden] { display: none; }
   .crumbs { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; font-size: 13px; color: var(--muted); }
@@ -473,7 +525,7 @@
   .block.suggestion { border: 1px dashed var(--border); border-radius: 8px; padding: 8px 10px; }
   .bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
   .grow { flex: 1; }
-  .chipbtn { border: 0; background: none; padding: 0; cursor: pointer; }
+  .chipbtn { border: 0; background: none; padding: 4px 0; cursor: pointer; }
   .menuwrap { position: relative; }
   .more { font-size: 15px; line-height: 1; padding: 3px 9px; }
   .menu { position: absolute; right: 0; top: calc(100% + 4px); z-index: 10; min-width: 200px; display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 6px 20px rgb(0 0 0 / 0.14); padding: 4px; }
@@ -500,7 +552,7 @@
   .decl { margin: 0 0 6px; overflow-wrap: anywhere; }
   .verdict { margin: 10px 0 0; font-size: 14px; }
   .row { display: flex; gap: 8px; margin-top: 10px; }
-  .btn { border: 1px solid var(--accent); background: var(--accent); color: white; border-radius: 6px; padding: 4px 12px; cursor: pointer; font-size: 13px; margin-top: 8px; }
+  .btn { border: 1px solid var(--accent); background: var(--accent); color: var(--on-accent); border-radius: 6px; padding: 4px 12px; cursor: pointer; font-size: 13px; margin-top: 8px; }
   .row .btn { margin-top: 0; }
   .btn.ghost { background: transparent; color: var(--accent); }
   .btn:disabled { opacity: 0.5; cursor: default; }

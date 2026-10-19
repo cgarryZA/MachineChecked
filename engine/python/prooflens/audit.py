@@ -67,7 +67,7 @@ def descriptor(index: dict, lean_root: Path | None, author: str | None = None,
     papers = []
     for p in index.get("papers", []):
         ax = arxiv_id(paper_url) if len(index.get("papers", [])) == 1 else None
-        entry = {"title": p.get("title"), "id": ax[0] if ax else None,
+        entry = {"key": p["id"], "title": p.get("title"), "id": ax[0] if ax else None,
                  "version": ax[1] if ax else None, "url": paper_url,
                  # A pinned revision, else the commit of the folder the paper was read from.
                  "revision": p.get("revision") or p.get("source_commit")}

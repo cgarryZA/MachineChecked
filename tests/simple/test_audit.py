@@ -152,10 +152,11 @@ def test_check_json_is_one_document_on_stdout(plain):
     assert c["Theorem 1"]["status_code"] == "link.checked"
     assert c["Theorem 2"]["status_code"] == "link.suggested"
     assert c["Theorem 2"]["status"] == "suggested link, not confirmed"
-    assert "not checked here" in out["note"]
+    assert "linked Lean declarations" in out["note"]
+    assert "correspondence reviews compare them with the paper" in out["note"]
 
 
-def test_the_skill_says_what_the_statuses_do_not_mean():
+def test_the_skill_defines_evidence_and_machine_statuses():
     skill = (ROOT / "skills" / "machinechecked" / "SKILL.md").read_text()
     head = skill.split("---")[1]
     assert "name: machinechecked" in head and "description:" in head
@@ -165,7 +166,8 @@ def test_the_skill_says_what_the_statuses_do_not_mean():
     for st in re.findall(r"^\| `(linked: [^`]+|suggested link, not confirmed|not linked)` \|",
                          skill, re.M):
         assert st.split(" (")[0] in src or st in src, st
-    assert "does **not** check that a Lean statement says what the paper" in skill
+    assert "status_code" in skill
+    assert "correspondence reviews" in skill and "independent kernel replay" in skill
 
 
 def test_source_links_point_into_the_project_and_can_be_private(toy, tmp_path):

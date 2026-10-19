@@ -51,6 +51,8 @@ colour. The frontend never recomputes acceptance from the evidence dimensions.
 | `scope.part-of` | out of scope: part-of | `out-of-scope` |
 | `scope.duplicate` | out of scope: duplicate | `out-of-scope` |
 | `link.claim-audit` | linked: claim audit published | `declared` |
+| `audit.unavailable` | Audit unavailable | `unspecified` |
+| `audit.incompatible` | Audit update required | `unspecified` |
 
 ## Independent evidence
 
@@ -60,13 +62,13 @@ observed `detail`/`errors`. Its required dimensions are `formal`, `review`, `rep
 mechanical checks. Their complete state vocabularies are in `statuses.json` and the claim schema.
 
 - `formal` reports the assessor's clause state, including proved, refuted, open and stated.
-  A definition is not presented as a theorem proof.
+  Definitions use the `stated` state.
 - `review` reports correspondence review independently of proof. The original `spec_review`
   and `def_reviews` retain individual stale/current reviews and self-declared provenance.
-- `replay` is passed, not run or unverified; it never upgrades correspondence review.
+- `replay` reports passed, not run or unverified.
 - `source` records hash verification independently of `placement` (exact, approximate,
   manual, ambiguous or unlocated). For PDF-only sources, `pdf_integrity` separately records
-  matched, mismatch, unpinned or unknown. A matching PDF hash does not make placement exact.
+  matched, mismatch, unpinned or unknown. PDF identity and location precision have independent values.
 
 Claim records also carry `source_evidence`, including simple and public paper views. Public
 paper pages copy a published claim's code, with attribution; they never assign that claim's
@@ -79,10 +81,15 @@ instruction. Old assessments need a new build or reassessment; labels are never 
 as a compatibility mechanism. External audit adapters must forward `status_code`. Old or
 unknown published audit codes remain unavailable until rebuilt.
 
-PR #87 owns source-region matching and PDF heading coverage. This change consumes the resulting
-`source_matches` and PDF pins; it does not implement those checks or change their acceptance
-policy. The PR is based on #87 so its source regression fixtures can adopt the new evidence
-contract and both changes can be tested together. Merge #87 first.
+Source-region matching and PDF heading extraction supply `source_matches`, locations and PDF pins.
+The presentation contract consumes those facts under the existing acceptance policy.
+
+Canonical paper pages import complete published records through `load_published_audit`.
+The importer checks the public paper identifier and version, project commit, audit release,
+claim chunks, declaration hashes and PDF bytes. It preserves reviews, evidence, source text,
+refutations, corrections and additional inventory entries. Failed imports retain a visible state.
+The original PDF remains the default; an explicit edition choice displays an audited revision
+and its own anchors. Coordinates transfer to the original PDF when their SHA-256 values match.
 
 ## Regression coverage
 

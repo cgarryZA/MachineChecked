@@ -295,9 +295,7 @@ def declRecord (roots : Array Name) (n : Name) (ci : ConstantInfo) : MetaM (Json
   let value ← match ci with
     | .defnInfo d =>
       if (← isProp ci.type) then pure Json.null
-      else do
-        let v ← ppJson d.value
-        pure (if v.compress.length > 20000 then Json.null else v)
+      else ppJson d.value
     | _ => pure Json.null
   let doc ← findDocString? env n
   let j := Json.mkObj [
@@ -349,6 +347,9 @@ def specRecord (h : IO.FS.Handle) (q : Query) (roots : Array Name) (seen : IO.Re
   let (binders, concl) ← match ci with
     | .defnInfo d => telescope d.value #[]
     | _ => pure (#[], Json.null)
+  let exact ← match ci with
+    | .defnInfo d => ppJson d.value
+    | _ => pure Json.null
   let closure ← emitClosure h roots spec used seen
   let direct ← match ci with
     | .defnInfo d => projectConsts roots d.value
@@ -358,7 +359,7 @@ def specRecord (h : IO.FS.Handle) (q : Query) (roots : Array Name) (seen : IO.Re
     | _ => #[]
   emit h (Json.mkObj [("record", "spec"), ("name", spec.toString), ("errors", toJson errs),
     ("axioms", toJson (axs.map toString)), ("decl", j),
-    ("binders", Json.arr binders), ("conclusion", concl),
+    ("binders", Json.arr binders), ("conclusion", concl), ("exact", exact),
     ("direct", toJson direct), ("consts", toJson consts), ("closure", toJson closure)])
 
 def levelsMatch (ls : List Level) (params : List Name) : Bool :=
@@ -443,6 +444,7 @@ def linkRecord (h : IO.FS.Handle) (q : Query) (roots : Array Name) (seen : IO.Re
       | _ => pure ci.type
     | _ => pure ci.type
   let (binders, concl) ← telescope stmt #[]
+  let exact ← ppJson stmt
   let axs ← collectAxioms n
   let bad := disallowed (q.allowed_axioms.map (·.toName)) axs
   let (j, used) ← declRecord roots n ci
@@ -450,7 +452,7 @@ def linkRecord (h : IO.FS.Handle) (q : Query) (roots : Array Name) (seen : IO.Re
   emit h (Json.mkObj [("record", "link"), ("name", n.toString), ("kind", kindOf ci),
     ("errors", toJson (if bad.isEmpty then #[] else #[s!"axioms={bad.toList}"])),
     ("axioms", toJson (axs.map toString)), ("sorry", toJson (axs.contains ``sorryAx)),
-    ("decl", j), ("binders", Json.arr binders), ("conclusion", concl),
+    ("decl", j), ("binders", Json.arr binders), ("conclusion", concl), ("exact", exact),
     ("closure", toJson closure)])
 
 /-! ## Dependencies, proofs included
