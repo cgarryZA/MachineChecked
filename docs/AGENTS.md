@@ -92,7 +92,7 @@ machinechecked workspace update - --as llm:MODEL <<'JSON'
  {"op": "put", "record": {"id": "e-1", "kind": "evidence", "claim": "Theorem 2",
   "ref": {"decl": "Plain.oddSum_eq_sq"}, "role": "supports"}},
  {"op": "put", "record": {"id": "f-1", "kind": "finding", "claim": "Theorem 2",
-  "coverage": "full", "basis": "direct", "evidence": ["e-1"],
+  "coverage": "full", "evidence": ["e-1"],
   "note": "The recursion states the paper's sum."}}]}
 JSON
 machinechecked workspace show --json

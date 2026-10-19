@@ -9,8 +9,9 @@
   // workspace opened here is an informed investigation; an independent review uses the review page.
   let { index, claim } = $props();
 
-  const COVERAGE = { full: "Every clause", partial: "Part of the claim", changed: "Stated differently",
-    related: "A related result", unresolved: "Unresolved" };
+  const COVERAGE = { full: "Every clause", composed: "Every clause, by the auditor's composition",
+    partial: "Part of the claim", changed: "Stated differently", related: "A related result",
+    unresolved: "Unresolved" };
 
   let available = $state(true);
   let mine = $state([]);

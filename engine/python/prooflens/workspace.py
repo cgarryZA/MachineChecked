@@ -238,14 +238,11 @@ def _choice(v, allowed, what: str, optional: bool = True):
     return v
 
 
-def _vocab() -> tuple[tuple, tuple, tuple]:
-    """The correspondence vocabulary of the links file (coverage, evidence basis, confidence):
-    a finding uses the same words, so it means what a link's note means."""
+def _vocab() -> tuple[tuple, tuple]:
+    """The correspondence vocabulary of the links file (coverage, confidence): a finding uses
+    the same words, so it means what a link's note means."""
     from . import simple
-    return (tuple(simple.COVERAGE) + tuple(x for x in ("unresolved",)
-                                           if x not in simple.COVERAGE),
-            tuple(getattr(simple, "BASIS", ("direct", "reviewed_composition", "checked_bridge"))),
-            tuple(simple.CONFIDENCE))
+    return tuple(simple.COVERAGE), tuple(simple.CONFIDENCE)
 
 
 def _ref(ref, snap, root) -> dict:
@@ -330,10 +327,8 @@ def _content(kind: str, rec: dict, ws: dict, snap, root) -> dict:
         if out["role"] == "rejected" and rec.get("reason"):
             out["why_rejected"] = _text(rec["reason"], "the reason")
     elif kind == "finding":
-        coverage, basis, confidence = _vocab()
+        coverage, confidence = _vocab()
         out["coverage"] = _choice(rec.get("coverage"), coverage, "coverage")
-        if rec.get("basis") is not None:
-            out["basis"] = _choice(rec["basis"], basis, "the evidence basis")
         if rec.get("confidence") is not None:
             out["confidence"] = _choice(rec["confidence"], confidence, "confidence")
         if rec.get("question") is not None:
