@@ -220,6 +220,11 @@ def _print_simple(body):
         print(f"warning: {stale_doc_message(d)}")
     for s, k in sorted(view_summary(body).items()):
         print(f"  {k:4d}  {s}")
+    for c in body.get("claims", []):
+        cor = c.get("correspondence") or {}
+        if cor.get("basis") == "reviewed_composition":
+            print(f"composition {c.get('number') or c['id']}: every clause by the auditor's "
+                  f"composition, which Lean has not checked. Next step: {cor['next_step']}")
 
 
 # -- everyday commands ------------------------------------------------------------------------
@@ -288,12 +293,22 @@ def cmd_link(a):
         sys.exit(f"the last build is of another paper ({built_title}); run "
                  f"`machinechecked view {paper.relative_to(root)}` first")
     note = _text_arg(a.note_file) if a.note_file else a.note
+    argument = _text_arg(a.argument_file) if a.argument_file else a.argument
+    bridge = None
+    if a.bridge:
+        bridge = {"theorem": a.bridge[0], "target": a.bridge[1]}
+        if a.bridge_pins:
+            bridge.update(target_fingerprint=a.bridge_pins[0], source_sha256=a.bridge_pins[1])
+    elif a.bridge_pins:
+        sys.exit("--bridge-pins goes with --bridge THEOREM TARGET")
     try:
         change = authoring.plan(root, links_key(root, paper), snap, a.claim,
                                 lean=a.decls or None, add=a.add, reject=a.reject or None,
                                 clear=a.clear, note=note, coverage=a.coverage,
                                 confidence=a.confidence, reason=a.reason, by=a.reviewer,
-                                external=a.external)
+                                external=a.external, basis=a.basis, refs=a.refs,
+                                argument=argument, bridge=bridge, question=a.question,
+                                would_decide=a.would_decide)
         if not a.dry_run:
             authoring.write(root, change)
     except authoring.LinkError as e:
@@ -327,6 +342,9 @@ def cmd_link(a):
     else:
         print(f"recorded for {c['id']} ({c['number']}) in {authoring.simple.links_file(root).name}"
               "; `machinechecked view` or `build` shows it")
+    if (change["after"] or {}).get("basis") == "reviewed_composition":
+        print("a composition: Lean has not checked the combination. Next step: "
+              + authoring.simple.COMPOSITION_NEXT_STEP)
 
 
 def _workspace_place(a):
@@ -368,11 +386,18 @@ def _print_workspace(v: dict) -> None:
         for f in c["findings"]:
             tag = f["state"] + ("" if f["in_force"] else ", superseded")
             print(f"  finding  {f['id']}  {tag}: coverage {f.get('coverage') or '-'}"
-                  f"  [{f['currency']['state']}]" + (f"  supersedes {f['supersedes']}: "
+                  + (f", basis {f['basis']}" if f.get("basis") else "")
+                  + f"  [{f['currency']['state']}]" + (f"  supersedes {f['supersedes']}: "
                                                      f"{f['reason']}" if f.get("supersedes")
                                                      else ""))
             if f.get("question"):
                 print(f"           question: {f['question']}")
+            if f.get("would_decide"):
+                print(f"           would decide it: {f['would_decide']}")
+            if f.get("basis") == "reviewed_composition":
+                from .simple import COMPOSITION_NEXT_STEP
+                print("           Lean has not checked this combination. Next step: "
+                      + COMPOSITION_NEXT_STEP)
         for q in c["questions"]:
             print(f"  question {q['id']}  {q['state']}: {q['text']}")
 
@@ -1151,7 +1176,22 @@ def main(argv=None):
     lk.add_argument("--reason", help="why they are rejected")
     lk.add_argument("--clear", action="store_true", help="remove the confirmed list (the "
                     "paper's \\lean tags and formalization.yaml apply again)")
-    lk.add_argument("--coverage", help="how far the declarations state the claim")
+    lk.add_argument("--coverage", help="how far the declarations state the claim: full, "
+                    "partial, changed, related or unresolved")
+    lk.add_argument("--basis", help="how full coverage is supported: direct (one Lean "
+                    "statement), reviewed_composition (your argument) or checked_bridge")
+    lk.add_argument("--refs", nargs="+", metavar="DECL", help="the linked declarations the "
+                    "basis rests on (default: all)")
+    lk.add_argument("--argument", help="a reviewed composition's argument")
+    lk.add_argument("--argument-file", help="a file holding the argument, or - for standard "
+                    "input")
+    lk.add_argument("--bridge", nargs=2, metavar=("THEOREM", "TARGET"), help="a checked "
+                    "bridge: a linked theorem whose type is exactly TARGET")
+    lk.add_argument("--bridge-pins", nargs=2, metavar=("TARGET_FINGERPRINT", "SOURCE_SHA256"),
+                    help="the versions of the target and the passage you read (`check --json` "
+                    "gives them as correspondence.bridge.current)")
+    lk.add_argument("--question", help="an unresolved reading's open question")
+    lk.add_argument("--would-decide", help="what would decide the open question")
     lk.add_argument("--confidence", help="high, medium or low")
     lk.add_argument("--note", help="the note on the correspondence")
     lk.add_argument("--note-file", help="a file holding the note, or - for standard input")

@@ -94,14 +94,15 @@ def test_the_auditors_note_comes_before_the_projects():
     entry = {"lean": ["A.b"], "coverage": "changed", "confidence": "high",
              "note": "The bound needs n + 5 derivatives where the paper has m + 4.", "by": "A. Auditor"}
     assert correspondence(claim, entry) == {
-        "source": "confirmed", "coverage": "changed", "confidence": "high",
+        "source": "confirmed", "coverage": "changed", "basis": None, "refs": [], "argument": None,
+        "next_step": None, "bridge": None, "question": None, "would_decide": None, "confidence": "high",
         "note": "The bound needs n + 5 derivatives where the paper has m + 4.", "by": "A. Auditor"}
     # Unknown words are dropped, never shown as given.
     odd = correspondence(claim, {"lean": ["A.b"], "coverage": "verified", "confidence": "sure",
                                  "note": "x"})
     assert (odd["coverage"], odd["confidence"]) == (None, None)
-    for cov in ("composed", "unresolved"):
-        assert correspondence(claim, {"lean": ["A.b"], "coverage": cov})["coverage"] == cov
+    assert correspondence(claim, {"lean": ["A.b"], "coverage": "unresolved"})["coverage"] == \
+        "unresolved"
     # Without an auditor's entry, the project's formalization.yaml notes are shown as the project's.
     assert correspondence(claim, {})["source"] == "formalization.yaml"
     assert correspondence({}, {}) is None
