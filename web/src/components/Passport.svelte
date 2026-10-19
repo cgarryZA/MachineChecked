@@ -16,6 +16,7 @@
   import Decl from "./Decl.svelte";
   import Tex from "./Tex.svelte";
   import LinkPicker from "./LinkPicker.svelte";
+  import { VERDICTS } from "../lib/review.js";
   import { tick, setContext } from "svelte";
 
   // One claim as Paper and Lean: a heading, the status the engine computed, the printed
@@ -38,6 +39,12 @@
   let menu = $state(false), menuWrap = $state(), menuButton = $state();
   let attempt = $state(0);
   const DETAILS = "@details";
+  const VERDICT_LABEL = Object.fromEntries(Object.values(VERDICTS).flat().map((v) => [v.value, v.label]));
+  function reviewer(r) {
+    const who = r.reviewer.kind === "model" ? "the AI model " + (r.reviewer.model || r.reviewer.id)
+      : (r.reviewer.name || r.reviewer.id);
+    return who + (r.reviewer.identity === "self-declared" ? " (self-declared)" : "");
+  }
   // The words for a mapper's coverage reading (links file `coverage`).
   const COVERAGE = { full: "States every clause",
     composed: "Every clause, by combining the linked declarations (the auditor's argument)",
@@ -292,6 +299,17 @@
           <p class="faint small">{cor.source === "formalization.yaml" ? "The project's note in formalization.yaml" : "The auditor's reading" + (cor.by ? ", by " + cor.by : "")}</p>
         </div>
       {/if}
+      {#each claim.reviews || [] as r}
+        <details class="review" data-verdict={r.verdict.value}>
+          <summary class="small"><strong>Review: {VERDICT_LABEL[r.verdict.value] || r.verdict.value}</strong>, by {reviewer(r)}, {(r.submitted_at || "").slice(0, 10)}{r.current === false ? " · recorded for other declarations or statements" : r.current === null ? " · not compared with the current Lean" : ""}</summary>
+          {#if r.verdict.detail}<p class="small pre">{r.verdict.detail}</p>{/if}
+          <p class="small pre">{r.comparison}</p>
+          <details>
+            <summary class="faint small">The reading, locked {r.locked_at} before the Lean was shown</summary>
+            <p class="small pre">{r.reading}</p>
+          </details>
+        </details>
+      {/each}
     </header>
 
     <div class="comparison-grid">
@@ -537,6 +555,10 @@
   header h1 { font-family: var(--serif); font-size: 24px; font-weight: 600; margin: 2px 0 10px; }
   .full header h1 { font-size: 30px; }
   .title { font-weight: 450; }
+  .review { border-left: 3px solid var(--border); padding: 4px 0 4px 10px; margin-top: 8px; }
+  .review[data-verdict="narrower"], .review[data-verdict="mismatched"], .review[data-verdict="vacuous"], .review[data-verdict="cannot determine"] { border-left-color: var(--tier-warning); }
+  .review summary { cursor: pointer; }
+  .pre { white-space: pre-wrap; overflow-wrap: anywhere; }
   .coverage { border-left: 3px solid var(--border); padding: 4px 0 4px 10px; margin-top: 8px; }
   .coverage p { margin: 2px 0; }
   .coverage[data-coverage="composed"], .coverage[data-coverage="partial"], .coverage[data-coverage="changed"], .coverage[data-coverage="related"], .coverage[data-coverage="unresolved"] { border-left-color: var(--tier-warning); }
