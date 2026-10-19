@@ -37,6 +37,9 @@
   let menu = $state(false), menuWrap = $state(), menuButton = $state();
   let attempt = $state(0);
   const DETAILS = "@details";
+  // The words for a mapper's coverage reading (links file `coverage`).
+  const COVERAGE = { full: "States every clause", partial: "States part of the claim",
+    changed: "States it differently", related: "A related result, not this claim" };
   let busy = $state(null);
   let saveError = $state(null);
   const RANK = { stale: 0, pending: 1, "author-reviewed": 2, reviewed: 3 };
@@ -272,6 +275,13 @@
         </span>
       </div>
       {#if copied}<p class="faint small copied">{copied}</p>{/if}
+      {#if claim.correspondence}
+        {@const cor = claim.correspondence}
+        <div class="coverage" data-coverage={cor.coverage || "note"}>
+          <p class="small">{#if cor.coverage}<strong>{COVERAGE[cor.coverage]}</strong>{#if cor.confidence}{" "}<span class="faint">({cor.confidence} confidence)</span>{/if}{#if cor.note}{". "}{/if}{/if}{cor.note}</p>
+          <p class="faint small">{cor.source === "formalization.yaml" ? "The project's note in formalization.yaml" : "The auditor's reading" + (cor.by ? ", by " + cor.by : "")}</p>
+        </div>
+      {/if}
     </header>
 
     <div class="comparison-grid">
@@ -519,6 +529,10 @@
   header h1 { font-family: var(--serif); font-size: 24px; font-weight: 600; margin: 2px 0 10px; }
   .full header h1 { font-size: 30px; }
   .title { font-weight: 450; }
+  .coverage { border-left: 3px solid var(--border); padding: 4px 0 4px 10px; margin-top: 8px; }
+  .coverage p { margin: 2px 0; }
+  .coverage[data-coverage="partial"], .coverage[data-coverage="changed"], .coverage[data-coverage="related"] { border-left-color: var(--tier-warning); }
+  .coverage[data-coverage="full"] { border-left-color: var(--st-proved); }
   .act { font: inherit; font-size: 13px; padding: 3px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; text-decoration: none; }
   .act:hover { border-color: var(--accent); color: var(--accent); text-decoration: none; }
   .summary { margin: 4px 0 8px; font-size: 13px; color: var(--muted); }
