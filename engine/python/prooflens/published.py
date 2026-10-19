@@ -38,22 +38,25 @@ def audit_version(desc: dict) -> str:
 def paper_version(value) -> dict | None:
     """The paper version an audit's descriptor says it pins, rebuilt from its kind and
     identifier: the label shown is the one MachineChecked gives that version, never a label the
-    audit supplies (a manuscript is never shown with a version number)."""
+    audit supplies (a manuscript is never shown with a version number). `checked` is true only
+    when the audit says every claim's pin was checked against the version; an audit that does
+    not say so is read as unchecked."""
     if value is None:
         return None
     if not isinstance(value, dict):
         raise AuditError('Invalid paper version')
     kind, vid, rev = value.get('kind'), value.get('id'), value.get('revision')
+    checked = value.get('checked') is True
     if kind == 'manuscript':
         if not isinstance(rev, str) or not versions.COMMIT.fullmatch(rev) or \
                 vid != 'manuscript:' + rev[:versions.SHORT]:
             raise AuditError('Invalid manuscript version')
-        return versions.manuscript_record(rev)
+        return {**versions.manuscript_record(rev), 'checked': checked}
     if kind == 'published' and isinstance(vid, str) and vid:
         rec = versions.published_version(('arXiv:' + vid[6:]) if vid.startswith('arxiv:') else vid)
         if rec['id'] != vid:
             raise AuditError('Invalid published version')
-        return {**rec, 'revision': rev if isinstance(rev, str) else None}
+        return {**rec, 'revision': rev if isinstance(rev, str) else None, 'checked': checked}
     raise AuditError('Invalid paper version')
 
 

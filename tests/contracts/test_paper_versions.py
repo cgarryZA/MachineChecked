@@ -59,7 +59,7 @@ def test_an_unpublished_manuscript_is_named_by_its_commit_and_never_numbered():
     p = paper(version="manuscript", published=f"arXiv:{V1}")
     rec = pinned(p, snap(), inventory(LATER[:7]))
     assert rec == {"kind": "manuscript", "id": "manuscript:1234567", "revision": LATER,
-                   "label": "Latest manuscript (commit 1234567)"}
+                   "label": "Latest manuscript (commit 1234567)", "checked": True}
     with pytest.raises(versions.VersionError, match="pinned to 2601.01234v1"):
         pinned(p, snap(), inventory(V1))
     with pytest.raises(versions.VersionError, match="pinned to commit abcdef0"):
@@ -77,6 +77,14 @@ def test_an_undeclared_version_the_pins_disagree_with_is_not_claimed():
     assert pinned(paper(published=f"arXiv:{V1}"), snap(), inventory())["label"] == "arXiv v1"
 
 
+def test_a_version_is_checked_only_when_every_claim_is_pinned_to_it():
+    declared = paper(published=f"arXiv:{V1}")
+    assert pinned(declared, snap(), inventory(V1))["checked"] is True
+    assert pinned(declared, snap(), inventory(claim_pin=V1))["checked"] is False
+    assert pinned(declared, snap(), inventory())["checked"] is False
+    assert pinned(declared, snap(), {"claims": []})["checked"] is False
+
+
 def test_a_site_reads_the_pinned_version_and_never_the_audits_own_label():
     d = files()
     rec = versions.manuscript_record("d" * 40)
@@ -84,7 +92,11 @@ def test_a_site_reads_the_pinned_version_and_never_the_audits_own_label():
         part["paper_version"] = {**rec, "label": "arXiv v3"}
     load = lambda listing: load_published_audit(PAPER, PAPER["formalisations"][0],
                                                 {"url": BASE, **listing}, fetcher(d))
-    assert load({})["paper_version"] == rec
+    # An audit that does not say its version was checked is read as unchecked.
+    assert load({})["paper_version"] == {**rec, "checked": False}
+    for part in (d["audit.json"]["papers"][0], d["data/index.json"]["papers"][0]):
+        part["paper_version"] = {**rec, "label": "arXiv v3", "checked": True}
+    assert load({})["paper_version"] == {**rec, "checked": True}
     assert load({"version": "manuscript:" + "d" * 12})["paper_version"]["label"] == \
         "Latest manuscript (commit ddddddd)"
     with pytest.raises(AuditError, match="another version"):
@@ -137,10 +149,11 @@ def test_one_project_publishes_a_v1_audit_and_a_latest_manuscript_audit(toy, tmp
     assert (one["id"], one["version"], one["revision"]) == ("arxiv:2601.01234", "v1", v1)
     assert one["paper_version"] == {"kind": "published", "id": f"arxiv:{V1}",
                                     "arxiv": "arxiv:2601.01234", "number": "v1",
-                                    "label": "arXiv v1", "revision": v1}
+                                    "label": "arXiv v1", "revision": v1,
+                                    "checked": True}
     assert (latest["id"], latest["version"], latest["revision"]) == \
         ("arxiv:2601.01234", None, later)
-    assert latest["paper_version"] == versions.manuscript_record(later)
+    assert latest["paper_version"] == {**versions.manuscript_record(later), "checked": True}
     assert latest["paper_version"]["label"] == f"Latest manuscript (commit {later[:7]})"
     statuses = [[c["status_code"] for c in json.loads(
         (tmp_path / "site" / s / "data" / "index.json").read_text())["claims"]]

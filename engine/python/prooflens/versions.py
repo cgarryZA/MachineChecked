@@ -8,7 +8,9 @@ source's pinned revision). Its record says which, with a label for readers: "arX
 The record is descriptive: no status depends on it. What is checked is that the inventory's pins
 (`papers.<id>.commit`, a claim's `commit`) name the declared version: a published version by its
 identifier (`2601.01234v1`), a manuscript by its commit. So an audit labelled with one version
-cannot carry claims pinned to another.
+cannot carry claims pinned to another. The record's `checked` says whether that check covers
+every claim: it is false when some claim carries no pin, so the version is only as the
+configuration states it, and readers are told so.
 """
 
 from __future__ import annotations
@@ -140,15 +142,24 @@ def describe_pin(pin: str) -> str:
     return f"commit {pin[:SHORT]}" if COMMIT.fullmatch(pin.lower()) else pin
 
 
+def unpinned_claims(inv: dict, pid: str) -> list[str]:
+    """The paper's claims that carry no pin (neither their own `commit` nor the paper's)."""
+    if ((inv.get("papers") or {}).get(pid) or {}).get("commit"):
+        return []
+    return [c["id"] for c in inv.get("claims", []) if c.get("paper") == pid and not c.get("commit")]
+
+
 def check(paper, rec: dict | None, is_declared: bool, inv: dict) -> dict | None:
-    """The version record to publish: `rec` when the inventory's pins agree with it. A declared
-    version the pins disagree with is refused; an inferred one is dropped (nothing is claimed)."""
+    """The version record to publish: `rec` when the inventory's pins agree with it, with
+    `checked` false when some claim carries no pin to check it against (or there are no claims).
+    A declared version the pins disagree with is refused; an inferred one is dropped (nothing is
+    claimed)."""
     if rec is None:
         return None
-    bad = {pin: ids for pin, ids in inventory_pins(inv, paper.id).items()
-           if not pin_matches(pin, rec)}
+    pins = inventory_pins(inv, paper.id)
+    bad = {pin: ids for pin, ids in pins.items() if not pin_matches(pin, rec)}
     if not bad:
-        return rec
+        return {**rec, "checked": bool(pins) and not unpinned_claims(inv, paper.id)}
     if not is_declared:
         return None
     pins = "; ".join(f"{describe_pin(p)} ({len(ids)} claim{'s' * (len(ids) != 1)}, "
