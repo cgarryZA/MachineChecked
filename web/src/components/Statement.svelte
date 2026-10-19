@@ -1,7 +1,9 @@
 <script>
   import LeanText from "./LeanText.svelte";
+  import Expansion from "./Expansion.svelte";
   import { gloss } from "../lib/gloss.js";
   import { carriedOf } from "../lib/carried.js";
+  import { expansionFor, expansionsOf } from "../lib/expand.js";
 
   // A locked proposition as its quantifier prefix and its conclusion.
   // `ext` highlights from outside (a linked symbol of the paper): a variable ({var}) or a
@@ -74,6 +76,7 @@
   // Only a choice made here is reported: dropping this view's selection for one made in another
   // view must not clear that one.
   function setTerm(where, k) {
+    alone = null;
     termSel = k == null ? null : { where, k };
     if (k != null) pinned = null;
     onselect?.(idOf(termSel));
@@ -93,6 +96,14 @@
     if (where.startsWith("l:")) return [...leafIds].find(([, i]) => i === +where.slice(2))?.[0]?.leaf;
     if (where.startsWith("p:")) return carriedPP[+where.slice(2)] || null;
     return null;
+  }
+  // A definition expanded at one of its applications: the selected sub-term's, or one the
+  // printed expression gives no sub-term of its own (`alone`).
+  let alone = $state(null);
+  const termExpansion = $derived(termSel ? expansionFor(ppAt(termSel.where), termSel.k) : null);
+  function expand(where, o) {
+    if (o.k >= 0) setTerm(where, termSel?.where === where && termSel.k === o.k ? null : o.k);
+    else { termSel = null; alone = alone === o.x ? null : o.x; }
   }
   const termText = $derived.by(() => {
     if (!termSel) return null;
@@ -135,7 +146,7 @@
   const SCOPE = { forall: "for every", exists: "there is", if: "if", then: "then", and: "and", or: "or", iff: "iff", not: "not" };
 </script>
 
-{#snippet lean(pp, where = null)}<LeanText {pp} {onref} {refs} {active} {onvar} {ongloss} term={termAt(where)} selId={outerId} onterm={where == null ? null : (k) => setTerm(where, k)} />{/snippet}
+{#snippet lean(pp, where = null)}<LeanText {pp} {onref} {refs} {active} {onvar} {ongloss} term={termAt(where)} selId={outerId} onterm={where == null ? null : (k) => setTerm(where, k)} />{#if where != null}{@const os = expansionsOf(pp)}{#if os.length}{" "}<span class="xs">expand{#each os as o}{" "}<button class="xb" class:on={o.k >= 0 ? termSel?.where === where && termSel.k === o.k : alone === o.x} aria-label={"Expand " + o.text + " at its arguments"} onclick={() => expand(where, o)}>{o.label}</button>{/each}</span>{/if}{/if}{/snippet}
 
 {#snippet name(i)}<span class="v" class:hl={active === i} role="button" tabindex="0" onmouseenter={() => onvar(i, "hover")} onmouseleave={() => onvar(null, "hover")} onclick={() => onvar(i, "pin")} onkeydown={(e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), onvar(i, "pin"))}>{vars[i].name}</span>{/snippet}
 
@@ -249,6 +260,12 @@
       <p><span class="small faint">Sub-expression</span><button class="x" aria-label="Release" onclick={() => (termSel = null)}>×</button></p>
       <p><code>{termText}</code></p>
       <p class="small faint">Activate it again to select the expression around it.</p>
+      {#if termExpansion}<Expansion x={termExpansion.x} occ={termExpansion.text} {onref} {refs} />{/if}
+    </div>
+  {/if}
+  {#if alone}
+    <div class="inspect term" aria-live="polite">
+      <Expansion x={alone} {onref} {refs} onclose={() => (alone = null)} />
     </div>
   {/if}
   {#if noted && gloss(noted)}
@@ -313,4 +330,7 @@
   .inner p { margin: 2px 0; }
   .subc:empty { display: none; }
   .bad { color: var(--st-malformed); }
+  .xs { font-size: 12px; color: var(--faint); font-family: var(--sans, inherit); white-space: normal; }
+  .xb { border: 1px solid var(--border); border-radius: 10px; background: none; color: var(--accent); cursor: pointer; font: 12px var(--mono); padding: 0 6px; min-height: 0; }
+  .xb.on { background: color-mix(in srgb, var(--st-open) 22%, transparent); }
 </style>

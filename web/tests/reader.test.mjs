@@ -39,7 +39,7 @@ const A = "alpha/project-a", B = "beta/project-b";
 // The paper page is written by the engine (`prooflens.paper.write_paper_site`), as machinechecked.org
 // writes its paper pages, so the test reads exactly the data a real page has.
 const FIXTURE = String.raw`
-import sys
+import json, sys
 from pathlib import Path
 from prooflens.paper import paper_claims, write_paper_site
 A, B = "alpha/project-a", "beta/project-b"
@@ -61,7 +61,7 @@ claims = paper_claims(anchors, paper["title"], [
 write_paper_site(Path(sys.argv[1]), paper, claims, [612, 792], None, Path(sys.argv[2]))
 
 # A long paper (30 pages), with statements early, in the middle and late, and its PDF.
-def pdf(pages):
+def pdf(pages, text="Searchable paper page {n}. Alpha theorem."):
     objs = ["<< /Type /Catalog /Pages 2 0 R >>",
             "<< /Type /Pages /Kids [" + " ".join(f"{3 + i} 0 R" for i in range(pages)) +
             f"] /Count {pages} >>"]
@@ -69,7 +69,7 @@ def pdf(pages):
     annot = font + 1
     objs += [f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 {font} 0 R >> >> /Contents {3 + pages + i} 0 R /Annots [{annot} 0 R] >>" for i in range(pages)]
     for i in range(pages):
-        content = f"BT /F1 14 Tf 60 700 Td (Searchable paper page {i+1}. Alpha theorem.) Tj ET"
+        content = f"BT /F1 14 Tf 60 700 Td ({text.format(n=i + 1)}) Tj ET"
         objs.append(f"<< /Length {len(content)} >>\nstream\n{content}\nendstream")
     objs.append("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
     objs.append("<< /Type /Annot /Subtype /Link /Rect [60 660 180 680] /A << /S /URI /URI (https://example.org/paper) >> >>")
@@ -89,6 +89,33 @@ long_claims[0]["anchor"]["end"] = [3, 0, 150]
 site = Path(sys.argv[1]).parent / "long"
 write_paper_site(site, long_paper, long_claims, [612, 792], "paper.pdf", Path(sys.argv[2]))
 (site / "paper.pdf").write_bytes(pdf(30))
+
+# A paper in two versions, one page each (as machinechecked.org writes them): arXiv v1, and the
+# latest manuscript at a commit, whose claims are numbered differently and linked differently.
+two = {**paper, "id": "arxiv:2601.00003", "title": "A paper in two versions"}
+versions = [{"id": "arxiv:2601.00003v1", "kind": "published", "href": "/versions/v1/",
+             "pdf": "https://arxiv.org/pdf/2601.00003v1", "audits": []},
+            {"id": "manuscript:abc1234", "kind": "manuscript", "revision": "abc1234" + "0" * 33,
+             "href": "../latest/", "label": "arXiv v2", "audits": []}]
+pages = {"v1": ([anchor("theorem", "1", 1, 100), anchor("theorem", "2", 1, 300)],
+                [("theorem", "1", ["A.one"])], [("theorem", "2", ["B.two"])], "Version one text."),
+         "latest": ([anchor("lemma", "1", 1, 100), anchor("theorem", "2", 1, 300),
+                     anchor("theorem", "3", 1, 500)],
+                    [("theorem", "3", ["A.three"])], [], "Latest manuscript text.")}
+for (name, (anchors, a_rows, b_rows, text)), v in zip(pages.items(), versions):
+    site = Path(sys.argv[1]).parent / "versions" / name
+    cl = paper_claims(anchors, two["title"], [(two["formalisations"][0], fy(a_rows)),
+                                              (two["formalisations"][1], fy(b_rows))])
+    write_paper_site(site, two, cl, [612, 792], "paper.pdf", Path(sys.argv[2]),
+                     versions=versions, version=v["id"])
+    (site / "paper.pdf").write_bytes(pdf(1, text))
+    # On v1, project A's audit pins the version without pinning every claim; B's checks it.
+    if name == "v1":
+        idx = json.loads((site / "data" / "index.json").read_text())
+        rec = {"kind": "published", "id": v["id"], "label": "arXiv v1"}
+        idx["audits"] = {two["formalisations"][0]["repository"]: {"paper_version": {**rec, "checked": False}},
+                         two["formalisations"][1]["repository"]: {"paper_version": {**rec, "checked": True}}}
+        (site / "data" / "index.json").write_text(json.dumps(idx))
 `;
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "mc-reader-"));
 const made = spawnSync(process.env.PYTHON || "python3", ["-c", FIXTURE, path.join(root, "paper"), reader], { encoding: "utf8" });
@@ -286,6 +313,73 @@ await check("a claim chosen in a long paper stays in view (contents and deep lin
     await cold.close();
   }
 });
+
+// A paper in two versions: the drop-down beside the project selector opens the other version's
+// page, with its own PDF, claim numbers and statuses; the address keeps the version and the
+// project; a deep link opens a claim in its version; switching changes no status.
+const VERSION = "select[aria-label='Paper version shown']";
+const statusOf = async (pg, claim) => {
+  await open(pg, claim);
+  return pg.locator("aside [data-status]").first().getAttribute("data-status");
+};
+const statuses = async (pg, claims) => {
+  const out = [];
+  for (const c of claims) out.push(await statusOf(pg, c));
+  return out;
+};
+for (const width of [1300, 390]) {
+  await check("the version drop-down switches the paper, its numbering and its statuses", width, async (pg) => {
+    await pg.goto(origin + "/versions/v1/");
+    await pg.waitForSelector(VERSION);
+    assert.deepEqual((await pg.locator(VERSION + " option").allTextContents()).map((t) => t.trim()),
+      ["arXiv v1", "Latest manuscript (commit abc1234)"], "labels from the version, never a number a manuscript lacks");
+    assert.equal(await pg.inputValue(VERSION), "arxiv:2601.00003v1");
+    await pg.waitForFunction(() => document.querySelector(".paperpane")?.textContent.includes("Version one text."));
+    const v1 = await statuses(pg, ["P:theorem-1", "P:theorem-2"]);
+    assert.deepEqual(v1, ["link.no-audit", "link.none"]);
+    await pg.selectOption("select[aria-label='Formalisation shown']", A);
+    await pg.waitForSelector(".version.unchecked");
+    assert.match(await pg.locator(".version.unchecked").textContent(), /not checked against its claims/);
+    await pg.selectOption("select[aria-label='Formalisation shown']", B);
+    assert.equal(await pg.locator(".version.unchecked").count(), 0, "a checked version carries no note");
+    const v1b = await statuses(pg, ["P:theorem-1", "P:theorem-2"]);
+    if (process.env.SHOTS) await pg.screenshot({ path: path.join(process.env.SHOTS, `versions-${width}.png`) });
+
+    await pg.selectOption(VERSION, "manuscript:abc1234");
+    await pg.waitForURL(/\/versions\/latest\//);
+    const u = new URL(pg.url());
+    assert.equal(u.searchParams.get("project"), B, "the project goes with the version");
+    assert.equal(u.hash.replace(/^#\/?$/, ""), "", "the claim does not: numbers differ between versions");
+    await pg.waitForSelector(VERSION);
+    assert.equal(await pg.inputValue(VERSION), "manuscript:abc1234");
+    assert.equal(await pg.inputValue("select[aria-label='Formalisation shown']"), B);
+    await pg.waitForFunction(() => document.querySelector(".paperpane")?.textContent.includes("Latest manuscript text."));
+    await pg.selectOption("select[aria-label='Formalisation shown']", A);
+    assert.deepEqual(await statuses(pg, ["P:lemma-1", "P:theorem-2", "P:theorem-3"]), ["link.none", "link.none", "link.no-audit"]);
+
+    await pg.selectOption(VERSION, "arxiv:2601.00003v1");
+    await pg.waitForURL(/\/versions\/v1\//);
+    await pg.waitForSelector(VERSION);
+    assert.deepEqual(await statuses(pg, ["P:theorem-1", "P:theorem-2"]), v1, "statuses are unchanged by switching");
+    await pg.selectOption("select[aria-label='Formalisation shown']", B);
+    assert.deepEqual(await statuses(pg, ["P:theorem-1", "P:theorem-2"]), v1b);
+    const [scroll, client] = await pg.evaluate(() => [document.documentElement.scrollWidth, document.documentElement.clientWidth]);
+    assert.ok(scroll <= client, `the page scrolls sideways (${scroll} > ${client})`);
+  });
+
+  await check("a deep link opens a claim in its version", width, async (pg) => {
+    await pg.goto(origin + "/versions/latest/#/r/paper/read/P/P%3Atheorem-3");
+    await pg.waitForSelector("aside h1");
+    assert.match(await pg.locator("aside h1").textContent(), /Theorem 3/);
+    assert.equal(await pg.inputValue(VERSION), "manuscript:abc1234");
+    assert.equal(await pg.locator("aside [data-status]").first().getAttribute("data-status"), "link.no-audit");
+    await pg.goto(origin + "/versions/v1/#/r/paper/read/P/P%3Atheorem-2");
+    await pg.waitForSelector("aside h1");
+    assert.match(await pg.locator("aside h1").textContent(), /Theorem 2/);
+    assert.equal(await pg.inputValue(VERSION), "arxiv:2601.00003v1");
+    assert.equal(await pg.locator("aside [data-status]").first().getAttribute("data-status"), "link.none");
+  });
+}
 
 // The claim inspector on the toy audit: opening a definition replaces the panel's contents and
 // leaves the paper where it was; Back brings the claim back as it was left.
@@ -509,6 +603,60 @@ await check("in the local reader a symbol is linked by choosing it and clicking 
     assert.match(await exactField.textContent(), /s\.start : s\.path 0 = d/);
     assert.match(await exactField.locator(".origin").textContent(), /Shape\.Base\.start/);
     assert.ok(await exactField.locator(".in").count() > 0, "the exact view selects the same sub-term");
+  });
+
+  await check("a definition expands at the arguments of each application, beside the statement", width, async (pg) => {
+    await pg.goto(origin + `/structure/#/r/${SHAPE.release}/read/P/${encodeURIComponent("P:thm:jet")}`);
+    const st = pg.locator("aside .view .stmt").first();
+    await st.locator(".ribbon").waitFor();
+    // The assumption at order n + 5 and the conclusion at n + 4 are different applications.
+    const chips = st.locator("button.xb");
+    assert.equal(await chips.count(), 2);
+    await chips.nth(0).click();
+    let xp = st.locator(".inspect .xp");
+    await xp.waitFor();
+    assert.match(await xp.locator(".occ").textContent(), /Shape\.JetBound f S \(n \+ 5\) C/);
+    assert.match((await xp.locator(".args").textContent()).replace(/\s+/g, " "), /k := n \+ 5/);
+    assert.match(await xp.locator(".body").textContent(), /∀ \(j : Nat\), j ≤ n \+ 5 → ∀ \(x : Nat\), S x → f j x ≤ C/);
+    assert.equal(await st.locator(".ribbon .in").count() > 0, true, "the application stays visible and selected");
+    await chips.nth(1).click();
+    xp = st.locator(".inspect .xp");
+    assert.match(await xp.locator(".body").textContent(), /j ≤ n \+ 4/);
+    assert.doesNotMatch(await xp.locator(".body").textContent(), /n \+ 5/);
+
+    // A partial application keeps the parameter it still needs; the definition it is passed to
+    // expands with it applied, and that application expands in turn.
+    await pg.goto(origin + `/structure/#/r/${SHAPE.release}/read/P/${encodeURIComponent("P:thm:below")}`);
+    const every = pg.locator("aside .view .stmt").filter({ hasText: "Shape.Every" }).first();
+    await every.locator(".ribbon").waitFor();
+    await every.locator("button.xb", { hasText: /^Shape\.AllBelow 7$/ }).click();
+    xp = every.locator(".inspect .xp").first();
+    assert.match((await xp.locator(".line").textContent()).replace(/\s+/g, " "), /still to supply \(v : Fin 2 → Nat\): ∀ \(i : Fin 2\), v i ≤ 7/);
+    assert.match((await xp.locator(".args").textContent()).replace(/\s+/g, " "), /α := Nat \(implicit\) ?instance := instLENat ?bound := 7 ?n := 2 \(implicit\)/);
+    await every.locator("button.xb", { hasText: /^Shape\.Every/ }).first().click();
+    xp = every.locator(".inspect .xp").first();
+    await xp.locator("button.xb").click();
+    assert.match(await xp.locator(".xp .body").textContent(), /∀ \(i : Fin 2\), v i ≤ 7/);
+    // A bound variable of the definition is renamed apart from the statement's own i.
+    const below = pg.locator("aside .view .stmt").filter({ hasText: "Shape.AllBelow i v" }).first();
+    await below.locator("button.xb").first().click();
+    assert.match(await below.locator(".inspect .xp .body").textContent(), /∀ \(i_1 : Fin 3\), v i_1 ≤ i$/);
+
+    // A definition by equations shows the equation that applies, specialised, with its case
+    // condition and its theorem's name.
+    await pg.goto(origin + `/structure/#/r/${SHAPE.release}/read/P/${encodeURIComponent("P:thm:steps")}`);
+    const steps = pg.locator("aside .view .stmt").filter({ hasText: "Shape.steps" }).first();
+    await steps.locator(".concl").waitFor();
+    await steps.locator("button.xb").click();
+    xp = steps.locator(".inspect .xp");
+    assert.match((await xp.locator(".eq").textContent()).replace(/\s+/g, " "), /Shape\.steps \(k \+ 3\) = if h : k \+ 3 = 0 then 0 else Shape\.steps \(k \+ 3 - 1\) \+ 1 expand Shape\.steps \(k \+ 3 - 1\) Shape\.steps\.eq_1/);
+    const pick = pg.locator("aside .view .stmt").filter({ hasText: "Shape.pick" }).first();
+    await pick.locator("button.xb").click();
+    xp = pick.locator(".inspect .xp");
+    assert.match((await xp.locator(".eq").textContent()).replace(/\s+/g, " "), /provided \(x_3 : k \+ 1 = 0 → False\): Shape\.pick \(k \+ 1\) 0 = 1 Shape\.pick\.eq_2/);
+    assert.match(await xp.textContent(), /Not applying here: Shape\.pick\.eq_1, Shape\.pick\.eq_3/);
+    assert.match((await xp.locator(".args").textContent()).replace(/\s+/g, " "), /argument 1 := k \+ 1/);
+    if (width === 1300) await pg.screenshot({ path: process.env.SHOT_DIR ? path.join(process.env.SHOT_DIR, "expansion.png") : path.join(os.tmpdir(), "mc-expansion.png") });
   });
 
   await check("a statement keeps its order, with each object's own conditions beside it", width, async (pg) => {

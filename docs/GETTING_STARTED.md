@@ -54,7 +54,7 @@ requires a text layer and recognisable headings. The reader marks these location
 MachineChecked reads an existing [`formalization.yaml`](https://github.com/mathlib-initiative/formalization.yaml):
 
 - its formalised sources are offered as papers;
-- the mappings in its `alignment` (in the shape `statements: [{source, lean}]`) become links, labelled *formalization.yaml*: attributed to the project;
+- the mappings in its `alignment` (in the shape `statements: [{source, lean}]`) become links, labelled *formalization.yaml*: attributed to the project; a row's `note` is shown beside the claim's links as the project's note;
 - its review status and counts appear as the project’s reported metadata.
 
 When the file names several sources, a mapping is used for a paper only if it names that paper by a word distinctive to its title.
@@ -86,6 +86,12 @@ body; a definition by pattern matching or recursion shows the equations Lean der
 of the definition, the exact statement of each equation theorem and the elaborated value; the
 compiled form of a recursive definition is folded under **Compiled value**.
 
+A definition applied in a statement expands where it stands: after the expression, **expand**
+lists its applications of the project's definitions. Choosing one shows the arguments, by the
+definition's parameters, and the definition at those arguments: its body with them substituted,
+or the equations that apply to them with any case condition and the equation theorem's name.
+Lean performs the substitution and checks it. Applications inside an expansion expand in turn.
+
 Click the evidence summary for proof checks, reviews and provenance. The ⋯ menu contains
 **Copy link**, **Report issue** and **Review it**; reviewing opens the selected claim.
 
@@ -107,6 +113,26 @@ The local reader saves your decisions in `machinechecked.links.json` at the repo
 
 A link records the declaration associated with a claim. A correspondence review compares their
 assumptions, definitions and conclusion; see [Reviewing](REVIEWING.md).
+
+**Coverage notes.** An auditor who has compared a claim with its declarations can say how far
+they state it, in the claim's entry of `machinechecked.links.json`:
+
+```json
+"lemma-8.6": {"lean": ["Proj.inverse_bound", "Proj.inverse_solves"],
+              "coverage": "changed", "confidence": "high",
+              "note": "The bound needs n + 5 derivatives where (8.19) has m + 4.",
+              "by": "A. Auditor"}
+```
+
+`coverage` is `full` (the declarations' statements together give every clause), `composed` (every
+clause follows, but only by combining the declarations through reasoning no Lean statement
+records, such as chaining estimates: the auditor's argument), `partial` (some clauses have no
+counterpart), `changed` (a clause is stated with other hypotheses, bound or setting), `related`
+(a comparable result) or `unresolved` (the note states the open question); `confidence` is
+`high`, `medium` or `low`. The reader shows the
+note under the claim's status, as the auditor's reading, and `check --json` reports it as the
+claim's `correspondence`. A note changes no status, and linking other declarations in the reader
+removes it, since it described the old ones.
 
 ## Read a claim
 
@@ -141,8 +167,8 @@ machinechecked build --site public/ --author "Your Name" --issues owner/repo
 
 If the Lean repository is private, add `--private-repository`: the reader then labels its source links as private instead of naming the repository. The name is still inside the links and the data, and the links open only for people with access.
 
-The directory carries `audit.json`: the public paper identifier, audited revision, Lean project
-commit, publisher and data location. Sites such as machinechecked.org use it to load the audit.
+The directory carries `audit.json`: the public paper identifier, the version of the paper it
+pins, audited revision, Lean project commit, publisher and data location. Sites such as machinechecked.org use it to load the audit.
 Review the exported paper and Lean statements before publishing.
 
 To check the linked declarations in automation:
@@ -183,6 +209,39 @@ jobs:
 ```
 
 The workflow uses your repository’s GitHub Actions runners and build cache.
+
+## Several audits of one repository
+
+An audit pins one version of its paper: a published version (`published = "arXiv:2601.01234v1"`, labelled "arXiv v1") or an unpublished manuscript at a commit (`version = "manuscript"` with the source's `rev`, labelled "Latest manuscript (commit abc1234)"). The [full assessment guide](ASSURANCE.md) says how to declare it; `build` refuses an audit whose claim inventory is pinned to another version. When some claims carry no pin, the version is shown as declared by the author and not checked against the claims.
+
+To publish an audit of each version side by side, keep the configuration of each on its own Lean ref (for example a branch `audit-v1` holding the published version's configuration, and `main` for the latest manuscript), and call the workflow once per audit with `ref` and `subpath`. Each call uploads its audit under that subpath; one deploy job merges them into one GitHub Pages site, at `/v1/` and `/latest/`:
+
+```yaml
+# .github/workflows/machinechecked.yml in your repository
+on: { push: { branches: [main] }, workflow_dispatch: }
+jobs:
+  v1:
+    uses: cgarryZA/MachineChecked/.github/workflows/audit.yml@main
+    with: { ref: audit-v1, subpath: v1, tex: true }
+  latest:
+    uses: cgarryZA/MachineChecked/.github/workflows/audit.yml@main
+    with: { subpath: latest, tex: true }
+  deploy:
+    needs: [v1, latest]
+    runs-on: ubuntu-24.04
+    permissions: { pages: write, id-token: write }
+    environment: github-pages
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { pattern: machinechecked-audit*, merge-multiple: true, path: site }
+      - uses: actions/upload-pages-artifact@v3
+        with: { path: site }
+      - uses: actions/deploy-pages@v4
+```
+
+A deploy replaces the whole site, so every run builds every audit; a saved build (`cache-repo`) keeps the frozen one quick. Each audit's `site_url` (in the configuration on its ref) is its own address, such as `https://you.github.io/project/v1/`.
+
+A paper page that lists audits of several versions gives each version its own page, and the reader a drop-down beside the formalisation selector to switch between them ([data model](DATA_MODEL.md)). Each version keeps its own PDF, claim numbers and statuses.
 
 ## A badge for your README
 

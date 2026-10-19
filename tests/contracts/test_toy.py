@@ -85,13 +85,34 @@ def test_definitions_carry_what_they_say_through_the_export(toy, tmp_path):
         chunk = json.loads((data / "claims" / c["file"]).read_text())
         return json.loads((data / "decls" / f"{chunk['decls']['Toy.triangle']}.json").read_text())
 
+    def expanded(out):
+        """The definitions expanded at their arguments in Theorem 2.1's exported statements."""
+        data = out / "data"
+        idx = json.loads((data / "index.json").read_text())
+        c = next(c for c in idx["claims"] if c["id"] == "T:thm:even-add")
+        found = []
+
+        def walk(o):
+            if isinstance(o, dict):
+                found.extend(x["name"] for x in o.get("expansions", []))
+                for v in o.values():
+                    walk(v)
+            elif isinstance(o, list):
+                for v in o:
+                    walk(v)
+        walk(json.loads((data / "claims" / c["file"]).read_text()))
+        return found
+
     export(cfg, tmp_path / "public")
     rec = exported(tmp_path / "public")
     assert rec["equations"] == tri["equations"] and rec["lean_source"] == tri["lean_source"]
+    # The statement's applications of evenness are expanded, and published with the Lean.
+    assert "Toy.IsEven" in expanded(tmp_path / "public")
     edit(toy / "machinechecked.toml", "lean = true", "lean = false")
     export(cfgmod.load(toy / "machinechecked.toml"), tmp_path / "private")
     rec = exported(tmp_path / "private")
     assert not {"equations", "body", "lean_source", "value"} & set(rec)
+    assert expanded(tmp_path / "private") == []
 
 
 @needs_lean

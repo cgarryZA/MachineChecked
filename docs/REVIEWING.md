@@ -63,6 +63,14 @@ revision, Lean fingerprints and reviewer attribution.
 
 The maintainer reads the report and decides whether to promote its review markers.
 
+## Publishing reports with an audit
+
+In zero configuration, put exported report files in the project's `machinechecked-reviews/`
+folder and build again. Each statement shows its reports under its links: the verdict, the
+reviewer as recorded, the comparison and the locked reading. A report is marked when the claim
+now links other declarations, or their statements changed, since it was recorded. Reports are
+shown as their reviewers wrote them and change no status; `check --json` lists them per claim.
+
 ## Maintainer acceptance
 
 In a project with formal review markers, a maintainer can evaluate saved reports with:

@@ -64,4 +64,16 @@ No solution for $0$ has a negative bound.
 If $a \le b$ and $b \le a$, then $a = b$.
 \end{theorem}
 
+\begin{theorem}\label{thm:jet}\lean{Shape.jet_lower}
+If the first $n + 5$ differences of $f$ are bounded by $C$ on $S$, so are the first $n + 4$.
+\end{theorem}
+
+\begin{theorem}\label{thm:below}\lean{Shape.below_succ}\lean{Shape.every_below}
+A vector bounded by $i$ is bounded by $i + 1$; vectors bounded by $7$ are bounded by $8$.
+\end{theorem}
+
+\begin{theorem}\label{thm:steps}\lean{Shape.steps_pos}\lean{Shape.pick_at}
+The number of steps down from $k + 3$ is positive, and $\mathrm{pick}(k + 1, 0) = 1$.
+\end{theorem}
+
 \end{document}

@@ -176,6 +176,28 @@ def props(o, kind="proposition"):
     return [(p["field"], p["type"]["text"]) for p in o.get("properties", []) if p["kind"] == kind]
 
 
+def expansions(pp):
+    """The expansions of a printed expression, by the text of the application each expands."""
+    out = {}
+    for x in pp.get("expansions", []):
+        t = next((t for t in pp["terms"] if t["id"] == x["at"]), None)
+        text = "".join(s["t"] for s in pp["segments"][t["from"]:t["to"]]) if t else x["name"]
+        out[bare(text)] = x
+    return out
+
+
+def bare(s):
+    """`s` without parentheses that enclose all of it."""
+    if not (s.startswith("(") and s.endswith(")")):
+        return s
+    depth = 0
+    for i, c in enumerate(s):
+        depth += (c == "(") - (c == ")")
+        if depth == 0 and i < len(s) - 1:
+            return s
+    return s[1:-1]
+
+
 @needs_lean
 @needs_tex
 @pytest.mark.parametrize("toolchain", [None, "leanprover/lean4:v4.24.0"])
@@ -245,3 +267,62 @@ def test_properties_carried_by_types(tmp_path, toolchain):
     assert props(neg["args"][0])[0] == ("start", "s.path 0 = 0")
     # Objects whose type carries no proposition get nothing: a number, a type, a datum.
     assert all("properties" not in x for x in statement(root)["binders"])
+
+
+def test_definitions_expand_at_their_arguments(tmp_path, toolchain):
+    """An application of a project definition inside a statement carries the definition at its
+    actual arguments (#97), substituted and type-checked by Lean: the body at those arguments,
+    with parameters not yet supplied kept and the definition's bound variables renamed apart, or
+    the equations that apply, specialised, with their case conditions and theorem names. Two
+    applications with different arguments are different expansions."""
+    root = build_copy(tmp_path, toolchain)
+    view = build_view(root, root / "paper/main.tex", root / ".machinechecked", log=lambda m: None)
+    rec = {l["name"]: l["record"] for c in view["body"]["claims"] for l in c["links"]}
+
+    jet = rec["Shape.jet_lower"]
+    hyp = expansions(jet["binders"][-1]["type"])["Shape.JetBound f S (n + 5) C"]
+    concl = expansions(jet["conclusion"])["Shape.JetBound f S (n + 4) C"]
+    assert hyp["checked"] and hyp["defined_by"] == "body" and hyp["params"] == []
+    assert [(a["name"], a["value"]["text"]) for a in hyp["args"]] == \
+        [("f", "f"), ("S", "S"), ("k", "n + 5"), ("C", "C")]
+    assert hyp["body"]["text"] == "∀ (j : Nat), j ≤ n + 5 → ∀ (x : Nat), S x → f j x ≤ C"
+    assert concl["body"]["text"] == "∀ (j : Nat), j ≤ n + 4 → ∀ (x : Nat), S x → f j x ≤ C"
+    assert hyp["id"] != concl["id"] and hyp["at"] != concl["at"]
+    # The arguments are the statement's own variables.
+    assert ("n", 2) in var_refs(hyp["body"])
+
+    # Implicit and instance arguments keep their order and how they are written; a partial
+    # application keeps the parameter it still needs.
+    every = rec["Shape.every_below"]
+    xs = expansions(every["binders"][-1]["type"])
+    part = xs["Shape.AllBelow 7"]
+    assert [(a["name"], a["binder"], a["value"]["text"]) for a in part["args"]] == \
+        [("α", "implicit", "Nat"), ("", "instance", "instLENat"), ("bound", "explicit", "7"),
+         ("n", "implicit", "2")]
+    assert [(p["name"], p["type"]["text"]) for p in part["params"]] == [("v", "Fin 2 → Nat")]
+    assert part["body"]["text"] == "∀ (i : Fin 2), v i ≤ 7"
+    # The definition it is passed to expands with it applied, and that expands in turn.
+    outer = xs["Shape.Every (Shape.AllBelow 7) vs"]
+    assert outer["body"]["text"] == "∀ (v : Fin 2 → Nat), v ∈ vs → Shape.AllBelow 7 v"
+    inner = expansions(outer["body"])["Shape.AllBelow 7 v"]
+    assert inner["body"]["text"] == "∀ (i : Fin 2), v i ≤ 7" and inner["params"] == []
+    # A bound variable of the definition does not capture the statement's own `i`.
+    below = expansions(rec["Shape.below_succ"]["binders"][-1]["type"])["Shape.AllBelow i v"]
+    assert below["body"]["text"] == "∀ (i_1 : Fin 3), v i_1 ≤ i"
+
+    # By equations: the one that applies, specialised, with its theorem and case condition.
+    steps = expansions(rec["Shape.steps_pos"]["conclusion"])["Shape.steps (k + 3)"]
+    assert steps["defined_by"] == "equations" and steps["equations_omitted"] == 0
+    [eq] = steps["equations"]
+    assert eq["name"] == "Shape.steps.eq_1" and eq["params"] == []
+    assert eq["statement"]["text"] == \
+        "Shape.steps (k + 3) = if h : k + 3 = 0 then 0 else Shape.steps (k + 3 - 1) + 1"
+    # Its left side is the application being expanded; only the right side's applications are.
+    assert list(expansions(eq["equation"])) == ["Shape.steps (k + 3 - 1)"]
+    pick = expansions(rec["Shape.pick_at"]["conclusion"])["Shape.pick (k + 1) 0"]
+    [eq] = pick["equations"]
+    assert eq["name"] == "Shape.pick.eq_2"
+    assert [(p["proposition"], p["type"]["text"]) for p in eq["params"]] == \
+        [(True, "k + 1 = 0 → False")]
+    assert eq["equation"]["text"] == "Shape.pick (k + 1) 0 = 1"
+    assert pick["equations_not_applying"] == ["Shape.pick.eq_1", "Shape.pick.eq_3"]
