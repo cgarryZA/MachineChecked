@@ -64,9 +64,10 @@ def statements(fy: dict) -> list[dict]:
             continue
         rest = src[m.end():]
         module = r.get("module") if isinstance(r.get("module"), str) else None
+        note = r.get("note").strip() if isinstance(r.get("note"), str) else ""
         out.append({"source": src, "kind": m.group(1).lower(), "number": m.group(2),
                     "hint": _tokens(rest), "lean": names, "status": r.get("status"),
-                    "module": module})
+                    "module": module, "note": note})
     return out
 
 

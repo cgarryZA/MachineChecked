@@ -73,6 +73,10 @@ See [the structured status contract](STATUS_CONTRACT.md) for the complete code i
 findings counts. `data/claims/<file>.json` holds one passport: the printed statement, each
 clause's unfolded statement, proofs, witness, regimes, reviews and structured `evidence`, the
 declarations of its closure, and its findings. A claim is loaded only when it is opened.
+In zero configuration a passport also has `correspondence` (or `null`): the mapper's note on how
+far the linked declarations state the claim, `{source, coverage, confidence, note, by}`, where
+`source` is `confirmed` (the auditor's, from `machinechecked.links.json`) or `formalization.yaml`
+(the project's row notes). It is displayed beside the links and is never an input to a status.
 
 A paper page (`prooflens.paper.write_paper_site`, used by machinechecked.org) is written in the
 same format, with `mode: "paper"`: the paper's registry entry (`paper`), the Lean projects that
