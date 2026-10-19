@@ -259,6 +259,28 @@ def _unpack(arc: Path, project: Path) -> None:
         shutil.rmtree(stage, ignore_errors=True)
 
 
+def _unpack_older(arc: Path, project: Path) -> None:
+    """Unpack an archive in the older layout: paths from the checkout's parent, the project's
+    under its folder's name (which may differ from this checkout's in case), a path
+    dependency's under its own. The project's folder goes into this checkout, the others
+    beside it, after the whole archive has been read."""
+    stage = Path(tempfile.mkdtemp(prefix=".lean-cache-restore-", dir=project))
+    try:
+        _sh(["tar", "-C", str(stage), "-I", "zstd -T0", "-xf", str(arc)])
+        for top in sorted(stage.iterdir()):
+            base = project if top.name.lower() == project.name.lower() else project.parent / top.name
+            for f in sorted(top.rglob("*")):
+                if f.is_dir() and not f.is_symlink():
+                    continue
+                dest = base / f.relative_to(top)
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(f), str(dest))
+    except OSError as e:
+        raise CacheError(f"the restore failed ({e}); the build was left as it was") from e
+    finally:
+        shutil.rmtree(stage, ignore_errors=True)
+
+
 def repository(project: Path) -> str | None:
     """The project's GitHub repository (`owner/repo`), from its `origin` remote."""
     from .audit import github_repository
@@ -484,7 +506,7 @@ def restore(project: Path, repo: str | None = None, local: Path | None = None,
         if man.get("layout") == 2:
             _unpack(arc, project)
         else:
-            _sh(["tar", "-C", str(project.parent), "-I", "zstd -T0", "-xf", str(arc)])
+            _unpack_older(arc, project)
     log(f"restored {stem} ("
         + ("the same Lean inputs" if key[0] == 0 else f"{dist} commits behind HEAD")
         + f", sha256 {got[:16]}…) "

@@ -377,7 +377,9 @@ def probe_modules(root: Path, modules: list[str], libs: list[str], requests: lis
             if len(group) == 1:
                 failed[group[0]] = str(e)[-600:]
                 return
-            log(f"lean: {label} could not be loaded in one session; splitting it")
+            errors = [l.strip() for l in str(e).splitlines() if "error" in l]
+            reason = errors[0].split("error:", 1)[-1].strip()[:200] if errors else "no error message"
+            log(f"lean: {label} could not be loaded in one session ({reason}); splitting it")
             half = len(group) // 2
             run(group[:half], label + "/a")
             run(group[half:], label + "/b")

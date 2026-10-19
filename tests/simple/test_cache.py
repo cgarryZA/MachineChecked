@@ -208,6 +208,14 @@ def test_an_archive_in_the_older_layout_still_restores(toy, tmp_path):
     cache.restore(other, local=out, log=lambda m: None)
     assert built(other, "--rehash") == []
 
+    # A checkout whose folder's name differs in case gets the build itself, not a sibling folder.
+    upper = tmp_path / "c" / "Toy"
+    upper.parent.mkdir()
+    git(upper.parent, "clone", "-q", str(src), "Toy")
+    cache.restore(upper, local=out, log=lambda m: None)
+    assert sorted(p.name for p in upper.parent.iterdir()) == ["Toy"]
+    assert built(upper, "--rehash") == []
+
 
 def test_prune_keeps_the_newest_of_each_package_platform_and_version():
     def man(project, created, toolchain="lean4:v1"):

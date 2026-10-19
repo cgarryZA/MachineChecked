@@ -357,7 +357,8 @@ def emitClosure (h : IO.FS.Handle) (roots : Array Name) (root : Name) (used : Ar
     unless inScope roots env n do continue
     let some c := env.find? n | continue
     members := members.push n.toString
-    let (j, more) ← declRecord roots n c
+    -- Each member has its own heartbeat budget: a closure can hold thousands.
+    let (j, more) ← withCurrHeartbeats (declRecord roots n c)
     unless (← seen.get).contains n do
       seen.modify (·.insert n)
       emit h j
@@ -460,7 +461,10 @@ def indexRecords (h : IO.FS.Handle) (roots : Array Name) : MetaM Unit := do
         | .axiomInfo _ => some "axiom" | _ => none
       let some k := kind | continue
       if k == "def" && (← isInstance n) then continue
-      let ty ← try pure (toString (← ppExpr ci.type)) catch _ => pure "(not printable)"
+      -- Each declaration printed has its own heartbeat budget: a project can hold tens of
+      -- thousands, more than one budget prints.
+      let ty ← withCurrHeartbeats do
+        try pure (toString (← ppExpr ci.type)) catch _ => pure "(not printable)"
       let doc ← findDocString? env n
       emit h (Json.mkObj [("record", "index"), ("name", n.toString), ("kind", k),
         ("module", mod.toString), ("range", ← rangeJson n),
@@ -605,8 +609,10 @@ open ProofLensProbe in
       ("githash", Lean.githash)])
     layering h q
     for r in q.requests do
-      -- Each request has its own heartbeat budget.
-      try withCurrHeartbeats <|
+      -- Each request has its own heartbeat budget. A request that fails, including by running
+      -- out of heartbeats (a runtime exception, which `try` does not catch), emits an error
+      -- record for itself and the probe goes on.
+      tryCatchRuntimeEx (withCurrHeartbeats do
         match r.kind with
         | "spec" => specRecord h q roots seen r.name.toName
         | "accept" | "refute" => proofRecord h q r.kind r.name.toName (r.spec.map (·.toName))
@@ -626,9 +632,9 @@ open ProofLensProbe in
           else
             emit h (Json.mkObj [("record", "defclosure"), ("name", r.name),
               ("errors", toJson #["missing"])])
-        | _ => pure ()
-      catch err =>
-        emit h (Json.mkObj [("record", if r.kind == "decl" then "defclosure" else r.kind),
-          ("name", r.name), ("spec", match r.spec with | some x => Json.str x | none => Json.null),
-          ("errors", toJson #[s!"probe-error: {← err.toMessageData.toString}"])])
+        | _ => pure ())
+        (fun err => do
+          emit h (Json.mkObj [("record", if r.kind == "decl" then "defclosure" else r.kind),
+            ("name", r.name), ("spec", match r.spec with | some x => Json.str x | none => Json.null),
+            ("errors", toJson #[s!"probe-error: {← err.toMessageData.toString}"])]))
     emit h (Json.mkObj [("record", "done")])
