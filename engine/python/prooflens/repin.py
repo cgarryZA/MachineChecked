@@ -334,6 +334,64 @@ def repin_plan(inventory: dict, paper: str, old_root: Path, new_root: Path, old_
     return result, report
 
 
+def repin_excerpts(display: dict, claim_ids: set[str], old_root: Path, new_root: Path,
+                   old_rev: str, new_rev: str) -> tuple[dict, list[dict]]:
+    """The display overlay with the excerpt selectors of `claim_ids` moved to `new_rev`, and a
+    report entry for each. A selector by label is read again at the next build and is only
+    checked here. A selector by location moves when its passage occurs exactly once, with the
+    same text, where the paper prints it; any other is pinned to `old_rev`, so that it selects
+    nothing at the new revision until it is chosen again. Excerpts are display only: nothing
+    here touches the inventory."""
+    result = deepcopy(display)
+    old_files, new_files = tex_files(old_root), tex_files(new_root)
+    entries = []
+    for cid, shown in sorted((result.get("claims") or {}).items()):
+        sel = shown.get("excerpt") if isinstance(shown, dict) else None
+        if cid not in claim_ids or not isinstance(sel, dict):
+            continue
+        entry = {"claim": cid, "selector": deepcopy(sel)}
+        if "label" in sel:
+            where = [f"{f}:{ln}" for f, text in new_files.items() for n, ln in labels(text)
+                     if n == sel["label"]]
+            entry["class"] = "follows-label" if len(where) == 1 else "label-not-unique"
+            entry["candidates"] = where
+            if len(where) != 1:
+                entry["reason"] = (f"the label {sel['label']} occurs {len(where)} times in the "
+                                   "new revision: the claim will be shown from the PDF")
+            entries.append(entry)
+            continue
+        pin = sel.get("revision")
+        if pin is not None and not same_revision(str(pin), old_rev):
+            entry.update({"class": "stale", "reason": f"it was selected at revision {pin}"})
+            entries.append(entry)
+            continue
+        span = {k: v for k, v in sel.items() if k not in ("location", "revision")}
+        here = {"location": sel.get("location"), **({"source_region": span} if span else {})}
+        try:
+            region = extract(old_root, here)
+        except (RegionError, OSError, UnicodeError) as error:
+            entry.update({"class": "stale", "reason": f"at the original revision: {error}"})
+            entries.append(entry)
+            continue
+        found = [(c, r) for c, r, hidden in exact_matches(new_root, new_files, here, region)
+                 if not hidden]
+        if len(found) == 1:
+            placed, new = found[0]
+            moved = {"location": placed["location"], **placed.get("source_region", {})}
+            if pin is not None:
+                moved["revision"] = new_rev
+            shown["excerpt"] = moved
+            entry.update({"class": "unchanged" if moved == sel else "moved", "to": moved,
+                          "context_changed": _context(old_files, region) != _context(new_files, new)})
+        else:
+            shown["excerpt"] = {**sel, "revision": sel.get("revision") or old_rev}
+            entry.update({"class": "invalidated", "to": shown["excerpt"], "reason": (
+                f"its text occurs {len(found)} times where the new revision prints it" if found
+                else "its text is not in the new revision") + "; select the passage again"})
+        entries.append(entry)
+    return result, entries
+
+
 def _apply(claim: dict, entry: dict, region, target, paper_pin, old_rev: str, new_rev: str):
     """Update one claim in the planned inventory. A repinned claim takes its new place and
     revision; any other claim keeps its digests and the revision they were made at (and takes
@@ -436,6 +494,13 @@ def main(argv=None) -> int:
                 raise RegionError("repinning needs pinned LaTeX source snapshots")
             result, report = repin_plan(inventory, paper.id, old.dir, new.dir, old.revision,
                                         new.revision)
+            before_display = display = new_display = None
+            if cfg.display and cfg.display.exists():
+                before_display = cfg.display.read_bytes()
+                display = json.loads(before_display)
+                ids = {c["id"] for c in inventory["claims"] if c["paper"] == paper.id}
+                new_display, report["excerpts"] = repin_excerpts(
+                    display, ids, old.dir, new.dir, old.revision, new.revision)
         links = {}
         if cfg.symbols and cfg.symbols.exists():
             for link in json.loads(cfg.symbols.read_text(encoding="utf-8")).get("links", []):
@@ -456,8 +521,14 @@ def main(argv=None) -> int:
                                               old_value, new_value)
             if cfg.path.read_bytes() != before_cfg:
                 raise RegionError("the configuration changed while planning; nothing written")
+            if before_display is not None and cfg.display.read_bytes() != before_display:
+                raise RegionError("the display overlay changed while planning; nothing written")
             if result != inventory:
                 write_plan(cfg.inventory, before, result)
+                written = True
+            if new_display is not None and new_display != display:
+                _replace(cfg.display, before_display,
+                         json.dumps(new_display, indent=2, ensure_ascii=False) + "\n")
                 written = True
             if config_text is not None:
                 _replace(cfg.path, before_cfg, config_text)

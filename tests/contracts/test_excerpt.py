@@ -150,6 +150,16 @@ def test_a_plain_passage_is_ready(tmp_path):
     rec = one(tmp_path, "For every $n$, \\emph{the} sum $\\sum_i i$ is finite.\n% gone\nNext sentence.")
     assert rec["ready"], rec["reasons"]
     assert texts(rec["blocks"][0]["p"]).endswith("is finite. Next sentence.")
+    rec = one(tmp_path, "As in \\cite{lit,lit}.")
+    assert rec["ready"] and rec["blocks"][0]["p"][1]["cite"] == ["1", "1"]
+
+
+def test_a_selector_of_another_revision_selects_nothing(tmp_path):
+    sel = {"location": "main.tex:6", "end_line": 6, "end_column": 5}
+    assert one(tmp_path, "Some text.", selector=sel)["ready"] is True
+    rec = one(tmp_path, "Some text.", selector={**sel, "revision": "other"})
+    assert rec["ready"] is False and "selected at revision other" in rec["reasons"][0]
+    assert one(tmp_path, "Some text.", selector={**sel, "revision": "rev"})["ready"] is True
 
 
 @pytest.mark.parametrize("body, preamble, why", [
@@ -170,6 +180,8 @@ def test_a_plain_passage_is_ready(tmp_path):
     ("\\newcommand{\\x}{y}$\\x$", "", "the passage defines a macro"),
     ("a $b", "", "mathematics without its closing $"),
     ("a < b", "", "the character < prints differently"),
+    ("As in \\cite{lit,lit}.", "\\usepackage{cite}\n", "which the cite package prints"),
+    ("$\\div x$", "\\usepackage{physics}\n", "the physics package"),
 ])
 def test_anything_not_reproduced_falls_back_whole(tmp_path, body, preamble, why):
     rec = one(tmp_path, body, preamble)

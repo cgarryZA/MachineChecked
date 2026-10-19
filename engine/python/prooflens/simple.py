@@ -92,12 +92,18 @@ def find_papers(root: Path) -> list[Path]:
 
 # -- claims from the paper -------------------------------------------------------------------
 
+def anchor_key(a: dict) -> str:
+    """The key a statement environment's claim has in zero configuration."""
+    num = a.get("number")
+    return a.get("label") or (f"{a['env']}-{num}" if num else f"{a['env']}@{a['file']}:{a['line']}")
+
+
 def claims_from_anchors(pid: str, anchors: list[dict], snap: Path) -> list[dict]:
     claims = []
     for a in anchors:
         env = a["env"]
         num = a.get("number")
-        key = a.get("label") or (f"{env}-{num}" if num else f"{env}@{a['file']}:{a['line']}")
+        key = anchor_key(a)
         title, tags = a.get("title") or "", []
         if a.get("file"):
             try:
@@ -536,9 +542,7 @@ def view_excerpts(snap, cwd: Path, anchors: list[dict], envs: list[str]) -> dict
     for a in anchors:
         rec = excerpt_for(snap.dir, snap.root, aux, snap.revision, set(envs), a, None, None)
         if rec is not None:
-            num = a.get("number")
-            out[a.get("label") or (f"{a['env']}-{num}" if num else
-                                   f"{a['env']}@{a['file']}:{a['line']}")] = rec
+            out[anchor_key(a)] = rec
     return out
 
 

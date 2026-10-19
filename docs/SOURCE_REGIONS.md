@@ -101,8 +101,9 @@ Which passage is shown:
 A `label` selects the innermost display or theorem-like environment carrying that label; the
 label must occur exactly once. A `location` uses the bounds of an audited region
 (`end_line`, `start_column`, `end_column`, as above), so prose can stop before the next claim on
-the same line. `false` shows the PDF. A missing, ambiguous or reversed selector is refused, and
-the claim is shown from the PDF.
+the same line; its optional `revision` names the paper revision its lines belong to, and at any
+other revision it selects nothing. `false` shows the PDF. A missing, ambiguous or reversed
+selector is refused, and the claim is shown from the PDF.
 
 The excerpt is read when the release is built, from the snapshot that was compiled, and stored
 with that release's evidence: rebuilding an old release shows its original passage, and a
@@ -125,7 +126,10 @@ definition the passage uses that has an optional argument, delimited parameters,
 `\edef` or `xparse`, or that is made inside a group or a conditional; a passage that is not
 part of the compiled document; a reference or citation that is not resolved, or that prints TeX
 (an author–year citation style, `\cref`); a numbered equation row without a label (its number
-is not recorded); `multline`, `flalign` and `eqnarray`. In the reader, every piece of
+is not recorded); `multline`, `flalign` and `eqnarray`; a citation of several works when the
+paper loads a package that prints citations its own way (`cite`, `natbib`, `biblatex`); a
+paper that loads a package giving standard mathematics commands another meaning (`physics`,
+`unicode-math`, `mathabx`, `MnSymbol`). In the reader, every piece of
 mathematics is typeset by KaTeX in strict mode under those definitions; one error shows the PDF
 instead. Packages from the TeX distribution are not read: a command they define that KaTeX does
 not know shows the PDF, and a package that changes the meaning of a standard command is not
@@ -194,3 +198,14 @@ Reviews, clauses, dismissals, Lean and other papers are not touched; free text s
 or URLs naming the old revision is left to edit by hand. Rerunning the same command writes
 nothing more. Evidence and releases built before the repin keep the snapshot they were
 built from.
+
+The display excerpts of the paper's claims ([above](#display-excerpts)) are handled
+separately, under `excerpts` in the plan; the audited pins above do not depend on them. A
+selector by `label` is read again at the next build (`follows-label`, or `label-not-unique`
+when the label is missing or repeated in the new revision, and the claim is then shown from the
+PDF). A selector by `location` is `moved` (or `unchanged`) when its text occurs exactly once,
+where the paper prints it, in the new revision; `--write` gives it the new place, with
+`context_changed` saying whether the lines beside it changed. Any other is `invalidated`:
+`--write` adds the original revision to it, so it selects nothing at the new revision until it
+is chosen again (`stale` in a later plan). The display overlay is written atomically with the
+inventory, and only for the selected paper's claims.

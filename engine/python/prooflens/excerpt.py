@@ -21,7 +21,8 @@ from dataclasses import dataclass
 from pathlib import Path
 import re
 
-from .source_regions import ENV, COMMAND, Region, RegionError, environments, extract, source_file
+from .source_regions import (ENV, COMMAND, Region, RegionError, environments, extract,
+                             same_revision, source_file)
 from .util import content_id
 
 SCHEME = "tex-excerpt-v1"
@@ -45,6 +46,11 @@ DEFINERS = {"newcommand", "renewcommand", "providecommand", "DeclareRobustComman
             "gdef", "edef", "xdef", "let", "DeclareMathOperator", "newenvironment",
             "renewenvironment", "NewDocumentCommand", "RenewDocumentCommand",
             "DeclareDocumentCommand", "newtheorem", "renewtheorem"}
+# Packages that change how a citation of several works is printed (sorted, compressed or
+# differently punctuated): such a citation is not reproduced.
+CITE_PACKAGES = {"cite", "natbib", "citesort", "mcite", "biblatex", "cleveref"}
+# Packages that give standard mathematics commands another meaning or appearance than KaTeX's.
+MEANING_PACKAGES = {"physics", "unicode-math", "mathabx", "MnSymbol"}
 LIST_LABELS = re.compile(r"\\(labelenum|theenum|labelitem)[iv]+\b|\\set(list|enumerate|itemize)\b"
                          r"|\\usepackage(\[[^\]]*\])?\{[^}]*\b(enumitem|enumerate|paralist)\b")
 
@@ -149,6 +155,7 @@ class Context:
         self.defs: dict[str, Definition] = {}
         self.envs: dict[str, str] = {}          # environments the paper (re)defines
         self.inputs: list[str] = []
+        self.packages: set[str] = set()           # every package the paper loads, by name
         self.list_labels = False
         self.problems: list[str] = []
         self.cond = 0                            # depth of TeX conditionals being read
@@ -285,6 +292,8 @@ class Context:
                     arg, k = _group(text, k)
                     ext = ".cls" if name in ("documentclass", "LoadClass") else ".sty"
                     for pkg in (p.strip() for p in arg.split(",")):
+                        if pkg and ext == ".sty":
+                            self.packages.add(pkg)
                         found = pkg and self.resolve(pkg, (ext,))
                         if found:
                             self._file(found, 0, stack + [rel])
@@ -689,6 +698,10 @@ class Passage:
             nums = [self.cite(x.strip()) for x in keys.split(",") if x.strip()]
             if not nums:
                 raise Unsupported("an empty citation")
+            styled = sorted(self.ctx.packages & CITE_PACKAGES)
+            if len(nums) > 1 and styled:
+                raise Unsupported(f"a citation of several works, which the {styled[0]} package "
+                                  "prints in a form this reader does not reproduce")
             return {"cite": nums, "note": self.plain(note) if note else None,
                     "keys": [x.strip() for x in keys.split(",") if x.strip()]}, k
         raise Unsupported(f"the text command {cmd} is not supported")
@@ -937,6 +950,10 @@ def build_excerpt(root: Path, main: str, aux: dict, region: Region, body: str | 
             reasons.append(str(e))
         if ctx.problems:
             reasons.append("the paper's definitions could not all be read: " + ctx.problems[0])
+        changed = sorted(ctx.packages & MEANING_PACKAGES)
+        if changed:
+            reasons.append(f"the paper loads the {changed[0]} package, which changes the meaning "
+                           "of standard commands")
     # amsthm's styles: a `plain` theorem's body is italic, `definition` and `remark` are upright;
     # another style is not known here.
     style = ctx.theorems.get(env) if env and reached else None
@@ -976,12 +993,18 @@ def excerpt_for(root: Path, main: str, aux: dict, revision: str | None, envs: se
                     region, body = environment_body(root, region.file, region.start_line, env)
                 return build_excerpt(root, main, aux, region, body, revision, selector, env)
             if "location" in selector and set(selector) <= {"location", "end_line", "start_column",
-                                                            "end_column"}:
-                span = {k: v for k, v in selector.items() if k != "location"}
+                                                            "end_column", "revision"}:
+                # Line numbers belong to one revision: a selector that names another (as a
+                # repin leaves one it could not move) selects nothing.
+                pin = selector.get("revision")
+                if pin is not None and not (revision and same_revision(str(pin), revision)):
+                    raise RegionError(f"the excerpt was selected at revision {pin}, not at "
+                                      f"{revision or 'this working copy'}; select it again")
+                span = {k: v for k, v in selector.items() if k not in ("location", "revision")}
                 claim = {"location": selector["location"], **({"source_region": span} if span else {})}
                 return build_excerpt(root, main, aux, extract(root, claim), None, revision, selector)
             raise RegionError("an excerpt selector is {\"label\": …} or {\"location\": \"file:line\", "
-                              "\"end_line\": …, \"end_column\": …}")
+                              "\"end_line\": …, \"end_column\": …, \"revision\": …}")
         if selector is not None:
             raise RegionError("an excerpt selector is an object, or false")
         if anchor and anchor.get("file") and anchor.get("line") and anchor.get("env"):
