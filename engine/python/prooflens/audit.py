@@ -1,7 +1,8 @@
 """The audit descriptor: `audit.json` at the root of a published reader.
 
 It says, in a few fields, what the audit is about and where its data is: the paper (and its
-arXiv identifier and version when it has one), the Lean repository and commit, who published
+arXiv identifier when it has one), the version of the paper it pins (`paper_version`: published,
+such as arXiv v1, or an unpublished manuscript at a commit), the Lean repository and commit, who published
 the audit, where reports go, and the path of the reader's data. A site that indexes audits reads
 this file and then the data it points to; it never runs anything an audit contains.
 
@@ -77,6 +78,12 @@ def descriptor(index: dict, lean_root: Path | None, author: str | None = None,
             entry.update(published_record(p["published"]))
         if p.get("published_note"):
             entry["note"] = p["published_note"]
+        # The version this audit pins (engine/python/prooflens/versions.py). An unpublished
+        # manuscript carries no published version number, even when `published` names the paper.
+        ver = p.get("paper_version")
+        entry["paper_version"] = ver
+        if ver and ver.get("kind") == "manuscript":
+            entry["version"] = None
         papers.append(entry)
     project = index.get("project") or {}
     return {

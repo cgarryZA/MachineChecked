@@ -142,8 +142,8 @@ def build(evidence: dict, release: str, display: dict | None = None
                        "pdf": f"papers/{pid}.pdf" if prov.get("pdf_sha256") else None,
                        "pdf_sha256": prov.get("pdf_sha256"), "page_size": t.get("page_size"),
                        "note": prov.get("note", ""),
-                       **{k: prov[k] for k in ("published", "published_note", "source_commit")
-                          if prov.get(k)}})
+                       **{k: prov[k] for k in ("published", "published_note", "source_commit",
+                                               "paper_version") if prov.get(k)}})
 
     store = decl_records(body, lean)
     keys = {n: record_key(r) for n, r in store.items()}
