@@ -531,7 +531,9 @@ def moduleDocRecords (h : IO.FS.Handle) (roots : Array Name) : MetaM Unit := do
     for d in docs do
       let mut heading : List Char := []
       let mut fence := false
-      let mut line := d.declarationRange.pos.line
+      -- Lean stores the text without its leading whitespace, so its first line is counted back
+      -- from the closing `-/`.
+      let mut line := d.declarationRange.endPos.line - (d.doc.toList.filter (· == '\n')).length
       for l in splitChars '\n' d.doc.toList do
         let t := l.dropWhile Char.isWhitespace
         if "```".toList.isPrefixOf t then

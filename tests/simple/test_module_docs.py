@@ -73,15 +73,17 @@ def test_stale_names_in_module_docstrings_are_listed(tmp_path, monkeypatch, caps
     view = build_view(root, root / "paper/main.tex", root / ".machinechecked",
                       log=lambda m: None)
     found = [(d["file"], d["line"], d["name"]) for d in view["body"]["module_docs"]]
-    assert found == [("Shape/Widgets.lean", 11, "Shape.Widget.foo_le_bar"),
-                     ("Shape/Widgets.lean", 12, "gone_lemma")]
+    lines = WIDGETS.splitlines()
+    assert found == [("Shape/Widgets.lean", 12, "Shape.Widget.foo_le_bar"),
+                     ("Shape/Widgets.lean", 13, "gone_lemma")]
+    assert all(f"`{n}`" in lines[l - 1] for _, l, n in found)
     assert any(n.startswith("2 name(s) in module docstrings are not declared")
                for n in view["body"]["notes"])
     monkeypatch.chdir(root)
     capsys.readouterr()
     cli.main(["check", "paper/main.tex"])  # a warning: the check still passes
     out = capsys.readouterr().out
-    assert ("warning: Shape/Widgets.lean:11: module docstring names Shape.Widget.foo_le_bar, "
+    assert ("warning: Shape/Widgets.lean:12: module docstring names Shape.Widget.foo_le_bar, "
             "which is not declared") in out
     cli.main(["check", "--json", "paper/main.tex"])
     doc = json.loads(capsys.readouterr().out)
