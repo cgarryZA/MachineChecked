@@ -91,6 +91,21 @@ You can:
 
 The local reader saves your decisions in `machinechecked.links.json` at the repository root and refreshes the view. Commit that small file if you want the associations to travel with the project.
 
+The same from a terminal, with the same checks and no Lean run (it resolves names against the
+last `view` or `build`):
+
+```sh
+machinechecked link "Lemma 2.3" Example.inverse_bound Example.inverse_solves \
+  --coverage changed --confidence high --note-file note.md --as "A. Auditor"
+machinechecked link "Lemma 2.3" --reject Example.other --reason "a different estimate"
+machinechecked link "Lemma 2.3" --clear     # the paper's \lean tags apply again
+```
+
+A claim is named by its id, its key (`lem:bound`) or its number; a number two claims share, or a
+name the build does not have, is refused with the candidates, and nothing is written. A
+declaration whose module is not built is recorded and reads as such until it is built.
+`--dry-run` shows the change and `--json` prints it as one document.
+
 A link records the declaration associated with a claim. A correspondence review compares their
 assumptions, definitions and conclusion; see [Reviewing](REVIEWING.md).
 
@@ -108,8 +123,8 @@ they state it, in the claim's entry of `machinechecked.links.json`:
 have no counterpart), `changed` (a clause is stated with other hypotheses, bound or setting) or
 `related` (a comparable result); `confidence` is `high`, `medium` or `low`. The reader shows the
 note under the claim's status, as the auditor's reading, and `check --json` reports it as the
-claim's `correspondence`. A note changes no status, and linking other declarations in the reader
-removes it, since it described the old ones.
+claim's `correspondence`. A note changes no status. It describes the declarations it was written
+for: when the list changes, it moves to `earlier_notes` in the file and is no longer shown.
 
 ## Read a claim
 

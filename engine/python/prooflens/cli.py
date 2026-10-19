@@ -11,7 +11,8 @@ the full assessment; any other project gets the zero-configuration view, whose o
 repository is `machinechecked.links.json` (its working files, a downloaded paper among them, are
 in `.machinechecked/`, which Git ignores). The full assessment has further commands: reassess,
 site, bundle, export, serve, review promote, replay and validate; `cache` saves and restores
-the Lean build (each with --help).
+the Lean build (each with --help). `link` records a claim's links from the terminal, and
+`workspace` keeps a saved investigation, as the reader does.
 `prooflens` is another name for the same command.
 """
 
@@ -233,10 +234,14 @@ def cmd_view(a):
             from .symbols import from_reader
             from_reader(cfg, req, _web_dist(a.web))
 
-        serve(res["site"], a.port, None, not a.no_browser, on_symbol=on_symbol)
+        from .workspace import api
+        serve(res["site"], a.port, None, not a.no_browser, on_symbol=on_symbol,
+              api=api(cfg.out_dir, res["site"] / "data", cfg.root))
         return
+    from . import authoring
     from .server import serve
-    from .simple import save_link
+    from .targets import Snapshot
+    from .workspace import api
     root, paper = _simple_target(a)
     _settings(a, root)
     print(f"MachineChecked: {paper.relative_to(root)} in {root.name}")
@@ -245,10 +250,204 @@ def cmd_view(a):
     key = view["body"]["paper"]
 
     def on_link(req):
-        save_link(root, key, req["key"], req.get("lean"), req.get("reject"))
+        change = authoring.from_reader(root, key, Snapshot(site / "data"), req)
         _simple_site(root, paper, a.web)
+        return {"claim": change["claim"], "changed": change["changed"]}
 
-    serve(site, a.port, on_link, not a.no_browser)
+    serve(site, a.port, on_link, not a.no_browser,
+          api=api(root / cfgmod.work_dir_name(root), site / "data", root))
+
+
+# -- recording links and investigations -------------------------------------------------------
+
+def _print_json(obj) -> None:
+    print(json.dumps(obj, indent=1, ensure_ascii=False))
+
+
+def cmd_link(a):
+    """`machinechecked link CLAIM [DECL ...]`: record, reject or clear a claim's links in the
+    links file, checked against the last build (no Lean runs)."""
+    from . import authoring
+    from .simple import links_key, paper_title
+    from .targets import Snapshot, TargetError
+    if _assurance_config(a):
+        sys.exit("`link` records the links of the zero-configuration view; a full assessment "
+                 "names its declarations in the inventory")
+    root, paper = _simple_target(a)
+    try:
+        snap = Snapshot(root / cfgmod.work_dir_name(root) / "site" / "data")
+    except TargetError as e:
+        sys.exit(str(e))
+    built_title = ((snap.index.get("papers") or [{}])[0]).get("title")
+    if built_title != paper_title(paper):
+        sys.exit(f"the last build is of another paper ({built_title}); run "
+                 f"`machinechecked view {paper.relative_to(root)}` first")
+    note = _text_arg(a.note_file) if a.note_file else a.note
+    try:
+        change = authoring.plan(root, links_key(root, paper), snap, a.claim,
+                                lean=a.decls or None, add=a.add, reject=a.reject or None,
+                                clear=a.clear, note=note, coverage=a.coverage,
+                                confidence=a.confidence, reason=a.reason, by=a.reviewer,
+                                external=a.external)
+        if not a.dry_run:
+            authoring.write(root, change)
+    except authoring.LinkError as e:
+        if a.json:
+            _print_json({"schema": "machinechecked/link@1", "ok": False, "written": False,
+                         "error": e.to_json()})
+            raise SystemExit(1)
+        lines = [f"machinechecked: {e}"] + [
+            "  " + (f"{c['id']}  {c.get('number') or ''}".rstrip() if "id" in c
+                    else f"{c.get('name')}" + (f"  ({c['module']})" if c.get("module") else "")
+                    if isinstance(c, dict) and "name" in c else json.dumps(c, ensure_ascii=False))
+            for c in e.candidates]
+        print("\n".join(lines), file=sys.stderr)
+        raise SystemExit(1)
+    written = change["changed"] and not a.dry_run
+    if a.json:
+        _print_json({"schema": "machinechecked/link@1", "ok": True, "written": written,
+                     "dry_run": a.dry_run, **change})
+        return
+    c = change["claim"]
+    for d in change["declarations"]:
+        state = {"built": "in the build", "unbuilt": "its module is not built: Lean has not "
+                 "checked it", "not loaded": "its module could not be loaded",
+                 "external": "not a project declaration: Lean checks it at the next build"}
+        print(f"  {d['name']}: {state.get(d['build'], d['build'])}")
+    if not change["changed"]:
+        print(f"{c['id']} ({c['number']}): nothing to change")
+    elif a.dry_run:
+        print(f"{c['id']} ({c['number']}) would become:\n"
+              + json.dumps(change["after"], indent=1, ensure_ascii=False))
+    else:
+        print(f"recorded for {c['id']} ({c['number']}) in {authoring.simple.links_file(root).name}"
+              "; `machinechecked view` or `build` shows it")
+
+
+def _workspace_place(a):
+    """The working directory, the build's site data and the project of a workspace command."""
+    if _assurance_config(a):
+        cfg = cfgmod.load(_assurance_config(a))
+        return cfg.out_dir, cfg.out_dir / "site" / "data", cfg.root
+    from .simple import find_lake_root
+    root = find_lake_root(Path.cwd().resolve())
+    if root is None:
+        sys.exit("no Lean project here: run machinechecked inside a directory with a lakefile")
+    work = root / cfgmod.work_dir_name(root)
+    return work, work / "site" / "data", root
+
+
+def _print_workspace(v: dict) -> None:
+    print(f"workspace {v['id']} ({v['mode']}), {v['reviewer']}, revision {v['revision']}"
+          + (f", made at release {v['release']}" if v.get("release") else ""))
+    cur = (v.get("current_sources") or {}).get("release")
+    if cur and cur != v.get("release"):
+        print(f"  the current build is release {cur}")
+    r = v.get("resume") or {}
+    if r:
+        print("  resume at " + ", ".join(f"{k} {r[k]}" for k in ("claim", "clause", "question")
+                                          if r.get(k)))
+    for e in v.get("exposure") or []:
+        print(f"  had seen: {', '.join(e['what'])} of "
+              f"{'every claim' if e.get('claims') is None else ', '.join(e['claims'])} "
+              f"({e.get('how')}, {e.get('at')})")
+    if v.get("conflicts"):
+        print(f"  {len(v['conflicts'])} refused conflicting edit(s) kept (see --json)")
+    for cid, c in v["claims"].items():
+        print(cid)
+        for e in c["evidence"]:
+            ref = e["ref"]
+            what = ref.get("decl") or (ref.get("source") or {}).get("file") or "paper passage"
+            print(f"  evidence {e['id']}  {e['role']:9} {what}  [{e['currency']['state']}]"
+                  + (f" (module not built)" if ref.get("build") == "unbuilt" else ""))
+        for f in c["findings"]:
+            tag = f["state"] + ("" if f["in_force"] else ", superseded")
+            print(f"  finding  {f['id']}  {tag}: coverage {f.get('coverage') or '-'}"
+                  f"  [{f['currency']['state']}]" + (f"  supersedes {f['supersedes']}: "
+                                                     f"{f['reason']}" if f.get("supersedes")
+                                                     else ""))
+            if f.get("question"):
+                print(f"           question: {f['question']}")
+        for q in c["questions"]:
+            print(f"  question {q['id']}  {q['state']}: {q['text']}")
+
+
+def cmd_workspace(a):
+    """`machinechecked workspace open|list|show|update|export|import`: the saved investigation
+    (`workspace.py`), as the reader saves it."""
+    from . import review_cli as rc
+    from . import workspace as wsp
+    from .targets import Snapshot, TargetError
+    work, data, root = _workspace_place(a)
+    try:
+        snap = Snapshot(data)
+    except TargetError:
+        snap = None
+
+    def who():
+        try:
+            return rc.parse_reviewer(a.reviewer, getattr(a, "same_family", "unknown"))
+        except rc.ReviewError as e:
+            sys.exit(str(e))
+
+    def path():
+        if getattr(a, "id", None):
+            return wsp.find(work, a.id)
+        return wsp.open_for(work, who(), getattr(a, "mode", None),
+                            sources=snap.sources() if snap else None)
+
+    try:
+        if a.action == "list":
+            rows = [wsp.summary(ws) for _, ws in wsp.list_all(work)]
+            if a.json:
+                return _print_json({"schema": "prooflens/workspaces@1", "workspaces": rows})
+            for r in rows:
+                print(f"{r['id']}  {r['mode']:11} {r['reviewer']}  {r['findings']} finding(s), "
+                      f"{r['open_questions']} open question(s), {r['reports']} report(s)")
+            if not rows:
+                print("no workspace yet: `machinechecked workspace open --as human:NAME`")
+        elif a.action in ("open", "show"):
+            if a.action == "open" and a.id and a.mode:
+                # Opening by id with another mode is refused by open_for, not changed silently.
+                p = wsp.open_for(work, who(), a.mode, a.id)
+            else:
+                p = path()
+            claim = None
+            if getattr(a, "claim", None):
+                if snap is None:
+                    sys.exit("no build to resolve the claim against: run view or build first")
+                claim = snap.resolve_claim(a.claim)
+            v = wsp.view(wsp.read(p), snap, claim)
+            if a.json:
+                return _print_json({**v, "path": str(p)})
+            _print_workspace(v)
+        elif a.action == "update":
+            raw = json.loads(_text_arg(a.file))
+            ops = raw.get("ops") if isinstance(raw, dict) else raw
+            op_id = a.op_id or (raw.get("op_id") if isinstance(raw, dict) else None)
+            p = path()
+            ack = wsp.update(p, ops, snap, root, a.reviewer or None, op_id, a.dry_run)
+            _print_json(ack)
+        elif a.action == "export":
+            body = wsp.export(path())
+            Path(a.out).write_text(json.dumps(body, indent=1, ensure_ascii=False) + "\n",
+                                   encoding="utf-8")
+            print(f"wrote {a.out} (workspace {body['id']}, {body['mode']})")
+        elif a.action == "import":
+            res = wsp.import_(work, json.loads(_text_arg(a.file)), snap, a.reviewer,
+                              None if a.file == "-" else Path(a.file).name)
+            _print_json(res)
+            if res["problems"] or res["conflicts"]:
+                raise SystemExit(1)
+    except wsp.Conflict as e:
+        _print_json({"ok": False, "error": str(e), "conflicts": e.conflicts})
+        raise SystemExit(1)
+    except (wsp.WorkspaceError, TargetError, ValueError) as e:
+        if getattr(a, "json", False) or a.action in ("update", "import"):
+            _print_json({"ok": False, "error": str(e),
+                         **({"candidates": e.candidates} if isinstance(e, TargetError) else {})})
+            raise SystemExit(1)
+        sys.exit(f"machinechecked: {e}")
 
 
 def _site_dest(site: str, root: Path) -> Path:
@@ -822,6 +1021,64 @@ def main(argv=None):
     s.add_argument("--dir")
     s.add_argument("--port", type=int, default=8017)
     s.set_defaults(func=cmd_serve)
+
+    lk = sub.add_parser("link")
+    lk.add_argument("claim", help="the claim: its id or key (thm:main), or its number "
+                    "(\"Lemma 2.3\", or 2.3 when only one claim has it)")
+    lk.add_argument("decls", nargs="*", metavar="DECL",
+                    help="the declarations that state it (they replace the confirmed list)")
+    lk.add_argument("--add", action="store_true", help="add DECL to the confirmed list")
+    lk.add_argument("--reject", nargs="+", metavar="DECL", help="record suggestions as not this "
+                    "claim's")
+    lk.add_argument("--reason", help="why they are rejected")
+    lk.add_argument("--clear", action="store_true", help="remove the confirmed list (the "
+                    "paper's \\lean tags and formalization.yaml apply again)")
+    lk.add_argument("--coverage", help="how far the declarations state the claim")
+    lk.add_argument("--confidence", help="high, medium or low")
+    lk.add_argument("--note", help="the note on the correspondence")
+    lk.add_argument("--note-file", help="a file holding the note, or - for standard input")
+    lk.add_argument("--as", dest="reviewer", help="the name the link is recorded under")
+    lk.add_argument("--external", action="store_true", help="accept a declaration from a "
+                    "dependency, which the project's index does not hold")
+    lk.add_argument("--paper", help="the paper (default: the one found)")
+    lk.add_argument("--dry-run", action="store_true", help="show the change, write nothing")
+    lk.add_argument("--json", action="store_true", help="print one JSON document")
+    lk.add_argument("-c", "--config", help=argparse.SUPPRESS)
+    lk.set_defaults(func=cmd_link)
+
+    ws = sub.add_parser("workspace")
+    wss = ws.add_subparsers(dest="action", required=True)
+    for name, help_ in {"open": "open or resume your workspace",
+                        "list": "the workspaces of this project",
+                        "show": "a workspace: evidence, findings and questions per claim",
+                        "update": "apply operations (a JSON file, or - for standard input)",
+                        "export": "write a workspace as one file",
+                        "import": "bring in an exported workspace"}.items():
+        sp = wss.add_parser(name, help=help_)
+        if name in ("update", "import"):
+            sp.add_argument("file", help="a JSON file, or - for standard input")
+        if name in ("open", "show", "update", "export"):
+            sp.add_argument("--id", help="the workspace (default: yours)")
+        if name == "open":
+            sp.add_argument("--mode", choices=["independent", "informed"],
+                            help="independent review (blind reading first) or informed "
+                                 "investigation; fixed when the workspace is made")
+        if name in ("open", "show"):
+            sp.add_argument("--claim", help="show only this claim")
+        if name in ("open", "show", "list"):
+            sp.add_argument("--json", action="store_true")
+        if name == "update":
+            sp.add_argument("--op-id", help="an identifier of this request: repeating it changes "
+                            "nothing")
+            sp.add_argument("--dry-run", action="store_true", help="show the result, save nothing")
+        if name == "export":
+            sp.add_argument("--out", required=True)
+        sp.add_argument("--as", dest="reviewer", default=os.environ.get("MACHINECHECKED_REVIEWER"),
+                        help="human:NAME or llm:MODEL (default: $MACHINECHECKED_REVIEWER)")
+        sp.add_argument("--same-family", choices=["yes", "no", "unknown"], default="unknown",
+                        help=argparse.SUPPRESS)
+        sp.add_argument("-c", "--config", default=None)
+        sp.set_defaults(func=cmd_workspace)
 
     rv = sub.add_parser("review")
     rvs = rv.add_subparsers(dest="action", required=True)

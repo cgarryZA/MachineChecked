@@ -16,6 +16,7 @@
   import Decl from "./Decl.svelte";
   import Tex from "./Tex.svelte";
   import LinkPicker from "./LinkPicker.svelte";
+  import Investigation from "./Investigation.svelte";
   import { tick, setContext } from "svelte";
 
   // One claim as Paper and Lean: a heading, the status the engine computed, the printed
@@ -415,6 +416,7 @@
       {/if}
     </section>
     </div>
+    {#if editable}<Investigation {index} {claim} />{/if}
     </div>
   </article>
 {/if}

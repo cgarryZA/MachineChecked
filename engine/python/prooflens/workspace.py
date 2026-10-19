@@ -1,0 +1,793 @@
+"""The saved record of a semantic-audit investigation (`prooflens/workspace@1`).
+
+A workspace keeps one auditor's investigation of a paper against its Lean project, so that it
+can be resumed in the reader, in a terminal or by another agent: the claims looked at, the
+evidence selected for each (and the candidates rejected), the findings, the open questions,
+where the auditor stopped, and the review protocol's drafts and reports. The reader (through
+`machinechecked view`'s local server) and the command line (`machinechecked workspace`) call the
+functions of this module, so both validate and save in the same way.
+
+Each workspace is one JSON file in `<work dir>/review-work/`, identified by the `id` inside it,
+never by the file's name. Writes replace the file atomically under a lock. Each record has a
+revision: an update names the revision it was made from, so two edits of different records are
+both kept, and an edit made from an older revision of the same record is refused as a conflict
+that returns (and keeps) both versions. A request repeated with the same `op_id` is answered
+with its first result and changes nothing.
+
+A workspace records evidence and readings; it changes no status. A submitted finding is never
+edited: a later one supersedes it, with its reason, and both remain. Exposure (what the auditor
+had seen) is only ever added to, so neither resuming nor importing makes an investigation blind.
+"""
+
+from __future__ import annotations
+
+import contextlib
+import copy
+import datetime as _dt
+import json
+import os
+import re
+import secrets
+import tempfile
+from pathlib import Path
+
+SCHEMA = "prooflens/workspace@1"
+DIR = "review-work"
+MODES = ("independent", "informed")
+KINDS = ("evidence", "finding", "question")
+ROLES = ("candidate", "supports", "context", "rejected")
+QUESTION_STATES = ("open", "answered", "withdrawn")
+EXPOSURES = ("Lean", "author's review", "prior interpretations", "external material")
+TEXT_CHARS = 20000
+OPS_KEPT = 500
+
+# Fields the service sets; a client's value for them is ignored.
+MANAGED = ("kind", "rev", "created_at", "created_by", "updated_at", "updated_by", "state",
+           "submitted_at", "supersedes", "reason", "pins")
+
+
+class WorkspaceError(RuntimeError):
+    """An edit refused, with what to do instead."""
+
+
+class Conflict(WorkspaceError):
+    """Edits made from an older revision of a record: `conflicts` holds, for each, the saved
+    record and the refused proposal."""
+
+    def __init__(self, conflicts: list[dict]):
+        super().__init__("; ".join(f"{c['id']} was changed (now revision {c['current'].get('rev')}"
+                                   f", the edit was made from {c.get('base_rev')})"
+                                   for c in conflicts))
+        self.conflicts = conflicts
+
+
+def now() -> str:
+    return _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _new_id(prefix: str) -> str:
+    return f"{prefix}-{secrets.token_hex(6)}"
+
+
+def store(work_dir: Path) -> Path:
+    return Path(work_dir) / DIR
+
+
+def reviewer_slug(reviewer_id: str) -> str:
+    return re.sub(r"[^\w.-]+", "_", reviewer_id)
+
+
+# -- files ---------------------------------------------------------------------------------
+
+@contextlib.contextmanager
+def _locked(path: Path):
+    """An exclusive lock on `path` (through `<path>.lock`) for one read-modify-write."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(str(path) + ".lock", "a+") as fh:
+        try:
+            import fcntl
+            fcntl.flock(fh, fcntl.LOCK_EX)
+        except ImportError:  # Windows
+            import msvcrt
+            fh.seek(0)
+            msvcrt.locking(fh.fileno(), msvcrt.LK_LOCK, 1)
+        try:
+            yield
+        finally:
+            try:
+                import fcntl
+                fcntl.flock(fh, fcntl.LOCK_UN)
+            except ImportError:
+                import msvcrt
+                fh.seek(0)
+                msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
+
+
+def _write(path: Path, ws: dict) -> None:
+    """Replace `path` by `ws` in one step: a reader sees the old file or the new one."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(ws, f, indent=1, ensure_ascii=False)
+            f.write("\n")
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
+
+
+def new(reviewer: dict, mode: str, sources: dict | None = None,
+        selection: dict | None = None, wid: str | None = None) -> dict:
+    """A new, empty workspace. An informed investigation records at once that the Lean and
+    earlier interpretations are open to its auditor; it has no blind reading to lock."""
+    if mode not in MODES:
+        raise WorkspaceError(f"mode {mode!r} is not one of: {', '.join(MODES)}")
+    at = now()
+    ws = {"schema": SCHEMA, "id": wid or _new_id("ws"), "created_at": at,
+          "reviewer": reviewer, "mode": mode, "revision": 0,
+          "selection": selection or {}, "sources": sources or {},
+          "exposure": [], "records": {}, "resume": {}, "review": {"drafts": {}, "reports": []},
+          "conflicts": [], "ops": {}, "provenance": []}
+    if mode == "informed":
+        ws["exposure"].append({"what": ["Lean", "prior interpretations"], "claims": None,
+                               "at": at, "how": "informed investigation"})
+    return ws
+
+
+def upgrade(raw: dict) -> dict:
+    """A workspace from what a file holds: a workspace as it is, or the older review work file
+    (`{reviewer, drafts, reports}`), whose drafts and reports it keeps unchanged."""
+    if raw.get("schema") == SCHEMA:
+        return raw
+    if raw.get("schema"):
+        raise WorkspaceError(f"not a workspace this version can read (schema {raw['schema']!r})")
+    if not isinstance(raw.get("drafts"), dict) or not isinstance(raw.get("reports"), list):
+        raise WorkspaceError("not a workspace or review work file")
+    ws = new(raw.get("reviewer") or {}, "independent")
+    ws["review"] = {"drafts": raw["drafts"], "reports": raw["reports"]}
+    ws["provenance"].append({"event": "upgraded from a review work file", "at": now()})
+    return ws
+
+
+def read(path: Path) -> dict:
+    return upgrade(json.loads(Path(path).read_text(encoding="utf-8")))
+
+
+def list_all(work_dir: Path) -> list[tuple[Path, dict]]:
+    """Every workspace of the working directory, with its file."""
+    out = []
+    for p in sorted(store(work_dir).glob("*.json")):
+        try:
+            out.append((p, read(p)))
+        except (OSError, ValueError, WorkspaceError):
+            continue
+    return out
+
+
+def summary(ws: dict) -> dict:
+    recs = ws.get("records", {}).values()
+    count = lambda k: sum(1 for r in recs if r.get("kind") == k)
+    return {"id": ws["id"], "reviewer": (ws.get("reviewer") or {}).get("id"), "mode": ws["mode"],
+            "revision": ws.get("revision", 0), "release": (ws.get("sources") or {}).get("release"),
+            "evidence": count("evidence"), "findings": count("finding"),
+            "open_questions": sum(1 for r in recs if r.get("kind") == "question"
+                                  and r.get("state") == "open"),
+            "reports": len((ws.get("review") or {}).get("reports", [])),
+            "resume": ws.get("resume") or {}}
+
+
+def find(work_dir: Path, wid: str) -> Path:
+    for p, ws in list_all(work_dir):
+        if ws["id"] == wid:
+            return p
+    raise WorkspaceError(f"no workspace {wid} in {store(work_dir)}")
+
+
+def open_for(work_dir: Path, reviewer: dict, mode: str | None = None, wid: str | None = None,
+             sources: dict | None = None, selection: dict | None = None) -> Path:
+    """The workspace to continue: the one named, else this reviewer's (of the mode asked, if
+    one is), else a new one. A reviewer's first workspace is the file the review protocol
+    already used (`review-work/<reviewer>.json`)."""
+    if wid:
+        p = find(work_dir, wid)
+        ws = read(p)
+        if mode and ws["mode"] != mode:
+            raise WorkspaceError(f"{wid} is an {ws['mode']} workspace; its mode changes only by "
+                                 "an explicit mode update, which keeps what was seen")
+        return p
+    mine = [(p, ws) for p, ws in list_all(work_dir)
+            if (ws.get("reviewer") or {}).get("id") == reviewer.get("id")
+            and (mode is None or ws["mode"] == mode)]
+    if len(mine) == 1:
+        return mine[0][0]
+    if len(mine) > 1:
+        raise WorkspaceError("this reviewer has several workspaces; choose one with --id: "
+                             + ", ".join(f"{ws['id']} ({ws['mode']})" for _, ws in mine))
+    default = store(work_dir) / f"{reviewer_slug(reviewer.get('id') or 'reviewer')}.json"
+    ws = new(reviewer, mode or "independent", sources, selection)
+    path = default if not default.exists() else store(work_dir) / f"{ws['id']}.json"
+    with _locked(path):
+        if not path.exists():
+            _write(path, ws)
+    return path
+
+
+# -- validation ----------------------------------------------------------------------------
+
+def _text(v, what: str, required: bool = False) -> str:
+    if v is None:
+        v = ""
+    if not isinstance(v, str):
+        raise WorkspaceError(f"{what} must be text")
+    if required and not v.strip():
+        raise WorkspaceError(f"{what} is empty")
+    if len(v) > TEXT_CHARS:
+        raise WorkspaceError(f"{what} is longer than {TEXT_CHARS} characters")
+    return v
+
+
+def _choice(v, allowed, what: str, optional: bool = True):
+    if v is None and optional:
+        return None
+    if v not in allowed:
+        raise WorkspaceError(f"{what} {v!r} is not one of: {', '.join(map(str, allowed))}")
+    return v
+
+
+def _vocab() -> tuple[tuple, tuple, tuple]:
+    """The correspondence vocabulary of the links file (coverage, evidence basis, confidence):
+    a finding uses the same words, so it means what a link's note means."""
+    from . import simple
+    return (tuple(simple.COVERAGE) + tuple(x for x in ("unresolved",)
+                                           if x not in simple.COVERAGE),
+            tuple(getattr(simple, "BASIS", ("direct", "reviewed_composition", "checked_bridge"))),
+            tuple(simple.CONFIDENCE))
+
+
+def _ref(ref, snap, root) -> dict:
+    """An evidence reference: exactly one of a declaration (`decl`, optional `module`), a
+    source location (`source`: `{file, line}`), or a passage of the paper (`paper`:
+    `{claim, quote}`)."""
+    if not isinstance(ref, dict):
+        raise WorkspaceError("an evidence record needs a `ref`")
+    kinds = [k for k in ("decl", "source", "paper") if ref.get(k)]
+    if len(kinds) != 1:
+        raise WorkspaceError("an evidence `ref` names exactly one of decl, source, paper")
+    if kinds == ["decl"]:
+        out = {"decl": _text(ref["decl"], "the declaration", True).strip()}
+        if ref.get("module"):
+            out["module"] = _text(ref["module"], "the module")
+        if snap is not None:
+            from .targets import resolve_declaration, TargetError
+            try:
+                r = resolve_declaration(out["decl"], snap, root, out.get("module"),
+                                        external=bool(ref.get("external")))
+            except TargetError as e:
+                raise WorkspaceError(str(e)) from None
+            out.update(module=r["module"], build=r["build"])
+            out["fingerprint"] = snap.fingerprints().get(out["decl"]) or \
+                snap.store_fingerprints().get(out["decl"])
+            out["digest"] = snap.digests().get(out["decl"])
+        else:
+            for k in ("build", "fingerprint", "digest"):
+                if ref.get(k):
+                    out[k] = ref[k]
+        return out
+    if kinds == ["source"]:
+        s = ref["source"]
+        if not isinstance(s, dict) or not isinstance(s.get("file"), str):
+            raise WorkspaceError("a source reference is {file, line}")
+        if s.get("line") is not None and not isinstance(s["line"], int):
+            raise WorkspaceError("a source line is a number")
+        return {"source": {"file": s["file"], **({"line": s["line"]} if s.get("line") else {})}}
+    p = ref["paper"]
+    if not isinstance(p, dict):
+        raise WorkspaceError("a paper reference is {claim, quote}")
+    return {"paper": {"claim": _claim(p.get("claim"), snap),
+                      "quote": _text(p.get("quote"), "the quotation")}}
+
+
+def _claim(q, snap) -> str:
+    if not isinstance(q, str) or not q.strip():
+        raise WorkspaceError("a record names its claim (`claim`)")
+    if snap is None:
+        return q.strip()
+    from .targets import TargetError
+    try:
+        return snap.resolve_claim(q)
+    except TargetError as e:
+        raise WorkspaceError(str(e) + (": " + ", ".join(c["id"] for c in e.candidates)
+                                       if e.candidates else "")) from None
+
+
+def _content(kind: str, rec: dict, ws: dict, snap, root) -> dict:
+    """The fields a client may set on a record of `kind`, checked."""
+    out = {"claim": _claim(rec.get("claim"), snap)}
+    if rec.get("clause") is not None:
+        out["clause"] = _text(rec["clause"], "the clause")
+    note = _text(rec.get("note"), "the note")
+    if note:
+        out["note"] = note
+    refs = rec.get("evidence") or []
+    if not isinstance(refs, list):
+        raise WorkspaceError("`evidence` is a list of evidence record ids")
+    for e in refs:
+        er = ws["records"].get(e)
+        if not er or er.get("kind") != "evidence":
+            raise WorkspaceError(f"{e} is not an evidence record of this workspace")
+        if er["claim"] != out["claim"]:
+            raise WorkspaceError(f"{e} is evidence for {er['claim']}, not {out['claim']}")
+    if refs:
+        out["evidence"] = list(dict.fromkeys(refs))
+    if kind == "evidence":
+        out["ref"] = _ref(rec.get("ref"), snap, root)
+        out["role"] = _choice(rec.get("role") or "candidate", ROLES, "the role", False)
+        out.pop("evidence", None)
+        if out["role"] == "rejected" and rec.get("reason"):
+            out["why_rejected"] = _text(rec["reason"], "the reason")
+    elif kind == "finding":
+        coverage, basis, confidence = _vocab()
+        out["coverage"] = _choice(rec.get("coverage"), coverage, "coverage")
+        if rec.get("basis") is not None:
+            out["basis"] = _choice(rec["basis"], basis, "the evidence basis")
+        if rec.get("confidence") is not None:
+            out["confidence"] = _choice(rec["confidence"], confidence, "confidence")
+        if rec.get("question") is not None:
+            out["question"] = _text(rec["question"], "the open question")
+        if out["coverage"] == "unresolved" and not out.get("question"):
+            raise WorkspaceError("an unresolved finding states its open question (`question`)")
+    elif kind == "question":
+        out["text"] = _text(rec.get("text"), "the question", True)
+        out["state"] = _choice(rec.get("state") or "open", QUESTION_STATES, "the state", False)
+        if rec.get("answer") is not None:
+            out["answer"] = _text(rec["answer"], "the answer")
+    return out
+
+
+def _pins(claim: str, snap) -> dict:
+    if snap is None:
+        return {}
+    ch = snap.chunk(claim) or {}
+    return {"release": snap.index.get("release"), "statement_sha256": ch.get("source_sha256")}
+
+
+# -- the update service --------------------------------------------------------------------
+
+def _record_op(ws, op, snap, root, by, at, changed):
+    kind = op.get("op")
+    rid = op.get("id") or (op.get("record") or {}).get("id")
+    cur = ws["records"].get(rid) if rid else None
+    base = op.get("base_rev")
+
+    def stale():
+        return {"id": rid, "base_rev": base, "current": copy.deepcopy(cur),
+                "proposed": copy.deepcopy(op)}
+
+    if kind == "put":
+        rec = op.get("record") or {}
+        if cur is None:
+            if base not in (None, 0):
+                raise WorkspaceError(f"{rid}: no such record to update")
+            k = _choice(rec.get("kind"), KINDS, "the record kind", False)
+            rid = rid or _new_id(k[0])
+            if not re.fullmatch(r"[\w.:-]{1,80}", rid):
+                raise WorkspaceError(f"{rid!r} is not a record id")
+            content = _content(k, rec, ws, snap, root)
+            new_rec = {"id": rid, "kind": k, **content, "rev": 1, "created_at": at,
+                       "created_by": by, "updated_at": at, "updated_by": by,
+                       "pins": _pins(content["claim"], snap)}
+            if k == "finding":
+                new_rec["state"] = "draft"
+            ws["records"][rid] = new_rec
+            changed.append(rid)
+            return None
+        content = _content(cur["kind"], {**rec, "kind": cur["kind"]}, ws, snap, root)
+        repin = bool(rec.get("repin"))
+        if cur["kind"] == "evidence" and not repin and content["ref"].get("decl") and \
+                content["ref"]["decl"] == (cur.get("ref") or {}).get("decl"):
+            # The evidence keeps the fingerprint it was recorded at until it is re-pinned.
+            for k in ("fingerprint", "digest"):
+                content["ref"][k] = cur["ref"].get(k)
+        kept = {k: v for k, v in cur.items() if k not in MANAGED and k != "id"}
+        if cur["kind"] == "question":
+            kept["state"] = cur.get("state")
+        same = kept == content
+        if base is None and same:
+            return None  # the same record again: a repeated create
+        if base != cur["rev"]:
+            return stale()
+        if cur["kind"] == "finding" and cur.get("state") == "submitted":
+            raise WorkspaceError(f"{rid} is submitted; supersede it (with a reason) instead")
+        if same and not repin:
+            return None
+        pins = _pins(content["claim"], snap) if repin else cur.get("pins", {})
+        ws["records"][rid] = {"id": rid, "kind": cur["kind"], **content,
+                              **({k: cur[k] for k in ("state", "submitted_at", "supersedes",
+                                                      "reason") if k in cur}
+                                 if cur["kind"] == "finding" else {}),
+                              "rev": cur["rev"] + 1, "created_at": cur["created_at"],
+                              "created_by": cur.get("created_by"), "updated_at": at,
+                              "updated_by": by, "pins": pins}
+        changed.append(rid)
+        return None
+    if cur is None:
+        raise WorkspaceError(f"no record {rid}")
+    if base != cur["rev"]:
+        return stale()
+    if kind == "delete":
+        if cur.get("state") == "submitted":
+            raise WorkspaceError(f"{rid} is submitted and is kept; supersede it instead")
+        users = [r["id"] for r in ws["records"].values()
+                 if rid in (r.get("evidence") or []) and r["id"] != rid]
+        if users:
+            raise WorkspaceError(f"{rid} is evidence of {', '.join(users)}; remove it there first")
+        del ws["records"][rid]
+        changed.append(rid)
+        return None
+    if kind == "submit":
+        if cur["kind"] != "finding" or cur.get("state") != "draft":
+            raise WorkspaceError(f"{rid} is not a draft finding")
+        if not cur.get("coverage") or not (cur.get("note") or cur.get("evidence")):
+            raise WorkspaceError(f"{rid}: a submitted finding has its coverage and a note or "
+                                 "evidence")
+        cur.update(state="submitted", submitted_at=at, rev=cur["rev"] + 1, updated_at=at,
+                   updated_by=by)
+        changed.append(rid)
+        return None
+    if kind == "supersede":
+        if cur["kind"] != "finding" or cur.get("state") != "submitted":
+            raise WorkspaceError(f"{rid}: only a submitted finding is superseded (edit a draft)")
+        later = [r["id"] for r in ws["records"].values() if r.get("supersedes") == rid]
+        if later:
+            raise WorkspaceError(f"{rid} is already superseded by {later[0]}; supersede that")
+        reason = _text(op.get("reason"), "the reason for superseding", True)
+        rec = {**(op.get("record") or {}), "kind": "finding"}
+        rec.setdefault("claim", cur["claim"])
+        content = _content("finding", rec, ws, snap, root)
+        if not content.get("coverage") or not (content.get("note") or content.get("evidence")):
+            raise WorkspaceError("a superseding finding has its coverage and a note or evidence")
+        nid = rec.get("id") or _new_id("f")
+        if nid in ws["records"]:
+            raise WorkspaceError(f"{nid} exists already")
+        ws["records"][nid] = {"id": nid, "kind": "finding", **content, "state": "submitted",
+                              "submitted_at": at, "supersedes": rid, "reason": reason, "rev": 1,
+                              "created_at": at, "created_by": by, "updated_at": at,
+                              "updated_by": by, "pins": _pins(content["claim"], snap)}
+        changed.append(nid)
+        return None
+    raise WorkspaceError(f"unknown operation {kind!r}")
+
+
+def _workspace_op(ws, op, snap, by, at, changed):
+    kind = op.get("op")
+    if kind == "resume":
+        st = op.get("state") or {}
+        if not isinstance(st, dict):
+            raise WorkspaceError("resume state is an object")
+        out = {}
+        if st.get("claim"):
+            out["claim"] = _claim(st["claim"], snap)
+        if st.get("clause"):
+            out["clause"] = _text(st["clause"], "the clause")
+        if st.get("question"):
+            q = ws["records"].get(st["question"])
+            if not q or q.get("kind") != "question":
+                raise WorkspaceError(f"{st['question']} is not a question of this workspace")
+            out["question"] = st["question"]
+        pinned = st.get("pinned") or []
+        if not isinstance(pinned, list) or not all(isinstance(x, (str, dict)) for x in pinned):
+            raise WorkspaceError("`pinned` is a list of references")
+        if pinned:
+            out["pinned"] = pinned
+        ws["resume"] = {**out, "at": at, "by": by}
+        changed.append("resume")
+    elif kind == "mode":
+        mode = _choice(op.get("mode"), MODES, "mode", False)
+        if mode != ws["mode"]:
+            if mode == "informed":
+                ws["exposure"].append({"what": ["Lean", "prior interpretations"], "claims": None,
+                                       "at": at, "how": "informed investigation"})
+            ws["provenance"].append({"event": f"mode {ws['mode']} -> {mode}", "at": at, "by": by})
+            ws["mode"] = mode
+            changed.append("mode")
+    elif kind == "exposure":
+        what = op.get("what")
+        what = [what] if isinstance(what, str) else what
+        if not what or not all(w in EXPOSURES for w in what):
+            raise WorkspaceError(f"exposure is one or more of: {', '.join(EXPOSURES)}")
+        claims = op.get("claims")
+        if claims is not None:
+            claims = [_claim(c, snap) for c in claims]
+        ws["exposure"].append({"what": what, "claims": claims, "at": at,
+                               "how": _text(op.get("how"), "how") or "self-declared"})
+        changed.append("exposure")
+    else:
+        raise WorkspaceError(f"unknown operation {kind!r}")
+
+
+def apply(ws: dict, ops: list[dict], snap=None, root: Path | None = None, by: str | None = None,
+          op_id: str | None = None) -> dict:
+    """Apply `ops` to `ws` in memory, all or none. Returns the acknowledgement; raises
+    WorkspaceError for an invalid edit and Conflict for edits of changed records (whose
+    proposals are kept in `ws['conflicts']`, the one change made then)."""
+    if op_id is not None and op_id in ws.get("ops", {}):
+        return {**ws["ops"][op_id], "repeated": True}
+    if not isinstance(ops, list) or not ops:
+        raise WorkspaceError("an update is a non-empty list of operations")
+    work = copy.deepcopy(ws)
+    at, changed, conflicts = now(), [], []
+    by = by or (ws.get("reviewer") or {}).get("id")
+    for op in ops:
+        if not isinstance(op, dict):
+            raise WorkspaceError("each operation is an object")
+        if op.get("op") in ("resume", "mode", "exposure"):
+            _workspace_op(work, op, snap, by, at, changed)
+        else:
+            c = _record_op(work, op, snap, root, by, at, changed)
+            if c:
+                conflicts.append(c)
+    if conflicts:
+        for c in conflicts:
+            ws.setdefault("conflicts", []).append({**c, "at": at, "by": by})
+        raise Conflict(conflicts)
+    ack = {"ok": True, "workspace": ws["id"], "changed": list(dict.fromkeys(changed)),
+           "revisions": {r: work["records"][r]["rev"] for r in changed if r in work["records"]}}
+    if changed:
+        work["revision"] = ws.get("revision", 0) + 1
+    ack["revision"] = work["revision"]
+    if op_id is not None:
+        work.setdefault("ops", {})[op_id] = ack
+        while len(work["ops"]) > OPS_KEPT:
+            work["ops"].pop(next(iter(work["ops"])))
+    ws.clear()
+    ws.update(work)
+    return ack
+
+
+def update(path: Path, ops: list[dict], snap=None, root: Path | None = None,
+           by: str | None = None, op_id: str | None = None, dry_run: bool = False) -> dict:
+    """Apply `ops` to the workspace saved at `path` and save it. With `dry_run`, return the
+    acknowledgement and the changed records without saving."""
+    with _locked(path):
+        ws = read(path)
+        try:
+            ack = apply(ws, ops, snap, root, by, op_id)
+        except Conflict:
+            if not dry_run:
+                _write(path, ws)
+            raise
+        if dry_run:
+            return {**ack, "dry_run": True,
+                    "records": {r: ws["records"].get(r) for r in ack["changed"]}}
+        if ack["changed"] or op_id is not None:
+            _write(path, ws)
+        return ack
+
+
+def save_review(path: Path, review: dict, reviewer: dict | None = None) -> None:
+    """Save the review protocol's drafts and reports (`review_cli.Session`) into the workspace,
+    leaving its other records as they are on disk."""
+    with _locked(path):
+        ws = read(path) if path.exists() else new(reviewer or {}, "independent")
+        if reviewer and not ws.get("reviewer"):
+            ws["reviewer"] = reviewer
+        ws["review"] = review
+        ws["revision"] = ws.get("revision", 0) + 1
+        _write(path, ws)
+
+
+# -- reading it back -----------------------------------------------------------------------
+
+def current_findings(ws: dict) -> list[dict]:
+    """The findings in force: submitted findings no later finding supersedes, and drafts."""
+    later = {r.get("supersedes") for r in ws["records"].values() if r.get("supersedes")}
+    return [r for r in ws["records"].values()
+            if r.get("kind") == "finding" and r["id"] not in later]
+
+
+def currency(ws: dict, snap) -> dict[str, dict]:
+    """Whether each record's evidence is still what the current build shows. A declaration
+    whose fingerprint changed makes its evidence `stale`, and so every finding and question
+    that cites it; a finding is also stale when its claim's printed text changed. A record the
+    build cannot check is `unchecked`; nothing here changes a status."""
+    digests = snap.digests() if snap is not None else {}
+    out = {}
+    for r in ws["records"].values():
+        if r.get("kind") != "evidence":
+            continue
+        ref = r.get("ref") or {}
+        if "decl" not in ref:
+            out[r["id"]] = {"state": "unchecked", "changes": []}
+            continue
+        was, now_d = ref.get("digest") or ref.get("fingerprint"), digests.get(ref["decl"])
+        if not was or now_d is None:
+            out[r["id"]] = {"state": "unchecked", "changes": []}
+        elif now_d != was:
+            out[r["id"]] = {"state": "stale", "changes": [
+                {"decl": ref["decl"], "was": was, "now": now_d}]}
+        else:
+            out[r["id"]] = {"state": "current", "changes": []}
+    for r in ws["records"].values():
+        if r.get("kind") == "evidence":
+            continue
+        changes = [ch for e in r.get("evidence") or [] for ch in out.get(e, {}).get("changes", [])]
+        pin = (r.get("pins") or {}).get("statement_sha256")
+        if snap is not None:
+            ch = snap.chunk(r["claim"])
+            if ch is None:
+                changes.append({"claim": r["claim"], "was": pin, "now": None})
+            elif pin and ch.get("source_sha256") != pin:
+                changes.append({"claim": r["claim"], "was": pin, "now": ch.get("source_sha256")})
+        out[r["id"]] = {"state": "stale" if changes else "current", "changes": changes}
+    return out
+
+
+def view(ws: dict, snap=None, claim: str | None = None) -> dict:
+    """The workspace as the reader and `workspace show` present it: its summary and, per
+    claim, the evidence, findings (current and superseded) and questions, each with its
+    currency against the current build."""
+    cur = currency(ws, snap)
+    in_force = {r["id"] for r in current_findings(ws)}
+    claims: dict[str, dict] = {}
+    for r in sorted(ws["records"].values(), key=lambda r: (r["created_at"], r["id"])):
+        if claim and r["claim"] != claim:
+            continue
+        c = claims.setdefault(r["claim"], {"evidence": [], "findings": [], "questions": []})
+        item = {**r, "currency": cur.get(r["id"], {"state": "unchecked", "changes": []})}
+        if r["kind"] == "finding":
+            item["in_force"] = r["id"] in in_force
+        c[{"evidence": "evidence", "finding": "findings", "question": "questions"}[r["kind"]]] \
+            .append(item)
+    return {"schema": "prooflens/workspace-view@1", **summary(ws),
+            "selection": ws.get("selection") or {}, "sources": ws.get("sources") or {},
+            "current_sources": snap.sources() if snap is not None else None,
+            "exposure": ws.get("exposure") or [], "conflicts": ws.get("conflicts") or [],
+            "claims": claims}
+
+
+def exposed(ws: dict, claim_ids: list[str]) -> list[dict]:
+    """The exposure entries of the workspace that cover any of `claim_ids`."""
+    return [e for e in ws.get("exposure") or []
+            if e.get("claims") is None or set(e["claims"]) & set(claim_ids)]
+
+
+# -- moving it between machines -------------------------------------------------------------
+
+def export(path: Path) -> dict:
+    """The workspace as a file to hand on: everything it holds, with its mode, exposure, pins
+    and authors, less the record of acknowledged requests."""
+    ws = read(path)
+    out = {k: v for k, v in ws.items() if k != "ops"}
+    out["exported_at"] = now()
+    return out
+
+
+def import_(work_dir: Path, data: dict, snap=None, by: str | None = None,
+            source: str | None = None) -> dict:
+    """Bring an exported workspace into this working directory. It keeps its id, authors,
+    pins, mode and exposure. A workspace already here with the same id gains the records it
+    lacks; a record both hold in different versions is kept as here and reported as a
+    conflict. References the current build cannot resolve are reported as `problems`; the
+    records stay as they were written and are not counted as resolved."""
+    ws_in = upgrade(dict(data))
+    ws_in.pop("exported_at", None)
+    ws_in.setdefault("ops", {})
+    for k in ("exposure", "records", "conflicts", "provenance"):
+        ws_in.setdefault(k, [] if k != "records" else {})
+    ws_in.setdefault("review", {"drafts": {}, "reports": []})
+    if ws_in.get("mode") not in MODES:
+        raise WorkspaceError(f"mode {ws_in.get('mode')!r} is not one of: {', '.join(MODES)}")
+    problems = []
+    for r in ws_in["records"].values():
+        if snap is not None:
+            if snap.chunk(r.get("claim") or "") is None:
+                problems.append({"record": r.get("id"),
+                                 "problem": f"claim {r.get('claim')} is not in release "
+                                            f"{snap.index.get('release')}"})
+            ref = r.get("ref") or {}
+            if ref.get("decl") and ref["decl"] not in snap.digests() and \
+                    ref.get("build") not in ("unbuilt", "external"):
+                names = {d.get("name") for d in snap.lean_index() or []}
+                if ref["decl"] not in names:
+                    problems.append({"record": r.get("id"),
+                                     "problem": f"{ref['decl']} is not in this build"})
+        for e in r.get("evidence") or []:
+            if e not in ws_in["records"]:
+                problems.append({"record": r.get("id"), "problem": f"evidence {e} is missing"})
+    at = now()
+    event = {"event": "imported", "at": at, "by": by, "from": source}
+    try:
+        path = find(work_dir, ws_in["id"])
+    except WorkspaceError:
+        path = store(work_dir) / f"{ws_in['id']}.json"
+        ws_in["provenance"].append(event)
+        with _locked(path):
+            _write(path, ws_in)
+        return {"workspace": ws_in["id"], "path": str(path), "added": sorted(ws_in["records"]),
+                "conflicts": [], "problems": problems}
+    added, conflicts = [], []
+    with _locked(path):
+        ws = read(path)
+        for rid, r in ws_in["records"].items():
+            mine = ws["records"].get(rid)
+            if mine is None:
+                ws["records"][rid] = r
+                added.append(rid)
+            elif mine != r:
+                c = {"id": rid, "base_rev": r.get("rev"), "current": mine, "proposed": r,
+                     "at": at, "by": by, "how": "import"}
+                ws.setdefault("conflicts", []).append(c)
+                conflicts.append(c)
+        for e in ws_in["exposure"]:
+            if e not in ws["exposure"]:
+                ws["exposure"].append(e)
+        if ws_in["mode"] == "informed" and ws["mode"] != "informed":
+            ws["provenance"].append({"event": "imported informed work; exposure added",
+                                     "at": at, "by": by})
+        known = {json.dumps(r, sort_keys=True) for r in ws["review"]["reports"]}
+        for r in ws_in["review"].get("reports", []):
+            if json.dumps(r, sort_keys=True) not in known:
+                ws["review"]["reports"].append(r)
+        ws["provenance"].append(event)
+        ws["revision"] = ws.get("revision", 0) + 1
+        _write(path, ws)
+    return {"workspace": ws["id"], "path": str(path), "added": added, "conflicts": conflicts,
+            "problems": problems}
+
+
+# -- the local reader's interface ------------------------------------------------------------
+
+def api(work_dir: Path, data_dir: Path, root: Path | None = None) -> tuple[dict, dict]:
+    """The routes `machinechecked view`'s local server answers for the reader: GET
+    `/api/workspaces` (the list), `/api/workspace?id=&claim=` (one, as `view` gives it) and
+    `/api/workspace/export?id=`; POST `/api/workspace` with `action` `open` (`reviewer`,
+    `mode`, `id`), `update` (`id`, `ops`, `op_id`, `base` ignored) or `import` (`data`). They
+    call the functions the command line calls."""
+    from .review_cli import ReviewError, parse_reviewer
+    from .targets import Snapshot, TargetError
+
+    def snap():
+        try:
+            return Snapshot(data_dir)
+        except TargetError:
+            return None
+
+    def one(q):
+        p = find(work_dir, (q.get("id") or [""])[0])
+        return view(read(p), snap(), (q.get("claim") or [None])[0])
+
+    def post(req):
+        action = req.get("action")
+        if action == "open":
+            s = snap()
+            if req.get("id"):
+                p = find(work_dir, req["id"])
+                ws = read(p)
+                if req.get("mode") and ws["mode"] != req["mode"]:
+                    raise WorkspaceError(f"{ws['id']} is an {ws['mode']} workspace")
+                return view(ws, s)
+            try:
+                who = parse_reviewer(req.get("reviewer") or "", req.get("same_family") or "unknown")
+            except ReviewError as e:
+                raise WorkspaceError(str(e)) from None
+            p = open_for(work_dir, who, req.get("mode"), req.get("id"),
+                         s.sources() if s else None)
+            return view(read(p), s)
+        if action == "update":
+            p = find(work_dir, req.get("id") or "")
+            ws = read(p)
+            return update(p, req.get("ops"), snap(), root, req.get("by")
+                          or (ws.get("reviewer") or {}).get("id"), req.get("op_id"))
+        if action == "import":
+            return import_(work_dir, req.get("data") or {}, snap(), req.get("by"), "reader")
+        raise WorkspaceError(f"unknown action {action!r}")
+
+    get = {"/api/workspaces": lambda q: {"workspaces": [summary(ws) for _, ws in
+                                                        list_all(work_dir)]},
+           "/api/workspace": one,
+           "/api/workspace/export": lambda q: export(find(work_dir, (q.get("id") or [""])[0]))}
+    return get, {"/api/workspace": post}
