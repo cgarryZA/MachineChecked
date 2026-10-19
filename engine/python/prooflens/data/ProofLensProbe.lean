@@ -716,6 +716,7 @@ open ProofLensProbe in
         | "accept" | "refute" => proofRecord h q r.kind r.name.toName (r.spec.map (·.toName))
         | "witness" => proofRecord h q "witness" r.name.toName none
         | "index" => do indexRecords h roots; moduleDocRecords h roots
+        | "moddocs" => moduleDocRecords h roots
         | "link" => linkRecord h q roots seen r.name.toName
         | "deps" => depsRecords h roots r.name.toName
         | "decl" => do

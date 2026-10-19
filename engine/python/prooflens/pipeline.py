@@ -14,7 +14,7 @@ from . import manifest as mf
 from . import review_queue as rq
 from .assess import Assessor, line_location
 from .config import Config
-from .probe import FINGERPRINT_VERSION, requests_from_inventory, run_probe
+from .probe import FINGERPRINT_VERSION, MODDOCS, requests_from_inventory, run_probe
 from .reviews import load_dismissals, load_reviews
 from .schemas import validate
 from .sources import acquire
@@ -88,7 +88,8 @@ def build(cfg: Config, release: str | None = None, skip_lean: bool = False,
     elif not skip_lean:
         lean_digest = lean_inputs_digest(cfg)
         log(f"probe: {len(requests_from_inventory(inv))} requests in {cfg.lean_root}")
-        lean = run_probe(cfg, requests_from_inventory(inv), lake=lake, build=lean_build)
+        lean = run_probe(cfg, requests_from_inventory(inv) + [MODDOCS], lake=lake,
+                         build=lean_build)
 
     tex, papers_prov, pdfs = {}, {}, {}
     display = load_display(cfg)

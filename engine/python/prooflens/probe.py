@@ -52,6 +52,10 @@ def requests_from_inventory(inv: dict) -> list[dict]:
     return reqs
 
 
+# The request for the names in the project's module docstrings that nothing declares.
+MODDOCS = {"kind": "moddocs", "name": ""}
+
+
 def fingerprint(canon: str) -> str:
     return f"{FINGERPRINT_VERSION}:{sha256_text(canon)}"
 
@@ -173,6 +177,11 @@ def run_probe(cfg: Config, requests: list[dict], lake: str = "lake",
                                             timeout, work)))
         except ProbeError as e:
             raise ProbeError(f"library {lib} ({', '.join(mods)}): {e}") from None
+        # A session loads only its own library: a docstring name that begins with the root of
+        # another library's modules may be declared there, so it is not reported.
+        others = {m.split(".")[0] for l, ms in groups if l != lib for m in ms}
+        parts[-1][1]["moddocs"] = [d for d in parts[-1][1]["moddocs"]
+                                   if d["name"].split(".")[0] not in others]
     return merge_records(parts)
 
 
@@ -197,9 +206,12 @@ def _pick(found: list[tuple[str, dict]], missing: dict) -> dict:
 def merge_records(parts: list[tuple[str, dict]]) -> dict:
     """The records of several sessions (one per library) as one result."""
     res = {"env": parts[0][1]["env"], "layering": [], "specs": {}, "proofs": {}, "decls": {},
-           "defs": {}, "complete": all(r["complete"] for _, r in parts)}
+           "defs": {}, "moddocs": [], "complete": all(r["complete"] for _, r in parts)}
     seen = set()
     for _, r in parts:
+        for d in r.get("moddocs", []):
+            if d not in res["moddocs"]:
+                res["moddocs"].append(d)
         for v in r["layering"]:
             key = json.dumps(v, sort_keys=True)
             if key not in seen:
@@ -224,7 +236,7 @@ def _strip_decl(rec: dict) -> dict:
 
 def parse_records(lines) -> dict:
     res = {"env": None, "layering": [], "specs": {}, "proofs": {}, "decls": {}, "defs": {},
-           "complete": False}
+           "moddocs": [], "complete": False}
     for line in lines:
         if not line.strip():
             continue
@@ -252,6 +264,9 @@ def parse_records(lines) -> dict:
             rec = dict(rec)
             rec["kind"] = rec.pop("record")
             res["proofs"][f"{rec['kind']}:{rec['name']}:{rec.get('spec') or ''}"] = rec
+        elif kind == "moddoc":
+            res["moddocs"].append({k: rec[k] for k in ("module", "line", "name", "heading",
+                                                       "item_lead") if k in rec})
         elif kind == "done":
             res["complete"] = True
     if not res["complete"]:

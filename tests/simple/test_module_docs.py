@@ -11,7 +11,8 @@ import pytest
 
 from conftest import ROOT, needs_lean, needs_tex
 from prooflens import cli
-from prooflens.simple import build_view, stale_doc_names
+from prooflens.moddocs import stale_doc_names
+from prooflens.simple import build_view
 
 SRC = ROOT / "tests" / "fixtures" / "structure"
 

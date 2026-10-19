@@ -122,6 +122,8 @@ machinechecked export --out public-audit/
 
 `symbol add` links a symbol of a claim's printed statement to a variable (or a binder's type) of its Lean statement, under your name; the reader marks it in the claim's text and highlights each side from the other. A link is an assertion, pinned to the statement and the text and shown as stale when either changes; no status reads it (docs/SYMBOL_LINKS.md).
 
+`check` and `build` also warn about each name a module docstring of the project lists that nothing declares (a dotted name such as `Widget.foo_le_bar`, or the name a list item begins with under a "Main …" heading), with its file and line: prose that advertises a result the project does not contain. It is a finding of the `warning` tier (code `module-doc-name`): it never changes a status or a gate, the reader lists it under the header, and an auditor can dismiss it with a written reason in the `dismissals` file, as any warning (`code`, the module as `subject`, the name as `trigger`, the finding's `fingerprint`, `rationale`, `by`).
+
 `reassess` re-evaluates current reviews and dismissals against compatible stored evidence. `export` assembles only explicitly permitted public fields and scans the result for private-content leakage.
 
 With several papers in one configuration, `export --paper ID` exports one of them: its claims, the declarations they depend on, and their reviews. The export is then also scanned for what belongs to the other papers alone (their claim ids, the declarations only they use and their Lean text, their reviews, and their manuscripts unless published), except a paper whose source and Lean the configuration publishes in full.
