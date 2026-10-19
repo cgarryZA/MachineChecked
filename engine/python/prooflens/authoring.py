@@ -33,23 +33,120 @@ def _now() -> str:
     return _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds")
 
 
-NOTE_FIELDS = ("note", "coverage", "confidence")
+# The fields of a reading: they describe the declarations they were written with
+# (`simple.READING_KEYS`).
+NOTE_FIELDS = simple.READING_KEYS
+
+
+def _reading_fields(entry: dict, coverage, basis, refs, argument, bridge, question,
+                    would_decide) -> dict:
+    """The reading fields a request sets, checked against the entry they go into: a stored or
+    given `composed` becomes `full` with basis `reviewed_composition`; a basis needs a
+    coverage; an argument belongs to a reviewed composition, a bridge to a checked bridge, and
+    a question and what would decide it to an unresolved reading."""
+    if coverage == "composed":
+        if basis not in (None, "reviewed_composition"):
+            raise LinkError("coverage `composed` is full coverage with basis "
+                            "reviewed_composition; give one of them")
+        coverage, basis = "full", "reviewed_composition"
+    if coverage is not None and coverage not in simple.COVERAGE:
+        raise LinkError(f"coverage {coverage!r} is not one of: {', '.join(simple.COVERAGE)}")
+    if basis is not None and basis not in simple.BASIS:
+        raise LinkError(f"basis {basis!r} is not one of: {', '.join(simple.BASIS)}")
+    legacy = entry.get("coverage") == "composed"
+    stored_cov = "full" if legacy else entry.get("coverage")
+    stored_basis = "reviewed_composition" if legacy else entry.get("basis")
+    cov = coverage or stored_cov
+    # A basis given stays; a stored one stays while the coverage is unchanged.
+    if basis is not None:
+        bas = basis
+    elif coverage is None or coverage == stored_cov:
+        bas = stored_basis
+    else:
+        bas = None
+    if bas and not cov:
+        raise LinkError("a basis says how a coverage is supported: give --coverage too")
+    out = {"basis": bas}
+    if coverage is not None:
+        out["coverage"] = coverage
+    for v, what, limit in ((argument, "the argument", simple.ARGUMENT_CHARS),
+                           (question, "the open question", simple.NOTE_CHARS),
+                           (would_decide, "what would decide it", simple.NOTE_CHARS)):
+        if v is not None and len(v) > limit:
+            raise LinkError(f"{what} is longer than {limit} characters")
+    if argument is not None:
+        if bas != "reviewed_composition":
+            raise LinkError("an argument belongs to a reviewed composition "
+                            "(--basis reviewed_composition)")
+        out["argument"] = argument
+    if bridge is not None:
+        if bas != "checked_bridge":
+            raise LinkError("a bridge belongs to a checked bridge (--basis checked_bridge)")
+        if not (isinstance(bridge, dict) and all(isinstance(bridge.get(k), str) and bridge[k]
+                                                 for k in ("theorem", "target"))):
+            raise LinkError("a bridge names its theorem and its target")
+        extra = set(bridge) - {"theorem", "target", "target_fingerprint", "source_sha256"}
+        if extra or not all(isinstance(bridge.get(k), (str, type(None)))
+                            for k in ("target_fingerprint", "source_sha256")):
+            raise LinkError("a bridge has theorem, target, target_fingerprint and "
+                            "source_sha256 (text)")
+        out["bridge"] = {k: v for k, v in bridge.items() if v}
+    if question is not None or would_decide is not None:
+        if cov != "unresolved":
+            raise LinkError("an open question belongs to an unresolved reading "
+                            "(--coverage unresolved)")
+        if question is not None:
+            out["question"] = question
+        if would_decide is not None:
+            out["would_decide"] = would_decide
+    if refs is not None:
+        if not bas:
+            raise LinkError("references say what a basis rests on: give --basis too")
+        out["refs"] = list(dict.fromkeys(refs))
+    return out
+
+
+def _tidy_reading(entry: dict) -> None:
+    """Drop the fields the entry's coverage and basis no longer have: a stored `composed`
+    becomes `full` with basis `reviewed_composition`."""
+    if entry.get("coverage") == "composed":
+        entry["coverage"] = "full"
+        entry.setdefault("basis", "reviewed_composition")
+        if not entry.get("argument") and entry.get("note"):
+            entry["argument"] = entry.pop("note")
+    if not entry.get("coverage"):
+        for k in ("basis", "refs"):
+            entry.pop(k, None)
+    if not entry.get("basis"):
+        entry.pop("refs", None)
+    if entry.get("basis") != "reviewed_composition":
+        entry.pop("argument", None)
+    if entry.get("basis") != "checked_bridge":
+        entry.pop("bridge", None)
+    if entry.get("coverage") != "unresolved":
+        for k in ("question", "would_decide"):
+            entry.pop(k, None)
+    for k in [k for k in NOTE_FIELDS if entry.get(k) is None]:
+        entry.pop(k, None)
 
 
 def plan(root: Path, paper: str, snap: Snapshot, claim: str, lean: list[str] | None = None,
          add: bool = False, reject: list[str] | None = None, clear: bool = False,
          note: str | None = None, coverage: str | None = None, confidence: str | None = None,
          reason: str | None = None, by: str | None = None, check_names: bool = True,
-         external: bool = False) -> dict:
+         external: bool = False, basis: str | None = None, refs: list[str] | None = None,
+         argument: str | None = None, bridge: dict | None = None, question: str | None = None,
+         would_decide: str | None = None) -> dict:
     """The change a link request makes, without writing it: the resolved claim, each
     declaration's build state, and the links-file entry before and after.
 
     `lean` replaces the claim's list of linked declarations (with `add`, it is added to the
     list); `reject` records suggestions as not this claim's, with `reason`; `clear` removes the
     confirmed list, so the claim's `\\lean{}` tags and formalization.yaml apply again, and keeps
-    its rejections. A note, coverage and confidence describe the declarations they were written
-    with: when the list changes without a new note, the old note is kept under `earlier_notes`
-    and no longer shown."""
+    its rejections. A reading (note, coverage, confidence, basis and the fields of its basis, see
+    `simple.correspondence`) describes the declarations it was written with: when the list
+    changes without a new reading, the old one is kept under `earlier_notes` and no longer
+    shown."""
     try:
         cid = snap.resolve_claim(claim)
     except TargetError as e:
@@ -62,10 +159,10 @@ def plan(root: Path, paper: str, snap: Snapshot, claim: str, lean: list[str] | N
 
     if clear and (lean or reject):
         raise LinkError("--clear removes the claim's confirmed links; give it alone")
-    if not (lean is not None or reject or clear or note is not None or coverage or confidence):
+    reading_given = any(v is not None for v in (note, coverage, confidence, basis, refs,
+                                                argument, bridge, question, would_decide))
+    if not (lean is not None or reject or clear or reading_given):
         raise LinkError("nothing to record: give declarations, --reject, --clear or a note")
-    if coverage is not None and coverage not in simple.COVERAGE:
-        raise LinkError(f"coverage {coverage!r} is not one of: {', '.join(simple.COVERAGE)}")
     if confidence is not None and confidence not in simple.CONFIDENCE:
         raise LinkError(f"confidence {confidence!r} is not one of: "
                         f"{', '.join(simple.CONFIDENCE)}")
@@ -117,14 +214,26 @@ def plan(root: Path, paper: str, snap: Snapshot, claim: str, lean: list[str] | N
             for n in reject:
                 entry.setdefault("rejected_reasons", {})[n] = {
                     "reason": reason, **({"by": by} if by else {}), "at": at}
-    if note is not None or coverage or confidence:
+    if reading_given:
+        fields = _reading_fields(entry, coverage, basis, refs, argument, bridge, question,
+                                 would_decide)
         if "lean" not in entry:
             # A note is about a confirmed list: confirm what the claim shows now.
             entry["lean"] = shown
             entry["at"] = at
-        for k, v in (("note", note), ("coverage", coverage), ("confidence", confidence)):
+        linked = entry["lean"]
+        stray = [n for n in fields.get("refs", []) if n not in linked]
+        if stray:
+            raise LinkError(f"{', '.join(stray)} is not linked to this claim: references are "
+                            "among its linked declarations")
+        if "bridge" in fields and fields["bridge"]["theorem"] not in linked:
+            raise LinkError(f"the bridge theorem {fields['bridge']['theorem']} is not linked to "
+                            "this claim")
+        for k, v in (("note", note), ("confidence", confidence)):
             if v is not None:
                 entry[k] = v
+        entry.update(fields)
+        _tidy_reading(entry)
         if by:
             entry["by"] = by
     after = entry or None
