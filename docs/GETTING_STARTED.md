@@ -189,7 +189,7 @@ The workflow uses your repository’s GitHub Actions runners and build cache.
 
 ## Several audits of one repository
 
-An audit pins one version of its paper: a published version (`published = "arXiv:2601.01234v1"`, labelled "arXiv v1") or an unpublished manuscript at a commit (`version = "manuscript"` with the source's `rev`, labelled "Latest manuscript (commit abc1234)"). The [full assessment guide](ASSURANCE.md) says how to declare it; `build` refuses an audit whose claim inventory is pinned to another version.
+An audit pins one version of its paper: a published version (`published = "arXiv:2601.01234v1"`, labelled "arXiv v1") or an unpublished manuscript at a commit (`version = "manuscript"` with the source's `rev`, labelled "Latest manuscript (commit abc1234)"). The [full assessment guide](ASSURANCE.md) says how to declare it; `build` refuses an audit whose claim inventory is pinned to another version. When some claims carry no pin, the version is shown as declared by the author and not checked against the claims.
 
 To publish an audit of each version side by side, keep the configuration of each on its own Lean ref (for example a branch `audit-v1` holding the published version's configuration, and `main` for the latest manuscript), and call the workflow once per audit with `ref` and `subpath`. Each call uploads its audit under that subpath; one deploy job merges them into one GitHub Pages site, at `/v1/` and `/latest/`:
 

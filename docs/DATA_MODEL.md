@@ -135,7 +135,11 @@ is known:
 An arXiv version also has `arxiv` (`arxiv:2601.01234`) and `number` (`v1`). A manuscript is never
 given a version number. `build` refuses an audit whose inventory pins (`papers.<id>.commit`, a
 claim's `commit`) name another version: a published version is pinned by its identifier
-(`2601.01234v1`), a manuscript by its commit. A site loading an audit (`load_published_audit`)
+(`2601.01234v1`), a manuscript by its commit. `checked` is true when every claim carries a pin and
+the pins name this version (a zero-configuration audit reads its claims from the version itself, so
+it is always true); false when some claim carries no pin, so the version is only as the configuration
+states it. Readers show an unchecked version as declared by the author and not checked against the
+claims. A site loading an audit (`load_published_audit`)
 rebuilds the label from `kind` and `id`, checks that the descriptor and the data name the same
 version, and, given a listing's `version`, refuses an audit that pins another one.
 
