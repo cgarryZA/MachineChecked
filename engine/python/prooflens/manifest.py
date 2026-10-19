@@ -91,10 +91,14 @@ def clause_evidence(cl: dict, anchor: dict | None, mode: str | None, src_ok: boo
     return result
 
 
-def symbol_links(display: dict | None, cid: str, tex: str | None, lean: dict) -> list[dict]:
+def symbol_links(display: dict | None, cid: str, tex: str | None, lean: dict,
+                 excerpt: dict | None = None) -> list[dict]:
     """The claim's symbol links, each as its author recorded it and whether it is stale: the
     statement it points into has another fingerprint now, or the claim's printed text changed.
-    Display only (docs/SYMBOL_LINKS.md)."""
+    A link made on a typeset excerpt (`pins.excerpt`) is also stale when that excerpt, or the
+    macros and references it is typeset with, changed or can no longer be typeset. Display
+    only (docs/SYMBOL_LINKS.md)."""
+    ready = excerpt if excerpt and excerpt.get("ready") else None
     out = []
     for ln in (display or {}).get("symbols", []):
         if ln.get("claim") != cid:
@@ -106,8 +110,12 @@ def symbol_links(display: dict | None, cid: str, tex: str | None, lean: dict) ->
         # printed, so it also needs the text it was made on (older links have none).
         from .symbols import target_text
         shown = target_text(spec, target)
-        stale = (pins.get("statement") != spec.get("fingerprint")
-                 or not tex or pins.get("source") != sha256_text(tex)
+        if "excerpt" in pins:
+            moved = (ready is None or pins["excerpt"] != ready.get("fingerprint")
+                     or pins.get("source") != sha256_text(ready.get("text") or ""))
+        else:
+            moved = not tex or pins.get("source") != sha256_text(tex)
+        stale = (pins.get("statement") != spec.get("fingerprint") or moved
                  or shown is None
                  or ("target" in pins and pins["target"] != shown)
                  or (("term" in target or "at" in target) and "target" not in pins))
@@ -253,9 +261,12 @@ def build(evidence: dict, release: str, display: dict | None = None
             "source_sha256": c.get("source_sha256"), **status, "anchor": anchor, "source_matches": src_ok,
             "source_evidence": source_evidence(anchor, t.get("mode"), src_ok, t),
             "statement_tex": (anchor or {}).get("statement"),
+            # The passage the reader typesets, when it can be typeset faithfully (display only).
+            "excerpt": (t.get("excerpts") or {}).get(c["id"]),
             "blockers": [shown_names(b, clause_tex) for b in a.get("blockers", [])],
             "clauses": clauses, "decls": decls, "findings": fs,
-            "symbols": symbol_links(display, c["id"], (anchor or {}).get("statement"), lean)}
+            "symbols": symbol_links(display, c["id"], (anchor or {}).get("statement"), lean,
+                                    (t.get("excerpts") or {}).get(c["id"]))}
 
     prov = body["provenance"]
     index = {"schema": SCHEMA, "release": release, "evidence": evidence["id"],
@@ -294,7 +305,8 @@ def search_index(index: dict, chunks: dict) -> dict:
         claims.append({"id": c["id"], "paper": c["paper"], "number": c.get("number", ""),
                        "title": c.get("title", ""), "heading": c.get("heading"),
                        "status": c["status"], "status_code": c["status_code"],
-                       "statement": ch.get("statement_tex") or "", "lean": lean})
+                       "statement": ch.get("statement_tex") or (ch.get("excerpt") or {}).get("text")
+                       or "", "lean": lean})
         for n in ch.get("decls", {}):
             decls.setdefault(n, []).append(c["id"])
     return {"claims": claims, "decls": [{"name": n, "claims": ids} for n, ids in
