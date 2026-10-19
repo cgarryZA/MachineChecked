@@ -78,6 +78,12 @@ body; a definition by pattern matching or recursion shows the equations Lean der
 of the definition, the exact statement of each equation theorem and the elaborated value; the
 compiled form of a recursive definition is folded under **Compiled value**.
 
+A definition applied in a statement expands where it stands: after the expression, **expand**
+lists its applications of the project's definitions. Choosing one shows the arguments, by the
+definition's parameters, and the definition at those arguments: its body with them substituted,
+or the equations that apply to them with any case condition and the equation theorem's name.
+Lean performs the substitution and checks it. Applications inside an expansion expand in turn.
+
 Click the evidence summary for proof checks, reviews and provenance. The ⋯ menu contains
 **Copy link**, **Report issue** and **Review it**; reviewing opens the selected claim.
 

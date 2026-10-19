@@ -261,102 +261,6 @@ def isExistsApp (e : Expr) : Option (Name × Expr) :=
     | _ => none
   else none
 
-/-- The logical shape of a conclusion: a conjunction, disjunction, equivalence, negation,
-implication, "for every" or "there is" as a tree whose leaves are pretty-printed propositions. A
-quantifier inside the conclusion is a node (`forall`, `exists`) with its variable's name, type and
-number, and its body as its one part. `vars` is
-threaded through the tree, so that every witness has a variable of its own: two witnesses in
-sibling parts never share one. `pos` is the position of `e` in the whole proposition; each
-node and variable carries its own (`id`). Display only; it changes no record that is assessed. -/
-partial def logicJson (vars : Array FVarId) (e : Expr) (pos : SubExpr.Pos) :
-    MetaM (Json × Array FVarId) := do
-  let op := if e.isAppOfArity ``And 2 then some "and"
-    else if e.isAppOfArity ``Or 2 then some "or"
-    else if e.isAppOfArity ``Iff 2 then some "iff" else none
-  match op with
-  | some o =>
-    let (a, vars) ← logicJson vars e.appFn!.appArg! pos.pushAppFn.pushAppArg
-    let (b, vars) ← logicJson vars e.appArg! pos.pushAppArg
-    return (Json.mkObj [("op", o), ("id", Json.str (toString pos)),
-      ("args", Json.arr #[a, b])], vars)
-  | none =>
-    if e.isAppOfArity ``Not 1 then
-      let (a, vars) ← logicJson vars e.appArg! pos.pushAppArg
-      return (Json.mkObj [("op", "not"), ("id", Json.str (toString pos)),
-        ("args", Json.arr #[a])], vars)
-    if let .forallE n t body bi := e then
-      if (← isProp t) && !body.hasLooseBVars then
-        -- An implication inside a part: its premise is a part of its own, not an assumption
-        -- of the whole statement.
-        let (a, vars) ← logicJson vars t pos.pushBindingDomain
-        let (b, vars) ← logicJson vars body pos.pushBindingBody
-        return (Json.mkObj [("op", "implies"), ("id", Json.str (toString pos)),
-          ("args", Json.arr #[a, b])], vars)
-      let tj ← ppJson t vars pos.pushBindingDomain
-      return ← withLocalDecl n bi t fun x => do
-        let idx := vars.size
-        let (b, vars') ←
-          logicJson (vars.push x.fvarId!) (body.instantiate1 x) pos.pushBindingBody
-        return (Json.mkObj [("op", "forall"), ("name", n.eraseMacroScopes.toString),
-          ("var", toJson idx), ("id", Json.str (toString pos)), ("type", tj),
-          ("args", Json.arr #[b])], vars')
-    match isExistsApp e with
-    | some (_, .lam n t body bi) =>
-      -- The witness is bound by the predicate `fun x => …`, the second argument of `Exists`.
-      let lam := pos.pushAppArg
-      let tj ← ppJson t vars lam.pushBindingDomain
-      withLocalDecl n bi t fun x => do
-        let idx := vars.size
-        let (b, vars') ←
-          logicJson (vars.push x.fvarId!) (body.instantiate1 x) lam.pushBindingBody
-        return (Json.mkObj [("op", "exists"), ("name", n.eraseMacroScopes.toString),
-          ("var", toJson idx), ("id", Json.str (toString lam)), ("type", tj),
-          ("args", Json.arr #[b])], vars')
-    | _ => return (Json.mkObj [("leaf", ← ppJson e vars pos)], vars)
-
-/-! ## The inspection representation -/
-
-/-- Split a proposition into its quantifier prefix and its conclusion. Universal binders are
-`forall` (data), `hypothesis` (a proposition) or `instance`; existential binders are `exists`.
-Definitions are not unfolded: the prefix is the one written in the specification. -/
-partial def telescope (e : Expr) (acc : Array Json) (vars : Array FVarId := #[])
-    (pos : SubExpr.Pos := .root) : MetaM (Array Json × Json) := do
-  match e with
-  | .forallE n t body bi =>
-    let isHyp ← isProp t
-    let role :=
-      if bi.isInstImplicit then "instance" else if isHyp then "hypothesis" else "forall"
-    let tj ← ppJson t vars pos.pushBindingDomain
-    withLocalDecl n bi t fun x => do
-      let hyps := (acc.filter fun j => j.getObjValD "role" == Json.str "hypothesis").size
-      let nm := if n.hasMacroScopes || n.isAnonymous then s!"h{hyps + 1}"
-        else n.toString
-      -- What an instance supplies: a proposition (`[Nonempty E]`) or data (`[Inhabited E]`).
-      let supplies := if isHyp then "proposition" else "data"
-      let j := Json.mkObj [("role", role), ("name", nm), ("id", Json.str (toString pos)),
-        ("type", tj), ("binder", binderStr bi), ("supplies", supplies)]
-      telescope (body.instantiate1 x) (acc.push j) (vars.push x.fvarId!) pos.pushBindingBody
-  | _ =>
-    match isExistsApp e with
-    | some (_, .lam n t body bi) =>
-      let lam := pos.pushAppArg
-      let tj ← ppJson t vars lam.pushBindingDomain
-      withLocalDecl n bi t fun x => do
-        let j := Json.mkObj [("role", "exists"), ("name", n.eraseMacroScopes.toString),
-          ("id", Json.str (toString lam)), ("type", tj), ("binder", binderStr bi)]
-        telescope (body.instantiate1 x) (acc.push j) (vars.push x.fvarId!) lam.pushBindingBody
-    | _ =>
-      -- The conclusion, with its logical shape when it has one (`logic`, display only).
-      let fields ← ppFields e vars pos
-      let (logic, _) ← logicJson vars e pos
-      let shaped := (logic.getObjVal? "op").toOption.isSome
-      return (acc, Json.mkObj (if shaped then fields ++ [("logic", logic)] else fields))
-
-/-- Constants of the project that `e` uses directly. -/
-def projectConsts (roots : Array Name) (e : Expr) : MetaM (Array String) := do
-  let env ← getEnv
-  return e.getUsedConstants.filter (inScope roots env) |>.map toString
-
 /-- Whether a name is one a reader looks for: not generated by the compiler or elaborator. -/
 def userFacing (n : Name) : Bool :=
   !n.isInternal && !(n.components.any fun c =>
@@ -364,17 +268,95 @@ def userFacing (n : Name) : Bool :=
     s.startsWith "_" || s.startsWith "match_" || s.startsWith "proof_" || s == "eq_def"
       || s.startsWith "eq_" && (s.drop 3).all Char.isDigit)
 
-/-! ## What a definition says
+/-- At most this many equations of one definition are exported; the record says how many more
+there are. -/
+def maxEquations : Nat := 64
 
-A definition is shown as it is written: its parameters and the body under them, or, for a
-definition by pattern matching or recursion, the equations Lean derives from it (its equation
-theorems, `getEqnsFor?`), each with its exact statement. The compiled value stays in `value`. -/
+/-! ## A definition at its actual arguments
+
+An application of one of the project's definitions inside a printed expression (`JetBound f S
+(n + 5) C`) is expanded where it stands. A definition given by a body is its body with those
+arguments substituted (`Expr.beta`: a bound variable is never captured), checked by Lean to have
+the application's type; arguments not supplied stay parameters. A definition given by equations
+is each equation theorem whose left side matches the application, specialised to its arguments,
+with the variables and conditions that remain, and checked by Lean to follow from the theorem.
+An expansion has identities of its own (prefixed `<occurrence>=`), apart from those of the
+general definition and of the statement. Display only. -/
+
+/-- At most this many applications of one printed expression are expanded; the record says how
+many more there are. -/
+def maxExpansions : Nat := 16
+
+/-- How deep a statement's applications are expanded: an application, and those inside its
+expansion. Further definitions stay references to their declarations. -/
+def statementDepth : Nat := 2
+
+/-- Whether an application of `c` is expanded: a definition of the project's (`roots`) that a
+reader looks for, of data or of a predicate, and not an instance or a structure's projection. -/
+def expandable (roots : Array Name) (c : Name) : MetaM Bool := do
+  let env ← getEnv
+  let some (.defnInfo d) := env.find? c | return false
+  unless inScope roots env c && userFacing c do return false
+  if (← isInstance c) || (← isProjectionFn c) then return false
+  return !(← isProp d.type)
+
+/-- How a definition's parameters are written and named, for its first `n` arguments. -/
+def paramInfos (type : Expr) (n : Nat) : MetaM (Array (Name × BinderInfo)) :=
+  forallBoundedTelescope type (some n) fun xs _ => xs.mapM fun x => do
+    let d ← x.fvarId!.getDecl
+    return (d.userName, d.binderInfo)
+
+/-- The statement `t` (the type of `thm`) with each of its leading variables replaced by the
+value its metavariable in `ms` was assigned, and those left unassigned kept as hypotheses, in
+their order. The result is checked to follow from `thm`. -/
+partial def keepUndetermined (thm : Expr) (ms : Array Expr) (t : Expr) (i : Nat)
+    (kept : Array Expr) : MetaM Expr := do
+  match t with
+  | .forallE n d b bi =>
+    let m ← instantiateMVars ms[i]!
+    if m.isMVar then
+      withLocalDecl n bi (← instantiateMVars d) fun x => do
+        m.mvarId!.assign x
+        keepUndetermined thm ms (b.instantiate1 x) (i + 1) (kept.push x)
+    else keepUndetermined thm ms (b.instantiate1 m) (i + 1) kept
+  | _ =>
+    let stmt ← mkForallFVars kept (← instantiateMVars t)
+    let prf ← mkLambdaFVars kept (← instantiateMVars (mkAppN thm ms))
+    check prf
+    unless ← isDefEq (← inferType prf) stmt do
+      throwError "the specialised equation does not follow from {thm}"
+    return stmt
+
+/-- The equation `eqn` of a definition at the application `e`, when its left side matches it:
+the statement with every variable the match determines replaced by its value, and the others
+(variables, and conditions such as a case excluded by an earlier pattern) kept as hypotheses.
+Run it under `withoutModifyingState`: it assigns metavariables. -/
+def specialiseEquation (eqn : Name) (us : List Level) (e : Expr) : MetaM (Option Expr) := do
+  let ci ← getConstInfo eqn
+  let lvls ← if ci.levelParams.length == us.length then pure us
+    else ci.levelParams.mapM fun _ => mkFreshLevelMVar
+  let thm := mkConst eqn lvls
+  let ty ← inferType thm
+  let (ms, _, body) ← forallMetaTelescope ty
+  let some (_, lhs, _) := body.eq? | return none
+  let la := lhs.getAppArgs
+  let ea := e.getAppArgs
+  unless lhs.getAppFn.constName? == e.getAppFn.constName? && la.size == ea.size do return none
+  for (a, b) in la.zip ea do
+    unless ← isDefEq a b do return none
+  some <$> keepUndetermined thm ms ty 0 #[]
+
+mutual
 
 /-- The parameters of a definition (the leading `fun` binders of its value) and the body under
 them, each printed with positions rooted at the value, so that the body's sub-terms have the
-identities they have in `value`. -/
+identities they have in `value`. Unless `bind`, the parameters are not numbered among the
+variables `vars` (an expansion's parameters are not variables of the statement). The body's
+applications of the project's definitions are expanded to `depth` (`ppExpanded`); in an
+equation (`eqn`), not the application its left side states. -/
 partial def paramsAndBody (e : Expr) (acc : Array Json := #[]) (vars : Array FVarId := #[])
-    (pos : SubExpr.Pos := .root) (pfx : String := "") (lambdas : Bool := true) :
+    (pos : SubExpr.Pos := .root) (pfx : String := "") (lambdas : Bool := true) (bind : Bool := true)
+    (roots : Array Name := #[]) (depth : Nat := 0) (eqn : Bool := false) :
     MetaM (Array Json × Json) := do
   match e, lambdas with
   | .lam n t b bi, true | .forallE n t b bi, false =>
@@ -383,13 +365,237 @@ partial def paramsAndBody (e : Expr) (acc : Array Json := #[]) (vars : Array FVa
       let j := Json.mkObj [("name", binderName n), ("binder", binderStr bi),
         ("id", Json.str (pfx ++ toString pos)), ("type", tj),
         ("proposition", toJson (← isProp t))]
-      paramsAndBody (b.instantiate1 x) (acc.push j) (vars.push x.fvarId!) pos.pushBindingBody pfx
-        lambdas
-  | _, _ => return (acc, ← ppJson e vars pos pfx)
+      paramsAndBody (b.instantiate1 x) (acc.push j) (if bind then vars.push x.fvarId! else vars)
+        pos.pushBindingBody pfx lambdas bind roots depth eqn
+  | _, _ => return (acc, ← ppExpanded roots depth e vars pos pfx eqn)
 
-/-- At most this many equations of one definition are exported; the record says how many more
-there are. -/
-def maxEquations : Nat := 64
+/-- The fields of a printed expression (`ppFields`), with the expansions of the applications of
+the project's definitions inside it (`expansions`) when `depth` is positive. When `e` is an
+equation (`eqn`), the application its left side states is the one being expanded: only its
+arguments and the right side are. -/
+partial def ppExpanded (roots : Array Name) (depth : Nat) (e : Expr) (vars : Array FVarId)
+    (root : SubExpr.Pos) (pfx : String := "") (eqn : Bool := false) : MetaM Json := do
+  let fields ← ppFields e vars root pfx
+  if depth == 0 || roots.isEmpty then return Json.mkObj fields
+  let found ← IO.mkRef (0 : Nat)
+  let out ← if eqn && e.isAppOfArity ``Eq 3 then do
+      let lhs := e.getArg! 1
+      let lp := root.pushNaryArg 3 1
+      let la := lhs.getAppArgs
+      let mut acc := #[]
+      for i in [:la.size] do
+        acc := acc ++
+          (← expansionsIn roots depth vars pfx found la[i]! (lp.pushNaryArg la.size i))
+      pure (acc ++ (← expansionsIn roots depth vars pfx found (e.getArg! 2) (root.pushNaryArg 3 2)))
+    else expansionsIn roots depth vars pfx found e root
+  if out.isEmpty then return Json.mkObj fields
+  return Json.mkObj (fields ++ [("expansions", Json.arr out),
+    ("expansions_omitted", toJson ((← found.get) - out.size))])
+
+/-- The applications of the project's definitions inside `e` (at `pos`), outermost first, each
+expanded in the local context where it stands; `found` counts them, and those after the first
+`maxExpansions` are counted only. -/
+partial def expansionsIn (roots : Array Name) (depth : Nat) (vars : Array FVarId) (pfx : String)
+    (found : IO.Ref Nat) (e : Expr) (pos : SubExpr.Pos) : MetaM (Array Json) := do
+  match e with
+  | .app .. =>
+    let f := e.getAppFn
+    let args := e.getAppArgs
+    let mut out := #[]
+    if let .const c us := f then
+      if ← expandable roots c then
+        found.modify (· + 1)
+        if (← found.get) ≤ maxExpansions then
+          out := out.push (← expansionAt roots depth vars pfx e c us pos)
+    else
+      out := out ++ (← expansionsIn roots depth vars pfx found f (pos.pushNaryFn args.size))
+    for i in [:args.size] do
+      out := out ++
+        (← expansionsIn roots depth vars pfx found args[i]! (pos.pushNaryArg args.size i))
+    return out
+  | .lam n t b bi | .forallE n t b bi =>
+    let a ← expansionsIn roots depth vars pfx found t pos.pushBindingDomain
+    withLocalDecl n bi t fun x => do
+      return a ++
+        (← expansionsIn roots depth vars pfx found (b.instantiate1 x) pos.pushBindingBody)
+  | .mdata _ b => expansionsIn roots depth vars pfx found b pos
+  | _ => return #[]
+
+/-- The expansion of the application `e` of `c` at `pos`: its arguments, by the definition's
+parameters; and the body at those arguments, or the equations that apply to them. A failure is
+recorded on the expansion (`error`) and stops nothing else. -/
+partial def expansionAt (roots : Array Name) (depth : Nat) (vars : Array FVarId) (pfx : String)
+    (e : Expr) (c : Name) (us : List Level) (pos : SubExpr.Pos) : MetaM Json := do
+  let at_ := pfx ++ toString pos
+  let xp := at_ ++ "="
+  let base : List (String × Json) := [("at", Json.str at_), ("id", Json.str xp),
+    ("name", Json.str c.toString)]
+  let act : MetaM Json := withCurrHeartbeats do
+    let ci ← getConstInfo c
+    let args := e.getAppArgs
+    let infos ← paramInfos (ci.instantiateTypeLevelParams us) args.size
+    let mut argsJ : Array Json := #[]
+    for i in [:args.size] do
+      let (n, bi) := infos[i]?.getD (.anonymous, .default)
+      -- A parameter without a written name (one matched by a pattern) has none here.
+      let nm := if n.hasMacroScopes then "" else binderName n
+      argsJ := argsJ.push (Json.mkObj [("name", Json.str nm),
+        ("binder", Json.str (binderStr bi)),
+        ("value", ← ppJson args[i]! vars (pos.pushNaryArg args.size i) pfx)])
+    let eqs? ← getEqnsFor? c
+    let byEqns := match eqs? with
+      | some eqs => eqs.size > 1
+      | none => false
+    let byEqns := byEqns || (eqs?.isSome && (← isRecursiveDefinition c))
+    if let some eqs := eqs? then
+      if byEqns then
+        let mut applied : Array Json := #[]
+        let mut other : Array Json := #[]
+        for q in eqs.toList.take maxEquations do
+          let r ← withoutModifyingState do
+            match ← specialiseEquation q us e with
+            | some stmt =>
+              let qp := xp ++ q.toString ++ ":"
+              let sj ← ppJson stmt vars .root qp
+              let (params, eqn) ← paramsAndBody stmt #[] vars .root qp (lambdas := false)
+                (bind := false) roots (depth - 1) (eqn := true)
+              pure (some (Json.mkObj [("name", Json.str q.toString), ("statement", sj),
+                ("params", Json.arr params), ("equation", eqn)]))
+            | none => pure none
+          match r with
+          | some j => applied := applied.push j
+          | none => other := other.push (Json.str q.toString)
+        return Json.mkObj (base ++ [("defined_by", Json.str "equations"),
+          ("args", Json.arr argsJ), ("equations", Json.arr applied),
+          ("equations_not_applying", Json.arr other),
+          ("equations_omitted", toJson (eqs.size - min eqs.size maxEquations)),
+          ("checked", Json.bool true)])
+    let v := (ci.instantiateValueLevelParams! us).beta args
+    check v
+    unless ← isDefEq (← inferType v) (← inferType e) do
+      throwError "the expansion does not have the type of the application"
+    -- Parameters left unapplied stay parameters of the expansion.
+    lambdaTelescope v fun xs b => do
+      let mut params : Array Json := #[]
+      let mut p := SubExpr.Pos.root
+      for x in xs do
+        let d ← x.fvarId!.getDecl
+        params := params.push (Json.mkObj [("name", Json.str (binderName d.userName)),
+          ("binder", Json.str (binderStr d.binderInfo)), ("id", Json.str (xp ++ toString p)),
+          ("type", ← ppJson d.type vars p.pushBindingDomain xp),
+          ("proposition", toJson (← isProp d.type))])
+        p := p.pushBindingBody
+      let bodyJ ← ppExpanded roots (depth - 1) b vars p xp
+      return Json.mkObj (base ++ [("defined_by", Json.str "body"), ("args", Json.arr argsJ),
+        ("params", Json.arr params), ("body", bodyJ), ("checked", Json.bool true)])
+  tryCatchRuntimeEx act fun err => do
+    return Json.mkObj (base ++ [("error",
+      Json.str s!"probe-error: {← err.toMessageData.toString}")])
+
+end
+
+/-- The logical shape of a conclusion: a conjunction, disjunction, equivalence, negation,
+implication, "for every" or "there is" as a tree whose leaves are pretty-printed propositions. A
+quantifier inside the conclusion is a node (`forall`, `exists`) with its variable's name, type and
+number, and its body as its one part. `vars` is
+threaded through the tree, so that every witness has a variable of its own: two witnesses in
+sibling parts never share one. `pos` is the position of `e` in the whole proposition; each
+node and variable carries its own (`id`). Display only; it changes no record that is assessed. -/
+partial def logicJson (roots : Array Name) (vars : Array FVarId) (e : Expr) (pos : SubExpr.Pos) :
+    MetaM (Json × Array FVarId) := do
+  let op := if e.isAppOfArity ``And 2 then some "and"
+    else if e.isAppOfArity ``Or 2 then some "or"
+    else if e.isAppOfArity ``Iff 2 then some "iff" else none
+  match op with
+  | some o =>
+    let (a, vars) ← logicJson roots vars e.appFn!.appArg! pos.pushAppFn.pushAppArg
+    let (b, vars) ← logicJson roots vars e.appArg! pos.pushAppArg
+    return (Json.mkObj [("op", o), ("id", Json.str (toString pos)),
+      ("args", Json.arr #[a, b])], vars)
+  | none =>
+    if e.isAppOfArity ``Not 1 then
+      let (a, vars) ← logicJson roots vars e.appArg! pos.pushAppArg
+      return (Json.mkObj [("op", "not"), ("id", Json.str (toString pos)),
+        ("args", Json.arr #[a])], vars)
+    if let .forallE n t body bi := e then
+      if (← isProp t) && !body.hasLooseBVars then
+        -- An implication inside a part: its premise is a part of its own, not an assumption
+        -- of the whole statement.
+        let (a, vars) ← logicJson roots vars t pos.pushBindingDomain
+        let (b, vars) ← logicJson roots vars body pos.pushBindingBody
+        return (Json.mkObj [("op", "implies"), ("id", Json.str (toString pos)),
+          ("args", Json.arr #[a, b])], vars)
+      let tj ← ppExpanded roots statementDepth t vars pos.pushBindingDomain
+      return ← withLocalDecl n bi t fun x => do
+        let idx := vars.size
+        let (b, vars') ←
+          logicJson roots (vars.push x.fvarId!) (body.instantiate1 x) pos.pushBindingBody
+        return (Json.mkObj [("op", "forall"), ("name", n.eraseMacroScopes.toString),
+          ("var", toJson idx), ("id", Json.str (toString pos)), ("type", tj),
+          ("args", Json.arr #[b])], vars')
+    match isExistsApp e with
+    | some (_, .lam n t body bi) =>
+      -- The witness is bound by the predicate `fun x => …`, the second argument of `Exists`.
+      let lam := pos.pushAppArg
+      let tj ← ppExpanded roots statementDepth t vars lam.pushBindingDomain
+      withLocalDecl n bi t fun x => do
+        let idx := vars.size
+        let (b, vars') ←
+          logicJson roots (vars.push x.fvarId!) (body.instantiate1 x) lam.pushBindingBody
+        return (Json.mkObj [("op", "exists"), ("name", n.eraseMacroScopes.toString),
+          ("var", toJson idx), ("id", Json.str (toString lam)), ("type", tj),
+          ("args", Json.arr #[b])], vars')
+    | _ => return (Json.mkObj [("leaf", ← ppExpanded roots statementDepth e vars pos)], vars)
+
+/-! ## The inspection representation -/
+
+/-- Split a proposition into its quantifier prefix and its conclusion. Universal binders are
+`forall` (data), `hypothesis` (a proposition) or `instance`; existential binders are `exists`.
+Definitions are not unfolded: the prefix is the one written in the specification. -/
+partial def telescope (roots : Array Name) (e : Expr) (acc : Array Json) (vars : Array FVarId := #[])
+    (pos : SubExpr.Pos := .root) : MetaM (Array Json × Json) := do
+  match e with
+  | .forallE n t body bi =>
+    let isHyp ← isProp t
+    let role :=
+      if bi.isInstImplicit then "instance" else if isHyp then "hypothesis" else "forall"
+    let tj ← ppExpanded roots statementDepth t vars pos.pushBindingDomain
+    withLocalDecl n bi t fun x => do
+      let hyps := (acc.filter fun j => j.getObjValD "role" == Json.str "hypothesis").size
+      let nm := if n.hasMacroScopes || n.isAnonymous then s!"h{hyps + 1}"
+        else n.toString
+      -- What an instance supplies: a proposition (`[Nonempty E]`) or data (`[Inhabited E]`).
+      let supplies := if isHyp then "proposition" else "data"
+      let j := Json.mkObj [("role", role), ("name", nm), ("id", Json.str (toString pos)),
+        ("type", tj), ("binder", binderStr bi), ("supplies", supplies)]
+      telescope roots (body.instantiate1 x) (acc.push j) (vars.push x.fvarId!) pos.pushBindingBody
+  | _ =>
+    match isExistsApp e with
+    | some (_, .lam n t body bi) =>
+      let lam := pos.pushAppArg
+      let tj ← ppExpanded roots statementDepth t vars lam.pushBindingDomain
+      withLocalDecl n bi t fun x => do
+        let j := Json.mkObj [("role", "exists"), ("name", n.eraseMacroScopes.toString),
+          ("id", Json.str (toString lam)), ("type", tj), ("binder", binderStr bi)]
+        telescope roots (body.instantiate1 x) (acc.push j) (vars.push x.fvarId!) lam.pushBindingBody
+    | _ =>
+      -- The conclusion, with its logical shape when it has one (`logic`, display only).
+      -- Without a shape, the conclusion is the one leaf, with its expansions.
+      let (logic, _) ← logicJson roots vars e pos
+      match logic.getObjVal? "leaf" with
+      | .ok leaf => return (acc, leaf)
+      | .error _ => return (acc, Json.mkObj ((← ppFields e vars pos) ++ [("logic", logic)]))
+
+/-- Constants of the project that `e` uses directly. -/
+def projectConsts (roots : Array Name) (e : Expr) : MetaM (Array String) := do
+  let env ← getEnv
+  return e.getUsedConstants.filter (inScope roots env) |>.map toString
+
+/-! ## What a definition says
+
+A definition is shown as it is written: its parameters and the body under them, or, for a
+definition by pattern matching or recursion, the equations Lean derives from it (its equation
+theorems, `getEqnsFor?`), each with its exact statement. The compiled value stays in `value`. -/
 
 /-- The equation theorems of a definition, each with its exact statement and, read as an
 equation, its variables (`params`) and the equation under them (`equation`). The positions of an
@@ -411,7 +617,7 @@ def equationsJson (n : Name) : MetaM (Option (Array Name × Array Json)) := do
 its parameters, body and the body's type (`result`), its equations, or the error that stopped their extraction. A
 definition by recursion or with several equations is presented by its equations. The
 extraction has its own heartbeat budget, and a failure is recorded here and stops nothing else. -/
-def definitionFields (n : Name) (type value : Expr) : MetaM (List (String × Json)) := do
+def definitionFields (roots : Array Name) (n : Name) (type value : Expr) : MetaM (List (String × Json)) := do
   let act : MetaM (List (String × Json)) := withCurrHeartbeats do
     let eqns ← equationsJson n
     let recursive ← isRecursiveDefinition n
@@ -425,7 +631,7 @@ def definitionFields (n : Name) (type value : Expr) : MetaM (List (String × Jso
       | none => [("equations", Json.null)]
     if byEqns then
       return [("defined_by", Json.str "equations")] ++ eqFields
-    let (params, body) ← paramsAndBody value
+    let (params, body) ← paramsAndBody value (roots := roots) (depth := 1)
     -- The type of the body: the definition's type under its parameters, prefixed `type:` (its
     -- positions are in the type, not in the value).
     let result ← forallBoundedTelescope type (some params.size) fun xs r => do
@@ -454,7 +660,7 @@ def declRecord (roots : Array Name) (n : Name) (ci : ConstantInfo) : MetaM (Json
   -- an instance, not a proposition such as a locked statement).
   let defn ← match ci with
     | .defnInfo d =>
-      if value != Json.null && userFacing n && !(← isInstance n) then definitionFields n ci.type d.value
+      if value != Json.null && userFacing n && !(← isInstance n) then definitionFields roots n ci.type d.value
       else pure []
     | _ => pure []
   let doc ← findDocString? env n
@@ -506,7 +712,7 @@ def specRecord (h : IO.FS.Handle) (q : Query) (roots : Array Name) (seen : IO.Re
   unless bad.isEmpty do errs := errs.push s!"axioms={bad.toList}"
   let (j, used) ← declRecord roots spec ci
   let (binders, concl) ← match ci with
-    | .defnInfo d => telescope d.value #[]
+    | .defnInfo d => telescope roots d.value #[]
     | _ => pure (#[], Json.null)
   let exact ← match ci with
     | .defnInfo d => ppJson d.value
@@ -600,7 +806,7 @@ def linkRecord (h : IO.FS.Handle) (q : Query) (roots : Array Name) (seen : IO.Re
       | some (.defnInfo d) => if d.type == .sort .zero then pure d.value else pure ci.type
       | _ => pure ci.type
     | _ => pure ci.type
-  let (binders, concl) ← telescope stmt #[]
+  let (binders, concl) ← telescope roots stmt #[]
   let exact ← ppJson stmt
   let axs ← collectAxioms n
   let bad := disallowed (q.allowed_axioms.map (·.toName)) axs

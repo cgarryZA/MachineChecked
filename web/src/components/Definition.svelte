@@ -1,6 +1,8 @@
 <script>
   import LeanText from "./LeanText.svelte";
+  import Expansion from "./Expansion.svelte";
   import { loadDecl } from "../lib/data.js";
+  import { expansionsOf } from "../lib/expand.js";
 
   // What a Lean definition says, from its declaration record (`d`, or loaded by `key`).
   // `view = "readable"`: its parameters and the body under them, or the equations Lean derives
@@ -25,6 +27,8 @@
   const term = (pp) => (pp?.terms || []);
   const sel = (pp) => (k) => onselect?.(k == null ? null : term(pp)[k]?.id ?? null);
   const src = $derived(rec?.lean_source);
+  // A definition its body applies, expanded at those arguments.
+  let opened = $state(null);
 </script>
 
 {#snippet lean(pp)}<LeanText {pp} {onref} {refs} {selId} onterm={onselect ? sel(pp) : null} />{/snippet}
@@ -59,7 +63,8 @@
       </ul>
       {#if rec.equations_omitted}<p class="small">{rec.equations_omitted} further equation{rec.equations_omitted === 1 ? " is" : "s are"} not included in this audit; the Lean source has them all.</p>{/if}
     {:else if rec.body}
-      <div class="line"><span class="role">:=</span><span class="body">{@render lean(rec.body)}</span></div>
+      <div class="line"><span class="role">:=</span><span class="body">{@render lean(rec.body)}{#if expansionsOf(rec.body).length}{" "}<span class="xs">expand{#each expansionsOf(rec.body) as o}{" "}<button class="xb" class:on={opened?.x === o.x} aria-label={"Expand " + o.text + " at its arguments"} onclick={() => (opened = opened?.x === o.x ? null : o)}>{o.label}</button>{/each}</span>{/if}</span></div>
+      {#if opened}<Expansion x={opened.x} occ={opened.k >= 0 ? opened.text : null} {onref} {refs} onclose={() => (opened = null)} />{/if}
     {:else if rec.value}
       <p class="small faint">Lean gives no equations for this definition; its value is in the exact Lean.</p>
     {:else if rec.signature}
@@ -121,6 +126,9 @@
   .compiled > summary { cursor: pointer; color: var(--muted); font-size: 13px; }
   .ref { border: 0; background: none; padding: 0; color: var(--accent); cursor: pointer; font-family: var(--mono); font-size: 0.95em; text-align: left; overflow-wrap: anywhere; }
   .small { font-size: 13px; }
+  .xs { font-size: 12px; color: var(--faint); white-space: normal; }
+  .xb { border: 1px solid var(--border); border-radius: 10px; background: none; color: var(--accent); cursor: pointer; font: 12px var(--mono); padding: 0 6px; min-height: 0; }
+  .xb.on { background: color-mix(in srgb, var(--st-open) 22%, transparent); }
   .faint { color: var(--faint); }
   .bad, .err { color: var(--st-malformed); font-size: 13px; }
   .defn :global(.lean button), .defn :global(.lean a) { min-height: 0; }

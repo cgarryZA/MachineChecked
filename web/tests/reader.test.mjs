@@ -453,6 +453,60 @@ await check("in the local reader a symbol is linked by choosing it and clicking 
     assert.match(await exact.locator(".src").textContent(), /\| n \+ 2 => fib n \+ fib \(n \+ 1\)/);
   });
 
+  await check("a definition expands at the arguments of each application, beside the statement", width, async (pg) => {
+    await pg.goto(origin + `/structure/#/r/${SHAPE.release}/read/P/${encodeURIComponent("P:thm:jet")}`);
+    const st = pg.locator("aside .view .stmt").first();
+    await st.locator(".ribbon").waitFor();
+    // The assumption at order n + 5 and the conclusion at n + 4 are different applications.
+    const chips = st.locator("button.xb");
+    assert.equal(await chips.count(), 2);
+    await chips.nth(0).click();
+    let xp = st.locator(".inspect .xp");
+    await xp.waitFor();
+    assert.match(await xp.locator(".occ").textContent(), /Shape\.JetBound f S \(n \+ 5\) C/);
+    assert.match((await xp.locator(".args").textContent()).replace(/\s+/g, " "), /k := n \+ 5/);
+    assert.match(await xp.locator(".body").textContent(), /∀ \(j : Nat\), j ≤ n \+ 5 → ∀ \(x : Nat\), S x → f j x ≤ C/);
+    assert.equal(await st.locator(".ribbon .in").count() > 0, true, "the application stays visible and selected");
+    await chips.nth(1).click();
+    xp = st.locator(".inspect .xp");
+    assert.match(await xp.locator(".body").textContent(), /j ≤ n \+ 4/);
+    assert.doesNotMatch(await xp.locator(".body").textContent(), /n \+ 5/);
+
+    // A partial application keeps the parameter it still needs; the definition it is passed to
+    // expands with it applied, and that application expands in turn.
+    await pg.goto(origin + `/structure/#/r/${SHAPE.release}/read/P/${encodeURIComponent("P:thm:below")}`);
+    const every = pg.locator("aside .view .stmt").filter({ hasText: "Shape.Every" }).first();
+    await every.locator(".ribbon").waitFor();
+    await every.locator("button.xb", { hasText: /^Shape\.AllBelow 7$/ }).click();
+    xp = every.locator(".inspect .xp").first();
+    assert.match((await xp.locator(".line").textContent()).replace(/\s+/g, " "), /still to supply \(v : Fin 2 → Nat\): ∀ \(i : Fin 2\), v i ≤ 7/);
+    assert.match((await xp.locator(".args").textContent()).replace(/\s+/g, " "), /α := Nat \(implicit\) ?instance := instLENat ?bound := 7 ?n := 2 \(implicit\)/);
+    await every.locator("button.xb", { hasText: /^Shape\.Every/ }).first().click();
+    xp = every.locator(".inspect .xp").first();
+    await xp.locator("button.xb").click();
+    assert.match(await xp.locator(".xp .body").textContent(), /∀ \(i : Fin 2\), v i ≤ 7/);
+    // A bound variable of the definition is renamed apart from the statement's own i.
+    const below = pg.locator("aside .view .stmt").filter({ hasText: "Shape.AllBelow i v" }).first();
+    await below.locator("button.xb").first().click();
+    assert.match(await below.locator(".inspect .xp .body").textContent(), /∀ \(i_1 : Fin 3\), v i_1 ≤ i$/);
+
+    // A definition by equations shows the equation that applies, specialised, with its case
+    // condition and its theorem's name.
+    await pg.goto(origin + `/structure/#/r/${SHAPE.release}/read/P/${encodeURIComponent("P:thm:steps")}`);
+    const steps = pg.locator("aside .view .stmt").filter({ hasText: "Shape.steps" }).first();
+    await steps.locator(".concl").waitFor();
+    await steps.locator("button.xb").click();
+    xp = steps.locator(".inspect .xp");
+    assert.match((await xp.locator(".eq").textContent()).replace(/\s+/g, " "), /Shape\.steps \(k \+ 3\) = if h : k \+ 3 = 0 then 0 else Shape\.steps \(k \+ 3 - 1\) \+ 1 expand Shape\.steps \(k \+ 3 - 1\) Shape\.steps\.eq_1/);
+    const pick = pg.locator("aside .view .stmt").filter({ hasText: "Shape.pick" }).first();
+    await pick.locator("button.xb").click();
+    xp = pick.locator(".inspect .xp");
+    assert.match((await xp.locator(".eq").textContent()).replace(/\s+/g, " "), /provided \(x_3 : k \+ 1 = 0 → False\): Shape\.pick \(k \+ 1\) 0 = 1 Shape\.pick\.eq_2/);
+    assert.match(await xp.textContent(), /Not applying here: Shape\.pick\.eq_1, Shape\.pick\.eq_3/);
+    assert.match((await xp.locator(".args").textContent()).replace(/\s+/g, " "), /argument 1 := k \+ 1/);
+    if (width === 1300) await pg.screenshot({ path: process.env.SHOT_DIR ? path.join(process.env.SHOT_DIR, "expansion.png") : path.join(os.tmpdir(), "mc-expansion.png") });
+  });
+
   await check("a statement keeps its order, with each object's own conditions beside it", width, async (pg) => {
     await pg.goto(origin + `/structure/#/r/${SHAPE.release}/read/P/${encodeURIComponent("P:thm:layout")}`);
     const st = pg.locator("aside .view .stmt");

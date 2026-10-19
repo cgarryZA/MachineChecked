@@ -77,6 +77,22 @@ names all of them. A failed extraction is recorded in `definition_error` and sto
 from the checkout the probe ran on (none for a declaration of a dependency). The export carries
 these fields only when every paper publishes its Lean.
 
+A printed term of a statement (a binder's type, a conclusion or one of its leaves) and the body
+of a definition also carry `expansions`: each application of one of the project's definitions
+inside it, expanded at its actual arguments. An expansion is `{at, id, name, args, defined_by,
+checked}`: `at` is the identity of the application it expands, `id` (`at` followed by `=`)
+prefixes the identities of its own sub-terms, and `args` are the arguments by the definition's
+parameters (`{name, binder, value}`). With `body`, `params` are the parameters the application
+does not supply and `body` is the definition's body with the arguments substituted
+(`Expr.beta`, so no bound variable is captured) and checked by Lean to have the application's
+type. With `equations`, `equations` lists each equation theorem whose left side matches the
+application, specialised to it, `{name, statement, params, equation}`, with the variables and
+case conditions that remain as `params` and the statement checked to follow from the theorem;
+`equations_not_applying` names the others and `equations_omitted` counts those not compared.
+An expansion's own applications expand once more; a failure is `error` on that expansion only.
+At most 16 applications of one term are expanded and `expansions_omitted` counts the rest.
+Expansions are display only and are exported with the statement, so only with the Lean.
+
 ## Manifest (`manifest-index.schema.json`, `manifest-claim.schema.json`), derived
 
 The current format is `prooflens/manifest@1`; older display data must be rebuilt.
