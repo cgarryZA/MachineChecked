@@ -115,6 +115,57 @@ def test_definitions_carry_what_they_say_through_the_export(toy, tmp_path):
     assert expanded(tmp_path / "private") == []
 
 
+def expansions_apart(data):
+    """Check that the reader data in `data` keeps every expansion out of the files that refer to
+    it: claims, declarations and expansions hold only references `{at, id, name, key}`, each to a
+    file `expansions/<key>.json` whose content has that key. Returns the number of expansions."""
+    def refs(o, where):
+        found = []
+        if isinstance(o, dict):
+            for k, v in o.items():
+                if k == "expansions":
+                    for x in v:
+                        assert set(x) == {"at", "id", "name", "key"}, \
+                            f"{where} embeds an expansion of {x.get('name')}"
+                        found.append(x["key"])
+                else:
+                    found += refs(v, where)
+        elif isinstance(o, list):
+            for v in o:
+                found += refs(v, where)
+        return found
+    wanted = set()
+    for sub in ("claims", "decls", "expansions"):
+        for f in (data / sub).glob("*.json"):
+            rec = json.loads(f.read_text())
+            wanted |= set(refs(rec, f"{sub}/{f.name}"))
+            if sub != "claims":
+                assert mf.record_key(rec) == f.stem, f"{sub}/{f.name} is not under its key"
+    stored = {f.stem for f in (data / "expansions").glob("*.json")}
+    assert wanted <= stored, f"missing expansions {sorted(wanted - stored)[:3]}"
+    for f in (data / "claims").glob("*.json"):
+        c = json.loads(f.read_text())
+        assert all((data / "decls" / f"{k}.json").exists() for k in c.get("decls", {}).values())
+    return len(stored)
+
+
+@needs_lean
+@needs_tex
+def test_claim_files_refer_to_expansions(toy, tmp_path):
+    """A claim file carries no expansion, only references to `data/expansions/<key>.json`,
+    which the reader fetches when one is opened; each is written once under its content key,
+    in the site and in the public export, and not exported when the Lean is not published."""
+    from prooflens import config as cfgmod
+    from prooflens.export import export
+    _, _, cfg = build(toy)
+    assert expansions_apart(cfg.out_dir / "site" / "data") > 0
+    export(cfg, tmp_path / "public")
+    assert expansions_apart(tmp_path / "public" / "data") > 0
+    edit(toy / "machinechecked.toml", "lean = true", "lean = false")
+    export(cfgmod.load(toy / "machinechecked.toml"), tmp_path / "private")
+    assert expansions_apart(tmp_path / "private" / "data") == 0
+
+
 @needs_lean
 @needs_tex
 def test_hashes(toy):

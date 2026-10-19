@@ -95,6 +95,11 @@ Only what is printed is searched (explicit arguments, not implicit or instance o
 4000 nodes of a term; at most 16 applications of one term are expanded and `expansions_omitted`
 counts the rest.
 Expansions are display only and are exported with the statement, so only with the Lean.
+In the reader's data, each expansion is a file of its own, `data/expansions/<key>.json`, where
+`key` is the first 24 hex digits of the SHA-256 of its canonical JSON; a statement, declaration
+or expansion refers to it as `{at, id, name, key}`, and the reader fetches it when it is opened.
+An expansion that recurs is written once. A published audit's loader fetches every expansion
+its claims and declarations refer to and checks each against its key.
 
 ## Manifest (`manifest-index.schema.json`, `manifest-claim.schema.json`), derived
 

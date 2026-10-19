@@ -619,9 +619,13 @@ await check("in the local reader a symbol is linked by choosing it and clicking 
   });
 
   await check("a definition expands at the arguments of each application, beside the statement", width, async (pg) => {
+    // An expansion is fetched from its own file when it is opened, not with the claim.
+    const fetched = [];
+    pg.on("request", (r) => { if (r.url().includes("/data/expansions/")) fetched.push(r.url()); });
     await pg.goto(origin + `/structure/#/r/${SHAPE.release}/read/P/${encodeURIComponent("P:thm:jet")}`);
     const st = pg.locator("aside .view .stmt").first();
     await st.locator(".ribbon").waitFor();
+    assert.equal(fetched.length, 0, "no expansion is fetched before one is opened");
     // The assumption at order n + 5 and the conclusion at n + 4 are different applications.
     const chips = st.locator("button.xb");
     assert.equal(await chips.count(), 2);
@@ -631,6 +635,7 @@ await check("in the local reader a symbol is linked by choosing it and clicking 
     assert.match(await xp.locator(".occ").textContent(), /Shape\.JetBound f S \(n \+ 5\) C/);
     assert.match((await xp.locator(".args").textContent()).replace(/\s+/g, " "), /k := n \+ 5/);
     assert.match(await xp.locator(".body").textContent(), /∀ \(j : Nat\), j ≤ n \+ 5 → ∀ \(x : Nat\), S x → f j x ≤ C/);
+    assert.equal(fetched.length, 1, "opening an expansion fetches it");
     assert.equal(await st.locator(".ribbon .in").count() > 0, true, "the application stays visible and selected");
     await chips.nth(1).click();
     xp = st.locator(".inspect .xp");

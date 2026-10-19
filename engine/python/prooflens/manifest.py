@@ -320,6 +320,60 @@ def record_key(record: dict) -> str:
     return content_id(record)[:24]
 
 
+EXPANSION_REF = ("at", "id", "name", "key")
+
+
+def is_expansion_ref(x) -> bool:
+    """Whether `x` is a reference to an expansion stored on its own (`split_expansions`)."""
+    return isinstance(x, dict) and "key" in x and set(x) <= set(EXPANSION_REF)
+
+
+def split_expansions(obj, out: dict[str, dict]):
+    """`obj` with each definition expanded at an application (an entry of a printed term's
+    `expansions`) replaced by a reference `{at, id, name, key}`, and the expansion itself put in
+    `out` under `key` (`record_key` of the expansion, its own nested expansions replaced in turn).
+    The reader fetches an expansion when it is opened, so a claim file carries only the
+    references, and an expansion that recurs in several statements is stored once. Display
+    only: no status reads an expansion."""
+    if isinstance(obj, list):
+        return [split_expansions(v, out) for v in obj]
+    if not isinstance(obj, dict):
+        return obj
+    res = {}
+    for k, v in obj.items():
+        if k == "expansions" and isinstance(v, list):
+            refs = []
+            for x in v:
+                if is_expansion_ref(x) or not isinstance(x, dict):
+                    refs.append(x)
+                    continue
+                full = split_expansions(x, out)
+                key = record_key(full)
+                out[key] = full
+                refs.append({"at": full.get("at"), "id": full.get("id"),
+                             "name": full.get("name"), "key": key})
+            res[k] = refs
+        else:
+            res[k] = split_expansions(v, out)
+    return res
+
+
+def expansion_keys(obj) -> set[str]:
+    """The keys of the expansions `obj` refers to (not those the expansions refer to)."""
+    found: set[str] = set()
+    stack = [obj]
+    while stack:
+        o = stack.pop()
+        if isinstance(o, dict):
+            if is_expansion_ref(o):
+                found.add(o["key"])
+            else:
+                stack.extend(o.values())
+        elif isinstance(o, list):
+            stack.extend(o)
+    return found
+
+
 def decl_records(body: dict, lean: dict) -> dict[str, dict]:
     """Every declaration once, with its current review."""
     reviews: dict[str, dict] = {}

@@ -302,8 +302,12 @@ def export(cfg: Config, out: Path, release: str | None = None,
     pidx["claims"] = [_pick(c, ["id", "paper", "number", "title", "kind", "scope", "status",
                                 "status_code", "class", "anchor", "counts", "file"]) for c in index["claims"]]
     write_json(data / "index.json", pidx, indent=None)
+    # Definitions expanded at their applications are written on their own, and only those that
+    # a published statement or declaration refers to (`mf.split_expansions`).
+    expansions: dict[str, dict] = {}
     for name, chunk in chunks.items():
-        write_json(data / "claims" / name, public_claim(chunk, pubs[chunk["paper"]]),
+        write_json(data / "claims" / name,
+                   mf.split_expansions(public_claim(chunk, pubs[chunk["paper"]]), expansions),
                    indent=None)
     # Declarations are shared between papers: their Lean text and review texts are exported only
     # when every paper allows it. A redacted record is a different record, so it gets its own key.
@@ -314,6 +318,7 @@ def export(cfg: Config, out: Path, release: str | None = None,
     for key, d in store.items():
         q = _pick(d, DECL_KEYS_LEAN if lean_ok else DECL_KEYS_MIN)
         q["review"] = _reviews(d.get("review"), rev_ok)
+        q = mf.split_expansions(q, expansions)
         new = mf.record_key(q)
         rekey[key] = new
         write_json(data / "decls" / f"{new}.json", q, indent=None)
@@ -322,6 +327,8 @@ def export(cfg: Config, out: Path, release: str | None = None,
         c = json.loads(path.read_text(encoding="utf-8"))
         c["decls"] = {n: rekey[k] for n, k in c["decls"].items()}
         write_json(path, c, indent=None)
+    for key, x in expansions.items():
+        write_json(data / "expansions" / f"{key}.json", x, indent=None)
     # The search index, with only what each paper allows.
     srch = mf.search_index(index, chunks)
     pub_search = {"claims": [], "decls": srch["decls"] if lean_ok else []}

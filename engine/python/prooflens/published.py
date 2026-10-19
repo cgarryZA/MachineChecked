@@ -182,6 +182,25 @@ def load_published_audit(paper: dict, project: dict, listing: dict, fetch) -> di
                 raise AuditError('Audit declaration hash mismatch')
             return key, rec
         store = dict(pool.map(declaration, keys))
+
+        # Definitions expanded at their applications, stored on their own and referred to by
+        # key from statements, declarations and other expansions (`mf.split_expansions`).
+        def expansion(key):
+            if not re.fullmatch(r'[0-9a-f]{24}', key):
+                raise AuditError('Invalid expansion key')
+            rec = read('data/expansions/' + key + '.json', 2_000_000)
+            if mf.record_key(rec) != key:
+                raise AuditError('Audit expansion hash mismatch')
+            return key, rec
+        expansions = {}
+        wanted = set().union(*(mf.expansion_keys(c['record']) for c in records),
+                             *(mf.expansion_keys(r) for r in store.values()))
+        while wanted:
+            if len(expansions) + len(wanted) > 100_000:
+                raise AuditError('Audit has too many expansions')
+            got = dict(pool.map(expansion, sorted(wanted)))
+            expansions.update(got)
+            wanted = set().union(*(mf.expansion_keys(r) for r in got.values())) - set(expansions)
     pdfs = {}
     edition = None
     if ap.get('pdf'):
@@ -199,6 +218,6 @@ def load_published_audit(paper: dict, project: dict, listing: dict, fetch) -> di
     return {'author': d.get('author') or listing.get('author'), 'url': base,
             'commit': f['commit'], 'release': idx['release'], 'version': audit_version(d),
             'paper_version': pinned,
-            'claims': records, 'store': store, 'pdfs': pdfs, 'paper': audited_paper,
+            'claims': records, 'store': store, 'expansions': expansions, 'pdfs': pdfs, 'paper': audited_paper,
             'context': {k: idx.get(k) for k in ('release', 'evidence', 'project', 'lean', 'issues', 'site_url', 'created', 'tool')},
             'gates': idx.get('gates', {}).get(ap['id']), 'state': 'loaded'}

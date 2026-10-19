@@ -2,13 +2,27 @@
   import LeanText from "./LeanText.svelte";
   import Expansion from "./Expansion.svelte";
   import { expansionFor, expansionsOf } from "../lib/expand.js";
+  import { loadExpansion } from "../lib/data.js";
 
   // A definition expanded at one application of it (`x`, one of a printed expression's
   // `expansions`): the arguments it is applied to, by the definition's parameters, then its body
   // at those arguments, or each of its equations that applies to them, as Lean computed and
   // checked them. `occ` is the application as the statement prints it. A sub-term of the
   // expansion that applies another of the project's definitions expands in turn, below.
-  let { x, occ = null, onref = null, refs = null, onclose = null } = $props();
+  // A statement refers to an expansion by key (`{at, id, name, key}`); it is fetched here, when
+  // it is opened.
+  let { x: given, occ = null, onref = null, refs = null, onclose = null } = $props();
+  const byKey = (g) => g?.key && !g.defined_by && !g.error;
+  let loaded = $state(null), failed = $state(null);
+  $effect(() => {
+    const g = given;
+    loaded = null;
+    failed = null;
+    if (!byKey(g)) return;
+    loadExpansion(g.key).then((r) => { if (given === g) loaded = r; })
+      .catch((e) => { if (given === g) failed = String(e?.message || e); });
+  });
+  const x = $derived(byKey(given) ? loaded : given);
 
   const BIND = { explicit: ["(", ")"], implicit: ["{", "}"], "strict-implicit": ["⦃", "⦄"], instance: ["[", "]"] };
   const WRITTEN = { implicit: "implicit", "strict-implicit": "implicit", instance: "instance" };
@@ -30,12 +44,16 @@
   {#each ps as p}{@const br = BIND[p.binder] || BIND.explicit}{" "}<span class="param">{br[0]}{#if p.binder !== "instance"}<span class="pn">{p.name}</span>{" : "}{/if}<LeanText pp={p.type} {onref} {refs} />{br[1]}</span>{/each}
 {/snippet}
 
-<div class="xp" data-expansion={x.id}>
+<div class="xp" data-expansion={given.id}>
   <p class="head">
-    <code class="nm">{x.name}</code><span class="lbl">at its arguments</span>
+    <code class="nm">{given.name}</code><span class="lbl">at its arguments</span>
     {#if onclose}<button class="x" aria-label="Close the expansion" onclick={onclose}>×</button>{/if}
   </p>
   {#if occ}<p class="occ"><code>{occ}</code></p>{/if}
+  {#if !x}
+    {#if failed}<p class="small bad">This expansion could not be loaded ({failed}). The statement above is exact.</p>
+    {:else}<p class="small faint">Loading the expansion…</p>{/if}
+  {:else}
   {#if x.args?.length}
     <ul class="args" aria-label="Arguments">
       {#each x.args as a, i}
@@ -72,6 +90,7 @@
     </div>
   {/if}
   {#if !x.error}<p class="small faint">Substituted and type-checked by Lean.</p>{/if}
+  {/if}
   {#if inner}
     <Expansion x={inner.x} occ={inner.text} {onref} {refs} onclose={() => { sel = null; alone = null; }} />
   {/if}

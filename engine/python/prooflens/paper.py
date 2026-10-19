@@ -228,7 +228,8 @@ def write_paper_site(site: Path, paper: dict, claims: list[dict],
              "findings": {"total": {}, "general": []}, "gates": {}, "claims": index_claims,
              "search": "data/search.json"}
     store = {k: v for a in audits_loaded.values() for k, v in a.get("store", {}).items()}
-    write_preview(site, index, chunks, store, {}, web_dist)
+    expansions = {k: v for a in audits_loaded.values() for k, v in a.get("expansions", {}).items()}
+    write_preview(site, index, chunks, store, {}, web_dist, expansions=expansions)
     search = mf.search_index(index, chunks)
     search["by_project"] = {}
     for repo in projects:
