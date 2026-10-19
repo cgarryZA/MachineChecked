@@ -291,6 +291,9 @@ def maxExpansions : Nat := 16
 expansion. Further definitions stay references to their declarations. -/
 def statementDepth : Nat := 2
 
+/-- At most this many nodes of one printed expression are visited looking for applications. -/
+def maxVisits : Nat := 4000
+
 /-- Whether an application of `c` is expanded: a definition of the project's (`roots`) that a
 reader looks for, of data or of a predicate, and not an instance or a structure's projection. -/
 def expandable (roots : Array Name) (c : Name) : MetaM Bool := do
@@ -377,7 +380,7 @@ partial def ppExpanded (roots : Array Name) (depth : Nat) (e : Expr) (vars : Arr
     (root : SubExpr.Pos) (pfx : String := "") (eqn : Bool := false) : MetaM Json := do
   let fields ← ppFields e vars root pfx
   if depth == 0 || roots.isEmpty then return Json.mkObj fields
-  let found ← IO.mkRef (0 : Nat)
+  let found ← IO.mkRef ((0, 0) : Nat × Nat)
   let out ← if eqn && e.isAppOfArity ``Eq 3 then do
       let lhs := e.getArg! 1
       let lp := root.pushNaryArg 3 1
@@ -390,13 +393,18 @@ partial def ppExpanded (roots : Array Name) (depth : Nat) (e : Expr) (vars : Arr
     else expansionsIn roots depth vars pfx found e root
   if out.isEmpty then return Json.mkObj fields
   return Json.mkObj (fields ++ [("expansions", Json.arr out),
-    ("expansions_omitted", toJson ((← found.get) - out.size))])
+    ("expansions_omitted", toJson ((← found.get).1 - out.size))])
 
 /-- The applications of the project's definitions inside `e` (at `pos`), outermost first, each
-expanded in the local context where it stands; `found` counts them, and those after the first
-`maxExpansions` are counted only. -/
+expanded in the local context where it stands. Only what is printed is searched: the explicit
+arguments of an application, not its implicit and instance arguments (whose terms can be very
+large shared structures). `found` counts the applications and the nodes visited; applications
+after the first `maxExpansions` are counted only, and the search stops after `maxVisits`
+nodes. -/
 partial def expansionsIn (roots : Array Name) (depth : Nat) (vars : Array FVarId) (pfx : String)
-    (found : IO.Ref Nat) (e : Expr) (pos : SubExpr.Pos) : MetaM (Array Json) := do
+    (found : IO.Ref (Nat × Nat)) (e : Expr) (pos : SubExpr.Pos) : MetaM (Array Json) := do
+  found.modify fun (n, v) => (n, v + 1)
+  if (← found.get).2 > maxVisits then return #[]
   match e with
   | .app .. =>
     let f := e.getAppFn
@@ -404,14 +412,19 @@ partial def expansionsIn (roots : Array Name) (depth : Nat) (vars : Array FVarId
     let mut out := #[]
     if let .const c us := f then
       if ← expandable roots c then
-        found.modify (· + 1)
-        if (← found.get) ≤ maxExpansions then
+        found.modify fun (n, v) => (n + 1, v)
+        if (← found.get).1 ≤ maxExpansions then
           out := out.push (← expansionAt roots depth vars pfx e c us pos)
     else
       out := out ++ (← expansionsIn roots depth vars pfx found f (pos.pushNaryFn args.size))
+    let explicit ← try
+        let info ← getFunInfoNArgs f args.size
+        pure (info.paramInfo.map (·.binderInfo.isExplicit))
+      catch _ => pure #[]
     for i in [:args.size] do
-      out := out ++
-        (← expansionsIn roots depth vars pfx found args[i]! (pos.pushNaryArg args.size i))
+      if explicit.getD i true then
+        out := out ++
+          (← expansionsIn roots depth vars pfx found args[i]! (pos.pushNaryArg args.size i))
     return out
   | .lam n t b bi | .forallE n t b bi =>
     let a ← expansionsIn roots depth vars pfx found t pos.pushBindingDomain
