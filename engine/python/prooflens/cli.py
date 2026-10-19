@@ -11,7 +11,8 @@ the full assessment; any other project gets the zero-configuration view, whose o
 repository is `machinechecked.links.json` (its working files, a downloaded paper among them, are
 in `.machinechecked/`, which Git ignores). The full assessment has further commands: reassess,
 site, bundle, export, serve, review promote, replay and validate; `cache` saves and restores
-the Lean build (each with --help).
+the Lean build (each with --help). `compare` gives a claim's passage, Lean statements and
+definitions as JSON, and `review` takes the review protocol's steps in either kind of project.
 `prooflens` is another name for the same command.
 """
 
@@ -564,32 +565,104 @@ def _text_arg(v: str | None) -> str:
     return sys.stdin.read() if v == "-" else Path(v).read_text(encoding="utf-8")
 
 
+def _built_work(a) -> tuple[Path, Path | None]:
+    """The working directory of the last build and the Lean project: the full assessment's
+    when a configuration selects it, else the zero-configuration view's in the project here.
+    Nothing is built: the commands that read a build use the one `view` or `build` wrote."""
+    if _assurance_config(a):
+        cfg = cfgmod.load(_assurance_config(a))
+        return cfg.out_dir, cfg.lean_root
+    from .simple import find_lake_root
+    root = find_lake_root(Path.cwd().resolve())
+    if root is None:
+        sys.exit("no Lean project here: run machinechecked inside a directory with a lakefile")
+    return root / cfgmod.work_dir_name(root), root
+
+
+def _print_json(obj) -> None:
+    print(json.dumps(obj, indent=1, ensure_ascii=False))
+
+
+def cmd_compare(a):
+    """`compare CLAIM`: a claim's comparison packet; `compare --query OP TARGET`: a targeted
+    query (`compare.py`). Both read the last build and change nothing."""
+    from . import compare as cmp
+    work, root = _built_work(a)
+    try:
+        site = cmp.Site(work / "site" / "data")
+        if a.query:
+            op, target = a.query
+            out = cmp.query(site, op, target, a.limit, a.after, root,
+                            log=lambda m: print(m, file=sys.stderr))
+            if a.json:
+                return _print_json(out)
+            if not out["available"]:
+                print(out["reason"])
+                return
+            for r in out["results"]:
+                print("\n".join(cmp.statement_lines(r)) if "statement" not in r
+                      or isinstance(r.get("statement"), dict) else
+                      f"{r['name']}: {r['statement']}" + ("" if r.get("complete") else " …"))
+            if out["retrieval"]["next"]:
+                print(f"(more: --after {out['retrieval']['next']})")
+            return
+        if not a.claim:
+            sys.exit("name a claim (its id, key or number), or give --query OP TARGET")
+        out = cmp.claim_packet(site, a.claim, a.stage, a.limit, a.after)
+    except cmp.CompareError as e:
+        if e.kind in ("no-build", "no-project") and not a.json:
+            sys.exit(f"machinechecked: {e}")
+        if a.json:
+            _print_json({"schema": cmp.PACKET_SCHEMA if not a.query else cmp.QUERY_SCHEMA,
+                         "ok": False, "error": e.to_json()})
+            raise SystemExit(2 if e.kind in ("no-build", "no-project") else 1)
+        print(f"machinechecked: {e}" + (f" (did you mean: {', '.join(map(str, e.candidates))})"
+                                         if e.candidates else ""), file=sys.stderr)
+        raise SystemExit(1)
+    if a.json:
+        return _print_json(out)
+    print(cmp.packet_text(out))
+    nxt = (out["retrieval"].get("definitions") or {}).get("next")
+    if nxt:
+        print(f"\n(more definitions: --after {nxt})")
+
+
 def cmd_review_step(a):
     from . import review_cli as rc
-    cfg = cfgmod.load(_config_arg(a))
+    work, _ = _built_work(a)
+    as_json = getattr(a, "json", False)
     try:
-        s = rc.Session(cfg, rc.parse_reviewer(a.reviewer, a.same_family))
+        s = rc.Session(work, rc.parse_reviewer(a.reviewer, a.same_family))
         if a.action == "next":
             u = next(iter(s.open_units()), None)
-            print(f"{u['id']}  ({u['reason']})" if u else "nothing left to review")
+            if as_json:
+                _print_json({"schema": "machinechecked/review-next@1",
+                             "release": s.index["release"], "mode": s.queue.get("mode"),
+                             "unit": u and {k: u.get(k) for k in ("id", "kind", "reason")}})
+            else:
+                print(f"{u['id']}  ({u['reason']})" if u else "nothing left to review")
         elif a.action == "status":
+            if as_json:
+                _print_json({"schema": "machinechecked/review-status@1",
+                             "release": s.index["release"], "mode": s.queue.get("mode"),
+                             "reports": len(s.work["reports"]),
+                             "drafts": {i: d["stage"] for i, d in s.work["drafts"].items()},
+                             "open": [u["id"] for u in s.open_units()]})
+                return
             print(f"{len(s.work['reports'])} report(s), {len(s.work['drafts'])} in progress, "
                   f"{len(s.open_units())} unit(s) left to review (release {s.index['release']})")
             for uid, d in s.work["drafts"].items():
                 print(f"  {uid}: at step '{d['stage']}'")
-        elif a.action == "read":
-            print(s.read(a.unit))
+        elif a.action in ("read", "show", "author"):
+            out = getattr(s, a.action)(a.unit, as_json)
+            _print_json(out) if as_json else print(out)
         elif a.action == "lock":
             s.lock(a.unit, _text_arg(a.text))
             print(f"reading locked; `review show {a.unit}` shows the Lean")
-        elif a.action == "show":
-            print(s.show(a.unit))
         elif a.action == "decide":
             s.decide(a.unit, a.verdict, _text_arg(a.comparison), _text_arg(a.detail),
                      _text_arg(a.witness))
             print(f"verdict recorded; `review author {a.unit}` shows the author's review")
-        elif a.action == "author":
-            print(s.author(a.unit))
         elif a.action == "submit":
             r = s.submit(a.unit, _text_arg(a.text).strip())
             print(f"report recorded: {r['unit']['id']}, {r['verdict']['value']}; "
@@ -798,6 +871,23 @@ def main(argv=None):
     ins.add_argument("--refresh", action="store_true", help=argparse.SUPPRESS)
     ins.set_defaults(func=cmd_inspect)
 
+    co = sub.add_parser("compare", help="a claim's paper passage, Lean statements and definitions, "
+                        "from the last build (for scripts and agents)")
+    co.add_argument("claim", nargs="?", help="the claim: its id (P:thm:main), key (thm:main) or "
+                    "number (\"Theorem 2.1\")")
+    co.add_argument("--stage", choices=["read", "compare", "informed"], default="informed",
+                    help="read: the paper only; compare: and the Lean; informed (default): and "
+                    "what people have recorded (notes, reviews, statuses)")
+    co.add_argument("--query", nargs=2, metavar=("OP", "TARGET"),
+                    help="a targeted query: definition NAME, mentions NAME, dependencies NAME "
+                    "(and uses, proof-facts, composition, impact, which say what is not "
+                    "extracted yet)")
+    co.add_argument("--limit", type=int, help="return at most this many definitions or results")
+    co.add_argument("--after", metavar="ID", help="continue a list after this item")
+    co.add_argument("--json", action="store_true", help="print one JSON document")
+    co.add_argument("-c", "--config", default=None, help=argparse.SUPPRESS)
+    co.set_defaults(func=cmd_compare)
+
     sy = sub.add_parser("symbol", help="link a symbol of the paper to a Lean object (an assertion "
                         "under your name; display only)")
     sys_ = sy.add_subparsers(dest="action", required=True)
@@ -863,6 +953,9 @@ def main(argv=None):
             sp.add_argument("--witness", help="a file holding your note on the witness")
         if name == "export":
             sp.add_argument("--out", required=True)
+        if name in ("next", "status", "read", "show", "author"):
+            sp.add_argument("--json", action="store_true",
+                            help="print one JSON document holding only what this step shows")
         sp.add_argument("--as", dest="reviewer", default=os.environ.get("MACHINECHECKED_REVIEWER"),
                         help="human:NAME or llm:MODEL (default: $MACHINECHECKED_REVIEWER)")
         sp.add_argument("--same-family", choices=["yes", "no", "unknown"], default="unknown",

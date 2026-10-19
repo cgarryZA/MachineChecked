@@ -75,11 +75,13 @@ violations and obligations by subject; `findings` holds only their totals.
   unlinked ones by number, and suggestions as candidates.
 - **Do the proofs compile?** The `linked: …` statuses answer it for linked claims. Quote the
   declaration names that are incomplete, use further axioms, or are missing.
-- **Does a Lean statement match the paper?** Read the claim in the paper and the Lean
-  declaration's statement (`#check` it, or open its source), and compare hypotheses,
-  quantifiers, definitions and conclusion. Present it as your reading, for the user to judge;
-  the reader's Review page (`machinechecked view`, then Review) records such a review
-  with source revisions and reviewer attribution.
+- **Does a Lean statement match the paper?** `machinechecked compare CLAIM --json` (after
+  `view` or `build`) gives the claim's complete passage, its linked declarations' complete
+  statements and the definitions they use, with the release and commit they come from; compare
+  hypotheses, quantifiers, definitions and conclusion. `compare --query definition NAME` and
+  `compare --query mentions NAME` answer the next question. Present it as your reading, for
+  the user to judge; `machinechecked review` (or the reader's Review page) records a review
+  with source revisions and reviewer attribution, and shows the paper before the Lean.
 - **Where is a paper statement proved, and what does a proof rest on?** `machinechecked
   inspect NAME --dependencies --json` prints the declaration's statement, axioms and source,
   what its statement mentions and, separately, what its proof uses, and every declaration of
