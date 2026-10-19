@@ -38,7 +38,16 @@ statuses come from (it changes when the paper, the links or the Lean change). Ea
 `unspecified`), and the skill explains both.
 Without a `machinechecked.toml`, `warnings` lists names in module docstrings that the project
 and its dependencies do not declare (`kind` `module-doc-name`, with `file`, `line`, `name` and
-`message`); they do not change the exit code.
+`message`), and references to the paper's numbers that disagree with the paper read here
+(`kind` `paper-reference`, with `file`, `line`, `reference`, `status`, `id` and `message`);
+they do not change the exit code. `numbering` holds every such reference
+(`numbering.references`: `reference`, its exact `text` and `context`, its `source` with
+declaration, module, file, line and `where` it is, and `status`: `exact`, `other-kind`,
+`absent`, `unchecked` or `other-source`; `stale_lead` and `content.closer` when an exact
+reference's declaration reads closer to another statement) and the project-level `pattern`
+(counts by status, `drift`, and whether the paper's numbering is complete). Each suggestion
+has `reasons`: `signal` (`content`, `uses`, `number`, `lexical`, `structure`) and `text`; a
+`number` reason has `basis` "a lead" or "a possibly stale lead".
 
 In a project with a `machinechecked.toml` (the full assessment), the document also has
 `findings` (totals per tier, dismissed warnings left out) and `finding_details`: each finding
@@ -95,8 +104,10 @@ prints one JSON document (`machinechecked/compare@1`) for one claim, read from t
 - `lean.declarations`: every linked declaration (or locked statement) with its complete
   statement: `statement.text` exactly as Lean prints it, `binders` and `conclusion` with their
   expression ids, and Lean's checks (axioms, sorry, errors). `lean.candidates` are suggestions
-  nobody has confirmed. `lean.definitions` are the definitions the statements use, with their
-  type and value; `generated_for` marks the equations Lean generated for one of them.
+  nobody has confirmed, with their reasons. `lean.definitions` are the definitions the
+  statements use, with their type and value; `generated_for` marks the equations Lean generated
+  for one of them. `lean.references` are the references to the paper's numbers that concern
+  the claim, and `lean.numbering` their project-level pattern (as in `check --json`).
 - `interpretations` (stage `informed`, the default): the correspondence note, review reports,
   author's review markers, symbol links, the status and the assessment's findings.
 - `retrieval`: what is `included`, what the stage `withheld`, what is `unavailable` because it
@@ -114,10 +125,20 @@ Targeted queries have one shape (`machinechecked/query@1`: `op`, `target`, `cont
 machinechecked compare --query definition Toy.triangle --json   # its type, value, equations
 machinechecked compare --query mentions Toy.triangle --json     # statements that use it
 machinechecked compare --query dependencies Toy.Acceptance.thm_bound --json   # runs inspect
+machinechecked compare --query search "Theorem 2" --json       # declarations stating a claim
+machinechecked compare --query search 'n ≤ C * n ^ 2' --json   # ... or an expression, or words
 ```
 
-`mentions` searches the statements of the build in full and the project's index by a preview
-of each type (`complete: false` on such a result: get its statement with `dependencies`). The
+`search` ranks every declaration of the project's built modules, linked or not, by how much of
+the query its complete statement, docstring, name and used definitions carry. A claim as the
+target searches with its printed statement, over declarations of its sort, and says when a
+result orders `∀` and `∃` differently. Each result has its complete `statement`, its `score`
+and its `reasons`; a result reached through a close match it uses says so (`signal` `uses`,
+with `via`). It is the search the suggestions and the reader use, from the build's content
+index (`data/retrieval.json`), with no Lean session; `--limit` and `--after` page it.
+Nothing people recorded (links, rejections, notes) enters it. In zero configuration,
+`mentions` reads the complete statements of that index; with an older build it reads previews
+(`complete: false` on such a result: get its statement with `dependencies`). The
 queries `uses`, `proof-facts`, `composition` and `impact` answer `available: false` with the
 issue that owns their extraction. An error is `{"ok": false, "error": {kind, message,
 candidates}}` with exit 1 (exit 2, kind `no-build`, when there is no build to read: run

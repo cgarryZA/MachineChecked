@@ -1,6 +1,7 @@
 // Loading of the presentation manifest. The site only reads: every status and finding comes
 // from the manifest as written by the engine.
 
+import { Retrieval } from "./retrieval.js";
 import { statusView } from "./presentation.js";
 export { notProved } from "./presentation.js";
 
@@ -115,6 +116,19 @@ export async function saveSymbol(req) {
 
 export function loadLeanIndex(index) {
   return getJson(index.lean_index || "data/lean-index.json");
+}
+
+// The content index of every project declaration (lib/retrieval.js), or null when the build has
+// none (a full assessment's site).
+const retrievals = new Map();
+export function loadRetrieval(index) {
+  if (!index.retrieval) return Promise.resolve(null);
+  if (!retrievals.has(index.retrieval)) {
+    const p = getJson(index.retrieval).then((d) => new Retrieval(d));
+    retrievals.set(index.retrieval, p);
+    p.catch(() => retrievals.delete(index.retrieval));
+  }
+  return retrievals.get(index.retrieval);
 }
 
 export async function loadSearch(index) {
