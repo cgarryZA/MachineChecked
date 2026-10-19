@@ -25,7 +25,7 @@ from __future__ import annotations
 from .status import fields
 
 from .reviews import Review, history
-from .source_regions import SCHEME as SOURCE_SCHEME, matches as source_matches
+from .source_regions import SCHEME as SOURCE_SCHEME, changed_line, matches as source_matches
 
 OUT_OF_SCOPE = {"expository", "literature", "empirical", "proof-step", "part-of", "duplicate"}
 
@@ -541,9 +541,11 @@ class Assessor:
                             "revision (python -m prooflens.source_regions --config FILE "
                             f"--paper {pid}); then rebuild"))
                     elif not source_matches(c, t):
+                        where = changed_line(c, region) if region else None
                         detail = region.get("error") or (
                             "is missing; rebuild the source evidence" if not region else
-                            "differs from the frozen source region")
+                            "differs from the frozen source region"
+                            + (f": {where}" if where else ""))
                         self.findings.append(_finding(
                             "violation", "source-changed", c["id"],
                             f"the source region at {c['location']} {detail}"))

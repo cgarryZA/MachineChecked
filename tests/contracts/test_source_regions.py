@@ -7,7 +7,7 @@ import json
 import pytest
 
 from prooflens.source_regions import (
-    SCHEME, RegionError, collect, extract, matches, migration_plan, write_plan,
+    SCHEME, RegionError, changed_line, collect, extract, matches, migration_plan, write_plan,
 )
 
 REV = "a" * 40
@@ -137,6 +137,19 @@ def test_migration_uses_original_revision_and_changes_only_hash_fields(tmp_path)
         migration_plan(inv, "T", tmp_path, "b" * 40)
 
 
+def test_migration_accepts_a_pin_abbreviated_from_the_revision(tmp_path):
+    """#105: an inventory pinned by a short commit hash migrates at that commit; a short hash
+    of another commit, or one too short to name a commit, is refused."""
+    inv = inventory(tmp_path)
+    inv["claims"][0]["commit"] = REV[:7]
+    result, changes = migration_plan(inv, "T", tmp_path, REV)
+    assert len(changes) == 1 and result["claims"][0]["commit"] == REV[:7]
+    for pin in ("b" * 7, REV[:6]):
+        inv["claims"][0]["commit"] = pin
+        with pytest.raises(RegionError, match="original paper revision"):
+            migration_plan(inv, "T", tmp_path, REV)
+
+
 def test_migration_does_not_accept_missing_or_changed_legacy_baseline(tmp_path):
     inv = inventory(tmp_path)
     inv["claims"][0]["source_sha256"] = "f" * 64
@@ -214,7 +227,9 @@ def test_source_edit_fails_gates_and_reader_source_match_not_the_lean_proof(tmp_
     assert a["claims"][0]["status"] == "formal: accepted"
     assert not a["gates"]["T"]["consistency"]["pass"]
     assert not a["gates"]["T"]["release"]["pass"]
-    assert any(f["code"] == "source-changed" for f in a["findings"])
+    # The finding names the line that changed (#106).
+    assert any(f["code"] == "source-changed" and "line 2 of the passage (line 2 of paper.tex)"
+               in f["message"] for f in a["findings"])
     _, chunks, _ = build(after, "synthetic-release")
     shown = next(iter(chunks.values()))
     assert shown["source_matches"] is False
@@ -240,3 +255,42 @@ def test_display_overlay_does_not_repin_source_evidence(tmp_path):
     _, chunks, _ = build(record, "synthetic", {"claims": {c["id"]: {"title_tex": "Pretty title"}}})
     assert record == before
     assert next(iter(chunks.values()))["source_matches"] is False
+
+
+def test_line_pins_locate_a_change_and_are_added_to_older_pins(tmp_path):
+    """#106: every line of a passage is pinned; a change is named by its line, an added line
+    as a change in length; a pin made without line digests still matches by the whole
+    passage, and the migration adds its line digests."""
+    text = "\\begin{align}\na&=1\\\\\nb&=2\n\\end{align}\n"
+    root = paper(tmp_path, text)
+    region = extract(root, claim())
+    assert len(region.line_sha256) == 4 and region.record()["line_sha256"] == region.line_sha256
+    c = claim(source_hash_scheme=SCHEME, source_sha256=region.sha256,
+              source_line_sha256=region.line_sha256)
+    paper(tmp_path, text.replace("b&=2", "b&=3"))
+    rec = collect({"claims": [c]}, "T", root)[c["id"]]
+    assert changed_line(c, rec) == "line 3 of the passage (line 3 of paper.tex) changed"
+    paper(tmp_path, text.replace("b&=2\n", "b&=2\nc&=4\n"))
+    rec = collect({"claims": [c]}, "T", root)[c["id"]]
+    assert changed_line(c, rec).startswith("line 4 of the passage")
+    paper(tmp_path, text)
+    older = claim(source_hash_scheme=SCHEME, source_sha256=region.sha256)
+    assert matches(older, {"regions": collect({"claims": [older]}, "T", root)})
+    assert changed_line(older, collect({"claims": [older]}, "T", root)[older["id"]]) is None
+    result, changes = migration_plan({"claims": [older]}, "T", root, REV)
+    assert result["claims"][0]["source_line_sha256"] == region.line_sha256
+    assert changes and changes[0]["lines_added"]
+    _, again = migration_plan(result, "T", root, REV)
+    assert again == []
+
+
+def test_a_migration_keeps_the_inventory_indentation(tmp_path):
+    """A rewrite keeps the file's own indentation, so its diff is the fields it updates."""
+    inv = inventory(tmp_path)
+    path = tmp_path / "claims.json"
+    path.write_text(json.dumps(inv, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
+    before = path.read_bytes()
+    result, _ = migration_plan(inv, "T", tmp_path, REV)
+    write_plan(path, before, result)
+    assert path.read_text(encoding="utf-8") == \
+        json.dumps(result, indent=1, ensure_ascii=False) + "\n"

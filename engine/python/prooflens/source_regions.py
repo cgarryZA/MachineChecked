@@ -82,22 +82,35 @@ class Region:
     end_column: int
     kind: str
     text: str
+    lines: tuple[str, ...] = ()
 
     @property
     def sha256(self) -> str:
         return hashlib.sha256(self.text.encode("utf-8")).hexdigest()
 
+    @property
+    def line_sha256(self) -> list[str]:
+        """One digest per source line the passage spans (the whole line, raw, without its line
+        terminator), so that a change can be located, a passage that only moved can be told
+        from a changed one, and any checker can verify the pins from the file's lines alone."""
+        return [hashlib.sha256(line.encode("utf-8")).hexdigest() for line in self.lines]
+
     def record(self) -> dict:
-        # The evidence needs bounds and a digest, not an additional public copy of the text.
+        # The evidence needs bounds and digests, not an additional public copy of the text.
         return {"file": self.file, "start_line": self.start_line, "end_line": self.end_line,
                 "start_column": self.start_column, "end_column": self.end_column,
-                "kind": self.kind, "scheme": SCHEME, "sha256": self.sha256}
+                "kind": self.kind, "scheme": SCHEME, "sha256": self.sha256,
+                "line_sha256": self.line_sha256}
 
 
 def positive(value, name: str) -> int:
     if type(value) is not int or value < 1:
         raise RegionError(f"{name} must be a positive integer")
     return value
+
+
+def _span(lines: list[str], first: int, last: int) -> tuple[str, ...]:
+    return tuple(l.rstrip("\r\n") for l in lines[first - 1:last])
 
 
 def extract(root: Path, claim: dict) -> Region:
@@ -129,7 +142,8 @@ def extract(root: Path, claim: dict) -> Region:
         end = starts[end_line - 1] + end_col - 1
         if start >= end or not text[start:end].strip():
             raise RegionError("source region is empty or reversed")
-        return Region(name, line, end_line, start_col, end_col, "span", text[start:end])
+        return Region(name, line, end_line, start_col, end_col, "span", text[start:end],
+                      _span(lines, line, end_line))
     start = starts[line - 1] + len(first) - len(first.lstrip())
     opening = ENV.match(text, start)
     if opening and opening.group(1) == "begin" and opening.group(2).rstrip("*") in DISPLAYS:
@@ -143,13 +157,14 @@ def extract(root: Path, claim: dict) -> Region:
                 end_line = text.count("\n", 0, end) + 1
                 end_column = end - (text.rfind("\n", 0, end) + 1) + 1
                 return Region(name, line, end_line, start - starts[line - 1] + 1,
-                              end_column, "environment", text[start:end])
+                              end_column, "environment", text[start:end],
+                              _span(lines, line, end_line))
         raise RegionError("source environment has no matching end")
     if first.lstrip().startswith(r"\begin"):
         raise RegionError("unsupported or malformed environment; select an explicit source region")
     if not first.strip() or first.lstrip().startswith("%"):
         raise RegionError("source line is blank or a comment; select the actual passage")
-    return Region(name, line, line, 1, len(first) + 1, "line", first)
+    return Region(name, line, line, 1, len(first) + 1, "line", first, (first,))
 
 
 def collect(inventory: dict, paper: str, root: Path) -> dict:
@@ -174,6 +189,30 @@ def matches(claim: dict, tex: dict) -> bool:
                 and claim["source_sha256"] == rec.get("sha256"))
 
 
+def same_revision(pin: str, revision: str) -> bool:
+    """Whether an inventory's pin names the snapshot's revision: the same value, or an
+    abbreviated commit hash (at least 7 hexadecimal digits) of it."""
+    return pin == revision or bool(re.fullmatch(r"[0-9a-f]{7,40}", pin)
+                                   and re.fullmatch(r"[0-9a-f]{40}", revision)
+                                   and revision.startswith(pin))
+
+
+def changed_line(claim: dict, rec: dict) -> str | None:
+    """Where a passage differs from its pins, from the line digests both sides keep: the first
+    changed line, by its place in the passage and in the file, or a change in its length."""
+    old, new = claim.get("source_line_sha256"), rec.get("line_sha256")
+    if not old or not new:
+        return None
+    for i, (a, b) in enumerate(zip(old, new)):
+        if a != b:
+            return (f"line {i + 1} of the passage (line {rec['start_line'] + i} of "
+                    f"{rec['file']}) changed")
+    if len(old) != len(new):
+        return (f"the passage has {len(new)} lines, not {len(old)}: lines were "
+                + ("added" if len(new) > len(old) else "removed") + " at its end")
+    return None
+
+
 def migration_plan(inventory: dict, paper: str, root: Path, revision: str) -> tuple[dict, list]:
     """Rehash only the original frozen snapshot; never edit a review or a paper revision."""
     result = deepcopy(inventory)
@@ -182,7 +221,7 @@ def migration_plan(inventory: dict, paper: str, root: Path, revision: str) -> tu
         if claim["paper"] != paper or location(claim) is None:
             continue
         pin = claim.get("commit") or inventory.get("papers", {}).get(paper, {}).get("commit")
-        if not pin or str(pin).removeprefix("arxiv:") != revision:
+        if not pin or not same_revision(str(pin).removeprefix("arxiv:"), revision):
             raise RegionError(f"{claim['id']}: original paper revision must match {revision}")
         scheme = claim.get("source_hash_scheme")
         if scheme not in (None, SCHEME):
@@ -192,27 +231,40 @@ def migration_plan(inventory: dict, paper: str, root: Path, revision: str) -> tu
         if scheme == SCHEME:
             if expected != region.sha256:
                 raise RegionError(f"{claim['id']}: region differs from its frozen hash")
+            if claim.get("source_line_sha256") != region.line_sha256:
+                # The same passage: add the line digests it was pinned without.
+                claim["source_line_sha256"] = region.line_sha256
+                changes.append({"claim": claim["id"], "old_sha256": expected,
+                                "lines_added": True, **region.record()})
             continue
         name, line = location(claim)
         original = source_file(root, name).read_text(encoding="utf-8").split("\n")[line - 1]
         legacy = hashlib.sha256(" ".join(original.split()).encode("utf-8")).hexdigest()
         if not expected or expected != legacy:
             raise RegionError(f"{claim['id']}: legacy hash does not match the original snapshot")
-        claim.update(source_sha256=region.sha256, source_hash_scheme=SCHEME)
+        claim.update(source_sha256=region.sha256, source_hash_scheme=SCHEME,
+                     source_line_sha256=region.line_sha256)
         changes.append({"claim": claim["id"], "old_sha256": expected, **region.record()})
     if not any(c["paper"] == paper for c in inventory["claims"]):
         raise RegionError(f"no claims for paper {paper}")
     return result, changes
 
 
+def _indent(raw: bytes) -> int:
+    """The indentation of a JSON file, so that a rewrite changes only the fields it updates."""
+    m = re.search(rb"\n( +)\S", raw)
+    return len(m.group(1)) if m else 2
+
+
 def write_plan(path: Path, before: bytes, result: dict) -> None:
-    """Atomically replace the inventory only if it is still the one that was planned."""
+    """Atomically replace the inventory only if it is still the one that was planned, in its
+    own indentation."""
     temporary = None
     try:
         with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent,
                                          prefix=".source-regions-", delete=False) as handle:
             temporary = Path(handle.name)
-            json.dump(result, handle, ensure_ascii=False, indent=2)
+            json.dump(result, handle, ensure_ascii=False, indent=_indent(before))
             handle.write("\n")
             handle.flush()
             os.fsync(handle.fileno())
