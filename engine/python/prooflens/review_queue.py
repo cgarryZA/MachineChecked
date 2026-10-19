@@ -3,9 +3,9 @@
 A unit of review is a locked proposition (`spec`), a definition its meaning depends on (`def`), or,
 in the zero-configuration view, a confirmed link between a claim and a declaration (`link`). Each
 unit carries the fingerprints it would be reviewed at, the digests of the paper passages a review
-of it reads (`source_sha256`, `review_sources.py`), its current review state, the author's
-review (shown to the reviewer only after their own verdict) and why it sits where it does in the
-order. A unit is reviewed once per fingerprint, however many claims depend on it.
+of it reads, by claim (`source_sha256`, `review_sources.py`), its current review state, the
+author's review (shown to the reviewer only after their own verdict) and why it sits where it
+does in the order. A unit is reviewed once per fingerprint, however many claims depend on it.
 
 The order is a suggestion: less effort first, with a preference for units that many claims depend
 on. Reviewing a definition settles that definition only; no claim is approved by it.
@@ -124,7 +124,7 @@ def assurance_queue(index: dict, chunks: dict, store: dict, authors: list[str]) 
                 "paper": c["paper"], "papers": [c["paper"]],
                 "section": section_of(c["number"]), "claims": [], "clauses": [],
                 "legacy_hash": st.get("legacy_hash"), "fingerprint": st.get("fingerprint"),
-                "source_sha256": (cl.get("spec_review") or {}).get("source_sha256") or [],
+                "source_sha256": (cl.get("spec_review") or {}).get("source_sha256") or {},
                 "state": (cl.get("spec_review") or {}).get("state", "pending"),
                 "author_review": _author_text(cl.get("spec_review")),
                 "witness": cl.get("witness"), "refute": cl.get("refute"),
@@ -152,7 +152,7 @@ def assurance_queue(index: dict, chunks: dict, store: dict, authors: list[str]) 
             "section": rec.get("module", "").rsplit(".", 1)[0] or "—",
             "claims": [{"id": i} for i in users], "legacy_hash": rec.get("legacy_hash"),
             "fingerprint": rec.get("fingerprint"),
-            "source_sha256": rec["review"].get("source_sha256") or [],
+            "source_sha256": rec["review"].get("source_sha256") or {},
             "state": rec["review"]["state"],
             "author_review": _author_text(rec["review"]), "effort": effort,
             "reason": f"{_size(effort)} definition; used by {len(users)} claim(s)"})

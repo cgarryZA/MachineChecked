@@ -100,59 +100,70 @@ class Assessor:
 
     # -- reviews --------------------------------------------------------------------------
 
-    def review_state(self, target: str, name: str, rec: dict | None) -> dict:
-        """The state of the last review of `name`: `reviewed` (current, by a reviewer other than
-        the authors of the statements), `author-reviewed`, `stale` (the declaration, or the paper
+    def review_state(self, target: str, name: str, rec: dict | None,
+                     claim: str | None = None) -> dict:
+        """The state of the review of `name`: `reviewed` (current, by a reviewer other than the
+        authors of the statements), `author-reviewed`, `stale` (the declaration, or the paper
         text the review read, changed since; `why` says which) or `pending` (none).
 
-        A review reads the source passages of the claims that state or name the declaration
-        (`review_sources.py`). A marker that records their digests counts only while they are
-        the claims' current pins. A marker that records none counts only while the history
-        shows those pins unchanged since it was written; otherwise it is `stale` with `why`
-        `source-unrecorded` (reviewed before source pins were recorded)."""
+        A review reads the passages of the claims that state or name the declaration
+        (`review_sources.py`). For `claim`, the review must have read that claim's current
+        passage; without one, the current passage of every claim it reads. The record is the
+        last marker at the declaration's current hash that did, provided the declaration's last
+        marker is at that hash. A marker without digests read a passage only while the history
+        shows it unchanged since the marker was written."""
         hist = history(self.reviews, target, name)
         last = hist[-1] if hist else None
-        want = review_sources.digests(self.inv, target, name)
-        why = None
+        readers = review_sources.digests(self.inv, target, name)
+        need = {claim: readers[claim]} if claim in readers else readers
+        why = source_claim = None
+        record = last
         if last is None:
             state = "pending"
         elif rec is None or last.hash not in _hashes(rec):
             state, why = "stale", "declaration"
         else:
-            why, claim = self._source_state(last, target, name, want)
-            state = "stale" if why else "author-reviewed" if last.by in self.authors \
-                else "reviewed"
-        out = {"state": state, "current": [last.to_json()] if state in (
+            at = [r for r in hist if r.hash in _hashes(rec)]
+            record = next((r for r in reversed(at) if self._reads(r, need)), None)
+            if record is None:
+                why, source_claim = self._unread(last, need)
+                state = "stale"
+            else:
+                state = "author-reviewed" if record.by in self.authors else "reviewed"
+        out = {"state": state, "current": [record.to_json()] if state in (
                    "reviewed", "author-reviewed") else [],
-               "stale": [r.to_json() for r in hist if r is not last or state == "stale"],
-               "source_sha256": want}
+               "stale": [r.to_json() for r in hist if r is not record or state == "stale"],
+               "source_sha256": readers}
         if why:
             out["why"] = why
-            if why != "declaration":
-                out["source_claim"] = claim
+            if source_claim:
+                out["source_claim"] = source_claim
         return out
 
-    def _source_state(self, review: Review, target: str, name: str,
-                      want: list[str]) -> tuple[str | None, str | None]:
-        """Why `review` does not cover the current text of the passages it read (None when it
-        does), and the claim whose passage is concerned."""
-        readers = [c for c in review_sources.reading_claims(self.inv, target, name)
-                   if c.get("source_sha256")]
+    def _read_one(self, review: Review, cid: str, sha: str) -> str:
+        """Whether `review` read the current passage `sha` of claim `cid`: `current`,
+        `changed` (an earlier text), `unread` (not recorded) or `unrecorded` (a marker without
+        digests whose history does not show the passage unchanged)."""
         if review.source is not None:
-            if review.source == want:
-                return None, None
-            changed = [c["id"] for c in readers if c["source_sha256"] not in review.source]
-            return "source-changed", (changed[0] if changed else
-                                      readers[0]["id"] if readers else None)
-        if not want:
-            return None, None
+            got = review.source.get(cid)
+            return "current" if got == sha else "unread" if got is None else "changed"
         if self._history is None:
             self._history = review_sources.History(getattr(self.cfg, "root", None),
                                                    getattr(self.cfg, "inventory", None), self.inv)
-        state, claim = self._history.state(review.file, review.line, [c["id"] for c in readers])
-        if state == "current":
-            return None, None
-        return ("source-changed" if state == "changed" else "source-unrecorded"), claim
+        return self._history.state(review.file, review.line, cid)
+
+    def _reads(self, review: Review, need: dict[str, str]) -> bool:
+        return all(self._read_one(review, c, s) == "current" for c, s in sorted(need.items()))
+
+    def _unread(self, review: Review, need: dict[str, str]) -> tuple[str, str]:
+        """Why the last marker does not cover the passages `need`, and the first claim
+        concerned."""
+        for cid, sha in sorted(need.items()):
+            st = self._read_one(review, cid, sha)
+            if st != "current":
+                return {"changed": "source-changed", "unread": "source-unread",
+                        "unrecorded": "source-unrecorded"}[st], cid
+        return "source-changed", sorted(need)[0]   # not reached: the last marker read them
 
     def _claim_label(self, cid: str | None) -> str:
         c = next((c for c in self.inv["claims"] if c["id"] == cid), None)
@@ -168,6 +179,9 @@ class Assessor:
         if why == "source-changed":
             return (f" (the source text of {self._claim_label(r.get('source_claim'))} changed "
                     "since its last reading)")
+        if why == "source-unread":
+            return (f" (its last review did not read the passage of "
+                    f"{self._claim_label(r.get('source_claim'))})")
         if why == "source-unrecorded":
             return (" (its last review was made before source pins were recorded, and the "
                     f"source text of {self._claim_label(r.get('source_claim'))} cannot be shown "
@@ -271,7 +285,7 @@ class Assessor:
             for e in errs:
                 self.findings.append(_finding("violation", "spec-" + e.split("=")[0], subj,
                                               f"proposition {spec}: {e}"))
-            sr = self.review_state("spec", spec, srec)
+            sr = self.review_state("spec", spec, srec, claim["id"])
             dr = self.closure_reviews([spec]) if srec else {}
             res["spec_review"] = sr
             if sr["state"] in ("pending", "stale"):
@@ -287,7 +301,8 @@ class Assessor:
             for d in missing:
                 self.findings.append(_finding("violation", "def-missing", subj,
                                               f"definition {d} is not in the environment"))
-            dr = {d: self.review_state("def", d, lean["decls"].get(d)) for d in names}
+            dr = {d: self.review_state("def", d, lean["decls"].get(d), claim["id"])
+                  for d in names}
             dr.update({d: r for d, r in self.closure_reviews(names).items() if d not in dr})
             res["spec_review"] = None
             states = [d["state"] for d in dr.values()]
@@ -452,6 +467,8 @@ class Assessor:
                 elif srs == "stale":
                     add({"source-changed": "the paper's text changed after the proposition's "
                                            "last review",
+                         "source-unread": "the proposition's last review did not read this "
+                                          "claim's passage",
                          "source-unrecorded": "the proposition was reviewed before source pins "
                                               "were recorded"}.get(
                         c["spec_review"].get("why"),
@@ -459,7 +476,7 @@ class Assessor:
             for d, r in (c.get("def_reviews") or {}).items():
                 why = r.get("why")
                 defs[d] = why if r["state"] == "stale" and why in (
-                    "source-changed", "source-unrecorded") else r["state"]
+                    "source-changed", "source-unread", "source-unrecorded") else r["state"]
             if c.get("witness") and not c.get("witness_ok"):
                 add("the witness that the hypotheses can be met fails its check", c)
             if any(not r["discharged"] for r in c.get("regimes", [])):
@@ -483,6 +500,7 @@ class Assessor:
                              ("stale", "changed after their review"),
                              ("source-changed", "have a paper text that changed after their "
                                                 "review"),
+                             ("source-unread", "have a review that did not read their passage"),
                              ("source-unrecorded", "were reviewed before source pins were "
                                                    "recorded"),
                              ("author-reviewed", "were reviewed only by the author")):

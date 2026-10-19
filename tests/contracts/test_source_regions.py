@@ -201,7 +201,7 @@ def assessed(root, c, tex):
     # The review read the claim's passage as pinned.
     reviews = [Review("spec", "Synthetic.spec", fp, "synthetic-reviewer", "human",
                       "self-declared", "reviews.md", 1, "Synthetic review.",
-                      source=[c["source_sha256"]])]
+                      source={c["id"]: c["source_sha256"]})]
     inv = {"claims": [c]}
     result = Assessor(cfg, inv, lean, {"T": tex}, reviews, [],
                       json.dumps({"commit": REV, "replayed": ["Synthetic.accept"]}), REV).run()

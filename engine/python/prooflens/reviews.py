@@ -1,12 +1,12 @@
 """Review records: markers in Markdown files, and dismissals of advisory findings.
 
-A marker `<!-- spec-review: <name> <hash> by=<reviewer> [kind=human|ai] [source=<sha>,...] -->`
-records a review of the proposition `<name>` at `<hash>`; `def-review` does the same for a
+A marker `<!-- spec-review: <name> <hash> by=<reviewer> [kind=human|ai] [source=<claim>@<sha>]...
+-->` records a review of the proposition `<name>` at `<hash>`; `def-review` does the same for a
 definition. The hash is either the legacy 128-bit structural hash or a `pl-fp-v1:` fingerprint;
-`source` lists the digests of the paper passages the reviewer read (`review_sources.py`). The
-last marker of a declaration (files in order, then position) is its record; it counts only while
-its hash is current and its passages are unchanged. The text of the review is the section the
-marker closes.
+each `source` names a claim whose passage the reviewer read and that passage's digest as read
+(`review_sources.py`). The last marker of a declaration (files in order, then position) is its
+record; it counts only while its hash is current, and for a claim only while it read the claim's
+current passage. The text of the review is the section the marker closes.
 
 A marker is a self-declared record: nothing in the file authenticates who wrote it.
 """
@@ -38,7 +38,7 @@ class Review:
     file: str
     line: int
     text: str
-    source: list[str] | None = None   # digests of the passages read; None if not recorded
+    source: dict[str, str] | None = None   # claim id -> digest of the passage read, if recorded
 
     def to_json(self) -> dict:
         return dict(self.__dict__)
@@ -56,7 +56,7 @@ def parse_file(path: Path, ai_patterns: list[str], rel_to: Path) -> list[Review]
     txt = path.read_text(encoding="utf-8")
     out, prev = [], 0
     for m in MARKER.finditer(txt):
-        attrs = dict(a.split("=", 1) for a in m.group(4).split())
+        attrs = dict(a.split("=", 1) for a in m.group(4).split() if not a.startswith("source="))
         start = prev
         heads = [h.start() for h in HEADING.finditer(txt, prev, m.start())]
         if heads:
@@ -74,7 +74,7 @@ def parse_file(path: Path, ai_patterns: list[str], rel_to: Path) -> list[Review]
             kind=reviewer_kind(by, attrs.get("kind"), ai_patterns), provenance="self-declared",
             file=os.path.relpath(path, rel_to),
             line=txt.count("\n", 0, m.start()) + 1, text=body,
-            source=parse_source(attrs.get("source"))))
+            source=parse_source(m.group(4))))
         prev = m.end()
     return out
 

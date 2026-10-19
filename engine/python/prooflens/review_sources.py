@@ -1,24 +1,26 @@
 """The paper text a review marker was made against.
 
-A review reads a claim's source passage beside a Lean declaration. A marker records the digests of
-the passages shown to the reviewer as `source=<sha256>[,<sha256>...]`: the inventory's pins
-(`source_sha256`, scheme `tex-region-v1` for a line-located claim) of every claim whose passage a
-review of the declaration reads. A proposition's review reads the claims whose clauses state it;
-a definition's review reads the definition claims that name it. A declaration no claim names
-(a definition only in a closure) has no passage, and its marker records none.
+A review reads a claim's source passage beside a Lean declaration. A marker records, for each
+claim whose passage was shown to the reviewer, the digest of that passage as read:
+`source=<claim id>@<sha256>`, one attribute per claim, the digest being the claim's pin
+(`source_sha256`, scheme `tex-region-v1` for a line-located claim). A proposition's review reads
+the claims whose clauses state it; a definition's review reads the definition claims that name
+it. A declaration no claim names (a definition only in a closure) has no passage, and its marker
+records none.
 
-A marker counts only while its digests are those of the claims' current pins: a changed text,
-or a claim added to or removed from those that read the declaration, reopens the review.
+A reading counts for a claim only while the digest it records for that claim is the claim's
+current pin: a changed text, or a claim the marker does not record, reopens the review for that
+claim.
 
-A marker written before this attribute existed has no digests. It stays current only while the
-pins of its claims are shown unchanged since the marker was written: Git gives the commit that
+A marker written before this attribute existed records no digests. It counts for a claim only
+while the claim's pin is shown unchanged since the marker was written: Git gives the commit that
 wrote the marker's line, and every version of the inventory from that commit to the working tree
-must keep each claim's passage (the same digest under the same scheme, or a legacy pin moved to
+must keep the claim's passage (the same digest under the same scheme, or a legacy pin moved to
 `tex-region-v1` at the same paper revision and file). When the history cannot show it (no Git
 repository, a shallow clone, a claim without a pin at that commit), the marker is "reviewed
 before source pins were recorded" and does not count. `python -m prooflens.review_sources
---config FILE --write` adds the digests to the markers whose passages are shown unchanged, and
-leaves every other marker as it is.
+--config FILE --write` adds the digests of the claims whose passages are shown unchanged, and
+nothing else.
 """
 
 from __future__ import annotations
@@ -32,7 +34,7 @@ from pathlib import Path
 
 from .source_regions import SCHEME, same_revision
 
-HEX64 = re.compile(r"[0-9a-f]{64}")
+SOURCE = re.compile(r"(?:^|\s)source=([^\s@]+)@([0-9a-f]{64})(?=\s|$)")
 
 
 # -- what a review reads ------------------------------------------------------------------------
@@ -49,23 +51,22 @@ def reading_claims(inventory: dict, target: str, name: str) -> list[dict]:
     return out
 
 
-def digests(inventory: dict, target: str, name: str) -> list[str]:
-    """The digests a current review of `name` records: the source pins of the claims it reads,
-    sorted, each once."""
-    return sorted({c["source_sha256"] for c in reading_claims(inventory, target, name)
-                   if c.get("source_sha256")})
+def digests(inventory: dict, target: str, name: str) -> dict[str, str]:
+    """The digests a current review of `name` records: claim id to the claim's source pin, for
+    the pinned claims it reads."""
+    return {c["id"]: c["source_sha256"] for c in reading_claims(inventory, target, name)
+            if c.get("source_sha256")}
 
 
-def attribute(values: list[str]) -> str:
-    """The marker attribute recording `values` (empty when there is no passage)."""
-    return f"source={','.join(values)}" if values else ""
+def attribute(values: dict[str, str]) -> str:
+    """The marker attributes recording `values` (empty when there is no passage)."""
+    return " ".join(f"source={cid}@{sha}" for cid, sha in sorted(values.items()))
 
 
-def parse(value: str | None) -> list[str] | None:
-    """The digests of a marker's `source=` value; None when the marker has none."""
-    if value is None:
-        return None
-    return sorted({v for v in value.split(",") if v and v != "none"})
+def parse(attrs: str) -> dict[str, str] | None:
+    """The digests recorded by a marker's attributes, by claim; None when it records none."""
+    found = SOURCE.findall(attrs or "")
+    return dict(found) if found else None
 
 
 # -- markers written before the attribute -------------------------------------------------------
@@ -175,41 +176,37 @@ class History:
             self._since[commit] = out.split() if out is not None else None
         return self._since[commit]
 
-    def state(self, file: str, line: int, claim_ids: list[str]) -> tuple[str, str | None]:
-        """Whether the passages of `claim_ids` are unchanged since the marker at `file:line` was
-        written: `("current", None)`, `("changed", claim id)` or `("unrecorded", claim id or
-        None)`."""
+    def state(self, file: str, line: int, cid: str) -> str:
+        """Whether the passage of claim `cid` is unchanged since the marker at `file:line` was
+        written: `current`, `changed` or `unrecorded`."""
         commit = self.commit_of(file, line)
         if commit is None:
-            return "unrecorded", None
-        versions = [self.inventory_at(commit)]
+            return "unrecorded"
         later = self.since(commit)
-        if versions[0] is None or later is None:
-            return "unrecorded", None
-        versions += [self.inventory_at(c) for c in later] + [self.current]
-        unrecorded = None
-        for cid in claim_ids:
-            chain = [(inv, next((c for c in (inv or {}).get("claims", []) if c["id"] == cid),
-                                None)) for inv in versions]
-            if any(inv is None for inv, _ in chain[1:-1]):
-                return "unrecorded", cid
-            first = chain[0][1]
-            if first is None or not first.get("source_sha256"):
-                unrecorded = unrecorded or cid
-                continue
-            for (pi, p), (qi, q) in zip(chain, chain[1:]):
-                # A claim removed from the inventory, or unpinned, and restored later is a
-                # changed passage.
-                if q is None or not q.get("source_sha256") or not same_passage(p, pi, q, qi):
-                    return "changed", cid
-        return ("unrecorded", unrecorded) if unrecorded else ("current", None)
+        if self.inventory_at(commit) is None or later is None:
+            return "unrecorded"
+        versions = [self.inventory_at(commit)] + [self.inventory_at(c) for c in later] + \
+            [self.current]
+        if any(inv is None for inv in versions[1:-1]):
+            return "unrecorded"
+        chain = [(inv, next((c for c in inv.get("claims", []) if c["id"] == cid), None))
+                 for inv in versions]
+        first = chain[0][1]
+        if first is None or not first.get("source_sha256"):
+            return "unrecorded"
+        for (pi, p), (qi, q) in zip(chain, chain[1:]):
+            # A claim removed from the inventory, or unpinned, and restored later is a changed
+            # passage.
+            if q is None or not q.get("source_sha256") or not same_passage(p, pi, q, qi):
+                return "changed"
+        return "current"
 
 
 # -- the migration ------------------------------------------------------------------------------
 
 def migration(cfg, inventory: dict | None = None) -> tuple[list[dict], list[dict]]:
-    """The markers without digests whose passages are shown unchanged since they were written
-    (with the attribute to add), and the others, with why they are left as they are."""
+    """For each marker without digests, the digests of the claims whose passages are shown
+    unchanged since it was written (the attributes to add), and the claims left out, with why."""
     from .reviews import load_reviews
     inv = inventory if inventory is not None else json.loads(
         cfg.inventory.read_text(encoding="utf-8"))
@@ -220,20 +217,19 @@ def migration(cfg, inventory: dict | None = None) -> tuple[list[dict], list[dict
         if r.source is not None:
             continue
         want = digests(inv, r.target, r.name)
-        if not want:
-            continue
-        ids = [c["id"] for c in reading_claims(inv, r.target, r.name) if c.get("source_sha256")]
-        state, cid = hist.state(r.file, r.line, ids)
-        row = {"file": r.file, "line": r.line, "target": r.target, "name": r.name, "by": r.by,
-               "claims": ids}
-        if state == "current":
-            add.append({**row, "attribute": attribute(want)})
-        else:
-            keep.append({**row, "state": state, "claim": cid,
-                         "reason": ("the source text of " + str(cid) + " changed since the "
-                                    "reading" if state == "changed" else
-                                    "reviewed before source pins were recorded: the history "
-                                    "does not show the passage unchanged")})
+        row = {"file": r.file, "line": r.line, "target": r.target, "name": r.name, "by": r.by}
+        shown = {}
+        for cid, sha in want.items():
+            state = hist.state(r.file, r.line, cid)
+            if state == "current":
+                shown[cid] = sha
+            else:
+                keep.append({**row, "claim": cid, "state": state, "reason": (
+                    f"the source text of {cid} changed since the reading" if state == "changed"
+                    else "reviewed before source pins were recorded: the history does not show "
+                         "the passage unchanged")})
+        if shown:
+            add.append({**row, "claims": sorted(shown), "attribute": attribute(shown)})
     return add, keep
 
 

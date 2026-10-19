@@ -67,9 +67,8 @@ def test_a_text_change_reopens_the_review_and_an_unchanged_passage_keeps_it(toy)
     clause = next(c for c in body["assessment"]["claims"]
                   if c["id"] == "T:thm:even-add")["clauses"][0]
     assert clause["spec_review"]["state"] == "reviewed"
-    assert clause["spec_review"]["source_sha256"] == [
-        next(c for c in body["inventory"]["claims"] if c["id"] == "T:thm:even-add")
-        ["source_sha256"]]
+    assert clause["spec_review"]["source_sha256"] == {"T:thm:even-add": next(
+        c for c in body["inventory"]["claims"] if c["id"] == "T:thm:even-add")["source_sha256"]}
 
     index, body, _ = change_text(toy)
     # The inventory is pinned to the new text, so the source check passes; the review read the
@@ -99,8 +98,8 @@ def test_a_text_change_reopens_the_review_and_an_unchanged_passage_keeps_it(toy)
     # A reading of the new text, recorded with its digest, is current again.
     txt = (toy / "reviews/T.md").read_text()
     (toy / "reviews/T.md").write_text(re.sub(
-        r"(thm_even_add \S+ by=a\.referee kind=human source=)[0-9a-f]{64}",
-        r"\g<1>" + sr["source_sha256"][0], txt))
+        r"(thm_even_add \S+ by=a\.referee kind=human source=T:thm:even-add@)[0-9a-f]{64}",
+        r"\g<1>" + sr["source_sha256"]["T:thm:even-add"], txt))
     index, _, _ = build(toy, reuse_lean=True)
     assert status(index, "T:thm:even-add") == "formal: accepted"
 
@@ -150,13 +149,14 @@ def test_a_marker_without_digests_counts_while_the_history_shows_its_text_unchan
     before = (toy / "reviews/T.md").read_text()
     add, keep = rs.migration(cfg)
     assert [(a["name"], a["attribute"]) for a in add] == [
-        ("Toy.IsEven", "source=" + next(c["source_sha256"] for c in body["inventory"]["claims"]
-                                        if c["id"] == "T:def:even"))]
+        ("Toy.IsEven", "source=T:def:even@" + next(
+            c["source_sha256"] for c in body["inventory"]["claims"] if c["id"] == "T:def:even"))]
     assert [(k["name"], k["state"], k["claim"]) for k in keep] == [
         ("Toy.PaperSpec.thm_even_add", "changed", "T:thm:even-add")]
     assert rs.main(["--config", str(toy / "machinechecked.toml"), "--write"]) == 0
     assert (toy / "reviews/T.md").read_text() == before
-    assert re.search(r"def-review: Toy\.IsEven \S+ by=a\.referee kind=human source=[0-9a-f]{64} "
+    assert re.search(r"def-review: Toy\.IsEven \S+ by=a\.referee kind=human "
+                     r"source=T:def:even@[0-9a-f]{64} "
                      r"-->", (toy / "reviews/definitions.md").read_text())
     index, _, _ = build(toy, reuse_lean=True)
     assert status(index, "T:def:even") == "definition: author-reviewed"
@@ -178,11 +178,49 @@ def test_a_legacy_pin_rehashed_at_the_same_revision_keeps_its_passage():
     assert not rs.same_passage(old, inv, {**new, "location": "t.tex:12"}, inv)
 
 
-def test_marker_digests_are_parsed_as_a_set(tmp_path):
+def test_marker_digests_are_read_per_claim(tmp_path):
     from prooflens.reviews import parse_file
     f = tmp_path / "r.md"
-    f.write_text("## A\n\nText.\n\n<!-- spec-review: X.a " + "0" * 32 + " by=r source="
-                 + "b" * 64 + "," + "a" * 64 + " -->\n\n## B\n\nText.\n\n<!-- spec-review: X.b "
-                 + "0" * 32 + " by=r -->\n")
+    f.write_text("## A\n\nText.\n\n<!-- spec-review: X.a " + "0" * 32 + " by=r source=P:b@"
+                 + "b" * 64 + " source=P:a@" + "a" * 64 + " -->\n\n## B\n\nText.\n\n"
+                 "<!-- spec-review: X.b " + "0" * 32 + " by=r -->\n")
     a, b = parse_file(f, [], tmp_path)
-    assert a.source == ["a" * 64, "b" * 64] and b.source is None
+    assert a.source == {"P:a": "a" * 64, "P:b": "b" * 64} and a.by == "r"
+    assert b.source is None
+    assert rs.attribute(a.source) == f"source=P:a@{'a' * 64} source=P:b@{'b' * 64}"
+
+
+def test_a_proposition_stated_by_two_claims_reopens_only_for_the_changed_one():
+    """A review of a proposition two claims state counts for each claim whose passage it read
+    as it now is: a change to one claim's text reopens that claim only."""
+    from types import SimpleNamespace
+    from prooflens.assess import Assessor
+    from prooflens.reviews import Review
+    fp = "synthetic-fingerprint"
+    clause = {"name": "main", "spec": "S.spec", "accept": "S.accept"}
+    inv = {"claims": [{"id": f"P:{x}", "paper": "P", "scope": "formal", "scope_reviewed": True,
+                       "source_sha256": x * 64, "clauses": [clause]} for x in "ab"]}
+    lean = {"specs": {"S.spec": {"fingerprint": fp, "errors": [], "closure": [], "binders": [],
+                                 "consts": []}},
+            "proofs": {"accept:S.accept:S.spec": {"errors": [], "sorry": False, "axioms": []}},
+            "decls": {}, "defs": {}, "layering": []}
+    cfg = SimpleNamespace(statement_authors=[], papers=[], lean_root=None)
+
+    def run(source):
+        r = Review("spec", "S.spec", fp, "a-referee", "human", "self-declared", "r.md", 1, "",
+                   source=source)
+        return {c["id"]: c for c in Assessor(cfg, inv, lean, {}, [r], []).run()["claims"]}
+
+    both = run({"P:a": "a" * 64, "P:b": "b" * 64})
+    assert {c: both[c]["status"] for c in both} == {"P:a": "formal: accepted",
+                                                    "P:b": "formal: accepted"}
+    changed = run({"P:a": "a" * 64, "P:b": "c" * 64})
+    assert changed["P:a"]["status"] == "formal: accepted"
+    assert changed["P:b"]["status"] == "formal: proved, review pending"
+    assert changed["P:b"]["clauses"][0]["spec_review"]["why"] == "source-changed"
+    # A reading that did not record a claim's passage does not count for it.
+    one = run({"P:a": "a" * 64})
+    assert one["P:a"]["status"] == "formal: accepted"
+    sr = one["P:b"]["clauses"][0]["spec_review"]
+    assert sr["why"] == "source-unread" and sr["source_claim"] == "P:b"
+    assert "did not read this claim's passage" in " ".join(one["P:b"]["blockers"])

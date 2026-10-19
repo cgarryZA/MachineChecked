@@ -37,23 +37,26 @@ was read. A review of a proposition reads the passages of every claim whose clau
 review of a definition reads the passages of the definition claims that name it. A definition
 that only occurs in a closure has no passage of its own.
 
-- **Recorded digests.** A marker records the digests of the passages shown to the reviewer
-  (`source=`, the claims' source pins `source_sha256`, scheme `tex-region-v1` for a claim
-  located by line). `review promote` writes them from the report. A marker whose digests differ
-  from the claims' current pins is not current: the claim reads `review pending`, with a finding
-  that names the claim whose text changed since the reading. A claim added to those that state
-  the proposition also reopens it.
-- **Markers written before the digests were recorded.** Such a marker counts only while the
-  project's Git history shows its passages unchanged since the marker was written: the commit
-  that wrote the marker's line, and every later version of the inventory, keep each claim's pin
-  (the same digest under the same scheme, or a legacy pin rehashed as `tex-region-v1` at the same
-  paper revision and in the same file). A pin that changed reopens the review as above. When the
-  history cannot show it (no Git repository, a shallow clone, a file not committed, a claim
-  without a pin when the marker was written), the review is reported as *reviewed before source
-  pins were recorded* and does not count.
+- **Recorded digests.** A marker records, for each claim whose passage was shown to the
+  reviewer, the digest of that passage as read (`source=CLAIM@DIGEST`, the claim's source pin
+  `source_sha256`, scheme `tex-region-v1` for a claim located by line). `review promote` writes
+  them from the report. A reading counts for a claim only while the digest it records for that
+  claim is the claim's current pin. Otherwise the claim reads `review pending`, with a finding
+  that names the claim and says that its text changed since the reading (or that the reading
+  did not record its passage). The review of the declaration for another claim whose passage
+  is unchanged stands. A definition's review in the closure of a statement must have read the
+  current passage of every claim that names the definition.
+- **Markers written before the digests were recorded.** Such a marker counts for a claim only
+  while the project's Git history shows the claim's passage unchanged since the marker was
+  written: the commit that wrote the marker's line, and every later version of the inventory,
+  keep the claim's pin (the same digest under the same scheme, or a legacy pin rehashed as
+  `tex-region-v1` at the same paper revision and in the same file). A pin that changed reopens
+  the review as above. When the history cannot show it (no Git repository, a shallow clone, a
+  file not committed, a claim without a pin when the marker was written), the review is reported
+  as *reviewed before source pins were recorded* and does not count.
 - **Migration.** `python -m prooflens.review_sources --config FILE` lists the markers without
-  digests and, with `--write`, adds the digests to those whose passages the history shows
-  unchanged. It leaves every other marker as it is: those need a new reading.
+  digests and, with `--write`, adds the digest of each claim whose passage the history shows
+  unchanged. It adds nothing for any other claim: those need a new reading.
 
 ## Gates
 

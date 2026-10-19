@@ -93,10 +93,10 @@ Reviews are ordinary Markdown, followed by a marker naming the checked declarati
 
 Reviewer's independent interpretation, comparison and verdict.
 
-<!-- spec-review: MyPaper.PaperSpec.thm_main HASH by=reviewer kind=human source=DIGEST -->
+<!-- spec-review: MyPaper.PaperSpec.thm_main HASH by=reviewer kind=human source=MyPaper:thm:main@DIGEST -->
 ```
 
-For definitions use `def-review`. The hash records the declaration version reviewed; relevant definition changes reopen the obligation. `source` records the digests of the paper passages read (the claims' `source_sha256` pins); a change to that text reopens the obligation too. Reviewer identity is a record, not authenticated proof of identity.
+For definitions use `def-review`. The hash records the declaration version reviewed; relevant definition changes reopen the obligation. `source` records, per claim, the digest of the paper passage read (the claim's `source_sha256` pin); a change to that text reopens the obligation too. Reviewer identity is a record, not authenticated proof of identity.
 
 The Review queue exports reports. The maintainer evaluates those reports before invoking `machinechecked review promote FILE.json`; promotion writes the acceptance markers. The maintainer may also request further review.
 
