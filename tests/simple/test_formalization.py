@@ -100,6 +100,8 @@ def test_the_auditors_note_comes_before_the_projects():
     odd = correspondence(claim, {"lean": ["A.b"], "coverage": "verified", "confidence": "sure",
                                  "note": "x"})
     assert (odd["coverage"], odd["confidence"]) == (None, None)
+    for cov in ("composed", "unresolved"):
+        assert correspondence(claim, {"lean": ["A.b"], "coverage": cov})["coverage"] == cov
     # Without an auditor's entry, the project's formalization.yaml notes are shown as the project's.
     assert correspondence(claim, {})["source"] == "formalization.yaml"
     assert correspondence({}, {}) is None

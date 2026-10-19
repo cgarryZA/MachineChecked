@@ -261,7 +261,7 @@ def linked_names(claim: dict, entry: dict) -> list[str]:
     return [n for n in names if n not in entry.get("rejected", [])]
 
 
-COVERAGE = ("full", "partial", "changed", "related")
+COVERAGE = ("full", "composed", "partial", "changed", "related", "unresolved")
 CONFIDENCE = ("high", "medium", "low")
 NOTE_CHARS = 2000
 
