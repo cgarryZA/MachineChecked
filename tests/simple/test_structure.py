@@ -269,6 +269,9 @@ def test_properties_carried_by_types(tmp_path, toolchain):
     assert all("properties" not in x for x in statement(root)["binders"])
 
 
+@needs_lean
+@needs_tex
+@pytest.mark.parametrize("toolchain", [None, "leanprover/lean4:v4.24.0"])
 def test_definitions_expand_at_their_arguments(tmp_path, toolchain):
     """An application of a project definition inside a statement carries the definition at its
     actual arguments (#97), substituted and type-checked by Lean: the body at those arguments,
