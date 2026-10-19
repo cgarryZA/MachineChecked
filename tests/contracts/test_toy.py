@@ -18,13 +18,17 @@ EXPECTED = {
     "T:cor:even-triangle": "formal: open",
     "T:rem:history": "out of scope: literature",
 }
+# The two equations of the proof of Theorem 2.5 are proof steps: their scope decision is their
+# status, and their links and review are their own (tests/contracts/test_steps.py).
+STEPS = {"T:eq:bound-sum": "out of scope: proof-step",
+         "T:eq:bound-range": "out of scope: proof-step"}
 
 
 @needs_lean
 @needs_tex
 def test_statuses_findings_and_schemas(toy):
     index, body, cfg = build(toy)
-    assert {c["id"]: c["status"] for c in index["claims"]} == EXPECTED
+    assert {c["id"]: c["status"] for c in index["claims"]} == {**EXPECTED, **STEPS}
     assert [f for f in findings(body) if f["tier"] == "violation"] == []
     # The only warning left is the truncated subtraction of the printed (false) claim; the one of
     # the corrected statement is dismissed with a rationale.
@@ -82,8 +86,10 @@ def test_anchors_locate_every_numbered_claim(toy):
         ("theorem", "2.2", "thm:triangle"), ("proposition", "2.3", "prop:pred"),
         ("remark", "2.4", "rem:pred"), ("theorem", "2.5", "thm:bound"),
         ("corollary", "2.6", "cor:even-triangle"), ("remark", "3.1", "rem:history")]
+    # The discussion section starts the second page.
+    assert [a["begin"][0] for a in anchors] == [1] * 7 + [2]
     for a in anchors:
-        assert a["begin"][0] == 1 and a["head"][2] > a["begin"][2] - 1
+        assert a["head"][2] > a["begin"][2] - 1
     assert all(c["anchor"] for c in index["claims"])
 
 

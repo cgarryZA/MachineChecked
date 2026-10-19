@@ -466,13 +466,23 @@ class Assessor:
             out.append("its definitions are not independently reviewed")
         return list(dict.fromkeys(out))
 
+    def step_review(self, claim: dict) -> dict:
+        """A proof step's own review, from its `step-review` markers: recorded beside its status,
+        never an input to it (`steps.py`)."""
+        from .steps import is_step, marker_review
+        region = ((self.tex or {}).get(claim["paper"], {}).get("regions") or {}).get(claim["id"])
+        if not is_step(claim, region):
+            return {}
+        marks = [r for r in self.reviews if r.target == "step" and r.name == claim["id"]]
+        return {"step_review": marker_review(marks, claim.get("source_sha256"), self.authors)}
+
     def run(self) -> dict:
         claims = []
         for c in self.inv["claims"]:
             clauses = [self.clause(c, cl, k) for k, cl in enumerate(c.get("clauses", []))]
             state = fields(self.claim_code(c, clauses))
             claims.append({"id": c["id"], **state, "clauses": clauses,
-                           "blockers": self.blockers(c, clauses)})
+                           "blockers": self.blockers(c, clauses), **self.step_review(c)})
         self.inventory_checks()
         if self.lean:
             for v in self.lean.get("layering", []):

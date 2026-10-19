@@ -48,3 +48,15 @@ Proposition: `∀ n : Nat, 0 < n → n - 1 < n`, the correction stated in Remark
 Verdict: faithful to the correction.
 
 <!-- spec-review: Toy.PaperSpec.prop_pred_pos pl-fp-v1:cd1578f08b39065fe86d850864b1b7befb7ff3d31a6ac1467335f3624671e2b8 by=statement-author -->
+
+## Equation (3), in the proof of Theorem 2.5
+
+A review of the printed step, not of Theorem 2.5. The step reads: for every natural number
+`k >= 0` (with `n` fixed at the start of the proof), `n <= k n^2`. At `k = 0` and `n = 1` it
+reads `1 <= 0`, which is false. It holds for every `k >= 1`, since `n <= n^2 <= k n^2`, and the
+next line of the proof uses only `k = 1`; restricting the printed range to `k >= 1` repairs the
+step, and Theorem 2.5 is unaffected.
+
+Verdict: false as printed.
+
+<!-- step-review: T:eq:bound-range 4640c8e3da3aba8d9a9e58abd761bf9c41ec8d0bafd25609f0d143cf9f3e62ef verdict=false by=a.referee kind=human -->
