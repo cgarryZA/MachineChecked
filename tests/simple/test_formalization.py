@@ -139,3 +139,44 @@ def test_a_note_is_shown_beside_the_links_and_changes_no_status(plain):
     save_link(plain, "paper/main.tex", "thm:sum-odd", ["Plain.oddSum_eq_sq", "Plain.oddSum"])
     entry = load_links(plain)["papers"]["paper/main.tex"]["thm:sum-odd"]
     assert "note" not in entry and "coverage" not in entry
+
+
+@needs_lean
+@needs_tex
+def test_an_exported_review_is_shown_and_changes_no_status(plain):
+    if not built_modules(plain, ["Plain"])[0]:
+        pytest.skip("the plain example is not built")
+    import json
+    save_link(plain, "paper/main.tex", "thm:sum-odd", ["Plain.oddSum_eq_sq"])
+
+    def theorem2():
+        view = build_view(plain, plain / "paper/main.tex", plain / ".machinechecked",
+                          log=lambda m: None)
+        return next(c for c in view["body"]["claims"] if c["number"] == "Theorem 2"), view
+
+    c, _ = theorem2()
+    rec = c["links"][0]["record"]
+    status, fp = c["status"], rec.get("fingerprint") or rec["decl"]["fingerprint"]
+    report = {"schema": "prooflens/review-report@1",
+              "unit": {"id": "link:" + c["key"], "kind": "link"},
+              "pins": {"fingerprints": {"Plain.oddSum_eq_sq": fp}},
+              "reviewer": {"id": "human:a-reviewer", "kind": "human", "name": "A. Reviewer",
+                           "identity": "self-declared"},
+              "reading": {"text": "The sum of the first n odd numbers is n^2.",
+                          "locked_at": "2026-01-01T00:00:00Z"},
+              "comparison": {"text": "Same statement.", "checklist": {}},
+              "verdict": {"group": "matches", "value": "exact", "detail": ""},
+              "submitted_at": "2026-01-01T00:05:00Z"}
+    (plain / "machinechecked-reviews").mkdir()
+    (plain / "machinechecked-reviews" / "a.json").write_text(json.dumps(
+        {"schema": "prooflens/review-reports@1", "reports": [report, report]}))
+    (plain / "machinechecked-reviews" / "b.json").write_text("not json")
+    c, view = theorem2()
+    assert c["status"] == status
+    assert [(r["verdict"]["value"], r["current"], r["reviewer"]["name"]) for r in c["reviews"]] == [
+        ("exact", True, "A. Reviewer")]
+    assert any("b.json was skipped" in n for n in view["body"]["notes"])
+    # Linking other declarations makes the review one of other declarations.
+    save_link(plain, "paper/main.tex", "thm:sum-odd", ["Plain.oddSum_eq_sq", "Plain.oddSum"])
+    c, _ = theorem2()
+    assert [r["current"] for r in c["reviews"]] == [False]
