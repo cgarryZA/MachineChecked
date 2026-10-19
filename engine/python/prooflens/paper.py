@@ -102,15 +102,62 @@ def _state(links: list[dict], audit: dict | None = None, audited: bool = False) 
     return fields("link.not-in-audit" if audited else "link.no-audit")
 
 
+HREF = re.compile(r"(?!//)(?![a-z][\w+.-]*:)[\w./~%-]*", re.I)
+HTTPS = re.compile(r"https://[^\s\"'<>]+")
+
+
+def page_versions(entries: list[dict], current: str) -> list[dict]:
+    """The versions of a paper its page offers (one page per version, each with its own PDF,
+    claim numbering and audits), as the reader's version drop-down receives them. Each entry
+    gives `id` and `kind` as an audit's `paper_version` does (a manuscript also its `revision`),
+    `href` (the address of that version's page, on the same site), and optionally `pdf` and
+    `audits` (`url`, `author`, `repository`). The label is MachineChecked's for that version,
+    never one the entry supplies; `current` is the id of the version this page shows."""
+    from .published import AuditError, paper_version
+    out = []
+    for e in entries:
+        try:
+            rec = paper_version({k: e.get(k) for k in ("kind", "id", "revision")})
+        except AuditError as err:
+            raise ValueError(f"paper version {e.get('id')!r}: {err}") from None
+        href = e.get("href")
+        if not isinstance(href, str) or not href or not HREF.fullmatch(href):
+            raise ValueError(f"paper version {rec['id']}: href must be an address on this site")
+        pdf = e.get("pdf")
+        if pdf is not None and not (isinstance(pdf, str) and (HTTPS.fullmatch(pdf) or
+                                                               HREF.fullmatch(pdf))):
+            raise ValueError(f"paper version {rec['id']}: pdf must be https or on this site")
+        audits = [{k: a.get(k) for k in ("url", "author", "repository") if a.get(k)}
+                  for a in e.get("audits") or [] if HTTPS.fullmatch(str(a.get("url", "")))]
+        out.append({"id": rec["id"], "kind": rec["kind"], "label": rec["label"],
+                    **({"revision": rec["revision"]} if rec.get("revision") else {}),
+                    "href": href, "pdf": pdf, "audits": audits})
+    ids = [v["id"] for v in out]
+    if len(set(ids)) != len(ids) or ids.count(current) != 1:
+        raise ValueError(f"the versions must be distinct and include this page's ({current})")
+    return out
+
+
 def write_paper_site(site: Path, paper: dict, claims: list[dict],
                      page_size: list | tuple | None, pdf_url: str | None,
-                     web_dist: Path | None = None, audits: dict | None = None) -> dict:
+                     web_dist: Path | None = None, audits: dict | None = None,
+                     versions: list[dict] | None = None, version: str | None = None) -> dict:
     """Write the paper page's data under `site/data/` (and the reader, given its built
     directory). `paper` is the paper's registry entry (its identifier, title, authors, links and
     formalisations), which the reader's panel beside the paper shows; `claims` are from
-    `paper_claims`. Replaces whatever is at `site`."""
+    `paper_claims`. A paper with several versions has a page per version: `version` is the id of
+    this page's, `versions` every version's entry (`page_versions`), and every audit loaded for
+    this page must pin this version. Replaces whatever is at `site`."""
     from .pipeline import write_preview
+    from .published import same_version
     audits_loaded = audits or {}
+    offered = page_versions(versions, version) if versions else None
+    if offered:
+        for r, a in audits_loaded.items():
+            pv = a.get("paper_version") if a.get("state") == "loaded" else None
+            if a.get("state") == "loaded" and not (pv and same_version(pv["id"], version)):
+                raise ValueError(f"the audit of {r} does not pin {version}: load it with the "
+                                 "listing's version (load_published_audit)")
     projects = [f["repository"] for f in paper.get("formalisations", [])]
     audited = {r for r, a in audits_loaded.items() if a.get("state") == "loaded"} if audits is not None else {f["repository"] for f in paper.get("formalisations", []) if f.get("audits")}
     index_claims, chunks = [], {}
@@ -167,10 +214,12 @@ def write_paper_site(site: Path, paper: dict, claims: list[dict],
     editions = {a["paper"]["edition"]: {**a["paper"], "author": a.get("author"), "repository": r}
                 for r, a in audits_loaded.items() if a.get("paper", {}).get("edition")}
     index = {"schema": SCHEMA, "editions": list(editions.values()),
-             "audits": {r: {k: a[k] for k in ("state", "detail", "commit", "release", "author", "url", "gates") if k in a}
+             "audits": {r: {k: a[k] for k in ("state", "detail", "commit", "release", "author", "url", "gates",
+                                                    "paper_version") if k in a}
                         for r, a in audits_loaded.items()}, "mode": "paper", "release": "paper", "evidence": eid,
              "tool": {"name": "machinechecked"}, "project": {}, "projects": projects,
              "paper": paper, "notes": [],
+             **({"version": version, "versions": offered} if offered else {}),
              "papers": [{"id": "P", "title": paper.get("title", ""), "mode": "pdf", "pdf": None,
                          "pdf_url": pdf_url, "page_size": list(page_size) if page_size else None,
                          "note": ""}],
