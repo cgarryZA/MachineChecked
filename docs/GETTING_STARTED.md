@@ -54,7 +54,7 @@ requires a text layer and recognisable headings. The reader marks these location
 MachineChecked reads an existing [`formalization.yaml`](https://github.com/mathlib-initiative/formalization.yaml):
 
 - its formalised sources are offered as papers;
-- the mappings in its `alignment` (in the shape `statements: [{source, lean}]`) become links, labelled *formalization.yaml*: attributed to the project;
+- the mappings in its `alignment` (in the shape `statements: [{source, lean}]`) become links, labelled *formalization.yaml*: attributed to the project; a row's `note` is shown beside the claim's links as the project's note;
 - its review status and counts appear as the project’s reported metadata.
 
 When the file names several sources, a mapping is used for a paper only if it names that paper by a word distinctive to its title.
@@ -99,6 +99,23 @@ The local reader saves your decisions in `machinechecked.links.json` at the repo
 
 A link records the declaration associated with a claim. A correspondence review compares their
 assumptions, definitions and conclusion; see [Reviewing](REVIEWING.md).
+
+**Coverage notes.** An auditor who has compared a claim with its declarations can say how far
+they state it, in the claim's entry of `machinechecked.links.json`:
+
+```json
+"lemma-8.6": {"lean": ["Proj.inverse_bound", "Proj.inverse_solves"],
+              "coverage": "changed", "confidence": "high",
+              "note": "The bound needs n + 5 derivatives where (8.19) has m + 4.",
+              "by": "A. Auditor"}
+```
+
+`coverage` is `full` (the declarations together state every clause), `partial` (some clauses
+have no counterpart), `changed` (a clause is stated with other hypotheses, bound or setting) or
+`related` (a comparable result); `confidence` is `high`, `medium` or `low`. The reader shows the
+note under the claim's status, as the auditor's reading, and `check --json` reports it as the
+claim's `correspondence`. A note changes no status, and linking other declarations in the reader
+removes it, since it described the old ones.
 
 ## Read a claim
 
