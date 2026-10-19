@@ -40,7 +40,7 @@ from pathlib import Path
 from .probe import FINGERPRINT_VERSION
 from .util import canonical_json, read_json
 
-FORMAT = "machinechecked/facts@1"
+FORMAT = "machinechecked/facts@2"
 DIR = "facts"
 
 

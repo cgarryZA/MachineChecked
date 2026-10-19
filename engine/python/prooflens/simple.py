@@ -22,6 +22,7 @@ from pathlib import Path
 from .config import STANDARD_AXIOMS, Config, Paper, Publish
 from .probe import ProbeError, by_library, fingerprint, lean_session, lib_names
 from .sources import acquire
+from .moddocs import stale_doc_names
 from .tex import DEFAULT_ENVS, TexError, anchors_for, theorem_envs
 from . import formalization as fz
 from .util import content_id, git_head, prepare_work_dir, read_json, sha256_file, write_json
@@ -651,6 +652,12 @@ def run_simple_probe(root: Path, modules: list[str], libs: list[str], requests: 
     return recs
 
 
+def stale_docs_note(found: list[dict]) -> str:
+    shown = ", ".join(f"{d['name']} ({d['file']}:{d['line']})" for d in found[:5])
+    return (f"{len(found)} name(s) in module docstrings are not declared in the project or its "
+            f"dependencies: {shown}" + (", …" if len(found) > 5 else ""))
+
+
 def probe_modules(root: Path, modules: list[str], libs: list[str], requests: list[dict],
                   lake: str = "lake", log=print, work: Path | None = None,
                   sessions: dict[str, list[str]] | None = None,
@@ -849,6 +856,8 @@ class LeanFacts:
         self.fresh_accepts: dict[tuple[str, str], list[dict]] = {}
         self.acceptrecs: dict[tuple[str, str], list[dict]] = {}
         self.declared: dict[str, set[str]] = {}      # the index's modules for each name
+        self.fresh_docs: dict[str, list[dict]] = {}
+        self.docs: dict[str, list[dict]] = {}        # `moddoc` records, by module
 
     def _accept_requests(self, names) -> list[dict]:
         """The `accept` requests of the bridges whose theorem is among `names`."""
@@ -877,6 +886,8 @@ class LeanFacts:
                 self.fresh_decls.setdefault(r["name"], r)
             elif r["record"] == "index":
                 self.fresh_index.setdefault(r["module"], []).append(r)
+            elif r["record"] == "moddoc":
+                self.fresh_docs.setdefault(r["module"], []).append(r)
             elif r["record"] == "accept":
                 self.fresh_accepts.setdefault((r["name"], r.get("spec")), []).append(r)
         return failed
@@ -903,13 +914,16 @@ class LeanFacts:
                 st.remove("failed", m)
             if indexed:
                 per_mod: dict[str, list[dict]] = {}
+                docs: dict[str, list[dict]] = {}
                 for r in rs:
                     if r["record"] == "index":
                         per_mod.setdefault(r["module"], []).append(_clean(r))
+                    elif r["record"] == "moddoc":
+                        docs.setdefault(r["module"], []).append(_clean(r))
                 for m in graph:
                     if m in built:
                         st.put("index", m, st.environment([m], graph),
-                               records=per_mod.get(m, []))
+                               records=per_mod.get(m, []), moddocs=docs.get(m, []))
             decls = {r["name"]: r for r in rs if r["record"] == "decl"}
             whole = st.environment(mods, graph)
             for r in rs:
@@ -976,6 +990,22 @@ class LeanFacts:
             out.append({"record": e["record"], "decls": objs})
         return out, None
 
+    def module_docs(self, index: list[dict]) -> list[dict]:
+        """The `moddoc` records of the indexed modules: the backticked names in a module's
+        docstrings that the environment it was indexed in does not know. A module indexed with
+        only some of the project loaded may report a name another project module declares, so
+        a name the project's index holds is left out: as written, or inside a namespace the
+        module declares into, as the probe tries it."""
+        names = {r["name"] for r in index}
+        spaces: dict[str, set[str]] = {}
+        for r in index:
+            parts = r["name"].split(".")
+            spaces.setdefault(r.get("module"), set()).update(
+                ".".join(parts[:i]) for i in range(1, len(parts)))
+        return [d for m in sorted(self.docs) for d in self.docs[m]
+                if d["name"] not in names
+                and not any(f"{ns}.{d['name']}" in names for ns in spaces.get(m, ()))]
+
     def _accept_answers(self, name: str, where: dict[str, set[str]], groups: list[list[str]]
                         ) -> tuple[dict | None, str | None]:
         """The stored `accept` answers of the bridges whose theorem is `name`, by pair, keyed
@@ -1008,6 +1038,7 @@ class LeanFacts:
             e, why = st.get("index", m)
             if e is not None:
                 by_mod[m] = e["records"]
+                self.docs[m] = e.get("moddocs", [])
                 continue
             f, _ = st.get("failed", m)
             if f is not None:
@@ -1037,6 +1068,8 @@ class LeanFacts:
                     continue
                 e, _ = st.get("index", m)
                 by_mod[m] = e["records"] if e is not None else self.fresh_index.get(m, [])
+                self.docs[m] = e.get("moddocs", []) if e is not None else \
+                    _dedup(self.fresh_docs.get(m, []))
         else:
             self.log(f"lean: reusing the stored index of {len(self.built)} built module(s)")
         index = sorted((r for m in by_mod for r in by_mod[m]),
@@ -1130,6 +1163,15 @@ def _first_line(reason: str) -> str:
         if any(sign in l.lower() for sign in RESOURCE_SIGNS):
             return l[:160]
     return (lines[0] if lines else "no message")[:160].rstrip(":")
+
+
+def _dedup(recs: list[dict]) -> list[dict]:
+    out = []
+    for r in recs:
+        r = _clean(r)
+        if r not in out:
+            out.append(r)
+    return out
 
 
 def _clean(rec: dict) -> dict:
@@ -1267,7 +1309,8 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
     fy = fz.load(root)
     if fy and "error" in fy:
         notes.append(fy["error"])
-    index, linkrecs, decls, acceptrecs, failed, facts_used = [], {}, {}, {}, {}, {"sessions": 0}
+    index, linkrecs, decls, acceptrecs, module_docs = [], {}, {}, {}, []
+    failed, facts_used = {}, {"sessions": 0}
     if fy and "error" not in fy:
         for c in claims:
             rows = fz.links_for(fy, c["kind"], c["number"], paper.title)
@@ -1305,6 +1348,9 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
         with lean.store.lock(log):
             index, failed = lean.index(linked)
             index = [index_preview(r) for r in index]
+            module_docs = stale_doc_names(lean.module_docs(index))
+            if module_docs:
+                notes.append(stale_docs_note(module_docs))
             wanted = set(linked)
             ctx = SuggestContext(index, root, fz.foreign_roots(fy, paper.title))
             for c in claims:
@@ -1374,7 +1420,7 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
             "site_url": load_links(root).get("site_url"),
             "author": load_links(root).get("author"),
             "pdf_sha256": sha256_file(pdf) if pdf else None, "tex": tex,
-            "claims": claims, "index": index, "decls": decls}
+            "claims": claims, "index": index, "decls": decls, "module_docs": module_docs}
     return {"body": body, "pdf": pdf, "cfg": cfg, "lean": facts_used}
 
 
