@@ -91,12 +91,34 @@ project at a time and never combines them. No statement text is written.
 At the root of every published reader (`machinechecked build --site`, `machinechecked export`):
 `schema` (`machinechecked/audit@1`), `created`, `author` (the name the audit is published under,
 as its author gives it), `papers` (title; `id` and `version` when the paper is an arXiv paper, for
-example `arxiv:2601.01234` and `v2`; `url`; `revision`), `formalisation` (`repository` as
+example `arxiv:2601.01234` and `v2`, with `version` null when the audit pins an unpublished
+manuscript; `url`; `revision`; `paper_version`, below), `formalisation` (`repository` as
 `owner/repo` when the project's remote is on GitHub, `commit`, `toolchain`), `release`, `data` (the
 path of the manifest index, inside the directory), `issues` and `site_url`. It records what its
 author states; it is not evidence of anything by itself. A reader loading an audit from another
 address takes every string in it and in its data as text, reads only files inside the audit's
 directory, and never offers to edit it.
+
+`paper_version` is the one version of the paper the audit pins (`versions.py`), or null when none
+is known:
+
+| Field | Published version | Unpublished manuscript |
+|---|---|---|
+| `kind` | `published` | `manuscript` |
+| `id` | `arxiv:2601.01234v1` (or `doi:…`, or the URL) | `manuscript:<first 7 hex of the commit>` |
+| `revision` | the commit of the source read, if known | the manuscript's commit |
+| `label` | `arXiv v1` | `Latest manuscript (commit abc1234)` |
+
+An arXiv version also has `arxiv` (`arxiv:2601.01234`) and `number` (`v1`). A manuscript is never
+given a version number. `build` refuses an audit whose inventory pins (`papers.<id>.commit`, a
+claim's `commit`) name another version: a published version is pinned by its identifier
+(`2601.01234v1`), a manuscript by its commit. `checked` is true when every claim carries a pin and
+the pins name this version (a zero-configuration audit reads its claims from the version itself, so
+it is always true); false when some claim carries no pin, so the version is only as the configuration
+states it. Readers show an unchecked version as declared by the author and not checked against the
+claims. A site loading an audit (`load_published_audit`)
+rebuilds the label from `kind` and `id`, checks that the descriptor and the data name the same
+version, and, given a listing's `version`, refuses an audit that pins another one.
 
 ## Identifiers
 

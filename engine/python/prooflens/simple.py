@@ -849,6 +849,7 @@ def write_view_site(view: dict, site: Path, web_dist: Path | None,
              "lean": None, "notes": body["notes"],
              "papers": [{"id": "P", "title": body["title"], "mode": body["tex"]["mode"],
                          "revision": body.get("commit"),
+                         **_paper_version(body),
                          "pdf": "papers/P.pdf" if view["pdf"] else None,
                          "pdf_sha256": body.get("pdf_sha256") if view["pdf"] else None,
                          "page_size": body["tex"].get("page_size"), "note": ""}],
@@ -871,6 +872,23 @@ def write_view_site(view: dict, site: Path, web_dist: Path | None,
                  "type": d["type"][:300], "doc": (d.get("doc") or "")[:300]}
                 for d in body["index"]], indent=None)
     return index
+
+
+def _paper_version(body: dict) -> dict:
+    """The version of the paper the view reads: the arXiv version its URL names, else the
+    project's commit (the paper is a file of the project). Its claims are read from that
+    version itself, so the version is checked."""
+    from . import versions
+    from .audit import arxiv_id
+    key = body.get("paper") or ""
+    ax = arxiv_id(key) if key.startswith(("http://", "https://")) else None
+    if ax and ax[1]:
+        return {"paper_version": {**versions.published_version(f"arXiv:{ax[0][6:]}{ax[1]}"),
+                                  "checked": True}}
+    commit = body.get("commit") or ""
+    if versions.COMMIT.fullmatch(commit) and len(commit) == 40:
+        return {"paper_version": {**versions.manuscript_record(commit), "checked": True}}
+    return {}
 
 
 def _link_view(l: dict, root: Path | None = None) -> dict:
