@@ -31,11 +31,9 @@ that computes or displays a status. When a feature changes, update the guide tha
   `prooflens review promote` does, after its refusals (`promote.py`). Keep the protocol order:
   reading locked before the Lean is shown, verdict recorded before the author's review.
 
-- **MachineChecked is a tool and a host, not a certifier.** An audit says what its author linked,
-  checked and recorded, under their name; the site never endorses it. Reports ("Raise issue") go
-  to the repository the audit names, carry identifiers only (never statement text), and change no
-  status. A paper has one page; several Lean projects are alternative sources of evidence for its
-  claims and are never merged into one verdict (see `PLAN.md`).
+- **Attribute evidence.** Published audits name their authors, project commits and paper revisions.
+  Reports open drafts in the audit’s repository and carry claim identifiers. Each paper has one
+  canonical page; readers choose one Lean project’s evidence at a time (see `PLAN.md`).
 
 ## Tracking work
 
@@ -107,3 +105,10 @@ downstream project, and its results are reported without its content.
   not know; no percentages of "verification".
 - Keep the command surface small: `view`, `build`, `check` (and `review promote`); other
   commands (the full assessment's, and `cache`) stay out of the main command list.
+
+## Public prose
+
+Write concise, affirmative sentences: say what the product does, what the evidence establishes,
+or what the reader can do next. Put each explanation where it supports a decision. Use compact
+attribution and Details for provenance. Preserve precise failure states, mathematical negation,
+quoted sources and substantive permission requirements. See issue #85.

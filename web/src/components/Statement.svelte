@@ -11,22 +11,7 @@
   let { st, spec = null, onref, compact = false, ext = null, onactive = null, onpinned = null,
         onterm = null } = $props();
 
-  // A statement is shown in full: its assumptions are what a reader compares with the paper.
-  // Only a long one, in a compact view, folds to its conclusion and one line naming its
-  // variables and counting its assumptions, with the ordered statement on request. A prefix with
-  // a "there is" is never folded, since that would hide which choices depend on which.
-  let expanded = $state(false);
   const binders = $derived(st.binders || []);
-  const textOf = (pp) => (typeof pp === "string" ? pp : pp?.text ?? (pp?.segments || []).map((x) => x.t).join(""));
-  const long = $derived(binders.length > 8 || binders.reduce((n, b) => n + textOf(b.type).length, 0) > 900);
-  const folded = $derived(compact && long && !expanded && !binders.some((b) => b.role === "exists"));
-  const summary = $derived.by(() => {
-    const vars = binders.filter((b) => b.role === "forall").map((b) => b.name);
-    const n = binders.filter((b) => b.role === "hypothesis" || b.role === "instance").length;
-    const under = n ? `under ${n} assumption${n > 1 ? "s" : ""}` : "";
-    if (!vars.length) return under.charAt(0).toUpperCase() + under.slice(1) + ":";
-    return "For all " + vars.join(", ") + (under ? ", " + under : "") + ":";
-  });
   const refs = $derived([...(st.closure || []), ...(st.direct || [])].sort((a, b) => b.length - a.length));
   const ROLE = { forall: "for all", exists: "there is", hypothesis: "assume", instance: "assume" };
 
@@ -122,11 +107,6 @@
   {#if !compact && spec}
     <p class="name"><code>{spec}</code></p>
   {/if}
-  {#if folded}
-    <p class="under">{summary}</p>
-    {#if st.conclusion}<div class="concl result">{@render lean(st.conclusion)}</div>{/if}
-    <button class="more" onclick={() => (expanded = true)}>Show the full statement ({binders.length + 1} lines, in order)</button>
-  {:else}
   {#if binders.length}
     <ol class="ribbon" aria-label="Quantifiers and hypotheses, in order">
       {#each groups as g}
@@ -171,7 +151,7 @@
     <div class="inspect term" aria-live="polite">
       <p><span class="small faint">Sub-expression</span><button class="x" aria-label="Release" onclick={() => (termSel = null)}>×</button></p>
       <p><code>{termText}</code></p>
-      <p class="small faint">Click again inside it to widen it to the expression around it.</p>
+      <p class="small faint">Activate it again to select the expression around it.</p>
     </div>
   {/if}
   {#if noted && gloss(noted)}
@@ -180,10 +160,6 @@
       <p class="small">{gloss(noted)}</p>
       <p class="small faint">A plain-English note on this name; the Lean definition is what the statement uses.</p>
     </div>
-  {/if}
-  {#if compact && long && expanded}
-    <button class="more" onclick={() => (expanded = false)}>Show less</button>
-  {/if}
   {/if}
   {#if !compact && binders.some((b) => b.role === "exists")}
     <p class="hint faint">
@@ -194,24 +170,26 @@
 </div>
 
 <style>
-  .stmt { margin-top: 12px; }
+  .stmt { margin-top: 12px; font-size: 17px; }
+  .stmt :global(.lean) { font-family: var(--serif); font-size: 18px; line-height: 1.6; }
+  .stmt :global(.lean button), .stmt :global(.lean a) { min-height: 0; }
   .name { margin: 0 0 8px; font-size: 13px; color: var(--muted); }
   .ribbon { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
-  .b { padding: 4px 10px; border-radius: 6px; background: var(--surface-2); border-left: 3px solid var(--border); }
+  .b { padding: 3px 0; }
   .line { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
   .line.sub { margin: 2px 0 0 18px; }
-  .b.forall { border-left-color: var(--accent); }
-  .b.exists { border-left-color: var(--st-refuted); }
-  .b.hypothesis { border-left-color: var(--st-open); }
-  .b.instance { border-left-color: var(--faint); }
-  .role { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); min-width: 64px; }
+
+
+
+
+  .role { font-size: 14px; color: var(--muted); min-width: 64px; }
   .sub .role { min-width: 46px; }
   .v { font-family: var(--mono); font-weight: 600; cursor: pointer; border-radius: 3px; }
   .v.hl { background: color-mix(in srgb, var(--accent) 22%, transparent); outline: 1px solid color-mix(in srgb, var(--accent) 45%, transparent); }
   .ty.hl { background: color-mix(in srgb, var(--accent) 22%, transparent); outline: 1px solid color-mix(in srgb, var(--accent) 45%, transparent); border-radius: 3px; }
   .hn { font-family: var(--mono); color: var(--faint); font-size: 12px; }
   .colon { color: var(--faint); }
-  .concl { margin-top: 6px; padding: 8px 10px; border-radius: 6px; border: 1px solid var(--border); display: flex; gap: 8px; align-items: baseline; }
+  .concl { margin-top: 6px; padding: 10px 0; border-top: 1px solid var(--border); display: flex; gap: 8px; align-items: baseline; }
   .concl .body { min-width: 0; flex: 1; }
   .op { font-size: 12px; color: var(--muted); }
   .parts { margin: 2px 0 0; padding-left: 18px; }

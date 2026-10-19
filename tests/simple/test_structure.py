@@ -38,6 +38,8 @@ def test_variables_and_logic_are_exported(tmp_path, toolchain):
             pytest.skip(f"{toolchain} is not installed")
     subprocess.run(["lake", "build"], cwd=root, check=True, capture_output=True, timeout=900)
     rec = statement(root)
+    assert rec["exact"]["text"], "the complete expression is emitted by Lean"
+    assert "∃" in rec["exact"]["text"] and "∀" in rec["exact"]["text"]
     b = rec["binders"]
     assert [x["name"] for x in b if x["role"] != "instance"] == \
         ["E", "j", "hj", "k", "hjk", "x", "C", "n"]

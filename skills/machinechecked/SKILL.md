@@ -5,20 +5,14 @@ description: Audit how a mathematical paper corresponds to its Lean 4 formalisat
 
 # MachineChecked
 
-MachineChecked is a command-line tool that runs locally, inside the user's Lean project: it
-reads the paper and the compiled Lean declarations and writes everything on the user's machine
-(`.machinechecked/` for generated data, `machinechecked.links.json` for confirmed links,
-`.machinechecked/MachineChecked.html` when asked for). It uploads nothing and needs no account; machinechecked.org
-is only where audits can optionally be published. Do not upload, publish or share a paper, its
-Lean or a generated reader unless the user asks; tell them where the files are instead. Review
-drafts made in the reader's Review page live in that browser until exported.
+MachineChecked runs locally in the user’s Lean project. It reads the paper and compiled Lean,
+saves generated data in `.machinechecked/`, and records confirmed links in `machinechecked.links.json`.
+`build` writes a shareable reader. Publish or share these files when the user authorizes it.
+Review drafts stay in the current browser until exported.
 
-MachineChecked reads a paper beside its Lean project and reports, claim by claim, what Lean
-establishes. It checks the Lean mechanically (the linked declaration exists, its proof has no
-`sorry`, which axioms it uses). It does **not** check that a Lean statement says what the paper
-says: that is a mathematical judgement. Never report a claim as "verified" or "correct" because
-its link reads *Lean proof checked*; say that Lean proves the linked statement, and that whether
-the statement matches the paper has not been reviewed unless a review says so.
+Report what each check establishes: Lean proves the formal proposition; correspondence reviews
+compare that proposition and its definitions with the paper. Attribute reviews to their recorded
+reviewers. Source verification and independent kernel replay have their own results.
 
 ## Install and run
 
@@ -31,8 +25,7 @@ uvx machinechecked check --json
 
 Needs Python 3.11+, the project's Lean toolchain (elan), TeX Live with `latexmk` for a LaTeX
 paper, and poppler (`pdftohtml`) for a paper that is only a PDF. If the project is not built,
-links read `linked: Lean not checked (the project is not built)`: build it, or say so; never
-treat that as proved. A large project can take hours to build: ask before starting one.
+links read `linked: Lean not checked (the project is not built)`: build it, or report the build requirement. A large project can take hours to build: ask before starting one.
 
 The paper is found automatically (a `.tex` with `\documentclass`, else a PDF). Pass it when
 there are several or it is elsewhere: `machinechecked check --json paper/main.tex`, or a URL:
@@ -43,10 +36,10 @@ there are several or it is elsewhere: `machinechecked check --json paper/main.te
 `check --json` prints one JSON document (progress goes to stderr). Exit 0: every linked
 declaration is proved; 1: one is missing or not proved; 2: the check could not run. On exit 2 the
 document has an `error` (`kind`, `message`, and `tool` when a program such as `lake` is missing)
-and no claims: report the error and that nothing was checked, never a status. `version` is the
+and an empty claims list: report the execution error. `version` is the
 MachineChecked version; `release` identifies the evidence the statuses were computed from (it
 changes when the paper, the links or the Lean change), for quoting which run a report is about.
-Per claim: `number` ("Theorem 2.1"), `status`, `links`
+Per claim: `number` ("Theorem 2.1"), `status_code`, `status`, `links`
 (each with `name`, `status`, `source`) and `suggestions` (unconfirmed candidates, with `why`).
 
 | status | meaning |
@@ -55,12 +48,12 @@ Per claim: `number` ("Theorem 2.1"), `status`, `links`
 | `linked: Lean proof incomplete (sorry)` | the proof, or something it uses, has `sorry` |
 | `linked: Lean proof uses further axioms` | it depends on axioms beyond the standard three |
 | `linked: Lean declaration not found` | the name does not exist in the built project |
-| `linked: Lean definition` | the link is to a definition (nothing to prove) |
+| `linked: Lean definition` | the link names a definition |
 | `linked: Lean not checked (the project is not built)` | Lean was not run |
 | `linked: Lean not checked (its module M is not built)` | the declaration's module is not built yet; build it to check |
-| `linked: Lean not checked (its module M could not be loaded)` | MachineChecked could not load that module; a tool limitation, not a finding about the mathematics |
+| `linked: Lean not checked (its module M could not be loaded)` | the module failed to load; report the loading error |
 | `linked: Lean name is ambiguous (declared in A, B)` | several modules declare the name (e.g. a challenge statement and its solution); name the module in `formalization.yaml` |
-| `suggested link, not confirmed` | only a candidate; nobody has linked it |
+| `suggested link, not confirmed` | a candidate awaiting confirmation |
 | `not linked` | no Lean counterpart is known |
 
 Link `source` says who made the link: `paper` (a `\lean{}` tag), `formalization.yaml` (the
@@ -69,9 +62,8 @@ project's own mapping), or `confirmed` (saved in `machinechecked.links.json`).
 `class` (`proved`, `open`, `malformed`, `unspecified`) is a coarse grouping of the status, used
 for the reader's colours: `proved` for a proof checked or a definition, `open` for `sorry` or
 further axioms, `malformed` for a declaration not found, `unspecified` for everything not checked
-or not linked. A claim's class is that of its worst link. Quote the `status`, which is exact;
-the class never says more than the status does, and `proved` never means the Lean statement
-matches the paper.
+or not linked. A claim's class is that of its worst link. Branch on `status_code`; use `status` for presentation.
+Report correspondence using its own review records.
 
 With a `machinechecked.toml` (the full assessment), `finding_details` lists each finding
 (`tier`, `code`, `subject`, `message`, and `dismissed` when a warning was dismissed): quote the
@@ -79,15 +71,15 @@ violations and obligations by subject; `findings` holds only their totals.
 
 ## Typical tasks
 
-- **Which claims are formalised?** Run `check --json`; group claims by `status`. Report the
-  unlinked ones by number, and the suggestions as candidates only.
+- **Which claims are formalised?** Run `check --json`; group claims by `status_code`. Report the
+  unlinked ones by number, and suggestions as candidates.
 - **Do the proofs compile?** The `linked: …` statuses answer it for linked claims. Quote the
   declaration names that are incomplete, use further axioms, or are missing.
 - **Does a Lean statement match the paper?** Read the claim in the paper and the Lean
   declaration's statement (`#check` it, or open its source), and compare hypotheses,
   quantifiers, definitions and conclusion. Present it as your reading, for the user to judge;
   the reader's Review page (`machinechecked view`, then Review) records such a review
-  properly, and a report changes no status.
+  with source revisions and reviewer attribution.
 - **Where is a paper statement proved, and what does a proof rest on?** `machinechecked
   inspect NAME --dependencies --json` prints the declaration's statement, axioms and source,
   what its statement mentions and, separately, what its proof uses, and every declaration of
@@ -95,21 +87,20 @@ violations and obligations by subject; `findings` holds only their totals.
   Start from the theorem that matches the paper's main result and follow its proof to find
   the lemmas a paper statement may correspond to; also search the rest of the project, since
   a lemma can be formalised without being used by that proof. If two modules declare the
-  name, pass `--module`. A dependency is a fact about Lean terms, not a correspondence.
+  name, pass `--module`. A dependency identifies constants used by Lean terms.
 - **Link a claim to a declaration**: the user does it in `machinechecked view` (Link / Not
   this), or you add a `\lean{Name}` tag to the statement in the LaTeX if the user agrees.
 - **A shareable report**: `machinechecked build` writes `.machinechecked/MachineChecked.html`
   (one file, opens from disk; Git ignores it there, and `--out` puts it elsewhere). `machinechecked build --site public/ --author "Name" --issues owner/repo` writes a
   directory to publish (for example on GitHub Pages) with `audit.json` describing it. Both
-  contain the paper and Lean statements: confirm the user may publish them.
+  contain the paper and Lean statements: check the user’s publication authorization.
 
-## Do not
+## Report and act precisely
 
-- Do not call a paper "verified", "machine-checked" or "correct" on the strength of these
-  statuses, and give no percentages of verification.
-- Do not run `machinechecked view` in a non-interactive session: it starts a local server and
-  opens a browser. Use `check --json` and `build`.
-- Do not edit `machinechecked.links.json` by hand to make a claim look linked; a link is a
-  statement by the person who makes it.
+- Name the formal proposition and proof result. Attribute mathematical correspondence to reviews
+  with their recorded scope and provenance.
+- In a non-interactive session, use `check --json` and `build`. `view` starts a local browser session.
+- Save links through the reader or an authorized source tag, preserving who made the association.
+- Write concise, affirmative prose. Explain what happened or what the user can do next.
 
 More: https://github.com/cgarryZA/MachineChecked/blob/main/docs/GETTING_STARTED.md

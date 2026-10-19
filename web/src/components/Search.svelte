@@ -1,90 +1,88 @@
 <script>
-  import { statusView } from "../lib/presentation.js";
-  import TexInline from "./TexInline.svelte";
   import { loadSearch } from "../lib/data.js";
-  import { href, go } from "../lib/route.svelte.js";
-
-  // Search over claims (numbers, titles, ids, printed statements, Lean names) and declarations.
+  import { project } from "../lib/project.svelte.js";
+  import { href, go, withQuery } from "../lib/route.svelte.js";
+  import TexInline from "./TexInline.svelte";
   let { index } = $props();
-  let q = $state("");
-  let data = $state(null);
-  let open = $state(false);
-  let sel = $state(0);
-
-  function load() {
-    if (!data) loadSearch(index).then((d) => (data = d)).catch(() => (data = { claims: [], decls: [] }));
-  }
-
+  const id = $props.id();
+  let q = $state(""), data = $state(null), error = $state(null), open = $state(false), sel = $state(0);
+  let attempt = $state(0), requested = $state(false), host;
+  $effect(() => {
+    const repo = project.repo;
+    attempt; index;
+    if (!requested) return;
+    let current = true;
+    data = null; error = null;
+    loadSearch(index).then((d) => { if (current && repo === project.repo) data = d; })
+      .catch((e) => { if (current) error = String(e.message || e); });
+    return () => { current = false; };
+  });
   const results = $derived.by(() => {
-    const words = q.toLowerCase().split(/\s+/).filter(Boolean);
+    const words = q.toLowerCase().trim().split(/\s+/).filter(Boolean);
     if (!data || !words.length) return [];
-    const hit = (t) => { const s = t.toLowerCase(); return words.every((w) => s.includes(w)); };
+    const hit = (t) => words.every((w) => t.toLowerCase().includes(w));
     const out = [];
-    for (const c of data.claims) {
-      const head = `${c.number} ${c.title} ${c.id}`;
-      const lean = c.lean.join(" ");
+    for (const c of data.claims || []) {
+      const head = `${c.number || ""} ${c.heading || ""} ${c.title || ""} ${c.id}`;
       if (hit(head)) out.push({ kind: "claim", c, rank: 0 });
-      else if (hit(lean)) out.push({ kind: "claim", c, rank: 1, why: c.lean.find((n) => words.some((w) => n.toLowerCase().includes(w))) });
-      else if (hit(c.statement)) out.push({ kind: "claim", c, rank: 2, why: "matches the statement" });
+      else if (hit((c.lean || []).join(" "))) out.push({ kind: "claim", c, rank: 1 });
+      else if (hit(c.statement || "")) out.push({ kind: "claim", c, rank: 2 });
     }
-    for (const d of data.decls) if (hit(d.name)) out.push({ kind: "decl", d, rank: 3 });
+    for (const d of data.decls || []) if (hit(d.name) && d.claims?.length) out.push({ kind: "decl", d, rank: 3 });
     return out.sort((a, b) => a.rank - b.rank).slice(0, 30);
   });
-
-  const c_heading = (r) => (r.kind === "claim" ? r.c.heading || r.c.title : null);
-
-  function choose(r) {
-    open = false;
-    q = "";
-    if (r.kind === "claim") go(href(index.release, "read", r.c.paper, r.c.id));
-    else go(href(index.release, "claim", r.d.claims[0]));
+  function target(r) {
+    if (r.kind === "claim") return href(index.release, "read", r.c.paper, r.c.id);
+    const c = index.claims.find((c) => c.id === r.d.claims[0]);
+    return withQuery(href(index.release, "read", c?.paper || index.papers[0]?.id, r.d.claims[0]), { inspect: r.d.name });
   }
+  function choose(r) { go(target(r)); open = false; q = ""; }
   function key(e) {
-    if (e.key === "ArrowDown") { sel = Math.min(sel + 1, results.length - 1); e.preventDefault(); }
-    else if (e.key === "ArrowUp") { sel = Math.max(sel - 1, 0); e.preventDefault(); }
-    else if (e.key === "Enter" && results[sel]) choose(results[sel]);
-    else if (e.key === "Escape") open = false;
+    if (["ArrowDown", "ArrowUp", "Home", "End"].includes(e.key) && results.length) {
+      e.preventDefault(); open = true;
+      sel = e.key === "Home" ? 0 : e.key === "End" ? results.length - 1
+        : (sel + (e.key === "ArrowDown" ? 1 : -1) + results.length) % results.length;
+      requestAnimationFrame(() => document.getElementById(`${id}-${sel}`)?.scrollIntoView({ block: "nearest" }));
+    } else if (e.key === "Enter" && open && results[sel]) { e.preventDefault(); choose(results[sel]); }
+    else if (e.key === "Escape") { e.preventDefault(); open = false; }
   }
 </script>
 
-<div class="search">
-  <input type="search" placeholder="Search claims, statements, Lean names" bind:value={q}
-    onfocus={() => { load(); open = true; }} oninput={() => { open = true; sel = 0; }}
-    onkeydown={key} onblur={() => setTimeout(() => (open = false), 150)} aria-label="Search" />
-  {#if open && q && results.length}
-    <ul class="results" role="listbox">
-      {#each results as r, i}
-        <li role="option" aria-selected={i === sel}>
-          <button class:sel={i === sel} onmousedown={() => choose(r)}>
-            {#if r.kind === "claim"}
-              <span class="t">{r.c.number || r.c.id}</span>
-              <span class="p">Paper {r.c.paper}</span>
-              <span class="s">{statusView(r.c).label}</span>
-              {#if c_heading(r)}<span class="w"><TexInline text={c_heading(r)} /></span>{/if}
-              {#if r.why}<span class="w">{r.why}</span>{/if}
-            {:else}
-              <span class="t mono">{r.d.name}</span>
-              <span class="p">declaration · in {r.d.claims.length} claim{r.d.claims.length === 1 ? "" : "s"}</span>
-            {/if}
-          </button>
-        </li>
-      {/each}
-    </ul>
-  {:else if open && q && data}
-    <ul class="results"><li class="none">No match.</li></ul>
+<div class="search" bind:this={host} onfocusout={(e) => { if (!host.contains(e.relatedTarget)) open = false; }}>
+  <input type="search" role="combobox" aria-autocomplete="list" aria-expanded={open && !!q}
+    aria-controls={id} aria-activedescendant={open && results[sel] ? `${id}-${sel}` : undefined}
+    placeholder="Search claims or Lean names" bind:value={q} aria-label="Search claims and definitions"
+    onfocus={() => { requested = true; open = true; }} oninput={() => { open = true; sel = 0; }} onkeydown={key} />
+  {#if open && q}
+    <div class="results">
+      {#if error}
+        <p role="status">Search unavailable. <button onclick={() => { host.querySelector("input").focus(); attempt++; }}>Try again</button></p>
+      {:else if !data}<p role="status">Searching…</p>
+      {:else if !results.length}<p role="status">No matching claims or definitions.</p>{/if}
+      <ul id={id} role="listbox" aria-label="Search results">
+        {#each results as r, i}
+          <li role="presentation">
+            <a id={`${id}-${i}`} role="option" aria-selected={i === sel} class:sel={i === sel} href={target(r)}
+              onfocus={() => sel = i} onclick={(e) => { if (!e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey) { e.preventDefault(); choose(r); } }}>
+              {#if r.kind === "claim"}<strong>{r.c.number || r.c.id}</strong><span><TexInline text={r.c.heading || r.c.title || ""} /></span>
+              {:else}<code>{r.d.name}</code><span class="muted">Definition · {r.d.claims.length} claim{r.d.claims.length === 1 ? "" : "s"}</span>{/if}
+            </a>
+          </li>
+        {/each}
+      </ul>
+    </div>
   {/if}
 </div>
 
 <style>
-  .search { position: relative; flex: 1; max-width: 420px; min-width: 160px; }
-  input { width: 100%; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font: inherit; font-size: 14px; }
-  .results { position: absolute; top: 38px; left: 0; right: 0; z-index: 50; list-style: none; margin: 0; padding: 4px; max-height: 70vh; overflow: auto;
-    background: var(--surface); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 8px 24px rgb(0 0 0 / 0.15); }
-  button { display: flex; flex-wrap: wrap; gap: 2px 10px; align-items: baseline; width: 100%; text-align: left; border: 0; background: none; padding: 6px 8px; border-radius: 6px; cursor: pointer; }
-  button.sel, button:hover { background: var(--accent-soft); }
-  .t { font-weight: 600; }
-  .p, .s { font-size: 12px; color: var(--muted); }
-  .w { flex-basis: 100%; font-size: 12px; color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .none { padding: 8px; color: var(--muted); }
-  .mono { font-family: var(--mono); font-size: 13px; }
+  .search { position: relative; flex: 1 1 220px; max-width: 420px; min-width: 160px; }
+  input { width: 100%; padding: 7px 10px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); color: var(--text); font: inherit; }
+  .results { position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 50; max-height: 65dvh; overflow: auto; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: 0 6px 20px #0002; }
+  ul { list-style: none; margin: 0; padding: 4px; }
+  a { display: flex; flex-direction: column; gap: 2px; padding: 10px; color: var(--text); overflow-wrap: anywhere; text-decoration: none; border-radius: 4px; }
+  a.sel, a:hover { background: var(--accent-soft); }
+  a span { font-size: 13px; }
+  p { padding: 10px; margin: 0; }
+  button { color: var(--accent); background: none; border: 0; cursor: pointer; }
+  @media (max-width: 700px) { .search { max-width: none; flex-basis: 100%; } input { font-size: 16px; } }
 </style>

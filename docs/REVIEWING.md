@@ -14,11 +14,13 @@ Each review has three stages:
 
 **2. Compare with Lean.** Inspect the elaborated Lean proposition, relevant definitions, quantifier order and witnesses. A short checklist names what to compare (the setting, each hypothesis, quantifiers and their order, the definitions relied on, the conclusion, constants, and any result or axiom taken as an assumption; for a definition, the object, its parameters and its conventions at edge cases); marking each item *matches*, *differs* or *unsure* is optional and is kept in the report. Record how it compares with the paper. The review protocol has eight precise verdicts, grouped in the interface under *Matches*, *Problem* and *Cannot determine*.
 
-**3. Read the author's review.** Only after recording your verdict does the queue show the existing author review. Record any disagreements without replacing your initial interpretation.
+**3. Read the author's review.** Only after recording your verdict does the queue show the existing author review. Record disagreements alongside your initial interpretation.
 
-The order is recorded by the application; it cannot establish that the reviewer never opened the Lean files somewhere else.
+The report records the steps completed in this reader.
 
-**Keeping later units blind.** Reviewing one unit can show another's material: a statement's step 2 shows the Lean of the definitions it uses, and when one section of the author's reviews covers several declarations, its step 3 shows the author's review of all of them. The queue suggests an order that reviews a revealed unit first wherever it can (the definitions before the statements that use them). When it cannot (two units reviewed in one section reveal each other), the page says so before you write your reading, and the report records the units that had already shown it to you (`reading.revealed_by`). It knows only the work kept in this browser.
+**Review order.** The queue puts definitions before statements that use them. It records material
+revealed by earlier units in `reading.revealed_by`, including shared author-review sections.
+This record covers work saved in the current browser.
 
 **From the command line.** The same three steps, with the same locks, for a reviewer without a browser (a scripted or batch reviewer, say). Name yourself with `--as human:NAME` or `--as llm:MODEL` (or `MACHINECHECKED_REVIEWER`); texts are files, or `-` for standard input:
 
@@ -55,13 +57,15 @@ A review may be useful before a theorem is proved, provided the formal specifica
 
 The reviewer supplies their name or model identity. On a standalone HTML bundle, identity is **self-declared**; a Git name or a typed username is not proof of authorship.
 
-Drafts are kept only in the browser you review in (its local storage), until you export them: clearing the site's data, a private window, or another browser or computer starts with none. **Export reports regularly**, especially before leaving a long review session. The JSON export contains the recorded interpretation, comparison, verdict, source revision, Lean fingerprints and reviewer attribution.
+Drafts are saved in this browser’s local storage. **Export reports regularly** to keep a durable
+copy and share your work. The JSON contains your interpretation, comparison, verdict, source
+revision, Lean fingerprints and reviewer attribution.
 
-A report is evidence for the maintainer; it does not change a claim's verification status.
+The maintainer reads the report and decides whether to promote its review markers.
 
 ## Maintainer acceptance
 
-In a project with formal review markers, a maintainer can evaluate submitted reports with:
+In a project with formal review markers, a maintainer can evaluate saved reports with:
 
 ```sh
 machinechecked review promote machinechecked-reviews-....json
@@ -69,6 +73,11 @@ machinechecked review promote machinechecked-reviews-....json
 
 Promotion checks that the manuscript and formal statements still match the review pins, that the review stages were recorded in the required order, and that the verdict is eligible. It displays the planned changes and requires the maintainer's decision. Model-family and author restrictions still apply. A report whose reading was not blind is refused unless the maintainer passes `--allow-revealed`.
 
-MachineChecked does **not** decide whether a review is mathematically persuasive. The maintainer remains responsible for reading the report. A promoted review may clear only its corresponding obligation; claims with missing proofs, unreviewed definitions or other requirements remain open.
+Promotion records the maintainer’s decision for the reviewed proposition or definition.
+Acceptance also requires the claim’s proofs and all other required checks.
 
 For details of the acceptance states, see [Evidence policy](EVIDENCE_POLICY.md). For the required configuration and review-marker format, see [Full assessment](ASSURANCE.md).
+
+Reports and drafts are saved in this browser. **Export reports** downloads the reports for sharing
+with the maintainer. **Review it** starts with the selected claim and records prior Lean exposure
+when opened from the reader.

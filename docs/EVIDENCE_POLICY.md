@@ -1,6 +1,6 @@
 # Evidence policy
 
-What each piece of evidence means, and what it does not.
+What each check establishes and how claims reach acceptance.
 
 The [structured status contract](STATUS_CONTRACT.md) lists the machine-readable codes and
 independent evidence dimensions. Labels never control acceptance or reader behaviour.
@@ -16,7 +16,7 @@ A formal claim's status, from strongest to weakest:
 | Status | Meaning |
 |---|---|
 | `formal: accepted` | every clause: a closed proposition, a theorem whose type is exactly it, only allowed axioms, and a current review of the proposition and of every project definition it depends on by a reviewer who did not write the statements |
-| `formal: proved, author-reviewed` | as accepted, but some review is only by an author of the statements |
+| `formal: proved, author-reviewed` | as accepted, with author provenance for at least one required review |
 | `formal: proved, review pending` | proved, but some review is missing or stale |
 | `refuted as printed[; corrected statement proved][; other clauses open]` | a theorem proves the negation of the printed claim |
 | `formal: open` | a proposition is written, a proof is missing |
@@ -37,12 +37,12 @@ declarations Lean generates (`match_1`, `_f`): they are part of the definition's
 | Consistency check | no violation: every check ran and nothing contradicts the inventory |
 | Release gate (per paper) | the source compiled and its hashes checked, or, for a paper published only as a PDF, the PDF pinned by its SHA-256 (`pdf_sha256`) and matching, with every claim in scope found in it (the gate then states that the source is a PDF and claim positions are approximate); consistency passes; every scope decision reviewed; every formal claim accepted and every definition claim reviewed by an independent reviewer; no printed clause refuted; every witness valid; a Comparator log shows a kernel replay of every proof of the paper |
 
-A paper can pass the consistency check with every claim open: the check says nothing about the
-paper as a whole.
+Consistency checks agreement between the inventory and evidence. Each claim’s status records
+its proof and review results.
 
 ## The evidence ladder
 
-Each clause shows its rungs separately. One rung passing says nothing about another.
+Each clause reports a result for every evidence dimension.
 
 | Rung | Mechanical? | Passes when |
 |---|---|---|
@@ -55,19 +55,14 @@ Each clause shows its rungs separately. One rung passing says nothing about anot
 | review | no | the proposition and its definitions have current reviews; `author` if only by an author |
 | source | yes | the claim was located in the compiled paper and its source hash matches the inventory; `pdf-only` if there is no LaTeX |
 
-## What evidence is not
+## What each check establishes
 
-- **`#print axioms`-clean is the trust base, not coverage.** A theorem over unconstrained
-  hypotheses can be axiom-clean and say nothing about the paper.
-- **A fingerprint shows structure, not meaning.** Two different fingerprints may be equivalent
-  mathematically. Two equal fingerprints are the same expression up to binder names, metadata and
-  proofs.
-- **A review marker is a self-declared record.** Nothing in a Markdown file authenticates who
-  wrote it. Its provenance is shown as `self-declared` until a stronger attestation exists.
-- **A witness only shows the hypotheses can be met.** Whether it is an instance the paper intends
-  (nonzero jumps, infinite activity, nontrivial law dependence) is a regime obligation and a
-  review judgement.
-- **A dismissed warning is a recorded opinion,** bound to the fingerprint it was made on.
+- **Proof:** Lean establishes the formal proposition under its recorded axioms.
+- **Correspondence:** reviewers compare the proposition and its definitions with the paper.
+- **Review provenance:** markers record self-declared identities and the hashes reviewed.
+- **Witness:** a checked example establishes that the formal hypotheses can be met.
+- **Source verification:** hashes identify the manuscript region or PDF being audited.
+- **Replay:** a structured Comparator record identifies the proofs and build replayed.
 
 ## Provenance of a release
 

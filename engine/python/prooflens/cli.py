@@ -305,12 +305,10 @@ def cmd_check(a):
     if not n:
         print("no claim is linked yet: confirm links in `machinechecked view`")
         return
-    print(f"all {n} linked declaration(s) are checked by Lean (whether each says what the paper "
-          "says is not reviewed by this check)")
+    print(f"Lean checked all {n} linked declaration(s)")
 
 
-CHECK_NOTE = ("Statuses say what Lean establishes about the linked declarations. Whether a Lean "
-              "statement says what the paper says is not checked here; that takes a reviewer.")
+CHECK_NOTE = "Results describe the linked Lean declarations; correspondence reviews compare them with the paper."
 
 
 FINDING_KEYS = ("id", "tier", "code", "subject", "message", "trigger", "dismissed")
@@ -924,14 +922,14 @@ def _could_not_run(a, kind: str, message: str, **extra):
         import json
         print(json.dumps({"schema": "machinechecked/check@1", "ok": False,
                           "error": {"kind": kind, "message": message, **extra},
-                          "note": "The check did not run; nothing is known about the claims."},
+                          "note": "Check unavailable; resolve the execution error and retry."},
                          indent=1))
     elif getattr(a, "func", None) is cmd_inspect and getattr(a, "json", False):
         import json
         print(json.dumps({"schema": "machinechecked/inspect@1", "ok": False,
                           "name": getattr(a, "name", None),
                           "error": {"kind": kind, "message": message, **extra},
-                          "note": "Lean was not asked; nothing is known about the declaration."},
+                          "note": "Inspection unavailable; resolve the execution error and retry."},
                          indent=1))
     raise SystemExit(COULD_NOT_RUN)
 

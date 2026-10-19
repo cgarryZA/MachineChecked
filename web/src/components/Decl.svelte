@@ -7,13 +7,9 @@
   // One Lean declaration of a closure, loaded from the shared store when it is opened.
   // `hideReview` keeps the author's review (and the review state) out of sight, as the review
   // queue does until the reviewer has recorded a verdict.
-  // In the claim inspector (`inspector`), it is shown open, without the fold, and a long value
-  // stays folded until asked for.
-  let { name, key, open = false, onref, hideReview = false, inspector = false } = $props();
+  // The claim inspector opens the declaration and its complete value.
+  let { name, key, open = false, onref, hideReview = false, inspector = false, index = siteIndex } = $props();
   let expanded = $state(false);
-  let showValue = $state(false);
-  const LONG = 300;
-  const textOf = (pp) => (typeof pp === "string" ? pp : pp?.text ?? (pp?.segments || []).map((x) => x.t).join(""));
   let d = $state(null);
   $effect(() => { if (open || inspector) expanded = true; });
   let error = $state(null);
@@ -44,22 +40,18 @@
       {#if d.signature}<LeanText pp={d.signature} {onref} refs={d.uses} />{/if}
       {#if d.value}
         <p class="lbl">value</p>
-        {#if showValue || textOf(d.value).length <= LONG}
-          <LeanText pp={d.value} {onref} refs={d.uses} />
-        {:else}
-          <button class="show" onclick={() => (showValue = true)}>Show the value ({textOf(d.value).length} characters)</button>
-        {/if}
+        <LeanText pp={d.value} {onref} refs={d.uses} />
       {/if}
       <details class="extra">
         <summary>Details</summary>
         {@render extra()}
       </details>
     {:else}
-      {#if siteIndex && moduleSourceUrl(siteIndex, d.module, d.range?.line)}
-        <p class="small"><a href={moduleSourceUrl(siteIndex, d.module, d.range?.line)} target="_blank" rel="noopener" title={sourceTitle(siteIndex)}>{sourceLabel(siteIndex)}</a></p>
+      {#if index && moduleSourceUrl(index, d.module, d.range?.line)}
+        <p class="small"><a href={moduleSourceUrl(index, d.module, d.range?.line)} target="_blank" rel="noopener" title={sourceTitle(index)}>{sourceLabel(index)}</a></p>
       {/if}
       {#if d.doc}
-        {#if hideReview}<p class="lbl">docstring (the author's words, not the definition)</p>{/if}
+        {#if hideReview}<p class="lbl">author’s docstring</p>{/if}
         <p class="doc">{d.doc}</p>
       {/if}
       {#if d.signature}
@@ -85,7 +77,7 @@
 
 {#snippet extra()}
   <p class="small faint">{d.module}{d.range ? ":" + d.range.line : ""}
-    {#if siteIndex && moduleSourceUrl(siteIndex, d.module, d.range?.line)} · <a href={moduleSourceUrl(siteIndex, d.module, d.range?.line)} target="_blank" rel="noopener" title={sourceTitle(siteIndex)}>{sourceLabel(siteIndex)}</a>{/if}</p>
+    {#if index && moduleSourceUrl(index, d.module, d.range?.line)} · <a href={moduleSourceUrl(index, d.module, d.range?.line)} target="_blank" rel="noopener" title={sourceTitle(index)}>{sourceLabel(index)}</a>{/if}</p>
   {#if d.doc}<p class="lbl">docstring</p><p class="doc">{d.doc}</p>{/if}
   {#if d.review}<p class="lbl">review: <span class={"rv rv-" + d.review.state} title={evidenceView("review", d.review).detail}>{evidenceView("review", d.review).word}</span></p>{/if}
   {#each d.review?.current || [] as r}

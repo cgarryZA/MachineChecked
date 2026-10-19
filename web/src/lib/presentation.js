@@ -50,3 +50,12 @@ export function clauseNote(clause, count) {
   }
   return null;
 }
+
+// Preserve each recorded state when a claim has clauses with different evidence.
+export function evidenceFacts(record) {
+  const rows = record?.clauses?.map((c) => c.evidence) || record?.evidence_summary || [];
+  return ["formal", "review"].flatMap((dimension) => {
+    const facts = [...new Map(rows.filter((r) => r?.[dimension]).map((r) => [r[dimension].state, evidenceView(dimension, r[dimension])])).values()];
+    return facts.length ? [{ dimension, label: dimension === "formal" ? "Proof" : "Review", word: facts.map((f) => f.word).join(" · "), detail: facts.map((f) => f.detail).join(" ") }] : [];
+  });
+}

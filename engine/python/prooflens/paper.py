@@ -1,16 +1,8 @@
-"""A paper's page: the paper's PDF, the statements found in it, and for each Lean project that
-states it formalises the paper, the declarations its `formalization.yaml` maps them to.
+"""Canonical paper pages with project-specific audit records and PDF editions.
 
-It is written in the reader's standard data format (`data/index.json`, `data/claims/`), so a
-paper page is read by the same code as a view or an audit. Nothing here runs Lean, so a mapped
-statement reads "linked: Lean not checked here (no audit published)": the link says which
-declaration the project names, not what Lean establishes. When the project has a published
-audit that lists a claim of the same printed number, the statement shows that claim's status as
-the audit records it, credited to the audit's author and linked to it (`apply_audits`): the
-audit's words, not the site's. Each project's links and statuses are kept apart (`by_project`);
-the reader shows one project at a time and never combines them.
-
-No statement's text is written: only its number, heading title and place on the page.
+The original PDF remains the default. Published evidence retains its author, release,
+source revision and complete claim records. Each audit's PDF coordinates belong to its
+verified PDF bytes; selecting a formalisation changes the evidence, independently of the PDF.
 """
 
 from __future__ import annotations
@@ -20,8 +12,9 @@ from pathlib import Path
 
 from . import formalization as fz
 from . import manifest as mf
-from .util import content_id
+from .util import content_id, write_json
 from .status import fields, source_evidence, STATUSES
+from .published import load_published_audit  # public import API for site builders
 
 SCHEMA = mf.SCHEMA
 NOT_CHECKED = "linked: Lean not checked here (no audit published)"
@@ -52,30 +45,52 @@ def paper_claims(anchors: list[dict], title: str,
     return out
 
 
-def apply_audits(claims: list[dict], audits: dict[str, dict]) -> list[dict]:
-    """Each statement (from `paper_claims`) with, for every project whose published audit lists
-    exactly one claim of the same printed number, that claim as the audit records it (`audit`:
-    status_code, derived label/class, claim id, link, author). When the project's formalization.yaml declares no
-    link for the statement, the audit's Lean names are its links. `audits` maps a repository to
-    `{"author", "url", "commit", "claims": [{"id", "number", "status_code", "lean",
-    "link"}]}`, read from the audit's own data; the claims are not changed otherwise."""
-    for c in claims:
+def apply_audits(claims: list[dict], audits: dict[str, dict], pdf_sha256: str | None = None) -> list[dict]:
+    """Join unique printed numbers within a validated project/paper snapshot.
+
+    Additional and ambiguously numbered audit entries retain their own identifiers.
+    Complete records stay under their project; exact coordinates transfer to the original
+    paper only when the PDF hashes match. ``load_published_audit`` supplies full snapshots.
+    """
+    original = list(claims)
+    used = {r: set() for r in audits}
+    for c in original:
         c["audit"] = {}
         for repo, au in audits.items():
             same = [x for x in au.get("claims", []) if x.get("number") == c["number"]]
-            if len(same) != 1:
+            if len(same) != 1 or sum(x["number"] == c["number"] for x in original) != 1:
+                if same:
+                    c["audit"][repo] = {**fields("unknown"), "detail": "Several records share this printed number; choose an audit entry from the contents."}
                 continue
             x = same[0]
-            code = x.get("status_code")
-            c["audit"][repo] = {**fields(code if code in STATUSES else "unknown"),
-                                "claim": x["id"],
-                                "link": x.get("link"), "author": au.get("author"),
-                                "audit": au.get("url")}
+            c["audit"][repo] = _audit_record(x, au, pdf_sha256)
+            used[repo].add(x["id"])
             if not any(l["repository"] == repo for l in c["links"]):
                 c["links"] = c["links"] + [
                     {"name": n, "repository": repo, "commit": au.get("commit"),
                      "source": "audit"} for n in x.get("lean", []) if NAME.fullmatch(n)]
+    # Audit entries include equations, prose and scope decisions that heading extraction misses.
+    for repo, au in audits.items():
+        for x in au.get("claims", []):
+            if x["id"] in used[repo] or not x.get("record"):
+                continue
+            claims.append({"key": "audit-" + content_id([repo, x["id"]])[:20],
+                           "number": x.get("number"), "kind": x.get("kind"),
+                           "title": x.get("title"), "links": [], "anchor": None,
+                           "projects": [repo], "audit": {repo: _audit_record(x, au, pdf_sha256)}})
     return claims
+
+
+def _audit_record(x: dict, au: dict, pdf_sha256: str | None) -> dict:
+    code = x.get("status_code")
+    out = {**fields(code if code in STATUSES else "unknown"), "claim": x["id"],
+           "link": x.get("link"), "author": au.get("author"), "audit": au.get("url")}
+    if x.get("record"):
+        ap = au["paper"]
+        out.update(record=x["record"], paper=ap, context=au["context"],
+                   edition=ap.get("edition"), audit_anchor=x.get("anchor"),
+                   same_pdf=bool(pdf_sha256 and pdf_sha256 == ap.get("pdf_sha256")))
+    return out
 
 
 def _state(links: list[dict], audit: dict | None = None, audited: bool = False) -> dict:
@@ -89,14 +104,15 @@ def _state(links: list[dict], audit: dict | None = None, audited: bool = False) 
 
 def write_paper_site(site: Path, paper: dict, claims: list[dict],
                      page_size: list | tuple | None, pdf_url: str | None,
-                     web_dist: Path | None = None) -> dict:
+                     web_dist: Path | None = None, audits: dict | None = None) -> dict:
     """Write the paper page's data under `site/data/` (and the reader, given its built
     directory). `paper` is the paper's registry entry (its identifier, title, authors, links and
     formalisations), which the reader's panel beside the paper shows; `claims` are from
     `paper_claims`. Replaces whatever is at `site`."""
     from .pipeline import write_preview
+    audits_loaded = audits or {}
     projects = [f["repository"] for f in paper.get("formalisations", [])]
-    audited = {f["repository"] for f in paper.get("formalisations", []) if f.get("audits")}
+    audited = {r for r, a in audits_loaded.items() if a.get("state") == "loaded"} if audits is not None else {f["repository"] for f in paper.get("formalisations", []) if f.get("audits")}
     index_claims, chunks = [], {}
     for c in claims:
         cid = f"P:{c['key']}"
@@ -107,19 +123,35 @@ def write_paper_site(site: Path, paper: dict, claims: list[dict],
         for r in projects:
             state = _state([l for l in c["links"] if l["repository"] == r], audits.get(r),
                                  r in audited)
+            failure = audits_loaded.get(r, {})
+            if not audits.get(r) and failure.get("state") in ("unavailable", "incompatible"):
+                state = fields("audit." + failure["state"])
             by_project[r] = {**state,
                              **({"audit": audits[r]} if r in audits else {})}
         first = projects[0] if projects else None
-        state = _state([l for l in c["links"] if not projects or l["repository"] == first],
-                             audits.get(first), first in audited)
-        common = {"id": cid, "paper": "P", "number": c["number"], "title": c.get("title"),
+        state = {k: by_project[first][k] for k in ("status_code", "status", "class")} if first else fields("link.none")
+        common = {**({"projects": c["projects"]} if c.get("projects") else {}), "id": cid, "paper": "P", "number": c["number"], "title": c.get("title"),
                   "heading": c.get("title") or None, "kind": c["kind"], "scope": "formal",
                   **state, "by_project": by_project}
-        index_claims.append({**common, "anchor": mf.index_anchor(anchor, "approximate"),
+        index_by_project = {}
+        chunk_by_project = {}
+        for r, variant in by_project.items():
+            au = variant.get("audit", {})
+            meta = {k: v for k, v in au.items() if k != "record"}
+            index_by_project[r] = {**variant, **({"audit": meta} if au else {})}
+            chunk_by_project[r] = {**variant, **({"audit": meta, "record": au["record"]} if au.get("record") else {})}
+            if au.get("record"):
+                rec = au["record"]
+                index_by_project[r]["evidence_summary"] = [
+                    {k: cl["evidence"][k] for k in ("formal", "review") if k in cl.get("evidence", {})}
+                    for cl in rec.get("clauses", [])]
+                index_by_project[r].update({k: rec.get(k) for k in ("scope", "kind", "title", "heading")})
+                index_by_project[r]["anchor"] = au.get("audit_anchor") if au.get("same_pdf") else mf.index_anchor(anchor, "approximate")
+        index_claims.append({**common, "by_project": index_by_project, "anchor": mf.index_anchor(anchor, "approximate"),
                              "counts": {}, "file": fname, "linked": len(c["links"]),
                              "suggested": 0})
         chunks[fname] = {
-            **common, "schema": SCHEMA, "mode": "simple", "release": "paper", "key": c["key"],
+            **common, "by_project": chunk_by_project, "schema": SCHEMA, "mode": "simple", "release": "paper", "key": c["key"],
             "scope_note": "", "scope_reviewed": True, "anchor": anchor,
             "source_matches": None, "source_evidence": source_evidence(anchor, "pdf"),
             "statement_tex": None, "blockers": [],
@@ -130,9 +162,13 @@ def write_paper_site(site: Path, paper: dict, claims: list[dict],
     summary = {}
     for c in index_claims:
         summary[c["status"]] = summary.get(c["status"], 0) + 1
-    # The page has no Lean evidence; its identifier is that of what it shows.
+    # Identify the assembled paper and its project-specific evidence.
     eid = content_id({"paper": paper, "claims": claims, "pdf": pdf_url})
-    index = {"schema": SCHEMA, "mode": "paper", "release": "paper", "evidence": eid,
+    editions = {a["paper"]["edition"]: {**a["paper"], "author": a.get("author"), "repository": r}
+                for r, a in audits_loaded.items() if a.get("paper", {}).get("edition")}
+    index = {"schema": SCHEMA, "editions": list(editions.values()),
+             "audits": {r: {k: a[k] for k in ("state", "detail", "commit", "release", "author", "url", "gates") if k in a}
+                        for r, a in audits_loaded.items()}, "mode": "paper", "release": "paper", "evidence": eid,
              "tool": {"name": "machinechecked"}, "project": {}, "projects": projects,
              "paper": paper, "notes": [],
              "papers": [{"id": "P", "title": paper.get("title", ""), "mode": "pdf", "pdf": None,
@@ -142,5 +178,25 @@ def write_paper_site(site: Path, paper: dict, claims: list[dict],
              "classes": {c["status"]: c["class"] for c in index_claims},
              "findings": {"total": {}, "general": []}, "gates": {}, "claims": index_claims,
              "search": "data/search.json"}
-    write_preview(site, index, chunks, {}, {}, web_dist)
+    store = {k: v for a in audits_loaded.values() for k, v in a.get("store", {}).items()}
+    write_preview(site, index, chunks, store, {}, web_dist)
+    search = mf.search_index(index, chunks)
+    search["by_project"] = {}
+    for repo in projects:
+        selected = {}
+        for name, chunk in chunks.items():
+            if chunk.get("projects") and repo not in chunk["projects"]:
+                continue
+            variant = chunk["by_project"][repo]
+            selected[name] = {**chunk,
+                              "links": [l for l in chunk.get("links", []) if l.get("repository") == repo],
+                              **variant.get("record", {}), "id": chunk["id"], "paper": "P"}
+        rows = [{**c, **c["by_project"][repo]} for c in index["claims"] if c["file"] in selected]
+        search["by_project"][repo] = mf.search_index({**index, "claims": rows}, selected)
+    write_json(site / "data" / "search.json", search, indent=None)
+    for a in audits_loaded.values():
+        for key, raw in a.get("pdfs", {}).items():
+            path = site / "data" / "papers" / f"{key}.pdf"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(raw)
     return index

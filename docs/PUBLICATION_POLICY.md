@@ -18,8 +18,8 @@
 2. **Assemble, then scan.** The export is assembled from allowed fields. Every file is then
    scanned against the private inputs, and any match blocks the export.
 3. **Pin.** A public release names its evidence id, the project commit and every paper revision.
-   If its sources are private, it says outside readers cannot reproduce it from the site.
-4. **Name it honestly.** A PDF with the audit appendix is a "Paper with Formal Verification Audit",
-   never a "verified paper", while any claim in scope is not accepted.
+   For private sources, the release records the access required to reproduce it.
+4. **Name the artifact.** A PDF with the audit appendix is a "Paper with Formal Verification Audit".
+   Describe claim acceptance using the recorded per-claim results.
 5. **The research repositories stay private** until their owner decides otherwise. Public
    MachineChecked development uses only the synthetic examples.

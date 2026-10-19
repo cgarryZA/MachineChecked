@@ -1,23 +1,14 @@
 # MachineChecked: plan of record
 
-MachineChecked shows a mathematical paper beside its Lean formalisation and says, claim by claim,
-what is established. It keeps three things apart that a Lean build alone does not:
-
-1. **Evidence**: what Lean and the mechanical checks established (exact statement types, axioms,
-   fingerprints, proof status).
-2. **Interpretation**: whether a Lean statement says what the paper says. No tool can check that;
-   only a reviewer can judge it.
-3. **Presentation**: how a reader explores both without knowing Lean. A view displays a status; it
-   never computes, changes or upgrades one.
+MachineChecked displays a mathematical paper beside its Lean formalisation. The engine assesses
+proofs, reviews, source verification and replay; the reader presents those results and their provenance.
 
 ## Two products
 
-| | Where | What it does | What it never does |
-|---|---|---|---|
-| **The tool** | `cgarryZA/MachineChecked`, command `machinechecked` | runs on a researcher's machine or in their own CI: reads the paper, probes the built Lean, links claims, records reviews, writes a reader and a portable audit | needs the website |
-| **The site** | machinechecked.org (moving to its own repository, `cgarryZA/machinechecked.org`) | indexes papers and the Lean repositories that formalise them, and displays published audits | builds Lean, runs anyone's code, or endorses an audit |
-
-The tool can be used without ever registering with the site, and the site without knowing Lean.
+| Product | Repository | Responsibility |
+|---|---|---|
+| Tool | `cgarryZA/MachineChecked` | Reads papers, probes compiled Lean, records reviews and writes portable audits on the researcher’s machine or CI |
+| Site | `cgarryZA/machinechecked.org` | Indexes papers and displays published audit data in the package’s reader |
 
 ## The site
 
@@ -29,9 +20,9 @@ The tool can be used without ever registering with the site, and the site withou
 | Lean repository linked | a repository states that it formalises the paper | "This repository states that it formalises this paper", and the repository |
 | Audit published | someone published a MachineChecked audit of that repository | the interactive reader: claims, Lean, statuses, reviews |
 
-A link is not an audit, and an audit is not an endorsement. A search result does not enter the
-registry. Figures a project reports about itself (a `sorry` count in `formalization.yaml`, its
-review status) are shown as the project's own, never as a check by MachineChecked.
+Listings cite the repository’s `formalization.yaml`; audits name their authors and revisions.
+Project-supplied counts and review descriptions carry project attribution. Search results link to
+external papers; the registry is built from formalisation declarations and curated entries.
 
 **Listing.** An arXiv paper is linked to a repository, with no approval, when the repository's
 `formalization.yaml` names the paper with `relationship: formalizes`. A daily job finds these files,
