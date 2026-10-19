@@ -117,3 +117,56 @@ def test_variables_and_logic_are_exported(tmp_path, toolchain):
         assert tree and all(exact.get(i) == t for i, t in tree.items()), (name, tree, exact)
     left, right = statement(root, "Shape.witnesses")["conclusion"]["logic"]["args"]
     assert left["id"] != right["id"] and left["type"]["id"] != right["type"]["id"]
+
+
+def build_copy(tmp_path, toolchain):
+    root = tmp_path / "structure"
+    shutil.copytree(SRC, root)
+    if toolchain:
+        (root / "lean-toolchain").write_text(toolchain + "\n")
+        if subprocess.run(["elan", "toolchain", "list"], capture_output=True,
+                          text=True).stdout.find(toolchain) < 0:
+            pytest.skip(f"{toolchain} is not installed")
+    subprocess.run(["lake", "build"], cwd=root, check=True, capture_output=True, timeout=900)
+    return root
+
+
+@needs_lean
+@needs_tex
+@pytest.mark.parametrize("toolchain", [None, "leanprover/lean4:v4.24.0"])
+def test_definitions_are_exported_as_written(tmp_path, toolchain):
+    """A linked definition carries what it says (#97): its parameters in their order, with how
+    each is written, and its body with the witness's type; a definition by recursion carries
+    the equation theorems Lean derives for it, each with its exact statement; both carry their
+    authored source. Sub-terms of the body have the identities they have in the value."""
+    root = build_copy(tmp_path, toolchain)
+    d = statement(root, "Shape.MultipleAbove")["decl"]
+    assert d["defined_by"] == "body"
+    assert [(p["name"], p["binder"], p["type"]["text"]) for p in d["params"]] == \
+        [("b", "explicit", "Nat"), ("m", "implicit", "Nat"), ("n", "explicit", "Nat")]
+    assert d["body"]["text"] == "∃ (q : Nat), b ≤ q ∧ n = m * q"
+    assert d["result"]["text"] == "Prop"
+    # The body's variables are the parameters, by position.
+    assert ("m", 1) in var_refs(d["body"]) and ("n", 2) in var_refs(d["body"])
+    body, value = texts(d["body"]), texts(d["value"])
+    assert body and all(value.get(i) == t for i, t in body.items())
+    assert [e["name"] for e in d["equations"]] == ["Shape.MultipleAbove.eq_1"]
+    assert d["lean_source"]["text"].splitlines()[-1].startswith("def MultipleAbove (b : Nat)")
+    assert d["lean_source"]["file"] == "Shape/Main.lean"
+
+    f = statement(root, "Shape.fib")["decl"]
+    assert f["defined_by"] == "equations" and f["equations_omitted"] == 0
+    assert [e["name"] for e in f["equations"]] == \
+        ["Shape.fib.eq_1", "Shape.fib.eq_2", "Shape.fib.eq_3"]
+    e1, e2, e3 = f["equations"]
+    assert e1["statement"]["text"] == "Shape.fib 0 = 0" and e1["params"] == []
+    assert e2["statement"]["text"] == "Shape.fib 1 = 1"
+    assert e3["statement"]["text"].startswith("∀ (n : Nat), Shape.fib ")
+    assert [p["name"] for p in e3["params"]] == ["n"]
+    assert e3["statement"]["text"].endswith(e3["equation"]["text"])
+    # An equation's sub-terms are named by its theorem, the same in both of its views.
+    eq, whole = texts(e3["equation"]), texts(e3["statement"])
+    assert eq and all(i.startswith("Shape.fib.eq_3:") and whole.get(i) == t
+                      for i, t in eq.items())
+    assert "| n + 2 => fib n + fib (n + 1)" in f["lean_source"]["text"]
+    assert "body" not in f, "the compiled recursion is only the value"

@@ -72,6 +72,12 @@ widen the selection. Dotted names open short mathematical notes. A Lean declarat
 its complete definition; **Back** and browser Back restore the claim view and reading position.
 Definition links can be copied or opened in another tab.
 
+A definition shows what it says: its parameters, in their order and as they are written, and its
+body; a definition by pattern matching or recursion shows the equations Lean derives for it
+(its equation theorems), each under its own variables. **Exact Lean** shows the authored source
+of the definition, the exact statement of each equation theorem and the elaborated value; the
+compiled form of a recursive definition is folded under **Compiled value**.
+
 Click the evidence summary for proof checks, reviews and provenance. The ⋯ menu contains
 **Copy link**, **Report issue** and **Review it**; reviewing opens the selected claim.
 

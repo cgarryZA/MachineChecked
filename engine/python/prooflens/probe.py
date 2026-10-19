@@ -165,7 +165,8 @@ def run_probe(cfg: Config, requests: list[dict], lake: str = "lake",
     groups = by_library(cfg.modules, lib_names(cfg.lean_root))
     work = cfg.out_dir / "build"
     if len(groups) == 1:
-        return lean_session(cfg.lean_root, cfg.modules, query, parse_records, lake, timeout, work)
+        return attach_sources(cfg.lean_root, lean_session(cfg.lean_root, cfg.modules, query,
+                                                          parse_records, lake, timeout, work))
     parts = []
     for lib, mods in groups:
         try:
@@ -173,7 +174,35 @@ def run_probe(cfg: Config, requests: list[dict], lake: str = "lake",
                                             timeout, work)))
         except ProbeError as e:
             raise ProbeError(f"library {lib} ({', '.join(mods)}): {e}") from None
-    return merge_records(parts)
+    return attach_sources(cfg.lean_root, merge_records(parts))
+
+
+def lean_source(lean_root: Path, decl: dict) -> dict | None:
+    """The authored source of a declaration of the project: the lines of its module's file that
+    its declaration range covers (docstring included), with the file, the lines and the SHA-256
+    of the text, read from the checkout the probe ran on. None for a declaration of a dependency
+    or one without a range (a generated declaration)."""
+    module, rng = decl.get("module"), decl.get("range")
+    if not module or not rng or not re.fullmatch(r"[\w.']+", module):
+        return None
+    rel = module.replace(".", "/") + ".lean"
+    path = lean_root / rel
+    if not path.is_file():
+        return None
+    lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    first, last = rng["line"], rng.get("end_line") or rng["line"]
+    if not 1 <= first <= last <= len(lines):
+        return None
+    text = "\n".join(lines[first - 1:last])
+    return {"file": rel, "line": first, "end_line": last, "text": text,
+            "sha256": sha256_text(text)}
+
+
+def attach_sources(lean_root: Path, res: dict) -> dict:
+    """Every declaration record of `res` with its authored source (`lean_source`)."""
+    for d in res.get("decls", {}).values():
+        d["lean_source"] = lean_source(lean_root, d)
+    return res
 
 
 def _module(rec: dict) -> str | None:

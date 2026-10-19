@@ -14,6 +14,7 @@
   import Ladder from "./Ladder.svelte";
   import Findings from "./Findings.svelte";
   import Decl from "./Decl.svelte";
+  import Definition from "./Definition.svelte";
   import Tex from "./Tex.svelte";
   import LinkPicker from "./LinkPicker.svelte";
   import { tick, setContext } from "svelte";
@@ -330,7 +331,8 @@
           <div class="block">
             <p class="decl"><code>{l.name}</code>
               {#if sourceUrl(evidenceIndex, l.path, l.range?.line)}<a class="src-link small" href={sourceUrl(evidenceIndex, l.path, l.range?.line)} target="_blank" rel="noopener" title={sourceTitle(evidenceIndex)}>{sourceLabel(evidenceIndex)}</a>{/if}</p>
-            {#if l.statement}<Statement st={l.statement} onref={showDecl} compact selId={selFor(l.name)} onselect={(id) => select(l.name, id)} />{/if}
+            {#if l.definition}<Definition d={l.definition} onref={showDecl} selId={selFor(l.name)} onselect={(id) => select(l.name, id)} />
+            {:else if l.statement}<Statement st={l.statement} onref={showDecl} compact selId={selFor(l.name)} onselect={(id) => select(l.name, id)} />{/if}
             {#if claim.links.length > 1}<StatusChip record={l} small />{/if}
             {#if editable}
               <button class="btn ghost" disabled={!!busy} onclick={() => act({ lean: claim.links.filter((x) => x.name !== l.name).map((x) => x.name) }, "unlink")}>Unlink</button>
@@ -385,7 +387,9 @@
                 onpinned={(v) => { if (linking) pickVar = v == null ? (pickVar?.spec === cl.spec && pickVar.var != null ? null : pickVar) : { spec: cl.spec, var: v }; }}
                 onactive={(v) => (leanActive = v == null ? (leanActive?.spec === cl.spec ? null : leanActive) : { spec: cl.spec, var: v })} />
             {:else if cl.defs?.length}
-              <p class="defs">{#each cl.defs as d, i}{#if i}, {/if}<button class="ref" onclick={() => showDecl(d)}>{d}</button>{/each}</p>
+              {#each cl.defs as d (d)}
+                <Definition name={d} key={claim.decls?.[d]} onref={showDecl} onname={showDecl} selId={selFor(d)} onselect={(id) => select(d, id)} />
+              {/each}
             {/if}
           </div>
         {:else}
@@ -396,11 +400,11 @@
     <section class="exact-pane">
       <h2>Exact Lean</h2>
       {#if simple}
-        {#each claim.links || [] as l}<ExactLean st={l.statement} name={l.name} onref={showDecl} selId={selFor(l.name)} onselect={(id) => select(l.name, id)} />{:else}<p class="muted">Choose a Lean declaration to compare.</p>{/each}
+        {#each claim.links || [] as l}{#if l.definition}<Definition d={l.definition} view="exact" onref={showDecl} selId={selFor(l.name)} onselect={(id) => select(l.name, id)} />{:else}<ExactLean st={l.statement} name={l.name} onref={showDecl} selId={selFor(l.name)} onselect={(id) => select(l.name, id)} />{/if}{:else}<p class="muted">Choose a Lean declaration to compare.</p>{/each}
       {:else}
         {#each claim.clauses || [] as cl}
           {#if cl.statement}<ExactLean st={cl.statement} name={cl.spec} onref={showDecl} selId={selFor(cl.spec)} onselect={(id) => select(cl.spec, id)} />
-          {:else if cl.defs?.length}{#each cl.defs as name}<Decl {name} key={claim.decls?.[name]} index={evidenceIndex} inspector onref={showDecl} />{/each}{/if}
+          {:else if cl.defs?.length}{#each cl.defs as name (name)}<Definition {name} key={claim.decls?.[name]} view="exact" onref={showDecl} selId={selFor(name)} onselect={(id) => select(name, id)} />{/each}{/if}
         {/each}
       {/if}
     </section>
@@ -552,7 +556,6 @@
   .chip.on { border-color: var(--accent); background: var(--accent-soft); }
   .chip :global(.tex) { border: 0; padding: 0; margin: 0; background: none; font-size: 15px; }
   .who { font: inherit; font-size: 13px; padding: 1px 6px; border: 1px solid var(--border); border-radius: 6px; width: 12em; }
-  .defs { margin: 0; }
   .details h2 { margin-bottom: 4px; }
   .cname { font-weight: 600; margin: 0 0 8px; }
   .changes { border-left: 3px solid var(--st-open, #b7791f); background: var(--surface-2, transparent); padding: 6px 10px; margin: 0 0 10px; border-radius: 0 6px 6px 0; }
@@ -575,7 +578,6 @@
   .review { border-left: 3px solid var(--border); padding-left: 10px; margin: 8px 0; }
   .pill { font-size: 11px; padding: 0 6px; border-radius: 999px; background: var(--surface-2); color: var(--muted); margin-left: 4px; }
   .rtext { white-space: pre-wrap; font: 13px/1.5 var(--sans); color: var(--muted); margin: 6px 0 0; }
-  .ref { border: 0; background: none; padding: 0; color: var(--accent); cursor: pointer; font-family: var(--mono); font-size: 0.92em; max-width: 100%; text-align: left; overflow-wrap: anywhere; }
   .foot { margin-top: 16px; }
   @media (max-width: 700px) {
     .passport, .view { gap: 12px; }

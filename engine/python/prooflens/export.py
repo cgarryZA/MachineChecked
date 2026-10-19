@@ -31,7 +31,9 @@ def _pick(d: dict | None, keys: list[str]) -> dict | None:
 
 
 DECL_KEYS_LEAN = ["name", "kind", "module", "range", "doc", "signature", "value", "uses",
-                  "fingerprint", "legacy_hash"]
+                  "fingerprint", "legacy_hash", "defined_by", "params", "body", "equations",
+                  "equation_names", "equations_omitted", "definition_error", "result",
+                  "lean_source"]
 DECL_KEYS_MIN = ["name", "kind", "module", "fingerprint", "legacy_hash"]
 
 
@@ -85,7 +87,9 @@ def other_papers_material(cfg: Config, pid: str, index: dict, chunks: dict,
         out.append((c["id"], f"a claim id of paper {c['paper']}", True))
         for n in sorted(claim_names(c) - mine):
             out.append((n, f"a declaration only paper {c['paper']} uses", True))
-            for ln in str((by_name.get(n) or {}).get("signature") or "").splitlines():
+            d = by_name.get(n) or {}
+            for ln in (str(d.get("signature") or "").splitlines()
+                       + str((d.get("lean_source") or {}).get("text") or "").splitlines()):
                 if len(ln.strip()) >= MIN_LINE:
                     out.append((ln.strip(), f"Lean text of {n}", False))
         for cl in c.get("clauses", []):

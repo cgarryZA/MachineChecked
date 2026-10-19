@@ -309,10 +309,43 @@ for (const width of [1300, 390]) {
     assert.equal((await scrollTops(pg))[1], paper, "the paper keeps its position");
     await pg.locator("aside .crumbs .back").click();
     await pg.waitForSelector("aside .view h1");
-    assert.equal(await pg.locator("aside .decl.inspector:visible").count(), 2, "both exact definitions remain in the claim comparison");
+    assert.equal(await pg.locator("aside .defn.exact:visible").count(), 2, "both exact definitions remain in the claim comparison");
     const [panel2, paper2] = await scrollTops(pg);
     assert.equal(panel2, panel, "the panel's scroll position comes back");
     assert.equal(paper2, paper, "the paper keeps its position");
+  });
+
+  await check("a definition claim shows each definition as it is written, beside the paper", width, async (pg) => {
+    await toyClaim(pg, "T:def:even");
+    const view = pg.locator("aside .view");
+    const even = view.locator(".lean .defn.readable[data-decl='Toy.IsEven']");
+    const tri = view.locator(".lean .defn.readable[data-decl='Toy.triangle']");
+    await tri.locator(".eq").first().waitFor();
+    assert.ok(await view.locator(".paper").textContent().then((t) => /triangular number/.test(t)), "the paper passage is beside them");
+    // Evenness by its body, with its parameter and the witness's type.
+    assert.match(await even.locator(".head").textContent(), /Toy\.IsEven\s*\(n : Nat\)\s*:\s*Prop/);
+    assert.equal((await even.locator(".body").textContent()).trim(), "∃ (k : Nat), n = 2 * k");
+    // The triangular numbers by their two equations, as Lean states them; the compiled
+    // recursion is folded away.
+    const eqs = await tri.locator(".eq").allTextContents();
+    assert.equal(eqs.length, 2);
+    assert.match(eqs[0], /Toy\.triangle 0 = 0/);
+    assert.match(eqs[1], /for\s*\(n : Nat\):\s*Toy\.triangle n\.succ = Toy\.triangle n \+ \(n \+ 1\)/);
+    const exact = view.locator(".exact-pane .defn.exact[data-decl='Toy.triangle']");
+    assert.match(await exact.locator(".src").textContent(), /\| n \+ 1 => triangle n \+ \(n \+ 1\)/);
+    assert.deepEqual(await exact.locator(".thm .tn").allTextContents(), ["Toy.triangle.eq_1", "Toy.triangle.eq_2"]);
+    assert.equal(await exact.locator("details.compiled").getAttribute("open"), null, "the compiled value is a secondary view");
+    assert.match(await exact.locator("details.compiled").textContent(), /Nat\.brecOn/);
+    assert.ok(!(await view.locator("section.lean").textContent()).includes("brecOn"), "no compiled recursion in the readable Lean");
+    // A sub-term selected in the readable body is the same sub-term of the exact value.
+    await even.locator(".body .p", { hasText: "2" }).first().click();
+    const lit = view.locator(".exact-pane .defn.exact[data-decl='Toy.IsEven'] .in");
+    assert.equal((await lit.allTextContents()).join(""), "2 * k");
+    // Selecting in an equation selects the same sub-term of its theorem.
+    await tri.locator(".eq").nth(1).locator(".body .p", { hasText: "1" }).last().click();
+    const mine = (await tri.locator(".eq").nth(1).locator(".in").allTextContents()).join("");
+    assert.match(mine, /^\(?n \+ 1\)?$/);
+    assert.equal((await exact.locator(".thm[data-eq='Toy.triangle.eq_2'] .in").allTextContents()).join(""), mine);
   });
 
   await check("the main view is the paper and the Lean, with the assumptions shown", width, async (pg) => {
@@ -403,6 +436,21 @@ await check("in the local reader a symbol is linked by choosing it and clicking 
     // A published audit offers no such control.
     await toyClaim(pg, "T:thm:even-add");
     assert.equal(await pg.locator("aside .mklink").count(), 0);
+  });
+
+  await check("a linked definition keeps its parameters in order, and a recursive one shows its equations", width, async (pg) => {
+    await pg.goto(origin + `/structure/#/r/${SHAPE.release}/read/P/${encodeURIComponent("P:def:multiple")}`);
+    const lean = pg.locator("aside .view section.lean");
+    const mult = lean.locator(".defn.readable[data-decl='Shape.MultipleAbove']");
+    await mult.waitFor();
+    assert.match(await mult.locator(".head").textContent(), /\(b : Nat\)\s*\{m : Nat\}\s*\(n : Nat\)\s*:\s*Prop/);
+    assert.equal((await mult.locator(".body").textContent()).trim(), "∃ (q : Nat), b ≤ q ∧ n = m * q");
+    const fib = lean.locator(".defn.readable[data-decl='Shape.fib'] .eq");
+    assert.equal(await fib.count(), 3);
+    assert.match(await fib.nth(0).textContent(), /Shape\.fib 0 = 0/);
+    const exact = pg.locator("aside .view .exact-pane .defn.exact[data-decl='Shape.fib']");
+    assert.equal(await exact.locator(".thm").count(), 3);
+    assert.match(await exact.locator(".src").textContent(), /\| n \+ 2 => fib n \+ fib \(n \+ 1\)/);
   });
 
   await check("a statement keeps its order, with each object's own conditions beside it", width, async (pg) => {

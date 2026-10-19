@@ -55,6 +55,47 @@ def test_statement_inspection(toy):
 
 @needs_lean
 @needs_tex
+def test_definitions_carry_what_they_say_through_the_export(toy, tmp_path):
+    """Definition 1.1 maps two definitions (#97): evenness by its body, with the witness's type,
+    and the triangular numbers by the equations Lean derives, each with its exact statement and
+    authored source. The public export carries them when the paper publishes its Lean, and
+    leaves them out when it does not."""
+    from prooflens import config as cfgmod
+    from prooflens.export import export
+    index, body, cfg = build(toy)
+    decls = body["lean"]["decls"]
+    even, tri = decls["Toy.IsEven"], decls["Toy.triangle"]
+    assert even["defined_by"] == "body"
+    assert [p["name"] for p in even["params"]] == ["n"]
+    assert even["body"]["text"] == "∃ (k : Nat), n = 2 * k"
+    assert "def IsEven (n : Nat) : Prop := ∃ k, n = 2 * k" in even["lean_source"]["text"]
+    assert tri["defined_by"] == "equations"
+    assert [e["name"] for e in tri["equations"]] == ["Toy.triangle.eq_1", "Toy.triangle.eq_2"]
+    assert tri["equations"][0]["statement"]["text"] == "Toy.triangle 0 = 0"
+    assert tri["equations"][1]["statement"]["text"].startswith("∀ (n : Nat), Toy.triangle ")
+    assert tri["equations"][1]["equation"]["text"].endswith("= Toy.triangle n + (n + 1)")
+    assert "| n + 1 => triangle n + (n + 1)" in tri["lean_source"]["text"]
+    # The generated helpers stay as they were: no equations of their own.
+    assert all("defined_by" not in d for n, d in decls.items() if "._" in n or ".match_" in n)
+
+    def exported(out):
+        data = out / "data"
+        idx = json.loads((data / "index.json").read_text())
+        c = next(c for c in idx["claims"] if c["id"] == "T:def:even")
+        chunk = json.loads((data / "claims" / c["file"]).read_text())
+        return json.loads((data / "decls" / f"{chunk['decls']['Toy.triangle']}.json").read_text())
+
+    export(cfg, tmp_path / "public")
+    rec = exported(tmp_path / "public")
+    assert rec["equations"] == tri["equations"] and rec["lean_source"] == tri["lean_source"]
+    edit(toy / "machinechecked.toml", "lean = true", "lean = false")
+    export(cfgmod.load(toy / "machinechecked.toml"), tmp_path / "private")
+    rec = exported(tmp_path / "private")
+    assert not {"equations", "body", "lean_source", "value"} & set(rec)
+
+
+@needs_lean
+@needs_tex
 def test_hashes(toy):
     _, body, _ = build(toy)
     spec = body["lean"]["specs"]["Toy.PaperSpec.thm_triangle"]

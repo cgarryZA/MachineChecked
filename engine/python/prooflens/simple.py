@@ -20,7 +20,7 @@ from importlib import resources
 from pathlib import Path
 
 from .config import STANDARD_AXIOMS, Config, Paper, Publish
-from .probe import ProbeError, by_library, fingerprint, lean_session, lib_names
+from .probe import ProbeError, by_library, fingerprint, lean_session, lean_source, lib_names
 from .sources import acquire
 from .tex import DEFAULT_ENVS, TexError, anchors_for, theorem_envs
 from . import formalization as fz
@@ -349,9 +349,17 @@ def run_simple_probe(root: Path, modules: list[str], libs: list[str], requests: 
     record as `_record` trims it."""
     query = {"scope_roots": [l.split(".")[0] for l in libs], "spec_prefix": "",
              "accept_prefix": "", "allowed_axioms": STANDARD_AXIOMS, "requests": requests}
+    def read(lines):
+        out = []
+        for line in lines:
+            rec = _record(line)
+            for d in [rec, rec.get("decl")]:
+                if isinstance(d, dict) and d.get("record", "decl") == "decl" and "fingerprint" in d:
+                    d["lean_source"] = lean_source(root, d)
+            out.append(rec)
+        return out
     try:
-        return lean_session(root, modules, query, lambda lines: [_record(l) for l in lines],
-                            lake, timeout, work, log, label)
+        return lean_session(root, modules, query, read, lake, timeout, work, log, label)
     except ProbeError as e:
         raise ViewError(str(e)) from None
 
@@ -853,4 +861,13 @@ def _link_view(l: dict, root: Path | None = None) -> dict:
                           "closure": rec.get("closure", []), "direct": []} if rec else None,
             "range": (rec.get("decl") or {}).get("range"),
             "module": (rec.get("decl") or {}).get("module"),
-            "doc": (rec.get("decl") or {}).get("doc")}
+            "doc": (rec.get("decl") or {}).get("doc"),
+            # A linked definition: what it says (its body or equations, and its source).
+            "definition": _definition(rec["decl"]) if "defined_by" in (rec.get("decl") or {})
+            else None}
+
+
+def _definition(decl: dict) -> dict:
+    """The fields of a definition's record that the reader shows as its content."""
+    from .export import DECL_KEYS_LEAN
+    return {k: decl[k] for k in DECL_KEYS_LEAN if k in decl}

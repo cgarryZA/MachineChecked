@@ -23,4 +23,13 @@ theorem shapes (E : Type) [Nonempty E] :
     (¬ ∃ x : Nat, x < 0) ∧ ((∀ n : Nat, 0 ≤ n) ∨ (1 = 1 → ∃ m : Nat, m = 1)) :=
   ⟨fun ⟨x, h⟩ => Nat.not_lt_zero x h, Or.inl fun n => Nat.zero_le n⟩
 
+/-- `n` is a multiple of `m` with a quotient of at least `b`; `m` is written implicitly. -/
+def MultipleAbove (b : Nat) {m : Nat} (n : Nat) : Prop := ∃ q, b ≤ q ∧ n = m * q
+
+/-- The Fibonacci numbers, by recursion with three equations. -/
+def fib : Nat → Nat
+  | 0 => 0
+  | 1 => 1
+  | n + 2 => fib n + fib (n + 1)
+
 end Shape

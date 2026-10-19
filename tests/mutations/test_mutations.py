@@ -48,6 +48,10 @@ def test_changed_definition_reopens_its_review(toy):
     assert ob
     clause = next(c for c in body["assessment"]["claims"] if c["id"] == "T:thm:even-add")["clauses"][0]
     assert clause["def_reviews"]["Toy.IsEven"]["state"] == "stale"
+    # What the reader shows of the definition is the new one (#97).
+    d = body["lean"]["decls"]["Toy.IsEven"]
+    assert d["body"]["text"] == "∃ (k : Nat), n = k + k"
+    assert "∃ k, n = k + k" in d["lean_source"]["text"]
 
 
 @needs_lean

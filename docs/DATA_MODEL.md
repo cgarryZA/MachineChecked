@@ -53,7 +53,7 @@ Dismissals of warnings (`dismissals.json`):
 | `inventory` | the inventory as read |
 | `reviews` | the review files' hashes and every parsed marker |
 | `dismissals` | as read |
-| `lean` | the probe records: specifications (binders, conclusion, closure, constants, hashes), proofs (exact-type check, axioms), declarations (signature, value, doc, hashes), layering |
+| `lean` | the probe records: specifications (binders, conclusion, closure, constants, hashes), proofs (exact-type check, axioms), declarations (signature, value, definition content, authored source, doc, hashes), layering |
 | `tex` | per paper: mode, page size, anchors (env, number, labels, file:line, begin/head/end positions, source hash), files read |
 | `assessment` | per claim: status and clauses; all findings |
 
@@ -63,6 +63,19 @@ occurrence of one of the statement's own variables (the index, in `binders`, of 
 introduced it). A conclusion that is a conjunction, disjunction or equivalence also has
 `logic`, a tree of `{op, args}` whose leaves are `{leaf: {text, segments}}`. A term also lists its sub-terms as `terms`, ranges `{from, to}` of its segments (outer before inner; none for a very large term), so that a reader can select a whole sub-term. Both are for
 display: no status, fingerprint or hash reads them.
+
+A declaration record of a definition of data or of a predicate (not a proposition, an instance or
+a generated helper) also says what the definition says. `defined_by` is `body` or `equations`.
+With `body`: `params` (the leading `fun` binders of its value, each `{name, binder, id, type,
+proposition}`), `body` (the term under them, with the sub-term identities it has in `value`) and
+`result` (its type, identities prefixed `type:`). `equations` lists the equation theorems Lean
+derives (`Lean.Meta.getEqnsFor?`), each `{name, statement, params, equation}`: the theorem's exact
+statement, and its variables and the equation under them; their identities are prefixed by the
+theorem's name. At most 64 are listed; `equations_omitted` counts the rest and `equation_names`
+names all of them. A failed extraction is recorded in `definition_error` and stops nothing else.
+`lean_source` is the declaration's authored source, `{file, line, end_line, text, sha256}`, read
+from the checkout the probe ran on (none for a declaration of a dependency). The export carries
+these fields only when every paper publishes its Lean.
 
 ## Manifest (`manifest-index.schema.json`, `manifest-claim.schema.json`), derived
 

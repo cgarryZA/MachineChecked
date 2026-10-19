@@ -2,6 +2,7 @@
 \usepackage{amsmath,amssymb,amsthm}
 \usepackage[margin=1in]{geometry}
 \newtheorem{theorem}{Theorem}
+\newtheorem{definition}{Definition}
 \newcommand{\lean}[1]{}
 
 \title{A Statement With Some Shape}
@@ -25,5 +26,10 @@ $x$ that is true.
 Let $E$ be nonempty. No natural number is negative, and either every $n$ satisfies $0 \le n$ or,
 if $1 = 1$, some $m$ equals $1$.
 \end{theorem}
+
+\begin{definition}\label{def:multiple}\lean{Shape.MultipleAbove}\lean{Shape.fib}
+A number $n$ is a multiple of $m$ above $b$ if $n = mq$ for some $q \ge b$. The Fibonacci numbers
+are $F_0 = 0$, $F_1 = 1$ and $F_{n+2} = F_n + F_{n+1}$.
+\end{definition}
 
 \end{document}
