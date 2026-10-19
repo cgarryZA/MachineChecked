@@ -9,12 +9,24 @@ it), the Lean version and the Lake manifest's hash it ran with, whether it passe
 theorems its configuration names (`theorem_names`), as replayed only when it passed. The
 assessment counts the replay for a proof only when the record's commit and environment are the
 audited project's (`assess.Assessor.replay`).
+
+Comparator's own trust model also asks for isolation: `landrun` sandboxes the solution's build,
+and the whole run goes under `systemd-run --user --property=RestrictAddressFamilies=~AF_UNIX`,
+in an environment where the solution was not compiled before. This module does not start that
+guard; the record says how the run went (`conditions`): whether the process could open a Unix
+socket (the guard forbids it, for Comparator too, which inherits the restriction), the systemd
+unit it ran in, the Landlock ABI of the kernel, and where `comparator`, `landrun`,
+`lean4export` and, when enabled, `nanoda_bin` were, with their SHA-256 (and Comparator's commit
+when it was built in a Git checkout).
 """
 
 from __future__ import annotations
 
 import datetime as _dt
 import json
+import os
+import re
+import shutil
 from pathlib import Path
 
 from .util import git_head, run, sha256_file, write_json
@@ -66,6 +78,90 @@ def unchanged_since(lean_root: Path, commit: str, head: str) -> str | None:
     return None
 
 
+GUARD = "RestrictAddressFamilies=~AF_UNIX"
+
+
+def af_unix_blocked() -> bool:
+    """Whether this process may not open a Unix socket, as under Comparator's guard."""
+    import errno
+    import socket
+    if not hasattr(socket, "AF_UNIX"):
+        return False
+    try:
+        socket.socket(socket.AF_UNIX, socket.SOCK_STREAM).close()
+    except OSError as e:
+        return e.errno in (errno.EAFNOSUPPORT, errno.EPERM, errno.EACCES)
+    return False
+
+
+def systemd_unit() -> str | None:
+    """The systemd unit this process runs in (`run-u12.service` under `systemd-run`), if any."""
+    try:
+        text = Path("/proc/self/cgroup").read_text()
+    except OSError:
+        return None
+    for line in text.splitlines():
+        path = line.split(":", 2)[-1]
+        units = [p for p in path.split("/") if re.search(r"\.(service|scope)$", p)]
+        if units:
+            return units[-1]
+    return None
+
+
+def landlock_abi() -> int | None:
+    """The Landlock ABI version of the running kernel (what `landrun` sandboxes with), or None
+    when it has none."""
+    import platform
+    if platform.system() != "Linux":
+        return None
+    try:
+        import ctypes
+        # landlock_create_ruleset(NULL, 0, LANDLOCK_CREATE_RULESET_VERSION)
+        v = ctypes.CDLL(None, use_errno=True).syscall(444, None, 0, 1)
+    except (OSError, AttributeError):
+        return None
+    return v if v > 0 else None
+
+
+def program(name: str | None, env_var: str | None = None,
+            cwd: Path | None = None) -> dict | None:
+    """Where a program is (the environment variable Comparator reads first, else `PATH`; a
+    relative path from `cwd`), with its SHA-256 and, for one built in the Git checkout of a
+    Lake project (as Comparator is), that checkout's commit."""
+    import subprocess
+    name = (os.environ.get(env_var) if env_var else None) or name
+    if name and cwd is not None and os.sep in name and not os.path.isabs(name):
+        name = str(cwd / name)
+    path = shutil.which(name) if name else None
+    if path is None:
+        return None
+    path = os.path.realpath(path)
+    r = subprocess.run(["git", "rev-parse", "--show-toplevel", "HEAD"],
+                       cwd=os.path.dirname(path), capture_output=True, text=True)
+    top, _, head = r.stdout.strip().partition("\n")
+    lake = r.returncode == 0 and any((Path(top) / f).is_file()
+                                     for f in ("lakefile.toml", "lakefile.lean"))
+    return {"path": path, "sha256": sha256_file(Path(path)), "commit": head if lake else None}
+
+
+def conditions(comparator: str, conf: dict, cwd: Path) -> dict:
+    """How a replay in `cwd` runs: the guard observed on this process, and the programs used."""
+    blocked = af_unix_blocked()
+    out = {"guard": GUARD if blocked else "none", "af_unix_blocked": blocked,
+           "systemd_unit": systemd_unit(), "landlock_abi": landlock_abi(),
+           "comparator": program(comparator, cwd=cwd),
+           "landrun": program("landrun", "COMPARATOR_LANDRUN"),
+           "lean4export": program("lean4export", "COMPARATOR_LEAN4EXPORT")}
+    if conf.get("enable_nanoda"):
+        out["nanoda"] = program("nanoda_bin", "COMPARATOR_NANODA")
+    kernels = conf.get("external_kernels")
+    if isinstance(kernels, dict):
+        out["external_kernels"] = {k: program(v[0], cwd=cwd) if isinstance(v, list) and v
+                                   and isinstance(v[0], str) else None
+                                   for k, v in kernels.items()}
+    return out
+
+
 def replay(lean_root: Path, config: Path, out: Path, comparator: str = "comparator",
            lake: str = "lake", timeout: int = 6 * 3600) -> dict:
     """Run Comparator on `config` in the project at `lean_root` and write its record to `out`."""
@@ -84,6 +180,7 @@ def replay(lean_root: Path, config: Path, out: Path, comparator: str = "comparat
     names = conf.get("theorem_names")
     if not isinstance(names, list) or not all(isinstance(n, str) for n in names):
         raise ReplayError(f"{config}: no `theorem_names` list")
+    how = conditions(comparator, conf, lean_root)
     r = run([lake, "env", comparator, str(config.resolve())], cwd=lean_root, timeout=timeout)
     passed = r.returncode == 0
     tc, lm = lean_root / "lean-toolchain", lean_root / "lake-manifest.json"
@@ -93,6 +190,7 @@ def replay(lean_root: Path, config: Path, out: Path, comparator: str = "comparat
            "config": str(config), "config_sha256": sha256_file(config),
            "passed": passed, "replayed": names if passed else [],
            "kernels": ["lean"] + (["nanoda"] if conf.get("enable_nanoda") else []),
+           "conditions": how,
            "created": _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds"),
            "output_tail": (r.stdout + r.stderr)[-4000:]}
     write_json(out, rec)

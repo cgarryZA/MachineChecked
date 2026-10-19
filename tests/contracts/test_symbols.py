@@ -37,8 +37,10 @@ def test_a_link_is_shown_as_its_authors_and_changes_no_status(toy, monkeypatch, 
          "by": WHO, "stale": False},
         {"symbol": {"tex": "b", "occurrence": "all"},
          "lean": {"decl": SPEC, "binder": 1, "path": "type"}, "by": WHO, "stale": False}]
-    # A link pinned to another statement is stale.
+    # Both are made on the passage the reader typesets, and pinned to its context.
     data = json.loads((toy / "symbols.json").read_text())
+    assert [ln["pins"]["excerpt"] for ln in data["links"]] == [ch["excerpt"]["fingerprint"]] * 2
+    # A link pinned to another statement is stale.
     data["links"][0]["pins"]["statement"] = "pl-fp-v1:" + "0" * 64
     (toy / "symbols.json").write_text(json.dumps(data))
     _, _, cfg = build(toy, reuse_lean=True)
@@ -114,3 +116,28 @@ def test_a_link_can_name_a_sub_term(toy):
     (toy / "symbols.json").write_text(json.dumps(data))
     _, _, cfg = build(toy, reuse_lean=True)
     assert chunk(cfg, "T:thm:even-add")[1]["symbols"][0]["stale"]
+
+
+def test_a_link_on_a_typeset_passage_goes_stale_with_its_context():
+    """The same printed text typeset under other macros or references is another passage for a
+    link made on it (#62, #69); a link made on the source text alone keeps its old rule."""
+    from prooflens.manifest import symbol_links
+    from prooflens.util import sha256_text
+    text = "For $a$ and $b$."
+    lean = {"specs": {SPEC: {"fingerprint": "fp", "binders": [{"name": "a"}]}}}
+    excerpt = {"ready": True, "text": text, "fingerprint": "tex-excerpt-v1:one"}
+
+    def link(**pins):
+        return {"symbols": [{"claim": "P:x", "symbol": {"tex": "a"}, "lean": {"decl": SPEC, "var": 0},
+                             "by": WHO, "pins": {"statement": "fp", "source": sha256_text(text),
+                                                 **pins}}]}
+
+    def stale(display, ex, tex=text):
+        return [s["stale"] for s in symbol_links(display, "P:x", tex, lean, ex)]
+    on_excerpt = link(excerpt="tex-excerpt-v1:one")
+    assert stale(on_excerpt, excerpt) == [False]
+    assert stale(on_excerpt, {**excerpt, "fingerprint": "tex-excerpt-v1:two"}) == [True]
+    assert stale(on_excerpt, {**excerpt, "ready": False}) == [True], "shown from the PDF"
+    assert stale(on_excerpt, None) == [True]
+    assert stale(link(), {**excerpt, "fingerprint": "tex-excerpt-v1:two"}) == [False]
+    assert stale(link(), excerpt, tex="Changed $a$.") == [True]
