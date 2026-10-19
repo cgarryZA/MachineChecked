@@ -95,8 +95,14 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends poppler-utils zstd \
             ${{ inputs.tex && 'latexmk texlive-latex-recommended texlive-latex-extra texlive-science texlive-fonts-recommended' || '' }}
-          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain none
+          curl -sSfL --retry 4 https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain none
           echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      - name: Install the project's Lean toolchain (a failed download is retried)
+        working-directory: ${{ inputs.project-dir }}
+        run: |
+          [ -f lean-toolchain ] || exit 0
+          for i in 1 2 3 4; do "$HOME/.elan/bin/elan" toolchain install "$(cat lean-toolchain)" && exit 0; sleep $((i * 10)); done
+          exit 1
       - name: Install MachineChecked
         run: pip install "${{ inputs.package }}"
       - name: Mathlib's cache, and a saved build of this project
