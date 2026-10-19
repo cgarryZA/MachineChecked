@@ -39,8 +39,10 @@
   let attempt = $state(0);
   const DETAILS = "@details";
   // The words for a mapper's coverage reading (links file `coverage`).
-  const COVERAGE = { full: "States every clause", partial: "States part of the claim",
-    changed: "States it differently", related: "A related result, not this claim" };
+  const COVERAGE = { full: "States every clause",
+    composed: "Every clause, by combining the linked declarations (the auditor's argument)",
+    partial: "States part of the claim", changed: "States it differently",
+    related: "A related result, not this claim", unresolved: "Unresolved" };
   let busy = $state(null);
   let saveError = $state(null);
   const RANK = { stale: 0, pending: 1, "author-reviewed": 2, reviewed: 3 };
@@ -537,7 +539,7 @@
   .title { font-weight: 450; }
   .coverage { border-left: 3px solid var(--border); padding: 4px 0 4px 10px; margin-top: 8px; }
   .coverage p { margin: 2px 0; }
-  .coverage[data-coverage="partial"], .coverage[data-coverage="changed"], .coverage[data-coverage="related"] { border-left-color: var(--tier-warning); }
+  .coverage[data-coverage="composed"], .coverage[data-coverage="partial"], .coverage[data-coverage="changed"], .coverage[data-coverage="related"], .coverage[data-coverage="unresolved"] { border-left-color: var(--tier-warning); }
   .coverage[data-coverage="full"] { border-left-color: var(--st-proved); }
   .act { font: inherit; font-size: 13px; padding: 3px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; text-decoration: none; }
   .act:hover { border-color: var(--accent); color: var(--accent); text-decoration: none; }

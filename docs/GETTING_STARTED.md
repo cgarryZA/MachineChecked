@@ -104,9 +104,12 @@ they state it, in the claim's entry of `machinechecked.links.json`:
               "by": "A. Auditor"}
 ```
 
-`coverage` is `full` (the declarations together state every clause), `partial` (some clauses
-have no counterpart), `changed` (a clause is stated with other hypotheses, bound or setting) or
-`related` (a comparable result); `confidence` is `high`, `medium` or `low`. The reader shows the
+`coverage` is `full` (the declarations' statements together give every clause), `composed` (every
+clause follows, but only by combining the declarations through reasoning no Lean statement
+records, such as chaining estimates: the auditor's argument), `partial` (some clauses have no
+counterpart), `changed` (a clause is stated with other hypotheses, bound or setting), `related`
+(a comparable result) or `unresolved` (the note states the open question); `confidence` is
+`high`, `medium` or `low`. The reader shows the
 note under the claim's status, as the auditor's reading, and `check --json` reports it as the
 claim's `correspondence`. A note changes no status, and linking other declarations in the reader
 removes it, since it described the old ones.
