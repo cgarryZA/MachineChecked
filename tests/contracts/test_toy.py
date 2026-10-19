@@ -221,10 +221,10 @@ def test_kernel_replay_needs_a_structured_record_for_this_commit(toy):
 
 @needs_lean
 @needs_tex
-def test_reuse_and_reassess_refuse_changed_inputs(toy):
+def test_reuse_and_reassess_refuse_changed_inputs(toy, monkeypatch, capsys):
     import json
     import pytest
-    from prooflens import config as cfgmod
+    from prooflens import cli, config as cfgmod
     from prooflens.pipeline import build as pl_build, reassess
     build(toy)
     cfg = cfgmod.load(toy / "machinechecked.toml")
@@ -232,6 +232,16 @@ def test_reuse_and_reassess_refuse_changed_inputs(toy):
     edit(toy / "lean/Toy/Defs.lean", "/-!", "-- a comment\n/-!")  # any Lean input
     with pytest.raises(RuntimeError, match="Lean inputs changed"):
         pl_build(cfg, reuse_lean=True, log=lambda *a: None)
+    # On the command line: one line naming the remedy, no traceback, exit 2 (#104).
+    monkeypatch.chdir(toy)
+    capsys.readouterr()
+    with pytest.raises(SystemExit) as e:
+        cli.main(["build", "--reuse-lean"])
+    err = capsys.readouterr().err
+    assert e.value.code == 2 and "Traceback" not in err and "unexpected" not in err
+    assert err.strip().splitlines() == [
+        "machinechecked: Lean inputs changed since the stored Lean results (here or in a path "
+        "dependency); run `machinechecked build` without `--reuse-lean`"]
     inv = json.loads((toy / "claims.json").read_text())
     inv["claims"][1]["clauses"][0]["accept"] = None
     (toy / "claims.json").write_text(json.dumps(inv))
