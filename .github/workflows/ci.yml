@@ -100,3 +100,32 @@ jobs:
       tex: true
       package: "."
       author: "MachineChecked CI"
+
+  # The same workflow building a second audit into a subpath from a given ref, as a repository
+  # publishing one audit per paper version does; the two artifacts merge into one site.
+  audit-workflow-subpath:
+    uses: ./.github/workflows/audit.yml
+    with:
+      project-dir: examples/plain-paper
+      tex: true
+      package: "."
+      author: "MachineChecked CI"
+      ref: ${{ github.sha }}
+      subpath: v1
+
+  audit-workflow-site:
+    needs: [audit-workflow, audit-workflow-subpath]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: machinechecked-audit*
+          merge-multiple: true
+          path: site
+      - name: Both audits are in the merged site
+        env:
+          SUBPATH_ARTIFACT: ${{ needs.audit-workflow-subpath.outputs.artifact }}
+        run: |
+          test "$SUBPATH_ARTIFACT" = machinechecked-audit-v1
+          test -f site/audit.json && test -f site/v1/audit.json
+          test -f site/v1/data/index.json && test -f site/v1/index.html

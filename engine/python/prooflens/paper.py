@@ -167,7 +167,8 @@ def write_paper_site(site: Path, paper: dict, claims: list[dict],
     editions = {a["paper"]["edition"]: {**a["paper"], "author": a.get("author"), "repository": r}
                 for r, a in audits_loaded.items() if a.get("paper", {}).get("edition")}
     index = {"schema": SCHEMA, "editions": list(editions.values()),
-             "audits": {r: {k: a[k] for k in ("state", "detail", "commit", "release", "author", "url", "gates") if k in a}
+             "audits": {r: {k: a[k] for k in ("state", "detail", "commit", "release", "author", "url", "gates",
+                                                    "paper_version") if k in a}
                         for r, a in audits_loaded.items()}, "mode": "paper", "release": "paper", "evidence": eid,
              "tool": {"name": "machinechecked"}, "project": {}, "projects": projects,
              "paper": paper, "notes": [],

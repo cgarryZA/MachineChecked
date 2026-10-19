@@ -10,6 +10,7 @@ import re
 from urllib.parse import quote, urlsplit, urljoin
 
 from . import manifest as mf
+from . import versions
 from .status import fields, STATUSES
 from .util import content_id
 from .schemas import validate
@@ -32,6 +33,36 @@ def relative_url(base: str, path: str) -> str:
 def audit_version(desc: dict) -> str:
     """Publication identity, including a rebuild at the same project commit."""
     return content_id({k: desc.get(k) for k in ('schema', 'release', 'formalisation', 'papers', 'data')})
+
+
+def paper_version(value) -> dict | None:
+    """The paper version an audit's descriptor says it pins, rebuilt from its kind and
+    identifier: the label shown is the one MachineChecked gives that version, never a label the
+    audit supplies (a manuscript is never shown with a version number)."""
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise AuditError('Invalid paper version')
+    kind, vid, rev = value.get('kind'), value.get('id'), value.get('revision')
+    if kind == 'manuscript':
+        if not isinstance(rev, str) or not versions.COMMIT.fullmatch(rev) or \
+                vid != 'manuscript:' + rev[:versions.SHORT]:
+            raise AuditError('Invalid manuscript version')
+        return versions.manuscript_record(rev)
+    if kind == 'published' and isinstance(vid, str) and vid:
+        rec = versions.published_version(('arXiv:' + vid[6:]) if vid.startswith('arxiv:') else vid)
+        if rec['id'] != vid:
+            raise AuditError('Invalid published version')
+        return {**rec, 'revision': rev if isinstance(rev, str) else None}
+    raise AuditError('Invalid paper version')
+
+
+def same_version(a: str, b: str) -> bool:
+    """Whether two version identifiers name one version (a manuscript's commit may be given
+    abbreviated)."""
+    if a.startswith('manuscript:') and b.startswith('manuscript:'):
+        return versions.same_commit(a[11:], b[11:])
+    return a.lower() == b.lower()
 
 
 def load_published_audit(paper: dict, project: dict, listing: dict, fetch) -> dict:
@@ -87,6 +118,11 @@ def load_published_audit(paper: dict, project: dict, listing: dict, fetch) -> di
     expected_version = project.get('paper_version')
     if expected_version and public.get('version') != expected_version:
         raise AuditError('Audit paper version differs from the listing')
+    pinned = paper_version(public.get('paper_version'))
+    # A listing that names the version it lists this audit under (`version`, an identifier as
+    # `paper_version.id` gives it) needs an audit that pins that version.
+    if listing.get('version') and not (pinned and same_version(listing['version'], pinned['id'])):
+        raise AuditError('Audit pins another version of the paper than the listing names')
     raw_index = read(d['data'], 20_000_000)
     idx = deepcopy(raw_index)
     if idx.get('schema') != mf.SCHEMA:
@@ -106,6 +142,8 @@ def load_published_audit(paper: dict, project: dict, listing: dict, fetch) -> di
         raise AuditError('Audit needs an unambiguous internal paper key')
     ap = matched[0]
     revision = ap.get('revision') or ap.get('source_commit')
+    if paper_version(ap.get('paper_version')) != pinned:
+        raise AuditError('Audit descriptor and data name different paper versions')
     if not revision or revision != public.get('revision'):
         raise AuditError('Audit paper revisions disagree')
     rows = [c for c in idx.get('claims', []) if c.get('paper') == ap['id']]
@@ -157,6 +195,7 @@ def load_published_audit(paper: dict, project: dict, listing: dict, fetch) -> di
         raise AuditError('Audit changed during download; retry the build')
     return {'author': d.get('author') or listing.get('author'), 'url': base,
             'commit': f['commit'], 'release': idx['release'], 'version': audit_version(d),
+            'paper_version': pinned,
             'claims': records, 'store': store, 'pdfs': pdfs, 'paper': audited_paper,
             'context': {k: idx.get(k) for k in ('release', 'evidence', 'project', 'lean', 'issues', 'site_url', 'created', 'tool')},
             'gates': idx.get('gates', {}).get(ap['id']), 'state': 'loaded'}

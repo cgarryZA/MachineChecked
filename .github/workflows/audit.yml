@@ -15,6 +15,11 @@ name: MachineChecked audit
 #         cache-repo: you/your-project   # optional: restore from its build-cache release
 #         paper: paper/main.tex          # optional: found in the project when not given
 #         tex: true                      # the paper is LaTeX: install TeX Live
+#
+# One repository can publish several audits, one per version of its paper (for example `/v1/`
+# from a frozen Lean ref and `/latest/` from main): call this workflow once per audit with `ref`
+# and `subpath`. Each call uploads its audit under that subpath, in an artifact of its own (the
+# output `artifact`), and a deploy job merges them into one site (docs/GETTING_STARTED.md).
 on:
   workflow_call:
     inputs:
@@ -46,6 +51,18 @@ on:
         description: the name the audit is published under (its audit.json)
         type: string
         default: ""
+      ref:
+        description: the Git ref (branch, tag or commit) of the Lean project to audit; the commit that triggered the run when empty
+        type: string
+        default: ""
+      subpath:
+        description: the directory of the published site the audit goes in, such as v1 or latest (the site's root when empty)
+        type: string
+        default: ""
+    outputs:
+      artifact:
+        description: the name of the artifact holding the audit
+        value: ${{ jobs.audit.outputs.artifact }}
 
 permissions:
   contents: read
@@ -53,9 +70,22 @@ permissions:
 jobs:
   audit:
     runs-on: ubuntu-24.04
+    outputs:
+      artifact: ${{ steps.where.outputs.artifact }}
     steps:
+      - name: Where the audit goes
+        id: where
+        env:
+          SUBPATH: ${{ inputs.subpath }}
+        run: |
+          if [ -n "$SUBPATH" ] && ! printf '%s' "$SUBPATH" | grep -Eq '^[A-Za-z0-9_-][A-Za-z0-9._-]*(/[A-Za-z0-9_-][A-Za-z0-9._-]*)*$'; then
+            echo "subpath must be a relative directory such as v1 or audits/latest: $SUBPATH" >&2
+            exit 1
+          fi
+          echo "artifact=machinechecked-audit${SUBPATH:+-${SUBPATH//\//-}}" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.ref }}
           fetch-depth: 0   # the history, so a saved build of an earlier commit can be used
       - uses: actions/setup-python@v5
         with:
@@ -90,11 +120,13 @@ jobs:
         env:
           PAPER: ${{ inputs.paper }}
           AUTHOR: ${{ inputs.author }}
+          SUBPATH: ${{ inputs.subpath }}
         run: |
-          machinechecked build --site "$RUNNER_TEMP/machinechecked-audit" \
+          mkdir -p "$RUNNER_TEMP/machinechecked-audit"
+          machinechecked build --site "$RUNNER_TEMP/machinechecked-audit/$SUBPATH" \
             ${AUTHOR:+--author "$AUTHOR"} ${PAPER:+"$PAPER"}
-          test -f "$RUNNER_TEMP/machinechecked-audit/audit.json"
+          test -f "$RUNNER_TEMP/machinechecked-audit/$SUBPATH/audit.json"
       - uses: actions/upload-artifact@v4
         with:
-          name: machinechecked-audit
+          name: ${{ steps.where.outputs.artifact }}
           path: ${{ runner.temp }}/machinechecked-audit
