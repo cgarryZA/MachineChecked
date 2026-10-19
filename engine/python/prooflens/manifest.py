@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 from collections import Counter
 
-from .assess import line_location, match_anchor
+from .assess import line_location, match_anchor, unread
 from .source_regions import matches as source_matches
 from .util import content_id, sha256_text
 from .status import fields, STATUSES, source_evidence
@@ -216,6 +216,9 @@ def build(evidence: dict, release: str, display: dict | None = None
         clauses = []
         for cl in a["clauses"]:
             spec = lean.get("specs", {}).get(cl.get("spec") or "")
+            if unread(spec):
+                # The probe found no proposition under the name: there is no statement to show.
+                spec = None
             proofs = {}
             for kind in ("accept", "refute"):
                 if cl.get(kind):
