@@ -149,3 +149,44 @@ def test_a_long_session_reports_its_progress(twins, monkeypatch):
                      log=said.append, label="Solution")
     assert said[0] == "lean: Solution: loading 1 module(s)"
     assert any(m.startswith("lean: Solution: 0 min") for m in said[1:])
+
+
+@needs_lean
+def test_a_request_out_of_heartbeats_reports_itself_and_the_probe_goes_on():
+    """A request that runs out of heartbeats (a runtime exception, which `try` does not catch)
+    emits a probe-error record for itself; the session still answers the others and finishes."""
+    import json
+    from prooflens.probe import lean_session
+    from prooflens.simple import built_modules
+    plain = ROOT / "examples" / "plain-paper"
+    if not built_modules(plain, ["Plain"])[0]:
+        pytest.skip("the plain example is not built")
+    query = {"scope_roots": ["Plain"], "spec_prefix": "", "accept_prefix": "",
+             "allowed_axioms": ["propext", "Classical.choice", "Quot.sound"],
+             "requests": [{"kind": "link", "name": "Plain.oddSum_eq_sq"},
+                          {"kind": "link", "name": "Plain.notDeclared"}],
+             "max_heartbeats": 1}
+    recs = lean_session(plain, ["Plain"], query, lambda lines: [json.loads(l) for l in lines])
+    links = {r["name"]: r for r in recs if r.get("record") == "link"}
+    assert any(e.startswith("probe-error:") and "heartbeats" in e
+               for e in links["Plain.oddSum_eq_sq"]["errors"])
+    assert links["Plain.notDeclared"]["errors"] == ["missing"]
+    assert recs[-1]["record"] == "done"
+
+
+def test_a_session_that_is_split_says_why(monkeypatch):
+    """When a group of modules cannot be probed in one session, the message names the error."""
+    from prooflens import simple
+    calls = []
+
+    def fail(root, group, *a, **k):
+        calls.append(group)
+        if len(group) > 1:
+            raise simple.ViewError("the Lean probe failed (1):\nProbe.lean:9:0: error: "
+                                   "(deterministic) timeout at `whnf`\nmore")
+        return []
+    monkeypatch.setattr(simple, "run_simple_probe", fail)
+    said = []
+    simple.probe_modules(ROOT, ["A.One", "A.Two"], ["A"], [], log=said.append)
+    assert said[0] == ("lean: A could not be loaded in one session "
+                       "((deterministic) timeout at `whnf`); splitting it")
