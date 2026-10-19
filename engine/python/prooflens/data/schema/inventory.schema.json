@@ -38,9 +38,23 @@
         "scope": {"$ref": "#/$defs/scope"},
         "scope_note": {"type": "string"},
         "scope_reviewed": {"type": "boolean"},
-        "clauses": {"type": "array", "items": {"$ref": "#/$defs/clause"}}
+        "clauses": {"type": "array", "items": {"$ref": "#/$defs/clause"}},
+        "unit": {"enum": ["statement", "proof-equation", "proof-passage"]},
+        "parent": {"type": ["string", "null"]},
+        "lean": {"$ref": "#/$defs/names"},
+        "coverage": {"type": "string"},
+        "basis": {"type": "string"},
+        "confidence": {"type": "string"},
+        "note": {"type": "string"},
+        "by": {"type": "string"},
+        "route": {
+          "type": "object", "required": ["lean"],
+          "properties": {"lean": {"$ref": "#/$defs/names"}, "note": {"type": "string"},
+                         "by": {"type": "string"}}
+        }
       }
     },
+    "names": {"type": "array", "items": {"type": "string", "minLength": 1}},
     "clause": {
       "type": "object",
       "required": ["name"],

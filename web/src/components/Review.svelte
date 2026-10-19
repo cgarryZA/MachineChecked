@@ -1,8 +1,9 @@
 <script>
   import { loadQueue, loadClaim } from "../lib/data.js";
   import { href, route, go, withQuery } from "../lib/route.svelte.js";
-  import { VERDICTS, GROUPS, CHECKLIST, MARKS, loadWork, saveWork, now, reviewerId, needsDetail, buildReport,
-           exportFile } from "../lib/review.js";
+  import { VERDICTS, GROUPS, CHECKLIST, MARKS, STEP_VERDICTS, STEP_GROUPS, loadWork, saveWork, now, reviewerId,
+           needsDetail, buildReport, exportFile } from "../lib/review.js";
+  import ProofStep from "./ProofStep.svelte";
   import PdfCrop from "./PdfCrop.svelte";
   import Tex from "./Tex.svelte";
   import Statement from "./Statement.svelte";
@@ -104,7 +105,10 @@
     draft.revealed_by = revealedBy(current);
     draft.locked_at = now(); draft.stage = "compare"; persist();
   }
-  function choose(g) { draft.group = g; draft.verdict = VERDICTS[g].length === 1 ? VERDICTS[g][0].value : null; persist(); }
+  // A proof step is reviewed as printed, with verdicts of its own.
+  const verdicts = $derived(current?.kind === "step" ? STEP_VERDICTS : VERDICTS);
+  const groupsOf = $derived(current?.kind === "step" ? STEP_GROUPS : GROUPS);
+  function choose(g) { draft.group = g; draft.verdict = verdicts[g].length === 1 ? verdicts[g][0].value : null; persist(); }
   const detailWanted = $derived(draft?.verdict ? needsDetail(draft.verdict) : null);
   const canDecide = $derived(!!draft?.verdict && (!detailWanted || (draft.detail || "").trim().length > 0)
                              && (draft.comparison || "").trim().length > 0);
@@ -217,7 +221,7 @@
           <li class:on={draft.stage === "compare"}>2. Compare</li>
           <li class:on={draft.stage === "author"}>3. Author's review</li>
         </ol>
-        <p class="why faint">{current.kind === "def" ? "Definition" : current.kind === "link" ? "Linked claim" : "Statement"} · {current.reason}{work.skipped.includes(current.id) ? " · skipped before" : ""}</p>
+        <p class="why faint">{current.kind === "def" ? "Definition" : current.kind === "link" ? "Linked claim" : current.kind === "step" ? "Proof step" : "Statement"} · {current.reason}{work.skipped.includes(current.id) ? " · skipped before" : ""}</p>
 
         {#if current.kind === "def"}
           <h2>A definition used by {current.claims.length} claim(s)</h2>
@@ -232,6 +236,10 @@
               <PdfCrop url={"data/" + paperOf(c).pdf} anchor={c.anchor} />
             {:else if c.statement_tex}
               <Tex text={c.statement_tex} />
+            {/if}
+            {#if c.step}
+              <p class="small">A step of the proof of {c.step.parent?.number || c.step.parent?.id || "its result"}. Is it valid as printed? Its parent's status plays no part.</p>
+              {#if c.context_tex}<details open><summary class="small">Its context in the proof</summary><Tex text={c.context_tex} /></details>{/if}
             {/if}
             <p class="small"><a href={href(index.release, "read", c.paper, c.id)} target="_blank" rel="noopener" title="Opens the paper and Lean reader">Open in the paper ↗</a></p>
           {/snippet}
@@ -250,6 +258,8 @@
           {/if}
           <p class="faint small">{current.kind === "def"
             ? "What is this object in the paper? Its setting, what it is built from, and anything left ambiguous."
+            : current.kind === "step"
+            ? "What the proof has fixed before this step (quantities, domains, constants); the premises it uses; its conclusion, with the range and order of its quantifiers; how the proof uses it next."
             : "The setting; every hypothesis, with its quantifiers and where it holds; the notion of solution; the conclusion, with its quantifier order and what constants depend on; every ambiguity and its readings."}</p>
           <textarea aria-labelledby="reading-label" rows="8" bind:value={draft.reading} oninput={persist}></textarea>
           <div class="row">
@@ -259,7 +269,7 @@
         {:else}
           <pre class="locked">{draft.reading}</pre>
 
-          <h3>In Lean <code class="small">{current.name}</code></h3>
+          <h3>In Lean{#if current.kind !== "step"} <code class="small">{current.name}</code>{/if}</h3>
           {#if current.kind === "def"}
             <Decl name={current.name} key={current.key} open hideReview />
           {:else if current.kind === "spec" && clause?.statement}
@@ -270,6 +280,8 @@
               </details>
             {/if}
             {#if current.witness}<p class="small">Witness: <code>{current.witness}</code></p>{/if}
+          {:else if current.kind === "step"}
+            {#if host}<ProofStep claim={host} {index} part="lean" />{:else}<p class="faint">Loading…</p>{/if}
           {:else if current.kind === "link"}
             {#each host?.links || [] as l}
               <p class="small"><code>{l.name}</code></p>
@@ -282,7 +294,7 @@
           {#if draft.stage === "compare"}
             <h3 id="comparison-label">Comparison</h3>
             <ul class="checklist" aria-label="What to compare">
-              {#each CHECKLIST[current.kind === "def" ? "def" : "statement"] as it (it.key)}
+              {#each CHECKLIST[current.kind === "def" ? "def" : current.kind === "step" ? "step" : "statement"] as it (it.key)}
                 <li>
                   <span class="ck-label">{it.label}<span class="faint small">&nbsp;— {it.hint}</span></span>
                   <span class="ck-marks">
@@ -295,17 +307,17 @@
               {/each}
             </ul>
             <p class="faint small">A guide: mark each item if it helps, and write what you found below.</p>
-            <textarea aria-labelledby="comparison-label" rows="6" bind:value={draft.comparison} oninput={persist} placeholder="Item by item against your reading: each hypothesis, each quantifier and its order, the conclusion, representation choices, constants."></textarea>
+            <textarea aria-labelledby="comparison-label" rows="6" bind:value={draft.comparison} oninput={persist} placeholder={current.kind === "step" ? "Does the step follow from what precedes it, for every value in the printed ranges? If Lean is linked, how does it compare with the printed step?" : "Item by item against your reading: each hypothesis, each quantifier and its order, the conclusion, representation choices, constants."}></textarea>
             {#if current.kind === "spec" && current.witness}
               <label for="witness-note">Witness comparison</label>
               <textarea id="witness-note" rows="3" bind:value={draft.witness} oninput={persist} placeholder="The witness: does it meet the hypotheses at an instance the paper intends, and is that instance non-trivial?"></textarea>
             {/if}
             <div class="groups" role="group" aria-label="Overall correspondence">
-              {#each GROUPS as g}<button class="choice" class:on={draft.group === g.key} aria-pressed={draft.group === g.key} onclick={() => choose(g.key)}>{g.label}</button>{/each}
+              {#each groupsOf as g}<button class="choice" class:on={draft.group === g.key} aria-pressed={draft.group === g.key} onclick={() => choose(g.key)}>{g.label}</button>{/each}
             </div>
             {#if draft.group}
               <fieldset class="verdicts"><legend>Verdict</legend>
-                {#each VERDICTS[draft.group].filter((v) => !v.refuteOnly || current.refute) as v}
+                {#each (verdicts[draft.group] || []).filter((v) => !v.refuteOnly || current.refute) as v}
                   <label><input type="radio" bind:group={draft.verdict} value={v.value} onchange={persist} /> {v.label}</label>
                 {/each}
               </fieldset>

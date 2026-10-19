@@ -10,6 +10,7 @@ from __future__ import annotations
 import re
 from collections import Counter
 
+from . import steps
 from .assess import line_location, match_anchor
 from .source_regions import matches as source_matches
 from .util import content_id, sha256_text
@@ -148,12 +149,15 @@ def build(evidence: dict, release: str, display: dict | None = None
     store = decl_records(body, lean)
     keys = {n: record_key(r) for n, r in store.items()}
     index_claims, chunks, summary = [], {}, {}
+    inv_by_id = {c["id"]: c for c in inv}
+    step_reports = (display or {}).get("step_reports") or {}
     for c in inv:
         a = assessed[c["id"]]
         if "status_code" not in a:
             raise ValueError("Old assessment: rebuild the audit with the current MachineChecked version")
         status = fields(a["status_code"])
         t = tex.get(c["paper"], {})
+        unit = steps.unit_of(c, (t.get("regions") or {}).get(c["id"]))
         anchor = match_anchor(c, t.get("anchors", [])) if t.get("mode") in ("latex", "pdf") \
             else None
         src_ok = None
@@ -197,7 +201,7 @@ def build(evidence: dict, release: str, display: dict | None = None
         index_claims.append({
             "id": c["id"], "paper": c["paper"], "number": number,
             "title": description, "heading": heading, "kind": c.get("kind", ""),
-            "scope": c["scope"], **status,
+            "scope": c["scope"], "unit": unit, "parent": c.get("parent"), **status,
             "anchor": {"kind": anchor["kind"], "page": top_of(anchor)[0], "y0": top_of(anchor)[1],
                        "y1": anchor["end"][2] if anchor.get("end") and
                        anchor["end"][0] == anchor["begin"][0] else None,
@@ -243,6 +247,17 @@ def build(evidence: dict, release: str, display: dict | None = None
                                  for n, r in (cl.get("def_reviews") or {}).items()}
             if st:
                 st.pop("decl", None)
+        step = None
+        if unit != "statement":
+            par = inv_by_id.get(c.get("parent") or "")
+            step, more = steps.full_block(
+                c, {"id": par["id"], "number": shown.get(par["id"], {}).get("number")
+                    or par.get("number", ""), "title": par.get("title", ""), "heading": None,
+                    "file": claim_file(par["id"])} if par else None,
+                lean, step_reports.get(steps.unit_id(c["id"]), []), unit)
+            names.update(more)
+            names.update(l["name"] for l in step["links"] + (step["route"] or {}).get(
+                "links", []))
         decls = {n: keys[n] for n in sorted(names) if n in keys}
         chunks[fname] = {
             "schema": SCHEMA, "release": release, "id": c["id"], "paper": c["paper"],
@@ -255,13 +270,22 @@ def build(evidence: dict, release: str, display: dict | None = None
             "statement_tex": (anchor or {}).get("statement"),
             "blockers": [shown_names(b, clause_tex) for b in a.get("blockers", [])],
             "clauses": clauses, "decls": decls, "findings": fs,
-            "symbols": symbol_links(display, c["id"], (anchor or {}).get("statement"), lean)}
+            "symbols": symbol_links(display, c["id"], (anchor or {}).get("statement"), lean),
+            "unit": unit, "parent": c.get("parent"),
+            **({"step": step} if step else {})}
+        if step and (t.get("step_text") or {}).get(c["id"]):
+            # A proof step's printed text and its context in the proof, from the snapshot.
+            chunks[fname]["statement_tex"] = chunks[fname]["statement_tex"] or \
+                t["step_text"][c["id"]]["text"]
+            chunks[fname]["context_tex"] = t["step_text"][c["id"]]["context"]
 
+    steps.attach_parents(index_claims, chunks)
     prov = body["provenance"]
     index = {"schema": SCHEMA, "release": release, "evidence": evidence["id"],
              "created": evidence["created"], "project": prov["project"],
              "lean": prov.get("lean"), "tool": prov["tool"], "papers": papers,
              "summary": {p: dict(s) for p, s in summary.items()},
+             "units": steps.unit_counts(index_claims),
              "classes": {st: status_class(st) for s in summary.values() for st in s},
              "gates": body["assessment"].get("gates", {}),
              "findings": {"total": dict(Counter(f["tier"] for f in findings

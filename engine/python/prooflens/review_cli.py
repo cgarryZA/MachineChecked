@@ -32,6 +32,8 @@ VERDICTS = {
     "cannot": ["cannot determine"],
 }
 REFUTE_ONLY = {"refutation not valid"}
+# A proof step is reviewed as printed: does it hold? (`steps.VERDICTS`)
+from .steps import VERDICTS as STEP_VERDICTS
 
 
 class ReviewError(RuntimeError):
@@ -144,12 +146,21 @@ class Session:
         if u["kind"] == "def":
             out.insert(0, f"A definition used by {len(u['claims'])} claim(s): "
                           + ", ".join(c["id"] for c in u["claims"][:12]))
+        if u["kind"] == "step":
+            ch = self.claim(u["claims"][0]["id"]) or {}
+            par = (ch.get("step") or {}).get("parent") or {}
+            out.insert(0, f"A step of the proof of {par.get('number') or par.get('id') or 'a result'}"
+                          f" ({par.get('id') or 'no parent recorded'}). Is it valid as printed?")
+            if ch.get("context_tex"):
+                out.append("Its context in the proof:\n" + ch["context_tex"])
         return "\n\n".join(out)
 
     def lean_text(self, u: dict) -> str:
         """Step 2: the Lean of the unit, with what it uses."""
         if u["kind"] == "def":
             return self._decl_text(u["name"], self.decl(u.get("key")))
+        if u["kind"] == "step":
+            return self._step_text(u)
         lines = []
         for c in u["claims"]:
             ch = self.claim(c["id"])
@@ -169,6 +180,28 @@ class Session:
                 lines.append("\n" + self._decl_text(n, self.decl((ch.get("decls") or {}).get(n))))
             break
         return "\n".join(lines) or "(the statement is not in this release)"
+
+    def _step_text(self, u: dict) -> str:
+        """Step 2 of a proof step: the Lean linked as establishing it and the formal route
+        used instead, if any."""
+        st = (self.claim(u["claims"][0]["id"]) or {}).get("step") or {}
+        out = []
+        for title, links in (("Lean linked as establishing this step", st.get("links") or []),
+                             ("The different formal route used instead",
+                              (st.get("route") or {}).get("links") or [])):
+            if not links:
+                continue
+            out.append(title + ":")
+            for l in links:
+                stmt = l.get("statement") or {}
+                out.append(f"  {l['name']}  ({l.get('status')})")
+                for b in stmt.get("binders") or []:
+                    out.append(f"    {b['role']:10} {b['name']} : {_text(b['type'])}")
+                if stmt.get("conclusion") is not None:
+                    out.append(f"    {'then':10} {_text(stmt.get('conclusion'))}")
+            if (st.get("route") or {}).get("note") and links is (st.get("route") or {}).get("links"):
+                out.append("  Note: " + st["route"]["note"])
+        return "\n".join(out) or "No Lean is linked to this step: assess the printed step itself."
 
     @staticmethod
     def _decl_text(name: str, d: dict | None) -> str:
@@ -217,13 +250,14 @@ class Session:
                witness: str = "") -> None:
         u = self.unit(uid)
         d = self.draft(u, "compare")
-        group = next((g for g, vs in VERDICTS.items() if verdict in vs), None)
+        table = STEP_VERDICTS if u["kind"] == "step" else VERDICTS
+        group = next((g for g, vs in table.items() if verdict in vs), None)
         if group is None:
             raise ReviewError(f"verdict {verdict!r} is not one of: "
-                              + ", ".join(v for vs in VERDICTS.values() for v in vs))
+                              + ", ".join(v for vs in table.values() for v in vs))
         if verdict in REFUTE_ONLY and not u.get("refute"):
             raise ReviewError(f"{verdict!r} applies only to a unit with a refutation")
-        if verdict != "faithful" and not detail.strip():
+        if verdict not in ("faithful", "holds as printed") and not detail.strip():
             raise ReviewError(f"verdict {verdict!r} needs --detail")
         if not comparison.strip():
             raise ReviewError("the comparison is empty")
@@ -263,6 +297,8 @@ class Session:
 
 
 def issue_draft(u: dict, verdict: str, detail: str) -> dict | None:
+    if u.get("kind") == "step":
+        return step_issue_draft(u, verdict, detail)
     if verdict == "faithful":
         return None
     note = verdict in ("faithful with representation choices", "broader")
@@ -272,13 +308,31 @@ def issue_draft(u: dict, verdict: str, detail: str) -> dict | None:
             "body": f"Review unit `{u['id']}`, verdict **{verdict}**.\n\n{detail}".strip()}
 
 
+def step_issue_draft(u: dict, verdict: str, detail: str) -> dict | None:
+    """An issue about a proof step names the step, its proof and the question it answers: a
+    finding on the printed step, never on the enclosing statement."""
+    if verdict == "holds as printed":
+        return None
+    par = (u.get("parent") or {}).get("number") or (u.get("parent") or {}).get("id") or ""
+    where = f"{u['name']}" + (f" in the proof of {par}" if par else "")
+    kind = {"false as printed": "finding on a proof step",
+            "holds, with a gap in the argument": "explanatory note",
+            "cannot determine": "unresolved question"}.get(verdict, "finding on a proof step")
+    return {"kind": kind, "title": f"{where}: {verdict}",
+            "body": (f"Review unit `{u['id']}` (a proof step, not the statement of {par or 'its result'}), "
+                     f"verdict **{verdict}**.\n\n{detail}").strip()}
+
+
 def report(index: dict, u: dict, d: dict, reviewer: dict, disagreements: str) -> dict:
     """The report, in the form the reader's review page exports (`buildReport`)."""
     revs = {p["id"]: p.get("revision") for p in index.get("papers", [])}
     return {
         "schema": REPORT_SCHEMA,
-        "unit": {"id": u["id"], "kind": u["kind"], "name": u["name"], "lean": u.get("lean") or [u["name"]],
-                 "claims": [c["id"] for c in u["claims"]], "papers": u.get("papers") or []},
+        "unit": {"id": u["id"], "kind": u["kind"], "name": u["name"],
+                 "lean": u.get("lean") if u["kind"] == "step" else u.get("lean") or [u["name"]],
+                 "claims": [c["id"] for c in u["claims"]], "papers": u.get("papers") or [],
+                 **({"target": u.get("unit"), "parent": u.get("parent"),
+                     "route": u.get("route") or []} if u["kind"] == "step" else {})},
         "pins": {"release": index["release"],
                  "project_commit": (index.get("project") or {}).get("commit"),
                  "manuscripts": {p: revs.get(p) for p in u.get("papers") or []},

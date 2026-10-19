@@ -40,6 +40,7 @@ colour. The frontend never recomputes acceptance from the evidence dimensions.
 | `link.not-in-audit` | linked: Lean not checked here (the published audit does not list it) | `declared` |
 | `link.suggested` | suggested link, not confirmed | `unspecified` |
 | `link.none` | not linked | `unspecified` |
+| `link.other-route` | linked: a different formal route | `unspecified` |
 | `formal.refuted` | refuted as printed | `refuted` |
 | `formal.refuted.open` | refuted as printed; other clauses open | `refuted` |
 | `formal.refuted.corrected` | refuted as printed; corrected statement proved | `refuted` |

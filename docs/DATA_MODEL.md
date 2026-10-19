@@ -23,6 +23,29 @@ The frozen list of claims, with the optional `label` of a claim and the `regimes
 A clause has `accept` or `refute`, not both. A corrected statement names the clause it
 `corrects` (by clause name). A definition claim's clause has `defs` and no `spec`.
 
+**Paper units.** A claim is a `statement` unless its `unit` says it is a `proof-equation` (a
+display inside a proof) or a `proof-passage` (a selected stretch of a proof); a claim recorded by
+line whose scope is `proof-step` and that gives no `unit` is a proof equation when its pinned
+region is a display environment and a proof passage otherwise. A proof step names its enclosing
+result in `parent`, and may record the Lean that establishes it and the different formal route
+used instead:
+
+```json
+{"id": "T:eq:bound-range", "paper": "T", "kind": "equation", "number": "Equation (3)",
+ "unit": "proof-equation", "parent": "T:thm:bound", "location": "toy.tex:75",
+ "source_region": {"end_line": 78}, "source_hash_scheme": "tex-region-v1",
+ "source_sha256": "…", "scope": "proof-step", "scope_reviewed": true, "clauses": [],
+ "lean": ["…"], "coverage": "full", "basis": "direct", "note": "…", "by": "…",
+ "route": {"lean": ["Toy.Acceptance.thm_bound"], "note": "…", "by": "…"}}
+```
+
+`lean` lists the declarations that state the step as printed, with `coverage` (`full`, `partial`,
+`changed`, `related`, `unresolved`; a stored `composed` reads as `full`) and `basis` (`direct`,
+`reviewed_composition`, `checked_bridge`). `route.lean` lists declarations that reach the parent
+by another argument. The probe checks both (as `link` records, `lean.links` in the evidence).
+None of these fields is an input to a status: a step's status is its scope decision's, and its
+review is its own (below).
+
 A claim's `location` is a file for a numbered environment, whose `source_sha256` is the hash of
 the whitespace-normalised body of the environment, or `<file>:<line>` for a claim recorded by
 line (an equation, a part of an environment, a prose claim), whose hash is the hash of that line.
@@ -35,6 +58,12 @@ Markdown files with markers:
 <!-- spec-review: <proposition> <hash> by=<reviewer> [kind=human|ai] -->
 <!-- def-review: <definition> <hash> by=<reviewer> [kind=human|ai] -->
 ```
+
+A review of a proof step is a report of the review queue (`prooflens/review-report@1`, unit
+`step:<claim id>`), kept in the project's `machinechecked-reviews/` folder. Its verdict is one of
+`holds as printed`, `holds, with a gap in the argument`, `false as printed`, `cannot determine`;
+its `pins.fingerprints.source` is the hash of the step's source text it was made on. Reports are
+display data, read when the site is written; they are never review markers.
 
 `<hash>` is the `legacy_hash` or the `pl-fp-v1:` fingerprint the review was made at. The section
 the marker closes is the text of the review. The last marker of a declaration, reading the files
@@ -77,6 +106,29 @@ In zero configuration a passport also has `correspondence` (or `null`): the mapp
 far the linked declarations state the claim, `{source, coverage, confidence, note, by}`, where
 `source` is `confirmed` (the auditor's, from `machinechecked.links.json`) or `formalization.yaml`
 (the project's row notes). It is displayed beside the links and is never an input to a status.
+
+Every index row and passport has `unit` and `parent`, and the index has `units`: per paper and
+per unit kind, how many claims have each status, so statements and proof steps are counted
+apart. A proof step's row also has `step_review`. A proof step's passport has `step`:
+
+| Field | What |
+|---|---|
+| `unit`, `parent` | its kind, and its enclosing result (`id`, `number`, `file`) |
+| `source` | its `location`, `region` and `sha256`: the exact pinned source |
+| `links` | the declarations that establish it, each with its `link.*` status and statement |
+| `correspondence` | `{source, coverage, basis, confidence, note, by}` of those links, or null |
+| `route` | `{links, note, by, source}`: the different formal route used instead, or null |
+| `review` | `{state, finding, reports}`: `unreviewed`, `holds`, `gap`, `false`, `undetermined`, or `stale` when every report was made on other source text; `finding` is the latest report on the current text |
+
+A step's passport also has its printed text (`statement_tex`) and its context in the proof
+(`context_tex`): from the proof's opening (at most 40 lines before the step) to the sentence after
+it. A parent's passport lists its steps (`steps`: id, number, unit, status, review state, linked
+and route names). In zero configuration the links file holds a step's links under its label
+(`lean`, with `coverage`, `basis`, `note`, `by`) and its formal route under `route`
+(`{lean, note, by}`); a step whose only links are a formal route has the status
+`link.other-route`. An export keeps all of this, the Lean statements only when the Lean is
+published, the reviewers' texts only when reviews are, the source text and location only when the
+source is.
 
 A paper page (`prooflens.paper.write_paper_site`, used by machinechecked.org) is written in the
 same format, with `mode: "paper"`: the paper's registry entry (`paper`), the Lean projects that

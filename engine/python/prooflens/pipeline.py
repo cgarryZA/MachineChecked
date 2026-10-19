@@ -77,6 +77,7 @@ def build(cfg: Config, release: str | None = None, skip_lean: bool = False,
         missing = [r["name"] for r in requests_from_inventory(inv)
                    if (r["kind"] == "spec" and r["name"] not in lean["specs"])
                    or (r["kind"] == "decl" and r["name"] not in lean["defs"])
+                   or (r["kind"] == "link" and r["name"] not in lean.get("links", {}))
                    or (r["kind"] in ("accept", "refute", "witness") and
                        f"{r['kind']}:{r['name']}:{r.get('spec') or ''}" not in lean["proofs"])]
         if missing:
@@ -136,6 +137,11 @@ def build(cfg: Config, release: str | None = None, skip_lean: bool = False,
         if paper.id in tex:
             if t is not None:
                 tex[paper.id]["regions"] = collect_source_regions(inv, paper.id, snap.dir)
+                # The text of each proof step and its context in the proof, for the reader and
+                # the review packet (published only with the source text).
+                from .steps import step_texts
+                tex[paper.id]["step_text"] = step_texts(inv, paper.id, snap.dir,
+                                                        tex[paper.id]["regions"])
                 locs = [c["location"] for c in inv["claims"]
                         if c["paper"] == paper.id and line_location(c) is not None]
                 tex[paper.id]["line_anchors"] = t["line_anchors"](locs)
@@ -334,11 +340,17 @@ def rebuild_site(cfg: Config, web_dist: Path | None = None, release: str | None 
 
 
 def load_display(cfg: Config) -> dict | None:
-    """What changes what is shown and never what is assessed: the display overlay, and the
-    symbol links (docs/SYMBOL_LINKS.md)."""
+    """What changes what is shown and never what is assessed: the display overlay, the symbol
+    links (docs/SYMBOL_LINKS.md), and the review reports of proof steps kept in the project's
+    `machinechecked-reviews/` folder (`steps.py`)."""
     out = read_json(cfg.display) if cfg.display and cfg.display.exists() else None
     if cfg.symbols and cfg.symbols.exists():
         out = {**(out or {}), "symbols": read_json(cfg.symbols).get("links", [])}
+    from .simple import load_review_reports
+    reports = {u: rs for u, rs in load_review_reports(cfg.root)[0].items()
+               if u.startswith("step:")}
+    if reports:
+        out = {**(out or {}), "step_reports": reports}
     return out
 
 

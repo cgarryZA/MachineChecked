@@ -245,7 +245,12 @@ def cmd_view(a):
     key = view["body"]["paper"]
 
     def on_link(req):
-        save_link(root, key, req["key"], req.get("lean"), req.get("reject"))
+        if "route" in req:
+            from .simple import save_route
+            save_route(root, key, req["key"], req["route"], req.get("note") or "",
+                       req.get("by") or "")
+        else:
+            save_link(root, key, req["key"], req.get("lean"), req.get("reject"))
         _simple_site(root, paper, a.web)
 
     serve(site, a.port, on_link, not a.no_browser)
@@ -308,6 +313,17 @@ def cmd_check(a):
     print(f"Lean checked all {n} linked declaration(s)")
 
 
+def _step_json(c: dict) -> dict:
+    """A proof step's formal route and its own review, for `check --json`."""
+    from .steps import review
+    rv = review(c.get("step_reports", []), c.get("source_sha256"))
+    return {"route": [{"name": l["name"], "status_code": l["status_code"]}
+                      for l in c.get("route_links", [])],
+            "step_review": rv["state"],
+            "finding": {"verdict": rv["finding"]["verdict"]["value"],
+                        "reviewer": rv["finding"]["reviewer"]} if rv["finding"] else None}
+
+
 CHECK_NOTE = "Results describe the linked Lean declarations; correspondence reviews compare them with the paper."
 
 
@@ -336,7 +352,9 @@ def _check_json(a):
             res = build(cfg, web_dist=_web_dist(a.web))
             idx = res["index"]
             claims = [{"id": c["id"], "paper": c["paper"], "number": c.get("number"),
-                       "title": c.get("title"), "status": c["status"], "status_code": c["status_code"], "class": c["class"]}
+                       "title": c.get("title"), "status": c["status"], "status_code": c["status_code"], "class": c["class"],
+                       "unit": c.get("unit", "statement"), "parent": c.get("parent"),
+                       **({"step_review": c["step_review"]} if "step_review" in c else {})}
                       for c in idx["claims"]]
             out = {"mode": "full", "release": idx["release"],
                    "project": idx.get("project", {}).get("commit"),
@@ -357,7 +375,9 @@ def _check_json(a):
                                     "submitted_at": r["submitted_at"], "current": r["current"]}
                                    for r in c.get("reviews", [])],
                        "suggestions": [{"name": x["name"], "why": x.get("why")}
-                                       for x in c.get("suggestions", [])]}
+                                       for x in c.get("suggestions", [])],
+                       "unit": c.get("unit", "statement"), "parent": c.get("parent"),
+                       **(_step_json(c) if c.get("unit") else {})}
                       for c in body["claims"]]
             out = {"mode": "simple", "paper": body["paper"], "title": body["title"],
                    "release": view_release(body), "commit": body.get("commit"),
