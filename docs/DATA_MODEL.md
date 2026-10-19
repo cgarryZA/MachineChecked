@@ -64,6 +64,22 @@ introduced it). A conclusion that is a conjunction, disjunction or equivalence a
 `logic`, a tree of `{op, args}` whose leaves are `{leaf: {text, segments}}`. A term also lists its sub-terms as `terms`, ranges `{from, to}` of its segments (outer before inner; none for a very large term), so that a reader can select a whole sub-term. Both are for
 display: no status, fingerprint or hash reads them.
 
+An object of a statement whose type is a subtype, structure or class with a field that is a
+proposition (a prefix binder that is not a hypothesis, or a `forall`/`exists` node of `logic`)
+has `properties`: every field of its type, inherited ones included and each once, projected from
+the object, as `{field, kind, structure, declared_in, inherited, projection, module, range, term,
+type}`. `kind` is `data` or `proposition`; `type` is the field's type at the object (for a
+proposition, what it states), with identities prefixed by the object's identity and the field
+(`<id>#<field>:`). At most 32 are listed (`properties_omitted` counts the rest); a failed
+extraction is `properties_error`. A hypothesis whose type is a structure of propositions (a
+class such as `[IsProbability Ω]`; not a conjunction or an equivalence) has the same
+`properties`: what its fields state. A hypothesis lists as `objects` the objects quantified inside it
+whose type carries a property, each `{op, name, id, type, scope, properties}`, with the
+connectives that enclose it (`scope`): they belong to the hypothesis. The reader shows a given
+object's properties as included in its type, a witness's as established with it (an object under
+a negation, an alternative, an equivalence or the premise of an implication keeps them local to
+that clause), and an object inside a hypothesis inside that hypothesis.
+
 A declaration record of a definition of data or of a predicate (not a proposition, an instance or
 a generated helper) also says what the definition says. `defined_by` is `body` or `equations`.
 With `body`: `params` (the leading `fun` binders of its value, each `{name, binder, id, type,

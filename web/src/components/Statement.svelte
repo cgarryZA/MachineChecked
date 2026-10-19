@@ -1,6 +1,7 @@
 <script>
   import LeanText from "./LeanText.svelte";
   import { gloss } from "../lib/gloss.js";
+  import { carriedOf } from "../lib/carried.js";
 
   // A locked proposition as its quantifier prefix and its conclusion.
   // `ext` highlights from outside (a linked symbol of the paper): a variable ({var}) or a
@@ -90,6 +91,7 @@
     if (where.startsWith("b:")) return binders[+where.slice(2)]?.type;
     if (where.startsWith("x:")) return vars[+where.slice(2)]?.type;
     if (where.startsWith("l:")) return [...leafIds].find(([, i]) => i === +where.slice(2))?.[0]?.leaf;
+    if (where.startsWith("p:")) return carriedPP[+where.slice(2)] || null;
     return null;
   }
   const termText = $derived.by(() => {
@@ -105,11 +107,64 @@
   let noted = $state(null);
   function ongloss(name) { noted = noted === name ? null : name; pinned = null; }
   const groupOf = (i) => groups.find((g) => g.head === i);
+
+  // Properties carried by an object's type (`properties`, from the probe): the fields of a
+  // subtype, structure or class, as they apply to that object, with where each comes from. A
+  // given object's properties are part of what is given; a witness's are established with it;
+  // an object inside an assumption keeps its properties inside that assumption. Every printed
+  // property is numbered (`p:<n>`) so that a sub-term of it can be selected.
+  const carriedPP = $derived(carriedOf(st).map((c) => c.prop.type));
+  const keyOf = (pp) => "p:" + carriedPP.indexOf(pp);
+  const short = (n) => (n || "").split(".").pop();
+  // How an object's properties stand in the statement: given with a supplied object, stated by
+  // an assumption whose type is a structure of propositions, established with a witness the
+  // statement produces, or local to the clause or assumption that contains the object (inside a
+  // negation, an alternative, an equivalence or the premise of an implication).
+  const BASIS = {
+    given: "Included in the type of the given object.",
+    states: "What this assumption states, field by field.",
+    produced: "Producing this object establishes these properties of its type.",
+    local: "Part of this object's type, within the clause that contains it.",
+    inside: "Part of this assumption's object.",
+  };
+  const ROLE_P = { given: "in its type", states: "it states", produced: "with it", local: "in its type", inside: "in its type" };
+  // More fields than this are folded under their summary.
+  const FOLD = 8;
+  const howOf = (b) => b.role === "exists" ? "produced"
+    : b.role === "hypothesis" || (b.role === "instance" && b.supplies === "proposition") ? "states" : "given";
+  const SCOPE = { forall: "for every", exists: "there is", if: "if", then: "then", and: "and", or: "or", iff: "iff", not: "not" };
 </script>
 
 {#snippet lean(pp, where = null)}<LeanText {pp} {onref} {refs} {active} {onvar} {ongloss} term={termAt(where)} selId={outerId} onterm={where == null ? null : (k) => setTerm(where, k)} />{/snippet}
 
 {#snippet name(i)}<span class="v" class:hl={active === i} role="button" tabindex="0" onmouseenter={() => onvar(i, "hover")} onmouseleave={() => onvar(null, "hover")} onclick={() => onvar(i, "pin")} onkeydown={(e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), onvar(i, "pin"))}>{vars[i].name}</span>{/snippet}
+
+{#snippet carried(o, how)}
+  {@const ps = o?.properties || []}
+  {#if ps.length || o?.properties_error}
+    {@const props = ps.filter((p) => p.kind === "proposition"), data = ps.filter((p) => p.kind === "data")}
+    <details class={"carried " + how} data-carried={how} open={ps.length <= FOLD}>
+      <summary class="small faint basis">{BASIS[how]}{#if ps.length > FOLD}{" "}({props.length} propert{props.length === 1 ? "y" : "ies"}, {data.length} data field{data.length === 1 ? "" : "s"}){/if}</summary>
+      {#each props as p (p.field)}
+        <div class="line prop" data-field={p.field}><span class="role">{ROLE_P[how]}</span><span class="pbody">{@render lean(p.type, keyOf(p.type))}<span class="origin" title={(p.projection || p.field) + (p.module ? " · " + p.module : "")}>field <code>{p.field}</code> of <code>{short(p.structure)}</code>{#if p.inherited}, from <code>{short(p.declared_in)}</code>{/if}</span></span></div>
+      {/each}
+      {#if data.length}
+        <div class="line data"><span class="role">data</span><span class="fields">{#each data as p, k (p.field)}{#if k}{", "}{/if}<code>{p.term}</code>{" : "}{@render lean(p.type)}{/each}</span></div>
+      {/if}
+      {#if o.properties_omitted}<p class="small faint">{o.properties_omitted} further field{o.properties_omitted === 1 ? " of this type is" : "s of this type are"} not listed.</p>{/if}
+      {#if o.properties_error}<p class="small bad">The fields of this type could not be read: {o.properties_error}</p>{/if}
+    </details>
+  {/if}
+{/snippet}
+
+{#snippet inner(b)}
+  {#each b.objects || [] as o (o.id)}
+    <div class="inner" data-inner={o.id}>
+      <p class="small"><span class="faint">inside this assumption{#if o.scope.length}{" "}({o.scope.map((x) => SCOPE[x] || x).join(" › ")}){/if}:</span> {o.op === "exists" ? "there is" : "for every"} <code>{o.name}</code> : {@render lean(o.type)}</p>
+      {@render carried(o, "inside")}
+    </div>
+  {/each}
+{/snippet}
 
 {#snippet condition(i, where = null)}
   {@const b = binders[i]}
@@ -118,23 +173,24 @@
   {@render lean(b.type, where)}
 {/snippet}
 
-{#snippet logic(node, depth)}
+{#snippet logic(node, depth, local = false)}
   {#if node.leaf}
     {@render lean(node.leaf, "l:" + leafIds.get(node))}
   {:else if node.op === "not"}
     <span class="op">it is not the case that</span>
-    <div class="parts witness">{@render logic(node.args[0], depth + 1)}</div>
+    <div class="parts witness">{@render logic(node.args[0], depth + 1, true)}</div>
   {:else if node.op === "implies"}
-    <div class="line"><span class="role">if</span><div class="body">{@render logic(node.args[0], depth + 1)}</div></div>
-    <div class="line"><span class="role">then</span><div class="body">{@render logic(node.args[1], depth + 1)}</div></div>
+    <div class="line"><span class="role">if</span><div class="body">{@render logic(node.args[0], depth + 1, true)}</div></div>
+    <div class="line"><span class="role">then</span><div class="body">{@render logic(node.args[1], depth + 1, local)}</div></div>
   {:else if node.op === "exists" || node.op === "forall"}
     <div class="line"><span class="role">{node.op === "exists" ? "there is" : "for every"}</span>{@render name(node.var)}<span class="colon"> : </span><span class="ty" class:hl={ext?.type === node.var}>{@render lean(node.type, "x:" + node.var)}</span><span class="op">{node.op === "exists" ? "such that" : ","}</span></div>
-    <div class="parts witness">{@render logic(node.args[0], depth + 1)}</div>
+    {@render carried(node, local ? "local" : node.op === "exists" ? "produced" : "given")}
+    <div class="parts witness">{@render logic(node.args[0], depth + 1, local)}</div>
   {:else}
     <span class="op">{OP[node.op] || node.op}</span>
     <ul class="parts">
       {#each node.op === "iff" ? node.args : flat(node, node.op) as part}
-        <li>{@render logic(part, depth + 1)}</li>
+        <li>{@render logic(part, depth + 1, local || node.op !== "and")}</li>
       {/each}
     </ul>
   {/if}
@@ -155,12 +211,15 @@
               {@render name(g.head)}<span class="colon"> : </span>
               <span class="ty" class:hl={ext?.type === g.head}>{@render lean(b.type, "b:" + g.head)}</span>
             </div>
+            {@render carried(b, howOf(b))}
             {#each g.members as m}
               <div class="line sub">{@render condition(m, "b:" + m)}</div>
+              <div class="subc">{@render carried(binders[m], howOf(binders[m]))}{@render inner(binders[m])}</div>
             {/each}
           </li>
         {:else}
-          <li class={"b " + binders[g.members[0]].role}><div class="line">{@render condition(g.members[0], "b:" + g.members[0])}</div></li>
+          {@const m = g.members[0]}
+          <li class={"b " + binders[m].role}><div class="line">{@render condition(m, "b:" + m)}</div>{@render carried(binders[m], howOf(binders[m]))}{@render inner(binders[m])}</li>
         {/if}
       {/each}
     </ol>
@@ -240,4 +299,17 @@
   .inspect p { margin: 2px 0; display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap; }
   .inspect .x { margin-left: auto; border: 0; background: none; cursor: pointer; color: var(--muted); font-size: 16px; line-height: 1; }
   .small { font-size: 13px; }
+  .carried { margin: 2px 0 4px 18px; padding-left: 10px; border-left: 2px solid var(--border); }
+  .carried.produced { border-left-color: color-mix(in srgb, var(--st-refuted) 50%, transparent); }
+  .carried .role { min-width: 74px; font-size: 13px; }
+  .carried :global(.lean) { font-size: 16px; }
+  .pbody { min-width: 0; flex: 1; }
+  .origin { display: block; font-size: 12px; color: var(--faint); }
+  .origin code, .fields code { font-size: 12px; }
+  .fields { font-size: 13px; color: var(--muted); }
+  .basis { margin: 2px 0; cursor: pointer; }
+  .inner { margin: 2px 0 4px 18px; }
+  .inner p { margin: 2px 0; }
+  .subc:empty { display: none; }
+  .bad { color: var(--st-malformed); }
 </style>

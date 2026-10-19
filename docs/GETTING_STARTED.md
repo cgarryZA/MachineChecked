@@ -67,6 +67,14 @@ these representations the full workspace, keeping every hypothesis visible. On a
 follow one another in reading order. The exact statement comes directly from Lean; rebuilding
 an older audit adds it.
 
+An object whose type is a subtype, structure or class shows the properties its type carries,
+as they apply to it, with the field and structure each comes from: for a given object they are
+part of what is given, for a witness they are established with it, and for an object inside an
+assumption, a negation or one alternative they stay inside it. An assumption that is a class of
+propositions shows what its fields state. **Exact Lean** lists each carried property as the Lean
+term that gives it (`s.start : s.path 0 = d`) with its field's declaration; many fields are
+folded under a summary.
+
 Click a variable to see its type and conditions. Click an expression to select it; further clicks
 widen the selection. Dotted names open short mathematical notes. A Lean declaration name opens
 its complete definition; **Back** and browser Back restore the claim view and reading position.

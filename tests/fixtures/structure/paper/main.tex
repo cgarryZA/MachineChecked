@@ -32,4 +32,36 @@ A number $n$ is a multiple of $m$ above $b$ if $n = mq$ for some $q \ge b$. The 
 are $F_0 = 0$, $F_1 = 1$ and $F_{n+2} = F_n + F_{n+1}$.
 \end{definition}
 
+\begin{theorem}\label{thm:supplied}\lean{Shape.supplied}
+Let $s$ be a solution for $d$ with bound at most $5$. Then $s$ starts at most at $5$.
+\end{theorem}
+
+\begin{theorem}\label{thm:assumed}\lean{Shape.assumed}
+If every admissible datum has a good solution, then $0$ has a good solution.
+\end{theorem}
+
+\begin{theorem}\label{thm:produced}\lean{Shape.produced}
+Every admissible datum $d$ has a good solution.
+\end{theorem}
+
+\begin{theorem}\label{thm:positive}\lean{Shape.positive}
+Every positive number is at least $1$.
+\end{theorem}
+
+\begin{theorem}\label{thm:single}\lean{Shape.single}
+A type with a single element has at most one element, and exactly one.
+\end{theorem}
+
+\begin{theorem}\label{thm:probability}\lean{Shape.probability}
+On a probability space, the whole space has measure one.
+\end{theorem}
+
+\begin{theorem}\label{thm:none-large}\lean{Shape.none_large}
+No solution for $0$ has a negative bound.
+\end{theorem}
+
+\begin{theorem}\label{thm:both}\lean{Shape.both}
+If $a \le b$ and $b \le a$, then $a = b$.
+\end{theorem}
+
 \end{document}

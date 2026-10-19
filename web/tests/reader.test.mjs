@@ -453,6 +453,64 @@ await check("in the local reader a symbol is linked by choosing it and clicking 
     assert.match(await exact.locator(".src").textContent(), /\| n \+ 2 => fib n \+ fib \(n \+ 1\)/);
   });
 
+  await check("properties carried by a type stay with their object: given, assumed or produced", width, async (pg) => {
+    const open = async (id) => {
+      await pg.goto(origin + `/structure/#/r/${SHAPE.release}/read/P/${encodeURIComponent(id)}`);
+      const st = pg.locator("aside .view .stmt");
+      await st.waitFor();
+      return st;
+    };
+    // A supplied solution: its proof fields are in its type, one inherited from its parent; the
+    // extra assumption is a row of its own.
+    let st = await open("P:thm:supplied");
+    const given = st.locator(".ribbon .carried.given");
+    assert.equal(await given.count(), 1);
+    const start = given.locator(".prop[data-field='start']");
+    assert.match(await start.textContent(), /s\.path 0 = d.*field start of Solution, from Base/s);
+    assert.match(await given.locator(".prop[data-field='le_bound']").textContent(), /∀ \(n : Nat\), s\.path n ≤ s\.bound/);
+    assert.match(await given.locator(".data").textContent(), /s\.path : Nat → Nat, s\.bound : Nat/);
+    // The extra assumption is about s alone, so it is shown under s, as a condition of its own.
+    assert.match(await st.locator(".ribbon .line.sub").textContent(), /assume\s*\(h\)\s*s\.bound ≤ 5/);
+    assert.equal(await st.locator(".ribbon .subc .carried").count(), 0, "an assumption is not a property of a type");
+    // The assumed existence keeps its solution inside the assumption; the result's own solution
+    // is produced.
+    st = await open("P:thm:assumed");
+    const inner = st.locator(".ribbon li.hypothesis .inner");
+    assert.equal(await inner.count(), 1);
+    assert.match(await inner.textContent(), /inside this assumption \(for every › then\):\s*there is s/);
+    assert.equal(await inner.locator(".carried.inside .prop").count(), 2);
+    assert.equal(await st.locator(".ribbon > li.exists .carried.produced").count(), 1);
+    // An established solution is produced under the condition on d.
+    st = await open("P:thm:produced");
+    assert.deepEqual(await st.locator(".ribbon > li").evaluateAll((ls) => ls.map((l) => l.className.split(" ").find((c) => ["forall", "hypothesis", "exists"].includes(c)))), ["forall", "exists"]);
+    assert.match(await st.locator(".ribbon > li.forall .line.sub").textContent(), /assume\s*\(h1\)\s*Shape\.Admissible d/);
+    assert.match(await st.locator(".carried.produced .basis").textContent(), /Producing this object establishes/);
+    // A subtype's predicate is in its type; a class instance stays an input with its law.
+    st = await open("P:thm:positive");
+    assert.match(await st.locator(".carried.given .prop[data-field='property']").textContent(), /0 < p\.val/);
+    st = await open("P:thm:single");
+    assert.match(await st.locator(".carried.given .prop[data-field='uniq']").textContent(), /∀ \(a : T\), a = default.*field uniq of Single/s);
+    assert.match(await st.locator(".concl").textContent(), /Subsingleton T/);
+    // A supplied measure space carries its laws; that it is a probability space is an assumption
+    // stating what its field says.
+    st = await open("P:thm:probability");
+    assert.match(await st.locator(".carried.given .prop[data-field='measure_empty']").textContent(), /field measure_empty of MeasureData/);
+    assert.match(await st.locator(".carried.states .prop[data-field='measure_univ']").textContent(), /it states.*= 1/s);
+    assert.equal(await st.locator(".carried.produced").count(), 0);
+    // Inside a negation the solution is not produced: its properties stay local to that claim.
+    st = await open("P:thm:none-large");
+    assert.equal(await st.locator(".carried.produced").count(), 0, "a negated existence produces nothing");
+    assert.match(await st.locator(".concl .carried.local .basis").textContent(), /within the clause that contains it/);
+    // A sub-term of a property can be selected, and the exact Lean selects the same one.
+    await open("P:thm:supplied");
+    await pg.locator("aside .view .carried .prop[data-field='start'] .p", { hasText: "0" }).first().click();
+    assert.ok(await pg.locator("aside .view .carried .prop[data-field='start'] .in").count() > 0);
+    const exactField = pg.locator(".exact-pane .carried .field[data-field='start']");
+    assert.match(await exactField.textContent(), /s\.start : s\.path 0 = d/);
+    assert.match(await exactField.locator(".origin").textContent(), /Shape\.Base\.start/);
+    assert.ok(await exactField.locator(".in").count() > 0, "the exact view selects the same sub-term");
+  });
+
   await check("a statement keeps its order, with each object's own conditions beside it", width, async (pg) => {
     await pg.goto(origin + `/structure/#/r/${SHAPE.release}/read/P/${encodeURIComponent("P:thm:layout")}`);
     const st = pg.locator("aside .view .stmt");

@@ -253,6 +253,94 @@ def isExistsApp (e : Expr) : Option (Name × Expr) :=
     | _ => none
   else none
 
+/-! ## Properties carried by a type
+
+A condition can be part of an object's type rather than a hypothesis of the statement: the
+predicate of a subtype, a proof field of a structure, the law of a class. For each object of a
+statement whose type is a structure (a subtype and a class are structures) with a field that is
+a proposition, every field of the structure is projected from the object, inherited fields
+included and each once (`getStructureFieldsFlattened`), and exported with its statement as it
+applies to that object, whether it is data or a proposition, and where it comes from (the
+structure, the parent structure that declares it, the projection). Display only. -/
+
+/-- At most this many fields of one object are exported; the record says how many more there
+are. -/
+def maxFields : Nat := 32
+
+/-- The fields carried by the type of the local `x` (`properties`), each with its statement
+specialised to `x`; nothing when the type is not a structure or has no field that is a
+proposition. An object of a type that is a proposition (`x` a proof) has properties only when
+`ofProp` is set, and a conjunction or an equivalence never has (`logic` shows its parts). The
+positions of a field's statement are prefixed by `pfx` and the field's name. A failure is
+recorded (`properties_error`) and stops nothing else. -/
+def propertiesOf (x : Expr) (vars : Array FVarId) (pfx : String) (ofProp : Bool := false) :
+    MetaM (List (String × Json)) := do
+  let act : MetaM (List (String × Json)) := withCurrHeartbeats do
+    let env ← getEnv
+    let ty ← whnfR (← instantiateMVars (← inferType x))
+    let .const S _ := ty.getAppFn | return []
+    unless isStructure env S do return []
+    if S == ``And || S == ``Iff then return []
+    if (← isProp ty) != ofProp then return []
+    let fields := getStructureFieldsFlattened env S (includeSubobjectFields := false)
+    let mut out : Array Json := #[]
+    let mut anyProp := false
+    for f in fields.toList.take maxFields do
+      let p ← mkProjection x f
+      let t ← instantiateMVars (← inferType p)
+      let prop ← isProp t
+      anyProp := anyProp || prop
+      let decl := (findField? env S f).getD S
+      let proj := getProjFnForField? env decl f
+      out := out.push (Json.mkObj [("field", f.toString),
+        ("kind", if prop then "proposition" else "data"),
+        ("structure", S.toString), ("declared_in", decl.toString),
+        ("inherited", toJson (decl != S)),
+        ("projection", match proj with | some q => Json.str q.toString | none => Json.null),
+        ("module", match proj with
+          | some q => Json.str (moduleOf env q).toString | none => Json.null),
+        ("range", ← match proj with | some q => rangeJson q | none => pure Json.null),
+        ("term", Json.str (toString (← ppExpr p))),
+        ("type", ← ppJson t vars .root s!"{pfx}{f}:")])
+    unless anyProp do return []
+    return [("properties", Json.arr out),
+      ("properties_omitted", toJson (fields.size - out.size))]
+  tryCatchRuntimeEx act fun err => do
+    return [("properties_error", Json.str s!"probe-error: {← err.toMessageData.toString}")]
+
+/-- The objects a proposition quantifies over inside itself (a hypothesis's own "for every" and
+"there is"), each with the connectives that enclose it (`scope`, outermost first) and the
+properties its type carries; only those whose type carries one. Their occurrences are not
+numbered as variables of the statement: they belong to the proposition. -/
+partial def innerObjects (e : Expr) (vars : Array FVarId) (pos : SubExpr.Pos)
+    (scope : Array String := #[]) : MetaM (Array Json) := do
+  let two : String → MetaM (Array Json) := fun op => do
+    let a ← innerObjects e.appFn!.appArg! vars pos.pushAppFn.pushAppArg (scope.push op)
+    let b ← innerObjects e.appArg! vars pos.pushAppArg (scope.push op)
+    return a ++ b
+  if e.isAppOfArity ``And 2 then return ← two "and"
+  if e.isAppOfArity ``Or 2 then return ← two "or"
+  if e.isAppOfArity ``Iff 2 then return ← two "iff"
+  if e.isAppOfArity ``Not 1 then
+    return ← innerObjects e.appArg! vars pos.pushAppArg (scope.push "not")
+  let one : String → Name → Expr → Expr → BinderInfo → SubExpr.Pos → MetaM (Array Json) :=
+    fun op n t body bi at_ => withLocalDecl n bi t fun x => do
+      let props ← propertiesOf x vars s!"{at_}#"
+      let inner ← innerObjects (body.instantiate1 x) vars at_.pushBindingBody (scope.push op)
+      if props.isEmpty then return inner
+      let tj ← ppJson t vars at_.pushBindingDomain
+      return #[Json.mkObj ([("op", Json.str op), ("name", Json.str (binderName n)),
+        ("id", Json.str (toString at_)), ("type", tj), ("scope", toJson scope)] ++ props)] ++ inner
+  if let .forallE n t body bi := e then
+    if (← isProp t) && !body.hasLooseBVars then
+      let a ← innerObjects t vars pos.pushBindingDomain (scope.push "if")
+      let b ← innerObjects body vars pos.pushBindingBody (scope.push "then")
+      return a ++ b
+    return ← one "forall" n t body bi pos
+  match isExistsApp e with
+  | some (_, .lam n t body bi) => one "exists" n t body bi pos.pushAppArg
+  | _ => return #[]
+
 /-- The logical shape of a conclusion: a conjunction, disjunction, equivalence, negation,
 implication, "for every" or "there is" as a tree whose leaves are pretty-printed propositions. A
 quantifier inside the conclusion is a node (`forall`, `exists`) with its variable's name, type and
@@ -287,11 +375,12 @@ partial def logicJson (vars : Array FVarId) (e : Expr) (pos : SubExpr.Pos) :
       let tj ← ppJson t vars pos.pushBindingDomain
       return ← withLocalDecl n bi t fun x => do
         let idx := vars.size
+        let props ← propertiesOf x (vars.push x.fvarId!) s!"{pos}#"
         let (b, vars') ←
           logicJson (vars.push x.fvarId!) (body.instantiate1 x) pos.pushBindingBody
-        return (Json.mkObj [("op", "forall"), ("name", n.eraseMacroScopes.toString),
+        return (Json.mkObj (([("op", "forall"), ("name", n.eraseMacroScopes.toString),
           ("var", toJson idx), ("id", Json.str (toString pos)), ("type", tj),
-          ("args", Json.arr #[b])], vars')
+          ("args", Json.arr #[b])] : List (String × Json)) ++ props), vars')
     match isExistsApp e with
     | some (_, .lam n t body bi) =>
       -- The witness is bound by the predicate `fun x => …`, the second argument of `Exists`.
@@ -299,11 +388,12 @@ partial def logicJson (vars : Array FVarId) (e : Expr) (pos : SubExpr.Pos) :
       let tj ← ppJson t vars lam.pushBindingDomain
       withLocalDecl n bi t fun x => do
         let idx := vars.size
+        let props ← propertiesOf x (vars.push x.fvarId!) s!"{lam}#"
         let (b, vars') ←
           logicJson (vars.push x.fvarId!) (body.instantiate1 x) lam.pushBindingBody
-        return (Json.mkObj [("op", "exists"), ("name", n.eraseMacroScopes.toString),
+        return (Json.mkObj (([("op", "exists"), ("name", n.eraseMacroScopes.toString),
           ("var", toJson idx), ("id", Json.str (toString lam)), ("type", tj),
-          ("args", Json.arr #[b])], vars')
+          ("args", Json.arr #[b])] : List (String × Json)) ++ props), vars')
     | _ => return (Json.mkObj [("leaf", ← ppJson e vars pos)], vars)
 
 /-! ## The inspection representation -/
@@ -325,8 +415,18 @@ partial def telescope (e : Expr) (acc : Array Json) (vars : Array FVarId := #[])
         else n.toString
       -- What an instance supplies: a proposition (`[Nonempty E]`) or data (`[Inhabited E]`).
       let supplies := if isHyp then "proposition" else "data"
-      let j := Json.mkObj [("role", role), ("name", nm), ("id", Json.str (toString pos)),
-        ("type", tj), ("binder", binderStr bi), ("supplies", supplies)]
+      -- What the object's type carries, or, for a hypothesis, the objects inside it whose type
+      -- carries something.
+      -- A hypothesis whose type is a structure of propositions (`[IsProbability Ω]`) lists
+      -- what its fields state.
+      let extra ← if isHyp then do
+          let objs ← innerObjects t vars pos.pushBindingDomain
+          let states ← propertiesOf x (vars.push x.fvarId!) s!"{pos}#" (ofProp := true)
+          pure ((if objs.isEmpty then [] else [("objects", Json.arr objs)]) ++ states)
+        else propertiesOf x (vars.push x.fvarId!) s!"{pos}#"
+      let j := Json.mkObj (([("role", role), ("name", nm), ("id", Json.str (toString pos)),
+        ("type", tj), ("binder", binderStr bi), ("supplies", supplies)] : List (String × Json))
+        ++ extra)
       telescope (body.instantiate1 x) (acc.push j) (vars.push x.fvarId!) pos.pushBindingBody
   | _ =>
     match isExistsApp e with
@@ -334,8 +434,10 @@ partial def telescope (e : Expr) (acc : Array Json) (vars : Array FVarId := #[])
       let lam := pos.pushAppArg
       let tj ← ppJson t vars lam.pushBindingDomain
       withLocalDecl n bi t fun x => do
-        let j := Json.mkObj [("role", "exists"), ("name", n.eraseMacroScopes.toString),
+        let props ← propertiesOf x (vars.push x.fvarId!) s!"{lam}#"
+        let j := Json.mkObj (([("role", "exists"), ("name", n.eraseMacroScopes.toString),
           ("id", Json.str (toString lam)), ("type", tj), ("binder", binderStr bi)]
+          : List (String × Json)) ++ props)
         telescope (body.instantiate1 x) (acc.push j) (vars.push x.fvarId!) lam.pushBindingBody
     | _ =>
       -- The conclusion, with its logical shape when it has one (`logic`, display only).

@@ -170,3 +170,78 @@ def test_definitions_are_exported_as_written(tmp_path, toolchain):
                       for i, t in eq.items())
     assert "| n + 2 => fib n + fib (n + 1)" in f["lean_source"]["text"]
     assert "body" not in f, "the compiled recursion is only the value"
+
+
+def props(o, kind="proposition"):
+    return [(p["field"], p["type"]["text"]) for p in o.get("properties", []) if p["kind"] == kind]
+
+
+@needs_lean
+@needs_tex
+@pytest.mark.parametrize("toolchain", [None, "leanprover/lean4:v4.24.0"])
+def test_properties_carried_by_types(tmp_path, toolchain):
+    """An object whose type is a subtype, structure or class carries that type's fields,
+    specialised to the object, each once with where it comes from (#98); where the object
+    stands decides whether they are given, inside an assumption, or established."""
+    root = build_copy(tmp_path, toolchain)
+    # A supplied solution: its proof fields (one inherited) apply to s; its data is listed as
+    # data; the extra hypothesis stays a hypothesis of its own.
+    b = statement(root, "Shape.supplied")["binders"]
+    s = next(x for x in b if x["name"] == "s")
+    assert s["role"] == "forall"
+    assert props(s) == [("start", "s.path 0 = d"), ("le_bound", "∀ (n : Nat), s.path n ≤ s.bound")]
+    assert [f for f, _ in props(s, "data")] == ["path", "bound"]
+    start = next(p for p in s["properties"] if p["field"] == "start")
+    assert (start["structure"], start["declared_in"], start["inherited"], start["projection"]) == \
+        ("Shape.Solution", "Shape.Base", True, "Shape.Base.start")
+    assert start["type"]["id"] == s["id"] + "#start:/"
+    assert ("s", 1) in var_refs(start["type"]) and ("d", 0) in var_refs(start["type"])
+    h = next(x for x in b if x["name"] == "h")
+    assert h["role"] == "hypothesis" and h["type"]["text"] == "s.bound ≤ 5"
+    assert "properties" not in h and "objects" not in h
+    # An assumed existence: the solution and its properties stay inside the assumption.
+    rec = statement(root, "Shape.assumed")
+    h = rec["binders"][0]
+    assert h["role"] == "hypothesis" and "properties" not in h
+    [obj] = h["objects"]
+    assert (obj["op"], obj["name"], obj["scope"]) == ("exists", "s", ["forall", "then"])
+    assert props(obj)[0] == ("start", "s.path 0 = d")
+    out = rec["binders"][1]
+    assert (out["role"], out["type"]["text"]) == ("exists", "Shape.Solution 0")
+    assert props(out)[0] == ("start", "s.path 0 = 0")
+    # An established existence: the solution is a witness, under the condition on d.
+    b = statement(root, "Shape.produced")["binders"]
+    assert [(x["role"], x["name"]) for x in b] == \
+        [("forall", "d"), ("hypothesis", "h1"), ("exists", "s")]
+    assert props(b[2])[1] == ("le_bound", "∀ (n : Nat), s.path n ≤ s.bound")
+    # A subtype carries its predicate.
+    [p] = statement(root, "Shape.positive")["binders"]
+    assert props(p) == [("property", "0 < p.val")] and props(p, "data") == [("val", "Nat")]
+    # A class instance is an input carrying its law and its data (inherited from Inhabited);
+    # `Subsingleton T` in the conclusion stays the proposition it is, and the existence part
+    # keeps its witness.
+    rec = statement(root, "Shape.single")
+    inst = rec["binders"][1]
+    assert (inst["role"], inst["supplies"]) == ("instance", "data")
+    assert props(inst) == [("uniq", "∀ (a : T), a = default")]
+    assert [(p["field"], p["declared_in"]) for p in inst["properties"] if p["kind"] == "data"] == \
+        [("default", "Inhabited")]
+    sub, ex = rec["conclusion"]["logic"]["args"]
+    assert sub["leaf"]["text"] == "Subsingleton T"
+    assert ex["op"] == "exists" and "properties" not in ex
+    # A supplied measure space carries its data and its laws; that it is a probability space is
+    # an additional assumption, which states what its field says.
+    ms, prob = statement(root, "Shape.probability")["binders"][1:]
+    assert (ms["role"], ms["supplies"], prob["role"], prob["supplies"]) == \
+        ("instance", "data", "instance", "proposition")
+    assert [f for f, _ in props(ms, "data")] == ["measurable", "measure"]
+    assert [f for f, _ in props(ms)] == ["measurable_compl", "measure_empty"]
+    assert props(prob) == [("measure_univ", "MeasureData.measure (fun (x : Ω) => True) = 1")]
+    # A conjunction or an equivalence assumed is not a structure to list.
+    assert all("properties" not in x for x in statement(root, "Shape.both")["binders"])
+    # Inside a negation, the solution is the negated claim's: its properties are on its node.
+    neg = statement(root, "Shape.none_large")["conclusion"]["logic"]
+    assert neg["op"] == "not" and neg["args"][0]["op"] == "exists"
+    assert props(neg["args"][0])[0] == ("start", "s.path 0 = 0")
+    # Objects whose type carries no proposition get nothing: a number, a type, a datum.
+    assert all("properties" not in x for x in statement(root)["binders"])
