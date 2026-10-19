@@ -20,16 +20,24 @@ jobs:
           node-version: "22"
           cache: npm
           cache-dependency-path: web/package-lock.json
+      # The Lean toolchains are kept between runs, keyed on the versions the examples pin.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.elan/toolchains
+          key: elan-${{ runner.os }}-v4.24.0-${{ hashFiles('examples/*/lean-toolchain', 'tests/fixtures/*/lean-toolchain') }}
       - name: Install TeX Live and elan
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends latexmk texlive-latex-recommended \
             texlive-latex-extra texlive-science texlive-fonts-recommended poppler-utils
-          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain none
+          curl -sSfL --retry 4 https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain none
           echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
-          # An older Lean too: the probe must compile on the versions users have
-          # (tests/simple/test_structure.py runs it on both).
-          "$HOME/.elan/bin/elan" toolchain install leanprover/lean4:v4.24.0
+          # The examples' toolchains, and an older Lean too: the probe must compile on the
+          # versions users have (tests/simple/test_structure.py runs it on both). A download
+          # that fails is retried.
+          for t in leanprover/lean4:v4.24.0 $(cat examples/*/lean-toolchain tests/fixtures/*/lean-toolchain | sort -u); do
+            for i in 1 2 3 4; do "$HOME/.elan/bin/elan" toolchain install "$t" && break; [ $i = 4 ] && exit 1; sleep $((i * 10)); done
+          done
       - name: Install ProofLens
         run: pip install -e '.[test]'
       - name: Build the plain example (zero-configuration tests use it)
@@ -100,3 +108,32 @@ jobs:
       tex: true
       package: "."
       author: "MachineChecked CI"
+
+  # The same workflow building a second audit into a subpath from a given ref, as a repository
+  # publishing one audit per paper version does; the two artifacts merge into one site.
+  audit-workflow-subpath:
+    uses: ./.github/workflows/audit.yml
+    with:
+      project-dir: examples/plain-paper
+      tex: true
+      package: "."
+      author: "MachineChecked CI"
+      ref: ${{ github.sha }}
+      subpath: v1
+
+  audit-workflow-site:
+    needs: [audit-workflow, audit-workflow-subpath]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: machinechecked-audit*
+          merge-multiple: true
+          path: site
+      - name: Both audits are in the merged site
+        env:
+          SUBPATH_ARTIFACT: ${{ needs.audit-workflow-subpath.outputs.artifact }}
+        run: |
+          test "$SUBPATH_ARTIFACT" = machinechecked-audit-v1
+          test -f site/audit.json && test -f site/v1/audit.json
+          test -f site/v1/data/index.json && test -f site/v1/index.html

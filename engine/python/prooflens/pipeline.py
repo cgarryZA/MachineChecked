@@ -20,6 +20,7 @@ from .schemas import validate
 from .sources import acquire
 from .source_regions import collect as collect_source_regions
 from .tex import DEFAULT_ENVS, TexError, anchors_for, theorem_envs
+from . import versions as paper_versions
 from .util import (canonical_json, git_dirty, git_head, link_or_copy, prepare_work_dir,
                    read_json, sha256_file, sha256_text, write_json)
 
@@ -62,6 +63,11 @@ def build(cfg: Config, release: str | None = None, skip_lean: bool = False,
     # runs: a problem there should not wait for a probe that can take hours.
     snaps = {paper.id: acquire(cfg, paper, cfg.out_dir / "sources" / paper.id)
              for paper in cfg.papers}
+    # The version of each paper the audit pins, refused when the inventory pins another one.
+    versions = {}
+    for paper in cfg.papers:
+        rec, is_declared = paper_versions.declared(paper, snaps[paper.id], cfg.root)
+        versions[paper.id] = paper_versions.check(paper, rec, is_declared, inv)
 
     lean = None
     lean_digest = None
@@ -94,7 +100,8 @@ def build(cfg: Config, release: str | None = None, skip_lean: bool = False,
                 # A paper read from a folder: the commit of the repository that folder is in.
                 **({"source_commit": git_head(cfg.root / paper.source["path"])}
                    if snap.kind == "path" and git_head(cfg.root / paper.source["path"]) else {}),
-                **({"published_note": paper.published_note} if paper.published_note else {})}
+                **({"published_note": paper.published_note} if paper.published_note else {}),
+                **({"paper_version": versions[paper.id]} if versions[paper.id] else {})}
         t = None
         if snap.mode == "latex" and not skip_tex:
             envs = paper.envs or sorted(set(DEFAULT_ENVS) | set(theorem_envs(snap.dir)))
