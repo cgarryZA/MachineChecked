@@ -149,3 +149,33 @@ def test_a_stale_inventory_is_refused_before_anything_is_written(toy, tmp_path, 
     build(toy, reuse_lean=True)
     (_, _, why), = pr.plan(cfg, pr.load_reports([f]))
     assert not why
+
+
+def test_a_directory_of_reports_stands_for_its_json_files(toy, tmp_path, capsys):
+    """#103: a directory is read as the `*.json` files directly in it, in name order; a
+    directory without any, a missing file or a file that is not JSON stops with one line."""
+    d = tmp_path / "reports"
+    (d / "nested").mkdir(parents=True)
+    (d / "b.json").write_text(json.dumps({"schema": "prooflens/review-reports@1",
+                                          "reports": [{"n": 2}, {"n": 3}]}))
+    (d / "a.json").write_text(json.dumps({"n": 1}))
+    (d / "notes.txt").write_text("not a report")
+    (d / "nested" / "c.json").write_text(json.dumps({"n": 4}))
+    extra = tmp_path / "extra.json"
+    extra.write_text(json.dumps({"n": 0}))
+    assert [r["n"] for r in pr.load_reports([extra, d])] == [0, 1, 2, 3]
+    (tmp_path / "empty").mkdir()
+    with pytest.raises(pr.PromoteError, match="no report files"):
+        pr.load_reports([tmp_path / "empty"])
+    with pytest.raises(pr.PromoteError, match="no such report file"):
+        pr.load_reports([tmp_path / "missing.json"])
+    with pytest.raises(pr.PromoteError, match="not a report file"):
+        pr.load_reports([d / "notes.txt"])
+    from prooflens import cli
+    with pytest.raises(SystemExit) as e:
+        cli.main(["review", "promote", "--yes", "-c", str(toy / "machinechecked.toml"),
+                  str(tmp_path / "empty")])
+    err = capsys.readouterr().err
+    assert e.value.code == 2 and "Traceback" not in err
+    assert err.strip() == (f"machinechecked: {tmp_path / 'empty'} is a directory with no report "
+                           "files (*.json) in it")
