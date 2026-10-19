@@ -106,7 +106,9 @@ application, specialised to it, `{name, statement, params, equation}`, with the 
 case conditions that remain as `params` and the statement checked to follow from the theorem;
 `equations_not_applying` names the others and `equations_omitted` counts those not compared.
 An expansion's own applications expand once more; a failure is `error` on that expansion only.
-At most 16 applications of one term are expanded and `expansions_omitted` counts the rest.
+Only what is printed is searched (explicit arguments, not implicit or instance ones), up to
+4000 nodes of a term; at most 16 applications of one term are expanded and `expansions_omitted`
+counts the rest.
 Expansions are display only and are exported with the statement, so only with the Lean.
 
 ## Manifest (`manifest-index.schema.json`, `manifest-claim.schema.json`), derived
