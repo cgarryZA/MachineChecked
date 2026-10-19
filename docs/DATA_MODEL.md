@@ -86,6 +86,29 @@ give it (`by_project`). Without an audit nothing has run Lean, so a linked state
 "linked: Lean not checked here (no audit published)" (class `declared`). The reader shows one
 project at a time and never combines them. No statement text is written.
 
+**Versions of a paper.** A paper with several versions (published `vN`, an unpublished
+manuscript at a commit) has one page per version, each written by `write_paper_site` with its own
+PDF, claims and audits, and with `versions` (every version) and `version` (this page's `id`).
+The site supplies each version as:
+
+| Field | What |
+|---|---|
+| `id` | the version's identifier, as an audit's `paper_version.id` gives it: `arxiv:2601.01234v1`, `manuscript:abc1234` |
+| `kind` | `published` or `manuscript` |
+| `revision` | a manuscript's commit (required for a manuscript) |
+| `href` | the address of that version's page on the same site, such as `/papers/2601.01234/v1/` (absolute path or relative; never another site) |
+| `pdf` | the version's PDF (https, or on the site); optional |
+| `audits` | the audits of that version: `url` (https), `author`, `repository`; optional |
+
+`page_versions` checks the list and sets each `label` from `kind` and `id` ("arXiv v1", "Latest
+manuscript (commit abc1234)"), ignoring a label the site gives. Every audit loaded for a page
+must pin that page's version: load it with the listing's `version` (`load_published_audit`), and
+`write_paper_site` refuses one that pins another. The reader shows a version drop-down beside the
+project selector when there are several versions: choosing one opens that version's page, with
+the chosen project and without the claim (claim numbers can differ between versions); a link to
+a claim opens it in its own version's page. Statuses belong to each version's page, so switching
+never changes one.
+
 ## Audit descriptor (`audit.json`), written by the engine
 
 At the root of every published reader (`machinechecked build --site`, `machinechecked export`):

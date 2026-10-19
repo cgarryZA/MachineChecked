@@ -218,6 +218,8 @@ jobs:
 
 A deploy replaces the whole site, so every run builds every audit; a saved build (`cache-repo`) keeps the frozen one quick. Each audit's `site_url` (in the configuration on its ref) is its own address, such as `https://you.github.io/project/v1/`.
 
+A paper page that lists audits of several versions gives each version its own page, and the reader a drop-down beside the formalisation selector to switch between them ([data model](DATA_MODEL.md)). Each version keeps its own PDF, claim numbers and statuses.
+
 ## A badge for your README
 
 Once your paper is listed on machinechecked.org (a repository whose `formalization.yaml` names an
