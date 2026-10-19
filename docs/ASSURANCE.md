@@ -33,6 +33,8 @@ root = "main.tex"
 publish = { pdf = false, source_text = false, lean = false, reviews = false }
 ```
 
+The probe loads the modules listed in `modules` and what they import. A proposition, proof, witness or definition the inventory names outside them is a violation that names it, with the project module that declares it when its source shows one: list that module in `modules`, or import it from a listed one.
+
 Sources can also be a pinned Git revision (`source = { git = "owner/repo", rev = "<commit>" }`, of which only that revision is fetched) or a versioned arXiv record (`source = { arxiv = "2601.01234v2" }`: its source is downloaded from arXiv once and kept in the working directory, so later builds work offline; the version is required). Say which public record the paper is with `published` (an arXiv identifier with version such as `"arXiv:2601.01234v2"`, a DOI, or a URL) and, if the audited revision differs from it, how with `note` (for example `"This revision corrects Proposition 2.3."`); both go into `audit.json` and the reader, and change no status.
 
 **The version an audit pins.** An audit pins exactly one version of its paper, and `audit.json` names it (`paper_version`, see the [data model](DATA_MODEL.md)):
@@ -96,9 +98,9 @@ Reviewer's independent interpretation, comparison and verdict.
 <!-- spec-review: MyPaper.PaperSpec.thm_main HASH by=reviewer kind=human -->
 ```
 
-For definitions use `def-review`. The hash records the declaration version reviewed; relevant definition changes reopen the obligation. Reviewer identity is a record, not authenticated proof of identity.
+For definitions use `def-review`. The hash records the declaration version reviewed; relevant definition changes reopen the obligation. Reviewer identity is a record, not authenticated proof of identity. A section that reviews several declarations ends with one marker for each, and every marker carries the section's text.
 
-The Review queue exports reports. The maintainer evaluates those reports before invoking `machinechecked review promote FILE.json`; promotion writes the acceptance markers. The maintainer may also request further review.
+The Review queue exports reports. The maintainer evaluates those reports before invoking `machinechecked review promote FILE.json`; promotion writes each acceptance marker after the declaration's last marker, preceded by a line ``Review by REVIEWER: VERDICT (report `FILE`).``. That line is the text of the reviewer's marker; every other marker of the section, including one added later, keeps the section's text. The maintainer may also request further review.
 
 ## Run checks and generate a site
 

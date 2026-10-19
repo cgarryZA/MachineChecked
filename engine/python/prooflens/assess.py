@@ -87,6 +87,15 @@ def _hashes(rec):
     return {h for h in (rec.get("legacy_hash"), rec.get("fingerprint")) if h}
 
 
+def unread(rec: dict | None) -> bool:
+    """Whether a probe record holds no declaration: none was found under the name, or the probe
+    failed on the request. Such a record has only `name` and `errors`."""
+    if rec is None:
+        return True
+    errs = rec.get("errors") or []
+    return "missing" in errs or any(str(e).startswith("probe-error") for e in errs)
+
+
 class Assessor:
     def __init__(self, cfg, inventory, lean, tex, reviews: list[Review], dismissals,
                  comparator_log: str | None = None, project_commit: str | None = None):
@@ -96,6 +105,31 @@ class Assessor:
         self.project_commit = project_commit
         self.findings: list[dict] = []
         self.authors = set(cfg.statement_authors)
+        self._unlisted: list[str] | None = None
+
+    # -- declarations the probe did not find ------------------------------------------------
+
+    def not_found(self, name: str) -> str:
+        """Why the probe has no record of `name`, for a finding: the declaration is not in any
+        module the probe loaded. When a project module that is not listed in `modules` declares
+        it (as far as its source text shows), that module is named."""
+        mods = []
+        try:
+            if self._unlisted is None:
+                from .probe import lib_names
+                from .simple import built_modules
+                root = self.cfg.lean_root
+                built, unbuilt = built_modules(root, lib_names(root))
+                listed = set(self.cfg.modules)
+                self._unlisted = [m for m in built + unbuilt if m not in listed]
+            from .simple import declaring_modules
+            mods = declaring_modules(self.cfg.lean_root, self._unlisted, name)
+        except (OSError, ValueError, AttributeError):
+            mods = []
+        if mods:
+            return (f"{name}: not found by the probe; it is declared in "
+                    f"{', '.join(mods)}, which is not listed in `modules`")
+        return f"{name}: not found by the probe; is its module listed in `modules`?"
 
     # -- reviews --------------------------------------------------------------------------
 
@@ -123,8 +157,9 @@ class Assessor:
         lean = self.lean
         out = {}
         for n in names:
-            clos = lean["specs"][n]["closure"] if n in lean["specs"] else \
-                lean["defs"].get(n, {}).get("closure", [])
+            # A record of a declaration the probe did not find has no closure.
+            clos = (lean["specs"][n] if n in lean["specs"] else
+                    lean["defs"].get(n, {})).get("closure") or []
             for d in clos:
                 if d in lean["specs"] or d in out:
                     continue
@@ -213,8 +248,10 @@ class Assessor:
             errs = (srec or {}).get("errors", ["missing"])
             res["checks"]["spec"] = {"ok": not errs, "errors": errs}
             for e in errs:
-                self.findings.append(_finding("violation", "spec-" + e.split("=")[0], subj,
-                                              f"proposition {spec}: {e}"))
+                self.findings.append(_finding(
+                    "violation", "spec-" + e.split("=")[0], subj,
+                    "proposition " + self.not_found(spec) if e == "missing" else
+                    f"proposition {spec}: {e}"))
             sr = self.review_state("spec", spec, srec)
             dr = self.closure_reviews([spec]) if srec else {}
             res["spec_review"] = sr
@@ -230,7 +267,7 @@ class Assessor:
             missing = [d for d in names if d not in lean["decls"]]
             for d in missing:
                 self.findings.append(_finding("violation", "def-missing", subj,
-                                              f"definition {d} is not in the environment"))
+                                              "definition " + self.not_found(d)))
             dr = {d: self.review_state("def", d, lean["decls"].get(d)) for d in names}
             dr.update({d: r for d, r in self.closure_reviews(names).items() if d not in dr})
             res["spec_review"] = None
@@ -266,6 +303,7 @@ class Assessor:
                 res["checks"]["replay"] = self.replay(thm)
             for e in perrs:
                 self.findings.append(_finding("violation", f"{kind}-" + e.split("=")[0], subj,
+                                              self.not_found(thm) if e == "missing" else
                                               f"{thm}: {e}"))
         res["state"] = ("proved" if res.get("accept_ok") else
                         "refuted" if res.get("refute_ok") else
@@ -292,9 +330,11 @@ class Assessor:
             ok = bool(p) and not p.get("errors")
             regs.append({**r, "discharged": ok, "type": (p or {}).get("type")})
             if not ok:
+                why = (f" (its witness {self.not_found(w)})"
+                       if w and "missing" in (p or {}).get("errors", ["missing"]) else "")
                 self.findings.append(_finding(
                     "obligation", "regime", subj,
-                    f"regime not shown to be covered: {r.get('name', '')}",
+                    f"regime not shown to be covered: {r.get('name', '')}{why}",
                     trigger=r.get("name", "")))
         res["regimes"] = regs
         return res
