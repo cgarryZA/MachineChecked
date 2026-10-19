@@ -149,3 +149,50 @@ def test_a_stale_link_write_is_refused(plain):
         authoring.write(plain, change)
     assert e.value.kind == "conflict" and e.value.candidates[0]["lean"] == ["Plain.Odd"]
     assert entry(plain, "thm:sum-odd")["lean"] == ["Plain.Odd"]
+
+
+@needs_lean
+@needs_tex
+def test_a_reading_records_its_basis_and_keeps_every_field_when_retired(plain, capsys):
+    code, out = link(capsys, "Theorem 2", "Plain.oddSum_eq_sq", "--coverage", "full",
+                     "--basis", "reviewed_composition", "--argument", "Sum the two halves.",
+                     "--as", "A. Auditor")
+    assert code == 0
+    assert entry(plain, "thm:sum-odd") == {"lean": ["Plain.oddSum_eq_sq"], "coverage": "full",
+                                           "basis": "reviewed_composition",
+                                           "argument": "Sum the two halves.", "by": "A. Auditor"}
+    # Fields that do not belong to the reading are refused, and nothing is written.
+    for args in (["--basis", "direct", "--argument", "x"],
+                 ["--question", "Which?"],
+                 ["--coverage", "full", "--basis", "direct", "--refs", "Plain.Odd"],
+                 ["--coverage", "composed", "--basis", "direct"],
+                 ["--coverage", "full", "--basis", "checked_bridge", "--bridge", "Plain.Odd",
+                  "Plain.Spec"]):
+        code, out = link(capsys, "Theorem 2", *args)
+        assert code == 1 and not out["written"], args
+    # Every field of the reading moves to earlier_notes when the list changes.
+    link(capsys, "Theorem 2", "Plain.Odd", "--add")
+    e = entry(plain, "thm:sum-odd")
+    assert not {"coverage", "basis", "argument"} & set(e)
+    old = e["earlier_notes"][0]
+    assert (old["coverage"], old["basis"], old["argument"]) == \
+        ("full", "reviewed_composition", "Sum the two halves.")
+    # `composed` is recorded as full coverage by the auditor's composition.
+    code, out = link(capsys, "Theorem 2", "--coverage", "composed", "--argument", "Combine.")
+    assert code == 0
+    e = entry(plain, "thm:sum-odd")
+    assert (e["coverage"], e["basis"], e["argument"]) == ("full", "reviewed_composition",
+                                                          "Combine.")
+    # An unresolved reading keeps its question; changing the coverage drops the basis.
+    code, out = link(capsys, "Theorem 2", "--coverage", "unresolved", "--question", "Which n?",
+                     "--would-decide", "Section 1.")
+    e = entry(plain, "thm:sum-odd")
+    assert code == 0 and (e["question"], e["would_decide"]) == ("Which n?", "Section 1.")
+    assert not {"basis", "argument"} & set(e)
+
+
+def test_a_stored_composed_entry_is_written_back_as_full_by_composition(tmp_path):
+    entry = {"lean": ["A.b"], "coverage": "composed", "note": "Chain the estimates."}
+    authoring._tidy_reading(entry)
+    assert entry == {"lean": ["A.b"], "coverage": "full", "basis": "reviewed_composition",
+                     "argument": "Chain the estimates."}

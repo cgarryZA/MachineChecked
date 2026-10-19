@@ -2,6 +2,7 @@
   import { listWorkspaces, openWorkspace, showWorkspace, updateWorkspace, newId,
     rememberedWorkspace, rememberWorkspace, humanId } from "../lib/workspace.js";
   import { href } from "../lib/route.svelte.js";
+  import { coverageView } from "../lib/coverage.js";
 
   // The auditor's saved investigation of this claim, under `machinechecked view`: its open
   // questions, findings and evidence, saved by the engine in the project's working directory, and
@@ -9,9 +10,17 @@
   // workspace opened here is an informed investigation; an independent review uses the review page.
   let { index, claim } = $props();
 
-  const COVERAGE = { full: "Every clause", composed: "Every clause, by the auditor's composition",
-    partial: "Part of the claim", changed: "Stated differently", related: "A related result",
-    unresolved: "Unresolved" };
+  // The readings a finding can record: the links file's coverage and, for full coverage, how it
+  // is supported (a checked bridge is recorded with `machinechecked workspace update`).
+  const CHOICES = {
+    direct: { label: "Every clause, in one Lean statement", coverage: "full", basis: "direct" },
+    composition: { label: "Every clause, by my composition", coverage: "full", basis: "reviewed_composition" },
+    full: { label: "Every clause", coverage: "full" },
+    partial: { label: "Part of the claim", coverage: "partial" },
+    changed: { label: "Stated differently", coverage: "changed" },
+    related: { label: "A related result", coverage: "related" },
+    unresolved: { label: "Unresolved", coverage: "unresolved" },
+  };
 
   let available = $state(true);
   let mine = $state([]);
@@ -21,9 +30,12 @@
   let busy = $state(false);
   let name = $state("");
   let question = $state("");
-  let coverage = $state("full");
+  let choice = $state("direct");
   let note = $state("");
   let openQ = $state("");
+  let decide = $state("");
+  let argument = $state("");
+  const picked = $derived(CHOICES[choice]);
   let cite = $state(true);
 
   const here = $derived(view?.claims?.[claim.id] || { evidence: [], findings: [], questions: [] });
@@ -78,9 +90,12 @@
         ev.push(id);
       }
     }
+    const { coverage, basis } = picked;
     ops.push({ op: "put", record: { id: newId("f"), kind: "finding", claim: claim.id, coverage,
-      note, evidence: ev, ...(coverage === "unresolved" ? { question: openQ } : {}) } });
-    if (await run(ops)) { note = ""; openQ = ""; }
+      note, evidence: ev, ...(basis ? { basis } : {}),
+      ...(basis === "reviewed_composition" && argument.trim() ? { argument } : {}),
+      ...(coverage === "unresolved" ? { question: openQ, ...(decide.trim() ? { would_decide: decide } : {}) } : {}) } });
+    if (await run(ops)) { note = ""; openQ = ""; decide = ""; argument = ""; }
   }
 
   async function addQuestion() {
@@ -124,11 +139,12 @@
         </div>
       {/each}
       {#each here.findings as f (f.id)}
+        {@const cv = coverageView(f)}
         <div class="item" data-kind="finding" data-state={f.state} class:old={!f.in_force}>
-          <p class="small"><strong>{COVERAGE[f.coverage] || "No coverage given"}</strong>
+          <p class="small"><strong>{cv?.headline || "No coverage given"}</strong>
             <span class="faint">· {f.in_force ? (f.state === "submitted" ? "submitted" : "draft") : "superseded"} · {f.created_by}</span>
             {#if f.currency?.state === "stale"}<span class="stale"> · evidence changed since</span>{/if}</p>
-          {#if f.question}<p class="small">Question: {f.question}</p>{/if}
+          {#each cv?.lines || [] as line}<p class="small" data-line={line.label}><span class="faint">{line.label}:</span> {line.names?.join(", ") || ""}{line.names?.length && line.text ? ". " : ""}<span class="text">{line.text || ""}</span>{#if line.note} <span class="faint">{line.note}</span>{/if}</p>{/each}
           {#if f.note}<p class="small text">{f.note}</p>{/if}
           {#if f.supersedes}<p class="faint small">Supersedes {f.supersedes}: {f.reason}</p>{/if}
           {#if f.state === "draft"}<button class="act" disabled={busy} onclick={() => submit(f)}>Submit</button>{/if}
@@ -140,11 +156,14 @@
 
       <details class="add">
         <summary>Record a finding</summary>
-        <p class="small"><label>Coverage <select bind:value={coverage}>{#each Object.entries(COVERAGE) as [k, label]}<option value={k}>{label}</option>{/each}</select></label>
+        <p class="small"><label>Coverage <select bind:value={choice}>{#each Object.entries(CHOICES) as [k, c]}<option value={k}>{c.label}</option>{/each}</select></label>
           {#if claim.links?.length}<label><input type="checkbox" bind:checked={cite} /> cite the linked declarations</label>{/if}</p>
-        {#if coverage === "unresolved"}<textarea bind:value={openQ} rows="2" placeholder="The question that would decide it" aria-label="Open question"></textarea>{/if}
+        {#if picked.coverage === "unresolved"}<textarea bind:value={openQ} rows="2" placeholder="The open question" aria-label="Open question"></textarea>
+          <textarea bind:value={decide} rows="2" placeholder="What would decide it" aria-label="What would decide it"></textarea>{/if}
+        {#if picked.basis === "reviewed_composition"}<textarea bind:value={argument} rows="3" placeholder="How the linked results combine to give each clause" aria-label="Argument"></textarea>
+          <p class="faint small">Lean has not checked this combination. Next step: state the combination as one Lean result.</p>{/if}
         <textarea bind:value={note} rows="3" placeholder="What establishes each clause, or what differs" aria-label="Note"></textarea>
-        <button class="act" disabled={busy || (coverage === "unresolved" && !openQ.trim())} onclick={addFinding}>Save draft</button>
+        <button class="act" disabled={busy || (picked.coverage === "unresolved" && !openQ.trim())} onclick={addFinding}>Save draft</button>
       </details>
       <details class="add">
         <summary>Ask a question</summary>

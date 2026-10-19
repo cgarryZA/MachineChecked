@@ -272,31 +272,157 @@ def linked_names(claim: dict, entry: dict) -> list[str]:
     return [n for n in names if n not in entry.get("rejected", [])]
 
 
-COVERAGE = ("full", "composed", "partial", "changed", "related", "unresolved")
+# A correspondence reading has two separate parts: `coverage`, how far the paper's claim and the
+# linked declarations agree mathematically, and `basis`, how that relation is supported: a
+# declaration that states it (`direct`), the auditor's argument combining the declarations
+# (`reviewed_composition`), or a theorem whose type Lean checks is exactly a target proposition
+# the auditor read against the paper (`checked_bridge`). Neither is an input to a status.
+COVERAGE = ("full", "partial", "changed", "related", "unresolved")
+BASIS = ("direct", "reviewed_composition", "checked_bridge")
 CONFIDENCE = ("high", "medium", "low")
 NOTE_CHARS = 2000
+ARGUMENT_CHARS = 8000
+# A reviewed composition is the auditor's argument, which Lean has not checked; what would make
+# it a Lean result is shown beside it.
+COMPOSITION_NEXT_STEP = "State the combination as one Lean result."
+# The keys of a links-file entry that describe its declarations; linking others removes them.
+READING_KEYS = ("note", "coverage", "confidence", "basis", "argument", "refs", "bridge",
+                "question", "would_decide")
 
 
-def correspondence(claim: dict, entry: dict) -> dict | None:
-    """The mapper's note on how far a claim's linked declarations state it: the auditor's, from
-    the links file (with its coverage and confidence when given), else the notes of the
-    project's formalization.yaml rows. It is a reading shown beside the links and changes no
-    status."""
+def _reading_text(v, limit: int = NOTE_CHARS) -> str:
+    return v.strip()[:limit] if isinstance(v, str) else ""
+
+
+def bridge_names(entry: dict) -> tuple[str, str] | None:
+    """The (theorem, target) of an entry's checked bridge, when its basis names one and the
+    theorem is one of the entry's linked declarations."""
+    b = entry.get("bridge")
+    if entry.get("basis") != "checked_bridge" or not isinstance(b, dict):
+        return None
+    thm, target = b.get("theorem"), b.get("target")
+    if not (isinstance(thm, str) and isinstance(target, str) and thm and target):
+        return None
+    lean = entry.get("lean")
+    return (thm, target) if isinstance(lean, list) and thm in lean else None
+
+
+def target_fingerprint(rec: dict | None, decls: dict) -> str | None:
+    """A digest of a bridge target as Lean has it: the target's own fingerprint and those of the
+    project definitions its statement uses, so that a change to any of them changes it."""
+    if not rec or "missing" in (rec.get("errors") or []):
+        return None
+    own = rec.get("fingerprint") or (rec.get("decl") or {}).get("fingerprint")
+    if not own:
+        return None
+    parts = [[rec["name"], own]] + [[n, (decls.get(n) or {}).get("fingerprint")]
+                                    for n in sorted(set(rec.get("closure") or []) - {rec["name"]})]
+    return hashlib.sha256(json.dumps(parts).encode()).hexdigest()[:16]
+
+
+ACCEPT_ERRORS = {"missing": "Lean finds no such theorem",
+                 "not-a-theorem": "it is not a theorem",
+                 "type-not-spec": "its type is not exactly the target"}
+
+
+def bridge_evidence(claim: dict, entry: dict, accept: dict | None, target: dict | None,
+                    decls: dict) -> dict:
+    """What Lean establishes about an entry's checked bridge, and whether the auditor's reading
+    of its target is current. `state` is `checked` (the theorem's type is exactly the target, a
+    proposition stated as a definition, with no `sorry` and only allowed axioms, and the target
+    and the paper's passage are the versions the auditor read), `stale` (checked, but the target
+    or the passage is not the version the auditor read, or no version is recorded), or
+    `unchecked`. `reasons` says why it is not `checked`."""
+    b = entry.get("bridge") if isinstance(entry.get("bridge"), dict) else {}
+    pinned = {"target_fingerprint": b.get("target_fingerprint") or None,
+              "source_sha256": b.get("source_sha256") or None}
+    current = {"target_fingerprint": target_fingerprint(target, decls),
+               "source_sha256": claim.get("source_sha256")}
+    out = {"theorem": b.get("theorem") if isinstance(b.get("theorem"), str) else None,
+           "target": b.get("target") if isinstance(b.get("target"), str) else None,
+           "state": "unchecked", "reasons": [], "pinned": pinned, "current": current}
+    why = out["reasons"]
+    if bridge_names(entry) is None:
+        why.append("the bridge theorem is not one of the claim's linked declarations"
+                   if out["theorem"] and out["target"]
+                   else "no bridge theorem and target are recorded")
+    elif accept is None:
+        why.append("Lean did not check the bridge (its module is not built or not loaded)")
+    else:
+        for e in accept.get("errors") or []:
+            why.append(ACCEPT_ERRORS.get(e) or ("its axioms are not all allowed"
+                                                if e.startswith("axioms=") else e))
+        if accept.get("sorry"):
+            why.append("its proof uses sorry")
+        if target is None or "missing" in (target.get("errors") or []):
+            why.append("Lean finds no such target")
+        elif target.get("kind") != "def" or \
+                ((target.get("decl") or {}).get("signature") or {}).get("text") != "Prop":
+            why.append("the target is not a proposition stated as a definition")
+    if why:
+        return out
+    if pinned["target_fingerprint"] != current["target_fingerprint"]:
+        why.append("the target is not the version the auditor read" if pinned["target_fingerprint"]
+                   else "no reviewed version of the target is recorded")
+    if pinned["source_sha256"] != current["source_sha256"]:
+        why.append("the paper's passage is not the version the auditor read"
+                   if pinned["source_sha256"]
+                   else "no reviewed version of the paper's passage is recorded")
+    out["state"] = "stale" if why else "checked"
+    return out
+
+
+def correspondence(claim: dict, entry: dict, bridge: dict | None = None) -> dict | None:
+    """The mapper's reading of how far a claim's linked declarations state it: the auditor's,
+    from the links file, else the notes of the project's formalization.yaml rows. It is shown
+    beside the links and changes no status.
+
+    The auditor's reading has its `coverage` and, separately, its `basis` with the references
+    it rests on: the linked declarations it cites (`refs`, all of them unless the entry names
+    some), the auditor's argument for a reviewed composition, and the bridge's evidence
+    (`bridge`, from `bridge_evidence`) for a checked bridge. An unresolved reading keeps its open
+    question and what would decide it. A value outside the supported ones is dropped, never
+    guessed, and a basis not given stays unspecified (`None`). A stored `composed` coverage reads
+    as `full` with basis `reviewed_composition`, its note as the argument when none is given. A
+    reviewed composition carries `next_step`, stating the combination as one Lean result."""
     if "lean" in entry:
-        note = entry["note"].strip() if isinstance(entry.get("note"), str) else ""
+        note = _reading_text(entry.get("note"))
         cov = entry.get("coverage") if entry.get("coverage") in COVERAGE else None
+        argument = _reading_text(entry.get("argument"), ARGUMENT_CHARS)
+        if entry.get("coverage") == "composed":
+            # The earlier single value for full coverage by the auditor's composition, whose
+            # note held the argument.
+            cov, basis = "full", "reviewed_composition"
+            if not argument:
+                argument, note = note, ""
+        else:
+            basis = entry.get("basis") if cov and entry.get("basis") in BASIS else None
         if not (note or cov):
             return None
-        return {"source": "confirmed", "coverage": cov,
+        linked = entry["lean"] if isinstance(entry["lean"], list) else []
+        refs = entry.get("refs")
+        refs = [n for n in refs if n in linked] if isinstance(refs, list) else list(linked)
+        if basis == "checked_bridge":
+            refs = [bridge["theorem"]] if bridge and bridge.get("theorem") in linked else []
+        unresolved = cov == "unresolved"
+        return {"source": "confirmed", "coverage": cov, "basis": basis,
+                "refs": refs if basis else [],
+                "argument": (argument or None) if basis == "reviewed_composition" else None,
+                "next_step": COMPOSITION_NEXT_STEP if basis == "reviewed_composition" else None,
+                "bridge": bridge if basis == "checked_bridge" else None,
+                "question": (_reading_text(entry.get("question")) or None) if unresolved else None,
+                "would_decide": (_reading_text(entry.get("would_decide")) or None) if unresolved
+                else None,
                 "confidence": entry.get("confidence") if entry.get("confidence") in CONFIDENCE
                 else None,
-                "note": note[:NOTE_CHARS],
+                "note": note,
                 "by": entry["by"] if isinstance(entry.get("by"), str) else None}
     notes = claim.get("declared_notes") or []
     if not notes:
         return None
-    return {"source": "formalization.yaml", "coverage": None, "confidence": None,
-            "note": " ".join(notes)[:NOTE_CHARS], "by": None}
+    return {"source": "formalization.yaml", "coverage": None, "basis": None, "refs": [],
+            "argument": None, "next_step": None, "bridge": None, "question": None,
+            "would_decide": None, "confidence": None, "note": " ".join(notes)[:NOTE_CHARS], "by": None}
 
 
 REVIEWS_DIR = "machinechecked-reviews"
@@ -364,6 +490,43 @@ def review_view(r: dict, links: list[dict]) -> dict:
             "project_commit": pins.get("project_commit"), "current": current}
 
 
+COVERAGE_WORDS = {"full": "every clause", "partial": "part of the claim",
+                  "changed": "stated differently", "related": "a related result, not this claim",
+                  "unresolved": "unresolved"}
+BASIS_WORDS = {"direct": "in one Lean statement", "reviewed_composition":
+               "by the auditor's composition", "checked_bridge": "through a bridge"}
+
+
+def reading_text(cor: dict | None) -> str:
+    """A correspondence reading (`correspondence`) for the terminal: its coverage and basis,
+    note, the composition's argument with what Lean has not checked and the next step, a
+    bridge's state, and an unresolved reading's question. Empty when nothing is recorded."""
+    cor = cor or {}
+    if not (cor.get("note") or cor.get("coverage")):
+        return ""
+    head = COVERAGE_WORDS.get(cor.get("coverage"), "")
+    if head and cor.get("basis") in BASIS_WORDS:
+        head += ", " + BASIS_WORDS[cor["basis"]]
+    lines = [head.capitalize()] if head else []
+    if cor.get("note"):
+        lines.append(cor["note"])
+    if cor.get("basis") == "reviewed_composition":
+        lines.append("The auditor's argument: " + (cor.get("argument") or "not written."))
+        lines.append("Lean has not checked this combination. Next step: "
+                     + (cor.get("next_step") or COMPOSITION_NEXT_STEP))
+    b = cor.get("bridge") or {}
+    if cor.get("basis") == "checked_bridge" and b:
+        lines.append(f"Bridge {b.get('theorem')} to target {b.get('target')}: "
+                     + {"checked": "Lean checks it", "stale": "out of date: "
+                        + "; ".join(b.get("reasons") or [])}.get(b.get("state"), "not checked: "
+                        + "; ".join(b.get("reasons") or [])))
+    if cor.get("coverage") == "unresolved":
+        lines.append("Open question: " + (cor.get("question") or "not stated."))
+        if cor.get("would_decide"):
+            lines.append("Would decide it: " + cor["would_decide"])
+    return "\n".join(lines)
+
+
 def link_source(claim: dict, entry: dict, name: str) -> str:
     if "lean" in entry:
         return "confirmed"
@@ -409,7 +572,7 @@ def save_link(root: Path, paper: str, key: str, lean: list[str] | None, rejected
             if entry.get("lean") != lean:
                 # A note describes the declarations it was written for: it is kept, no longer
                 # shown, under `earlier_notes`.
-                old = {k: entry.pop(k) for k in ("note", "coverage", "confidence") if k in entry}
+                old = {k: entry.pop(k) for k in READING_KEYS if k in entry}
                 if old:
                     entry.setdefault("earlier_notes", []).append(
                         {**old, "lean": entry.get("lean"), "by": entry.get("by")})
@@ -609,6 +772,14 @@ def resolve_link(name: str, records: list[dict], module: str | None, root: Path,
     return None, None
 
 
+def _one(records: list[dict]) -> dict | None:
+    """The one record Lean gave for a name, or None when it found none or several modules
+    declare it."""
+    found = [r for r in records if "missing" not in (r.get("errors") or [])]
+    mods = {r.get("module") or (r.get("decl") or {}).get("module") for r in found}
+    return found[0] if len(mods) == 1 else None
+
+
 def link_state(rec: dict | None) -> dict:
     """The structured status of a confirmed link from its probe record."""
     if rec is None or "missing" in rec.get("errors", []):
@@ -654,10 +825,17 @@ class LeanFacts:
     does not import or elaborate), a failure the same inputs repeat. A failure of resources or of
     the session (out of memory, a timeout, a heartbeat budget, a killed or unfinished session) is
     stored only as an attempt: the next build loads the module again and says that the earlier
-    attempt failed."""
+    attempt failed.
+
+    A checked bridge (`bridges`, pairs of a theorem and its target) is checked by an `accept`
+    request asked with the theorem's record. Its answer is stored like a link record, per pair
+    and the theorem's module, with the environment of the theorem's module and the target's
+    module (and everything they import), so it is reused while those are unchanged; after a
+    build, `acceptrecs` holds the answers by pair."""
 
     def __init__(self, root: Path, libs: list[str], built: list[str], unbuilt: list[str],
-                 work: Path, lake: str = "lake", log=print, reuse_only: bool = False):
+                 work: Path, lake: str = "lake", log=print, reuse_only: bool = False,
+                 bridges=frozenset()):
         from . import facts
         self.root, self.libs, self.built, self.unbuilt = root, libs, built, unbuilt
         self.work, self.lake, self.log, self.reuse_only = work, lake, log, reuse_only
@@ -667,6 +845,15 @@ class LeanFacts:
         self.fresh_decls: dict[str, dict] = {}
         self.fresh_index: dict[str, list[dict]] = {}
         self.retry: set[str] = set()                 # failures of this build to try again
+        self.bridges: set[tuple[str, str]] = set(bridges)
+        self.fresh_accepts: dict[tuple[str, str], list[dict]] = {}
+        self.acceptrecs: dict[tuple[str, str], list[dict]] = {}
+        self.declared: dict[str, set[str]] = {}      # the index's modules for each name
+
+    def _accept_requests(self, names) -> list[dict]:
+        """The `accept` requests of the bridges whose theorem is among `names`."""
+        return [{"kind": "accept", "name": t, "spec": s} for t, s in sorted(self.bridges)
+                if t in names]
 
     # -- probing and storing ----------------------------------------------------------------
 
@@ -690,6 +877,8 @@ class LeanFacts:
                 self.fresh_decls.setdefault(r["name"], r)
             elif r["record"] == "index":
                 self.fresh_index.setdefault(r["module"], []).append(r)
+            elif r["record"] == "accept":
+                self.fresh_accepts.setdefault((r["name"], r.get("spec")), []).append(r)
         return failed
 
     def _store(self, recs: list[dict], sessions: dict[str, list[str]], failed: dict[str, str],
@@ -739,6 +928,27 @@ class LeanFacts:
                 if "missing" not in errors and m and st.own(m) is not None:
                     st.put("link", f"{r['name']}\0module:{m}", st.environment([m], graph),
                            **answer)
+            for r in rs:
+                if r["record"] != "accept":
+                    continue
+                errors = r.get("errors", [])
+                if any(str(e).startswith("probe-error") for e in errors):
+                    continue
+                spec = r.get("spec") or ""
+                # The target's module: as this session's record of the target, or the index,
+                # gives it. A change to it, or to anything it imports, reopens the answer.
+                targets = {(l.get("decl") or {}).get("module") for l in rs
+                           if l["record"] == "link" and l["name"] == spec}
+                targets |= {x["module"] for x in rs if x["record"] == "index"
+                            and x["name"] == spec}
+                targets |= self.declared.get(spec, set())
+                targets = sorted(t for t in targets if t)
+                st.put("accept", f"{r['name']}\0{spec}\0{_session_key(mods)}",
+                       st.environment(list(mods) + targets, graph), record=_clean(r))
+                m = r.get("module")
+                if "missing" not in errors and m and st.own(m) is not None:
+                    st.put("accept", f"{r['name']}\0{spec}\0module:{m}",
+                           st.environment([m] + targets, graph), record=_clean(r))
         if failed:
             project = {m: d for m in self.built if (d := st.own(m)) is not None}
             for m, reason in failed.items():
@@ -766,6 +976,25 @@ class LeanFacts:
             out.append({"record": e["record"], "decls": objs})
         return out, None
 
+    def _accept_answers(self, name: str, where: dict[str, set[str]], groups: list[list[str]]
+                        ) -> tuple[dict | None, str | None]:
+        """The stored `accept` answers of the bridges whose theorem is `name`, by pair, keyed
+        like its link records; None and why when one is not stored current."""
+        out = {}
+        for t, spec in sorted(self.bridges):
+            if t != name:
+                continue
+            keys = [f"{t}\0{spec}\0module:{m}" for m in sorted(where[t])] if t in where \
+                else [f"{t}\0{spec}\0{_session_key(g)}" for g in groups]
+            recs = []
+            for k in keys:
+                e, why = self.store.get("accept", k)
+                if e is None:
+                    return None, why
+                recs.append(e["record"])
+            out[(t, spec)] = recs
+        return out, None
+
     # -- the two phases ---------------------------------------------------------------------
 
     def index(self, linked: set[str]) -> tuple[list[dict], dict[str, str]]:
@@ -787,17 +1016,21 @@ class LeanFacts:
             earlier = st.peek("attempt", m)
             stale[m] = f"an earlier attempt failed: {_first_line(earlier['reason'])}" \
                 if earlier else why
+        self.declared = _where({r["name"] for rs in by_mod.values() for r in rs},
+                               by_mod.values(), self.built)
         if stale:
             self._need(f"{len(stale)} module(s) to index ({_reasons(stale)})")
             where = _where(linked, by_mod.values(), self.built)
-            ask = sorted(n for n in linked if not (n in where and self._answers(n, where, [])[0]
-                                                   is not None)
+            ask = sorted(n for n in linked
+                         if not (n in where and self._answers(n, where, [])[0] is not None
+                                 and self._accept_answers(n, where, [])[0] is not None)
                          and (n in where or not declaring_modules(self.root, self.unbuilt, n)))
             self.log(f"lean: indexing {len(stale)} of {len(self.built)} built module(s) "
                      f"({_reasons(stale)})"
                      + (f" and checking {len(ask)} linked declaration(s)" if ask else ""))
             more = self._run(sorted(stale), [{"kind": "index", "name": ""}]
-                             + [{"kind": "link", "name": n} for n in ask])
+                             + [{"kind": "link", "name": n} for n in ask]
+                             + self._accept_requests(ask))
             failed.update(more)
             for m in stale:
                 if m in failed:
@@ -809,6 +1042,7 @@ class LeanFacts:
         index = sorted((r for m in by_mod for r in by_mod[m]),
                        key=lambda r: (r.get("module") or "", (r.get("range") or {}).get("line")
                                       or 0, r["name"]))
+        self.declared = _where({r["name"] for r in index}, [index], self.built)
         return index, failed
 
     def links(self, wanted: set[str], index: list[dict], failed: dict[str, str]
@@ -831,21 +1065,39 @@ class LeanFacts:
                 for d in a["decls"]:
                     decls.setdefault(d["name"], d)
 
-        def settle(n) -> bool:
+        def settle(n, last: bool = False) -> bool:
+            # A name is settled when its record and the answers of its bridges are stored
+            # current; after this build's extraction, what it extracted serves instead.
             got, why = self._answers(n, where, groups)
-            if got is not None:
+            acc, why_acc = self._accept_answers(n, where, groups)
+            if got is not None and acc is not None:
                 take(n, got)
+                self.acceptrecs.update(acc)
                 return True
-            if n in self.fresh:
-                take(n, [{"record": r, "decls": [self.fresh_decls[m] for m in
-                                                 r.get("closure", []) if m in self.fresh_decls]}
-                         for r in self.fresh[n]])
+            if last:
+                if got is not None:
+                    take(n, got)
+                elif n in self.fresh:
+                    take(n, [{"record": r, "decls": [self.fresh_decls[m] for m in
+                                                     r.get("closure", [])
+                                                     if m in self.fresh_decls]}
+                             for r in self.fresh[n]])
+                for pair in self.bridges:
+                    if pair[0] == n:
+                        got_pair = (acc or {}).get(pair) or self.fresh_accepts.get(pair)
+                        if got_pair:
+                            self.acceptrecs[pair] = got_pair
                 return True
-            need[n] = why
+            need[n] = why or why_acc
             return False
 
         for n in sorted(wanted):
             if n not in where and declaring_modules(self.root, self.unbuilt, n):
+                continue
+            # A name the index sessions of this build answered needs no second session.
+            if n in self.fresh and all(p in self.fresh_accepts for p in self.bridges
+                                       if p[0] == n):
+                settle(n, last=True)
                 continue
             settle(n)
         if need:
@@ -858,10 +1110,11 @@ class LeanFacts:
             if elsewhere:
                 runs.append((loadable, elsewhere))
             for mods, names in runs:
-                failed.update(self._run(mods, [{"kind": "link", "name": n} for n in names]))
+                failed.update(self._run(mods, [{"kind": "link", "name": n} for n in names]
+                                        + self._accept_requests(names)))
             for n in sorted(need):
                 del need[n]
-                settle(n)
+                settle(n, last=True)
         elif wanted:
             self.log(f"lean: reusing the stored records of {len(linkrecs)} linked or suggested "
                      f"declaration(s)")
@@ -1014,7 +1267,7 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
     fy = fz.load(root)
     if fy and "error" in fy:
         notes.append(fy["error"])
-    index, linkrecs, decls, failed, facts_used = [], {}, {}, {}, {"sessions": 0}
+    index, linkrecs, decls, acceptrecs, failed, facts_used = [], {}, {}, {}, {}, {"sessions": 0}
     if fy and "error" not in fy:
         for c in claims:
             rows = fz.links_for(fy, c["kind"], c["number"], paper.title)
@@ -1041,9 +1294,14 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
         unbuilt_set = set(unbuilt)
         linked = {n for c in claims for n in c["link_names"]
                   if c.get("declared_modules", {}).get(n) not in unbuilt_set}
+        # A checked bridge's theorem is checked against its target, whose own record gives the
+        # version of the target the auditor's reading is compared with.
+        bridge_pairs = {b for c in claims if (b := bridge_names(links.get(c["key"], {})))}
+        linked |= {t for _, t in bridge_pairs}
         work = out_dir / "build"
         (work / "index-cache.json").unlink(missing_ok=True)  # the store replaces it
-        lean = LeanFacts(root, libs, built, unbuilt, work, lake, log, reuse_only)
+        lean = LeanFacts(root, libs, built, unbuilt, work, lake, log, reuse_only,
+                         bridges=bridge_pairs)
         with lean.store.lock(log):
             index, failed = lean.index(linked)
             index = [index_preview(r) for r in index]
@@ -1057,6 +1315,7 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
                 # Every suggestion shown is checked by Lean, not only the first.
                 wanted |= {s["name"] for s in c["suggestions"] if s.get("kind")}
             linkrecs, decls = lean.links(wanted, index, failed)
+            acceptrecs = lean.acceptrecs
         facts_used = {"sessions": lean.sessions, **lean.store.stats}
         again = sorted(m for m in failed if m in lean.retry)
         kept = sorted(m for m in failed if m not in lean.retry)
@@ -1087,7 +1346,14 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
         for s in c.get("suggestions", []):
             found = [r for r in linkrecs.get(s["name"], []) if "missing" not in r.get("errors", [])]
             s["record"] = found[0] if len({((r.get("decl") or {}).get("module")) for r in found}) == 1 else None
-        c["correspondence"] = correspondence(c, entry) if c["links"] else None
+        bridge = None
+        if entry.get("basis") == "checked_bridge":
+            thm, target = bridge_names(entry) or (None, None)
+            recs = acceptrecs.get((thm, target), [])
+            accept = _one(recs) or ({"errors": ["missing"]} if recs and all(
+                "missing" in (r.get("errors") or []) for r in recs) else None)
+            bridge = bridge_evidence(c, entry, accept, _one(linkrecs.get(target, [])), decls)
+        c["correspondence"] = correspondence(c, entry, bridge) if c["links"] else None
         c["reviews"] = [review_view(r, c["links"]) for r in reports.get("link:" + c["key"], [])]
         if c["links"]:
             worst = max(c["links"], key=lambda l: ["proved", "unspecified", "open", "malformed"]

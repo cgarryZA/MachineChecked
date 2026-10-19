@@ -2,12 +2,14 @@
 the exported report is one `review promote` accepts unchanged."""
 
 import json
+from pathlib import Path
 
 import pytest
 
 from conftest import build, needs_lean, needs_tex
 from prooflens import cli
 from prooflens import promote as pr
+from prooflens.review_cli import issue_draft, report
 
 UNIT = "def:Toy.triangle"
 WHO = ["--as", "human:Test-Referee"]
@@ -68,3 +70,30 @@ def test_a_reviewer_must_be_named(toy, monkeypatch, capsys):
     with pytest.raises(SystemExit) as e:
         cli.main(["review", "next"])
     assert e.value.code == 2 and "human:NAME or llm:MODEL" in capsys.readouterr().err
+
+
+DRAFTS = json.loads((Path(__file__).resolve().parents[1] / "fixtures" / "review"
+                     / "issue-drafts.json").read_text(encoding="utf-8"))
+
+
+@pytest.mark.parametrize("case", DRAFTS["cases"], ids=lambda c: c["verdict"])
+def test_issue_drafts_are_those_the_reader_writes(case):
+    """The command line writes the drafts of tests/fixtures/review/issue-drafts.json, which
+    web/tests/review.test.mjs checks the reader writes too."""
+    assert issue_draft(DRAFTS["unit"], case["verdict"], case["detail"]) == case["draft"]
+
+
+def test_cannot_determine_is_an_open_question_not_a_defect():
+    """A reviewer who cannot decide leaves an open question: the report's issue draft says so,
+    keeps the question, and never calls it a defect."""
+    unit = {**DRAFTS["unit"], "kind": "statement"}
+    draft = {"reading": "r" * 20, "locked_at": "2026-01-01T00:00:00Z", "comparison": "c",
+             "decided_at": "2026-01-01T00:01:00Z", "group": "cannot",
+             "verdict": "cannot determine", "detail": "Is n allowed to be 0?",
+             "author_shown_at": "2026-01-01T00:02:00Z"}
+    r = report({"release": "v1", "papers": []}, unit, draft, {"id": "human:A"}, "none")
+    d = r["issue_draft"]
+    assert d["kind"] == "unresolved question"
+    assert "defect" not in json.dumps(d) and "Is n allowed to be 0?" in d["body"]
+    assert r["verdict"] == {"group": "cannot", "value": "cannot determine",
+                            "detail": "Is n allowed to be 0?"}
