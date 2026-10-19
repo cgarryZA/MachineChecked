@@ -33,9 +33,10 @@ def test_a_unit_says_what_it_reveals_and_revealed_units_come_first(toy):
     markers closing one review section reveal each other's author review (#53)."""
     _, _, cfg = build(toy)
     q = json.loads((cfg.out_dir / "site/data/review-queue.json").read_text())
-    h = next(u["legacy_hash"] for u in q["units"] if u["id"] == "spec:Toy.PaperSpec.thm_bound")
+    u = next(u for u in q["units"] if u["id"] == "spec:Toy.PaperSpec.thm_bound")
+    h, src = u["legacy_hash"], ",".join(u["source_sha256"])
     edit(toy / "reviews/T.md", "<!-- spec-review: Toy.PaperSpec.thm_triangle",
-         f"<!-- spec-review: Toy.PaperSpec.thm_bound {h} by=statement-author -->\n"
+         f"<!-- spec-review: Toy.PaperSpec.thm_bound {h} by=statement-author source={src} -->\n"
          "<!-- spec-review: Toy.PaperSpec.thm_triangle")
     _, _, cfg = build(toy, reuse_lean=True)
     q = json.loads((cfg.out_dir / "site/data/review-queue.json").read_text())

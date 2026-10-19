@@ -922,7 +922,8 @@ def cmd_review(a):
             for w in why:
                 print(f"           - {w}")
         else:
-            print(f"OK       {head}\n           {pr.marker(r, cur)}")
+            print(f"OK       {head}\n           "
+                  f"{pr.marker(r, cur, r['pins'].get('source_sha256'))}")
             ok.append((r, cur))
     if not ok:
         sys.exit("nothing to promote")

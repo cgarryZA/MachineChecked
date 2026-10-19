@@ -1,11 +1,12 @@
 """Review records: markers in Markdown files, and dismissals of advisory findings.
 
-A marker `<!-- spec-review: <name> <hash> by=<reviewer> [kind=human|ai] -->` records a review of
-the proposition `<name>` at `<hash>`; `def-review` does the same for a definition. The hash is
-either the legacy 128-bit structural hash or a `pl-fp-v1:` fingerprint. The last marker of a
-declaration (files in order, then position) is its record; it counts only while its hash is
-current. The text of the review is the section
-the marker closes.
+A marker `<!-- spec-review: <name> <hash> by=<reviewer> [kind=human|ai] [source=<sha>,...] -->`
+records a review of the proposition `<name>` at `<hash>`; `def-review` does the same for a
+definition. The hash is either the legacy 128-bit structural hash or a `pl-fp-v1:` fingerprint;
+`source` lists the digests of the paper passages the reviewer read (`review_sources.py`). The
+last marker of a declaration (files in order, then position) is its record; it counts only while
+its hash is current and its passages are unchanged. The text of the review is the section the
+marker closes.
 
 A marker is a self-declared record: nothing in the file authenticates who wrote it.
 """
@@ -19,6 +20,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from .review_sources import parse as parse_source
 from .util import sha256_file
 
 MARKER = re.compile(r"<!--\s*(spec|def)-review:\s*(\S+)\s+(\S+)((?:\s+[\w-]+=\S+)*)\s*-->")
@@ -36,6 +38,7 @@ class Review:
     file: str
     line: int
     text: str
+    source: list[str] | None = None   # digests of the passages read; None if not recorded
 
     def to_json(self) -> dict:
         return dict(self.__dict__)
@@ -70,7 +73,8 @@ def parse_file(path: Path, ai_patterns: list[str], rel_to: Path) -> list[Review]
             target=m.group(1), name=m.group(2), hash=m.group(3), by=by,
             kind=reviewer_kind(by, attrs.get("kind"), ai_patterns), provenance="self-declared",
             file=os.path.relpath(path, rel_to),
-            line=txt.count("\n", 0, m.start()) + 1, text=body))
+            line=txt.count("\n", 0, m.start()) + 1, text=body,
+            source=parse_source(attrs.get("source"))))
         prev = m.end()
     return out
 

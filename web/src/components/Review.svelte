@@ -102,6 +102,8 @@
   function lockReading() {
     if ((draft.reading || "").trim().length < 20) return;
     draft.revealed_by = revealedBy(current);
+    // The passages read are those of this release: the report pins their digests.
+    draft.source_sha256 = current.source_sha256 || null;
     draft.locked_at = now(); draft.stage = "compare"; persist();
   }
   function choose(g) { draft.group = g; draft.verdict = VERDICTS[g].length === 1 ? VERDICTS[g][0].value : null; persist(); }
@@ -131,6 +133,7 @@
     if (!r) return;
     work.drafts[r.unit.id] = {
       stage: "author", reading: r.reading.text, locked_at: r.reading.locked_at, revealed_by: r.reading.revealed_by,
+      source_sha256: r.pins.source_sha256,
       comparison: r.comparison.text, witness: r.comparison.witness, decided_at: r.comparison.decided_at,
       group: r.verdict.group, verdict: r.verdict.value, detail: r.verdict.detail,
       author_shown_at: r.author_review.shown_at, disagreements: r.author_review.disagreements };

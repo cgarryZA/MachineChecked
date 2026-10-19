@@ -33,13 +33,21 @@ line (an equation, a part of an environment, a prose claim), whose hash is the h
 Markdown files with markers:
 
 ```
-<!-- spec-review: <proposition> <hash> by=<reviewer> [kind=human|ai] -->
-<!-- def-review: <definition> <hash> by=<reviewer> [kind=human|ai] -->
+<!-- spec-review: <proposition> <hash> by=<reviewer> [kind=human|ai] [source=<sha256>,...] -->
+<!-- def-review: <definition> <hash> by=<reviewer> [kind=human|ai] [source=<sha256>,...] -->
 ```
 
-`<hash>` is the `legacy_hash` or the `pl-fp-v1:` fingerprint the review was made at. The section
-the marker closes is the text of the review. The last marker of a declaration, reading the files
-in order (a directory's `.md` files by name), is its current record.
+`<hash>` is the `legacy_hash` or the `pl-fp-v1:` fingerprint the review was made at. `source`
+lists the digests of the paper passages the reviewer read: the `source_sha256` pins of the claims
+that state the proposition, or of the definition claims that name the definition, sorted and
+comma-separated; a declaration no claim names has none. A marker without `source` is read as
+the [evidence policy](EVIDENCE_POLICY.md#a-review-is-a-reading-of-a-text) says. The section the
+marker closes is the text of the review. The last marker of a declaration, reading the files in
+order (a directory's `.md` files by name), is its current record.
+
+A review report (`prooflens/review-report@1`) pins the same digests as `pins.source_sha256`,
+taken when the reading is locked; `review promote` refuses a report whose digests are missing or
+differ from the current ones.
 
 Dismissals of warnings (`dismissals.json`):
 `[{"code", "subject", "trigger", "fingerprint", "rationale", "by"}]`.

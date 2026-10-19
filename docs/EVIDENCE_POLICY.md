@@ -30,6 +30,31 @@ and fails the paper's consistency check.
 Every definition in the closure of a proposition needs its own review, including the auxiliary
 declarations Lean generates (`match_1`, `_f`): they are part of the definition's meaning.
 
+## A review is a reading of a text
+
+A review compares a Lean declaration with the paper's text, so it counts only for the text that
+was read. A review of a proposition reads the passages of every claim whose clauses state it; a
+review of a definition reads the passages of the definition claims that name it. A definition
+that only occurs in a closure has no passage of its own.
+
+- **Recorded digests.** A marker records the digests of the passages shown to the reviewer
+  (`source=`, the claims' source pins `source_sha256`, scheme `tex-region-v1` for a claim
+  located by line). `review promote` writes them from the report. A marker whose digests differ
+  from the claims' current pins is not current: the claim reads `review pending`, with a finding
+  that names the claim whose text changed since the reading. A claim added to those that state
+  the proposition also reopens it.
+- **Markers written before the digests were recorded.** Such a marker counts only while the
+  project's Git history shows its passages unchanged since the marker was written: the commit
+  that wrote the marker's line, and every later version of the inventory, keep each claim's pin
+  (the same digest under the same scheme, or a legacy pin rehashed as `tex-region-v1` at the same
+  paper revision and in the same file). A pin that changed reopens the review as above. When the
+  history cannot show it (no Git repository, a shallow clone, a file not committed, a claim
+  without a pin when the marker was written), the review is reported as *reviewed before source
+  pins were recorded* and does not count.
+- **Migration.** `python -m prooflens.review_sources --config FILE` lists the markers without
+  digests and, with `--write`, adds the digests to those whose passages the history shows
+  unchanged. It leaves every other marker as it is: those need a new reading.
+
 ## Gates
 
 | Gate | Passes when |
@@ -52,14 +77,15 @@ Each clause reports a result for every evidence dimension.
 | kernel replay | yes | a structured Comparator record (`comparator_log`: JSON with the full project `commit` and the exact names of the `replayed` theorems, as `machinechecked replay` writes it) covers this proof for this commit, or for an ancestor of it with no Lean input changed since; without one the rung is `not run`, never `failed`; a record of another commit, of a run that did not pass, of a tree with uncommitted Lean changes, or of another Lean version or set of Lake dependencies (when it names them), or a text log, is `unverified` |
 | witness | yes, for the theorem; the fit to the paper is reviewed | a proposition with hypotheses has a theorem meeting them (not needed for a clause whose refutation checks: a proof of ¬S exhibits an instance meeting S's hypotheses) |
 | regimes | yes, for the theorems; the fit is reviewed | each regime the paper intends to cover has its witness |
-| review | no | the proposition and its definitions have current reviews; `author` if only by an author |
+| review | no | the proposition and its definitions have current reviews of their current Lean and paper text; `author` if only by an author |
 | source | yes | the claim was located in the compiled paper and its source hash matches the inventory; `pdf-only` if there is no LaTeX |
 
 ## What each check establishes
 
 - **Proof:** Lean establishes the formal proposition under its recorded axioms.
 - **Correspondence:** reviewers compare the proposition and its definitions with the paper.
-- **Review provenance:** markers record self-declared identities and the hashes reviewed.
+- **Review provenance:** markers record self-declared identities, the hashes reviewed and the
+  digests of the paper passages read.
 - **Witness:** a checked example establishes that the formal hypotheses can be met.
 - **Source verification:** hashes identify the manuscript region or PDF being audited.
 - **Replay:** a structured Comparator record identifies the proofs and build replayed.

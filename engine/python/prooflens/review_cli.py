@@ -179,7 +179,9 @@ class Session:
         d = self.draft(u, "read")
         if len(reading.strip()) < 20:
             raise ReviewError("the reading is too short to record (20 characters at least)")
-        d.update(reading=reading, revealed_by=self.revealed_by(u), locked_at=now(), stage="compare")
+        # The passages read are those of this queue's release: the report pins their digests.
+        d.update(reading=reading, revealed_by=self.revealed_by(u), locked_at=now(),
+                 source_sha256=u.get("source_sha256"), stage="compare")
         self.save()
 
     def show(self, uid: str, as_json: bool = False) -> str | dict:
@@ -286,7 +288,8 @@ def report(index: dict, u: dict, d: dict, reviewer: dict, disagreements: str) ->
                  "project_commit": (index.get("project") or {}).get("commit"),
                  "manuscripts": {p: revs.get(p) for p in u.get("papers") or []},
                  "legacy_hash": u.get("legacy_hash"), "fingerprint": u.get("fingerprint"),
-                 "fingerprints": u.get("fingerprints")},
+                 "fingerprints": u.get("fingerprints"),
+                 "source_sha256": d.get("source_sha256")},
         "reviewer": reviewer,
         "reading": {"text": d["reading"], "locked_at": d["locked_at"],
                     "revealed_by": d.get("revealed_by") or []},

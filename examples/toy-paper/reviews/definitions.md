@@ -7,14 +7,14 @@ Synthetic reviews for the example (see `T.md`).
 Definition 1.1: `n` is even if `n = 2k` for some natural `k`. The definition is
 `∃ k, n = 2 * k`.
 
-<!-- def-review: Toy.IsEven pl-fp-v1:a2514da741fb42660e227ed84561ac546c4e4f8e59d16eacaaee94b6a6d2204e by=a.referee kind=human -->
+<!-- def-review: Toy.IsEven pl-fp-v1:a2514da741fb42660e227ed84561ac546c4e4f8e59d16eacaaee94b6a6d2204e by=a.referee kind=human source=5087ddc4fc4cd7e08f886f51e965aa0925ca11fdecbb669f2331cb13cef9dd15 -->
 
 ## `Toy.triangle`
 
 Definition 1.1: `T_n = 0 + 1 + ⋯ + n`. The definition is the recursion `T_0 = 0`,
 `T_(n+1) = T_n + (n + 1)`.
 
-<!-- def-review: Toy.triangle e46077ff10d20514656f6f13387c90e6 by=statement-author -->
+<!-- def-review: Toy.triangle e46077ff10d20514656f6f13387c90e6 by=statement-author source=5087ddc4fc4cd7e08f886f51e965aa0925ca11fdecbb669f2331cb13cef9dd15 -->
 
 ## `Toy.triangle._f`, `Toy.triangle.match_1`
 
