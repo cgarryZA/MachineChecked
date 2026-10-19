@@ -365,6 +365,23 @@ def test_a_replay_record_counts_only_for_its_commit_environment_and_a_passing_ru
         c = next(c for c in body["assessment"]["claims"] if c["id"] == "T:thm:even-add")
         return c["clauses"][0]["checks"]["replay"]
 
+    # The guard of the run is shown, never changing the replay's state or the claim's status.
+    (toy / "replay.json").write_text(json.dumps(
+        {**rec, "conditions": {**rec["conditions"], "guard": "none"}}))
+    index, _, _ = build(toy)
+    base = status(index, "T:thm:even-add")
+    got = state()
+    assert got["state"] == "pass" and got["guard"] == "unguarded"
+    assert got["detail"].endswith("; replayed without the sandbox guard")
+    for conditions, guard in (({**rec["conditions"], "guard": "RestrictAddressFamilies=~AF_UNIX"},
+                               "guarded"), (None, "unrecorded")):
+        (toy / "replay.json").write_text(json.dumps({**rec, "conditions": conditions}))
+        index, body, _ = build(toy)
+        got = next(c for c in body["assessment"]["claims"]
+                   if c["id"] == "T:thm:even-add")["clauses"][0]["checks"]["replay"]
+        assert got["state"] == "pass" and got["guard"] == guard
+        assert status(index, "T:thm:even-add") == base
+    (toy / "replay.json").write_text(json.dumps(rec))
     assert state()["state"] == "pass"
     for change, why in (({"passed": False}, "did not pass"), ({"dirty": True}, "uncommitted"),
                         ({"toolchain": "leanprover/lean4:v0.0.0"}, "other Lean version"),

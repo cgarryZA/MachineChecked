@@ -554,6 +554,12 @@ def _finding_details(cfg, eid: str) -> list[dict]:
             for f in sorted(found, key=lambda f: (order.get(f.get("tier"), 3), f.get("id", "")))]
 
 
+def _replay_guard(cfg, eid: str) -> dict | None:
+    from . import evidence as ev
+    from .replay import guard_summary
+    return guard_summary(ev.load(cfg.out_dir, eid)["body"]["assessment"])
+
+
 def _check_json(a):
     """`check --json`: every claim with its status and links, as one JSON document on stdout
     (progress goes to stderr). Exit 1 if a linked declaration is missing or not proved."""
@@ -571,7 +577,8 @@ def _check_json(a):
             out = {"mode": "full", "release": idx["release"],
                    "project": idx.get("project", {}).get("commit"),
                    "findings": idx["findings"]["total"],
-                   "finding_details": _finding_details(cfg, res["evidence"])}
+                   "finding_details": _finding_details(cfg, res["evidence"]),
+                   "replay": _replay_guard(cfg, res["evidence"])}
             failed = bool(idx["findings"]["total"].get("violation"))
         else:
             root, paper = _simple_target(a)
@@ -636,6 +643,9 @@ def cmd_build(a):
             print(f"  warning  {f['message']}")
     if idx["findings"]["total"].get("warning"):
         print("  (warnings: see `check --json` or the reader)")
+    rg = _replay_guard(cfg, res["evidence"])
+    if rg and rg["message"]:
+        print(f"note: independent replay: {rg['message']}")
     if dest is not None:
         # The site to publish is the audit's public export: what the configuration publishes,
         # scanned for private material, as `export --out` writes it.
@@ -712,13 +722,19 @@ def cmd_replay(a):
     if out is None:
         sys.exit("say where to write the record: --out FILE, or `comparator_log` in "
                  "machinechecked.toml (which the assessment then reads)")
-    rec = replay(cfg.lean_root, Path(a.comparator_config).resolve(), out, a.comparator)
-    print(f"Comparator {'passed' if rec['passed'] else 'did not pass'} on commit "
-          f"{rec['commit'][:12]}: {len(rec['replayed'])} theorem(s) replayed; record in {out}")
+    rec = replay(cfg.lean_root, Path(a.comparator_config).resolve(), out, a.comparator,
+                 guard=not a.no_guard)
     how = rec["conditions"]
+    print(f"Comparator {'passed' if rec['passed'] else 'did not pass'} on commit "
+          f"{rec['commit'][:12]}: {len(rec['replayed'])} theorem(s) replayed"
+          + (" under the sandbox guard" if how["guard"] != "none" else "")
+          + f"; record in {out}")
     if how["guard"] == "none":
-        print("note: Comparator ran without the guard its README requires (this process could "
-              "open a Unix socket); the record says so. See `machinechecked replay --help`.",
+        why = ("--no-guard was given" if how["guard_mode"] == "opted-out" else
+               "this machine cannot start it: it needs `systemd-run` and a user systemd manager "
+               "that applies RestrictAddressFamilies")
+        print(f"note: replayed without the sandbox guard ({why}); the replay still counts, and "
+              "the record and the audit say so. See `machinechecked replay --help`.",
               file=sys.stderr)
     if how["landrun"] is None:
         print("note: no `landrun` was found; the record says so.", file=sys.stderr)
@@ -1096,17 +1112,21 @@ def main(argv=None):
         description="Run Comparator (`lake env comparator CONFIG`) in the Lean project and record "
         "the replay. Comparator's trust model asks for a checking environment in which the "
         "solution was not compiled before, `landrun` on PATH, and the whole run under "
-        "`systemd-run --user --property=RestrictAddressFamilies=~AF_UNIX --pipe --wait "
-        "-E PATH=\"$PATH\" --working-directory \"$PWD\" -- machinechecked replay CONFIG`. "
-        "This command does not start that guard; the record says whether this process ran "
-        "under it, which systemd unit and Landlock ABI it had, and which comparator, landrun, "
-        "lean4export and nanoda_bin it used, with their SHA-256.")
+        "`systemd-run --user --property=RestrictAddressFamilies=~AF_UNIX`. This command starts "
+        "that sandbox guard itself when the machine has `systemd-run` and a user systemd "
+        "manager that applies it (or runs directly when it is already under it); --no-guard "
+        "opts out. A replay without the guard still counts, and the audit says it was replayed "
+        "without the sandbox guard. The record says how the run went: the guard, the systemd "
+        "unit, the Landlock ABI, and which comparator, landrun, lean4export and nanoda_bin it "
+        "used, with their SHA-256.")
     rp.add_argument("comparator_config", metavar="CONFIG",
                     help="the Comparator configuration (its theorem_names are the proofs "
                     "replayed)")
     rp.add_argument("-c", "--config", default=None, help=argparse.SUPPRESS)
     rp.add_argument("--out", help="the record (default: comparator_log in machinechecked.toml)")
     rp.add_argument("--comparator", default="comparator", help="the Comparator program")
+    rp.add_argument("--no-guard", action="store_true",
+                    help="run Comparator without the systemd-run sandbox guard")
     rp.set_defaults(func=cmd_replay)
 
     ins = sub.add_parser("inspect", help="what a Lean declaration depends on, proofs included")

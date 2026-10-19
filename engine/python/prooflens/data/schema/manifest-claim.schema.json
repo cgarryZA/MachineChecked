@@ -167,6 +167,13 @@
                       "not-run",
                       "unverified"
                     ]
+                  },
+                  "guard": {
+                    "enum": [
+                      "guarded",
+                      "unguarded",
+                      "unrecorded"
+                    ]
                   }
                 }
               },

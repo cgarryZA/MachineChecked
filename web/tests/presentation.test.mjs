@@ -29,6 +29,11 @@ assert.match(clauseNote({ evidence: { formal: { state: "refuted" } } }, 2), /for
 assert.doesNotMatch(clauseNote({ evidence: { formal: { state: "refuted" } } }, 2), /printed statement false/);
 assert.match(evidenceView("source", { state: "pdf-only", placement: "approximate", pdf_integrity: "matched" }).word,
   /PDF only · PDF hash matched · approximate location/);
+assert.equal(evidenceView("replay", { state: "pass", guard: "unguarded" }).word,
+  "passed · replayed without the sandbox guard");
+assert.equal(evidenceView("replay", { state: "pass", guard: "guarded" }).word,
+  "passed · under the sandbox guard");
+assert.equal(evidenceView("replay", { state: "pass" }).word, "passed");
 console.log("all structured presentation contracts passed");
 
 const { evidenceFacts } = await import("../src/lib/presentation.js");

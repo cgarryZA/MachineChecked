@@ -49,7 +49,7 @@ Each clause reports a result for every evidence dimension.
 | locked statement | yes | the proposition is a definition of type `Prop` in the specification layer, over allowed axioms |
 | exact statement | yes | the acceptance theorem's type is exactly the proposition (or its negation), and it has no `sorry`; checked on the build the probe ran on, which may be a restored cache |
 | axioms | yes | its axioms are among the allowed (`propext`, `Classical.choice`, `Quot.sound` by default) |
-| kernel replay | yes | a structured Comparator record (`comparator_log`: JSON with the full project `commit` and the exact names of the `replayed` theorems, as `machinechecked replay` writes it) covers this proof for this commit, or for an ancestor of it with no Lean input changed since; without one the rung is `not run`, never `failed`; a record of another commit, of a run that did not pass, of a tree with uncommitted Lean changes, or of another Lean version or set of Lake dependencies (when it names them), or a text log, is `unverified` |
+| kernel replay | yes | a structured Comparator record (`comparator_log`: JSON with the full project `commit` and the exact names of the `replayed` theorems, as `machinechecked replay` writes it) covers this proof for this commit, or for an ancestor of it with no Lean input changed since; without one the rung is `not run`, never `failed`; a record of another commit, of a run that did not pass, of a tree with uncommitted Lean changes, or of another Lean version or set of Lake dependencies (when it names them), or a text log, is `unverified`; a replay made without Comparator's sandbox guard still passes, and the rung says "replayed without the sandbox guard" (or "sandbox guard not recorded" for a record that does not state its conditions) |
 | witness | yes, for the theorem; the fit to the paper is reviewed | a proposition with hypotheses has a theorem meeting them (not needed for a clause whose refutation checks: a proof of ¬S exhibits an instance meeting S's hypotheses) |
 | regimes | yes, for the theorems; the fit is reviewed | each regime the paper intends to cover has its witness |
 | review | no | the proposition and its definitions have current reviews; `author` if only by an author |
@@ -62,7 +62,8 @@ Each clause reports a result for every evidence dimension.
 - **Review provenance:** markers record self-declared identities and the hashes reviewed.
 - **Witness:** a checked example establishes that the formal hypotheses can be met.
 - **Source verification:** hashes identify the manuscript region or PDF being audited.
-- **Replay:** a structured Comparator record identifies the proofs and build replayed.
+- **Replay:** a structured Comparator record identifies the proofs and build replayed, and
+  states whether the run was under Comparator's sandbox guard.
 
 ## Provenance of a release
 
