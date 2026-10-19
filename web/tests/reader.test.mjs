@@ -1038,7 +1038,7 @@ await check("review opens the selected claim, keeps protocol order and exports a
       await inv.getByRole("button", { name: "Save question" }).click();
       await inv.locator("[data-kind=question]").waitFor();
       await inv.locator("summary", { hasText: "Record a finding" }).click();
-      await inv.getByRole("combobox").selectOption("changed");
+      await inv.getByRole("combobox", { name: "Coverage" }).selectOption("changed");
       await inv.getByRole("textbox", { name: "Note" }).fill("The Lean adds a hypothesis.");
       await inv.getByRole("button", { name: "Save draft" }).click();
       await inv.locator("[data-kind=finding]").waitFor();
@@ -1078,7 +1078,7 @@ print(json.dumps(wsp.read(p)))`);
         // reads as a direct result.
         const add = inv.locator("details.add", { hasText: "Record a finding" });
         if (!(await add.evaluate((d) => d.open))) await add.locator("summary").click();
-        await inv.getByRole("combobox").selectOption("composition");
+        await inv.getByRole("combobox", { name: "Coverage" }).selectOption("composition");
         await inv.getByRole("textbox", { name: "Argument" }).fill("Apply it to each summand.");
         await inv.getByRole("textbox", { name: "Note" }).fill("Two results combined.");
         await inv.getByRole("button", { name: "Save draft" }).click();
@@ -1087,6 +1087,60 @@ print(json.dumps(wsp.read(p)))`);
         assert.match((await comp.textContent()).replace(/\s+/g, " "),
           /^Every clause, by the auditor's composition.*Lean has not checked this combination\..*Next step: State the combination as one Lean result\./);
       } finally { await pg2.close(); }
+    });
+
+    // A requirement of Theorem 2.2 with its source: the sentence that sets the quantifier's
+    // domain is suggested from the paper's source, accepted, and a wrong suggestion removed
+    // with its reason; a later use and an alignment saved from the terminal are shown apart.
+    fs.mkdirSync(path.join(root, "sources", "T"), { recursive: true });
+    fs.copyFileSync(path.join(here, "..", "..", "examples", "toy-paper", "paper", "toy.tex"), path.join(root, "sources", "T", "toy.tex"));
+    await check("a requirement keeps the passages that govern it", 1300, async (pg) => {
+      await pg.goto(`http://127.0.0.1:${port}/#/r/${TOY.release}/claim/${encodeURIComponent("T:thm:triangle")}`);
+      const inv = pg.locator("section.investigation");
+      await inv.getByRole("button", { name: /^Continue ws-/ }).click();
+      await inv.locator("summary", { hasText: "Add a requirement" }).click();
+      await inv.getByRole("textbox", { name: "Local id" }).fill("r1");
+      await inv.getByRole("combobox", { name: "Form" }).selectOption("for every");
+      await inv.getByRole("textbox", { name: "Variables" }).fill("n");
+      await inv.getByRole("textbox", { name: "Requirement" }).fill("for every natural number n");
+      await inv.getByRole("button", { name: "Save requirement" }).click();
+      const req = inv.locator("[data-req=r1]");
+      await req.waitFor();
+      assert.match(await req.textContent(), /r1 for every n: for every natural number n[\s\S]*the statement · this claim's passage · printed for this claim/);
+      await req.getByRole("button", { name: "Suggest nearby context" }).click();
+      const proposed = req.locator(".frag.proposed", { hasText: "For every natural number $n$," });
+      await proposed.waitFor();
+      assert.match(await proposed.textContent(), /Suggested: domain of a quantifier · toy\.tex:46/);
+      await proposed.getByRole("button", { name: "Accept" }).click();
+      const accepted = req.locator(".frag[data-role='quantifier domain']:not(.proposed)");
+      await accepted.waitFor();
+      assert.match(await accepted.textContent(), /For every natural number \$n\$,[\s\S]*domain of a quantifier · toy\.tex:46 · printed for this claim · by human:Test-Auditor \(suggested by MachineChecked\)/);
+      // A later use and an alignment, saved through the engine.
+      engine(String.raw`
+import json, sys
+from pathlib import Path
+from prooflens import workspace as wsp
+from prooflens.targets import Snapshot
+(p, ws), = wsp.list_all(Path(sys.argv[1]))
+s = Snapshot(Path(sys.argv[1]).parent / "toyws" / "data")
+wsp.update(p, [{"op": "put", "record": {"kind": "fragment", "claim": "T:thm:triangle", "requirement": "r1", "role": "later use", "region": {"file": "toy.tex", "start_line": 79}}},
+               {"op": "put", "record": {"kind": "fragment", "claim": "T:thm:triangle", "requirement": "r1", "role": "context", "origin": "inferred", "state": "proposed", "region": {"file": "toy.tex", "start_line": 41}}},
+               {"op": "put", "record": {"kind": "alignment", "claim": "T:thm:triangle", "requirements": ["r1"], "lean": [{"decl": "Toy.PaperSpec.thm_triangle", "var": "n"}]}}], s)
+print("null")`);
+      await pg.reload();
+      await req.locator(".frag.use").waitFor();
+      assert.match(await req.locator(".frag.use").textContent(), /Used later at toy\.tex:79: a use of the result; this reading is unchanged/);
+      assert.match(await req.locator("[data-alignment]").textContent(), /Lean: Toy\.PaperSpec\.thm_triangle \(variable: n\) · corresponds · recorded by human:Test-Auditor/);
+      assert.equal(await inv.locator(".witness").count(), 0);
+      // A wrong proposal is removed with its reason, and kept as removed.
+      const wrong = req.locator(".frag.proposed");
+      await wrong.getByRole("button", { name: "Remove" }).click();
+      await req.getByRole("textbox", { name: "Why remove it" }).fill("Not about n.");
+      await req.getByRole("button", { name: "Remove passage" }).click();
+      await req.locator("details.removed").waitFor();
+      assert.equal(await req.locator(".frag.proposed").count(), 0);
+      await req.locator("details.removed summary").click();
+      assert.match(await req.locator("details.removed").textContent(), /toy\.tex:41 \(context\), removed by human:Test-Auditor: Not about n\./);
     });
   } finally { py.kill(); }
 }

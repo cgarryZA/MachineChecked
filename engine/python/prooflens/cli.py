@@ -400,10 +400,16 @@ def _print_workspace(v: dict) -> None:
                       + COMPOSITION_NEXT_STEP)
         for q in c["questions"]:
             print(f"  question {q['id']}  {q['state']}: {q['text']}")
+        rd = c.get("reading") or {}
+        if rd.get("requirements") or rd.get("alignments"):
+            from .requirements import lines as reading_lines
+            print("  requirements:")
+            for line in reading_lines(rd):
+                print("  " + line)
 
 
 def cmd_workspace(a):
-    """`machinechecked workspace open|list|show|update|export|import`: the saved investigation
+    """`machinechecked workspace open|list|show|update|suggest|export|import`: the saved investigation
     (`workspace.py`), as the reader saves it."""
     from . import review_cli as rc
     from . import workspace as wsp
@@ -458,6 +464,19 @@ def cmd_workspace(a):
             p = path()
             ack = wsp.update(p, ops, snap, root, a.reviewer or None, op_id, a.dry_run)
             _print_json(ack)
+        elif a.action == "suggest":
+            from .requirements import suggestion_ops
+            if snap is None:
+                sys.exit("no build to read the paper from: run view or build first")
+            p = path()
+            cid = snap.resolve_claim(a.claim)
+            ops = suggestion_ops(wsp.read(p), snap, cid, a.requirement)
+            if not a.apply:
+                return _print_json({"ops": ops})
+            if not ops:
+                return _print_json({"ok": True, "changed": [], "suggested": 0})
+            ack = wsp.update(p, ops, snap, root, a.reviewer or None, a.op_id)
+            _print_json({**ack, "suggested": len(ops)})
         elif a.action == "export":
             body = wsp.export(path())
             Path(a.out).write_text(json.dumps(body, indent=1, ensure_ascii=False) + "\n",
@@ -473,7 +492,7 @@ def cmd_workspace(a):
         _print_json({"ok": False, "error": str(e), "conflicts": e.conflicts})
         raise SystemExit(1)
     except (wsp.WorkspaceError, TargetError, ValueError) as e:
-        if getattr(a, "json", False) or a.action in ("update", "import"):
+        if getattr(a, "json", False) or a.action in ("update", "import", "suggest"):
             _print_json({"ok": False, "error": str(e),
                          **({"candidates": e.candidates} if isinstance(e, TargetError) else {})})
             raise SystemExit(1)
@@ -865,7 +884,21 @@ def cmd_compare(a):
             return
         if not a.claim:
             sys.exit("name a claim (its id, key or number), or give --query OP TARGET")
-        out = cmp.claim_packet(site, a.claim, a.stage, a.limit, a.after)
+        reading = None
+        if a.workspace:
+            from . import workspace as wsp
+            from .targets import Snapshot
+            cid = site.resolve_claim(a.claim)
+            try:
+                ws = wsp.read(wsp.find(work, a.workspace))
+            except wsp.WorkspaceError as e:
+                raise cmp.CompareError(str(e), "unknown-workspace") from None
+            v = wsp.view(ws, Snapshot(work / "site" / "data"), cid)
+            reading = {"workspace": ws["id"], "reviewer": v["reviewer"], "mode": v["mode"],
+                       **((v["claims"].get(cid) or {}).get("reading")
+                          or {"requirements": [], "witnesses": [], "alignments": [],
+                              "questions": []})}
+        out = cmp.claim_packet(site, a.claim, a.stage, a.limit, a.after, reading)
     except cmp.CompareError as e:
         if e.kind in ("no-build", "no-project") and not a.json:
             sys.exit(f"machinechecked: {e}")
@@ -1153,6 +1186,8 @@ def main(argv=None):
                     "extracted yet)")
     co.add_argument("--limit", type=int, help="return at most this many definitions or results")
     co.add_argument("--after", metavar="ID", help="continue a list after this item")
+    co.add_argument("--workspace", metavar="ID", help="include this workspace's requirements of "
+                    "the claim (informed stage only)")
     co.add_argument("--json", action="store_true", help="print one JSON document")
     co.add_argument("-c", "--config", default=None, help=argparse.SUPPRESS)
     co.set_defaults(func=cmd_compare)
@@ -1230,13 +1265,22 @@ def main(argv=None):
                         "list": "the workspaces of this project",
                         "show": "a workspace: evidence, findings and questions per claim",
                         "update": "apply operations (a JSON file, or - for standard input)",
+                        "suggest": "propose the passages near a claim that may govern a "
+                                   "requirement (printed as operations, or saved with --apply)",
                         "export": "write a workspace as one file",
                         "import": "bring in an exported workspace"}.items():
         sp = wss.add_parser(name, help=help_)
         if name in ("update", "import"):
             sp.add_argument("file", help="a JSON file, or - for standard input")
-        if name in ("open", "show", "update", "export"):
+        if name in ("open", "show", "update", "export", "suggest"):
             sp.add_argument("--id", help="the workspace (default: yours)")
+        if name == "suggest":
+            sp.add_argument("--claim", required=True, help="the claim (id, key or number)")
+            sp.add_argument("--requirement", required=True,
+                            help="the requirement's local id the passages are proposed for")
+            sp.add_argument("--apply", action="store_true",
+                            help="save the proposals (each stays a proposal until accepted)")
+            sp.add_argument("--op-id", help="an identifier of this request")
         if name == "open":
             sp.add_argument("--mode", choices=["independent", "informed"],
                             help="independent review (blind reading first) or informed "
