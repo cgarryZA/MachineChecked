@@ -31,6 +31,28 @@ export const VERDICTS = {
   ],
 };
 
+// A proof step is reviewed as printed: does it hold? (`steps.VERDICTS` in the engine.) The
+// review records the step's own finding, apart from the statement of its enclosing result.
+export const STEP_VERDICTS = {
+  matches: [
+    { value: "holds as printed", label: "Holds as printed" },
+    { value: "holds, with a gap in the argument", label: "Holds, with a gap in the argument",
+      detail: "Give the argument the printed proof leaves out." },
+  ],
+  problem: [
+    { value: "false as printed", label: "False as printed",
+      detail: "Give the counterexample or the failing case, and what would repair the step." },
+  ],
+  cannot: [
+    { value: "cannot determine", label: "Cannot determine", detail: "Say what would decide it." },
+  ],
+};
+export const STEP_GROUPS = [
+  { key: "matches", label: "The step holds" },
+  { key: "problem", label: "It fails as printed" },
+  { key: "cannot", label: "Cannot determine" },
+];
+
 // What to compare, item by item. The checklist guides the comparison and is kept in the report;
 // the verdict and the written comparison remain what a maintainer reads.
 export const CHECKLIST = {
@@ -42,6 +64,13 @@ export const CHECKLIST = {
     { key: "conclusion", label: "The conclusion", hint: "compare the conclusion and its strength" },
     { key: "constants", label: "Constants", hint: "what each constant may depend on" },
     { key: "assumed", label: "Assumed results and axioms", hint: "compare which results each statement assumes and proves" },
+  ],
+  step: [
+    { key: "fixed", label: "What is fixed before it", hint: "the quantities, domains and constants the proof has already chosen" },
+    { key: "premises", label: "Its premises", hint: "the results and assumptions it cites, at the instances it uses them" },
+    { key: "quantifiers", label: "Quantifiers and their ranges", hint: "for all / there is, their order and the range of each" },
+    { key: "constants", label: "Constants", hint: "what each constant may depend on" },
+    { key: "conclusion", label: "The conclusion", hint: "what the step asserts, and how the proof uses it next" },
   ],
   def: [
     { key: "object", label: "The object", hint: "it is the paper's object, built from the same parts" },
@@ -100,7 +129,8 @@ export function reviewerId(r) {
 }
 
 export function needsDetail(verdict) {
-  return Object.values(VERDICTS).flat().find((v) => v.value === verdict)?.detail || null;
+  return [...Object.values(VERDICTS).flat(), ...Object.values(STEP_VERDICTS).flat()]
+    .find((v) => v.value === verdict)?.detail || null;
 }
 
 // The kind of issue each verdict's draft is: a note explaining an accepted difference, a defect
@@ -117,6 +147,7 @@ const UNRESOLVED_BODY = "The reviewer could not determine whether the Lean state
   + "paper says. This is an open question, not a difference that was found.";
 
 export function issueDraft(unit, verdict, detail) {
+  if (unit.kind === "step") return stepIssueDraft(unit, verdict, detail);
   const kind = Object.hasOwn(DRAFT_KIND, verdict) ? DRAFT_KIND[verdict] : null;
   if (!kind) return null;
   const claims = unit.claims.map((c) => c.number || c.id).join(", ");
@@ -135,13 +166,29 @@ export function issueDraft(unit, verdict, detail) {
   };
 }
 
+// An issue about a proof step names the step, its proof and the question it answers: a finding
+// on the printed step, never on the enclosing statement (as `review_cli.step_issue_draft`).
+export function stepIssueDraft(unit, verdict, detail) {
+  if (verdict === "holds as printed") return null;
+  const par = unit.parent?.number || unit.parent?.id || "";
+  const kind = { "false as printed": "finding on a proof step", "holds, with a gap in the argument": "explanatory note",
+                 "cannot determine": "unresolved question" }[verdict] || "finding on a proof step";
+  return {
+    kind,
+    title: `${unit.name}${par ? ` in the proof of ${par}` : ""}: ${verdict}`,
+    body: `Review unit \`${unit.id}\` (a proof step, not the statement of ${par || "its result"}), verdict **${verdict}**.\n\n${detail || ""}`.trim(),
+  };
+}
+
 export function buildReport({ index, unit, draft, reviewer }) {
   const papers = Object.fromEntries((index.papers || []).map((p) => [p.id, p.revision || null]));
   const verdict = draft.verdict;
   return {
     schema: REPORT_SCHEMA,
-    unit: { id: unit.id, kind: unit.kind, name: unit.name, lean: unit.lean || [unit.name],
-            claims: unit.claims.map((c) => c.id), papers: unit.papers || [] },
+    unit: { id: unit.id, kind: unit.kind, name: unit.name,
+            lean: unit.kind === "step" ? unit.lean || [] : unit.lean || [unit.name],
+            claims: unit.claims.map((c) => c.id), papers: unit.papers || [],
+            ...(unit.kind === "step" ? { target: unit.unit, parent: unit.parent || null, route: unit.route || [] } : {}) },
     pins: {
       release: index.release,
       project_commit: index.project?.commit || null,
@@ -149,6 +196,8 @@ export function buildReport({ index, unit, draft, reviewer }) {
       legacy_hash: unit.legacy_hash || null,
       fingerprint: unit.fingerprint || null,
       fingerprints: unit.fingerprints || null,
+      // The digests of the paper passages shown when the reading was locked.
+      source_sha256: draft.source_sha256 ?? null,
     },
     reviewer: {
       id: reviewerId(reviewer), kind: reviewer.kind, name: reviewer.name || null,

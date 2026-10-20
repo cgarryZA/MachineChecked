@@ -28,6 +28,7 @@ h1, h2, h3 { line-height: 1.25; margin: 0; }
 .st-unspecified { --st: var(--st-unspecified); }
 /* A claim a project's formalization.yaml links to Lean, with no audit: linked, not checked. */
 .st-declared { --st: var(--accent); }
+.st-caution { --st: var(--tier-warning); }
 .st-out-of-scope { --st: var(--st-out-of-scope); }
 
 button, select, input { min-height: var(--control-height); }

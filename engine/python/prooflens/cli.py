@@ -307,12 +307,13 @@ def cmd_link(a):
         sys.exit("--bridge-pins goes with --bridge THEOREM TARGET")
     try:
         change = authoring.plan(root, links_key(root, paper), snap, a.claim,
-                                lean=a.decls or None, add=a.add, reject=a.reject or None,
+                                lean=None if a.route else a.decls or None, add=a.add, reject=a.reject or None,
                                 clear=a.clear, note=note, coverage=a.coverage,
                                 confidence=a.confidence, reason=a.reason, by=a.reviewer,
                                 external=a.external, basis=a.basis, refs=a.refs,
                                 argument=argument, bridge=bridge, question=a.question,
-                                would_decide=a.would_decide)
+                                would_decide=a.would_decide,
+                                route=(a.decls or []) if a.route else None)
         if not a.dry_run:
             authoring.write(root, change)
     except authoring.LinkError as e:
@@ -541,6 +542,17 @@ def cmd_check(a):
     print(f"Lean checked all {n} linked declaration(s)")
 
 
+def _step_json(c: dict) -> dict:
+    """A proof step's formal route and its own review, for `check --json`."""
+    from .steps import review
+    rv = review(c.get("step_reports", []), c.get("source_sha256"))
+    return {"route": [{"name": l["name"], "status_code": l["status_code"]}
+                      for l in c.get("route_links", [])],
+            "step_review": rv["state"],
+            "finding": {"verdict": rv["finding"]["verdict"]["value"],
+                        "reviewer": rv["finding"]["reviewer"]} if rv["finding"] else None}
+
+
 CHECK_NOTE = "Results describe the linked Lean declarations; correspondence reviews compare them with the paper."
 
 
@@ -576,7 +588,9 @@ def _check_json(a):
             res = build(cfg, web_dist=_web_dist(a.web))
             idx = res["index"]
             claims = [{"id": c["id"], "paper": c["paper"], "number": c.get("number"),
-                       "title": c.get("title"), "status": c["status"], "status_code": c["status_code"], "class": c["class"]}
+                       "title": c.get("title"), "status": c["status"], "status_code": c["status_code"], "class": c["class"],
+                       "unit": c.get("unit", "statement"), "parent": c.get("parent"),
+                       **({"step_review": c["step_review"]} if "step_review" in c else {})}
                       for c in idx["claims"]]
             out = {"mode": "full", "release": idx["release"],
                    "project": idx.get("project", {}).get("commit"),
@@ -601,7 +615,9 @@ def _check_json(a):
                        "suggestions": [{"name": x["name"], "why": x.get("why"),
                                         "reasons": x.get("reasons", [])}
                                        for x in c.get("suggestions", [])],
-                       "references": [o["id"] for o in c.get("references", [])]}
+                       "references": [o["id"] for o in c.get("references", [])],
+                       "unit": c.get("unit", "statement"), "parent": c.get("parent"),
+                       **(_step_json(c) if c.get("unit") else {})}
                       for c in body["claims"]]
             from . import numbering as nb
             num = body.get("numbering") or {"references": [], "pattern": None}
@@ -967,7 +983,8 @@ def cmd_review(a):
             for w in why:
                 print(f"           - {w}")
         else:
-            print(f"OK       {head}\n           {pr.marker(r, cur)}")
+            print(f"OK       {head}\n           "
+                  f"{pr.marker(r, cur, pr.report_source(r))}")
             ok.append((r, cur))
     if not ok:
         sys.exit("nothing to promote")
@@ -1208,6 +1225,8 @@ def main(argv=None):
     lk.add_argument("decls", nargs="*", metavar="DECL",
                     help="the declarations that state it (they replace the confirmed list)")
     lk.add_argument("--add", action="store_true", help="add DECL to the confirmed list")
+    lk.add_argument("--route", action="store_true", help="for a proof step: DECL is the "
+                    "different formal route used instead of the printed step (none: clear it)")
     lk.add_argument("--reject", nargs="+", metavar="DECL", help="record suggestions as not this "
                     "claim's")
     lk.add_argument("--reason", help="why they are rejected")

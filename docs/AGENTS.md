@@ -118,6 +118,12 @@ interpretation; the review protocol's `--json` output uses the same stages. Pass
 statements are never shortened; `--limit N` pages the definitions, and `--after ID` (the
 `retrieval.definitions.next` it returns) continues them.
 
+A proof step (`machinechecked compare "Equation (3)"`, or the review unit `step:<claim id>`) is a
+claim of its own: its passage carries `step` (its parent and the question, whether the printed
+step holds) and `context` (the proof up to it and the sentence after it); from the compare stage
+its declarations have the role `establishes the step` or `formal route used instead`, and at the
+informed stage `interpretations.step` holds its correspondence, route and review.
+
 Targeted queries have one shape (`machinechecked/query@1`: `op`, `target`, `context`,
 `results`, `provenance`, `retrieval`):
 

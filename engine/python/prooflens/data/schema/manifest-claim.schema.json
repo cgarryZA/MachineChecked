@@ -333,6 +333,7 @@
         "link.not-in-audit",
         "link.suggested",
         "link.none",
+        "link.other-route",
         "formal.refuted",
         "formal.refuted.open",
         "formal.refuted.corrected",
