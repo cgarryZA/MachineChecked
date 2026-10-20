@@ -157,7 +157,7 @@ def test_a_walk_cut_short_says_so_and_a_failed_request_fails_alone(built):
 @needs_lean
 def test_a_repeated_query_runs_no_lean(built, monkeypatch):
     pf.extract(built, "Facts.branches")
-    monkeypatch.setattr(pf, "run_simple_probe", lambda *a, **k: pytest.fail("ran Lean"))
+    monkeypatch.setattr(pf, "probe_modules", lambda *a, **k: pytest.fail("ran Lean"))
     assert pf.extract(built, "Facts.branches")["cache"]["hit"]
 
 

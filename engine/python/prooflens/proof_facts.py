@@ -19,21 +19,21 @@ A fact inside a proof is established inside this proof, under its context. It is
 exported theorem, and nothing here says that one proposition implies another: a search ranks
 candidates, it does not compare bounds.
 
-The answer is cached until a Lean input or a built module of the project changes, so asking
-again over unchanged input runs no Lean.
+The answer is kept in the facts store (`facts.py`) and reused until the modules it was read
+from change, so asking again over unchanged input runs no Lean.
 """
 
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 from pathlib import Path
 
 from .config import work_dir_name
-from .deps import _probe_digest, _resolve, _tool_version
+from .deps import _resolve, _short, _tool_version, store
+from .facts import graphs
 from .probe import lib_names
-from .simple import (ViewError, built_modules, lean_digest, probe_modules, run_simple_probe)
+from .simple import ViewError, built_modules, probe_modules
 
 SCHEMA = "machinechecked/proof-facts@1"
 BASIS = "established inside this proof under this context"
@@ -51,17 +51,7 @@ KIND_WORDS = {"have": "stated in the proof", "show": "goal restated in the proof
               "application": "theorem applied in the proof"}
 
 
-def cache_dir(root: Path) -> Path:
-    return root / work_dir_name(root) / "build" / "proof-facts"
-
-
-def cache_key(root: Path, name: str, module: str | None, limits: dict | None) -> str:
-    h = hashlib.sha256()
-    for part in (lean_digest(root), name, module or "", _tool_version(), _probe_digest(),
-                 json.dumps(limits or {}, sort_keys=True)):
-        h.update(part.encode())
-        h.update(b"\0")
-    return h.hexdigest()
+KIND = "proof-facts"  # the facts store's kind for these answers
 
 
 # -- the source ----------------------------------------------------------------------------
@@ -246,8 +236,13 @@ def rank(facts: list[dict], query: str) -> list[dict]:
 def extract(root: Path, name: str, module: str | None = None, lake: str = "lake", log=None,
             refresh: bool = False, limits: dict | None = None, cached_only: bool = False) -> dict:
     """The facts inside the proof of `name` in the Lean project at `root`, as one JSON-ready
-    document. `limits` (`nodes`, `facts`, and `heartbeats` in thousands) bound the walk; `cached_only` answers from the cache
-    or not at all (`status: "not extracted"`)."""
+    document. `limits` (`nodes`, `facts`, and `heartbeats` in thousands) bound the walk;
+    `cached_only` answers from the facts store or not at all (`status: "not extracted"`).
+
+    The answer is kept in the facts store shared with `view`, `build`, `check` and `inspect`
+    and reused while the modules of the environment it was read from (the declaration's module
+    and what it imports, sources and compiled files) and the probe are unchanged; an edit to
+    another module keeps it."""
     libs = lib_names(root)
     if not libs:
         raise ViewError("no Lean library found in the lakefile")
@@ -258,53 +253,68 @@ def extract(root: Path, name: str, module: str | None = None, lake: str = "lake"
     target, answer = _resolve(root, name, module, built, unbuilt)
     if answer is not None:
         return {**head, "ok": False, **answer}
-    key = cache_key(root, name, target or module, limits)
-    stored = cache_dir(root) / f"{key}.json"
-    if stored.exists() and not refresh:
-        body = json.loads(stored.read_text(encoding="utf-8"))
-        return {**head, **body, "cache": {"hit": True, "key": key[:16]}}
+    st = store(root, libs)
+    key = f"{name}\0{target or '*'}\0{json.dumps(limits or {}, sort_keys=True)}"
+    if cached_only or not refresh:
+        entry, _ = st.get(KIND, key)
+        if entry is not None:
+            return {**head, **entry["body"], "cache": {"hit": True, "key": _short(key)}}
     if cached_only:
         return {**head, "ok": False, "status": "not extracted",
-                "reason": "the facts of this proof have not been extracted since the Lean "
-                          "last changed"}
-    work = root / work_dir_name(root) / "build"
-    request = [{"kind": "proof-facts", "name": name}]
-    extra = {"facts_nodes": (limits or {}).get("nodes"), "facts_items": (limits or {}).get("facts"),
-             "max_heartbeats": (limits or {}).get("heartbeats")}
-    extra = {k: v for k, v in extra.items() if v}
-    if target is not None:
-        recs = run_simple_probe(root, [target], libs, request, lake, work=work, log=log,
-                                label=target, extra=extra)
-    else:
-        recs, failed = probe_modules(root, built, libs, request, lake, log=log or (lambda m: None),
-                                     work=work, extra=extra)
-        hits = [r for r in recs if r.get("record") == "proof-facts" and r.get("name") == name
-                and not r.get("errors")]
-        if len({h.get("module") for h in hits}) > 1:
-            return {**head, "ok": False, "status": "ambiguous",
-                    "modules": sorted(h.get("module") for h in hits)}
-        if not hits and failed:
-            return {**head, "ok": False, "status": "not checked", "modules": sorted(failed),
-                    "reason": "some built modules could not be loaded"}
-        recs = hits or recs
-    rec = next((r for r in recs if r.get("record") == "proof-facts" and r.get("name") == name),
-               None)
-    errors = (rec or {}).get("errors") or []
-    if rec is None or "missing" in errors:
-        body = {"ok": False, "status": "not found", "modules": [target] if target else []}
-    elif "no-value" in errors:
-        body = {"ok": False, "status": "no proof",
-                "reason": f"{name} is a {rec.get('kind')}: it has no proof or body to look into"}
-    elif any(e.startswith("probe-error") for e in errors):
-        # The request failed (it ran out of heartbeats, say); nothing is cached, so asking
-        # again retries it.
-        return {**head, "ok": False, "status": "probe error", "reason": errors[0],
-                "cache": {"hit": False, "key": key[:16]}}
-    else:
-        body = {"ok": True, "status": "found", **_assemble(rec, root)}
-    stored.parent.mkdir(parents=True, exist_ok=True)
-    stored.write_text(json.dumps(body, ensure_ascii=False), encoding="utf-8")
-    return {**head, **body, "cache": {"hit": False, "key": key[:16]}}
+                "reason": "the facts of this proof have not been read since the Lean last "
+                          "changed"}
+    with st.lock(log):
+        entry, _ = (None, None) if refresh else st.get(KIND, key)
+        if entry is not None:  # another process read it meanwhile
+            return {**head, **entry["body"], "cache": {"hit": True, "key": _short(key)}}
+        work = root / work_dir_name(root) / "build"
+        request = [{"kind": "proof-facts", "name": name}, {"kind": "modules", "name": ""}]
+        extra = {"facts_nodes": (limits or {}).get("nodes"),
+                 "facts_items": (limits or {}).get("facts"),
+                 "max_heartbeats": (limits or {}).get("heartbeats")}
+        extra = {k: v for k, v in extra.items() if v}
+        quiet = log or (lambda m: None)
+        if target is not None:
+            recs, failed = probe_modules(root, [target], libs, request, lake, log=quiet,
+                                         work=work, extra=extra)
+            if failed:
+                raise ViewError(failed[target])
+            env = st.environment([target], next(iter(graphs(recs).values()), {}))
+        else:
+            # The source does not show the name: ask every library, each in its own session.
+            recs, failed = probe_modules(root, built, libs, request, lake, log=quiet, work=work,
+                                         extra=extra)
+            hits = [r for r in recs if r.get("record") == "proof-facts" and r.get("name") == name
+                    and not r.get("errors")]
+            if len({h.get("module") for h in hits}) > 1:
+                return {**head, "ok": False, "status": "ambiguous",
+                        "modules": sorted(h.get("module") for h in hits)}
+            if not hits and failed:
+                return {**head, "ok": False, "status": "not checked", "modules": sorted(failed),
+                        "reason": "some built modules could not be loaded"}
+            recs = hits or recs
+            graph: dict[str, list[str]] = {}
+            for g in graphs(recs).values():
+                graph.update(g)
+            env = st.environment(built, graph)
+        rec = next((r for r in recs if r.get("record") == "proof-facts"
+                    and r.get("name") == name), None)
+        errors = (rec or {}).get("errors") or []
+        if rec is None or "missing" in errors:
+            body = {"ok": False, "status": "not found", "modules": [target] if target else []}
+        elif "no-value" in errors:
+            body = {"ok": False, "status": "no proof",
+                    "reason": f"{name} is a {rec.get('kind')}: it has no proof or body to look "
+                              "into"}
+        elif any(e.startswith("probe-error") for e in errors):
+            # The request failed (it ran out of heartbeats, say); nothing is stored, so asking
+            # again retries it.
+            return {**head, "ok": False, "status": "probe error", "reason": errors[0],
+                    "cache": {"hit": False, "key": _short(key)}}
+        else:
+            body = {"ok": True, "status": "found", **_assemble(rec, root)}
+        st.put(KIND, key, env, body=body)
+    return {**head, **body, "cache": {"hit": False, "key": _short(key)}}
 
 
 def find_fact(doc: dict, ref: dict) -> dict | None:

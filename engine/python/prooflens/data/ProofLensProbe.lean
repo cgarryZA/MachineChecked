@@ -958,6 +958,16 @@ def proofFactsRecord (h : IO.FS.Handle) (q : Query) (roots : Array Name) (n : Na
       ("auxiliary", toJson (s.aux.map toString)),
       ("limits", Json.mkObj [("nodes", toJson s.maxNodes), ("facts", toJson s.maxItems)])])
 
+/-- Every module of the environment with the modules it imports directly: what a record
+extracted in this environment can depend on. -/
+def moduleRecords (h : IO.FS.Handle) : CoreM Unit := do
+  let env ← getEnv
+  let names := env.header.moduleNames
+  for i in [:names.size] do
+    let imports := env.header.moduleData[i]!.imports.map (·.module.toString)
+    emit h (Json.mkObj [("record", "module"), ("name", names[i]!.toString),
+      ("imports", toJson imports)])
+
 /-- Every module of the specification layer that imports a module of the acceptance layer. -/
 def layering (h : IO.FS.Handle) (q : Query) : CoreM Unit := do
   -- Without both layers named (the zero-configuration view) there is no layering to check;
@@ -1015,6 +1025,7 @@ open ProofLensProbe in
         | "link" => linkRecord h q roots seen r.name.toName
         | "deps" => depsRecords h roots r.name.toName
         | "proof-facts" => proofFactsRecord h q roots r.name.toName
+        | "modules" => moduleRecords h
         | "decl" => do
           let env ← getEnv
           if let some ci := env.find? r.name.toName then

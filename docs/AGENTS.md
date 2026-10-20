@@ -140,8 +140,8 @@ instance inside a lemma Lean generated, listed under `proof.auxiliary` and asked
 name), and `proof.complete: false` when the walk reached its limit (200,000 nodes, 200 facts). A
 fact's `basis` is always "established inside this proof under this context": it is not an
 exported theorem, and `--match` ranks facts by shared symbols without deciding that one bound
-gives another. Lean runs once per declaration; the answer is cached in
-`.machinechecked/build/proof-facts/` until a Lean input or built module changes. The queries
+gives another. Lean runs once per declaration; the answer is kept in the facts store, like
+`inspect`'s, and reused until the declaration's module or a module it imports changes. The queries
 `uses`, `composition` and `impact` answer `available: false` with the issue that owns their
 extraction. An error is `{"ok": false, "error": {kind, message,
 candidates}}` with exit 1 (exit 2, kind `no-build`, when there is no build to read: run
@@ -224,7 +224,12 @@ versions. Repeat a request with its `op_id` after a lost answer: it changes noth
 `unchecked`) and the `resume` point. To cite a fact inside a proof, put its `ref` from
 `compare --query proof-facts` as `"ref": {"fact": REF}`; a finding resting on it takes basis
 `reviewed_composition` (it is not `direct` coverage), and `show` marks it `stale` once that proof
-changes. A workspace started in informed mode records that the Lean
+changes. Requirements of a claim (`requirement`), the passages that govern each one
+(`fragment`: a region of the paper's source with its role, origin and scope) and their
+association with Lean (`alignment`) are records of the same workspace; `show --json` gives each
+claim's `reading`, `workspace suggest --claim C --requirement r1 [--apply]` proposes nearby
+passages, and `compare C --workspace ID --json` carries the reading in
+`interpretations.requirements`. A workspace started in informed mode records that the Lean
 was seen; `{"op": "exposure", "what": "external material"}` records anything else you read.
 
 ## A note for your project's AGENTS.md or CLAUDE.md

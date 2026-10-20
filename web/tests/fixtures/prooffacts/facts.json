@@ -6,8 +6,8 @@
   "limit": null,
   "after": null,
   "context": {
-   "release": "v-7e445cbea634",
-   "evidence": "7e445cbea634ce0c56b6799626dc9ab429150be6f3e40ffdcaf625ed5569ae5c",
+   "release": "v-9908572a716c",
+   "evidence": "9908572a716c7d5c674920b58f5a840e90115e8beb7e207afceee2b9c59f48a1",
    "mode": "simple",
    "project": {
     "name": "prooffacts"
@@ -16,7 +16,7 @@
     {
      "id": "P",
      "title": "Bounds Sharper Than Their Statements",
-     "pdf_sha256": "81e9fede0a5b493ceb6578b582bf6a180272dc6f03bddfdd4f808efd9e61785f"
+     "pdf_sha256": "e0032259f2ba1c1da7fb60624e415e2b54fb6986d7a2db506b9af96b9d54b729"
     }
    ]
   },
@@ -465,7 +465,7 @@
    "note": "A fact inside a proof holds in its context only, under the assumptions listed with it. It is not an exported theorem, and a search ranks candidates without deciding whether one bound implies another.",
    "cache": {
     "hit": false,
-    "key": "fb9cd7f4eae95bea"
+    "key": "75fcb3d98e7b0a6f"
    }
   },
   "available": true,
@@ -943,7 +943,7 @@
     }
    }
   ],
-  "provenance": "Lean (the declaration's elaborated proof), cached until a Lean input changes",
+  "provenance": "Lean (the declaration's elaborated proof), kept in the facts store until a module it was read from changes",
   "retrieval": {
    "total": 3,
    "returned": 3,
@@ -959,8 +959,8 @@
   "limit": null,
   "after": null,
   "context": {
-   "release": "v-7e445cbea634",
-   "evidence": "7e445cbea634ce0c56b6799626dc9ab429150be6f3e40ffdcaf625ed5569ae5c",
+   "release": "v-9908572a716c",
+   "evidence": "9908572a716c7d5c674920b58f5a840e90115e8beb7e207afceee2b9c59f48a1",
    "mode": "simple",
    "project": {
     "name": "prooffacts"
@@ -969,7 +969,7 @@
     {
      "id": "P",
      "title": "Bounds Sharper Than Their Statements",
-     "pdf_sha256": "81e9fede0a5b493ceb6578b582bf6a180272dc6f03bddfdd4f808efd9e61785f"
+     "pdf_sha256": "e0032259f2ba1c1da7fb60624e415e2b54fb6986d7a2db506b9af96b9d54b729"
     }
    ]
   },
@@ -1386,7 +1386,7 @@
    "note": "A fact inside a proof holds in its context only, under the assumptions listed with it. It is not an exported theorem, and a search ranks candidates without deciding whether one bound implies another.",
    "cache": {
     "hit": false,
-    "key": "a8a858f4a5d01376"
+    "key": "5fca7339dc3412ce"
    }
   },
   "available": true,
@@ -1743,7 +1743,7 @@
     }
    }
   ],
-  "provenance": "Lean (the declaration's elaborated proof), cached until a Lean input changes",
+  "provenance": "Lean (the declaration's elaborated proof), kept in the facts store until a module it was read from changes",
   "retrieval": {
    "total": 2,
    "returned": 2,

@@ -268,6 +268,33 @@ optional `clause` and `note`, `rev`, `created_at`/`created_by`, `updated_at`/`up
   finding names it in `supersedes`, with its `reason`, and both are kept.
 - **`question`**: `text`, `state` (`open`, `answered`, `withdrawn`), optional `answer` and
   `evidence`.
+- **`requirement`**: one thing the claim demands, as the auditor reads it. `local_id` (unique
+  under the claim, e.g. `r1.2`), `form` (`statement`, `object`, `assumption`, `conclusion`,
+  `condition`, `for every`, `there is`, `and`, `or`, `not`, `implies`, `constant dependence`,
+  `definition`, `other`), `text`, optional `parent` (the requirement it sits inside: its scope),
+  `binds` (the variables a `for every`, `there is` or `constant dependence` introduces),
+  `independent_of` (variables a constant or witness may not depend on) and `origin`: `printed`,
+  or `correction` with `corrects` naming the printed requirement, which stays as printed. A
+  finding or a question may name a requirement in `requirement`.
+- **`fragment`**: a passage a requirement comes from. `requirement` (its local id), `role`
+  (`statement`, `quantifier domain`, `constant dependence`, `standing assumption`,
+  `definition`, `earlier choice`, `cited result`, `context`, `later use`, `proposed
+  correction`), `origin` (`printed`: the paper states it for this claim; `inferred`: an
+  attachment the auditor or a suggestion infers; `correction`), optional `scope` (where it
+  applies, in words) and `note`, and exactly one of `region` (`{paper, file, start_line,
+  end_line, start_column, end_column}` in the build's snapshot of the paper's source,
+  `<work dir>/sources/<paper>/`, with its `text`, `sha256` and `line_sha256` as
+  `source_regions.py` computes them, recorded when written) or `passage` (`{claim, sha256}`: a
+  claim's whole printed passage). `state` is `accepted` (the default), `proposed` (a
+  suggestion, with `suggestion: {rule, by}`) or `removed` (with `why_removed`, kept);
+  `state_by`/`state_at` record who set it. A `later use` is shown as a use and does not enter
+  the requirement's reading.
+- **`alignment`**: `requirements` (local ids; none only for an `additional assumption` of the
+  Lean), `lean` (targets: `{decl}`, or a part of its statement as the build prints it: `var`,
+  `binder` (a variable's type or a hypothesis), `at` (a sub-term's identity) or `conclusion`;
+  each with `build`, `fingerprint`, `digest` and the `target` text) and `relation`
+  (`corresponds`, `additional assumption`, `changed`, `alternative representation`). A
+  requirement may have several alignments and a target may serve several requirements.
 
 An update is a list of operations applied together or not at all: `put` (create, or replace a
 record's content, given `base_rev`, the revision it was read at), `delete` (a draft or an unused
@@ -280,9 +307,23 @@ different records are both kept. Writes replace the file atomically under a lock
 fingerprint with those of the constants Lean generated for it (`N._f`, `N.match_1`, `N.eq_1`), which
 carry a definition's equations. Against a later build, evidence whose digest changed is `stale`,
 and so is every finding or question that cites it, and every finding whose claim's printed text
-changed; the others stay `current` (`unchecked` when the build shows no fingerprint). The saved
+changed; the others stay `current` (`unchecked` when the build shows no fingerprint). A fragment
+whose region of the source now reads differently (the lines that changed are listed), or whose
+claim's passage changed, is `stale`, and so is an alignment whose declaration changed, and every
+requirement they belong to, and every finding or question that names that requirement. The saved
 records are not re-pinned silently: a `put` with `repin: true` re-pins a record to the current
 build.
+
+**The reading.** `workspace show --json` gives each claim's `reading`: its requirements in
+reading order (with `depth`, `children`, their fragments grouped as `governing`, `later_uses`,
+`proposed` and `removed`, their alignments, `currency`, `questions` such as a requirement with no
+source, and `reading_sha256`, a digest of the form, words and governing fragments' pins); the
+`witnesses` (each `there is`, its `scope`: `produced`, `assumed` inside an assumption,
+`denied` inside a `not`, or `alternative` inside an `or`; the variables it is chosen `after` and
+`before`; its `conditions`); and the `alignments`. `workspace suggest` proposes fragments from the
+passage's neighbourhood (the sentence before and after it, quantifier or dependence wording
+inside it, the prose opening its section, the claims it cites); a proposal is a guess until
+accepted.
 
 **Mode and exposure.** An informed workspace records at its creation that the Lean and prior
 interpretations were open to its auditor; it has no locked reading. A mode change and an import
