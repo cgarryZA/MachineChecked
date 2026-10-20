@@ -3,14 +3,16 @@
 An audit publishes, per claim, the records of its auditors' workspaces (`workspace.py`) that the
 auditor has accepted: the requirements of the claim, the passages accepted as governing them,
 the alignments with Lean, and the submitted findings (superseded ones included, with the reason)
-with the evidence they cite. Proposed and removed passages, draft findings, evidence no
-submitted finding cites, questions, exposure, resume state and the review protocol's drafts stay
-in the workspace.
+with the evidence and the counterexamples they cite (and the evidence those cite). Proposed
+and removed passages, draft findings, evidence no submitted finding cites, questions, exposure,
+resume state and the review protocol's drafts stay in the workspace.
 
 Each record keeps its author and times, its pins and its currency against the published build,
 computed over the published records alone. The paper's `publish` settings apply: a passage's
 text, file and lines only when the source text is published, a Lean target's text only when the
-Lean is, and the auditor's prose (notes, arguments, questions, reasons) only when reviews are. A cited fact
+Lean is, and the auditor's prose (notes, arguments, questions, reasons, a counterexample's
+specialisation and reduction) only when reviews are. A difference shows its paper expression when
+the source text is published and its Lean expression when the Lean is. A cited fact
 inside a proof keeps its basis, "established inside this proof under this context", and its
 pins; its proposition and context are Lean text. Its currency needs the Lean project, so it is
 published as `unchecked`.
@@ -35,15 +37,19 @@ FILE_LIMIT = 2_000_000  # bytes per claim file; the site's loader refuses a larg
 COMMON = ("id", "kind", "claim", "clause", "rev", "created_at", "created_by", "updated_at",
           "updated_by", "pins")
 PROSE = ("note", "argument", "question", "would_decide", "reason", "why_rejected")
+# A counterexample's mathematics, as the auditor wrote it.
+CX_PROSE = ("specialisation", "reduced", "violation", "admissibility", "samples")
 FIELDS = {
-    "requirement": ("local_id", "form", "text", "origin", "parent", "binds", "independent_of",
-                    "corrects"),
+    "requirement": ("local_id", "form", "text", "origin", "parent", "binds", "domain",
+                    "independent_of", "depends_on", "corrects"),
     "fragment": ("requirement", "role", "origin", "scope", "state", "state_by", "state_at",
                  "suggestion"),
     "alignment": ("requirements", "relation"),
     "finding": ("coverage", "basis", "confidence", "bridge", "requirement", "state",
-                "submitted_at", "supersedes"),
+                "submitted_at", "supersedes", "verdict", "counterexamples"),
     "evidence": ("role",),
+    "counterexample": ("requirement", "reading", "obligation_sha256", "evidence_pins",
+                       "evidence"),
 }
 REVIEWER = ("id", "kind", "name", "model", "identity")
 
@@ -54,7 +60,8 @@ class PublishError(RuntimeError):
 
 def accepted(ws: dict) -> dict[str, dict]:
     """The records of `ws` its auditor has accepted: every requirement and alignment, the
-    accepted passages, the submitted findings and the evidence those findings cite."""
+    accepted passages, the submitted findings, and the evidence and counterexamples those
+    findings cite, with the evidence those counterexamples cite."""
     recs = ws.get("records") or {}
     out = {}
     for rid, r in recs.items():
@@ -65,6 +72,11 @@ def accepted(ws: dict) -> dict[str, dict]:
             out[rid] = r
     for r in list(out.values()):
         if r.get("kind") == "finding":
+            for c in r.get("counterexamples") or []:
+                if (recs.get(c["id"]) or {}).get("kind") == "counterexample":
+                    out[c["id"]] = recs[c["id"]]
+    for r in list(out.values()):
+        if r.get("kind") in ("finding", "counterexample"):
             for e in r.get("evidence") or []:
                 if (recs.get(e) or {}).get("kind") == "evidence":
                     out[e] = recs[e]
@@ -84,6 +96,9 @@ def _changes(changes: list[dict], source_text: bool) -> list[dict]:
 
 
 FACT_PINS = ("decl", "module", "at", "fact_hash", "proof_hash", "kind", "name", "head")
+CERT_PINS = ("theorem", "target", "certifies", "module", "file_sha256", "target_fingerprint",
+             "axioms", "lean", "toolchain", "manifest_sha256", "result", "reasons")
+CERT_LEAN = ("file", "type", "target_statement")
 FACT_LEAN = ("type", "assumptions", "variables", "cases", "source")
 
 
@@ -100,6 +115,12 @@ def _ref(ref: dict, pub) -> dict:
     if "decl" in ref:
         return {k: ref[k] for k in ("decl", "module", "build", "fingerprint", "digest")
                 if ref.get(k) is not None}
+    if "certificate" in ref:
+        # A certificate: what Lean checked and its pins always; its proposition and source
+        # file only when the Lean is published.
+        c = ref["certificate"]
+        return {"certificate": {k: c[k] for k in CERT_PINS if c.get(k) is not None}
+                | ({k: c[k] for k in CERT_LEAN if c.get(k) is not None} if pub.lean else {})}
     if "source" in ref:
         return {"source": dict(ref["source"]) if pub.lean else {}}
     p = ref.get("paper") or {}
@@ -107,12 +128,42 @@ def _ref(ref: dict, pub) -> dict:
                       **({"quote": p.get("quote") or ""} if pub.source_text else {})}}
 
 
-def public_record(r: dict, pub, currency: dict, in_force: set[str]) -> dict:
-    """One accepted record with what `pub` allows."""
+def _difference(d: dict, pub) -> dict:
+    out = {k: d[k] for k in ("feature", "outcome", "hint") if d.get(k) is not None}
+    if pub.source_text:
+        out["paper"] = d["paper"]
+    if pub.lean and d.get("lean"):
+        out["lean"] = d["lean"]
+    if d.get("resolution"):
+        out["resolution"] = {k: v for k, v in d["resolution"].items()
+                             if k != "text" or pub.reviews}
+    if pub.reviews:
+        out.update({k: d[k] for k in ("conditions", "transport", "why") if d.get(k)})
+    return out
+
+
+def public_record(r: dict, pub, currency: dict, in_force: set[str],
+                  records: list[dict] | None = None) -> dict:
+    """One accepted record with what `pub` allows. A counterexample also carries what it can
+    show against its reading (`estimates.analyse`, over the published `records`)."""
     k = r["kind"]
     out = {f: r[f] for f in (*COMMON, *FIELDS[k]) if r.get(f) is not None}
     if pub.reviews:
         out.update({f: r[f] for f in PROSE if r.get(f) not in (None, "")})
+    if k == "finding" and r.get("difference"):
+        out["difference"] = _difference(r["difference"], pub)
+    if k == "counterexample":
+        from . import estimates as est
+        if pub.reviews:
+            out.update({f: r[f] for f in CX_PROSE if r.get(f) not in (None, [], {})})
+        ob = est.obligation(records or [], r["requirement"], r.get("reading") or ())
+        a = est.analyse(r, ob)
+        out["reading_text"] = (ob or {}).get("text")
+        out["analysis"] = {f: a[f] for f in ("form", "decisive", "standing", "standing_text",
+                                             "family", "fixed", "problems", "admissibility",
+                                             "samples", "samples_note")}
+        if pub.reviews:
+            out["analysis"].update(shows=a["shows"], open_obligations=a["open_obligations"])
     cur = currency.get(r["id"]) or {"state": "unchecked", "changes": []}
     out["currency"] = {"state": cur["state"],
                        "changes": _changes(cur.get("changes") or [], pub.source_text)}
@@ -155,15 +206,17 @@ def readings(work_dir: Path, snap, pub_for, claims: set[str]) -> dict[str, list[
             order = {r["id"]: (i, d) for i, (r, d) in enumerate(rq._order(
                 [r for r in recs if r["kind"] == "requirement"]))}
             group: dict[str, list[dict]] = {"requirements": [], "fragments": [],
-                                            "alignments": [], "findings": [], "evidence": []}
+                                            "alignments": [], "findings": [], "evidence": [],
+                                            "counterexamples": []}
             for r in sorted(recs, key=lambda r: (order.get(r["id"], (0, 0))[0],
                                                  r.get("created_at") or "", r["id"])):
-                item = public_record(r, pub, cur, in_force)
+                item = public_record(r, pub, cur, in_force, recs)
                 if r["kind"] == "requirement":
                     item["depth"] = order[r["id"]][1]
                 group[{"requirement": "requirements", "fragment": "fragments",
                        "alignment": "alignments", "finding": "findings",
-                       "evidence": "evidence"}[r["kind"]]].append(item)
+                       "evidence": "evidence",
+                       "counterexample": "counterexamples"}[r["kind"]]].append(item)
             out.setdefault(cid, []).append({
                 "workspace": ws["id"], "mode": ws.get("mode"),
                 "reviewer": {k: who[k] for k in REVIEWER if who.get(k) is not None},

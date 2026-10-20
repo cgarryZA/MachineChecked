@@ -153,6 +153,57 @@ requirement goes stale even if the display itself did not change. `machinechecke
 independent review withhold them. A requirement and its alignments are your reading: they
 change no status.
 
+**Estimates, differences and counterexamples.** Give a quantifier's variables their `domain`
+(`"ε > 0"`) and a constant its allowed dependence (`independent_of`, or `depends_on` for a
+constant chosen after a variable). The reading then shows each estimate as an obligation in the
+order its variables are chosen: "for every ε > 0, … with C independent of ε" reads "there is C;
+for every ε > 0: …". A difference from the Lean is a finding on the affected requirement:
+
+```json
+{"op": "put", "record": {"kind": "finding", "claim": "Equation (3)", "requirement": "r1.1.1",
+ "difference": {"feature": "derivative order", "paper": "m + 4", "lean": "n + 5",
+                "outcome": "difference"}, "note": "one more derivative"}}
+```
+
+`feature` is one of `domain`, `quantifier order`, `constant dependence`, `derivative order`,
+`norm`, `power`, `weight`, `index offset`, `additional assumption`, `lost case`, `stronger
+conclusion`, `representation`, `other`; `outcome` is `open`, `difference`, `resolved` (with a
+`resolution`: `common extension`, `checked bridge` with its `theorem`, `argument`, `inherited
+assumption` or `renaming`, and its `text`) or `no difference` (with `why`). A domain,
+representation or additional-assumption difference names the `transport` you inspected first (a
+common extension, a bridge, the full theorem), so that a change of representation is not
+recorded as a defect. The reading lists the Lean hypotheses no requirement is aligned with as
+hints to inspect; a hypothesis aligned with a requirement that a standing assumption governs is
+shown as inherited from it.
+
+A counterexample is a record of its own against one reading of a requirement:
+
+```json
+{"op": "put", "record": {"kind": "counterexample", "claim": "Equation (3)",
+ "requirement": "r1.1.1", "specialisation": {"assign": {"ε": "C + 1"}, "zero": ["f"]},
+ "reduced": "1 ≤ C/ε", "violation": "C/(C + 1) < 1 for every C ≥ 0",
+ "admissibility": [{"obligation": "f = 0 is admissible", "state": "verified",
+                    "method": "checked against Definition 2"}], "evidence": ["e-cert"]}}
+```
+
+A value may be symbolic: `ε = C + 1` gives a family over the constant, so it can show that no
+choice of C works; a value fixed for a constant, or `samples` from a numeric sweep, show only the
+values tried. The reading says which: an admissible counterexample (a family, or an instance
+when the reading chooses no constant, with every admissibility obligation verified), a
+candidate (an obligation still open), not admissible, incomplete (a variable without a value,
+or a value using a variable chosen after it) or numeric samples only. `reading` lists the
+corrections it is read with; each correction gives a reading of its own, beside the printed one,
+with its own evidence. A Lean certificate is evidence with `"ref": {"certificate": {"theorem",
+"target", "certifies"}}`: Lean checks that the theorem's type is exactly the target (`proves`) or
+its negation (`refutes`), a proposition stated as a definition, with no `sorry` and the standard
+axioms, and the record keeps the checked type, the target's statement and fingerprint, the source
+file's hash, the Lean version and the Lake manifest's hash. It certifies that proposition only,
+not the reading it is attached to. A counterexample is pinned to its reading and to the evidence
+it cites: changing a quantifier, a domain, a constant's dependence or a passage that governs
+them, or the certificate, makes it `stale`, and so the finding that cites it
+(`"counterexamples": [ID]`). A refuted printed step is a finding on the step, with `"verdict":
+"false as printed"`; its enclosing result keeps its own evidence and status.
+
 When a declaration that evidence cites changes (its statement, or a definition's equations), or a
 claim's printed text changes, `show` marks that evidence and the findings that cite it as
 `stale`; the others stay current. A cited fact inside a proof is `stale` once that proof
@@ -164,7 +215,7 @@ review` lists that exposure, and `review promote` refuses it without `--allow-re
 **What a published audit carries.** `machinechecked export` (and `build --site`, `check --site`)
 publishes, for each claim, the records you have accepted: the requirements, the passages
 accepted as governing them, the alignments with Lean, and the submitted findings (superseded ones
-too, with the reason) with the evidence they cite. Each keeps its author, its pins and whether it
+too, with the reason) with the evidence and counterexamples they cite. Each keeps its author, its pins and whether it
 is current against the published build. Proposed and removed passages, draft findings, evidence
 no submitted finding cites, questions, exposure and the review protocol's drafts stay in the
 workspace. The paper's `publish` settings apply: a passage's text and lines appear only when the

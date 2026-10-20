@@ -188,6 +188,15 @@
                 "depth": {
                   "type": "integer",
                   "minimum": 0
+                },
+                "domain": {
+                  "type": "string"
+                },
+                "depends_on": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
                 }
               }
             }
@@ -519,7 +528,6 @@
                 "kind",
                 "claim",
                 "currency",
-                "coverage",
                 "state",
                 "evidence",
                 "in_force"
@@ -662,6 +670,98 @@
                 },
                 "in_force": {
                   "type": "boolean"
+                },
+                "verdict": {
+                  "enum": [
+                    "holds as printed",
+                    "holds, with a gap in the argument",
+                    "false as printed",
+                    "cannot determine"
+                  ]
+                },
+                "difference": {
+                  "type": "object",
+                  "required": [
+                    "feature",
+                    "outcome"
+                  ],
+                  "properties": {
+                    "feature": {
+                      "type": "string"
+                    },
+                    "outcome": {
+                      "enum": [
+                        "open",
+                        "difference",
+                        "resolved",
+                        "no difference"
+                      ]
+                    },
+                    "paper": {
+                      "type": "string"
+                    },
+                    "lean": {
+                      "type": "string"
+                    },
+                    "conditions": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "transport": {
+                      "type": "string"
+                    },
+                    "why": {
+                      "type": "string"
+                    },
+                    "resolution": {
+                      "type": "object",
+                      "required": [
+                        "by"
+                      ],
+                      "properties": {
+                        "by": {
+                          "type": "string"
+                        },
+                        "text": {
+                          "type": "string"
+                        },
+                        "theorem": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "hint": {
+                      "type": "object",
+                      "properties": {
+                        "decl": {
+                          "type": "string"
+                        },
+                        "binder": {
+                          "type": "integer"
+                        }
+                      }
+                    }
+                  }
+                },
+                "counterexamples": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": [
+                      "id",
+                      "sha256"
+                    ],
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "sha256": {
+                        "type": "string"
+                      }
+                    }
+                  }
                 }
               }
             }
@@ -760,6 +860,162 @@
                 },
                 "ref": {
                   "type": "object"
+                }
+              }
+            }
+          },
+          "counterexamples": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "kind",
+                "claim",
+                "currency",
+                "requirement",
+                "analysis"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "claim": {
+                  "type": "string"
+                },
+                "clause": {
+                  "type": "string"
+                },
+                "rev": {
+                  "type": "integer"
+                },
+                "created_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "created_by": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "updated_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "updated_by": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "pins": {
+                  "type": "object"
+                },
+                "note": {
+                  "type": "string"
+                },
+                "currency": {
+                  "type": "object",
+                  "required": [
+                    "state",
+                    "changes"
+                  ],
+                  "properties": {
+                    "state": {
+                      "enum": [
+                        "current",
+                        "stale",
+                        "unchecked",
+                        "removed"
+                      ]
+                    },
+                    "changes": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    }
+                  }
+                },
+                "kind": {
+                  "const": "counterexample"
+                },
+                "requirement": {
+                  "type": "string"
+                },
+                "reading": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "reading_text": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "obligation_sha256": {
+                  "type": "string"
+                },
+                "evidence": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "evidence_pins": {
+                  "type": "object"
+                },
+                "specialisation": {
+                  "type": "object"
+                },
+                "reduced": {
+                  "type": "string"
+                },
+                "violation": {
+                  "type": "string"
+                },
+                "admissibility": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  }
+                },
+                "samples": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  }
+                },
+                "analysis": {
+                  "type": "object",
+                  "required": [
+                    "form",
+                    "standing",
+                    "decisive"
+                  ],
+                  "properties": {
+                    "form": {
+                      "enum": [
+                        "family",
+                        "instance",
+                        "fixed constants",
+                        "incomplete"
+                      ]
+                    },
+                    "standing": {
+                      "type": "string"
+                    },
+                    "decisive": {
+                      "type": "boolean"
+                    }
+                  }
                 }
               }
             }

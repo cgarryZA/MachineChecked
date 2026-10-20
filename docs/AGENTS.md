@@ -277,7 +277,11 @@ changes. Requirements of a claim (`requirement`), the passages that govern each 
 association with Lean (`alignment`) are records of the same workspace; `show --json` gives each
 claim's `reading`, `workspace suggest --claim C --requirement r1 [--apply]` proposes nearby
 passages, and `compare C --workspace ID --json` carries the reading in
-`interpretations.requirements`. A workspace started in informed mode records that the Lean
+`interpretations.requirements`. Differences from the Lean are findings with a `difference` on
+the affected requirement; a counterexample (`counterexample`: a specialisation, its reduction and
+violation, its admissibility obligations) is read against its requirement's quantifiers, and a
+Lean certificate is evidence `{"certificate": {theorem, target, certifies}}` that Lean checks
+when it is recorded. A workspace started in informed mode records that the Lean
 was seen; `{"op": "exposure", "what": "external material"}` records anything else you read.
 
 ## A note for your project's AGENTS.md or CLAUDE.md
