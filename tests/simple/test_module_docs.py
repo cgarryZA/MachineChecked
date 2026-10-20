@@ -55,7 +55,7 @@ end Shape
 def project(tmp_path, toolchain):
     root = tmp_path / "structure"
     shutil.copytree(SRC, root)
-    (root / "Shape.lean").write_text("import Shape.Main\nimport Shape.Widgets\n")
+    (root / "Shape.lean").write_text((SRC / "Shape.lean").read_text() + "import Shape.Widgets\n")
     (root / "Shape" / "Widgets.lean").write_text(WIDGETS)
     if toolchain:
         (root / "lean-toolchain").write_text(toolchain + "\n")

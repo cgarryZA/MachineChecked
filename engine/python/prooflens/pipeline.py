@@ -360,7 +360,23 @@ def load_display(cfg: Config) -> dict | None:
 
 
 def write_preview(site: Path, index: dict, chunks: dict, store: dict, pdfs: dict,
-                  web_dist: Path | None, queue: dict | None = None):
+                  web_dist: Path | None, queue: dict | None = None,
+                  expansions: dict | None = None):
+    """Write the reader and its data to `site`. Definitions expanded at their applications are
+    written on their own (`data/expansions/<key>.json`, `mf.split_expansions`), together with
+    `expansions` already split off (those of published audits)."""
+    expansions = dict(expansions or {})
+    # A declaration record without its expansions is a different record: it gets its own key.
+    rekey, split_store = {}, {}
+    for k, r in store.items():
+        q = mf.split_expansions(r, expansions)
+        rekey[k] = mf.record_key(q) if q != r else k
+        split_store[rekey[k]] = q
+    store = split_store
+    chunks = {n: {**mf.split_expansions(c, expansions),
+                  **({"decls": {d: rekey.get(k, k) for d, k in c["decls"].items()}}
+                     if isinstance(c.get("decls"), dict) else {})}
+              for n, c in chunks.items()}
     if queue is not None:
         index = {**index, "review_queue": "data/review-queue.json"}
     if site.exists():
@@ -375,6 +391,8 @@ def write_preview(site: Path, index: dict, chunks: dict, store: dict, pdfs: dict
         write_json(data / "claims" / name, chunk, indent=None)
     for key, record in store.items():
         write_json(data / "decls" / f"{key}.json", record, indent=None)
+    for key, record in expansions.items():
+        write_json(data / "expansions" / f"{key}.json", record, indent=None)
     write_json(data / "search.json", mf.search_index(index, chunks), indent=None)
     if queue is not None:
         write_json(data / "review-queue.json", queue, indent=None)

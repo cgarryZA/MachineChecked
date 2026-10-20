@@ -67,10 +67,30 @@ these representations the full workspace, keeping every hypothesis visible. On a
 follow one another in reading order. The exact statement comes directly from Lean; rebuilding
 an older audit adds it.
 
+An object whose type is a subtype, structure or class shows the properties its type carries,
+as they apply to it, with the field and structure each comes from: for a given object they are
+part of what is given, for a witness they are established with it, and for an object inside an
+assumption, a negation or one alternative they stay inside it. An assumption that is a class of
+propositions shows what its fields state. **Exact Lean** lists each carried property as the Lean
+term that gives it (`s.start : s.path 0 = d`) with its field's declaration; many fields are
+folded under a summary.
+
 Click a variable to see its type and conditions. Click an expression to select it; further clicks
 widen the selection. Dotted names open short mathematical notes. A Lean declaration name opens
 its complete definition; **Back** and browser Back restore the claim view and reading position.
 Definition links can be copied or opened in another tab.
+
+A definition shows what it says: its parameters, in their order and as they are written, and its
+body; a definition by pattern matching or recursion shows the equations Lean derives for it
+(its equation theorems), each under its own variables. **Exact Lean** shows the authored source
+of the definition, the exact statement of each equation theorem and the elaborated value; the
+compiled form of a recursive definition is folded under **Compiled value**.
+
+A definition applied in a statement expands where it stands: after the expression, **expand**
+lists its applications of the project's definitions. Choosing one shows the arguments, by the
+definition's parameters, and the definition at those arguments: its body with them substituted,
+or the equations that apply to them with any case condition and the equation theorem's name.
+Lean performs the substitution and checks it. Applications inside an expansion expand in turn.
 
 **Used by**, under a declaration, lists the declarations that refer to it and how (in their
 statement, proof or definition body); a user opens like any declaration, so a specialised lemma

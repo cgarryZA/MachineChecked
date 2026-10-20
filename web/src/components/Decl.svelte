@@ -3,6 +3,7 @@
   import { loadDecl, siteIndex } from "../lib/data.js";
   import { moduleSourceUrl, sourceLabel, sourceTitle } from "../lib/issue.js";
   import LeanText from "./LeanText.svelte";
+  import Definition from "./Definition.svelte";
   import Uses from "./Uses.svelte";
 
   // One Lean declaration of a closure, loaded from the shared store when it is opened.
@@ -14,6 +15,8 @@
   let d = $state(null);
   $effect(() => { if (open || inspector) expanded = true; });
   let error = $state(null);
+  // The sub-term selected in the definition, shared between its readable and exact views.
+  let selId = $state(null);
   $effect(() => {
     if (expanded && !d && !error) {
       if (!key) error = "not part of this claim's closure in this release";
@@ -38,6 +41,14 @@
       {#if inspector}<Uses {name} {onref} {index} />{/if}
     {:else if !d}
       <p class="faint">Loading…</p>
+    {:else if inspector && d.defined_by !== undefined}
+      <Definition {d} {onref} {selId} onselect={(id) => (selId = id)} />
+      <Definition {d} view="exact" heading={false} {onref} {selId} onselect={(id) => (selId = id)} />
+      <details class="extra">
+        <summary>Details</summary>
+        {@render extra()}
+      </details>
+      <Uses {name} module={d.module} {onref} {index} />
     {:else if inspector}
       {#if d.signature}<LeanText pp={d.signature} {onref} refs={d.uses} />{/if}
       {#if d.value}
@@ -56,6 +67,14 @@
       {#if d.doc}
         {#if hideReview}<p class="lbl">author’s docstring</p>{/if}
         <p class="doc">{d.doc}</p>
+      {/if}
+      {#if d.defined_by !== undefined}
+        <p class="lbl">what it says</p>
+        <Definition {d} {onref} {selId} onselect={(id) => (selId = id)} />
+        {#if d.lean_source}
+          <p class="lbl">Lean source</p>
+          <pre class="src">{d.lean_source.text}</pre>
+        {/if}
       {/if}
       {#if d.signature}
         <p class="lbl">type</p>
@@ -114,6 +133,7 @@
   .doc { margin: 8px 0; color: var(--muted); }
   .lbl { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--faint); margin: 8px 0 2px; }
   .fp { font-family: var(--mono); font-size: 11px; margin: 8px 0 2px; }
+  .src { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 13px/1.55 var(--mono); }
   .rtext { white-space: pre-wrap; font: 13px/1.5 var(--sans); color: var(--muted); margin: 2px 0 0; }
   .rv { font-size: 12px; }
   .err { color: var(--st-malformed); font-size: 13px; }
