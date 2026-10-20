@@ -18,13 +18,17 @@ EXPECTED = {
     "T:cor:even-triangle": "formal: open",
     "T:rem:history": "out of scope: literature",
 }
+# The two equations of the proof of Theorem 2.5 are proof steps: their scope decision is their
+# status, and their links and review are their own (tests/contracts/test_steps.py).
+STEPS = {"T:eq:bound-sum": "out of scope: proof-step",
+         "T:eq:bound-range": "out of scope: proof-step"}
 
 
 @needs_lean
 @needs_tex
 def test_statuses_findings_and_schemas(toy):
     index, body, cfg = build(toy)
-    assert {c["id"]: c["status"] for c in index["claims"]} == EXPECTED
+    assert {c["id"]: c["status"] for c in index["claims"]} == {**EXPECTED, **STEPS}
     assert [f for f in findings(body) if f["tier"] == "violation"] == []
     # The only warning left is the truncated subtraction of the printed (false) claim; the one of
     # the corrected statement is dismissed with a rationale.
@@ -115,6 +119,57 @@ def test_definitions_carry_what_they_say_through_the_export(toy, tmp_path):
     assert expanded(tmp_path / "private") == []
 
 
+def expansions_apart(data):
+    """Check that the reader data in `data` keeps every expansion out of the files that refer to
+    it: claims, declarations and expansions hold only references `{at, id, name, key}`, each to a
+    file `expansions/<key>.json` whose content has that key. Returns the number of expansions."""
+    def refs(o, where):
+        found = []
+        if isinstance(o, dict):
+            for k, v in o.items():
+                if k == "expansions":
+                    for x in v:
+                        assert set(x) == {"at", "id", "name", "key"}, \
+                            f"{where} embeds an expansion of {x.get('name')}"
+                        found.append(x["key"])
+                else:
+                    found += refs(v, where)
+        elif isinstance(o, list):
+            for v in o:
+                found += refs(v, where)
+        return found
+    wanted = set()
+    for sub in ("claims", "decls", "expansions"):
+        for f in (data / sub).glob("*.json"):
+            rec = json.loads(f.read_text())
+            wanted |= set(refs(rec, f"{sub}/{f.name}"))
+            if sub != "claims":
+                assert mf.record_key(rec) == f.stem, f"{sub}/{f.name} is not under its key"
+    stored = {f.stem for f in (data / "expansions").glob("*.json")}
+    assert wanted <= stored, f"missing expansions {sorted(wanted - stored)[:3]}"
+    for f in (data / "claims").glob("*.json"):
+        c = json.loads(f.read_text())
+        assert all((data / "decls" / f"{k}.json").exists() for k in c.get("decls", {}).values())
+    return len(stored)
+
+
+@needs_lean
+@needs_tex
+def test_claim_files_refer_to_expansions(toy, tmp_path):
+    """A claim file carries no expansion, only references to `data/expansions/<key>.json`,
+    which the reader fetches when one is opened; each is written once under its content key,
+    in the site and in the public export, and not exported when the Lean is not published."""
+    from prooflens import config as cfgmod
+    from prooflens.export import export
+    _, _, cfg = build(toy)
+    assert expansions_apart(cfg.out_dir / "site" / "data") > 0
+    export(cfg, tmp_path / "public")
+    assert expansions_apart(tmp_path / "public" / "data") > 0
+    edit(toy / "machinechecked.toml", "lean = true", "lean = false")
+    export(cfgmod.load(toy / "machinechecked.toml"), tmp_path / "private")
+    assert expansions_apart(tmp_path / "private" / "data") == 0
+
+
 @needs_lean
 @needs_tex
 def test_hashes(toy):
@@ -144,8 +199,10 @@ def test_anchors_locate_every_numbered_claim(toy):
         ("theorem", "2.2", "thm:triangle"), ("proposition", "2.3", "prop:pred"),
         ("remark", "2.4", "rem:pred"), ("theorem", "2.5", "thm:bound"),
         ("corollary", "2.6", "cor:even-triangle"), ("remark", "3.1", "rem:history")]
+    # The discussion section starts the second page.
+    assert [a["begin"][0] for a in anchors] == [1] * 7 + [2]
     for a in anchors:
-        assert a["begin"][0] == 1 and a["head"][2] > a["begin"][2] - 1
+        assert a["head"][2] > a["begin"][2] - 1
     assert all(c["anchor"] for c in index["claims"])
 
 
@@ -427,6 +484,23 @@ def test_a_replay_record_counts_only_for_its_commit_environment_and_a_passing_ru
         c = next(c for c in body["assessment"]["claims"] if c["id"] == "T:thm:even-add")
         return c["clauses"][0]["checks"]["replay"]
 
+    # The guard of the run is shown, never changing the replay's state or the claim's status.
+    (toy / "replay.json").write_text(json.dumps(
+        {**rec, "conditions": {**rec["conditions"], "guard": "none"}}))
+    index, _, _ = build(toy)
+    base = status(index, "T:thm:even-add")
+    got = state()
+    assert got["state"] == "pass" and got["guard"] == "unguarded"
+    assert got["detail"].endswith("; replayed without the sandbox guard")
+    for conditions, guard in (({**rec["conditions"], "guard": "RestrictAddressFamilies=~AF_UNIX"},
+                               "guarded"), (None, "unrecorded")):
+        (toy / "replay.json").write_text(json.dumps({**rec, "conditions": conditions}))
+        index, body, _ = build(toy)
+        got = next(c for c in body["assessment"]["claims"]
+                   if c["id"] == "T:thm:even-add")["clauses"][0]["checks"]["replay"]
+        assert got["state"] == "pass" and got["guard"] == guard
+        assert status(index, "T:thm:even-add") == base
+    (toy / "replay.json").write_text(json.dumps(rec))
     assert state()["state"] == "pass"
     for change, why in (({"passed": False}, "did not pass"), ({"dirty": True}, "uncommitted"),
                         ({"toolchain": "leanprover/lean4:v0.0.0"}, "other Lean version"),

@@ -162,6 +162,13 @@ export function loadDecl(key) {
   return getJson(`data/decls/${key}.json`);
 }
 
+// A definition expanded at one application (`data/expansions/<key>.json`): a statement refers to
+// it by key, and it is fetched when the reader opens it.
+export function loadExpansion(key) {
+  if (!/^[0-9a-f]{24}$/.test(key || "")) return Promise.reject(new Error(`not an expansion key: ${key}`));
+  return getJson(`data/expansions/${key}.json`);
+}
+
 // The review queue the engine wrote (`data/review-queue.json`), if this site has one.
 export function loadQueue(index) {
   return getJson(index.review_queue);

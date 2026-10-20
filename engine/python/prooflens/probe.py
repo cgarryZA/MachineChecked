@@ -27,7 +27,8 @@ class ProbeError(RuntimeError):
 
 def requests_from_inventory(inv: dict) -> list[dict]:
     """One request per specification, proof, refutation, witness and definition named by the
-    inventory, without duplicates and in a stable order."""
+    inventory, and one `link` request per declaration a proof step is linked to (`lean`, and its
+    different formal route), without duplicates and in a stable order."""
     reqs, seen = [], set()
 
     def add(r):
@@ -49,7 +50,16 @@ def requests_from_inventory(inv: dict) -> list[dict]:
             for w in [cl.get("witness")] + [r.get("witness") for r in cl.get("regimes", [])]:
                 if w:
                     add({"kind": "witness", "name": w})
+    from .steps import is_step, lean_names, route_names
+    for c in inv["claims"]:
+        if is_step(c):
+            for n in lean_names(c) + route_names(c):
+                add({"kind": "link", "name": n})
     return reqs
+
+
+# The request for the names in the project's module docstrings that nothing declares.
+MODDOCS = {"kind": "moddocs", "name": ""}
 
 
 def fingerprint(canon: str) -> str:
@@ -174,6 +184,11 @@ def run_probe(cfg: Config, requests: list[dict], lake: str = "lake",
                                             timeout, work)))
         except ProbeError as e:
             raise ProbeError(f"library {lib} ({', '.join(mods)}): {e}") from None
+        # A session loads only its own library: a docstring name that begins with the root of
+        # another library's modules may be declared there, so it is not reported.
+        others = {m.split(".")[0] for l, ms in groups if l != lib for m in ms}
+        parts[-1][1]["moddocs"] = [d for d in parts[-1][1]["moddocs"]
+                                   if d["name"].split(".")[0] not in others]
     return attach_sources(cfg.lean_root, merge_records(parts))
 
 
@@ -226,9 +241,14 @@ def _pick(found: list[tuple[str, dict]], missing: dict) -> dict:
 def merge_records(parts: list[tuple[str, dict]]) -> dict:
     """The records of several sessions (one per library) as one result."""
     res = {"env": parts[0][1]["env"], "layering": [], "specs": {}, "proofs": {}, "decls": {},
-           "defs": {}, "complete": all(r["complete"] for _, r in parts)}
+           "defs": {}, "moddocs": [], "complete": all(r["complete"] for _, r in parts)}
+    if any("links" in r for _, r in parts):
+        res["links"] = {}
     seen = set()
     for _, r in parts:
+        for d in r.get("moddocs", []):
+            if d not in res["moddocs"]:
+                res["moddocs"].append(d)
         for v in r["layering"]:
             key = json.dumps(v, sort_keys=True)
             if key not in seen:
@@ -236,9 +256,9 @@ def merge_records(parts: list[tuple[str, dict]]) -> dict:
                 res["layering"].append(v)
         for name, d in r["decls"].items():
             res["decls"].setdefault(name, d)
-    for key in ("specs", "proofs", "defs"):
-        for k in dict.fromkeys(k for _, r in parts for k in r[key]):
-            recs = [(lib, r[key][k]) for lib, r in parts if k in r[key]]
+    for key in ("specs", "proofs", "defs") + (("links",) if "links" in res else ()):
+        for k in dict.fromkeys(k for _, r in parts for k in r.get(key, {})):
+            recs = [(lib, r[key][k]) for lib, r in parts if k in r.get(key, {})]
             found = [(lib, x) for lib, x in recs if "missing" not in x.get("errors", [])]
             res[key][k] = _pick(found, recs[0][1])
     return res
@@ -253,7 +273,7 @@ def _strip_decl(rec: dict) -> dict:
 
 def parse_records(lines) -> dict:
     res = {"env": None, "layering": [], "specs": {}, "proofs": {}, "decls": {}, "defs": {},
-           "complete": False}
+           "moddocs": [], "complete": False}
     for line in lines:
         if not line.strip():
             continue
@@ -277,10 +297,23 @@ def parse_records(lines) -> dict:
                 rec["legacy_hash"] = d["legacy_hash"]
                 rec["fingerprint"] = d["fingerprint"]
             res["specs"][rec["name"]] = rec
+        elif kind == "link":
+            # A declaration a proof step is linked to: its statement and proof checks, as the
+            # zero-configuration view records them.
+            rec = dict(rec)
+            rec.pop("record")
+            if isinstance(rec.get("decl"), dict):
+                d = _strip_decl(rec["decl"])
+                rec["decl"] = d
+                res["decls"].setdefault(d["name"], d)
+            res.setdefault("links", {})[rec["name"]] = rec
         elif kind in ("accept", "refute", "witness"):
             rec = dict(rec)
             rec["kind"] = rec.pop("record")
             res["proofs"][f"{rec['kind']}:{rec['name']}:{rec.get('spec') or ''}"] = rec
+        elif kind == "moddoc":
+            res["moddocs"].append({k: rec[k] for k in ("module", "line", "name", "heading",
+                                                       "item_lead") if k in rec})
         elif kind == "done":
             res["complete"] = True
     if not res["complete"]:

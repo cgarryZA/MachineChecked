@@ -5,6 +5,10 @@ carried through the assessment, manifest index, claim record, search index, CLI 
 export. Simple links select their code where the probe or module resolver observes the result.
 `status` and `class` are derived snapshots for CLI consumers, not inputs to browser logic.
 
+The class `caution` (drawn in the reader's warning colour) marks a status that needs attention
+without being a failure: `link.other-route`, a proof step whose linked Lean reaches the enclosing
+result by a different route than the printed step.
+
 `engine/python/prooflens/data/statuses.json` is the shared vocabulary. Python's `status.fields`
 and the reader's small `presentation.js` read it directly. Unknown codes use a neutral
 “Status unavailable” fallback, including when supplied with an apparently accepted label or
@@ -40,6 +44,7 @@ colour. The frontend never recomputes acceptance from the evidence dimensions.
 | `link.not-in-audit` | linked: Lean not checked here (the published audit does not list it) | `declared` |
 | `link.suggested` | suggested link, not confirmed | `unspecified` |
 | `link.none` | not linked | `unspecified` |
+| `link.other-route` | linked: a different formal route | `caution` |
 | `formal.refuted` | refuted as printed | `refuted` |
 | `formal.refuted.open` | refuted as printed; other clauses open | `refuted` |
 | `formal.refuted.corrected` | refuted as printed; corrected statement proved | `refuted` |
@@ -65,7 +70,10 @@ mechanical checks. Their complete state vocabularies are in `statuses.json` and 
   Definitions use the `stated` state.
 - `review` reports correspondence review independently of proof. The original `spec_review`
   and `def_reviews` retain individual stale/current reviews and self-declared provenance.
-- `replay` reports passed, not run or unverified.
+- `replay` reports passed, not run or unverified. A passed replay also has `guard`: `guarded`
+  (under Comparator's sandbox guard), `unguarded` (shown as "replayed without the sandbox
+  guard") or `unrecorded` (a record that does not state its conditions). The guard never changes
+  the state.
 - `source` records hash verification independently of `placement` (exact, approximate,
   manual, ambiguous or unlocated). For PDF-only sources, `pdf_integrity` separately records
   matched, mismatch, unpinned or unknown. PDF identity and location precision have independent values.

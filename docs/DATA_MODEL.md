@@ -24,6 +24,29 @@ The frozen list of claims, with the optional `label` of a claim and the `regimes
 A clause has `accept` or `refute`, not both. A corrected statement names the clause it
 `corrects` (by clause name). A definition claim's clause has `defs` and no `spec`.
 
+**Paper units.** A claim is a `statement` unless its `unit` says it is a `proof-equation` (a
+display inside a proof) or a `proof-passage` (a selected stretch of a proof); a claim recorded by
+line whose scope is `proof-step` and that gives no `unit` is a proof equation when its pinned
+region is a display environment and a proof passage otherwise. A proof step names its enclosing
+result in `parent`, and may record the Lean that establishes it and the different formal route
+used instead:
+
+```json
+{"id": "T:eq:bound-range", "paper": "T", "kind": "equation", "number": "Equation (3)",
+ "unit": "proof-equation", "parent": "T:thm:bound", "location": "toy.tex:75",
+ "source_region": {"end_line": 78}, "source_hash_scheme": "tex-region-v1",
+ "source_sha256": "…", "scope": "proof-step", "scope_reviewed": true, "clauses": [],
+ "lean": ["…"], "coverage": "full", "basis": "direct", "note": "…", "by": "…",
+ "route": {"lean": ["Toy.Acceptance.thm_bound"], "note": "…", "by": "…"}}
+```
+
+`lean` lists the declarations that state the step as printed, with `coverage` (`full`, `partial`,
+`changed`, `related`, `unresolved`; a stored `composed` reads as `full`) and `basis` (`direct`,
+`reviewed_composition`, `checked_bridge`). `route.lean` lists declarations that reach the parent
+by another argument. The probe checks both (as `link` records, `lean.links` in the evidence).
+None of these fields is an input to a status: a step's status is its scope decision's, and its
+review is its own (below).
+
 A claim's `location` is a file for a numbered environment, whose `source_sha256` is the hash of
 the whitespace-normalised body of the environment, or `<file>:<line>` for a claim recorded by
 line (an equation, a part of an environment, a prose claim), whose hash is the hash of that line.
@@ -33,13 +56,30 @@ line (an equation, a part of an environment, a prose claim), whose hash is the h
 Markdown files with markers:
 
 ```
-<!-- spec-review: <proposition> <hash> by=<reviewer> [kind=human|ai] -->
-<!-- def-review: <definition> <hash> by=<reviewer> [kind=human|ai] -->
+<!-- spec-review: <proposition> <hash> by=<reviewer> [kind=human|ai] [source=<claim>@<sha256>]... -->
+<!-- def-review: <definition> <hash> by=<reviewer> [kind=human|ai] [source=<claim>@<sha256>]... -->
+<!-- step-review: <claim id> <source sha256> verdict=holds|gap|false|undetermined by=<reviewer> [source=<claim id>@<source sha256>] -->
 ```
 
-`<hash>` is the `legacy_hash` or the `pl-fp-v1:` fingerprint the review was made at. The section
-the marker closes is the text of the review. The last marker of a declaration, reading the files
-in order (a directory's `.md` files by name), is its current record.
+`<hash>` is the `legacy_hash` or the `pl-fp-v1:` fingerprint the review was made at. Each
+`source` names a claim whose passage the reviewer read (a claim that states the proposition, or a
+definition claim that names the definition) and the digest of that passage as read, its
+`source_sha256` pin; a declaration no claim names has none. A marker without `source` is read as
+the [evidence policy](EVIDENCE_POLICY.md#a-review-is-a-reading-of-a-text) says. The section the
+marker closes is the text of the review. The last marker of a declaration, reading the files in
+order (a directory's `.md` files by name), is its current record.
+
+A `step-review` marker records a review of a printed proof step; its hash is the digest of the
+step's source text as read, and `review promote`, which writes it from an accepted report of the
+queue's unit `step:<claim id>` (whose `pins.fingerprints.source` is that digest), also writes it
+as the marker's `source`. It is current by the same rule: while that digest is the step's current
+pin. The assessment records each proof step's review from its markers (`step_review`); it is
+never an input to a status. In zero configuration, a step's review is such a report kept in the
+project's `machinechecked-reviews/` folder.
+
+A review report (`prooflens/review-report@1`) pins the same digests as `pins.source_sha256`
+(claim id to digest), taken when the reading is locked; `review promote` refuses a report whose
+digests are missing or differ from the current ones.
 
 Dismissals of warnings (`dismissals.json`):
 `[{"code", "subject", "trigger", "fingerprint", "rationale", "by"}]`.
@@ -56,7 +96,7 @@ Dismissals of warnings (`dismissals.json`):
 | `dismissals` | as read |
 | `lean` | the probe records: specifications (binders, conclusion, closure, constants, hashes), proofs (exact-type check, axioms), declarations (signature, value, definition content, authored source, doc, hashes), layering |
 | `tex` | per paper: mode, page size, anchors (env, number, labels, file:line, begin/head/end positions, source hash), files read, source regions, and the display excerpts of its claims (`excerpts`, [SOURCE_REGIONS.md](SOURCE_REGIONS.md#display-excerpts)) |
-| `assessment` | per claim: status and clauses; all findings |
+| `assessment` | per claim: status and clauses (for a proof step, also its `step_review` from its markers); all findings |
 
 A pretty-printed Lean term (a binder's type, a conclusion, a signature) is `{text, segments}`:
 each segment is a piece of the text, with `ref` when it names a constant and `var` when it is an
@@ -111,6 +151,11 @@ Only what is printed is searched (explicit arguments, not implicit or instance o
 4000 nodes of a term; at most 16 applications of one term are expanded and `expansions_omitted`
 counts the rest.
 Expansions are display only and are exported with the statement, so only with the Lean.
+In the reader's data, each expansion is a file of its own, `data/expansions/<key>.json`, where
+`key` is the first 24 hex digits of the SHA-256 of its canonical JSON; a statement, declaration
+or expansion refers to it as `{at, id, name, key}`, and the reader fetches it when it is opened.
+An expansion that recurs is written once. A published audit's loader fetches every expansion
+its claims and declarations refer to and checks each against its key.
 
 ## Manifest (`manifest-index.schema.json`, `manifest-claim.schema.json`), derived
 
@@ -136,6 +181,29 @@ target, state, reasons, pinned, current}`, where `state` is `checked`, `stale` o
 `source_sha256`) as read and as now. An unresolved reading has its `question` and `would_decide`.
 Values outside these are dropped. It is displayed beside the links and is never an input to a
 status.
+
+Every index row and passport has `unit` and `parent`, and the index has `units`: per paper and
+per unit kind, how many claims have each status, so statements and proof steps are counted
+apart. A proof step's row also has `step_review`. A proof step's passport has `step`:
+
+| Field | What |
+|---|---|
+| `unit`, `parent` | its kind, and its enclosing result (`id`, `number`, `file`) |
+| `source` | its `location`, `region` and `sha256`: the exact pinned source |
+| `links` | the declarations that establish it, each with its `link.*` status and statement |
+| `correspondence` | `{source, coverage, basis, confidence, note, by}` of those links, or null |
+| `route` | `{links, note, by, source}`: the different formal route used instead, or null |
+| `review` | `{state, finding, reports}`: `unreviewed`, `holds`, `gap`, `false`, `undetermined`, or `stale` when every report was made on other source text; `finding` is the latest report on the current text |
+
+A step's passport also has its printed text (`statement_tex`) and its context in the proof
+(`context_tex`): from the proof's opening (at most 40 lines before the step) to the sentence after
+it. A parent's passport lists its steps (`steps`: id, number, unit, status, review state, linked
+and route names). In zero configuration the links file holds a step's links under its label
+(`lean`, with `coverage`, `basis`, `note`, `by`) and its formal route under `route`
+(`{lean, note, by}`); a step whose only links are a formal route has the status
+`link.other-route`. An export keeps all of this, the Lean statements only when the Lean is
+published, the reviewers' texts only when reviews are, the source text and location only when the
+source is.
 
 A paper page (`prooflens.paper.write_paper_site`, used by machinechecked.org) is written in the
 same format, with `mode: "paper"`: the paper's registry entry (`paper`), the Lean projects that

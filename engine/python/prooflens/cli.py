@@ -212,9 +212,12 @@ def _simple_site(root: Path, paper: Path, web: str | None):
 
 
 def _print_simple(body):
+    from .moddocs import stale_doc_message
     from .simple import view_summary
     for n in body.get("notes", []):
         print(f"note: {n}")
+    for d in body.get("module_docs", []):
+        print(f"warning: {stale_doc_message(d)}")
     for s, k in sorted(view_summary(body).items()):
         print(f"  {k:4d}  {s}")
     for c in body.get("claims", []):
@@ -300,12 +303,13 @@ def cmd_link(a):
         sys.exit("--bridge-pins goes with --bridge THEOREM TARGET")
     try:
         change = authoring.plan(root, links_key(root, paper), snap, a.claim,
-                                lean=a.decls or None, add=a.add, reject=a.reject or None,
+                                lean=None if a.route else a.decls or None, add=a.add, reject=a.reject or None,
                                 clear=a.clear, note=note, coverage=a.coverage,
                                 confidence=a.confidence, reason=a.reason, by=a.reviewer,
                                 external=a.external, basis=a.basis, refs=a.refs,
                                 argument=argument, bridge=bridge, question=a.question,
-                                would_decide=a.would_decide)
+                                would_decide=a.would_decide,
+                                route=(a.decls or []) if a.route else None)
         if not a.dry_run:
             authoring.write(root, change)
     except authoring.LinkError as e:
@@ -534,10 +538,22 @@ def cmd_check(a):
     print(f"Lean checked all {n} linked declaration(s)")
 
 
+def _step_json(c: dict) -> dict:
+    """A proof step's formal route and its own review, for `check --json`."""
+    from .steps import review
+    rv = review(c.get("step_reports", []), c.get("source_sha256"))
+    return {"route": [{"name": l["name"], "status_code": l["status_code"]}
+                      for l in c.get("route_links", [])],
+            "step_review": rv["state"],
+            "finding": {"verdict": rv["finding"]["verdict"]["value"],
+                        "reviewer": rv["finding"]["reviewer"]} if rv["finding"] else None}
+
+
 CHECK_NOTE = "Results describe the linked Lean declarations; correspondence reviews compare them with the paper."
 
 
-FINDING_KEYS = ("id", "tier", "code", "subject", "message", "trigger", "dismissed")
+FINDING_KEYS = ("id", "tier", "code", "subject", "message", "trigger", "file", "line",
+                "dismissed")
 
 
 def _finding_details(cfg, eid: str) -> list[dict]:
@@ -548,6 +564,12 @@ def _finding_details(cfg, eid: str) -> list[dict]:
     order = {"violation": 0, "obligation": 1, "warning": 2}
     return [{k: f[k] for k in FINDING_KEYS if k in f}
             for f in sorted(found, key=lambda f: (order.get(f.get("tier"), 3), f.get("id", "")))]
+
+
+def _replay_guard(cfg, eid: str) -> dict | None:
+    from . import evidence as ev
+    from .replay import guard_summary
+    return guard_summary(ev.load(cfg.out_dir, eid)["body"]["assessment"])
 
 
 def _check_json(a):
@@ -562,15 +584,19 @@ def _check_json(a):
             res = build(cfg, web_dist=_web_dist(a.web))
             idx = res["index"]
             claims = [{"id": c["id"], "paper": c["paper"], "number": c.get("number"),
-                       "title": c.get("title"), "status": c["status"], "status_code": c["status_code"], "class": c["class"]}
+                       "title": c.get("title"), "status": c["status"], "status_code": c["status_code"], "class": c["class"],
+                       "unit": c.get("unit", "statement"), "parent": c.get("parent"),
+                       **({"step_review": c["step_review"]} if "step_review" in c else {})}
                       for c in idx["claims"]]
             out = {"mode": "full", "release": idx["release"],
                    "project": idx.get("project", {}).get("commit"),
                    "findings": idx["findings"]["total"],
-                   "finding_details": _finding_details(cfg, res["evidence"])}
+                   "finding_details": _finding_details(cfg, res["evidence"]),
+                   "replay": _replay_guard(cfg, res["evidence"])}
             failed = bool(idx["findings"]["total"].get("violation"))
         else:
             root, paper = _simple_target(a)
+            from .moddocs import stale_doc_message
             from .simple import view_release
             view = _simple_view(root, paper)
             body = view["body"]
@@ -583,13 +609,18 @@ def _check_json(a):
                                     "submitted_at": r["submitted_at"], "current": r["current"]}
                                    for r in c.get("reviews", [])],
                        "suggestions": [{"name": x["name"], "why": x.get("why")}
-                                       for x in c.get("suggestions", [])]}
+                                       for x in c.get("suggestions", [])],
+                       "unit": c.get("unit", "statement"), "parent": c.get("parent"),
+                       **(_step_json(c) if c.get("unit") else {})}
                       for c in body["claims"]]
             out = {"mode": "simple", "paper": body["paper"], "title": body["title"],
                    "release": view_release(body), "commit": body.get("commit"),
                    "modules": {"built": body["project"]["built"],
                                "not_built": body["project"]["unbuilt"]},
-                   "notes": body["notes"]}
+                   "notes": body["notes"],
+                   "warnings": [{"kind": "module-doc-name", "file": d["file"], "line": d["line"],
+                                 "name": d["name"], "message": stale_doc_message(d)}
+                                for d in body.get("module_docs", [])]}
             failed = any(l["class"] != "proved" for c in claims for l in c["links"])
     summary = {}
     for c in claims:
@@ -618,11 +649,19 @@ def cmd_build(a):
     print("findings:", ", ".join(f"{v} {k}" for k, v in sorted(idx["findings"]["total"].items()))
           or "none")
     # Violations and obligations, one per line: they are few, and they block acceptance.
-    for f in _finding_details(cfg, res["evidence"]):
+    details = _finding_details(cfg, res["evidence"])
+    for f in details:
         if f["tier"] in ("violation", "obligation") and not f.get("dismissed"):
             print(f"  {f['tier']}  {f['subject']}: {f['message']}")
+    # Names in module docstrings that nothing declares, with file and line.
+    for f in details:
+        if f["code"] == "module-doc-name" and not f.get("dismissed"):
+            print(f"  warning  {f['message']}")
     if idx["findings"]["total"].get("warning"):
         print("  (warnings: see `check --json` or the reader)")
+    rg = _replay_guard(cfg, res["evidence"])
+    if rg and rg["message"]:
+        print(f"note: independent replay: {rg['message']}")
     if dest is not None:
         # The site to publish is the audit's public export: what the configuration publishes,
         # scanned for private material, as `export --out` writes it.
@@ -699,13 +738,19 @@ def cmd_replay(a):
     if out is None:
         sys.exit("say where to write the record: --out FILE, or `comparator_log` in "
                  "machinechecked.toml (which the assessment then reads)")
-    rec = replay(cfg.lean_root, Path(a.comparator_config).resolve(), out, a.comparator)
-    print(f"Comparator {'passed' if rec['passed'] else 'did not pass'} on commit "
-          f"{rec['commit'][:12]}: {len(rec['replayed'])} theorem(s) replayed; record in {out}")
+    rec = replay(cfg.lean_root, Path(a.comparator_config).resolve(), out, a.comparator,
+                 guard=not a.no_guard)
     how = rec["conditions"]
+    print(f"Comparator {'passed' if rec['passed'] else 'did not pass'} on commit "
+          f"{rec['commit'][:12]}: {len(rec['replayed'])} theorem(s) replayed"
+          + (" under the sandbox guard" if how["guard"] != "none" else "")
+          + f"; record in {out}")
     if how["guard"] == "none":
-        print("note: Comparator ran without the guard its README requires (this process could "
-              "open a Unix socket); the record says so. See `machinechecked replay --help`.",
+        why = ("--no-guard was given" if how["guard_mode"] == "opted-out" else
+               "this machine cannot start it: it needs `systemd-run` and a user systemd manager "
+               "that applies RestrictAddressFamilies")
+        print(f"note: replayed without the sandbox guard ({why}); the replay still counts, and "
+              "the record and the audit say so. See `machinechecked replay --help`.",
               file=sys.stderr)
     if how["landrun"] is None:
         print("note: no `landrun` was found; the record says so.", file=sys.stderr)
@@ -922,7 +967,8 @@ def cmd_review(a):
             for w in why:
                 print(f"           - {w}")
         else:
-            print(f"OK       {head}\n           {pr.marker(r, cur)}")
+            print(f"OK       {head}\n           "
+                  f"{pr.marker(r, cur, pr.report_source(r))}")
             ok.append((r, cur))
     if not ok:
         sys.exit("nothing to promote")
@@ -1083,17 +1129,21 @@ def main(argv=None):
         description="Run Comparator (`lake env comparator CONFIG`) in the Lean project and record "
         "the replay. Comparator's trust model asks for a checking environment in which the "
         "solution was not compiled before, `landrun` on PATH, and the whole run under "
-        "`systemd-run --user --property=RestrictAddressFamilies=~AF_UNIX --pipe --wait "
-        "-E PATH=\"$PATH\" --working-directory \"$PWD\" -- machinechecked replay CONFIG`. "
-        "This command does not start that guard; the record says whether this process ran "
-        "under it, which systemd unit and Landlock ABI it had, and which comparator, landrun, "
-        "lean4export and nanoda_bin it used, with their SHA-256.")
+        "`systemd-run --user --property=RestrictAddressFamilies=~AF_UNIX`. This command starts "
+        "that sandbox guard itself when the machine has `systemd-run` and a user systemd "
+        "manager that applies it (or runs directly when it is already under it); --no-guard "
+        "opts out. A replay without the guard still counts, and the audit says it was replayed "
+        "without the sandbox guard. The record says how the run went: the guard, the systemd "
+        "unit, the Landlock ABI, and which comparator, landrun, lean4export and nanoda_bin it "
+        "used, with their SHA-256.")
     rp.add_argument("comparator_config", metavar="CONFIG",
                     help="the Comparator configuration (its theorem_names are the proofs "
                     "replayed)")
     rp.add_argument("-c", "--config", default=None, help=argparse.SUPPRESS)
     rp.add_argument("--out", help="the record (default: comparator_log in machinechecked.toml)")
     rp.add_argument("--comparator", default="comparator", help="the Comparator program")
+    rp.add_argument("--no-guard", action="store_true",
+                    help="run Comparator without the systemd-run sandbox guard")
     rp.set_defaults(func=cmd_replay)
 
     ins = sub.add_parser("inspect", help="what a Lean declaration depends on, proofs included")
@@ -1158,6 +1208,8 @@ def main(argv=None):
     lk.add_argument("decls", nargs="*", metavar="DECL",
                     help="the declarations that state it (they replace the confirmed list)")
     lk.add_argument("--add", action="store_true", help="add DECL to the confirmed list")
+    lk.add_argument("--route", action="store_true", help="for a proof step: DECL is the "
+                    "different formal route used instead of the printed step (none: clear it)")
     lk.add_argument("--reject", nargs="+", metavar="DECL", help="record suggestions as not this "
                     "claim's")
     lk.add_argument("--reason", help="why they are rejected")

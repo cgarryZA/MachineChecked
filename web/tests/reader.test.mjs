@@ -179,6 +179,17 @@ const reviewUnits = ["T:thm:bound", "T:thm:even-add"].map((id, i) => {
 fs.writeFileSync(path.join(root, "review/data/index.json"), JSON.stringify(reviewIndex));
 fs.writeFileSync(path.join(root, "review/data/review-queue.json"), JSON.stringify({ authors: ["Synthetic author"], needs_statement: [], units: reviewUnits }));
 
+// A review queue holding one proof step with no Lean link, as the engine writes it.
+fs.cpSync(path.join(root, "toy"), path.join(root, "review-step"), { recursive: true });
+const stepRow = TOY.claims.find((c) => c.id === "T:eq:bound-range");
+const stepChunk = JSON.parse(fs.readFileSync(path.join(root, "toy/data/claims", stepRow.file)));
+fs.writeFileSync(path.join(root, "review-step/data/index.json"), JSON.stringify(reviewIndex));
+fs.writeFileSync(path.join(root, "review-step/data/review-queue.json"), JSON.stringify({ authors: [], needs_statement: [], units: [{
+  id: "step:T:eq:bound-range", kind: "step", unit: "proof-equation", name: "Equation (3)", lean: [],
+  route: ["Toy.Acceptance.thm_bound"], fingerprints: { source: stepChunk.source_sha256 },
+  parent: { id: "T:thm:bound", number: "Theorem 2.5" }, state: "pending", reason: "Proof step of Theorem 2.5; no Lean is linked to it",
+  claims: [{ id: "T:eq:bound-range" }], papers: ["T"], paper: "T", section: "2", author_review: [] }] }));
+
 fs.cpSync(path.join(root, "toy"), path.join(root, "long-statement"), { recursive: true });
 const longFile = TOY.claims.find((c) => c.id === "T:thm:even-add").file;
 const longPath = path.join(root, "long-statement/data/claims", longFile);
@@ -677,9 +688,13 @@ await check("in the local reader a symbol is linked by choosing it and clicking 
   });
 
   await check("a definition expands at the arguments of each application, beside the statement", width, async (pg) => {
+    // An expansion is fetched from its own file when it is opened, not with the claim.
+    const fetched = [];
+    pg.on("request", (r) => { if (r.url().includes("/data/expansions/")) fetched.push(r.url()); });
     await pg.goto(origin + `/structure/#/r/${SHAPE.release}/read/P/${encodeURIComponent("P:thm:jet")}`);
     const st = pg.locator("aside .view .stmt").first();
     await st.locator(".ribbon").waitFor();
+    assert.equal(fetched.length, 0, "no expansion is fetched before one is opened");
     // The assumption at order n + 5 and the conclusion at n + 4 are different applications.
     const chips = st.locator("button.xb");
     assert.equal(await chips.count(), 2);
@@ -689,6 +704,7 @@ await check("in the local reader a symbol is linked by choosing it and clicking 
     assert.match(await xp.locator(".occ").textContent(), /Shape\.JetBound f S \(n \+ 5\) C/);
     assert.match((await xp.locator(".args").textContent()).replace(/\s+/g, " "), /k := n \+ 5/);
     assert.match(await xp.locator(".body").textContent(), /∀ \(j : Nat\), j ≤ n \+ 5 → ∀ \(x : Nat\), S x → f j x ≤ C/);
+    assert.equal(fetched.length, 1, "opening an expansion fetches it");
     assert.equal(await st.locator(".ribbon .in").count() > 0, true, "the application stays visible and selected");
     await chips.nth(1).click();
     xp = st.locator(".inspect .xp");
@@ -1041,6 +1057,21 @@ await check("failed claim loads can be retried", 1300, async (pg) => {
   await pg.locator("aside h1").waitFor(); assert.equal(attempts, 2);
 });
 
+await check("names in module docstrings that nothing declares are listed, dismissals shown", 1300, async (pg) => {
+  const mk = (name, line, dismissed) => ({ id: `module-doc-name:Toy.Defs:${name}`, tier: "warning", code: "module-doc-name", subject: "Toy.Defs", trigger: name,
+    message: `Toy/Defs.lean:${line}: module docstring names ${name}, which is not declared`, ...(dismissed ? { dismissed } : {}) });
+  const general = [mk("Toy.gone_lemma", 7), mk("Toy.old_bound", 8, { by: "auditor", rationale: "kept as a pointer" })];
+  await pg.route("**/toy/data/index.json", (r) => r.fulfill({ contentType: "application/json", body: JSON.stringify({ ...TOY, findings: { ...TOY.findings, general } }) }));
+  await pg.goto(origin + "/toy/");
+  const banner = pg.locator("details.docnames");
+  assert.match(await banner.locator("summary").textContent(), /^Warning: 1 name\(s\) in module docstrings are not declared .*\(1 dismissed\)$/);
+  await banner.locator("summary").click();
+  const items = await banner.locator("li").allTextContents();
+  assert.equal(items.length, 2);
+  assert.match(items[0], /Toy\/Defs.lean:7: module docstring names Toy.gone_lemma, which is not declared/);
+  assert.match(items[1], /dismissed by auditor: “kept as a pointer”/);
+});
+
 await check("contents close after a mobile selection", 390, async (pg) => {
   await pg.goto(origin + "/paper/");
   await pg.getByRole("button", { name: "Contents", exact: true }).click();
@@ -1090,7 +1121,7 @@ for (const scheme of ["light", "dark"]) await check(`${scheme} theme text meets 
   const ratios = await pg.evaluate(() => {
     const style = getComputedStyle(document.documentElement);
     const luminance = (hex) => { const rgb = hex.trim().replace("#", "").replace(/^([0-9a-f])([0-9a-f])([0-9a-f])$/i, "$1$1$2$2$3$3").match(/../g).map((s) => parseInt(s, 16) / 255).map((v) => v <= .04045 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4); return rgb[0] * .2126 + rgb[1] * .7152 + rgb[2] * .0722; };
-    return [["--faint", "--bg"], ["--faint", "--surface-2"], ["--on-accent", "--accent"]].map(([a,b]) => { const x = luminance(style.getPropertyValue(a)), y = luminance(style.getPropertyValue(b)); return (Math.max(x,y)+.05)/(Math.min(x,y)+.05); });
+    return [["--faint", "--bg"], ["--faint", "--surface-2"], ["--on-accent", "--accent"], ["--tier-warning", "--bg"], ["--tier-warning", "--surface"]].map(([a,b]) => { const x = luminance(style.getPropertyValue(a)), y = luminance(style.getPropertyValue(b)); return (Math.max(x,y)+.05)/(Math.min(x,y)+.05); });
   });
   assert.ok(ratios.every((r) => r >= 4.5), JSON.stringify(ratios));
   if (process.env.SHOTS) await pg.screenshot({ path: path.join(process.env.SHOTS, `theme-${scheme}.png`) });
@@ -1150,6 +1181,71 @@ await check("review opens the selected claim, keeps protocol order and exports a
   await pg.getByRole("button", { name: "Export reports (1 new)", exact: true }).click();
   const file = await download; const exported = JSON.parse(fs.readFileSync(await file.path()));
   assert.deepEqual(exported.reports[0], report);
+});
+
+for (const width of [1300, 390]) {
+  await check("a proof step shows its own finding beside the equation, apart from its parent", width, async (pg) => {
+    await toyClaim(pg, "T:eq:bound-range");
+    const view = pg.locator("aside .view");
+    assert.equal(await view.locator(".chipbtn [data-status]").getAttribute("data-status"), "scope.proof-step", "the scope decision is the status");
+    const finding = view.locator(".paper .finding");
+    assert.equal(await finding.getAttribute("data-review"), "false");
+    assert.match(await finding.textContent(), /false as printed.*k = 0/s);
+    assert.match(await finding.textContent(), /Theorem 2\.5/);
+    assert.match(await view.locator("section.lean").textContent(), /No Lean declaration is linked as establishing this step/);
+    assert.match(await view.locator("section.lean").textContent(), /Different formal route used instead.*Toy\.Acceptance\.thm_bound/s);
+    await view.locator(".paper .finding .context summary").click();
+    assert.match(await view.locator(".paper .finding .context").textContent(), /k = 1/);
+    // A linked step that no one has reviewed reads as not reviewed.
+    await toyClaim(pg, "T:eq:bound-sum");
+    assert.equal(await pg.locator("aside .view .paper .finding").getAttribute("data-review"), "unreviewed");
+    assert.match(await pg.locator("aside .view .paper .finding").textContent(), /not reviewed/);
+    assert.match(await pg.locator("aside .view section.lean").textContent(), /Toy\.Acceptance\.thm_triangle/);
+    // The parent keeps its own status and lists its steps.
+    await toyClaim(pg, "T:thm:bound");
+    assert.equal(await pg.locator("aside .view .chipbtn [data-status]").getAttribute("data-status"), "formal.review-pending");
+    const rows = pg.locator("aside .view .steps li");
+    assert.equal(await rows.count(), 2);
+    assert.match(await rows.nth(1).textContent(), /Equation \(3\).*false as printed/s);
+    assert.equal(await pg.locator("aside .view .paper .finding").count(), 0, "the parent has no step finding");
+    await rows.nth(1).locator("a").click();
+    await pg.waitForFunction(() => decodeURIComponent(location.hash).endsWith("T:eq:bound-range"));
+  });
+}
+
+await check("the overview counts statements and proof steps apart", 1300, async (pg) => {
+  await pg.goto(origin + `/toy/#/r/${TOY.release}/overview`);
+  await pg.getByRole("button", { name: /^Proof steps \(2\)$/ }).click();
+  assert.equal(await pg.locator(".coverage .claims li").count(), 2);
+  assert.match(await pg.locator(".coverage .claims").textContent(), /Review of the printed step: false as printed/);
+  await pg.getByRole("button", { name: /^Statements \(\d+\)$/ }).click();
+  assert.equal(await pg.locator(".coverage .claims li").count(), TOY.claims.length - 2);
+});
+
+await check("a proof step with no Lean link is reviewed as printed and reported as a step", 390, async (pg) => {
+  await pg.goto(origin + `/review-step/#/r/${TOY.release}/review?claim=T%3Aeq%3Abound-range`);
+  await pg.getByRole("textbox", { name: "Your name" }).fill("Synthetic reviewer");
+  await pg.getByRole("button", { name: "Start", exact: true }).click();
+  await pg.locator(".review .unit h2").waitFor();
+  assert.match(await pg.locator(".review .unit").textContent(), /Proof step.*A step of the proof of Theorem 2\.5/s);
+  await pg.getByRole("textbox", { name: "Your reading", exact: true }).fill("For every k >= 0, with n fixed, the step says n <= k n^2.");
+  await pg.getByRole("button", { name: "Lock my reading and show the Lean" }).click();
+  await pg.getByText("Different formal route used instead").waitFor();
+  await pg.getByRole("textbox", { name: "Comparison", exact: true }).fill("At k = 0 and n = 1 it reads 1 <= 0.");
+  await pg.getByRole("button", { name: "It fails as printed", exact: true }).click();
+  await pg.getByRole("radio", { name: "False as printed", exact: true }).check();
+  await pg.locator("#verdict-detail").fill("Fails at k = 0, n = 1; holds for k >= 1.");
+  await pg.getByRole("button", { name: "Record verdict and show the author's review" }).click();
+  await pg.getByRole("button", { name: "Save report", exact: true }).click();
+  await pg.getByRole("button", { name: "Export reports (1 new)", exact: true }).waitFor();
+  const report = await pg.evaluate(() => JSON.parse(localStorage.getItem("prooflens-review:toy-paper")).reports[0]);
+  assert.equal(report.unit.kind, "step");
+  assert.equal(report.unit.target, "proof-equation");
+  assert.deepEqual(report.unit.lean, []);
+  assert.deepEqual(report.unit.parent, { id: "T:thm:bound", number: "Theorem 2.5" });
+  assert.equal(report.pins.fingerprints.source, stepChunk.source_sha256);
+  assert.equal(report.verdict.value, "false as printed");
+  assert.equal(report.issue_draft.title, "Equation (3) in the proof of Theorem 2.5: false as printed");
 });
 
 // A saved investigation, under the engine's own local server: started in the reader, resumed

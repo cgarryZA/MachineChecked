@@ -21,6 +21,11 @@ def test_full_evidence_and_project_revision_survive_import(tmp_path):
     assert len(index['claims']) == 2
     assert index['claims'][1]['projects'] == [REPO]
     for k in rec['decls'].values(): assert (tmp_path/'data/decls'/f'{k}.json').is_file()
+    # The expansions the statement refers to, and those they refer to, come with the audit and
+    # are written on the paper page under their keys.
+    assert len(audit['expansions']) == 2
+    for k, x in audit['expansions'].items():
+        assert json.loads((tmp_path/'data/expansions'/f'{k}.json').read_text()) == x
 
 
 def test_exact_locations_stay_with_the_pdf_they_describe(tmp_path):
@@ -47,7 +52,7 @@ def test_incompatible_contract_is_rejected(part,key,value):
     with pytest.raises(AuditError): snapshot(d)
 
 
-@pytest.mark.parametrize('change', ['repository','paper','version','revision','commit','duplicate','pdf','decl','chunk'])
+@pytest.mark.parametrize('change', ['repository','paper','version','revision','commit','duplicate','pdf','decl','chunk','expansion'])
 def test_wrong_or_partial_snapshot_is_rejected(change):
     d=files();desc=d['audit.json']; idx=d['data/index.json']
     if change=='repository':desc['formalisation']['repository']='another/project'
@@ -58,6 +63,7 @@ def test_wrong_or_partial_snapshot_is_rejected(change):
     if change=='duplicate':idx['claims'].append(copy.deepcopy(idx['claims'][0]))
     if change=='pdf':d['data/papers/T.pdf']+=b'changed'
     if change=='decl':d[next(k for k in d if k.startswith('data/decls/'))]['value']='False'
+    if change=='expansion':d[next(k for k in d if k.startswith('data/expansions/'))]['checked']=False
     if change=='chunk':d['data/claims/'+idx['claims'][0]['file']]['id']='another'
     with pytest.raises(AuditError):snapshot(d)
 

@@ -14,7 +14,7 @@ from . import manifest as mf
 from . import review_queue as rq
 from .assess import Assessor, line_location
 from .config import Config
-from .probe import FINGERPRINT_VERSION, requests_from_inventory, run_probe
+from .probe import FINGERPRINT_VERSION, MODDOCS, requests_from_inventory, run_probe
 from .reviews import load_dismissals, load_reviews
 from .schemas import validate
 from .sources import acquire
@@ -78,6 +78,7 @@ def build(cfg: Config, release: str | None = None, skip_lean: bool = False,
         missing = [r["name"] for r in requests_from_inventory(inv)
                    if (r["kind"] == "spec" and r["name"] not in lean["specs"])
                    or (r["kind"] == "decl" and r["name"] not in lean["defs"])
+                   or (r["kind"] == "link" and r["name"] not in lean.get("links", {}))
                    or (r["kind"] in ("accept", "refute", "witness") and
                        f"{r['kind']}:{r['name']}:{r.get('spec') or ''}" not in lean["proofs"])]
         if missing:
@@ -88,7 +89,8 @@ def build(cfg: Config, release: str | None = None, skip_lean: bool = False,
     elif not skip_lean:
         lean_digest = lean_inputs_digest(cfg)
         log(f"probe: {len(requests_from_inventory(inv))} requests in {cfg.lean_root}")
-        lean = run_probe(cfg, requests_from_inventory(inv), lake=lake, build=lean_build)
+        lean = run_probe(cfg, requests_from_inventory(inv) + [MODDOCS], lake=lake,
+                         build=lean_build)
 
     tex, papers_prov, pdfs = {}, {}, {}
     display = load_display(cfg)
@@ -138,6 +140,11 @@ def build(cfg: Config, release: str | None = None, skip_lean: bool = False,
         if paper.id in tex:
             if t is not None:
                 tex[paper.id]["regions"] = collect_source_regions(inv, paper.id, snap.dir)
+                # The text of each proof step and its context in the proof, for the reader and
+                # the review packet (published only with the source text).
+                from .steps import step_texts
+                tex[paper.id]["step_text"] = step_texts(inv, paper.id, snap.dir,
+                                                        tex[paper.id]["regions"])
                 locs = [c["location"] for c in inv["claims"]
                         if c["paper"] == paper.id and line_location(c) is not None]
                 tex[paper.id]["line_anchors"] = t["line_anchors"](locs)
@@ -353,7 +360,23 @@ def load_display(cfg: Config) -> dict | None:
 
 
 def write_preview(site: Path, index: dict, chunks: dict, store: dict, pdfs: dict,
-                  web_dist: Path | None, queue: dict | None = None):
+                  web_dist: Path | None, queue: dict | None = None,
+                  expansions: dict | None = None):
+    """Write the reader and its data to `site`. Definitions expanded at their applications are
+    written on their own (`data/expansions/<key>.json`, `mf.split_expansions`), together with
+    `expansions` already split off (those of published audits)."""
+    expansions = dict(expansions or {})
+    # A declaration record without its expansions is a different record: it gets its own key.
+    rekey, split_store = {}, {}
+    for k, r in store.items():
+        q = mf.split_expansions(r, expansions)
+        rekey[k] = mf.record_key(q) if q != r else k
+        split_store[rekey[k]] = q
+    store = split_store
+    chunks = {n: {**mf.split_expansions(c, expansions),
+                  **({"decls": {d: rekey.get(k, k) for d, k in c["decls"].items()}}
+                     if isinstance(c.get("decls"), dict) else {})}
+              for n, c in chunks.items()}
     if queue is not None:
         index = {**index, "review_queue": "data/review-queue.json"}
     if site.exists():
@@ -368,6 +391,8 @@ def write_preview(site: Path, index: dict, chunks: dict, store: dict, pdfs: dict
         write_json(data / "claims" / name, chunk, indent=None)
     for key, record in store.items():
         write_json(data / "decls" / f"{key}.json", record, indent=None)
+    for key, record in expansions.items():
+        write_json(data / "expansions" / f"{key}.json", record, indent=None)
     write_json(data / "search.json", mf.search_index(index, chunks), indent=None)
     if queue is not None:
         write_json(data / "review-queue.json", queue, indent=None)

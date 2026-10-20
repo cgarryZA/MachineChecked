@@ -12,12 +12,15 @@ audited project's (`assess.Assessor.replay`).
 
 Comparator's own trust model also asks for isolation: `landrun` sandboxes the solution's build,
 and the whole run goes under `systemd-run --user --property=RestrictAddressFamilies=~AF_UNIX`,
-in an environment where the solution was not compiled before. This module does not start that
-guard; the record says how the run went (`conditions`): whether the process could open a Unix
-socket (the guard forbids it, for Comparator too, which inherits the restriction), the systemd
-unit it ran in, the Landlock ABI of the kernel, and where `comparator`, `landrun`,
-`lean4export` and, when enabled, `nanoda_bin` were, with their SHA-256 (and Comparator's commit
-when it was built in a Git checkout).
+in an environment where the solution was not compiled before. `replay` starts that guard itself
+when the machine can (a user systemd manager that applies the property, which is checked by
+trying to open a Unix socket inside it), unless the caller opts out; a process already under
+the guard runs Comparator directly. A replay without the guard still counts as replay evidence,
+and the assessment says it was replayed without the sandbox guard. The record says how the run
+went (`conditions`): the guard and how it came to hold (`guard_mode`), the systemd unit, the
+Landlock ABI of the kernel, and where `comparator`, `landrun`, `lean4export` and, when
+enabled, `nanoda_bin` were, with their SHA-256 (and Comparator's commit when it was built in a
+Git checkout).
 """
 
 from __future__ import annotations
@@ -27,6 +30,9 @@ import json
 import os
 import re
 import shutil
+import subprocess
+import sys
+import uuid
 from pathlib import Path
 
 from .util import git_head, run, sha256_file, write_json
@@ -144,11 +150,51 @@ def program(name: str | None, env_var: str | None = None,
     return {"path": path, "sha256": sha256_file(Path(path)), "commit": head if lake else None}
 
 
-def conditions(comparator: str, conf: dict, cwd: Path) -> dict:
-    """How a replay in `cwd` runs: the guard observed on this process, and the programs used."""
+# Exits 0 when a Unix socket cannot be opened, as under the guard.
+_SOCKET_CHECK = ("import socket, sys\n"
+                 "try:\n    socket.socket(socket.AF_UNIX, socket.SOCK_STREAM).close()\n"
+                 "except OSError:\n    sys.exit(0)\n"
+                 "sys.exit(3)\n")
+
+# Variables of systemd's own that describe the calling process, not the run.
+_NOT_PASSED = ("INVOCATION_ID", "JOURNAL_STREAM", "NOTIFY_SOCKET", "LISTEN_PID", "LISTEN_FDS",
+               "LISTEN_FDNAMES", "MANAGERPID", "SYSTEMD_EXEC_PID")
+
+
+def guard_prefix(cwd: Path, unit: str) -> list[str] | None:
+    """The `systemd-run` command that runs a program in `cwd` under Comparator's guard, as the
+    unit `unit`, with this process's environment; None when this machine cannot, that is when
+    there is no `systemd-run`, no user manager to start the unit, or the unit can still open a
+    Unix socket."""
+    exe = shutil.which("systemd-run")
+    if exe is None:
+        return None
+    prefix = [exe, "--user", "--quiet", "--collect", "--pipe", "--wait", f"--property={GUARD}",
+              f"--working-directory={cwd}"]
+    prefix += [f"--setenv={k}={v}" for k, v in sorted(os.environ.items())
+               if k not in _NOT_PASSED and "\n" not in v]
+    try:
+        r = subprocess.run(prefix + [f"--unit={unit}-check", "--", sys.executable, "-I", "-c",
+                                     _SOCKET_CHECK],
+                           capture_output=True, text=True, timeout=120)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return prefix + [f"--unit={unit}"] if r.returncode == 0 else None
+
+
+def conditions(comparator: str, conf: dict, cwd: Path, mode: str = "observed",
+               unit: str | None = None) -> dict:
+    """How a replay in `cwd` runs: the guard and how it came to hold (`started` by `replay` in
+    the systemd unit `unit`, `inherited` from this process, or none because the machine has no
+    way to start it, `unavailable`, or the caller opted out, `opted-out`), and the programs
+    used."""
     blocked = af_unix_blocked()
-    out = {"guard": GUARD if blocked else "none", "af_unix_blocked": blocked,
-           "systemd_unit": systemd_unit(), "landlock_abi": landlock_abi(),
+    if mode == "observed":
+        mode = "inherited" if blocked else "unavailable"
+    guarded = mode in ("started", "inherited")
+    out = {"guard": GUARD if guarded else "none", "guard_mode": mode, "af_unix_blocked": blocked,
+           "systemd_unit": unit if mode == "started" else systemd_unit(),
+           "landlock_abi": landlock_abi(),
            "comparator": program(comparator, cwd=cwd),
            "landrun": program("landrun", "COMPARATOR_LANDRUN"),
            "lean4export": program("lean4export", "COMPARATOR_LEAN4EXPORT")}
@@ -163,8 +209,10 @@ def conditions(comparator: str, conf: dict, cwd: Path) -> dict:
 
 
 def replay(lean_root: Path, config: Path, out: Path, comparator: str = "comparator",
-           lake: str = "lake", timeout: int = 6 * 3600) -> dict:
-    """Run Comparator on `config` in the project at `lean_root` and write its record to `out`."""
+           lake: str = "lake", timeout: int = 6 * 3600, guard: bool = True) -> dict:
+    """Run Comparator on `config` in the project at `lean_root` and write its record to `out`:
+    under Comparator's guard when this process is not already under it and `guard` is set and
+    the machine can start it, else directly."""
     commit = git_head(lean_root)
     if commit is None:
         raise ReplayError(f"{lean_root} is not a Git repository: a replay is bound to a commit")
@@ -180,8 +228,19 @@ def replay(lean_root: Path, config: Path, out: Path, comparator: str = "comparat
     names = conf.get("theorem_names")
     if not isinstance(names, list) or not all(isinstance(n, str) for n in names):
         raise ReplayError(f"{config}: no `theorem_names` list")
-    how = conditions(comparator, conf, lean_root)
-    r = run([lake, "env", comparator, str(config.resolve())], cwd=lean_root, timeout=timeout)
+    cmd = [lake, "env", comparator, str(config.resolve())]
+    if af_unix_blocked():
+        how = conditions(comparator, conf, lean_root, "inherited")
+    elif not guard:
+        how = conditions(comparator, conf, lean_root, "opted-out")
+    else:
+        unit = f"machinechecked-replay-{uuid.uuid4().hex[:12]}"
+        prefix = guard_prefix(lean_root, unit)
+        how = conditions(comparator, conf, lean_root, "started" if prefix else "unavailable",
+                         unit)
+        if prefix:
+            cmd = prefix + ["--"] + cmd
+    r = run(cmd, cwd=lean_root, timeout=timeout)
     passed = r.returncode == 0
     tc, lm = lean_root / "lean-toolchain", lean_root / "lake-manifest.json"
     rec = {"schema": SCHEMA, "checker": "comparator", "commit": commit, "dirty": False,
@@ -195,3 +254,21 @@ def replay(lean_root: Path, config: Path, out: Path, comparator: str = "comparat
            "output_tail": (r.stdout + r.stderr)[-4000:]}
     write_json(out, rec)
     return rec
+
+
+def guard_summary(assessment: dict) -> dict | None:
+    """How the replays that count in an assessment ran: the record's guard (`guarded`,
+    `unguarded`, or `unrecorded` for a record without its conditions), the number of proofs
+    replayed, and a sentence when they are not shown to have run under the sandbox guard; None
+    when no replay counts."""
+    passed = [cl["checks"]["replay"] for c in assessment["claims"]
+              for cl in c.get("clauses", [])
+              if ((cl.get("checks") or {}).get("replay") or {}).get("state") == "pass"]
+    if not passed:
+        return None
+    guard = passed[0].get("guard", "unrecorded")
+    message = {"guarded": None,
+               "unguarded": f"{len(passed)} proof(s) replayed without the sandbox guard",
+               "unrecorded": f"{len(passed)} proof(s) replayed; the record does not say whether "
+                             "the sandbox guard was used"}[guard]
+    return {"guard": guard, "replayed": len(passed), "message": message}

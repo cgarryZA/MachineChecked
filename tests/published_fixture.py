@@ -27,6 +27,18 @@ def files():
     decl = {'name': 'Synthetic.bound', 'kind': 'def', 'module': 'Synthetic', 'signature': 'Synthetic.bound : Prop',
             'value': 'True', 'review': {'state': 'author-reviewed', 'current': [{'by': 'Author', 'provenance': 'author', 'text': 'Synthetic definition review.'}]}}
     key = mf.record_key(decl)
+    # A definition expanded at an application in the statement, with one nested expansion: both
+    # are stored on their own and referred to by key.
+    inner = {'at': '/1=/0', 'id': '/1=/0=', 'name': 'Synthetic.inner', 'defined_by': 'body',
+             'args': [], 'params': [], 'body': {'text': 'True'}, 'checked': True}
+    ik = mf.record_key(inner)
+    outer = {'at': '/1', 'id': '/1=', 'name': 'Synthetic.bound', 'defined_by': 'body', 'args': [],
+             'params': [], 'checked': True,
+             'body': {'text': 'Synthetic.inner', 'expansions': [
+                 {'at': '/1=/0', 'id': '/1=/0=', 'name': 'Synthetic.inner', 'key': ik}]}}
+    ok = mf.record_key(outer)
+    conclusion = {'text': 'Synthetic.bound', 'expansions': [
+        {'at': '/1', 'id': '/1=', 'name': 'Synthetic.bound', 'key': ok}]}
     anchor = {'kind': 'exact', 'begin': [1, 0, 110], 'end': [1, 0, 150]}
     claim = {'schema': mf.SCHEMA, 'release': desc['release'], 'id': 'T:one', 'paper': 'T', 'number': 'Theorem 1',
              'kind': 'theorem', 'scope': 'formal', 'scope_reviewed': True, 'scope_note': '',
@@ -35,7 +47,7 @@ def files():
              'blockers': ['Source changed'], 'findings': [], 'decls': {decl['name']: key},
              'clauses': [{'name': 'original', 'state': 'proved', 'spec': decl['name'],
                           'defs': [decl['name']], 'accept': 'Synthetic.proof',
-                          'statement': {'binders': [], 'conclusion': 'True'},
+                          'statement': {'binders': [], 'conclusion': conclusion},
                           'evidence': {'formal': {'state': 'proved'}, 'review': {'state': 'author-reviewed'},
                                        'source': {'state': 'fail', 'placement': 'exact'}, 'replay': {'state': 'not-run'}},
                           'spec_review': {'current': [{'by': 'Author', 'provenance': 'author', 'text': 'Synthetic statement review.'}]}}]}
@@ -50,7 +62,8 @@ def files():
              'claims': [{**{k: c.get(k) for k in ('id','paper','number','scope','kind','status_code','status','class')},
                          'counts': {}, 'anchor': mf.index_anchor(c['anchor'], 'exact'), 'file': mf.claim_file(c['id'])} for c in (claim,extra)]}
     return {'audit.json': desc, 'data/index.json': index, 'data/papers/T.pdf': pdf,
-            'data/decls/'+key+'.json': decl, **{'data/claims/'+mf.claim_file(c['id']): c for c in (claim,extra)}}
+            'data/decls/'+key+'.json': decl, 'data/expansions/'+ok+'.json': outer,
+            'data/expansions/'+ik+'.json': inner, **{'data/claims/'+mf.claim_file(c['id']): c for c in (claim,extra)}}
 
 
 def fetcher(data):
