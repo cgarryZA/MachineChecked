@@ -1107,7 +1107,7 @@ def cmd_review(a):
             sys.exit(r.returncode)
 
 
-INVENTORY = {"regions": "source_regions", "repin": "repin"}
+INVENTORY = {"regions": "source_regions", "repin": "repin", "rebound": "rebound"}
 
 
 def cmd_inventory(a):
@@ -1475,7 +1475,8 @@ def main(argv=None):
     iv = sub.add_parser(
         "inventory", help="pin the claims' source passages",
         description="regions: hash line pins as regions at the revision they were pinned at "
-        "(docs/SOURCE_REGIONS.md); repin: move the claims to a new revision of the paper. "
+        "(docs/SOURCE_REGIONS.md); rebound: change the bounds of claims' regions there; repin: "
+        "move the claims to a new revision of the paper. "
         "Each prints a plan, and changes files only with --write; pass --help after the action "
         "for its options.")
     iv.add_argument("action", choices=sorted(INVENTORY))

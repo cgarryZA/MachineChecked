@@ -82,6 +82,32 @@ passage being presented as the unchanged reviewed source.
 This audited source pin is separate from any display excerpt or its rendering-context
 fingerprint. Editing a display overlay cannot refresh an audited source check.
 
+## Changing a region's bounds
+
+A review may find that a pin covers less than its claim asserts, or more. Change the bounds at
+the revision the claim is pinned at:
+
+```sh
+machinechecked inventory rebound --paper P --claim P:intro:rate --lines 40-42
+machinechecked inventory rebound --paper P --claim P:intro:rate --lines 40-42 --write
+```
+
+`--lines A-B` selects lines A to B (inclusive); `--lines A` the line or display that starts on
+line A, as a location alone does. `--file`, `--start-column` and `--end-column` (for one claim)
+give another file or column bounds. Repeat `--claim ... --lines ...` to change several claims
+in one write. The snapshot is read as for the migration (`--source`, `--rev`), and must be the
+revision each claim is pinned at; the claim's present pin (a region, or a legacy line hash)
+must match it there. The plan prints, per claim, the old and new bounds with the first and
+last line of each. New bounds that start or end on a blank or comment-only line are refused,
+and so are bounds that contain a sectioning command (`\part` to `\subsubsection`, or
+`\appendix`) after their first line, unless `--across-sections` is given.
+
+`--write` replaces `location`, `source_region`, `source_sha256` and `source_line_sha256`,
+computed as above, and atomically. A new passage is new text: the claim's `scope_reviewed`
+becomes `false`, and every review marker that recorded the claim's old digest reads it as
+changed, so the reviews of the propositions and definitions it states reopen; readings of
+other claims stand. Bounds that select the same text change nothing.
+
 ## Display excerpts
 
 The reader shows a claim's statement typeset from the paper's source when the **whole** passage
