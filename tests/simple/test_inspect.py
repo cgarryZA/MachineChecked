@@ -120,11 +120,14 @@ def test_the_answer_is_cached_until_a_lean_input_changes(project):
     assert not first["cache"]["hit"] and again["cache"]["hit"]
     assert {k: v for k, v in first.items() if k != "cache"} == \
         {k: v for k, v in again.items() if k != "cache"}
-    # A changed source is a different project state: the stored answer is not reused.
+    inspect(project, "Twin.target", module="Solution.Main")
+    # A changed source is a different project state: the stored answer is not reused. An
+    # answer whose environment does not hold the changed module (another library's) is.
     src = project / "Deps" / "Main.lean"
     src.write_text(src.read_text() + "\n-- touched\n")
     try:
         assert not inspect(project, "Deps.double")["cache"]["hit"]
+        assert inspect(project, "Twin.target", module="Solution.Main")["cache"]["hit"]
     finally:
         src.write_text(DEPS)
 

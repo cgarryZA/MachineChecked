@@ -199,3 +199,54 @@ def test_linking_other_declarations_retires_the_whole_reading(tmp_path):
     assert entry["earlier_notes"] == [{"coverage": "full", "basis": "checked_bridge",
                                        "bridge": old["bridge"], "lean": old["lean"],
                                        "by": "A. Auditor"}]
+
+
+@needs_lean
+@needs_tex
+def test_a_bridge_check_is_reused_until_its_module_changes(cover, monkeypatch):
+    """The `accept` answer for a bridge is stored with the facts: a build with nothing changed
+    asks Lean nothing and shows the same evidence; a change to the bridge's module asks again,
+    and the new answer is the one shown."""
+    from prooflens import simple
+    asked, real = [], simple.run_simple_probe
+
+    def spy(root, modules, libs, requests, *a, **k):
+        asked.append([(r["kind"], r["name"]) for r in requests if r["kind"] in ("link", "accept")])
+        return real(root, modules, libs, requests, *a, **k)
+    monkeypatch.setattr(simple, "run_simple_probe", spy)
+
+    write_links(cover, readings())
+    _, first = view(cover)
+    pins = first["thm:three"]["correspondence"]["bridge"]["current"]
+    write_links(cover, readings({"target_fingerprint": pins["target_fingerprint"],
+                                 "source_sha256": pins["source_sha256"]}))
+    _, claims = view(cover)
+    checked = claims["thm:three"]["correspondence"]["bridge"]
+    assert checked["state"] == "checked"
+    assert any(("accept", "Cover.three_even") in reqs for reqs in asked)
+
+    asked.clear()
+    v, claims = view(cover)
+    assert asked == [] and v["lean"]["sessions"] == 0
+    assert claims["thm:three"]["correspondence"]["bridge"] == checked
+
+    # The bridge theorem's proof now uses `sorry`: its module changed, so it is checked again.
+    spec = cover / "Cover" / "Spec.lean"
+    proved = spec.read_text()
+    spec.write_text(proved.replace("fun _ _ _ ha hb hc => even_add (even_add ha hb) hc",
+                                   "by sorry"))
+    subprocess.run(["lake", "build"], cwd=cover, check=True, capture_output=True, timeout=900)
+    asked.clear()
+    _, claims = view(cover)
+    b = claims["thm:three"]["correspondence"]["bridge"]
+    assert any(("accept", "Cover.three_even") in reqs for reqs in asked)
+    assert b["state"] == "unchecked" and "its proof uses sorry" in b["reasons"]
+
+    # Proved again, the bridge is checked again, and then reused.
+    spec.write_text(proved)
+    subprocess.run(["lake", "build"], cwd=cover, check=True, capture_output=True, timeout=900)
+    _, claims = view(cover)
+    assert claims["thm:three"]["correspondence"]["bridge"] == checked
+    asked.clear()
+    _, claims = view(cover)
+    assert asked == [] and claims["thm:three"]["correspondence"]["bridge"] == checked

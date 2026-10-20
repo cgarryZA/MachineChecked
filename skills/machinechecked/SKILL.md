@@ -97,6 +97,11 @@ violations and obligations by subject; `findings` holds only their totals.
 - **Record what establishes a clause**: `machinechecked workspace update FILE` with evidence and
   finding records (docs/REVIEWING.md, "Saved investigations"); `workspace show --json` resumes
   it. A finding is your reading, attributed to you; it changes no status.
+- **Break a claim into requirements**: `requirement`, `fragment` and `alignment` records of the
+  same workspace keep each requirement with the exact passages that govern it (a quantifier's
+  domain, a constant's dependence, a standing assumption) and the Lean it corresponds to.
+  `workspace suggest --claim C --requirement r1` proposes nearby passages; a proposal is a guess
+  until accepted. A later use of a result is a use, never a change to its reading.
 - **A shareable report**: `machinechecked build` writes `.machinechecked/MachineChecked.html`
   (one file, opens from disk; Git ignores it there, and `--out` puts it elsewhere). `machinechecked build --site public/ --author "Name" --issues owner/repo` writes a
   directory to publish (for example on GitHub Pages) with `audit.json` describing it. Both

@@ -15,6 +15,8 @@
    `source_text = false`, the export carries no manuscript text, file paths or source locations.
    With `lean = false`, it carries no Lean statements or declaration bodies. With
    `reviews = false`, it carries reviewers and states but not review texts.
+   The auditors' accepted workspace records follow the same settings
+   ([data model](DATA_MODEL.md#published-workspace-records-prooflenspublished-work1-written-by-the-export)).
 2. **Assemble, then scan.** The export is assembled from allowed fields. Every file is then
    scanned against the private inputs, and any match blocks the export.
 3. **Pin.** A public release names its evidence id, the project commit and every paper revision.

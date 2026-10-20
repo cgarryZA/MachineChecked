@@ -102,3 +102,29 @@ def test_only_names_shaped_like_project_declarations_are_listed():
     assert [(d["file"], d["name"]) for d in found] == [("A/B.lean", "Widget.gone"),
                                                        ("A/B.lean", "gone_lemma"),
                                                        ("A/B.lean", "x_T")]
+
+
+@needs_lean
+@needs_tex
+def test_docstring_names_are_kept_with_the_facts_until_the_module_changes(tmp_path):
+    """The names a module's docstrings hold are stored with its index: a build with nothing
+    changed asks Lean nothing and lists the same names; an edit to the docstring re-indexes the
+    module and lists what it now says."""
+    root = project(tmp_path, None)
+
+    def view():
+        v = build_view(root, root / "paper/main.tex", root / ".machinechecked",
+                       log=lambda m: None)
+        return v, [(d["file"], d["line"], d["name"]) for d in v["body"]["module_docs"]]
+    _, first = view()
+    v, again = view()
+    assert v["lean"]["sessions"] == 0 and again == first
+
+    widgets = root / "Shape" / "Widgets.lean"
+    widgets.write_text(WIDGETS.replace("* `gone_lemma` — deleted too.",
+                                       "* `Shape.Widget.ghost_lemma` — also gone."))
+    subprocess.run(["lake", "build"], cwd=root, check=True, capture_output=True, timeout=900)
+    v, after = view()
+    assert v["lean"]["sessions"] > 0
+    assert after == [("Shape/Widgets.lean", 12, "Shape.Widget.foo_le_bar"),
+                     ("Shape/Widgets.lean", 13, "Shape.Widget.ghost_lemma")]

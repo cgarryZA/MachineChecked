@@ -33,6 +33,11 @@ export const showWorkspace = (id, claim) =>
 export const updateWorkspace = (id, ops) =>
   call("api/workspace", { action: "update", id, ops, op_id: newId("req") });
 
+// Attach the passages near a claim that the engine proposes as context of a requirement; each
+// stays a proposal until the auditor accepts or removes it.
+export const suggestContext = (id, claim, requirement) =>
+  call("api/workspace", { action: "suggest", id, claim, requirement, op_id: newId("req") });
+
 export function newId(prefix) {
   const r = globalThis.crypto?.randomUUID?.() || Math.random().toString(16).slice(2) + Date.now().toString(16);
   return `${prefix}-${r.replace(/-/g, "").slice(0, 12)}`;
