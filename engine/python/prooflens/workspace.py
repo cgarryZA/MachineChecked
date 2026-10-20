@@ -15,9 +15,10 @@ that returns (and keeps) both versions. A request repeated with the same `op_id`
 with its first result and changes nothing.
 
 A workspace also keeps the auditor's breakdown of a claim into requirements, the passages of
-the paper that govern each one and their association with Lean (`requirements.py`), and, for an
-estimate, the differences found, candidate counterexamples and Lean certificates
-(`estimates.py`).
+the paper that govern each one and their association with Lean (`requirements.py`), the
+auditor's compositions: arguments that combine several results, with an optional Lean bridge
+(`composition.py`), and, for an estimate, the differences found, candidate counterexamples and
+Lean certificates (`estimates.py`).
 
 A workspace records evidence and readings; it changes no status. A submitted finding is never
 edited: a later one supersedes it, with its reason, and both remain. Exposure (what the auditor
@@ -40,7 +41,7 @@ SCHEMA = "prooflens/workspace@1"
 DIR = "review-work"
 MODES = ("independent", "informed")
 KINDS = ("evidence", "finding", "question", "requirement", "fragment", "alignment",
-         "counterexample")
+         "composition", "counterexample")
 ROLES = ("candidate", "supports", "context", "rejected")
 QUESTION_STATES = ("open", "answered", "withdrawn")
 EXPOSURES = ("Lean", "author's review", "prior interpretations", "external material")
@@ -181,7 +182,7 @@ def summary(ws: dict) -> dict:
             "revision": ws.get("revision", 0), "release": (ws.get("sources") or {}).get("release"),
             "evidence": count("evidence"), "findings": count("finding"),
             "counterexamples": count("counterexample"),
-            "requirements": count("requirement"),
+            "requirements": count("requirement"), "compositions": count("composition"),
             "open_questions": sum(1 for r in recs if r.get("kind") == "question"
                                   and r.get("state") == "open"),
             "reports": len((ws.get("review") or {}).get("reports", [])),
@@ -288,19 +289,55 @@ def _fact_ref(f, root) -> dict:
     return pf.citation(found)
 
 
+APP_KEPT = ("callee", "module", "id", "caller", "via", "arguments", "premises", "result",
+            "app_hash")
+
+
+def _app_ref(a, root) -> dict:
+    """An application of a declaration (`app`: `{callee, id, module?}`, as `compare --query
+    uses` gives each application's `id`). With the Lean project it is looked up (the answer is
+    cached) and kept with its arguments, premises, result and a digest of them."""
+    if not isinstance(a, dict) or not isinstance(a.get("callee"), str) or \
+            not isinstance(a.get("id"), str):
+        raise WorkspaceError("an application reference is {callee, id}, as `compare --query "
+                             "uses CALLEE` gives each application")
+    if root is None:
+        if not (a.get("caller") and a.get("app_hash")):
+            raise WorkspaceError("without the Lean project an application reference carries "
+                                 "its caller and app_hash")
+        return {k: a[k] for k in APP_KEPT if a.get(k) is not None}
+    from . import uses as us
+    from .simple import ViewError
+    try:
+        doc = us.uses(Path(root), a["callee"], a.get("module"))
+    except ViewError as e:
+        raise WorkspaceError(str(e)) from None
+    if not doc.get("ok"):
+        raise WorkspaceError(f"{a['callee']}: {doc.get('status')}"
+                             + (f": {doc['reason']}" if doc.get("reason") else ""))
+    found = us.find_application(doc, a)
+    if found is None:
+        raise WorkspaceError(f"no application {a['id']} of {a['callee']}: ask `compare --query "
+                             f"uses {a['callee']}` again")
+    return us.citation(doc, found)
+
+
 def _ref(ref, snap, root) -> dict:
-    """An evidence reference: exactly one of a declaration (`decl`, optional `module`), a
-    fact inside a proof (`fact`), a Lean certificate (`certificate`: `{theorem, target,
-    certifies}`, `estimates.certificate_ref`), a source location (`source`: `{file, line}`),
-    or a passage of the paper (`paper`: `{claim, quote}`)."""
+    """An evidence reference: exactly one of a declaration (`decl`, optional `module`), an
+    application of one (`app`), a fact inside a proof (`fact`), a Lean certificate
+    (`certificate`: `{theorem, target, certifies}`, `estimates.certificate_ref`), a source
+    location (`source`: `{file, line}`), or a passage of the paper (`paper`: `{claim, quote}`)."""
     if not isinstance(ref, dict):
         raise WorkspaceError("an evidence record needs a `ref`")
-    kinds = [k for k in ("decl", "fact", "certificate", "source", "paper") if ref.get(k)]
+    kinds = [k for k in ("decl", "app", "fact", "certificate", "source", "paper")
+             if ref.get(k)]
     if len(kinds) != 1:
-        raise WorkspaceError("an evidence `ref` names exactly one of decl, fact, certificate, "
-                             "source, paper")
+        raise WorkspaceError("an evidence `ref` names exactly one of decl, app, fact, "
+                             "certificate, source, paper")
     if kinds == ["fact"]:
         return {"fact": _fact_ref(ref["fact"], root)}
+    if kinds == ["app"]:
+        return {"app": _app_ref(ref["app"], root)}
     if kinds == ["certificate"]:
         from .estimates import certificate_ref
         return {"certificate": certificate_ref(ref["certificate"], root)}
@@ -374,6 +411,9 @@ def _content(kind: str, rec: dict, ws: dict, snap, root, cur: dict | None = None
             raise WorkspaceError(f"{e} is evidence for {er['claim']}, not {out['claim']}")
     if refs:
         out["evidence"] = list(dict.fromkeys(refs))
+    if kind == "composition":
+        from . import composition
+        return composition.content(out, rec, ws, snap, root, cur, repin)
     if kind in ("requirement", "fragment", "alignment"):
         out.pop("evidence", None)
         if kind == "requirement":
@@ -415,6 +455,8 @@ def _content(kind: str, rec: dict, ws: dict, snap, root, cur: dict | None = None
                 raise WorkspaceError("a basis says how a coverage is supported: give the "
                                      "coverage too")
             out["basis"] = basis
+        if rec.get("composition") not in (None, ""):
+            _composition_basis(out, rec["composition"], basis, ws)
         if rec.get("confidence") is not None:
             out["confidence"] = _choice(rec["confidence"], confidence, "confidence")
         if rec.get("argument") is not None:
@@ -449,6 +491,30 @@ def _content(kind: str, rec: dict, ws: dict, snap, root, cur: dict | None = None
     return out
 
 
+def _composition_basis(out: dict, cid, basis, ws: dict) -> None:
+    """A finding that rests on a composition of the workspace: its coverage is the
+    composition's argument, so its basis is `reviewed_composition`, or `checked_bridge` when the
+    composition carries a bridge Lean checked; full coverage needs a complete composition."""
+    from . import composition as cp
+    c = ws["records"].get(cid)
+    if not c or c.get("kind") != "composition":
+        raise WorkspaceError(f"{cid} is not a composition of this workspace")
+    if c["claim"] != out["claim"]:
+        raise WorkspaceError(f"{cid} is a composition for {c['claim']}, not {out['claim']}")
+    if basis not in (cp.BASIS_REVIEWED, cp.BASIS_BRIDGE):
+        raise WorkspaceError("a finding that rests on a composition has basis "
+                             "reviewed_composition (or checked_bridge, once its bridge is "
+                             "checked): a composition is never direct coverage")
+    if basis == cp.BASIS_BRIDGE and not c.get("bridge"):
+        raise WorkspaceError(f"{cid} has no bridge Lean checked: its basis is "
+                             "reviewed_composition")
+    if out.get("coverage") == "full":
+        why = cp.full_refusal(cp.gaps(c, ws))
+        if why:
+            raise WorkspaceError(f"{cid}: {why}")
+    out["composition"] = cid
+
+
 def _pins(claim: str, snap) -> dict:
     if snap is None:
         return {}
@@ -474,7 +540,7 @@ def _record_op(ws, op, snap, root, by, at, changed):
             if base not in (None, 0):
                 raise WorkspaceError(f"{rid}: no such record to update")
             k = _choice(rec.get("kind"), KINDS, "the record kind", False)
-            rid = rid or _new_id({"fragment": "p"}.get(k, k[0]))
+            rid = rid or _new_id({"fragment": "p", "composition": "c"}.get(k, k[0]))
             if not re.fullmatch(r"[\w.:-]{1,80}", rid):
                 raise WorkspaceError(f"{rid!r} is not a record id")
             content = _content(k, rec, ws, snap, root, rid=rid)
@@ -516,6 +582,12 @@ def _record_op(ws, op, snap, root, by, at, changed):
                 (was.get("decl"), was.get("at")):
             # A cited fact keeps the proof it was recorded from until it is re-pinned.
             content["ref"]["fact"] = was
+        was_app = (cur.get("ref") or {}).get("app") or {}
+        if cur["kind"] == "evidence" and not repin and content["ref"].get("app") and \
+                (content["ref"]["app"]["callee"], content["ref"]["app"]["id"]) == \
+                (was_app.get("callee"), was_app.get("id")):
+            # A cited application keeps the elaboration it was recorded from until re-pinned.
+            content["ref"]["app"] = was_app
         kept = {k: v for k, v in cur.items() if k not in MANAGED and k != "id"}
         if cur["kind"] in ("question", "fragment"):
             kept["state"] = cur.get("state")
@@ -526,6 +598,13 @@ def _record_op(ws, op, snap, root, by, at, changed):
             return stale()
         if cur["kind"] == "finding" and cur.get("state") == "submitted":
             raise WorkspaceError(f"{rid} is submitted; supersede it (with a reason) instead")
+        if cur["kind"] == "composition" and not (same and not repin):
+            cited = [r["id"] for r in ws["records"].values() if r.get("composition") == rid
+                     and r.get("state") == "submitted"]
+            if cited:
+                raise WorkspaceError(f"{rid} is the argument of submitted finding(s) "
+                                     f"{', '.join(cited)}; record a new composition and "
+                                     "supersede the finding")
         if same and not repin:
             return None
         pins = _pins(content["claim"], snap) if repin else cur.get("pins", {})
@@ -550,10 +629,14 @@ def _record_op(ws, op, snap, root, by, at, changed):
         if cur.get("state") == "submitted":
             raise WorkspaceError(f"{rid} is submitted and is kept; supersede it instead")
         users = [r["id"] for r in ws["records"].values()
-                 if (rid in (r.get("evidence") or []) or rid in
-                     [c["id"] for c in r.get("counterexamples") or []]) and r["id"] != rid]
+                 if (rid in (r.get("evidence") or []) or r.get("composition") == rid
+                     or rid in [c["id"] for c in r.get("counterexamples") or []])
+                 and r["id"] != rid]
         if users:
-            raise WorkspaceError(f"{rid} is evidence of {', '.join(users)}; remove it there first")
+            raise WorkspaceError(f"{rid} is "
+                                 + ("the composition" if cur["kind"] == "composition"
+                                    else "evidence") + f" of {', '.join(users)}; remove it "
+                                 "there first")
         if cur["kind"] == "requirement":
             from .requirements import references
             users = references(ws, cur["claim"], cur["local_id"], rid)
@@ -570,6 +653,9 @@ def _record_op(ws, op, snap, root, by, at, changed):
                 not (cur.get("note") or cur.get("evidence") or cur.get("counterexamples")):
             raise WorkspaceError(f"{rid}: a submitted finding has its coverage (or a difference "
                                  "or a verdict) and a note or evidence")
+        if cur.get("composition"):
+            # The composition may have changed since the draft was written.
+            _composition_basis(dict(cur), cur["composition"], cur.get("basis"), ws)
         cur.update(state="submitted", submitted_at=at, rev=cur["rev"] + 1, updated_at=at,
                    updated_by=by)
         changed.append(rid)
@@ -753,6 +839,10 @@ def currency(ws: dict, snap, root: Path | None = None, check_facts: bool = False
             from .proof_facts import currency as fact_currency
             out[r["id"]] = fact_currency(Path(root) if root else None, ref["fact"], check_facts)
             continue
+        if "app" in ref:
+            from .uses import app_currency
+            out[r["id"]] = app_currency(Path(root) if root else None, ref["app"], check_facts)
+            continue
         if "decl" not in ref:
             out[r["id"]] = {"state": "unchecked", "changes": []}
             continue
@@ -764,6 +854,10 @@ def currency(ws: dict, snap, root: Path | None = None, check_facts: bool = False
                 {"decl": ref["decl"], "was": was, "now": now_d}]}
         else:
             out[r["id"]] = {"state": "current", "changes": []}
+    from . import composition as cp
+    for r in ws["records"].values():
+        if r.get("kind") == "composition":
+            out[r["id"]] = cp.currency(r, ws, out, snap)
     from . import estimates as est
     for r in ws["records"].values():
         if r.get("kind") == "counterexample":
@@ -774,6 +868,8 @@ def currency(ws: dict, snap, root: Path | None = None, check_facts: bool = False
             continue
         changes = [ch for e in r.get("evidence") or [] for ch in out.get(e, {}).get("changes", [])]
         changes += est.finding_changes(r, ws["records"], out)
+        if r.get("composition"):
+            changes += out.get(r["composition"], {}).get("changes", [])
         if r.get("requirement"):
             changes += rq.requirement_changes(ws, r["claim"], r["requirement"], out)
         pin = (r.get("pins") or {}).get("statement_sha256")
@@ -793,20 +889,37 @@ def view(ws: dict, snap=None, claim: str | None = None, root: Path | None = None
     claim, the evidence, findings (current and superseded) and questions, each with its
     currency against the current build (and, for cited facts inside proofs, the Lean project
     at `root`)."""
+    from . import composition as cp
     from . import requirements as rq
     cur = currency(ws, snap, root, check_facts)
     in_force = {r["id"] for r in current_findings(ws)}
+    comps = {}
+    for r in ws["records"].values():
+        if r.get("kind") == "composition" and (not claim or r["claim"] == claim):
+            b = cp.bridge_currency(r["bridge"], r["claim"], snap, root, check_facts) \
+                if r.get("bridge") else None
+            comps[r["id"]] = cp.view(r, ws, cur, b)
     claims: dict[str, dict] = {}
     for r in sorted(ws["records"].values(), key=lambda r: (r["created_at"], r["id"])):
         if claim and r["claim"] != claim:
             continue
         c = claims.setdefault(r["claim"], {"evidence": [], "findings": [], "questions": [],
-                                           "counterexamples": []})
+                                           "compositions": [], "counterexamples": []})
         if r["kind"] in ("requirement", "fragment", "alignment"):
+            continue
+        if r["kind"] == "composition":
+            c["compositions"].append(comps[r["id"]])
             continue
         item = {**r, "currency": cur.get(r["id"], {"state": "unchecked", "changes": []})}
         if r["kind"] == "finding":
             item["in_force"] = r["id"] in in_force
+            shown = (comps.get(r.get("composition")) or {}).get("basis")
+            if r.get("basis") == cp.BASIS_BRIDGE and shown and shown != cp.BASIS_BRIDGE:
+                # The composition's bridge is not checked now: the finding reads as the
+                # auditor's composition until it is.
+                item.update(basis=cp.BASIS_REVIEWED, recorded_basis=cp.BASIS_BRIDGE,
+                            basis_reason=(comps[r["composition"]].get("bridge_check") or {})
+                            .get("reasons") or [])
         c[{"evidence": "evidence", "finding": "findings", "question": "questions",
            "counterexample": "counterexamples"}[r["kind"]]].append(item)
     for cid, c in claims.items():

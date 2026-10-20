@@ -2,7 +2,8 @@
   import { listWorkspaces, openWorkspace, showWorkspace, updateWorkspace, suggestContext, newId,
     rememberedWorkspace, rememberWorkspace, humanId } from "../lib/workspace.js";
   import { href } from "../lib/route.svelte.js";
-  import { coverageView } from "../lib/coverage.js";
+  import { coverageView, compositionView } from "../lib/coverage.js";
+  import Composition from "./Composition.svelte";
 
   // The auditor's saved investigation of this claim, under `machinechecked view`: its open
   // questions, findings and evidence, saved by the engine in the project's working directory, and
@@ -38,7 +39,7 @@
   const picked = $derived(CHOICES[choice]);
   let cite = $state(true);
 
-  const here = $derived(view?.claims?.[claim.id] || { evidence: [], findings: [], questions: [] });
+  const here = $derived(view?.claims?.[claim.id] || { evidence: [], findings: [], questions: [], compositions: [] });
   const reading = $derived(here.reading || { requirements: [], witnesses: [], alignments: [], questions: [] });
 
   // The breakdown of the claim into requirements (`requirements.py`): the words below describe
@@ -197,9 +198,18 @@
     return t.decl + (part ? ` (${part}${t.target ? ": " + t.target : ""})` : "");
   }
 
+  // A finding that rests on a composition reads as that composition: its argument is shown
+  // with the composition, under Compositions.
+  function findingView(f) {
+    if (!f.composition) return coverageView(f);
+    const c = (here.compositions || []).find((x) => x.id === f.composition);
+    return { headline: compositionView({ coverage: f.coverage, basis: f.basis, bridge_check: c?.bridge_check }).headline, lines: [] };
+  }
+
   function refText(r) {
     if (r.certificate) return `${r.certificate.theorem}, certificate for ${r.certificate.target}`;
     if (r.fact) return `${r.fact.name || r.fact.head || "a fact"} : ${r.fact.type}, inside the proof of ${r.fact.decl}`;
+    if (r.app) return `${r.app.callee} applied in ${r.app.caller}`;
     return r.decl || (r.source ? r.source.file + (r.source.line ? ":" + r.source.line : "") : "a passage of the paper");
   }
 </script>
@@ -226,17 +236,25 @@
         </div>
       {/each}
       {#each here.findings as f (f.id)}
-        {@const cv = coverageView(f)}
+        {@const cv = findingView(f)}
         <div class="item" data-kind="finding" data-state={f.state} class:old={!f.in_force}>
           <p class="small"><strong>{findingHead(f, cv)}</strong>
             <span class="faint">· {f.in_force ? (f.state === "submitted" ? "submitted" : "draft") : "superseded"} · {f.created_by}{f.requirement ? ` · on ${f.requirement}` : ""}</span>
             {#if f.currency?.state === "stale"}<span class="stale"> · evidence changed since</span>{/if}</p>
           {#each cv?.lines || [] as line}<p class="small" data-line={line.label}><span class="faint">{line.label}:</span> {line.names?.join(", ") || ""}{line.names?.length && line.text ? ". " : ""}<span class="text">{line.text || ""}</span>{#if line.note} <span class="faint">{line.note}</span>{/if}</p>{/each}
+          {#if f.composition}<p class="small faint">Rests on composition {f.composition}{f.recorded_basis ? `; recorded as ${f.recorded_basis === "checked_bridge" ? "a checked bridge" : f.recorded_basis}, its bridge is not checked now` : ""}.</p>{/if}
           {#if f.note}<p class="small text">{f.note}</p>{/if}
           {#if f.supersedes}<p class="faint small">Supersedes {f.supersedes}: {f.reason}</p>{/if}
           {#if f.state === "draft"}<button class="act" disabled={busy} onclick={() => submit(f)}>Submit</button>{/if}
         </div>
       {/each}
+      {#if here.compositions?.length}
+        <div class="compositions" aria-label="Compositions">
+          <h3>Compositions</h3>
+          <p class="faint small">Arguments that combine several results, recorded with <code>machinechecked workspace update</code>.</p>
+          {#each here.compositions as c (c.id)}<Composition {c} evidence={here.evidence} />{/each}
+        </div>
+      {/if}
       {#if reading.requirements.length || reading.alignments.length}
         <div class="reading" aria-label="Requirements">
           <h3>Requirements</h3>
@@ -384,7 +402,7 @@
   .act:disabled { opacity: 0.5; cursor: default; }
   .link { font: inherit; background: none; border: 0; padding: 0; color: var(--accent); cursor: pointer; }
   .bad { color: var(--st-refuted); }
-  .reading h3 { font-size: 14px; margin: 12px 0 2px; }
+  .reading h3, .compositions h3 { font-size: 14px; margin: 12px 0 2px; }
   .req { border-left: 3px solid var(--border); padding: 2px 0 2px 10px; margin: 6px 0; }
   .req p { margin: 2px 0; }
   .form { font-style: italic; }

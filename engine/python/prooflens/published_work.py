@@ -3,9 +3,10 @@
 An audit publishes, per claim, the records of its auditors' workspaces (`workspace.py`) that the
 auditor has accepted: the requirements of the claim, the passages accepted as governing them,
 the alignments with Lean, and the submitted findings (superseded ones included, with the reason)
-with the evidence and the counterexamples they cite (and the evidence those cite). Proposed
-and removed passages, draft findings, evidence no submitted finding cites, questions, exposure,
-resume state and the review protocol's drafts stay in the workspace.
+with the evidence, compositions and counterexamples they cite (and the evidence those
+compositions and counterexamples cite). Proposed and removed passages, draft findings, evidence
+no submitted finding cites, questions, exposure, resume state and the review protocol's drafts
+stay in the workspace.
 
 Each record keeps its author and times, its pins and its currency against the published build,
 computed over the published records alone. The paper's `publish` settings apply: a passage's
@@ -15,7 +16,11 @@ specialisation and reduction) only when reviews are. A difference shows its pape
 the source text is published and its Lean expression when the Lean is. A cited fact
 inside a proof keeps its basis, "established inside this proof under this context", and its
 pins; its proposition and context are Lean text. Its currency needs the Lean project, so it is
-published as `unchecked`.
+published as `unchecked`, and so is a cited application's. A composition keeps its structure
+(steps, the evidence each rests on, identifications, obligations and their state) always, the
+objects and substitutions it names when the Lean is published, and its prose when reviews are.
+Its basis is `checked_bridge` only when its bridge is checked against the Lean project at
+export (from the facts store); otherwise it is the auditor's composition.
 
 The records sit in `data/work/<claim file>`, one file per claim that has any, which the claim's
 passport names in `work`. They are readings: nothing here is an input to a status.
@@ -46,8 +51,9 @@ FIELDS = {
                  "suggestion"),
     "alignment": ("requirements", "relation"),
     "finding": ("coverage", "basis", "confidence", "bridge", "requirement", "state",
-                "submitted_at", "supersedes", "verdict", "counterexamples"),
+                "submitted_at", "supersedes", "composition", "verdict", "counterexamples"),
     "evidence": ("role",),
+    "composition": ("coverage",),
     "counterexample": ("requirement", "reading", "obligation_sha256", "evidence_pins",
                        "evidence"),
 }
@@ -60,8 +66,8 @@ class PublishError(RuntimeError):
 
 def accepted(ws: dict) -> dict[str, dict]:
     """The records of `ws` its auditor has accepted: every requirement and alignment, the
-    accepted passages, the submitted findings, and the evidence and counterexamples those
-    findings cite, with the evidence those counterexamples cite."""
+    accepted passages, the submitted findings, the compositions and counterexamples they rest
+    on, and the evidence those findings, compositions and counterexamples cite."""
     recs = ws.get("records") or {}
     out = {}
     for rid, r in recs.items():
@@ -71,12 +77,15 @@ def accepted(ws: dict) -> dict[str, dict]:
                 (k == "finding" and r.get("state") == "submitted"):
             out[rid] = r
     for r in list(out.values()):
+        c = recs.get(r.get("composition") or "")
+        if r.get("kind") == "finding" and (c or {}).get("kind") == "composition":
+            out[c["id"]] = c
         if r.get("kind") == "finding":
-            for c in r.get("counterexamples") or []:
-                if (recs.get(c["id"]) or {}).get("kind") == "counterexample":
-                    out[c["id"]] = recs[c["id"]]
+            for x in r.get("counterexamples") or []:
+                if (recs.get(x["id"]) or {}).get("kind") == "counterexample":
+                    out[x["id"]] = recs[x["id"]]
     for r in list(out.values()):
-        if r.get("kind") in ("finding", "counterexample"):
+        if r.get("kind") in ("finding", "composition", "counterexample"):
             for e in r.get("evidence") or []:
                 if (recs.get(e) or {}).get("kind") == "evidence":
                     out[e] = recs[e]
@@ -112,6 +121,13 @@ def _ref(ref: dict, pub) -> dict:
                          **({k: f[k] for k in FACT_LEAN if f.get(k) is not None}
                             if pub.lean else {}),
                          "basis": BASIS}}
+    if "app" in ref:
+        # An application: where it is and its digest always, its arguments, premises and
+        # result only when the Lean is published.
+        a = ref["app"]
+        keep = ("callee", "module", "id", "caller", "via", "app_hash") + \
+            (("arguments", "premises", "result") if pub.lean else ())
+        return {"app": {k: a[k] for k in keep if a.get(k) is not None}}
     if "decl" in ref:
         return {k: ref[k] for k in ("decl", "module", "build", "fingerprint", "digest")
                 if ref.get(k) is not None}
@@ -142,10 +158,63 @@ def _difference(d: dict, pub) -> dict:
     return out
 
 
+def _composition(r: dict, pub, view: dict) -> dict:
+    """A composition's structure always; the objects and substitutions it names when the Lean
+    is published, its prose when reviews are; its computed basis, gaps and bridge check."""
+    steps = []
+    for st in r.get("steps") or []:
+        x = {k: st[k] for k in ("id", "requirements", "uses", "after") if st.get(k)}
+        if pub.lean and st.get("substitutions"):
+            x["substitutions"] = st["substitutions"]
+        if pub.reviews:
+            x.update({k: st[k] for k in ("establishes", "inference", "note") if st.get(k)})
+        steps.append(x)
+    idents = []
+    for it in r.get("identifications") or []:
+        x = {"left": {"step": it["left"]["step"]}, "right": {"step": it["right"]["step"]},
+             "relation": it["relation"], "how": it["how"]}
+        if pub.lean:
+            x["left"]["object"], x["right"]["object"] = it["left"]["object"], \
+                it["right"]["object"]
+        if it.get("evidence"):
+            x["evidence"] = it["evidence"]
+        if pub.reviews and it.get("note"):
+            x["note"] = it["note"]
+        idents.append(x)
+    obls = []
+    for o in r.get("obligations") or []:
+        x = {k: o[k] for k in ("id", "kind", "state", "by") if o.get(k)}
+        if pub.reviews:
+            x.update({k: o[k] for k in ("text", "note") if o.get(k)})
+        obls.append(x)
+    out = {"steps": steps, "evidence": list(r.get("evidence") or []),
+           "basis": view["basis"], "gaps": view["gaps"], "complete": view["complete"],
+           "next_step": view["next_step"]}
+    if idents:
+        out["identifications"] = idents
+    if obls:
+        out["obligations"] = obls
+    if pub.reviews and r.get("statement"):
+        out["statement"] = r["statement"]
+    b = r.get("bridge")
+    if b:
+        out["bridge"] = {k: b[k] for k in ("theorem", "target", "module", "axioms",
+                                           "target_fingerprint", "source_sha256", "checked_at")
+                         if b.get(k) is not None}
+        if pub.lean and b.get("type"):
+            out["bridge"]["type"] = b["type"]
+        chk = view.get("bridge_check") or {}
+        out["bridge_check"] = {"state": chk.get("state") or "unchecked",
+                               "reasons": list(chk.get("reasons") or [])}
+    return out
+
+
 def public_record(r: dict, pub, currency: dict, in_force: set[str],
+                  compositions: dict | None = None,
                   records: list[dict] | None = None) -> dict:
-    """One accepted record with what `pub` allows. A counterexample also carries what it can
-    show against its reading (`estimates.analyse`, over the published `records`)."""
+    """One accepted record with what `pub` allows; `compositions` holds each composition as
+    `composition.view` gives it. A counterexample also carries what it can show against its
+    reading (`estimates.analyse`, over the published `records`)."""
     k = r["kind"]
     out = {f: r[f] for f in (*COMMON, *FIELDS[k]) if r.get(f) is not None}
     if pub.reviews:
@@ -180,15 +249,26 @@ def public_record(r: dict, pub, currency: dict, in_force: set[str],
     elif k == "finding":
         out["evidence"] = list(r.get("evidence") or [])
         out["in_force"] = r["id"] in in_force
+        shown = ((compositions or {}).get(r.get("composition") or "") or {}).get("basis")
+        if r.get("basis") == "checked_bridge" and shown and shown != "checked_bridge":
+            # The composition's bridge is not checked at export: the finding reads as the
+            # auditor's composition.
+            out.update(basis="reviewed_composition", recorded_basis="checked_bridge")
     elif k == "evidence":
         out["ref"] = _ref(r.get("ref") or {}, pub)
+    elif k == "composition":
+        out.update(_composition(r, pub, (compositions or {})[r["id"]]))
     return out
 
 
-def readings(work_dir: Path, snap, pub_for, claims: set[str]) -> dict[str, list[dict]]:
+def readings(work_dir: Path, snap, pub_for, claims: set[str],
+             root: Path | None = None) -> dict[str, list[dict]]:
     """Per claim of `claims`, one reading per workspace that has accepted records for it: the
     workspace, its auditor and mode, and its records in the form `public_record` gives.
-    `pub_for(claim)` is the publication settings of the claim's paper."""
+    `pub_for(claim)` is the publication settings of the claim's paper; a composition's bridge
+    is checked against the Lean project at `root` (from the facts store; without it, or when it
+    is not stored current, the bridge is not counted)."""
+    from . import composition as cp
     out: dict[str, list[dict]] = {}
     for _, ws in wsp.list_all(work_dir):
         kept = accepted(ws)
@@ -197,6 +277,9 @@ def readings(work_dir: Path, snap, pub_for, claims: set[str]) -> dict[str, list[
             continue
         cur = wsp.currency({"records": kept}, snap)
         in_force = {r["id"] for r in wsp.current_findings({"records": kept})}
+        comps = {r["id"]: cp.view(r, {"records": kept}, cur, cp.bridge_currency(
+                     r["bridge"], r["claim"], snap, root) if r.get("bridge") else None)
+                 for r in kept.values() if r["kind"] == "composition"}
         who = ws.get("reviewer") or {}
         by_claim: dict[str, list[dict]] = {}
         for r in kept.values():
@@ -207,15 +290,16 @@ def readings(work_dir: Path, snap, pub_for, claims: set[str]) -> dict[str, list[
                 [r for r in recs if r["kind"] == "requirement"]))}
             group: dict[str, list[dict]] = {"requirements": [], "fragments": [],
                                             "alignments": [], "findings": [], "evidence": [],
-                                            "counterexamples": []}
+                                            "compositions": [], "counterexamples": []}
             for r in sorted(recs, key=lambda r: (order.get(r["id"], (0, 0))[0],
                                                  r.get("created_at") or "", r["id"])):
-                item = public_record(r, pub, cur, in_force, recs)
+                item = public_record(r, pub, cur, in_force, comps, recs)
                 if r["kind"] == "requirement":
                     item["depth"] = order[r["id"]][1]
                 group[{"requirement": "requirements", "fragment": "fragments",
                        "alignment": "alignments", "finding": "findings",
                        "evidence": "evidence",
+                       "composition": "compositions",
                        "counterexample": "counterexamples"}[r["kind"]]].append(item)
             out.setdefault(cid, []).append({
                 "workspace": ws["id"], "mode": ws.get("mode"),
@@ -224,12 +308,14 @@ def readings(work_dir: Path, snap, pub_for, claims: set[str]) -> dict[str, list[
     return out
 
 
-def write(data: Path, work_dir: Path, pub_for, sources: Path | None = None) -> dict[str, str]:
+def write(data: Path, work_dir: Path, pub_for, sources: Path | None = None,
+          root: Path | None = None) -> dict[str, str]:
     """Write the accepted workspace records of `work_dir` into the published data at `data`
     (its `index.json` and claim passports already written): `data/work/<claim file>` for each
     claim that has any, named by the passport's `work`. Currency is computed against `data`
     itself, with the paper sources under `sources` (default: the sources of the build the data
-    was written from). Returns the files written, by claim id."""
+    was written from), and bridges against the Lean project at `root`. Returns the files
+    written, by claim id."""
     from .targets import Snapshot, TargetError
     if not wsp.store(work_dir).is_dir():
         return {}
@@ -240,7 +326,7 @@ def write(data: Path, work_dir: Path, pub_for, sources: Path | None = None) -> d
     if sources is not None:
         snap.sources_base = Path(sources)
     files = {c["id"]: c["file"] for c in snap.claims if c.get("file")}
-    found = readings(work_dir, snap, pub_for, set(files))
+    found = readings(work_dir, snap, pub_for, set(files), root)
     written = {}
     for cid, rs in sorted(found.items()):
         body = {"schema": SCHEMA, "release": snap.index.get("release"), "claim": cid,

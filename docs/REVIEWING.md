@@ -119,6 +119,43 @@ as evidence; it keeps its basis, established inside that proof under that contex
 resting on it records the coverage as your composition, not as direct coverage. A `have` the
 source states but the compiled proof does not keep is shown as source text only.
 
+**Compositions.** A claim is often covered by several results together: one produces an object,
+another gives a property of it, a third transports it to the paper's form. Record the argument
+as a `composition`: its steps in order, the evidence each one rests on (a declaration, an
+application of one from `compare --query uses`, or a fact inside a proof), the substitutions,
+which objects of different steps are the same, and what remains open:
+
+```json
+{"ops": [
+  {"op": "put", "record": {"id": "e-exists", "kind": "evidence", "claim": "Theorem 1",
+   "ref": {"decl": "Comp.exists_pos_even"}, "role": "supports"}},
+  {"op": "put", "record": {"id": "e-sum", "kind": "evidence", "claim": "Theorem 1",
+   "ref": {"app": {"callee": "Comp.even_add", "id": "app:Comp.pos_double_even:0"}},
+   "role": "supports"}},
+  {"op": "put", "record": {"id": "c1", "kind": "composition", "claim": "Theorem 1",
+   "coverage": "full", "steps": [
+     {"id": "s1", "establishes": "a positive even n", "uses": ["e-exists"]},
+     {"id": "s2", "establishes": "n + n is even", "uses": ["e-sum"], "after": ["s1"],
+      "requirements": ["r1"], "substitutions": [{"variable": "a", "value": "n"}]}],
+   "identifications": [{"left": {"step": "s1", "object": "n"},
+                        "right": {"step": "s2", "object": "a"}, "how": "retained witness"}]}},
+  {"op": "put", "record": {"id": "f1", "kind": "finding", "claim": "Theorem 1",
+   "coverage": "full", "basis": "reviewed_composition", "composition": "c1",
+   "note": "The sum rule is applied to the witness the existence theorem produces."}}]}
+```
+
+Full coverage is recorded only when every requirement of the claim is established by a step and
+no obligation is open; two separate existence results leave a `compatible witnesses` obligation
+open until a step or evidence discharges it. The reader shows **Every clause, by the auditor's
+composition**, the steps, and the next step: state the combination as one Lean result. When you
+have done that, attach it as the composition's `bridge`, `{"theorem": NAME, "target": SPEC}`, with
+`SPEC` a proposition stated as a definition that you have read against the paper. Lean checks it
+when it is saved, and refuses a theorem whose type is not exactly the target. The composition then
+reads **Every clause, through a checked bridge** while the check holds; a change to the target, a
+definition it uses or the claim's passage puts it out of date, and it reads as your composition
+again. `workspace show` and `compare --query composition CLAIM` print the argument; no status
+changes either way.
+
 **Requirements and the passages that govern them.** A claim's meaning can depend on sentences
 outside its display: "for every ε > 0" before an estimate, "with C independent of ε" after it, a
 standing assumption at the start of a section. Break the claim into requirements, each with the

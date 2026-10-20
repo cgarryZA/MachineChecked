@@ -189,9 +189,11 @@ name), and `proof.complete: false` when the walk reached its limit (200,000 node
 fact's `basis` is always "established inside this proof under this context": it is not an
 exported theorem, and `--match` ranks facts by shared symbols without deciding that one bound
 gives another. Lean runs once per declaration; the answer is kept in the facts store, like
-`inspect`'s, and reused until the declaration's module or a module it imports changes. The queries
-`composition` and `impact` answer `available: false` with the issue that owns their
-extraction. An error is `{"ok": false, "error": {kind, message,
+`inspect`'s, and reused until the declaration's module or a module it imports changes.
+`--query composition CLAIM` gives the compositions the workspaces record for the claim (one
+workspace's with `--workspace ID`), each as `workspace show` gives it: its steps, `basis`, `gaps`,
+`next_step` and `bridge_check`. They are prior interpretations (`subject.contains`). The query
+`impact` answers `available: false` with the issue that owns its extraction. An error is `{"ok": false, "error": {kind, message,
 candidates}}` with exit 1 (exit 2, kind `no-build`, when there is no build to read: run
 `view` or `build`); `candidates` lists the claims or declarations you may have meant.
 
@@ -277,12 +279,16 @@ changes. Requirements of a claim (`requirement`), the passages that govern each 
 association with Lean (`alignment`) are records of the same workspace; `show --json` gives each
 claim's `reading`, `workspace suggest --claim C --requirement r1 [--apply]` proposes nearby
 passages, and `compare C --workspace ID --json` carries the reading in
-`interpretations.requirements`. Differences from the Lean are findings with a `difference` on
-the affected requirement; a counterexample (`counterexample`: a specialisation, its reduction and
-violation, its admissibility obligations) is read against its requirement's quantifiers, and a
-Lean certificate is evidence `{"certificate": {theorem, target, certifies}}` that Lean checks
-when it is recorded. A workspace started in informed mode records that the Lean
-was seen; `{"op": "exposure", "what": "external material"}` records anything else you read.
+`interpretations.requirements` (and that workspace's compositions in
+`interpretations.compositions`). An argument that combines several results is a `composition`
+record ([Reviewing](REVIEWING.md#saved-investigations)); a step can cite an application from
+`compare --query uses` as `"ref": {"app": {"callee": NAME, "id": APP_ID}}`. Differences from the
+Lean are findings with a `difference` on the affected requirement; a counterexample
+(`counterexample`: a specialisation, its reduction and violation, its admissibility obligations)
+is read against its requirement's quantifiers, and a Lean certificate is evidence
+`{"certificate": {theorem, target, certifies}}` that Lean checks when it is recorded. A
+workspace started in informed mode records that the Lean was seen; `{"op": "exposure", "what":
+"external material"}` records anything else you read.
 
 ## A note for your project's AGENTS.md or CLAUDE.md
 

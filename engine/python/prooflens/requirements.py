@@ -406,6 +406,9 @@ def references(ws: dict, claim: str, lid: str, but: str | None = None) -> list[s
             users.append(r["id"])
         elif r.get("kind") == "counterexample" and lid in (r.get("reading") or []):
             users.append(r["id"])
+        elif r.get("kind") == "composition" and any(lid in (s.get("requirements") or [])
+                                                    for s in r.get("steps") or []):
+            users.append(r["id"])
     return users
 
 

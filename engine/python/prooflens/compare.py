@@ -389,8 +389,8 @@ def claim_packet(site: Site, claim: str, stage: str = "informed", limit: int | N
                  after: str | None = None, reading: dict | None = None) -> dict:
     """The comparison packet of one claim: its passage, its linked declarations (and, from
     the compare stage, unconfirmed suggestions as candidates) and the definitions they use.
-    `reading` is a workspace's reading of the claim (`requirements.reading`), included at the
-    informed stage only."""
+    `reading` is a workspace's reading of the claim (`requirements.reading`, with that
+    workspace's `compositions`), included at the informed stage only."""
     cid = site.resolve_claim(claim)
     ch = site.chunk(cid)
     if ch is None:
@@ -421,6 +421,8 @@ def claim_packet(site: Site, claim: str, stage: str = "informed", limit: int | N
     if stage == "informed":
         out["interpretations"] = _informed(ch)
         if reading is not None:
+            reading = dict(reading)
+            out["interpretations"]["compositions"] = reading.pop("compositions", [])
             out["interpretations"]["requirements"] = reading
         sections.append("interpretations")
     out["retrieval"] = _retrieval(stage, sections, page)
@@ -560,10 +562,11 @@ QUERIES = {
     "uses": "where a declaration is applied, and the source of each premise",
     "proof-facts": "the typed facts inside a declaration's proof, each with its assumptions and "
                    "cases (Lean reads the proof once; the answer is cached)",
-    "composition": "a multi-result argument and the identifications it needs",
+    "composition": "the auditors' compositions for a claim: the steps, the results each rests "
+                   "on, substitutions, identifications, obligations and any Lean bridge",
     "impact": "which main result uses a declaration",
 }
-NOT_YET = {"composition": "#147", "impact": "#112"}
+NOT_YET = {"impact": "#112"}
 
 
 def linked_claims(site: Site) -> dict[str, list[str]]:
@@ -597,11 +600,15 @@ def mark_claims(doc: dict, claims: dict[str, list[str]]) -> dict:
 
 
 def query(site: Site, op: str, target: str, limit: int | None = None, after: str | None = None,
-          root: Path | None = None, log=None, match: str | None = None) -> dict:
+          root: Path | None = None, log=None, match: str | None = None,
+          workspace: str | None = None) -> dict:
     """One targeted query: `{op, context, target, results, provenance, retrieval}`. An
     operation the engine does not extract yet answers `available: false` with its owner.
     `proof-facts` answers with the facts inside the target's proof (ranked against `match` when
-    given), and the declaration, locals, cases and source-only lines in `subject`."""
+    given), and the declaration, locals, cases and source-only lines in `subject`.
+    `composition` answers with the compositions recorded for the target claim in the
+    workspaces of the build's working directory (or in `workspace`): prior interpretations,
+    which an independent review reads only after its verdict."""
     if op not in QUERIES:
         raise CompareError(f"no query {op!r}; the queries are: {', '.join(QUERIES)}", "bad-query")
     out = {"schema": QUERY_SCHEMA, "op": op, "target": target, "limit": limit, "after": after,
@@ -630,6 +637,22 @@ def query(site: Site, op: str, target: str, limit: int | None = None, after: str
         prov = "Lean (the elaborated terms of the project), cached until a Lean input changes"
     elif op == "search":
         return {**out, **search(site, target, limit, after)}
+    elif op == "composition":
+        from . import composition as cp
+        from .targets import Snapshot, TargetError
+        from .workspace import WorkspaceError
+        cid = site.resolve_claim(target)
+        try:
+            results = cp.query(site.data.parent.parent, Snapshot(site.data), cid, root,
+                               workspace)
+        except (WorkspaceError, TargetError) as e:
+            raise CompareError(str(e), "unknown-workspace") from None
+        out["subject"] = {"claim": cid, "contains": ["prior interpretations"],
+                          "note": "an auditor's composition is a reading: its basis is the "
+                                  "auditor's argument unless a bridge is checked, and it changes "
+                                  "no status"}
+        prov = ("the workspaces of the working directory; a bridge's check from the facts store "
+                "(`workspace show` asks Lean again)")
     elif op == "proof-facts":
         if root is None:
             raise CompareError("`proof-facts` needs the Lean project", "no-project")
@@ -845,6 +868,11 @@ def packet_text(pk: dict) -> str:
         from .requirements import lines
         head = f"Requirements recorded in workspace {rd.get('workspace')} by {rd.get('reviewer')}"
         out.append("\n".join([head] + lines(rd)))
+    comps = (pk.get("interpretations") or {}).get("compositions") or []
+    if comps:
+        from .composition import lines as composition_lines
+        out.append("\n".join(["Compositions recorded in that workspace"]
+                              + [x for c in comps for x in composition_lines(c)]))
     if pk["paper"].get("note"):
         out.insert(0, pk["paper"]["note"])
     lean = pk.get("lean")

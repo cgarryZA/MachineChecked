@@ -430,6 +430,9 @@ def _print_workspace(v: dict) -> None:
                       + COMPOSITION_NEXT_STEP)
         for q in c["questions"]:
             print(f"  question {q['id']}  {q['state']}: {q['text']}")
+        for comp in c.get("compositions") or []:
+            from .composition import lines as composition_lines
+            print("\n".join(composition_lines(comp)))
         rd = c.get("reading") or {}
         if rd.get("requirements") or rd.get("alignments"):
             from .requirements import lines as reading_lines
@@ -559,7 +562,7 @@ def cmd_build_simple(a):
         everything = Publish(pdf=True, source_text=True, lean=True, reviews=True)
         try:
             published_work.write(dest / "data", site.parent, lambda cid: everything,
-                                 site.parent / "sources")
+                                 site.parent / "sources", root)
         except published_work.PublishError as e:
             shutil.rmtree(dest)
             sys.exit(f"machinechecked: {e}")
@@ -941,7 +944,8 @@ def cmd_compare(a):
         if a.query:
             op, target = a.query
             out = cmp.query(site, op, target, a.limit, a.after, root,
-                            log=lambda m: print(m, file=sys.stderr), match=a.match)
+                            log=lambda m: print(m, file=sys.stderr), match=a.match,
+                            workspace=a.workspace)
             if a.json:
                 return _print_json(out)
             if not out["available"]:
@@ -958,6 +962,14 @@ def cmd_compare(a):
                 return
             if op == "proof-facts":
                 print(cmp.proof_facts_text(out))
+                return
+            if op == "composition":
+                from .composition import lines as composition_lines
+                for c in out["results"]:
+                    print(f"{c['workspace']} ({c['mode']}), {c['reviewer']}:")
+                    print("\n".join(composition_lines(c)))
+                if not out["results"]:
+                    print(f"no composition is recorded for {out['subject']['claim']}")
                 return
             for r in out["results"]:
                 print("\n".join(cmp.statement_lines(r)) if "statement" not in r
@@ -977,11 +989,12 @@ def cmd_compare(a):
                 ws = wsp.read(wsp.find(work, a.workspace))
             except wsp.WorkspaceError as e:
                 raise cmp.CompareError(str(e), "unknown-workspace") from None
-            v = wsp.view(ws, Snapshot(work / "site" / "data"), cid)
+            v = wsp.view(ws, Snapshot(work / "site" / "data"), cid, root)
             reading = {"workspace": ws["id"], "reviewer": v["reviewer"], "mode": v["mode"],
                        **((v["claims"].get(cid) or {}).get("reading")
                           or {"requirements": [], "witnesses": [], "alignments": [],
-                              "questions": []})}
+                              "questions": []}),
+                       "compositions": (v["claims"].get(cid) or {}).get("compositions") or []}
         out = cmp.claim_packet(site, a.claim, a.stage, a.limit, a.after, reading)
     except cmp.CompareError as e:
         if e.kind in ("no-build", "no-project") and not a.json:
@@ -1272,14 +1285,16 @@ def main(argv=None):
                     help="a targeted query: definition NAME, mentions NAME, dependencies NAME, "
                     "search CLAIM-OR-TEXT (the project's declarations by statement content), "
                     "proof-facts NAME (the facts inside its proof), uses NAME (where it is "
-                    "applied, with the source of each premise); composition and impact say what "
-                    "is not extracted yet")
+                    "applied, with the source of each premise), composition CLAIM (the "
+                    "auditors' compositions for it, with --workspace for one workspace); impact "
+                    "says what is not extracted yet")
     co.add_argument("--match", metavar="TEXT",
                     help="with proof-facts: rank the facts by the symbols they share with TEXT")
     co.add_argument("--limit", type=int, help="return at most this many definitions or results")
     co.add_argument("--after", metavar="ID", help="continue a list after this item")
-    co.add_argument("--workspace", metavar="ID", help="include this workspace's requirements of "
-                    "the claim (informed stage only)")
+    co.add_argument("--workspace", metavar="ID", help="include this workspace's requirements and "
+                    "compositions of the claim (informed stage only); with --query composition, "
+                    "only this workspace's")
     co.add_argument("--json", action="store_true", help="print one JSON document")
     co.add_argument("-c", "--config", default=None, help=argparse.SUPPRESS)
     co.set_defaults(func=cmd_compare)
