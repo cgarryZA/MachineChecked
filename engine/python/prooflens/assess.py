@@ -146,12 +146,14 @@ class Assessor:
         passage; without one, the current passage of every claim it reads. The record is the
         last marker at the declaration's current hash that did, provided the declaration's last
         marker is at that hash. A marker without digests read a passage only while the history
-        shows it unchanged since the marker was written."""
+        shows it unchanged since the marker was written. A marker with no review text records
+        no reading and does not count (`why` "no-reading"), unless its reviewer is one the
+        configuration allows bare markers by (`bare_markers_by`)."""
         hist = history(self.reviews, target, name)
         last = hist[-1] if hist else None
         readers = review_sources.digests(self.inv, target, name)
         need = {claim: readers[claim]} if claim in readers else readers
-        why = source_claim = None
+        why = source_claim = bare = None
         record = last
         if last is None:
             state = "pending"
@@ -159,8 +161,11 @@ class Assessor:
             state, why = "stale", "declaration"
         else:
             at = [r for r in hist if r.hash in _hashes(rec)]
-            record = next((r for r in reversed(at) if self._reads(r, need)), None)
-            if record is None:
+            read = [r for r in at if self._reads(r, need)]
+            record = next((r for r in reversed(read) if self.has_reading(r)), None)
+            if record is None and read:
+                why, state, bare = "no-reading", "stale", read[-1]
+            elif record is None:
                 why, source_claim = self._unread(last, need)
                 state = "stale"
             else:
@@ -173,7 +178,15 @@ class Assessor:
             out["why"] = why
             if source_claim:
                 out["source_claim"] = source_claim
+            if bare is not None:
+                out["marker"] = {"file": bare.file, "line": bare.line}
         return out
+
+    def has_reading(self, review: Review) -> bool:
+        """Whether a marker records a reading: review text precedes it (its section, or the
+        `Review by` line promotion wrote), or its reviewer is allowed bare markers."""
+        return bool(review.text.strip()) or review.by in set(
+            getattr(self.cfg, "bare_markers_by", None) or [])
 
     def _read_one(self, review: Review, cid: str, sha: str) -> str:
         """Whether `review` read the current passage `sha` of claim `cid`
@@ -213,6 +226,10 @@ class Assessor:
         if why == "source-unread":
             return (f" (its last review did not read the passage of "
                     f"{self._claim_label(r.get('source_claim'))})")
+        if why == "no-reading":
+            m = r.get("marker") or {}
+            return (f" (its marker at {m.get('file')}:{m.get('line')} records no reading: no "
+                    "review text precedes it)")
         if why == "source-unrecorded":
             return (" (its last review was made before source pins were recorded, and the "
                     f"source text of {self._claim_label(r.get('source_claim'))} cannot be shown "
@@ -221,6 +238,8 @@ class Assessor:
 
     @staticmethod
     def _stale_fields(r: dict) -> dict:
+        if r.get("why") == "no-reading":
+            return {"reason": "no-reading", **(r.get("marker") or {})}
         if r["state"] == "stale" and r.get("why", "declaration") != "declaration":
             return {"reason": r["why"], "source_claim": r.get("source_claim")}
         return {}
@@ -514,13 +533,16 @@ class Assessor:
                          "source-unread": "the proposition's last review did not read this "
                                           "claim's passage",
                          "source-unrecorded": "the proposition was reviewed before source pins "
-                                              "were recorded"}.get(
+                                              "were recorded",
+                         "no-reading": "the proposition's review marker records no reading "
+                                       "(no review text)"}.get(
                         c["spec_review"].get("why"),
                         "the proposition changed after its last review"), c)
             for d, r in (c.get("def_reviews") or {}).items():
                 why = r.get("why")
                 defs[d] = why if r["state"] == "stale" and why in (
-                    "source-changed", "source-unread", "source-unrecorded") else r["state"]
+                    "source-changed", "source-unread", "source-unrecorded", "no-reading") \
+                    else r["state"]
             if c.get("witness") and not c.get("witness_ok"):
                 add("the witness that the hypotheses can be met fails its check", c)
             if any(not r["discharged"] for r in c.get("regimes", [])):
@@ -547,6 +569,7 @@ class Assessor:
                              ("source-unread", "have a review that did not read their passage"),
                              ("source-unrecorded", "were reviewed before source pins were "
                                                    "recorded"),
+                             ("no-reading", "have a review marker that records no reading"),
                              ("author-reviewed", "were reviewed only by the author")):
             if counts.get(state):
                 out.append(f"{counts[state]} definition{'s' if counts[state] > 1 else ''} its "
@@ -574,6 +597,7 @@ class Assessor:
             claims.append({"id": c["id"], **state, "clauses": clauses,
                            "blockers": self.blockers(c, clauses), **self.step_review(c)})
         self.inventory_checks()
+        self.bare_marker_checks()
         if self.lean:
             for v in self.lean.get("layering", []):
                 self.findings.append(_finding(
@@ -582,6 +606,23 @@ class Assessor:
             self.module_doc_checks()
         gates = self.gates(claims)
         return {"claims": claims, "findings": self.findings, "gates": gates}
+
+    def bare_marker_checks(self):
+        """An obligation for each declaration whose last review marker has no review text
+        (`has_reading`), with the marker's file and line: a marker records a reading, and one
+        without text, copied between files say, records none. Such a marker never counts as a
+        review (`review_state`)."""
+        last: dict[tuple[str, str], Review] = {}
+        for r in self.reviews:
+            if r.target in ("spec", "def"):
+                last[(r.target, r.name)] = r
+        for (target, name), r in last.items():
+            if not self.has_reading(r):
+                kind = "proposition" if target == "spec" else "definition"
+                self.findings.append(_finding(
+                    "obligation", "review-without-reading", name,
+                    f"{r.file}:{r.line}: the review marker of the {kind} {name} records no "
+                    "reading: no review text precedes it", file=r.file, line=r.line))
 
     def module_doc_checks(self):
         """A warning for each name a module docstring lists that nothing declares: prose that

@@ -100,6 +100,8 @@ Reviewer's independent interpretation, comparison and verdict.
 
 For definitions use `def-review`. The hash records the declaration version reviewed; relevant definition changes reopen the obligation. `source` records, per claim, the digest of the paper passage read (the claim's `source_sha256` pin); a change to that text reopens the obligation too. Reviewer identity is a record, not authenticated proof of identity. A section that reviews several declarations ends with one marker for each, and every marker carries the section's text.
 
+A marker records a reading, so one with no review text before it (a heading followed only by markers, as when markers are copied without their reviews) counts as no review: the declaration reads as not reviewed, its claim as review pending, and `build` lists each such marker with its file and line (an obligation, code `review-without-reading`). `bare_markers_by = ["reviewer"]` under `[project]` lets the markers of the reviewers it names count without text.
+
 The Review queue exports reports. The maintainer evaluates those reports before invoking `machinechecked review promote FILE.json`; promotion writes each acceptance marker after the declaration's last marker, preceded by a line ``Review by REVIEWER: VERDICT (report `FILE`).``. That line is the text of the reviewer's marker; every other marker of the section, including one added later, keeps the section's text. The maintainer may also request further review.
 
 ## Run checks and generate a site
