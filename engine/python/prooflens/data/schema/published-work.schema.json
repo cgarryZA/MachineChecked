@@ -1,0 +1,771 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/cgarryZA/ProofLens/schema/published-work.schema.json",
+  "title": "Workspace records a published audit carries for one claim",
+  "description": "The records the auditors accepted (published_work.py): readings, never an input to a status.",
+  "type": "object",
+  "required": [
+    "schema",
+    "release",
+    "claim",
+    "readings"
+  ],
+  "properties": {
+    "schema": {
+      "const": "prooflens/published-work@1"
+    },
+    "release": {
+      "type": "string"
+    },
+    "claim": {
+      "type": "string"
+    },
+    "readings": {
+      "type": "array",
+      "maxItems": 200,
+      "items": {
+        "type": "object",
+        "required": [
+          "workspace",
+          "mode",
+          "reviewer",
+          "requirements",
+          "fragments",
+          "alignments",
+          "findings",
+          "evidence"
+        ],
+        "properties": {
+          "workspace": {
+            "type": "string"
+          },
+          "mode": {
+            "enum": [
+              "independent",
+              "informed"
+            ]
+          },
+          "reviewer": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string"
+              },
+              "name": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "model": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "identity": {
+                "type": "string"
+              }
+            }
+          },
+          "requirements": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "kind",
+                "claim",
+                "currency",
+                "local_id",
+                "text"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "claim": {
+                  "type": "string"
+                },
+                "clause": {
+                  "type": "string"
+                },
+                "rev": {
+                  "type": "integer"
+                },
+                "created_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "created_by": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "updated_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "updated_by": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "pins": {
+                  "type": "object"
+                },
+                "note": {
+                  "type": "string"
+                },
+                "currency": {
+                  "type": "object",
+                  "required": [
+                    "state",
+                    "changes"
+                  ],
+                  "properties": {
+                    "state": {
+                      "enum": [
+                        "current",
+                        "stale",
+                        "unchecked",
+                        "removed"
+                      ]
+                    },
+                    "changes": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    }
+                  }
+                },
+                "kind": {
+                  "const": "requirement"
+                },
+                "local_id": {
+                  "type": "string"
+                },
+                "form": {
+                  "type": "string"
+                },
+                "text": {
+                  "type": "string"
+                },
+                "origin": {
+                  "enum": [
+                    "printed",
+                    "correction"
+                  ]
+                },
+                "parent": {
+                  "type": "string"
+                },
+                "binds": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "independent_of": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "corrects": {
+                  "type": "string"
+                },
+                "depth": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            }
+          },
+          "fragments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "kind",
+                "claim",
+                "currency",
+                "requirement",
+                "role",
+                "state"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "claim": {
+                  "type": "string"
+                },
+                "clause": {
+                  "type": "string"
+                },
+                "rev": {
+                  "type": "integer"
+                },
+                "created_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "created_by": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "updated_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "updated_by": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "pins": {
+                  "type": "object"
+                },
+                "note": {
+                  "type": "string"
+                },
+                "currency": {
+                  "type": "object",
+                  "required": [
+                    "state",
+                    "changes"
+                  ],
+                  "properties": {
+                    "state": {
+                      "enum": [
+                        "current",
+                        "stale",
+                        "unchecked",
+                        "removed"
+                      ]
+                    },
+                    "changes": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    }
+                  }
+                },
+                "kind": {
+                  "const": "fragment"
+                },
+                "requirement": {
+                  "type": "string"
+                },
+                "role": {
+                  "type": "string"
+                },
+                "origin": {
+                  "enum": [
+                    "printed",
+                    "inferred",
+                    "correction"
+                  ]
+                },
+                "scope": {
+                  "type": "string"
+                },
+                "state": {
+                  "const": "accepted"
+                },
+                "state_by": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "state_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "suggestion": {
+                  "type": "object"
+                },
+                "region": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "paper": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "file": {
+                      "type": "string"
+                    },
+                    "start_line": {
+                      "type": "integer"
+                    },
+                    "end_line": {
+                      "type": "integer"
+                    },
+                    "start_column": {
+                      "type": "integer"
+                    },
+                    "end_column": {
+                      "type": "integer"
+                    },
+                    "sha256": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "text": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "passage": {
+                  "type": "object",
+                  "required": [
+                    "claim"
+                  ],
+                  "properties": {
+                    "claim": {
+                      "type": "string"
+                    },
+                    "sha256": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "alignments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "kind",
+                "claim",
+                "currency",
+                "requirements",
+                "lean"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "claim": {
+                  "type": "string"
+                },
+                "clause": {
+                  "type": "string"
+                },
+                "rev": {
+                  "type": "integer"
+                },
+                "created_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "created_by": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "updated_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "updated_by": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "pins": {
+                  "type": "object"
+                },
+                "note": {
+                  "type": "string"
+                },
+                "currency": {
+                  "type": "object",
+                  "required": [
+                    "state",
+                    "changes"
+                  ],
+                  "properties": {
+                    "state": {
+                      "enum": [
+                        "current",
+                        "stale",
+                        "unchecked",
+                        "removed"
+                      ]
+                    },
+                    "changes": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    }
+                  }
+                },
+                "kind": {
+                  "const": "alignment"
+                },
+                "requirements": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "relation": {
+                  "type": "string"
+                },
+                "lean": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": [
+                      "decl"
+                    ],
+                    "properties": {
+                      "decl": {
+                        "type": "string"
+                      },
+                      "module": {
+                        "type": "string"
+                      },
+                      "build": {
+                        "type": "string"
+                      },
+                      "fingerprint": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "digest": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "var": {
+                        "type": [
+                          "integer",
+                          "string"
+                        ]
+                      },
+                      "binder": {
+                        "type": [
+                          "integer",
+                          "string"
+                        ]
+                      },
+                      "at": {
+                        "type": "string"
+                      },
+                      "conclusion": {
+                        "type": "boolean"
+                      },
+                      "target": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "findings": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "kind",
+                "claim",
+                "currency",
+                "coverage",
+                "state",
+                "evidence",
+                "in_force"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "claim": {
+                  "type": "string"
+                },
+                "clause": {
+                  "type": "string"
+                },
+                "rev": {
+                  "type": "integer"
+                },
+                "created_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "created_by": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "updated_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "updated_by": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "pins": {
+                  "type": "object"
+                },
+                "note": {
+                  "type": "string"
+                },
+                "currency": {
+                  "type": "object",
+                  "required": [
+                    "state",
+                    "changes"
+                  ],
+                  "properties": {
+                    "state": {
+                      "enum": [
+                        "current",
+                        "stale",
+                        "unchecked",
+                        "removed"
+                      ]
+                    },
+                    "changes": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    }
+                  }
+                },
+                "kind": {
+                  "const": "finding"
+                },
+                "coverage": {
+                  "enum": [
+                    "full",
+                    "partial",
+                    "changed",
+                    "related",
+                    "unresolved"
+                  ]
+                },
+                "basis": {
+                  "enum": [
+                    "direct",
+                    "reviewed_composition",
+                    "checked_bridge"
+                  ]
+                },
+                "confidence": {
+                  "enum": [
+                    "high",
+                    "medium",
+                    "low"
+                  ]
+                },
+                "argument": {
+                  "type": "string"
+                },
+                "bridge": {
+                  "type": "object",
+                  "properties": {
+                    "theorem": {
+                      "type": "string"
+                    },
+                    "target": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "question": {
+                  "type": "string"
+                },
+                "would_decide": {
+                  "type": "string"
+                },
+                "requirement": {
+                  "type": "string"
+                },
+                "state": {
+                  "const": "submitted"
+                },
+                "submitted_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "supersedes": {
+                  "type": "string"
+                },
+                "reason": {
+                  "type": "string"
+                },
+                "evidence": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "in_force": {
+                  "type": "boolean"
+                }
+              }
+            }
+          },
+          "evidence": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "kind",
+                "claim",
+                "currency",
+                "role",
+                "ref"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "claim": {
+                  "type": "string"
+                },
+                "clause": {
+                  "type": "string"
+                },
+                "rev": {
+                  "type": "integer"
+                },
+                "created_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "created_by": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "updated_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "updated_by": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "pins": {
+                  "type": "object"
+                },
+                "note": {
+                  "type": "string"
+                },
+                "currency": {
+                  "type": "object",
+                  "required": [
+                    "state",
+                    "changes"
+                  ],
+                  "properties": {
+                    "state": {
+                      "enum": [
+                        "current",
+                        "stale",
+                        "unchecked",
+                        "removed"
+                      ]
+                    },
+                    "changes": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    }
+                  }
+                },
+                "kind": {
+                  "const": "evidence"
+                },
+                "role": {
+                  "enum": [
+                    "candidate",
+                    "supports",
+                    "context",
+                    "rejected"
+                  ]
+                },
+                "why_rejected": {
+                  "type": "string"
+                },
+                "ref": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
