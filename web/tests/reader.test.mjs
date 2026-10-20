@@ -212,7 +212,25 @@ fs.writeFileSync(path.join(root, "toywork/data/work", workRow.file), JSON.string
                   state_by: "llm:synthetic-model", region: { paper: "T", file: "toy.tex", start_line: 12, end_line: 12, sha256: "x", text: "A synthetic printed sentence." }, currency: cur }],
     alignments: [{ id: "a1", kind: "alignment", claim: "T:def:even", requirements: ["even"], relation: "corresponds",
                    lean: [{ decl: "Toy.IsEven" }], created_by: "llm:synthetic-model", currency: { state: "stale", changes: [{ decl: "Toy.IsEven", was: "a", now: "b" }] } }],
-    findings: [], evidence: [] }] }));
+    findings: [
+      { id: "f-c1", kind: "finding", claim: "T:def:even", coverage: "partial", basis: "reviewed_composition", composition: "c-1",
+        state: "submitted", submitted_at: "2026-10-20T00:00:00Z", created_by: "llm:synthetic-model", evidence: [], in_force: true, currency: cur },
+      { id: "f-c2", kind: "finding", claim: "T:def:even", coverage: "full", basis: "checked_bridge", composition: "c-2",
+        state: "submitted", submitted_at: "2026-10-20T00:00:00Z", created_by: "llm:synthetic-model", evidence: [], in_force: true, currency: cur }],
+    evidence: [{ id: "e-1", kind: "evidence", claim: "T:def:even", role: "supports", ref: { decl: "Toy.IsEven" }, currency: cur },
+               { id: "e-2", kind: "evidence", claim: "T:def:even", role: "supports",
+                 ref: { app: { callee: "Toy.even_add", id: "app:Toy.synthetic:0", caller: "Toy.synthetic", app_hash: "x" } }, currency: { state: "unchecked", changes: [] } }],
+    compositions: [
+      { id: "c-1", kind: "composition", claim: "T:def:even", coverage: "partial", basis: "reviewed_composition", created_by: "llm:synthetic-model",
+        steps: [{ id: "s1", establishes: "SYNTHETIC-STEP: some n is even", uses: ["e-1"] },
+                { id: "s2", establishes: "some m is even", uses: ["e-2"], substitutions: [{ variable: "a", value: "m" }] }],
+        obligations: [{ id: "o1", kind: "compatible witnesses", state: "open", text: "n and m may differ" }],
+        evidence: ["e-1", "e-2"], gaps: { requirements: 1, uncovered: ["even"], open: ["o1"] }, complete: false,
+        next_step: "State the combination as one Lean result.", currency: cur },
+      { id: "c-2", kind: "composition", claim: "T:def:even", coverage: "full", basis: "checked_bridge", created_by: "llm:synthetic-model",
+        steps: [{ id: "s1", establishes: "the whole definition", uses: ["e-1"], requirements: ["even"] }],
+        evidence: ["e-1"], gaps: { requirements: 1, uncovered: [], open: [] }, complete: true, next_step: null,
+        bridge: { theorem: "Toy.synthetic_bridge", target: "Toy.Spec.synthetic" }, bridge_check: { state: "checked", reasons: [] }, currency: cur }] }] }));
 
 fs.cpSync(path.join(root, "toy"), path.join(root, "long-statement"), { recursive: true });
 const longFile = TOY.claims.find((c) => c.id === "T:thm:even-add").file;
@@ -891,6 +909,22 @@ await check("a direct audit shows its published readings beside an unchanged sta
   assert.equal(await work.locator("pre.src").textContent(), "A synthetic printed sentence.");
   assert.match(await work.locator("[data-role='statement']").textContent(), /toy\.tex:12 · printed for this claim · accepted by llm:synthetic-model/);
   assert.match(await work.locator("[data-alignment='a1']").textContent(), /Toy\.IsEven.*the Lean changed since it was recorded/);
+  // Each finding resting on a composition shows it: the auditor's argument with its open
+  // obligation and the next step, or a checked bridge; neither reads as a direct result.
+  const findings = work.locator("[data-kind='finding']");
+  assert.match(await findings.nth(0).locator("strong").first().textContent(), /^States part of the claim, by the auditor's composition$/);
+  const c1 = work.locator("[data-composition='c-1']");
+  const t1 = (await c1.textContent()).replace(/\s+/g, " ");
+  assert.match(t1, /s1 SYNTHETIC-STEP: some n is even · from Toy\.IsEven/);
+  assert.match(t1, /s2 some m is even · from Toy\.even_add applied in Toy\.synthetic · with a := m/);
+  assert.match(t1, /Open: compatible witness choices n and m may differ/);
+  assert.match(t1, /No step establishes even\./);
+  assert.match(t1, /Lean has not checked this combination\. Next step: State the combination as one Lean result\./);
+  assert.match(await findings.nth(1).locator("strong").first().textContent(), /^Every clause, through a checked bridge$/);
+  const t2 = (await work.locator("[data-composition='c-2']").textContent()).replace(/\s+/g, " ");
+  assert.match(t2, /Bridge: Toy\.synthetic_bridge for the target Toy\.Spec\.synthetic\. Lean checks its proof/);
+  assert.doesNotMatch(t2, /Next step/);
+  assert.doesNotMatch(await work.textContent(), /States every clause/);
 });
 
 for (const width of [1440, 1000, 390, 320]) {
@@ -1409,6 +1443,28 @@ print("null")`);
       assert.equal(await req.locator(".frag.proposed").count(), 0);
       await req.locator("details.removed summary").click();
       assert.match(await req.locator("details.removed").textContent(), /toy\.tex:41 \(context\), removed by human:Test-Auditor: Not about n\./);
+
+      // A composition saved from the terminal is shown with its steps and obligations, as the
+      // auditor's argument with the next step.
+      engine(String.raw`
+import sys
+from pathlib import Path
+from prooflens import workspace as wsp
+from prooflens.targets import Snapshot
+(p, ws), = wsp.list_all(Path(sys.argv[1]))
+s = Snapshot(Path(sys.argv[1]).parent / "toyws" / "data")
+wsp.update(p, [{"op": "put", "record": {"id": "e-tri", "kind": "evidence", "claim": "T:thm:triangle", "role": "supports", "ref": {"decl": "Toy.Acceptance.thm_triangle", "external": True}}},
+               {"op": "put", "record": {"id": "c-tri", "kind": "composition", "claim": "T:thm:triangle", "coverage": "full", "steps": [
+                   {"id": "s1", "establishes": "the closed form for every n", "uses": ["e-tri"], "requirements": ["r1"]}]}},
+               {"op": "put", "record": {"id": "f-tri", "kind": "finding", "claim": "T:thm:triangle", "coverage": "full", "basis": "reviewed_composition", "composition": "c-tri", "note": "By the composition."}}], s)
+print("null")`);
+      await pg.reload();
+      const comp = inv.locator("[data-composition='c-tri']");
+      await comp.waitFor();
+      assert.match((await comp.textContent()).replace(/\s+/g, " "),
+        /^Every clause, by the auditor's composition · composition c-tri · human:Test-Auditor s1 the closed form for every n · from Toy\.Acceptance\.thm_triangle · establishes r1 Lean has not checked this combination\. Next step: State the combination as one Lean result\.$/);
+      const f = inv.locator("[data-kind=finding]", { hasText: "By the composition." });
+      assert.match((await f.textContent()).replace(/\s+/g, " "), /^Every clause, by the auditor's composition.*Rests on composition c-tri\./);
     });
   } finally { py.kill(); }
 }
