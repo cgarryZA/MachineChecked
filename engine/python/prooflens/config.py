@@ -73,6 +73,9 @@ class Config:
     author: str | None = None         # the name the audit is published under (audit.json)
     repository: str | None = None     # "owner/repo" of the Lean source, if not the git remote
     repository_private: bool = False  # the reader does not show the repository's name
+    # Type classes treated as inhabited by the witness check (`assess.INHABITED_CLASSES` when
+    # not configured).
+    inhabited_classes: list[str] | None = None
 
     @property
     def root(self) -> Path:
@@ -161,4 +164,15 @@ def load(path: str | Path) -> Config:
         author=proj.get("author"),
         repository=issue_repo(proj.get("repository"), str(path)),
         repository_private=bool(proj.get("repository_private", False)),
+        inhabited_classes=_names(proj, "inhabited_classes", str(path)),
     )
+
+
+def _names(proj: dict, key: str, where: str) -> list[str] | None:
+    """A list of names from the configuration, or None when the key is absent."""
+    if key not in proj:
+        return None
+    v = proj[key]
+    if not isinstance(v, list) or not all(isinstance(x, str) for x in v):
+        raise ConfigError(f"{where}: {key} must be a list of names")
+    return v
