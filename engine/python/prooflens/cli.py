@@ -11,7 +11,7 @@ the full assessment; any other project gets the zero-configuration view, whose o
 repository is `machinechecked.links.json` (its working files, a downloaded paper among them, are
 in `.machinechecked/`, which Git ignores). The full assessment has further commands: reassess,
 site, bundle, export, serve, review promote, replay and validate; `cache` saves and restores
-the Lean build (each with --help). `compare` gives a claim's passage, Lean statements and
+the Lean build, and `inventory` pins the claims' source passages (each with --help). `compare` gives a claim's passage, Lean statements and
 definitions as JSON, and `review` takes the review protocol's steps in either kind of project.
 `link` records a claim's links from the terminal, and `workspace` keeps a saved investigation,
 as the reader does.
@@ -1107,6 +1107,20 @@ def cmd_review(a):
             sys.exit(r.returncode)
 
 
+INVENTORY = {"regions": "source_regions", "repin": "repin"}
+
+
+def cmd_inventory(a):
+    """Run one of the inventory's source-pin commands, with the configuration found here when
+    none is given."""
+    import importlib
+    rest = list(a.rest)
+    if not any(x == "--config" or x.startswith("--config=") for x in rest):
+        rest = ["--config", str(_config_arg(a))] + rest
+    module = importlib.import_module(f".{INVENTORY[a.action]}", __package__)
+    sys.exit(module.main(rest))
+
+
 def cmd_validate(a):
     validate(json.loads(Path(a.file).read_text()), a.schema)
     print(f"{a.file}: valid {a.schema}")
@@ -1457,6 +1471,17 @@ def main(argv=None):
                         help="for a model: whether it is of the statements' author's family")
         sp.add_argument("-c", "--config", default=None)
         sp.set_defaults(func=cmd_review_step)
+
+    iv = sub.add_parser(
+        "inventory", help="pin the claims' source passages",
+        description="regions: hash line pins as regions at the revision they were pinned at "
+        "(docs/SOURCE_REGIONS.md); repin: move the claims to a new revision of the paper. "
+        "Each prints a plan, and changes files only with --write; pass --help after the action "
+        "for its options.")
+    iv.add_argument("action", choices=sorted(INVENTORY))
+    iv.add_argument("-c", "--config", default=None, help=argparse.SUPPRESS)
+    iv.add_argument("rest", nargs=argparse.REMAINDER)
+    iv.set_defaults(func=cmd_inventory)
 
     v = sub.add_parser("validate")
     v.add_argument("file")
