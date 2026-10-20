@@ -21,8 +21,8 @@
 \begin{abstract}
 A synthetic paper used to develop and test MachineChecked. It contains a definition, a proved
 theorem with hypotheses, a proved identity, a printed claim that is false together with its
-corrected form, a theorem with a uniform constant, a claim left open, and a remark outside the
-formal scope.
+corrected form, a theorem with a uniform constant whose printed proof has a step that is false
+as printed, a claim left open, and a remark outside the formal scope.
 \end{abstract}
 
 \section{Definitions}
@@ -68,7 +68,15 @@ $n$.
 \end{theorem}
 
 \begin{proof}
-By Theorem~\ref{thm:triangle}, $2T_n = n^2 + n \le 2n^2$, so $C = 1$ works.
+Fix $n$. By Theorem~\ref{thm:triangle},
+\begin{equation}\label{eq:bound-sum}
+  2\,T_n = n^2 + n.
+\end{equation}
+For every natural number $k \ge 0$,
+\begin{equation}\label{eq:bound-range}
+  n \le k\,n^2,
+\end{equation}
+and the choice $k = 1$ in \eqref{eq:bound-range} gives $2T_n \le 2n^2$, so $C = 1$ works.
 \end{proof}
 
 \begin{corollary}\label{cor:even-triangle}

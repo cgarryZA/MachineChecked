@@ -16,6 +16,7 @@
   import Decl from "./Decl.svelte";
   import Tex from "./Tex.svelte";
   import LinkPicker from "./LinkPicker.svelte";
+  import ProofStep from "./ProofStep.svelte";
   import Investigation from "./Investigation.svelte";
   import ProofFacts from "./ProofFacts.svelte";
   import { VERDICTS } from "../lib/review.js";
@@ -273,7 +274,7 @@
               {#if full && meta?.anchor}<a href={href(index.release, "read", claim.paper, claim.id)}>Show in the paper</a>{/if}
               <button onclick={() => { copyLink(); menu = false; }}>{claimLink(index, claim) ? "Copy link" : "Copy reference"}</button>
               {#if reportsUrl(evidenceIndex, claim)}<a href={reportsUrl(evidenceIndex, claim)} target="_blank" rel="noopener">View existing reports ↗</a>{/if}
-              {#if index.review_queue && inScope(claim)}
+              {#if index.review_queue && (inScope(claim) || claim.step)}
                 <a href={withQuery(href(index.release, "review"), { claim: claim.id, seen: "lean" })}>Review it</a>
               {/if}
               <button onclick={() => showDecl(DETAILS)}>Audit details</button>
@@ -282,7 +283,7 @@
         </span>
       </div>
       {#if copied}<p class="faint small copied">{copied}</p>{/if}
-      {#if claim.correspondence}
+      {#if claim.correspondence && !claim.step}
         {@const cor = claim.correspondence}
         {@const cv = coverageView(cor)}
         <div class="coverage" data-coverage={cv.coverage || "note"} data-basis={cv.basis || "unspecified"} data-tone={cv.tone}>
@@ -305,6 +306,7 @@
           </details>
         </details>
       {/each}
+      <ProofStep {claim} {index} part="list" />
     </header>
 
     <div class="comparison-grid">
@@ -312,6 +314,7 @@
       <h2>Paper{claim.audit?.paper ? " · audited revision" : ""}</h2>
       {#if claim.audit?.paper}<p class="small faint">Revision <code>{claim.audit.paper.revision.slice(0, 12)}</code> · <a href={claim.audit.link}>Open audit</a></p>{/if}
       <PaperStatement {claim} {paper} symbols={links.map((l) => ({ tex: l.symbol.tex, id: l.id }))} active={litSymbols} {onsym} />
+      {#if claim.step}<ProofStep {claim} {index} part="finding" />{/if}
       {#if editable && !simple && claim.statement_tex && claim.clauses.some((c) => c.statement)}
         <details class="mklink" bind:open={linking}>
           <summary>Link a symbol to the Lean</summary>
@@ -346,7 +349,12 @@
 
     <section class="lean">
       <h2>Readable Lean</h2>
-      {#if simple}
+      {#if claim.step}
+        <ProofStep {claim} {index} part="lean" onref={showDecl} editable={editable && simple} busy={!!busy}
+          onlink={(names) => act({ lean: names }, "link")} onroute={(names) => act({ route: names }, "route")} />
+        {#if busy}<p class="faint small">Saving the link and rebuilding…</p>{/if}
+        {#if saveError}<p class="bad small">{saveError}</p>{/if}
+      {:else if simple}
         {#if claim.audit}
           <p class="small recorded">As recorded in the published audit{claim.audit.author ? " by " + claim.audit.author : ""}.
             {#if claim.audit.link}<a href={claim.audit.link} target="_blank" rel="noopener">Open this claim in the audit ↗</a>{/if}</p>
@@ -421,7 +429,9 @@
     </section>
     <section class="exact-pane">
       <h2>Exact Lean</h2>
-      {#if simple}
+      {#if claim.step}
+        {#each [...claim.step.links, ...(claim.step.route?.links || [])] as l (l.name)}{#if l.statement}<ExactLean st={l.statement} name={l.name} onref={showDecl} />{/if}{:else}<p class="muted">No Lean is linked to this step.</p>{/each}
+      {:else if simple}
         {#each claim.links || [] as l}<ExactLean st={l.statement} name={l.name} onref={showDecl} selId={selFor(l.name)} onselect={(id) => select(l.name, id)} />{:else}<p class="muted">Choose a Lean declaration to compare.</p>{/each}
       {:else}
         {#each claim.clauses || [] as cl}

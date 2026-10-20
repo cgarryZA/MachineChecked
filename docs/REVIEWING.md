@@ -2,7 +2,7 @@
 
 **A linked Lean theorem is not automatically a faithful formalisation of the paper.** MachineChecked's Review view helps a mathematician examine the correspondence one unit at a time and record a reproducible judgement.
 
-The queue supports two settings: ordinary projects with linked statements, and projects with locked paper specifications, dependency-level definition reviews and an acceptance policy. It uses the same reader in both.
+The queue supports two settings: ordinary projects with linked statements, and projects with locked paper specifications, dependency-level definition reviews and an acceptance policy. It uses the same reader in both. In both, the steps of printed proofs have units of their own (see [Proof steps](#proof-steps)).
 
 ## One claim at a time
 
@@ -147,6 +147,43 @@ drafts.
 
 A review may be useful before a theorem is proved, provided the formal specification exists. Claims without a formal statement cannot yet undergo comparison; the queue lists them separately.
 
+## Proof steps
+
+An equation or passage inside a printed proof has its own unit in the queue (`step:<claim id>`),
+whether or not any Lean is linked to it. Its question is whether the printed step holds, in its
+context: step 1 shows the step and the proof up to it and the sentence after it; step 2 shows the
+Lean linked as establishing it and the formal route used instead, if any. The checklist covers
+what the proof has fixed before the step, its premises, the ranges and order of its quantifiers,
+its constants and its conclusion. Its verdicts are its own:
+
+| Verdict | What the reviewer must explain |
+|---|---|
+| Holds as printed | Nothing more |
+| Holds, with a gap in the argument | The argument the printed proof leaves out |
+| False as printed | The counterexample or the failing case, and what would repair the step |
+| Cannot determine | What would decide it |
+
+A report on a step pins the hash of the step's source text, and follows the same protocol as
+any other: reading locked before the Lean is shown, verdict recorded before the author's review.
+In a full assessment, `review promote` turns an accepted step report into a marker, with the same
+refusals (out-of-order steps, an author of the statements, a reading that was not blind, a
+manuscript at another revision), and refuses a report whose step's source changed since, or
+whose verdict is *cannot determine*:
+
+```
+<!-- step-review: T:eq:bound-range <source sha256> verdict=false by=a.referee -->
+```
+
+The marker is stored evidence: the assessment records the step's review from it (its last
+marker, current while its hash is the step's source hash). In zero configuration, put the report
+in `machinechecked-reviews/` and build again. Either way the step shows its finding beside the
+equation and lists its earlier reviews; a review made on other text is kept and shown, and the
+step reads **source changed**. The scope decision `proof-step` records
+formal coverage only; it is never a reading of the step, so a step with no report reads
+**not reviewed**. A step's finding belongs to the step: the enclosing result's status and review
+are unchanged by it. An issue draft names the step and its proof (“Equation (3) in the proof of
+Theorem 2.5: false as printed”).
+
 ## Review records and identity
 
 The reviewer supplies their name or model identity. On a standalone HTML bundle, identity is **self-declared**; a Git name or a typed username is not proof of authorship.
@@ -175,9 +212,9 @@ machinechecked review promote machinechecked-reviews-....json
 
 A directory of reports may be given instead of the files: it stands for the `*.json` files directly in it, in name order.
 
-Promotion checks that the manuscript and formal statements still match the review pins, that the review stages were recorded in the required order, and that the verdict is eligible. It displays the planned changes and requires the maintainer's decision. Model-family and author restrictions still apply. A report whose reading was not blind is refused unless the maintainer passes `--allow-revealed`.
+Promotion checks that the manuscript, the passages read (their digests, pinned when the reading was locked) and the formal statements still match the review pins, that the review stages were recorded in the required order, and that the verdict is eligible. It displays the planned changes and requires the maintainer's decision. Model-family and author restrictions still apply. A report whose reading was not blind is refused unless the maintainer passes `--allow-revealed`.
 
-Promotion records the maintainer’s decision for the reviewed proposition or definition.
+Promotion records the maintainer’s decision for the reviewed proposition or definition. The marker it writes records the digests of the paper passages read, so a later change to that text reopens the review (see [Evidence policy](EVIDENCE_POLICY.md#a-review-is-a-reading-of-a-text), which also says how markers written before the digests were recorded are read, and how to add the digests to them).
 Acceptance also requires the claim’s proofs and all other required checks.
 
 For details of the acceptance states, see [Evidence policy](EVIDENCE_POLICY.md). For the required configuration and review-marker format, see [Full assessment](ASSURANCE.md).

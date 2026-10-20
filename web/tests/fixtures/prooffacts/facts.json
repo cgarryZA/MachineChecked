@@ -6,8 +6,8 @@
   "limit": null,
   "after": null,
   "context": {
-   "release": "v-e72c3885d1ef",
-   "evidence": "e72c3885d1ef0e8960720652b8a277770f23a6be19425080139c7afeff66e8a9",
+   "release": "v-7e445cbea634",
+   "evidence": "7e445cbea634ce0c56b6799626dc9ab429150be6f3e40ffdcaf625ed5569ae5c",
    "mode": "simple",
    "project": {
     "name": "prooffacts"
@@ -465,7 +465,7 @@
    "note": "A fact inside a proof holds in its context only, under the assumptions listed with it. It is not an exported theorem, and a search ranks candidates without deciding whether one bound implies another.",
    "cache": {
     "hit": false,
-    "key": "4361db21b7f67c63"
+    "key": "fb9cd7f4eae95bea"
    }
   },
   "available": true,
@@ -959,8 +959,8 @@
   "limit": null,
   "after": null,
   "context": {
-   "release": "v-e72c3885d1ef",
-   "evidence": "e72c3885d1ef0e8960720652b8a277770f23a6be19425080139c7afeff66e8a9",
+   "release": "v-7e445cbea634",
+   "evidence": "7e445cbea634ce0c56b6799626dc9ab429150be6f3e40ffdcaf625ed5569ae5c",
    "mode": "simple",
    "project": {
     "name": "prooffacts"
@@ -1386,7 +1386,7 @@
    "note": "A fact inside a proof holds in its context only, under the assumptions listed with it. It is not an exported theorem, and a search ranks candidates without deciding whether one bound implies another.",
    "cache": {
     "hit": false,
-    "key": "9ba033acc28f182b"
+    "key": "a8a858f4a5d01376"
    }
   },
   "available": true,

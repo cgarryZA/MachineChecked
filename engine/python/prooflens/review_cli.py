@@ -36,6 +36,8 @@ VERDICTS = {
     "cannot": ["cannot determine"],
 }
 REFUTE_ONLY = {"refutation not valid"}
+# A proof step is reviewed as printed: does it hold? (`steps.VERDICTS`)
+from .steps import VERDICTS as STEP_VERDICTS
 
 
 class ReviewError(RuntimeError):
@@ -179,7 +181,9 @@ class Session:
         d = self.draft(u, "read")
         if len(reading.strip()) < 20:
             raise ReviewError("the reading is too short to record (20 characters at least)")
-        d.update(reading=reading, revealed_by=self.revealed_by(u), locked_at=now(), stage="compare")
+        # The passages read are those of this queue's release: the report pins their digests.
+        d.update(reading=reading, revealed_by=self.revealed_by(u), locked_at=now(),
+                 source_sha256=u.get("source_sha256"), stage="compare")
         self.save()
 
     def show(self, uid: str, as_json: bool = False) -> str | dict:
@@ -196,13 +200,14 @@ class Session:
                witness: str = "") -> None:
         u = self.unit(uid)
         d = self.draft(u, "compare")
-        group = next((g for g, vs in VERDICTS.items() if verdict in vs), None)
+        table = STEP_VERDICTS if u["kind"] == "step" else VERDICTS
+        group = next((g for g, vs in table.items() if verdict in vs), None)
         if group is None:
             raise ReviewError(f"verdict {verdict!r} is not one of: "
-                              + ", ".join(v for vs in VERDICTS.values() for v in vs))
+                              + ", ".join(v for vs in table.values() for v in vs))
         if verdict in REFUTE_ONLY and not u.get("refute"):
             raise ReviewError(f"{verdict!r} applies only to a unit with a refutation")
-        if verdict != "faithful" and not detail.strip():
+        if verdict not in ("faithful", "holds as printed") and not detail.strip():
             raise ReviewError(f"verdict {verdict!r} needs --detail")
         if not comparison.strip():
             raise ReviewError("the comparison is empty")
@@ -261,6 +266,8 @@ UNRESOLVED_BODY = ("The reviewer could not determine whether the Lean statement 
 
 def issue_draft(u: dict, verdict: str, detail: str) -> dict | None:
     """The issue a maintainer may file for a verdict, as the reader's `issueDraft` writes it."""
+    if u.get("kind") == "step":
+        return step_issue_draft(u, verdict, detail)
     kind = DRAFT_KIND.get(verdict)
     if kind is None:
         return None
@@ -275,18 +282,37 @@ def issue_draft(u: dict, verdict: str, detail: str) -> dict | None:
             "body": f"Review unit `{u['id']}`, verdict **{verdict}**.\n\n{detail}".strip()}
 
 
+def step_issue_draft(u: dict, verdict: str, detail: str) -> dict | None:
+    """An issue about a proof step names the step, its proof and the question it answers: a
+    finding on the printed step, never on the enclosing statement."""
+    if verdict == "holds as printed":
+        return None
+    par = (u.get("parent") or {}).get("number") or (u.get("parent") or {}).get("id") or ""
+    where = f"{u['name']}" + (f" in the proof of {par}" if par else "")
+    kind = {"false as printed": "finding on a proof step",
+            "holds, with a gap in the argument": "explanatory note",
+            "cannot determine": "unresolved question"}.get(verdict, "finding on a proof step")
+    return {"kind": kind, "title": f"{where}: {verdict}",
+            "body": (f"Review unit `{u['id']}` (a proof step, not the statement of {par or 'its result'}), "
+                     f"verdict **{verdict}**.\n\n{detail}").strip()}
+
+
 def report(index: dict, u: dict, d: dict, reviewer: dict, disagreements: str) -> dict:
     """The report, in the form the reader's review page exports (`buildReport`)."""
     revs = {p["id"]: p.get("revision") for p in index.get("papers", [])}
     return {
         "schema": REPORT_SCHEMA,
-        "unit": {"id": u["id"], "kind": u["kind"], "name": u["name"], "lean": u.get("lean") or [u["name"]],
-                 "claims": [c["id"] for c in u["claims"]], "papers": u.get("papers") or []},
+        "unit": {"id": u["id"], "kind": u["kind"], "name": u["name"],
+                 "lean": u.get("lean") if u["kind"] == "step" else u.get("lean") or [u["name"]],
+                 "claims": [c["id"] for c in u["claims"]], "papers": u.get("papers") or [],
+                 **({"target": u.get("unit"), "parent": u.get("parent"),
+                     "route": u.get("route") or []} if u["kind"] == "step" else {})},
         "pins": {"release": index["release"],
                  "project_commit": (index.get("project") or {}).get("commit"),
                  "manuscripts": {p: revs.get(p) for p in u.get("papers") or []},
                  "legacy_hash": u.get("legacy_hash"), "fingerprint": u.get("fingerprint"),
-                 "fingerprints": u.get("fingerprints")},
+                 "fingerprints": u.get("fingerprints"),
+                 "source_sha256": d.get("source_sha256")},
         "reviewer": reviewer,
         "reading": {"text": d["reading"], "locked_at": d["locked_at"],
                     "revealed_by": d.get("revealed_by") or []},
