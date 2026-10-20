@@ -529,6 +529,17 @@ def cmd_build_simple(a):
         if dest.exists():
             shutil.rmtree(dest)
         shutil.copytree(site, dest)
+        # The workspace records the auditor accepted (published_work.py); a zero-configuration
+        # audit publishes its source, Lean and reviews.
+        from . import published_work
+        from .config import Publish
+        everything = Publish(pdf=True, source_text=True, lean=True, reviews=True)
+        try:
+            published_work.write(dest / "data", site.parent, lambda cid: everything,
+                                 site.parent / "sources")
+        except published_work.PublishError as e:
+            shutil.rmtree(dest)
+            sys.exit(f"machinechecked: {e}")
         print(f"wrote the reader to {dest}: publish this directory as it is "
               "(audit.json describes it)")
         return

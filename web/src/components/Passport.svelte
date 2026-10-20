@@ -18,6 +18,7 @@
   import LinkPicker from "./LinkPicker.svelte";
   import ProofStep from "./ProofStep.svelte";
   import Investigation from "./Investigation.svelte";
+  import PublishedWork from "./PublishedWork.svelte";
   import { VERDICTS } from "../lib/review.js";
   import { tick, setContext } from "svelte";
 
@@ -449,6 +450,7 @@
     </section>
     </div>
     {#if editable}<Investigation {index} {claim} />{/if}
+    {#if claim.work}<PublishedWork {claim} />{/if}
     </div>
   </article>
 {/if}

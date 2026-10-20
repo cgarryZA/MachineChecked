@@ -153,6 +153,17 @@ def load_published_audit(paper: dict, project: dict, listing: dict, fetch) -> di
     if len(rows) > 5000 or len({c['id'] for c in rows}) != len(rows):
         raise AuditError('Audit claim inventory is too large or has duplicate identifiers')
 
+    def work(rec, row):
+        """The accepted workspace records the passport names (published_work.py), checked to
+        belong to this claim and release; they are readings and change no status."""
+        if rec['work'] != 'work/' + row['file']:
+            raise AuditError('Audit workspace records are not where the claim names them')
+        w = read('data/' + rec['work'], 2_000_000)
+        contract(w, 'published-work')
+        if w.get('claim') != rec['id'] or w.get('release') != idx['release']:
+            raise AuditError('Audit workspace records disagree with their claim')
+        return w
+
     def claim(row):
         rec = read('data/claims/' + row['file'])
         expected_code = rec.get('status_code') if rec.get('status_code') in STATUSES else 'unknown'
@@ -165,6 +176,8 @@ def load_published_audit(paper: dict, project: dict, listing: dict, fetch) -> di
         anchor = rec.get('anchor')
         if row.get('anchor') != mf.index_anchor(anchor, (anchor or {}).get('kind', 'unlocated')):
             raise AuditError('Audit claim locations disagree with the index')
+        if rec.get('work') is not None:
+            rec['work'] = work(rec, row)
         return {**row, **fields(rec['status_code']), 'record': rec,
                 'link': '/read/?audit=' + quote(base, safe='') +
                         '#/r/' + quote(idx['release'], safe='') + '/read/' + quote(ap['id'], safe='') + '/' + quote(rec['id'], safe='')}
