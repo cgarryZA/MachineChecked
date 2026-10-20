@@ -196,16 +196,18 @@ def _fetch_paper(root: Path, url: str, title: str | None = None) -> Path:
     return out
 
 
-def _simple_view(root: Path, paper: Path) -> dict:
-    """What the reader would show, without writing it (`check` needs no site)."""
+def _simple_view(root: Path, paper: Path, reuse_lean: bool = False) -> dict:
+    """What the reader would show, without writing it (`check` needs no site). With
+    `reuse_lean`, only stored Lean facts are used."""
     from .simple import build_view
     out = root / cfgmod.work_dir_name(root)
-    return build_view(root, paper, out, log=lambda m: print("  " + m, file=sys.stderr))
+    return build_view(root, paper, out, log=lambda m: print("  " + m, file=sys.stderr),
+                      reuse_only=reuse_lean)
 
 
-def _simple_site(root: Path, paper: Path, web: str | None):
+def _simple_site(root: Path, paper: Path, web: str | None, reuse_lean: bool = False):
     from .simple import write_view_site
-    view = _simple_view(root, paper)
+    view = _simple_view(root, paper, reuse_lean)
     site = root / cfgmod.work_dir_name(root) / "site"
     index = write_view_site(view, site, _web_dist(web), root)
     return site, index, view
@@ -496,7 +498,7 @@ def cmd_build_simple(a):
     from .bundle import bundle
     root, paper = _simple_target(a)
     _settings(a, root)
-    site, index, view = _simple_site(root, paper, a.web)
+    site, index, view = _simple_site(root, paper, a.web, a.reuse_lean)
     _print_simple(view["body"])
     if a.site:
         import shutil
@@ -1048,8 +1050,8 @@ def main(argv=None):
     b.add_argument("--lake", default="lake", help=argparse.SUPPRESS)
     b.add_argument("--no-lean-build", action="store_true", help=argparse.SUPPRESS)
     b.add_argument("--reuse-lean", action="store_true",
-                   help="reuse the last Lean results when no Lean input changed (after an edit to "
-                        "the claim inventory or the reviews, say)")
+                   help="use only the stored Lean results, starting no Lean session; stop and say "
+                        "what must be extracted when they do not cover the build")
     b.add_argument("--web", help=argparse.SUPPRESS)
     b.add_argument("--fail-on-violation", action="store_true", help=argparse.SUPPRESS)
     b.set_defaults(func=cmd_build)

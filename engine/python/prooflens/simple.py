@@ -39,7 +39,12 @@ ENV_WORDS = {"thm", "theorem", "lem", "lemma", "prop", "proposition", "cor", "co
 from .status import fields, source_evidence
 
 class ViewError(RuntimeError):
-    pass
+    """A failure the view reports. `deterministic` (for a failed Lean session) as in
+    `probe.ProbeError`: true only for an error Lean reported in its input."""
+
+    def __init__(self, message: str = "", deterministic: bool = False):
+        super().__init__(message)
+        self.deterministic = deterministic
 
 
 # -- discovery -------------------------------------------------------------------------------
@@ -650,20 +655,28 @@ def save_settings(root: Path, issues: str | None = None, site_url: str | None = 
 
 # -- the Lean side ---------------------------------------------------------------------------
 
-# What an index record keeps: the reader lists a declaration's statement only to this length,
-# and suggestions read a docstring only for the statement numbers it cites.
+# What an index preview keeps: the reader lists a declaration's statement only to this length,
+# and suggestions read a docstring only for the statement numbers it cites. The facts store
+# keeps the whole record.
 INDEX_TYPE_CHARS, INDEX_DOC_CHARS = 300, 4000
 
 
+def index_preview(rec: dict) -> dict:
+    """The short form of an index record that the view uses."""
+    return {"record": "index", "name": rec["name"], "kind": rec["kind"],
+            "module": rec.get("module"), "range": rec.get("range"),
+            "type": (rec.get("type") or "")[:INDEX_TYPE_CHARS],
+            "doc": (rec.get("doc") or "")[:INDEX_DOC_CHARS] or None}
+
+
 def _record(line: str) -> dict:
-    """One probe record, as kept in memory: an index record trimmed to what is used, any other
+    """One probe record, as kept in memory: an index record as the probe wrote it, any other
     with its canonical form replaced by its fingerprint."""
     rec = json.loads(line)
     if rec.get("record") == "index":
         return {"record": "index", "name": rec["name"], "kind": rec["kind"],
                 "module": rec.get("module"), "range": rec.get("range"),
-                "type": (rec.get("type") or "")[:INDEX_TYPE_CHARS],
-                "doc": (rec.get("doc") or "")[:INDEX_DOC_CHARS] or None}
+                "type": rec.get("type") or "", "doc": rec.get("doc") or None}
     for d in [rec, rec.get("decl")]:
         if isinstance(d, dict) and "canon" in d:
             d["fingerprint"] = fingerprint(d.pop("canon"))
@@ -678,10 +691,14 @@ def run_simple_probe(root: Path, modules: list[str], libs: list[str], requests: 
     query = {"scope_roots": [l.split(".")[0] for l in libs], "spec_prefix": "",
              "accept_prefix": "", "allowed_axioms": STANDARD_AXIOMS, "requests": requests}
     try:
-        return lean_session(root, modules, query, lambda lines: [_record(l) for l in lines],
+        recs = lean_session(root, modules, query, lambda lines: [_record(l) for l in lines],
                             lake, timeout, work, log, label)
     except ProbeError as e:
-        raise ViewError(str(e)) from None
+        raise ViewError(str(e), deterministic=e.deterministic) from None
+    if not any(r.get("record") == "done" for r in recs):
+        raise ViewError("the Lean session ended before it finished (its output has no `done` "
+                        "record)")
+    return recs
 
 
 def stale_docs_note(found: list[dict]) -> str:
@@ -691,8 +708,10 @@ def stale_docs_note(found: list[dict]) -> str:
 
 
 def probe_modules(root: Path, modules: list[str], libs: list[str], requests: list[dict],
-                  lake: str = "lake", log=print,
-                  work: Path | None = None) -> tuple[list[dict], dict[str, str]]:
+                  lake: str = "lake", log=print, work: Path | None = None,
+                  sessions: dict[str, list[str]] | None = None,
+                  retry: set[str] | None = None
+                  ) -> tuple[list[dict], dict[str, str]]:
     """Probe the built modules without assuming they can all be imported into one Lean session.
 
     A project may build modules that do not belong together: two libraries declaring the same
@@ -700,16 +719,23 @@ def probe_modules(root: Path, modules: list[str], libs: list[str], requests: lis
     silently keep one, so each library is probed in its own session, always; a library that
     fails to load is split in halves, down to single modules. Each record is tagged with the
     group it came from, and a name found in several groups is ambiguous until its module is
-    given. Returns the records and the modules that could not be loaded, with the reason."""
+    given. Returns the records and the modules that could not be loaded, with the reason;
+    `sessions`, when given, receives the modules of each session started, by its label, and
+    `retry` the failed modules whose failure was not an error Lean reported in them (out of
+    memory, a timeout, a killed or unfinished session): another attempt may load them."""
     recs, failed = [], {}
 
     def run(group: list[str], label: str):
+        if sessions is not None:
+            sessions[label] = list(group)
         try:
             out = run_simple_probe(root, group, libs, requests, lake, work=work, log=log,
                                    label=label)
         except ViewError as e:
             if len(group) == 1:
                 failed[group[0]] = str(e)[-600:]
+                if retry is not None and not getattr(e, "deterministic", False):
+                    retry.add(group[0])
                 return
             errors = [l.strip() for l in str(e).splitlines() if "error" in l]
             reason = errors[0].split("error:", 1)[-1].strip()[:200] if errors else "no error message"
@@ -823,6 +849,395 @@ def link_state(rec: dict | None) -> dict:
     return fields("link.checked")
 
 
+# -- extracted Lean facts, reused between builds ---------------------------------------------
+
+class StaleLean(ViewError):
+    """The stored Lean facts do not cover the build and reuse alone was asked for
+    (`build --reuse-lean`). The message says what must be extracted."""
+
+
+def _reasons(why: dict[str, str]) -> str:
+    """A short account of why entries must be extracted, most common reason first."""
+    count: dict[str, int] = {}
+    for r in why.values():
+        count[r] = count.get(r, 0) + 1
+    parts = sorted(count.items(), key=lambda kv: (-kv[1], kv[0]))
+    return "; ".join(f"{r} ({n})" for r, n in parts[:3]) + ("; …" if len(parts) > 3 else "")
+
+
+def _session_key(modules: list[str]) -> str:
+    return "session:" + hashlib.sha256("\n".join(sorted(modules)).encode()).hexdigest()
+
+
+class LeanFacts:
+    """The Lean facts a view needs, from the facts store (`facts.Store`) where it holds them
+    current, else from the probe, which then stores them. A module's index is stored per module,
+    a linked or suggested declaration's record per declaration and module (with the records of
+    its closure, each stored once), so an edit outside Lean starts no Lean session and an edit to
+    a module reopens only what that module's importers extracted. With `reuse_only`, nothing is
+    extracted: a build that would need Lean stops with `StaleLean`.
+
+    A module that fails to load is stored as failed only when Lean reported an error in it (it
+    does not import or elaborate), a failure the same inputs repeat. A failure of resources or of
+    the session (out of memory, a timeout, a heartbeat budget, a killed or unfinished session) is
+    stored only as an attempt: the next build loads the module again and says that the earlier
+    attempt failed.
+
+    A checked bridge (`bridges`, pairs of a theorem and its target) is checked by an `accept`
+    request asked with the theorem's record. Its answer is stored like a link record, per pair
+    and the theorem's module, with the environment of the theorem's module and the target's
+    module (and everything they import), so it is reused while those are unchanged; after a
+    build, `acceptrecs` holds the answers by pair."""
+
+    def __init__(self, root: Path, libs: list[str], built: list[str], unbuilt: list[str],
+                 work: Path, lake: str = "lake", log=print, reuse_only: bool = False,
+                 bridges=frozenset()):
+        from . import facts
+        self.root, self.libs, self.built, self.unbuilt = root, libs, built, unbuilt
+        self.work, self.lake, self.log, self.reuse_only = work, lake, log, reuse_only
+        self.store = facts.Store(root, libs, work, STANDARD_AXIOMS)
+        self.sessions = 0
+        self.fresh: dict[str, list[dict]] = {}       # link records extracted in this build
+        self.fresh_decls: dict[str, dict] = {}
+        self.fresh_index: dict[str, list[dict]] = {}
+        self.retry: set[str] = set()                 # failures of this build to try again
+        self.bridges: set[tuple[str, str]] = set(bridges)
+        self.fresh_accepts: dict[tuple[str, str], list[dict]] = {}
+        self.acceptrecs: dict[tuple[str, str], list[dict]] = {}
+        self.declared: dict[str, set[str]] = {}      # the index's modules for each name
+        self.fresh_docs: dict[str, list[dict]] = {}
+        self.docs: dict[str, list[dict]] = {}        # `moddoc` records, by module
+
+    def _accept_requests(self, names) -> list[dict]:
+        """The `accept` requests of the bridges whose theorem is among `names`."""
+        return [{"kind": "accept", "name": t, "spec": s} for t, s in sorted(self.bridges)
+                if t in names]
+
+    # -- probing and storing ----------------------------------------------------------------
+
+    def _need(self, what: str) -> None:
+        if self.reuse_only:
+            raise StaleLean(f"the stored Lean facts do not cover this build: {what}; run "
+                            "`machinechecked build` without `--reuse-lean`")
+
+    def _run(self, modules: list[str], requests: list[dict]) -> dict[str, str]:
+        sessions: dict[str, list[str]] = {}
+        recs, failed = probe_modules(self.root, modules, self.libs,
+                                     requests + [{"kind": "modules", "name": ""}], self.lake,
+                                     self.log, self.work, sessions=sessions, retry=self.retry)
+        self.sessions += len(sessions)
+        self._store(recs, sessions, failed, any(r["kind"] == "index" for r in requests))
+        for r in recs:
+            r.pop("probe_group", None)
+            if r["record"] == "link":
+                self.fresh.setdefault(r["name"], []).append(r)
+            elif r["record"] == "decl":
+                self.fresh_decls.setdefault(r["name"], r)
+            elif r["record"] == "index":
+                self.fresh_index.setdefault(r["module"], []).append(r)
+            elif r["record"] == "moddoc":
+                self.fresh_docs.setdefault(r["module"], []).append(r)
+            elif r["record"] == "accept":
+                self.fresh_accepts.setdefault((r["name"], r.get("spec")), []).append(r)
+        return failed
+
+    def _store(self, recs: list[dict], sessions: dict[str, list[str]], failed: dict[str, str],
+               indexed: bool) -> None:
+        """Store what each complete session extracted, with the environment it came from. A
+        session that did not finish stores nothing; a request that failed is not stored, so it
+        is asked again."""
+        from .facts import graphs
+        st = self.store
+        graph_of = graphs(recs)
+        by_label: dict[str, list[dict]] = {}
+        for r in recs:
+            by_label.setdefault(r.get("probe_group", ""), []).append(r)
+        built = set(self.built)
+        for label, mods in sessions.items():
+            rs = by_label.get(label, [])
+            graph = graph_of.get(label)
+            if not graph or not any(r["record"] == "done" for r in rs):
+                continue
+            for m in mods:
+                st.remove("attempt", m)
+                st.remove("failed", m)
+            if indexed:
+                per_mod: dict[str, list[dict]] = {}
+                docs: dict[str, list[dict]] = {}
+                for r in rs:
+                    if r["record"] == "index":
+                        per_mod.setdefault(r["module"], []).append(_clean(r))
+                    elif r["record"] == "moddoc":
+                        docs.setdefault(r["module"], []).append(_clean(r))
+                for m in graph:
+                    if m in built:
+                        st.put("index", m, st.environment([m], graph),
+                               records=per_mod.get(m, []), moddocs=docs.get(m, []))
+            decls = {r["name"]: r for r in rs if r["record"] == "decl"}
+            whole = st.environment(mods, graph)
+            for r in rs:
+                if r["record"] != "link":
+                    continue
+                errors = r.get("errors", [])
+                if any(str(e).startswith("probe-error") for e in errors):
+                    continue
+                members = r.get("closure", [])
+                if any(n not in decls for n in members):
+                    continue
+                answer = {"record": _clean(r),
+                          "decls": [st.put_object(_clean(decls[n])) for n in members]}
+                st.put("link", f"{r['name']}\0{_session_key(mods)}", whole, **answer)
+                m = (r.get("decl") or {}).get("module")
+                if "missing" not in errors and m and st.own(m) is not None:
+                    st.put("link", f"{r['name']}\0module:{m}", st.environment([m], graph),
+                           **answer)
+            for r in rs:
+                if r["record"] != "accept":
+                    continue
+                errors = r.get("errors", [])
+                if any(str(e).startswith("probe-error") for e in errors):
+                    continue
+                spec = r.get("spec") or ""
+                # The target's module: as this session's record of the target, or the index,
+                # gives it. A change to it, or to anything it imports, reopens the answer.
+                targets = {(l.get("decl") or {}).get("module") for l in rs
+                           if l["record"] == "link" and l["name"] == spec}
+                targets |= {x["module"] for x in rs if x["record"] == "index"
+                            and x["name"] == spec}
+                targets |= self.declared.get(spec, set())
+                targets = sorted(t for t in targets if t)
+                st.put("accept", f"{r['name']}\0{spec}\0{_session_key(mods)}",
+                       st.environment(list(mods) + targets, graph), record=_clean(r))
+                m = r.get("module")
+                if "missing" not in errors and m and st.own(m) is not None:
+                    st.put("accept", f"{r['name']}\0{spec}\0module:{m}",
+                           st.environment([m] + targets, graph), record=_clean(r))
+        if failed:
+            project = {m: d for m in self.built if (d := st.own(m)) is not None}
+            for m, reason in failed.items():
+                if m in self.retry:
+                    st.put("attempt", m, {}, reason=reason)
+                    st.remove("failed", m)
+                else:
+                    st.put("failed", m, project, reason=reason)
+                    st.remove("attempt", m)
+
+    def _answers(self, name: str, where: dict[str, set[str]],
+                 groups: list[list[str]]) -> tuple[list[dict] | None, str | None]:
+        """The stored answers for `name`: one for each module the index says declares it, or,
+        for a name the index does not hold, one for each library's session."""
+        keys = [f"{name}\0module:{m}" for m in sorted(where[name])] if name in where \
+            else [f"{name}\0{_session_key(g)}" for g in groups]
+        out = []
+        for k in keys:
+            e, why = self.store.get("link", k)
+            if e is None:
+                return None, why
+            objs = [self.store.get_object(o) for o in e.get("decls", [])]
+            if any(o is None for o in objs):
+                return None, "not extracted yet"
+            out.append({"record": e["record"], "decls": objs})
+        return out, None
+
+    def module_docs(self, index: list[dict]) -> list[dict]:
+        """The `moddoc` records of the indexed modules: the backticked names in a module's
+        docstrings that the environment it was indexed in does not know. A module indexed with
+        only some of the project loaded may report a name another project module declares, so
+        a name the project's index holds is left out: as written, or inside a namespace the
+        module declares into, as the probe tries it."""
+        names = {r["name"] for r in index}
+        spaces: dict[str, set[str]] = {}
+        for r in index:
+            parts = r["name"].split(".")
+            spaces.setdefault(r.get("module"), set()).update(
+                ".".join(parts[:i]) for i in range(1, len(parts)))
+        return [d for m in sorted(self.docs) for d in self.docs[m]
+                if d["name"] not in names
+                and not any(f"{ns}.{d['name']}" in names for ns in spaces.get(m, ()))]
+
+    def _accept_answers(self, name: str, where: dict[str, set[str]], groups: list[list[str]]
+                        ) -> tuple[dict | None, str | None]:
+        """The stored `accept` answers of the bridges whose theorem is `name`, by pair, keyed
+        like its link records; None and why when one is not stored current."""
+        out = {}
+        for t, spec in sorted(self.bridges):
+            if t != name:
+                continue
+            keys = [f"{t}\0{spec}\0module:{m}" for m in sorted(where[t])] if t in where \
+                else [f"{t}\0{spec}\0{_session_key(g)}" for g in groups]
+            recs = []
+            for k in keys:
+                e, why = self.store.get("accept", k)
+                if e is None:
+                    return None, why
+                recs.append(e["record"])
+            out[(t, spec)] = recs
+        return out, None
+
+    # -- the two phases ---------------------------------------------------------------------
+
+    def index(self, linked: set[str]) -> tuple[list[dict], dict[str, str]]:
+        """The index of the built modules and the modules that could not be loaded. The linked
+        names without a stored answer are asked in the same sessions, so the modules load once."""
+        st = self.store
+        by_mod: dict[str, list[dict]] = {}
+        failed: dict[str, str] = {}
+        stale: dict[str, str] = {}
+        for m in self.built:
+            e, why = st.get("index", m)
+            if e is not None:
+                by_mod[m] = e["records"]
+                self.docs[m] = e.get("moddocs", [])
+                continue
+            f, _ = st.get("failed", m)
+            if f is not None:
+                failed[m] = f["reason"]
+                continue
+            earlier = st.peek("attempt", m)
+            stale[m] = f"an earlier attempt failed: {_first_line(earlier['reason'])}" \
+                if earlier else why
+        self.declared = _where({r["name"] for rs in by_mod.values() for r in rs},
+                               by_mod.values(), self.built)
+        if stale:
+            self._need(f"{len(stale)} module(s) to index ({_reasons(stale)})")
+            where = _where(linked, by_mod.values(), self.built)
+            ask = sorted(n for n in linked
+                         if not (n in where and self._answers(n, where, [])[0] is not None
+                                 and self._accept_answers(n, where, [])[0] is not None)
+                         and (n in where or not declaring_modules(self.root, self.unbuilt, n)))
+            self.log(f"lean: indexing {len(stale)} of {len(self.built)} built module(s) "
+                     f"({_reasons(stale)})"
+                     + (f" and checking {len(ask)} linked declaration(s)" if ask else ""))
+            more = self._run(sorted(stale), [{"kind": "index", "name": ""}]
+                             + [{"kind": "link", "name": n} for n in ask]
+                             + self._accept_requests(ask))
+            failed.update(more)
+            for m in stale:
+                if m in failed:
+                    continue
+                e, _ = st.get("index", m)
+                by_mod[m] = e["records"] if e is not None else self.fresh_index.get(m, [])
+                self.docs[m] = e.get("moddocs", []) if e is not None else \
+                    _dedup(self.fresh_docs.get(m, []))
+        else:
+            self.log(f"lean: reusing the stored index of {len(self.built)} built module(s)")
+        index = sorted((r for m in by_mod for r in by_mod[m]),
+                       key=lambda r: (r.get("module") or "", (r.get("range") or {}).get("line")
+                                      or 0, r["name"]))
+        self.declared = _where({r["name"] for r in index}, [index], self.built)
+        return index, failed
+
+    def links(self, wanted: set[str], index: list[dict], failed: dict[str, str]
+              ) -> tuple[dict[str, list[dict]], dict[str, dict]]:
+        """The records of the linked and suggested names, and of the declarations in their
+        closures. Only the modules that declare a name without a stored answer are loaded (with
+        what they import); a name the index does not hold (from a dependency, say) is looked
+        for in every loadable module, unless its source shows it in a module that is not
+        built."""
+        loadable = [m for m in self.built if m not in failed]
+        where = _where(wanted, [index], loadable)
+        groups = [g for _, g in by_library(sorted(loadable), self.libs)]
+        linkrecs: dict[str, list[dict]] = {}
+        decls: dict[str, dict] = {}
+        need: dict[str, str] = {}
+
+        def take(n, answers):
+            linkrecs[n] = [a["record"] for a in answers]
+            for a in answers:
+                for d in a["decls"]:
+                    decls.setdefault(d["name"], d)
+
+        def settle(n, last: bool = False) -> bool:
+            # A name is settled when its record and the answers of its bridges are stored
+            # current; after this build's extraction, what it extracted serves instead.
+            got, why = self._answers(n, where, groups)
+            acc, why_acc = self._accept_answers(n, where, groups)
+            if got is not None and acc is not None:
+                take(n, got)
+                self.acceptrecs.update(acc)
+                return True
+            if last:
+                if got is not None:
+                    take(n, got)
+                elif n in self.fresh:
+                    take(n, [{"record": r, "decls": [self.fresh_decls[m] for m in
+                                                     r.get("closure", [])
+                                                     if m in self.fresh_decls]}
+                             for r in self.fresh[n]])
+                for pair in self.bridges:
+                    if pair[0] == n:
+                        got_pair = (acc or {}).get(pair) or self.fresh_accepts.get(pair)
+                        if got_pair:
+                            self.acceptrecs[pair] = got_pair
+                return True
+            need[n] = why or why_acc
+            return False
+
+        for n in sorted(wanted):
+            if n not in where and declaring_modules(self.root, self.unbuilt, n):
+                continue
+            # A name the index sessions of this build answered needs no second session.
+            if n in self.fresh and all(p in self.fresh_accepts for p in self.bridges
+                                       if p[0] == n):
+                settle(n, last=True)
+                continue
+            settle(n)
+        if need:
+            self._need(f"{len(need)} declaration(s) to check ({_reasons(need)})")
+            self.log(f"lean: checking {len(need)} linked or suggested declaration(s) "
+                     f"({_reasons(need)})")
+            mine = {n: where[n] for n in need if n in where}
+            elsewhere = sorted(n for n in need if n not in where)
+            runs = [(sorted(set().union(*mine.values())), sorted(mine))] if mine else []
+            if elsewhere:
+                runs.append((loadable, elsewhere))
+            for mods, names in runs:
+                failed.update(self._run(mods, [{"kind": "link", "name": n} for n in names]
+                                        + self._accept_requests(names)))
+            for n in sorted(need):
+                del need[n]
+                settle(n, last=True)
+        elif wanted:
+            self.log(f"lean: reusing the stored records of {len(linkrecs)} linked or suggested "
+                     f"declaration(s)")
+        return linkrecs, decls
+
+
+def _first_line(reason: str) -> str:
+    """The line of a failure's text that names it: a sign of running out of a resource where
+    there is one, else its first line."""
+    from .probe import RESOURCE_SIGNS
+    lines = [l.strip() for l in str(reason).splitlines() if l.strip()]
+    for l in lines:
+        if any(sign in l.lower() for sign in RESOURCE_SIGNS):
+            return l[:160]
+    return (lines[0] if lines else "no message")[:160].rstrip(":")
+
+
+def _dedup(recs: list[dict]) -> list[dict]:
+    out = []
+    for r in recs:
+        r = _clean(r)
+        if r not in out:
+            out.append(r)
+    return out
+
+
+def _clean(rec: dict) -> dict:
+    return {k: v for k, v in rec.items() if k != "probe_group"}
+
+
+def _where(names, record_lists, modules) -> dict[str, set[str]]:
+    """The modules among `modules` that the index records say declare each of `names`."""
+    mods = set(modules)
+    out: dict[str, set[str]] = {}
+    for recs in record_lists:
+        for r in recs:
+            if r["name"] in names and r.get("module") in mods:
+                out.setdefault(r["name"], set()).add(r["module"])
+    return out
+
+
 # -- the whole view --------------------------------------------------------------------------
 
 def tex_machinery_digest() -> str:
@@ -839,21 +1254,6 @@ def tree_digest(d: Path) -> str:
     for f in sorted(p for p in d.rglob("*") if p.is_file()):
         h.update(str(f.relative_to(d)).encode())
         h.update(hashlib.sha256(f.read_bytes()).digest())
-    return h.hexdigest()
-
-
-def lean_digest(root: Path) -> str:
-    """The content of every Lean input of the project and its path dependencies, and whether
-    each module is built."""
-    import hashlib
-    from .pipeline import lean_inputs_digest
-    h = hashlib.sha256()
-    for f in sorted((root / ".lake" / "build").rglob("*.olean")) if (root / ".lake").exists() \
-            else []:
-        h.update(str(f.relative_to(root)).encode())
-        h.update(str(f.stat().st_mtime_ns).encode())
-    fake = type("C", (), {"lean_root": root})()
-    h.update(lean_inputs_digest(fake).encode())
     return h.hexdigest()
 
 
@@ -901,8 +1301,10 @@ def paper_title(p: Path) -> str:
 
 
 def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
-               log=print) -> dict:
-    """Everything the reader shows for `paper_path` in the Lean project at `root`."""
+               log=print, reuse_only: bool = False) -> dict:
+    """Everything the reader shows for `paper_path` in the Lean project at `root`. With
+    `reuse_only`, the Lean facts come from the facts store alone, and a build they do not cover
+    stops with `StaleLean`."""
     prepare_work_dir(out_dir)
     libs = lib_names(root)
     built, unbuilt = built_modules(root, libs) if libs else ([], [])
@@ -971,6 +1373,7 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
     if fy and "error" in fy:
         notes.append(fy["error"])
     index, linkrecs, decls, acceptrecs, module_docs = [], {}, {}, {}, []
+    failed, facts_used = {}, {"sessions": 0}
     if fy and "error" not in fy:
         for c in claims:
             rows = fz.links_for(fy, c["kind"], c["number"], paper.title)
@@ -1009,82 +1412,42 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
         bridge_pairs = {b for c in claims if (b := bridge_names(links.get(c["key"], {})))}
         linked |= {t for _, t in bridge_pairs}
         work = out_dir / "build"
-
-        def accepts(names):
-            return [{"kind": "accept", "name": t, "spec": s}
-                    for t, s in sorted(bridge_pairs) if t in names]
-
-        def take(recs):
-            for r in recs:
-                if r["record"] == "link":
-                    linkrecs.setdefault(r["name"], []).append(r)
-                elif r["record"] == "decl":
-                    decls.setdefault(r["name"], r)
-                elif r["record"] == "accept":
-                    acceptrecs.setdefault((r["name"], r.get("spec")), []).append(r)
-
-        # The index is reused while no Lean input of the project changed. Built afresh, it is
-        # made in the same sessions as the linked names' records, so the modules load once.
-        icache = work / "index-cache.json"
-        idigest = lean_digest(root)
-        cached = read_json(icache) if icache.exists() else {}
-        failed = {}
-        if cached.get("digest") == idigest and "moddocs" in cached:
-            index, failed = cached["index"], cached.get("failed", {})
-            moddocs = cached["moddocs"]
-        else:
-            log(f"lean: indexing {len(built)} built module(s)"
-                + (f" and checking {len(linked)} linked declaration(s)" if linked else ""))
-            recs, failed = probe_modules(root, built, libs, [{"kind": "index", "name": ""}]
-                                         + [{"kind": "link", "name": n} for n in sorted(linked)]
-                                         + accepts(linked), lake, log, work)
-            index = [r for r in recs if r["record"] == "index"]
-            moddocs = [r for r in recs if r["record"] == "moddoc"]
-            take(recs)
-            write_json(icache, {"digest": idigest, "index": index, "failed": failed,
-                                "moddocs": moddocs}, indent=None)
-        module_docs = stale_doc_names(moddocs)
-        if module_docs:
-            notes.append(stale_docs_note(module_docs))
-        wanted = set(linked)
-        ctx = SuggestContext(index, root, fz.foreign_roots(fy, paper.title))
-        for c in claims:
-            entry = links.get(c["key"], {})
-            if steps.is_step(c):
-                # A proof step is linked by someone who read it; nothing is suggested for it.
-                c["suggestions"] = []
-                continue
-            c["suggestions"] = [s for s in suggest(c, index, ctx=ctx)
-                                if s["name"] not in entry.get("rejected", [])
-                                and s["name"] not in c["link_names"]]
-            # Every suggestion shown is checked by Lean, not only the first.
-            wanted |= {s["name"] for s in c["suggestions"] if s.get("kind")}
-        wanted -= set(linkrecs)
-        if wanted:
-            # Only the modules that declare the names are loaded (with what they import). A name
-            # the index does not hold (from a dependency, say) is looked for in every loadable
-            # module, unless its source shows it in a module that is not built.
-            log(f"lean: checking {len(wanted)} linked or suggested declaration(s)")
-            loadable = [m for m in built if m not in failed]
-            where: dict[str, set[str]] = {}
-            for r in index:
-                if r["name"] in wanted and r.get("module") in loadable:
-                    where.setdefault(r["name"], set()).add(r["module"])
-            elsewhere = sorted(n for n in wanted if n not in where
-                               and not declaring_modules(root, unbuilt, n))
-            groups = [(sorted(set().union(*where.values())), sorted(where))] if where else []
-            if elsewhere:
-                groups.append((loadable, elsewhere))
-            for mods, names in groups:
-                recs, more = probe_modules(root, mods, libs,
-                                           [{"kind": "link", "name": n} for n in names]
-                                           + accepts(names), lake, log, work)
-                failed.update(more)
-                take(recs)
-        if failed:
-            notes.append(f"{len(failed)} built module(s) could not be loaded by MachineChecked "
-                         f"and are not indexed: {', '.join(sorted(failed)[:5])}"
-                         + ("…" if len(failed) > 5 else ""))
+        (work / "index-cache.json").unlink(missing_ok=True)  # the store replaces it
+        lean = LeanFacts(root, libs, built, unbuilt, work, lake, log, reuse_only,
+                         bridges=bridge_pairs)
+        with lean.store.lock(log):
+            index, failed = lean.index(linked)
+            index = [index_preview(r) for r in index]
+            module_docs = stale_doc_names(lean.module_docs(index))
+            if module_docs:
+                notes.append(stale_docs_note(module_docs))
+            wanted = set(linked)
+            ctx = SuggestContext(index, root, fz.foreign_roots(fy, paper.title))
+            for c in claims:
+                entry = links.get(c["key"], {})
+                if steps.is_step(c):
+                    # A proof step is linked by someone who read it; nothing is suggested for it.
+                    c["suggestions"] = []
+                    continue
+                c["suggestions"] = [s for s in suggest(c, index, ctx=ctx)
+                                    if s["name"] not in entry.get("rejected", [])
+                                    and s["name"] not in c["link_names"]]
+                # Every suggestion shown is checked by Lean, not only the first.
+                wanted |= {s["name"] for s in c["suggestions"] if s.get("kind")}
+            linkrecs, decls = lean.links(wanted, index, failed)
+            acceptrecs = lean.acceptrecs
+        facts_used = {"sessions": lean.sessions, **lean.store.stats}
+        again = sorted(m for m in failed if m in lean.retry)
+        kept = sorted(m for m in failed if m not in lean.retry)
+        if kept:
+            notes.append(f"{len(kept)} built module(s) could not be loaded by MachineChecked "
+                         f"and are not indexed: {', '.join(kept[:5])}"
+                         + ("…" if len(kept) > 5 else ""))
+        if again:
+            notes.append(f"{len(again)} built module(s) could not be loaded this time (out of "
+                         "memory, a time limit or an interrupted Lean session) and are not "
+                         f"indexed; the next build tries them again: {', '.join(again[:5])}"
+                         + ("…" if len(again) > 5 else ""))
 
     # Statuses.
     def checked(c, n, source):
@@ -1144,7 +1507,7 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
             "author": load_links(root).get("author"),
             "pdf_sha256": sha256_file(pdf) if pdf else None, "tex": tex,
             "claims": claims, "index": index, "decls": decls, "module_docs": module_docs}
-    return {"body": body, "pdf": pdf, "cfg": cfg}
+    return {"body": body, "pdf": pdf, "cfg": cfg, "lean": facts_used}
 
 
 def source_info(root: Path | None, libs: list[str]) -> dict:
