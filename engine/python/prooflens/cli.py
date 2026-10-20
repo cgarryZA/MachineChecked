@@ -220,6 +220,10 @@ def _print_simple(body):
         print(f"note: {n}")
     for d in body.get("module_docs", []):
         print(f"warning: {stale_doc_message(d)}")
+    from . import numbering as nb
+    for o in (body.get("numbering") or {}).get("references", []):
+        if nb.suspect(o):
+            print(f"warning: {nb.message(o)}")
     for s, k in sorted(view_summary(body).items()):
         print(f"  {k:4d}  {s}")
     for c in body.get("claims", []):
@@ -248,7 +252,8 @@ def cmd_view(a):
 
         from .workspace import api
         serve(res["site"], a.port, None, not a.no_browser, on_symbol=on_symbol,
-              api=api(cfg.out_dir, res["site"] / "data", cfg.root))
+              api=_with_uses(api(cfg.out_dir, res["site"] / "data", cfg.root), cfg.lean_root,
+                             res["site"] / "data"))
         return
     from . import authoring
     from .server import serve
@@ -267,7 +272,15 @@ def cmd_view(a):
         return {"claim": change["claim"], "changed": change["changed"]}
 
     serve(site, a.port, on_link, not a.no_browser,
-          api=api(root / cfgmod.work_dir_name(root), site / "data", root))
+          api=_with_uses(api(root / cfgmod.work_dir_name(root), site / "data", root), root,
+                         site / "data"))
+
+
+def _with_uses(api: tuple[dict, dict], root: Path, data: Path) -> tuple[dict, dict]:
+    """The local server's routes, with the reader's question of where a declaration is used."""
+    from .uses import route
+    gets, posts = api
+    return {**gets, "/api/uses": route(root, data)}, posts
 
 
 # -- recording links and investigations -------------------------------------------------------
@@ -383,9 +396,20 @@ def _print_workspace(v: dict) -> None:
         print(cid)
         for e in c["evidence"]:
             ref = e["ref"]
-            what = ref.get("decl") or (ref.get("source") or {}).get("file") or "paper passage"
+            fact = ref.get("fact")
+            what = ref.get("decl") or (ref.get("source") or {}).get("file") or \
+                (f"{fact.get('name') or fact.get('head') or 'a fact'} : {fact.get('type')}, "
+                 f"inside the proof of {fact['decl']}" if fact else "paper passage")
             print(f"  evidence {e['id']}  {e['role']:9} {what}  [{e['currency']['state']}]"
                   + (f" (module not built)" if ref.get("build") == "unbuilt" else ""))
+            if fact:
+                print(f"           {fact['basis']}"
+                      + (f"; assuming {'; '.join(fact['assumptions'])}"
+                         if fact.get("assumptions") else "")
+                      + "".join(f"; {c}" for c in fact.get("cases") or []))
+                for ch in e["currency"].get("changes") or []:
+                    if ch.get("reason"):
+                        print(f"           {ch['reason']}")
         for f in c["findings"]:
             tag = f["state"] + ("" if f["in_force"] else ", superseded")
             print(f"  finding  {f['id']}  {tag}: coverage {f.get('coverage') or '-'}"
@@ -456,7 +480,7 @@ def cmd_workspace(a):
                 if snap is None:
                     sys.exit("no build to resolve the claim against: run view or build first")
                 claim = snap.resolve_claim(a.claim)
-            v = wsp.view(wsp.read(p), snap, claim)
+            v = wsp.view(wsp.read(p), snap, claim, root, check_facts=a.action == "show")
             if a.json:
                 return _print_json({**v, "path": str(p)})
             _print_workspace(v)
@@ -640,11 +664,15 @@ def _check_json(a):
                        "reviews": [{"reviewer": r["reviewer"], "verdict": r["verdict"]["value"],
                                     "submitted_at": r["submitted_at"], "current": r["current"]}
                                    for r in c.get("reviews", [])],
-                       "suggestions": [{"name": x["name"], "why": x.get("why")}
+                       "suggestions": [{"name": x["name"], "why": x.get("why"),
+                                        "reasons": x.get("reasons", [])}
                                        for x in c.get("suggestions", [])],
+                       "references": [o["id"] for o in c.get("references", [])],
                        "unit": c.get("unit", "statement"), "parent": c.get("parent"),
                        **(_step_json(c) if c.get("unit") else {})}
                       for c in body["claims"]]
+            from . import numbering as nb
+            num = body.get("numbering") or {"references": [], "pattern": None}
             out = {"mode": "simple", "paper": body["paper"], "title": body["title"],
                    "release": view_release(body), "commit": body.get("commit"),
                    "modules": {"built": body["project"]["built"],
@@ -652,7 +680,12 @@ def _check_json(a):
                    "notes": body["notes"],
                    "warnings": [{"kind": "module-doc-name", "file": d["file"], "line": d["line"],
                                  "name": d["name"], "message": stale_doc_message(d)}
-                                for d in body.get("module_docs", [])]}
+                                for d in body.get("module_docs", [])]
+                   + [{"kind": "paper-reference", "file": o["source"].get("file"),
+                       "line": o["source"].get("line"), "reference": o["reference"],
+                       "status": o["status"], "id": o["id"], "message": nb.message(o)}
+                      for o in num["references"] if nb.suspect(o)],
+                   "numbering": num}
             failed = any(l["class"] != "proved" for c in claims for l in c["links"])
     summary = {}
     for c in claims:
@@ -798,6 +831,13 @@ def cmd_inspect(a):
     if root is None:
         sys.exit("no Lean project here: run machinechecked inside a directory with a lakefile")
     log = (lambda m: print(m, file=sys.stderr))
+    if a.used_by:
+        from .uses import text, uses
+        out = uses(root, a.name, a.module, log=log, refresh=a.refresh)
+        print(json.dumps(out, indent=1, ensure_ascii=False) if a.json else text(out))
+        if not out["ok"]:
+            sys.exit(1)
+        return
     out = inspect(root, a.name, a.module, log=log, refresh=a.refresh)
     if not a.dependencies and out.get("closure"):
         out["closure"] = {k: v for k, v in out["closure"].items() if k != "members"}
@@ -898,11 +938,23 @@ def cmd_compare(a):
         if a.query:
             op, target = a.query
             out = cmp.query(site, op, target, a.limit, a.after, root,
-                            log=lambda m: print(m, file=sys.stderr))
+                            log=lambda m: print(m, file=sys.stderr), match=a.match)
             if a.json:
                 return _print_json(out)
             if not out["available"]:
                 print(out["reason"])
+                return
+            if op == "uses":
+                from .uses import text
+                claims = cmp.linked_claims(site)
+                for r in out["results"]:
+                    print(text(r, claims))
+                return
+            if op == "search":
+                print(cmp.search_text(out))
+                return
+            if op == "proof-facts":
+                print(cmp.proof_facts_text(out))
                 return
             for r in out["results"]:
                 print("\n".join(cmp.statement_lines(r)) if "statement" not in r
@@ -1197,6 +1249,9 @@ def main(argv=None):
     ins.add_argument("--module", help="the module that declares it, when several declare the name")
     ins.add_argument("--dependencies", action="store_true",
                      help="list every declaration of the project it depends on")
+    ins.add_argument("--used-by", action="store_true",
+                     help="where it is used instead: the declarations that use it, each "
+                          "application's arguments and the source of each premise")
     ins.add_argument("--json", action="store_true",
                      help="print one JSON document (for scripts and agents)")
     ins.add_argument("--project", help="the Lean project (default: the one here)")
@@ -1211,9 +1266,13 @@ def main(argv=None):
                     help="read: the paper only; compare: and the Lean; informed (default): and "
                     "what people have recorded (notes, reviews, statuses)")
     co.add_argument("--query", nargs=2, metavar=("OP", "TARGET"),
-                    help="a targeted query: definition NAME, mentions NAME, dependencies NAME "
-                    "(and uses, proof-facts, composition, impact, which say what is not "
-                    "extracted yet)")
+                    help="a targeted query: definition NAME, mentions NAME, dependencies NAME, "
+                    "search CLAIM-OR-TEXT (the project's declarations by statement content), "
+                    "proof-facts NAME (the facts inside its proof), uses NAME (where it is "
+                    "applied, with the source of each premise); composition and impact say what "
+                    "is not extracted yet")
+    co.add_argument("--match", metavar="TEXT",
+                    help="with proof-facts: rank the facts by the symbols they share with TEXT")
     co.add_argument("--limit", type=int, help="return at most this many definitions or results")
     co.add_argument("--after", metavar="ID", help="continue a list after this item")
     co.add_argument("--workspace", metavar="ID", help="include this workspace's requirements of "

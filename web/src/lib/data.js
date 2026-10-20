@@ -1,6 +1,7 @@
 // Loading of the presentation manifest. The site only reads: every status and finding comes
 // from the manifest as written by the engine.
 
+import { Retrieval } from "./retrieval.js";
 import { statusView } from "./presentation.js";
 export { notProved } from "./presentation.js";
 
@@ -128,6 +129,19 @@ export function loadLeanIndex(index) {
   return getJson(index.lean_index || "data/lean-index.json");
 }
 
+// The content index of every project declaration (lib/retrieval.js), or null when the build has
+// none (a full assessment's site).
+const retrievals = new Map();
+export function loadRetrieval(index) {
+  if (!index.retrieval) return Promise.resolve(null);
+  if (!retrievals.has(index.retrieval)) {
+    const p = getJson(index.retrieval).then((d) => new Retrieval(d));
+    retrievals.set(index.retrieval, p);
+    p.catch(() => retrievals.delete(index.retrieval));
+  }
+  return retrievals.get(index.retrieval);
+}
+
 export async function loadSearch(index) {
   const data = await getJson(index.search || "data/search.json");
   return data.by_project?.[project.repo] || data;
@@ -183,4 +197,27 @@ export function loadExpansion(key) {
 // The review queue the engine wrote (`data/review-queue.json`), if this site has one.
 export function loadQueue(index) {
   return getJson(index.review_queue);
+}
+
+// The reverse references of a declaration (`data/uses.json`, written by the zero-configuration
+// build): for the module that declares it, the declarations that use it and how. Null when the
+// build holds none; `{ ambiguous }` when several modules declare the name and none is given.
+export async function loadUsers(index, name, module) {
+  if (!index?.uses) return null;
+  const data = await getJson(index.uses);
+  const entries = data?.by_name?.[name] || [];
+  if (!entries.length) return { users: [] };
+  const mine = module ? entries.find((e) => e.module === module) : entries.length === 1 ? entries[0] : null;
+  if (!mine) return module ? { users: [] } : { ambiguous: entries.map((e) => e.module) };
+  return mine;
+}
+
+// Where a declaration is used, with each application's arguments and the source of each premise,
+// from `machinechecked view`'s local server: the document `compare --query uses` gives.
+export async function askUses(name, module) {
+  const q = `name=${encodeURIComponent(name)}${module ? `&module=${encodeURIComponent(module)}` : ""}`;
+  const r = await fetch(`api/uses?${q}`, { cache: "no-store" });
+  const out = await r.json().catch(() => ({ error: r.statusText }));
+  if (!r.ok) throw new Error(out.error || r.statusText);
+  return out;
 }

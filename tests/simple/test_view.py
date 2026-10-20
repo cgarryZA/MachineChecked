@@ -42,7 +42,12 @@ def test_view_suggests_then_links(plain):
         ("Plain.odd_add_odd", "paper")]
     assert claims["Theorem 1"]["status"] == "linked: Lean proof checked"
     assert claims["Lemma 4"]["links"] == []
-    assert why["Theorem 3"][0] == ("Plain.sq_odd", "its docstring cites Theorem 3")
+    # Its statement's content first, then the docstring's citation, each said.
+    assert why["Theorem 3"][0][0] == "Plain.sq_odd"
+    assert [r["signal"] for r in claims["Theorem 3"]["suggestions"][0]["reasons"]] == \
+        ["content", "number"]
+    assert why["Theorem 3"][0][1].startswith("shares square, number, odd") and \
+        why["Theorem 3"][0][1].endswith("; its docstring cites Theorem 3")
     assert why["Theorem 2"][0][0] == "Plain.oddSum_eq_sq"
     assert why["Lemma 4"] == []
     # A suggestion is only a suggestion until someone links.

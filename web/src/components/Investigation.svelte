@@ -76,6 +76,12 @@
   }
 
   $effect(() => { claim.id; refresh(); });
+  // A fact cited from a proof's facts is saved by that panel; show it here too.
+  $effect(() => {
+    const again = () => refresh();
+    globalThis.addEventListener?.("machinechecked-workspace-changed", again);
+    return () => globalThis.removeEventListener?.("machinechecked-workspace-changed", again);
+  });
 
   async function start(id) {
     busy = true; error = null;
@@ -178,6 +184,7 @@
   }
 
   function refText(r) {
+    if (r.fact) return `${r.fact.name || r.fact.head || "a fact"} : ${r.fact.type}, inside the proof of ${r.fact.decl}`;
     return r.decl || (r.source ? r.source.file + (r.source.line ? ":" + r.source.line : "") : "a passage of the paper");
   }
 </script>
@@ -274,7 +281,7 @@
       {/if}
 
       {#if here.evidence.length}
-        <p class="small faint">Evidence: {#each here.evidence as e, i (e.id)}{i ? ", " : ""}<code>{refText(e.ref)}</code> ({e.role}{e.currency?.state === "stale" ? ", changed since" : ""}){/each}</p>
+        <p class="small faint">Evidence: {#each here.evidence as e, i (e.id)}{i ? ", " : ""}<code>{refText(e.ref)}</code> ({e.role}{e.ref?.fact ? ", " + e.ref.fact.basis : ""}{e.currency?.state === "stale" ? ", changed since" : ""}){/each}</p>
       {/if}
 
       <details class="add">

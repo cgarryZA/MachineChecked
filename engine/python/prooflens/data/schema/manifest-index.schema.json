@@ -171,6 +171,10 @@
     },
     "search": {
       "type": "string"
+    },
+    "uses": {
+      "type": "string",
+      "description": "The reverse references of the project's declarations (data/uses.json)."
     }
   }
 }

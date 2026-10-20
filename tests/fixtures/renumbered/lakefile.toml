@@ -1,0 +1,5 @@
+name = "renum"
+defaultTargets = ["Renum"]
+
+[[lean_lib]]
+name = "Renum"

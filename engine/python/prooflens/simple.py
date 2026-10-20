@@ -23,6 +23,7 @@ from .config import STANDARD_AXIOMS, Config, Paper, Publish
 from .probe import ProbeError, by_library, fingerprint, lean_session, lean_source, lib_names
 from .sources import acquire
 from .moddocs import stale_doc_names
+from . import numbering as nb
 from .tex import DEFAULT_ENVS, TexError, anchors_for, theorem_envs
 from . import formalization as fz
 from . import steps
@@ -123,7 +124,7 @@ def claims_from_anchors(pid: str, anchors: list[dict], snap: Path) -> list[dict]
             "id": f"{pid}:{key}", "key": key, "paper": pid, "kind": env,
             "number": f"{env.capitalize()} {num}" if num else env.capitalize(), "title": title,
             "label": a.get("label"), "location": a["file"], "line": a.get("line"),
-            "source_sha256": a["source_sha256"],
+            "source_sha256": a["source_sha256"], "statement": a.get("statement") or "",
             "scope": "definition" if env in DEFINITION_ENVS else "formal",
             "scope_note": "", "scope_reviewed": True, "clauses": [], "tags": tags})
     return claims
@@ -164,11 +165,16 @@ def _tokens(s: str) -> set[str]:
 
 class SuggestContext:
     """What suggestions need to know about the whole index, computed once per view: how common
-    each name word is, the modules' own docstrings (`/-! … -/` in their sources), and the
-    namespaces only other papers use (`formalization.foreign_roots`)."""
+    each name word is, the modules' own docstrings (`/-! … -/` in their sources), the
+    namespaces only other papers use (`formalization.foreign_roots`), the content index of
+    every declaration (`retrieval.Retrieval`) and, when given, the project's references to the
+    paper's numbers (`numbering.analyse`)."""
 
     def __init__(self, index: list[dict], root: Path | None = None,
-                 foreign: set[str] = frozenset()):
+                 foreign: set[str] = frozenset(), retrieval=None, numbering: dict | None = None):
+        from .retrieval import Retrieval
+        self.retrieval = retrieval if retrieval is not None else Retrieval.build(index)
+        self.numbering = numbering
         self.foreign = set(foreign)
         self.df: dict[str, int] = {}
         for d in index:
@@ -193,29 +199,67 @@ class SuggestContext:
         return bool(self.foreign & roots)
 
 
+def claim_text(claim: dict) -> str:
+    """What a claim's content search reads: its title and its printed statement."""
+    return " ".join(x for x in (claim.get("title"), claim.get("statement")
+                                 or claim.get("statement_tex")) if x)
+
+
+# How the signals of a suggestion combine: the statement's content counts most; a cited number,
+# and a name resembling the label or the title, count less, so that together they cannot
+# outrank a declaration whose content matches the claim half as well again.
+W_CONTENT, W_NUMBER, W_NAME = 0.7, 0.2, 0.1
+CONTENT_FULL = 0.6       # content scores are compared with the best one, or this when it is less
+CONTENT_MIN = 0.4        # a declaration is suggested on content alone from this score
+EXPLAIN_LIMIT = 50       # content candidates considered per claim
+
+
 def suggest(claim: dict, index: list[dict], limit: int = 3,
             ctx: SuggestContext | None = None) -> list[dict]:
-    """Candidate declarations for a claim, best first, each with the reason it is suggested.
+    """Candidate declarations for a claim, best first, each with the reasons it is suggested.
 
-    A docstring that cites the claim's number is the strongest sign, for a declaration of the
-    claim's own sort (theorems for a theorem, definitions for a definition) above one of the
-    other sort; a theorem whose statement is such a cited definition ranks above both. A module
-    docstring that cites it suggests the module's last declaration of the claim's sort. Name
-    resemblance to the claim's label, and title words shared with a name (one of them rare
-    among the project's names), come after. A citation from a namespace only another paper of
-    the project uses is ranked low and says so. Ties are broken by name, never by index order."""
+    Three signals are combined (`W_CONTENT`, `W_NUMBER`, `W_NAME`). The content signal is the
+    share of the claim's printed statement and title that a declaration's complete statement,
+    docstring, name and used definitions carry (`retrieval.py`), including a wrapper reached
+    through a close match it uses. The number signal is a docstring citing the claim's number:
+    for a declaration of the claim's own sort (theorems for a theorem, definitions for a
+    definition) above one of the other sort; a theorem whose statement is such a cited
+    definition above both; a module docstring citing it suggests the module's last declaration
+    of the claim's sort. A citation that is a possibly stale lead (`numbering.reliability`)
+    counts less and says so. The name signal is resemblance to the claim's label, or title words
+    shared with a name, one of them rare among the project's names. A declaration is suggested
+    when its content score reaches `CONTENT_MIN` or another signal names it. A candidate from a
+    namespace only another paper of the project uses is ranked low and says so. Ties are broken
+    by name, never by index order."""
+    from .numbering import claim_ref, printed, reliability
+    from .retrieval import paper_quantifiers
     ctx = ctx or SuggestContext(index)
     out: dict[str, dict] = {}
     names = {d["name"]: d for d in index}
+    ref = claim_ref(claim)
+    ref = printed(*ref) if ref else None
 
-    def add(name, score, why):
+    def entry(name):
         d = names.get(name)
         if d is None:
+            return None
+        if name not in out:
+            out[name] = {"name": name, "kind": d["kind"], "content": 0.0, "number": 0.0,
+                         "lexical": 0.0, "reasons": {}}
+        return out[name]
+
+    def add(name, signal, value, why, extra=None):
+        e = entry(name)
+        if e is None or e[signal] >= value:
             return
-        if ctx.is_foreign(d):
-            score, why = score * 0.4, why + " (in a namespace this project maps to another paper)"
-        if name not in out or out[name]["score"] < score:
-            out[name] = {"name": name, "score": round(score, 3), "why": why, "kind": d["kind"]}
+        e[signal] = value
+        e["reasons"][signal] = {"signal": signal, "text": why, **(extra or {})}
+
+    def cite(name, value, why):
+        factor, stale = reliability(ctx.numbering, name, ref) if ref else (1.0, None)
+        add(name, "number", value * factor, why + (f" ({stale})" if stale else ""),
+            {"reference": claim["number"], "basis": "a possibly stale lead" if stale
+             else "a lead"})
 
     wants_def = claim["kind"] in DEFINITION_ENVS
 
@@ -231,9 +275,9 @@ def suggest(claim: dict, index: list[dict], limit: int = 3,
         doc = d.get("doc") or ""
         if doc and num_re.search(doc):
             if sort_ok(d):
-                add(d["name"], 0.9, f"its docstring cites {number}")
+                cite(d["name"], 0.9, f"its docstring cites {number}")
             else:
-                add(d["name"], 0.6, f"its docstring cites {number}")
+                cite(d["name"], 0.6, f"its docstring cites {number}")
                 if d["kind"] != "theorem":
                     cited_defs.add(d["name"])
         if not sort_ok(d):
@@ -243,25 +287,54 @@ def suggest(claim: dict, index: list[dict], limit: int = 3,
         if label and nt:
             j = len(label & nt) / len(label | nt)
             if j >= 0.5:
-                add(d["name"], 0.4 + 0.4 * j, "its name resembles the label")
+                add(d["name"], "lexical", 0.5 + 0.5 * j, "its name resembles the label")
         shared = words & nt
         if len(shared) >= 2 and any(ctx.df.get(t, 0) <= ctx.rare for t in shared):
-            add(d["name"], 0.35, "its name shares words with the title")
+            add(d["name"], "lexical", 0.45, "its name shares words with the title")
     # A theorem whose statement is a cited definition proves what that definition states.
     if cited_defs and not wants_def:
         for d in index:
             ty = (d.get("type") or "").strip()
             if d["kind"] == "theorem" and ty and any(c == ty or c.endswith("." + ty)
                                                      for c in cited_defs):
-                add(d["name"], 0.95, f"it proves {ty}, whose docstring cites {number}")
+                cite(d["name"], 0.95, f"it proves {ty}, whose docstring cites {number}")
     for m, doc in ctx.module_docs.items():
         if num_re.search(doc):
             mine = [d for d in index if d.get("module") == m and sort_ok(d)]
             if mine:
                 last = max(mine, key=lambda d: ((d.get("range") or {}).get("line") or 0, d["name"]))
-                add(last["name"], 0.3, f"its module's docstring cites {number} (the module's "
-                    f"last {last['kind']})")
-    return sorted(out.values(), key=lambda x: (-x["score"], x["name"]))[:limit]
+                cite(last["name"], 0.3, f"its module's docstring cites {number} (the module's "
+                     f"last {last['kind']})")
+    # The claim's content, over every declaration of its sort.
+    text = claim_text(claim)
+    if text.strip():
+        found = ctx.retrieval.search(text, kinds=lambda k: k != "theorem" if wants_def
+                                     else k == "theorem", limit=EXPLAIN_LIMIT,
+                                     paper_order=paper_quantifiers(text))
+        for r in found["results"]:
+            e = entry(r["name"])
+            if e is None:
+                continue
+            e["content"] = r["score"]
+            for x in r["reasons"]:
+                e["reasons"][x["signal"]] = x
+    best = max([e["content"] for e in out.values()] + [CONTENT_FULL])
+    ranked = []
+    for e in out.values():
+        if not (e["content"] >= CONTENT_MIN or e["number"] or e["lexical"]):
+            continue
+        score = (W_CONTENT * e["content"] / best + W_NUMBER * e["number"]
+                 + W_NAME * e["lexical"])
+        reasons = [e["reasons"][k] for k in ("content", "uses", "number", "lexical",
+                                             "structure") if k in e["reasons"]]
+        why = "; ".join(x["text"] for x in reasons)
+        if ctx.is_foreign(names[e["name"]]):
+            score *= 0.4
+            why += " (in a namespace this project maps to another paper)"
+        ranked.append({"name": e["name"], "score": round(score, 3), "why": why,
+                       "reasons": reasons, "kind": e["kind"],
+                       "signals": {k: round(e[k], 3) for k in ("content", "number", "lexical")}})
+    return sorted(ranked, key=lambda x: (-x["score"], x["name"]))[:limit]
 
 
 def tagged_names(claim: dict) -> list[str]:
@@ -661,22 +734,34 @@ def save_settings(root: Path, issues: str | None = None, site_url: str | None = 
 INDEX_TYPE_CHARS, INDEX_DOC_CHARS = 300, 4000
 
 
+def lean_index_entry(d: dict) -> dict:
+    """A declaration as the reader's list of declarations shows it (`data/lean-index.json`),
+    from its preview: the complete statement is in the content index (`retrieval.py`)."""
+    return {"name": d["name"], "kind": d["kind"], "module": d["module"],
+            "type": (d.get("type") or "")[:INDEX_TYPE_CHARS],
+            "type_complete": d.get("type_complete", True),
+            "doc": (d.get("doc") or "")[:INDEX_TYPE_CHARS]}
+
+
 def index_preview(rec: dict) -> dict:
     """The short form of an index record that the view uses."""
     return {"record": "index", "name": rec["name"], "kind": rec["kind"],
             "module": rec.get("module"), "range": rec.get("range"),
             "type": (rec.get("type") or "")[:INDEX_TYPE_CHARS],
+            "type_complete": len(rec.get("type") or "") <= INDEX_TYPE_CHARS,
             "doc": (rec.get("doc") or "")[:INDEX_DOC_CHARS] or None}
 
 
 def _record(line: str) -> dict:
-    """One probe record, as kept in memory: an index record as the probe wrote it, any other
+    """One probe record, as kept in memory: an index record with what is used (its complete
+    statement and docstring, and the project constants its statement and value use), any other
     with its canonical form replaced by its fingerprint."""
     rec = json.loads(line)
     if rec.get("record") == "index":
         return {"record": "index", "name": rec["name"], "kind": rec["kind"],
                 "module": rec.get("module"), "range": rec.get("range"),
-                "type": rec.get("type") or "", "doc": rec.get("doc") or None}
+                "type": rec.get("type") or "", "doc": rec.get("doc") or None,
+                "uses": rec.get("uses") or [], "value_uses": rec.get("value_uses") or []}
     for d in [rec, rec.get("decl")]:
         if isinstance(d, dict) and "canon" in d:
             d["fingerprint"] = fingerprint(d.pop("canon"))
@@ -685,11 +770,13 @@ def _record(line: str) -> dict:
 
 def run_simple_probe(root: Path, modules: list[str], libs: list[str], requests: list[dict],
                      lake: str = "lake", timeout: int = 3600,
-                     work: Path | None = None, log=None, label: str = "") -> list[dict]:
+                     work: Path | None = None, log=None, label: str = "",
+                     extra: dict | None = None) -> list[dict]:
     """Run the Lean probe on `modules` in one session (`probe.lean_session`), keeping each
-    record as `_record` trims it."""
+    record as `_record` trims it. `extra` adds fields to the query (a request's limits)."""
     query = {"scope_roots": [l.split(".")[0] for l in libs], "spec_prefix": "",
-             "accept_prefix": "", "allowed_axioms": STANDARD_AXIOMS, "requests": requests}
+             "accept_prefix": "", "allowed_axioms": STANDARD_AXIOMS, "requests": requests,
+             **(extra or {})}
     def read(lines):
         out = []
         for line in lines:
@@ -719,7 +806,7 @@ def stale_docs_note(found: list[dict]) -> str:
 def probe_modules(root: Path, modules: list[str], libs: list[str], requests: list[dict],
                   lake: str = "lake", log=print, work: Path | None = None,
                   sessions: dict[str, list[str]] | None = None,
-                  retry: set[str] | None = None
+                  retry: set[str] | None = None, extra: dict | None = None
                   ) -> tuple[list[dict], dict[str, str]]:
     """Probe the built modules without assuming they can all be imported into one Lean session.
 
@@ -739,7 +826,7 @@ def probe_modules(root: Path, modules: list[str], libs: list[str], requests: lis
             sessions[label] = list(group)
         try:
             out = run_simple_probe(root, group, libs, requests, lake, work=work, log=log,
-                                   label=label)
+                                   label=label, extra=extra)
         except ViewError as e:
             if len(group) == 1:
                 failed[group[0]] = str(e)[-600:]
@@ -916,6 +1003,8 @@ class LeanFacts:
         self.declared: dict[str, set[str]] = {}      # the index's modules for each name
         self.fresh_docs: dict[str, list[dict]] = {}
         self.docs: dict[str, list[dict]] = {}        # `moddoc` records, by module
+        self.fresh_refs: dict[str, list[dict]] = {}
+        self.refs: dict[str, list[dict]] = {}        # `refs` records (reverse uses), by module
 
     def _accept_requests(self, names) -> list[dict]:
         """The `accept` requests of the bridges whose theorem is among `names`."""
@@ -946,6 +1035,8 @@ class LeanFacts:
                 self.fresh_index.setdefault(r["module"], []).append(r)
             elif r["record"] == "moddoc":
                 self.fresh_docs.setdefault(r["module"], []).append(r)
+            elif r["record"] == "refs":
+                self.fresh_refs.setdefault(r["module"], []).append(r)
             elif r["record"] == "accept":
                 self.fresh_accepts.setdefault((r["name"], r.get("spec")), []).append(r)
         return failed
@@ -973,15 +1064,19 @@ class LeanFacts:
             if indexed:
                 per_mod: dict[str, list[dict]] = {}
                 docs: dict[str, list[dict]] = {}
+                refs: dict[str, list[dict]] = {}
                 for r in rs:
                     if r["record"] == "index":
                         per_mod.setdefault(r["module"], []).append(_clean(r))
                     elif r["record"] == "moddoc":
                         docs.setdefault(r["module"], []).append(_clean(r))
+                    elif r["record"] == "refs":
+                        refs.setdefault(r["module"], []).append(_clean(r))
                 for m in graph:
                     if m in built:
                         st.put("index", m, st.environment([m], graph),
-                               records=per_mod.get(m, []), moddocs=docs.get(m, []))
+                               records=per_mod.get(m, []), moddocs=docs.get(m, []),
+                               refs=_dedup(refs.get(m, [])))
             decls = {r["name"]: r for r in rs if r["record"] == "decl"}
             whole = st.environment(mods, graph)
             for r in rs:
@@ -1097,6 +1192,7 @@ class LeanFacts:
             if e is not None:
                 by_mod[m] = e["records"]
                 self.docs[m] = e.get("moddocs", [])
+                self.refs[m] = e.get("refs", [])
                 continue
             f, _ = st.get("failed", m)
             if f is not None:
@@ -1117,7 +1213,10 @@ class LeanFacts:
             self.log(f"lean: indexing {len(stale)} of {len(self.built)} built module(s) "
                      f"({_reasons(stale)})"
                      + (f" and checking {len(ask)} linked declaration(s)" if ask else ""))
-            more = self._run(sorted(stale), [{"kind": "index", "name": ""}]
+            # The reverse references of every declaration (what the reader's "Used by" shows)
+            # are read in the same sessions.
+            more = self._run(sorted(stale), [{"kind": "index", "name": ""},
+                                             {"kind": "refs", "name": ""}]
                              + [{"kind": "link", "name": n} for n in ask]
                              + self._accept_requests(ask))
             failed.update(more)
@@ -1128,6 +1227,8 @@ class LeanFacts:
                 by_mod[m] = e["records"] if e is not None else self.fresh_index.get(m, [])
                 self.docs[m] = e.get("moddocs", []) if e is not None else \
                     _dedup(self.fresh_docs.get(m, []))
+                self.refs[m] = e.get("refs", []) if e is not None else \
+                    _dedup(self.fresh_refs.get(m, []))
         else:
             self.log(f"lean: reusing the stored index of {len(self.built)} built module(s)")
         index = sorted((r for m in by_mod for r in by_mod[m]),
@@ -1323,7 +1424,7 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
 
     # The paper.
     snap = acquire(cfg, paper, out_dir / "sources" / paper.id)
-    tex, pdf, claims = {"mode": snap.mode}, None, []
+    tex, pdf, claims, aux = {"mode": snap.mode}, None, [], None
     if snap.mode == "latex":
         envs = sorted(set(DEFAULT_ENVS) | set(theorem_envs(snap.dir)))
         # The compiled paper is reused while its sources are unchanged (a link changes nothing
@@ -1356,6 +1457,7 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
             tex.update(page_size=t["page_size"], anchors=anchors, envs=envs,
                        excerpts=view_excerpts(snap, Path(t["pdf"]).parent, anchors, envs))
             pdf = t["pdf"]
+            aux = Path(t["pdf"]).parent / (Path(snap.root).stem + ".aux")
             claims = claims_from_anchors(paper.id, anchors, snap.dir)
             for c in proof_steps(paper.id, anchors, snap.dir, t["numbers"]):
                 c["line_anchor"] = t["step_anchors"].get(c["location"])
@@ -1382,7 +1484,8 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
     if fy and "error" in fy:
         notes.append(fy["error"])
     index, linkrecs, decls, acceptrecs, module_docs = [], {}, {}, {}, []
-    failed, facts_used = {}, {"sessions": 0}
+    failed, facts_used, refs = {}, {"sessions": 0}, []
+    retrieval, numbering = None, None
     if fy and "error" not in fy:
         for c in claims:
             rows = fz.links_for(fy, c["kind"], c["number"], paper.title)
@@ -1425,13 +1528,21 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
         lean = LeanFacts(root, libs, built, unbuilt, work, lake, log, reuse_only,
                          bridges=bridge_pairs)
         with lean.store.lock(log):
-            index, failed = lean.index(linked)
-            index = [index_preview(r) for r in index]
+            full, failed = lean.index(linked)
+            index = [index_preview(r) for r in full]
             module_docs = stale_doc_names(lean.module_docs(index))
             if module_docs:
                 notes.append(stale_docs_note(module_docs))
             wanted = set(linked)
-            ctx = SuggestContext(index, root, fz.foreign_roots(fy, paper.title))
+            # Content search and the paper's numbers read the complete records.
+            foreign = fz.foreign_roots(fy, paper.title)
+            from .retrieval import Retrieval
+            retrieval = Retrieval.build(full)
+            numbering = paper_numbering(root, full, claims, tex, aux, foreign, retrieval)
+            note = nb.drift_note(numbering["pattern"], numbering["references"])
+            if note:
+                notes.append(note)
+            ctx = SuggestContext(index, root, foreign, retrieval, numbering)
             for c in claims:
                 entry = links.get(c["key"], {})
                 if steps.is_step(c):
@@ -1446,6 +1557,7 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
             linkrecs, decls = lean.links(wanted, index, failed)
             acceptrecs = lean.acceptrecs
         facts_used = {"sessions": lean.sessions, **lean.store.stats}
+        refs = [r for m in sorted(lean.refs) for r in lean.refs[m]]
         again = sorted(m for m in failed if m in lean.retry)
         kept = sorted(m for m in failed if m not in lean.retry)
         if kept:
@@ -1494,6 +1606,7 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
             bridge = bridge_evidence(c, entry, accept, _one(linkrecs.get(target, [])), decls)
         c["correspondence"] = correspondence(c, entry, bridge) if c["links"] else None
         c["reviews"] = [review_view(r, c["links"]) for r in reports.get("link:" + c["key"], [])]
+        c["references"] = claim_references(c, numbering)
         if c["links"]:
             worst = max(c["links"], key=lambda l: ["proved", "unspecified", "open", "malformed"]
                         .index(l["class"]))
@@ -1515,8 +1628,40 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
             "site_url": load_links(root).get("site_url"),
             "author": load_links(root).get("author"),
             "pdf_sha256": sha256_file(pdf) if pdf else None, "tex": tex,
-            "claims": claims, "index": index, "decls": decls, "module_docs": module_docs}
-    return {"body": body, "pdf": pdf, "cfg": cfg, "lean": facts_used}
+            "claims": claims, "index": index, "decls": decls, "module_docs": module_docs,
+            "numbering": numbering}
+    from .uses import site_index
+    return {"body": body, "pdf": pdf, "cfg": cfg, "lean": facts_used, "retrieval": retrieval,
+            "uses": site_index(refs) if refs else None}
+
+
+def paper_numbering(root: Path, index: list[dict], claims: list[dict], tex: dict,
+                    aux: Path | None, foreign, retrieval) -> dict:
+    """The project's references to the paper's numbers, checked against the paper read here
+    (`numbering.analyse`). The numbering is complete when the paper's LaTeX compiled; a PDF's
+    statements are found by their headings, so some may be missed."""
+    if tex.get("mode") == "latex" and claims:
+        complete, reason = True, ""
+    elif tex.get("mode") == "pdf" and claims:
+        complete, reason = False, ("the paper is a PDF whose statements were found by their "
+                                   "headings, so its numbering may be incomplete")
+    else:
+        complete, reason = False, "the paper's statements could not be read in this build"
+    inv = nb.inventory(claims, complete, reason,
+                       nb.sections_from_aux(aux) if aux is not None else None)
+    blocks = nb.module_doc_blocks(root, {d.get("module") for d in index if d.get("module")})
+    return nb.analyse(index, claims, inv, blocks, foreign, retrieval, claim_text)
+
+
+def claim_references(c: dict, numbering: dict | None) -> list[dict]:
+    """The references that concern a claim: those citing its number, and those in the
+    docstrings and names of its linked and suggested declarations."""
+    if not numbering:
+        return []
+    names = {l["name"] for l in c.get("links", [])} | {s["name"] for s in c.get("suggestions", [])}
+    return [o for o in numbering["references"]
+            if c["id"] in (o.get("paper") or {}).get("claims", [])
+            or o["source"].get("declaration") in names]
 
 
 def source_info(root: Path | None, libs: list[str]) -> dict:
@@ -1599,7 +1744,8 @@ def write_view_site(view: dict, site: Path, web_dist: Path | None,
             "correspondence": c.get("correspondence"), "reviews": c.get("reviews", []),
             "suggestions": [_link_view(s, root) for s in c.get("suggestions", [])],
             "clauses": [], "decls": {n: keys[n] for n in sorted(names) if n in keys},
-            "findings": [], "unit": steps.unit_of(c), "parent": c.get("parent")}
+            "findings": [], "references": c.get("references", []),
+            "unit": steps.unit_of(c), "parent": c.get("parent")}
         if steps.is_step(c):
             chunks[fname].update(
                 context_tex=c.get("context_tex"),
@@ -1632,6 +1778,9 @@ def write_view_site(view: dict, site: Path, web_dist: Path | None,
              "classes": classes,
              "findings": {"total": {}, "general": []}, "gates": {}, "claims": index_claims,
              "search": "data/search.json", "lean_index": "data/lean-index.json",
+             **({"uses": "data/uses.json"} if view.get("uses") else {}),
+             "retrieval": "data/retrieval.json" if view.get("retrieval") is not None else None,
+             "numbering": (body.get("numbering") or {}).get("pattern"),
              "editable": False}
     from .pipeline import write_preview
     from .review_queue import simple_queue
@@ -1643,10 +1792,17 @@ def write_view_site(view: dict, site: Path, web_dist: Path | None,
     write_json(site / audit.NAME, audit.descriptor(
         index, root, author=body.get("author"),
         paper_url=key if key.startswith(("http://", "https://")) else None))
+    if view.get("uses"):
+        write_json(site / "data" / "uses.json", view["uses"], indent=None)
     write_json(site / "data" / "lean-index.json",
-               [{"name": d["name"], "kind": d["kind"], "module": d["module"],
-                 "type": d["type"][:300], "doc": (d.get("doc") or "")[:300]}
-                for d in body["index"]], indent=None)
+               [lean_index_entry(d) for d in body["index"]], indent=None)
+    # The content index is built from complete records (`build_view`); the view's previews
+    # are not complete statements, so without it no content index is written.
+    retrieval = view.get("retrieval")
+    if retrieval is not None:
+        write_json(site / "data" / "retrieval.json", retrieval.export(), indent=None)
+    write_json(site / "data" / "numbering.json",
+               body.get("numbering") or {"references": [], "pattern": None}, indent=None)
     return index
 
 
@@ -1680,7 +1836,7 @@ def _link_view(l: dict, root: Path | None = None) -> dict:
     rec = l.get("record") or {}
     module = (rec.get("decl") or {}).get("module")
     return {"path": audit.source_path(root, module) if root else None,"name": l["name"], **fields(l.get("status_code", "link.suggested"), l.get("status_detail")),
-            "why": l.get("why"), "source": l.get("source"),
+            "why": l.get("why"), "reasons": l.get("reasons"), "source": l.get("source"),
             "fingerprint": rec.get("fingerprint") or (rec.get("decl") or {}).get("fingerprint"),
             "kind": rec.get("kind") or l.get("kind"),
             "axioms": rec.get("axioms"), "sorry": rec.get("sorry"),
