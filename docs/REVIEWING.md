@@ -110,6 +110,15 @@ changes nothing. A finding is a draft until `{"op": "submit", "id", "base_rev"}`
 finding is never edited, but `{"op": "supersede", "id", "base_rev", "reason", "record"}` records a
 later one with its reason, and both remain.
 
+**Facts inside a proof.** An exported theorem can prove more than it states. Under `view`, a linked
+theorem has **Facts inside the proof**: *Read the proof* asks Lean for the propositions its proof
+establishes along the way, each with the hypotheses it needs and the case of the proof it lies in,
+and each theorem the proof applies with the local that supplies each of its hypotheses (`compare
+--query proof-facts NAME` gives the same in a terminal). *Cite in the investigation* saves a fact
+as evidence; it keeps its basis, established inside that proof under that context, so a finding
+resting on it records the coverage as your composition, not as direct coverage. A `have` the
+source states but the compiled proof does not keep is shown as source text only.
+
 **Requirements and the passages that govern them.** A claim's meaning can depend on sentences
 outside its display: "for every ε > 0" before an estimate, "with C independent of ε" after it, a
 standing assumption at the start of a section. Break the claim into requirements, each with the
@@ -146,7 +155,8 @@ change no status.
 
 When a declaration that evidence cites changes (its statement, or a definition's equations), or a
 claim's printed text changes, `show` marks that evidence and the findings that cite it as
-`stale`; the others stay current. Re-pin a record with `"repin": true` once you have checked it
+`stale`; the others stay current. A cited fact inside a proof is `stale` once that proof
+changes, even when the theorem's statement does not. Re-pin a record with `"repin": true` once you have checked it
 again. Changing to independent mode, or importing, keeps what the workspace records you had seen,
 so an informed investigation never becomes a blind review: a report made with `machinechecked
 review` lists that exposure, and `review promote` refuses it without `--allow-revealed`.

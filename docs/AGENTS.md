@@ -133,6 +133,8 @@ machinechecked compare --query mentions Toy.triangle --json     # statements tha
 machinechecked compare --query dependencies Toy.Acceptance.thm_bound --json   # runs inspect
 machinechecked compare --query search "Theorem 2" --json       # declarations stating a claim
 machinechecked compare --query search 'n ≤ C * n ^ 2' --json   # ... or an expression, or words
+machinechecked compare --query proof-facts Example.bound --json  # facts inside its proof
+machinechecked compare --query proof-facts Example.bound --match "C * h"   # ranked by symbols
 ```
 
 `search` ranks every declaration of the project's built modules, linked or not, by how much of
@@ -144,9 +146,25 @@ with `via`). It is the search the suggestions and the reader use, from the build
 index (`data/retrieval.json`), with no Lean session; `--limit` and `--after` page it.
 Nothing people recorded (links, rejections, notes) enters it. In zero configuration,
 `mentions` reads the complete statements of that index; with an older build it reads previews
-(`complete: false` on such a result: get its statement with `dependencies`). The
-queries `uses`, `proof-facts`, `composition` and `impact` answer `available: false` with the
-issue that owns their extraction. An error is `{"ok": false, "error": {kind, message,
+(`complete: false` on such a result: get its statement with `dependencies`).
+
+`proof-facts NAME` asks Lean, for that one declaration, for the propositions its proof establishes
+along the way: each `have` (and `let` of a proposition), each goal a `show` states, and each
+application of a theorem of the project or of a theorem to a local fact. Each result has its
+`type`, the locals it needs (`assumptions`: the hypotheses and variables its type and its proof
+mention), the `cases` of the proof it lies in (a branch of a case split, a witness of an
+`obtain`), the `premises` of an applied theorem with the local that supplies each, `used_by`, its
+`source` line (`located` says how it was found) and its `ref`, the reference a workspace cites.
+`subject` holds the exported statement (`basis: "exported theorem"`), the proof's hash and what
+was inspected, `source_only` (a `have` or `show` of the source with no typed counterpart, for
+instance inside a lemma Lean generated, listed under `proof.auxiliary` and asked about by its own
+name), and `proof.complete: false` when the walk reached its limit (200,000 nodes, 200 facts). A
+fact's `basis` is always "established inside this proof under this context": it is not an
+exported theorem, and `--match` ranks facts by shared symbols without deciding that one bound
+gives another. Lean runs once per declaration; the answer is kept in the facts store, like
+`inspect`'s, and reused until the declaration's module or a module it imports changes. The queries
+`uses`, `composition` and `impact` answer `available: false` with the issue that owns their
+extraction. An error is `{"ok": false, "error": {kind, message,
 candidates}}` with exit 1 (exit 2, kind `no-build`, when there is no build to read: run
 `view` or `build`); `candidates` lists the claims or declarations you may have meant.
 
@@ -224,7 +242,10 @@ machinechecked workspace show --json
 `error` (exit 1); an edit of a record changed since its `base_rev` returns `conflicts` with both
 versions. Repeat a request with its `op_id` after a lost answer: it changes nothing. `show
 --json` gives every record with its `currency` (`current`, `stale` with the `changes`, or
-`unchecked`) and the `resume` point. Requirements of a claim (`requirement`), the passages that govern each one
+`unchecked`) and the `resume` point. To cite a fact inside a proof, put its `ref` from
+`compare --query proof-facts` as `"ref": {"fact": REF}`; a finding resting on it takes basis
+`reviewed_composition` (it is not `direct` coverage), and `show` marks it `stale` once that proof
+changes. Requirements of a claim (`requirement`), the passages that govern each one
 (`fragment`: a region of the paper's source with its role, origin and scope) and their
 association with Lean (`alignment`) are records of the same workspace; `show --json` gives each
 claim's `reading`, `workspace suggest --claim C --requirement r1 [--apply]` proposes nearby

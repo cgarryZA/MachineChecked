@@ -770,11 +770,13 @@ def _record(line: str) -> dict:
 
 def run_simple_probe(root: Path, modules: list[str], libs: list[str], requests: list[dict],
                      lake: str = "lake", timeout: int = 3600,
-                     work: Path | None = None, log=None, label: str = "") -> list[dict]:
+                     work: Path | None = None, log=None, label: str = "",
+                     extra: dict | None = None) -> list[dict]:
     """Run the Lean probe on `modules` in one session (`probe.lean_session`), keeping each
-    record as `_record` trims it."""
+    record as `_record` trims it. `extra` adds fields to the query (a request's limits)."""
     query = {"scope_roots": [l.split(".")[0] for l in libs], "spec_prefix": "",
-             "accept_prefix": "", "allowed_axioms": STANDARD_AXIOMS, "requests": requests}
+             "accept_prefix": "", "allowed_axioms": STANDARD_AXIOMS, "requests": requests,
+             **(extra or {})}
     try:
         recs = lean_session(root, modules, query, lambda lines: [_record(l) for l in lines],
                             lake, timeout, work, log, label)
@@ -795,7 +797,7 @@ def stale_docs_note(found: list[dict]) -> str:
 def probe_modules(root: Path, modules: list[str], libs: list[str], requests: list[dict],
                   lake: str = "lake", log=print, work: Path | None = None,
                   sessions: dict[str, list[str]] | None = None,
-                  retry: set[str] | None = None
+                  retry: set[str] | None = None, extra: dict | None = None
                   ) -> tuple[list[dict], dict[str, str]]:
     """Probe the built modules without assuming they can all be imported into one Lean session.
 
@@ -815,7 +817,7 @@ def probe_modules(root: Path, modules: list[str], libs: list[str], requests: lis
             sessions[label] = list(group)
         try:
             out = run_simple_probe(root, group, libs, requests, lake, work=work, log=log,
-                                   label=label)
+                                   label=label, extra=extra)
         except ViewError as e:
             if len(group) == 1:
                 failed[group[0]] = str(e)[-600:]
