@@ -28,8 +28,9 @@ Review by a.referee: faithful (report `reports/gone.json`).
 
 def test_tokens_that_look_like_names_and_paths_are_cited(tmp_path):
     assert classify("Foo.bar_eq_span") == classify("bar_eq_span") == "name"
-    assert classify("notes/span.md") == classify("T.md") == "path"
-    for t in ("n + 1", "x", "Foo", "https://example.org/a.md", "2.5", "∀ x, P x"):
+    assert classify("notes/span.md") == classify("T.md") == classify("Lib/Sub/") == "path"
+    for t in ("n + 1", "x", "Foo", "https://example.org/a.md", "2.5", "∀ x, P x", "e₁/2",
+              "a/b"):
         assert classify(t) is None, t
     f = tmp_path / "reviews.md"
     f.write_text(REVIEW)
@@ -46,6 +47,16 @@ def test_tokens_that_look_like_names_and_paths_are_cited(tmp_path):
     assert [c["token"] for c in unresolved(cites, None, [tmp_path])] == ["notes/span.md"]
     # The configured patterns replace the default ones.
     assert "C_rel" in [c["token"] for c in citations([f], tmp_path, ignore=[])]
+    # A path resolves relative to any folder of the project (a library root, a package).
+    (tmp_path / "pkg" / "notes").mkdir(parents=True)
+    (tmp_path / "pkg" / "notes" / "span.md").write_text("x")
+    assert unresolved(cites, None, [tmp_path]) == []
+
+
+def test_notation_in_code_spans_is_not_cited(tmp_path):
+    f = tmp_path / "reviews.md"
+    f.write_text("`X'_T`, `μ.law`, `C.h`, `ab_n` and `x_i` are notation; `Foo.baz` is not.\n")
+    assert [c["token"] for c in citations([f], tmp_path)] == ["Foo.baz"]
 
 
 @needs_lean

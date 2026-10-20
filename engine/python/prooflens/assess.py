@@ -608,7 +608,8 @@ class Assessor:
         if not files or root is None:
             return
         cites = rc.citations(files, root, getattr(self.cfg, "review_citations_ignore", None))
-        bases = [root, getattr(self.cfg, "lean_root", root)]
+        lean_root = getattr(self.cfg, "lean_root", None) or root
+        bases = [root] + ([lean_root] if not lean_root.is_relative_to(root) else [])
         seen = set()
         for c in rc.unresolved(cites, self.lean.get("names"), bases):
             if (c["file"], c["token"]) in seen:
