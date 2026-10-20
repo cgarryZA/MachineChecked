@@ -309,7 +309,12 @@ optional `clause` and `note`, `rev`, `created_at`/`created_by`, `updated_at`/`up
   it without Lean `kind`, `name` or `head`, `type`, `assumptions`, `variables`, `cases`, `source`
   and `basis`, always "established inside this proof under this context"). A cited fact is
   `stale` once the proof's hash changes, and `unchecked` until the proof is read again after a
-  Lean change. `role` is `candidate` (the default), `supports`,
+  Lean change. `{certificate: {...}}` is a Lean certificate (`theorem`, `target`, `certifies`:
+  `proves` when the theorem's type is exactly the target, `refutes` when it is its negation;
+  checked by the probe when recorded, keeping `type`, `target_statement`, `target_fingerprint`,
+  `file`, `file_sha256`, `axioms`, `lean`, `toolchain`, `manifest_sha256`, `result` and
+  `reasons`); it is `stale` once its source file, its checked type, its target or the result
+  changes. `role` is `candidate` (the default), `supports`,
   `context` or `rejected` (with `why_rejected`). A candidate is a candidate until the auditor
   gives it another role.
 - **`finding`**: `coverage` (the links file's words: `full`, `partial`, `changed`, `related`,
@@ -323,7 +328,11 @@ optional `clause` and `note`, `rev`, `created_at`/`created_by`, `updated_at`/`up
   basis is then `reviewed_composition`, or `checked_bridge` when the composition carries a
   bridge, and full coverage needs the composition complete (checked again at `submit`). Shown
   while the bridge is not checked, a `checked_bridge` finding reads as `reviewed_composition`
-  (with `recorded_basis`). `state` is `draft`
+  (with `recorded_basis`). A finding may also record a `difference` on its `requirement`
+  (`{feature, paper, lean, outcome, conditions, transport, resolution, why, hint}`), a `verdict`
+  on a printed step (`holds as printed`, `holds, with a gap in the argument`, `false as
+  printed`, `cannot determine`) and the `counterexamples` it rests on (pinned by digest); such a
+  finding is submitted without a coverage. `state` is `draft`
   or `submitted` (`submitted_at`). A submitted finding is never edited or deleted: a later
   finding names it in `supersedes`, with its `reason`, and both are kept.
 - **`question`**: `text`, `state` (`open`, `answered`, `withdrawn`), optional `answer` and
@@ -333,9 +342,20 @@ optional `clause` and `note`, `rev`, `created_at`/`created_by`, `updated_at`/`up
   `condition`, `for every`, `there is`, `and`, `or`, `not`, `implies`, `constant dependence`,
   `definition`, `other`), `text`, optional `parent` (the requirement it sits inside: its scope),
   `binds` (the variables a `for every`, `there is` or `constant dependence` introduces),
-  `independent_of` (variables a constant or witness may not depend on) and `origin`: `printed`,
+  `domain` (the values its variables range over, in words: `ε > 0`), `independent_of`
+  (variables a constant or witness may not depend on: it is chosen before them), `depends_on`
+  (variables a constant may depend on: it is chosen after them) and `origin`: `printed`,
   or `correction` with `corrects` naming the printed requirement, which stays as printed. A
   finding or a question may name a requirement in `requirement`.
+- **`counterexample`**: an auditor's counterexample to one reading of a requirement
+  (`estimates.py`). `requirement`, optional `reading` (the corrections it is read with),
+  `specialisation` (`assign`: a value, number or expression, for each variable; `zero`,
+  `dimensions`, `limits`, `other`), `reduced` (the obligation it reduces to), `violation`,
+  `admissibility` (`{obligation, state: verified | open | fails, method}`), optional `samples`
+  (numeric assignments, kept as samples) and `evidence`. The service pins `obligation_sha256`
+  (the reading: the order of its variables, their domains, the constants' dependence, the
+  requirements' texts and the pins of the passages that govern them) and `evidence_pins`; a
+  change to either makes it `stale` until it is re-pinned.
 - **`fragment`**: a passage a requirement comes from. `requirement` (its local id), `role`
   (`statement`, `quantifier domain`, `constant dependence`, `standing assumption`,
   `definition`, `earlier choice`, `cited result`, `context`, `later use`, `proposed
@@ -404,7 +424,12 @@ build.
 reading order (with `depth`, `children`, their fragments grouped as `governing`, `later_uses`,
 `proposed` and `removed`, their alignments, `currency`, `questions` such as a requirement with no
 source, and `reading_sha256`, a digest of the form, words and governing fragments' pins); the
-`witnesses` (each `there is`, its `scope`: `produced`, `assumed` inside an assumption,
+`estimates` block (each requirement with a counterexample, a verdict or a difference: its
+printed reading and each corrected one, as an obligation with its variables in order, the
+counterexamples analysed against it (`form`: family, instance, fixed constants or incomplete;
+`standing`), its findings and certificates, and specialisations to try from the domains; the
+differences recorded, open apart from resolved; the computed hints, and the hypotheses inherited
+from standing assumptions); the `witnesses` (each `there is`, its `scope`: `produced`, `assumed` inside an assumption,
 `denied` inside a `not`, or `alternative` inside an `or`; the variables it is chosen `after` and
 `before`; its `conditions`); and the `alignments`. `workspace suggest` proposes fragments from the
 passage's neighbourhood (the sentence before and after it, quantifier or dependence wording

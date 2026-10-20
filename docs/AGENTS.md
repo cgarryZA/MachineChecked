@@ -282,8 +282,13 @@ passages, and `compare C --workspace ID --json` carries the reading in
 `interpretations.requirements` (and that workspace's compositions in
 `interpretations.compositions`). An argument that combines several results is a `composition`
 record ([Reviewing](REVIEWING.md#saved-investigations)); a step can cite an application from
-`compare --query uses` as `"ref": {"app": {"callee": NAME, "id": APP_ID}}`. A workspace started
-in informed mode records that the Lean was seen; `{"op": "exposure", "what": "external material"}` records anything else you read.
+`compare --query uses` as `"ref": {"app": {"callee": NAME, "id": APP_ID}}`. Differences from the
+Lean are findings with a `difference` on the affected requirement; a counterexample
+(`counterexample`: a specialisation, its reduction and violation, its admissibility obligations)
+is read against its requirement's quantifiers, and a Lean certificate is evidence
+`{"certificate": {theorem, target, certifies}}` that Lean checks when it is recorded. A
+workspace started in informed mode records that the Lean was seen; `{"op": "exposure", "what":
+"external material"}` records anything else you read.
 
 ## A note for your project's AGENTS.md or CLAUDE.md
 

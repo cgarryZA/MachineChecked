@@ -96,7 +96,24 @@ def with_work(data, cid='T:one'):
                              'note': 'A synthetic direct reading.', 'created_by': 'human:A-Auditor',
                              'currency': cur}],
                'evidence': [{'id': 'e1', 'kind': 'evidence', 'claim': cid, 'role': 'supports',
-                             'ref': {'decl': 'Synthetic.bound'}, 'currency': cur}]}
+                             'ref': {'decl': 'Synthetic.bound'}, 'currency': cur},
+                            {'id': 'e2', 'kind': 'evidence', 'claim': cid, 'role': 'supports',
+                             'ref': {'certificate': {'theorem': 'Synthetic.no_bound',
+                                                     'target': 'Synthetic.Bound',
+                                                     'certifies': 'refutes',
+                                                     'result': 'checked', 'reasons': []}},
+                             'currency': {'state': 'unchecked', 'changes': []}}],
+               'counterexamples': [{'id': 'x1', 'kind': 'counterexample', 'claim': cid,
+                                    'requirement': 'r1', 'evidence': ['e2'],
+                                    'created_by': 'human:A-Auditor', 'currency': cur,
+                                    'reading_text': 'the synthetic bound holds',
+                                    'analysis': {'form': 'instance', 'decisive': True,
+                                                 'standing': 'candidate',
+                                                 'standing_text': 'a candidate counterexample: '
+                                                                  'not yet shown admissible',
+                                                 'shows': 'n = 0 reduces the reading to 1 ≤ 0, '
+                                                          'which fails (1 > 0).',
+                                                 'problems': []}}]}
     data = copy.deepcopy(data)
     data['data/work/' + fname] = {'schema': 'prooflens/published-work@1',
                                   'release': data['data/index.json']['release'], 'claim': cid,

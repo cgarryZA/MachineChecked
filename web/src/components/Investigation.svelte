@@ -64,6 +64,20 @@
   const binding = $derived(["for every", "there is", "constant dependence"].includes(rqForm));
   const alignments = $derived(Object.fromEntries((reading.alignments || []).map((a) => [a.id, a])));
 
+  // Estimates (`estimates.py`): each requirement's printed and corrected readings with their
+  // counterexamples and certificates, the differences recorded on it, and computed hints.
+  const OUTCOME = { open: "not yet decided", difference: "a difference", resolved: "resolved", "no difference": "no difference" };
+  const est = $derived(reading.estimates || { estimates: [], differences: [], resolved: [], hints: [], inherited: [] });
+  const estimatesFor = (lid) => (est.estimates || []).filter((e) => e.requirement === lid);
+  const differencesFor = (lid) => [...(est.differences || []), ...(est.resolved || [])].filter((d) => d.requirement === lid);
+  const changed = (x) => x?.currency?.state === "stale";
+  function findingHead(f, cv) {
+    if (cv?.headline) return cv.headline;
+    if (f.verdict) return "The printed step: " + f.verdict;
+    if (f.difference) return `A ${f.difference.feature} difference: ${OUTCOME[f.difference.outcome]}`;
+    return "No coverage given";
+  }
+
   async function refresh(keepError = false) {
     if (!keepError) error = null;
     try {
@@ -193,6 +207,7 @@
   }
 
   function refText(r) {
+    if (r.certificate) return `${r.certificate.theorem}, certificate for ${r.certificate.target}`;
     if (r.fact) return `${r.fact.name || r.fact.head || "a fact"} : ${r.fact.type}, inside the proof of ${r.fact.decl}`;
     if (r.app) return `${r.app.callee} applied in ${r.app.caller}`;
     return r.decl || (r.source ? r.source.file + (r.source.line ? ":" + r.source.line : "") : "a passage of the paper");
@@ -223,8 +238,8 @@
       {#each here.findings as f (f.id)}
         {@const cv = findingView(f)}
         <div class="item" data-kind="finding" data-state={f.state} class:old={!f.in_force}>
-          <p class="small"><strong>{cv?.headline || "No coverage given"}</strong>
-            <span class="faint">· {f.in_force ? (f.state === "submitted" ? "submitted" : "draft") : "superseded"} · {f.created_by}</span>
+          <p class="small"><strong>{findingHead(f, cv)}</strong>
+            <span class="faint">· {f.in_force ? (f.state === "submitted" ? "submitted" : "draft") : "superseded"} · {f.created_by}{f.requirement ? ` · on ${f.requirement}` : ""}</span>
             {#if f.currency?.state === "stale"}<span class="stale"> · evidence changed since</span>{/if}</p>
           {#each cv?.lines || [] as line}<p class="small" data-line={line.label}><span class="faint">{line.label}:</span> {line.names?.join(", ") || ""}{line.names?.length && line.text ? ". " : ""}<span class="text">{line.text || ""}</span>{#if line.note} <span class="faint">{line.note}</span>{/if}</p>{/each}
           {#if f.composition}<p class="small faint">Rests on composition {f.composition}{f.recorded_basis ? `; recorded as ${f.recorded_basis === "checked_bridge" ? "a checked bridge" : f.recorded_basis}, its bridge is not checked now` : ""}.</p>{/if}
@@ -246,8 +261,9 @@
           <p class="faint small">Your reading of what the claim demands, each with the passages of the paper it comes from. Lean has not checked these associations.</p>
           {#each reading.requirements as r (r.id)}
             <div class="req" data-req={r.local_id} style:margin-left="{r.depth * 16}px">
-              <p class="small"><code>{r.local_id}</code> <span class="form">{r.form}{r.binds?.length ? " " + r.binds.join(", ") : ""}</span>: <span class="text">{r.text}</span>
+              <p class="small"><code>{r.local_id}</code> <span class="form">{r.form}{r.binds?.length ? " " + r.binds.join(", ") : ""}{r.domain ? ` (${r.domain})` : ""}</span>: <span class="text">{r.text}</span>
                 {#if r.independent_of?.length}<span class="faint"> · independent of {r.independent_of.join(", ")}</span>{/if}
+                {#if r.depends_on?.length}<span class="faint"> · may depend on {r.depends_on.join(", ")}</span>{/if}
                 {#if r.origin === "correction"}<span class="faint"> · added by a correction of {r.corrects}; the printed requirement stays</span>{/if}
                 {#if r.currency?.state === "stale"}<span class="stale"> · its source or Lean changed since</span>{/if}</p>
               {#each r.fragments.governing as f (f.id)}
@@ -286,11 +302,43 @@
                 {#if a}<p class="small lean" data-alignment={a.id}><span class="faint">Lean:</span> {a.lean.map(targetText).join("; ")} <span class="faint">· {a.relation} · recorded by {a.created_by}</span>{#if a.currency?.state === "stale"}<span class="stale"> · the Lean changed since</span>{/if}</p>{/if}
               {/each}
               {#each r.questions as q}<p class="small question">Question: {q}</p>{/each}
+              {#each estimatesFor(r.local_id) as e (e.requirement)}
+                {#each e.readings as rd (rd.corrections.join(","))}
+                  <div class="estimate" data-reading={rd.printed ? "printed" : rd.corrections.join(",")}>
+                    <p class="small"><span class="faint">{rd.printed ? "Read as printed" : `Read with the correction ${rd.corrections.join(", ")}`}:</span> <span class="text">{rd.obligation.text}</span></p>
+                    {#each rd.obligation.order.filter((o) => o.quantifier === "there is") as o (o.var)}
+                      <p class="faint small">{o.var} may depend on {o.may_depend_on.length ? o.may_depend_on.join(", ") : "nothing chosen before it"}{o.independent_of.length ? `; independent of ${o.independent_of.join(", ")}` : ""}</p>
+                    {/each}
+                    {#each rd.counterexamples as c (c.id)}
+                      <div class="cx" data-cx={c.id} data-standing={c.analysis.standing}>
+                        <p class="small"><strong>Counterexample</strong> <span class="faint">· {c.analysis.standing_text} · {c.created_by}</span>{#if changed(c)}<span class="stale"> · the reading or its evidence changed since</span>{/if}</p>
+                        <p class="small text">{c.analysis.shows}</p>
+                        {#each c.analysis.problems as q}<p class="small question">{q}</p>{/each}
+                        {#each c.analysis.open_obligations as o}<p class="small question">Not yet shown: {o}</p>{/each}
+                        {#if c.analysis.samples_note}<p class="faint small">{c.analysis.samples} sample(s). {c.analysis.samples_note}</p>{/if}
+                        {#each c.certificates as k (k.evidence)}<p class="small cert">{k.scope}{#if changed(k)}<span class="stale"> · changed since</span>{/if}</p>{/each}
+                      </div>
+                    {/each}
+                    {#each rd.findings.filter((f) => f.verdict) as f (f.id)}<p class="small verdict">The printed step: <strong>{f.verdict}</strong> <span class="faint">· {f.state}</span>{#if changed(f)}<span class="stale"> · its evidence changed since</span>{/if}</p>{/each}
+                    {#each rd.certificates as k (k.evidence)}<p class="small cert">{k.scope}{#if changed(k)}<span class="stale"> · changed since</span>{/if}</p>{/each}
+                    {#each rd.specialisations as t}<p class="faint small">To try: {t.try} (from {t.rule})</p>{/each}
+                  </div>
+                {/each}
+              {/each}
+              {#each differencesFor(r.local_id) as d (d.finding)}
+                <p class="small diff" data-feature={d.feature} data-outcome={d.outcome}><span class="faint">{d.feature[0].toUpperCase() + d.feature.slice(1)}, {OUTCOME[d.outcome]}:</span> paper <code>{d.paper}</code>{#if d.lean}; Lean <code>{d.lean}</code>{/if}{#if d.transport}<span class="faint">{` · transport inspected: ${d.transport}`}</span>{/if}{#if d.resolution}<span class="faint">{` · resolved by ${d.resolution.by}: ${d.resolution.text}`}</span>{/if}{#if d.why}<span class="faint">{` · ${d.why}`}</span>{/if}</p>
+              {/each}
               <p class="small"><button class="link" disabled={busy} onclick={() => suggestFor(r)}>Suggest nearby context</button></p>
             </div>
           {/each}
           {#each reading.witnesses as w}
             <p class="small witness"><span class="faint">Witness {w.binds.join(", ") || w.requirement}:</span> {SCOPE[w.scope]}{w.after.length ? `; chosen after ${w.after.join(", ")}` : ""}{w.before.length ? `; chosen before ${w.before.join(", ")}` : ""}{w.independent_of.length ? `; independent of ${w.independent_of.join(", ")}` : ""}</p>
+          {/each}
+          {#each est.inherited || [] as h}
+            <p class="small inherited" data-binder={h.binder}>{h.decl} assumes <code>{h.lean}</code>: inherited from {h.from} ({h.requirement})</p>
+          {/each}
+          {#each est.hints || [] as h}
+            <p class="small hint" data-binder={h.binder}>{h.text} <span class="faint">(a computed pointer to inspect, not a finding)</span></p>
           {/each}
           {#each reading.alignments.filter((a) => !a.requirements.length) as a (a.id)}
             <p class="small lean" data-alignment={a.id}><span class="faint">Lean only ({a.relation}):</span> {a.lean.map(targetText).join("; ")} <span class="faint">· recorded by {a.created_by}</span>{#if a.note} <span class="text">{a.note}</span>{/if}</p>
@@ -364,4 +412,7 @@
   .src { margin: 2px 0; padding: 4px 6px; background: var(--surface); border: 1px solid var(--border); border-radius: 4px; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
   .why { font: inherit; font-size: 13px; padding: 1px 6px; border: 1px solid var(--border); border-radius: 6px; width: 22em; max-width: 100%; }
   .question { color: var(--tier-warning); }
+  .estimate { margin: 4px 0 4px 8px; padding-left: 6px; border-left: 2px solid var(--border); }
+  .cx { margin: 4px 0; }
+  .hint { color: var(--tier-warning); }
 </style>

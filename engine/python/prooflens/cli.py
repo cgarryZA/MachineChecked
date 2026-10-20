@@ -414,6 +414,9 @@ def _print_workspace(v: dict) -> None:
             tag = f["state"] + ("" if f["in_force"] else ", superseded")
             print(f"  finding  {f['id']}  {tag}: coverage {f.get('coverage') or '-'}"
                   + (f", basis {f['basis']}" if f.get("basis") else "")
+                  + (f", {f['verdict']}" if f.get("verdict") else "")
+                  + (f", {f['difference']['feature']} difference on {f.get('requirement')}"
+                     if f.get("difference") else "")
                   + f"  [{f['currency']['state']}]" + (f"  supersedes {f['supersedes']}: "
                                                      f"{f['reason']}" if f.get("supersedes")
                                                      else ""))

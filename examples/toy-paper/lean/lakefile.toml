@@ -3,3 +3,7 @@ defaultTargets = ["Toy"]
 
 [[lean_lib]]
 name = "Toy"
+
+# An auditor's certificates about the paper's printed steps; not part of the formalisation.
+[[lean_lib]]
+name = "ToyAudit"

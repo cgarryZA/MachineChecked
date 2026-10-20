@@ -124,6 +124,11 @@ def requirement_content(out: dict, rec: dict, ws: dict, rid: str | None) -> dict
                                                   for b in binds):
             raise _err("`binds` is a list of the variables' names")
         out["binds"] = [b.strip() for b in binds]
+    if rec.get("domain") not in (None, ""):
+        if out["form"] not in BINDING_FORMS:
+            raise _err(f"only a requirement of form {', '.join(BINDING_FORMS)} has a domain "
+                       "for its variables")
+        out["domain"] = _text(rec["domain"], "the domain (`domain`)").strip()
     if rec.get("independent_of") not in (None, []):
         ind = rec["independent_of"]
         if out["form"] not in ("there is", "constant dependence"):
@@ -132,6 +137,18 @@ def requirement_content(out: dict, rec: dict, ws: dict, rid: str | None) -> dict
         if not isinstance(ind, list) or not all(isinstance(b, str) and b.strip() for b in ind):
             raise _err("`independent_of` is a list of the variables' names")
         out["independent_of"] = [b.strip() for b in ind]
+    if rec.get("depends_on") not in (None, []):
+        dep = rec["depends_on"]
+        if out["form"] not in ("there is", "constant dependence"):
+            raise _err("`depends_on` belongs to a constant or witness (`there is` or "
+                       "`constant dependence`)")
+        if not isinstance(dep, list) or not all(isinstance(b, str) and b.strip() for b in dep):
+            raise _err("`depends_on` is a list of the variables' names")
+        out["depends_on"] = [b.strip() for b in dep]
+        both = set(out["depends_on"]) & set(out.get("independent_of") or [])
+        if both:
+            raise _err(f"a constant cannot both depend on and be independent of "
+                       f"{', '.join(sorted(both))}")
     if out["origin"] == "correction":
         if rec.get("corrects") in (None, ""):
             raise _err("a requirement added by a correction names the printed requirement it "
@@ -384,7 +401,10 @@ def references(ws: dict, claim: str, lid: str, but: str | None = None) -> list[s
             users.append(r["id"])
         elif r.get("kind") == "alignment" and lid in (r.get("requirements") or []):
             users.append(r["id"])
-        elif r.get("kind") in ("finding", "question") and r.get("requirement") == lid:
+        elif r.get("kind") in ("finding", "question", "counterexample") and \
+                r.get("requirement") == lid:
+            users.append(r["id"])
+        elif r.get("kind") == "counterexample" and lid in (r.get("reading") or []):
             users.append(r["id"])
         elif r.get("kind") == "composition" and any(lid in (s.get("requirements") or [])
                                                     for s in r.get("steps") or []):
@@ -485,6 +505,9 @@ def reading_digest(req: dict, fragments: list[dict]) -> str:
     the fragments that govern it (not later uses, proposals or removed ones)."""
     body = {k: req.get(k) for k in ("form", "text", "binds", "independent_of", "origin",
                                     "parent", "corrects")}
+    for k in ("domain", "depends_on"):
+        if req.get(k):
+            body[k] = req[k]
     body["fragments"] = sorted([fr["role"], fr["origin"], _pin(fr)] for fr in fragments
                                if fr.get("state") == "accepted" and fr["role"] != "later use")
     return "reading-v1:" + hashlib.sha256(json.dumps(body, sort_keys=True,
@@ -565,11 +588,12 @@ def _natural(s: str):
     return [int(p) if p.isdigit() else p for p in re.split(r"(\d+)", s)]
 
 
-def reading(records: list[dict], cur: dict) -> dict:
+def reading(records: list[dict], cur: dict, snap=None, claim: str | None = None) -> dict:
     """The claim's requirements as the reader, `workspace show` and `compare` present them:
     in reading order, each with its fragments (governing, later uses, proposals, removed) and
-    alignments, its currency and the questions it leaves; the witness obligations; and the
-    alignments with what they associate."""
+    alignments, its currency and the questions it leaves; the witness obligations; the
+    alignments with what they associate; and the estimates block (`estimates.analysis`):
+    readings of estimates, differences, counterexamples and hints."""
     reqs = [r for r in records if r.get("kind") == "requirement"]
     frags = [r for r in records if r.get("kind") == "fragment"]
     aligns = [r for r in records if r.get("kind") == "alignment"]
@@ -609,8 +633,9 @@ def reading(records: list[dict], cur: dict) -> dict:
                       "questions": qs})
     al_items = [{**a, "currency": cur.get(a["id"], {"state": "unchecked", "changes": []})}
                 for a in sorted(aligns, key=lambda a: (a["created_at"], a["id"]))]
+    from .estimates import analysis
     return {"requirements": items, "witnesses": witnesses(reqs), "alignments": al_items,
-            "questions": problems}
+            "questions": problems, "estimates": analysis(records, cur, snap, claim)}
 
 
 # -- suggestions -----------------------------------------------------------------------------
@@ -798,6 +823,8 @@ def lines(rd: dict) -> list[str]:
         head = f"{pad}{r['local_id']}  {r['form']}"
         if r.get("binds"):
             head += " " + ", ".join(r["binds"])
+        if r.get("domain"):
+            head += f" ({r['domain']})"
         head += f": {r['text']}"
         if r.get("origin") == "correction":
             head += f"  (added by a correction of {r.get('corrects')})"
@@ -832,4 +859,7 @@ def lines(rd: dict) -> list[str]:
                    + "; ".join(target_text(t) for t in a["lean"])
                    + f"  ({a['relation']}, recorded by {a.get('created_by')})"
                    + ("  [stale]" if a["currency"]["state"] == "stale" else ""))
+    if rd.get("estimates"):
+        from .estimates import lines as estimate_lines
+        out += estimate_lines(rd["estimates"])
     return out

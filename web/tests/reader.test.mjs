@@ -1016,6 +1016,11 @@ for (const width of [1300, 390]) {
     assert.match(await work.locator("[data-alignment='a1']").textContent(), /Synthetic\.bound.*corresponds.*A-Auditor/);
     assert.deepEqual(await work.locator("[data-kind='finding']").evaluateAll((es) => es.map((e) => e.classList.contains("old"))), [true, false]);
     assert.match(await work.textContent(), /Supersedes f1: A synthetic stronger theorem/);
+    // A counterexample on the requirement, with what it can show and what its certificate checks.
+    const cx = work.locator("[data-cx='x1']");
+    assert.equal(await cx.getAttribute("data-standing"), "candidate");
+    assert.match(await cx.textContent(), /Counterexample · a candidate counterexample: not yet shown admissible · by human:A-Auditor[\s\S]*Against: the synthetic bound holds[\s\S]*n = 0 reduces the reading to 1 ≤ 0, which fails/);
+    assert.match(await cx.textContent(), /Certificate: Synthetic\.no_bound: Lean checks that its type is the negation of Synthetic\.Bound; it certifies that proposition only/);
     assert.equal(await work.locator("button, input, textarea, select").count(), 0, "nothing to edit");
     assert.equal(await pg.locator(".edition select").inputValue(), "original");
     await pg.locator(".view .chipbtn").click();
@@ -1630,6 +1635,59 @@ print("null")`);
         /^Every clause, by the auditor's composition · composition c-tri · human:Test-Auditor s1 the closed form for every n · from Toy\.Acceptance\.thm_triangle · establishes r1 Lean has not checked this combination\. Next step: State the combination as one Lean result\.$/);
       const f = inv.locator("[data-kind=finding]", { hasText: "By the composition." });
       assert.match((await f.textContent()).replace(/\s+/g, " "), /^Every clause, by the auditor's composition.*Rests on composition c-tri\./);
+    });
+
+
+    // A printed proof step refuted by a counterexample (#111): the step's reading with the
+    // order of its quantifiers, the counterexample and what its certificate checks, the
+    // finding on the step, and the corrected reading with its own evidence, apart.
+    await check("a refuted proof step shows its counterexample and the corrected reading apart", 1300, async (pg) => {
+      engine(String.raw`
+import sys
+from pathlib import Path
+from prooflens import workspace as wsp
+from prooflens.targets import Snapshot
+(p, ws), = wsp.list_all(Path(sys.argv[1]))
+s = Snapshot(Path(sys.argv[1]).parent / "toyws" / "data")
+C = "T:eq:bound-range"
+def req(lid, form, text, **kw):
+    return {"op": "put", "record": {"kind": "requirement", "claim": C, "local_id": lid, "form": form, "text": text, **kw}}
+def cert(theorem, target, certifies, stmt):
+    return {"certificate": {"theorem": theorem, "target": target, "certifies": certifies, "type": ("¬" if certifies == "refutes" else "") + target, "target_statement": stmt, "target_fingerprint": "0" * 16, "result": "checked", "reasons": []}}
+wsp.update(p, [
+  req("n", "for every", "the n fixed by the proof", binds=["n"], domain="n ≥ 0"),
+  req("n.k", "for every", "every natural number k ≥ 0", binds=["k"], domain="k ≥ 0", parent="n"),
+  req("n.k.1", "conclusion", "n ≤ k n²", parent="n.k"),
+  {"op": "put", "record": {"kind": "fragment", "claim": C, "requirement": "n.k.1", "role": "statement", "passage": {"claim": C}}},
+  req("n.kc", "for every", "every natural number k ≥ 1", binds=["k"], domain="k ≥ 1", parent="n", origin="correction", corrects="n.k"),
+  {"op": "put", "record": {"kind": "fragment", "claim": C, "requirement": "n.kc", "role": "proposed correction", "passage": {"claim": C}}},
+  {"op": "put", "record": {"id": "e-ref", "kind": "evidence", "claim": C, "role": "supports", "ref": cert("ToyAudit.bound_range_at_one_false", "ToyAudit.bound_range_at_one", "refutes", "∀ (k : Nat), 1 ≤ k * 1 ^ 2")}},
+  {"op": "put", "record": {"id": "x-zero", "kind": "counterexample", "claim": C, "requirement": "n.k.1", "specialisation": {"assign": {"n": 1, "k": 0}}, "reduced": "1 ≤ k · 1²", "violation": "at k = 0 it reads 1 ≤ 0", "admissibility": [{"obligation": "k = 0 satisfies k ≥ 0", "state": "verified", "method": "arithmetic"}], "evidence": ["e-ref"]}},
+  {"op": "put", "record": {"id": "f-false", "kind": "finding", "claim": C, "requirement": "n.k.1", "verdict": "false as printed", "counterexamples": ["x-zero"], "note": "k = 0, n = 1."}},
+  {"op": "put", "record": {"id": "e-pro", "kind": "evidence", "claim": C, "role": "supports", "ref": cert("ToyAudit.bound_range_corrected_holds", "ToyAudit.bound_range_corrected", "proves", "∀ (n k : Nat), 1 ≤ k → n ≤ k * n ^ 2")}},
+  {"op": "put", "record": {"id": "f-fixed", "kind": "finding", "claim": C, "requirement": "n.kc", "coverage": "full", "basis": "checked_bridge", "evidence": ["e-pro"], "note": "holds for k ≥ 1"}},
+  {"op": "put", "record": {"id": "f-order", "kind": "finding", "claim": C, "requirement": "n.k.1", "difference": {"feature": "domain", "paper": "k ≥ 0", "lean": "1 ≤ k", "outcome": "difference", "transport": "none applies: k = 0 is excluded"}, "note": "the Lean adds k ≥ 1"}}], s)
+print("null")`);
+      await pg.goto(`http://127.0.0.1:${port}/#/r/${TOY.release}/claim/${encodeURIComponent("T:eq:bound-range")}`);
+      const inv = pg.locator("section.investigation");
+      await inv.getByRole("button", { name: /^Continue ws-/ }).click();
+      const req = inv.locator("[data-req='n.k.1']");
+      await req.waitFor();
+      const printed = req.locator(".estimate[data-reading=printed]");
+      assert.match(await printed.textContent(), /Read as printed: for every n \(n ≥ 0\); for every k \(k ≥ 0\): n ≤ k n²/);
+      const cx = printed.locator("[data-cx=x-zero]");
+      assert.equal(await cx.getAttribute("data-standing"), "admissible counterexample");
+      assert.match(await cx.textContent(), /n = 1, k = 0 reduces the reading to 1 ≤ k · 1², which fails \(at k = 0 it reads 1 ≤ 0\)\./);
+      assert.match(await cx.locator(".cert").textContent(), /^Lean checks that the type of ToyAudit\.bound_range_at_one_false is the negation of ToyAudit\.bound_range_at_one \(∀ \(k : Nat\), 1 ≤ k \* 1 \^ 2\)\. It certifies that proposition only, not the reading it is attached to\./);
+      assert.match(await printed.locator(".verdict").textContent(), /The printed step: false as printed/);
+      // The corrected reading has its own evidence; the printed requirement stays.
+      const corrected = req.locator(".estimate[data-reading='n.kc']");
+      assert.match(await corrected.textContent(), /Read with the correction n\.kc: for every n \(n ≥ 0\); for every k \(k ≥ 1\): n ≤ k n²/);
+      assert.equal(await corrected.locator("[data-cx]").count(), 0);
+      assert.match(await corrected.locator(".cert").textContent(), /ToyAudit\.bound_range_corrected_holds is exactly ToyAudit\.bound_range_corrected/);
+      assert.match(await inv.locator("[data-req='n.k']").textContent(), /n\.k for every k \(k ≥ 0\): every natural number k ≥ 0/);
+      assert.match(await req.locator(".diff[data-feature=domain]").textContent(), /Domain, a difference: paper k ≥ 0; Lean 1 ≤ k · transport inspected: none applies/);
+      assert.match(await inv.locator("[data-kind=finding]", { hasText: "k = 0, n = 1." }).textContent(), /The printed step: false as printed/);
     });
   } finally { py.kill(); }
 }

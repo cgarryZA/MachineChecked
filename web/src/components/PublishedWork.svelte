@@ -42,6 +42,10 @@
   }
   function refText(r) {
     if (r?.app) return `${r.app.callee} applied in ${r.app.caller}`;
+    if (r?.certificate) {
+      const c = r.certificate;
+      return `${c.theorem}: Lean ${c.result === "checked" ? "checks" : "does not check"} that its type is ${c.certifies === "refutes" ? "the negation of" : "exactly"} ${c.target}${c.target_statement ? " (" + c.target_statement + ")" : ""}; it certifies that proposition only`;
+    }
     if (r?.fact) return `${r.fact.name || r.fact.head || "a fact"}${r.fact.type ? " : " + r.fact.type : ""}, inside the proof of ${r.fact.decl} (${r.fact.basis})`;
     if (r?.decl) return r.decl;
     if (r?.source) return r.source.file ? r.source.file + (r.source.line ? ":" + r.source.line : "") : "a Lean source location";
@@ -59,6 +63,14 @@
     if (c) return { headline: compositionView({ coverage: f.coverage, basis: f.basis, bridge_check: c.bridge_check }).headline, lines: [] };
     return coverageView({ ...f, refs: cited(rd, f).map((e) => e.ref?.decl).filter(Boolean) });
   };
+  const OUTCOME = { open: "not yet decided", difference: "a difference", resolved: "resolved", "no difference": "no difference" };
+  const counterexamples = (rd, lid) => (rd.counterexamples || []).filter((c) => c.requirement === lid);
+  function findingHead(f, cv) {
+    if (cv?.headline) return cv.headline;
+    if (f.verdict) return "The printed step: " + f.verdict;
+    if (f.difference) return `A ${f.difference.feature} difference: ${OUTCOME[f.difference.outcome]}`;
+    return "No coverage given";
+  }
 </script>
 
 {#if work?.readings?.length}
@@ -71,10 +83,11 @@
         {#each rd.findings as f (f.id)}
           {@const cv = view(rd, f)}
           <div class="item" data-kind="finding" class:old={!f.in_force}>
-            <p class="small"><strong>{cv?.headline || "No coverage given"}</strong>
+            <p class="small"><strong>{findingHead(f, cv)}</strong>
               <span class="faint">· {f.in_force ? "submitted" : "superseded"} {day(f.submitted_at)} by {f.created_by}{f.requirement ? ` · on ${f.requirement}` : ""}</span>
               {#if stale(f)}<span class="stale"> · its evidence {STALE}</span>{/if}</p>
             {#each cv?.lines || [] as line}<p class="small" data-line={line.label}><span class="faint">{line.label}:</span> {line.names?.join(", ") || ""}{line.names?.length && line.text ? ". " : ""}<span class="text">{line.text || ""}</span>{#if line.note} <span class="faint">{line.note}</span>{/if}</p>{/each}
+            {#if f.difference}{@const d = f.difference}<p class="small diff" data-feature={d.feature}>{#if d.paper}paper <code>{d.paper}</code>{/if}{#if d.lean}{d.paper ? "; " : ""}Lean <code>{d.lean}</code>{/if}{#if d.transport}<span class="faint">{` · transport inspected: ${d.transport}`}</span>{/if}{#if d.resolution}<span class="faint">{` · resolved by ${d.resolution.by}${d.resolution.text ? ": " + d.resolution.text : ""}`}</span>{/if}{#if d.why}<span class="faint">{` · ${d.why}`}</span>{/if}</p>{/if}
             {#if f.note}<p class="small text">{f.note}</p>{/if}
             {#each (rd.compositions || []).filter((c) => c.id === f.composition) as c (c.id)}<Composition {c} evidence={rd.evidence} />{/each}
             {#if f.supersedes}<p class="faint small">Supersedes {f.supersedes}{f.reason ? `: ${f.reason}` : ""}</p>{/if}
@@ -85,7 +98,7 @@
           <h3>Requirements</h3>
           {#each rd.requirements as r (r.id)}
             <div class="req" data-req={r.local_id} style:margin-left="{(r.depth || 0) * 16}px">
-              <p class="small"><code>{r.local_id}</code> <span class="form">{r.form}{r.binds?.length ? " " + r.binds.join(", ") : ""}</span>: <span class="text">{r.text}</span>
+              <p class="small"><code>{r.local_id}</code> <span class="form">{r.form}{r.binds?.length ? " " + r.binds.join(", ") : ""}{r.domain ? ` (${r.domain})` : ""}</span>: <span class="text">{r.text}</span>
                 {#if r.independent_of?.length}<span class="faint"> · independent of {r.independent_of.join(", ")}</span>{/if}
                 {#if r.origin === "correction"}<span class="faint"> · added by a correction of {r.corrects}; the printed requirement stays</span>{/if}
                 {#if stale(r)}<span class="stale"> · its source or Lean {STALE}</span>{/if}</p>
@@ -99,6 +112,16 @@
                 <div class="frag use" data-role="later use">
                   {#if f.region?.text}<pre class="src">{f.region.text}</pre>{/if}
                   <p class="faint small">Used later at {where(f)}: a use of the result; this reading is unchanged · by {f.created_by}</p>
+                </div>
+              {/each}
+              {#each counterexamples(rd, r.local_id) as c (c.id)}
+                <div class="cx" data-cx={c.id} data-standing={c.analysis?.standing}>
+                  <p class="small"><strong>Counterexample</strong> <span class="faint">· {c.analysis?.standing_text} · by {c.created_by}{c.reading?.length ? ` · read with the correction ${c.reading.join(", ")}` : ""}</span>{#if stale(c)}<span class="stale"> · the reading or its evidence {STALE}</span>{/if}</p>
+                  {#if c.reading_text}<p class="faint small">Against: {c.reading_text}</p>{/if}
+                  {#if c.analysis?.shows}<p class="small text">{c.analysis.shows}</p>{/if}
+                  {#each c.analysis?.problems || [] as q}<p class="small">{q}</p>{/each}
+                  {#if c.analysis?.samples_note}<p class="faint small">{c.analysis.samples} sample(s). {c.analysis.samples_note}</p>{/if}
+                  {#each (c.evidence || []).map((id) => rd.evidence.find((e) => e.id === id)).filter(Boolean) as e (e.id)}<p class="faint small">Certificate: <code>{refText(e.ref)}</code>{stale(e) ? " · " + STALE : ""}</p>{/each}
                 </div>
               {/each}
               {#each aligned(rd, r.local_id) as a (a.id)}
@@ -132,5 +155,6 @@
   .stale { color: var(--tier-warning); }
   .frag { margin: 4px 0 4px 8px; }
   .frag.use { opacity: 0.8; }
+  .cx { margin: 4px 0 4px 8px; padding-left: 6px; border-left: 2px solid var(--border); }
   .src { margin: 2px 0; padding: 4px 6px; background: var(--surface); border: 1px solid var(--border); border-radius: 4px; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
 </style>
