@@ -36,6 +36,8 @@ def two(toy):
                 'root = "u.tex"\n'
                 'publish = { pdf = false, source_text = false, lean = false, reviews = false }\n')
     inv = json.loads((toy / "claims.json").read_text())
+    # Paper U prints the bound without its proof, so without the proof's steps.
+    inv["claims"] = [c for c in inv["claims"] if c.get("parent") != "T:thm:bound"]
     for c in inv["claims"]:
         if c["id"] == "T:thm:bound":
             c.update(id="U:thm:bound", paper="U", location="u.tex")

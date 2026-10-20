@@ -3,7 +3,9 @@
 The file is the project's own account of itself: its sources, its main results, how it was made,
 its review status, and an `alignment` between the source's statements and Lean declarations. The
 alignment is free-form in the standard; the shape read here is its suggested one,
-`statements: [{source, lean, module, status}]`, with `lean` a name or a list of names.
+`statements: [{source, lean, module, status}]`, with `lean` a name or a list of names. A row
+whose source is a proof equation (`Equation (3)`) may say `route: different`: its declarations are
+the formal route used instead of the printed step, not a statement of it.
 
 A mapping read from the file is a link the project's authors declared, shown as such; the
 file's review status is the project's own description of its review, shown as such. Neither
@@ -17,8 +19,8 @@ from pathlib import Path
 
 NAMES = ("formalization.yaml", "formalization.yml")
 KINDS = ("theorem", "lemma", "proposition", "corollary", "definition", "remark", "example",
-         "conjecture", "claim", "assumption", "hypothesis", "convention")
-REF = re.compile(r"\b(" + "|".join(KINDS) + r")\s+((?:[A-Z](?:\.\d+)+|[A-Z]?\d+(?:\.\d+)*)[a-z]?)",
+         "conjecture", "claim", "assumption", "hypothesis", "convention", "equation")
+REF = re.compile(r"\b(" + "|".join(KINDS) + r")\s+\(?((?:[A-Z](?:\.\d+)+|[A-Z]?\d+(?:\.\d+)*)[a-z]?)\)?",
                  re.I)
 
 
@@ -67,7 +69,10 @@ def statements(fy: dict) -> list[dict]:
         note = r.get("note").strip() if isinstance(r.get("note"), str) else ""
         out.append({"source": src, "kind": m.group(1).lower(), "number": m.group(2),
                     "hint": _tokens(rest), "lean": names, "status": r.get("status"),
-                    "module": module, "note": note})
+                    "module": module, "note": note,
+                    # A row about a proof step may name the different formal route used
+                    # instead of the printed step (`route: different`).
+                    "route": r.get("route") == "different"})
     return out
 
 
@@ -80,7 +85,7 @@ def links_for(fy: dict, claim_kind: str, claim_number: str, paper_title: str) ->
     """The alignment's statements that name this claim of this paper. When the file formalizes
     several sources, the paper is the source whose title it shares most words with, and a
     statement must name it by a word only that source's title has ("(Euler)")."""
-    num = claim_number.split()[-1] if claim_number else ""
+    num = claim_number.split()[-1].strip("()") if claim_number else ""
     rows = [st for st in statements(fy) if st["kind"] == claim_kind.lower()
             and st["number"] == num]
     srcs = [_tokens(s.get("title", "")) for s in formalized_sources(fy)]

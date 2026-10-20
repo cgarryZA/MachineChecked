@@ -21,6 +21,7 @@
   const paper = $derived(index?.papers.find((p) => p.id === paperId));
   const versions = $derived(pageVersions(index));
   const thisVersion = $derived(versions.find((v) => v.id === index?.version));
+  const docNames = $derived((index?.findings?.general || []).filter((f) => f.code === "module-doc-name"));
   // The chosen project's audit pins this version; when some of its claims carry no revision,
   // the version is only as its author declares it, and the page says so.
   const unchecked = $derived(thisVersion && index?.audits?.[project.repo]?.paper_version &&
@@ -108,6 +109,16 @@
   {#if index.notes?.length}
     <div class="banner">{#each index.notes as n}<div>{n}</div>{/each}</div>
   {/if}
+  {#if docNames.length}
+    <details class="banner docnames">
+      <summary>Warning: {docNames.filter((f) => !f.dismissed).length} name(s) in module docstrings are not declared in the project or its dependencies{docNames.some((f) => f.dismissed) ? ` (${docNames.filter((f) => f.dismissed).length} dismissed)` : ""}</summary>
+      <ul>
+        {#each docNames as f (f.id)}
+          <li class:dismissed={f.dismissed}>{f.message}{#if f.dismissed}<span class="dz"> · dismissed by {f.dismissed.by}: “{f.dismissed.rationale}”</span>{:else if f.dismissal_stale}<span class="dz"> · an earlier dismissal no longer applies</span>{/if}</li>
+        {/each}
+      </ul>
+    </details>
+  {/if}
 
   </div>
   <div class="workspace">
@@ -147,6 +158,10 @@
   .aux { font-size: 14px; }
   :global(.top .aux:first-of-type) { margin-left: auto; }
   .banner { padding: 8px 16px; background: var(--surface-2); border-bottom: 1px solid var(--border); font-size: 14px; }
+  .docnames summary { cursor: pointer; }
+  .docnames ul { margin: 6px 0 0; padding-left: 18px; font-size: 13px; }
+  .docnames .dismissed { color: var(--faint); }
+  .docnames .dz { color: var(--muted); }
   .attribution { display: flex; gap: 12px; align-items: baseline; font-size: 13px; }
   .page { max-width: 1560px; margin: 0 auto; padding: 24px 16px 80px; }
   @media (max-width: 640px) {

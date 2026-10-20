@@ -125,7 +125,8 @@ def test_changed_manuscript_claim(toy):
 @needs_lean
 @needs_tex
 def test_author_review_declared_human_is_still_not_independent(toy):
-    edit(toy / "reviews/T.md", "by=statement-author -->", "by=statement-author kind=human -->")
+    edit(toy / "reviews/T.md", "by=statement-author source=",
+         "by=statement-author kind=human source=")
     index, _, _ = build(toy)
     assert status(index, "T:thm:triangle") == "formal: proved, author-reviewed"
 

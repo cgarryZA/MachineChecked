@@ -63,6 +63,7 @@ def _one_paper(index: dict, chunks: dict, store: dict, pid: str):
            "papers": [p for p in index["papers"] if p["id"] == pid],
            "claims": [c for c in index["claims"] if c["id"] in claim_ids],
            "summary": {k: v for k, v in index["summary"].items() if k == pid},
+           "units": {k: v for k, v in (index.get("units") or {}).items() if k == pid},
            "gates": {k: v for k, v in (index.get("gates") or {}).items() if k == pid},
            "findings": {"total": dict(tiers), "general": general}}
     one["classes"] = {st: cls for st, cls in index["classes"].items()
@@ -108,6 +109,7 @@ def public_claim(chunk: dict, pub) -> dict:
                         "source_sha256", "blockers"])
     out["location"] = chunk.get("location") if pub.source_text else None
     out["statement_tex"] = chunk.get("statement_tex") if pub.source_text else None
+    out["context_tex"] = chunk.get("context_tex") if pub.source_text else None
     out["excerpt"] = chunk.get("excerpt") if pub.source_text else None
     a = chunk.get("anchor")
     # `head` (the baseline of the first line) is what the index's top is computed from, so the
@@ -140,7 +142,43 @@ def public_claim(chunk: dict, pub) -> dict:
     out["findings"] = [_pick(f, ["id", "tier", "code", "subject", "message", "trigger",
                                  "signal", "dismissed", "dismissal_stale"])
                        for f in chunk["findings"]]
+    out["unit"] = chunk.get("unit") or "statement"
+    out["parent"] = chunk.get("parent")
+    out["steps"] = list(chunk.get("steps") or [])
+    if chunk.get("step"):
+        out["step"] = public_step(chunk["step"], pub)
     return out
+
+
+def public_step(st: dict, pub) -> dict:
+    """A proof step's links, formal route and review, with what `pub` allows: the Lean
+    statements of its links when the Lean is published, the reviewers' texts when reviews are,
+    its source location when the source text is."""
+    def link(l):
+        q = dict(l)
+        if not pub.lean:
+            q["statement"] = None
+        return q
+
+    rv = st.get("review") or {}
+    reports = []
+    for r in rv.get("reports") or []:
+        q = dict(r)
+        if not pub.reviews:
+            q["reading"] = q["comparison"] = q["text"] = ""
+            q["verdict"] = {**q["verdict"], "detail": ""}
+        reports.append(q)
+    finding = next((q for q in reversed(reports) if q.get("current")), None)
+    route = st.get("route")
+    return {"unit": st.get("unit"), "parent": st.get("parent"),
+            "source": {**(st.get("source") or {}),
+                       **({} if pub.source_text else {"location": None, "region": None})},
+            "links": [link(l) for l in st.get("links") or []],
+            "correspondence": st.get("correspondence"),
+            "route": {**route, "links": [link(l) for l in route.get("links") or []]}
+            if route else None,
+            "review": {"state": rv.get("state", "unreviewed"),
+                       "finding": finding if rv.get("finding") else None, "reports": reports}}
 
 
 def _reviews(r: dict | None, with_text: bool) -> dict | None:
@@ -297,10 +335,13 @@ def export(cfg: Config, out: Path, release: str | None = None,
             (data / "papers").mkdir(parents=True, exist_ok=True)
             shutil.copyfile(src, data / p["pdf"])
     pidx["findings"] = {"total": index["findings"]["total"],
-                        "general": [_pick(f, ["id", "tier", "code", "subject", "message"])
+                        "general": [_pick(f, ["id", "tier", "code", "subject", "message",
+                                              "trigger", "dismissed", "dismissal_stale"])
                                     for f in index["findings"]["general"]]}
-    pidx["claims"] = [_pick(c, ["id", "paper", "number", "title", "kind", "scope", "status",
-                                "status_code", "class", "anchor", "counts", "file"]) for c in index["claims"]]
+    pidx["claims"] = [_pick(c, ["id", "paper", "number", "title", "kind", "scope", "unit",
+                                "parent", "step_review", "status", "status_code", "class", "anchor", "counts",
+                                "file"]) for c in index["claims"]]
+    pidx["units"] = index.get("units") or {}
     write_json(data / "index.json", pidx, indent=None)
     # Definitions expanded at their applications are written on their own, and only those that
     # a published statement or declaration refers to (`mf.split_expansions`).

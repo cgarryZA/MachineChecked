@@ -198,8 +198,10 @@ def assessed(root, c, tex):
             "proofs": {"accept:Synthetic.accept:Synthetic.spec": {"errors": [], "sorry": False,
                                                                  "axioms": []}},
             "decls": {}, "defs": {}, "layering": []}
+    # The review read the claim's passage as pinned.
     reviews = [Review("spec", "Synthetic.spec", fp, "synthetic-reviewer", "human",
-                      "self-declared", "reviews.md", 1, "Synthetic review.")]
+                      "self-declared", "reviews.md", 1, "Synthetic review.",
+                      source={c["id"]: c["source_sha256"]})]
     inv = {"claims": [c]}
     result = Assessor(cfg, inv, lean, {"T": tex}, reviews, [],
                       json.dumps({"commit": REV, "replayed": ["Synthetic.accept"]}), REV).run()
