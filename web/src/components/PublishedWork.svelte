@@ -1,10 +1,11 @@
 <script>
   import { loadWork } from "../lib/data.js";
-  import { coverageView } from "../lib/coverage.js";
+  import { coverageView, compositionView } from "../lib/coverage.js";
+  import Composition from "./Composition.svelte";
 
   // The workspace records the audit publishes for this claim (`published_work.py`): each
   // auditor's requirements, the passages accepted as governing them, the alignments with Lean
-  // and the submitted findings with their evidence. They are shown as recorded, attributed and
+  // and the submitted findings with their evidence and compositions. They are shown as recorded, attributed and
   // read-only; the claim's status comes from the evidence, never from them.
   let { claim } = $props();
 
@@ -40,6 +41,7 @@
     return t.decl + (part ? ` (${part}${t.target ? ": " + t.target : ""})` : "");
   }
   function refText(r) {
+    if (r?.app) return `${r.app.callee} applied in ${r.app.caller}`;
     if (r?.fact) return `${r.fact.name || r.fact.head || "a fact"}${r.fact.type ? " : " + r.fact.type : ""}, inside the proof of ${r.fact.decl} (${r.fact.basis})`;
     if (r?.decl) return r.decl;
     if (r?.source) return r.source.file ? r.source.file + (r.source.line ? ":" + r.source.line : "") : "a Lean source location";
@@ -51,7 +53,12 @@
   const uses = (rd, lid) => rd.fragments.filter((f) => f.requirement === lid && f.role === "later use");
   const aligned = (rd, lid) => rd.alignments.filter((a) => (a.requirements || []).includes(lid));
   const cited = (rd, f) => (f.evidence || []).map((id) => rd.evidence.find((e) => e.id === id)).filter(Boolean);
-  const view = (rd, f) => coverageView({ ...f, refs: cited(rd, f).map((e) => e.ref?.decl).filter(Boolean) });
+  const view = (rd, f) => {
+    // A finding that rests on a composition reads as that composition, shown below it.
+    const c = f.composition && (rd.compositions || []).find((x) => x.id === f.composition);
+    if (c) return { headline: compositionView({ coverage: f.coverage, basis: f.basis, bridge_check: c.bridge_check }).headline, lines: [] };
+    return coverageView({ ...f, refs: cited(rd, f).map((e) => e.ref?.decl).filter(Boolean) });
+  };
 </script>
 
 {#if work?.readings?.length}
@@ -69,6 +76,7 @@
               {#if stale(f)}<span class="stale"> · its evidence {STALE}</span>{/if}</p>
             {#each cv?.lines || [] as line}<p class="small" data-line={line.label}><span class="faint">{line.label}:</span> {line.names?.join(", ") || ""}{line.names?.length && line.text ? ". " : ""}<span class="text">{line.text || ""}</span>{#if line.note} <span class="faint">{line.note}</span>{/if}</p>{/each}
             {#if f.note}<p class="small text">{f.note}</p>{/if}
+            {#each (rd.compositions || []).filter((c) => c.id === f.composition) as c (c.id)}<Composition {c} evidence={rd.evidence} />{/each}
             {#if f.supersedes}<p class="faint small">Supersedes {f.supersedes}{f.reason ? `: ${f.reason}` : ""}</p>{/if}
             {#if cited(rd, f).length}<p class="faint small">Evidence: {#each cited(rd, f) as e, i (e.id)}{i ? ", " : ""}<code>{refText(e.ref)}</code> ({e.role}{stale(e) ? ", " + STALE : ""}){/each}</p>{/if}
           </div>

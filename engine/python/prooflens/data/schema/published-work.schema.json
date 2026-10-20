@@ -662,6 +662,14 @@
                 },
                 "in_force": {
                   "type": "boolean"
+                },
+                "composition": {
+                  "type": "string"
+                },
+                "recorded_basis": {
+                  "enum": [
+                    "checked_bridge"
+                  ]
                 }
               }
             }
@@ -760,6 +768,391 @@
                 },
                 "ref": {
                   "type": "object"
+                }
+              }
+            }
+          },
+          "compositions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "kind",
+                "claim",
+                "currency",
+                "steps",
+                "evidence",
+                "basis",
+                "gaps",
+                "complete"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "claim": {
+                  "type": "string"
+                },
+                "clause": {
+                  "type": "string"
+                },
+                "rev": {
+                  "type": "integer"
+                },
+                "created_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "created_by": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "updated_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "updated_by": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "pins": {
+                  "type": "object"
+                },
+                "note": {
+                  "type": "string"
+                },
+                "currency": {
+                  "type": "object",
+                  "required": [
+                    "state",
+                    "changes"
+                  ],
+                  "properties": {
+                    "state": {
+                      "enum": [
+                        "current",
+                        "stale",
+                        "unchecked",
+                        "removed"
+                      ]
+                    },
+                    "changes": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    }
+                  }
+                },
+                "kind": {
+                  "const": "composition"
+                },
+                "coverage": {
+                  "enum": [
+                    "full",
+                    "partial",
+                    "changed",
+                    "related",
+                    "unresolved"
+                  ]
+                },
+                "basis": {
+                  "enum": [
+                    "reviewed_composition",
+                    "checked_bridge"
+                  ]
+                },
+                "statement": {
+                  "type": "string"
+                },
+                "steps": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": {
+                    "type": "object",
+                    "required": [
+                      "id"
+                    ],
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "requirements": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "uses": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "after": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "substitutions": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "required": [
+                            "variable",
+                            "value"
+                          ],
+                          "properties": {
+                            "variable": {
+                              "type": "string"
+                            },
+                            "value": {
+                              "type": "string"
+                            },
+                            "in": {
+                              "type": "string"
+                            }
+                          }
+                        }
+                      },
+                      "establishes": {
+                        "type": "string"
+                      },
+                      "inference": {
+                        "type": "string"
+                      },
+                      "note": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                },
+                "identifications": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": [
+                      "left",
+                      "right",
+                      "relation",
+                      "how"
+                    ],
+                    "properties": {
+                      "left": {
+                        "type": "object",
+                        "required": [
+                          "step"
+                        ],
+                        "properties": {
+                          "step": {
+                            "type": "string"
+                          },
+                          "object": {
+                            "type": "string"
+                          }
+                        }
+                      },
+                      "right": {
+                        "type": "object",
+                        "required": [
+                          "step"
+                        ],
+                        "properties": {
+                          "step": {
+                            "type": "string"
+                          },
+                          "object": {
+                            "type": "string"
+                          }
+                        }
+                      },
+                      "relation": {
+                        "type": "string"
+                      },
+                      "how": {
+                        "enum": [
+                          "retained witness",
+                          "evidence",
+                          "definition"
+                        ]
+                      },
+                      "evidence": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "note": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                },
+                "obligations": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": [
+                      "id",
+                      "kind",
+                      "state"
+                    ],
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "kind": {
+                        "type": "string"
+                      },
+                      "state": {
+                        "enum": [
+                          "open",
+                          "discharged"
+                        ]
+                      },
+                      "by": {
+                        "type": "object",
+                        "properties": {
+                          "steps": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "evidence": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        }
+                      },
+                      "text": {
+                        "type": "string"
+                      },
+                      "note": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                },
+                "evidence": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "gaps": {
+                  "type": "object",
+                  "required": [
+                    "requirements",
+                    "uncovered",
+                    "open"
+                  ],
+                  "properties": {
+                    "requirements": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "uncovered": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "open": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                },
+                "complete": {
+                  "type": "boolean"
+                },
+                "next_step": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "bridge": {
+                  "type": "object",
+                  "required": [
+                    "theorem",
+                    "target"
+                  ],
+                  "properties": {
+                    "theorem": {
+                      "type": "string"
+                    },
+                    "target": {
+                      "type": "string"
+                    },
+                    "module": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "type": {
+                      "type": "string"
+                    },
+                    "axioms": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "target_fingerprint": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "source_sha256": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "checked_at": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "bridge_check": {
+                  "type": "object",
+                  "required": [
+                    "state",
+                    "reasons"
+                  ],
+                  "properties": {
+                    "state": {
+                      "enum": [
+                        "checked",
+                        "stale",
+                        "unchecked"
+                      ]
+                    },
+                    "reasons": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  }
                 }
               }
             }
