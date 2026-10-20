@@ -799,15 +799,28 @@ def projectConstants (roots : Array Name) : CoreM (Array Name) := do
       out := out ++ env.header.moduleData[i]!.constNames
   return out
 
+/-- Whether a constant is declared in a module of `roots`, by module index: one lookup per
+constant, for the hundreds of thousands of references a large project has. -/
+def scopeTest (roots : Array Name) : CoreM (Name → Bool) := do
+  let env ← getEnv
+  let names := env.header.moduleNames
+  let mut inside : Std.HashSet Nat := {}
+  for i in [:names.size] do
+    if roots.contains names[i]!.getRoot then inside := inside.insert i
+  return fun n => match env.getModuleIdxFor? n with
+    | some i => inside.contains i.toNat
+    | none => false
+
 /-- For every declaration of the project, the project's constants its statement and its value
 mention. -/
 def refsRecords (h : IO.FS.Handle) (roots : Array Name) (cache : UsedCache) : MetaM Unit := do
   let env ← getEnv
+  let isInside ← scopeTest roots
   for n in ← projectConstants roots do
     let some ci := env.find? n | continue
     let (st, va) ← usedOf cache n ci
     let inside := fun (a : Array Name) =>
-      Json.arr ((a.filter fun c => c != n && inScope roots env c).map (Json.str ·.toString))
+      Json.arr ((a.filter fun c => c != n && isInside c).map (Json.str ·.toString))
     emit h (Json.mkObj [("record", "refs"), ("name", n.toString),
       ("owner", (ownerOf env n).toString), ("module", (moduleOf env n).toString),
       ("kind", kindOf ci), ("user_facing", toJson (userFacing n)),
