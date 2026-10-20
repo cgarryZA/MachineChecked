@@ -1,15 +1,17 @@
 """Review records: markers in Markdown files, and dismissals of advisory findings.
 
-A marker `<!-- spec-review: <name> <hash> by=<reviewer> [kind=human|ai] -->` records a review of
-the proposition `<name>` at `<hash>`; `def-review` does the same for a definition. The hash is
-either the legacy 128-bit structural hash or a `pl-fp-v1:` fingerprint. A marker
+A marker `<!-- spec-review: <name> <hash> by=<reviewer> [kind=human|ai] [source=<claim>@<sha>]...
+-->` records a review of the proposition `<name>` at `<hash>`; `def-review` does the same for a
+definition. The hash is either the legacy 128-bit structural hash or a `pl-fp-v1:` fingerprint;
+each `source` names a claim whose passage the reviewer read and that passage's digest as read
+(`review_sources.py`). A marker
 `<!-- step-review: <claim id> <source sha256> verdict=<holds|gap|false|undetermined> by=… -->`
-records a review of a printed proof step (`steps.py`) at the hash of its source text. The last marker of a
-declaration (files in order, then position) is its record; it counts only while its hash is
-current. The text of the review is the section
-the marker closes; a marker straight after another shares its text, and the `Review by` lines
-that `review promote` writes are the text of the reviewer's marker that follows each, never part
-of the section's.
+records a review of a printed proof step (`steps.py`) at the hash of its source text, which is
+the digest of the passage it read. The last marker of a declaration (files in order, then
+position) is its record; it counts only while its hash is current, and for a claim only while it
+read the claim's current passage. The text of the review is the section the marker closes; a
+marker straight after another shares its text, and the `Review by` lines that `review promote`
+writes are the text of the reviewer's marker that follows each, never part of the section's.
 
 A marker is a self-declared record: nothing in the file authenticates who wrote it.
 """
@@ -23,6 +25,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from .review_sources import parse as parse_source
 from .util import sha256_file
 
 MARKER = re.compile(r"<!--\s*(spec|def|step)-review:\s*(\S+)\s+(\S+)((?:\s+[\w-]+=\S+)*)\s*-->")
@@ -42,6 +45,7 @@ class Review:
     file: str
     line: int
     text: str
+    source: dict[str, str] | None = None   # claim id -> digest of the passage read, if recorded
     verdict: str | None = None   # a step review's finding: holds, gap, false, undetermined
 
     def to_json(self) -> dict:
@@ -63,7 +67,7 @@ def parse_file(path: Path, ai_patterns: list[str], rel_to: Path) -> list[Review]
     txt = path.read_text(encoding="utf-8")
     out, prev, block = [], 0, ""
     for m in MARKER.finditer(txt):
-        attrs = dict(a.split("=", 1) for a in m.group(4).split())
+        attrs = dict(a.split("=", 1) for a in m.group(4).split() if not a.startswith("source="))
         start = prev
         heads = [h.start() for h in HEADING.finditer(txt, prev, m.start())]
         if heads:
@@ -87,6 +91,8 @@ def parse_file(path: Path, ai_patterns: list[str], rel_to: Path) -> list[Review]
             kind=reviewer_kind(by, attrs.get("kind"), ai_patterns), provenance="self-declared",
             file=os.path.relpath(path, rel_to),
             line=txt.count("\n", 0, m.start()) + 1, text=body,
+            source=parse_source(m.group(4), m.group(2) if m.group(1) == "step" else None,
+                                m.group(3)),
             verdict=attrs.get("verdict") if m.group(1) == "step" else None))
         prev = m.end()
     return out

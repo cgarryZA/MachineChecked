@@ -3,10 +3,11 @@
 A unit of review is a locked proposition (`spec`), a definition its meaning depends on (`def`), in
 the zero-configuration view a confirmed link between a claim and a declaration (`link`), or, in
 both, a proof step (`step`: an equation or passage of a printed proof, reviewed as printed whether
-or not any Lean is linked to it). Each
-unit carries the fingerprints it would be reviewed at, its current review state, the author's
-review (shown to the reviewer only after their own verdict) and why it sits where it does in the
-order. A unit is reviewed once per fingerprint, however many claims depend on it.
+or not any Lean is linked to it). Each unit carries the fingerprints it would be reviewed at, the
+digests of the paper passages a review of it reads, by claim (`source_sha256`,
+`review_sources.py`), its current review state, the author's review (shown to the reviewer only
+after their own verdict) and why it sits where it does in the order. A unit is reviewed once per
+fingerprint, however many claims depend on it.
 
 The order is a suggestion: less effort first, with a preference for units that many claims depend
 on. Reviewing a definition settles that definition only; no claim is approved by it.
@@ -125,6 +126,7 @@ def assurance_queue(index: dict, chunks: dict, store: dict, authors: list[str]) 
                 "paper": c["paper"], "papers": [c["paper"]],
                 "section": section_of(c["number"]), "claims": [], "clauses": [],
                 "legacy_hash": st.get("legacy_hash"), "fingerprint": st.get("fingerprint"),
+                "source_sha256": (cl.get("spec_review") or {}).get("source_sha256") or {},
                 "state": (cl.get("spec_review") or {}).get("state", "pending"),
                 "author_review": _author_text(cl.get("spec_review")),
                 "witness": cl.get("witness"), "refute": cl.get("refute"),
@@ -151,7 +153,9 @@ def assurance_queue(index: dict, chunks: dict, store: dict, authors: list[str]) 
             "paper": None, "papers": sorted({paper_of[i] for i in users}),
             "section": rec.get("module", "").rsplit(".", 1)[0] or "—",
             "claims": [{"id": i} for i in users], "legacy_hash": rec.get("legacy_hash"),
-            "fingerprint": rec.get("fingerprint"), "state": rec["review"]["state"],
+            "fingerprint": rec.get("fingerprint"),
+            "source_sha256": rec["review"].get("source_sha256") or {},
+            "state": rec["review"]["state"],
             "author_review": _author_text(rec["review"]), "effort": effort,
             "reason": f"{_size(effort)} definition; used by {len(users)} claim(s)"})
     for u in units:
@@ -198,7 +202,7 @@ def step_units(index: dict, chunks: dict) -> list[dict]:
             "id": "step:" + c["id"], "kind": "step", "unit": st.get("unit"), "key": ch.get("key"),
             "name": c["number"] or c["id"], "lean": [l["name"] for l in links],
             "route": [l["name"] for l in route], "fingerprints": fps,
-            "source_sha256": ch.get("source_sha256"),
+            "source_sha256": {c["id"]: ch["source_sha256"]} if ch.get("source_sha256") else {},
             "parent": {k: parent.get(k) for k in ("id", "number")} if parent else None,
             "paper": c["paper"], "papers": [c["paper"]],
             "section": section_of(parent.get("number") or c["number"]),

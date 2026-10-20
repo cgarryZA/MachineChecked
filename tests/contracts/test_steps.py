@@ -248,8 +248,9 @@ def test_a_proof_step_is_reviewed_from_the_command_line(toy, tmp_path, monkeypat
     cli.main(["review", "promote", str(out), "--yes"])
     text = (toy / "reviews/T.md").read_text()
     sha = chunk(cfg, "T:eq:bound-sum")["source_sha256"]
-    assert f"<!-- step-review: T:eq:bound-sum {sha} verdict=holds by=human:Test-Referee -->" \
-        in text
+    # The marker records the passage read in the form of every review marker.
+    assert (f"<!-- step-review: T:eq:bound-sum {sha} verdict=holds by=human:Test-Referee "
+            f"source=T:eq:bound-sum@{sha} -->") in text
     # The marker is evidence: the step's review comes from it, and only the step's.
     index, body, cfg = build(toy, reuse_lean=True)
     assert chunk(cfg, "T:eq:bound-sum")["step"]["review"]["state"] == "holds"

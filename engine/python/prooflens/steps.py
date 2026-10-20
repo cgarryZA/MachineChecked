@@ -126,8 +126,11 @@ def report_view(r: dict, source_sha256: str | None) -> dict | None:
     verdict = r.get("verdict") or {}
     if verdict.get("value") not in STATE:
         return None
+    from .review_sources import report_digests
     pins = r.get("pins") or {}
-    pinned = (pins.get("fingerprints") or {}).get("source")
+    uid = str((r.get("unit") or {}).get("id") or "")
+    pinned = (report_digests(r) or {}).get(uid[len("step:"):]) if uid.startswith("step:") \
+        else (pins.get("fingerprints") or {}).get("source")
     rv = r.get("reviewer") or {}
     return {"reviewer": {k: rv.get(k) for k in ("id", "kind", "name", "model", "identity",
                                                  "same_family_as_author")},
@@ -146,10 +149,13 @@ def report_view(r: dict, source_sha256: str | None) -> dict | None:
 MARK = {v: k for k, v in STATE.items()}
 
 
-def marker_review(marks: list, source_sha256: str | None, authors=frozenset()) -> dict:
+def marker_review(marks: list, claim_id: str, source_sha256: str | None,
+                  authors=frozenset()) -> dict:
     """The review of a printed step from its `step-review` markers (`reviews.Review`, in file
-    order): the last marker is its record; it is the finding while its hash is the step's
-    current source hash, and `stale` otherwise."""
+    order): the last marker is its record; it is the finding while it read the step's current
+    passage (`review_sources.marker_state`, the rule of every review marker), and `stale`
+    otherwise."""
+    from .review_sources import marker_state
     views = []
     for m in marks:
         if m.verdict not in MARK:
@@ -158,8 +164,9 @@ def marker_review(marks: list, source_sha256: str | None, authors=frozenset()) -
                                    "author": m.by in authors},
                       "verdict": {"value": MARK[m.verdict], "detail": ""},
                       "state": m.verdict, "text": m.text[:TEXT_CHARS], "file": m.file,
-                      "line": m.line, "source_sha256": m.hash,
-                      "current": bool(source_sha256) and m.hash == source_sha256})
+                      "line": m.line, "source_sha256": (m.source or {}).get(claim_id),
+                      "current": bool(source_sha256) and
+                      marker_state(m, claim_id, source_sha256) == "current"})
     if not views:
         return {"state": "unreviewed", "finding": None, "reports": []}
     last = views[-1]

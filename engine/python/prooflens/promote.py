@@ -5,8 +5,9 @@ Promotion is the maintainer's step. It refuses a report that does not apply to t
 it now is, or that the acceptance rules cannot count as an independent review:
 
 * the evidence must be current (the Lean inputs unchanged since the last build);
-* the unit's fingerprints (and the 32-digit legacy hash the markers record) and the manuscript
-  revisions must be those the report was made at;
+* the unit's fingerprints (and the 32-digit legacy hash the markers record), the manuscript
+  revisions and the digests of the paper passages read (`review_sources.py`) must be those the
+  report was made at;
 * the verdict must be faithful, faithful with representation choices (listed), or broader (with
   the instantiation that gives the printed claim);
 * the reading must have been locked before the verdict, and the verdict recorded before the
@@ -25,8 +26,9 @@ was made at, and match the manuscript; its verdict must be holds as printed, hol
 `<!-- step-review: CLAIM SOURCE-SHA256 verdict=holds|gap|false by=REVIEWER -->`.
 
 For each report it accepts, it archives the report (JSON and the protocol's text block) and
-writes `<!-- spec-review: NAME HASH by=REVIEWER -->` (or `def-review`, `step-review`) after the
-declaration's (or step's) last marker, in the exact form the acceptance checker reads, then assesses the stored evidence
+writes `<!-- spec-review: NAME HASH by=REVIEWER source=CLAIM@DIGEST... -->` (or `def-review`,
+`step-review`; no `source` when no claim's passage is read) after the declaration's (or step's)
+last marker, in the exact form the acceptance checker reads, then assesses the stored evidence
 again. A promoted marker records the reviewer the report names; who they are is as the report
 states it.
 """
@@ -38,6 +40,7 @@ import re
 from pathlib import Path
 
 from . import evidence as ev
+from . import review_sources
 from .config import Config
 from .reviews import history, load_reviews, review_files
 from .util import read_json
@@ -118,6 +121,14 @@ def check_report(r: dict, body: dict, cfg: Config, accept_same_family: bool,
         if pins.get("legacy_hash") != cur.get("legacy_hash") or not HEX32.match(
                 cur.get("legacy_hash") or ""):
             why.append("the legacy hash differs from the current one")
+    # The passages read: one rule for every kind of unit.
+    want = expected_source(body, u, cur)
+    have = report_source(r)
+    if have is None and want:
+        why.append("the report does not record the paper text it was made against (source "
+                   "digests); review the unit again from a current build")
+    elif have is not None and have != want:
+        why.append("the paper's text changed since the review (source digests differ)")
     papers = body["provenance"]["papers"]
     for pid, revn in (pins.get("manuscripts") or {}).items():
         if pid in papers and papers[pid].get("revision") != revn:
@@ -164,18 +175,37 @@ def step_claim(body: dict, u: dict) -> dict | None:
     return c if is_step(c, region) else None
 
 
+def expected_source(body: dict, unit: dict, cur: dict | None = None) -> dict[str, str]:
+    """The digests of the passages a review of `unit` reads, by claim, from the inventory of
+    the evidence (which promotion checks is the current one): a step's own passage, or those of
+    the claims that state the proposition or name the definition."""
+    if unit.get("kind") == "step":
+        return {cur["id"]: cur["source_sha256"]} if cur and cur.get("source_sha256") else {}
+    inv = {"claims": (body.get("inventory") or {}).get("claims", [])}
+    return review_sources.digests(inv, unit.get("kind"), unit.get("name"))
+
+
+def report_source(r: dict) -> dict[str, str] | None:
+    """The digests a report pinned, by claim (`review_sources.report_digests`)."""
+    return review_sources.report_digests(r)
+
+
 def marker_name(r: dict) -> str:
     u = r["unit"]
     return u["id"][len("step:"):] if u["kind"] == "step" else u["name"]
 
 
-def marker(r: dict, cur: dict) -> str:
+def marker(r: dict, cur: dict, source: dict[str, str] | None = None) -> str:
+    """The marker of a promoted report; `source` is the digests of the passages it read, by
+    claim."""
+    attr = review_sources.attribute(source or {})
+    attr = " " + attr if attr else ""
     if r["unit"]["kind"] == "step":
         from .steps import STATE
         return (f"<!-- step-review: {marker_name(r)} {cur['source_sha256']} "
-                f"verdict={STATE[r['verdict']['value']]} by={r['reviewer']['id']} -->")
+                f"verdict={STATE[r['verdict']['value']]} by={r['reviewer']['id']}{attr} -->")
     return (f"<!-- {r['unit']['kind']}-review: {r['unit']['name']} {cur['legacy_hash']} "
-            f"by={r['reviewer']['id']} -->")
+            f"by={r['reviewer']['id']}{attr} -->")
 
 
 def report_text(r: dict, cur: dict) -> str:
@@ -186,7 +216,8 @@ def report_text(r: dict, cur: dict) -> str:
         f"### {', '.join(u['claims']) or u['id']}: {u['name']}",
         f"Pins: manuscript {ms}; project {p.get('project_commit')}; "
         + (f"source {cur['source_sha256']}" if u["kind"] == "step" else
-           f"hash {cur['legacy_hash']} ({p.get('fingerprint')})"),
+           f"hash {cur['legacy_hash']} ({p.get('fingerprint')}); source "
+           f"{review_sources.attribute(p.get('source_sha256') or {}) or '—'}"),
         f"Reviewer: {rv['id']} ({rv['kind']}{', ' + rv['model'] if rv.get('model') else ''}, "
         f"self-declared); {r['submitted_at']}; same model family as the author: "
         f"{rv.get('same_family_as_author')}",
@@ -275,7 +306,7 @@ def apply(cfg: Config, accepted: list[tuple[dict, dict]]) -> list[dict]:
             rel = rel.relative_to(path.parent.resolve())
         except ValueError:
             pass
-        mk = marker(r, cur)
+        mk = marker(r, cur, report_source(r))
         insert_after(path, line, [f"Review by {r['reviewer']['id']}: {r['verdict']['value']} "
                                   f"(report `{rel.as_posix()}`).", mk])
         reviews, _ = load_reviews(cfg.reviews, cfg.ai_reviewers, cfg.root)
