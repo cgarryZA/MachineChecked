@@ -94,7 +94,7 @@ Dismissals of warnings (`dismissals.json`):
 | `inventory` | the inventory as read |
 | `reviews` | the review files' hashes and every parsed marker |
 | `dismissals` | as read |
-| `lean` | the probe records: specifications (binders, conclusion, closure, constants, hashes), proofs (exact-type check, axioms), declarations (signature, value, doc, hashes), layering |
+| `lean` | the probe records: specifications (binders, conclusion, closure, constants, hashes), proofs (exact-type check, axioms), declarations (signature, value, definition content, authored source, doc, hashes), layering |
 | `tex` | per paper: mode, page size, anchors (env, number, labels, file:line, begin/head/end positions, source hash), files read, source regions, and the display excerpts of its claims (`excerpts`, [SOURCE_REGIONS.md](SOURCE_REGIONS.md#display-excerpts)) |
 | `assessment` | per claim: status and clauses (for a proof step, also its `step_review` from its markers); all findings |
 
@@ -104,6 +104,58 @@ occurrence of one of the statement's own variables (the index, in `binders`, of 
 introduced it). A conclusion that is a conjunction, disjunction or equivalence also has
 `logic`, a tree of `{op, args}` whose leaves are `{leaf: {text, segments}}`. A term also lists its sub-terms as `terms`, ranges `{from, to}` of its segments (outer before inner; none for a very large term), so that a reader can select a whole sub-term. Both are for
 display: no status, fingerprint or hash reads them.
+
+An object of a statement whose type is a subtype, structure or class with a field that is a
+proposition (a prefix binder that is not a hypothesis, or a `forall`/`exists` node of `logic`)
+has `properties`: every field of its type, inherited ones included and each once, projected from
+the object, as `{field, kind, structure, declared_in, inherited, projection, module, range, term,
+type}`. `kind` is `data` or `proposition`; `type` is the field's type at the object (for a
+proposition, what it states), with identities prefixed by the object's identity and the field
+(`<id>#<field>:`). At most 32 are listed (`properties_omitted` counts the rest); a failed
+extraction is `properties_error`. A hypothesis whose type is a structure of propositions (a
+class such as `[IsProbability Ω]`; not a conjunction or an equivalence) has the same
+`properties`: what its fields state. A hypothesis lists as `objects` the objects quantified inside it
+whose type carries a property, each `{op, name, id, type, scope, properties}`, with the
+connectives that enclose it (`scope`): they belong to the hypothesis. The reader shows a given
+object's properties as included in its type, a witness's as established with it (an object under
+a negation, an alternative, an equivalence or the premise of an implication keeps them local to
+that clause), and an object inside a hypothesis inside that hypothesis.
+
+A declaration record of a definition of data or of a predicate (not a proposition, an instance or
+a generated helper) also says what the definition says. `defined_by` is `body` or `equations`.
+With `body`: `params` (the leading `fun` binders of its value, each `{name, binder, id, type,
+proposition}`), `body` (the term under them, with the sub-term identities it has in `value`) and
+`result` (its type, identities prefixed `type:`). `equations` lists the equation theorems Lean
+derives (`Lean.Meta.getEqnsFor?`), each `{name, statement, params, equation}`: the theorem's exact
+statement, and its variables and the equation under them; their identities are prefixed by the
+theorem's name. At most 64 are listed; `equations_omitted` counts the rest and `equation_names`
+names all of them. A failed extraction is recorded in `definition_error` and stops nothing else.
+`lean_source` is the declaration's authored source, `{file, line, end_line, text, sha256}`, read
+from the checkout the probe ran on (none for a declaration of a dependency). The export carries
+these fields only when every paper publishes its Lean.
+
+A printed term of a statement (a binder's type, a conclusion or one of its leaves) and the body
+of a definition also carry `expansions`: each application of one of the project's definitions
+inside it, expanded at its actual arguments. An expansion is `{at, id, name, args, defined_by,
+checked}`: `at` is the identity of the application it expands, `id` (`at` followed by `=`)
+prefixes the identities of its own sub-terms, and `args` are the arguments by the definition's
+parameters (`{name, binder, value}`). With `body`, `params` are the parameters the application
+does not supply and `body` is the definition's body with the arguments substituted
+(`Expr.beta`, so no bound variable is captured) and checked by Lean to have the application's
+type. With `equations`, `equations` lists each equation theorem whose left side matches the
+application, specialised to it, `{name, statement, params, equation}`, with the variables and
+case conditions that remain as `params` and the statement checked to follow from the theorem;
+`equations_not_applying` names the others and `equations_omitted` counts those not compared.
+An expansion's own applications expand once more; a failure is `error` on that expansion only.
+Only what is printed is searched (explicit arguments, not implicit or instance ones), up to
+4000 nodes of a term; at most 16 applications of one term are expanded and `expansions_omitted`
+counts the rest.
+Expansions are display only and are exported with the statement, so only with the Lean.
+In the reader's data, each expansion is a file of its own, `data/expansions/<key>.json`, where
+`key` is the first 24 hex digits of the SHA-256 of its canonical JSON; a statement, declaration
+or expansion refers to it as `{at, id, name, key}`, and the reader fetches it when it is opened.
+An expansion that recurs is written once. A published audit's loader fetches every expansion
+its claims and declarations refer to and checks each against its key.
 
 ## Manifest (`manifest-index.schema.json`, `manifest-claim.schema.json`), derived
 

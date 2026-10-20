@@ -31,7 +31,9 @@ def _pick(d: dict | None, keys: list[str]) -> dict | None:
 
 
 DECL_KEYS_LEAN = ["name", "kind", "module", "range", "doc", "signature", "value", "uses",
-                  "fingerprint", "legacy_hash"]
+                  "fingerprint", "legacy_hash", "defined_by", "params", "body", "equations",
+                  "equation_names", "equations_omitted", "definition_error", "result",
+                  "lean_source"]
 DECL_KEYS_MIN = ["name", "kind", "module", "fingerprint", "legacy_hash"]
 
 
@@ -86,7 +88,9 @@ def other_papers_material(cfg: Config, pid: str, index: dict, chunks: dict,
         out.append((c["id"], f"a claim id of paper {c['paper']}", True))
         for n in sorted(claim_names(c) - mine):
             out.append((n, f"a declaration only paper {c['paper']} uses", True))
-            for ln in str((by_name.get(n) or {}).get("signature") or "").splitlines():
+            d = by_name.get(n) or {}
+            for ln in (str(d.get("signature") or "").splitlines()
+                       + str((d.get("lean_source") or {}).get("text") or "").splitlines()):
                 if len(ln.strip()) >= MIN_LINE:
                     out.append((ln.strip(), f"Lean text of {n}", False))
         for cl in c.get("clauses", []):
@@ -339,8 +343,12 @@ def export(cfg: Config, out: Path, release: str | None = None,
                                 "file"]) for c in index["claims"]]
     pidx["units"] = index.get("units") or {}
     write_json(data / "index.json", pidx, indent=None)
+    # Definitions expanded at their applications are written on their own, and only those that
+    # a published statement or declaration refers to (`mf.split_expansions`).
+    expansions: dict[str, dict] = {}
     for name, chunk in chunks.items():
-        write_json(data / "claims" / name, public_claim(chunk, pubs[chunk["paper"]]),
+        write_json(data / "claims" / name,
+                   mf.split_expansions(public_claim(chunk, pubs[chunk["paper"]]), expansions),
                    indent=None)
     # Declarations are shared between papers: their Lean text and review texts are exported only
     # when every paper allows it. A redacted record is a different record, so it gets its own key.
@@ -351,6 +359,7 @@ def export(cfg: Config, out: Path, release: str | None = None,
     for key, d in store.items():
         q = _pick(d, DECL_KEYS_LEAN if lean_ok else DECL_KEYS_MIN)
         q["review"] = _reviews(d.get("review"), rev_ok)
+        q = mf.split_expansions(q, expansions)
         new = mf.record_key(q)
         rekey[key] = new
         write_json(data / "decls" / f"{new}.json", q, indent=None)
@@ -359,6 +368,8 @@ def export(cfg: Config, out: Path, release: str | None = None,
         c = json.loads(path.read_text(encoding="utf-8"))
         c["decls"] = {n: rekey[k] for n, k in c["decls"].items()}
         write_json(path, c, indent=None)
+    for key, x in expansions.items():
+        write_json(data / "expansions" / f"{key}.json", x, indent=None)
     # The workspace records the auditors accepted, with what each paper publishes.
     from . import published_work
     paper_of = {c["id"]: c["paper"] for c in chunks.values()}

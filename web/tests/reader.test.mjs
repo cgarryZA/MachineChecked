@@ -557,10 +557,43 @@ for (const width of [1300, 390]) {
     assert.equal((await scrollTops(pg))[1], paper, "the paper keeps its position");
     await pg.locator("aside .crumbs .back").click();
     await pg.waitForSelector("aside .view h1");
-    assert.equal(await pg.locator("aside .decl.inspector:visible").count(), 2, "both exact definitions remain in the claim comparison");
+    assert.equal(await pg.locator("aside .defn.exact:visible").count(), 2, "both exact definitions remain in the claim comparison");
     const [panel2, paper2] = await scrollTops(pg);
     assert.equal(panel2, panel, "the panel's scroll position comes back");
     assert.equal(paper2, paper, "the paper keeps its position");
+  });
+
+  await check("a definition claim shows each definition as it is written, beside the paper", width, async (pg) => {
+    await toyClaim(pg, "T:def:even");
+    const view = pg.locator("aside .view");
+    const even = view.locator(".lean .defn.readable[data-decl='Toy.IsEven']");
+    const tri = view.locator(".lean .defn.readable[data-decl='Toy.triangle']");
+    await tri.locator(".eq").first().waitFor();
+    assert.ok(await view.locator(".paper").textContent().then((t) => /triangular number/.test(t)), "the paper passage is beside them");
+    // Evenness by its body, with its parameter and the witness's type.
+    assert.match(await even.locator(".head").textContent(), /Toy\.IsEven\s*\(n : Nat\)\s*:\s*Prop/);
+    assert.equal((await even.locator(".body").textContent()).trim(), "∃ (k : Nat), n = 2 * k");
+    // The triangular numbers by their two equations, as Lean states them; the compiled
+    // recursion is folded away.
+    const eqs = await tri.locator(".eq").allTextContents();
+    assert.equal(eqs.length, 2);
+    assert.match(eqs[0], /Toy\.triangle 0 = 0/);
+    assert.match(eqs[1], /for\s*\(n : Nat\):\s*Toy\.triangle n\.succ = Toy\.triangle n \+ \(n \+ 1\)/);
+    const exact = view.locator(".exact-pane .defn.exact[data-decl='Toy.triangle']");
+    assert.match(await exact.locator(".src").textContent(), /\| n \+ 1 => triangle n \+ \(n \+ 1\)/);
+    assert.deepEqual(await exact.locator(".thm .tn").allTextContents(), ["Toy.triangle.eq_1", "Toy.triangle.eq_2"]);
+    assert.equal(await exact.locator("details.compiled").getAttribute("open"), null, "the compiled value is a secondary view");
+    assert.match(await exact.locator("details.compiled").textContent(), /Nat\.brecOn/);
+    assert.ok(!(await view.locator("section.lean").textContent()).includes("brecOn"), "no compiled recursion in the readable Lean");
+    // A sub-term selected in the readable body is the same sub-term of the exact value.
+    await even.locator(".body .p", { hasText: "2" }).first().click();
+    const lit = view.locator(".exact-pane .defn.exact[data-decl='Toy.IsEven'] .in");
+    assert.equal((await lit.allTextContents()).join(""), "2 * k");
+    // Selecting in an equation selects the same sub-term of its theorem.
+    await tri.locator(".eq").nth(1).locator(".body .p", { hasText: "1" }).last().click();
+    const mine = (await tri.locator(".eq").nth(1).locator(".in").allTextContents()).join("");
+    assert.match(mine, /^\(?n \+ 1\)?$/);
+    assert.equal((await exact.locator(".thm[data-eq='Toy.triangle.eq_2'] .in").allTextContents()).join(""), mine);
   });
 
   await check("the main view is the paper and the Lean, with the assumptions shown", width, async (pg) => {
@@ -656,9 +689,141 @@ await check("in the local reader a symbol is linked by choosing it and clicking 
     assert.equal(await pg.locator("aside .mklink").count(), 0);
   });
 
+  await check("a linked definition keeps its parameters in order, and a recursive one shows its equations", width, async (pg) => {
+    await pg.goto(origin + `/structure/#/r/${SHAPE.release}/read/P/${encodeURIComponent("P:def:multiple")}`);
+    const lean = pg.locator("aside .view section.lean");
+    const mult = lean.locator(".defn.readable[data-decl='Shape.MultipleAbove']");
+    await mult.waitFor();
+    assert.match(await mult.locator(".head").textContent(), /\(b : Nat\)\s*\{m : Nat\}\s*\(n : Nat\)\s*:\s*Prop/);
+    assert.equal((await mult.locator(".body").textContent()).trim(), "∃ (q : Nat), b ≤ q ∧ n = m * q");
+    const fib = lean.locator(".defn.readable[data-decl='Shape.fib'] .eq");
+    assert.equal(await fib.count(), 3);
+    assert.match(await fib.nth(0).textContent(), /Shape\.fib 0 = 0/);
+    const exact = pg.locator("aside .view .exact-pane .defn.exact[data-decl='Shape.fib']");
+    assert.equal(await exact.locator(".thm").count(), 3);
+    assert.match(await exact.locator(".src").textContent(), /\| n \+ 2 => fib n \+ fib \(n \+ 1\)/);
+  });
+
+  await check("properties carried by a type stay with their object: given, assumed or produced", width, async (pg) => {
+    const open = async (id) => {
+      await pg.goto(origin + `/structure/#/r/${SHAPE.release}/read/P/${encodeURIComponent(id)}`);
+      const st = pg.locator("aside .view :not(.suggestion) > .stmt");
+      await st.waitFor();
+      return st;
+    };
+    // A supplied solution: its proof fields are in its type, one inherited from its parent; the
+    // extra assumption is a row of its own.
+    let st = await open("P:thm:supplied");
+    const given = st.locator(".ribbon .carried.given");
+    assert.equal(await given.count(), 1);
+    const start = given.locator(".prop[data-field='start']");
+    assert.match(await start.textContent(), /s\.path 0 = d.*field start of Solution, from Base/s);
+    assert.match(await given.locator(".prop[data-field='le_bound']").textContent(), /∀ \(n : Nat\), s\.path n ≤ s\.bound/);
+    assert.match(await given.locator(".data").textContent(), /s\.path : Nat → Nat, s\.bound : Nat/);
+    // The extra assumption is about s alone, so it is shown under s, as a condition of its own.
+    assert.match(await st.locator(".ribbon .line.sub").textContent(), /assume\s*\(h\)\s*s\.bound ≤ 5/);
+    assert.equal(await st.locator(".ribbon .subc .carried").count(), 0, "an assumption is not a property of a type");
+    // The assumed existence keeps its solution inside the assumption; the result's own solution
+    // is produced.
+    st = await open("P:thm:assumed");
+    const inner = st.locator(".ribbon li.hypothesis .inner");
+    assert.equal(await inner.count(), 1);
+    assert.match(await inner.textContent(), /inside this assumption \(for every › then\):\s*there is s/);
+    assert.equal(await inner.locator(".carried.inside .prop").count(), 2);
+    assert.equal(await st.locator(".ribbon > li.exists .carried.produced").count(), 1);
+    // An established solution is produced under the condition on d.
+    st = await open("P:thm:produced");
+    assert.deepEqual(await st.locator(".ribbon > li").evaluateAll((ls) => ls.map((l) => l.className.split(" ").find((c) => ["forall", "hypothesis", "exists"].includes(c)))), ["forall", "exists"]);
+    assert.match(await st.locator(".ribbon > li.forall .line.sub").textContent(), /assume\s*\(h1\)\s*Shape\.Admissible d/);
+    assert.match(await st.locator(".carried.produced .basis").textContent(), /Producing this object establishes/);
+    // A subtype's predicate is in its type; a class instance stays an input with its law.
+    st = await open("P:thm:positive");
+    assert.match(await st.locator(".carried.given .prop[data-field='property']").textContent(), /0 < p\.val/);
+    st = await open("P:thm:single");
+    assert.match(await st.locator(".carried.given .prop[data-field='uniq']").textContent(), /∀ \(a : T\), a = default.*field uniq of Single/s);
+    assert.match(await st.locator(".concl").textContent(), /Subsingleton T/);
+    // A supplied measure space carries its laws; that it is a probability space is an assumption
+    // stating what its field says.
+    st = await open("P:thm:probability");
+    assert.match(await st.locator(".carried.given .prop[data-field='measure_empty']").textContent(), /field measure_empty of MeasureData/);
+    assert.match(await st.locator(".carried.states .prop[data-field='measure_univ']").textContent(), /it states.*= 1/s);
+    assert.equal(await st.locator(".carried.produced").count(), 0);
+    // Inside a negation the solution is not produced: its properties stay local to that claim.
+    st = await open("P:thm:none-large");
+    assert.equal(await st.locator(".carried.produced").count(), 0, "a negated existence produces nothing");
+    assert.match(await st.locator(".concl .carried.local .basis").textContent(), /within the clause that contains it/);
+    // A sub-term of a property can be selected, and the exact Lean selects the same one.
+    await open("P:thm:supplied");
+    await pg.locator("aside .view .carried .prop[data-field='start'] .p", { hasText: "0" }).first().click();
+    assert.ok(await pg.locator("aside .view .carried .prop[data-field='start'] .in").count() > 0);
+    const exactField = pg.locator(".exact-pane .carried .field[data-field='start']");
+    assert.match(await exactField.textContent(), /s\.start : s\.path 0 = d/);
+    assert.match(await exactField.locator(".origin").textContent(), /Shape\.Base\.start/);
+    assert.ok(await exactField.locator(".in").count() > 0, "the exact view selects the same sub-term");
+  });
+
+  await check("a definition expands at the arguments of each application, beside the statement", width, async (pg) => {
+    // An expansion is fetched from its own file when it is opened, not with the claim.
+    const fetched = [];
+    pg.on("request", (r) => { if (r.url().includes("/data/expansions/")) fetched.push(r.url()); });
+    await pg.goto(origin + `/structure/#/r/${SHAPE.release}/read/P/${encodeURIComponent("P:thm:jet")}`);
+    const st = pg.locator("aside .view :not(.suggestion) > .stmt").first();
+    await st.locator(".ribbon").waitFor();
+    assert.equal(fetched.length, 0, "no expansion is fetched before one is opened");
+    // The assumption at order n + 5 and the conclusion at n + 4 are different applications.
+    const chips = st.locator("button.xb");
+    assert.equal(await chips.count(), 2);
+    await chips.nth(0).click();
+    let xp = st.locator(".inspect .xp");
+    await xp.waitFor();
+    assert.match(await xp.locator(".occ").textContent(), /Shape\.JetBound f S \(n \+ 5\) C/);
+    assert.match((await xp.locator(".args").textContent()).replace(/\s+/g, " "), /k := n \+ 5/);
+    assert.match(await xp.locator(".body").textContent(), /∀ \(j : Nat\), j ≤ n \+ 5 → ∀ \(x : Nat\), S x → f j x ≤ C/);
+    assert.equal(fetched.length, 1, "opening an expansion fetches it");
+    assert.equal(await st.locator(".ribbon .in").count() > 0, true, "the application stays visible and selected");
+    await chips.nth(1).click();
+    xp = st.locator(".inspect .xp");
+    assert.match(await xp.locator(".body").textContent(), /j ≤ n \+ 4/);
+    assert.doesNotMatch(await xp.locator(".body").textContent(), /n \+ 5/);
+
+    // A partial application keeps the parameter it still needs; the definition it is passed to
+    // expands with it applied, and that application expands in turn.
+    await pg.goto(origin + `/structure/#/r/${SHAPE.release}/read/P/${encodeURIComponent("P:thm:below")}`);
+    const every = pg.locator("aside .view :not(.suggestion) > .stmt").filter({ hasText: "Shape.Every" }).first();
+    await every.locator(".ribbon").waitFor();
+    await every.locator("button.xb", { hasText: /^Shape\.AllBelow 7$/ }).click();
+    xp = every.locator(".inspect .xp").first();
+    assert.match((await xp.locator(".line").textContent()).replace(/\s+/g, " "), /still to supply \(v : Fin 2 → Nat\): ∀ \(i : Fin 2\), v i ≤ 7/);
+    assert.match((await xp.locator(".args").textContent()).replace(/\s+/g, " "), /α := Nat \(implicit\) ?instance := instLENat ?bound := 7 ?n := 2 \(implicit\)/);
+    await every.locator("button.xb", { hasText: /^Shape\.Every/ }).first().click();
+    xp = every.locator(".inspect .xp").first();
+    await xp.locator("button.xb").click();
+    assert.match(await xp.locator(".xp .body").textContent(), /∀ \(i : Fin 2\), v i ≤ 7/);
+    // A bound variable of the definition is renamed apart from the statement's own i.
+    const below = pg.locator("aside .view :not(.suggestion) > .stmt").filter({ hasText: "Shape.AllBelow i v" }).first();
+    await below.locator("button.xb").first().click();
+    assert.match(await below.locator(".inspect .xp .body").textContent(), /∀ \(i_1 : Fin 3\), v i_1 ≤ i$/);
+
+    // A definition by equations shows the equation that applies, specialised, with its case
+    // condition and its theorem's name.
+    await pg.goto(origin + `/structure/#/r/${SHAPE.release}/read/P/${encodeURIComponent("P:thm:steps")}`);
+    const steps = pg.locator("aside .view :not(.suggestion) > .stmt").filter({ hasText: "Shape.steps" }).first();
+    await steps.locator(".concl").waitFor();
+    await steps.locator("button.xb").click();
+    xp = steps.locator(".inspect .xp");
+    assert.match((await xp.locator(".eq").textContent()).replace(/\s+/g, " "), /Shape\.steps \(k \+ 3\) = if h : k \+ 3 = 0 then 0 else Shape\.steps \(k \+ 3 - 1\) \+ 1 expand Shape\.steps \(k \+ 3 - 1\) Shape\.steps\.eq_1/);
+    const pick = pg.locator("aside .view :not(.suggestion) > .stmt").filter({ hasText: "Shape.pick" }).first();
+    await pick.locator("button.xb").click();
+    xp = pick.locator(".inspect .xp");
+    assert.match((await xp.locator(".eq").textContent()).replace(/\s+/g, " "), /provided \(x_3 : k \+ 1 = 0 → False\): Shape\.pick \(k \+ 1\) 0 = 1 Shape\.pick\.eq_2/);
+    assert.match(await xp.textContent(), /Not applying here: Shape\.pick\.eq_1, Shape\.pick\.eq_3/);
+    assert.match((await xp.locator(".args").textContent()).replace(/\s+/g, " "), /argument 1 := k \+ 1/);
+    if (width === 1300) await pg.screenshot({ path: process.env.SHOT_DIR ? path.join(process.env.SHOT_DIR, "expansion.png") : path.join(os.tmpdir(), "mc-expansion.png") });
+  });
+
   await check("a statement keeps its order, with each object's own conditions beside it", width, async (pg) => {
     await pg.goto(origin + `/structure/#/r/${SHAPE.release}/read/P/${encodeURIComponent("P:thm:layout")}`);
-    const st = pg.locator("aside .view .stmt");
+    const st = pg.locator("aside .view :not(.suggestion) > .stmt");
     await st.locator(".ribbon").waitFor();
     const rows = (await st.locator(".ribbon > li").allTextContents()).map((t) => t.replace(/\s+/g, " ").trim());
     assert.equal(rows.length, 7, rows.join(" | "));
@@ -702,7 +867,7 @@ await check("in the local reader a symbol is linked by choosing it and clicking 
 
   await check("a \"there is\" inside a conclusion shows its witness's type and scope", width, async (pg) => {
     await pg.goto(origin + `/structure/#/r/${SHAPE.release}/read/P/${encodeURIComponent("P:thm:witnesses")}`);
-    const st = pg.locator("aside .view .stmt").first();
+    const st = pg.locator("aside .view :not(.suggestion) > .stmt").first();
     await st.locator(".concl").waitFor();
     const parts = (await st.locator(".concl .body > .parts > li").allTextContents()).map((t) => t.replace(/\s+/g, ""));
     assert.equal(parts.length, 2, parts.join(" | "));
@@ -719,7 +884,7 @@ await check("in the local reader a symbol is linked by choosing it and clicking 
 
   await check("negation, implication and \"for every\" inside a conclusion keep their scope", width, async (pg) => {
     await pg.goto(origin + `/structure/#/r/${SHAPE.release}/read/P/${encodeURIComponent("P:thm:shapes")}`);
-    const st = pg.locator("aside .view .stmt").first();
+    const st = pg.locator("aside .view :not(.suggestion) > .stmt").first();
     await st.locator(".concl").waitFor();
     assert.match((await st.locator(".ribbon").textContent()).replace(/\s+/g, " "), /assume instance Nonempty E/);
     const parts = (await st.locator(".concl .body > .parts > li").allTextContents()).map((t) => t.replace(/\s+/g, ""));
@@ -730,7 +895,7 @@ await check("in the local reader a symbol is linked by choosing it and clicking 
 
   await check("clicking inside an expression selects it, and each click widens it", width, async (pg) => {
     await pg.goto(origin + `/structure/#/r/${SHAPE.release}/read/P/${encodeURIComponent("P:thm:layout")}`);
-    const st = pg.locator("aside .view .stmt");
+    const st = pg.locator("aside .view :not(.suggestion) > .stmt");
     await st.locator(".ribbon").waitFor();
     const plus = st.locator(".concl .parts > li").nth(1).locator(".p", { hasText: "+" }).first();
     const text = async () => (await st.locator(".inspect.term code").textContent()).trim();
@@ -744,7 +909,7 @@ await check("in the local reader a symbol is linked by choosing it and clicking 
 
   await check("a sub-term selected in one view of a statement is selected in the other", width, async (pg) => {
     await pg.goto(origin + `/structure/#/r/${SHAPE.release}/read/P/${encodeURIComponent("P:thm:layout")}`);
-    const st = pg.locator("aside .view .stmt").first();
+    const st = pg.locator("aside .view :not(.suggestion) > .stmt").first();
     await st.locator(".ribbon").waitFor();
     const exact = pg.locator("aside .exact pre").first();
     await exact.waitFor();
@@ -763,7 +928,7 @@ await check("in the local reader a symbol is linked by choosing it and clicking 
 
   await check("a name's plain-English note appears only on request, beside the name", width, async (pg) => {
     await pg.goto(origin + `/structure/#/r/${SHAPE.release}/read/P/${encodeURIComponent("P:thm:layout")}`);
-    const st = pg.locator("aside .view .stmt");
+    const st = pg.locator("aside .view :not(.suggestion) > .stmt");
     await st.locator(".ribbon").waitFor();
     assert.equal(await st.locator(".note").count(), 0, "no note by default");
     await st.locator("button.g", { hasText: "Inhabited" }).click();
@@ -775,7 +940,7 @@ await check("in the local reader a symbol is linked by choosing it and clicking 
 
   await check("hovering a variable highlights it everywhere; a click holds it", width, async (pg) => {
     await pg.goto(origin + `/structure/#/r/${SHAPE.release}/read/P/${encodeURIComponent("P:thm:layout")}`);
-    const st = pg.locator("aside .view .stmt");
+    const st = pg.locator("aside .view :not(.suggestion) > .stmt");
     await st.locator(".ribbon").waitFor();
     const x = st.locator(".concl .var[data-var='6']").first();
     await x.hover();

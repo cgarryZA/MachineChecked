@@ -59,6 +59,119 @@ def test_statement_inspection(toy):
 
 @needs_lean
 @needs_tex
+def test_definitions_carry_what_they_say_through_the_export(toy, tmp_path):
+    """Definition 1.1 maps two definitions (#97): evenness by its body, with the witness's type,
+    and the triangular numbers by the equations Lean derives, each with its exact statement and
+    authored source. The public export carries them when the paper publishes its Lean, and
+    leaves them out when it does not."""
+    from prooflens import config as cfgmod
+    from prooflens.export import export
+    index, body, cfg = build(toy)
+    decls = body["lean"]["decls"]
+    even, tri = decls["Toy.IsEven"], decls["Toy.triangle"]
+    assert even["defined_by"] == "body"
+    assert [p["name"] for p in even["params"]] == ["n"]
+    assert even["body"]["text"] == "∃ (k : Nat), n = 2 * k"
+    assert "def IsEven (n : Nat) : Prop := ∃ k, n = 2 * k" in even["lean_source"]["text"]
+    assert tri["defined_by"] == "equations"
+    assert [e["name"] for e in tri["equations"]] == ["Toy.triangle.eq_1", "Toy.triangle.eq_2"]
+    assert tri["equations"][0]["statement"]["text"] == "Toy.triangle 0 = 0"
+    assert tri["equations"][1]["statement"]["text"].startswith("∀ (n : Nat), Toy.triangle ")
+    assert tri["equations"][1]["equation"]["text"].endswith("= Toy.triangle n + (n + 1)")
+    assert "| n + 1 => triangle n + (n + 1)" in tri["lean_source"]["text"]
+    # The generated helpers stay as they were: no equations of their own.
+    assert all("defined_by" not in d for n, d in decls.items() if "._" in n or ".match_" in n)
+
+    def exported(out):
+        data = out / "data"
+        idx = json.loads((data / "index.json").read_text())
+        c = next(c for c in idx["claims"] if c["id"] == "T:def:even")
+        chunk = json.loads((data / "claims" / c["file"]).read_text())
+        return json.loads((data / "decls" / f"{chunk['decls']['Toy.triangle']}.json").read_text())
+
+    def expanded(out):
+        """The definitions expanded at their arguments in Theorem 2.1's exported statements."""
+        data = out / "data"
+        idx = json.loads((data / "index.json").read_text())
+        c = next(c for c in idx["claims"] if c["id"] == "T:thm:even-add")
+        found = []
+
+        def walk(o):
+            if isinstance(o, dict):
+                found.extend(x["name"] for x in o.get("expansions", []))
+                for v in o.values():
+                    walk(v)
+            elif isinstance(o, list):
+                for v in o:
+                    walk(v)
+        walk(json.loads((data / "claims" / c["file"]).read_text()))
+        return found
+
+    export(cfg, tmp_path / "public")
+    rec = exported(tmp_path / "public")
+    assert rec["equations"] == tri["equations"] and rec["lean_source"] == tri["lean_source"]
+    # The statement's applications of evenness are expanded, and published with the Lean.
+    assert "Toy.IsEven" in expanded(tmp_path / "public")
+    edit(toy / "machinechecked.toml", "lean = true", "lean = false")
+    export(cfgmod.load(toy / "machinechecked.toml"), tmp_path / "private")
+    rec = exported(tmp_path / "private")
+    assert not {"equations", "body", "lean_source", "value"} & set(rec)
+    assert expanded(tmp_path / "private") == []
+
+
+def expansions_apart(data):
+    """Check that the reader data in `data` keeps every expansion out of the files that refer to
+    it: claims, declarations and expansions hold only references `{at, id, name, key}`, each to a
+    file `expansions/<key>.json` whose content has that key. Returns the number of expansions."""
+    def refs(o, where):
+        found = []
+        if isinstance(o, dict):
+            for k, v in o.items():
+                if k == "expansions":
+                    for x in v:
+                        assert set(x) == {"at", "id", "name", "key"}, \
+                            f"{where} embeds an expansion of {x.get('name')}"
+                        found.append(x["key"])
+                else:
+                    found += refs(v, where)
+        elif isinstance(o, list):
+            for v in o:
+                found += refs(v, where)
+        return found
+    wanted = set()
+    for sub in ("claims", "decls", "expansions"):
+        for f in (data / sub).glob("*.json"):
+            rec = json.loads(f.read_text())
+            wanted |= set(refs(rec, f"{sub}/{f.name}"))
+            if sub != "claims":
+                assert mf.record_key(rec) == f.stem, f"{sub}/{f.name} is not under its key"
+    stored = {f.stem for f in (data / "expansions").glob("*.json")}
+    assert wanted <= stored, f"missing expansions {sorted(wanted - stored)[:3]}"
+    for f in (data / "claims").glob("*.json"):
+        c = json.loads(f.read_text())
+        assert all((data / "decls" / f"{k}.json").exists() for k in c.get("decls", {}).values())
+    return len(stored)
+
+
+@needs_lean
+@needs_tex
+def test_claim_files_refer_to_expansions(toy, tmp_path):
+    """A claim file carries no expansion, only references to `data/expansions/<key>.json`,
+    which the reader fetches when one is opened; each is written once under its content key,
+    in the site and in the public export, and not exported when the Lean is not published."""
+    from prooflens import config as cfgmod
+    from prooflens.export import export
+    _, _, cfg = build(toy)
+    assert expansions_apart(cfg.out_dir / "site" / "data") > 0
+    export(cfg, tmp_path / "public")
+    assert expansions_apart(tmp_path / "public" / "data") > 0
+    edit(toy / "machinechecked.toml", "lean = true", "lean = false")
+    export(cfgmod.load(toy / "machinechecked.toml"), tmp_path / "private")
+    assert expansions_apart(tmp_path / "private" / "data") == 0
+
+
+@needs_lean
+@needs_tex
 def test_hashes(toy):
     _, body, _ = build(toy)
     spec = body["lean"]["specs"]["Toy.PaperSpec.thm_triangle"]
