@@ -45,8 +45,12 @@ In a project with a `machinechecked.toml` (the full assessment), the document al
 with its `tier` (`violation`, `obligation`, `warning`), `code`, `subject` (the claim or clause,
 for example `T:thm:bound#0`), `message`, and `dismissed` (who and why) when a warning was
 dismissed. A warning with code `module-doc-name` is a name a module docstring lists that nothing
-declares: its `subject` is the module, its `trigger` the name, and it has `file` and `line`. Report the violations and obligations by subject and message; they are what blocks a
-claim from being accepted.
+declares: its `subject` is the module, its `trigger` the name, and it has `file` and `line`.
+Report the violations and obligations by subject and message; they are what blocks a
+claim from being accepted. `replay` is null when no Comparator replay counts; otherwise it
+gives the record's `guard` (`guarded`, `unguarded`, or `unrecorded` for an older record), the
+number of proofs `replayed`, and a `message` when they were not shown to run under the sandbox
+guard.
 
 ### What a declaration rests on
 
@@ -102,6 +106,12 @@ prints one JSON document (`machinechecked/compare@1`) for one claim, read from t
 interpretation; the review protocol's `--json` output uses the same stages. Passages and linked
 statements are never shortened; `--limit N` pages the definitions, and `--after ID` (the
 `retrieval.definitions.next` it returns) continues them.
+
+A proof step (`machinechecked compare "Equation (3)"`, or the review unit `step:<claim id>`) is a
+claim of its own: its passage carries `step` (its parent and the question, whether the printed
+step holds) and `context` (the proof up to it and the sentence after it); from the compare stage
+its declarations have the role `establishes the step` or `formal route used instead`, and at the
+informed stage `interpretations.step` holds its correspondence, route and review.
 
 Targeted queries have one shape (`machinechecked/query@1`: `op`, `target`, `context`,
 `results`, `provenance`, `retrieval`):

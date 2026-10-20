@@ -69,6 +69,10 @@ audit whose terms allow it carries its pinned PDF.
   its outputs and never modifies its tools.
 - **Review queue**: reading locked before the Lean is shown, verdict recorded before the author's
   review; a report is exported, and only `machinechecked review promote` writes a marker.
+- **Proof steps are targets of their own** (#125): an equation or passage of a printed proof has
+  its own links (the Lean that establishes it, or the different formal route used instead) and
+  its own review, apart from its enclosing result. A `proof-step` scope decision is about formal
+  coverage only, never a reading of the step.
 - **Provenance is shown, never upgraded.** A Markdown marker is self-declared; a review by an
   author of the statements is never independent; human or AI review is recorded.
 - **Links are pinned to a release** (`#/r/<release>/…`): an older link shows a banner, never newer

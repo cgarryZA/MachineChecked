@@ -33,3 +33,41 @@ def test_consecutive_markers_share_their_section(tmp_path):
     # A marker with a heading of its own but no text has none, and does not borrow another's.
     assert text["Foo.d"] == ""
     assert text["Foo.spec_c"] == "Its own review."
+
+
+PROMOTED = """# Reviews
+
+## Remark 1: `Foo.spec_a`, `Foo.spec_c`
+
+Manuscript: the bound. Propositions: both. Correspondence: item by item. Verdict: faithful.
+
+<!-- spec-review: Foo.spec_a 0123456789abcdef0123456789abcdef by=author -->
+Review by reviewer: faithful (report `reports/Foo.spec_a--reviewer--2026.md`).
+<!-- spec-review: Foo.spec_a 0123456789abcdef0123456789abcdef by=reviewer -->
+<!-- spec-review: Foo.spec_c 456789abcdef0123456789abcdef0123 by=author -->
+
+## Remark 2: `Foo.spec_d`
+
+Its own review.
+
+<!-- spec-review: Foo.spec_d 11111111111111111111111111111111 by=author -->
+Review by reviewer: faithful (report `reports/Foo.spec_d--reviewer--2026.md`).
+<!-- spec-review: Foo.spec_d 11111111111111111111111111111111 by=reviewer -->
+"""
+
+
+def test_promoted_lines_are_not_the_section_text(tmp_path):
+    """#162: after `review promote` wrote a reviewer's line and marker into a section, a unit
+    added to the section later still has the section's text, not the other unit's report."""
+    f = tmp_path / "R.md"
+    f.write_text(PROMOTED)
+    recs = {(r.name, r.by): r.text for r in parse_file(f, [], tmp_path)}
+    joint = ("Manuscript: the bound. Propositions: both. Correspondence: item by item. "
+             "Verdict: faithful.")
+    assert recs[("Foo.spec_a", "author")] == joint
+    assert recs[("Foo.spec_c", "author")] == joint
+    # The reviewer's marker has the line promote wrote for it.
+    assert recs[("Foo.spec_a", "reviewer")] == \
+        "Review by reviewer: faithful (report `reports/Foo.spec_a--reviewer--2026.md`)."
+    # The next section's text does not take the promoted line of the one before.
+    assert recs[("Foo.spec_d", "author")] == "Its own review."

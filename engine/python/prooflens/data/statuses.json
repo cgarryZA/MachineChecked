@@ -130,6 +130,11 @@
       "class": "unspecified",
       "explanation": "No Lean declaration is linked to this claim."
     },
+    "link.other-route": {
+      "label": "linked: a different formal route",
+      "class": "caution",
+      "explanation": "Lean reaches this by a different route than the printed step: the linked Lean establishes the enclosing result by another argument, and no linked declaration states this step."
+    },
     "formal.refuted": {
       "label": "refuted as printed",
       "class": "refuted",
@@ -421,6 +426,35 @@
           "explanation": "Regimes is not required for this clause."
         }
       }
+    },
+    "step": {
+      "label": "Review of the printed step",
+      "states": {
+        "unreviewed": {
+          "label": "not reviewed",
+          "explanation": "No reviewer has recorded a reading of this step as printed."
+        },
+        "holds": {
+          "label": "holds as printed",
+          "explanation": "A reviewer found that the step follows as printed."
+        },
+        "gap": {
+          "label": "holds, with a gap",
+          "explanation": "A reviewer found that the step holds, and recorded an argument the printed proof leaves out."
+        },
+        "false": {
+          "label": "false as printed",
+          "explanation": "A reviewer found that the step fails as printed, and recorded why."
+        },
+        "undetermined": {
+          "label": "undetermined",
+          "explanation": "A reviewer recorded an open question about this step."
+        },
+        "stale": {
+          "label": "source changed",
+          "explanation": "The step's source text changed after its last review."
+        }
+      }
     }
   },
   "placement": {
@@ -435,5 +469,10 @@
     "mismatch": "PDF hash mismatch",
     "unpinned": "PDF hash not pinned",
     "unknown": "PDF hash not checked"
+  },
+  "replay_guard": {
+    "guarded": "under the sandbox guard",
+    "unguarded": "replayed without the sandbox guard",
+    "unrecorded": "sandbox guard not recorded"
   }
 }
