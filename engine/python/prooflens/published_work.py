@@ -10,7 +10,10 @@ in the workspace.
 Each record keeps its author and times, its pins and its currency against the published build,
 computed over the published records alone. The paper's `publish` settings apply: a passage's
 text, file and lines only when the source text is published, a Lean target's text only when the
-Lean is, and the auditor's prose (notes, arguments, questions, reasons) only when reviews are.
+Lean is, and the auditor's prose (notes, arguments, questions, reasons) only when reviews are. A cited fact
+inside a proof keeps its basis, "established inside this proof under this context", and its
+pins; its proposition and context are Lean text. Its currency needs the Lean project, so it is
+published as `unchecked`.
 
 The records sit in `data/work/<claim file>`, one file per claim that has any, which the claim's
 passport names in `work`. They are readings: nothing here is an input to a status.
@@ -80,7 +83,20 @@ def _changes(changes: list[dict], source_text: bool) -> list[dict]:
     return [{k: v for k, v in c.items() if k not in ("region", "lines")} for c in changes]
 
 
+FACT_PINS = ("decl", "module", "at", "fact_hash", "proof_hash", "kind", "name", "head")
+FACT_LEAN = ("type", "assumptions", "variables", "cases", "source")
+
+
 def _ref(ref: dict, pub) -> dict:
+    if "fact" in ref:
+        # A fact inside a proof: where it is and its pins always, its basis always (it is not an
+        # exported theorem), its proposition and context only when the Lean is published.
+        f = ref["fact"]
+        from .proof_facts import BASIS
+        return {"fact": {**{k: f[k] for k in FACT_PINS if f.get(k) is not None},
+                         **({k: f[k] for k in FACT_LEAN if f.get(k) is not None}
+                            if pub.lean else {}),
+                         "basis": BASIS}}
     if "decl" in ref:
         return {k: ref[k] for k in ("decl", "module", "build", "fingerprint", "digest")
                 if ref.get(k) is not None}

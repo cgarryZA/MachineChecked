@@ -97,6 +97,10 @@ Each clause reports a result for every evidence dimension.
 - **Source verification:** hashes identify the manuscript region or PDF being audited.
 - **Replay:** a structured Comparator record identifies the proofs and build replayed, and
   states whether the run was under Comparator's sandbox guard.
+- **Suggestions and paper numbers:** a suggestion, a content search result or a check of the
+  Lean's references to the paper's numbers names a candidate to inspect and why. It
+  establishes nothing about correspondence and never makes a link: a claim with suggestions
+  and no link reads `link.suggested`, unlinked and in the same class as `link.none`.
 
 ## Provenance of a release
 

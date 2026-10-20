@@ -88,14 +88,43 @@ PDF text can be selected and copied. The claim markers occupy the margin.
 
 ## Connect a claim to Lean
 
-MachineChecked suggests declarations from `\lean{...}` tags, docstrings and similar names.
-Confirm a candidate to save the association.
+MachineChecked suggests declarations by what they state. It compares the claim's printed
+statement with every declaration of the project, linked or not: the complete Lean statement,
+its docstring, its name and the definitions the statement uses. A docstring citing the claim's
+number and a name resembling its label also count, for less. Each suggestion lists its reasons:
+the terms it shares with the claim and where they occur, a citation of the claim's number, a
+close match its proof uses (a wrapper of a helper, say), and a difference in the order of `∀`
+and `∃`. Confirm a candidate to save the association.
 
 You can:
 
 - **Link** a suggested declaration;
 - choose **Not this** to reject the suggestion;
-- search the project's declarations to choose another.
+- search the project's declarations by statement, symbols or name, or with **Search with this
+  claim**, and link another. Open a result to read its complete statement.
+
+The search box at the top of the reader finds declarations by their statements too.
+
+### Paper numbers in the Lean
+
+`view`, `build` and `check` read every reference to a numbered statement or section in the
+project's docstrings, declaration names and module docstrings (`Theorem 2.1`, `lemma_3_4`), and
+compare it with the paper read here:
+
+- the paper has that statement;
+- the number belongs to another kind of statement (`Lemma 3.3` where the paper's 3.3 is a
+  proposition);
+- this version of the paper has no statement with that number;
+- the paper's numbering is not completely known (a PDF read by its headings), so it is not
+  checked;
+- the reference is to another work (`Theorem 4.1 of [Gauss]`), or in a namespace the project
+  maps to another paper.
+
+A reference to an existing number whose declaration reads much closer to another statement is
+named as a possibly stale lead, with the closer statement. `check` prints each disagreement
+with its file and line. When several references disagree, the reader's notes say that the Lean
+appears to follow another version of the paper, and suggestions then rank content further
+above cited numbers. None of this links a declaration or changes a status.
 
 The local reader saves your decisions in `machinechecked.links.json` at the repository root and refreshes the view. Commit that small file if you want the associations to travel with the project.
 

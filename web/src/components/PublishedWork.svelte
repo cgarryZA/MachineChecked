@@ -40,6 +40,7 @@
     return t.decl + (part ? ` (${part}${t.target ? ": " + t.target : ""})` : "");
   }
   function refText(r) {
+    if (r?.fact) return `${r.fact.name || r.fact.head || "a fact"}${r.fact.type ? " : " + r.fact.type : ""}, inside the proof of ${r.fact.decl} (${r.fact.basis})`;
     if (r?.decl) return r.decl;
     if (r?.source) return r.source.file ? r.source.file + (r.source.line ? ":" + r.source.line : "") : "a Lean source location";
     return r?.paper?.quote ? `“${r.paper.quote}”` : "a passage of the paper";

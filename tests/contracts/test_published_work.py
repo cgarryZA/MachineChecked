@@ -247,3 +247,30 @@ def test_a_paper_that_keeps_its_source_private_publishes_no_passage_text(toy, tm
     assert rd["evidence"][0]["ref"] == {"paper": {"claim": "T:def:even"}}
     assert rd["requirements"][0]["text"] == "the synthetic condition"
     assert rd["findings"][1]["note"] == "SECOND-FINDING-NOTE"
+
+
+def test_a_cited_fact_inside_a_proof_is_published_with_its_basis(tmp_path):
+    work = tmp_path / ".machinechecked"
+    snap = make_build(work)
+    claim = "P:lem:bound"
+    fact = {"decl": "Syn.bound", "module": "Syn.Main", "at": "/1/1/1", "fact_hash": "a" * 16,
+            "proof_hash": "b" * 16, "kind": "have", "name": "strong",
+            "type": "LEAN-FACT-TYPE", "assumptions": ["hx : LEAN-HYPOTHESIS"]}
+    p = wsp.open_for(work, WHO, "informed", sources=snap.sources())
+    wsp.update(p, [
+        put({"id": "e-fact", "kind": "evidence", "claim": claim, "role": "supports",
+             "ref": {"fact": fact}}),
+        put({"id": "f-fact", "kind": "finding", "claim": claim, "coverage": "full",
+             "basis": "reviewed_composition", "evidence": ["e-fact"], "note": "n"})], snap)
+    wsp.update(p, [{"op": "submit", "id": "f-fact", "base_rev": 1}], snap)
+    rd, = pw.readings(work, snap, lambda cid: EVERYTHING, {claim})[claim]
+    ref = rd["evidence"][0]["ref"]["fact"]
+    assert ref["basis"] == "established inside this proof under this context"
+    assert (ref["decl"], ref["at"], ref["type"]) == ("Syn.bound", "/1/1/1", "LEAN-FACT-TYPE")
+    # Its currency needs the Lean project: it is not published as current.
+    assert rd["evidence"][0]["currency"]["state"] == "unchecked"
+    closed = Publish(pdf=False, source_text=False, lean=False, reviews=False)
+    rd, = pw.readings(work, snap, lambda cid: closed, {claim})[claim]
+    raw = json.dumps(rd)
+    assert "LEAN-FACT-TYPE" not in raw and "LEAN-HYPOTHESIS" not in raw
+    assert rd["evidence"][0]["ref"]["fact"]["basis"].startswith("established inside")
