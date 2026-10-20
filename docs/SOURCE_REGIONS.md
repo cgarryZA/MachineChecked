@@ -86,6 +86,33 @@ definitions whose values the claim states (`rebound --macro`, below), and dismis
 when the rest is notation whose definition is not part of the claim. The dismissal is tied to
 the passage's digest and to the macros named (its trigger), so it reopens when either changes.
 
+### Notation macros
+
+List the paper's notation in `machinechecked.toml`, under `[project]` for every paper or under
+a `[[paper]]` for that paper's own (the paper's list adds to the project's):
+
+```toml
+[project]
+notation_macros = ["R", "E", "Prob"]   # or "\\R": the backslash is optional
+```
+
+A listed macro gives no `source-macro-unpinned` warning. Its definitions in the snapshot are
+hashed instead, each from its first line through the line that closes its body, and a reading
+of a passage that uses the macro records that digest: the digest a review marker records for
+the claim (`source=CLAIM@DIGEST`) is the SHA-256 of `tex-notation-reading-v1`, the claim's pin,
+and the name and definition digest of each listed macro the passage uses (`source_sha256` when
+it uses none). A change to a listed macro's definition therefore reopens every review that read
+a passage using it, as a change to the passage does; the claim's pin and the source check are
+unchanged, and a definition that only moves keeps the readings. The source evidence names the
+listed macros of each passage, with their digests, under `notation`.
+
+A reading that recorded only the claim's pin, or a marker without digests, read the passage
+without its notation: once the macro is listed, the review is pending, with a finding that says
+the reading did not record the definitions of the notation its passage uses
+(`source-notation-unrecorded`). Promote a new reading to record them. A macro the manuscript
+defines elsewhere and the list leaves out still gets the one dismissible warning per passage.
+Without `notation_macros`, a reading records the pin itself, as before.
+
 ## Replacing a legacy opening-line hash
 
 Do this while the configuration still names the **original frozen paper revision**:

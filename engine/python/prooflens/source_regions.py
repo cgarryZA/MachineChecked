@@ -374,12 +374,49 @@ def unpinned_macros(p: Pin, defs: dict[str, list[tuple[str, int]]]) -> list[dict
     return out
 
 
-def collect(inventory: dict, paper: str, root: Path) -> dict:
+NOTATION = "tex-notation-v1"
+
+
+def macro_name(name: str) -> str:
+    """A macro named in the configuration, as a control sequence: `R` or `\\R` is `\\R`."""
+    name = name.strip()
+    name = name if name.startswith("\\") else "\\" + name
+    if not MACRO.fullmatch(name):
+        raise RegionError(f"notation macro {name!r} is not a control sequence such as \\R")
+    return name
+
+
+def notation_digests(root: Path, files: dict[str, str], defs: dict[str, list[tuple[str, int]]],
+                     names) -> dict[str, dict]:
+    """The digest of the definition of each listed notation macro the snapshot defines: of the
+    scheme, then the digest of each of its definitions in file order (each from its first line
+    through the line that closes its body), so a move keeps it and a change to any definition
+    changes it. A macro whose definitions cannot be delimited has none."""
+    out = {}
+    for name in names:
+        where = defs.get(name) or []
+        if not where:
+            continue
+        try:
+            shas = [extract(root, part_claim(definition_part(files, name, f, ln))).sha256
+                    for f, ln in where]
+        except RegionError:
+            continue
+        text = NOTATION + "\n" + "".join(f"definition {sha}\n" for sha in shas)
+        out[name] = {"macro": name, "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+                     "defined": [f"{f}:{ln}" for f, ln in where]}
+    return out
+
+
+def collect(inventory: dict, paper: str, root: Path, notation=()) -> dict:
     """One record per claim, including extraction errors; shared start lines do not collide.
     A record also names the macros its passages use that the snapshot defines elsewhere and
-    the pin leaves out (`macros`)."""
+    the pin leaves out: the listed notation macros (`notation`, each with the digest of its
+    definitions), and the others (`macros`). Names in `notation` are control sequences."""
     out = {}
-    defs = None
+    defs = files = None
+    listed = set(notation)
+    digests: dict[str, dict] | None = None
     for claim in inventory["claims"]:
         if claim["paper"] != paper:
             continue
@@ -389,10 +426,17 @@ def collect(inventory: dict, paper: str, root: Path) -> dict:
             p = pin(root, claim)
             rec = p.record()
             if defs is None:
-                defs = definitions(tex_sources(root))
-            macros = unpinned_macros(p, defs)
+                files = tex_sources(root)
+                defs = definitions(files)
+            outside = unpinned_macros(p, defs)
+            if listed and digests is None and any(m["macro"] in listed for m in outside):
+                digests = notation_digests(root, files, defs, sorted(listed))
+            hashed = [digests[m["macro"]] for m in outside if m["macro"] in (digests or {})]
+            macros = [m for m in outside if m["macro"] not in (digests or {})]
             if macros:
                 rec["macros"] = macros
+            if hashed:
+                rec["notation"] = hashed
             out[claim["id"]] = rec
         except (RegionError, OSError, UnicodeError) as error:
             out[claim["id"]] = {"scheme": claim.get("source_hash_scheme") or SCHEME,

@@ -220,3 +220,132 @@ def test_the_reader_and_the_review_packet_show_every_passage(tmp_path):
         "source_parts")
     assert "source_parts" not in public_claim(chunk, SimpleNamespace(source_text=False,
                                                                      lean=True))
+
+
+# -- notation macros listed in the configuration ------------------------------------------------
+
+def assess_read(root, c, rec, source):
+    """The assessment of the claim `c` (as `assessed` builds it) with the source evidence
+    `rec`, its proposition's review having recorded the digests `source`."""
+    import json
+    from prooflens.assess import Assessor
+    from prooflens.reviews import Review
+    fp = "synthetic-fingerprint"
+    c = {**c, "paper": "T", "id": "T:est", "scope": "formal", "scope_reviewed": True,
+         "clauses": [{"name": "main", "spec": "Synthetic.spec", "accept": "Synthetic.accept"}]}
+    cfg = SimpleNamespace(statement_authors=[], papers=[SimpleNamespace(id="T")], lean_root=root)
+    lean = {"specs": {"Synthetic.spec": {"fingerprint": fp, "errors": [], "closure": [],
+                                         "binders": [], "consts": []}},
+            "proofs": {"accept:Synthetic.accept:Synthetic.spec": {"errors": [], "sorry": False,
+                                                                 "axioms": []}},
+            "decls": {}, "defs": {}, "layering": []}
+    tex = {"T": {"mode": "latex", "envs": [], "anchors": [], "regions": {"T:est": rec}}}
+    reviews = [Review("spec", "Synthetic.spec", fp, "synthetic-reviewer", "human",
+                      "self-declared", "reviews.md", 1, "Synthetic review.", source=source)]
+    inv = {"claims": [c]}
+    out = Assessor(cfg, inv, lean, tex, reviews, [],
+                   json.dumps({"commit": REV, "replayed": ["Synthetic.accept"]}), REV).run()
+    return out, inv, tex
+
+
+def spec_review(out):
+    return out["claims"][0]["clauses"][0]["spec_review"]
+
+
+def test_a_listed_notation_macro_gives_no_warning(tmp_path):
+    root = write(tmp_path)
+    c = single(root)
+    rec = collect({"claims": [c]}, "X", root, ["\\iterCount"])[c["id"]]
+    assert "macros" not in rec
+    (m,) = rec["notation"]
+    assert m["macro"] == "\\iterCount" and m["defined"] == ["values.tex:2"]
+    from prooflens.review_sources import digests
+    out, inv, tex = assess_read(root, c, rec, None)
+    read = digests(inv, "spec", "Synthetic.spec", tex)
+    out, _, _ = assess_read(root, c, rec, read)
+    assert not [f for f in out["findings"] if f["code"] == "source-macro-unpinned"]
+    assert spec_review(out)["state"] == "reviewed"
+    assert out["claims"][0]["status"] == "formal: accepted"
+    # The pin itself is unchanged: the source check still passes.
+    assert matches(c, {"regions": {c["id"]: rec}})
+
+
+def test_a_changed_definition_of_a_listed_macro_reopens_the_review(tmp_path):
+    from prooflens.review_sources import digests
+    root = write(tmp_path)
+    c = single(root)
+    rec = collect({"claims": [c]}, "X", root, ["\\iterCount"])[c["id"]]
+    _, inv, tex = assess_read(root, c, rec, None)
+    read = digests(inv, "spec", "Synthetic.spec", tex)
+    # The definition moves: the reading stands.
+    (root / "values.tex").write_text("% generated\n\n" + VALUES.split("\n", 1)[1],
+                                     encoding="utf-8")
+    moved = collect({"claims": [c]}, "X", root, ["\\iterCount"])[c["id"]]
+    assert spec_review(assess_read(root, c, moved, read)[0])["state"] == "reviewed"
+    # The definition changes: the reading reopens, the passage's pin still matches.
+    (root / "values.tex").write_text("% generated\n\\newcommand{\\iterCount}{43}\n",
+                                     encoding="utf-8")
+    after = collect({"claims": [c]}, "X", root, ["\\iterCount"])[c["id"]]
+    assert matches(c, {"regions": {c["id"]: after}})
+    out, _, _ = assess_read(root, c, after, read)
+    sr = spec_review(out)
+    assert sr["state"] == "stale" and sr["why"] == "source-changed"
+    assert out["claims"][0]["status"] == "formal: proved, review pending"
+    f = next(f for f in out["findings"] if f["code"] == "spec-review")
+    assert "a definition of the notation it uses" in f["message"]
+
+
+def test_a_reading_without_the_notation_digests_does_not_count(tmp_path):
+    root = write(tmp_path)
+    c = single(root)
+    rec = collect({"claims": [c]}, "X", root, ["\\iterCount"])[c["id"]]
+    for source in ({"T:est": c["source_sha256"]}, None):
+        out, _, _ = assess_read(root, c, rec, source)
+        sr = spec_review(out)
+        assert sr["state"] == "stale" and sr["why"] == "source-notation-unrecorded"
+        assert out["claims"][0]["status"] == "formal: proved, review pending"
+
+
+def test_an_unlisted_macro_still_warns_and_old_markers_read_as_before(tmp_path):
+    root = write(tmp_path)
+    c = single(root)
+    rec = collect({"claims": [c]}, "X", root, ["\\other"])[c["id"]]
+    assert rec["macros"] == [{"macro": "\\iterCount", "defined": ["values.tex:2"]}]
+    assert "notation" not in rec
+    out, _, _ = assess_read(root, c, rec, {"T:est": c["source_sha256"]})
+    warn = [f for f in out["findings"] if f["code"] == "source-macro-unpinned"]
+    assert len(warn) == 1 and warn[0]["trigger"] == "\\iterCount"
+    assert spec_review(out)["state"] == "reviewed"
+    # Without the setting a reading records the pin itself.
+    from prooflens.review_sources import reading_digest
+    assert reading_digest(c, collect({"claims": [c]}, "X", root)[c["id"]]) == c["source_sha256"]
+
+
+def test_the_configuration_lists_notation_macros_for_the_project_and_each_paper(tmp_path):
+    from prooflens.config import ConfigError, load
+    base = ('[project]\nname = "t"\nmodules = []\nscope_roots = []\nspec_prefix = "S"\n'
+            'accept_prefix = "A"\ninventory = "claims.json"\n')
+    paper = '[[paper]]\nid = "{id}"\nsource = {{ path = "paper" }}\n'
+    (tmp_path / "machinechecked.toml").write_text(
+        base + 'notation_macros = ["R", "\\\\E"]\n' + paper.format(id="P")
+        + 'notation_macros = ["\\\\Prob", "R"]\n' + paper.format(id="Q"), encoding="utf-8")
+    cfg = load(tmp_path / "machinechecked.toml")
+    assert cfg.paper("P").notation_macros == ["\\R", "\\E", "\\Prob"]
+    assert cfg.paper("Q").notation_macros == ["\\R", "\\E"]
+    (tmp_path / "machinechecked.toml").write_text(
+        base + 'notation_macros = ["not a macro"]\n' + paper.format(id="P"), encoding="utf-8")
+    with pytest.raises(ConfigError, match="notation macro"):
+        load(tmp_path / "machinechecked.toml")
+
+
+def test_promotion_expects_the_reading_digest_with_the_notation(tmp_path):
+    from prooflens.promote import expected_source
+    from prooflens.review_sources import digests
+    root = write(tmp_path)
+    c = single(root)
+    rec = collect({"claims": [c]}, "X", root, ["\\iterCount"])[c["id"]]
+    _, inv, tex = assess_read(root, c, rec, None)
+    want = expected_source({"inventory": inv, "tex": tex},
+                           {"kind": "spec", "name": "Synthetic.spec"})
+    assert want == digests(inv, "spec", "Synthetic.spec", tex)
+    assert want["T:est"] != c["source_sha256"]

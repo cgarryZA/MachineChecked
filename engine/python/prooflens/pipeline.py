@@ -139,7 +139,8 @@ def build(cfg: Config, release: str | None = None, skip_lean: bool = False,
             pdfs[paper.id] = snap.dir / snap.pdf
         if paper.id in tex:
             if t is not None:
-                tex[paper.id]["regions"] = collect_source_regions(inv, paper.id, snap.dir)
+                tex[paper.id]["regions"] = collect_source_regions(
+                    inv, paper.id, snap.dir, getattr(paper, "notation_macros", ()))
                 # The passages of pins that list several, in order (display only).
                 parts = part_texts(inv, paper.id, snap.dir)
                 if parts:

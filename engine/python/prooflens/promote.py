@@ -182,7 +182,7 @@ def expected_source(body: dict, unit: dict, cur: dict | None = None) -> dict[str
     if unit.get("kind") == "step":
         return {cur["id"]: cur["source_sha256"]} if cur and cur.get("source_sha256") else {}
     inv = {"claims": (body.get("inventory") or {}).get("claims", [])}
-    return review_sources.digests(inv, unit.get("kind"), unit.get("name"))
+    return review_sources.digests(inv, unit.get("kind"), unit.get("name"), body.get("tex"))
 
 
 def report_source(r: dict) -> dict[str, str] | None:

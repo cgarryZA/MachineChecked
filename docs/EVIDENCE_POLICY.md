@@ -49,7 +49,10 @@ that only occurs in a closure has no passage of its own.
   claim is the claim's current pin. Otherwise the claim reads `review pending`, with a finding
   that names the claim and says that its text changed since the reading (or that the reading
   did not record its passage). The review of the declaration for another claim whose passage
-  is unchanged stands. A definition's review in the closure of a statement must have read the
+  is unchanged stands. When the passage uses notation macros the configuration lists
+  (`notation_macros`), the digest also covers their definitions, so a changed definition
+  reopens the reading too, and a reading that did not record them does not count
+  ([notation macros](SOURCE_REGIONS.md#notation-macros)). A definition's review in the closure of a statement must have read the
   current passage of every claim that names the definition.
 - **Markers written before the digests were recorded.** Such a marker counts for a claim only
   while the project's Git history shows the claim's passage unchanged since the marker was
