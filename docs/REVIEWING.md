@@ -151,6 +151,16 @@ again. Changing to independent mode, or importing, keeps what the workspace reco
 so an informed investigation never becomes a blind review: a report made with `machinechecked
 review` lists that exposure, and `review promote` refuses it without `--allow-revealed`.
 
+**What a published audit carries.** `machinechecked export` (and `build --site`, `check --site`)
+publishes, for each claim, the records you have accepted: the requirements, the passages
+accepted as governing them, the alignments with Lean, and the submitted findings (superseded ones
+too, with the reason) with the evidence they cite. Each keeps its author, its pins and whether it
+is current against the published build. Proposed and removed passages, draft findings, evidence
+no submitted finding cites, questions, exposure and the review protocol's drafts stay in the
+workspace. The paper's `publish` settings apply: a passage's text and lines appear only when the
+source text is published, and your notes and reasons only when reviews are. The reader shows the
+records read-only on the claim, under **Auditors' readings**; they change no status.
+
 ## What a verdict means
 
 | Verdict | What the reviewer must explain |
