@@ -30,6 +30,8 @@ structure Request where
   spec : Option String := none
   /-- For `apps`: the declarations to look in; every declaration of the project if none. -/
   callers : Option (Array String) := none
+  /-- For `names`: the names to resolve. -/
+  names : Option (Array String) := none
   deriving FromJson, Inhabited
 
 structure Query where
@@ -1011,6 +1013,43 @@ def moduleDocRecords (h : IO.FS.Handle) (roots : Array Name) : MetaM Unit := do
             k := k + 2
         line := line + 1
 
+/-! ## Names cited in review text -/
+
+/-- Whether the components of `n` are the last components of `u`. -/
+partial def isNameSuffix (n u : Name) : Bool :=
+  match n, u with
+  | .anonymous, _ => true
+  | .str p s, .str q t => s == t && isNameSuffix p q
+  | .num p i, .num q j => i == j && isNameSuffix p q
+  | _, _ => false
+
+/-- The names of `names` (dotted, as written) that nothing in the environment resolves: no
+declaration, namespace or module has the name, and no declaration or namespace has it as its
+last components (`bar_eq_span` for `Foo.bar_eq_span`). -/
+def namesRecord (h : IO.FS.Handle) (names : Array String) : MetaM Unit := do
+  let env ← getEnv
+  let mut pending : Array (String × Name) := #[]
+  for s in names do
+    let n := (splitChars '.' s.toList).foldl (fun n p => Name.str n (charsToString p)) .anonymous
+    unless env.contains n || env.isNamespace n || (env.getModuleIdx? n).isSome do
+      pending := pending.push (s, n)
+  let mut lasts : NameSet := {}
+  for (_, n) in pending do
+    if let .str _ t := n then lasts := lasts.insert (Name.mkSimple t)
+  let mut found : NameSet := {}
+  for md in env.header.moduleData do
+    for c in md.constNames do
+      let mut u := privateToUserName c
+      while !u.isAnonymous do
+        if let .str _ t := u then
+          if lasts.contains (Name.mkSimple t) then
+            for (_, n) in pending do
+              if isNameSuffix n u then found := found.insert n
+        u := u.getPrefix
+  let unresolved := pending.filter (fun (_, n) => !found.contains n) |>.map (·.1)
+  emit h (Json.mkObj [("record", "names"), ("checked", toJson names),
+    ("unresolved", toJson unresolved)])
+
 /-- A theorem of a link: its statement split like a specification, and its axioms. -/
 def linkRecord (h : IO.FS.Handle) (q : Query) (inside : Name → Bool) (seen : IO.Ref NameSet)
     (n : Name) : MetaM Unit := do
@@ -1906,6 +1945,7 @@ open ProofLensProbe in
         | "witness" => proofRecord h q "witness" r.name.toName none
         | "index" => do indexRecords h roots; moduleDocRecords h roots
         | "moddocs" => moduleDocRecords h roots
+        | "names" => namesRecord h (r.names.getD #[])
         | "link" => linkRecord h q inside seen r.name.toName
         | "deps" => depsRecords h inside r.name.toName
         | "proof-facts" => proofFactsRecord h q roots r.name.toName

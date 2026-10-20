@@ -73,6 +73,10 @@ class Config:
     author: str | None = None         # the name the audit is published under (audit.json)
     repository: str | None = None     # "owner/repo" of the Lean source, if not the git remote
     repository_private: bool = False  # the reader does not show the repository's name
+    # Citations in review text (`review_citations.py`): patterns of backticked tokens that are
+    # notation, not names (None: the default), and whether an unresolved one is a violation.
+    review_citations_ignore: list[str] | None = None
+    review_citations_strict: bool = False
 
     @property
     def root(self) -> Path:
@@ -161,4 +165,21 @@ def load(path: str | Path) -> Config:
         author=proj.get("author"),
         repository=issue_repo(proj.get("repository"), str(path)),
         repository_private=bool(proj.get("repository_private", False)),
+        review_citations_ignore=_patterns(proj, "review_citations_ignore", str(path)),
+        review_citations_strict=bool(proj.get("review_citations_strict", False)),
     )
+
+
+def _patterns(proj: dict, key: str, where: str) -> list[str] | None:
+    """A list of regular expressions from the configuration, or None when the key is absent."""
+    if key not in proj:
+        return None
+    v = proj[key]
+    if not isinstance(v, list) or not all(isinstance(x, str) for x in v):
+        raise ConfigError(f"{where}: {key} must be a list of regular expressions")
+    for x in v:
+        try:
+            re.compile(x)
+        except re.error as e:
+            raise ConfigError(f"{where}: {key}: {x!r} is not a regular expression: {e}") from None
+    return v

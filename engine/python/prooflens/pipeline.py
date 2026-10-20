@@ -89,8 +89,11 @@ def build(cfg: Config, release: str | None = None, skip_lean: bool = False,
     elif not skip_lean:
         lean_digest = lean_inputs_digest(cfg)
         log(f"probe: {len(requests_from_inventory(inv))} requests in {cfg.lean_root}")
-        lean = run_probe(cfg, requests_from_inventory(inv) + [MODDOCS], lake=lake,
-                         build=lean_build)
+        from .review_citations import citations, names_request
+        cited = names_request(citations(cfg.reviews, cfg.root,
+                                        getattr(cfg, "review_citations_ignore", None)))
+        lean = run_probe(cfg, requests_from_inventory(inv) + [MODDOCS]
+                         + ([cited] if cited else []), lake=lake, build=lean_build)
 
     tex, papers_prov, pdfs = {}, {}, {}
     display = load_display(cfg)

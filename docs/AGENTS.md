@@ -55,6 +55,8 @@ with its `tier` (`violation`, `obligation`, `warning`), `code`, `subject` (the c
 for example `T:thm:bound#0`), `message`, and `dismissed` (who and why) when a warning was
 dismissed. A warning with code `module-doc-name` is a name a module docstring lists that nothing
 declares: its `subject` is the module, its `trigger` the name, and it has `file` and `line`.
+A warning with code `review-citation` is a name or file that review text cites and nothing
+resolves: its `subject` is the review file, its `trigger` the token, with `file` and `line`.
 Report the violations and obligations by subject and message; they are what blocks a
 claim from being accepted. `replay` is null when no Comparator replay counts; otherwise it
 gives the record's `guard` (`guarded`, `unguarded`, or `unrecorded` for an older record), the
