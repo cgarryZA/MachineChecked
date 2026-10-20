@@ -22,7 +22,33 @@ FINGERPRINT_VERSION = "pl-fp-v1"
 
 
 class ProbeError(RuntimeError):
-    pass
+    """A Lean session that failed. `deterministic` is true when Lean finished and reported an
+    error in what it was given (a module that does not import or elaborate): the same inputs
+    fail the same way. It is false for a failure of resources or of the session itself (out of
+    memory, a timeout, a heartbeat budget, a killed process, a session that did not finish),
+    which another attempt may not repeat."""
+
+    def __init__(self, message: str, deterministic: bool = False):
+        super().__init__(message)
+        self.deterministic = deterministic
+
+
+# What Lean or the system prints when a session runs out of a resource rather than meeting an
+# error in its input. A heartbeat budget is a resource: a larger budget or another machine may
+# finish where this one did not.
+RESOURCE_SIGNS = ("out of memory", "bad_alloc", "cannot allocate memory", "heartbeats",
+                  "(deterministic) timeout", "stack overflow", "killed", "timed out")
+
+
+def failure_is_deterministic(returncode: int, text: str) -> bool:
+    """Whether a finished Lean session's failure is an error in its input: Lean exited on its
+    own (no signal), printed an `error`, and showed no sign of running out of a resource."""
+    if returncode <= 0 or returncode >= 128:      # a signal (128 + n through a shell) or no exit
+        return False
+    low = text.lower()
+    if any(sign in low for sign in RESOURCE_SIGNS):
+        return False
+    return "error" in low
 
 
 def requests_from_inventory(inv: dict) -> list[dict]:
@@ -117,7 +143,7 @@ def _run_watched(cmd: list[str], cwd: Path, env: dict, timeout: int, out: Path, 
                 if elapsed > timeout:
                     proc.kill()
                     proc.wait()
-                    raise ProbeError(f"the Lean probe ({label}) took longer than {timeout} s")
+                    raise ProbeError(f"the Lean probe ({label}) timed out after {timeout} s")
                 size = out.stat().st_size if out.exists() else 0
                 log(f"lean: {label}: {int(elapsed // 60)} min, "
                     + (f"{size / 1e6:.1f} MB of records written" if size else
@@ -147,14 +173,20 @@ def lean_session(root: Path, modules: list[str], query: dict, read, lake: str = 
         out = tmp / "out.jsonl"
         cmd = [lake, "env", "lean", str(tmp / "Probe.lean")]
         if log is None:
-            r = run(cmd, cwd=root, env=env, timeout=timeout)
+            import subprocess
+            try:
+                r = run(cmd, cwd=root, env=env, timeout=timeout)
+            except subprocess.TimeoutExpired:
+                raise ProbeError(f"the Lean probe timed out after {timeout} s") from None
         else:
             label = label or ", ".join(modules[:2]) + ("…" if len(modules) > 2 else "")
             log(f"lean: {label}: loading {len(modules)} module(s)")
             r = _run_watched(cmd, root, env, timeout, out, log, label)
         if r.returncode != 0 or not out.exists():
-            raise ProbeError(f"the Lean probe failed ({r.returncode}):\n{r.stdout[-3000:]}\n"
-                             f"{r.stderr[-3000:]}")
+            text = f"{r.stdout[-3000:]}\n{r.stderr[-3000:]}"
+            raise ProbeError(f"the Lean probe failed ({r.returncode}):\n{text}",
+                             deterministic=r.returncode != 0
+                             and failure_is_deterministic(r.returncode, text))
         with out.open(encoding="utf-8") as f:
             return read(line for line in f if line.strip())
 

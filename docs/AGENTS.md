@@ -229,7 +229,12 @@ machinechecked workspace show --json
 `error` (exit 1); an edit of a record changed since its `base_rev` returns `conflicts` with both
 versions. Repeat a request with its `op_id` after a lost answer: it changes nothing. `show
 --json` gives every record with its `currency` (`current`, `stale` with the `changes`, or
-`unchecked`) and the `resume` point. A workspace started in informed mode records that the Lean
+`unchecked`) and the `resume` point. Requirements of a claim (`requirement`), the passages that govern each one
+(`fragment`: a region of the paper's source with its role, origin and scope) and their
+association with Lean (`alignment`) are records of the same workspace; `show --json` gives each
+claim's `reading`, `workspace suggest --claim C --requirement r1 [--apply]` proposes nearby
+passages, and `compare C --workspace ID --json` carries the reading in
+`interpretations.requirements`. A workspace started in informed mode records that the Lean
 was seen; `{"op": "exposure", "what": "external material"}` records anything else you read.
 
 ## A note for your project's AGENTS.md or CLAUDE.md

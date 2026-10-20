@@ -14,6 +14,9 @@ both kept, and an edit made from an older revision of the same record is refused
 that returns (and keeps) both versions. A request repeated with the same `op_id` is answered
 with its first result and changes nothing.
 
+A workspace also keeps the auditor's breakdown of a claim into requirements, the passages of
+the paper that govern each one and their association with Lean (`requirements.py`).
+
 A workspace records evidence and readings; it changes no status. A submitted finding is never
 edited: a later one supersedes it, with its reason, and both remain. Exposure (what the auditor
 had seen) is only ever added to, so neither resuming nor importing makes an investigation blind.
@@ -34,7 +37,7 @@ from pathlib import Path
 SCHEMA = "prooflens/workspace@1"
 DIR = "review-work"
 MODES = ("independent", "informed")
-KINDS = ("evidence", "finding", "question")
+KINDS = ("evidence", "finding", "question", "requirement", "fragment", "alignment")
 ROLES = ("candidate", "supports", "context", "rejected")
 QUESTION_STATES = ("open", "answered", "withdrawn")
 EXPOSURES = ("Lean", "author's review", "prior interpretations", "external material")
@@ -43,7 +46,7 @@ OPS_KEPT = 500
 
 # Fields the service sets; a client's value for them is ignored.
 MANAGED = ("kind", "rev", "created_at", "created_by", "updated_at", "updated_by", "state",
-           "submitted_at", "supersedes", "reason", "pins")
+           "submitted_at", "supersedes", "reason", "pins", "state_by", "state_at")
 
 
 class WorkspaceError(RuntimeError):
@@ -174,6 +177,7 @@ def summary(ws: dict) -> dict:
     return {"id": ws["id"], "reviewer": (ws.get("reviewer") or {}).get("id"), "mode": ws["mode"],
             "revision": ws.get("revision", 0), "release": (ws.get("sources") or {}).get("release"),
             "evidence": count("evidence"), "findings": count("finding"),
+            "requirements": count("requirement"),
             "open_questions": sum(1 for r in recs if r.get("kind") == "question"
                                   and r.get("state") == "open"),
             "reports": len((ws.get("review") or {}).get("reports", [])),
@@ -301,8 +305,12 @@ def _claim(q, snap) -> str:
                                        if e.candidates else "")) from None
 
 
-def _content(kind: str, rec: dict, ws: dict, snap, root) -> dict:
-    """The fields a client may set on a record of `kind`, checked."""
+def _content(kind: str, rec: dict, ws: dict, snap, root, cur: dict | None = None,
+             repin: bool = False, rid: str | None = None) -> dict:
+    """The fields a client may set on a record of `kind`, checked. `cur` is the record being
+    replaced: a fragment's text and an alignment's fingerprints stay as they were recorded
+    unless `repin` is given."""
+    from . import requirements as rq
     out = {"claim": _claim(rec.get("claim"), snap)}
     if rec.get("clause") is not None:
         out["clause"] = _text(rec["clause"], "the clause")
@@ -320,6 +328,15 @@ def _content(kind: str, rec: dict, ws: dict, snap, root) -> dict:
             raise WorkspaceError(f"{e} is evidence for {er['claim']}, not {out['claim']}")
     if refs:
         out["evidence"] = list(dict.fromkeys(refs))
+    if kind in ("requirement", "fragment", "alignment"):
+        out.pop("evidence", None)
+        if kind == "requirement":
+            return rq.requirement_content(out, rec, ws, rid)
+        if kind == "fragment":
+            return rq.fragment_content(out, rec, ws, snap, cur, repin)
+        return rq.alignment_content(out, rec, ws, snap, root, cur, repin)
+    if kind in ("finding", "question") and rec.get("requirement") not in (None, ""):
+        out["requirement"] = rq.known_requirement(ws, out["claim"], rec["requirement"])
     if kind == "evidence":
         out["ref"] = _ref(rec.get("ref"), snap, root)
         out["role"] = _choice(rec.get("role") or "candidate", ROLES, "the role", False)
@@ -399,27 +416,38 @@ def _record_op(ws, op, snap, root, by, at, changed):
             if base not in (None, 0):
                 raise WorkspaceError(f"{rid}: no such record to update")
             k = _choice(rec.get("kind"), KINDS, "the record kind", False)
-            rid = rid or _new_id(k[0])
+            rid = rid or _new_id({"fragment": "p"}.get(k, k[0]))
             if not re.fullmatch(r"[\w.:-]{1,80}", rid):
                 raise WorkspaceError(f"{rid!r} is not a record id")
-            content = _content(k, rec, ws, snap, root)
+            content = _content(k, rec, ws, snap, root, rid=rid)
             new_rec = {"id": rid, "kind": k, **content, "rev": 1, "created_at": at,
                        "created_by": by, "updated_at": at, "updated_by": by,
                        "pins": _pins(content["claim"], snap)}
             if k == "finding":
                 new_rec["state"] = "draft"
+            if k == "fragment":
+                new_rec.update(state_by=by, state_at=at)
             ws["records"][rid] = new_rec
             changed.append(rid)
             return None
-        content = _content(cur["kind"], {**rec, "kind": cur["kind"]}, ws, snap, root)
         repin = bool(rec.get("repin"))
+        content = _content(cur["kind"], {**rec, "kind": cur["kind"]}, ws, snap, root, cur,
+                           repin, rid)
+        if cur["kind"] == "requirement" and content["local_id"] != cur["local_id"]:
+            from .requirements import references
+            users = references(ws, cur["claim"], cur["local_id"], rid)
+            if users:
+                raise WorkspaceError(f"{cur['local_id']} is used by {', '.join(users)}; its "
+                                     "local id stays while they refer to it")
+        if content["claim"] != cur["claim"] and cur["kind"] == "requirement":
+            raise WorkspaceError("a requirement stays with its claim")
         if cur["kind"] == "evidence" and not repin and content["ref"].get("decl") and \
                 content["ref"]["decl"] == (cur.get("ref") or {}).get("decl"):
             # The evidence keeps the fingerprint it was recorded at until it is re-pinned.
             for k in ("fingerprint", "digest"):
                 content["ref"][k] = cur["ref"].get(k)
         kept = {k: v for k, v in cur.items() if k not in MANAGED and k != "id"}
-        if cur["kind"] == "question":
+        if cur["kind"] in ("question", "fragment"):
             kept["state"] = cur.get("state")
         same = kept == content
         if base is None and same:
@@ -431,7 +459,11 @@ def _record_op(ws, op, snap, root, by, at, changed):
         if same and not repin:
             return None
         pins = _pins(content["claim"], snap) if repin else cur.get("pins", {})
-        ws["records"][rid] = {"id": rid, "kind": cur["kind"], **content,
+        marks = {}
+        if cur["kind"] == "fragment":
+            marks = ({"state_by": by, "state_at": at} if content["state"] != cur.get("state")
+                     else {k: cur[k] for k in ("state_by", "state_at") if k in cur})
+        ws["records"][rid] = {"id": rid, "kind": cur["kind"], **content, **marks,
                               **({k: cur[k] for k in ("state", "submitted_at", "supersedes",
                                                       "reason") if k in cur}
                                  if cur["kind"] == "finding" else {}),
@@ -451,6 +483,12 @@ def _record_op(ws, op, snap, root, by, at, changed):
                  if rid in (r.get("evidence") or []) and r["id"] != rid]
         if users:
             raise WorkspaceError(f"{rid} is evidence of {', '.join(users)}; remove it there first")
+        if cur["kind"] == "requirement":
+            from .requirements import references
+            users = references(ws, cur["claim"], cur["local_id"], rid)
+            if users:
+                raise WorkspaceError(f"{rid} ({cur['local_id']}) is used by {', '.join(users)}; "
+                                     "remove them first")
         del ws["records"][rid]
         changed.append(rid)
         return None
@@ -620,8 +658,9 @@ def currency(ws: dict, snap) -> dict[str, dict]:
     whose fingerprint changed makes its evidence `stale`, and so every finding and question
     that cites it; a finding is also stale when its claim's printed text changed. A record the
     build cannot check is `unchecked`; nothing here changes a status."""
+    from . import requirements as rq
     digests = snap.digests() if snap is not None else {}
-    out = {}
+    out = rq.currency(ws, snap)
     for r in ws["records"].values():
         if r.get("kind") != "evidence":
             continue
@@ -638,9 +677,11 @@ def currency(ws: dict, snap) -> dict[str, dict]:
         else:
             out[r["id"]] = {"state": "current", "changes": []}
     for r in ws["records"].values():
-        if r.get("kind") == "evidence":
+        if r.get("kind") not in ("finding", "question"):
             continue
         changes = [ch for e in r.get("evidence") or [] for ch in out.get(e, {}).get("changes", [])]
+        if r.get("requirement"):
+            changes += rq.requirement_changes(ws, r["claim"], r["requirement"], out)
         pin = (r.get("pins") or {}).get("statement_sha256")
         if snap is not None:
             ch = snap.chunk(r["claim"])
@@ -656,6 +697,7 @@ def view(ws: dict, snap=None, claim: str | None = None) -> dict:
     """The workspace as the reader and `workspace show` present it: its summary and, per
     claim, the evidence, findings (current and superseded) and questions, each with its
     currency against the current build."""
+    from . import requirements as rq
     cur = currency(ws, snap)
     in_force = {r["id"] for r in current_findings(ws)}
     claims: dict[str, dict] = {}
@@ -663,11 +705,15 @@ def view(ws: dict, snap=None, claim: str | None = None) -> dict:
         if claim and r["claim"] != claim:
             continue
         c = claims.setdefault(r["claim"], {"evidence": [], "findings": [], "questions": []})
+        if r["kind"] in ("requirement", "fragment", "alignment"):
+            continue
         item = {**r, "currency": cur.get(r["id"], {"state": "unchecked", "changes": []})}
         if r["kind"] == "finding":
             item["in_force"] = r["id"] in in_force
         c[{"evidence": "evidence", "finding": "findings", "question": "questions"}[r["kind"]]] \
             .append(item)
+    for cid, c in claims.items():
+        c["reading"] = rq.reading([r for r in ws["records"].values() if r["claim"] == cid], cur)
     return {"schema": "prooflens/workspace-view@1", **summary(ws),
             "selection": ws.get("selection") or {}, "sources": ws.get("sources") or {},
             "current_sources": snap.sources() if snap is not None else None,
@@ -771,8 +817,9 @@ def api(work_dir: Path, data_dir: Path, root: Path | None = None) -> tuple[dict,
     """The routes `machinechecked view`'s local server answers for the reader: GET
     `/api/workspaces` (the list), `/api/workspace?id=&claim=` (one, as `view` gives it) and
     `/api/workspace/export?id=`; POST `/api/workspace` with `action` `open` (`reviewer`,
-    `mode`, `id`), `update` (`id`, `ops`, `op_id`, `base` ignored) or `import` (`data`). They
-    call the functions the command line calls."""
+    `mode`, `id`), `update` (`id`, `ops`, `op_id`, `base` ignored), `import` (`data`) or
+    `suggest` (`id`, `claim`, `requirement`: attach the passages `requirements.suggest`
+    proposes, as proposals). They call the functions the command line calls."""
     from .review_cli import ReviewError, parse_reviewer
     from .targets import Snapshot, TargetError
 
@@ -810,6 +857,17 @@ def api(work_dir: Path, data_dir: Path, root: Path | None = None) -> tuple[dict,
                           or (ws.get("reviewer") or {}).get("id"), req.get("op_id"))
         if action == "import":
             return import_(work_dir, req.get("data") or {}, snap(), req.get("by"), "reader")
+        if action == "suggest":
+            from .requirements import suggestion_ops
+            p = find(work_dir, req.get("id") or "")
+            ws, s = read(p), snap()
+            cid = _claim(req.get("claim"), s)
+            ops = suggestion_ops(ws, s, cid, req.get("requirement"))
+            if not ops:
+                return {"ok": True, "workspace": ws["id"], "changed": [], "suggested": 0}
+            ack = update(p, ops, s, root, req.get("by") or (ws.get("reviewer") or {}).get("id"),
+                         req.get("op_id"))
+            return {**ack, "suggested": len(ops)}
         raise WorkspaceError(f"unknown action {action!r}")
 
     get = {"/api/workspaces": lambda q: {"workspaces": [summary(ws) for _, ws in

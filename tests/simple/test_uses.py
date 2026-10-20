@@ -164,7 +164,7 @@ def test_a_repeat_query_starts_no_lean_session_and_a_change_reopens_it(tmp_path,
 
     monkeypatch.setattr(us, "probe_modules", spy)
     uses(root, "Uses.good_double")
-    assert seen == [["apps"]]
+    assert seen == [["apps", "modules"]]
     # A change to a caller's proof reopens the answer: the condition is now assumed.
     p = root / "Uses" / "Main.lean"
     p.write_text(p.read_text().replace(

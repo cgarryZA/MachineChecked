@@ -11,7 +11,8 @@ A packet is filtered by stage before it is returned. `read` holds the paper only
 with the paper's `\\lean{...}` tags removed, since they name declarations. `compare` adds the
 formal material and its mechanical structure: statements, binders, definitions, Lean's checks.
 `informed` adds prior interpretations: correspondence notes, review reports and markers, symbol
-links, statuses and the assessment's findings. Independent review uses `read` before its
+links, statuses and the assessment's findings, and, when a workspace is named, its auditor's
+requirements of the claim with the passages that govern them and their alignment with Lean. Independent review uses `read` before its
 reading is locked and `compare` before its verdict; any other use is an informed investigation.
 
 What a build does not hold is said, not implied: a section the stage withholds is listed in
@@ -334,7 +335,8 @@ def _withheld(stage: str) -> list[dict]:
         out.append({"section": "lean", "reason": "the Lean is shown after the reading is locked"})
     if stage in ("read", "compare"):
         out.append({"section": "interpretations", "reason": "correspondence notes, reviews, "
-                    "symbol links and statuses are shown after the verdict"})
+                    "symbol links, statuses and recorded requirements are shown after the "
+                    "verdict"})
     return out
 
 
@@ -363,9 +365,11 @@ def _retrieval(stage: str, sections: list[str], page: dict | None, extra: list |
 
 
 def claim_packet(site: Site, claim: str, stage: str = "informed", limit: int | None = None,
-                 after: str | None = None) -> dict:
+                 after: str | None = None, reading: dict | None = None) -> dict:
     """The comparison packet of one claim: its passage, its linked declarations (and, from
-    the compare stage, unconfirmed suggestions as candidates) and the definitions they use."""
+    the compare stage, unconfirmed suggestions as candidates) and the definitions they use.
+    `reading` is a workspace's reading of the claim (`requirements.reading`), included at the
+    informed stage only."""
     cid = site.resolve_claim(claim)
     ch = site.chunk(cid)
     if ch is None:
@@ -391,6 +395,8 @@ def claim_packet(site: Site, claim: str, stage: str = "informed", limit: int | N
                                    "no declaration is linked to this claim")
     if stage == "informed":
         out["interpretations"] = _informed(ch)
+        if reading is not None:
+            out["interpretations"]["requirements"] = reading
         sections.append("interpretations")
     out["retrieval"] = _retrieval(stage, sections, page)
     return out
@@ -646,6 +652,11 @@ def statement_lines(d: dict) -> list[str]:
 def packet_text(pk: dict) -> str:
     """A packet for the terminal."""
     out = [passage_text(p) for p in pk["paper"]["passages"]]
+    rd = (pk.get("interpretations") or {}).get("requirements")
+    if rd:
+        from .requirements import lines
+        head = f"Requirements recorded in workspace {rd.get('workspace')} by {rd.get('reviewer')}"
+        out.append("\n".join([head] + lines(rd)))
     if pk["paper"].get("note"):
         out.insert(0, pk["paper"]["note"])
     lean = pk.get("lean")

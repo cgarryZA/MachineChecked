@@ -9,15 +9,12 @@ of a paper: that takes a reviewer.
 
 from __future__ import annotations
 
-import hashlib
-import json
-from importlib import resources
 from pathlib import Path
 
-from .config import work_dir_name
+from .config import STANDARD_AXIOMS, work_dir_name
+from .facts import Store, graphs
 from .probe import lib_names
-from .simple import (ViewError, built_modules, declaring_modules, lean_digest, probe_modules,
-                     run_simple_probe)
+from .simple import ViewError, built_modules, declaring_modules, probe_modules
 
 SCHEMA = "machinechecked/inspect@1"
 NOTE = ("Dependencies are the constants Lean's terms mention: what a statement is stated with, "
@@ -35,24 +32,9 @@ def _tool_version() -> str:
         return "unknown"
 
 
-def _probe_digest() -> str:
-    """The probe's own text: a change to it invalidates every stored answer."""
-    body = resources.files("prooflens").joinpath("data/ProofLensProbe.lean").read_bytes()
-    return hashlib.sha256(body).hexdigest()[:16]
-
-
-def cache_dir(root: Path) -> Path:
-    return root / work_dir_name(root) / "build" / "inspect"
-
-
-def cache_key(root: Path, name: str, module: str | None) -> str:
-    """The answer is reused while no Lean input or built module of the project changes, and for
-    the same tool and probe."""
-    h = hashlib.sha256()
-    for part in (lean_digest(root), name, module or "", _tool_version(), _probe_digest()):
-        h.update(part.encode())
-        h.update(b"\0")
-    return h.hexdigest()
+def store(root: Path, libs: list[str]) -> Store:
+    """The facts store `inspect` shares with `view`, `build` and `check`."""
+    return Store(root, libs, root / work_dir_name(root) / "build", STANDARD_AXIOMS)
 
 
 def _resolve(root: Path, name: str, module: str | None, built: list[str],
@@ -168,38 +150,54 @@ def inspect(root: Path, name: str, module: str | None = None, lake: str = "lake"
     target, answer = _resolve(root, name, module, built, unbuilt)
     if answer is not None:
         return {**head, "ok": False, **answer}
-    key = cache_key(root, name, target or module)
-    stored = cache_dir(root) / f"{key}.json"
-    if stored.exists() and not refresh:
-        body = json.loads(stored.read_text(encoding="utf-8"))
-        return {**head, **body, "cache": {"hit": True, "key": key[:16]}}
-    work = root / work_dir_name(root) / "build"
-    request = [{"kind": "deps", "name": name}]
-    if target is not None:
-        nodes, summary = _read(run_simple_probe(root, [target], libs, request, lake, work=work,
-                                                log=log, label=target), name)
-    else:
-        # The source does not show the name: ask every library, each in its own session.
-        recs, failed = probe_modules(root, built, libs, request, lake, log=log or (lambda m: None),
-                                     work=work)
-        hits = {}
-        for r in recs:
-            if r.get("record") == "deps" and r.get("name") == name and not r.get("errors"):
-                hits.setdefault(r["probe_group"], r)
-        if len({h.get("module") for h in hits.values()}) > 1:
-            return {**head, "ok": False, "status": "ambiguous",
-                    "modules": sorted(h.get("module") for h in hits.values())}
-        group = next(iter(hits), None)
-        nodes, summary = _read([r for r in recs if r.get("probe_group") == group], name) \
-            if group else ([], None)
-        if group is None and failed:
-            return {**head, "ok": False, "status": "not checked", "modules": sorted(failed),
-                    "reason": "some built modules could not be loaded"}
-    if summary is None or "missing" in summary.get("errors", []) or name not in \
-            {n["name"] for n in nodes}:
-        body = {"ok": False, "status": "not found", "modules": [target] if target else []}
-    else:
-        body = {"ok": True, "status": "found", **_assemble(name, nodes, summary)}
-    stored.parent.mkdir(parents=True, exist_ok=True)
-    stored.write_text(json.dumps(body), encoding="utf-8")
-    return {**head, **body, "cache": {"hit": False, "key": key[:16]}}
+    # An answer is reused while the modules of the environment it was extracted from (the
+    # declaration's module and what it imports) and the probe are unchanged; an edit to another
+    # module keeps it.
+    st = store(root, libs)
+    key = f"{name}\0{target or '*'}"
+    with st.lock(log):
+        entry, _ = (None, None) if refresh else st.get("deps", key)
+        if entry is not None:
+            return {**head, **entry["body"], "cache": {"hit": True, "key": _short(key)}}
+        work = root / work_dir_name(root) / "build"
+        request = [{"kind": "deps", "name": name}, {"kind": "modules", "name": ""}]
+        quiet = log or (lambda m: None)
+        if target is not None:
+            recs, failed = probe_modules(root, [target], libs, request, lake, log=quiet,
+                                         work=work)
+            if failed:
+                raise ViewError(failed[target])
+            nodes, summary = _read(recs, name)
+            env = st.environment([target], next(iter(graphs(recs).values()), {}))
+        else:
+            # The source does not show the name: ask every library, each in its own session.
+            recs, failed = probe_modules(root, built, libs, request, lake, log=quiet, work=work)
+            hits = {}
+            for r in recs:
+                if r.get("record") == "deps" and r.get("name") == name and not r.get("errors"):
+                    hits.setdefault(r["probe_group"], r)
+            if len({h.get("module") for h in hits.values()}) > 1:
+                return {**head, "ok": False, "status": "ambiguous",
+                        "modules": sorted(h.get("module") for h in hits.values())}
+            group = next(iter(hits), None)
+            nodes, summary = _read([r for r in recs if r.get("probe_group") == group], name) \
+                if group else ([], None)
+            if group is None and failed:
+                return {**head, "ok": False, "status": "not checked", "modules": sorted(failed),
+                        "reason": "some built modules could not be loaded"}
+            graph: dict[str, list[str]] = {}
+            for g in graphs(recs).values():
+                graph.update(g)
+            env = st.environment(built, graph)
+        if summary is None or "missing" in summary.get("errors", []) or name not in \
+                {n["name"] for n in nodes}:
+            body = {"ok": False, "status": "not found", "modules": [target] if target else []}
+        else:
+            body = {"ok": True, "status": "found", **_assemble(name, nodes, summary)}
+        st.put("deps", key, env, body=body)
+    return {**head, **body, "cache": {"hit": False, "key": _short(key)}}
+
+
+def _short(key: str) -> str:
+    import hashlib
+    return hashlib.sha256(key.encode()).hexdigest()[:16]

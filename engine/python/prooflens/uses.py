@@ -17,20 +17,20 @@ The answer names the scope it searched. Modules that are not built or could not 
 listed, and while there are any the answer is incomplete: "no use found" then holds only for the
 modules searched. A name declared by two modules is ambiguous until its module is given.
 
-Answers are reused while no Lean input of the project changes; a repeat query starts no Lean
-session. The reverse references of every declaration (`refs`, for the further callers) are
-extracted once per snapshot and shared by every query.
+Answers are kept in the facts store (`facts.py`) and reused while no module of the project
+changes; a repeat query starts no Lean session. The reverse references of every declaration
+(`refs`, for the further callers) are stored per module with the index a build extracts, and
+shared by every query.
 """
 
 from __future__ import annotations
 
-import hashlib
-import json
 from pathlib import Path
 
 from .config import work_dir_name
+from .facts import graphs
 from .probe import lib_names
-from .simple import ViewError, built_modules, lean_digest, probe_modules
+from .simple import ViewError, built_modules, probe_modules
 
 SCHEMA = "machinechecked/uses@1"
 NOTE = ("Uses are read from Lean's elaborated terms. Where a premise comes from is what the term "
@@ -57,40 +57,6 @@ def _tool_version() -> str:
         return version("machinechecked")
     except PackageNotFoundError:
         return "unknown"
-
-
-def _probe_digest() -> str:
-    from importlib import resources
-    body = resources.files("prooflens").joinpath("data/ProofLensProbe.lean").read_bytes()
-    return hashlib.sha256(body).hexdigest()[:16]
-
-
-class _Cache:
-    """Answers kept in `<work dir>/build/uses`, reused while no Lean input or built module of
-    the project changes, for the same tool and probe."""
-
-    def __init__(self, root: Path):
-        self.dir = root / work_dir_name(root) / "build" / "uses"
-        self.snapshot = hashlib.sha256("\0".join(
-            (lean_digest(root), _tool_version(), _probe_digest())).encode()).hexdigest()
-
-    def _path(self, kind: str, key: str) -> Path:
-        h = hashlib.sha256(f"{self.snapshot}\0{kind}\0{key}".encode()).hexdigest()
-        return self.dir / kind / f"{h}.json"
-
-    def get(self, kind: str, key: str):
-        p = self._path(kind, key)
-        try:
-            return json.loads(p.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            return None
-
-    def put(self, kind: str, key: str, body) -> None:
-        p = self._path(kind, key)
-        p.parent.mkdir(parents=True, exist_ok=True)
-        tmp = p.with_suffix(".tmp")
-        tmp.write_text(json.dumps(body, ensure_ascii=False), encoding="utf-8")
-        tmp.replace(p)
 
 
 # -- the reverse references of every declaration ----------------------------------------------
@@ -403,48 +369,71 @@ def uses(root: Path, name: str, module: str | None = None, lake: str = "lake", l
     target, answer = _resolve(root, name, module, built, unbuilt)
     if answer is not None:
         return {**head, "ok": False, **answer}
-    cache = _Cache(root)
+    from .deps import store
+    # An answer is reused while every module of the project it searched, and the probe, are
+    # unchanged (#130's facts store): a user can be anywhere, so an edit to any project module
+    # reopens it, and an edit outside Lean does not.
+    st = store(root, libs)
     key = f"{name}\0{module or target or '*'}"
-    if not refresh:
-        body = cache.get("uses", key)
-        if body is not None:
-            return {**head, **body, "cache": {"hit": True}}
-    refs = None if refresh else cache.get("refs", "")
-    requests = [{"kind": "apps", "name": name}]
-    if refs is None:
-        requests += [{"kind": "refs", "name": ""}, {"kind": "modules", "name": ""}]
-    work = root / work_dir_name(root) / "build"
-    quiet = log or (lambda m: None)
-    recs, failed = probe_modules(root, built, libs, requests, lake, log=quiet, work=work)
-    errs = [r for r in recs if r.get("record") == "apps" and r.get("errors")]
-    if errs and not any(r.get("record") == "uses" for r in recs):
-        raise ViewError(errs[0]["errors"][0])
-    if refs is None:
-        refs = [r for r in recs if r.get("record") in ("refs", "module")]
-        if not failed:
-            cache.put("refs", "", refs)
-    else:
-        recs = recs + refs
-    found = [r for r in recs if r.get("record") == "uses" and not r.get("errors")]
-    if module or target:
-        want = module or target
-        found = [r for r in found if r.get("module") == want]
-    mods = sorted({r.get("module") for r in found})
-    if len(mods) > 1:
-        body = {"ok": False, "status": "ambiguous", "modules": mods}
-    elif not found:
-        body = {"ok": False, "status": "not checked" if failed else "not found",
-                "modules": sorted(failed) if failed else ([target] if target else []),
-                **({"reason": "some built modules could not be loaded"} if failed else {})}
-    else:
+    with st.lock(log):
+        entry, _ = (None, None) if refresh else st.get("uses", key)
+        if entry is not None:
+            return {**head, **entry["body"], "cache": {"hit": True}}
+        refs = None if refresh else _stored_refs(st, built)
+        requests = [{"kind": "apps", "name": name}, {"kind": "modules", "name": ""}]
+        if refs is None:
+            requests.append({"kind": "refs", "name": ""})
+        work = root / work_dir_name(root) / "build"
+        quiet = log or (lambda m: None)
+        recs, failed = probe_modules(root, built, libs, requests, lake, log=quiet, work=work)
+        errs = [r for r in recs if r.get("record") == "apps" and r.get("errors")]
+        if errs and not any(r.get("record") == "uses" for r in recs):
+            raise ViewError(errs[0]["errors"][0])
+        graph: dict[str, list[str]] = {}
+        for g in graphs(recs).values():
+            graph.update(g)
+        found = [r for r in recs if r.get("record") == "uses" and not r.get("errors")]
+        if module or target:
+            want = module or target
+            found = [r for r in found if r.get("module") == want]
         groups = sorted({r["probe_group"] for r in found})
-        # The sessions that hold the declaration, as one environment.
-        idx = refs_index([{**r, "probe_group": ""} for r in recs if r.get("record") == "refs"
-                          and r.get("probe_group") in groups])
-        body = _assemble(name, recs, groups, built, unbuilt, failed, idx)
-    if not failed:
-        cache.put("uses", key, body)
+        if refs is None:
+            fresh = [r for r in recs if r.get("record") == "refs"]
+            if not failed:
+                st.put("refs", "", st.environment(built, graph),
+                       records=[{k: v for k, v in r.items() if k != "probe_group"}
+                                for r in fresh])
+            # The sessions that hold the declaration, as one environment.
+            refs = [r for r in fresh if r.get("probe_group") in groups]
+        mods = sorted({r.get("module") for r in found})
+        if len(mods) > 1:
+            body = {"ok": False, "status": "ambiguous", "modules": mods}
+        elif not found:
+            body = {"ok": False, "status": "not checked" if failed else "not found",
+                    "modules": sorted(failed) if failed else ([target] if target else []),
+                    **({"reason": "some built modules could not be loaded"} if failed else {})}
+        else:
+            idx = refs_index([{**r, "probe_group": ""} for r in refs])
+            body = _assemble(name, recs, groups, built, unbuilt, failed, idx)
+        if not failed:
+            st.put("uses", key, st.environment(built, graph), body=body)
     return {**head, **body, "cache": {"hit": False}}
+
+
+def _stored_refs(st, built: list[str]) -> list[dict] | None:
+    """The reverse references of the built modules, as the facts store holds them current: from
+    the index a build stored per module, else from an earlier query; None when it holds neither
+    for every module."""
+    out = []
+    for m in built:
+        e, _ = st.get("index", m)
+        if e is None or "refs" not in e:
+            break
+        out += e["refs"]
+    else:
+        return out
+    e, _ = st.get("refs", "")
+    return e["records"] if e is not None else None
 
 
 # -- the reader ------------------------------------------------------------------------------

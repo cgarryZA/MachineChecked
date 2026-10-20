@@ -55,8 +55,17 @@ def moduleOf (env : Environment) (n : Name) : Name :=
   | some idx => env.header.moduleNames[idx.toNat]!
   | none => `«this file»
 
-def inScope (roots : Array Name) (env : Environment) (n : Name) : Bool :=
-  roots.contains (moduleOf env n).getRoot
+/-- Whether a constant is declared in a module of `roots`, by module index: one lookup per
+constant, for the hundreds of thousands of references a large project has. -/
+def scopeTest (roots : Array Name) : CoreM (Name → Bool) := do
+  let env ← getEnv
+  let names := env.header.moduleNames
+  let mut inside : Std.HashSet Nat := {}
+  for i in [:names.size] do
+    if roots.contains names[i]!.getRoot then inside := inside.insert i
+  return fun n => match env.getModuleIdxFor? n with
+    | some i => inside.contains i.toNat
+    | none => false
 
 def kindOf : ConstantInfo → String
   | .thmInfo _ => "theorem" | .defnInfo _ => "def" | .inductInfo _ => "inductive"
@@ -345,15 +354,15 @@ where
     | .strictImplicit => "strict-implicit" | .instImplicit => "instance"
 
 /-- Constants of the project that `e` uses directly. -/
-def projectConsts (roots : Array Name) (e : Expr) : MetaM (Array String) := do
+def projectConsts (inside : Name → Bool) (e : Expr) : MetaM (Array String) := do
   let env ← getEnv
-  return e.getUsedConstants.filter (inScope roots env) |>.map toString
+  return e.getUsedConstants.filter inside |>.map toString
 
 /-! ## Records -/
 
 def emit (h : IO.FS.Handle) (j : Json) : IO Unit := h.putStrLn j.compress
 
-def declRecord (roots : Array Name) (n : Name) (ci : ConstantInfo) : MetaM (Json × Array Name) := do
+def declRecord (inside : Name → Bool) (n : Name) (ci : ConstantInfo) : MetaM (Json × Array Name) := do
   let env ← getEnv
   let (lh, c, used) ← constPrint ci
   let sig ← ppJson ci.type
@@ -368,11 +377,11 @@ def declRecord (roots : Array Name) (n : Name) (ci : ConstantInfo) : MetaM (Json
     ("module", (moduleOf env n).toString), ("range", ← rangeJson n),
     ("doc", match doc with | some d => Json.str d | none => Json.null),
     ("legacy_hash", lh), ("canon", c), ("signature", sig), ("value", value),
-    ("uses", Json.arr ((used.filter fun u => inScope roots env u && !u.isInternal).map
+    ("uses", Json.arr ((used.filter fun u => inside u && !u.isInternal).map
       (Json.str ·.toString)))]
   return (j, used)
 
-def emitClosure (h : IO.FS.Handle) (roots : Array Name) (root : Name) (used : Array Name)
+def emitClosure (h : IO.FS.Handle) (inside : Name → Bool) (root : Name) (used : Array Name)
     (seen : IO.Ref NameSet) : MetaM (Array String) := do
   let env ← getEnv
   let mut stack := used
@@ -383,11 +392,11 @@ def emitClosure (h : IO.FS.Handle) (roots : Array Name) (root : Name) (used : Ar
     stack := stack.pop
     if visited.contains n || n == root then continue
     visited := visited.insert n
-    unless inScope roots env n do continue
+    unless inside n do continue
     let some c := env.find? n | continue
     members := members.push n.toString
     -- Each member has its own heartbeat budget: a closure can hold thousands.
-    let (j, more) ← withCurrHeartbeats (declRecord roots n c)
+    let (j, more) ← withCurrHeartbeats (declRecord inside n c)
     unless (← seen.get).contains n do
       seen.modify (·.insert n)
       emit h j
@@ -397,7 +406,7 @@ def emitClosure (h : IO.FS.Handle) (roots : Array Name) (root : Name) (used : Ar
 def disallowed (allowed : Array Name) (axs : Array Name) : Array Name :=
   axs.filter (!allowed.contains ·)
 
-def specRecord (h : IO.FS.Handle) (q : Query) (roots : Array Name) (seen : IO.Ref NameSet)
+def specRecord (h : IO.FS.Handle) (q : Query) (inside : Name → Bool) (seen : IO.Ref NameSet)
     (spec : Name) : MetaM Unit := do
   let env ← getEnv
   let some ci := env.find? spec
@@ -409,16 +418,16 @@ def specRecord (h : IO.FS.Handle) (q : Query) (roots : Array Name) (seen : IO.Re
   let axs ← collectAxioms spec
   let bad := disallowed (q.allowed_axioms.map (·.toName)) axs
   unless bad.isEmpty do errs := errs.push s!"axioms={bad.toList}"
-  let (j, used) ← declRecord roots spec ci
+  let (j, used) ← declRecord inside spec ci
   let (binders, concl) ← match ci with
     | .defnInfo d => telescope d.value #[]
     | _ => pure (#[], Json.null)
   let exact ← match ci with
     | .defnInfo d => ppJson d.value
     | _ => pure Json.null
-  let closure ← emitClosure h roots spec used seen
+  let closure ← emitClosure h inside spec used seen
   let direct ← match ci with
-    | .defnInfo d => projectConsts roots d.value
+    | .defnInfo d => projectConsts inside d.value
     | _ => pure #[]
   let consts := match ci with
     | .defnInfo d => d.value.getUsedConstants.map toString
@@ -572,7 +581,7 @@ def moduleDocRecords (h : IO.FS.Handle) (roots : Array Name) : MetaM Unit := do
         line := line + 1
 
 /-- A theorem of a link: its statement split like a specification, and its axioms. -/
-def linkRecord (h : IO.FS.Handle) (q : Query) (roots : Array Name) (seen : IO.Ref NameSet)
+def linkRecord (h : IO.FS.Handle) (q : Query) (inside : Name → Bool) (seen : IO.Ref NameSet)
     (n : Name) : MetaM Unit := do
   let env ← getEnv
   let some ci := env.find? n
@@ -587,8 +596,8 @@ def linkRecord (h : IO.FS.Handle) (q : Query) (roots : Array Name) (seen : IO.Re
   let exact ← ppJson stmt
   let axs ← collectAxioms n
   let bad := disallowed (q.allowed_axioms.map (·.toName)) axs
-  let (j, used) ← declRecord roots n ci
-  let closure ← emitClosure h roots n used seen
+  let (j, used) ← declRecord inside n ci
+  let closure ← emitClosure h inside n used seen
   emit h (Json.mkObj [("record", "link"), ("name", n.toString), ("kind", kindOf ci),
     ("errors", toJson (if bad.isEmpty then #[] else #[s!"axioms={bad.toList}"])),
     ("axioms", toJson (axs.map toString)), ("sorry", toJson (axs.contains ``sorryAx)),
@@ -614,13 +623,13 @@ def statementAndValueConsts (ci : ConstantInfo) : Array Name × Array Name :=
   (ci.type.getUsedConstants, value)
 
 /-- One declaration reached from a `deps` root: what it is, how far from the root, and its own
-statement and value dependencies, split into the project's (`roots`) and the rest. -/
-def depNode (roots : Array Name) (n : Name) (ci : ConstantInfo) (depth : Nat) : MetaM Json := do
+statement and value dependencies, split into the project's (`inside`) and the rest. -/
+def depNode (inside : Name → Bool) (n : Name) (ci : ConstantInfo) (depth : Nat) : MetaM Json := do
   let env ← getEnv
   let (st, va) := statementAndValueConsts ci
-  let inside := fun (a : Array Name) => Json.arr ((a.filter (inScope roots env)).map (Json.str ·.toString))
-  let outside := fun (a : Array Name) =>
-    Json.arr ((a.filter (!inScope roots env ·)).map (Json.str ·.toString))
+  let ours := fun (a : Array Name) => Json.arr ((a.filter inside).map (Json.str ·.toString))
+  let others := fun (a : Array Name) =>
+    Json.arr ((a.filter (!inside ·)).map (Json.str ·.toString))
   -- Each declaration printed has its own heartbeat budget: a closure can hold thousands.
   let ty ← withCurrHeartbeats do
     try
@@ -633,12 +642,12 @@ def depNode (roots : Array Name) (n : Name) (ci : ConstantInfo) (depth : Nat) : 
     ("user_facing", toJson (userFacing n)), ("depth", toJson depth),
     ("doc", match doc with | some d => Json.str d | none => Json.null),
     ("type", if ty.length > 4000 then prefixOf ty 4000 ++ " …" else ty),
-    ("statement_uses", inside st), ("value_uses", inside va),
-    ("statement_external", outside st), ("value_external", outside va)]
+    ("statement_uses", ours st), ("value_uses", ours va),
+    ("statement_external", others st), ("value_external", others va)]
 
 /-- Every declaration of the project reachable from `root` through statements and values, each
 once, at its least distance from the root, then a `deps` record with the root's axioms. -/
-def depsRecords (h : IO.FS.Handle) (roots : Array Name) (root : Name) : MetaM Unit := do
+def depsRecords (h : IO.FS.Handle) (inside : Name → Bool) (root : Name) : MetaM Unit := do
   let env ← getEnv
   unless env.contains root do
     emit h (Json.mkObj [("record", "deps"), ("name", root.toString), ("errors", toJson #["missing"])])
@@ -653,13 +662,13 @@ def depsRecords (h : IO.FS.Handle) (roots : Array Name) (root : Name) : MetaM Un
     if seen.contains n then continue
     seen := seen.insert n
     let some ci := env.find? n | continue
-    unless n == root || inScope roots env n do continue
-    emit h (← depNode roots n ci d)
+    unless n == root || inside n do continue
+    emit h (← depNode inside n ci d)
     reached := reached + 1
     let (st, va) := statementAndValueConsts ci
     for c in st ++ va do
       unless seen.contains c do
-        if inScope roots env c then queue := queue.push (c, d + 1)
+        if inside c then queue := queue.push (c, d + 1)
   let axs ← collectAxioms root
   emit h (Json.mkObj [("record", "deps"), ("name", root.toString), ("errors", Json.arr #[]),
     ("module", (moduleOf env root).toString), ("axioms", toJson (axs.map toString)),
@@ -798,18 +807,6 @@ def projectConstants (roots : Array Name) : CoreM (Array Name) := do
     if roots.contains env.header.moduleNames[i]!.getRoot then
       out := out ++ env.header.moduleData[i]!.constNames
   return out
-
-/-- Whether a constant is declared in a module of `roots`, by module index: one lookup per
-constant, for the hundreds of thousands of references a large project has. -/
-def scopeTest (roots : Array Name) : CoreM (Name → Bool) := do
-  let env ← getEnv
-  let names := env.header.moduleNames
-  let mut inside : Std.HashSet Nat := {}
-  for i in [:names.size] do
-    if roots.contains names[i]!.getRoot then inside := inside.insert i
-  return fun n => match env.getModuleIdxFor? n with
-    | some i => inside.contains i.toNat
-    | none => false
 
 /-- For every declaration of the project, the project's constants its statement and its value
 mention. -/
@@ -1170,6 +1167,7 @@ open ProofLensProbe in
   let roots := q.scope_roots.map (·.toName)
   let seen ← IO.mkRef ({} : NameSet)
   let used : UsedCache ← IO.mkRef {}
+  let inside ← scopeTest roots
   let h ← IO.FS.Handle.mk opath .write
   do
     emit h (Json.mkObj [("record", "env"), ("lean", Lean.versionString),
@@ -1181,21 +1179,21 @@ open ProofLensProbe in
       -- record for itself and the probe goes on.
       tryCatchRuntimeEx (withBudget q.max_heartbeats <| withCurrHeartbeats do
         match r.kind with
-        | "spec" => specRecord h q roots seen r.name.toName
+        | "spec" => specRecord h q inside seen r.name.toName
         | "accept" | "refute" => proofRecord h q r.kind r.name.toName (r.spec.map (·.toName))
         | "witness" => proofRecord h q "witness" r.name.toName none
         | "index" => do indexRecords h roots; moduleDocRecords h roots
         | "moddocs" => moduleDocRecords h roots
-        | "link" => linkRecord h q roots seen r.name.toName
-        | "deps" => depsRecords h roots r.name.toName
+        | "link" => linkRecord h q inside seen r.name.toName
+        | "deps" => depsRecords h inside r.name.toName
         | "modules" => moduleRecords h
         | "decl" => do
           let env ← getEnv
           if let some ci := env.find? r.name.toName then
-            let (j, used) ← declRecord roots r.name.toName ci
+            let (j, used) ← declRecord inside r.name.toName ci
             seen.modify (·.insert r.name.toName)
             emit h j
-            let members ← emitClosure h roots r.name.toName used seen
+            let members ← emitClosure h inside r.name.toName used seen
             emit h (Json.mkObj [("record", "defclosure"), ("name", r.name),
               ("closure", toJson members)])
           else

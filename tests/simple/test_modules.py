@@ -90,9 +90,10 @@ def test_modules_that_cannot_load_together_are_told_apart(twins):
 @needs_lean
 @needs_tex
 def test_lean_loads_only_what_it_must(twins, tmp_path, monkeypatch):
-    """The linked names are answered in the sessions that build the index; with the index
-    reused, a name is checked by loading only the modules that declare it; a name whose source
-    is in an unbuilt module is never asked of Lean. The statuses do not change."""
+    """The linked names are answered in the sessions that build the index; a second build reuses
+    the stored facts and starts no session; with the index stored but not a name's record, the
+    name is checked by loading only the modules that declare it; a name whose source is in an
+    unbuilt module is never asked of Lean. The statuses do not change."""
     from prooflens import simple
     sessions, real = [], simple.run_simple_probe
 
@@ -108,13 +109,19 @@ def test_lean_loads_only_what_it_must(twins, tmp_path, monkeypatch):
         return {c["number"]: [l["status"] for l in c["links"]] for c in view["body"]["claims"]}
 
     first = statuses()
-    # One session per library, each building the index (with the reverse references) and
-    # answering the linked names.
-    assert len(sessions) == 2 and all(kinds == {"index", "refs", "link"}
+    # One session per library, each building the index (with the reverse references) and answering the linked names.
+    assert len(sessions) == 2 and all(kinds == {"index", "refs", "link", "modules"}
                                       for _, kinds, _ in sessions)
-    assert all("Later.result" in names and "Twin.target" in names for *_, names in sessions)
+    assert all("Twin.target" in names for *_, names in sessions)
+    assert not any("Later.result" in names for *_, names in sessions)
 
     sessions.clear()
+    assert statuses() == first
+    assert sessions == []
+
+    # Without the stored records of the links, only the modules declaring a name are loaded.
+    from prooflens.facts import Store
+    Store(twins, [], out / "build", []).drop("link")
     assert statuses() == first
     target = [mods for mods, _, names in sessions if "Twin.target" in names]
     assert sorted(target) == [["Challenge.Main"], ["Solution.Main"]]

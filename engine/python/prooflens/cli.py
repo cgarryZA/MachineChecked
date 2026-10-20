@@ -196,16 +196,18 @@ def _fetch_paper(root: Path, url: str, title: str | None = None) -> Path:
     return out
 
 
-def _simple_view(root: Path, paper: Path) -> dict:
-    """What the reader would show, without writing it (`check` needs no site)."""
+def _simple_view(root: Path, paper: Path, reuse_lean: bool = False) -> dict:
+    """What the reader would show, without writing it (`check` needs no site). With
+    `reuse_lean`, only stored Lean facts are used."""
     from .simple import build_view
     out = root / cfgmod.work_dir_name(root)
-    return build_view(root, paper, out, log=lambda m: print("  " + m, file=sys.stderr))
+    return build_view(root, paper, out, log=lambda m: print("  " + m, file=sys.stderr),
+                      reuse_only=reuse_lean)
 
 
-def _simple_site(root: Path, paper: Path, web: str | None):
+def _simple_site(root: Path, paper: Path, web: str | None, reuse_lean: bool = False):
     from .simple import write_view_site
-    view = _simple_view(root, paper)
+    view = _simple_view(root, paper, reuse_lean)
     site = root / cfgmod.work_dir_name(root) / "site"
     index = write_view_site(view, site, _web_dist(web), root)
     return site, index, view
@@ -410,10 +412,16 @@ def _print_workspace(v: dict) -> None:
                       + COMPOSITION_NEXT_STEP)
         for q in c["questions"]:
             print(f"  question {q['id']}  {q['state']}: {q['text']}")
+        rd = c.get("reading") or {}
+        if rd.get("requirements") or rd.get("alignments"):
+            from .requirements import lines as reading_lines
+            print("  requirements:")
+            for line in reading_lines(rd):
+                print("  " + line)
 
 
 def cmd_workspace(a):
-    """`machinechecked workspace open|list|show|update|export|import`: the saved investigation
+    """`machinechecked workspace open|list|show|update|suggest|export|import`: the saved investigation
     (`workspace.py`), as the reader saves it."""
     from . import review_cli as rc
     from . import workspace as wsp
@@ -468,6 +476,19 @@ def cmd_workspace(a):
             p = path()
             ack = wsp.update(p, ops, snap, root, a.reviewer or None, op_id, a.dry_run)
             _print_json(ack)
+        elif a.action == "suggest":
+            from .requirements import suggestion_ops
+            if snap is None:
+                sys.exit("no build to read the paper from: run view or build first")
+            p = path()
+            cid = snap.resolve_claim(a.claim)
+            ops = suggestion_ops(wsp.read(p), snap, cid, a.requirement)
+            if not a.apply:
+                return _print_json({"ops": ops})
+            if not ops:
+                return _print_json({"ok": True, "changed": [], "suggested": 0})
+            ack = wsp.update(p, ops, snap, root, a.reviewer or None, a.op_id)
+            _print_json({**ack, "suggested": len(ops)})
         elif a.action == "export":
             body = wsp.export(path())
             Path(a.out).write_text(json.dumps(body, indent=1, ensure_ascii=False) + "\n",
@@ -483,7 +504,7 @@ def cmd_workspace(a):
         _print_json({"ok": False, "error": str(e), "conflicts": e.conflicts})
         raise SystemExit(1)
     except (wsp.WorkspaceError, TargetError, ValueError) as e:
-        if getattr(a, "json", False) or a.action in ("update", "import"):
+        if getattr(a, "json", False) or a.action in ("update", "import", "suggest"):
             _print_json({"ok": False, "error": str(e),
                          **({"candidates": e.candidates} if isinstance(e, TargetError) else {})})
             raise SystemExit(1)
@@ -505,7 +526,7 @@ def cmd_build_simple(a):
     from .bundle import bundle
     root, paper = _simple_target(a)
     _settings(a, root)
-    site, index, view = _simple_site(root, paper, a.web)
+    site, index, view = _simple_site(root, paper, a.web, a.reuse_lean)
     _print_simple(view["body"])
     if a.site:
         import shutil
@@ -903,7 +924,21 @@ def cmd_compare(a):
             return
         if not a.claim:
             sys.exit("name a claim (its id, key or number), or give --query OP TARGET")
-        out = cmp.claim_packet(site, a.claim, a.stage, a.limit, a.after)
+        reading = None
+        if a.workspace:
+            from . import workspace as wsp
+            from .targets import Snapshot
+            cid = site.resolve_claim(a.claim)
+            try:
+                ws = wsp.read(wsp.find(work, a.workspace))
+            except wsp.WorkspaceError as e:
+                raise cmp.CompareError(str(e), "unknown-workspace") from None
+            v = wsp.view(ws, Snapshot(work / "site" / "data"), cid)
+            reading = {"workspace": ws["id"], "reviewer": v["reviewer"], "mode": v["mode"],
+                       **((v["claims"].get(cid) or {}).get("reading")
+                          or {"requirements": [], "witnesses": [], "alignments": [],
+                              "questions": []})}
+        out = cmp.claim_packet(site, a.claim, a.stage, a.limit, a.after, reading)
     except cmp.CompareError as e:
         if e.kind in ("no-build", "no-project") and not a.json:
             sys.exit(f"machinechecked: {e}")
@@ -1070,8 +1105,8 @@ def main(argv=None):
     b.add_argument("--lake", default="lake", help=argparse.SUPPRESS)
     b.add_argument("--no-lean-build", action="store_true", help=argparse.SUPPRESS)
     b.add_argument("--reuse-lean", action="store_true",
-                   help="reuse the last Lean results when no Lean input changed (after an edit to "
-                        "the claim inventory or the reviews, say)")
+                   help="use only the stored Lean results, starting no Lean session; stop and say "
+                        "what must be extracted when they do not cover the build")
     b.add_argument("--web", help=argparse.SUPPRESS)
     b.add_argument("--fail-on-violation", action="store_true", help=argparse.SUPPRESS)
     b.set_defaults(func=cmd_build)
@@ -1196,6 +1231,8 @@ def main(argv=None):
                     "extracted yet")
     co.add_argument("--limit", type=int, help="return at most this many definitions or results")
     co.add_argument("--after", metavar="ID", help="continue a list after this item")
+    co.add_argument("--workspace", metavar="ID", help="include this workspace's requirements of "
+                    "the claim (informed stage only)")
     co.add_argument("--json", action="store_true", help="print one JSON document")
     co.add_argument("-c", "--config", default=None, help=argparse.SUPPRESS)
     co.set_defaults(func=cmd_compare)
@@ -1275,13 +1312,22 @@ def main(argv=None):
                         "list": "the workspaces of this project",
                         "show": "a workspace: evidence, findings and questions per claim",
                         "update": "apply operations (a JSON file, or - for standard input)",
+                        "suggest": "propose the passages near a claim that may govern a "
+                                   "requirement (printed as operations, or saved with --apply)",
                         "export": "write a workspace as one file",
                         "import": "bring in an exported workspace"}.items():
         sp = wss.add_parser(name, help=help_)
         if name in ("update", "import"):
             sp.add_argument("file", help="a JSON file, or - for standard input")
-        if name in ("open", "show", "update", "export"):
+        if name in ("open", "show", "update", "export", "suggest"):
             sp.add_argument("--id", help="the workspace (default: yours)")
+        if name == "suggest":
+            sp.add_argument("--claim", required=True, help="the claim (id, key or number)")
+            sp.add_argument("--requirement", required=True,
+                            help="the requirement's local id the passages are proposed for")
+            sp.add_argument("--apply", action="store_true",
+                            help="save the proposals (each stays a proposal until accepted)")
+            sp.add_argument("--op-id", help="an identifier of this request")
         if name == "open":
             sp.add_argument("--mode", choices=["independent", "informed"],
                             help="independent review (blind reading first) or informed "

@@ -225,13 +225,9 @@ def resolve_declaration(name: str, snap: Snapshot, root: Path | None, module: st
     if root is not None:
         libs = lib_names(root)
         built, unbuilt = built_modules(root, libs) if libs else ([], [])
-        failed = {}
-        # The working directory holds the site (`site/data`) and the build cache beside it.
-        cache = snap.data.parent.parent / "build" / "index-cache.json"
-        try:
-            failed = json.loads(cache.read_text(encoding="utf-8")).get("failed", {})
-        except (OSError, ValueError):
-            pass
+        # The working directory holds the site (`site/data`) and the facts store beside it.
+        from .facts import load_failures
+        failed = load_failures(snap.data.parent.parent / "build")
         for m in declaring_modules(root, [module] if module in unbuilt else unbuilt, name):
             return {"name": name, "module": m, "build": "unbuilt"}
         for m in declaring_modules(root, list(failed), name):
