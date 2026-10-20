@@ -66,6 +66,45 @@ def files():
             'data/expansions/'+ik+'.json': inner, **{'data/claims/'+mf.claim_file(c['id']): c for c in (claim,extra)}}
 
 
+def with_work(data, cid='T:one'):
+    """`data` with an auditor's accepted workspace records for `cid` (published_work.py)."""
+    fname = next(c['file'] for c in data['data/index.json']['claims'] if c['id'] == cid)
+    cur = {'state': 'current', 'changes': []}
+    reading = {'workspace': 'ws-000000000000', 'mode': 'informed',
+               'reviewer': {'id': 'human:A-Auditor', 'kind': 'human', 'name': 'A Auditor',
+                            'identity': 'self-declared'},
+               'requirements': [{'id': 'q1', 'kind': 'requirement', 'claim': cid, 'local_id': 'r1',
+                                 'form': 'conclusion', 'text': 'the synthetic bound holds',
+                                 'depth': 0, 'created_by': 'human:A-Auditor', 'currency': cur}],
+               'fragments': [{'id': 'p1', 'kind': 'fragment', 'claim': cid, 'requirement': 'r1',
+                              'role': 'statement', 'origin': 'printed', 'state': 'accepted',
+                              'state_by': 'human:A-Auditor', 'created_by': 'human:A-Auditor',
+                              'passage': {'claim': cid, 'sha256': None}, 'currency': cur}],
+               'alignments': [{'id': 'a1', 'kind': 'alignment', 'claim': cid, 'requirements': ['r1'],
+                               'relation': 'corresponds', 'lean': [{'decl': 'Synthetic.bound'}],
+                               'created_by': 'human:A-Auditor', 'currency': cur}],
+               'findings': [{'id': 'f1', 'kind': 'finding', 'claim': cid, 'coverage': 'partial',
+                             'state': 'submitted', 'submitted_at': '2026-01-01T00:00:00Z',
+                             'evidence': ['e1'], 'in_force': False,
+                             'note': 'A synthetic first reading.', 'created_by': 'human:A-Auditor',
+                             'currency': cur},
+                            {'id': 'f2', 'kind': 'finding', 'claim': cid, 'coverage': 'full',
+                             'basis': 'direct', 'state': 'submitted',
+                             'submitted_at': '2026-01-02T00:00:00Z', 'evidence': ['e1'],
+                             'in_force': True, 'supersedes': 'f1',
+                             'reason': 'A synthetic stronger theorem.',
+                             'note': 'A synthetic direct reading.', 'created_by': 'human:A-Auditor',
+                             'currency': cur}],
+               'evidence': [{'id': 'e1', 'kind': 'evidence', 'claim': cid, 'role': 'supports',
+                             'ref': {'decl': 'Synthetic.bound'}, 'currency': cur}]}
+    data = copy.deepcopy(data)
+    data['data/work/' + fname] = {'schema': 'prooflens/published-work@1',
+                                  'release': data['data/index.json']['release'], 'claim': cid,
+                                  'readings': [reading]}
+    data['data/claims/' + fname]['work'] = 'work/' + fname
+    return data
+
+
 def fetcher(data):
     def fetch(url, limit):
         value = data[url.removeprefix(BASE)]
@@ -77,8 +116,8 @@ def snapshot(data=None):
     return load_published_audit(PAPER, PAPER['formalisations'][0], {'url': BASE}, fetcher(data or files()))
 
 
-def build(path, reader=None):
-    audit = snapshot()
+def build(path, reader=None, work=False):
+    audit = snapshot(with_work(files()) if work else None)
     claims = [{'key': 'theorem-1', 'number': 'Theorem 1', 'kind': 'theorem', 'links': [],
                'anchor': {'begin': [1,0,220], 'end': [1,0,260]}}]
     apply_audits(claims, {REPO:audit}, 'f'*64)
@@ -88,4 +127,4 @@ def build(path, reader=None):
 
 if __name__ == '__main__':
     import sys
-    build(Path(sys.argv[1]), Path(sys.argv[2]))
+    build(Path(sys.argv[1]), Path(sys.argv[2]), work=True)

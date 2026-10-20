@@ -113,6 +113,17 @@ export async function saveSymbol(req) {
   return out;
 }
 
+// The workspace records an audit publishes for a claim (`prooflens/published-work@1`): the
+// passport names their file in `work`; a paper page carries them in the claim's record already.
+export async function loadWork(claim) {
+  const w = claim?.work;
+  if (!w) return null;
+  if (typeof w === "object") return w;
+  if (!inside(w)) throw new Error(`${w}: outside the audit's directory`);
+  const data = await getJson("data/" + w);
+  return data?.schema === "prooflens/published-work@1" && data.claim === claim.id ? data : null;
+}
+
 export function loadLeanIndex(index) {
   return getJson(index.lean_index || "data/lean-index.json");
 }

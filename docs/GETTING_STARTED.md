@@ -245,6 +245,8 @@ Select a claim to see the printed statement beside its Lean statement. For a LaT
 - **Further axioms:** the proof relies on axioms beyond the default allowlist.
 - **Definition / declaration not found:** the linked item is not a checked theorem or cannot be resolved from the built modules.
 
+MachineChecked keeps what Lean reported in `.machinechecked/`, so the next `view`, `build` or `check` asks Lean again only about modules that changed (and the modules that import them). Linking a claim, writing a note or editing the paper starts no Lean session. `machinechecked build --reuse-lean` builds from what is kept alone, and names what Lean must be asked when that is not enough. A module that Lean reports an error in stays unindexed until the project's Lean files, toolchain or Lake manifest change; a module that could not be loaded for want of memory or time, or because the Lean session was stopped, is tried again on the next build.
+
 For projects with a separate acceptance framework, further statuses and evidence are available. [Read the evidence policy](EVIDENCE_POLICY.md) before interpreting them.
 
 ## Share or publish

@@ -115,5 +115,14 @@ probe itself are unchanged; otherwise it stops with exit code 2 and says to run 
 build` without `--reuse-lean`. `machinechecked reassess` applies new reviews and dismissals to stored
 evidence, and refuses when the claim inventory changed.
 
+In zero configuration, every build reuses the Lean facts it extracted before (a module's index, a
+linked declaration's record, an `inspect` answer) while the modules of the environment they came
+from (the declaration's module and everything it imports, in the project and its path
+dependencies), the probe, the toolchain, the lakefiles and the Lake manifest are unchanged, and
+extracts again only what a change reopens. A link, a note or an edit to the paper extracts
+nothing. `machinechecked build --reuse-lean` uses the stored facts alone: when they do not cover
+the build it starts no Lean session, stops with exit code 2 and names the modules to index or the
+declarations to check, with the reason.
+
 Evidence records are content-addressed and never rewritten. A release name, once given, keeps its
 evidence.

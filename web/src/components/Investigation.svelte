@@ -1,5 +1,5 @@
 <script>
-  import { listWorkspaces, openWorkspace, showWorkspace, updateWorkspace, newId,
+  import { listWorkspaces, openWorkspace, showWorkspace, updateWorkspace, suggestContext, newId,
     rememberedWorkspace, rememberWorkspace, humanId } from "../lib/workspace.js";
   import { href } from "../lib/route.svelte.js";
   import { coverageView } from "../lib/coverage.js";
@@ -39,6 +39,29 @@
   let cite = $state(true);
 
   const here = $derived(view?.claims?.[claim.id] || { evidence: [], findings: [], questions: [] });
+  const reading = $derived(here.reading || { requirements: [], witnesses: [], alignments: [], questions: [] });
+
+  // The breakdown of the claim into requirements (`requirements.py`): the words below describe
+  // a fragment's role and origin, and a witness's scope, as the engine records them.
+  const FORMS = ["statement", "object", "assumption", "conclusion", "condition", "for every",
+    "there is", "and", "or", "not", "implies", "constant dependence", "definition", "other"];
+  const ROLE = { statement: "the statement", "quantifier domain": "domain of a quantifier",
+    "constant dependence": "allowed dependence of a constant", "standing assumption": "standing assumption",
+    definition: "definition used", "earlier choice": "choice made earlier", "cited result": "result cited",
+    context: "context", "later use": "later use", "proposed correction": "proposed correction" };
+  const ORIGIN = { printed: "printed for this claim", inferred: "attached by inference", correction: "proposed correction" };
+  const SCOPE = { produced: "the claim produces it", assumed: "assumed by the claim",
+    denied: "the claim says there is none", alternative: "inside one alternative" };
+  let rqId = $state("");
+  let rqForm = $state("condition");
+  let rqParent = $state("");
+  let rqText = $state("");
+  let rqBinds = $state("");
+  let rqPassage = $state(true);
+  let removing = $state(null);
+  let why = $state("");
+  const binding = $derived(["for every", "there is", "constant dependence"].includes(rqForm));
+  const alignments = $derived(Object.fromEntries((reading.alignments || []).map((a) => [a.id, a])));
 
   async function refresh(keepError = false) {
     if (!keepError) error = null;
@@ -112,6 +135,48 @@
   const submit = (f) => run([{ op: "submit", id: f.id, base_rev: f.rev }]);
   const resumeHere = () => run([{ op: "resume", state: { claim: claim.id } }]);
 
+  async function addRequirement() {
+    const binds = binding ? rqBinds.split(",").map((b) => b.trim()).filter(Boolean) : [];
+    const ops = [{ op: "put", record: { id: newId("r"), kind: "requirement", claim: claim.id,
+      local_id: rqId.trim(), form: rqForm, text: rqText, ...(rqParent ? { parent: rqParent } : {}),
+      ...(binds.length ? { binds } : {}) } }];
+    if (rqPassage) ops.push({ op: "put", record: { id: newId("p"), kind: "fragment", claim: claim.id,
+      requirement: rqId.trim(), role: "statement", passage: { claim: claim.id } } });
+    if (await run(ops)) { rqId = ""; rqText = ""; rqBinds = ""; rqParent = ""; }
+  }
+
+  // A put replaces a fragment's content: its location is sent as it is, so it keeps the text
+  // it was attached with.
+  function fragmentRecord(f, change) {
+    const keep = ["id", "kind", "claim", "requirement", "role", "origin", "scope", "note", "suggestion", "state", "why_removed"];
+    const rec = Object.fromEntries(keep.filter((k) => f[k] !== undefined).map((k) => [k, f[k]]));
+    if (f.region) rec.region = Object.fromEntries(["paper", "file", "start_line", "end_line", "start_column", "end_column"]
+      .filter((k) => f.region[k] !== undefined).map((k) => [k, f.region[k]]));
+    if (f.passage) rec.passage = { claim: f.passage.claim };
+    return { op: "put", base_rev: f.rev, record: { ...rec, ...change } };
+  }
+  const accept = (f) => run([fragmentRecord(f, { state: "accepted" })]);
+  async function remove(f) {
+    if (await run([fragmentRecord(f, { state: "removed", why_removed: why })])) { removing = null; why = ""; }
+  }
+  async function suggestFor(r) {
+    busy = true; error = null;
+    try {
+      await suggestContext(wsId, claim.id, r.local_id);
+      await refresh();
+    } catch (e) { error = String(e.message || e); }
+    busy = false;
+  }
+  function where(f) {
+    if (f.passage) return f.passage.claim === claim.id ? "this claim's passage" : `the passage of ${f.passage.claim}`;
+    const r = f.region || {};
+    return `${r.file}:${r.start_line}${r.end_line && r.end_line !== r.start_line ? "–" + r.end_line : ""}`;
+  }
+  function targetText(t) {
+    const part = t.conclusion ? "the conclusion" : "var" in t ? "variable" : "binder" in t ? "hypothesis or type" : "at" in t ? "sub-term" : null;
+    return t.decl + (part ? ` (${part}${t.target ? ": " + t.target : ""})` : "");
+  }
+
   function refText(r) {
     return r.decl || (r.source ? r.source.file + (r.source.line ? ":" + r.source.line : "") : "a passage of the paper");
   }
@@ -150,13 +215,71 @@
           {#if f.state === "draft"}<button class="act" disabled={busy} onclick={() => submit(f)}>Submit</button>{/if}
         </div>
       {/each}
+      {#if reading.requirements.length || reading.alignments.length}
+        <div class="reading" aria-label="Requirements">
+          <h3>Requirements</h3>
+          <p class="faint small">Your reading of what the claim demands, each with the passages of the paper it comes from. Lean has not checked these associations.</p>
+          {#each reading.requirements as r (r.id)}
+            <div class="req" data-req={r.local_id} style:margin-left="{r.depth * 16}px">
+              <p class="small"><code>{r.local_id}</code> <span class="form">{r.form}{r.binds?.length ? " " + r.binds.join(", ") : ""}</span>: <span class="text">{r.text}</span>
+                {#if r.independent_of?.length}<span class="faint"> · independent of {r.independent_of.join(", ")}</span>{/if}
+                {#if r.origin === "correction"}<span class="faint"> · added by a correction of {r.corrects}; the printed requirement stays</span>{/if}
+                {#if r.currency?.state === "stale"}<span class="stale"> · its source or Lean changed since</span>{/if}</p>
+              {#each r.fragments.governing as f (f.id)}
+                <div class="frag" data-role={f.role}>
+                  {#if f.region?.text}<pre class="src">{f.region.text}</pre>{/if}
+                  <p class="faint small">{ROLE[f.role]} · {where(f)} · {ORIGIN[f.origin]}{f.scope ? ` · applies to ${f.scope}` : ""} · by {f.created_by}{f.suggestion ? " (suggested by MachineChecked)" : ""}
+                    {#if f.currency?.state === "stale"}<span class="stale"> · the passage changed since</span>{/if}
+                    · <button class="link" disabled={busy} onclick={() => { removing = f.id; why = ""; }}>Remove</button></p>
+                  {#if removing === f.id}<p class="small"><input class="why" bind:value={why} placeholder="Why it does not govern this requirement" aria-label="Why remove it" />
+                    <button class="act" disabled={busy || !why.trim()} onclick={() => remove(f)}>Remove passage</button></p>{/if}
+                </div>
+              {/each}
+              {#each r.fragments.later_uses as f (f.id)}
+                <div class="frag use" data-role="later use">
+                  {#if f.region?.text}<pre class="src">{f.region.text}</pre>{/if}
+                  <p class="faint small">Used later at {where(f)}: a use of the result; this reading is unchanged · by {f.created_by}</p>
+                </div>
+              {/each}
+              {#each r.fragments.proposed as f (f.id)}
+                <div class="frag proposed" data-role={f.role}>
+                  {#if f.region?.text}<pre class="src">{f.region.text}</pre>{/if}
+                  <p class="small"><span class="faint">Suggested: {ROLE[f.role]} · {where(f)}{f.suggestion ? ` (${f.suggestion.rule})` : ""}</span>
+                    <button class="act" disabled={busy} onclick={() => accept(f)}>Accept</button>
+                    <button class="act" disabled={busy} onclick={() => { removing = f.id; why = ""; }}>Remove</button></p>
+                  {#if removing === f.id}<p class="small"><input class="why" bind:value={why} placeholder="Why it does not govern this requirement" aria-label="Why remove it" />
+                    <button class="act" disabled={busy || !why.trim()} onclick={() => remove(f)}>Remove passage</button></p>{/if}
+                </div>
+              {/each}
+              {#if r.fragments.removed.length}
+                <details class="removed"><summary class="faint small">Removed passages ({r.fragments.removed.length})</summary>
+                  {#each r.fragments.removed as f (f.id)}<p class="faint small">{where(f)} ({ROLE[f.role]}), removed by {f.state_by}: {f.why_removed}</p>{/each}
+                </details>
+              {/if}
+              {#each r.alignments as aid}
+                {@const a = alignments[aid]}
+                {#if a}<p class="small lean" data-alignment={a.id}><span class="faint">Lean:</span> {a.lean.map(targetText).join("; ")} <span class="faint">· {a.relation} · recorded by {a.created_by}</span>{#if a.currency?.state === "stale"}<span class="stale"> · the Lean changed since</span>{/if}</p>{/if}
+              {/each}
+              {#each r.questions as q}<p class="small question">Question: {q}</p>{/each}
+              <p class="small"><button class="link" disabled={busy} onclick={() => suggestFor(r)}>Suggest nearby context</button></p>
+            </div>
+          {/each}
+          {#each reading.witnesses as w}
+            <p class="small witness"><span class="faint">Witness {w.binds.join(", ") || w.requirement}:</span> {SCOPE[w.scope]}{w.after.length ? `; chosen after ${w.after.join(", ")}` : ""}{w.before.length ? `; chosen before ${w.before.join(", ")}` : ""}{w.independent_of.length ? `; independent of ${w.independent_of.join(", ")}` : ""}</p>
+          {/each}
+          {#each reading.alignments.filter((a) => !a.requirements.length) as a (a.id)}
+            <p class="small lean" data-alignment={a.id}><span class="faint">Lean only ({a.relation}):</span> {a.lean.map(targetText).join("; ")} <span class="faint">· recorded by {a.created_by}</span>{#if a.note} <span class="text">{a.note}</span>{/if}</p>
+          {/each}
+        </div>
+      {/if}
+
       {#if here.evidence.length}
         <p class="small faint">Evidence: {#each here.evidence as e, i (e.id)}{i ? ", " : ""}<code>{refText(e.ref)}</code> ({e.role}{e.currency?.state === "stale" ? ", changed since" : ""}){/each}</p>
       {/if}
 
       <details class="add">
         <summary>Record a finding</summary>
-        <p class="small"><label>Coverage <select bind:value={choice}>{#each Object.entries(CHOICES) as [k, c]}<option value={k}>{c.label}</option>{/each}</select></label>
+        <p class="small"><label>Coverage <select bind:value={choice} aria-label="Coverage">{#each Object.entries(CHOICES) as [k, c]}<option value={k}>{c.label}</option>{/each}</select></label>
           {#if claim.links?.length}<label><input type="checkbox" bind:checked={cite} /> cite the linked declarations</label>{/if}</p>
         {#if picked.coverage === "unresolved"}<textarea bind:value={openQ} rows="2" placeholder="The open question" aria-label="Open question"></textarea>
           <textarea bind:value={decide} rows="2" placeholder="What would decide it" aria-label="What would decide it"></textarea>{/if}
@@ -164,6 +287,17 @@
           <p class="faint small">Lean has not checked this combination. Next step: state the combination as one Lean result.</p>{/if}
         <textarea bind:value={note} rows="3" placeholder="What establishes each clause, or what differs" aria-label="Note"></textarea>
         <button class="act" disabled={busy || (picked.coverage === "unresolved" && !openQ.trim())} onclick={addFinding}>Save draft</button>
+      </details>
+      <details class="add">
+        <summary>Add a requirement</summary>
+        <p class="small"><input class="who" bind:value={rqId} placeholder="r1" aria-label="Local id" />
+          <label>Form <select bind:value={rqForm}>{#each FORMS as f}<option value={f}>{f}</option>{/each}</select></label>
+          <label>Inside <select bind:value={rqParent}><option value="">(top level)</option>{#each reading.requirements as r}<option value={r.local_id}>{r.local_id}</option>{/each}</select></label></p>
+        {#if binding}<p class="small"><input class="who" bind:value={rqBinds} placeholder="ε, C" aria-label="Variables" /> <span class="faint">the variables it introduces</span></p>{/if}
+        <textarea bind:value={rqText} rows="2" placeholder="What the claim demands, in your words" aria-label="Requirement"></textarea>
+        <p class="small"><label><input type="checkbox" bind:checked={rqPassage} /> its source is this claim's passage</label></p>
+        <button class="act" disabled={busy || !rqId.trim() || !rqText.trim()} onclick={addRequirement}>Save requirement</button>
+        <p class="faint small">Other passages (the sentence that sets a quantifier's domain, a standing assumption) are attached with “Suggest nearby context” or <code>machinechecked workspace update</code>.</p>
       </details>
       <details class="add">
         <summary>Ask a question</summary>
@@ -195,4 +329,14 @@
   .act:disabled { opacity: 0.5; cursor: default; }
   .link { font: inherit; background: none; border: 0; padding: 0; color: var(--accent); cursor: pointer; }
   .bad { color: var(--st-refuted); }
+  .reading h3 { font-size: 14px; margin: 12px 0 2px; }
+  .req { border-left: 3px solid var(--border); padding: 2px 0 2px 10px; margin: 6px 0; }
+  .req p { margin: 2px 0; }
+  .form { font-style: italic; }
+  .frag { margin: 4px 0 4px 8px; }
+  .frag.use { opacity: 0.8; }
+  .frag.proposed { border-left: 2px dashed var(--border); padding-left: 6px; }
+  .src { margin: 2px 0; padding: 4px 6px; background: var(--surface); border: 1px solid var(--border); border-radius: 4px; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .why { font: inherit; font-size: 13px; padding: 1px 6px; border: 1px solid var(--border); border-radius: 6px; width: 22em; max-width: 100%; }
+  .question { color: var(--tier-warning); }
 </style>

@@ -110,12 +110,56 @@ changes nothing. A finding is a draft until `{"op": "submit", "id", "base_rev"}`
 finding is never edited, but `{"op": "supersede", "id", "base_rev", "reason", "record"}` records a
 later one with its reason, and both remain.
 
+**Requirements and the passages that govern them.** A claim's meaning can depend on sentences
+outside its display: "for every ε > 0" before an estimate, "with C independent of ε" after it, a
+standing assumption at the start of a section. Break the claim into requirements, each with the
+passages it comes from, and align them with the Lean:
+
+```json
+{"ops": [
+  {"op": "put", "record": {"kind": "requirement", "claim": "Equation (3)", "local_id": "r1",
+   "form": "there is", "binds": ["C"], "independent_of": ["ε"], "text": "a constant C, independent of ε"}},
+  {"op": "put", "record": {"kind": "requirement", "claim": "Equation (3)", "local_id": "r1.1",
+   "parent": "r1", "form": "for every", "binds": ["ε"], "text": "for every ε > 0"}},
+  {"op": "put", "record": {"kind": "fragment", "claim": "Equation (3)", "requirement": "r1.1",
+   "role": "quantifier domain", "region": {"file": "paper.tex", "start_line": 6}}},
+  {"op": "put", "record": {"kind": "fragment", "claim": "Equation (3)", "requirement": "r1",
+   "role": "constant dependence", "region": {"file": "paper.tex", "start_line": 10}}},
+  {"op": "put", "record": {"kind": "fragment", "claim": "Equation (3)", "requirement": "r1.1",
+   "role": "later use", "region": {"file": "paper.tex", "start_line": 13}}},
+  {"op": "put", "record": {"kind": "alignment", "claim": "Equation (3)",
+   "requirements": ["r1.1"], "lean": [{"decl": "Example.estimate", "binder": "hε"}]}}]}
+```
+
+A region is checked against the build's copy of the paper's source and keeps the exact lines
+it was attached with. A later use (a choice of ε < 1 further on) is shown as a use; it never
+changes the reading of the quantifier it uses. `machinechecked workspace suggest --claim C
+--requirement r1.1` proposes nearby passages (add `--apply` to save them as proposals); accept
+one by putting it with `"state": "accepted"`, or remove it with `"state": "removed"` and
+`why_removed`, which keeps who removed it and why. In the reader, the Investigation section
+shows the requirements with their passages and alignments, and offers **Add a requirement**,
+**Suggest nearby context**, **Accept** and **Remove**. When a governing passage changes, its
+requirement goes stale even if the display itself did not change. `machinechecked compare CLAIM
+--workspace ID` adds the requirements to the informed packet; the read and compare stages of an
+independent review withhold them. A requirement and its alignments are your reading: they
+change no status.
+
 When a declaration that evidence cites changes (its statement, or a definition's equations), or a
 claim's printed text changes, `show` marks that evidence and the findings that cite it as
 `stale`; the others stay current. Re-pin a record with `"repin": true` once you have checked it
 again. Changing to independent mode, or importing, keeps what the workspace records you had seen,
 so an informed investigation never becomes a blind review: a report made with `machinechecked
 review` lists that exposure, and `review promote` refuses it without `--allow-revealed`.
+
+**What a published audit carries.** `machinechecked export` (and `build --site`, `check --site`)
+publishes, for each claim, the records you have accepted: the requirements, the passages
+accepted as governing them, the alignments with Lean, and the submitted findings (superseded ones
+too, with the reason) with the evidence they cite. Each keeps its author, its pins and whether it
+is current against the published build. Proposed and removed passages, draft findings, evidence
+no submitted finding cites, questions, exposure and the review protocol's drafts stay in the
+workspace. The paper's `publish` settings apply: a passage's text and lines appear only when the
+source text is published, and your notes and reasons only when reviews are. The reader shows the
+records read-only on the claim, under **Auditors' readings**; they change no status.
 
 ## What a verdict means
 

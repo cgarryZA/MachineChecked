@@ -1074,6 +1074,16 @@ def depsRecords (h : IO.FS.Handle) (roots : Array Name) (root : Name) : MetaM Un
     ("module", (moduleOf env root).toString), ("axioms", toJson (axs.map toString)),
     ("sorry", toJson (axs.contains ``sorryAx)), ("reached", toJson reached)])
 
+/-- Every module of the environment with the modules it imports directly: what a record
+extracted in this environment can depend on. -/
+def moduleRecords (h : IO.FS.Handle) : CoreM Unit := do
+  let env ← getEnv
+  let names := env.header.moduleNames
+  for i in [:names.size] do
+    let imports := env.header.moduleData[i]!.imports.map (·.module.toString)
+    emit h (Json.mkObj [("record", "module"), ("name", names[i]!.toString),
+      ("imports", toJson imports)])
+
 /-- Every module of the specification layer that imports a module of the acceptance layer. -/
 def layering (h : IO.FS.Handle) (q : Query) : CoreM Unit := do
   -- Without both layers named (the zero-configuration view) there is no layering to check;
@@ -1130,6 +1140,7 @@ open ProofLensProbe in
         | "moddocs" => moduleDocRecords h roots
         | "link" => linkRecord h q roots seen r.name.toName
         | "deps" => depsRecords h roots r.name.toName
+        | "modules" => moduleRecords h
         | "decl" => do
           let env ← getEnv
           if let some ci := env.find? r.name.toName then
