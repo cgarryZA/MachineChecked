@@ -3,6 +3,7 @@
   import { loadDecl, siteIndex } from "../lib/data.js";
   import { moduleSourceUrl, sourceLabel, sourceTitle } from "../lib/issue.js";
   import LeanText from "./LeanText.svelte";
+  import Uses from "./Uses.svelte";
 
   // One Lean declaration of a closure, loaded from the shared store when it is opened.
   // `hideReview` keeps the author's review (and the review state) out of sight, as the review
@@ -34,6 +35,7 @@
 {#snippet body()}
     {#if error}
       <p class="err">{error}</p>
+      {#if inspector}<Uses {name} {onref} {index} />{/if}
     {:else if !d}
       <p class="faint">Loading…</p>
     {:else if inspector}
@@ -46,6 +48,7 @@
         <summary>Details</summary>
         {@render extra()}
       </details>
+      <Uses {name} module={d.module} {onref} {index} />
     {:else}
       {#if index && moduleSourceUrl(index, d.module, d.range?.line)}
         <p class="small"><a href={moduleSourceUrl(index, d.module, d.range?.line)} target="_blank" rel="noopener" title={sourceTitle(index)}>{sourceLabel(index)}</a></p>
@@ -72,6 +75,7 @@
         <p class="lbl">no current review{d.review.stale?.length ? " (the last one is stale)" : ""}</p>
       {/if}
       {#if d.fingerprint}<p class="fp faint" title={d.legacy_hash ? "legacy " + d.legacy_hash : ""}>{d.fingerprint.slice(0, 24)}…</p>{/if}
+      {#if !hideReview}<Uses {name} module={d.module} {onref} {index} />{/if}
     {/if}
 {/snippet}
 

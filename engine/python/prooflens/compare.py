@@ -41,7 +41,6 @@ NOT_EXTRACTED = [
     {"what": "standing assumptions and definitions the passage refers to", "owner": "#69"},
     {"what": "definitions expanded at their actual arguments", "owner": "#97"},
     {"what": "properties carried by the types of the objects", "owner": "#98"},
-    {"what": "uses of the declarations and the source of each premise", "owner": "#144"},
     {"what": "typed facts inside proofs", "owner": "#145",
      "request": "`compare --query proof-facts NAME` reads one proof on request"},
 ]
@@ -374,9 +373,15 @@ def _claim_ref(ch: dict) -> dict:
             if ch.get(k) is not None}
 
 
+# Content a packet leaves to a targeted query, because it runs Lean.
+ON_REQUEST = [{"what": "where each declaration is used, each application's arguments and the "
+                       "source of each premise", "query": "uses"}]
+
+
 def _retrieval(stage: str, sections: list[str], page: dict | None, extra: list | None = None):
     return {"included": sections, "withheld": _withheld(stage),
             "unavailable": ([] if stage == "read" else NOT_EXTRACTED) + (extra or []),
+            "on_request": [] if stage == "read" else ON_REQUEST,
             "definitions": page}
 
 
@@ -558,7 +563,37 @@ QUERIES = {
     "composition": "a multi-result argument and the identifications it needs",
     "impact": "which main result uses a declaration",
 }
-NOT_YET = {"uses": "#144", "composition": "#147", "impact": "#112"}
+NOT_YET = {"composition": "#147", "impact": "#112"}
+
+
+def linked_claims(site: Site) -> dict[str, list[str]]:
+    """The claims each declaration is linked to in this build (confirmed links and locked
+    statements, not suggestions)."""
+    out: dict[str, list[str]] = {}
+    for meta in site.claims:
+        ch = site.chunk(meta["id"]) or {}
+        names = [l["name"] for l in ch.get("links") or []]
+        names += [n for cl in ch.get("clauses") or [] for n in (cl.get("spec"), cl.get("accept"))
+                  if n]
+        for n in dict.fromkeys(names):
+            out.setdefault(n, []).append(ch.get("id") or meta["id"])
+    return out
+
+
+def mark_claims(doc: dict, claims: dict[str, list[str]]) -> dict:
+    """A uses document with the claims each user, further caller and caller is linked to."""
+    if not doc.get("ok"):
+        return doc
+    for key in ("users", "further"):
+        for u in doc.get(key) or []:
+            if u["name"] in claims:
+                u["claims"] = claims[u["name"]]
+    for a in doc.get("applications") or []:
+        if a["caller"] in claims:
+            a["caller_claims"] = claims[a["caller"]]
+    doc["linked_users"] = sorted({u["name"] for k in ("users", "further")
+                                  for u in doc.get(k) or [] if u["name"] in claims})
+    return doc
 
 
 def query(site: Site, op: str, target: str, limit: int | None = None, after: str | None = None,
@@ -587,6 +622,12 @@ def query(site: Site, op: str, target: str, limit: int | None = None, after: str
     elif op == "mentions":
         results = _mentions(site, target)
         prov = "the statements of the build, and its index of the project"
+    elif op == "uses":
+        if root is None:
+            raise CompareError("`uses` needs the Lean project", "no-project")
+        from .uses import uses
+        results = [mark_claims(uses(root, target, None, log=log), linked_claims(site))]
+        prov = "Lean (the elaborated terms of the project), cached until a Lean input changes"
     elif op == "search":
         return {**out, **search(site, target, limit, after)}
     elif op == "proof-facts":
