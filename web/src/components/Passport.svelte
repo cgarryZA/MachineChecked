@@ -18,6 +18,7 @@
   import LinkPicker from "./LinkPicker.svelte";
   import ProofStep from "./ProofStep.svelte";
   import Investigation from "./Investigation.svelte";
+  import ProofFacts from "./ProofFacts.svelte";
   import PublishedWork from "./PublishedWork.svelte";
   import { VERDICTS } from "../lib/review.js";
   import { tick, setContext } from "svelte";
@@ -366,6 +367,7 @@
             {#if l.statement}<Statement st={l.statement} onref={showDecl} compact selId={selFor(l.name)} onselect={(id) => select(l.name, id)} />{/if}
             {#if claim.links.length > 1}<StatusChip record={l} small />{/if}
             {#if editable}
+              {#if l.kind === "theorem" || l.kind === "def"}<ProofFacts name={l.name} {claim} onref={showDecl} />{/if}
               <button class="btn ghost" disabled={!!busy} onclick={() => act({ lean: claim.links.filter((x) => x.name !== l.name).map((x) => x.name) }, "unlink")}>Unlink</button>
             {/if}
           </div>

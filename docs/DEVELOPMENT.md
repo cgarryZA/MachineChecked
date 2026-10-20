@@ -27,6 +27,7 @@ To exercise the zero-configuration flow, use `examples/plain-paper/`. For the lo
 | `engine/python/prooflens/data/ProofLensProbe.lean` | Elaborated Lean declarations and dependency data |
 | `engine/python/prooflens/deps.py` | `inspect`: a declaration's statement and proof dependencies |
 | `engine/python/prooflens/facts.py` | The facts store: extracted Lean facts kept between builds, `inspect` and `check` |
+| `engine/python/prooflens/proof_facts.py` | `compare --query proof-facts`: the typed facts inside one proof (the probe's `proof-facts` request), kept in the facts store |
 | `engine/python/prooflens/assess.py` | Full-assessment states and findings |
 | `engine/python/prooflens/review_queue.py` | Review units and queue ordering |
 | `engine/python/prooflens/promote.py` | Maintainer-controlled review promotion |
@@ -89,7 +90,7 @@ The detailed engineering rules live in [CLAUDE.md](../CLAUDE.md). The evolving p
 
 The public command is `machinechecked`; `prooflens` remains an alias for compatibility. Most users need only `view`, `build` and `check`.
 
-`inspect NAME [--dependencies] [--json]` reports what a declaration's statement mentions and, separately, what its proof uses, through the whole project (the probe's `deps` request; every other record stays proof-erased). Full-assessment users can use `reassess` (new reviews without a Lean re-probe), `site` (regenerate the reader from stored evidence), `bundle` (single-file HTML), `export` (approved public data) and `review promote` (maintainer approval).
+`inspect NAME [--dependencies] [--json]` reports what a declaration's statement mentions and, separately, what its proof uses, through the whole project (the probe's `deps` request; every other record stays proof-erased). `compare --query proof-facts NAME` walks one declaration's elaborated proof term (the probe's `proof-facts` request): `have`, `let` of a proposition, `show`, and applications of project theorems or of theorems to a local fact, each with its local context, the locals it needs, the case arguments of eliminators it lies under and its sub-expression position. The walk enters no generated `_proof_` lemma (it lists them), visits shared closed sub-terms once, and stops at 200,000 nodes or 200 facts (query fields `facts_nodes`, `facts_items`), saying so; each fact is printed with its own heartbeat budget, and a request that fails emits a `probe-error` for itself only. Statement fingerprints are unchanged: the request adds a record of its own. Full-assessment users can use `reassess` (new reviews without a Lean re-probe), `site` (regenerate the reader from stored evidence), `bundle` (single-file HTML), `export` (approved public data) and `review promote` (maintainer approval).
 
 ## Releasing
 

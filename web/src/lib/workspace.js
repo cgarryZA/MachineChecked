@@ -33,6 +33,11 @@ export const showWorkspace = (id, claim) =>
 export const updateWorkspace = (id, ops) =>
   call("api/workspace", { action: "update", id, ops, op_id: newId("req") });
 
+// The typed facts inside one declaration's proof (`compare --query proof-facts`), ranked by
+// `match` when given. Lean reads the proof on the first request; the engine caches the answer.
+export const proofFacts = (name, match) =>
+  call(`api/proof-facts?name=${encodeURIComponent(name)}${match ? `&match=${encodeURIComponent(match)}` : ""}`);
+
 // Attach the passages near a claim that the engine proposes as context of a requirement; each
 // stays a proposal until the auditor accepts or removes it.
 export const suggestContext = (id, claim, requirement) =>

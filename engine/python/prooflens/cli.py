@@ -383,9 +383,20 @@ def _print_workspace(v: dict) -> None:
         print(cid)
         for e in c["evidence"]:
             ref = e["ref"]
-            what = ref.get("decl") or (ref.get("source") or {}).get("file") or "paper passage"
+            fact = ref.get("fact")
+            what = ref.get("decl") or (ref.get("source") or {}).get("file") or \
+                (f"{fact.get('name') or fact.get('head') or 'a fact'} : {fact.get('type')}, "
+                 f"inside the proof of {fact['decl']}" if fact else "paper passage")
             print(f"  evidence {e['id']}  {e['role']:9} {what}  [{e['currency']['state']}]"
                   + (f" (module not built)" if ref.get("build") == "unbuilt" else ""))
+            if fact:
+                print(f"           {fact['basis']}"
+                      + (f"; assuming {'; '.join(fact['assumptions'])}"
+                         if fact.get("assumptions") else "")
+                      + "".join(f"; {c}" for c in fact.get("cases") or []))
+                for ch in e["currency"].get("changes") or []:
+                    if ch.get("reason"):
+                        print(f"           {ch['reason']}")
         for f in c["findings"]:
             tag = f["state"] + ("" if f["in_force"] else ", superseded")
             print(f"  finding  {f['id']}  {tag}: coverage {f.get('coverage') or '-'}"
@@ -456,7 +467,7 @@ def cmd_workspace(a):
                 if snap is None:
                     sys.exit("no build to resolve the claim against: run view or build first")
                 claim = snap.resolve_claim(a.claim)
-            v = wsp.view(wsp.read(p), snap, claim)
+            v = wsp.view(wsp.read(p), snap, claim, root, check_facts=a.action == "show")
             if a.json:
                 return _print_json({**v, "path": str(p)})
             _print_workspace(v)
@@ -898,11 +909,14 @@ def cmd_compare(a):
         if a.query:
             op, target = a.query
             out = cmp.query(site, op, target, a.limit, a.after, root,
-                            log=lambda m: print(m, file=sys.stderr))
+                            log=lambda m: print(m, file=sys.stderr), match=a.match)
             if a.json:
                 return _print_json(out)
             if not out["available"]:
                 print(out["reason"])
+                return
+            if op == "proof-facts":
+                print(cmp.proof_facts_text(out))
                 return
             for r in out["results"]:
                 print("\n".join(cmp.statement_lines(r)) if "statement" not in r
@@ -1211,9 +1225,11 @@ def main(argv=None):
                     help="read: the paper only; compare: and the Lean; informed (default): and "
                     "what people have recorded (notes, reviews, statuses)")
     co.add_argument("--query", nargs=2, metavar=("OP", "TARGET"),
-                    help="a targeted query: definition NAME, mentions NAME, dependencies NAME "
-                    "(and uses, proof-facts, composition, impact, which say what is not "
-                    "extracted yet)")
+                    help="a targeted query: definition NAME, mentions NAME, dependencies NAME, "
+                    "proof-facts NAME (the facts inside its proof) (and uses, composition, "
+                    "impact, which say what is not extracted yet)")
+    co.add_argument("--match", metavar="TEXT",
+                    help="with proof-facts: rank the facts by the symbols they share with TEXT")
     co.add_argument("--limit", type=int, help="return at most this many definitions or results")
     co.add_argument("--after", metavar="ID", help="continue a list after this item")
     co.add_argument("--workspace", metavar="ID", help="include this workspace's requirements of "

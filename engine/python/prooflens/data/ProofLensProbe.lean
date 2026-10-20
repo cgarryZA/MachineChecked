@@ -38,6 +38,10 @@ structure Query where
   requests : Array Request
   /-- Each request's heartbeat budget, in thousands as `maxHeartbeats`; Lean's default if none. -/
   max_heartbeats : Option Nat := none
+  /-- The most nodes of a proof term, and the most facts, a `proof-facts` request walks and
+  reports; the probe's defaults if none. -/
+  facts_nodes : Option Nat := none
+  facts_items : Option Nat := none
   deriving FromJson, Inhabited
 
 /-- Runs `x` with a heartbeat budget of `n` thousand heartbeats when one is given. -/
@@ -663,6 +667,297 @@ def depsRecords (h : IO.FS.Handle) (roots : Array Name) (root : Name) : MetaM Un
     ("module", (moduleOf env root).toString), ("axioms", toJson (axs.map toString)),
     ("sorry", toJson (axs.contains ``sorryAx)), ("reached", toJson reached)])
 
+/-! ## Facts inside a proof
+
+A `proof-facts` request reads one declaration's value, unerased, for the propositions its proof
+establishes along the way: each `have` (or `let` of a proposition), each goal a `show` states, and
+each application of a theorem of the project, or of any theorem to a local fact. Each comes with
+its type, the local context it holds in (the binders and hypotheses around it, including the case
+of a case split it lies in), the hypotheses it needs and its position in the term. The walk is
+bounded in the nodes it visits and the facts it reports, and says when it was cut short. It adds a
+record of its own and changes no other. -/
+
+/-- The most nodes of a proof term one request visits, and the most facts it reports. -/
+def factsMaxNodes : Nat := 200000
+def factsMaxItems : Nat := 200
+
+/-- A binder met on the way into a proof: where it came from and the cases it lies in. -/
+structure PFLocal where
+  fvar : FVarId
+  origin : String
+  scope : Array Nat
+  ctx : Array Nat
+  deriving Inhabited
+
+/-- A fact found in a proof. For an application, `type` is the application itself. -/
+structure PFItem where
+  kind : String
+  name : Name
+  type : Expr
+  ctx : Array Nat
+  scope : Array Nat
+  pos : SubExpr.Pos
+  uses : Array Nat
+  head : Name := .anonymous
+  /-- The local a `have` introduces. -/
+  bound : Option Nat := none
+  deriving Inhabited
+
+structure PFState where
+  maxNodes : Nat := factsMaxNodes
+  maxItems : Nat := factsMaxItems
+  lctx : LocalContext := {}
+  locals : Array PFLocal := #[]
+  index : Std.HashMap FVarId Nat := {}
+  scopes : Array (Name × Nat) := #[]
+  items : Array PFItem := #[]
+  visited : Nat := 0
+  cut : Array String := #[]
+  seen : Std.HashSet Expr := {}
+  /-- The generated lemmas the proof applies (`_proof_1`, say): parts of it this walk does not
+  enter. -/
+  aux : Array Name := #[]
+
+abbrev PFM := StateRefT PFState MetaM
+
+/-- The locals among the free variables of `e`. -/
+def pfUses (e : Expr) : PFM (Array Nat) := do
+  let idx := (← get).index
+  return ((collectFVars {} e).fvarIds.filterMap (idx[·]?)).qsort (· < ·)
+
+def pfFull : PFM Bool := do
+  let s ← get
+  if s.items.size ≥ s.maxItems then
+    unless s.cut.contains "facts" do modify fun s => { s with cut := s.cut.push "facts" }
+    return true
+  return false
+
+def pfRecord (kind : String) (n : Name) (ty : Expr) (ctx scope : Array Nat) (pos : SubExpr.Pos)
+    (uses : Array Nat) (head : Name := .anonymous) (bound : Option Nat := none) : PFM Unit := do
+  unless ← pfFull do
+    let it : PFItem :=
+      { kind := kind, name := n, type := ty, ctx := ctx, scope := scope, pos := pos,
+        uses := uses, head := head, bound := bound }
+    modify fun s => { s with items := s.items.push it }
+
+/-- Runs `k` with a new local `n : t`, kept (with its declaration) for the report. -/
+def pfWithLocal (n : Name) (bi : BinderInfo) (t : Expr) (origin : String)
+    (ctx scope : Array Nat) (k : Expr → Nat → PFM Unit) : PFM Unit :=
+  withLocalDecl n bi t fun x => do
+    let d ← x.fvarId!.getDecl
+    let i := (← get).locals.size
+    let l : PFLocal := { fvar := x.fvarId!, origin := origin, scope := scope, ctx := ctx }
+    modify fun s =>
+      { s with lctx := s.lctx.addDecl d, locals := s.locals.push l,
+               index := s.index.insert x.fvarId! i }
+    k x i
+
+/-- Whether `a` is, up to metadata, the local of a fact (a `have` or a `let`). -/
+def pfIsFact (fvs : Array Expr) (a : Expr) : PFM Bool := do
+  match a.consumeMData with
+  | .bvar j =>
+    if j < fvs.size then
+      let s ← get
+      match s.index[fvs[fvs.size - 1 - j]!.fvarId!]? with
+      | some i => return s.locals[i]!.origin == "have"
+      | none => return false
+    else return false
+  | _ => return false
+
+/-- Walk a proof term. `fvs` holds the locals of the loose bound variables of `e`, innermost
+last; `ctx` their indices; `scope` the cases (an argument of an eliminator) `e` lies in; `stmt`
+the binders of the statement still to enter. -/
+partial def pfVisit (roots : Array Name) (e : Expr) (fvs : Array Expr) (ctx scope : Array Nat)
+    (pos : SubExpr.Pos) (stmt : Nat) : PFM Unit := do
+  if !(← get).cut.isEmpty then return
+  modify fun s => { s with visited := s.visited + 1 }
+  if (← get).visited > (← get).maxNodes then
+    modify fun s => { s with cut := s.cut.push "nodes" }
+    return
+  if !e.hasLooseBVars then
+    if (← get).seen.contains e then return
+    modify fun s => { s with seen := s.seen.insert e }
+  let haveLike (n : Name) (t v b : Expr) (pv pb : SubExpr.Pos) : PFM Unit := do
+    let t := t.instantiateRev fvs
+    pfVisit roots v fvs ctx scope pv 0
+    let prop ← isProp t
+    let uses ← if prop then pfUses (v.instantiateRev fvs) else pure #[]
+    pfWithLocal n .default t (if prop then "have" else "let") ctx scope fun x i => do
+      if prop then pfRecord "have" n t ctx scope pos uses (bound := some i)
+      pfVisit roots b (fvs.push x) (ctx.push i) scope pb 0
+  match e with
+  | .mdata _ b => pfVisit roots b fvs ctx scope pos stmt
+  | .proj _ _ b => pfVisit roots b fvs ctx scope pos.pushProj stmt
+  | .lam n t b bi =>
+    pfWithLocal n bi (t.instantiateRev fvs) (if stmt > 0 then "statement" else "bound") ctx
+      scope fun x i => pfVisit roots b (fvs.push x) (ctx.push i) scope pos.pushBindingBody (stmt - 1)
+  | .letE n t v b _ => haveLike n t v b pos.pushLetValue pos.pushLetBody
+  | .app .. =>
+    let f := e.getAppFn
+    let args := e.getAppArgs
+    let k := args.size
+    if f.isConstOf ``letFun && k == 4 then
+      if let .lam n t b _ := args[3]!.consumeMData then
+        return ← haveLike n t args[2]! b (pos.pushNaryArg k 2)
+          ((pos.pushNaryArg k 3).pushBindingBody)
+    if f.isConstOf ``id && k == 2 then
+      let t := args[0]!.consumeMData.instantiateRev fvs
+      if ← isProp t then
+        pfRecord "show" .anonymous t ctx scope pos (← pfUses (args[1]!.instantiateRev fvs))
+    if let .const c _ := f then
+      let env ← getEnv
+      if let some (.thmInfo _) := env.find? c then
+        if userFacing c && (inScope roots env c || (← args.anyM (pfIsFact fvs))) then
+          pfRecord "application" c (e.instantiateRev fvs) ctx scope pos
+            (← pfUses (e.instantiateRev fvs)) c
+        else if !userFacing c && inScope roots env c && !(← get).aux.contains c then
+          modify fun s => { s with aux := s.aux.push c }
+    else
+      pfVisit roots f fvs ctx scope (pos.pushNaryFn k) 0
+    -- The implicit and instance arguments of a constant (types, motives, instances) hold no
+    -- step of the proof: they are not entered, which keeps the walk short on large terms.
+    let explicit ← match f with
+      | .const c _ => do
+        let mut t := (← getConstInfo c).type
+        let mut out : Array Bool := #[]
+        for _ in [:k] do
+          let .forallE _ _ b bi := t | break
+          out := out.push bi.isExplicit
+          t := b
+        pure out
+      | _ => pure #[]
+    for i in [:k] do
+      let a := args[i]!
+      let p := pos.pushNaryArg k i
+      if !explicit.getD i true then continue
+      match f, a.consumeMData with
+      | .const c _, .lam .. =>
+        -- A function argument of a constant is a case of what it eliminates (a branch of
+        -- `dite`, the alternative of `Or.elim`, the witness of `Exists.casesOn`).
+        let sid := (← get).scopes.size
+        modify fun s => { s with scopes := s.scopes.push (c, i) }
+        pfVisit roots a fvs ctx (scope.push sid) p 0
+      | _, _ => pfVisit roots a fvs ctx scope p 0
+  | _ => pure ()
+
+/-- The locals a fact needs: those its type and its proof mention, and those their types
+mention, in order. -/
+def pfNeeds (s : PFState) (ty : Expr) (uses : Array Nat) : MetaM (Array Nat) := do
+  let mut need : Std.HashSet Nat := {}
+  let mut stack := uses ++ ((collectFVars {} ty).fvarIds.filterMap (s.index[·]?))
+  while !stack.isEmpty do
+    let i := stack.back!
+    stack := stack.pop
+    if need.contains i then continue
+    need := need.insert i
+    let t ← inferType (mkFVar s.locals[i]!.fvar)
+    stack := stack ++ ((collectFVars {} t).fvarIds.filterMap (s.index[·]?))
+  return need.toArray.qsort (· < ·)
+
+/-- The hypotheses of an application's theorem, at the application's arguments: each with the
+local that supplies it, when a local does. -/
+def pfPremises (s : PFState) (app : Expr) : MetaM (Array Json) := do
+  let args := app.getAppArgs
+  let mut t ← inferType app.getAppFn
+  let mut out : Array Json := #[]
+  for i in [:args.size] do
+    t ← whnfD t
+    let .forallE n d b _ := t | break
+    if ← isProp d then
+      let by_ := match args[i]!.consumeMData with
+        | .fvar f => match s.index[f]? with | some j => Json.str s!"l{j}" | none => Json.null
+        | _ => Json.null
+      out := out.push (Json.mkObj [("arg", toJson i), ("name", n.eraseMacroScopes.toString),
+        ("type", Json.mkObj [("text", Json.str (toString (← ppExpr d)))]), ("supplied_by", by_)])
+    t := b.instantiate1 args[i]!
+  return out
+
+/-- The local context of the locals `ids` alone, so that a fact prints with the names of its own
+context (another case's binder of the same name does not rename it). -/
+def pfContext (s : PFState) (ids : Array Nat) : LocalContext :=
+  ids.foldl (fun l i => l.addDecl (s.lctx.get! s.locals[i]!.fvar)) {}
+
+def proofFactsRecord (h : IO.FS.Handle) (q : Query) (roots : Array Name) (n : Name) :
+    MetaM Unit := do
+  let env ← getEnv
+  let some ci := env.find? n
+    | emit h (Json.mkObj [("record", "proof-facts"), ("name", n.toString),
+        ("errors", toJson #["missing"])])
+  let value? := match ci with
+    | .thmInfo t => some t.value | .defnInfo d => some d.value | .opaqueInfo o => some o.value
+    | _ => none
+  let some value := value?
+    | emit h (Json.mkObj [("record", "proof-facts"), ("name", n.toString),
+        ("kind", kindOf ci), ("errors", toJson #["no-value"])])
+  let value ← instantiateMVars value
+  let arity := ci.type.getForallBinderNames.length
+  let init : PFState := { maxNodes := q.facts_nodes.getD factsMaxNodes,
+                          maxItems := q.facts_items.getD factsMaxItems }
+  let ((), s) ← (pfVisit roots value #[] #[] #[] .root arity).run init
+  withLCtx s.lctx (← getLocalInstances) do
+    let vars := s.locals.map (·.fvar)
+    let mut items : Array Json := #[]
+    let mut wanted : Std.HashSet Nat := {}
+    let mut k := 0
+    for it in s.items do
+      -- Each fact is printed with a heartbeat budget of its own.
+      let j? ← withCurrHeartbeats <| withLCtx (pfContext s it.ctx) (← getLocalInstances) do
+        try
+          let ty ← if it.kind == "application" then instantiateMVars (← inferType it.type)
+            else pure it.type
+          let needs ← pfNeeds s ty it.uses
+          let alone ← mkForallFVars (needs.map (mkFVar s.locals[·]!.fvar)) ty
+          let premises ← if it.kind == "application" then pfPremises s it.type else pure #[]
+          pure (some (Json.mkObj [("id", Json.str s!"f{k}"), ("kind", Json.str it.kind),
+            ("name", if it.name.isAnonymous then Json.null
+              else Json.str it.name.eraseMacroScopes.toString),
+            ("generated_name", toJson it.name.hasMacroScopes),
+            ("head", if it.head.isAnonymous then Json.null else Json.str it.head.toString),
+            ("type", ← ppJson ty vars), ("at", Json.str (toString it.pos)),
+            ("context", toJson (it.ctx.map (s!"l{·}"))),
+            ("uses", toJson (it.uses.map (s!"l{·}"))),
+            ("local", match it.bound with | some i => Json.str s!"l{i}" | none => Json.null),
+            ("needs", toJson (needs.map (s!"l{·}"))),
+            ("scope", toJson (it.scope.map (s!"s{·}"))),
+            ("premises", Json.arr premises),
+            ("standalone", Json.mkObj [("text", Json.str (toString (← ppExpr alone)))]),
+            ("fact_hash", Json.str (hex ((deepHash alone).run' {})))], it.ctx))
+        catch _ => pure none
+      if let some (j, ctx) := j? then
+        items := items.push j
+        for i in ctx do wanted := wanted.insert i
+      k := k + 1
+    let mut locals : Array Json := #[]
+    let mut scopes : Std.HashSet Nat := {}
+    for i in wanted.toArray.qsort (· < ·) do
+      let l := s.locals[i]!
+      let d := s.lctx.get! l.fvar
+      let prop ← isProp d.type
+      let role := if d.binderInfo.isInstImplicit then "instance"
+        else if prop then "hypothesis" else "variable"
+      for sc in l.scope do scopes := scopes.insert sc
+      locals := locals.push (Json.mkObj [("id", Json.str s!"l{i}"),
+        ("name", Json.str d.userName.eraseMacroScopes.toString),
+        ("generated_name", toJson d.userName.hasMacroScopes), ("role", Json.str role),
+        ("origin", Json.str l.origin), ("scope", toJson (l.scope.map (s!"s{·}"))),
+        ("type", ← withCurrHeartbeats <| withLCtx (pfContext s l.ctx) (← getLocalInstances) do
+          ppJson d.type vars)])
+    for it in s.items do
+      for sc in it.scope do scopes := scopes.insert sc
+    let scopesJson := (scopes.toArray.qsort (· < ·)).map fun i =>
+      let (c, a) := s.scopes[i]!
+      Json.mkObj [("id", Json.str s!"s{i}"), ("head", Json.str c.toString), ("arg", toJson a)]
+    let axs ← collectAxioms n
+    emit h (Json.mkObj [("record", "proof-facts"), ("name", n.toString), ("kind", kindOf ci),
+      ("module", (moduleOf env n).toString), ("range", ← rangeJson n), ("errors", Json.arr #[]),
+      ("statement", ← ppJson ci.type),
+      ("proof_hash", Json.str (hex ((deepHash value).run' {}))),
+      ("axioms", toJson (axs.map toString)), ("sorry", toJson (axs.contains ``sorryAx)),
+      ("facts", Json.arr items), ("locals", Json.arr locals), ("scopes", Json.arr scopesJson),
+      ("visited", toJson s.visited), ("cut", toJson s.cut),
+      ("auxiliary", toJson (s.aux.map toString)),
+      ("limits", Json.mkObj [("nodes", toJson s.maxNodes), ("facts", toJson s.maxItems)])])
+
 /-- Every module of the environment with the modules it imports directly: what a record
 extracted in this environment can depend on. -/
 def moduleRecords (h : IO.FS.Handle) : CoreM Unit := do
@@ -729,6 +1024,7 @@ open ProofLensProbe in
         | "moddocs" => moduleDocRecords h roots
         | "link" => linkRecord h q roots seen r.name.toName
         | "deps" => depsRecords h roots r.name.toName
+        | "proof-facts" => proofFactsRecord h q roots r.name.toName
         | "modules" => moduleRecords h
         | "decl" => do
           let env ← getEnv
