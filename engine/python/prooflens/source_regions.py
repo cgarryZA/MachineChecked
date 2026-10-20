@@ -167,8 +167,120 @@ def extract(root: Path, claim: dict) -> Region:
     return Region(name, line, line, 1, len(first) + 1, "line", first, (first,))
 
 
+# Commands that carry no text of a claim: a label, a heading, the start of the appendix.
+SECTIONING = r"\\(?:part|chapter|section|subsection|subsubsection|paragraph|subparagraph)\*?"
+_STRUCTURE = re.compile(r"\\label\s*\{[^{}]*\}|" + SECTIONING
+                        + r"\s*(?:\[[^\]]*\])?\s*\{(?:[^{}]|\{[^{}]*\})*\}|\\appendix\b")
+_SECTION = re.compile(SECTIONING + r"(?![A-Za-z])|\\appendix\b")
+# A line after which a new sentence starts: one that ends a sentence, or a line of LaTeX
+# structure (an environment's begin or end, a display's end, an item, a heading).
+_ENDS = re.compile(r"[.!?][\s'\")\]}$]*$")
+_BOUNDARY = re.compile(r"^\s*(?:\\(?:begin|end|item|label|\]|\[|par\b|noindent|medskip|"
+                       r"bigskip|smallskip|appendix|part|chapter|section|subsection|"
+                       r"subsubsection|paragraph|subparagraph)|\$\$)"
+                       r"|(?:\\end\s*\{[^{}]*\}|\\\]|\$\$|\\\\)\s*$")
+
+
+def _code(line: str) -> str:
+    """A source line without its comment."""
+    return re.sub(r"(?<!\\)%.*", "", line)
+
+
+def _blank(line: str) -> bool:
+    return not _code(line).strip()
+
+
+def _bare(line: str) -> bool:
+    """Whether a line holds nothing of a claim's text: only labels, headings, comments."""
+    return not _STRUCTURE.sub("", _code(line)).strip()
+
+
+def _paragraph(lines: list[str], first: int, last: int) -> tuple[int, int]:
+    """The paragraph around lines `first`..`last` (1-based): out to the nearest blank line or
+    line of structure on each side."""
+    a, b = first, last
+    while a > 1 and not _blank(lines[a - 2]) and not _BOUNDARY.search(_code(lines[a - 2])):
+        a -= 1
+    while b < len(lines) and not _blank(lines[b]) and not _BOUNDARY.search(_code(lines[b])):
+        b += 1
+    return a, b
+
+
+def advice(lines: list[str], region: Region) -> list[dict]:
+    """Where a line-located region may not hold the claim's text (#180): a region of only a
+    label or heading (`label-only`, naming the paragraph that follows), a region that begins
+    or ends inside a sentence (`starts-mid-sentence`, `ends-mid-sentence`, naming the
+    paragraph around it), and one that runs into another section (`spans-section`). Each is
+    advice: the region is what the inventory pins, and a reviewer decides its extent. A
+    display environment and a region bounded inside a line are judged on their lines only for
+    a heading after their first line."""
+    first, last = region.start_line, region.end_line
+    body = lines[first - 1:last]
+    out = []
+
+    def where(a: int, b: int) -> dict:
+        return {"file": region.file, "line": a, "end_line": b}
+
+    if all(_bare(l) for l in body):
+        a = last + 1
+        while a <= len(lines) and (_blank(lines[a - 1]) or _bare(lines[a - 1])):
+            a += 1
+        if a <= len(lines) and not _SECTION.search(_code(lines[a - 1])):
+            b = _paragraph(lines, a, a)[1]
+            out.append({"kind": "label-only", "suggested": where(a, b)})
+        else:
+            out.append({"kind": "label-only"})
+        return out
+    for i, l in enumerate(body[1:], first + 1):
+        if _SECTION.search(_code(l)):
+            out.append({"kind": "spans-section", "at": i})
+            break
+    whole = region.kind in ("line", "span") and region.start_column == 1 and \
+        region.end_column == len(lines[last - 1].rstrip("\r\n")) + 1
+    if not whole:
+        return out
+    para = where(*_paragraph(lines, first, last))
+    prev = lines[first - 2] if first > 1 else ""
+    if not _blank(prev) and not _BOUNDARY.search(_code(prev)) \
+            and not _ENDS.search(_code(prev).rstrip()):
+        out.append({"kind": "starts-mid-sentence", "suggested": para})
+    after = lines[last] if last < len(lines) else ""
+    end = _code(body[-1]).rstrip()
+    if not _blank(after) and not _BOUNDARY.search(_code(after)) and \
+            not _BOUNDARY.search(end) and not _ENDS.search(end):
+        out.append({"kind": "ends-mid-sentence", "suggested": para})
+    return out
+
+
+def advice_message(claim_id: str, region: dict, a: dict) -> str:
+    """What an advice says, for a finding or the repin plan."""
+    at = f"{region.get('file')}:{region.get('start_line')}"
+    if region.get("end_line", region.get("start_line")) != region.get("start_line"):
+        at += f"-{region.get('end_line')}"
+    s = a.get("suggested")
+    hint = (f"; pin lines {s['line']}-{s['end_line']} of {s['file']} instead (location "
+            f"{s['file']}:{s['line']} with source_region end_line {s['end_line']})"
+            if s else "")
+    what = {"label-only": "holds only a label or heading, so it pins none of the claim's text",
+            "starts-mid-sentence": "begins inside a sentence that starts before it",
+            "ends-mid-sentence": "ends inside a sentence that continues after it",
+            "spans-section": f"runs past a heading on line {a.get('at')} into another "
+                             "section"}[a["kind"]]
+    return f"the source region of {claim_id} at {at} {what}{hint}"
+
+
+def region_advice(root: Path, region: Region) -> list[dict]:
+    """`advice` for a region of the snapshot at `root`."""
+    try:
+        text = source_file(root, region.file).read_text(encoding="utf-8")
+    except (RegionError, OSError, UnicodeError):
+        return []
+    return advice(text.splitlines(), region)
+
+
 def collect(inventory: dict, paper: str, root: Path) -> dict:
-    """One record per claim, including extraction errors; shared start lines do not collide."""
+    """One record per claim, including extraction errors; shared start lines do not collide.
+    A record carries `advice` when its region may not hold the claim's text."""
     out = {}
     for claim in inventory["claims"]:
         if claim["paper"] != paper:
@@ -176,7 +288,11 @@ def collect(inventory: dict, paper: str, root: Path) -> dict:
         try:
             if location(claim) is None:
                 continue
-            out[claim["id"]] = extract(root, claim).record()
+            region = extract(root, claim)
+            out[claim["id"]] = region.record()
+            adv = region_advice(root, region)
+            if adv:
+                out[claim["id"]]["advice"] = adv
         except (RegionError, OSError, UnicodeError) as error:
             out[claim["id"]] = {"scheme": SCHEME, "error": str(error)}
     return out
