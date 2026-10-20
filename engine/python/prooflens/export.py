@@ -359,6 +359,15 @@ def export(cfg: Config, out: Path, release: str | None = None,
         c = json.loads(path.read_text(encoding="utf-8"))
         c["decls"] = {n: rekey[k] for n, k in c["decls"].items()}
         write_json(path, c, indent=None)
+    # The workspace records the auditors accepted, with what each paper publishes.
+    from . import published_work
+    paper_of = {c["id"]: c["paper"] for c in chunks.values()}
+    try:
+        published_work.write(data, cfg.out_dir, lambda cid: pubs[paper_of[cid]],
+                             cfg.out_dir / "sources")
+    except published_work.PublishError as e:
+        shutil.rmtree(out)
+        raise ExportError(str(e)) from None
     # The search index, with only what each paper allows.
     srch = mf.search_index(index, chunks)
     pub_search = {"claims": [], "decls": srch["decls"] if lean_ok else []}

@@ -72,11 +72,13 @@ def _choice(v, allowed, what, optional=True):
 
 
 def sources_dir(snap, paper: str) -> Path | None:
-    """The build's snapshot of a paper's source (`<work dir>/sources/<paper>/`), which the
-    claims' anchors and the fragments' regions are relative to."""
+    """The build's snapshot of a paper's source (`<work dir>/sources/<paper>/`, or under the
+    snapshot's `sources_base`), which the claims' anchors and the fragments' regions are
+    relative to."""
     if snap is None or not paper:
         return None
-    d = Path(snap.data).parent.parent / "sources" / paper
+    base = getattr(snap, "sources_base", None) or Path(snap.data).parent.parent / "sources"
+    d = Path(base) / paper
     return d if d.is_dir() else None
 
 

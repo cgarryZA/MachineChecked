@@ -190,6 +190,24 @@ fs.writeFileSync(path.join(root, "review-step/data/review-queue.json"), JSON.str
   parent: { id: "T:thm:bound", number: "Theorem 2.5" }, state: "pending", reason: "Proof step of Theorem 2.5; no Lean is linked to it",
   claims: [{ id: "T:eq:bound-range" }], papers: ["T"], paper: "T", section: "2", author_review: [] }] }));
 
+// The toy audit with an auditor's published workspace records on Definition 1.1, in the form
+// `published_work.py` writes them: the passport names their file.
+fs.cpSync(path.join(root, "toy"), path.join(root, "toywork"), { recursive: true });
+const workRow = TOY.claims.find((c) => c.id === "T:def:even");
+const workPath = path.join(root, "toywork/data/claims", workRow.file);
+fs.writeFileSync(workPath, JSON.stringify({ ...JSON.parse(fs.readFileSync(workPath)), work: "work/" + workRow.file }));
+fs.mkdirSync(path.join(root, "toywork/data/work"), { recursive: true });
+const cur = { state: "current", changes: [] };
+fs.writeFileSync(path.join(root, "toywork/data/work", workRow.file), JSON.stringify({
+  schema: "prooflens/published-work@1", release: TOY.release, claim: "T:def:even", readings: [{
+    workspace: "ws-111111111111", mode: "independent", reviewer: { id: "llm:synthetic-model", kind: "model", model: "synthetic-model", identity: "self-declared" },
+    requirements: [{ id: "q1", kind: "requirement", claim: "T:def:even", local_id: "even", form: "definition", text: "n is even when n = 2k", depth: 0, currency: cur }],
+    fragments: [{ id: "p1", kind: "fragment", claim: "T:def:even", requirement: "even", role: "statement", origin: "printed", state: "accepted",
+                  state_by: "llm:synthetic-model", region: { paper: "T", file: "toy.tex", start_line: 12, end_line: 12, sha256: "x", text: "A synthetic printed sentence." }, currency: cur }],
+    alignments: [{ id: "a1", kind: "alignment", claim: "T:def:even", requirements: ["even"], relation: "corresponds",
+                   lean: [{ decl: "Toy.IsEven" }], created_by: "llm:synthetic-model", currency: { state: "stale", changes: [{ decl: "Toy.IsEven", was: "a", now: "b" }] } }],
+    findings: [], evidence: [] }] }));
+
 fs.cpSync(path.join(root, "toy"), path.join(root, "long-statement"), { recursive: true });
 const longFile = TOY.claims.find((c) => c.id === "T:thm:even-add").file;
 const longPath = path.join(root, "long-statement/data/claims", longFile);
@@ -801,6 +819,15 @@ for (const width of [1300, 390]) {
     assert.match(await pg.locator("aside .paper h2").textContent(), /audited revision/);
     assert.equal(await pg.locator("aside .crop").count(), 1, "full audited PDF crop is available");
     assert.doesNotMatch(await pg.locator("aside .crop").textContent(), /Estimated/);
+    // The auditor's accepted workspace records, read-only and attributed.
+    const work = pg.locator("aside .published-work");
+    await work.waitFor();
+    assert.match(await work.textContent(), /Reading by A Auditor \(self-declared\)/);
+    assert.match(await work.locator("[data-req='r1']").textContent(), /the synthetic bound holds/);
+    assert.match(await work.locator("[data-alignment='a1']").textContent(), /Synthetic\.bound.*corresponds.*A-Auditor/);
+    assert.deepEqual(await work.locator("[data-kind='finding']").evaluateAll((es) => es.map((e) => e.classList.contains("old"))), [true, false]);
+    assert.match(await work.textContent(), /Supersedes f1: A synthetic stronger theorem/);
+    assert.equal(await work.locator("button, input, textarea, select").count(), 0, "nothing to edit");
     assert.equal(await pg.locator(".edition select").inputValue(), "original");
     await pg.locator(".view .chipbtn").click();
     for (const [dim, state] of [["formal","proved"],["review","author-reviewed"],["source","fail"],["replay","not-run"]]) {
@@ -817,6 +844,7 @@ for (const width of [1300, 390]) {
     await pg.waitForFunction(() => document.querySelector(".view .chipbtn [data-status]")?.dataset.status === "link.none");
     assert.equal(await pg.locator(".view .lean .statement").count(), 0);
     assert.doesNotMatch(await pg.locator("aside").textContent(), /Synthetic statement review/);
+    assert.equal(await pg.locator("aside .published-work").count(), 0, "another project's readings are not shown");
     assert.equal(await pg.locator(".edition select").inputValue(), "original", "project choice keeps the paper");
     await pg.selectOption("select[aria-label='Formalisation shown']", "synthetic/alpha");
     // Close the panel so the PDF control is reachable on a phone.
@@ -841,6 +869,22 @@ await check("direct audit has compact attribution with provenance on request", 3
   await banner.locator("a").click();
   await pg.waitForSelector("main.ch");
   assert.match(await pg.locator("main.ch").textContent(), /A. Author/);
+});
+
+await check("a direct audit shows its published readings beside an unchanged status", 1300, async (pg) => {
+  const at = `#/r/${TOY.release}/read/T/T%3Adef%3Aeven`;
+  await pg.goto(origin + "/toy/?audit=" + encodeURIComponent(origin + "/toy/") + at);
+  await pg.waitForSelector("aside .view .chipbtn [data-status]");
+  const before = await pg.locator("aside .view .chipbtn [data-status]").getAttribute("data-status");
+  assert.equal(await pg.locator("aside .published-work").count(), 0);
+  await pg.goto(origin + "/toywork/?audit=" + encodeURIComponent(origin + "/toywork/") + at);
+  const work = pg.locator("aside .published-work");
+  await work.waitFor();
+  assert.equal(await pg.locator("aside .view .chipbtn [data-status]").getAttribute("data-status"), before);
+  assert.match(await work.textContent(), /Reading by the AI model synthetic-model · independent review/);
+  assert.equal(await work.locator("pre.src").textContent(), "A synthetic printed sentence.");
+  assert.match(await work.locator("[data-role='statement']").textContent(), /toy\.tex:12 · printed for this claim · accepted by llm:synthetic-model/);
+  assert.match(await work.locator("[data-alignment='a1']").textContent(), /Toy\.IsEven.*the Lean changed since it was recorded/);
 });
 
 for (const width of [1440, 1000, 390, 320]) {

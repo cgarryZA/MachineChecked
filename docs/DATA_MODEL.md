@@ -335,7 +335,48 @@ add exposure and never remove it. A report made with `machinechecked review` lis
 `workspace import` keeps its id, authors, pins, mode and exposure. Into a workspace already
 present, it adds the records that are missing and keeps a record both hold in different versions
 as it is, listing the other under `conflicts`. References the current build cannot resolve are
-reported as `problems`. A workspace is not part of a published audit.
+reported as `problems`. A published audit carries the accepted records of every workspace in
+the working directory, below; the workspace itself stays local.
+
+## Published workspace records (`prooflens/published-work@1`), written by the export
+
+`machinechecked export` (and `build --site`, `check --site`) writes, for each claim with any,
+`data/work/<claim file>`, and the claim's passport names it in `work` (`"work/<claim file>"`).
+`engine/python/prooflens/published_work.py` writes it; `published-work.schema.json` describes it.
+The file is `{schema, release, claim, readings}`; each reading is one workspace's accepted
+records for the claim:
+
+| Field | Content |
+|---|---|
+| `workspace`, `mode` | the workspace id and its mode (`independent` or `informed`) |
+| `reviewer` | `{id, kind, name, model, identity}` of the workspace's reviewer |
+| `requirements` | every requirement of the claim, in reading order, with `depth` |
+| `fragments` | the passages with `state` `accepted` (governing ones and later uses) |
+| `alignments` | every alignment |
+| `findings` | the submitted findings, superseded ones included, each with `in_force` |
+| `evidence` | the evidence records those findings cite |
+
+Each record keeps the workspace fields above (`id`, `kind`, `claim`, `clause`, `rev`,
+`created_at`/`created_by`, `updated_at`/`updated_by`, `pins`, and its kind's fields) and gains
+`currency` (`{state, changes}`: `current`, `stale` or `unchecked`), computed against the published
+data over the published records alone. Proposed and removed fragments, draft findings, evidence
+no submitted finding cites, questions, `exposure`, `resume`, `review`, `conflicts`,
+`provenance` and `ops` are not published.
+
+The paper's `publish` settings apply. Without `source_text`, a region keeps only `paper` and
+`sha256` (no `text`, file or lines), a changed region's entry in `changes` loses its location,
+and a `paper` evidence reference loses its `quote`. Without `lean`, an alignment target loses its
+`target` text, a `source` evidence reference its file and line, and a `fact` evidence reference
+its `type`, `assumptions`, `variables`, `cases` and `source` (its declaration, position, pins and
+`basis` stay). A cited fact's currency needs the Lean project, so it is published as
+`unchecked`. Without `reviews`, `note`,
+`argument`, `question`, `would_decide`, `reason` and `why_rejected` are left out. The export
+scans these files with the rest. A claim file larger than 2 MB is refused.
+
+A site loading an audit (`load_published_audit`) reads the file the passport names (only
+`work/<the claim's file>`), checks it against the schema and that its `claim` and `release` are
+the passport's, and puts it in the claim's record as `work`. The reader shows the readings on the
+claim, read-only and attributed. They are never an input to a status.
 
 ## Links file (`machinechecked.links.json`), written by people, the reader and `link`
 
