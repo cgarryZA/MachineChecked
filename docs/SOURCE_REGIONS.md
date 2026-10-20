@@ -43,6 +43,49 @@ a newline may end a TeX comment. Formatting changes can therefore require a new 
 The scanner does not execute TeX or prove that a passage captures every external macro or
 assumption on which its meaning depends.
 
+## Several passages, and macro definitions
+
+A claim that asserts text in passages that are not adjacent (a sentence restated in the next
+section, a property stated forty lines later), or whose numbers are macros defined in another
+file, lists the further passages in `source_parts`, after its own passage:
+
+```json
+{
+  "id": "P:est:properties",
+  "location": "paper/main.tex:51",
+  "source_region": {"end_line": 52},
+  "source_hash_scheme": "tex-regions-v1",
+  "source_sha256": "<combined SHA-256>",
+  "source_line_sha256": ["…", "…"],
+  "source_parts": [
+    {"location": "paper/main.tex:93", "sha256": "…", "line_sha256": ["…"]},
+    {"location": "paper/figs/values.tex:2", "macro": "\\iterCount",
+     "sha256": "…", "line_sha256": ["…"]}
+  ]
+}
+```
+
+Each part has a `location` and the same optional bounds as a region (`end_line`,
+`start_column`, `end_column`), in any file of the snapshot, and its own `sha256` and
+`line_sha256`. A part with `macro` pins that macro's definition, and must define it. Under the
+scheme `tex-regions-v1`, `source_sha256` is the SHA-256 of the text `tex-regions-v1`, then one
+line per passage in order, the claim's own first: its role (`passage`, or `macro \name`) and
+its digest. It depends on the passages' text, not on where they are, so a move keeps it and a
+change to any passage changes it. A pin without parts keeps `tex-region-v1` and its digest is
+the region's, as before.
+
+The source check, the migration, `rebound` and `repin` verify every passage. A
+`source-changed` finding names the passage that changed: the claim's own (by line), or a part
+(`part 2 (the definition of \iterCount)`, by line). The reader shows every passage of the
+pin in order, and a review packet holds them under the passage's `parts`.
+
+A region that uses a macro the manuscript defines outside it (in its preamble or another file)
+gets an advisory warning, `source-macro-unpinned`, one per passage, naming each such macro and
+where it is defined: a change to those definitions does not change the pin. Pin the
+definitions whose values the claim states (`rebound --macro`, below), and dismiss the warning
+when the rest is notation whose definition is not part of the claim. The dismissal is tied to
+the passage's digest and to the macros named (its trigger), so it reopens when either changes.
+
 ## Replacing a legacy opening-line hash
 
 Do this while the configuration still names the **original frozen paper revision**:
@@ -94,7 +137,12 @@ machinechecked inventory rebound --paper P --claim P:intro:rate --lines 40-42 --
 
 `--lines A-B` selects lines A to B (inclusive); `--lines A` the line or display that starts on
 line A, as a location alone does. `--file`, `--start-column` and `--end-column` (for one claim)
-give another file or column bounds. Repeat `--claim ... --lines ...` to change several claims
+give another file or column bounds. For one claim, `--also FILE:A-B` (repeatable) adds a
+further passage and `--macro \name` (repeatable) pins the definition of a macro: its only
+definition in the manuscript, through the line that closes its body, or the one named with
+`--macro \name@FILE:LINE`. With either, the pin lists exactly the passages given; `--single`
+removes the further passages; with neither, the pin keeps the ones it lists and recomputes
+their digests. Repeat `--claim ... --lines ...` to change several claims
 in one write. The snapshot is read as for the migration (`--source`, `--rev`), and must be the
 revision each claim is pinned at; the claim's present pin (a region, or a legacy line hash)
 must match it there. The plan prints, per claim, the old and new bounds with the first and
@@ -217,6 +265,11 @@ classifies the claim:
 | `not-handled` | an environment pin this command cannot place (below) | nothing is written |
 | `pending-review` | its pin is of another revision (a passage that changed in an earlier repin) | nothing |
 | `unpinned` | it has no source pin | nothing |
+
+A pin with further passages is repinned only when every passage is found unchanged, each by
+its exact text (a macro definition whose text changed is found by the macro's name); the plan
+lists each part's class under `parts`. When any part changed or is missing, the claim is
+`changed`: the passages found take their new places and the pin keeps its digests.
 
 The plan lists every claim of the paper. A claim pinned by its environment (a `location` that
 names a file without a line, and the hash of the environment's body, as the compiled paper's

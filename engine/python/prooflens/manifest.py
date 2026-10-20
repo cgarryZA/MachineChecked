@@ -280,6 +280,9 @@ def build(evidence: dict, release: str, display: dict | None = None
             "statement_tex": (anchor or {}).get("statement"),
             # The passage the reader typesets, when it can be typeset faithfully (display only).
             "excerpt": (t.get("excerpts") or {}).get(c["id"]),
+            # Every passage of a pin that lists several, in order (display only).
+            **({"source_parts": t["part_text"][c["id"]]}
+               if (t.get("part_text") or {}).get(c["id"]) else {}),
             "blockers": [shown_names(b, clause_tex) for b in a.get("blockers", [])],
             "clauses": clauses, "decls": decls, "findings": fs,
             "symbols": symbol_links(display, c["id"], (anchor or {}).get("statement"), lean,

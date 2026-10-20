@@ -27,7 +27,7 @@ from .status import fields
 
 from . import review_sources
 from .reviews import Review, history
-from .source_regions import SCHEME as SOURCE_SCHEME, changed_line, matches as source_matches
+from .source_regions import SCHEMES as SOURCE_SCHEMES, changed_line, matches as source_matches
 
 OUT_OF_SCOPE = {"expository", "literature", "empirical", "proof-step", "part-of", "duplicate"}
 
@@ -695,7 +695,7 @@ class Assessor:
                 line = line_location(c)
                 if line is not None:
                     region = (t.get("regions") or {}).get(c["id"], {})
-                    if c.get("source_hash_scheme") != SOURCE_SCHEME:
+                    if c.get("source_hash_scheme") not in SOURCE_SCHEMES:
                         self.findings.append(_finding(
                             "violation", "source-hash-scheme", c["id"],
                             f"{c['location']}: source regions must be pinned at the original "
@@ -710,6 +710,21 @@ class Assessor:
                         self.findings.append(_finding(
                             "violation", "source-changed", c["id"],
                             f"the source region at {c['location']} {detail}"))
+                    macros = region.get("macros") or []
+                    if macros:
+                        # One warning per passage. Its trigger is the set of macros, so a
+                        # dismissal (tied to the passage's digest) reopens when another macro
+                        # defined outside the passage comes into use.
+                        names = " ".join(m["macro"] for m in macros)
+                        where = "; ".join(f"{m['macro']} at {', '.join(m['defined'])}"
+                                          for m in macros)
+                        self.add_warning(
+                            "source-macro-unpinned", c["id"], c["id"],
+                            {"fingerprint": c.get("source_sha256")},
+                            f"the source region at {c['location']} uses macros defined outside "
+                            f"it ({where}); a change to those definitions does not change the "
+                            "pin. Pin the definitions whose values are part of the claim "
+                            "(machinechecked inventory rebound --macro NAME)", names)
                     continue
                 a = match_anchor(c, anchors)
                 if a is None:

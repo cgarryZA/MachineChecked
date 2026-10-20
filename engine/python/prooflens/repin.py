@@ -22,8 +22,8 @@ import re
 import tempfile
 
 from .source_regions import (
-    DISPLAYS, ENV, SCHEME, RegionError, changed_line, extract, location, same_revision, source_file,
-    write_plan,
+    DISPLAYS, ENV, SCHEMES, RegionError, changed_line, definition_part, extract, location,
+    part_claim, pin as pin_of, same_revision, source_file, tex_sources, write_plan,
 )
 
 LABEL = re.compile(r"\\label\s*\{([^{}]*)\}")
@@ -382,22 +382,24 @@ def repin_plan(inventory: dict, paper: str, old_root: Path, new_root: Path, old_
             entries.append(entry)
             _apply_statement(claim, entry, target, paper_pin, old_rev, new_rev)
             continue
-        if claim.get("source_hash_scheme") != SCHEME:
+        if claim.get("source_hash_scheme") not in SCHEMES:
             raise RegionError(f"{claim['id']}: pin its source region at the original revision "
                               "first (python -m prooflens.source_regions)")
         try:
-            region = extract(old_root, claim)
+            full = pin_of(old_root, claim)
         except (RegionError, OSError, UnicodeError) as error:
             raise RegionError(f"{claim['id']}: at the original revision: {error}") from None
-        if region.sha256 != claim.get("source_sha256"):
+        region = full.main
+        if full.sha256 != claim.get("source_sha256"):
             raise RegionError(f"{claim['id']}: its passage at the original revision {old_rev} "
                               "differs from its pin; the baseline is not the reviewed text")
         if claim.get("source_line_sha256") not in (None, region.line_sha256):
             raise RegionError(f"{claim['id']}: its line pins differ from its passage at the "
                               f"original revision {old_rev}")
-        plans.append((claim, region))
+        plans.append((claim, region, full))
 
-    for claim, region in plans:
+    new_defs = None
+    for claim, region, full in plans:
         entry = {"claim": claim["id"], "from": claim["location"], "from_region": _bounds(region)}
         names = {name for name, _ in labels(region.text)} | (
             {claim["label"]} if claim.get("label") else set())
@@ -465,8 +467,15 @@ def repin_plan(inventory: dict, paper: str, old_root: Path, new_root: Path, old_
                 # symbol link may rest on, need not be.
                 entry["context_changed"] = (_context(old_files, region)
                                             != _context(new_files, new))
+        parts = None
+        if full.parts:
+            if new_defs is None:
+                new_defs = tex_sources(new_root)
+            parts = _with_parts(entry, full, new_root, new_files, new_defs)
         entries.append(entry)
         _apply(claim, entry, region, target, paper_pin, old_rev, new_rev)
+        if parts is not None and entry["class"] != "ambiguous":
+            claim["source_parts"] = parts
 
     pins = result.get("papers", {}).get(paper)
     if pins and pins.get("commit") and same_revision(
@@ -543,6 +552,70 @@ def repin_excerpts(display: dict, claim_ids: set[str], old_root: Path, new_root:
                 else "its text is not in the new revision") + "; select the passage again"})
         entries.append(entry)
     return result, entries
+
+
+def _as_part(placed: dict, part: dict) -> dict:
+    """A part placed elsewhere, in the form of the inventory: its digests and role kept."""
+    out = {"location": placed["location"], **(placed.get("source_region") or {})}
+    for k in ("macro", "sha256", "line_sha256"):
+        if k in part:
+            out[k] = part[k]
+    return out
+
+
+def _with_parts(entry: dict, full, new_root: Path, new_files: dict[str, str],
+                sources: dict[str, str]) -> list[dict]:
+    """Classify each further passage of a pin as the claim's own passage is (by its exact
+    text; a macro definition that changed is found by the macro's name), record them under
+    the entry's `parts`, and give the claim its class over all its passages: repinned only
+    when every passage is found unchanged. Returns the parts as the inventory should hold
+    them: placed where found, with their digests unchanged."""
+    out, rows = [], []
+    for part, region in full.parts:
+        row = {"part": part["location"], **({"macro": part["macro"]} if part.get("macro")
+                                            else {})}
+        exact = exact_matches(new_root, new_files, {"id": entry["claim"], **part_claim(part)},
+                              region)
+        placed = None
+        if len(exact) > 1:
+            row.update({"class": "ambiguous", "reason": f"its text occurs {len(exact)} times",
+                        "candidates": [c["location"] for c, _, _ in exact]})
+        elif exact and exact[0][2]:
+            row.update({"class": "ambiguous", "candidates": [exact[0][0]["location"]],
+                        "reason": "its text occurs only where the paper may not print it"})
+        elif exact:
+            placed = _as_part(exact[0][0], part)
+            same = all(placed.get(k) == part.get(k) for k in ("location", "end_line",
+                                                              "start_column", "end_column"))
+            row["class"] = "unchanged" if same else "moved"
+        elif part.get("macro"):
+            try:
+                found = definition_part(sources, part["macro"])
+                placed = {**found, **{k: part[k] for k in ("sha256", "line_sha256")
+                                      if k in part}}
+                row.update({"class": "changed", "reason": "its definition has another text"})
+            except RegionError as error:
+                row.update({"class": "ambiguous" if "defined" in str(error) else "removed",
+                            "reason": str(error)})
+        else:
+            row.update({"class": "not-found", "reason": "no passage has its text"})
+        if placed is not None:
+            row["to"] = placed["location"]
+        rows.append(row)
+        out.append(placed or part)
+    entry["parts"] = rows
+    classes = {r["class"] for r in rows}
+    if entry["class"] == "ambiguous" or "ambiguous" in classes:
+        entry["class"] = "ambiguous"
+        entry.setdefault("reason", "a further passage of its pin is ambiguous")
+    elif entry["class"] in ("unchanged", "moved") and classes - {"unchanged", "moved"}:
+        entry["class"] = "changed"
+        first = next(r for r in rows if r["class"] not in ("unchanged", "moved"))
+        entry["where"] = (f"part {rows.index(first) + 1} ({first['part']}) of its pin: "
+                          + first.get("reason", first["class"]))
+    elif entry["class"] == "unchanged" and "moved" in classes:
+        entry["class"] = "moved"
+    return out
 
 
 def _apply(claim: dict, entry: dict, region, target, paper_pin, old_rev: str, new_rev: str):
