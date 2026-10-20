@@ -115,7 +115,8 @@ def test_stale_numbers_are_reported_and_content_finds_each_claim(tmp_path, capsy
 def test_the_index_holds_complete_statements_and_uses(tmp_path, toolchain):
     root = project(tmp_path, toolchain)
     view = build_view(root, root / "paper/main.tex", root / ".machinechecked", log=lambda m: None)
-    idx = {d["name"]: d for d in view["body"]["index"]}
+    # The view keeps previews; the content index holds the complete records from the store.
+    idx = {d["name"]: d for d in view["retrieval"].docs}
     assert "Renum.triangle" in idx["Renum.triangle_bound"]["uses"]
     assert "Renum.triangle_le_sq" in idx["Renum.triangle_bound"]["value_uses"]
     assert "Renum.two_mul_triangle" in idx["Renum.gauss_sum"]["value_uses"]
