@@ -13,8 +13,10 @@ from prooflens import promote as pr
 from prooflens.pipeline import reassess
 
 # The marker grammar of the acceptance checker the markers are written for: a 32-digit
-# lowercase hexadecimal hash and a single `by=` attribute.
-CHECKER = re.compile(r"<!--\s*(spec|def)-review:\s*(\S+)\s+([0-9a-f]{32})\s+by=(\S+)\s*-->")
+# lowercase hexadecimal hash, a `by=` attribute and, when the review reads a claim's passage,
+# the digests of the passages read.
+CHECKER = re.compile(r"<!--\s*(spec|def)-review:\s*(\S+)\s+([0-9a-f]{32})\s+by=(\S+)"
+                     r"((?:\s+source=[^\s@]+@[0-9a-f]{64})*)\s*-->")
 
 
 def report(index, unit, reviewer=None, verdict="faithful", detail="", times=None):
@@ -31,7 +33,7 @@ def report(index, unit, reviewer=None, verdict="faithful", detail="", times=None
         "pins": {"release": index["release"], "project_commit": None,
                  "manuscripts": {p: revs.get(p) for p in unit["papers"]},
                  "legacy_hash": unit["legacy_hash"], "fingerprint": unit["fingerprint"],
-                 "fingerprints": None},
+                 "fingerprints": None, "source_sha256": unit.get("source_sha256")},
         "reviewer": rv,
         "reading": {"text": "My reading of the claim, written before seeing the Lean.",
                     "locked_at": t[0]},
@@ -73,10 +75,18 @@ def test_promotion_end_to_end(toy, tmp_path):
                                                 "fingerprint": "pl-fp-v1:" + "0" * 64}},
         "revealed": {**report(index, u), "reading": {**report(index, u)["reading"],
                      "revealed_by": [{"unit": "spec:Toy.PaperSpec.thm_triangle", "what": "Lean"}]}},
+        "text": {**report(index, u), "pins": {**report(index, u)["pins"],
+                                               "source_sha256": {"T:def:even": "0" * 64}}},
+        "no text": {**report(index, u), "pins": {**report(index, u)["pins"],
+                                                  "source_sha256": None}},
     }
     for k, r in bad.items():
         (_, _, why), = pr.plan(cfg, [r])
         assert why, k
+    (_, _, why), = pr.plan(cfg, [bad["text"]])
+    assert why == ["the paper's text changed since the review (source digests differ)"]
+    (_, _, why), = pr.plan(cfg, [bad["no text"]])
+    assert len(why) == 1 and "does not record the paper text" in why[0]
     (_, _, why), = pr.plan(cfg, [bad["family"]], accept_same_family=True)
     assert not why
     (_, _, why), = pr.plan(cfg, [bad["revealed"]])
@@ -90,11 +100,19 @@ def test_promotion_end_to_end(toy, tmp_path):
     done = pr.apply(cfg, [(r, cur) for r, cur, _ in steps])
     assert len(done) == 4
     text = (toy / "reviews/T.md").read_text() + (toy / "reviews/definitions.md").read_text()
-    found = {m.group(2): (m.group(3), m.group(4)) for m in CHECKER.finditer(text)
+    found = {m.group(2): (m.group(3), m.group(4), m.group(5)) for m in CHECKER.finditer(text)
              if m.group(4) == "human:Test-Referee"}
     assert set(found) == set(names)
     for r in good:
         assert found[r["unit"]["name"]][0] == r["pins"]["legacy_hash"]
+    # Each marker records the passage its review read: the proposition its theorem's, the
+    # definition the definition claim's; the generated declarations no claim names, none.
+    pins = {c["id"]: c["source_sha256"] for c in json.loads((toy / "claims.json").read_text())
+            ["claims"]}
+    assert found["Toy.PaperSpec.thm_triangle"][2] == \
+        f" source=T:thm:triangle@{pins['T:thm:triangle']}"
+    assert found["Toy.triangle"][2] == f" source=T:def:even@{pins['T:def:even']}"
+    assert found["Toy.triangle._f"][2] == "" and found["Toy.triangle.match_1"][2] == ""
     # The report is kept beside the markers, in full and as the protocol's text block.
     reports = list((toy / "reviews/reports").glob("*.json"))
     assert len(reports) == 4 and len(list((toy / "reviews/reports").glob("*.md"))) == 4
@@ -132,8 +150,10 @@ def test_a_unit_added_to_a_section_after_promotion_shows_the_section(toy, tmp_pa
     marker = next(m.group(0) for m in CHECKER.finditer((toy / "reviews/T.md").read_text())
                   if m.group(2) == tri and m.group(4) == "human:Test-Referee")
     h = units["Toy.PaperSpec.thm_bound"]["legacy_hash"]
+    src = " ".join(f"source={c}@{d}"
+                   for c, d in units["Toy.PaperSpec.thm_bound"]["source_sha256"].items())
     edit(toy / "reviews/T.md", marker,
-         f"{marker}\n<!-- spec-review: Toy.PaperSpec.thm_bound {h} by=statement-author -->")
+         f"{marker}\n<!-- spec-review: Toy.PaperSpec.thm_bound {h} by=statement-author {src} -->")
     _, _, cfg = build(toy, reuse_lean=True)
     q = {u["name"]: u for u in queue(cfg)["units"]}
     assert q["Toy.PaperSpec.thm_bound"]["author_review"][-1]["text"] == reading

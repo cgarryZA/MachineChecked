@@ -56,20 +56,30 @@ line (an equation, a part of an environment, a prose claim), whose hash is the h
 Markdown files with markers:
 
 ```
-<!-- spec-review: <proposition> <hash> by=<reviewer> [kind=human|ai] -->
-<!-- def-review: <definition> <hash> by=<reviewer> [kind=human|ai] -->
-<!-- step-review: <claim id> <source sha256> verdict=holds|gap|false|undetermined by=<reviewer> -->
+<!-- spec-review: <proposition> <hash> by=<reviewer> [kind=human|ai] [source=<claim>@<sha256>]... -->
+<!-- def-review: <definition> <hash> by=<reviewer> [kind=human|ai] [source=<claim>@<sha256>]... -->
+<!-- step-review: <claim id> <source sha256> verdict=holds|gap|false|undetermined by=<reviewer> [source=<claim id>@<source sha256>] -->
 ```
 
-A `step-review` marker records a review of a printed proof step at the hash of its source text; `review promote` writes
-it from an accepted report of the queue's unit `step:<claim id>` (whose `pins.fingerprints.source`
-is that hash). The assessment records each proof step's review from its markers
-(`step_review`); it is never an input to a status. In zero configuration, a step's review is
-such a report kept in the project's `machinechecked-reviews/` folder.
+`<hash>` is the `legacy_hash` or the `pl-fp-v1:` fingerprint the review was made at. Each
+`source` names a claim whose passage the reviewer read (a claim that states the proposition, or a
+definition claim that names the definition) and the digest of that passage as read, its
+`source_sha256` pin; a declaration no claim names has none. A marker without `source` is read as
+the [evidence policy](EVIDENCE_POLICY.md#a-review-is-a-reading-of-a-text) says. The section the
+marker closes is the text of the review. The last marker of a declaration, reading the files in
+order (a directory's `.md` files by name), is its current record.
 
-`<hash>` is the `legacy_hash` or the `pl-fp-v1:` fingerprint the review was made at. The section
-the marker closes is the text of the review. The last marker of a declaration, reading the files
-in order (a directory's `.md` files by name), is its current record.
+A `step-review` marker records a review of a printed proof step; its hash is the digest of the
+step's source text as read, and `review promote`, which writes it from an accepted report of the
+queue's unit `step:<claim id>` (whose `pins.fingerprints.source` is that digest), also writes it
+as the marker's `source`. It is current by the same rule: while that digest is the step's current
+pin. The assessment records each proof step's review from its markers (`step_review`); it is
+never an input to a status. In zero configuration, a step's review is such a report kept in the
+project's `machinechecked-reviews/` folder.
+
+A review report (`prooflens/review-report@1`) pins the same digests as `pins.source_sha256`
+(claim id to digest), taken when the reading is locked; `review promote` refuses a report whose
+digests are missing or differ from the current ones.
 
 Dismissals of warnings (`dismissals.json`):
 `[{"code", "subject", "trigger", "fingerprint", "rationale", "by"}]`.

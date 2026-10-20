@@ -196,6 +196,8 @@ export function buildReport({ index, unit, draft, reviewer }) {
       legacy_hash: unit.legacy_hash || null,
       fingerprint: unit.fingerprint || null,
       fingerprints: unit.fingerprints || null,
+      // The digests of the paper passages shown when the reading was locked.
+      source_sha256: draft.source_sha256 ?? null,
     },
     reviewer: {
       id: reviewerId(reviewer), kind: reviewer.kind, name: reviewer.name || null,
