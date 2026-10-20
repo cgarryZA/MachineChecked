@@ -379,7 +379,10 @@
           <h3>Suggested</h3>
           {#each claim.suggestions.filter((s) => !claim.links.some((l) => l.name === s.name)) as s (s.name)}
             <div class="block suggestion">
-              <p class="decl"><code>{s.name}</code> <span class="faint">— {s.why}</span></p>
+              <p class="decl"><code>{s.name}</code></p>
+              {#if s.reasons?.length}
+                <ul class="reasons faint small">{#each s.reasons as r}<li>{r.text}</li>{/each}</ul>
+              {:else if s.why}<p class="faint small">{s.why}</p>{/if}
               {#if s.statement}<Statement st={s.statement} onref={showDecl} compact />{/if}
               {#if editable}
                 <div class="row">
@@ -392,8 +395,14 @@
             </div>
           {/each}
         {/if}
+        {#if claim.references?.some((o) => o.status !== "exact" || o.stale_lead)}
+          <h3>Paper numbers in the Lean</h3>
+          <ul class="reasons small">
+            {#each claim.references.filter((o) => o.status !== "exact" || o.stale_lead) as o (o.id)}<li>{o.message}</li>{/each}
+          </ul>
+        {/if}
         {#if editable}
-          <LinkPicker {index} disabled={!!busy} onpick={(name) => act({ lean: [...claim.links.map((x) => x.name), name] }, "link")} />
+          <LinkPicker {index} {claim} disabled={!!busy} onpick={(name) => act({ lean: [...claim.links.map((x) => x.name), name] }, "link")} />
         {/if}
         {#if busy}<p class="faint small">Saving the link and rebuilding…</p>{/if}
         {#if saveError}<p class="bad small">{saveError}</p>{/if}
@@ -588,6 +597,7 @@
   .block { margin-bottom: 14px; }
   .block.refuted { border-left: 3px solid var(--st-refuted); padding-left: 10px; }
   .block.suggestion { border: 1px dashed var(--border); border-radius: 8px; padding: 8px 10px; }
+  ul.reasons { margin: 2px 0 6px; padding-left: 18px; }
   .bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
   .grow { flex: 1; }
   .chipbtn { border: 0; background: none; padding: 4px 0; cursor: pointer; }

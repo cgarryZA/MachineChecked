@@ -156,6 +156,26 @@ class Site:
         except ValueError:
             return []
 
+    def retrieval(self):
+        """The build's content index of every project declaration (`retrieval.py`), or None
+        when the build has none (a full assessment, or a build before it existed)."""
+        if not hasattr(self, "_retrieval"):
+            from .retrieval import Retrieval
+            p = self.data / "retrieval.json"
+            try:
+                self._retrieval = Retrieval.from_export(json.loads(p.read_text(encoding="utf-8")))
+            except (OSError, ValueError, KeyError):
+                self._retrieval = None
+        return self._retrieval
+
+    def numbering(self) -> dict | None:
+        """The project's references to the paper's numbers (`numbering.py`)."""
+        p = self.data / "numbering.json"
+        try:
+            return json.loads(p.read_text(encoding="utf-8")) if p.exists() else None
+        except ValueError:
+            return None
+
 
 # -- the paper ---------------------------------------------------------------------------------
 
@@ -383,7 +403,11 @@ def claim_packet(site: Site, claim: str, stage: str = "informed", limit: int | N
         names = [n for d in decls for n in ((d.get("statement") or {}).get("closure") or [])]
         names += [n for n in (ch.get("decls") or {}) if n not in names]
         defs, page = _page(_definitions(site, [ch], names, stage), limit, after)
-        out["lean"] = {"declarations": decls, "candidates": cands, "definitions": defs}
+        out["lean"] = {"declarations": decls, "candidates": cands, "definitions": defs,
+                       "references": ch.get("references") or []}
+        num = site.numbering()
+        if num and num.get("pattern"):
+            out["lean"]["numbering"] = num["pattern"]
         sections.append("lean")
         if not decls:
             out["lean"]["note"] = ("no Lean is linked to this step: review the printed step "
@@ -494,8 +518,18 @@ def _mentions(site: Site, name: str) -> list[dict]:
             found[n] = {"id": f"decl:{n}", "name": n, "module": rec.get("module"),
                         "statement": _text(rec.get("signature")), "complete": True,
                         "claims": []}
-    # The build's index of every project declaration holds a preview of each type: a match
-    # there is a candidate whose full statement `dependencies` (or `inspect`) gives.
+    # The build's content index holds every project declaration's complete statement and the
+    # constants it mentions.
+    ret = site.retrieval()
+    if ret is not None:
+        for d in ret.docs:
+            n = d["name"]
+            if n not in found and n != name and name in (d.get("uses") or []):
+                found[n] = {"id": f"decl:{n}", "name": n, "module": d.get("module"),
+                            "statement": d.get("type") or "", "complete": True, "claims": []}
+        return sorted(found.values(), key=lambda r: r["name"])
+    # An older build's index holds a preview of each type: a match there is a candidate whose
+    # full statement `dependencies` (or `inspect`) gives.
     pat = re.compile(r"(?<![\w.])" + re.escape(name) + r"(?![\w])")
     short = name.rsplit(".", 1)[-1]
     spat = re.compile(r"(?<![\w.])" + re.escape(short) + r"(?![\w])")
@@ -515,6 +549,8 @@ QUERIES = {
     "definition": "a declaration's record: its type, its value or body, and the constants Lean "
                   "generated for it",
     "mentions": "the declarations whose statement mentions a constant",
+    "search": "the project's declarations whose complete statements best match a claim's printed "
+              "statement, a Lean expression or words, with the reasons for each",
     "dependencies": "what a declaration's statement and proof use (runs `inspect`)",
     "uses": "where a declaration is applied, and the source of each premise",
     "proof-facts": "the typed facts inside a declaration's proof, each with its assumptions and "
@@ -551,6 +587,8 @@ def query(site: Site, op: str, target: str, limit: int | None = None, after: str
     elif op == "mentions":
         results = _mentions(site, target)
         prov = "the statements of the build, and its index of the project"
+    elif op == "search":
+        return {**out, **search(site, target, limit, after)}
     elif op == "proof-facts":
         if root is None:
             raise CompareError("`proof-facts` needs the Lean project", "no-project")
@@ -575,6 +613,49 @@ def query(site: Site, op: str, target: str, limit: int | None = None, after: str
         prov = "Lean (inspect), cached until a Lean input changes"
     part, page = _page(results, limit, after)
     return {**out, "available": True, "results": part, "provenance": prov, "retrieval": page}
+
+
+def search(site: Site, target: str, limit: int | None = None, after: str | None = None) -> dict:
+    """The content search (`retrieval.Retrieval.search`) the reader and the suggestions use. A
+    target naming a claim searches with its printed statement, over declarations of its sort;
+    any other target is the query itself. Nothing recorded by people (links, rejections, notes)
+    enters the search or its results."""
+    from .retrieval import paper_quantifiers
+    ret = site.retrieval()
+    if ret is None:
+        return {"available": False, "results": [],
+                "reason": "this build has no content index of the project's declarations; "
+                          "`machinechecked view` or `build` in zero configuration writes one"}
+    try:
+        cid = site.resolve_claim(target)
+    except CompareError:
+        cid = None
+    kinds, order, subject = None, None, {"text": target}
+    if cid:
+        ch = site.chunk(cid) or {}
+        text = " ".join(x for x in (ch.get("title"), ch.get("statement_tex")
+                                    or (ch.get("anchor") or {}).get("statement")) if x)
+        definition = ch.get("scope") == "definition"
+        kinds = (lambda k: k != "theorem") if definition else (lambda k: k == "theorem")
+        order = paper_quantifiers(text)
+        subject = {"claim": cid, "text": text,
+                   "kinds": "definitions" if definition else "theorems"}
+    else:
+        text = target
+    try:
+        res = ret.search(text, kinds=kinds, limit=limit or 20, after=after, paper_order=order)
+    except ValueError as e:
+        raise CompareError(str(e), "bad-cursor") from None
+    for r in res["results"]:
+        r["id"] = f"decl:{r['name']}"
+    return {"available": True, "subject": subject, "results": res["results"],
+            "query": res["query"],
+            "scope": {"declarations": len(ret),
+                      "what": "every user-facing declaration of the project's built modules, "
+                              "linked or not"},
+            "provenance": "the build's content index (complete statements, docstrings, names "
+                          "and the definitions each statement uses); no Lean session",
+            "retrieval": res["page"]}
 
 
 def _proof_facts(root: Path, target: str, log) -> dict:
@@ -619,6 +700,24 @@ def passage_text(p: dict) -> str:
         if p.get("context"):
             body += "\nIts context in the proof:\n" + p["context"]
     return body
+
+
+def search_text(out: dict) -> str:
+    """A content search for the terminal: each result with its reasons and complete statement."""
+    sub = out.get("subject") or {}
+    head = (f"Declarations ({sub.get('kinds')}) matching {sub['claim']}" if sub.get("claim")
+            else f"Declarations matching {sub.get('text')!r}")
+    lines = [f"{head}, among {out['scope']['declarations']} declarations of the project:"]
+    for r in out["results"]:
+        lines.append(f"\n{r['name']}  ({r.get('kind')}, {r.get('module')})")
+        for x in r["reasons"]:
+            lines.append(f"  - {x['text']}")
+        lines.append(f"  {r['statement']}")
+    if not out["results"]:
+        lines.append("(nothing in the project shares a term with it)")
+    if out["retrieval"]["next"]:
+        lines.append(f"\n(more: --after {out['retrieval']['next']})")
+    return "\n".join(lines)
 
 
 def statement_lines(d: dict) -> list[str]:

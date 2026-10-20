@@ -90,6 +90,27 @@ The detailed engineering rules live in [CLAUDE.md](../CLAUDE.md). The evolving p
 
 The public command is `machinechecked`; `prooflens` remains an alias for compatibility. Most users need only `view`, `build` and `check`.
 
+### Content search and paper numbers
+
+`retrieval.py` indexes every user-facing declaration of the project's built modules from the
+probe's `index` records: the complete statement, the docstring, the name, and the project
+constants the statement mentions (`uses`) and the value uses (`value_uses`). A text's terms are
+words (split at underscores and capitals, lower case, lightly stemmed), symbols (`\le`, `≤` and
+`<=` are one term; `≥` is folded into `≤`), numerals and dotted constants. A declaration's
+score is the share of the query's rarity-weighted terms it carries; the users of the ten best
+matches join the results through them. The zero-configuration view writes the index to
+`data/retrieval.json` with its word tables; `web/src/lib/retrieval.js` reads the tables from it
+and implements the same scoring. `tests/fixtures/retrieval/make_cases.py` writes the cases both
+must answer alike (`tests/contracts/test_retrieval.py` checks the file is current, and
+`web/tests/retrieval.test.mjs` runs the reader's side): regenerate it after changing either.
+The same test measures retrieval on a synthetic index of 40,000 declarations.
+
+`numbering.py` finds references to numbered statements in docstrings, names and module
+docstrings and checks them against the paper's claims and, from the compilation's table of
+contents, its sections. `simple.suggest` combines content (weight 0.7), cited numbers (0.2,
+less for a possibly stale lead) and names (0.1). The fixture `tests/fixtures/renumbered` is a
+paper renumbered after its Lean was written.
+
 `inspect NAME [--dependencies] [--json]` reports what a declaration's statement mentions and, separately, what its proof uses, through the whole project (the probe's `deps` request; every other record stays proof-erased). `compare --query proof-facts NAME` walks one declaration's elaborated proof term (the probe's `proof-facts` request): `have`, `let` of a proposition, `show`, and applications of project theorems or of theorems to a local fact, each with its local context, the locals it needs, the case arguments of eliminators it lies under and its sub-expression position. The walk enters no generated `_proof_` lemma (it lists them), visits shared closed sub-terms once, and stops at 200,000 nodes or 200 facts (query fields `facts_nodes`, `facts_items`), saying so; each fact is printed with its own heartbeat budget, and a request that fails emits a `probe-error` for itself only. Statement fingerprints are unchanged: the request adds a record of its own. Full-assessment users can use `reassess` (new reviews without a Lean re-probe), `site` (regenerate the reader from stored evidence), `bundle` (single-file HTML), `export` (approved public data) and `review promote` (maintainer approval).
 
 ## Releasing

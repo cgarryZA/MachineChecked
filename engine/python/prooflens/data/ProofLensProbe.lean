@@ -475,8 +475,15 @@ def userFacing (n : Name) : Bool :=
     s.startsWith "_" || s.startsWith "match_" || s.startsWith "proof_" || s == "eq_def"
       || s.startsWith "eq_" && (s.drop 3).all Char.isDigit)
 
+/-- The project constants (`roots`) among `cs` that a reader looks for, other than `self`. -/
+def projectNamesJson (roots : Array Name) (env : Environment) (self : Name) (cs : Array Name) :
+    Json :=
+  Json.arr ((cs.filter fun c => c != self && inScope roots env c && userFacing c).map
+    (Json.str ·.toString))
+
 /-- Every user-facing theorem, definition and type declared in the modules of `roots`: name,
-kind, module, line, docstring and statement as text. -/
+kind, module, line, docstring, the complete statement as text, and the project constants its
+statement mentions (`uses`) and its value uses (`value_uses`: a proof or a body). -/
 def indexRecords (h : IO.FS.Handle) (roots : Array Name) : MetaM Unit := do
   let env ← getEnv
   let names := env.header.moduleNames
@@ -497,10 +504,16 @@ def indexRecords (h : IO.FS.Handle) (roots : Array Name) : MetaM Unit := do
       let ty ← withCurrHeartbeats do
         try pure (toString (← ppExpr ci.type)) catch _ => pure "(not printable)"
       let doc ← findDocString? env n
+      let value := match ci with
+        | .defnInfo d => d.value.getUsedConstants
+        | .thmInfo t => t.value.getUsedConstants
+        | .opaqueInfo o => o.value.getUsedConstants
+        | _ => #[]
       emit h (Json.mkObj [("record", "index"), ("name", n.toString), ("kind", k),
         ("module", mod.toString), ("range", ← rangeJson n),
         ("doc", match doc with | some d => Json.str d | none => Json.null),
-        ("type", if ty.length > 4000 then prefixOf ty 4000 ++ " …" else ty)])
+        ("type", ty), ("uses", projectNamesJson roots env n ci.type.getUsedConstants),
+        ("value_uses", projectNamesJson roots env n value)])
 
 /-! ## Names in module docstrings -/
 

@@ -1,0 +1,53 @@
+\documentclass[11pt]{article}
+\usepackage{amsmath,amssymb,amsthm}
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{proposition}[theorem]{Proposition}
+\newtheorem{corollary}[theorem]{Corollary}
+\theoremstyle{definition}
+\newtheorem{definition}[theorem]{Definition}
+
+\title{Triangle Numbers, Second Version}
+\author{A synthetic example}
+\date{}
+
+\begin{document}
+\maketitle
+
+\section{Definitions}
+
+\begin{definition}[Triangle numbers]\label{def:triangle}
+For a natural number $n$, the triangle number $T(n)$ is the sum $0 + 1 + \dots + n$.
+\end{definition}
+
+\section{Two facts added in this version}
+
+\begin{theorem}\label{thm:max}
+For all natural numbers $m$ and $n$, $m + n \le 2 \max(m, n)$.
+\end{theorem}
+
+\begin{lemma}\label{lem:sq}
+Every natural number $n$ satisfies $n \le n^2$.
+\end{lemma}
+
+\section{Bounds}
+
+\begin{theorem}\label{thm:bound}
+There is a constant $C$ such that for every natural number $n$, the triangle number satisfies
+$T(n) \le C n^2$.
+\end{theorem}
+
+\begin{lemma}\label{lem:twice}
+For every natural number $n$, twice the triangle number $T(n)$ equals $n(n+1)$.
+\end{lemma}
+
+\begin{proposition}\label{prop:succ}
+For every natural number $n$, the triangle number $T(n+1)$ is $T(n) + (n + 1)$.
+\end{proposition}
+
+\begin{corollary}\label{cor:const}
+For every natural number $n$ there is a constant $C$ such that the triangle number
+satisfies $T(n) \le C$.
+\end{corollary}
+
+\end{document}

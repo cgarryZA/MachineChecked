@@ -220,6 +220,10 @@ def _print_simple(body):
         print(f"note: {n}")
     for d in body.get("module_docs", []):
         print(f"warning: {stale_doc_message(d)}")
+    from . import numbering as nb
+    for o in (body.get("numbering") or {}).get("references", []):
+        if nb.suspect(o):
+            print(f"warning: {nb.message(o)}")
     for s, k in sorted(view_summary(body).items()):
         print(f"  {k:4d}  {s}")
     for c in body.get("claims", []):
@@ -651,11 +655,15 @@ def _check_json(a):
                        "reviews": [{"reviewer": r["reviewer"], "verdict": r["verdict"]["value"],
                                     "submitted_at": r["submitted_at"], "current": r["current"]}
                                    for r in c.get("reviews", [])],
-                       "suggestions": [{"name": x["name"], "why": x.get("why")}
+                       "suggestions": [{"name": x["name"], "why": x.get("why"),
+                                        "reasons": x.get("reasons", [])}
                                        for x in c.get("suggestions", [])],
+                       "references": [o["id"] for o in c.get("references", [])],
                        "unit": c.get("unit", "statement"), "parent": c.get("parent"),
                        **(_step_json(c) if c.get("unit") else {})}
                       for c in body["claims"]]
+            from . import numbering as nb
+            num = body.get("numbering") or {"references": [], "pattern": None}
             out = {"mode": "simple", "paper": body["paper"], "title": body["title"],
                    "release": view_release(body), "commit": body.get("commit"),
                    "modules": {"built": body["project"]["built"],
@@ -663,7 +671,12 @@ def _check_json(a):
                    "notes": body["notes"],
                    "warnings": [{"kind": "module-doc-name", "file": d["file"], "line": d["line"],
                                  "name": d["name"], "message": stale_doc_message(d)}
-                                for d in body.get("module_docs", [])]}
+                                for d in body.get("module_docs", [])]
+                   + [{"kind": "paper-reference", "file": o["source"].get("file"),
+                       "line": o["source"].get("line"), "reference": o["reference"],
+                       "status": o["status"], "id": o["id"], "message": nb.message(o)}
+                      for o in num["references"] if nb.suspect(o)],
+                   "numbering": num}
             failed = any(l["class"] != "proved" for c in claims for l in c["links"])
     summary = {}
     for c in claims:
@@ -914,6 +927,9 @@ def cmd_compare(a):
                 return _print_json(out)
             if not out["available"]:
                 print(out["reason"])
+                return
+            if op == "search":
+                print(cmp.search_text(out))
                 return
             if op == "proof-facts":
                 print(cmp.proof_facts_text(out))
@@ -1226,8 +1242,9 @@ def main(argv=None):
                     "what people have recorded (notes, reviews, statuses)")
     co.add_argument("--query", nargs=2, metavar=("OP", "TARGET"),
                     help="a targeted query: definition NAME, mentions NAME, dependencies NAME, "
-                    "proof-facts NAME (the facts inside its proof) (and uses, composition, "
-                    "impact, which say what is not extracted yet)")
+                    "search CLAIM-OR-TEXT (the project's declarations by statement content), "
+                    "proof-facts NAME (the facts inside its proof), and uses, composition, "
+                    "impact, which say what is not extracted yet")
     co.add_argument("--match", metavar="TEXT",
                     help="with proof-facts: rank the facts by the symbols they share with TEXT")
     co.add_argument("--limit", type=int, help="return at most this many definitions or results")
