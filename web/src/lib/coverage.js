@@ -75,3 +75,25 @@ export function coverageView(cor) {
   }
   return { coverage, basis, headline, tone, lines };
 }
+
+// An auditor's composition (`composition.view` of the engine): `{headline, tone, basis,
+// bridgeState, nextStep, open, uncovered}`. The basis is a checked bridge only when the engine
+// says Lean checks it now; otherwise it is the auditor's composition, with the next step beside
+// it. A composition never has the words or the tone of a direct result.
+export function compositionView(c) {
+  if (!c) return null;
+  const coverage = Object.hasOwn(COVERAGE, c.coverage) ? c.coverage : null;
+  const check = c.bridge_check && typeof c.bridge_check === "object" ? c.bridge_check : null;
+  const bridgeState = check && BRIDGE.includes(check.state) ? check.state : check ? "unchecked" : null;
+  const basis = c.basis === "checked_bridge" && bridgeState === "checked" ? "checked_bridge" : "reviewed_composition";
+  const how = basis === "checked_bridge" ? "through a checked bridge" : "by the auditor's composition";
+  const headline = coverage === "full" ? `Every clause, ${how}`
+    : coverage ? `${COVERAGE[coverage]}, ${how}` : `A composition, ${how}; no coverage recorded`;
+  const gaps = c.gaps && typeof c.gaps === "object" ? c.gaps : {};
+  return {
+    headline, basis, bridgeState,
+    tone: coverage === "unresolved" ? "open" : basis === "checked_bridge" && coverage === "full" ? "bridge" : "reading",
+    nextStep: basis === "reviewed_composition" ? text(c.next_step) || NEXT_STEP : null,
+    open: names(gaps.open), uncovered: names(gaps.uncovered),
+  };
+}

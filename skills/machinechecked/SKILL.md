@@ -102,6 +102,11 @@ violations and obligations by subject; `findings` holds only their totals.
   domain, a constant's dependence, a standing assumption) and the Lean it corresponds to.
   `workspace suggest --claim C --requirement r1` proposes nearby passages; a proposal is a guess
   until accepted. A later use of a result is a use, never a change to its reading.
+- **Combine several results**: a `composition` record lists the steps, the declaration,
+  application or fact inside a proof each rests on, the substitutions, which objects are the
+  same, and the open obligations. It reads as your composition, with the next step: state the
+  combination as one Lean result. A `bridge` (a theorem whose type is exactly a target
+  proposition) is checked by Lean when saved; `compare --query composition CLAIM` shows them.
 - **A shareable report**: `machinechecked build` writes `.machinechecked/MachineChecked.html`
   (one file, opens from disk; Git ignores it there, and `--out` puts it elsewhere). `machinechecked build --site public/ --author "Name" --issues owner/repo` writes a
   directory to publish (for example on GitHub Pages) with `audit.json` describing it. Both

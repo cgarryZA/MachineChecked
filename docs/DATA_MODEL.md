@@ -299,7 +299,11 @@ optional `clause` and `note`, `rev`, `created_at`/`created_by`, `updated_at`/`up
 
 - **`evidence`**: `ref` is one of `{decl, module, build, fingerprint, digest}` (a declaration of
   the selected build; `build` is `built`, `unbuilt`, `not loaded` or `external`), `{source:
-  {file, line}}`, `{paper: {claim, quote}}`, or `{fact: {...}}`: a fact inside a proof, as
+  {file, line}}`, `{paper: {claim, quote}}`, `{app: {...}}`: an application of a declaration, as
+  `compare --query uses` gives it (`callee`, `module`, `id`, `caller`, `via`, the `arguments`
+  and `premises` with how each is supplied, the `result`, and `app_hash`, a digest of them; it is
+  `stale` once the caller elaborates it differently, `unchecked` until the uses are read again
+  after a Lean change), or `{fact: {...}}`: a fact inside a proof, as
   `compare --query proof-facts` gives it (`decl`, `module`, `at` its position in the proof term,
   `fact_hash` its proposition with the locals it needs, `proof_hash` the whole proof, and to read
   it without Lean `kind`, `name` or `head`, `type`, `assumptions`, `variables`, `cases`, `source`
@@ -315,7 +319,11 @@ optional `clause` and `note`, `rev`, `created_at`/`created_by`, `updated_at`/`up
   `question` and optional `would_decide`. A finding that rests on a fact inside a proof (a
   `supports` evidence with a `fact` reference) cannot have basis `direct`: that fact is not an
   exported statement. A `composed` coverage is recorded as `full` with basis
-  `reviewed_composition`. `state` is `draft`
+  `reviewed_composition`. A finding may rest on a `composition` of the same claim (its id): its
+  basis is then `reviewed_composition`, or `checked_bridge` when the composition carries a
+  bridge, and full coverage needs the composition complete (checked again at `submit`). Shown
+  while the bridge is not checked, a `checked_bridge` finding reads as `reviewed_composition`
+  (with `recorded_basis`). `state` is `draft`
   or `submitted` (`submitted_at`). A submitted finding is never edited or deleted: a later
   finding names it in `supersedes`, with its `reason`, and both are kept.
 - **`question`**: `text`, `state` (`open`, `answered`, `withdrawn`), optional `answer` and
@@ -347,6 +355,32 @@ optional `clause` and `note`, `rev`, `created_at`/`created_by`, `updated_at`/`up
   each with `build`, `fingerprint`, `digest` and the `target` text) and `relation`
   (`corresponds`, `additional assumption`, `changed`, `alternative representation`). A
   requirement may have several alignments and a target may serve several requirements.
+- **`composition`**: an argument that several results together cover the claim
+  (`composition.py`). `steps`, in order, each `{id, establishes, requirements, uses, after,
+  substitutions, inference, note}`: what it establishes, the requirements it establishes (with
+  those inside them), the evidence it rests on (a `decl`, `app` or `fact` reference that is not
+  rejected) and the earlier steps it follows from (one of them at least), the substitutions it
+  makes (`{variable, value, in}`, `in` an evidence id of the step) and any inference of the
+  auditor's own. `identifications` (`{left: {step, object}, right: {step, object}, relation,
+  how}`; `relation` is `same object`, `equal`, `restriction`, `coercion` or `other`; `how` is
+  `retained witness`, when the right step follows from the left, `evidence`, with the
+  `evidence` that shows it, or `definition`). `obligations` (`{id, kind, text, state, by}`;
+  `kind` is `compatible witnesses`, `local to global`, `equality transport`, `constant
+  dependence`, `genericity`, `side condition` or `other`; `state` is `open` or `discharged`, with
+  `by: {steps, evidence}`). `evidence` is computed: every evidence id it uses. Optional
+  `statement` (the combined statement, in words) and `coverage`; `full` is refused while a
+  printed requirement of the claim is established by no step, an obligation is open, or the
+  claim has no requirements recorded. The basis is never written: `workspace show` gives it as
+  `reviewed_composition`, with `next_step`, or `checked_bridge` while the `bridge` is checked,
+  with `gaps` (`requirements`, `uncovered`, `open`) and `complete`. A `bridge` is `{theorem,
+  target}`: Lean checks it when it is written (the probe's `accept` request, the links file's
+  bridge check, answered from the facts store), and one whose type is not exactly the target, a
+  proposition stated as a definition, with no `sorry` and only allowed axioms, is refused. It is
+  kept with `module`, `type`, `axioms`, `checked_at` and its pins: `target_fingerprint` (the
+  target and the definitions its statement uses) and `source_sha256` (the claim's passage).
+  `bridge_check` says whether it is `checked`, `stale` (the target or the passage changed since)
+  or `unchecked` (not read since the Lean last changed; `workspace show` asks Lean). A composition
+  a submitted finding rests on is not edited: record a new one and supersede the finding.
 
 An update is a list of operations applied together or not at all: `put` (create, or replace a
 record's content, given `base_rev`, the revision it was read at), `delete` (a draft or an unused
@@ -406,7 +440,8 @@ records for the claim:
 | `fragments` | the passages with `state` `accepted` (governing ones and later uses) |
 | `alignments` | every alignment |
 | `findings` | the submitted findings, superseded ones included, each with `in_force` |
-| `evidence` | the evidence records those findings cite |
+| `evidence` | the evidence records those findings and compositions cite |
+| `compositions` | the compositions those findings rest on, with `basis`, `gaps`, `complete`, `next_step` and `bridge_check` |
 
 Each record keeps the workspace fields above (`id`, `kind`, `claim`, `clause`, `rev`,
 `created_at`/`created_by`, `updated_at`/`updated_by`, `pins`, and its kind's fields) and gains
@@ -420,8 +455,14 @@ The paper's `publish` settings apply. Without `source_text`, a region keeps only
 and a `paper` evidence reference loses its `quote`. Without `lean`, an alignment target loses its
 `target` text, a `source` evidence reference its file and line, and a `fact` evidence reference
 its `type`, `assumptions`, `variables`, `cases` and `source` (its declaration, position, pins and
-`basis` stay). A cited fact's currency needs the Lean project, so it is published as
-`unchecked`. Without `reviews`, `note`,
+`basis` stay). A cited fact's (or application's) currency needs the Lean project, so it is
+published as `unchecked`; an `app` reference keeps its arguments, premises and result only with
+`lean`. A composition keeps its steps' ids, requirements, evidence and order, its
+identifications' steps and how they are known, and its obligations' kinds, states and discharges;
+its objects and substitutions only with `lean`; its statement, what each step establishes, the
+inferences, obligation texts and notes only with `reviews`. Its basis is `checked_bridge` only when
+the bridge is checked at export against the project's facts store; otherwise
+`reviewed_composition`, and a finding recorded as `checked_bridge` on it reads the same way. Without `reviews`, `note`,
 `argument`, `question`, `would_decide`, `reason` and `why_rejected` are left out. The export
 scans these files with the rest. A claim file larger than 2 MB is refused.
 

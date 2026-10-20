@@ -356,9 +356,10 @@ def _assemble(name: str, recs: list[dict], groups: list[str], built: list[str],
 
 
 def uses(root: Path, name: str, module: str | None = None, lake: str = "lake", log=None,
-         refresh: bool = False) -> dict:
+         refresh: bool = False, cached_only: bool = False) -> dict:
     """Where `name` is used in the Lean project at `root`, and its applications there, as one
-    JSON-ready document."""
+    JSON-ready document. `cached_only` answers from the facts store or with `status: "not
+    extracted"`."""
     libs = lib_names(root)
     if not libs:
         raise ViewError("no Lean library found in the lakefile")
@@ -375,6 +376,12 @@ def uses(root: Path, name: str, module: str | None = None, lake: str = "lake", l
     # reopens it, and an edit outside Lean does not.
     st = store(root, libs)
     key = f"{name}\0{module or target or '*'}"
+    if cached_only:
+        entry, _ = st.get("uses", key)
+        if entry is not None:
+            return {**head, **entry["body"], "cache": {"hit": True}}
+        return {**head, "ok": False, "status": "not extracted",
+                "reason": "its uses have not been read since the Lean last changed"}
     with st.lock(log):
         entry, _ = (None, None) if refresh else st.get("uses", key)
         if entry is not None:
@@ -418,6 +425,64 @@ def uses(root: Path, name: str, module: str | None = None, lake: str = "lake", l
         if not failed:
             st.put("uses", key, st.environment(built, graph), body=body)
     return {**head, **body, "cache": {"hit": False}}
+
+
+def app_hash(app: dict) -> str:
+    """A digest of an application as Lean elaborated it: its arguments, premises and result."""
+    import hashlib
+    import json
+    body = {k: app.get(k) for k in ("callee", "caller", "via", "params", "result", "unsupplied")}
+    return hashlib.sha256(json.dumps(body, sort_keys=True, ensure_ascii=False)
+                          .encode()).hexdigest()[:16]
+
+
+def citation(doc: dict, app: dict) -> dict:
+    """What a workspace keeps of a cited application (`compare --query uses`): where it is, the
+    actual argument of each variable, each premise with how it is supplied, the conclusion it
+    obtains, and a digest that says when it no longer describes the caller's proof."""
+    return {"callee": app["callee"], "module": (doc.get("declaration") or {}).get("module"),
+            "id": app["id"], "caller": app["caller"],
+            **({"via": app["via"]} if app.get("via") else {}),
+            "arguments": [{"binder": p.get("binder"), "role": p.get("role"),
+                           "value": _text(p.get("argument"))}
+                          for p in app.get("params") or [] if p.get("role") != "premise"],
+            "premises": [{"binder": q["binder"], "statement": q.get("statement"),
+                          "discharge": q.get("discharge"), "supplied": q.get("supplied")}
+                         for q in app.get("premises") or []],
+            "result": _text(app.get("result")), "app_hash": app_hash(app)}
+
+
+def find_application(doc: dict, ref: dict) -> dict | None:
+    for a in doc.get("applications") or []:
+        if a["id"] == ref.get("id") and a.get("available", True):
+            return a
+    return None
+
+
+def app_currency(root: Path | None, ref: dict, check_now: bool = False) -> dict:
+    """Whether a cited application still describes the caller's proof: `current` while it is
+    elaborated the same way, `stale` when it changed or is gone, `unchecked` while its uses have
+    not been read since the Lean last changed (`check_now` reads them)."""
+    if root is None:
+        return {"state": "unchecked", "changes": [], "reason": "no Lean project to check against"}
+    try:
+        doc = uses(root, ref["callee"], ref.get("module"), cached_only=not check_now)
+    except ViewError as e:
+        return {"state": "unchecked", "changes": [], "reason": str(e)}
+    if doc.get("status") == "not extracted":
+        return {"state": "unchecked", "changes": [],
+                "reason": f"{doc['reason']}; `machinechecked compare --query uses "
+                          f"{ref['callee']}` reads them again"}
+    found = find_application(doc, ref) if doc.get("ok") else None
+    if found is None:
+        return {"state": "stale", "changes": [{"app": ref["id"], "was": ref.get("app_hash"),
+                                               "now": None,
+                                               "reason": "the application is no longer there"}]}
+    now = app_hash(found)
+    if now == ref.get("app_hash"):
+        return {"state": "current", "changes": []}
+    return {"state": "stale", "changes": [{"app": ref["id"], "was": ref.get("app_hash"),
+                                           "now": now, "reason": "the application changed"}]}
 
 
 def _stored_refs(st, built: list[str]) -> list[dict] | None:

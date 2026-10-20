@@ -56,3 +56,28 @@ for (const odd of [{ coverage: "verified" }, { coverage: "toString" }]) {
 }
 assert.equal(coverageView({ ...base, basis: "checked" }).basis, null);
 assert.equal(coverageView(null), null);
+
+// A composition (the engine's `composition.view`): the auditor's argument unless Lean checks its
+// bridge now, never worded or drawn as a direct result, with the next step beside it.
+{
+  const { compositionView } = await import("../src/lib/coverage.js");
+  const comp = { coverage: "full", basis: "reviewed_composition", gaps: { requirements: 2, uncovered: [], open: [] },
+                 next_step: "State the combination as one Lean result." };
+  const reviewed = compositionView(comp);
+  assert.equal(reviewed.headline, "Every clause, by the auditor's composition");
+  assert.equal(reviewed.nextStep, "State the combination as one Lean result.");
+  assert.notEqual(reviewed.headline, direct.headline);
+  assert.notEqual(reviewed.tone, direct.tone);
+  const checked = compositionView({ ...comp, basis: "checked_bridge", next_step: null, bridge_check: { state: "checked", reasons: [] } });
+  assert.deepEqual([checked.headline, checked.basis, checked.nextStep], ["Every clause, through a checked bridge", "checked_bridge", null]);
+  // A basis that says bridge without a check Lean answers now reads as the auditor's composition.
+  for (const bridge_check of [undefined, { state: "stale", reasons: ["the target changed"] }, { state: "odd" }]) {
+    const v = compositionView({ ...comp, basis: "checked_bridge", bridge_check });
+    assert.equal(v.basis, "reviewed_composition");
+    assert.equal(v.headline, "Every clause, by the auditor's composition");
+  }
+  const open = compositionView({ coverage: "partial", basis: "reviewed_composition", gaps: { uncovered: ["r1"], open: ["o1"] } });
+  assert.equal(open.headline, "States part of the claim, by the auditor's composition");
+  assert.deepEqual([open.open, open.uncovered], [["o1"], ["r1"]]);
+  assert.match(compositionView({ steps: [] }).headline, /no coverage recorded/);
+}
