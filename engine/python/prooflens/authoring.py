@@ -136,7 +136,7 @@ def plan(root: Path, paper: str, snap: Snapshot, claim: str, lean: list[str] | N
          reason: str | None = None, by: str | None = None, check_names: bool = True,
          external: bool = False, basis: str | None = None, refs: list[str] | None = None,
          argument: str | None = None, bridge: dict | None = None, question: str | None = None,
-         would_decide: str | None = None) -> dict:
+         would_decide: str | None = None, route: list[str] | None = None) -> dict:
     """The change a link request makes, without writing it: the resolved claim, each
     declaration's build state, and the links-file entry before and after.
 
@@ -146,7 +146,11 @@ def plan(root: Path, paper: str, snap: Snapshot, claim: str, lean: list[str] | N
     its rejections. A reading (note, coverage, confidence, basis and the fields of its basis, see
     `simple.correspondence`) describes the declarations it was written with: when the list
     changes without a new reading, the old one is kept under `earlier_notes` and no longer
-    shown."""
+    shown.
+
+    `route` (a proof step only) replaces the step's different formal route: the declarations
+    that reach its enclosing result by another argument (with `add`, they are added to it); a
+    note given with it describes the route."""
     try:
         cid = snap.resolve_claim(claim)
     except TargetError as e:
@@ -161,7 +165,16 @@ def plan(root: Path, paper: str, snap: Snapshot, claim: str, lean: list[str] | N
         raise LinkError("--clear removes the claim's confirmed links; give it alone")
     reading_given = any(v is not None for v in (note, coverage, confidence, basis, refs,
                                                 argument, bridge, question, would_decide))
-    if not (lean is not None or reject or clear or reading_given):
+    if route is not None:
+        if (snap.chunk(cid) or {}).get("unit") in (None, "statement"):
+            raise LinkError(f"{cid} is not a proof step: a formal route is recorded for an "
+                            "equation or passage of a proof")
+        if lean is not None or reject or clear or (reading_given and not (
+                note is not None and not any(v is not None for v in (
+                    coverage, confidence, basis, refs, argument, bridge, question,
+                    would_decide)))):
+            raise LinkError("--route records the step's formal route; give it with a note only")
+    if not (lean is not None or reject or clear or reading_given or route is not None):
         raise LinkError("nothing to record: give declarations, --reject, --clear or a note")
     if confidence is not None and confidence not in simple.CONFIDENCE:
         raise LinkError(f"confidence {confidence!r} is not one of: "
@@ -170,7 +183,8 @@ def plan(root: Path, paper: str, snap: Snapshot, claim: str, lean: list[str] | N
         raise LinkError(f"the note is longer than {simple.NOTE_CHARS} characters")
 
     decls = []
-    names = list(dict.fromkeys(lean or [])) + list(dict.fromkeys(reject or []))
+    names = list(dict.fromkeys(lean or [])) + list(dict.fromkeys(reject or [])) + \
+        list(dict.fromkeys(route or []))
     for n in names:
         if not check_names:
             decls.append({"name": n, "module": None, "build": "unchecked"})
@@ -214,7 +228,20 @@ def plan(root: Path, paper: str, snap: Snapshot, claim: str, lean: list[str] | N
             for n in reject:
                 entry.setdefault("rejected_reasons", {})[n] = {
                     "reason": reason, **({"by": by} if by else {}), "at": at}
-    if reading_given:
+    if route is not None:
+        old = entry.get("route") or {}
+        st = (snap.chunk(cid) or {}).get("step") or {}
+        shown_route = [l["name"] for l in (st.get("route") or {}).get("links") or []]
+        new = list(dict.fromkeys((old.get("lean", shown_route) if add else []) + list(route)))
+        r = {"lean": new}
+        kept = note if note is not None else (old.get("note") if old.get("lean") == new else None)
+        if kept:
+            r["note"] = kept
+        if by or (old.get("by") and old.get("lean") == new):
+            r["by"] = by or old["by"]
+        r["at"] = old["at"] if {k: v for k, v in old.items() if k != "at"} == r else at
+        entry["route"] = r
+    elif reading_given:
         fields = _reading_fields(entry, coverage, basis, refs, argument, bridge, question,
                                  would_decide)
         if "lean" not in entry:
@@ -264,17 +291,22 @@ def write(root: Path, change: dict) -> None:
 
 
 def from_reader(root: Path, paper: str, snap: Snapshot, req: dict) -> dict:
-    """A request of the reader's local server (`POST /api/link`, `{key, lean, reject}`),
+    """A request of the reader's local server (`POST /api/link`, `{key, lean, reject}`, or
+    `{key, route, note}` for a proof step's formal route),
     checked and recorded as `machinechecked link` records it. The reader picks declarations
     from the build's own lists, so their names are not checked again here."""
     if not isinstance(req.get("key"), str):
         raise LinkError("the request names no claim")
-    lean, reject = req.get("lean"), req.get("reject")
-    for v in (lean, reject):
+    lean, reject, route = req.get("lean"), req.get("reject"), req.get("route")
+    for v in (lean, reject, route):
         if v is not None and not (isinstance(v, list) and all(isinstance(n, str) for n in v)):
             raise LinkError("declarations are a list of names")
-    ch = plan(root, paper, snap, req["key"], lean=lean, reject=reject,
-              clear=lean is None and not reject, check_names=False,
-              by=req.get("by") if isinstance(req.get("by"), str) else None)
+    by = req.get("by") if isinstance(req.get("by"), str) else None
+    if "route" in req:
+        ch = plan(root, paper, snap, req["key"], route=route or [], check_names=False, by=by,
+                  note=req["note"] if isinstance(req.get("note"), str) else None)
+    else:
+        ch = plan(root, paper, snap, req["key"], lean=lean, reject=reject,
+                  clear=lean is None and not reject, check_names=False, by=by)
     write(root, ch)
     return ch

@@ -2,7 +2,8 @@
 
 It listens on 127.0.0.1 only. `GET /api/status` tells the reader it may edit; `POST /api/link`
 with `{"key", "lean": [names] | null, "reject": [names]}` records a link (or removes it, or
-rejects suggestions) in `prooflens.links.json` and rebuilds the view. In a full assessment,
+rejects suggestions) in `prooflens.links.json` and rebuilds the view; with `{"key", "route":
+[names] | null, "note"}` it records the different formal route used instead of a proof step. In a full assessment,
 `POST /api/symbol` with `{"action": "add" | "remove", "claim", "tex", "decl", "var" | "type_of",
 "by"}` records or removes a symbol link (docs/SYMBOL_LINKS.md) and rewrites the site. The
 workspace routes (`workspace.api`) read and update the auditor's saved investigation, and `GET

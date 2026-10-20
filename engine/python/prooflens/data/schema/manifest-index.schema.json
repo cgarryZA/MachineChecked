@@ -105,7 +105,8 @@
               "malformed",
               "out-of-scope",
               "unspecified",
-              "declared"
+              "declared",
+              "caution"
             ]
           },
           "anchor": {
@@ -149,6 +150,7 @@
               "link.not-in-audit",
               "link.suggested",
               "link.none",
+              "link.other-route",
               "formal.refuted",
               "formal.refuted.open",
               "formal.refuted.corrected",

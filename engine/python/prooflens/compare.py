@@ -174,6 +174,16 @@ def passage(ch: dict, stage: str) -> dict:
               "sha256": ch.get("source_sha256") or anchor.get("source_sha256")}
     out = {"claim": ch["id"], "number": ch.get("number"), "heading": ch.get("heading"),
            "source": {k: v for k, v in source.items() if v is not None}}
+    st = ch.get("step")
+    if st:
+        # A proof step is read in its proof: what the proof has fixed before it, and how it
+        # is used after it. Its question is whether the printed step holds.
+        par = st.get("parent") or {}
+        out["step"] = {"unit": st.get("unit"),
+                       "parent": {k: par.get(k) for k in ("id", "number") if par.get(k)},
+                       "question": "Does the printed step hold, in its context?"}
+        if ch.get("context_tex"):
+            out["context"] = ch["context_tex"]
     if not text:
         return {**out, "available": False, "text": None,
                 "reason": "the build holds no printed text for this claim; read it in the paper "
@@ -221,6 +231,14 @@ def _link(l: dict, role: str) -> dict:
         out["unavailable"] = "Lean did not check this declaration in this build, so its " \
                              "statement is not known"
     return out
+
+
+def _step_decls(ch: dict) -> list[dict]:
+    """A proof step's Lean: the declarations linked as establishing it, then those of the
+    different formal route used instead (which do not state it)."""
+    st = ch.get("step") or {}
+    return [_link(l, "establishes the step") for l in st.get("links") or []] + \
+        [_link(l, "formal route used instead") for l in (st.get("route") or {}).get("links") or []]
 
 
 def _clause(cl: dict) -> dict:
@@ -304,7 +322,10 @@ def _informed(ch: dict) -> dict:
                                for cl in ch.get("clauses") or []],
             "assessment": {k: ch.get(k) for k in ("status", "status_code", "class", "blockers",
                                                    "findings", "scope", "scope_note",
-                                                   "source_evidence", "source_matches")}}
+                                                   "source_evidence", "source_matches")},
+            **({"step": {k: (ch["step"] or {}).get(k) for k in ("correspondence", "route",
+                                                                 "review")}}
+               if ch.get("step") else {})}
 
 
 def _withheld(stage: str) -> list[dict]:
@@ -355,7 +376,8 @@ def claim_packet(site: Site, claim: str, stage: str = "informed", limit: int | N
     sections = ["paper"]
     page = None
     if stage != "read":
-        decls = [_link(l, "link") for l in ch.get("links") or []]
+        decls = _step_decls(ch) if ch.get("step") else \
+            [_link(l, "link") for l in ch.get("links") or []]
         decls += [_clause(cl) for cl in ch.get("clauses") or [] if cl.get("statement")]
         cands = [_link(s, "candidate") for s in ch.get("suggestions") or []]
         names = [n for d in decls for n in ((d.get("statement") or {}).get("closure") or [])]
@@ -364,7 +386,9 @@ def claim_packet(site: Site, claim: str, stage: str = "informed", limit: int | N
         out["lean"] = {"declarations": decls, "candidates": cands, "definitions": defs}
         sections.append("lean")
         if not decls:
-            out["lean"]["note"] = "no declaration is linked to this claim"
+            out["lean"]["note"] = ("no Lean is linked to this step: review the printed step "
+                                   "itself" if ch.get("step") else
+                                   "no declaration is linked to this claim")
     if stage == "informed":
         out["interpretations"] = _informed(ch)
         sections.append("interpretations")
@@ -379,8 +403,8 @@ def unit_packet(site: Site, unit: dict, stage: str) -> dict:
     chunks = [site.chunk(c["id"]) for c in unit.get("claims") or []]
     out = _head(site, stage, {"unit": unit["id"], "stage": stage})
     # The unit's declaration names are Lean: not part of the read stage.
-    keys = ("id", "kind", "papers") if stage == "read" else ("id", "kind", "name", "lean",
-                                                             "papers")
+    keys = ("id", "kind", "unit", "parent", "papers") if stage == "read" else \
+        ("id", "kind", "unit", "parent", "name", "lean", "route", "papers")
     out["unit"] = {k: unit.get(k) for k in keys if unit.get(k) is not None}
     missing = [c["id"] for c, ch in zip(unit.get("claims") or [], chunks) if ch is None]
     chunks = [ch for ch in chunks if ch is not None]
@@ -395,7 +419,10 @@ def unit_packet(site: Site, unit: dict, stage: str) -> dict:
     extra = []
     if stage != "read":
         decls, names = [], []
-        if unit["kind"] == "link":
+        if unit["kind"] == "step":
+            for ch in chunks[:1]:
+                decls += _step_decls(ch)
+        elif unit["kind"] == "link":
             want = unit.get("lean") or []
             for ch in chunks:
                 for l in ch.get("links") or []:
@@ -415,7 +442,9 @@ def unit_packet(site: Site, unit: dict, stage: str) -> dict:
         for d in decls:
             names += [n for n in (d.get("statement") or {}).get("closure") or []
                       if n not in names]
-        if not decls:
+        if not decls and unit["kind"] == "step":
+            out["note"] = "no Lean is linked to this step: review the printed step itself"
+        elif not decls:
             extra.append({"what": f"the Lean of {unit['id']}", "owner": None,
                           "reason": "this build holds no statement for it"})
         defs = _definitions(site, chunks, names, stage,
@@ -581,6 +610,12 @@ def passage_text(p: dict) -> str:
     body = f"{head}\n{p['text']}\n  ({how}" + (f"; {where}" if where else "") + ")"
     if not p.get("complete"):
         body += f"\n  INCOMPLETE: {p['reason']}"
+    if p.get("step"):
+        par = p["step"].get("parent") or {}
+        body = (f"A step of the proof of {par.get('number') or par.get('id') or 'its result'}"
+                f" ({par.get('id') or 'no parent recorded'}). {p['step']['question']}\n" + body)
+        if p.get("context"):
+            body += "\nIts context in the proof:\n" + p["context"]
     return body
 
 
@@ -616,7 +651,10 @@ def packet_text(pk: dict) -> str:
     lean = pk.get("lean")
     if lean is not None:
         for d in lean["declarations"]:
-            out.append("\n".join(statement_lines(d)))
+            head = {"establishes the step": "Lean linked as establishing this step:\n",
+                    "formal route used instead": "The different formal route used instead "
+                    "(it does not state the step):\n"}.get(d.get("role"), "")
+            out.append(head + "\n".join(statement_lines(d)))
         for d in lean.get("candidates") or []:
             out.append("candidate (not confirmed): " + "\n".join(statement_lines(d)))
         for d in lean["definitions"]:
@@ -625,7 +663,9 @@ def packet_text(pk: dict) -> str:
             elif not d.get("generated_for"):
                 out.append("\n".join(statement_lines(d)))
         if not lean["declarations"]:
-            out.append("(this build holds no statement for it)")
+            out.append("No Lean is linked to this step: assess the printed step itself."
+                       if pk.get("note", "").startswith("no Lean is linked to this step")
+                       else "(this build holds no statement for it)")
     for w in pk["retrieval"]["withheld"]:
         out.append(f"(not shown at this stage: {w['section']}; {w['reason']})")
     return "\n\n".join(out)
