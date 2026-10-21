@@ -161,8 +161,8 @@ For each claim it shows:
   passage (a passage it could not locate, or a paper read from its PDF). A removed claim whose
   text a new claim now has is offered as a proposed match, and two such claims make it
   `ambiguous`: a match carries no evidence over. When the inventory still pins the earlier text,
-  the comparison says so: the source check reports the difference until the passage is read
-  again and pinned.
+  the comparison says so: the source check reports the difference, and the reviews that read
+  the passage are due until it is pinned again and read at the new pin.
 - **the Lean**: for each clause, whether its proposition, each project definition its meaning
   depends on, and each of its proofs changed, with both statements as Lean prints them. A
   definition can change while its name and type stay the same; a proof can change while its

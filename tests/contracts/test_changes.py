@@ -361,6 +361,7 @@ def test_toy_a_context_change_beside_an_unchanged_display(toy, capsys):
     edit(tex, "A synthetic paper used to develop", "A synthetic paper written to develop")
     build(toy)
     doc = changes_json(toy, capsys)
+    current = doc["to"]["release"]
     step = next(c for c in doc["claims"] if c["claim"] == "T:eq:bound-range")
     assert step["paper_change"]["class"] == "unchanged"
     assert [e["outcome"] for e in step["evidence"]] == ["kept"]
@@ -376,19 +377,26 @@ def test_toy_a_context_change_beside_an_unchanged_display(toy, capsys):
     # The sentence that changed, in both versions, from the builds' own records.
     assert [(w, t.split(".")[0]) for w, _, t in chg.shown_texts(p)] == [
         ("earlier", "Fix $n$"), ("later", r"Fix $n \ge 1$")]
-    # Its review still reads the pinned earlier text, and the comparison says so.
+    # The manuscript no longer matches the step's pin: its reading is unread until the passage
+    # is pinned again and read, and the comparison names the passage.
     e = step["evidence"][0]
-    assert e["outcome"] == "kept" and "earlier text" in e["caveat"] and "pin" in p
-    # Pinned again after the change: the reading is due, with the changed sentence named.
+    assert e["outcome"] == "reopened" and "pin" in p and "caveat" not in e
+    assert e["because"][0]["dependency"] == "paper"
+    assert e["because"][0]["change"] == "context-changed"
+    # Pinned again after the change: from the last build in which it counted, the reading is
+    # due, with the changed sentence named.
     pin_context(toy, 71)
     build(toy)
     doc = changes_json(toy, capsys)
     step = next(c for c in doc["claims"] if c["claim"] == "T:eq:bound-range")
+    assert [e["outcome"] for e in step["evidence"]] == ["open"]
+    doc = changes_json(toy, capsys, "--from", current)
+    step = next(c for c in doc["claims"] if c["claim"] == "T:eq:bound-range")
     e = step["evidence"][0]
     assert e["outcome"] == "reopened"
-    assert e["because"][0]["change"] == "context-repinned"
+    assert e["because"][0]["change"] == "context-changed"
     assert e["question"] == ("Does the step Equation (3) (T:eq:bound-range) still hold under "
                              "its changed context (toy.tex:71)?")
     capsys.readouterr()
-    cli.main(["changes", "-c", str(toy / "machinechecked.toml")])
+    cli.main(["changes", "-c", str(toy / "machinechecked.toml"), "--from", current])
     assert "question: Does the step Equation (3)" in capsys.readouterr().out
