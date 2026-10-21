@@ -268,6 +268,16 @@ def _same_marker(x: dict, y: dict) -> bool:
     return all(x.get(k) == y.get(k) for k in ("by", "file", "hash", "source"))
 
 
+def _reads(e: dict, cid: str) -> bool:
+    """Whether the review of an evidence entry may have read the claim's passage: a step's own
+    review, a marker that records a digest of it, or one that records no digests."""
+    if e["target"] == "step":
+        return True
+    m = e["to"].get("marker")
+    src = ((e["from"].get("marker") if m == "same" else m) or {}).get("source")
+    return src is None or cid in src
+
+
 def _label(v: Version, cid: str | None) -> str:
     c = v.claims.get(cid or "")
     if c is None:
@@ -323,6 +333,18 @@ def _because(target: str, name: str, old_r: dict, new_r: dict, cid: str, old: Ve
             return [dep], (f"Does {name} still {what} {_label(new, sc)} under its changed "
                            f"context ({where})?")
         return [dep], f"Does {name} still {what} the changed text of {_label(new, sc)}?"
+    if why == "source-unpinned":
+        # The later build's manuscript no longer matches the claim's pin: the reading is unread
+        # until the passage is pinned again and read at the new pin.
+        sc = new_r.get("source_claim") or cid
+        later = (paper.get(sc) or {}).get("to")
+        dep = {"dependency": "paper", "claim": sc,
+               "was": (marker.get("source") or {}).get(sc),
+               "now": later.get("sha256") if isinstance(later, dict) else None,
+               "detail": "the manuscript no longer matches the claim's pin",
+               **_paper_dependency(paper, sc)}
+        return [dep], (f"Pin {_label(new, sc)} again at the text the paper now prints, then: "
+                       f"does {name} still {what} it?")
     detail = WHY.get(why, "its last review is not current")
     sc = new_r.get("source_claim")
     return ([{"dependency": "record", "reason": why, "claim": sc, "detail": detail}],
@@ -525,14 +547,18 @@ def compare(old_record: dict, old_release: str, new_record: dict, new_release: s
         elif p["class"] not in ("removed", "new", "ambiguous") and later.get("pin") and \
                 not later.get("matches_pin"):
             p["pin"] = ("the inventory still pins the earlier text: the source check reports "
-                        "the difference, and a review of the earlier text counts only for that "
-                        "text until the passage is read again and pinned")
-            caveat = "counted against the pinned earlier text; the paper now prints another"
+                        "the difference, and the reviews that read the passage count as unread "
+                        "until it is pinned again and read at the new pin")
+            # The assessment reopens the reviews that read the passage; one that a build still
+            # counted was assessed before that rule.
+            caveat = ("counted against the pinned earlier text by a build that did not reopen "
+                      "it; the paper now prints another")
         else:
             caveat = None
         if caveat:
             for e in evidence:
-                if e["outcome"] in ("kept", "replaced", "newly-current"):
+                if e["outcome"] in ("kept", "replaced", "newly-current") and (
+                        p["class"] == "unknown" or _reads(e, cid)):
                     e["caveat"] = caveat
         lean_changed = any(
             (r.get("proposition") or {}).get("change", "unchanged") not in ("unchanged",
@@ -893,5 +919,6 @@ def _dependency_words(d: dict) -> str:
         if d.get("context"):
             out = f"the context of {d['claim']}'s passage changed ({_context_words(d)})"
         return out + (f" ({(d.get('was') or '')[:12]} -> {(d.get('now') or '')[:12]})"
-                      if d.get("was") or d.get("now") else "")
+                      if d.get("was") or d.get("now") else "") + (
+            f"; {d['detail']}" if d.get("detail") else "")
     return d.get("detail", "")
