@@ -190,7 +190,10 @@ See [the structured status contract](STATUS_CONTRACT.md) for the complete code i
 findings counts. `data/claims/<file>.json` holds one passport: the printed statement (and its
 display `excerpt`, when the paper publishes its source text), each
 clause's unfolded statement, proofs, witness, regimes, reviews and structured `evidence`, the
-declarations of its closure, and its findings. A claim is loaded only when it is opened.
+declarations of its closure, and its findings. A clause also lists `witness_defs`, the
+declarations only its witnesses use that have no current review (`{name, witnesses, state}`),
+and a definition claim's clause `witness_candidates`, the witness-only declarations that use a
+definition it maps (`{name, uses, witnesses}`). A claim is loaded only when it is opened.
 In zero configuration a passport also has `correspondence` (or `null`): the mapper's reading of how
 far the linked declarations state the claim, `{source, coverage, basis, refs, argument, next_step,
 bridge, question, would_decide, confidence, note, by}`, where `source` is `confirmed` (the
