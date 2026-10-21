@@ -393,29 +393,105 @@ def write_plan(path: Path, before: bytes, result: dict) -> None:
             temporary.unlink(missing_ok=True)
 
 
+REVISION = re.compile(r"(?:arxiv:)?(?:[0-9a-f]{7,40}|[A-Za-z0-9./-]+v\d+)")
+
+
+def folder(cfg, paper, spec: str, dest: Path) -> Path:
+    """A copy, at `dest`, of the manuscript named by `spec`: a folder, or `git:REV`, the folder
+    the configuration reads the paper from (`source = { path = ... }`) as committed at revision
+    REV of the repository that holds it."""
+    import dataclasses
+    import io
+    import subprocess
+    import tarfile
+    from .sources import acquire
+    if spec.startswith("git:"):
+        rev = spec[len("git:"):]
+        if "path" not in paper.source:
+            raise RegionError(f"{spec}: git:REV names a revision of the folder the paper is "
+                              "read from, and this paper's source is not a folder")
+        base = (cfg.root / paper.source["path"]).resolve()
+        top = subprocess.run(["git", "-C", str(base), "rev-parse", "--show-toplevel"],
+                             capture_output=True, text=True)
+        if top.returncode != 0:
+            raise RegionError(f"{spec}: {base} is not in a Git repository")
+        rel = base.relative_to(Path(top.stdout.strip()).resolve()).as_posix()
+        tree = f"{rev}:{rel}" if rel != "." else f"{rev}:"
+        arch = subprocess.run(["git", "-C", top.stdout.strip(), "archive", "--format=tar",
+                               tree], capture_output=True)
+        if arch.returncode != 0:
+            raise RegionError(f"{spec}: the folder {rel} cannot be read at revision {rev}: "
+                              + arch.stderr.decode(errors="replace").strip())
+        dest.mkdir(parents=True, exist_ok=True)
+        with tarfile.open(fileobj=io.BytesIO(arch.stdout)) as t:
+            t.extractall(dest, filter="data")
+        return dest
+    path = Path(spec).resolve()
+    if not path.is_dir():
+        raise RegionError(f"{spec} is not a folder")
+    snap = acquire(cfg, dataclasses.replace(paper, source={"path": str(path)}), dest)
+    if snap.mode != "latex":
+        raise RegionError(f"{spec} holds no LaTeX source")
+    return snap.dir
+
+
+def baseline(cfg, paper, inventory: dict, dest: Path, source: str | None = None,
+             rev: str | None = None) -> tuple[Path, str]:
+    """The manuscript at the revision the inventory was pinned at, and that revision.
+
+    A Git or arXiv source is acquired at the configuration's pin. A folder (`source`, or a
+    configuration that reads the paper from a folder, as a manuscript vendored into the
+    project) has no revision of its own: it is the revision `rev`, else the one the
+    configuration records for the folder (`source = { path = ..., rev = ... }`), else the one
+    the inventory records under `papers`. Either way the claims' pins are verified against the snapshot
+    before anything is planned, so a folder that does not hold that revision is refused."""
+    from .sources import acquire
+    recorded = ((inventory.get("papers") or {}).get(paper.id) or {}).get("commit")
+    if source is None and "path" in paper.source:
+        source = str((cfg.root / paper.source["path"]).resolve())
+    if source is not None:
+        revision = rev or (paper.source.get("rev") if "path" in paper.source else None) \
+            or recorded
+        if not revision:
+            raise RegionError(
+                f"the revision of {source} is not recorded: pass --rev REV, or record it as "
+                f"papers.{paper.id}.commit in the inventory")
+        if not REVISION.fullmatch(str(revision)):
+            raise RegionError(f"{revision!r} is not a commit or a versioned arXiv identifier")
+        return folder(cfg, paper, source, dest), str(revision).removeprefix("arxiv:")
+    if rev is not None:
+        raise RegionError("--rev names the revision of a folder given with --source")
+    if "git" in paper.source:
+        if not re.fullmatch(r"[0-9a-f]{40}", str(paper.source.get("rev", ""))):
+            raise RegionError("the original revision must be a full Git commit, not a branch "
+                              "or tag")
+    snap = acquire(cfg, paper, dest)
+    if not snap.revision or snap.mode != "latex":
+        raise RegionError("needs a pinned LaTeX source snapshot")
+    return snap.dir, snap.revision
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Hash source regions at their original pinned revision")
     parser.add_argument("--config", required=True)
     parser.add_argument("--paper", required=True)
+    parser.add_argument("--source", help="the manuscript at its pinned revision: a folder, or "
+                        "git:REV for the configured folder as committed at REV (default: the "
+                        "configured source)")
+    parser.add_argument("--rev", help="the paper revision --source (or a configured folder) "
+                        "holds (default: the inventory's papers.PAPER.commit)")
     parser.add_argument("--write", action="store_true", help="apply the verified plan (default: dry run)")
     args = parser.parse_args(argv)
     from .config import load
-    from .sources import acquire
     try:
         cfg = load(args.config)
         paper = cfg.paper(args.paper)
-        if "git" in paper.source:
-            if not re.fullmatch(r"[0-9a-f]{40}", str(paper.source.get("rev", ""))):
-                raise RegionError("migration needs the original full Git commit, not a branch or tag")
-        elif "arxiv" not in paper.source:
-            raise RegionError("migration needs the original pinned Git/arXiv source, not a working folder")
         before = cfg.inventory.read_bytes()
         inventory = json.loads(before)
         with tempfile.TemporaryDirectory(prefix="machinechecked-source-regions-") as temp:
-            snap = acquire(cfg, paper, Path(temp) / paper.id)
-            if not snap.revision or snap.mode != "latex":
-                raise RegionError("migration needs a pinned LaTeX source snapshot")
-            result, changes = migration_plan(inventory, paper.id, snap.dir, snap.revision)
+            root, revision = baseline(cfg, paper, inventory, Path(temp) / paper.id,
+                                      args.source, args.rev)
+            result, changes = migration_plan(inventory, paper.id, root, revision)
         if args.write and changes:
             write_plan(cfg.inventory, before, result)
         print(json.dumps({"applied": args.write, "paper": paper.id, "changes": changes}, indent=2))
