@@ -763,6 +763,47 @@ def cmd_reassess(a):
     print(f"site of release {res['release']} written to {res['site']}")
 
 
+def cmd_changes(a):
+    """`machinechecked changes`: what changed between two releases of the full assessment and
+    which evidence that reopens (`changes.py`). It reads stored evidence and changes nothing."""
+    from . import changes as chg
+    from . import evidence as ev
+    from .util import read_json
+    if not _assurance_config(a):
+        sys.exit("`changes` compares releases of the full assessment: run it beside "
+                 "machinechecked.toml (or pass -c)")
+    cfg = cfgmod.load(_config_arg(a))
+    try:
+        doc = chg.between(cfg.out_dir, a.from_release, a.to_release)
+    except chg.ChangesError as e:
+        sys.exit(str(e))
+    if a.from_source or a.to_source:
+        recs = [ev.load(cfg.out_dir, read_json(cfg.out_dir / "releases" / f"{r}.json")
+                        ["evidence"]) for r in (doc["from"]["release"], doc["to"]["release"])]
+        chg.with_texts(doc, recs[0], recs[1], a.from_source, a.to_source)
+    if a.workspace:
+        from . import workspace as wsp
+        from .targets import Snapshot, TargetError
+        data = cfg.out_dir / "site" / "data"
+        try:
+            snap = Snapshot(data)
+        except TargetError:
+            sys.exit("no site of the later release: run `machinechecked site --release "
+                     f"{doc['to']['release']}` first")
+        if snap.index.get("release") != doc["to"]["release"]:
+            sys.exit(f"the site is of release {snap.index.get('release')}, not "
+                     f"{doc['to']['release']}: the workspace is checked against the site; run "
+                     f"`machinechecked site --release {doc['to']['release']}` first")
+        try:
+            ws = wsp.read(wsp.find(cfg.out_dir, a.workspace))
+        except wsp.WorkspaceError as e:
+            sys.exit(str(e))
+        doc["workspace"] = chg.workspace_due(wsp.view(ws, snap, None, cfg.lean_root), ws["id"])
+    if a.json:
+        return _print_json(doc)
+    print(chg.text(doc, a.all))
+
+
 def cmd_bundle(a):
     from .bundle import bundle
     cfg = cfgmod.load(_config_arg(a))
@@ -1208,6 +1249,27 @@ def main(argv=None):
     r.add_argument("--release")
     r.add_argument("--web")
     r.set_defaults(func=cmd_reassess)
+
+    ch = sub.add_parser(
+        "changes", help="what changed between two releases and which evidence it reopens",
+        description="Compare two releases of the full assessment (by default the latest and "
+        "the one before it): each claim's passage, its Lean statements and definitions, each "
+        "build's status, and every review the later build no longer counts, with the change "
+        "it depends on and the question a new reading answers. Nothing is changed.")
+    ch.add_argument("-c", "--config", default=None)
+    ch.add_argument("--from", dest="from_release", metavar="RELEASE",
+                    help="the earlier release (default: the one before --to)")
+    ch.add_argument("--to", dest="to_release", metavar="RELEASE",
+                    help="the later release (default: the latest)")
+    ch.add_argument("--from-source", metavar="DIR",
+                    help="the manuscript folder of the earlier revision, to show changed text")
+    ch.add_argument("--to-source", metavar="DIR",
+                    help="the manuscript folder of the later revision, to show changed text")
+    ch.add_argument("--workspace", metavar="ID",
+                    help="also list this workspace's records that are no longer current")
+    ch.add_argument("--all", action="store_true", help="list unchanged claims too")
+    ch.add_argument("--json", action="store_true")
+    ch.set_defaults(func=cmd_changes)
 
     n = sub.add_parser("bundle")
     n.add_argument("-c", "--config", default=None)

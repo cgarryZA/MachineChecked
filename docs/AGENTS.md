@@ -214,6 +214,33 @@ The passage says there is one constant `C` for every `n`; the locked statement's
 `snapshot` and the declaration's `fingerprint`; as a review it goes through `machinechecked
 review` (below), which keeps the protocol's order.
 
+### What changed since the last release
+
+In a project with a `machinechecked.toml`, `machinechecked changes --json` compares the latest
+release with the one before it (`--from R1 --to R2` for any two) and prints one document,
+`prooflens/changes@1`:
+
+- `from` and `to`: each release's identity (evidence, project commit, Lean inputs, each paper's
+  revision); `paper_changed` per paper and `lean_changed` say which side changed.
+- `claims`: one entry per claim of either build, with `paper_change.class` (`unchanged`,
+  `moved`, `changed`, `context-changed`, `removed`, `new`, `ambiguous`, `unknown`), its
+  `reason`, the `context` passages or notation that changed, `proposed` or `candidates` for a
+  removed claim whose text another claim now has (never applied), and `pin` when the inventory
+  still pins the earlier text; `status.from` and `status.to`, each build's own status; `lean`,
+  per clause, the `proposition`, the changed `definitions` and the `proofs`, each with its
+  `change` (`statement`, `proof`, `removed`, `new`, `renamed`) and both builds' `text`; and
+  `evidence`, every review with its `outcome` (`reopened`, `dropped`, `replaced`,
+  `newly-current`, `kept`, `open`), and for a reopened one `because` (the dependency: a Lean
+  declaration with both fingerprints and texts, or a paper passage with both digests and its
+  changed context) and the `question` a new reading answers.
+- `declarations`: every project declaration whose statement or proof changed, with the claims
+  that depend on it.
+
+Report the reopened reviews by claim, with their question; `kept` means the later build still
+counts the same marker, and a `caveat` says when it counts against a pinned earlier text.
+Nothing in the document is a status: report `status.to` as the claim's status. `--workspace ID`
+adds `workspace.records`, the saved investigation's records that are not current.
+
 ### Reviewing from the terminal
 
 `machinechecked review next|read|lock|show|decide|author|submit|status|export` takes a unit of

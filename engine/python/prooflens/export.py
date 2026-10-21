@@ -372,6 +372,15 @@ def export(cfg: Config, out: Path, release: str | None = None,
         write_json(path, c, indent=None)
     for key, x in expansions.items():
         write_json(data / "expansions" / f"{key}.json", x, indent=None)
+    # What changed since the release before, with what the papers publish.
+    from . import changes as chg
+    from .pipeline import release_changes
+    doc = release_changes(cfg, relrec["release"])
+    if doc is not None:
+        write_json(data / "changes.json", chg.public(doc, pubs, lean_ok, rev_ok, paper),
+                   indent=None)
+        pidx["changes"] = "data/changes.json"
+        write_json(data / "index.json", pidx, indent=None)
     # The workspace records the auditors accepted, with what each paper publishes.
     from . import published_work
     paper_of = {c["id"]: c["paper"] for c in chunks.values()}

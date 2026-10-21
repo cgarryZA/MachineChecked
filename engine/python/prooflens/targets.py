@@ -168,6 +168,18 @@ class Snapshot:
                 out.setdefault(rec["name"], rec["fingerprint"])
         return out
 
+    def store_records(self, name: str) -> list[dict]:
+        """The records of the shared declaration store for `name`."""
+        out = []
+        for p in sorted((self.data / "decls").glob("*.json")):
+            try:
+                rec = json.loads(p.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if rec.get("name") == name:
+                out.append(rec)
+        return out
+
     def digests(self) -> dict[str, str]:
         """A digest per declaration of its fingerprint and those of the constants Lean generated
         for it (`N._f`, `N.match_1`, `N.eq_1`, …), which hold what a definition by recursion or
@@ -222,6 +234,12 @@ def resolve_declaration(name: str, snap: Snapshot, root: Path | None, module: st
                           kind="ambiguous")
     if mods:
         return {"name": name, "module": mods[0], "build": "built"}
+    if not index:
+        # A full assessment keeps no Lean index: the declarations its probe recorded (the
+        # shared store) are the build's own.
+        stored = sorted({r.get("module") for r in snap.store_records(name) if r.get("module")})
+        if module in stored or (len(stored) == 1 and not module):
+            return {"name": name, "module": module or stored[0], "build": "built"}
     if root is not None:
         libs = lib_names(root)
         built, unbuilt = built_modules(root, libs) if libs else ([], [])
