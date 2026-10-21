@@ -226,7 +226,10 @@ def test_source_edit_fails_gates_and_reader_source_match_not_the_lean_proof(tmp_
     tex["regions"] = collect({"claims": [c]}, "T", tmp_path)
     after = assessed(tmp_path, c, tex)
     a = after["body"]["assessment"]
-    assert a["claims"][0]["status"] == "formal: accepted"
+    # The Lean proof still counts; the review read a text the manuscript no longer prints (#203).
+    assert a["claims"][0]["status"] == "formal: proved, review pending"
+    assert a["claims"][0]["clauses"][0]["state"] == "proved"
+    assert a["claims"][0]["clauses"][0]["spec_review"]["why"] == "source-unpinned"
     assert not a["gates"]["T"]["consistency"]["pass"]
     assert not a["gates"]["T"]["release"]["pass"]
     # The finding names the line that changed (#106).

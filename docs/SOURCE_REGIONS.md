@@ -188,7 +188,13 @@ review or silently accept an enlarged mathematical scope. A genuinely changed st
 needs a new source review, not a migration against the changed version.
 
 Existing generated line-only evidence must be rebuilt. Until then, a `source-hash-scheme` or
-`source-changed` violation blocks consistency and release. The reader's source match uses
+`source-changed` violation blocks consistency and release.
+
+A passage whose manuscript text no longer matches its pin (`source-changed`, for the claim's
+own passage, a part or a pinned macro definition) is unread: every review that read it counts
+as not current, and the claim reads `review pending` with a finding (`source-unpinned`) naming
+the passage and the first line that differs, until the passage is pinned again and a reading is
+recorded at the new pin ([evidence policy](EVIDENCE_POLICY.md#a-review-is-a-reading-of-a-text)). The reader's source match uses
 the same comparison as the assessor, even when the PDF excerpt was placed by hand. A failed
 paper-source check does not change which proposition Lean proved; it prevents the new paper
 passage being presented as the unchanged reviewed source.

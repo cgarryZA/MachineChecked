@@ -12,6 +12,8 @@ A reading counts for a claim only while the digest it records for that claim is 
 current pin: a changed text, or a claim the marker does not record, reopens the review for that
 claim. When the passage uses notation macros the configuration lists (`notation_macros`), the
 digest also covers their definitions (`reading_digest`), so a changed definition reopens it too.
+A reading also counts only while the manuscript matches the pin: a passage the source check
+finds changed is unread by every marker until it is pinned again (`assess.unpinned_passages`).
 
 A marker written before this attribute existed records no digests. It counts for a claim only
 while the claim's pin is shown unchanged since the marker was written: Git gives the commit that

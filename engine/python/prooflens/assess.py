@@ -156,6 +156,7 @@ class Assessor:
         self._history = None
         self._unlisted: list[str] | None = None
         self._pins: dict[str, str | None] | None = None
+        self._unpinned: dict[str, str] | None = None
 
     # -- declarations the probe did not find ------------------------------------------------
 
@@ -240,7 +241,11 @@ class Assessor:
         """Whether `review` read the current passage `sha` of claim `cid`
         (`review_sources.marker_state`). When `sha` covers listed notation macros, a marker that
         records only the claim's pin, or no digests, read the passage without their definitions
-        (`notation-unrecorded`)."""
+        (`notation-unrecorded`). A passage the manuscript no longer matches (`unpinned_passages`)
+        is unread by every marker until it is pinned again and read at the new pin
+        (`unpinned`)."""
+        if cid in self.unpinned():
+            return "unpinned"
         if self._pins is None:
             self._pins = {c["id"]: c.get("source_sha256") for c in self.inv["claims"]}
         pin = self._pins.get(cid)
@@ -262,8 +267,21 @@ class Assessor:
             if st != "current":
                 return {"changed": "source-changed", "unread": "source-unread",
                         "unrecorded": "source-unrecorded",
-                        "notation-unrecorded": "source-notation-unrecorded"}[st], cid
+                        "notation-unrecorded": "source-notation-unrecorded",
+                        "unpinned": "source-unpinned"}[st], cid
         return "source-changed", sorted(need)[0]   # not reached: the last marker read them
+
+    def unpinned(self) -> dict[str, str]:
+        """The claims whose passage in the manuscript no longer matches their pin, each with
+        where it differs (`unpinned_passages`)."""
+        if self._unpinned is None:
+            self._unpinned = unpinned_passages(self.inv, self.tex)
+        return self._unpinned
+
+    def unpinned_note(self, cid: str | None) -> str:
+        """Why the claim `cid`'s passage reads as unread, for a reason or a finding."""
+        return (f"the manuscript no longer matches the pin of {self._claim_label(cid)}: "
+                f"{self.unpinned().get(cid, 'its text differs')}")
 
     def _claim_label(self, cid: str | None) -> str:
         c = next((c for c in self.inv["claims"] if c["id"] == cid), None)
@@ -283,6 +301,9 @@ class Assessor:
             return (f" (the source text of {self._claim_label(r.get('source_claim'))}"
                     + (", or a definition of the notation it uses," if notation else "")
                     + " changed since its last reading)")
+        if why == "source-unpinned":
+            return (f" ({self.unpinned_note(r.get('source_claim'))}; pin the passage again and "
+                    "record a reading of the new text)")
         if why == "source-unread":
             return (f" (its last review did not read the passage of "
                     f"{self._claim_label(r.get('source_claim'))})")
@@ -632,6 +653,10 @@ class Assessor:
                          "source-notation-unrecorded": "the proposition's last review did not "
                                                        "record the definitions of the notation "
                                                        "macros this claim's passage uses",
+                         "source-unpinned": (
+                             f"{self.unpinned_note(c['spec_review'].get('source_claim'))}; "
+                             "the proposition's review counts only once the passage is pinned "
+                             "again and read"),
                          "no-reading": "the proposition's review marker records no reading "
                                        "(no review text)"}.get(
                         c["spec_review"].get("why"),
@@ -640,7 +665,8 @@ class Assessor:
                 why = r.get("why")
                 defs[d] = why if r["state"] == "stale" and why in (
                     "source-changed", "source-unread", "source-unrecorded",
-                    "source-notation-unrecorded", "no-reading") else r["state"]
+                    "source-notation-unrecorded", "source-unpinned", "no-reading") \
+                    else r["state"]
             if c.get("witness") and not c.get("witness_ok"):
                 add("the witness that the hypotheses can be met fails its check", c)
             if any(not r["discharged"] for r in c.get("regimes", [])):
@@ -665,6 +691,9 @@ class Assessor:
                              ("source-changed", "have a paper text that changed after their "
                                                 "review"),
                              ("source-unread", "have a review that did not read their passage"),
+                             ("source-unpinned", "have a passage the manuscript no longer "
+                                                 "matches: their review counts only once it "
+                                                 "is pinned again and read"),
                              ("source-unrecorded", "were reviewed before source pins were "
                                                    "recorded"),
                              ("no-reading", "have a review marker that records no reading"),
@@ -686,8 +715,9 @@ class Assessor:
         if not is_step(claim, region):
             return {}
         marks = [r for r in self.reviews if r.target == "step" and r.name == claim["id"]]
-        return {"step_review": marker_review(marks, claim["id"], claim.get("source_sha256"),
-                                             self.authors)}
+        # A step whose passage the manuscript no longer matches has no current reading.
+        sha = None if claim["id"] in self.unpinned() else claim.get("source_sha256")
+        return {"step_review": marker_review(marks, claim["id"], sha, self.authors)}
 
     def run(self) -> dict:
         claims = []
@@ -871,15 +901,10 @@ class Assessor:
                             f"{c['location']}: source regions must be pinned at the original "
                             "revision (python -m prooflens.source_regions --config FILE "
                             f"--paper {pid}); then rebuild"))
-                    elif not source_matches(c, t):
-                        where = changed_line(c, region) if region else None
-                        detail = region.get("error") or (
-                            "is missing; rebuild the source evidence" if not region else
-                            "differs from the frozen source region"
-                            + (f": {where}" if where else ""))
+                    elif c["id"] in self.unpinned():
                         self.findings.append(_finding(
                             "violation", "source-changed", c["id"],
-                            f"the source region at {c['location']} {detail}"))
+                            self.unpinned()[c["id"]]))
                     self.region_advice(c, region)
                     macros = region.get("macros") or []
                     if macros:
@@ -906,12 +931,9 @@ class Assessor:
                             f"{c.get('number', c['id'])} is not found in the compiled paper"))
                     continue
                 matched.add(a["id"])
-                if c.get("source_sha256") and a.get("source_sha256") and \
-                        c["source_sha256"] != a["source_sha256"]:
+                if c["id"] in self.unpinned():
                     self.findings.append(_finding(
-                        "violation", "source-changed", c["id"],
-                        f"the source of {c.get('number', c['id'])} differs from the frozen "
-                        f"inventory"))
+                        "violation", "source-changed", c["id"], self.unpinned()[c["id"]]))
             for a in anchors:
                 if a["id"] not in matched:
                     self.findings.append(_finding(
@@ -934,6 +956,38 @@ class Assessor:
                              advice_message(claim["id"], region, a), a["kind"])
             if a.get("suggested"):
                 self.findings[-1]["suggested"] = a["suggested"]
+
+
+def unpinned_passages(inventory: dict, tex: dict | None) -> dict[str, str]:
+    """The claims whose passage in the manuscript no longer matches their pin, each with the
+    message of the source check's finding (`source-changed`), which says where it differs. Only a paper read from its LaTeX
+    source is compared. A line-located claim is compared by its region (each further passage
+    and macro definition included); a statement environment by the digest of its text. A pin
+    under a scheme the check does not accept is reported apart (`source-hash-scheme`) and is not
+    listed.
+
+    A review reads the paper's text, so a reading of such a passage does not count until the
+    passage is pinned again and read at the new pin (`Assessor._read_one`)."""
+    out: dict[str, str] = {}
+    for c in inventory.get("claims", []):
+        t = (tex or {}).get(c.get("paper")) or {}
+        if t.get("mode") != "latex":
+            continue
+        if line_location(c) is not None:
+            if c.get("source_hash_scheme") not in SOURCE_SCHEMES or source_matches(c, t):
+                continue
+            region = (t.get("regions") or {}).get(c["id"], {})
+            where = changed_line(c, region) if region else None
+            out[c["id"]] = f"the source region at {c['location']} " + (region.get("error") or (
+                "is missing; rebuild the source evidence" if not region else
+                "differs from the frozen source region" + (f": {where}" if where else "")))
+            continue
+        a = match_anchor(c, t.get("anchors") or [])
+        if a and c.get("source_sha256") and a.get("source_sha256") and \
+                c["source_sha256"] != a["source_sha256"]:
+            out[c["id"]] = (f"the source of {c.get('number', c['id'])} differs from the frozen "
+                            "inventory")
+    return out
 
 
 def line_location(claim: dict) -> int | None:
