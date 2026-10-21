@@ -276,7 +276,12 @@ When the manuscript gains a revision, move the inventory to it:
 machinechecked inventory repin --paper P --to NEW
 machinechecked inventory repin --paper P --to NEW --write
 machinechecked build
+machinechecked changes
 ```
+
+The last command compares the new release with the one before it: what changed in each
+claim's passage and in its Lean, and which reviews are now due, each with the question a new
+reading answers ([What changed since the last release](ASSURANCE.md#what-changed-since-the-last-release)).
 
 `NEW` is a Git commit of the paper's repository (a branch or tag is resolved to its commit) or
 a versioned arXiv identifier. The configuration must name the original revision as a full Git

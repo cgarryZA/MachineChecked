@@ -175,6 +175,10 @@
     "uses": {
       "type": "string",
       "description": "The reverse references of the project's declarations (data/uses.json)."
+    },
+    "changes": {
+      "type": "string",
+      "description": "What changed since the release before this one, and the evidence it reopens (data/changes.json, prooflens/changes@1)."
     }
   }
 }

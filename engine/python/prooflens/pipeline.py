@@ -190,7 +190,8 @@ def build(cfg: Config, release: str | None = None, skip_lean: bool = False,
     index["project"].update(source_info(cfg))
     site = cfg.out_dir / "site"
     write_preview(site, index, chunks, store, pdfs, web_dist,
-                  rq.assurance_queue(index, chunks, store, cfg.statement_authors))
+                  rq.assurance_queue(index, chunks, store, cfg.statement_authors),
+                  changes=release_changes(cfg, rel))
     log(f"evidence {eid[:12]}  release {rel}  site {site}")
     return {"evidence": eid, "release": rel, "site": site, "index": index}
 
@@ -351,8 +352,22 @@ def rebuild_site(cfg: Config, web_dist: Path | None = None, release: str | None 
     index["project"].update(source_info(cfg))
     site = cfg.out_dir / "site"
     write_preview(site, index, chunks, store, pdf_paths(cfg, record["body"]), web_dist,
-                  rq.assurance_queue(index, chunks, store, cfg.statement_authors))
+                  rq.assurance_queue(index, chunks, store, cfg.statement_authors),
+                  changes=release_changes(cfg, rel["release"]))
     return {"release": rel["release"], "site": site, "index": index}
+
+
+def release_changes(cfg: Config, release: str) -> dict | None:
+    """What changed from the release before `release` to it (`changes.py`), for the reader;
+    None for a first release, or when the earlier evidence is of a form the comparison cannot
+    read. It changes nothing that is assessed."""
+    from . import changes
+    try:
+        if changes.previous_release(cfg.out_dir, release) is None:
+            return None
+        return changes.between(cfg.out_dir, None, release)
+    except (changes.ChangesError, ev.EvidenceError, KeyError, TypeError, ValueError):
+        return None
 
 
 def load_display(cfg: Config) -> dict | None:
@@ -366,10 +381,11 @@ def load_display(cfg: Config) -> dict | None:
 
 def write_preview(site: Path, index: dict, chunks: dict, store: dict, pdfs: dict,
                   web_dist: Path | None, queue: dict | None = None,
-                  expansions: dict | None = None):
+                  expansions: dict | None = None, changes: dict | None = None):
     """Write the reader and its data to `site`. Definitions expanded at their applications are
     written on their own (`data/expansions/<key>.json`, `mf.split_expansions`), together with
-    `expansions` already split off (those of published audits)."""
+    `expansions` already split off (those of published audits). `changes`, the comparison with
+    the release before, is written as `data/changes.json`."""
     expansions = dict(expansions or {})
     # A declaration record without its expansions is a different record: it gets its own key.
     rekey, split_store = {}, {}
@@ -384,6 +400,8 @@ def write_preview(site: Path, index: dict, chunks: dict, store: dict, pdfs: dict
               for n, c in chunks.items()}
     if queue is not None:
         index = {**index, "review_queue": "data/review-queue.json"}
+    if changes is not None:
+        index = {**index, "changes": "data/changes.json"}
     if site.exists():
         shutil.rmtree(site)
     if web_dist and web_dist.exists():
@@ -401,6 +419,8 @@ def write_preview(site: Path, index: dict, chunks: dict, store: dict, pdfs: dict
     write_json(data / "search.json", mf.search_index(index, chunks), indent=None)
     if queue is not None:
         write_json(data / "review-queue.json", queue, indent=None)
+    if changes is not None:
+        write_json(data / "changes.json", changes, indent=None)
     for pid, pdf in pdfs.items():
         (data / "papers").mkdir(parents=True, exist_ok=True)
         link_or_copy(pdf, data / "papers" / f"{pid}.pdf")

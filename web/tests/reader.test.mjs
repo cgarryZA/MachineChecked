@@ -232,6 +232,46 @@ fs.writeFileSync(path.join(root, "toywork/data/work", workRow.file), JSON.string
         evidence: ["e-1"], gaps: { requirements: 1, uncovered: [], open: [] }, complete: true, next_step: null,
         bridge: { theorem: "Toy.synthetic_bridge", target: "Toy.Spec.synthetic" }, bridge_check: { state: "checked", reasons: [] }, currency: cur }] }] }));
 
+// The toy audit with the comparison to an earlier release (`changes.py`, prooflens/changes@1):
+// a definition whose statement changed reopens the review that read it, a context change beside
+// an unchanged display is reported with its pin, and an unchanged claim is hidden by default.
+fs.cpSync(path.join(root, "toy"), path.join(root, "toychanges"), { recursive: true });
+const marker = { by: "a.referee", kind: "human", provenance: "self-declared", file: "reviews/definitions.md", line: 10, hash: "pl-fp-v1:old", source: { "T:def:even": "d".repeat(64) } };
+const unchangedRow = (cid) => ({ claim: cid, paper: "T", number: TOY.claims.find((c) => c.id === cid).number, kind: "theorem", scope: "formal",
+  status: { from: { status: "formal: accepted", status_code: "formal.accepted" }, to: { status: "formal: accepted", status_code: "formal.accepted" } },
+  paper_change: { class: "unchanged", reason: "the same text at the same place", context: [], from: "same", to: { location: "toy.tex", sha256: "e".repeat(64) } },
+  lean_changed: false, lean: [], evidence: [{ target: "spec", name: "Toy.PaperSpec.thm_triangle", clause: "statement", outcome: "kept", from: { state: "reviewed", marker }, to: { state: "reviewed", marker: "same" } }], due: false });
+const CHANGES = {
+  schema: "prooflens/changes@1",
+  from: { release: "r-earlier", evidence: "1".repeat(64), project: { commit: "a".repeat(40), dirty: false }, papers: { T: { revision: "b".repeat(40), mode: "latex" } } },
+  to: { release: TOY.release, evidence: TOY.evidence, project: { commit: "c".repeat(40), dirty: false }, papers: { T: { revision: "b".repeat(40), mode: "latex" } } },
+  paper_changed: { T: false }, lean_changed: true,
+  counts: { claims: { "context-changed": 1, unchanged: 2 }, evidence: { reopened: 1, kept: 2 }, declarations: { statement: 1 }, status_changed: 1 },
+  claims: [
+    { claim: "T:def:even", paper: "T", number: "Definition 1.1", kind: "definition", scope: "definition",
+      status: { from: { status: "definition: reviewed", status_code: "definition.reviewed" }, to: { status: "definition: review pending", status_code: "definition.review-pending" } },
+      paper_change: { class: "unchanged", reason: "the same text at the same place", context: [], from: "same", to: { location: "toy.tex", sha256: "d".repeat(64) } },
+      lean_changed: true, due: true,
+      lean: [{ clause: "definition", in: "both", definitions: [{ name: "Toy.IsEven", change: "statement",
+        from: { fingerprint: "pl-fp-v1:old", text: "Toy.IsEven : Nat → Prop\n∀ (n : Nat), Toy.IsEven n = ∃ (k : Nat), n = 2 * k" },
+        to: { fingerprint: "pl-fp-v1:new", text: "Toy.IsEven : Nat → Prop\n∀ (n : Nat), Toy.IsEven n = ∃ (k : Nat), n = k + k <img src=x onerror=alert(1)>" } }], definitions_unchanged: 0, proofs: [] }],
+      evidence: [{ target: "def", name: "Toy.IsEven", clause: "definition", outcome: "reopened", from: { state: "reviewed", marker }, to: { state: "stale", marker: null },
+        because: [{ dependency: "lean", name: "Toy.IsEven", was: "pl-fp-v1:old", now: "pl-fp-v1:new" }],
+        question: "Does Toy.IsEven still define what Definition 1.1 (T:def:even) prints, now that its definition has changed?" }] },
+    { claim: "T:eq:bound-range", paper: "T", number: "Equation (3)", kind: "equation", scope: "proof-step",
+      status: { from: { status: "out of scope: proof-step", status_code: "scope.proof-step" }, to: { status: "out of scope: proof-step", status_code: "scope.proof-step" } },
+      paper_change: { class: "context-changed", reason: "its own passage is unchanged; the context its pin covers changed",
+        context: [{ what: "passage", part: 1, change: "changed", from: { location: "toy.tex:71", sha256: "1".repeat(64) }, to: { location: "toy.tex:71", sha256: "2".repeat(64) } }],
+        pin: "the inventory still pins the earlier text: the source check reports the difference, and a review of the earlier text counts only for that text until the passage is read again and pinned",
+        from: { location: "toy.tex:75", sha256: "3".repeat(64), part_text: [{ location: "toy.tex:75", text: "n \\le k n^2" }, { location: "toy.tex:71", text: "Fix $n$." }] },
+        to: { location: "toy.tex:75", sha256: "4".repeat(64), part_text: [{ location: "toy.tex:75", text: "n \\le k n^2" }, { location: "toy.tex:71", text: "Fix $n \\ge 1$." }] } },
+      lean_changed: false, due: false, lean: [],
+      evidence: [{ target: "step", name: "T:eq:bound-range", outcome: "kept", from: { state: "false" }, to: { state: "false" }, caveat: "counted against the pinned earlier text; the paper now prints another" }] },
+    unchangedRow("T:thm:triangle")],
+  declarations: [], note: "Each status is the one its own build computed; this comparison changes none." };
+fs.writeFileSync(path.join(root, "toychanges/data/changes.json"), JSON.stringify(CHANGES));
+fs.writeFileSync(path.join(root, "toychanges/data/index.json"), JSON.stringify({ ...TOY, changes: "data/changes.json" }));
+
 fs.cpSync(path.join(root, "toy"), path.join(root, "long-statement"), { recursive: true });
 const longFile = TOY.claims.find((c) => c.id === "T:thm:even-add").file;
 const longPath = path.join(root, "long-statement/data/claims", longFile);
@@ -1051,6 +1091,45 @@ for (const width of [1300, 390]) {
     await pg.waitForFunction(() => document.querySelector(".view .chipbtn [data-status]")?.dataset.status === "formal.refuted.corrected");
     assert.equal(await pg.locator("aside .lean .block").count(), 2);
     if (process.env.SHOTS) await pg.screenshot({ path: path.join(process.env.SHOTS, `published-${width}.png`) });
+  });
+}
+
+for (const width of [1300, 390]) {
+  await check("the changes since the earlier release name what changed and what is due for review", width, async (pg) => {
+    await pg.goto(origin + "/toy/" + `#/r/${TOY.release}/changes`);
+    await pg.waitForSelector("main.ch");
+    assert.equal(await pg.locator("[data-changes]").count(), 0, "a release without an earlier one shows no comparison");
+    await pg.goto(origin + "/toychanges/" + `#/r/${TOY.release}/changes`);
+    const section = pg.locator("[data-changes]");
+    await section.waitFor();
+    assert.match(await section.locator("h2").textContent(), /Changes since release r-earlier/);
+    // The unchanged claim is listed only on request.
+    assert.equal(await section.locator("article.claim").count(), 2);
+    const def = section.locator("article[data-claim='T:def:even']");
+    // Both builds' statuses, each as its own build recorded it.
+    assert.deepEqual(await def.locator(".status [data-status]").evaluateAll((xs) => xs.map((x) => x.dataset.status)), ["definition.reviewed", "definition.review-pending"]);
+    const reopened = def.locator("[data-outcome='reopened']");
+    assert.match(await reopened.textContent(), /Due for review: review of Toy\.IsEven by a\.referee/);
+    assert.match(await reopened.textContent(), /Because Toy\.IsEven changed\./);
+    assert.match(await reopened.locator(".question").textContent(), /still define what Definition 1\.1/);
+    const was = await def.locator(".lean pre").allTextContents();
+    assert.match(was[0], /n = 2 \* k/);
+    assert.match(was[1], /n = k \+ k <img src=x onerror=alert\(1\)>/, "a string is shown as text");
+    assert.equal(await def.locator(".lean img").count(), 0);
+    assert.equal(await def.locator("h3 a").getAttribute("href"), `#/r/${TOY.release}/claim/T%3Adef%3Aeven`);
+    const ctx = section.locator("article[data-claim='T:eq:bound-range']");
+    assert.match(await ctx.locator(".pc").textContent(), /Context changed/);
+    assert.match(await ctx.locator(".ctx").textContent(), /passage toy\.tex:71 changed/);
+    assert.match(await ctx.textContent(), /the inventory still pins the earlier text/);
+    // The sentence that changed, in both versions; the unchanged display is not repeated.
+    assert.deepEqual(await ctx.locator(".text pre").allTextContents(), ["Fix $n$.", "Fix $n \\ge 1$."]);
+    assert.match(await ctx.locator(".text").first().textContent(), /Earlier context \(toy\.tex:71\)/);
+    assert.match(await ctx.locator("[data-outcome='kept']").textContent(), /counted against the pinned earlier text/);
+    await section.locator("label.all input").check();
+    assert.equal(await section.locator("article.claim").count(), 3);
+    const box = await section.boundingBox();
+    assert.ok(box.x >= 0 && box.x + box.width <= width + 1, "the comparison fits the page");
+    if (process.env.SHOTS) await pg.screenshot({ path: path.join(process.env.SHOTS, `changes-${width}.png`), fullPage: true });
   });
 }
 

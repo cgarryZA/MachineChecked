@@ -123,6 +123,7 @@ machinechecked reassess
 machinechecked site
 machinechecked bundle --out audit.html
 machinechecked export --out public-audit/
+machinechecked changes
 ```
 
 `build --site DIR` builds and then writes the same export to `DIR` in one step (as the reusable audit workflow does); it refuses a directory that is the project or holds anything but a previous site.
@@ -136,6 +137,58 @@ machinechecked export --out public-audit/
 With several papers in one configuration, `export --paper ID` exports one of them: its claims, the declarations they depend on, and their reviews. The export is then also scanned for what belongs to the other papers alone (their claim ids, the declarations only they use and their Lean text, their reviews, and their manuscripts unless published), except a paper whose source and Lean the configuration publishes in full.
 
 The export is a complete site, reader included; with `--data-only` it holds only the audit's descriptor and data, for a site that reads it with its own reader (machinechecked.org opens it as `https://machinechecked.org/read/?audit=<its address>`).
+
+## What changed since the last release
+
+Each build is a release. When the paper or the Lean changes, compare the new release with the
+one before it:
+
+```sh
+machinechecked changes                       # the latest release against the one before it
+machinechecked changes --from R1 --to R2     # any two releases
+machinechecked changes --json                # the same, as one document (prooflens/changes@1)
+```
+
+For each claim it shows:
+
+- **the paper**: whether its passage is `unchanged`, `moved`, `changed`, `context-changed` (its
+  own passage is the same, and a further passage of its pin or the definition of a notation
+  macro it uses changed), `removed` or `new`; `unknown` when a build has no digest of the
+  passage (a passage it could not locate, or a paper read from its PDF). A removed claim whose
+  text a new claim now has is offered as a proposed match, and two such claims make it
+  `ambiguous`: a match carries no evidence over. When the inventory still pins the earlier text,
+  the comparison says so: the source check reports the difference until the passage is read
+  again and pinned.
+- **the Lean**: for each clause, whether its proposition, each project definition its meaning
+  depends on, and each of its proofs changed, with both statements as Lean prints them. A
+  definition can change while its name and type stay the same; a proof can change while its
+  statement stays the same.
+- **both statuses**, each as its own build computed it.
+- **the evidence**: every review the earlier build counted, and what became of it in the later
+  build: *still current*, *due for review* (with the change it depends on and the question a new
+  reading answers), *no longer applies* (the claim no longer depends on that declaration; the
+  review is never moved to another declaration), or *a new reading*.
+
+A review of a statement reads the paper and the statement, never a proof: a proof that changed
+leaves it current, and the comparison says that it stands through that change. A review of a
+definition reopens when the definition changes, and with it every claim whose meaning depends
+on it. A review of a passage reopens when the passage is pinned again with other text, and the
+question names the changed context (for example the sentence before a display that fixes its
+quantifier). The text of a changed further passage is shown from the builds' own records; add
+`--from-source DIR` and `--to-source DIR`, the manuscript folders of the two revisions, to show
+a claim's own changed passage too (a folder's text is shown only when it is the text the build
+recorded).
+
+`--workspace ID` adds the records of a saved investigation that are no longer current against
+the later release ([Saved investigations](REVIEWING.md#saved-investigations)), each with the
+change that made it stale; an unchecked record is listed too, since it is not known to be
+current.
+
+The reader shows the same comparison on its **Details** page, and `export` publishes it with
+what each paper's `publish` settings allow (its passages' places and text only with its source
+text, the Lean statements only with its Lean). The comparison changes no status and writes
+nothing: a reopened review needs a new reading at the new revision, and the earlier reading
+stays in the review files as it was.
 
 ## What the evidence says
 

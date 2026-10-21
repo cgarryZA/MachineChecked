@@ -243,7 +243,9 @@ them, or the certificate, makes it `stale`, and so the finding that cites it
 
 When a declaration that evidence cites changes (its statement, or a definition's equations), or a
 claim's printed text changes, `show` marks that evidence and the findings that cite it as
-`stale`; the others stay current. A cited fact inside a proof is `stale` once that proof
+`stale`; the others stay current. In a full assessment, `machinechecked changes --workspace ID`
+lists them beside the review markers the new release reopened, each with what changed
+([What changed since the last release](ASSURANCE.md#what-changed-since-the-last-release)). A cited fact inside a proof is `stale` once that proof
 changes, even when the theorem's statement does not. Re-pin a record with `"repin": true` once you have checked it
 again. Changing to independent mode, or importing, keeps what the workspace records you had seen,
 so an informed investigation never becomes a blind review: a report made with `machinechecked

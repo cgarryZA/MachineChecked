@@ -159,6 +159,28 @@ or expansion refers to it as `{at, id, name, key}`, and the reader fetches it wh
 An expansion that recurs is written once. A published audit's loader fetches every expansion
 its claims and declarations refer to and checks each against its key.
 
+## Changes between releases (`prooflens/changes@1`), derived
+
+`machinechecked changes --json`, and `data/changes.json` of a site or an export whose release
+has an earlier one (the index names it as `changes`). It compares two evidence records and is
+derived from them alone; no status, fingerprint or gate reads it.
+
+| Field | Content |
+|---|---|
+| `from`, `to` | each release: `release`, `evidence`, `created`, `project` (`commit`, `dirty`), `lean_inputs_sha256`, `lean`, and per paper its `revision`, `mode`, `pdf_sha256`, `paper_version` |
+| `paper_changed`, `lean_changed` | per paper, and for the Lean project, whether the two releases differ |
+| `claims[]` | per claim of either release: `claim`, `paper`, `number`, `kind`, `scope`, `status` (`from`, `to`: each `{status, status_code}` as its build computed it, or null), `paper_change`, `lean_changed`, `lean`, `evidence`, `due` |
+| `paper_change` | `class`, `reason`, `context` (the further passages or notation definitions that changed: `what`, `change`, `from`, `to`), `repinned` (when the inventory's pin changed: `from`, `to`, `passage`, `context`), `proposed` or `candidates`, `pin`, and the passage of each build (`from`, `to`: `location`, `bounds`, `sha256`, `passage`, `parts`, `notation`, `pin`, `matches_pin`; `from` is `"same"` for an unchanged passage) |
+| `lean[]` | per clause: `clause`, `in` (`both`, `earlier`, `later`), `proposition`, `definitions` (those that changed), `definitions_unchanged`, `proofs` (with `role` and `check`); each `{name, change, from, to}` with each build's `fingerprint`, `legacy_hash`, `source_sha256` and `text` |
+| `evidence[]` | per review: `target` (`spec`, `def`, `step`), `name`, `clause`, `from` and `to` (`state`, `marker`: `by`, `kind`, `file`, `line`, `hash`, `source`; `"same"` for a kept marker), `outcome`, and `because`, `question`, `caveat`, `kept_through` |
+| `declarations[]` | every project declaration whose statement or proof changed, or that one release has alone: `name`, `change`, `from`, `to`, `claims` |
+| `counts` | per paper class, per evidence outcome and per declaration change, and `status_changed` |
+| `workspace` | with `--workspace`: the workspace's records that are not current (`id`, `kind`, `claim`, `state`, `changes`, `pinned_release`) |
+
+The export keeps a passage's places and text only when its paper publishes its source text, the
+Lean `text` only when every paper publishes its Lean, and a marker's `file` and `line` only
+with the reviews.
+
 ## Manifest (`manifest-index.schema.json`, `manifest-claim.schema.json`), derived
 
 The current format is `prooflens/manifest@1`; older display data must be rebuilt.

@@ -194,6 +194,13 @@ export function loadExpansion(key) {
   return getJson(`data/expansions/${key}.json`);
 }
 
+// What changed since the release before this one (`data/changes.json`, `changes.py`), if this
+// site has an earlier release to compare with.
+export function loadChanges(index) {
+  if (!index?.changes) return Promise.resolve(null);
+  return getJson(index.changes);
+}
+
 // The review queue the engine wrote (`data/review-queue.json`), if this site has one.
 export function loadQueue(index) {
   return getJson(index.review_queue);
