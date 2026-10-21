@@ -21,6 +21,7 @@ inventory = "claims.json"
 reviews = ["reviews/statements.md", "reviews/definitions.md"]
 statement_authors = ["me"]
 ai_reviewers = ["claude*"]
+notation_macros = ["R", "E"]  # optional: notation whose definitions readings record
 
 [review]
 check = "python3 tools/check.py"  # optional post-promotion check
@@ -83,6 +84,8 @@ The claim inventory lists each printed claim, its pinned source, scope and claus
 This is one claim entry inside `claims.json`. The acceptance theorem must have the specification’s **exact closed proposition** as its type.
 
 Other clause fields include `refute` (a proof of the printed proposition's negation), `corrects` (which original clause a correction addresses), and `defs` for a definition claim.
+
+A proposition with hypotheses and no `witness` (a theorem that meets them) carries a `witness` obligation, which names the hypotheses that need it. Instances of standard classes over the proposition's own variables (`[MeasurableSpace Ω]`, `[IsProbabilityMeasure P]`, `[InnerProductSpace ℝ F]`, `[NeZero N]`) have canonical instances, so a proposition whose only hypotheses are such instances gets a low-signal warning instead (code `witness-instances`), which lists the classes and can be dismissed like any warning. An instance of `Fact`, of a class of the project, or of a class applied to anything but a variable bound before it or a number system (`[NeZero 0]`) still needs a witness. `inhabited_classes` under `[project]` replaces the built-in list of classes treated as inhabited (`assess.INHABITED_CLASSES`); `inhabited_classes = []` raises the obligation for every instance. Neither finding changes a status.
 
 Out-of-scope labels such as `part-of`, `proof-step`, `duplicate`, `literature` and `empirical` require explicit reasons. Each scope decision is recorded for review.
 

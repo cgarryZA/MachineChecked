@@ -19,7 +19,7 @@ from .reviews import load_dismissals, load_reviews
 from .schemas import validate
 from .sources import acquire
 from .excerpt import collect as collect_excerpts, read_aux
-from .source_regions import collect as collect_source_regions
+from .source_regions import collect as collect_source_regions, part_texts
 from .tex import DEFAULT_ENVS, TexError, anchors_for, theorem_envs
 from . import versions as paper_versions
 from .util import (canonical_json, git_dirty, git_head, link_or_copy, prepare_work_dir,
@@ -142,7 +142,12 @@ def build(cfg: Config, release: str | None = None, skip_lean: bool = False,
             pdfs[paper.id] = snap.dir / snap.pdf
         if paper.id in tex:
             if t is not None:
-                tex[paper.id]["regions"] = collect_source_regions(inv, paper.id, snap.dir)
+                tex[paper.id]["regions"] = collect_source_regions(
+                    inv, paper.id, snap.dir, getattr(paper, "notation_macros", ()))
+                # The passages of pins that list several, in order (display only).
+                parts = part_texts(inv, paper.id, snap.dir)
+                if parts:
+                    tex[paper.id]["part_text"] = parts
                 # The text of each proof step and its context in the proof, for the reader and
                 # the review packet (published only with the source text).
                 from .steps import step_texts

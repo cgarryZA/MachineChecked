@@ -22,8 +22,8 @@ import re
 import tempfile
 
 from .source_regions import (
-    ENV, SCHEME, RegionError, changed_line, extract, location, same_revision, source_file,
-    write_plan,
+    DISPLAYS, ENV, SCHEMES, RegionError, changed_line, definition_part, extract, location,
+    part_claim, pin as pin_of, same_revision, source_file, tex_sources, write_plan,
 )
 
 LABEL = re.compile(r"\\label\s*\{([^{}]*)\}")
@@ -32,9 +32,10 @@ CONTEXT = 2  # lines on each side compared for a change of the passage's surroun
 SKIP = {".git", ".lake", ".machinechecked", ".prooflens"}
 
 # The classes of a claim, in the order the plan lists them. Only `unchanged` and `moved`
-# claims are repinned; `ambiguous` claims prevent a write.
+# claims are repinned; `ambiguous` and `not-handled` claims prevent a write. `unpinned` claims
+# have no source pin to move.
 CLASSES = ("unchanged", "moved", "changed", "removed", "not-found", "ambiguous",
-           "pending-review")
+           "not-handled", "pending-review", "unpinned")
 
 
 def tex_files(root: Path) -> dict[str, str]:
@@ -184,6 +185,142 @@ def _by_label(root: Path, files: dict[str, str], claim: dict, region, label: str
                   + (f" ({'; '.join(errors)})" if errors else ""))
 
 
+BEGIN = re.compile(r"\\(begin|end)\s*\{([A-Za-z][A-Za-z0-9*_.-]*)\}")
+
+
+def own_labels(body: str) -> list[str]:
+    """The labels of an environment's body outside the environments nested in it (an equation's
+    label inside a theorem is the equation's)."""
+    out, depth = [], 0
+    for line in body.split("\n"):
+        live = COMMENT.sub("", line)
+        tokens = sorted([(m.start(), "env", m) for m in BEGIN.finditer(live)]
+                        + [(m.start(), "label", m) for m in LABEL.finditer(live)],
+                       key=lambda t: t[0])
+        for _, what, m in tokens:
+            if what == "label":
+                if depth == 0:
+                    out.append(m.group(1))
+            else:
+                depth = max(0, depth + (1 if m.group(1) == "begin" else -1))
+    return out
+
+
+@dataclasses.dataclass(frozen=True)
+class Statement:
+    """A theorem-like environment of a snapshot, hashed as the compiled paper's anchors are
+    (`tex.statement_at`): its body, whitespace normalised."""
+    file: str
+    line: int
+    env: str
+    labels: tuple[str, ...]
+    sha256: str | None
+    hidden: bool
+
+
+def statements(root: Path, files: dict[str, str], kind: str | None) -> list[Statement]:
+    """Every environment of `kind` (any environment other than a display, without one) in the
+    snapshot."""
+    from .tex import statement_at
+    from .util import norm_ws, sha256_text
+    out = []
+    for name, text in files.items():
+        dead = dead_ranges(text)
+        offset = 0
+        for k, line in enumerate(text.split("\n"), start=1):
+            for m in BEGIN.finditer(COMMENT.sub("", line)):
+                env = m.group(2)
+                if m.group(1) != "begin" or env.rstrip("*") in DISPLAYS or \
+                        (kind and env.rstrip("*").lower() != kind.lower()):
+                    continue
+                body = statement_at(root / name, k, env)
+                if body is None:
+                    continue
+                hidden = any(a <= offset + m.start() < b for a, b in dead)
+                out.append(Statement(name, k, env, tuple(own_labels(body)),
+                                     sha256_text(norm_ws(body)), hidden))
+            offset += len(line) + 1
+    return out
+
+
+def _names_of(claim: dict) -> set[str]:
+    """The labels by which the compiled paper's anchors find a claim (`assess.match_anchor`)."""
+    cid, pid = claim["id"], claim["paper"]
+    out = {cid}
+    if claim.get("label"):
+        out.add(claim["label"])
+    if cid.startswith(pid + ":"):
+        out.add(cid[len(pid) + 1:])
+    return out
+
+
+def statement_entry(claim: dict, old_root: Path, new_root: Path, old_files, new_files,
+                    old_rev: str) -> tuple[dict, Statement | None]:
+    """The plan entry of a claim pinned by its environment (a `location` without a line and the
+    hash of its environment's body), and its environment in the new snapshot when it is placed.
+    The environment is found by its own label, as the compiled paper finds it; a claim the
+    compiled paper finds only by its printed number cannot be placed without compiling."""
+    entry = {"claim": claim["id"], "from": claim.get("location"), "pin": "environment"}
+    names = _names_of(claim)
+    kind = claim.get("kind")
+    old = [s for s in statements(old_root, old_files, kind) if names & set(s.labels)]
+    if not old:
+        entry.update({"class": "not-handled", "reason": (
+            "no environment" + (f" {kind}" if kind else "") + " at the original revision "
+            "carries its label; the compiled paper finds it by its printed number, which this "
+            "command does not compute: place it by hand")})
+        return entry, None
+    if len(old) > 1:
+        entry.update({"class": "not-handled", "candidates": [f"{s.file}:{s.line}" for s in old],
+                      "reason": "several environments carry its label at the original revision"})
+        return entry, None
+    if old[0].sha256 != claim.get("source_sha256"):
+        raise RegionError(f"{claim['id']}: its environment at the original revision {old_rev} "
+                          "differs from its pin; the baseline is not the reviewed text")
+    entry["from_region"] = {"file": old[0].file, "start_line": old[0].line}
+    new_all = statements(new_root, new_files, kind)
+    new = [s for s in new_all if names & set(s.labels)]
+    if len(new) > 1:
+        entry.update({"class": "ambiguous", "reason": f"its label occurs {len(new)} times",
+                      "candidates": [f"{s.file}:{s.line}" for s in new]})
+        return entry, None
+    if new and new[0].hidden:
+        entry.update({"class": "ambiguous", "candidates": [f"{new[0].file}:{new[0].line}"],
+                      "reason": "its label occurs only where the paper may not print it"})
+        return entry, None
+    if new:
+        target = new[0]
+        entry["to"] = target.file
+        entry["to_region"] = {"file": target.file, "start_line": target.line}
+        if target.sha256 == claim.get("source_sha256"):
+            entry["class"] = "unchanged" if target.file == old[0].file else "moved"
+        else:
+            entry["class"] = "changed"
+            old_body = _body(old_root, old[0])
+            new_body = _body(new_root, target)
+            entry["diff"] = list(difflib.unified_diff(
+                old_body, new_body, lineterm="",
+                fromfile=f"{old[0].file}:{old[0].line} at {old_rev}",
+                tofile=f"{target.file}:{target.line}"))
+        return entry, target
+    same = [s for s in new_all if s.sha256 == claim.get("source_sha256") and not s.hidden]
+    if len(same) == 1:
+        entry.update({"class": "ambiguous", "candidates": [f"{same[0].file}:{same[0].line}"],
+                      "reason": "its label is not in the new revision, and one environment "
+                                "has its text under another label: confirm it by hand"})
+    else:
+        entry.update({"class": "removed", "reason": "its label "
+                      + ", ".join(sorted(names & set(old[0].labels)))
+                      + " is not in the new revision"})
+    return entry, None
+
+
+def _body(root: Path, s: Statement) -> list[str]:
+    from .tex import statement_at
+    return (statement_at(root / s.file, s.line, s.env) or "").split("\n")
+
+
+
 def _context(files: dict[str, str], region) -> tuple[list[str], list[str]]:
     lines = files.get(region.file, "").split("\n")
     before = lines[max(0, region.start_line - 1 - CONTEXT):region.start_line - 1]
@@ -221,31 +358,48 @@ def repin_plan(inventory: dict, paper: str, old_root: Path, new_root: Path, old_
     entries, plans = [], []
     # Verify every claim at the original revision before relocating any of them.
     for claim in claims:
-        if location(claim) is None:
+        if location(claim) is None and not claim.get("source_sha256"):
+            entries.append({"claim": claim["id"], "class": "unpinned",
+                            "from": claim.get("location"),
+                            "reason": "it has no source pin to move"})
             continue
         pin = claim.get("commit") or paper_pin
         if pin and not same_revision(str(pin).removeprefix("arxiv:"), old_rev):
             entries.append({"claim": claim["id"], "class": "pending-review",
-                            "from": claim["location"],
+                            "from": claim.get("location"),
                             "reason": f"its source pin is of revision {pin}, not {old_rev}: "
                                       "review the passage and pin it again first"})
             continue
-        if claim.get("source_hash_scheme") != SCHEME:
+        if location(claim) is None:
+            if not claim.get("location") or claim.get("source_hash_scheme") is not None:
+                entries.append({"claim": claim["id"], "class": "not-handled",
+                                "from": claim.get("location"),
+                                "reason": "its source pin has neither a line nor a file of an "
+                                          "environment; pin it by hand"})
+                continue
+            entry, target = statement_entry(claim, old_root, new_root, old_files, new_files,
+                                            old_rev)
+            entries.append(entry)
+            _apply_statement(claim, entry, target, paper_pin, old_rev, new_rev)
+            continue
+        if claim.get("source_hash_scheme") not in SCHEMES:
             raise RegionError(f"{claim['id']}: pin its source region at the original revision "
                               "first (python -m prooflens.source_regions)")
         try:
-            region = extract(old_root, claim)
+            full = pin_of(old_root, claim)
         except (RegionError, OSError, UnicodeError) as error:
             raise RegionError(f"{claim['id']}: at the original revision: {error}") from None
-        if region.sha256 != claim.get("source_sha256"):
+        region = full.main
+        if full.sha256 != claim.get("source_sha256"):
             raise RegionError(f"{claim['id']}: its passage at the original revision {old_rev} "
                               "differs from its pin; the baseline is not the reviewed text")
         if claim.get("source_line_sha256") not in (None, region.line_sha256):
             raise RegionError(f"{claim['id']}: its line pins differ from its passage at the "
                               f"original revision {old_rev}")
-        plans.append((claim, region))
+        plans.append((claim, region, full))
 
-    for claim, region in plans:
+    new_defs = None
+    for claim, region, full in plans:
         entry = {"claim": claim["id"], "from": claim["location"], "from_region": _bounds(region)}
         names = {name for name, _ in labels(region.text)} | (
             {claim["label"]} if claim.get("label") else set())
@@ -313,8 +467,15 @@ def repin_plan(inventory: dict, paper: str, old_root: Path, new_root: Path, old_
                 # symbol link may rest on, need not be.
                 entry["context_changed"] = (_context(old_files, region)
                                             != _context(new_files, new))
+        parts = None
+        if full.parts:
+            if new_defs is None:
+                new_defs = tex_sources(new_root)
+            parts = _with_parts(entry, full, new_root, new_files, new_defs)
         entries.append(entry)
         _apply(claim, entry, region, target, paper_pin, old_rev, new_rev)
+        if parts is not None and entry["class"] != "ambiguous":
+            claim["source_parts"] = parts
 
     pins = result.get("papers", {}).get(paper)
     if pins and pins.get("commit") and same_revision(
@@ -330,7 +491,8 @@ def repin_plan(inventory: dict, paper: str, old_root: Path, new_root: Path, old_
                          if any(e["class"] == c for e in entries)},
               "claims": entries,
               "new_passages": [{"location": loc, "label": n} for loc, n in new],
-              "blocking": [e["claim"] for e in entries if e["class"] == "ambiguous"]}
+              "blocking": [e["claim"] for e in entries
+                           if e["class"] in ("ambiguous", "not-handled")]}
     return result, report
 
 
@@ -392,6 +554,70 @@ def repin_excerpts(display: dict, claim_ids: set[str], old_root: Path, new_root:
     return result, entries
 
 
+def _as_part(placed: dict, part: dict) -> dict:
+    """A part placed elsewhere, in the form of the inventory: its digests and role kept."""
+    out = {"location": placed["location"], **(placed.get("source_region") or {})}
+    for k in ("macro", "sha256", "line_sha256"):
+        if k in part:
+            out[k] = part[k]
+    return out
+
+
+def _with_parts(entry: dict, full, new_root: Path, new_files: dict[str, str],
+                sources: dict[str, str]) -> list[dict]:
+    """Classify each further passage of a pin as the claim's own passage is (by its exact
+    text; a macro definition that changed is found by the macro's name), record them under
+    the entry's `parts`, and give the claim its class over all its passages: repinned only
+    when every passage is found unchanged. Returns the parts as the inventory should hold
+    them: placed where found, with their digests unchanged."""
+    out, rows = [], []
+    for part, region in full.parts:
+        row = {"part": part["location"], **({"macro": part["macro"]} if part.get("macro")
+                                            else {})}
+        exact = exact_matches(new_root, new_files, {"id": entry["claim"], **part_claim(part)},
+                              region)
+        placed = None
+        if len(exact) > 1:
+            row.update({"class": "ambiguous", "reason": f"its text occurs {len(exact)} times",
+                        "candidates": [c["location"] for c, _, _ in exact]})
+        elif exact and exact[0][2]:
+            row.update({"class": "ambiguous", "candidates": [exact[0][0]["location"]],
+                        "reason": "its text occurs only where the paper may not print it"})
+        elif exact:
+            placed = _as_part(exact[0][0], part)
+            same = all(placed.get(k) == part.get(k) for k in ("location", "end_line",
+                                                              "start_column", "end_column"))
+            row["class"] = "unchanged" if same else "moved"
+        elif part.get("macro"):
+            try:
+                found = definition_part(sources, part["macro"])
+                placed = {**found, **{k: part[k] for k in ("sha256", "line_sha256")
+                                      if k in part}}
+                row.update({"class": "changed", "reason": "its definition has another text"})
+            except RegionError as error:
+                row.update({"class": "ambiguous" if "defined" in str(error) else "removed",
+                            "reason": str(error)})
+        else:
+            row.update({"class": "not-found", "reason": "no passage has its text"})
+        if placed is not None:
+            row["to"] = placed["location"]
+        rows.append(row)
+        out.append(placed or part)
+    entry["parts"] = rows
+    classes = {r["class"] for r in rows}
+    if entry["class"] == "ambiguous" or "ambiguous" in classes:
+        entry["class"] = "ambiguous"
+        entry.setdefault("reason", "a further passage of its pin is ambiguous")
+    elif entry["class"] in ("unchanged", "moved") and classes - {"unchanged", "moved"}:
+        entry["class"] = "changed"
+        first = next(r for r in rows if r["class"] not in ("unchanged", "moved"))
+        entry["where"] = (f"part {rows.index(first) + 1} ({first['part']}) of its pin: "
+                          + first.get("reason", first["class"]))
+    elif entry["class"] == "unchanged" and "moved" in classes:
+        entry["class"] = "moved"
+    return out
+
+
 def _apply(claim: dict, entry: dict, region, target, paper_pin, old_rev: str, new_rev: str):
     """Update one claim in the planned inventory. A repinned claim takes its new place and
     revision; any other claim keeps its digests and the revision they were made at (and takes
@@ -405,6 +631,21 @@ def _apply(claim: dict, entry: dict, region, target, paper_pin, old_rev: str, ne
         claim["location"] = target[0]["location"]
         if "source_region" in target[0]:
             claim["source_region"] = target[0]["source_region"]
+    if entry["class"] in ("unchanged", "moved"):
+        if claim.get("commit"):
+            claim["commit"] = _pin(claim["commit"], old_rev, new_rev)
+    else:
+        claim["commit"] = claim.get("commit") or paper_pin or old_rev
+
+
+def _apply_statement(claim: dict, entry: dict, target, paper_pin, old_rev: str,
+                     new_rev: str):
+    """Update one environment-pinned claim in the planned inventory, as `_apply` does a
+    line-pinned one: its location is the file of its environment."""
+    if entry["class"] in ("ambiguous", "not-handled"):
+        return
+    if target is not None:
+        claim["location"] = target.file
     if entry["class"] in ("unchanged", "moved"):
         if claim.get("commit"):
             claim["commit"] = _pin(claim["commit"], old_rev, new_rev)
@@ -456,51 +697,73 @@ def main(argv=None) -> int:
     parser.add_argument("--paper", required=True)
     parser.add_argument("--to", required=True, help="the new revision: a Git commit, or a "
                         "versioned arXiv identifier")
+    parser.add_argument("--from-source", help="the manuscript at the original revision: a "
+                        "folder, or git:REV for the configured folder as committed at REV of "
+                        "its repository (default: the configured source)")
+    parser.add_argument("--from-rev", help="the paper revision --from-source (or a configured "
+                        "folder) holds (default: the inventory's papers.PAPER.commit)")
+    parser.add_argument("--to-source", help="the manuscript at the new revision --to: a folder, "
+                        "or git:REV as above (default: the configured source at --to; for a "
+                        "configured folder, that folder)")
     parser.add_argument("--write", action="store_true",
                         help="apply the plan (default: print it only)")
     args = parser.parse_args(argv)
     from .config import load
+    from .source_regions import REVISION, baseline, folder
     from .sources import SourceError, acquire
     try:
         cfg = load(args.config)
         paper = cfg.paper(args.paper)
-        key = "rev" if "git" in paper.source else "arxiv" if "arxiv" in paper.source else None
-        if key is None:
-            raise RegionError("repinning needs a pinned Git or arXiv source, not a working "
-                              "folder")
-        old_value = str(paper.source.get(key, ""))
-        if key == "rev" and not re.fullmatch(r"[0-9a-f]{40}", old_value):
-            raise RegionError("repinning needs the original full Git commit, not a branch or "
-                              "tag")
+        src = paper.source
+        vendored = "path" in src
+        key = "rev" if "git" in src or (vendored and "rev" in src) else \
+            "arxiv" if "arxiv" in src else None
+        old_value = str(src.get(key, "")) if key else None
         before = cfg.inventory.read_bytes()
         before_cfg = cfg.path.read_bytes()
         inventory = json.loads(before)
         with tempfile.TemporaryDirectory(prefix="machinechecked-repin-") as temp:
             try:
-                old = acquire(cfg, paper, Path(temp) / "original" / paper.id)
+                old_dir, old_rev = baseline(cfg, paper, inventory,
+                                            Path(temp) / "original" / paper.id,
+                                            args.from_source, args.from_rev)
             except SourceError as error:
                 raise RegionError(
-                    f"the original revision {old_value} cannot be read ({error}). The claims "
-                    "are compared with the text they were pinned at; restore access to that "
-                    "revision, as no other baseline is used") from None
-            target = dataclasses.replace(paper, source={**paper.source, key: args.to})
-            try:
-                new = acquire(cfg, target, Path(temp) / "target" / paper.id)
-            except SourceError as error:
-                raise RegionError(f"the new revision {args.to} cannot be read ({error})") \
-                    from None
-            if old.mode != "latex" or new.mode != "latex" or not old.revision \
-                    or not new.revision:
-                raise RegionError("repinning needs pinned LaTeX source snapshots")
-            result, report = repin_plan(inventory, paper.id, old.dir, new.dir, old.revision,
-                                        new.revision)
+                    f"the original revision {old_value or args.from_rev or ''} cannot be read "
+                    f"({error}). The claims are compared with the text they were pinned at; "
+                    "restore access to that revision, as no other baseline is used") from None
+            to_source = args.to_source
+            if to_source is None and vendored:
+                to_source = str((cfg.root / paper.source["path"]).resolve())
+            if to_source is not None:
+                if not REVISION.fullmatch(args.to):
+                    raise RegionError(f"--to {args.to!r} is not a commit or a versioned arXiv "
+                                      "identifier")
+                new_dir = folder(cfg, paper, to_source, Path(temp) / "target" / paper.id)
+                new_rev = args.to.removeprefix("arxiv:")
+            else:
+                target = dataclasses.replace(paper, source={**paper.source, key: args.to})
+                try:
+                    new = acquire(cfg, target, Path(temp) / "target" / paper.id)
+                except SourceError as error:
+                    raise RegionError(f"the new revision {args.to} cannot be read ({error})") \
+                        from None
+                if new.mode != "latex" or not new.revision:
+                    raise RegionError("repinning needs pinned LaTeX source snapshots")
+                new_dir, new_rev = new.dir, new.revision
+            result, report = repin_plan(inventory, paper.id, old_dir, new_dir, old_rev,
+                                        new_rev)
+            if vendored:
+                # A folder has no revision of its own: the inventory records the one it holds.
+                pins = result.setdefault("papers", {}).setdefault(paper.id, {})
+                pins["commit"] = _pin(pins.get("commit") or old_rev, old_rev, new_rev)
             before_display = display = new_display = None
             if cfg.display and cfg.display.exists():
                 before_display = cfg.display.read_bytes()
                 display = json.loads(before_display)
                 ids = {c["id"] for c in inventory["claims"] if c["paper"] == paper.id}
                 new_display, report["excerpts"] = repin_excerpts(
-                    display, ids, old.dir, new.dir, old.revision, new.revision)
+                    display, ids, old_dir, new_dir, old_rev, new_rev)
         links = {}
         if cfg.symbols and cfg.symbols.exists():
             for link in json.loads(cfg.symbols.read_text(encoding="utf-8")).get("links", []):
@@ -509,14 +772,19 @@ def main(argv=None) -> int:
             if links.get(e["claim"]) and (e["class"] not in ("unchanged", "moved")
                                           or e.get("context_changed")):
                 e["symbol_links"] = links[e["claim"]]
-        new_value = new.revision if key == "rev" else args.to
+        new_value = new_rev if key == "rev" else args.to
         written = False
         if args.write:
             if report["blocking"]:
-                parser.exit(2, "repin: nothing written: ambiguous claims "
-                            + ", ".join(report["blocking"]) + "; resolve them first\n")
+                kinds = {e["claim"]: e["class"] for e in report["claims"]}
+                parts = [f"{what} " + ", ".join(c for c in report["blocking"] if kinds[c] == k)
+                         for k, what in (("ambiguous", "ambiguous claims"),
+                                         ("not-handled", "claims it cannot place"))
+                         if any(kinds[c] == k for c in report["blocking"])]
+                parser.exit(2, "repin: nothing written: " + "; ".join(parts)
+                            + "; resolve them first\n")
             config_text = None
-            if new_value != old_value:
+            if key is not None and new_value != old_value:
                 config_text = retarget_config(before_cfg.decode("utf-8"), paper.id, key,
                                               old_value, new_value)
             if cfg.path.read_bytes() != before_cfg:

@@ -206,6 +206,11 @@ def passage(ch: dict, stage: str) -> dict:
                        "question": "Does the printed step hold, in its context?"}
         if ch.get("context_tex"):
             out["context"] = ch["context_tex"]
+    parts = [{k: p.get(k) for k in ("file", "start_line", "end_line", "macro", "text")
+              if p.get(k) is not None} for p in ch.get("source_parts") or []]
+    if not text and parts:
+        # A pin of several passages holds each one's source text, the claim's own first.
+        text, quality = parts[0]["text"], "LaTeX source"
     if not text:
         return {**out, "available": False, "text": None,
                 "reason": "the build holds no printed text for this claim; read it in the paper "
@@ -216,6 +221,16 @@ def passage(ch: dict, stage: str) -> dict:
         text = re.sub(r"[ \t]{2,}", " ", LEAN_TAGS.sub("", text)).strip()
         removed.append("the paper's \\lean{...} tags, which name Lean declarations")
     out.update(available=True, text=text, quality=quality, complete=complete)
+    if parts:
+        if stage == "read":
+            for part in parts:
+                if LEAN_TAGS.search(part["text"]):
+                    part["text"] = re.sub(r"[ \t]{2,}", " ",
+                                          LEAN_TAGS.sub("", part["text"])).strip()
+                    if not removed:
+                        removed.append("the paper's \\lean{...} tags, which name Lean "
+                                       "declarations")
+        out["parts"] = parts
     if not complete:
         out["reason"] = (f"the PDF extraction keeps the first {PDF_TEXT_CHARS} characters of a "
                          "statement; read the rest in the paper at the source given")
@@ -757,6 +772,12 @@ def passage_text(p: dict) -> str:
     body = f"{head}\n{p['text']}\n  ({how}" + (f"; {where}" if where else "") + ")"
     if not p.get("complete"):
         body += f"\n  INCOMPLETE: {p['reason']}"
+    for k, part in enumerate(p.get("parts") or [], start=1):
+        if k == 1:
+            continue
+        what = f"the definition of {part['macro']}" if part.get("macro") else "also pinned"
+        body += (f"\n-- part {k} of its pin, {what} ({part['file']}:{part['start_line']}"
+                 f"-{part['end_line']}):\n{part['text']}")
     if p.get("step"):
         par = p["step"].get("parent") or {}
         body = (f"A step of the proof of {par.get('number') or par.get('id') or 'its result'}"

@@ -65,6 +65,7 @@ Each failure a full assessment must catch has a test, mostly in `tests/mutations
 | Definition changed after review | fingerprint changes; review stale; claim not accepted | `test_changed_definition_reopens_its_review` |
 | `∃ C, ∀ n` reversed to `∀ n, ∃ C` | quantifier order recorded and shown; review reopened | `test_quantifier_reversal`, `test_a_reviewed_statement_that_changes_reopens_its_review` |
 | Zero witness for a nondegenerate regime | witness passes; regime obligation stays open | `test_regime_without_a_nondegenerate_witness` |
+| Hypothesis hidden in an instance (`[Fact (1 < p)]`, `[NeZero 0]`) beside standard instances | witness obligation naming that binder; instance-only propositions get a low-signal warning | `test_a_premise_or_an_unlisted_class_keeps_the_obligation_and_names_its_binder` |
 | Macro-generated numbered theorem not in the inventory | inventory-gap violation | `test_macro_generated_theorem_missing_from_the_inventory` |
 | Manuscript claim edited | source-changed violation | `test_changed_manuscript_claim` |
 | Author review declared human | still author-reviewed | `test_author_review_declared_human_is_still_not_independent` |

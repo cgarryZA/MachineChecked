@@ -43,24 +43,99 @@ a newline may end a TeX comment. Formatting changes can therefore require a new 
 The scanner does not execute TeX or prove that a passage captures every external macro or
 assumption on which its meaning depends.
 
+## Several passages, and macro definitions
+
+A claim that asserts text in passages that are not adjacent (a sentence restated in the next
+section, a property stated forty lines later), or whose numbers are macros defined in another
+file, lists the further passages in `source_parts`, after its own passage:
+
+```json
+{
+  "id": "P:est:properties",
+  "location": "paper/main.tex:51",
+  "source_region": {"end_line": 52},
+  "source_hash_scheme": "tex-regions-v1",
+  "source_sha256": "<combined SHA-256>",
+  "source_line_sha256": ["…", "…"],
+  "source_parts": [
+    {"location": "paper/main.tex:93", "sha256": "…", "line_sha256": ["…"]},
+    {"location": "paper/figs/values.tex:2", "macro": "\\iterCount",
+     "sha256": "…", "line_sha256": ["…"]}
+  ]
+}
+```
+
+Each part has a `location` and the same optional bounds as a region (`end_line`,
+`start_column`, `end_column`), in any file of the snapshot, and its own `sha256` and
+`line_sha256`. A part with `macro` pins that macro's definition, and must define it. Under the
+scheme `tex-regions-v1`, `source_sha256` is the SHA-256 of the text `tex-regions-v1`, then one
+line per passage in order, the claim's own first: its role (`passage`, or `macro \name`) and
+its digest. It depends on the passages' text, not on where they are, so a move keeps it and a
+change to any passage changes it. A pin without parts keeps `tex-region-v1` and its digest is
+the region's, as before.
+
+The source check, the migration, `rebound` and `repin` verify every passage. A
+`source-changed` finding names the passage that changed: the claim's own (by line), or a part
+(`part 2 (the definition of \iterCount)`, by line). The reader shows every passage of the
+pin in order, and a review packet holds them under the passage's `parts`.
+
+A region that uses a macro the manuscript defines outside it (in its preamble or another file)
+gets an advisory warning, `source-macro-unpinned`, one per passage, naming each such macro and
+where it is defined: a change to those definitions does not change the pin. Pin the
+definitions whose values the claim states (`rebound --macro`, below), and dismiss the warning
+when the rest is notation whose definition is not part of the claim. The dismissal is tied to
+the passage's digest and to the macros named (its trigger), so it reopens when either changes.
+
+### Notation macros
+
+List the paper's notation in `machinechecked.toml`, under `[project]` for every paper or under
+a `[[paper]]` for that paper's own (the paper's list adds to the project's):
+
+```toml
+[project]
+notation_macros = ["R", "E", "Prob"]   # or "\\R": the backslash is optional
+```
+
+A listed macro gives no `source-macro-unpinned` warning. Its definitions in the snapshot are
+hashed instead, each from its first line through the line that closes its body, and a reading
+of a passage that uses the macro records that digest: the digest a review marker records for
+the claim (`source=CLAIM@DIGEST`) is the SHA-256 of `tex-notation-reading-v1`, the claim's pin,
+and the name and definition digest of each listed macro the passage uses (`source_sha256` when
+it uses none). A change to a listed macro's definition therefore reopens every review that read
+a passage using it, as a change to the passage does; the claim's pin and the source check are
+unchanged, and a definition that only moves keeps the readings. The source evidence names the
+listed macros of each passage, with their digests, under `notation`.
+
+A reading that recorded only the claim's pin, or a marker without digests, read the passage
+without its notation: once the macro is listed, the review is pending, with a finding that says
+the reading did not record the definitions of the notation its passage uses
+(`source-notation-unrecorded`). Promote a new reading to record them. A macro the manuscript
+defines elsewhere and the list leaves out still gets the one dismissible warning per passage.
+Without `notation_macros`, a reading records the pin itself, as before.
+
 ## Replacing a legacy opening-line hash
 
 Do this while the configuration still names the **original frozen paper revision**:
 
 ```sh
-python -m prooflens.source_regions --config machinechecked.toml --paper P
-python -m prooflens.source_regions --config machinechecked.toml --paper P --write
+machinechecked inventory regions --paper P
+machinechecked inventory regions --paper P --write
 machinechecked build --reuse-lean
 ```
 
-The first command prints a plan only. It requires a full pinned Git commit or a versioned arXiv
-source, checks it against each claim's recorded paper revision (an abbreviated commit hash of
-at least seven digits names that commit), verifies the old one-line hash
-in that snapshot, and calculates the new region hash there. A working folder, branch name,
-missing original revision or failed baseline check is refused. No target-revision rehashing or
-fuzzy relocation is performed. The operation is idempotent and the write is atomic; all
-claims must validate before anything is written. An inventory edited during planning is
-not overwritten.
+(`python -m prooflens.source_regions --config machinechecked.toml ...` is the same command.)
+The first command prints a plan only. A Git source must be pinned to a full commit, an arXiv
+source to a versioned identifier. A manuscript read from a folder (`source = { path = ... }`, as
+a copy vendored into the Lean project) is the revision recorded as `papers.P.commit` in the
+inventory, or the one given with `--rev`; `--source DIR` (or `--source git:REV`, the configured
+folder as committed at REV of the repository that holds it) reads another folder instead. The
+revision is checked against each claim's recorded paper revision (an abbreviated commit hash of
+at least seven digits names that commit), the old one-line hash is verified in that snapshot,
+and the new region hash is calculated there. A branch name, a missing original revision or a
+failed baseline check is refused, so a folder that does not hold the recorded revision is
+refused too. No target-revision rehashing or fuzzy relocation is performed. The operation is
+idempotent and the write is atomic; all claims must validate before anything is written. An
+inventory edited during planning is not overwritten.
 
 Only `source_sha256`, `source_hash_scheme` and `source_line_sha256` change. A claim already on
 `tex-region-v1` whose passage still matches gains its line digests. Paper revisions, Lean fingerprints,
@@ -76,6 +151,37 @@ passage being presented as the unchanged reviewed source.
 
 This audited source pin is separate from any display excerpt or its rendering-context
 fingerprint. Editing a display overlay cannot refresh an audited source check.
+
+## Changing a region's bounds
+
+A review may find that a pin covers less than its claim asserts, or more. Change the bounds at
+the revision the claim is pinned at:
+
+```sh
+machinechecked inventory rebound --paper P --claim P:intro:rate --lines 40-42
+machinechecked inventory rebound --paper P --claim P:intro:rate --lines 40-42 --write
+```
+
+`--lines A-B` selects lines A to B (inclusive); `--lines A` the line or display that starts on
+line A, as a location alone does. `--file`, `--start-column` and `--end-column` (for one claim)
+give another file or column bounds. For one claim, `--also FILE:A-B` (repeatable) adds a
+further passage and `--macro \name` (repeatable) pins the definition of a macro: its only
+definition in the manuscript, through the line that closes its body, or the one named with
+`--macro \name@FILE:LINE`. With either, the pin lists exactly the passages given; `--single`
+removes the further passages; with neither, the pin keeps the ones it lists and recomputes
+their digests. Repeat `--claim ... --lines ...` to change several claims
+in one write. The snapshot is read as for the migration (`--source`, `--rev`), and must be the
+revision each claim is pinned at; the claim's present pin (a region, or a legacy line hash)
+must match it there. The plan prints, per claim, the old and new bounds with the first and
+last line of each. New bounds that start or end on a blank or comment-only line are refused,
+and so are bounds that contain a sectioning command (`\part` to `\subsubsection`, or
+`\appendix`) after their first line, unless `--across-sections` is given.
+
+`--write` replaces `location`, `source_region`, `source_sha256` and `source_line_sha256`,
+computed as above, and atomically. A new passage is new text: the claim's `scope_reviewed`
+becomes `false`, and every review marker that recorded the claim's old digest reads it as
+changed, so the reviews of the propositions and definitions it states reopen; readings of
+other claims stand. Bounds that select the same text change nothing.
 
 ## Display excerpts
 
@@ -143,15 +249,31 @@ source text.
 When the manuscript gains a revision, move the inventory to it:
 
 ```sh
-python -m prooflens.repin --config machinechecked.toml --paper P --to NEW
-python -m prooflens.repin --config machinechecked.toml --paper P --to NEW --write
+machinechecked inventory repin --paper P --to NEW
+machinechecked inventory repin --paper P --to NEW --write
 machinechecked build
 ```
 
 `NEW` is a Git commit of the paper's repository (a branch or tag is resolved to its commit) or
 a versioned arXiv identifier. The configuration must name the original revision as a full Git
-commit or a versioned arXiv identifier, and every claim must already be on `tex-region-v1`
-(migrate first, above). The first command prints a plan only.
+commit or a versioned arXiv identifier, and every line-located claim must already be on
+`tex-region-v1` (migrate first, above). The first command prints a plan only.
+
+Either snapshot can be given as a folder instead: `--from-source DIR` (with `--from-rev REV`
+when the inventory does not record the revision as `papers.P.commit`) and `--to-source DIR`,
+`--to` then naming the revision the folder holds. For a manuscript vendored into the Lean
+project (`source = { path = "manuscript" }`), `git:REV` names the configured folder as
+committed at REV of the project's repository, and the new snapshot is the folder itself by
+default:
+
+```sh
+# the vendored copy as committed is the pinned revision; the working copy is the new one
+machinechecked inventory repin --paper P --from-source git:HEAD --to NEW
+```
+
+The configuration of a folder has no revision to change: `--write` records the new one as
+`papers.P.commit`. A folder is labelled by the revision it is given, so its claims are verified
+against it exactly as an acquired snapshot is.
 
 The command reads both snapshots. It first checks each claim's passage at the original
 revision against its digests; a claim that does not match there stops the plan, and an
@@ -167,7 +289,24 @@ classifies the claim:
 | `removed` | its text is not found, and its label is not in the new revision | keeps its place, digests and revision |
 | `not-found` | its text is not found, and it has no label to find a changed version by | keeps its place, digests and revision |
 | `ambiguous` | its text or its label occurs more than once, or its text occurs only where the paper may not print it | nothing is written |
+| `not-handled` | an environment pin this command cannot place (below) | nothing is written |
 | `pending-review` | its pin is of another revision (a passage that changed in an earlier repin) | nothing |
+| `unpinned` | it has no source pin | nothing |
+
+A pin with further passages is repinned only when every passage is found unchanged, each by
+its exact text (a macro definition whose text changed is found by the macro's name); the plan
+lists each part's class under `parts`. When any part changed or is missing, the claim is
+`changed`: the passages found take their new places and the pin keeps its digests.
+
+The plan lists every claim of the paper. A claim pinned by its environment (a `location` that
+names a file without a line, and the hash of the environment's body, as the compiled paper's
+anchors give it) is found by its own `\label` in an environment of its `kind`: the same body
+hash is `unchanged` (or `moved` to another file), another body is `changed` with a diff, and a
+label that is gone is `removed`. A label that occurs twice is `ambiguous`, and so is a missing
+label when one environment of the new revision has the claim's text under another label (the
+match is shown, not taken). A claim the compiled paper finds only by its printed number, or
+whose label is carried by several environments at the original revision, is `not-handled`:
+numbers are computed by compiling, which this command does not do, so pin such a claim by hand.
 
 A claim that keeps its revision records it in its own `commit`, so a later repin reports it
 as `pending-review` rather than comparing it with text it was not pinned to.
@@ -190,7 +329,7 @@ that rests on the surrounding text needs checking. The plan counts the symbol li
 claim that changed or whose surroundings changed; a symbol link keeps the printed text it was
 made on and shows as stale in the reader when that text changes.
 
-`--write` refuses while any claim is ambiguous. It writes atomically and only if neither the
+`--write` refuses while any claim is ambiguous or not handled. It writes atomically and only if neither the
 inventory nor the configuration changed during planning. It changes only the selected paper's
 claims (`location`, `source_region`, `commit`, and line digests a claim was pinned without),
 the paper's `commit` under `papers`, and the paper's source revision in the configuration.

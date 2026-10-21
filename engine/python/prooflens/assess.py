@@ -27,7 +27,7 @@ from .status import fields
 
 from . import review_sources
 from .reviews import Review, history
-from .source_regions import SCHEME as SOURCE_SCHEME, changed_line, matches as source_matches
+from .source_regions import SCHEMES as SOURCE_SCHEMES, changed_line, matches as source_matches
 
 OUT_OF_SCOPE = {"expository", "literature", "empirical", "proof-step", "part-of", "duplicate"}
 
@@ -57,8 +57,55 @@ TOTALISED = {
 }
 
 
-# Totalised operations so common in analysis that a warning about them is rarely informative.
-LOW_SIGNAL = {"HDiv.hDiv", "Inv.inv"}
+# Totalised operations so common in analysis that a warning about them is rarely informative,
+# and propositions whose only hypotheses are instances of inhabited classes.
+LOW_SIGNAL = {"HDiv.hDiv", "Inv.inv", "witness-instances"}
+
+# Type classes whose instances exist at a canonical type (ℝ, Unit, `Fin 1`, a Dirac measure)
+# whenever their arguments are free variables of the proposition. A proposition whose only
+# hypotheses are such instances gets a low-signal warning instead of a witness obligation. A
+# project sets its own list with `inhabited_classes` in `machinechecked.toml` (`[]` restores
+# the obligation everywhere). `Fact`, `Subsingleton`, `Nontrivial` and the project's own
+# classes are deliberately absent: their instances need not exist, or not together.
+INHABITED_CLASSES = [
+    "Inhabited", "Nonempty", "DecidableEq", "Fintype", "Finite", "Countable", "Encodable",
+    "NeZero",
+    "Preorder", "PartialOrder", "LinearOrder", "Lattice",
+    "AddMonoid", "AddCommMonoid", "AddGroup", "AddCommGroup", "Monoid", "CommMonoid", "Group",
+    "CommGroup", "Semiring", "CommSemiring", "Ring", "CommRing", "Field", "Module", "Algebra",
+    "TopologicalSpace", "UniformSpace", "PseudoMetricSpace", "MetricSpace",
+    "PseudoEMetricSpace", "EMetricSpace", "T2Space", "CompleteSpace", "CompactSpace",
+    "LocallyCompactSpace", "ProperSpace", "TopologicalSpace.SecondCountableTopology",
+    "TopologicalSpace.SeparableSpace",
+    "SeminormedAddCommGroup", "NormedAddCommGroup", "NormedSpace", "InnerProductSpace",
+    "NormedField", "NontriviallyNormedField", "RCLike", "FiniteDimensional", "Module.Finite",
+    "MeasurableSpace", "MeasureTheory.MeasureSpace", "BorelSpace", "OpensMeasurableSpace",
+    "MeasurableSingletonClass", "StandardBorelSpace", "MeasurableSpace.CountablyGenerated",
+    "MeasureTheory.IsProbabilityMeasure", "MeasureTheory.IsFiniteMeasure",
+    "MeasureTheory.IsZeroOrProbabilityMeasure", "MeasureTheory.SigmaFinite",
+]
+
+# Constants an instance's argument may be, besides a variable of the proposition: the number
+# systems, at which the classes above have their canonical instances.
+_STANDARD_TYPES = {"ℕ", "ℤ", "ℚ", "ℝ", "ℂ", "ℝ≥0", "ℝ≥0∞", "Nat", "Int", "Rat", "Real",
+                   "Complex", "NNReal", "ENNReal"}
+
+
+def instance_class(binder: dict, earlier: set[str], allowed: set[str]) -> str | None:
+    """The class of an instance binder when it is in `allowed` and applied only to variables
+    bound before it (or to a number system): `[NormedAddCommGroup F]`, `[NeZero N]`,
+    `[InnerProductSpace ℝ F]`. None for any other instance (`[Fact (1 < p)]`, `[NeZero 0]`,
+    a class outside the list), which needs a witness like a hypothesis."""
+    text = ((binder.get("type") or {}).get("text") or "").strip()
+    if not text or any(ch in text for ch in "()[]{}⟨⟩:,"):
+        return None
+    head, *args = text.split()
+    head = head.lstrip("@")
+    if head not in allowed:
+        return None
+    if not all(a in earlier or a in _STANDARD_TYPES for a in args):
+        return None
+    return head
 
 
 def _finding(tier, code, subject, message, **extra):
@@ -108,6 +155,7 @@ class Assessor:
         self.authors = set(cfg.statement_authors)
         self._history = None
         self._unlisted: list[str] | None = None
+        self._pins: dict[str, str | None] | None = None
 
     # -- declarations the probe did not find ------------------------------------------------
 
@@ -149,7 +197,7 @@ class Assessor:
         shows it unchanged since the marker was written."""
         hist = history(self.reviews, target, name)
         last = hist[-1] if hist else None
-        readers = review_sources.digests(self.inv, target, name)
+        readers = review_sources.digests(self.inv, target, name, self.tex)
         need = {claim: readers[claim]} if claim in readers else readers
         why = source_claim = None
         record = last
@@ -177,7 +225,14 @@ class Assessor:
 
     def _read_one(self, review: Review, cid: str, sha: str) -> str:
         """Whether `review` read the current passage `sha` of claim `cid`
-        (`review_sources.marker_state`)."""
+        (`review_sources.marker_state`). When `sha` covers listed notation macros, a marker that
+        records only the claim's pin, or no digests, read the passage without their definitions
+        (`notation-unrecorded`)."""
+        if self._pins is None:
+            self._pins = {c["id"]: c.get("source_sha256") for c in self.inv["claims"]}
+        pin = self._pins.get(cid)
+        if pin and sha != pin and (review.source is None or review.source.get(cid) == pin):
+            return "notation-unrecorded"
         if review.source is None and self._history is None:
             self._history = review_sources.History(getattr(self.cfg, "root", None),
                                                    getattr(self.cfg, "inventory", None), self.inv)
@@ -193,7 +248,8 @@ class Assessor:
             st = self._read_one(review, cid, sha)
             if st != "current":
                 return {"changed": "source-changed", "unread": "source-unread",
-                        "unrecorded": "source-unrecorded"}[st], cid
+                        "unrecorded": "source-unrecorded",
+                        "notation-unrecorded": "source-notation-unrecorded"}[st], cid
         return "source-changed", sorted(need)[0]   # not reached: the last marker read them
 
     def _claim_label(self, cid: str | None) -> str:
@@ -208,11 +264,18 @@ class Assessor:
             return ""
         why = r.get("why")
         if why == "source-changed":
-            return (f" (the source text of {self._claim_label(r.get('source_claim'))} changed "
-                    "since its last reading)")
+            c = next((c for c in self.inv["claims"] if c["id"] == r.get("source_claim")), None)
+            notation = c is not None and (review_sources.region_of(self.tex, c) or {}).get(
+                "notation")
+            return (f" (the source text of {self._claim_label(r.get('source_claim'))}"
+                    + (", or a definition of the notation it uses," if notation else "")
+                    + " changed since its last reading)")
         if why == "source-unread":
             return (f" (its last review did not read the passage of "
                     f"{self._claim_label(r.get('source_claim'))})")
+        if why == "source-notation-unrecorded":
+            return (f" (its last review of {self._claim_label(r.get('source_claim'))} did not "
+                    "record the definitions of the notation macros its passage uses)")
         if why == "source-unrecorded":
             return (" (its last review was made before source pins were recorded, and the "
                     f"source text of {self._claim_label(r.get('source_claim'))} cannot be shown "
@@ -386,14 +449,10 @@ class Assessor:
                         "stated" if cl.get("defs") else "unspecified")
 
         if srec:
-            roles = [b["role"] for b in srec.get("binders", [])]
             # A checked refutation needs no witness: a proof of ¬S exhibits an instance meeting
             # S's hypotheses (were they never met, S would hold vacuously and not be refutable).
-            if ("hypothesis" in roles or "instance" in roles) and not cl.get("witness") \
-                    and not res.get("refute_ok"):
-                self.findings.append(_finding(
-                    "obligation", "witness", subj,
-                    f"{spec} has hypotheses but no witness that they can be met"))
+            if not cl.get("witness") and not res.get("refute_ok"):
+                self.witness_check(subj, spec, srec)
             for c in srec.get("consts", []):
                 if c in TOTALISED:
                     self.add_warning("totalised", subj, spec, srec,
@@ -413,6 +472,42 @@ class Assessor:
                     trigger=r.get("name", "")))
         res["regimes"] = regs
         return res
+
+    def witness_check(self, subj: str, spec: str, srec: dict) -> None:
+        """The witness a proposition without one needs. A hypothesis, or an instance of a class
+        not known to be inhabited, raises the `witness` obligation, naming the binders that need
+        it. A proposition whose only hypotheses are instances of `inhabited_classes` over its
+        own variables gets a low-signal `witness-instances` warning instead: no theorem shows
+        them met, but each has a canonical instance. Neither changes a status."""
+        configured = getattr(self.cfg, "inhabited_classes", None)
+        allowed = set(INHABITED_CLASSES if configured is None else configured)
+        earlier: set[str] = set()
+        needs, classes = [], []
+        for b in srec.get("binders", []):
+            role, text = b.get("role"), (b.get("type") or {}).get("text", "?")
+            if role == "hypothesis":
+                needs.append(f"{b.get('name', '?')} : {text}")
+            elif role == "instance":
+                cls = instance_class(b, earlier, allowed)
+                if cls is None:
+                    needs.append(f"[{text}]")
+                else:
+                    classes.append(cls)
+            if b.get("name"):
+                earlier.add(b["name"])
+        if needs:
+            shown = "; ".join(needs[:3]) + ("; …" if len(needs) > 3 else "")
+            self.findings.append(_finding(
+                "obligation", "witness", subj,
+                f"{spec} has hypotheses but no witness that they can be met ({shown})",
+                binders=needs))
+        elif classes:
+            names = ", ".join(dict.fromkeys(classes))
+            self.add_warning(
+                "witness-instances", subj, spec, srec,
+                f"{spec} has no witness; its only hypotheses are instances of classes treated "
+                f"as inhabited ({names}), and no theorem shows them met together",
+                "witness-instances")
 
     def add_warning(self, code, subj, name, rec, message, trigger):
         fp = rec.get("fingerprint")
@@ -514,13 +609,17 @@ class Assessor:
                          "source-unread": "the proposition's last review did not read this "
                                           "claim's passage",
                          "source-unrecorded": "the proposition was reviewed before source pins "
-                                              "were recorded"}.get(
+                                              "were recorded",
+                         "source-notation-unrecorded": "the proposition's last review did not "
+                                                       "record the definitions of the notation "
+                                                       "macros this claim's passage uses"}.get(
                         c["spec_review"].get("why"),
                         "the proposition changed after its last review"), c)
             for d, r in (c.get("def_reviews") or {}).items():
                 why = r.get("why")
                 defs[d] = why if r["state"] == "stale" and why in (
-                    "source-changed", "source-unread", "source-unrecorded") else r["state"]
+                    "source-changed", "source-unread", "source-unrecorded",
+                    "source-notation-unrecorded") else r["state"]
             if c.get("witness") and not c.get("witness_ok"):
                 add("the witness that the hypotheses can be met fails its check", c)
             if any(not r["discharged"] for r in c.get("regimes", [])):
@@ -547,6 +646,8 @@ class Assessor:
                              ("source-unread", "have a review that did not read their passage"),
                              ("source-unrecorded", "were reviewed before source pins were "
                                                    "recorded"),
+                             ("source-notation-unrecorded", "have a review that did not record "
+                                                            "the definitions of their notation"),
                              ("author-reviewed", "were reviewed only by the author")):
             if counts.get(state):
                 out.append(f"{counts[state]} definition{'s' if counts[state] > 1 else ''} its "
@@ -724,7 +825,7 @@ class Assessor:
                 line = line_location(c)
                 if line is not None:
                     region = (t.get("regions") or {}).get(c["id"], {})
-                    if c.get("source_hash_scheme") != SOURCE_SCHEME:
+                    if c.get("source_hash_scheme") not in SOURCE_SCHEMES:
                         self.findings.append(_finding(
                             "violation", "source-hash-scheme", c["id"],
                             f"{c['location']}: source regions must be pinned at the original "
@@ -739,6 +840,22 @@ class Assessor:
                         self.findings.append(_finding(
                             "violation", "source-changed", c["id"],
                             f"the source region at {c['location']} {detail}"))
+                    macros = region.get("macros") or []
+                    if macros:
+                        # One warning per passage. Its trigger is the set of macros, so a
+                        # dismissal (tied to the passage's digest) reopens when another macro
+                        # defined outside the passage comes into use.
+                        names = " ".join(m["macro"] for m in macros)
+                        where = "; ".join(f"{m['macro']} at {', '.join(m['defined'])}"
+                                          for m in macros)
+                        self.add_warning(
+                            "source-macro-unpinned", c["id"], c["id"],
+                            {"fingerprint": c.get("source_sha256")},
+                            f"the source region at {c['location']} uses macros defined outside "
+                            f"it ({where}); a change to those definitions does not change the "
+                            "pin. Pin the definitions whose values are part of the claim "
+                            "(machinechecked inventory rebound --macro NAME), and list the "
+                            "notation in notation_macros", names)
                     continue
                 a = match_anchor(c, anchors)
                 if a is None:
