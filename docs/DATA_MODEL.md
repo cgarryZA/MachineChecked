@@ -49,7 +49,9 @@ review is its own (below).
 
 A claim's `location` is a file for a numbered environment, whose `source_sha256` is the hash of
 the whitespace-normalised body of the environment, or `<file>:<line>` for a claim recorded by
-line (an equation, a part of an environment, a prose claim), whose hash is the hash of that line.
+line (an equation, a part of an environment, a prose claim), whose pin is the source region that
+starts there, and may list further passages and macro definitions in `source_parts`
+([SOURCE_REGIONS.md](SOURCE_REGIONS.md)).
 
 ## Reviews, written by people
 

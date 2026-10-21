@@ -21,6 +21,7 @@ inventory = "claims.json"
 reviews = ["reviews/statements.md", "reviews/definitions.md"]
 statement_authors = ["me"]
 ai_reviewers = ["claude*"]
+notation_macros = ["R", "E"]  # optional: notation whose definitions readings record
 
 [review]
 check = "python3 tools/check.py"  # optional post-promotion check
