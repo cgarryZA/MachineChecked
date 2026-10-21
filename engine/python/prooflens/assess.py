@@ -704,6 +704,7 @@ class Assessor:
                     "violation", "layering", v["module"],
                     f"the specification module {v['module']} imports {v['imports']}"))
             self.module_doc_checks()
+            self.review_citation_checks()
         gates = self.gates(claims)
         return {"claims": claims, "findings": self.findings, "gates": gates}
 
@@ -735,6 +736,34 @@ class Assessor:
                              {"fingerprint": stale_doc_fingerprint(d)},
                              stale_doc_message(d), d["name"])
             self.findings[-1].update(file=d["file"], line=d["line"])
+
+    def review_citation_checks(self):
+        """A warning for each name or path cited in backticks by the review files that nothing
+        resolves (`review_citations.py`), with its file and line; a violation when the
+        configuration says `review_citations_strict`. The warning never changes a status, and
+        an auditor can dismiss it (code `review-citation`, the review file as subject, the
+        token as trigger)."""
+        from . import review_citations as rc
+        files = getattr(self.cfg, "reviews", None)
+        root = getattr(self.cfg, "root", None)
+        if not files or root is None:
+            return
+        cites = rc.citations(files, root, getattr(self.cfg, "review_citations_ignore", None))
+        lean_root = getattr(self.cfg, "lean_root", None) or root
+        bases = [root] + ([lean_root] if not lean_root.is_relative_to(root) else [])
+        seen = set()
+        for c in rc.unresolved(cites, self.lean.get("names"), bases):
+            if (c["file"], c["token"]) in seen:
+                continue
+            seen.add((c["file"], c["token"]))
+            if getattr(self.cfg, "review_citations_strict", False):
+                self.findings.append(_finding("violation", "review-citation", c["file"],
+                                              rc.message(c), trigger=c["token"],
+                                              file=c["file"], line=c["line"]))
+            else:
+                self.add_warning("review-citation", c["file"], c["file"],
+                                 {"fingerprint": rc.fingerprint(c)}, rc.message(c), c["token"])
+                self.findings[-1].update(file=c["file"], line=c["line"])
 
     # -- gates ----------------------------------------------------------------------------
 

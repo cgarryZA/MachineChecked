@@ -276,6 +276,11 @@ def merge_records(parts: list[tuple[str, dict]]) -> dict:
            "defs": {}, "moddocs": [], "complete": all(r["complete"] for _, r in parts)}
     if any("links" in r for _, r in parts):
         res["links"] = {}
+    named = [r["names"] for _, r in parts if "names" in r]
+    if named:
+        # A name resolved in any library's session is resolved.
+        res["names"] = {"checked": named[0]["checked"], "unresolved": [
+            n for n in named[0]["unresolved"] if all(n in x["unresolved"] for x in named)]}
     seen = set()
     for _, r in parts:
         for d in r.get("moddocs", []):
@@ -346,6 +351,10 @@ def parse_records(lines) -> dict:
         elif kind == "moddoc":
             res["moddocs"].append({k: rec[k] for k in ("module", "line", "name", "heading",
                                                        "item_lead") if k in rec})
+        elif kind == "names":
+            # Names cited in review text: those checked, and those nothing resolves.
+            res["names"] = {"checked": rec.get("checked", []),
+                            "unresolved": rec.get("unresolved", [])}
         elif kind == "done":
             res["complete"] = True
     if not res["complete"]:

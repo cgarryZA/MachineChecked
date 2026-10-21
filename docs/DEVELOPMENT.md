@@ -71,6 +71,7 @@ Each failure a full assessment must catch has a test, mostly in `tests/mutations
 | Claim pinned at its label line, or mid-sentence | `source-region` warning naming the paragraph; no status changes | `test_label_lines_partial_sentences_and_section_crossings`, `test_advice_is_a_dismissible_warning_that_changes_no_status` |
 | Author review declared human | still author-reviewed | `test_author_review_declared_human_is_still_not_independent` |
 | Justified totalised operation | warning dismissed; dismissal lapses when the statement changes | `test_dismissal_lapses_when_the_statement_changes` |
+| Review text citing a lemma or file that does not exist | warning with file and line (violation with `review_citations_strict`); no status changes | `test_a_dangling_citation_is_a_warning_or_in_strict_mode_a_violation` |
 | A proposition, proof, witness or definition the probe cannot find (its module not in `modules`) | violation naming the declaration, and the module that declares it when the source shows one; clause open; no statement shown or queued | `test_a_module_left_out_of_modules`, `test_a_proposition_in_a_module_the_probe_does_not_load` |
 | Specification layer imports acceptance layer | layering violation | `test_specification_layer_importing_the_acceptance_layer` |
 | Private source or PDF in an export | export blocked | `test_export_with_a_leak_is_blocked`, `test_unapproved_pdf_is_blocked` |

@@ -724,9 +724,11 @@ def cmd_build(a):
     for f in details:
         if f["tier"] in ("violation", "obligation") and not f.get("dismissed"):
             print(f"  {f['tier']}  {f['subject']}: {f['message']}")
-    # Names in module docstrings that nothing declares, with file and line.
+    # Names in module docstrings that nothing declares, and names or files review text cites
+    # that nothing resolves, with file and line.
     for f in details:
-        if f["code"] == "module-doc-name" and not f.get("dismissed"):
+        if f["code"] in ("module-doc-name", "review-citation") and f["tier"] == "warning" \
+                and not f.get("dismissed"):
             print(f"  warning  {f['message']}")
     if idx["findings"]["total"].get("warning"):
         print("  (warnings: see `check --json` or the reader)")
