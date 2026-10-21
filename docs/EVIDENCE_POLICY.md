@@ -36,10 +36,12 @@ declarations Lean generates (`match_1`, `_f`): they are part of the definition's
 
 ## A review is a reading of a text
 
-A review compares a Lean declaration with the paper's text, so it counts only for the text that
-was read. A review of a proposition reads the passages of every claim whose clauses state it; a
-review of a definition reads the passages of the definition claims that name it. A definition
-that only occurs in a closure has no passage of its own.
+A review compares a Lean declaration with the paper's text, so it counts only for the text that was
+read. A marker with no review text before it records no reading and does not count (unless the
+configuration allows bare markers by its reviewer, `bare_markers_by`). A review of a proposition
+reads the passages of every claim whose clauses state it; a review of a definition reads the
+passages of the definition claims that name it. A definition that only occurs in a closure has no
+passage of its own.
 
 - **Recorded digests.** A marker records, for each claim whose passage was shown to the
   reviewer, the digest of that passage as read (`source=CLAIM@DIGEST`, the claim's source pin

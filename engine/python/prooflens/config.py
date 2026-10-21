@@ -76,6 +76,8 @@ class Config:
     author: str | None = None         # the name the audit is published under (audit.json)
     repository: str | None = None     # "owner/repo" of the Lean source, if not the git remote
     repository_private: bool = False  # the reader does not show the repository's name
+    # Reviewers whose review markers count without review text before them (`assess.py`).
+    bare_markers_by: list[str] = field(default_factory=list)
     # Type classes treated as inhabited by the witness check (`assess.INHABITED_CLASSES` when
     # not configured).
     inhabited_classes: list[str] | None = None
@@ -169,6 +171,7 @@ def load(path: str | Path) -> Config:
         author=proj.get("author"),
         repository=issue_repo(proj.get("repository"), str(path)),
         repository_private=bool(proj.get("repository_private", False)),
+        bare_markers_by=_names(proj, "bare_markers_by", str(path)) or [],
         inhabited_classes=_names(proj, "inhabited_classes", str(path)),
     )
 

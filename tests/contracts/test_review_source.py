@@ -207,8 +207,8 @@ def test_a_proposition_stated_by_two_claims_reopens_only_for_the_changed_one():
     cfg = SimpleNamespace(statement_authors=[], papers=[], lean_root=None)
 
     def run(source):
-        r = Review("spec", "S.spec", fp, "a-referee", "human", "self-declared", "r.md", 1, "",
-                   source=source)
+        r = Review("spec", "S.spec", fp, "a-referee", "human", "self-declared", "r.md", 1,
+                   "Synthetic review.", source=source)
         return {c["id"]: c for c in Assessor(cfg, inv, lean, {}, [r], []).run()["claims"]}
 
     both = run({"P:a": "a" * 64, "P:b": "b" * 64})
