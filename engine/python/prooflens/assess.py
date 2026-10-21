@@ -851,6 +851,7 @@ class Assessor:
                         self.findings.append(_finding(
                             "violation", "source-changed", c["id"],
                             f"the source region at {c['location']} {detail}"))
+                    self.region_advice(c, region)
                     macros = region.get("macros") or []
                     if macros:
                         # One warning per passage. Its trigger is the set of macros, so a
@@ -888,6 +889,22 @@ class Assessor:
                         "violation", "inventory-gap", f"{pid}:{a.get('label') or a['env']}",
                         f"{a['env'].capitalize()} {a.get('number')} ({a['file']}:{a['line']}) "
                         f"is in the paper but not in the inventory"))
+
+    def region_advice(self, claim: dict, region: dict):
+        """A warning for each way the claim's source region may not hold its text
+        (`source_regions.advice`): a label line, a region that starts or ends inside a sentence,
+        one that runs into another section. It names the passage likely meant, never changes a
+        status, and an auditor can dismiss it (code `source-region`, the claim as subject, the
+        kind as trigger); a dismissal lapses when the region's text changes."""
+        from .source_regions import SCHEME, advice_message
+        # The digest of the claim's own passage (a pin of several passages records it apart).
+        passage = region.get("passage_sha256") or region.get("sha256")
+        for a in region.get("advice") or []:
+            self.add_warning("source-region", claim["id"], claim["id"],
+                             {"fingerprint": f"{SCHEME}:{passage}"},
+                             advice_message(claim["id"], region, a), a["kind"])
+            if a.get("suggested"):
+                self.findings[-1]["suggested"] = a["suggested"]
 
 
 def line_location(claim: dict) -> int | None:

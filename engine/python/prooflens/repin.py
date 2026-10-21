@@ -22,8 +22,9 @@ import re
 import tempfile
 
 from .source_regions import (
-    DISPLAYS, ENV, SCHEMES, RegionError, changed_line, definition_part, extract, location,
-    part_claim, pin as pin_of, same_revision, source_file, tex_sources, write_plan,
+    DISPLAYS, ENV, SCHEMES, RegionError, advice_message, changed_line, definition_part,
+    extract, location, part_claim, pin as pin_of, region_advice, same_revision, source_file,
+    tex_sources, write_plan,
 )
 
 LABEL = re.compile(r"\\label\s*\{([^{}]*)\}")
@@ -455,6 +456,12 @@ def repin_plan(inventory: dict, paper: str, old_root: Path, new_root: Path, old_
             placed, new = target
             entry["to"] = placed["location"]
             entry["to_region"] = _bounds(new)
+            # Where the region at the new revision may not hold the claim's text (advice only).
+            notes = region_advice(new_root, new)
+            if notes:
+                rec = new.record()
+                entry["advice"] = [{**a, "message": advice_message(claim["id"], rec, a)}
+                                   for a in notes]
             if entry["class"] == "changed":
                 pins = {**claim, "source_line_sha256": region.line_sha256}
                 entry["where"] = changed_line(pins, new.record())
@@ -492,7 +499,8 @@ def repin_plan(inventory: dict, paper: str, old_root: Path, new_root: Path, old_
               "claims": entries,
               "new_passages": [{"location": loc, "label": n} for loc, n in new],
               "blocking": [e["claim"] for e in entries
-                           if e["class"] in ("ambiguous", "not-handled")]}
+                           if e["class"] in ("ambiguous", "not-handled")],
+              "advice": [e["claim"] for e in entries if e.get("advice")]}
     return result, report
 
 

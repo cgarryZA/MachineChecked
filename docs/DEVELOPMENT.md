@@ -68,6 +68,7 @@ Each failure a full assessment must catch has a test, mostly in `tests/mutations
 | Hypothesis hidden in an instance (`[Fact (1 < p)]`, `[NeZero 0]`) beside standard instances | witness obligation naming that binder; instance-only propositions get a low-signal warning | `test_a_premise_or_an_unlisted_class_keeps_the_obligation_and_names_its_binder` |
 | Macro-generated numbered theorem not in the inventory | inventory-gap violation | `test_macro_generated_theorem_missing_from_the_inventory` |
 | Manuscript claim edited | source-changed violation | `test_changed_manuscript_claim` |
+| Claim pinned at its label line, or mid-sentence | `source-region` warning naming the paragraph; no status changes | `test_label_lines_partial_sentences_and_section_crossings`, `test_advice_is_a_dismissible_warning_that_changes_no_status` |
 | Author review declared human | still author-reviewed | `test_author_review_declared_human_is_still_not_independent` |
 | Justified totalised operation | warning dismissed; dismissal lapses when the statement changes | `test_dismissal_lapses_when_the_statement_changes` |
 | A proposition, proof, witness or definition the probe cannot find (its module not in `modules`) | violation naming the declaration, and the module that declares it when the source shows one; clause open; no statement shown or queued | `test_a_module_left_out_of_modules`, `test_a_proposition_in_a_module_the_probe_does_not_load` |
