@@ -56,6 +56,15 @@ passage of its own.
   reopens the reading too, and a reading that did not record them does not count
   ([notation macros](SOURCE_REGIONS.md#notation-macros)). A definition's review in the closure of a statement must have read the
   current passage of every claim that names the definition.
+- **The manuscript must match the pin.** A reading counts against the text the paper prints.
+  When the source check finds that the manuscript no longer matches a claim's pin (its
+  passage, a further passage in `source_parts`, or a pinned macro definition: a
+  `source-changed` violation), the claim's passage reads as unread for every review that read
+  it, whatever digest the marker records: the claim reads `review pending`, with a finding
+  (`source-unpinned`) that names the passage and where it differs. Pin the passage again
+  (`inventory repin`, or `rebound` at the pinned revision) and record a reading at the new pin
+  to restore the review; `review promote` refuses a report on such a passage. A paper read only
+  from its PDF has no source check, and its readings count against the pin.
 - **Markers written before the digests were recorded.** Such a marker counts for a claim only
   while the project's Git history shows the claim's passage unchanged since the marker was
   written: the commit that wrote the marker's line, and every later version of the inventory,
