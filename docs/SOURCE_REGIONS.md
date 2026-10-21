@@ -37,6 +37,30 @@ region or a recognised display opener, the selected nonblank line remains a sing
 claim: surrounding prose is **not** inferred to be covered. Choosing the right scope remains
 a review responsibility.
 
+`build` and `check` advise where a region may not hold the claim's text, as a warning (code
+`source-region`) that names the passage likely meant:
+
+| Advice (`trigger`) | When |
+|---|---|
+| `label-only` | the region holds only a `\label`, a heading (`\section`, `\subsection`, …), comments and whitespace; the paragraph that follows is named |
+| `starts-mid-sentence` | the line before the region is part of its paragraph and does not end a sentence |
+| `ends-mid-sentence` | the region's last line does not end a sentence and the paragraph continues on the next line |
+| `spans-section` | a heading (`\part` to `\subparagraph`, `\appendix`) occurs after the region's first line |
+
+A region pinned at a label line gives no protection: a change of the paragraph it is about
+reopens nothing. Pin the paragraph instead, from its first line with an explicit end:
+
+```json
+{"location": "paper/main.tex:4", "source_region": {"end_line": 5}}
+```
+
+then pin it again (above) and review the passage. The sentence checks apply to regions of whole
+lines; a display environment, and a region bounded by columns, are checked only for a heading.
+The advice never changes a status; an auditor can dismiss it (`dismissals`: the claim as
+`subject`, the kind as `trigger`, the finding's `fingerprint`), and the dismissal lapses when
+the region's text changes. The repin plan lists the same advice for each claim at the new
+revision (`advice` on its entry, and the claims concerned under `advice`).
+
 The fingerprint preserves whitespace and comments in the selected text (line endings are
 normalised when read as text). In particular, newlines are not collapsed before hashing:
 a newline may end a TeX comment. Formatting changes can therefore require a new source pin.

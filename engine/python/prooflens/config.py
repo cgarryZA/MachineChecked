@@ -80,6 +80,8 @@ class Config:
     # notation, not names (None: the default), and whether an unresolved one is a violation.
     review_citations_ignore: list[str] | None = None
     review_citations_strict: bool = False
+    # Reviewers whose review markers count without review text before them (`assess.py`).
+    bare_markers_by: list[str] = field(default_factory=list)
     # Type classes treated as inhabited by the witness check (`assess.INHABITED_CLASSES` when
     # not configured).
     inhabited_classes: list[str] | None = None
@@ -175,6 +177,7 @@ def load(path: str | Path) -> Config:
         repository_private=bool(proj.get("repository_private", False)),
         review_citations_ignore=_patterns(proj, "review_citations_ignore", str(path)),
         review_citations_strict=bool(proj.get("review_citations_strict", False)),
+        bare_markers_by=_names(proj, "bare_markers_by", str(path)) or [],
         inhabited_classes=_names(proj, "inhabited_classes", str(path)),
     )
 
