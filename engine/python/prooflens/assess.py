@@ -57,8 +57,55 @@ TOTALISED = {
 }
 
 
-# Totalised operations so common in analysis that a warning about them is rarely informative.
-LOW_SIGNAL = {"HDiv.hDiv", "Inv.inv"}
+# Totalised operations so common in analysis that a warning about them is rarely informative,
+# and propositions whose only hypotheses are instances of inhabited classes.
+LOW_SIGNAL = {"HDiv.hDiv", "Inv.inv", "witness-instances"}
+
+# Type classes whose instances exist at a canonical type (ℝ, Unit, `Fin 1`, a Dirac measure)
+# whenever their arguments are free variables of the proposition. A proposition whose only
+# hypotheses are such instances gets a low-signal warning instead of a witness obligation. A
+# project sets its own list with `inhabited_classes` in `machinechecked.toml` (`[]` restores
+# the obligation everywhere). `Fact`, `Subsingleton`, `Nontrivial` and the project's own
+# classes are deliberately absent: their instances need not exist, or not together.
+INHABITED_CLASSES = [
+    "Inhabited", "Nonempty", "DecidableEq", "Fintype", "Finite", "Countable", "Encodable",
+    "NeZero",
+    "Preorder", "PartialOrder", "LinearOrder", "Lattice",
+    "AddMonoid", "AddCommMonoid", "AddGroup", "AddCommGroup", "Monoid", "CommMonoid", "Group",
+    "CommGroup", "Semiring", "CommSemiring", "Ring", "CommRing", "Field", "Module", "Algebra",
+    "TopologicalSpace", "UniformSpace", "PseudoMetricSpace", "MetricSpace",
+    "PseudoEMetricSpace", "EMetricSpace", "T2Space", "CompleteSpace", "CompactSpace",
+    "LocallyCompactSpace", "ProperSpace", "TopologicalSpace.SecondCountableTopology",
+    "TopologicalSpace.SeparableSpace",
+    "SeminormedAddCommGroup", "NormedAddCommGroup", "NormedSpace", "InnerProductSpace",
+    "NormedField", "NontriviallyNormedField", "RCLike", "FiniteDimensional", "Module.Finite",
+    "MeasurableSpace", "MeasureTheory.MeasureSpace", "BorelSpace", "OpensMeasurableSpace",
+    "MeasurableSingletonClass", "StandardBorelSpace", "MeasurableSpace.CountablyGenerated",
+    "MeasureTheory.IsProbabilityMeasure", "MeasureTheory.IsFiniteMeasure",
+    "MeasureTheory.IsZeroOrProbabilityMeasure", "MeasureTheory.SigmaFinite",
+]
+
+# Constants an instance's argument may be, besides a variable of the proposition: the number
+# systems, at which the classes above have their canonical instances.
+_STANDARD_TYPES = {"ℕ", "ℤ", "ℚ", "ℝ", "ℂ", "ℝ≥0", "ℝ≥0∞", "Nat", "Int", "Rat", "Real",
+                   "Complex", "NNReal", "ENNReal"}
+
+
+def instance_class(binder: dict, earlier: set[str], allowed: set[str]) -> str | None:
+    """The class of an instance binder when it is in `allowed` and applied only to variables
+    bound before it (or to a number system): `[NormedAddCommGroup F]`, `[NeZero N]`,
+    `[InnerProductSpace ℝ F]`. None for any other instance (`[Fact (1 < p)]`, `[NeZero 0]`,
+    a class outside the list), which needs a witness like a hypothesis."""
+    text = ((binder.get("type") or {}).get("text") or "").strip()
+    if not text or any(ch in text for ch in "()[]{}⟨⟩:,"):
+        return None
+    head, *args = text.split()
+    head = head.lstrip("@")
+    if head not in allowed:
+        return None
+    if not all(a in earlier or a in _STANDARD_TYPES for a in args):
+        return None
+    return head
 
 
 def _finding(tier, code, subject, message, **extra):
@@ -405,14 +452,10 @@ class Assessor:
                         "stated" if cl.get("defs") else "unspecified")
 
         if srec:
-            roles = [b["role"] for b in srec.get("binders", [])]
             # A checked refutation needs no witness: a proof of ¬S exhibits an instance meeting
             # S's hypotheses (were they never met, S would hold vacuously and not be refutable).
-            if ("hypothesis" in roles or "instance" in roles) and not cl.get("witness") \
-                    and not res.get("refute_ok"):
-                self.findings.append(_finding(
-                    "obligation", "witness", subj,
-                    f"{spec} has hypotheses but no witness that they can be met"))
+            if not cl.get("witness") and not res.get("refute_ok"):
+                self.witness_check(subj, spec, srec)
             for c in srec.get("consts", []):
                 if c in TOTALISED:
                     self.add_warning("totalised", subj, spec, srec,
@@ -432,6 +475,42 @@ class Assessor:
                     trigger=r.get("name", "")))
         res["regimes"] = regs
         return res
+
+    def witness_check(self, subj: str, spec: str, srec: dict) -> None:
+        """The witness a proposition without one needs. A hypothesis, or an instance of a class
+        not known to be inhabited, raises the `witness` obligation, naming the binders that need
+        it. A proposition whose only hypotheses are instances of `inhabited_classes` over its
+        own variables gets a low-signal `witness-instances` warning instead: no theorem shows
+        them met, but each has a canonical instance. Neither changes a status."""
+        configured = getattr(self.cfg, "inhabited_classes", None)
+        allowed = set(INHABITED_CLASSES if configured is None else configured)
+        earlier: set[str] = set()
+        needs, classes = [], []
+        for b in srec.get("binders", []):
+            role, text = b.get("role"), (b.get("type") or {}).get("text", "?")
+            if role == "hypothesis":
+                needs.append(f"{b.get('name', '?')} : {text}")
+            elif role == "instance":
+                cls = instance_class(b, earlier, allowed)
+                if cls is None:
+                    needs.append(f"[{text}]")
+                else:
+                    classes.append(cls)
+            if b.get("name"):
+                earlier.add(b["name"])
+        if needs:
+            shown = "; ".join(needs[:3]) + ("; …" if len(needs) > 3 else "")
+            self.findings.append(_finding(
+                "obligation", "witness", subj,
+                f"{spec} has hypotheses but no witness that they can be met ({shown})",
+                binders=needs))
+        elif classes:
+            names = ", ".join(dict.fromkeys(classes))
+            self.add_warning(
+                "witness-instances", subj, spec, srec,
+                f"{spec} has no witness; its only hypotheses are instances of classes treated "
+                f"as inhabited ({names}), and no theorem shows them met together",
+                "witness-instances")
 
     def add_warning(self, code, subj, name, rec, message, trigger):
         fp = rec.get("fingerprint")
