@@ -531,6 +531,14 @@
         {#if claim.anchor.kind === "approximate"} · located approximately{/if}
         {#if claim.source_matches === false}<span class="bad"> · differs from the frozen inventory</span>{/if}</p>{/if}
     {/if}
+    {#if claim.source_parts?.length > 1}
+      <h3>Pinned passages ({claim.source_parts.length})</h3>
+      <p class="faint small">The claim's source pin covers these passages, in this order; a change to any of them reopens its reviews.{#if claim.source_matches === false}<span class="bad"> One of them differs from the frozen inventory.</span>{/if}</p>
+      {#each claim.source_parts as part, i}
+        <p class="faint small part-head"><code>{part.file}</code>, lines {part.start_line}–{part.end_line}{#if i === 0} · the claim's passage{:else if part.macro} · the definition of <code>{part.macro}</code>{/if}</p>
+        <pre class="srctext">{part.text}</pre>
+      {/each}
+    {/if}
     {#if Object.keys(claim.decls || {}).length}
       {@const ds = Object.keys(claim.decls || {})}
       <h3>Definitions ({ds.length})</h3>
@@ -641,6 +649,7 @@
   .proof dd { margin: 0 0 6px; }
   .review { border-left: 3px solid var(--border); padding-left: 10px; margin: 8px 0; }
   .pill { font-size: 11px; padding: 0 6px; border-radius: 999px; background: var(--surface-2); color: var(--muted); margin-left: 4px; }
+  .part-head { margin: 8px 0 2px; }
   .srctext { white-space: pre-wrap; overflow-wrap: anywhere; font: 13px/1.5 var(--mono); background: var(--surface); padding: 8px 10px; border-radius: var(--radius); }
   .rtext { white-space: pre-wrap; font: 13px/1.5 var(--sans); color: var(--muted); margin: 6px 0 0; }
   .foot { margin-top: 16px; }

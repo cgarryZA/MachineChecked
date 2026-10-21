@@ -42,6 +42,9 @@ class Paper:
     # "manuscript" (the unpublished source at its pinned revision, `source.rev`). When absent, a
     # paper with `published` (or an arXiv source) pins that published version (docs/ASSURANCE.md).
     version: str | None = None
+    # Notation macros: those of the project and the paper's own, as control sequences. A passage
+    # that uses one is read with its definition's digest (docs/SOURCE_REGIONS.md).
+    notation_macros: list[str] = field(default_factory=list)
     # A paper whose source is a PDF: the PDF's SHA-256, pinned by the configuration. The release
     # gate accepts a PDF as source evidence only when it is pinned and matches (EVIDENCE_POLICY).
     pdf_sha256: str | None = None
@@ -120,6 +123,7 @@ def load(path: str | Path) -> Config:
         raw = tomllib.load(f)
     base = path.parent
     proj = _req(raw, "project", str(path))
+    notation = _macros(proj, str(path))
     papers = []
     for p in raw.get("paper", []):
         src = _req(p, "source", "paper")
@@ -132,7 +136,8 @@ def load(path: str | Path) -> Config:
             id=_req(p, "id", "paper"), title=p.get("title", p["id"]), source=src,
             root=p.get("root"), pdf=p.get("pdf"), pdf_sha256=p.get("pdf_sha256"), commit=src.get("rev"), envs=p.get("envs"),
             publish=Publish(**p.get("publish", {})), published=p.get("published"),
-            published_note=p.get("note"), version=p.get("version")))
+            published_note=p.get("note"), version=p.get("version"),
+            notation_macros=list(dict.fromkeys(notation + _macros(p, f"paper {p['id']}")))))
     return Config(
         path=path,
         name=_req(proj, "name", "project"),
@@ -176,3 +181,13 @@ def _names(proj: dict, key: str, where: str) -> list[str] | None:
     if not isinstance(v, list) or not all(isinstance(x, str) for x in v):
         raise ConfigError(f"{where}: {key} must be a list of names")
     return v
+
+
+def _macros(table: dict, where: str) -> list[str]:
+    """The notation macros a table lists (`notation_macros`), as control sequences."""
+    from .source_regions import RegionError, macro_name
+    names = _names(table, "notation_macros", where) or []
+    try:
+        return [macro_name(n) for n in names]
+    except RegionError as error:
+        raise ConfigError(f"{where}: {error}") from None
