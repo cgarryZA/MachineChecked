@@ -10,7 +10,8 @@ records none.
 
 A reading counts for a claim only while the digest it records for that claim is the claim's
 current pin: a changed text, or a claim the marker does not record, reopens the review for that
-claim.
+claim. When the passage uses notation macros the configuration lists (`notation_macros`), the
+digest also covers their definitions (`reading_digest`), so a changed definition reopens it too.
 
 A marker written before this attribute existed records no digests. It counts for a claim only
 while the claim's pin is shown unchanged since the marker was written: Git gives the commit that
@@ -26,6 +27,7 @@ nothing else.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -51,11 +53,34 @@ def reading_claims(inventory: dict, target: str, name: str) -> list[dict]:
     return out
 
 
-def digests(inventory: dict, target: str, name: str) -> dict[str, str]:
-    """The digests a current review of `name` records: claim id to the claim's source pin, for
-    the pinned claims it reads."""
-    return {c["id"]: c["source_sha256"] for c in reading_claims(inventory, target, name)
-            if c.get("source_sha256")}
+NOTATION_READING = "tex-notation-reading-v1"
+
+
+def reading_digest(claim: dict, region: dict | None) -> str:
+    """The digest a reading of `claim` records: the claim's source pin, or, when its passage
+    uses notation macros the configuration lists (`notation` of its source evidence), the
+    SHA-256 of the scheme, the pin and each macro's name and definition digest, in order. A
+    change to the definition of a listed macro therefore reopens the readings of every passage
+    that uses it, as a change to the passage does."""
+    notation = (region or {}).get("notation") or []
+    if not notation:
+        return claim["source_sha256"]
+    text = NOTATION_READING + "\n" + f"passage {claim['source_sha256']}\n" + "".join(
+        f"notation {m['macro']} {m['sha256']}\n" for m in notation)
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def region_of(tex: dict | None, claim: dict) -> dict | None:
+    """The source evidence of a claim's passage, if the build recorded one."""
+    return ((tex or {}).get(claim.get("paper"), {}).get("regions") or {}).get(claim["id"])
+
+
+def digests(inventory: dict, target: str, name: str, tex: dict | None = None) -> dict[str, str]:
+    """The digests a current review of `name` records: claim id to the digest of a reading of
+    the claim's passage (`reading_digest`, over the source evidence `tex`), for the pinned
+    claims it reads."""
+    return {c["id"]: reading_digest(c, region_of(tex, c))
+            for c in reading_claims(inventory, target, name) if c.get("source_sha256")}
 
 
 def attribute(values: dict[str, str]) -> str:

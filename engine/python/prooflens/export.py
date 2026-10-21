@@ -111,6 +111,8 @@ def public_claim(chunk: dict, pub) -> dict:
     out["statement_tex"] = chunk.get("statement_tex") if pub.source_text else None
     out["context_tex"] = chunk.get("context_tex") if pub.source_text else None
     out["excerpt"] = chunk.get("excerpt") if pub.source_text else None
+    if chunk.get("source_parts") and pub.source_text:
+        out["source_parts"] = chunk["source_parts"]
     a = chunk.get("anchor")
     # `head` (the baseline of the first line) is what the index's top is computed from, so the
     # published claim must keep it for its location to agree with the index.

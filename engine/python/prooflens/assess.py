@@ -27,7 +27,7 @@ from .status import fields
 
 from . import review_sources
 from .reviews import Review, history
-from .source_regions import SCHEME as SOURCE_SCHEME, changed_line, matches as source_matches
+from .source_regions import SCHEMES as SOURCE_SCHEMES, changed_line, matches as source_matches
 
 OUT_OF_SCOPE = {"expository", "literature", "empirical", "proof-step", "part-of", "duplicate"}
 
@@ -155,6 +155,7 @@ class Assessor:
         self.authors = set(cfg.statement_authors)
         self._history = None
         self._unlisted: list[str] | None = None
+        self._pins: dict[str, str | None] | None = None
 
     # -- declarations the probe did not find ------------------------------------------------
 
@@ -196,7 +197,7 @@ class Assessor:
         shows it unchanged since the marker was written."""
         hist = history(self.reviews, target, name)
         last = hist[-1] if hist else None
-        readers = review_sources.digests(self.inv, target, name)
+        readers = review_sources.digests(self.inv, target, name, self.tex)
         need = {claim: readers[claim]} if claim in readers else readers
         why = source_claim = None
         record = last
@@ -224,7 +225,14 @@ class Assessor:
 
     def _read_one(self, review: Review, cid: str, sha: str) -> str:
         """Whether `review` read the current passage `sha` of claim `cid`
-        (`review_sources.marker_state`)."""
+        (`review_sources.marker_state`). When `sha` covers listed notation macros, a marker that
+        records only the claim's pin, or no digests, read the passage without their definitions
+        (`notation-unrecorded`)."""
+        if self._pins is None:
+            self._pins = {c["id"]: c.get("source_sha256") for c in self.inv["claims"]}
+        pin = self._pins.get(cid)
+        if pin and sha != pin and (review.source is None or review.source.get(cid) == pin):
+            return "notation-unrecorded"
         if review.source is None and self._history is None:
             self._history = review_sources.History(getattr(self.cfg, "root", None),
                                                    getattr(self.cfg, "inventory", None), self.inv)
@@ -240,7 +248,8 @@ class Assessor:
             st = self._read_one(review, cid, sha)
             if st != "current":
                 return {"changed": "source-changed", "unread": "source-unread",
-                        "unrecorded": "source-unrecorded"}[st], cid
+                        "unrecorded": "source-unrecorded",
+                        "notation-unrecorded": "source-notation-unrecorded"}[st], cid
         return "source-changed", sorted(need)[0]   # not reached: the last marker read them
 
     def _claim_label(self, cid: str | None) -> str:
@@ -255,11 +264,18 @@ class Assessor:
             return ""
         why = r.get("why")
         if why == "source-changed":
-            return (f" (the source text of {self._claim_label(r.get('source_claim'))} changed "
-                    "since its last reading)")
+            c = next((c for c in self.inv["claims"] if c["id"] == r.get("source_claim")), None)
+            notation = c is not None and (review_sources.region_of(self.tex, c) or {}).get(
+                "notation")
+            return (f" (the source text of {self._claim_label(r.get('source_claim'))}"
+                    + (", or a definition of the notation it uses," if notation else "")
+                    + " changed since its last reading)")
         if why == "source-unread":
             return (f" (its last review did not read the passage of "
                     f"{self._claim_label(r.get('source_claim'))})")
+        if why == "source-notation-unrecorded":
+            return (f" (its last review of {self._claim_label(r.get('source_claim'))} did not "
+                    "record the definitions of the notation macros its passage uses)")
         if why == "source-unrecorded":
             return (" (its last review was made before source pins were recorded, and the "
                     f"source text of {self._claim_label(r.get('source_claim'))} cannot be shown "
@@ -593,13 +609,17 @@ class Assessor:
                          "source-unread": "the proposition's last review did not read this "
                                           "claim's passage",
                          "source-unrecorded": "the proposition was reviewed before source pins "
-                                              "were recorded"}.get(
+                                              "were recorded",
+                         "source-notation-unrecorded": "the proposition's last review did not "
+                                                       "record the definitions of the notation "
+                                                       "macros this claim's passage uses"}.get(
                         c["spec_review"].get("why"),
                         "the proposition changed after its last review"), c)
             for d, r in (c.get("def_reviews") or {}).items():
                 why = r.get("why")
                 defs[d] = why if r["state"] == "stale" and why in (
-                    "source-changed", "source-unread", "source-unrecorded") else r["state"]
+                    "source-changed", "source-unread", "source-unrecorded",
+                    "source-notation-unrecorded") else r["state"]
             if c.get("witness") and not c.get("witness_ok"):
                 add("the witness that the hypotheses can be met fails its check", c)
             if any(not r["discharged"] for r in c.get("regimes", [])):
@@ -626,6 +646,8 @@ class Assessor:
                              ("source-unread", "have a review that did not read their passage"),
                              ("source-unrecorded", "were reviewed before source pins were "
                                                    "recorded"),
+                             ("source-notation-unrecorded", "have a review that did not record "
+                                                            "the definitions of their notation"),
                              ("author-reviewed", "were reviewed only by the author")):
             if counts.get(state):
                 out.append(f"{counts[state]} definition{'s' if counts[state] > 1 else ''} its "
@@ -774,7 +796,7 @@ class Assessor:
                 line = line_location(c)
                 if line is not None:
                     region = (t.get("regions") or {}).get(c["id"], {})
-                    if c.get("source_hash_scheme") != SOURCE_SCHEME:
+                    if c.get("source_hash_scheme") not in SOURCE_SCHEMES:
                         self.findings.append(_finding(
                             "violation", "source-hash-scheme", c["id"],
                             f"{c['location']}: source regions must be pinned at the original "
@@ -789,6 +811,22 @@ class Assessor:
                         self.findings.append(_finding(
                             "violation", "source-changed", c["id"],
                             f"the source region at {c['location']} {detail}"))
+                    macros = region.get("macros") or []
+                    if macros:
+                        # One warning per passage. Its trigger is the set of macros, so a
+                        # dismissal (tied to the passage's digest) reopens when another macro
+                        # defined outside the passage comes into use.
+                        names = " ".join(m["macro"] for m in macros)
+                        where = "; ".join(f"{m['macro']} at {', '.join(m['defined'])}"
+                                          for m in macros)
+                        self.add_warning(
+                            "source-macro-unpinned", c["id"], c["id"],
+                            {"fingerprint": c.get("source_sha256")},
+                            f"the source region at {c['location']} uses macros defined outside "
+                            f"it ({where}); a change to those definitions does not change the "
+                            "pin. Pin the definitions whose values are part of the claim "
+                            "(machinechecked inventory rebound --macro NAME), and list the "
+                            "notation in notation_macros", names)
                     continue
                 a = match_anchor(c, anchors)
                 if a is None:

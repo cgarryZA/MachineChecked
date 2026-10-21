@@ -26,7 +26,24 @@
         "label": {"type": ["string", "null"]},
         "location": {"type": ["string", "null"]},
         "source_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
-        "source_hash_scheme": {"const": "tex-region-v1"},
+        "source_hash_scheme": {"enum": ["tex-region-v1", "tex-regions-v1"]},
+        "source_line_sha256": {"type": "array", "items": {"type": "string", "pattern": "^[0-9a-f]{64}$"}},
+        "source_parts": {
+          "type": "array", "minItems": 1,
+          "items": {
+            "type": "object", "required": ["location", "sha256", "line_sha256"],
+            "additionalProperties": false,
+            "properties": {
+              "location": {"type": "string", "pattern": "^.+:[0-9]+$"},
+              "end_line": {"type": "integer", "minimum": 1},
+              "start_column": {"type": "integer", "minimum": 1},
+              "end_column": {"type": "integer", "minimum": 1},
+              "macro": {"type": "string", "pattern": "^\\\\[A-Za-z@]+$"},
+              "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+              "line_sha256": {"type": "array", "items": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}
+            }
+          }
+        },
         "source_region": {
           "type": "object", "required": ["end_line"], "additionalProperties": false,
           "properties": {
