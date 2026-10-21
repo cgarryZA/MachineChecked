@@ -1148,7 +1148,7 @@ class LeanFacts:
         docstrings that the environment it was indexed in does not know. A module indexed with
         only some of the project loaded may report a name another project module declares, so
         a name the project's index holds is left out: as written, or inside a namespace the
-        module declares into, as the probe tries it."""
+        module declares into, enters or opens, as the probe tries it (`scopes`)."""
         names = {r["name"] for r in index}
         spaces: dict[str, set[str]] = {}
         for r in index:
@@ -1157,7 +1157,8 @@ class LeanFacts:
                 ".".join(parts[:i]) for i in range(1, len(parts)))
         return [d for m in sorted(self.docs) for d in self.docs[m]
                 if d["name"] not in names
-                and not any(f"{ns}.{d['name']}" in names for ns in spaces.get(m, ()))]
+                and not any(f"{ns}.{d['name']}" in names
+                            for ns in spaces.get(m, set()) | set(d.get("scopes", ())))]
 
     def _accept_answers(self, name: str, where: dict[str, set[str]], groups: list[list[str]]
                         ) -> tuple[dict | None, str | None]:

@@ -314,7 +314,7 @@ machinechecked check
 
 The command exits with an error when a linked declaration is missing or unproved.
 
-It also warns, with the file and line, about each name a module docstring lists that the project and its dependencies do not declare: a dotted name such as `Widget.foo_le_bar`, or the name a list item begins with under a "Main …" heading. A deleted or renamed declaration often leaves such a name behind. The reader's banner lists them too. A warning does not change the exit code.
+It also warns, with the file and line, about each name a module docstring lists that the project and its dependencies do not declare: a dotted name such as `Widget.foo_le_bar`, or the name a list item begins with under a "Main …" heading. A deleted or renamed declaration often leaves such a name behind. Names resolve as in Lean, through the namespaces the file enters and opens. A name that is only a module or a namespace gets its own warning; to name a module on purpose, write it in full and call it one ("the module `Example.Shapes.Widget`"). The reader's banner lists them too. A warning does not change the exit code.
 
 Generated files in `.machinechecked/` are Git-ignored. Use `--out` to save the HTML elsewhere.
 The bundle contains the paper and Lean statements; share it with an appropriate audience.

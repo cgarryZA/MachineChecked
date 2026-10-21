@@ -350,7 +350,8 @@ def parse_records(lines) -> dict:
             res["proofs"][f"{rec['kind']}:{rec['name']}:{rec.get('spec') or ''}"] = rec
         elif kind == "moddoc":
             res["moddocs"].append({k: rec[k] for k in ("module", "line", "name", "heading",
-                                                       "item_lead") if k in rec})
+                                                       "item_lead", "kind", "full", "scopes")
+                                   if k in rec})
         elif kind == "names":
             # Names cited in review text: those checked, and those nothing resolves.
             res["names"] = {"checked": rec.get("checked", []),

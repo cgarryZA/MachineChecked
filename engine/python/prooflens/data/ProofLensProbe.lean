@@ -962,9 +962,112 @@ def nameLike (s : List Char) : Bool :=
   | c :: _ => !c.isDigit && c != '.' && s.getLast? != some '.'
     && (splitChars '.' s).all (fun p => !p.isEmpty && p.all ok)
 
-/-- Every backticked name in the docstrings of the modules of `roots` that is no declaration,
-namespace or module: its module, its line, the heading it is under and whether it begins a list
-item. A name is tried as written and inside each namespace the module declares into. -/
+/-- `s` with its comments and string literals blanked out, its newlines kept. -/
+partial def stripComments (out : Array Char) (depth : Nat) (inLine inStr : Bool) :
+    List Char → Array Char
+  | [] => out
+  | c :: r =>
+    if c == '\n' then stripComments (out.push '\n') depth false inStr r
+    else if inLine then stripComments out depth true inStr r
+    else if depth > 0 then
+      match c, r with
+      | '/', '-' :: r' => stripComments out (depth + 1) false false r'
+      | '-', '/' :: r' => stripComments (out.push ' ') (depth - 1) false false r'
+      | _, _ => stripComments out depth false false r
+    else if inStr then
+      match c, r with
+      | '\\', '\n' :: r' => stripComments (out.push '\n') 0 false true r'
+      | '\\', _ :: r' => stripComments out 0 false true r'
+      | '"', _ => stripComments (out.push ' ') 0 false false r
+      | _, _ => stripComments out 0 false true r
+    else
+      match c, r with
+      | '-', '-' :: r' => stripComments out 0 true false r'
+      | '/', '-' :: r' => stripComments out 1 false false r'
+      | '"', _ => stripComments (out.push ' ') 0 false true r
+      | '\'', '"' :: '\'' :: r' => stripComments (out.push ' ') 0 false false r'
+      | _, _ => stripComments (out.push c) 0 false false r
+
+/-- The words of a line of Lean, with parentheses as words of their own. -/
+def words (l : List Char) : List String :=
+  let spaced := l.foldr (fun c acc =>
+    if c == '(' || c == ')' then ' ' :: c :: ' ' :: acc
+    else if c.isWhitespace then ' ' :: acc else c :: acc) []
+  ((splitChars ' ' spaced).filter (!·.isEmpty)).toList.map charsToString
+
+/-- Runs `x` as if inside namespace `ns` with `opens` open, as Lean resolves an identifier
+there. -/
+def withScope (ns : Name) (opens : List OpenDecl) (x : MetaM α) : MetaM α :=
+  withTheReader Core.Context (fun c => { c with currNamespace := ns, openDecls := opens }) x
+
+/-- The namespaces a source file enters (`namespace`) and what its `open` commands open,
+each resolved where the command stands. An `open … in` opens for one command only and is left
+out; every other `open` is kept to the end of the file, as a docstring at the top of a file
+names what the file goes on to open. -/
+def fileScopes (src : String) : MetaM (Array Name × List OpenDecl) := do
+  let mut stack : Array Name := #[]
+  let mut spaces : Array Name := #[]
+  let mut opens : List OpenDecl := []
+  for l in splitChars '\n' (stripComments #[] 0 false false src.toList).toList do
+    let ws := (words l).dropWhile (fun w => w ∈ ["noncomputable", "public", "private"]
+      || "@[".toList.isPrefixOf w.toList)
+    let cur := stack.back?.getD .anonymous
+    match ws with
+    | "namespace" :: n :: _ =>
+      let mut ns := cur
+      for c in n.toName.components do
+        ns := ns ++ c
+        stack := stack.push ns
+        unless spaces.contains ns do spaces := spaces.push ns
+    | "section" :: _ => stack := stack.push cur
+    | "end" :: rest =>
+      let k := match rest with | n :: _ => max 1 n.toName.components.length | [] => 1
+      stack := stack.extract 0 (stack.size - k)
+    | "open" :: rest =>
+      if rest.contains "in" then continue
+      let rest := rest.filter (· != "scoped")
+      let resolve := fun (n : String) => do
+        try withScope cur opens (resolveNamespaceCore n.toName (allowEmpty := true))
+        catch _ => pure []
+      let mut i := 0
+      let mut last : List Name := []
+      let mut added : List OpenDecl := []
+      while i < rest.length do
+        let w := rest[i]!
+        if w == "(" then
+          i := i + 1
+          while i < rest.length && rest[i]! != ")" do
+            for ns in last do
+              added := .explicit rest[i]!.toName (ns ++ rest[i]!.toName) :: added
+            i := i + 1
+          last := []
+        else if w == "hiding" then
+          let exs := (rest.drop (i + 1)).map String.toName
+          added := last.map (.simple · exs) ++ added
+          last := []
+          i := rest.length
+        else if w == "renaming" || w == ")" then
+          i := rest.length
+        else
+          added := last.map (.simple · []) ++ added
+          last ← resolve w
+          i := i + 1
+      added := last.map (.simple · []) ++ added
+      opens := opens ++ added.reverse
+    | _ => pure ()
+  return (spaces, opens)
+
+/-- Whether the line `l` calls what it names a module or a namespace. -/
+def saysModule (l : List Char) : Bool :=
+  let w := charsToString (l.map Char.toLower)
+  (w.splitOn "module").length > 1 || (w.splitOn "namespace").length > 1
+
+/-- Every backticked name in the docstrings of the modules of `roots` that resolves to no
+constant: its module, its line, the heading it is under, whether it begins a list item, and
+what it is instead (`kind`: a `module`, a `namespace`, or `none`, with its `full` name). A name
+is resolved as Lean resolves an identifier, inside each namespace the module's file enters or
+declares into and with every namespace its file opens (`scopes`). A module or namespace named
+in full on a line that calls it a module or a namespace is not reported. -/
 def moduleDocRecords (h : IO.FS.Handle) (roots : Array Name) : MetaM Unit := do
   let env ← getEnv
   let names := env.header.moduleNames
@@ -982,8 +1085,33 @@ def moduleDocRecords (h : IO.FS.Handle) (roots : Array Name) : MetaM Unit := do
       while !p.isAnonymous do
         unless spaces.contains p do spaces := spaces.push p
         p := p.getPrefix
-    let known := fun (n : Name) => env.contains n || declared.contains n || env.isNamespace n
-      || (env.getModuleIdx? n).isSome
+    -- The source is read from the project the probe runs in; a module whose file is elsewhere
+    -- (a dependency's) is resolved with the namespaces it declares into only.
+    let file : System.FilePath := mod.components.foldl (fun p c => p / c.toString) "."
+    let (entered, opens) ← try fileScopes (← IO.FS.readFile (file.addExtension "lean"))
+      catch _ => pure (#[], [])
+    for ns in entered do
+      unless spaces.contains ns do spaces := spaces.push ns
+    let scopes := #[Name.anonymous] ++ spaces
+    let scopesJson := Json.arr ((spaces ++ (opens.filterMap fun
+      | .simple ns _ => some ns | _ => none).toArray).map (Json.str ·.toString))
+    let constant := fun (n : Name) => do
+      for ns in scopes do
+        -- A private declaration of the module, or a protected one, named inside its
+        -- namespace.
+        if env.contains (ns ++ n) || declared.contains (ns ++ n) then return true
+      for ns in scopes do
+        let rs ← try withScope ns opens (resolveGlobalName n) catch _ => pure []
+        if rs.any (·.2.isEmpty) then return true
+      return false
+    let other := fun (n : Name) => do
+      for ns in scopes do
+        if (env.getModuleIdx? (ns ++ n)).isSome then return some ("module", ns ++ n)
+      for ns in scopes do
+        let r ← try withScope ns opens (resolveNamespaceCore n (allowEmpty := true))
+          catch _ => pure []
+        if let some full := r.head? then return some ("namespace", full)
+      return (none : Option (String × Name))
     for d in docs do
       let mut heading : List Char := []
       let mut fence := false
@@ -1005,11 +1133,19 @@ def moduleDocRecords (h : IO.FS.Handle) (roots : Array Name) : MetaM Unit := do
             if nameLike tok then
               let n := (splitChars '.' tok).foldl (fun n p => Name.str n (charsToString p))
                 .anonymous
-              unless known n || spaces.any (fun ns => known (ns ++ n)) do
-                emit h (Json.mkObj [("record", "moddoc"), ("module", mod.toString),
-                  ("line", toJson line), ("name", Json.str (charsToString tok)),
-                  ("heading", Json.str (charsToString heading)),
-                  ("item_lead", toJson (item && k == 1))])
+              unless ← constant n do
+                let what ← other n
+                let marked := match what with
+                  | some (_, full) => full == n && saysModule l
+                  | none => false
+                unless marked do
+                  emit h (Json.mkObj [("record", "moddoc"), ("module", mod.toString),
+                    ("line", toJson line), ("name", Json.str (charsToString tok)),
+                    ("heading", Json.str (charsToString heading)),
+                    ("item_lead", toJson (item && k == 1)),
+                    ("kind", Json.str (what.map (·.1) |>.getD "none")),
+                    ("full", Json.str ((what.map (·.2)).getD n).toString),
+                    ("scopes", scopesJson)])
             k := k + 2
         line := line + 1
 

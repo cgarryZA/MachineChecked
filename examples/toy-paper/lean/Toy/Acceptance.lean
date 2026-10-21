@@ -3,7 +3,7 @@ import Toy.PaperSpec
 /-!
 # Proofs of the statements of the toy paper
 
-Each theorem has exactly a proposition of `Toy.PaperSpec` (or its negation) as its type.
+Each theorem has exactly a proposition of the module `Toy.PaperSpec` (or its negation) as its type.
 -/
 
 namespace Toy.Acceptance
