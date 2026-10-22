@@ -991,13 +991,87 @@ def _session_key(modules: list[str]) -> str:
     return "session:" + hashlib.sha256("\n".join(sorted(modules)).encode()).hexdigest()
 
 
+REFRESHED = "a refresh was asked"
+
+
+def index_scope(root: Path, libs: list[str], built: list[str], foreign: set[str],
+                linked: set[str], modules: set[str]) -> tuple[list[str], list[str], list[str]]:
+    """The built modules a paper's build indexes, the libraries it leaves out and their modules
+    it does not index. A library is left out when formalization.yaml maps its namespace only to
+    other papers (`formalization.foreign_roots`). A module of such a library is indexed all the
+    same when the project names it as the module of a linked declaration (`modules`) or its
+    source declares one of the `linked` names, so that a link into another paper's library is
+    checked there and a name two libraries declare is found in both. Only sources are read, so
+    the scope is the same whatever the facts store holds."""
+    from .probe import library_of
+    out = {lib for lib in libs if lib.split(".")[0] in foreign}
+    if not out:
+        return list(built), [], []
+    lasts = {n.rsplit(".", 1)[-1] for n in linked}
+    keep, rest = [], []
+    for m in built:
+        if library_of(m, libs) not in out or m in modules:
+            keep.append(m)
+            continue
+        try:
+            text = (root / (m.replace(".", "/") + ".lean")).read_text(
+                encoding="utf-8", errors="replace") if lasts else ""
+        except OSError:
+            text = ""
+        if any(l in text for l in lasts) and declared_names(text) & linked:
+            keep.append(m)
+        else:
+            rest.append(m)
+    left = sorted({library_of(m, libs) for m in rest})
+    return keep, left, rest
+
+
+def sources_declare(root: Path, modules: list[str]) -> set[str]:
+    """The names the sources of `modules` declare, as far as their text shows."""
+    out: set[str] = set()
+    for m in modules:
+        try:
+            out |= declared_names((root / (m.replace(".", "/") + ".lean"))
+                                  .read_text(encoding="utf-8", errors="replace"))
+        except OSError:
+            continue
+    return out
+
+
+def project_index(root: Path, lake: str = "lake", log=None) -> tuple[list[dict], dict[str, str]]:
+    """The complete index records of every built module of the project at `root`, whatever
+    paper maps them, and the modules that could not be loaded: from the facts store, extracting
+    what it does not hold current (a search of every library, `compare --query search
+    --all-libraries`)."""
+    from .config import work_dir_name
+    libs = lib_names(root)
+    built, unbuilt = built_modules(root, libs) if libs else ([], [])
+    if not built:
+        raise ViewError("the Lean project is not built (run `lake build`)")
+    quiet = log or (lambda m: None)
+    lean = LeanFacts(root, libs, built, unbuilt, root / work_dir_name(root) / "build", lake,
+                     quiet)
+    with lean.store.lock(log):
+        return lean.index(set())
+
+
+def scope_note(left_out: list[str], modules: int) -> str:
+    return (f"{modules} built module(s) of {', '.join(left_out)}, which formalization.yaml maps "
+            "only to other papers, are not indexed for this paper: its suggestions, search and "
+            "paper-number checks leave them out. `machinechecked inspect NAME` reaches any "
+            "declaration, and `machinechecked compare --query search TEXT --all-libraries` "
+            "searches every library")
+
+
 class LeanFacts:
     """The Lean facts a view needs, from the facts store (`facts.Store`) where it holds them
     current, else from the probe, which then stores them. A module's index is stored per module,
     a linked or suggested declaration's record per declaration and module (with the records of
     its closure, each stored once), so an edit outside Lean starts no Lean session and an edit to
     a module reopens only what that module's importers extracted. With `reuse_only`, nothing is
-    extracted: a build that would need Lean stops with `StaleLean`.
+    extracted: a build that would need Lean stops with `StaleLean`. With `refresh`, nothing
+    stored is used: every fact the build reads is extracted again and stored in place of the old
+    one, and the entries it does not read are kept.
 
     A module that fails to load is stored as failed only when Lean reported an error in it (it
     does not import or elaborate), a failure the same inputs repeat. A failure of resources or of
@@ -1013,11 +1087,19 @@ class LeanFacts:
 
     def __init__(self, root: Path, libs: list[str], built: list[str], unbuilt: list[str],
                  work: Path, lake: str = "lake", log=print, reuse_only: bool = False,
-                 bridges=frozenset()):
+                 bridges=frozenset(), refresh: bool = False, scope: list[str] | None = None):
         from . import facts
         self.root, self.libs, self.built, self.unbuilt = root, libs, built, unbuilt
         self.work, self.lake, self.log, self.reuse_only = work, lake, log, reuse_only
         self.store = facts.Store(root, libs, work, STANDARD_AXIOMS)
+        # The modules to index: every built module unless a paper's build leaves some out
+        # (`index_scope`). A name the index does not hold, and no indexed library declares, is
+        # looked for in the others.
+        self.scope = list(built) if scope is None else list(scope)
+        # With `refresh`, a stored entry is used only if this build wrote it: every fact the
+        # build reads is extracted again and replaces the stored one.
+        self.refresh = refresh
+        self.written: set[tuple[str, str]] = set()
         self.sessions = 0
         self.fresh: dict[str, list[dict]] = {}       # link records extracted in this build
         self.fresh_decls: dict[str, dict] = {}
@@ -1043,6 +1125,17 @@ class LeanFacts:
         if self.reuse_only:
             raise StaleLean(f"the stored Lean facts do not cover this build: {what}; run "
                             "`machinechecked build` without `--reuse-lean`")
+
+    def _get(self, kind: str, key: str) -> tuple[dict | None, str | None]:
+        """A stored entry this build may use, as `facts.Store.get`; with `refresh`, only one
+        this build wrote."""
+        if self.refresh and (kind, key) not in self.written:
+            return None, REFRESHED
+        return self.store.get(kind, key)
+
+    def _put(self, kind: str, key: str, env: dict[str, str], **data) -> dict:
+        self.written.add((kind, key))
+        return self.store.put(kind, key, env, **data)
 
     def _run(self, modules: list[str], requests: list[dict]) -> dict[str, str]:
         sessions: dict[str, list[str]] = {}
@@ -1100,9 +1193,9 @@ class LeanFacts:
                         refs.setdefault(r["module"], []).append(_clean(r))
                 for m in graph:
                     if m in built:
-                        st.put("index", m, st.environment([m], graph),
-                               records=per_mod.get(m, []), moddocs=docs.get(m, []),
-                               refs=_dedup(refs.get(m, [])))
+                        self._put("index", m, st.environment([m], graph),
+                                  records=per_mod.get(m, []), moddocs=docs.get(m, []),
+                                  refs=_dedup(refs.get(m, [])))
             decls = {r["name"]: r for r in rs if r["record"] == "decl"}
             whole = st.environment(mods, graph)
             for r in rs:
@@ -1116,11 +1209,11 @@ class LeanFacts:
                     continue
                 answer = {"record": _clean(r),
                           "decls": [st.put_object(_clean(decls[n])) for n in members]}
-                st.put("link", f"{r['name']}\0{_session_key(mods)}", whole, **answer)
+                self._put("link", f"{r['name']}\0{_session_key(mods)}", whole, **answer)
                 m = (r.get("decl") or {}).get("module")
                 if "missing" not in errors and m and st.own(m) is not None:
-                    st.put("link", f"{r['name']}\0module:{m}", st.environment([m], graph),
-                           **answer)
+                    self._put("link", f"{r['name']}\0module:{m}", st.environment([m], graph),
+                              **answer)
             for r in rs:
                 if r["record"] != "accept":
                     continue
@@ -1136,31 +1229,41 @@ class LeanFacts:
                             and x["name"] == spec}
                 targets |= self.declared.get(spec, set())
                 targets = sorted(t for t in targets if t)
-                st.put("accept", f"{r['name']}\0{spec}\0{_session_key(mods)}",
-                       st.environment(list(mods) + targets, graph), record=_clean(r))
+                self._put("accept", f"{r['name']}\0{spec}\0{_session_key(mods)}",
+                          st.environment(list(mods) + targets, graph), record=_clean(r))
                 m = r.get("module")
                 if "missing" not in errors and m and st.own(m) is not None:
-                    st.put("accept", f"{r['name']}\0{spec}\0module:{m}",
-                           st.environment([m] + targets, graph), record=_clean(r))
+                    self._put("accept", f"{r['name']}\0{spec}\0module:{m}",
+                              st.environment([m] + targets, graph), record=_clean(r))
         if failed:
             project = {m: d for m in self.built if (d := st.own(m)) is not None}
             for m, reason in failed.items():
                 if m in self.retry:
-                    st.put("attempt", m, {}, reason=reason)
+                    self._put("attempt", m, {}, reason=reason)
                     st.remove("failed", m)
                 else:
-                    st.put("failed", m, project, reason=reason)
+                    self._put("failed", m, project, reason=reason)
                     st.remove("attempt", m)
 
-    def _answers(self, name: str, where: dict[str, set[str]],
-                 groups: list[list[str]]) -> tuple[list[dict] | None, str | None]:
+    def _answers(self, name: str, where: dict[str, set[str]], groups: list[list[str]],
+                 wider: list[list[str]] = ()) -> tuple[list[dict] | None, str | None]:
         """The stored answers for `name`: one for each module the index says declares it, or,
-        for a name the index does not hold, one for each library's session."""
-        keys = [f"{name}\0module:{m}" for m in sorted(where[name])] if name in where \
-            else [f"{name}\0{_session_key(g)}" for g in groups]
+        for a name the index does not hold, one for each library's session; and when no such
+        session finds it, one for each session of the libraries the index leaves out
+        (`wider`)."""
+        if name in where:
+            return self._stored([f"{name}\0module:{m}" for m in sorted(where[name])])
+        out, why = self._stored([f"{name}\0{_session_key(g)}" for g in groups])
+        if out is not None and wider and all(_missing(a["record"]) for a in out):
+            more, why = self._stored([f"{name}\0{_session_key(g)}" for g in wider])
+            out = None if more is None else out + more
+        return (out, None) if out is not None else (None, why)
+
+    def _stored(self, keys: list[str]) -> tuple[list[dict] | None, str | None]:
+        """The stored link answers of `keys`, or None and why when one is not stored current."""
         out = []
         for k in keys:
-            e, why = self.store.get("link", k)
+            e, why = self._get("link", k)
             if e is None:
                 return None, why
             objs = [self.store.get_object(o) for o in e.get("decls", [])]
@@ -1168,6 +1271,13 @@ class LeanFacts:
                 return None, "not extracted yet"
             out.append({"record": e["record"], "decls": objs})
         return out, None
+
+    def _unfound(self, name: str, groups: list[list[str]]) -> bool:
+        """Whether no session of `groups` found `name`, by the answers stored or extracted in
+        this build."""
+        got, _ = self._stored([f"{name}\0{_session_key(g)}" for g in groups])
+        recs = [a["record"] for a in got] if got is not None else self.fresh.get(name, [])
+        return all(_missing(r) for r in recs)
 
     def module_docs(self, index: list[dict]) -> list[dict]:
         """The `moddoc` records of the indexed modules: the backticked names in a module's
@@ -1198,7 +1308,7 @@ class LeanFacts:
                 else [f"{t}\0{spec}\0{_session_key(g)}" for g in groups]
             recs = []
             for k in keys:
-                e, why = self.store.get("accept", k)
+                e, why = self._get("accept", k)
                 if e is None:
                     return None, why
                 recs.append(e["record"])
@@ -1208,24 +1318,25 @@ class LeanFacts:
     # -- the two phases ---------------------------------------------------------------------
 
     def index(self, linked: set[str]) -> tuple[list[dict], dict[str, str]]:
-        """The index of the built modules and the modules that could not be loaded. The linked
-        names without a stored answer are asked in the same sessions, so the modules load once."""
+        """The index of the built modules in scope and the modules that could not be loaded.
+        The linked names without a stored answer are asked in the same sessions, so the modules
+        load once."""
         st = self.store
         by_mod: dict[str, list[dict]] = {}
         failed: dict[str, str] = {}
         stale: dict[str, str] = {}
-        for m in self.built:
-            e, why = st.get("index", m)
+        for m in self.scope:
+            e, why = self._get("index", m)
             if e is not None:
                 by_mod[m] = e["records"]
                 self.docs[m] = e.get("moddocs", [])
                 self.refs[m] = e.get("refs", [])
                 continue
-            f, _ = st.get("failed", m)
+            f, _ = self._get("failed", m)
             if f is not None:
                 failed[m] = f["reason"]
                 continue
-            earlier = st.peek("attempt", m)
+            earlier = None if self.refresh else st.peek("attempt", m)
             stale[m] = f"an earlier attempt failed: {_first_line(earlier['reason'])}" \
                 if earlier else why
         self.declared = _where({r["name"] for rs in by_mod.values() for r in rs},
@@ -1237,7 +1348,7 @@ class LeanFacts:
                          if not (n in where and self._answers(n, where, [])[0] is not None
                                  and self._accept_answers(n, where, [])[0] is not None)
                          and (n in where or not declaring_modules(self.root, self.unbuilt, n)))
-            self.log(f"lean: indexing {len(stale)} of {len(self.built)} built module(s) "
+            self.log(f"lean: indexing {len(stale)} of {len(self.scope)} built module(s) "
                      f"({_reasons(stale)})"
                      + (f" and checking {len(ask)} linked declaration(s)" if ask else ""))
             # The reverse references of every declaration (what the reader's "Used by" shows)
@@ -1250,14 +1361,14 @@ class LeanFacts:
             for m in stale:
                 if m in failed:
                     continue
-                e, _ = st.get("index", m)
+                e, _ = self._get("index", m)
                 by_mod[m] = e["records"] if e is not None else self.fresh_index.get(m, [])
                 self.docs[m] = e.get("moddocs", []) if e is not None else \
                     _dedup(self.fresh_docs.get(m, []))
                 self.refs[m] = e.get("refs", []) if e is not None else \
                     _dedup(self.fresh_refs.get(m, []))
         else:
-            self.log(f"lean: reusing the stored index of {len(self.built)} built module(s)")
+            self.log(f"lean: reusing the stored index of {len(self.scope)} built module(s)")
         index = sorted((r for m in by_mod for r in by_mod[m]),
                        key=lambda r: (r.get("module") or "", (r.get("range") or {}).get("line")
                                       or 0, r["name"]))
@@ -1269,11 +1380,15 @@ class LeanFacts:
         """The records of the linked and suggested names, and of the declarations in their
         closures. Only the modules that declare a name without a stored answer are loaded (with
         what they import); a name the index does not hold (from a dependency, say) is looked
-        for in every loadable module, unless its source shows it in a module that is not
-        built."""
-        loadable = [m for m in self.built if m not in failed]
+        for in every loadable module in scope, and when none declares it, in the built modules
+        the index leaves out, unless its source shows it in a module that is not built."""
+        loadable = [m for m in self.scope if m not in failed]
         where = _where(wanted, [index], loadable)
         groups = [g for _, g in by_library(sorted(loadable), self.libs)]
+        in_scope = set(self.scope)
+        others = [m for m in self.built if m not in in_scope and m not in failed
+                  and self._get("failed", m)[0] is None]
+        wider = [g for _, g in by_library(sorted(others), self.libs)]
         linkrecs: dict[str, list[dict]] = {}
         decls: dict[str, dict] = {}
         need: dict[str, str] = {}
@@ -1287,7 +1402,7 @@ class LeanFacts:
         def settle(n, last: bool = False) -> bool:
             # A name is settled when its record and the answers of its bridges are stored
             # current; after this build's extraction, what it extracted serves instead.
-            got, why = self._answers(n, where, groups)
+            got, why = self._answers(n, where, groups, wider)
             acc, why_acc = self._accept_answers(n, where, groups)
             if got is not None and acc is not None:
                 take(n, got)
@@ -1313,9 +1428,11 @@ class LeanFacts:
         for n in sorted(wanted):
             if n not in where and declaring_modules(self.root, self.unbuilt, n):
                 continue
-            # A name the index sessions of this build answered needs no second session.
+            # A name the index sessions of this build answered needs no second session, unless
+            # none of them found it and the index leaves libraries out.
             if n in self.fresh and all(p in self.fresh_accepts for p in self.bridges
-                                       if p[0] == n):
+                                       if p[0] == n) \
+                    and not (wider and n not in where and self._unfound(n, groups)):
                 settle(n, last=True)
                 continue
             settle(n)
@@ -1326,11 +1443,21 @@ class LeanFacts:
             mine = {n: where[n] for n in need if n in where}
             elsewhere = sorted(n for n in need if n not in where)
             runs = [(sorted(set().union(*mine.values())), sorted(mine))] if mine else []
-            if elsewhere:
-                runs.append((loadable, elsewhere))
+            keys = lambda n, gs: [f"{n}\0{_session_key(g)}" for g in gs]
+            first = [n for n in elsewhere if self._stored(keys(n, groups))[0] is None
+                     or self._accept_answers(n, where, groups)[0] is None]
+            if first:
+                runs.append((loadable, first))
             for mods, names in runs:
                 failed.update(self._run(mods, [{"kind": "link", "name": n} for n in names]
                                         + self._accept_requests(names)))
+            # A name no library in scope declares is looked for in those the index leaves out.
+            wide = [n for n in elsewhere if wider and self._unfound(n, groups)
+                    and self._stored(keys(n, wider))[0] is None]
+            if wide:
+                self.log(f"lean: looking for {len(wide)} declaration(s) in the "
+                         f"{len(others)} built module(s) the index leaves out")
+                failed.update(self._run(others, [{"kind": "link", "name": n} for n in wide]))
             for n in sorted(need):
                 del need[n]
                 settle(n, last=True)
@@ -1362,6 +1489,10 @@ def _dedup(recs: list[dict]) -> list[dict]:
 
 def _clean(rec: dict) -> dict:
     return {k: v for k, v in rec.items() if k != "probe_group"}
+
+
+def _missing(rec: dict) -> bool:
+    return "missing" in (rec.get("errors") or [])
 
 
 def _where(names, record_lists, modules) -> dict[str, set[str]]:
@@ -1438,10 +1569,12 @@ def paper_title(p: Path) -> str:
 
 
 def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
-               log=print, reuse_only: bool = False) -> dict:
+               log=print, reuse_only: bool = False, refresh: bool = False) -> dict:
     """Everything the reader shows for `paper_path` in the Lean project at `root`. With
     `reuse_only`, the Lean facts come from the facts store alone, and a build they do not cover
-    stops with `StaleLean`."""
+    stops with `StaleLean`; with `refresh`, every Lean fact the build reads is extracted again
+    and replaces the stored one. The libraries formalization.yaml maps only to other papers are
+    left out of the index (`index_scope`)."""
     prepare_work_dir(out_dir)
     libs = lib_names(root)
     built, unbuilt = built_modules(root, libs) if libs else ([], [])
@@ -1512,7 +1645,7 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
         notes.append(fy["error"])
     index, linkrecs, decls, acceptrecs, module_docs = [], {}, {}, {}, []
     failed, facts_used, refs = {}, {"sessions": 0}, []
-    retrieval, numbering = None, None
+    retrieval, numbering, index_scope_info = None, None, None
     if fy and "error" not in fy:
         for c in claims:
             rows = fz.links_for(fy, c["kind"], c["number"], paper.title)
@@ -1552,17 +1685,36 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
         linked |= {t for _, t in bridge_pairs}
         work = out_dir / "build"
         (work / "index-cache.json").unlink(missing_ok=True)  # the store replaces it
+        # The libraries mapped only to other papers are not indexed for this one.
+        foreign = fz.foreign_roots(fy, paper.title)
+        named = {m for c in claims for n, m in (c.get("declared_modules") or {}).items()
+                 if n in linked}
+        scope, left_out, rest = index_scope(root, libs, built, foreign, linked, named)
+        if left_out:
+            index_scope_info = {"left_out": left_out, "modules": len(rest)}
+            notes.append(scope_note(left_out, len(rest)))
+            log(f"lean: leaving {len(rest)} built module(s) of {', '.join(left_out)} out of "
+                "this paper's index (formalization.yaml maps them only to other papers)")
+        if refresh:
+            log("lean: refreshing: every Lean fact this build reads is extracted again")
         lean = LeanFacts(root, libs, built, unbuilt, work, lake, log, reuse_only,
-                         bridges=bridge_pairs)
+                         bridges=bridge_pairs, refresh=refresh, scope=scope)
         with lean.store.lock(log):
             full, failed = lean.index(linked)
             index = [index_preview(r) for r in full]
-            module_docs = stale_doc_names(lean.module_docs(index), root)
+            docs = lean.module_docs(index)
+            if rest:
+                # A name the sources of the libraries left out declare is not indexed here,
+                # and not stale.
+                elsewhere = sources_declare(root, rest)
+                docs = [d for d in docs if not any(
+                    (f"{ns}.{d['name']}" if ns else d["name"]) in elsewhere
+                    for ns in {"", *d.get("scopes", ())})]
+            module_docs = stale_doc_names(docs, root)
             if module_docs:
                 notes.append(stale_docs_note(module_docs))
             wanted = set(linked)
             # Content search and the paper's numbers read the complete records.
-            foreign = fz.foreign_roots(fy, paper.title)
             from .retrieval import Retrieval
             retrieval = Retrieval.build(full)
             numbering = paper_numbering(root, full, claims, tex, aux, foreign, retrieval)
@@ -1657,6 +1809,9 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
             "pdf_sha256": sha256_file(pdf) if pdf else None, "tex": tex,
             "claims": claims, "index": index, "decls": decls, "module_docs": module_docs,
             "numbering": numbering}
+    if index_scope_info:
+        # What the index leaves out, so that a declaration there is not taken for absent.
+        body["index_scope"] = index_scope_info
     from .uses import site_index
     return {"body": body, "pdf": pdf, "cfg": cfg, "lean": facts_used, "retrieval": retrieval,
             "uses": site_index(refs) if refs else None}
@@ -1808,6 +1963,7 @@ def write_view_site(view: dict, site: Path, web_dist: Path | None,
              **({"uses": "data/uses.json"} if view.get("uses") else {}),
              "retrieval": "data/retrieval.json" if view.get("retrieval") is not None else None,
              "numbering": (body.get("numbering") or {}).get("pattern"),
+             **({"index_scope": body["index_scope"]} if body.get("index_scope") else {}),
              "editable": False}
     from .pipeline import write_preview
     from .review_queue import simple_queue

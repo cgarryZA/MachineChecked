@@ -149,7 +149,13 @@ dependencies), the probe, the toolchain, the lakefiles and the Lake manifest are
 extracts again only what a change reopens. A link, a note or an edit to the paper extracts
 nothing. `machinechecked build --reuse-lean` uses the stored facts alone: when they do not cover
 the build it starts no Lean session, stops with exit code 2 and names the modules to index or the
-declarations to check, with the reason.
+declarations to check, with the reason. `machinechecked build --refresh` uses no stored fact: it
+extracts again everything the build reads and stores it in place of what was kept. Reuse never
+changes what is assessed: for the same sources, a build from stored facts and a refreshed one
+give the same statuses. A paper's build leaves out of its index the libraries formalization.yaml
+maps only to other papers, and its notes say so. A link into one is still checked by Lean, and a
+linked name whose declaration the source of a module left out also shows is checked there too,
+so a name two libraries declare is still ambiguous without its module.
 
 Evidence records are content-addressed and never rewritten. A release name, once given, keeps its
 evidence.

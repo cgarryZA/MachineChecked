@@ -58,6 +58,11 @@ MachineChecked reads an existing [`formalization.yaml`](https://github.com/mathl
 - its review status and counts appear as the project’s reported metadata.
 
 When the file names several sources, a mapping is used for a paper only if it names that paper by a word distinctive to its title.
+A library whose namespace the file maps only to other papers is not indexed for this paper: its
+suggestions, search and paper-number checks cover the paper's own libraries, and the reader's
+notes name the libraries left out. A link into such a library is still checked, in the module
+that declares it. `machinechecked compare --query search TEXT --all-libraries` searches every
+library, and `machinechecked inspect NAME` reaches any declaration.
 
 Build the Lean project to check its linked declarations.
 
@@ -283,6 +288,10 @@ Select a claim to see the printed statement beside its Lean statement. For a LaT
 - **Definition / declaration not found:** the linked item is not a checked theorem or cannot be resolved from the built modules.
 
 MachineChecked keeps what Lean reported in `.machinechecked/`, so the next `view`, `build` or `check` asks Lean again only about modules that changed (and the modules that import them). Linking a claim, writing a note or editing the paper starts no Lean session. `machinechecked build --reuse-lean` builds from what is kept alone, and names what Lean must be asked when that is not enough. A module that Lean reports an error in stays unindexed until the project's Lean files, toolchain or Lake manifest change; a module that could not be loaded for want of memory or time, or because the Lean session was stopped, is tried again on the next build.
+`machinechecked build --refresh` asks Lean again for everything the build reads (the index of
+each module, the records of linked and suggested declarations, the modules recorded as failing
+to load) and keeps the new answers in place of the old; `inspect` answers and the facts of other
+papers' libraries stay. When nothing changed, it gives the statuses that reusing them gives.
 
 For projects with a separate acceptance framework, further statuses and evidence are available. [Read the evidence policy](EVIDENCE_POLICY.md) before interpreting them.
 
