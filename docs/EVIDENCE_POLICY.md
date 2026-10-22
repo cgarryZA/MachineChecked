@@ -84,6 +84,14 @@ passage of its own.
 - **Migration.** `python -m prooflens.review_sources --config FILE` lists the markers without
   digests and, with `--write`, adds the digest of each claim whose passage the history shows
   unchanged. It adds nothing for any other claim: those need a new reading.
+- **A reading of a passage that no longer uses the declaration.** When the inventory moves a
+  clause to another claim, a marker's reading of the old claim's passage is no reading of a
+  passage that uses the declaration now. `inventory retire` lists such readings and, with
+  `--write`, removes exactly them: it never rewrites one to the new claim and adds none, and a
+  marker left with no reading records `source=none`, so that the history rule above does not
+  apply to it. The claims that now use the declaration read as unread until someone reads them
+  ([moving a clause](SOURCE_REGIONS.md#moving-a-clause-to-another-claim)). A marker retired whole
+  (`<!-- retired spec-review: ... -->`) records no review; it keeps its review text in the file.
 
 ## Gates
 

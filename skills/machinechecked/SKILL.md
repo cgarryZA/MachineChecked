@@ -1,6 +1,6 @@
 ---
 name: machinechecked
-description: Audit how a mathematical paper corresponds to its Lean 4 formalisation with the MachineChecked CLI - find the paper's numbered statements, see which are linked to Lean declarations, whether Lean proves them (sorry, extra axioms, not found), and which links still need a mathematician's review; write a shareable reader. Use when a user has a Lean project together with a paper (LaTeX, PDF, an arXiv URL, a leanblueprint, or a formalization.yaml) and asks which claims are formalised, whether the proofs compile, or whether the Lean statements match the paper.
+description: Audit how a mathematical paper corresponds to its Lean 4 formalisation with the MachineChecked CLI - find the paper's numbered statements, see which are linked to Lean declarations, whether Lean proves them (sorry, extra axioms, not found), and which links still need a mathematician's review; investigate whether Lean establishes a claim as printed (search, uses, facts inside proofs, compositions) and save the evidence for others to resume; write a shareable reader. Use when a user has a Lean project together with a paper (LaTeX, PDF, an arXiv URL, a leanblueprint, or a formalization.yaml) and asks which claims are formalised, whether the proofs compile, whether the Lean statements match the paper, or where and how the Lean covers a claim.
 ---
 
 # MachineChecked
@@ -90,32 +90,99 @@ violations and obligations by subject; `findings` holds only their totals.
   the lemmas a paper statement may correspond to; also search the rest of the project, since
   a lemma can be formalised without being used by that proof. If two modules declare the
   name, pass `--module`. A dependency identifies constants used by Lean terms.
+- **Does the main result use this lemma?** `machinechecked compare --query impact NAME --json`
+  answers for each main result (the declarations linked to the paper's theorems, or those
+  `--main` names): used by its proof, in its statement only, formalized separately, or not
+  traced, with the path of references and the applications of NAME at its end, and lists the
+  claims whose linked Lean uses NAME. *Formalized separately* says only that this main
+  result's Lean does not refer to NAME; *not traced* says the trace is incomplete, never that
+  NAME is unused. Whether a difference in NAME matters at a use is your reading, for the user
+  to judge.
 - **Link a claim to a declaration**: the user does it in `machinechecked view` (Link / Not
   this); with the user's agreement, `machinechecked link "Theorem 2" Pkg.name --as NAME --json`
   records it (`--reject NAME`, `--clear`; `--dry-run` first), or a `\lean{Name}` tag in the
   LaTeX. An unknown or ambiguous claim or name is refused with candidates.
-- **Record what establishes a clause**: `machinechecked workspace update FILE` with evidence and
-  finding records (docs/REVIEWING.md, "Saved investigations"); `workspace show --json` resumes
-  it. A finding is your reading, attributed to you; it changes no status.
-- **Break a claim into requirements**: `requirement`, `fragment` and `alignment` records of the
-  same workspace keep each requirement with the exact passages that govern it (a quantifier's
-  domain, a constant's dependence, a standing assumption) and the Lean it corresponds to.
-  `workspace suggest --claim C --requirement r1` proposes nearby passages; a proposal is a guess
-  until accepted. A later use of a result is a use, never a change to its reading.
-- **Combine several results**: a `composition` record lists the steps, the declaration,
-  application or fact inside a proof each rests on, the substitutions, which objects are the
-  same, and the open obligations. It reads as your composition, with the next step: state the
-  combination as one Lean result. A `bridge` (a theorem whose type is exactly a target
-  proposition) is checked by Lean when saved; `compare --query composition CLAIM` shows them.
+- **Does the Lean establish a claim as printed?** Investigate it (below) and save the evidence
+  in a workspace.
+- **What changed since the last build?** After a rebuild, `machinechecked workspace show
+  --json` marks the saved records whose paper text, statement, proof or certificate changed
+  `stale`. In a full assessment, `machinechecked changes --json` compares two releases claim by
+  claim and names every review the later build no longer counts, with the dependency that
+  changed; `--workspace ID` adds the workspace's evidence, findings, questions,
+  counterexamples and compositions that are not current.
 - **A shareable report**: `machinechecked build` writes `.machinechecked/MachineChecked.html`
   (one file, opens from disk; Git ignores it there, and `--out` puts it elsewhere). `machinechecked build --site public/ --author "Name" --issues owner/repo` writes a
   directory to publish (for example on GitHub Pages) with `audit.json` describing it. Both
   contain the paper and Lean statements: check the user’s publication authorization.
 
+## Investigate a claim
+
+An investigation finds where and how the Lean covers each requirement of a claim and saves the
+evidence, so that you or another agent can resume it. Open a workspace first
+(`machinechecked workspace open --mode informed --as llm:MODEL`) and record each result as you
+go (`workspace update`, with the records of
+https://github.com/cgarryZA/MachineChecked/blob/main/docs/REVIEWING.md#saved-investigations).
+https://github.com/cgarryZA/MachineChecked/blob/main/docs/AGENTS.md#a-worked-investigation
+carries every step out on the toy example.
+
+1. **Read the claim.** `compare CLAIM --stage read --json` gives its complete passage. Record
+   each requirement (a quantifier with its domain, a constant with what it may depend on, a
+   hypothesis, the conclusion) with the source `fragment` it comes from, standing assumptions
+   and the sentences around a display included. `workspace suggest --claim C --requirement r1`
+   proposes nearby passages; a proposal stays a guess until you accept it. A passage that uses
+   the result later is a fragment with role `later use`, shown apart from the reading.
+2. **Search by content.** `compare --query search CLAIM` ranks the project's declarations by
+   what their statements say; `search 'EXPRESSION'` takes a formula or words (both read the
+   zero-configuration build's content index). A paper number in a docstring is a lead:
+   `check --json` lists in `numbering` each number that names another kind of statement
+   (`other-kind`), none (`absent`), or a declaration that reads closer to another claim
+   (`stale_lead`). Before concluding that a requirement has no support, look at the results
+   that use the weaker ones (`--query uses`), the statements about the same objects (`--query
+   mentions`) and the stronger wrappers a search reaches through a close match (`signal`
+   `uses`).
+3. **Inspect.** `compare CLAIM --json` gives each linked or suggested declaration's complete
+   statement and the definitions it uses; `--query definition NAME` and `--query dependencies
+   NAME --json` go further. Compare quantifier order, domains, hypotheses, definitions and the
+   conclusion.
+4. **Follow the objects.** `--query uses NAME` gives each application of NAME with the argument
+   supplied to every binder and the origin of each premise (its `discharge`: `assumed` by the
+   caller, `proved` in it, or `local`). `--query proof-facts NAME` gives the facts a proof
+   establishes on the way, each under its assumptions and case.
+5. **Assemble.** Cite declarations, applications (`{"app": {callee, id}}`) and proof facts
+   (`{"fact": REF}`) as evidence, and combine them in a `composition` with its substitutions,
+   the objects different steps share, and its open obligations. A `bridge` attached to it is
+   checked by Lean when saved: it establishes that its theorem proves the target proposition
+   exactly, and the target's agreement with the paper stays your reading.
+6. **Compare estimates and steps.** Record a `difference` (its feature, the paper's and Lean's
+   expressions, the outcome) on the requirement it affects, and a `counterexample` against one
+   reading, with a Lean certificate as evidence when you have one. A printed proof step is a
+   claim of its own (`compare "Equation (3)"`), with its own verdict, such as `false as
+   printed`.
+7. **Conclude.** A finding gives the coverage and its basis: `direct` (one Lean statement),
+   `reviewed_composition` (your argument) or `checked_bridge`. It is your reading, attributed
+   to you, and changes no status. Save what remains open as a `question` and set the `resume`
+   point. Submit the findings that are final; `build --site DIR` publishes them with the audit.
+8. **Resume.** `workspace export` and `workspace import` hand a workspace on; `workspace show
+   --json` gives its `resume` point and each record's `currency` against the current build.
+
+Each answer says what it covers. `retrieval.unavailable` in a `compare` packet lists what is not
+extracted yet, with the issue that owns it; a query answers `available: false` with its
+`reason` when its kind is not available here; `complete: false` (a passage, a list, a `uses`
+scope with modules not built, a proof walk that reached its limit) marks a partial answer, and
+`retrieval.next` with `--after` fetches the rest.
+
 ## Report and act precisely
 
+- Lead with the mathematical finding. Then give the exact declarations, applications (`app` id)
+  and proof facts it rests on, the connecting argument, and the `snapshot` (release, project
+  commit, paper revision) it was read from.
+- When a search finds nothing, say where it looked: the query, the modules searched (`scope`),
+  and anything not built.
 - Name the formal proposition and proof result. Attribute mathematical correspondence to reviews
-  with their recorded scope and provenance.
+  with their recorded scope and provenance; report an author's review as the author's.
+- Present your interpretation of the paper as yours: it is saved under your name and stays
+  editable. An informed investigation has seen the Lean; an independent review goes through
+  `machinechecked review`, which records that exposure.
 - In a non-interactive session, use `check --json` and `build`. `view` starts a local browser session.
 - Save links through the reader, `machinechecked link` or an authorized source tag, preserving who
   made the association.

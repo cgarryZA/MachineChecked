@@ -1810,9 +1810,10 @@ def write_view_site(view: dict, site: Path, web_dist: Path | None,
              "numbering": (body.get("numbering") or {}).get("pattern"),
              "editable": False}
     from .pipeline import write_preview
-    from .review_queue import simple_queue
+    from .review_queue import prioritise, simple_queue
     write_preview(site, index, chunks, store, {"P": view["pdf"]} if view["pdf"] else {},
-                  web_dist, simple_queue(index, chunks))
+                  web_dist, prioritise(simple_queue(index, chunks), uses=view.get("uses"),
+                                       unbuilt=body["project"]["unbuilt"]))
     index["review_queue"] = "data/review-queue.json"
     from . import audit
     key = body.get("paper") or ""

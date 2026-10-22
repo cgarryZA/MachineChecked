@@ -140,6 +140,95 @@ def page_versions(entries: list[dict], current: str) -> list[dict]:
     return out
 
 
+CHANGES = ("same", "renumbered", "changed", "split", "removed", "new")
+KEY = re.compile(r"[\w.:-]+")
+
+
+def claim_map(earlier: str, earlier_claims: list[dict], later: str,
+              later_claims: list[dict]) -> dict:
+    """The map of the claims of one version of a paper (`earlier`, a version id) to those of
+    another (`later`), computed from the two versions' claim inventories. Each claim gives `key`
+    and `number`, and may give `label` (its source pin, such as the LaTeX label) and `statement`
+    (its text). A claim is matched by its label, else by its statement text when exactly one
+    claim of the other version has it; only claims with a statement are mapped, since without one
+    nothing says whether it changed. A matched claim is `same`, `renumbered` (same statement,
+    another number) or `changed` (another statement); an unmatched one is `removed` (from the
+    earlier version) or `new` (in the later). A split is never inferred: a listing states it."""
+    def norm(t):
+        return " ".join(str(t).split())
+
+    def ref(c):
+        return {"key": c["key"], "number": c["number"]}
+    a = [c for c in earlier_claims if c.get("statement")]
+    b = [c for c in later_claims if c.get("statement")]
+    used, out = set(), []
+    for c in a:
+        same_label = [d for d in b if c.get("label") and d.get("label") == c["label"]]
+        same_text = [d for d in b if norm(d["statement"]) == norm(c["statement"])]
+        match = same_label if len(same_label) == 1 else same_text if len(same_text) == 1 else []
+        match = [d for d in match if d["key"] not in used]
+        if not match:
+            out.append({"from": [ref(c)], "to": [], "change": "removed"})
+            continue
+        d = match[0]
+        used.add(d["key"])
+        change = ("changed" if norm(d["statement"]) != norm(c["statement"]) else
+                  "renumbered" if d["number"] != c["number"] else "same")
+        out.append({"from": [ref(c)], "to": [ref(d)], "change": change})
+    out += [{"from": [], "to": [ref(d)], "change": "new"} for d in b if d["key"] not in used]
+    return check_claim_map({"from": earlier, "to": later, "claims": out})
+
+
+def check_claim_map(m: dict) -> dict:
+    """A claim map (`claim_map`, or a listing's), checked: `from` and `to` are the ids of the
+    earlier and the later version, and each of `claims` names the claims (`key`, `number`) it
+    relates on each side and its `change`: `same`, `renumbered` or `changed` (one claim to one),
+    `split` (one to several), `removed` (one to none) or `new` (none to one)."""
+    if not isinstance(m, dict) or not all(isinstance(m.get(k), str) and m[k] for k in ("from", "to")) \
+            or m["from"] == m["to"] or not isinstance(m.get("claims"), list):
+        raise ValueError("a claim map gives `from` and `to` (two version ids) and `claims`")
+    shape = {"same": (1, 1), "renumbered": (1, 1), "changed": (1, 1), "split": (1, 2),
+             "removed": (1, 0), "new": (0, 1)}
+    out = []
+    for e in m["claims"]:
+        sides = {}
+        for side in ("from", "to"):
+            refs = e.get(side) if isinstance(e, dict) else None
+            if not isinstance(refs, list) or not all(
+                    isinstance(r, dict) and isinstance(r.get("key"), str) and KEY.fullmatch(r["key"])
+                    and isinstance(r.get("number"), str) and r["number"] for r in refs):
+                raise ValueError(f"claim map {m['from']} -> {m['to']}: each side is a list of "
+                                 f"claims with `key` and `number` ({e!r})")
+            sides[side] = [{"key": r["key"], "number": r["number"]} for r in refs]
+        change = e.get("change")
+        lo = shape.get(change)
+        n = (len(sides["from"]), len(sides["to"]))
+        if lo is None or not (n == lo or change == "split" and n[0] == 1 and n[1] >= 2):
+            raise ValueError(f"claim map {m['from']} -> {m['to']}: {change!r} does not fit "
+                             f"{n[0]} claim(s) to {n[1]}")
+        out.append({**sides, "change": change})
+    return {"from": m["from"], "to": m["to"], "claims": out}
+
+
+def counterparts(maps: list[dict], version: str, offered: list[str]) -> dict[str, list[dict]]:
+    """For each claim key of the page of `version`, its counterparts in the other versions the
+    page offers, from the claim maps that relate them: the other version, the `change`, whether
+    the other version is the `later` one, and its claims there (`id`, `number`)."""
+    out: dict[str, list[dict]] = {}
+    for m in maps:
+        m = check_claim_map(m)
+        for here, there in (("from", "to"), ("to", "from")):
+            if m[here] != version or m[there] not in offered:
+                continue
+            for e in m["claims"]:
+                for r in e[here]:
+                    out.setdefault(r["key"], []).append({
+                        "version": m[there], "later": there == "to", "change": e["change"],
+                        "claims": [{"id": f"P:{x['key']}", "number": x["number"]}
+                                   for x in e[there]]})
+    return out
+
+
 def audit_order(projects: list[str], audits: dict, stars: dict | None) -> tuple[list[str], str]:
     """The loaded audits of a page, in the order the reader draws on them, and what orders them:
     `"stars"` (the repositories' GitHub star counts, most first, ties in listing order) when the
@@ -166,14 +255,18 @@ def write_paper_site(site: Path, paper: dict, claims: list[dict],
                      page_size: list | tuple | None, pdf_url: str | None,
                      web_dist: Path | None = None, audits: dict | None = None,
                      versions: list[dict] | None = None, version: str | None = None,
-                     stars: dict[str, int] | None = None) -> dict:
+                     stars: dict[str, int] | None = None,
+                     claim_maps: list[dict] | None = None) -> dict:
     """Write the paper page's data under `site/data/` (and the reader, given its built
     directory). `paper` is the paper's registry entry (its identifier, title, authors, links and
     formalisations), which the reader's panel beside the paper shows; `claims` are from
     `paper_claims`. A paper with several versions has a page per version: `version` is the id of
     this page's, `versions` every version's entry (`page_versions`), and every audit loaded for
     this page must pin this version. `stars` gives each audited repository's GitHub star count,
-    which orders the audits the reader draws on (`audit_order`). Replaces whatever is at `site`."""
+    which orders the audits the reader draws on (`audit_order`). `claim_maps` relate this
+    version's claims to another version's (`claim_map`, `check_claim_map`): each claim they name
+    carries its `counterparts`, which the reader shows with a link; they never change a status.
+    Replaces whatever is at `site`."""
     from .pipeline import write_preview
     from .published import same_version
     audits_loaded = audits or {}
@@ -187,6 +280,9 @@ def write_paper_site(site: Path, paper: dict, claims: list[dict],
     projects = [f["repository"] for f in paper.get("formalisations", [])]
     order, order_by = audit_order(projects, audits_loaded, stars)
     audited = {r for r, a in audits_loaded.items() if a.get("state") == "loaded"} if audits is not None else {f["repository"] for f in paper.get("formalisations", []) if f.get("audits")}
+    if claim_maps and not offered:
+        raise ValueError("claim maps relate versions: give `versions` and `version`")
+    related = counterparts(claim_maps or [], version, [v["id"] for v in offered or []])
     index_claims, chunks = [], {}
     for c in claims:
         cid = f"P:{c['key']}"
@@ -223,7 +319,8 @@ def write_paper_site(site: Path, paper: dict, claims: list[dict],
                 index_by_project[r]["anchor"] = au.get("audit_anchor") if au.get("same_pdf") else mf.index_anchor(anchor, "approximate")
         index_claims.append({**common, "by_project": index_by_project, "anchor": mf.index_anchor(anchor, "approximate"),
                              "counts": {}, "file": fname, "linked": len(c["links"]),
-                             "suggested": 0})
+                             "suggested": 0,
+                             **({"counterparts": related[c["key"]]} if c["key"] in related else {})})
         chunks[fname] = {
             **common, "by_project": chunk_by_project, "schema": SCHEMA, "mode": "simple", "release": "paper", "key": c["key"],
             "scope_note": "", "scope_reviewed": True, "anchor": anchor,

@@ -3,6 +3,7 @@
   import TexInline from "./TexInline.svelte";
   import { loadClaim, loadSearch, saveLink, saveSymbol, shownClaim, projectClaims, auditOf } from "../lib/data.js";
   import { project } from "../lib/project.svelte.js";
+  import { counterpartViews } from "../lib/versions.js";
   import { href, route, go, withQuery, inspectionHref } from "../lib/route.svelte.js";
   import { statusView, inScope, clauseNote, evidenceView } from "../lib/presentation.js";
   import { coverageView } from "../lib/coverage.js";
@@ -68,6 +69,8 @@
   const paper = $derived(claim?.audit?.paper || (claim && index.papers.find((p) => p.id === claim.paper)));
   const evidenceIndex = $derived(claim?.audit?.context ? { ...index, ...claim.audit.context, papers: [paper] } : index);
   const meta = $derived(index.claims.find((c) => c.id === claimId));
+  // The claim in the other versions of the paper, from the site's claim map.
+  const counterparts = $derived(counterpartViews(index, meta, project.combined ? null : project.repo));
   const simple = $derived(claim?.mode === "simple");
 
   // The element that scrolls the panel: the side panel in the reader, the page on a claim page.
@@ -297,6 +300,9 @@
           {#if claim.filled}<strong>From another audit.</strong>{" The default audit does not map this claim; this is the evidence of the audit of "}{:else}{"From the audit of "}{/if}<code>{claim.evidence_from}</code>{source.author ? " by " + source.author : ""}{#if source.commit}{" at commit "}<code>{source.commit.slice(0, 12)}</code>{/if}.
         </p>
       {/if}
+      {#each counterparts as cp}
+        <p class="small counterpart" data-change={cp.change} data-version={cp.version}>{cp.before}{#each cp.claims as c, i}{#if i}{i === cp.claims.length - 1 ? " and " : ", "}{/if}<a href={c.href}>{c.number}</a>{/each}{cp.after}.</p>
+      {/each}
       {#if claim.correspondence && !claim.step}
         {@const cor = claim.correspondence}
         {@const cv = coverageView(cor)}
@@ -650,6 +656,7 @@
   .copied { margin: 4px 0 0; }
   .evidence-from { margin: 6px 0 0; color: var(--muted); overflow-wrap: anywhere; }
   .evidence-from.filled, .evidence-from.missing { color: var(--text); border-left: 3px solid var(--accent); padding-left: 8px; }
+  .counterpart { margin: 6px 0 0; color: var(--muted); overflow-wrap: anywhere; }
   .linkby { margin: 4px 0 0; }
   .recorded { margin: 0 0 8px; }
   .mklink { margin-top: 8px; border: 1px dashed var(--border); border-radius: 8px; padding: 6px 10px; }

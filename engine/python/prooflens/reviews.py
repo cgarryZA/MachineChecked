@@ -29,6 +29,11 @@ from .review_sources import parse as parse_source
 from .util import sha256_file
 
 MARKER = re.compile(r"<!--\s*(spec|def|step)-review:\s*(\S+)\s+(\S+)((?:\s+[\w-]+=\S+)*)\s*-->")
+# A marker that `inventory retire` set aside (`retire.py`): it stays in the file with its review
+# text, which it still closes, and records no review.
+RETIRED = re.compile(r"<!--\s*retired\s+(spec|def|step)-review:\s*(\S+)\s+(\S+)"
+                     r"((?:\s+[\w-]+=\S+)*)\s*-->")
+ANY = re.compile(MARKER.pattern + "|" + RETIRED.pattern)
 HEADING = re.compile(r"^#{1,6} ", re.M)
 # The line `review promote` writes before a reviewer's marker (`promote.apply`).
 PROMOTED = re.compile(r"^[ \t]*Review by \S+: [^\n]*\(report `[^`\n]*`\)\.[ \t]*$\n?", re.M)
@@ -65,16 +70,18 @@ def reviewer_kind(by: str, explicit: str | None, ai_patterns: list[str]) -> str:
 
 def parse_file(path: Path, ai_patterns: list[str], rel_to: Path) -> list[Review]:
     txt = path.read_text(encoding="utf-8")
-    out, prev, block = [], 0, ""
-    for m in MARKER.finditer(txt):
+    out, prev, block, seen = [], 0, "", False
+    for any_ in ANY.finditer(txt):
+        live = any_.group(1) is not None
+        m = MARKER.fullmatch(any_.group()) if live else RETIRED.fullmatch(any_.group())
         attrs = dict(a.split("=", 1) for a in m.group(4).split() if not a.startswith("source="))
         start = prev
-        heads = [h.start() for h in HEADING.finditer(txt, prev, m.start())]
+        heads = [h.start() for h in HEADING.finditer(txt, prev, any_.start())]
         if heads:
             start = heads[-1]
-        since = txt[prev:m.start()]
+        since = txt[prev:any_.start()]
         promoted = [p.strip() for p in PROMOTED.findall(since)]
-        if not PROMOTED.sub("", since).strip() and (out or promoted):
+        if not PROMOTED.sub("", since).strip() and (seen or promoted):
             # Nothing of the author's since the previous marker. A `Review by` line written by
             # `review promote` is the record of the reviewer's marker it precedes; a marker
             # straight after another closes the same review: one section reviewing several
@@ -82,19 +89,23 @@ def parse_file(path: Path, ai_patterns: list[str], rel_to: Path) -> list[Review]
             # interleaved reviewers' lines and markers among them.
             body = "\n".join(promoted) if promoted else block
         else:
-            body = MARKER.sub("", PROMOTED.sub("", txt[start:m.start()])).strip()
+            body = ANY.sub("", PROMOTED.sub("", txt[start:any_.start()])).strip()
             body = re.sub(r"\A#{1,6} [^\n]*(?:\n|\Z)", "", body).strip()
             block = body
+        seen = True
+        if not live:
+            prev = any_.end()
+            continue
         by = attrs.get("by", "unknown")
         out.append(Review(
             target=m.group(1), name=m.group(2), hash=m.group(3), by=by,
             kind=reviewer_kind(by, attrs.get("kind"), ai_patterns), provenance="self-declared",
             file=os.path.relpath(path, rel_to),
-            line=txt.count("\n", 0, m.start()) + 1, text=body,
+            line=txt.count("\n", 0, any_.start()) + 1, text=body,
             source=parse_source(m.group(4), m.group(2) if m.group(1) == "step" else None,
                                 m.group(3)),
             verdict=attrs.get("verdict") if m.group(1) == "step" else None))
-        prev = m.end()
+        prev = any_.end()
     return out
 
 

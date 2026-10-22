@@ -47,6 +47,11 @@ issue's work until it is agreed to be worked on, and close it with the commit th
 (`Fixes #n`). Issues in public repositories follow the privacy rules above: nothing of a private
 project, written generically.
 
+Several Claude sessions work on these repositories at once, so check a ticket out before you
+start it. If it carries the `claimed` label, read its claim comment and leave it to that session.
+Otherwise add the `claimed` label and comment which session and branch has it. The label comes
+off when the PR merges; a session that stops without a PR removes it and says why.
+
 ## Names
 
 The product, the command and the files are `machinechecked` (`machinechecked.toml`,
