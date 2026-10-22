@@ -378,6 +378,8 @@ def _workspace_place(a):
 
 
 def _print_workspace(v: dict) -> None:
+    from .estimates import certificate_scope
+    from .workspace import ref_text
     print(f"workspace {v['id']} ({v['mode']}), {v['reviewer']}, revision {v['revision']}"
           + (f", made at release {v['release']}" if v.get("release") else ""))
     cur = (v.get("current_sources") or {}).get("release")
@@ -397,20 +399,20 @@ def _print_workspace(v: dict) -> None:
         print(cid)
         for e in c["evidence"]:
             ref = e["ref"]
-            fact = ref.get("fact")
-            what = ref.get("decl") or (ref.get("source") or {}).get("file") or \
-                (f"{fact.get('name') or fact.get('head') or 'a fact'} : {fact.get('type')}, "
-                 f"inside the proof of {fact['decl']}" if fact else "paper passage")
-            print(f"  evidence {e['id']}  {e['role']:9} {what}  [{e['currency']['state']}]"
+            fact, cert = ref.get("fact"), ref.get("certificate")
+            print(f"  evidence {e['id']}  {e['role']:9} {ref_text(ref)}  "
+                  f"[{e['currency']['state']}]"
                   + (f" (module not built)" if ref.get("build") == "unbuilt" else ""))
             if fact:
                 print(f"           {fact['basis']}"
                       + (f"; assuming {'; '.join(fact['assumptions'])}"
                          if fact.get("assumptions") else "")
                       + "".join(f"; {c}" for c in fact.get("cases") or []))
-                for ch in e["currency"].get("changes") or []:
-                    if ch.get("reason"):
-                        print(f"           {ch['reason']}")
+            if cert:
+                print(f"           {certificate_scope(cert)}")
+            for ch in e["currency"].get("changes") or []:
+                if ch.get("reason"):
+                    print(f"           {ch['reason']}")
         for f in c["findings"]:
             tag = f["state"] + ("" if f["in_force"] else ", superseded")
             print(f"  finding  {f['id']}  {tag}: coverage {f.get('coverage') or '-'}"
