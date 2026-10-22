@@ -508,8 +508,14 @@ accepted.
 
 **Mode and exposure.** An informed workspace records at its creation that the Lean and prior
 interpretations were open to its auditor; it has no locked reading. A mode change and an import
-add exposure and never remove it. A report made with `machinechecked review` lists that exposure in
-`reading.revealed_by`, so `review promote` refuses it unless the maintainer passes
+add exposure and never remove it. A workspace's exposure is that of everyone it records as having
+worked in it: its `reviewer`, the authors of its records and of its edits (refused ones in
+`conflicts` too), whoever set its `resume`, and the people its `provenance` names (who changed
+its mode or imported it). A report made with `machinechecked review` lists, in `reading.revealed_by`, the exposure of
+every workspace of the working directory its reviewer has worked in, and the units whose step 2
+or 3 the reviewer's review work in any of their workspaces reached and whose material includes
+the unit's; an entry an import brings after the reading was locked counts when its `at` is not
+later than the lock. So `review promote` refuses the report unless the maintainer passes
 `--allow-revealed`.
 
 **Export and import.** `workspace export` writes the whole workspace (less `ops`) as one file;
