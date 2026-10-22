@@ -255,7 +255,9 @@ def build(evidence: dict, release: str, display: dict | None = None
             # its state and reviewer.
             cl["def_reviews"] = {n: {"state": r["state"],
                                      "by": [x["by"] for x in r.get("current", [])],
-                                     "kind": [x["kind"] for x in r.get("current", [])]}
+                                     "kind": [x["kind"] for x in r.get("current", [])],
+                                     **({"rests_on": r["rests_on"]} if r.get("rests_on")
+                                        else {})}
                                  for n, r in (cl.get("def_reviews") or {}).items()}
             if st:
                 st.pop("decl", None)

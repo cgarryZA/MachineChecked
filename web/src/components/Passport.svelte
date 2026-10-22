@@ -531,6 +531,11 @@
           {@const entries = Object.entries(cl.def_reviews).sort((a, b) => RANK[a[1].state] - RANK[b[1].state] || a[0].localeCompare(b[0]))}
           {@const counts = entries.reduce((m, [, r]) => ((m[r.state] = (m[r.state] || 0) + 1), m), {})}
           <p class="small muted">Definitions its meaning depends on: {Object.entries(counts).map(([k, v]) => `${v} ${evidenceView("review", { state: k }).word}`).join(", ")}</p>
+          {#if claim.scope === "definition"}
+            {#each entries.filter(([, r]) => r.rests_on?.passages?.length) as [n, r]}
+              <p class="faint small rests-on"><code>{n}</code>: the review by {r.rests_on.by} at <code>{r.rests_on.file}:{r.rests_on.line}</code>, which read {r.rests_on.passages.join(", ")}</p>
+            {/each}
+          {/if}
         {/if}
       {/each}
     {/if}

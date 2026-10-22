@@ -58,7 +58,12 @@ passage of its own.
   (`notation_macros`), the digest also covers their definitions, so a changed definition
   reopens the reading too, and a reading that did not record them does not count
   ([notation macros](SOURCE_REGIONS.md#notation-macros)). A definition's review in the closure of a statement must have read the
-  current passage of every claim that names the definition.
+  current passage of every claim that names the definition, in one reading: readings of the
+  passages made in separate reviews do not combine, and the finding names the marker that read
+  each. A definition claim's review is the last marker at the definition's current hash that
+  read that claim's passage; the assessment records it (`rests_on`), and a warning
+  (`def-review-other-claim`) names one whose review text names another claim that names the
+  definition, and not this one.
 - **The manuscript must match the pin.** A reading counts against the text the paper prints.
   When the source check finds that the manuscript no longer matches a claim's pin (its
   passage, a further passage in `source_parts`, or a pinned macro definition: a
