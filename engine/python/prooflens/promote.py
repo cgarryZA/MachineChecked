@@ -7,7 +7,7 @@ it now is, or that the acceptance rules cannot count as an independent review:
 * the evidence must be current (the Lean inputs unchanged since the last build);
 * the unit's fingerprints (and the 32-digit legacy hash the markers record), the manuscript
   revisions and the digests of the paper passages read (`review_sources.py`) must be those the
-  report was made at;
+  report was made at, and the manuscript must still match the pin of each passage read;
 * the verdict must be faithful, faithful with representation choices (listed), or broader (with
   the instantiation that gives the printed claim);
 * the reading must have been locked before the verdict, and the verdict recorded before the
@@ -129,6 +129,14 @@ def check_report(r: dict, body: dict, cfg: Config, accept_same_family: bool,
                    "digests); review the unit again from a current build")
     elif have is not None and have != want:
         why.append("the paper's text changed since the review (source digests differ)")
+    if not step:
+        from .assess import unpinned_passages
+        inv = {"claims": (body.get("inventory") or {}).get("claims", [])}
+        unpinned = sorted(set(want) & set(unpinned_passages(inv, body.get("tex"))))
+        if unpinned:
+            why.append("the manuscript no longer matches the pin of " + ", ".join(unpinned)
+                       + ": pin the passage again (machinechecked inventory repin) and review "
+                       "it from a new build")
     papers = body["provenance"]["papers"]
     for pid, revn in (pins.get("manuscripts") or {}).items():
         if pid in papers and papers[pid].get("revision") != revn:

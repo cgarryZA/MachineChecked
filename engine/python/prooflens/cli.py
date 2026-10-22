@@ -628,6 +628,22 @@ def _finding_details(cfg, eid: str) -> list[dict]:
             for f in sorted(found, key=lambda f: (order.get(f.get("tier"), 3), f.get("id", "")))]
 
 
+def _witness_lists(cfg, eid: str) -> dict[str, dict]:
+    """Per claim of the full assessment: the unreviewed declarations only its witnesses use
+    (`witness_defs`, with the clause), and for a definition claim the witness-only declarations
+    that use a definition it maps (`witness_candidates`). Advice; neither is a status."""
+    from . import evidence as ev
+    out = {}
+    for c in ev.load(cfg.out_dir, eid)["body"]["assessment"]["claims"]:
+        wd = [{"clause": cl.get("name"), **e} for cl in c.get("clauses") or []
+              for e in cl.get("witness_defs") or []]
+        wc = [e for cl in c.get("clauses") or [] for e in cl.get("witness_candidates") or []]
+        if wd or wc:
+            out[c["id"]] = {**({"witness_defs": wd} if wd else {}),
+                            **({"witness_candidates": wc} if wc else {})}
+    return out
+
+
 def _replay_guard(cfg, eid: str) -> dict | None:
     from . import evidence as ev
     from .replay import guard_summary
@@ -645,10 +661,12 @@ def _check_json(a):
             cfg = cfgmod.load(_assurance_config(a))
             res = build(cfg, web_dist=_web_dist(a.web))
             idx = res["index"]
+            wit = _witness_lists(cfg, res["evidence"])
             claims = [{"id": c["id"], "paper": c["paper"], "number": c.get("number"),
                        "title": c.get("title"), "status": c["status"], "status_code": c["status_code"], "class": c["class"],
                        "unit": c.get("unit", "statement"), "parent": c.get("parent"),
-                       **({"step_review": c["step_review"]} if "step_review" in c else {})}
+                       **({"step_review": c["step_review"]} if "step_review" in c else {}),
+                       **wit.get(c["id"], {})}
                       for c in idx["claims"]]
             out = {"mode": "full", "release": idx["release"],
                    "project": idx.get("project", {}).get("commit"),
@@ -724,10 +742,11 @@ def cmd_build(a):
     for f in details:
         if f["tier"] in ("violation", "obligation") and not f.get("dismissed"):
             print(f"  {f['tier']}  {f['subject']}: {f['message']}")
-    # Names in module docstrings that nothing declares, and names or files review text cites
-    # that nothing resolves, with file and line.
+    # Names in module docstrings that nothing declares, names or files review text cites that
+    # nothing resolves (with file and line), and the unreviewed declarations only witnesses use.
     for f in details:
-        if f["code"] in ("module-doc-name", "review-citation") and f["tier"] == "warning" \
+        if f["code"] in ("module-doc-name", "review-citation", "witness-def-review") \
+                and f["tier"] == "warning" \
                 and not f.get("dismissed"):
             print(f"  warning  {f['message']}")
     if idx["findings"]["total"].get("warning"):

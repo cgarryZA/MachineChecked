@@ -3,7 +3,7 @@ or runs into another section, is reported as advice naming the passage likely me
 is a dismissible warning and never changes a status."""
 
 from prooflens.repin import repin_plan
-from prooflens.source_regions import SCHEME, advice, collect, extract
+from prooflens.source_regions import SCHEME, advice, advice_message, collect, extract
 from test_repin import NEW, OLD, pinned, write
 from test_source_regions import assessed
 
@@ -76,3 +76,64 @@ def test_the_repin_plan_carries_the_advice_at_the_new_revision(tmp_path):
     assert e["class"] == "moved" and report["advice"] == ["T:fit"]
     assert [a["kind"] for a in e["advice"]] == ["label-only"]
     assert e["advice"][0]["suggested"]["line"] == 9
+
+
+# #200: a whole-line region that holds the \begin or the \end of an environment without the other.
+THEOREM = "\\newtheorem{theorem}{Theorem}\n"
+CUT = ("\\begin{theorem}\\label{X:thm:rate}\n"
+       "The error is $O(h)$.\n"
+       "\\end{theorem}\n"
+       "Hence the scheme converges:\n"
+       "\\begin{equation}\\label{X:eq:bound}\n"
+       "e_h \\le C h ,\n"
+       "\\end{equation}\n"
+       "uniformly in the data.\n\n")
+
+
+def cuts(root, c):
+    region = extract(root, c)
+    text = (root / "paper.tex").read_text().splitlines()
+    return [a for a in advice(text, region, {"theorem"}) if a["kind"] == "cuts-environment"]
+
+
+def test_a_region_that_cuts_an_environment_names_it_and_bounds_that_fix_it(tmp_path):
+    root = write(tmp_path / "p", THEOREM, CUT)
+    # Lines: 1-3 the preamble, 4 \newtheorem, 5-7 the theorem, 8 the prose, 9-11 the display,
+    # 12 the end of the sentence.
+    (a,) = cuts(root, claim(root, "conv", 6, 10))
+    assert a["environments"] == [{"name": "theorem", "line": 5, "end_line": 7},
+                                 {"name": "equation", "line": 9, "end_line": 11}]
+    assert a["suggested"] == {"file": "paper.tex", "line": 5, "end_line": 11}
+    assert a["without"] == {"file": "paper.tex", "line": 8, "end_line": 8}
+    message = advice_message("X:sec:conv", extract(root, claim(root, "conv", 6, 10)).record(), a)
+    assert "the theorem at lines 5-7 and the equation at lines 9-11" in message
+    assert "pin lines 5-11 of paper.tex to contain them whole" in message
+    assert "or lines 8-8 to leave them out" in message
+    # The prose with its display whole, the theorem whole, or a line inside either: no cut.
+    for line, end in ((8, 12), (5, 7), (6, 6), (10, 10), (5, 12)):
+        assert cuts(root, claim(root, "ok", line, end)) == [], (line, end)
+    # Holding only the display's \begin: containing it runs to its \end; there is nothing
+    # of the region's own text to keep without it beyond line 8.
+    (a,) = cuts(root, claim(root, "open", 8, 9))
+    assert a["suggested"]["end_line"] == 11 and a["without"]["end_line"] == 8
+    # An environment the snapshot does not declare theorem-like (here, without \newtheorem)
+    # is not judged; a display always is.
+    region = extract(root, claim(root, "conv", 6, 10))
+    text = (root / "paper.tex").read_text().splitlines()
+    (a,) = [a for a in advice(text, region) if a["kind"] == "cuts-environment"]
+    assert [e["name"] for e in a["environments"]] == ["equation"]
+
+
+def test_the_cut_is_found_in_a_build_with_the_snapshots_theorems(tmp_path):
+    root = write(tmp_path / "p", THEOREM, CUT)
+    c = claim(root, "conv", 6, 10)
+    regions = collect({"claims": [c]}, "T", root)
+    (a,) = [a for a in regions["T:conv"]["advice"] if a["kind"] == "cuts-environment"]
+    assert [e["name"] for e in a["environments"]] == ["theorem", "equation"]
+    tex = {"mode": "latex", "anchors": [], "envs": [], "regions": regions}
+    record = assessed(root, c, tex)
+    found = [f for f in record["body"]["assessment"]["findings"]
+             if f["code"] == "source-region" and f["trigger"] == "cuts-environment"]
+    assert len(found) == 1 and found[0]["tier"] == "warning"
+    assert found[0]["suggested"] == {"file": "paper.tex", "line": 5, "end_line": 11}
+    assert record["body"]["assessment"]["claims"][0]["status_code"] == "formal.accepted"

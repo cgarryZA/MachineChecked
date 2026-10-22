@@ -87,6 +87,8 @@ Other clause fields include `refute` (a proof of the printed proposition's negat
 
 A proposition with hypotheses and no `witness` (a theorem that meets them) carries a `witness` obligation, which names the hypotheses that need it. Instances of standard classes over the proposition's own variables (`[MeasurableSpace Ω]`, `[IsProbabilityMeasure P]`, `[InnerProductSpace ℝ F]`, `[NeZero N]`) have canonical instances, so a proposition whose only hypotheses are such instances gets a low-signal warning instead (code `witness-instances`), which lists the classes and can be dismissed like any warning. An instance of `Fact`, of a class of the project, or of a class applied to anything but a variable bound before it or a number system (`[NeZero 0]`) still needs a witness. `inhabited_classes` under `[project]` replaces the built-in list of classes treated as inhabited (`assess.INHABITED_CLASSES`); `inhabited_classes = []` raises the obligation for every instance. Neither finding changes a status.
 
+A witness is only as good as the declarations that choose its instance. When a witness's statement uses a project declaration that no proposition's closure includes and no definition claim maps (an `abbrev` holding the paper's example values, say), `check` lists it while it has no current `def-review` (a warning, code `witness-def-review`, subject the declaration, trigger the witnesses; a dismissal lapses when the declaration changes), `check --json` gives the list under each claim (`witness_defs`), and the claim's audit details show it. A definition claim's audit details list the witness-only declarations whose type or body uses a definition it maps, as candidates for its mapping (`witness_candidates`). The list changes no status. `require_witness_def_reviews = true` under `[project]` asks a review of each such declaration, as of the definitions a proposition depends on: until it has one, the claim reads review pending.
+
 Out-of-scope labels such as `part-of`, `proof-step`, `duplicate`, `literature` and `empirical` require explicit reasons. Each scope decision is recorded for review.
 
 ## Record reviews
@@ -159,8 +161,8 @@ For each claim it shows:
   passage (a passage it could not locate, or a paper read from its PDF). A removed claim whose
   text a new claim now has is offered as a proposed match, and two such claims make it
   `ambiguous`: a match carries no evidence over. When the inventory still pins the earlier text,
-  the comparison says so: the source check reports the difference until the passage is read
-  again and pinned.
+  the comparison says so: the source check reports the difference, and the reviews that read
+  the passage are due until it is pinned again and read at the new pin.
 - **the Lean**: for each clause, whether its proposition, each project definition its meaning
   depends on, and each of its proofs changed, with both statements as Lean prints them. A
   definition can change while its name and type stay the same; a proof can change while its

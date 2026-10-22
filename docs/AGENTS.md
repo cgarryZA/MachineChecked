@@ -238,7 +238,9 @@ release with the one before it (`--from R1 --to R2` for any two) and prints one 
   that depend on it.
 
 Report the reopened reviews by claim, with their question; `kept` means the later build still
-counts the same marker, and a `caveat` says when it counts against a pinned earlier text.
+counts the same marker. A review that read a passage the manuscript no longer matches is
+reopened (`because` names the passage), and a `caveat` marks one that a build counted
+against a pinned earlier text before such reviews were reopened.
 Nothing in the document is a status: report `status.to` as the claim's status. `--workspace ID`
 adds `workspace.records`, the saved investigation's records that are not current.
 

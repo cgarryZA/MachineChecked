@@ -7,6 +7,7 @@ comment. The scanner recognises literal environments and explicit spans, not arb
 from __future__ import annotations
 
 import argparse
+import bisect
 from copy import deepcopy
 from dataclasses import dataclass
 import hashlib
@@ -206,14 +207,17 @@ def _paragraph(lines: list[str], first: int, last: int) -> tuple[int, int]:
     return a, b
 
 
-def advice(lines: list[str], region: Region) -> list[dict]:
+def advice(lines: list[str], region: Region, theorems=()) -> list[dict]:
     """Where a line-located region may not hold the claim's text (#180): a region of only a
     label or heading (`label-only`, naming the paragraph that follows), a region that begins
     or ends inside a sentence (`starts-mid-sentence`, `ends-mid-sentence`, naming the
-    paragraph around it), and one that runs into another section (`spans-section`). Each is
-    advice: the region is what the inventory pins, and a reviewer decides its extent. A
-    display environment and a region bounded inside a line are judged on their lines only for
-    a heading after their first line."""
+    paragraph around it), one that runs into another section (`spans-section`), and one that
+    holds the `\\begin` or the `\\end` of a display, proof or theorem-like environment without
+    the other (`cuts-environment`, naming the environments and the bounds that contain them
+    whole or leave them out). `theorems` are the theorem-like environment names of the
+    snapshot. Each is advice: the region is what the inventory pins, and a reviewer decides its
+    extent. A display environment and a region bounded inside a line are judged on their lines
+    only for a heading after their first line."""
     first, last = region.start_line, region.end_line
     body = lines[first - 1:last]
     out = []
@@ -239,6 +243,9 @@ def advice(lines: list[str], region: Region) -> list[dict]:
         region.end_column == len(lines[last - 1].rstrip("\r\n")) + 1
     if not whole:
         return out
+    cut = _cuts(lines, region.file, first, last, set(theorems))
+    if cut:
+        out.append(cut)
     para = where(*_paragraph(lines, first, last))
     prev = lines[first - 2] if first > 1 else ""
     if not _blank(prev) and not _BOUNDARY.search(_code(prev)) \
@@ -252,11 +259,88 @@ def advice(lines: list[str], region: Region) -> list[dict]:
     return out
 
 
+# Environments whose extent is part of what a claim states: displays and proofs; with them, the
+# theorem-like environments a snapshot declares (`\newtheorem`).
+_CUTTABLE = {*DISPLAYS, "displaymath", "proof"}
+_NEWTHEOREM = re.compile(r"\\newtheorem\*?\s*\{([A-Za-z@]+)\}")
+
+
+def theorem_names(files: dict[str, str]) -> set[str]:
+    """The environment names declared with `\\newtheorem` in a snapshot's TeX files."""
+    return {m.group(1) for text in files.values() for m in _NEWTHEOREM.finditer(_strip(text))}
+
+
+def _strip(text: str) -> str:
+    return "\n".join(_code(l) for l in text.splitlines())
+
+
+def _cuts(lines: list[str], file: str, first: int, last: int, theorems: set[str]) -> dict | None:
+    """`cuts-environment` advice for lines `first`..`last` (1-based) of `file` when they hold
+    the `\\begin` or the `\\end` of a display, proof or theorem-like environment without the
+    other: each such environment with its lines, the smallest whole-line region that contains
+    the region and every environment it cuts (`suggested`), and the largest one inside the
+    region that holds none of their `\\begin`/`\\end` lines (`without`, absent when nothing of
+    the text is left)."""
+    if not any(ENV.search(_code(l)) for l in lines[first - 1:last]):
+        return None
+    text = "".join(l.rstrip("\r\n") + "\n" for l in lines)
+    starts = [0]
+    for l in lines:
+        starts.append(starts[-1] + len(l.rstrip("\r\n")) + 1)
+    pairs, stack = [], []
+    try:
+        for op, env, start, _ in environments(text, 0):
+            line = bisect.bisect_right(starts, start)
+            if op == "begin":
+                stack.append((env, line))
+            elif stack and stack[-1][0] == env:
+                name, b = stack.pop()
+                pairs.append((name, b, line))
+            else:
+                return None  # the file itself is unbalanced: there is no extent to suggest
+    except RegionError:
+        return None
+    kinds = _CUTTABLE | theorems
+
+    def cuts(a: int, b: int):
+        return [(n, x, y) for n, x, y in pairs if n.rstrip("*") in kinds
+                and (a <= x <= b) != (a <= y <= b)]
+
+    found = cuts(first, last)
+    if not found:
+        return None
+    a, b = first, last
+    while more := cuts(a, b):
+        a, b = min([a] + [x for _, x, _ in more]), max([b] + [y for _, _, y in more])
+    lo = max([first] + [y + 1 for _, x, y in found if x < first <= y])
+    hi = min([last] + [x - 1 for _, x, y in found if x <= last < y])
+    out = {"kind": "cuts-environment",
+           "environments": [{"name": n, "line": x, "end_line": y} for n, x, y in found],
+           "suggested": {"file": file, "line": a, "end_line": b}}
+    if lo <= hi and not cuts(lo, hi) and not all(_bare(l) for l in lines[lo - 1:hi]):
+        out["without"] = {"file": file, "line": lo, "end_line": hi}
+    return out
+
+
 def advice_message(claim_id: str, region: dict, a: dict) -> str:
     """What an advice says, for a finding or the repin plan."""
     at = f"{region.get('file')}:{region.get('start_line')}"
     if region.get("end_line", region.get("start_line")) != region.get("start_line"):
         at += f"-{region.get('end_line')}"
+    if a["kind"] == "cuts-environment":
+        envs = " and ".join(f"the {e['name']} at lines {e['line']}-{e['end_line']}"
+                            for e in a["environments"])
+        s, w = a["suggested"], a.get("without")
+        hint = (f"; pin lines {s['line']}-{s['end_line']} of {s['file']} to contain "
+                f"{'it' if len(a['environments']) == 1 else 'them'} whole (location "
+                f"{s['file']}:{s['line']} with source_region end_line {s['end_line']})")
+        if w:
+            hint += (f", or lines {w['line']}-{w['end_line']} to leave "
+                     f"{'it' if len(a['environments']) == 1 else 'them'} out (location "
+                     f"{w['file']}:{w['line']} with source_region end_line {w['end_line']})")
+        return (f"the source region of {claim_id} at {at} holds the \\begin or the \\end of "
+                f"{envs} without the other, so a change to its own text may reopen nothing "
+                f"and a change to the other text reopens it{hint}")
     s = a.get("suggested")
     hint = (f"; pin lines {s['line']}-{s['end_line']} of {s['file']} instead (location "
             f"{s['file']}:{s['line']} with source_region end_line {s['end_line']})"
@@ -269,13 +353,16 @@ def advice_message(claim_id: str, region: dict, a: dict) -> str:
     return f"the source region of {claim_id} at {at} {what}{hint}"
 
 
-def region_advice(root: Path, region: Region) -> list[dict]:
-    """`advice` for a region of the snapshot at `root`."""
+def region_advice(root: Path, region: Region, theorems=None) -> list[dict]:
+    """`advice` for a region of the snapshot at `root`; `theorems` are the snapshot's
+    theorem-like environment names (`theorem_names`), read from it when not given."""
     try:
         text = source_file(root, region.file).read_text(encoding="utf-8")
     except (RegionError, OSError, UnicodeError):
         return []
-    return advice(text.splitlines(), region)
+    if theorems is None:
+        theorems = theorem_names(tex_sources(root))
+    return advice(text.splitlines(), region, theorems)
 
 
 # -- pins of several passages (#185) and of macro definitions (#183) -----------------------------
@@ -549,7 +636,7 @@ def collect(inventory: dict, paper: str, root: Path, notation=()) -> dict:
                 rec["macros"] = macros
             if hashed:
                 rec["notation"] = hashed
-            adv = region_advice(root, p.main)
+            adv = region_advice(root, p.main, theorem_names(files))
             if adv:
                 rec["advice"] = adv
             out[claim["id"]] = rec

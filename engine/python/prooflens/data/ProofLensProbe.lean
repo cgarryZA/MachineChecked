@@ -6,7 +6,8 @@ Body of the probe that `prooflens probe` runs inside a Lean project. The CLI pre
 has no imports of its own and is not built as part of any library.
 
 Input: the JSON query named by `PROOFLENS_QUERY`. Output: JSON lines written to the file named
-by `PROOFLENS_OUT`, one record per request and one per declaration of the definition closure.
+by `PROOFLENS_OUT`, one record per request and one per declaration of the definition closure,
+and last a `done` record with the number of bytes written before it.
 
 For a specification the record holds two representations of the proposition:
 
@@ -870,9 +871,10 @@ def levelsMatch (ls : List Level) (params : List Name) : Bool :=
     && params.all ps.contains
 
 /-- `accept`: the type is exactly the specification; `refute`: exactly its negation; `witness`:
-any theorem of the acceptance layer. -/
-def proofRecord (h : IO.FS.Handle) (q : Query) (kind : String) (thm : Name)
-    (spec : Option Name) : MetaM Unit := do
+any theorem of the acceptance layer, with the project declarations in the closure of its type
+(the instance it exhibits lives in them). -/
+def proofRecord (h : IO.FS.Handle) (q : Query) (inside : Name → Bool) (seen : IO.Ref NameSet)
+    (kind : String) (thm : Name) (spec : Option Name) : MetaM Unit := do
   let env ← getEnv
   let some ci := env.find? thm
     | emit h (Json.mkObj [("record", kind), ("name", thm.toString), ("errors", toJson #["missing"])])
@@ -896,11 +898,15 @@ def proofRecord (h : IO.FS.Handle) (q : Query) (kind : String) (thm : Name)
   let bad := disallowed (q.allowed_axioms.map (·.toName)) axs
   unless bad.isEmpty do errs := errs.push s!"axioms={bad.toList}"
   let ty ← ppJson ci.type
-  emit h (Json.mkObj [("record", kind), ("name", thm.toString),
+  let closure : List (String × Json) ← if kind == "witness" then
+      pure [("closure", toJson (← emitClosure h inside thm ci.type.getUsedConstants seen))]
+    else pure []
+  let fields : List (String × Json) := [("record", kind), ("name", thm.toString),
     ("spec", match spec with | some s => Json.str s.toString | none => Json.null),
     ("errors", toJson errs), ("axioms", toJson (axs.map toString)),
     ("type", ty), ("module", (moduleOf env thm).toString), ("range", ← rangeJson thm),
-    ("sorry", toJson (axs.contains ``sorryAx))])
+    ("sorry", toJson (axs.contains ``sorryAx))]
+  emit h (Json.mkObj (fields ++ closure))
 
 /-- The project constants (`roots`) among `cs` that a reader looks for, other than `self`. -/
 def projectNamesJson (roots : Array Name) (env : Environment) (self : Name) (cs : Array Name) :
@@ -2069,8 +2075,9 @@ open ProofLensProbe in
       tryCatchRuntimeEx (withBudget q.max_heartbeats <| withCurrHeartbeats do
         match r.kind with
         | "spec" => specRecord h q inside seen r.name.toName
-        | "accept" | "refute" => proofRecord h q r.kind r.name.toName (r.spec.map (·.toName))
-        | "witness" => proofRecord h q "witness" r.name.toName none
+        | "accept" | "refute" =>
+          proofRecord h q inside seen r.kind r.name.toName (r.spec.map (·.toName))
+        | "witness" => proofRecord h q inside seen "witness" r.name.toName none
         | "index" => do indexRecords h roots; moduleDocRecords h roots
         | "moddocs" => moduleDocRecords h roots
         | "names" => namesRecord h (r.names.getD #[])
@@ -2097,4 +2104,10 @@ open ProofLensProbe in
           emit h (Json.mkObj [("record", if r.kind == "decl" then "defclosure" else r.kind),
             ("name", r.name), ("spec", match r.spec with | some x => Json.str x | none => Json.null),
             ("errors", toJson #[s!"probe-error: {← err.toMessageData.toString}"])]))
-    emit h (Json.mkObj [("record", "done")])
+    -- Every record reaches the file before `done` says how many bytes precede it, so a
+    -- reader can tell a complete output from one cut short. A write that fails (a full disk)
+    -- raises here or in `emit`, and the session ends with an error.
+    h.flush
+    let bytes := (← System.FilePath.metadata opath).byteSize
+    emit h (Json.mkObj [("record", "done"), ("bytes", toJson bytes.toNat)])
+    h.flush

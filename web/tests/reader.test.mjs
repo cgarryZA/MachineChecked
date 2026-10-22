@@ -666,6 +666,30 @@ for (const width of [1300, 390]) {
     await pg.waitForSelector("aside .view h1");
   });
 
+  await check("the audit details list the unreviewed declarations only a witness uses, and a definition's candidates", width, async (pg) => {
+    const W = "Toy.Acceptance.thm_even_add_hypotheses";
+    const patch = (glob, extra) => pg.route(glob, async (route) => {
+      const response = await route.fetch();
+      const rec = await response.json();
+      rec.clauses[0] = { ...rec.clauses[0], ...extra };
+      route.fulfill({ response, json: rec });
+    });
+    await patch("**/toy/data/claims/*even-add*", { witness_defs: [{ name: "Toy.triangle", witnesses: [W], state: "pending" }] });
+    await patch("**/toy/data/claims/*def_even*", { witness_candidates: [{ name: "Toy.triangle", uses: ["Toy.IsEven"], witnesses: [W] }] });
+    await toyClaim(pg, "T:thm:even-add");
+    await pg.locator("aside .chipbtn").click();
+    const list = pg.locator("aside .details .witness-defs");
+    await list.waitFor();
+    assert.match(await list.textContent(), /Toy\.triangle\s*— no review/);
+    await list.locator("button.ref").click();
+    await pg.waitForSelector("aside .decl.inspector");
+    await toyClaim(pg, "T:def:even");
+    await pg.locator("aside .chipbtn").click();
+    const cands = pg.locator("aside .details .witness-candidates");
+    await cands.waitFor();
+    assert.match(await cands.textContent(), /Toy\.triangle\s*— uses Toy\.IsEven; used by Toy\.Acceptance\.thm_even_add_hypotheses/);
+  });
+
   await check("a definition opens beside its paper definition; reviews and provenance are under Details", width, async (pg) => {
     await toyClaim(pg, "T:thm:even-add");
     await pg.locator("aside .lean .r", { hasText: "IsEven" }).first().click();

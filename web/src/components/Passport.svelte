@@ -500,6 +500,18 @@
           <p class="small">Witness <code>{cl.witness}</code>:</p>
           <Statement st={{ binders: [], conclusion: cl.witness_record.type }} onref={showDecl} compact />
         {/if}
+        {#if cl.witness_defs?.length}
+          <p class="small">Declarations only its witness uses, without a current review: the instance the witness exhibits is fixed by them.</p>
+          <ul class="small witness-defs">
+            {#each cl.witness_defs as w (w.name)}<li><button class="ref" onclick={() => showDecl(w.name)}><code>{w.name}</code></button> <span class="faint">— {w.state === "stale" ? "review out of date" : "no review"}</span></li>{/each}
+          </ul>
+        {/if}
+        {#if cl.witness_candidates?.length}
+          <p class="small">Declarations only witnesses use that build on this definition: candidates for its mapping.</p>
+          <ul class="small witness-candidates">
+            {#each cl.witness_candidates as w (w.name)}<li><button class="ref" onclick={() => showDecl(w.name)}><code>{w.name}</code></button> <span class="faint">— uses {w.uses.join(", ")}; used by {w.witnesses.join(", ")}</span></li>{/each}
+          </ul>
+        {/if}
         {#if cl.regimes?.length}
           <ul class="small">
             {#each cl.regimes as r}<li>{r.discharged ? "covered" : "not shown"}: {r.name}{#if r.description} — {r.description}{/if}</li>{/each}
