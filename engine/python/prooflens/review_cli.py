@@ -12,6 +12,10 @@ As on the page, the order is what this program recorded: it cannot show that the
 not read the Lean elsewhere. What other units had already shown a unit's material to this
 reviewer is recorded in the report (`reading.revealed_by`), and so is what the workspace
 records the reviewer had seen (an informed investigation has seen the Lean of every claim).
+
+`next` and `status` give the open units in the queue's order (`review_queue.prioritise`), in the
+paper's, or in an order that also uses what the auditors' workspaces record as open; that last
+order rests on prior interpretations, so asking for it is recorded as exposure.
 """
 
 from __future__ import annotations
@@ -22,12 +26,15 @@ import re
 from pathlib import Path
 
 from . import compare as cmp
+from . import review_queue as rq
 from .simple import reading_text
 from . import workspace as wsp
 from .config import Config
 
 REPORT_SCHEMA = "prooflens/review-report@1"
 REPORTS_SCHEMA = "prooflens/review-reports@1"
+# How a workspace's exposure names an order that used the auditors' records.
+ORDER_EXPOSURE = "interpretation-informed review order"
 
 # The verdicts of the protocol, by group, as on the review page (`web/src/lib/review.js`).
 VERDICTS = {
@@ -70,6 +77,7 @@ class Session:
 
     def __init__(self, target: Config | Path, reviewer: dict):
         work = Path(getattr(target, "out_dir", target))
+        self.work_dir = work
         self.data = work / "site" / "data"
         if not (self.data / "review-queue.json").exists():
             raise ReviewError("no review queue: run `machinechecked view` or `machinechecked "
@@ -107,8 +115,40 @@ class Session:
             r["pins"].get("fingerprints") or {}, sort_keys=True)) == self._fp(u)
             for r in self.work["reports"])
 
-    def open_units(self) -> list[dict]:
-        return [u for u in self.queue["units"] if u["state"] != "reviewed" and not self.reported(u)]
+    def open_units(self, order: str = "priority") -> list[dict]:
+        """The units left to review, in the order asked (`review_queue.ORDERS`): the queue's
+        (`priority`), the paper's (`document`), or the queue's with what the workspaces of this
+        working directory record as open (`informed`). Those records are prior
+        interpretations: an informed order records that exposure in this reviewer's workspace,
+        for the claims it drew on, so that a later reading of them is not taken as blind."""
+        units = [u for u in self.queue["units"] if u["state"] != "reviewed"
+                 and not self.reported(u)]
+        if order == "priority":
+            return units
+        if order == "document":
+            return rq.arrange(units, {}, "document", self.index.get("claims") or [])
+        if order != "informed":
+            raise ReviewError(f"order {order!r} is not one of: {', '.join(rq.ORDERS)}")
+        spaces = [ws for _, ws in wsp.list_all(self.work_dir)]
+        signals, drawn = rq.workspace_signals(units, spaces, self.site)
+        if drawn:
+            self.expose(drawn, ORDER_EXPOSURE)
+        return rq.arrange(units, signals)
+
+    def expose(self, claims: list[str], how: str) -> None:
+        """Record in this reviewer's workspace that they have seen prior interpretations of
+        `claims`, unless it already records that."""
+        for e in self.workspace.get("exposure") or []:
+            if "prior interpretations" in e.get("what", []) and (
+                    e.get("claims") is None or set(claims) <= set(e["claims"])):
+                return
+        if not self.path.exists():
+            self.save()
+        wsp.update(self.path, [{"op": "exposure", "what": ["prior interpretations"],
+                                "claims": sorted(claims), "how": how}],
+                   by=self.reviewer["id"])
+        self.workspace = wsp.read(self.path)
+        self.work = self.workspace["review"]
 
     def draft(self, u: dict, stage: str | None = None) -> dict:
         d = self.work["drafts"].get(u["id"])

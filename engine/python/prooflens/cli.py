@@ -1089,25 +1089,36 @@ def cmd_review_step(a):
     try:
         s = rc.Session(work, rc.parse_reviewer(a.reviewer, a.same_family))
         if a.action == "next":
-            u = next(iter(s.open_units()), None)
+            u = next(iter(s.open_units(a.order)), None)
             if as_json:
                 _print_json({"schema": "machinechecked/review-next@1",
                              "release": s.index["release"], "mode": s.queue.get("mode"),
-                             "unit": u and {k: u.get(k) for k in ("id", "kind", "reason")}})
+                             "order": a.order,
+                             "unit": u and {k: u.get(k) for k in ("id", "kind", "reason",
+                                                                  "priority")}})
             else:
                 print(f"{u['id']}  ({u['reason']})" if u else "nothing left to review")
+                for sig in ((u or {}).get("priority") or {}).get("signals") or []:
+                    for q in sig.get("questions") or []:
+                        print(f"  question: {q}")
         elif a.action == "status":
+            units = s.open_units(a.order)
             if as_json:
                 _print_json({"schema": "machinechecked/review-status@1",
                              "release": s.index["release"], "mode": s.queue.get("mode"),
                              "reports": len(s.work["reports"]),
                              "drafts": {i: d["stage"] for i, d in s.work["drafts"].items()},
-                             "open": [u["id"] for u in s.open_units()]})
+                             "order": {"by": a.order, **({"queue": s.queue["order"]}
+                                                         if s.queue.get("order") else {})},
+                             "open": [u["id"] for u in units]})
                 return
             print(f"{len(s.work['reports'])} report(s), {len(s.work['drafts'])} in progress, "
-                  f"{len(s.open_units())} unit(s) left to review (release {s.index['release']})")
+                  f"{len(units)} unit(s) left to review (release {s.index['release']})")
             for uid, d in s.work["drafts"].items():
                 print(f"  {uid}: at step '{d['stage']}'")
+            for name, sig in ((s.queue.get("order") or {}).get("signals") or {}).items():
+                if sig.get("state") != "read":
+                    print(f"  order: {name} {sig['state']}: {sig.get('why')}")
         elif a.action in ("read", "show", "author"):
             out = getattr(s, a.action)(a.unit, as_json)
             _print_json(out) if as_json else print(out)
@@ -1558,6 +1569,13 @@ def main(argv=None):
         if name in ("next", "status", "read", "show", "author"):
             sp.add_argument("--json", action="store_true",
                             help="print one JSON document holding only what this step shows")
+        if name in ("next", "status"):
+            sp.add_argument("--order", choices=["priority", "document", "informed"],
+                            default="priority",
+                            help="priority: changed evidence and proof use first (default); "
+                                 "document: the paper's order; informed: also what the "
+                                 "auditors' workspaces record as open, which records that "
+                                 "you have seen prior interpretations")
         sp.add_argument("--as", dest="reviewer", default=os.environ.get("MACHINECHECKED_REVIEWER"),
                         help="human:NAME or llm:MODEL (default: $MACHINECHECKED_REVIEWER)")
         sp.add_argument("--same-family", choices=["yes", "no", "unknown"], default="unknown",
