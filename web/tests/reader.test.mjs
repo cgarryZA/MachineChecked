@@ -44,7 +44,7 @@ const A = "alpha/project-a", B = "beta/project-b";
 const FIXTURE = String.raw`
 import json, sys
 from pathlib import Path
-from prooflens.paper import paper_claims, write_paper_site
+from prooflens.paper import claim_map, paper_claims, write_paper_site
 A, B = "alpha/project-a", "beta/project-b"
 def anchor(env, number, page, y0):
     return {"env": env, "number": number, "title": None, "begin": [page, 0, y0], "end": [page, 0, y0 + 40]}
@@ -117,17 +117,31 @@ versions = [{"id": "arxiv:2601.00003v1", "kind": "published", "href": "/versions
             {"id": "manuscript:abc1234", "kind": "manuscript", "revision": "abc1234" + "0" * 33,
              "href": "../latest/", "label": "arXiv v2", "audits": [
                  {"url": "https://audit.example/a/latest/", "author": "A. Author", "repository": A, "commit": "2" * 40}]}]
-pages = {"v1": ([anchor("theorem", "1", 1, 100), anchor("theorem", "2", 1, 300)],
+pages = {"v1": ([anchor("theorem", "1", 1, 100), anchor("theorem", "2", 1, 300),
+                 anchor("theorem", "3", 1, 500)],
                 [("theorem", "1", ["A.one"])], [("theorem", "2", ["B.two"])], "Version one text."),
          "latest": ([anchor("lemma", "1", 1, 100), anchor("theorem", "2", 1, 300),
                      anchor("theorem", "3", 1, 500)],
                     [("theorem", "3", ["A.three"])], [], "Latest manuscript text.")}
+# The claim map between them (#225), from the two inventories: v1's Theorem 1 is the latest
+# Theorem 3 with its statement changed (the same label), Theorem 2 became Lemma 1 (the same
+# statement), Theorem 3 was removed, and the latest Theorem 2 is new.
+inventory = {"v1": [("theorem-1", "Theorem 1", "thm:bound", "A bound."),
+                    ("theorem-2", "Theorem 2", None, "An identity."),
+                    ("theorem-3", "Theorem 3", None, "A remark.")],
+             "latest": [("lemma-1", "Lemma 1", None, "An identity."),
+                        ("theorem-2", "Theorem 2", None, "Another identity."),
+                        ("theorem-3", "Theorem 3", "thm:bound", "A sharper bound.")]}
+claim_maps = [claim_map(versions[0]["id"], [{"key": k, "number": n, "label": l, "statement": t}
+                                            for k, n, l, t in inventory["v1"]],
+                        versions[1]["id"], [{"key": k, "number": n, "label": l, "statement": t}
+                                            for k, n, l, t in inventory["latest"]])]
 for (name, (anchors, a_rows, b_rows, text)), v in zip(pages.items(), versions):
     site = Path(sys.argv[1]).parent / "versions" / name
     cl = paper_claims(anchors, two["title"], [(two["formalisations"][0], fy(a_rows)),
                                               (two["formalisations"][1], fy(b_rows))])
     write_paper_site(site, two, cl, [612, 792], "paper.pdf", Path(sys.argv[2]), audits={},
-                     versions=versions, version=v["id"])
+                     versions=versions, version=v["id"], claim_maps=claim_maps)
     (site / "paper.pdf").write_bytes(pdf(1, text))
     # On v1, project A's audit pins the version without pinning every claim; B's checks it.
     if name == "v1":
@@ -558,6 +572,17 @@ for (const width of [1300, 390]) {
     assert.equal(await pg.inputValue(VERSION), "manuscript:abc1234");
     assert.equal(await pg.inputValue("select[aria-label='Formalisation shown']"), B);
     await pg.waitForFunction(() => document.querySelector(".paperpane")?.textContent.includes("Latest manuscript text."));
+    // The chosen version's label is shown whole, at a phone's width too.
+    const cut = await pg.locator(VERSION).evaluate((sel) => {
+      const cs = getComputedStyle(sel);
+      const ctx = document.createElement("canvas").getContext("2d");
+      ctx.font = `${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+      const text = ctx.measureText(sel.selectedOptions[0].textContent.trim()).width;
+      const room = sel.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight) - 20;
+      return text > room ? `${Math.round(text)} > ${Math.round(room)}` : null;
+    });
+    assert.equal(cut, null, `the version's label is cut off (${cut})`);
+    if (process.env.SHOTS) await pg.screenshot({ path: path.join(process.env.SHOTS, `versions-latest-${width}.png`) });
     await pg.selectOption("select[aria-label='Formalisation shown']", A);
     assert.deepEqual(await statuses(pg, ["P:lemma-1", "P:theorem-2", "P:theorem-3"]), ["link.none", "link.none", "link.no-audit"]);
 
@@ -582,6 +607,52 @@ for (const width of [1300, 390]) {
     assert.match(await pg.locator("aside h1").textContent(), /Theorem 2/);
     assert.equal(await pg.inputValue(VERSION), "arxiv:2601.00003v1");
     assert.equal(await pg.locator("aside [data-status]").first().getAttribute("data-status"), "link.none");
+  });
+}
+
+// #225: a claim shows what it is in the other version, from the site's claim map, with a link
+// to that claim on the other version's page; a removed and a new claim say so. Statuses are each
+// page's own.
+const counterpart = async (pg, claim, number) => {
+  await open(pg, claim);
+  await pg.waitForFunction((n) => document.querySelector("aside h1")?.textContent.includes(n), number);
+  return (await pg.locator("aside .counterpart").allTextContents()).map((t) => t.replace(/\s+/g, " ").trim());
+};
+for (const width of [1300, 390]) {
+  await check("a claim shows its counterpart in the other version and links there", width, async (pg) => {
+    await pg.goto(origin + "/versions/v1/");
+    await pg.waitForSelector(VERSION);
+    assert.deepEqual(await counterpart(pg, "P:theorem-1", "Theorem 1"),
+      ["Theorem 3 in Latest manuscript (commit abc1234), statement changed."]);
+    assert.deepEqual(await counterpart(pg, "P:theorem-2", "Theorem 2"),
+      ["Lemma 1 in Latest manuscript (commit abc1234), renumbered."]);
+    assert.deepEqual(await counterpart(pg, "P:theorem-3", "Theorem 3"),
+      ["Removed in Latest manuscript (commit abc1234)."]);
+    assert.equal(await pg.locator("aside .counterpart a").count(), 0, "a removed claim links nowhere");
+    assert.deepEqual(await statuses(pg, ["P:theorem-1", "P:theorem-2", "P:theorem-3"]), ["link.no-audit", "link.none", "link.none"]);
+    if (process.env.SHOTS) {
+      await counterpart(pg, "P:theorem-1", "Theorem 1");
+      await pg.screenshot({ path: path.join(process.env.SHOTS, `counterpart-${width}.png`) });
+    }
+
+    await counterpart(pg, "P:theorem-1", "Theorem 1");
+    await pg.locator("aside .counterpart a", { hasText: "Theorem 3" }).click();
+    await pg.waitForURL(/\/versions\/latest\//);
+    const u = new URL(pg.url());
+    assert.equal(decodeURIComponent(u.hash), "#/r/paper/read/P/P:theorem-3");
+    await pg.waitForFunction(() => document.querySelector("aside h1")?.textContent.includes("Theorem 3"));
+    assert.equal(await pg.inputValue(VERSION), "manuscript:abc1234");
+    assert.deepEqual((await pg.locator("aside .counterpart").allTextContents()).map((t) => t.replace(/\s+/g, " ").trim()),
+      ["Theorem 1 in arXiv v1, statement changed."]);
+    assert.equal(await pg.locator("aside [data-status]").first().getAttribute("data-status"), "link.no-audit");
+    assert.deepEqual(await counterpart(pg, "P:theorem-2", "Theorem 2"), ["New in this version: not in arXiv v1."]);
+    assert.deepEqual(await counterpart(pg, "P:lemma-1", "Lemma 1"), ["Theorem 2 in arXiv v1, renumbered."]);
+    await pg.locator("aside .counterpart a", { hasText: "Theorem 2" }).click();
+    await pg.waitForURL(/\/versions\/v1\//);
+    await pg.waitForFunction(() => document.querySelector("aside h1")?.textContent.includes("Theorem 2"));
+    assert.equal(await pg.inputValue(VERSION), "arxiv:2601.00003v1");
+    const [scroll, client] = await pg.evaluate(() => [document.documentElement.scrollWidth, document.documentElement.clientWidth]);
+    assert.ok(scroll <= client, `the page scrolls sideways (${scroll} > ${client})`);
   });
 }
 

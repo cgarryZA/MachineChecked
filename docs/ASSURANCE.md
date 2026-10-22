@@ -196,7 +196,8 @@ The reader shows the same comparison on its **Details** page, and `export` publi
 what each paper's `publish` settings allow (its passages' places and text only with its source
 text, the Lean statements only with its Lean). The comparison changes no status and writes
 nothing: a reopened review needs a new reading at the new revision, and the earlier reading
-stays in the review files as it was.
+stays in the review files as it was. The review queue offers the reopened reviews first, with
+their questions ([Review order](REVIEWING.md#review-order)).
 
 ## What the evidence says
 

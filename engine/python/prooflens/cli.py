@@ -1024,7 +1024,8 @@ def cmd_compare(a):
             op, target = a.query
             out = cmp.query(site, op, target, a.limit, a.after, root,
                             log=lambda m: print(m, file=sys.stderr), match=a.match,
-                            workspace=a.workspace, every_library=a.all_libraries)
+                            workspace=a.workspace, main=a.main,
+                            every_library=a.all_libraries)
             if a.json:
                 return _print_json(out)
             if not out["available"]:
@@ -1035,6 +1036,11 @@ def cmd_compare(a):
                 claims = cmp.linked_claims(site)
                 for r in out["results"]:
                     print(text(r, claims))
+                return
+            if op == "impact":
+                from .impact import text as impact_text
+                for r in out["results"]:
+                    print(impact_text(r))
                 return
             if op == "search":
                 print(cmp.search_text(out))
@@ -1100,25 +1106,36 @@ def cmd_review_step(a):
     try:
         s = rc.Session(work, rc.parse_reviewer(a.reviewer, a.same_family))
         if a.action == "next":
-            u = next(iter(s.open_units()), None)
+            u = next(iter(s.open_units(a.order)), None)
             if as_json:
                 _print_json({"schema": "machinechecked/review-next@1",
                              "release": s.index["release"], "mode": s.queue.get("mode"),
-                             "unit": u and {k: u.get(k) for k in ("id", "kind", "reason")}})
+                             "order": a.order,
+                             "unit": u and {k: u.get(k) for k in ("id", "kind", "reason",
+                                                                  "priority")}})
             else:
                 print(f"{u['id']}  ({u['reason']})" if u else "nothing left to review")
+                for sig in ((u or {}).get("priority") or {}).get("signals") or []:
+                    for q in sig.get("questions") or []:
+                        print(f"  question: {q}")
         elif a.action == "status":
+            units = s.open_units(a.order)
             if as_json:
                 _print_json({"schema": "machinechecked/review-status@1",
                              "release": s.index["release"], "mode": s.queue.get("mode"),
                              "reports": len(s.work["reports"]),
                              "drafts": {i: d["stage"] for i, d in s.work["drafts"].items()},
-                             "open": [u["id"] for u in s.open_units()]})
+                             "order": {"by": a.order, **({"queue": s.queue["order"]}
+                                                         if s.queue.get("order") else {})},
+                             "open": [u["id"] for u in units]})
                 return
             print(f"{len(s.work['reports'])} report(s), {len(s.work['drafts'])} in progress, "
-                  f"{len(s.open_units())} unit(s) left to review (release {s.index['release']})")
+                  f"{len(units)} unit(s) left to review (release {s.index['release']})")
             for uid, d in s.work["drafts"].items():
                 print(f"  {uid}: at step '{d['stage']}'")
+            for name, sig in ((s.queue.get("order") or {}).get("signals") or {}).items():
+                if sig.get("state") != "read":
+                    print(f"  order: {name} {sig['state']}: {sig.get('why')}")
         elif a.action in ("read", "show", "author"):
             out = getattr(s, a.action)(a.unit, as_json)
             _print_json(out) if as_json else print(out)
@@ -1186,7 +1203,8 @@ def cmd_review(a):
             sys.exit(r.returncode)
 
 
-INVENTORY = {"regions": "source_regions", "repin": "repin", "rebound": "rebound"}
+INVENTORY = {"regions": "source_regions", "repin": "repin", "rebound": "rebound",
+             "retire": "retire"}
 
 
 def cmd_inventory(a):
@@ -1409,10 +1427,14 @@ def main(argv=None):
                     "search CLAIM-OR-TEXT (the project's declarations by statement content), "
                     "proof-facts NAME (the facts inside its proof), uses NAME (where it is "
                     "applied, with the source of each premise), composition CLAIM (the "
-                    "auditors' compositions for it, with --workspace for one workspace); impact "
-                    "says what is not extracted yet")
+                    "auditors' compositions for it, with --workspace for one workspace), impact "
+                    "NAME (how each main result uses it, and which claims' Lean uses it)")
     co.add_argument("--match", metavar="TEXT",
                     help="with proof-facts: rank the facts by the symbols they share with TEXT")
+    co.add_argument("--main", action="append", metavar="NAME",
+                    help="with impact: a main result to trace from, a declaration or a claim "
+                    "(its linked Lean); repeat for several (default: the declarations linked to "
+                    "the paper's theorems)")
     co.add_argument("--limit", type=int, help="return at most this many definitions or results")
     co.add_argument("--after", metavar="ID", help="continue a list after this item")
     co.add_argument("--workspace", metavar="ID", help="include this workspace's requirements and "
@@ -1578,6 +1600,13 @@ def main(argv=None):
         if name in ("next", "status", "read", "show", "author"):
             sp.add_argument("--json", action="store_true",
                             help="print one JSON document holding only what this step shows")
+        if name in ("next", "status"):
+            sp.add_argument("--order", choices=["priority", "document", "informed"],
+                            default="priority",
+                            help="priority: changed evidence and proof use first (default); "
+                                 "document: the paper's order; informed: also what the "
+                                 "auditors' workspaces record as open, which records that "
+                                 "you have seen prior interpretations")
         sp.add_argument("--as", dest="reviewer", default=os.environ.get("MACHINECHECKED_REVIEWER"),
                         help="human:NAME or llm:MODEL (default: $MACHINECHECKED_REVIEWER)")
         sp.add_argument("--same-family", choices=["yes", "no", "unknown"], default="unknown",
@@ -1586,10 +1615,11 @@ def main(argv=None):
         sp.set_defaults(func=cmd_review_step)
 
     iv = sub.add_parser(
-        "inventory", help="pin the claims' source passages",
+        "inventory", help="pin the claims' source passages, and retire stale readings",
         description="regions: hash line pins as regions at the revision they were pinned at "
         "(docs/SOURCE_REGIONS.md); rebound: change the bounds of claims' regions there; repin: "
-        "move the claims to a new revision of the paper. "
+        "move the claims to a new revision of the paper; retire: remove the readings review markers "
+        "record of passages that no longer use their declaration. "
         "Each prints a plan, and changes files only with --write; pass --help after the action "
         "for its options.")
     iv.add_argument("action", choices=sorted(INVENTORY))
