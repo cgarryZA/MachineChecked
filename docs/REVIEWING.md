@@ -332,9 +332,11 @@ The maintainer reads the report and decides whether to promote its review marker
 
 In zero configuration, put exported report files in the project's `machinechecked-reviews/`
 folder and build again. Each statement shows its reports under its links: the verdict, the
-reviewer as recorded, the comparison and the locked reading. A report is marked when the claim
-now links other declarations, or their statements changed, since it was recorded. Reports are
-shown as their reviewers wrote them and change no status; `check --json` lists them per claim.
+reviewer as recorded, the comparison and the locked reading. A report pins the text of the
+statement it read; it is marked when the paper now prints another text, when it pins none, or
+when the claim now links other declarations or their statements changed since it was recorded.
+Reports are shown as their reviewers wrote them and change no status; `check --json` lists them
+per claim.
 
 ## Maintainer acceptance
 

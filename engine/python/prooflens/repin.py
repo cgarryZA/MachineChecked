@@ -345,11 +345,174 @@ def _bounds(region) -> dict:
             "start_column": region.start_column, "end_column": region.end_column}
 
 
+class LineDiff:
+    """The line diff of two versions of one file, as blocks of unchanged and changed lines,
+    mapping a line of the old version (1-based) to the new version."""
+
+    def __init__(self, old: str, new: str):
+        self.new_lines = new.split("\n")
+        self.ops = difflib.SequenceMatcher(None, old.split("\n"), self.new_lines,
+                                           autojunk=False).get_opcodes()
+
+    def _block(self, line: int):
+        for op in self.ops:
+            if op[1] < line <= op[2]:
+                return op
+        return None
+
+    def same(self, line: int) -> int | None:
+        """The new line of an old line that lies in an unchanged block, else None."""
+        op = self._block(line)
+        return op[3] + line - op[1] if op and op[0] == "equal" else None
+
+    def _mapped(self, line: int, first: bool) -> int | None:
+        op = self._block(line)
+        if op is None:
+            return None
+        tag, i1, i2, j1, j2 = op
+        if tag == "equal" or (tag == "replace" and i2 - i1 == j2 - j1):
+            return j1 + line - i1
+        # A rewritten block of another length, or removed lines: its whole replacement, which
+        # is empty for removed lines.
+        return j1 + 1 if first else j2
+
+    def first(self, line: int) -> int | None:
+        """The new line a passage that started at old `line` starts at."""
+        return self._mapped(line, True)
+
+    def last(self, line: int) -> int | None:
+        """The new line a passage that ended at old `line` ends at."""
+        return self._mapped(line, False)
+
+
+FLAGGED = ("cuts-environment", "spans-section")
+
+
+def proposed_bounds(claim: dict, region, new_root: Path, old_files: dict[str, str],
+                    new_files: dict[str, str], old_rev: str, new_rev: str,
+                    theorems) -> dict:
+    """Bounds for a span whose text changed, from the line diff of its file: its first and last
+    lines mapped through the unchanged blocks of the diff (a line in a rewritten block maps to
+    the whole of the block's replacement), blank and comment-only lines trimmed from the ends.
+    Columns are kept when the line they bound is unchanged. Advice only: the result carries the
+    passage's text diff at those bounds and its region advice, and `flagged` names the advice
+    that makes the bounds doubtful (an environment cut, a heading crossed)."""
+    if region.file not in new_files or region.file not in old_files:
+        return {"reason": f"{region.file} is not in the new revision"}
+    diff = LineDiff(old_files[region.file], new_files[region.file])
+    a, b = diff.first(region.start_line), diff.last(region.end_line)
+    lines = diff.new_lines
+    while a is not None and b is not None and a <= b and not COMMENT.sub("", lines[a - 1]).strip():
+        a += 1
+    while a is not None and b is not None and a <= b and not COMMENT.sub("", lines[b - 1]).strip():
+        b -= 1
+    if a is None or b is None or a > b:
+        return {"reason": "every line of the passage was removed or blanked"}
+    old = claim.get("source_region") or {}
+    span = {"end_line": b}
+    kept = []
+    if "start_column" in old and diff.same(region.start_line) == a:
+        span["start_column"] = old["start_column"]
+        kept.append("start_column")
+    if "end_column" in old and diff.same(region.end_line) == b:
+        span["end_column"] = old["end_column"]
+        kept.append("end_column")
+    out = {"location": f"{region.file}:{a}", "source_region": span}
+    if ({"start_column", "end_column"} & set(old)) - set(kept):
+        out["columns"] = ("the line a column bounded changed; the proposal takes the whole "
+                          "line")
+    c = {**claim, "location": out["location"], "source_region": span}
+    try:
+        new = extract(new_root, c)
+    except (RegionError, OSError, UnicodeError) as error:
+        return {**out, "reason": f"the proposed bounds are not a passage: {error}"}
+    out["where"] = changed_line({**claim, "source_line_sha256": region.line_sha256},
+                                new.record())
+    out["diff"] = list(difflib.unified_diff(
+        list(region.lines), list(new.lines), lineterm="",
+        fromfile=f"{region.file}:{region.start_line} at {old_rev}",
+        tofile=f"{new.file}:{new.start_line} at {new_rev}"))
+    notes = region_advice(new_root, new, theorems)
+    if notes:
+        rec = new.record()
+        out["advice"] = [{**n, "message": advice_message(claim["id"], rec, n)} for n in notes]
+    flagged = [n["kind"] for n in notes if n["kind"] in FLAGGED]
+    if flagged:
+        out["flagged"] = flagged
+    return out
+
+
+# A line reference in a note: `lines 120–122`, `line 4`, `ll. 3-5`, optionally `of FILE.tex`
+# (or `in FILE.tex`), or `FILE.tex:120-122`.
+_RANGE = r"(?P<{a}>\d+)(?:\s*(?:--|-|–|—|to)\s*(?P<{b}>\d+))?"
+LINE_REF = re.compile(
+    r"(?P<path>[\w./-]+\.tex):" + _RANGE.format(a="pa", b="pb")
+    + r"|\b(?:[Ll]ines?|ll?\.)\s*" + _RANGE.format(a="a", b="b")
+    + r"(?:\s+(?:of|in)\s+(?P<file>[\w./-]+\.tex))?")
+
+
+def note_references(note: str, own: str | None, old_files: dict[str, str],
+                    new_files: dict[str, str], diffs: dict) -> tuple[list[dict], str]:
+    """Each line reference of a note with what the new revision does with its lines, and the
+    note with the references whose lines only moved rewritten to their new numbers. A reference
+    without a file names the claim's own file (`own`). Classes: `unchanged` (the same numbers),
+    `moved` (every line in an unchanged block of the diff, still adjacent), `changed` (some of
+    its lines changed or were removed: `changed_lines`), `unread` (a file that is not in both
+    revisions, or a line outside it)."""
+    refs, edits = [], []
+    for m in LINE_REF.finditer(note):
+        file = m.group("path") or m.group("file") or own
+        ga, gb = ("pa", "pb") if m.group("path") else ("a", "b")
+        a = int(m.group(ga))
+        b = int(m.group(gb)) if m.group(gb) else a
+        ref = {"text": m.group(0), "file": file, "lines": [a, b]}
+        refs.append(ref)
+        if not file or file not in old_files or file not in new_files:
+            ref.update({"class": "unread", "reason": (
+                f"{file} is not in both revisions" if file
+                else "it names no file, and the claim has none to read it in")})
+            continue
+        if file not in diffs:
+            diffs[file] = LineDiff(old_files[file], new_files[file])
+        diff = diffs[file]
+        if not 1 <= a <= b <= old_files[file].count("\n") + 1:
+            ref.update({"class": "unread", "reason": f"not lines of {file}"})
+            continue
+        mapped = [diff.same(k) for k in range(a, b + 1)]
+        if None in mapped:
+            ref.update({"class": "changed", "changed_lines": [
+                k for k, n in zip(range(a, b + 1), mapped) if n is None]})
+            continue
+        if mapped[-1] - mapped[0] != b - a:
+            ref.update({"class": "changed", "changed_lines": [],
+                        "reason": "lines were inserted between its lines"})
+            continue
+        ref["to"] = [mapped[0], mapped[-1]]
+        if mapped[0] == a:
+            ref["class"] = "unchanged"
+            continue
+        ref["class"] = "moved"
+        edits.append((m.span(ga), mapped[0]))
+        if m.group(gb):
+            edits.append((m.span(gb), mapped[-1]))
+    out = note
+    for (i, j), n in sorted(edits, reverse=True):
+        out = out[:i] + str(n) + out[j:]
+    return refs, out
+
+
 def repin_plan(inventory: dict, paper: str, old_root: Path, new_root: Path, old_rev: str,
-               new_rev: str) -> tuple[dict, dict]:
+               new_rev: str, accept=(), rewrite_notes: bool = False) -> tuple[dict, dict]:
     """The inventory with the paper's claims moved from `old_rev` (snapshot `old_root`) to
     `new_rev` (snapshot `new_root`), and the report of what happened to each claim. Raises
-    RegionError, before matching anything, if a claim does not match its pin at `old_rev`."""
+    RegionError, before matching anything, if a claim does not match its pin at `old_rev`.
+
+    A changed or not-found span is given bounds proposed from the line diff (`proposed`); the
+    claims in `accept` take them (their digests and revision kept), and a claim in `accept`
+    without usable proposed bounds is refused. The line references of the claims' scope notes
+    are listed under `notes`; with `rewrite_notes`, those whose lines only moved take their new
+    numbers."""
+    accept = set(accept)
     result = deepcopy(inventory)
     claims = [c for c in result["claims"] if c["paper"] == paper]
     if not claims:
@@ -453,6 +616,12 @@ def repin_plan(inventory: dict, paper: str, old_root: Path, new_root: Path, old_
                 else:
                     entry["reason"] = next(why for _, why in located if why)
                     entry["candidates"] = [f"{f}:{ln}" for _, f, ln in found]
+        if target is None and entry["class"] in ("changed", "not-found") \
+                and region.kind == "span":
+            if theorems is None:
+                theorems = theorem_names(tex_sources(new_root))
+            entry["proposed"] = proposed_bounds(claim, region, new_root, old_files, new_files,
+                                                old_rev, new_rev, theorems)
         if target is not None:
             placed, new = target
             entry["to"] = placed["location"]
@@ -486,6 +655,14 @@ def repin_plan(inventory: dict, paper: str, old_root: Path, new_root: Path, old_
         _apply(claim, entry, region, target, paper_pin, old_rev, new_rev)
         if parts is not None and entry["class"] != "ambiguous":
             claim["source_parts"] = parts
+        if claim["id"] in accept:
+            _accept(claim, entry)
+            accept.discard(claim["id"])
+    if accept:
+        raise RegionError(", ".join(sorted(accept)) + ": no bounds are proposed for "
+                          + ("it" if len(accept) == 1 else "them")
+                          + " (only a changed or not-found span of this paper has them)")
+    notes = _notes(inventory, result, paper, entries, old_files, new_files, rewrite_notes)
 
     pins = result.get("papers", {}).get(paper)
     if pins and pins.get("commit") and same_revision(
@@ -503,8 +680,62 @@ def repin_plan(inventory: dict, paper: str, old_root: Path, new_root: Path, old_
               "new_passages": [{"location": loc, "label": n} for loc, n in new],
               "blocking": [e["claim"] for e in entries
                            if e["class"] in ("ambiguous", "not-handled")],
-              "advice": [e["claim"] for e in entries if e.get("advice")]}
+              "advice": [e["claim"] for e in entries if e.get("advice")],
+              "proposed": [e["claim"] for e in entries
+                           if (e.get("proposed") or {}).get("diff") is not None],
+              "notes": notes}
     return result, report
+
+
+def _accept(claim: dict, entry: dict) -> None:
+    """Give a claim of the planned inventory its proposed bounds, keeping its digests and the
+    revision they were made at, so the source check goes on reporting it until it is reviewed
+    and pinned again."""
+    p = entry.get("proposed")
+    why = None
+    if entry["class"] not in ("changed", "not-found") or not p:
+        why = f"it is {entry['class']}, and no bounds are proposed for it"
+    elif "reason" in p:
+        why = p["reason"]
+    elif p.get("flagged"):
+        why = "they " + " and ".join({"cuts-environment": "cut an environment",
+                                      "spans-section": "cross a heading"}[k]
+                                     for k in p["flagged"]) + "; set them by hand"
+    if why:
+        raise RegionError(f"{claim['id']}: its proposed bounds cannot be taken: {why}")
+    claim["location"] = p["location"]
+    claim["source_region"] = p["source_region"]
+    p["accepted"] = True
+
+
+def _notes(inventory: dict, result: dict, paper: str, entries: list[dict],
+           old_files: dict[str, str], new_files: dict[str, str], rewrite: bool) -> list[dict]:
+    """The line references of the paper's claims' scope notes (`note_references`), for every
+    claim whose pin is of the original revision; with `rewrite`, the planned inventory's notes
+    take the new numbers of the references whose lines only moved."""
+    skip = {e["claim"] for e in entries if e["class"] == "pending-review"}
+    planned = {c["id"]: c for c in result["claims"] if c["paper"] == paper}
+    diffs, out = {}, []
+    for claim in inventory["claims"]:
+        note = claim.get("scope_note")
+        if claim["paper"] != paper or claim["id"] in skip or not isinstance(note, str):
+            continue
+        try:
+            loc = location(claim)
+        except RegionError:
+            loc = None
+        own = loc[0] if loc else claim.get("location") if \
+            str(claim.get("location") or "").endswith(".tex") else None
+        refs, rewritten = note_references(note, own, old_files, new_files, diffs)
+        if not refs:
+            continue
+        row = {"claim": claim["id"], "references": refs}
+        if rewritten != note:
+            row["rewritten"] = rewritten
+            if rewrite:
+                planned[claim["id"]]["scope_note"] = rewritten
+        out.append(row)
+    return out
 
 
 def repin_excerpts(display: dict, claim_ids: set[str], old_root: Path, new_root: Path,
@@ -718,6 +949,12 @@ def main(argv=None) -> int:
                         "configured folder, that folder)")
     parser.add_argument("--write", action="store_true",
                         help="apply the plan (default: print it only)")
+    parser.add_argument("--accept-bounds", action="append", default=[], metavar="CLAIM",
+                        help="give CLAIM, a changed or not-found span, the bounds the plan "
+                        "proposes from the line diff (its digests are kept); repeatable")
+    parser.add_argument("--rewrite-notes", action="store_true",
+                        help="give the line references of scope notes whose lines only moved "
+                        "their new numbers")
     args = parser.parse_args(argv)
     from .config import load
     from .source_regions import REVISION, baseline, folder
@@ -763,7 +1000,7 @@ def main(argv=None) -> int:
                     raise RegionError("repinning needs pinned LaTeX source snapshots")
                 new_dir, new_rev = new.dir, new.revision
             result, report = repin_plan(inventory, paper.id, old_dir, new_dir, old_rev,
-                                        new_rev)
+                                        new_rev, args.accept_bounds, args.rewrite_notes)
             if vendored:
                 # A folder has no revision of its own: the inventory records the one it holds.
                 pins = result.setdefault("papers", {}).setdefault(paper.id, {})

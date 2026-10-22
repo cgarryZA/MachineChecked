@@ -686,7 +686,8 @@ def _check_json(a):
                                   "source": l.get("source")} for l in c["links"]],
                        "correspondence": c.get("correspondence"),
                        "reviews": [{"reviewer": r["reviewer"], "verdict": r["verdict"]["value"],
-                                    "submitted_at": r["submitted_at"], "current": r["current"]}
+                                    "submitted_at": r["submitted_at"], "current": r["current"],
+                                    **({"why": r["why"]} if r.get("why") else {})}
                                    for r in c.get("reviews", [])],
                        "suggestions": [{"name": x["name"], "why": x.get("why"),
                                         "reasons": x.get("reasons", [])}
