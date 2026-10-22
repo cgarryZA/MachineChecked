@@ -1186,7 +1186,8 @@ def cmd_review(a):
             sys.exit(r.returncode)
 
 
-INVENTORY = {"regions": "source_regions", "repin": "repin", "rebound": "rebound"}
+INVENTORY = {"regions": "source_regions", "repin": "repin", "rebound": "rebound",
+             "retire": "retire"}
 
 
 def cmd_inventory(a):
@@ -1584,10 +1585,11 @@ def main(argv=None):
         sp.set_defaults(func=cmd_review_step)
 
     iv = sub.add_parser(
-        "inventory", help="pin the claims' source passages",
+        "inventory", help="pin the claims' source passages, and retire stale readings",
         description="regions: hash line pins as regions at the revision they were pinned at "
         "(docs/SOURCE_REGIONS.md); rebound: change the bounds of claims' regions there; repin: "
-        "move the claims to a new revision of the paper. "
+        "move the claims to a new revision of the paper; retire: remove the readings review markers "
+        "record of passages that no longer use their declaration. "
         "Each prints a plan, and changes files only with --write; pass --help after the action "
         "for its options.")
     iv.add_argument("action", choices=sorted(INVENTORY))
