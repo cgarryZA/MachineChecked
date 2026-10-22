@@ -994,31 +994,97 @@ def _session_key(modules: list[str]) -> str:
 REFRESHED = "a refresh was asked"
 
 
+# A source that defines commands, builds declarations in a quotation or runs code that adds them
+# can make declarations of any name, in its own library or in any library that uses it.
+MAKES_COMMANDS = re.compile(
+    r":\s*command\b|`\(\s*(?:\$\S+\s+)*(?:command\||@\[|"
+    r"(?:(?:private|protected|noncomputable)\s+)*"
+    r"(?:def|theorem|lemma|abbrev|instance|structure|inductive|class|axiom|opaque)\b)"
+    r"|\b(?:run_cmd|run_elab|run_meta|command_elab|initialize|builtin_initialize)\b"
+    r"|\b(?:addDecl|addAndCompile|elabCommand|mkAux)\w*|CommandElab")
+# Attributes that make a declaration under a translated name (`mul_comm` to `add_comm`).
+RENAMES = re.compile(r"\bto_(?:additive|dual)\w*")
+# An identifier word: what lies between dots, spaces, brackets and other symbols.
+WORD = re.compile(r"[\w'!?]+")
+
+
+def _source_words(text: str) -> set[str]:
+    """The identifier words of a source, in lower case: a dotted name gives each component."""
+    return {w.lower() for w in WORD.findall(text)}
+
+
+def name_words(name: str) -> set[str] | None:
+    """The words one of which a module's source must contain for the module to hold `name`:
+    each component of the name in lower case, and each of its beginnings at an underscore, with
+    and without trailing primes. A name Lean generates extends one a source declares (a
+    projection, constructor, recursor, equation lemma or auxiliary definition carries the
+    declaration's name or a namespace the source enters; `simps`, `mk_iff` or `irreducible_def`
+    append to a name), so its source has one of these words. The name is split into words as a
+    source is (`_source_words`), so a component written in `«»` or with symbols is matched the
+    same way in both.
+
+    None when any module may hold the name: a component starts with `inst` (Lean names an
+    instance itself, `deriving` included, from words a source need not contain, and the
+    instance's own fields, `instReprFoo.repr`, extend that name), or the name is written in
+    `«»` or has a component with no word."""
+    if "«" in name:
+        return None
+    words: set[str] = set()
+    for part in name.split("."):
+        found = WORD.findall(part)
+        if not found or any(w.startswith("inst") for w in found):
+            return None
+        for w in found:
+            for p in {w.lower(), w.lower().rstrip("'")}:
+                pieces = p.split("_")
+                words |= {"_".join(pieces[:i]) for i in range(1, len(pieces) + 1)}
+    words.discard("")
+    return words
+
+
 def index_scope(root: Path, libs: list[str], built: list[str], foreign: set[str],
                 linked: set[str], modules: set[str]) -> tuple[list[str], list[str], list[str]]:
     """The built modules a paper's build indexes, the libraries it leaves out and their modules
     it does not index. A library is left out when formalization.yaml maps its namespace only to
     other papers (`formalization.foreign_roots`). A module of such a library is indexed all the
-    same when the project names it as the module of a linked declaration (`modules`) or its
-    source declares one of the `linked` names, so that a link into another paper's library is
-    checked there and a name two libraries declare is found in both. Only sources are read, so
-    the scope is the same whatever the facts store holds."""
+    same when it could hold a linked name, so that a link into another paper's library is
+    checked there and a name two libraries declare is found in both:
+
+    * the project names it as the module of a linked declaration (`modules`);
+    * its source contains, as a whole word, one of the linked name's words (`name_words`): a
+      component of the name or of one of its prefixes, or a beginning of one at an underscore,
+      in any case;
+    * its source uses an attribute that translates names (`to_additive`, `to_dual`).
+
+    Every module is indexed when a linked name has a component starting with `inst` (an
+    instance Lean named, or one of its fields), or when a source of the project defines
+    commands, builds declarations in a quotation or runs code that adds them
+    (`MAKES_COMMANDS`): either may make a declaration of any name. A module whose source cannot
+    be read is indexed. Including a module costs only time; leaving out one that holds a linked
+    name could hide that the name is ambiguous. Only sources are read, so the scope is the same
+    whatever the facts store holds."""
     from .probe import library_of
     out = {lib for lib in libs if lib.split(".")[0] in foreign}
     if not out:
         return list(built), [], []
-    lasts = {n.rsplit(".", 1)[-1] for n in linked}
+    wanted = [name_words(n) for n in linked]
+    if any(w is None for w in wanted):
+        return list(built), [], []
+    words = set().union(*wanted) if wanted else set()
+    texts: dict[str, str | None] = {}
+    for m in built:
+        try:
+            texts[m] = (root / (m.replace(".", "/") + ".lean")).read_text(encoding="utf-8",
+                                                                          errors="replace")
+        except OSError:
+            texts[m] = None
+    if any(t is not None and MAKES_COMMANDS.search(t) for t in texts.values()):
+        return list(built), [], []
     keep, rest = [], []
     for m in built:
-        if library_of(m, libs) not in out or m in modules:
-            keep.append(m)
-            continue
-        try:
-            text = (root / (m.replace(".", "/") + ".lean")).read_text(
-                encoding="utf-8", errors="replace") if lasts else ""
-        except OSError:
-            text = ""
-        if any(l in text for l in lasts) and declared_names(text) & linked:
+        t = texts[m]
+        if library_of(m, libs) not in out or m in modules or t is None or RENAMES.search(t) \
+                or words & _source_words(t):
             keep.append(m)
         else:
             rest.append(m)

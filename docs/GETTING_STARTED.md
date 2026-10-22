@@ -60,9 +60,15 @@ MachineChecked reads an existing [`formalization.yaml`](https://github.com/mathl
 When the file names several sources, a mapping is used for a paper only if it names that paper by a word distinctive to its title.
 A library whose namespace the file maps only to other papers is not indexed for this paper: its
 suggestions, search and paper-number checks cover the paper's own libraries, and the reader's
-notes name the libraries left out. A link into such a library is still checked, in the module
-that declares it. `machinechecked compare --query search TEXT --all-libraries` searches every
-library, and `machinechecked inspect NAME` reaches any declaration.
+notes name the libraries left out. A module of such a library is still indexed when it could
+hold a name the paper links: its source uses one of the name's words (a part of the name between
+dots, or the start of one up to an underscore, in any case) or an attribute that renames
+declarations, such as `to_additive`. Every library is indexed when a linked name is one Lean
+gives an instance (`inst…`), or when the project defines its own commands. A link into the
+other library is therefore checked there, and a name both libraries hold reads ambiguous, as
+with every library indexed ([evidence policy](EVIDENCE_POLICY.md) names the case this does not
+detect). `machinechecked compare --query search TEXT --all-libraries` searches every library,
+and `machinechecked inspect NAME` reaches any declaration.
 
 Build the Lean project to check its linked declarations.
 

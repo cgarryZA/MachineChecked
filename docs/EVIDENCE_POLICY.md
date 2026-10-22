@@ -153,9 +153,14 @@ declarations to check, with the reason. `machinechecked build --refresh` uses no
 extracts again everything the build reads and stores it in place of what was kept. Reuse never
 changes what is assessed: for the same sources, a build from stored facts and a refreshed one
 give the same statuses. A paper's build leaves out of its index the libraries formalization.yaml
-maps only to other papers, and its notes say so. A link into one is still checked by Lean, and a
-linked name whose declaration the source of a module left out also shows is checked there too,
-so a name two libraries declare is still ambiguous without its module.
+maps only to other papers, and its notes say so. A module of such a library is indexed all the
+same when it could hold a linked name: its source uses one of the name's words (a component of
+the name, or its start up to an underscore, in any case) or an attribute that renames
+declarations (`to_additive`, `to_dual`). Every library is indexed when a linked name is one Lean
+gives an instance (`inst…`) or the project defines commands. A link into another library is
+then checked by Lean there, and a name two libraries hold reads ambiguous without its module, as
+when every library is indexed. A dependency's command that names a declaration with words its
+call does not contain is not detected ([DEVELOPMENT.md](DEVELOPMENT.md)).
 
 Evidence records are content-addressed and never rewritten. A release name, once given, keeps its
 evidence.
