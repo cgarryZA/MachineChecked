@@ -9,6 +9,7 @@ namespaces they are made in), the namespaces those form, and the modules the fil
 
 from __future__ import annotations
 
+import json
 import os
 import re
 from pathlib import Path
@@ -111,6 +112,22 @@ def lean_files(roots: list[Path]):
                     yield path, ".".join(parts)
 
 
+def source_roots(lean_root: Path) -> list[Path]:
+    """The folders whose sources are searched: the project (with `.lake/packages`) and each path
+    dependency of its Lake manifest, where it points."""
+    roots = [lean_root]
+    try:
+        packages = json.loads((lean_root / "lake-manifest.json").read_text()).get("packages", [])
+    except (OSError, ValueError, AttributeError):
+        packages = []
+    for p in packages if isinstance(packages, list) else []:
+        if isinstance(p, dict) and p.get("type") == "path" and p.get("dir"):
+            d = (lean_root / p["dir"]).resolve()
+            if d not in roots and not d.is_relative_to(lean_root.resolve()):
+                roots.append(d)
+    return roots
+
+
 class SourceNames:
     """The declarations, namespaces and modules of the Lean sources under `roots`, read from the
     files that mention one of `lasts` (the last components of the names to look up)."""
@@ -140,6 +157,10 @@ class SourceNames:
         declaration's name."""
         return self.known(name) or any(n.endswith("." + name) for n in self.names)
 
+    def declares_in(self, name: str, scopes) -> bool:
+        """Whether `name` is known as written or inside one of the namespaces `scopes`."""
+        return any(self.known(f"{ns}.{name}" if ns else name) for ns in {"", *scopes})
+
 
 def undeclared_doc_names(docs: list[dict], lean_root: Path) -> list[dict]:
     """Of the names module docstrings list that the probe found undeclared
@@ -152,7 +173,7 @@ def undeclared_doc_names(docs: list[dict], lean_root: Path) -> list[dict]:
     own = [d for d in docs if (lean_root / d["file"]).is_file()]
     if not own:
         return []
-    src = SourceNames([lean_root], {last(d["name"]) for d in own})
+    src = SourceNames(source_roots(lean_root), {last(d["name"]) for d in own})
     scopes: dict[str, set[str]] = {}
     out = []
     for d in own:
@@ -161,8 +182,7 @@ def undeclared_doc_names(docs: list[dict], lean_root: Path) -> list[dict]:
             _, entered, opened = declarations(text)
             scopes[d["file"]] = {""} | entered | opened | {
                 f"{e}.{o}" for e in entered for o in opened}
-        if not any(src.known(f"{ns}.{d['name']}" if ns else d["name"])
-                   for ns in scopes[d["file"]]):
+        if not src.declares_in(d["name"], scopes[d["file"]]):
             out.append(d)
     return out
 
