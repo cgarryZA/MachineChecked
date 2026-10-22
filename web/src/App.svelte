@@ -1,5 +1,5 @@
 <script>
-  import { loadIndex, canEdit, auditInfo, AUDIT } from "./lib/data.js";
+  import { loadIndex, canEdit, auditInfo, AUDIT, auditOf } from "./lib/data.js";
   import { project, chooseProject } from "./lib/project.svelte.js";
   import { route, href } from "./lib/route.svelte.js";
   import { pageVersions, versionHref, versionLabel } from "./lib/versions.js";
@@ -28,10 +28,13 @@
                              index.audits[project.repo].paper_version.checked !== true);
   function chooseVersion(id) {
     const v = versions.find((x) => x.id === id);
-    const to = v && v.id !== index.version ? versionHref(v, project.repo) : null;
+    const to = v && v.id !== index.version ? versionHref(v, project.combined ? null : project.repo) : null;
     if (to) location.assign(to);
   }
   const releaseMismatch = $derived(index && route.release && route.release !== index.release);
+  // With the audits shown together: the default audit, and how the audits are ordered.
+  const lead = $derived(project.combined ? auditOf(index, project.repo) : null);
+  const byStars = $derived(index?.audit_order_by === "stars");
 </script>
 
 {#if error}
@@ -76,9 +79,10 @@
         <span class="version unchecked" title="Some of this audit's claims record no revision of the paper, so the version is as the audit's author declares it">Version declared by the audit's author, not checked against its claims</span>
       {/if}
       {#if repos.length > 1}
-        <label class="project" title="Choose the project whose evidence to show">
+        <label class="project" title="Choose the project whose evidence to show, or every audit of this version">
           <span>Formalisation</span>
-          <select value={project.repo} onchange={(e) => chooseProject(e.currentTarget.value)} aria-label="Formalisation shown">
+          <select value={project.combined ? "" : project.repo} onchange={(e) => chooseProject(e.currentTarget.value)} aria-label="Formalisation shown">
+            {#if project.order.length > 1}<option value="">All audits, {byStars ? "by stars" : "listing order"}</option>{/if}
             {#each repos as r}<option value={r}>{r}</option>{/each}
           </select>
         </label>
@@ -99,6 +103,11 @@
     <div class="banner attribution">
       <span>Audit by {auditInfo.author || "the project"}</span>
       <a href={href(index.release, "changes")}>Details</a>
+    </div>
+  {/if}
+  {#if lead}
+    <div class="banner together" data-together title="Each claim carries one audit's status; statuses from different audits are never combined">
+      Showing the audit of <code>{project.repo}</code>{lead.author ? " by " + lead.author : ""}{byStars ? " (most GitHub stars)" : ""}. Claims it does not map show the next audit that does, labelled.
     </div>
   {/if}
   {#if releaseMismatch}
@@ -163,6 +172,7 @@
   .docnames ul { margin: 6px 0 0; padding-left: 18px; font-size: 13px; }
   .docnames .dismissed { color: var(--faint); }
   .docnames .dz { color: var(--muted); }
+  .together code { overflow-wrap: anywhere; }
   .attribution { display: flex; gap: 12px; align-items: baseline; font-size: 13px; }
   .page { max-width: 1560px; margin: 0 auto; padding: 24px 16px 80px; }
   @media (max-width: 640px) {

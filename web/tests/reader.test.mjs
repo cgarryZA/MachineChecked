@@ -105,11 +105,18 @@ write_paper_site(site, tall_paper, tall_claims, [612, 792], "paper.pdf", Path(sy
 
 # A paper in two versions, one page each (as machinechecked.org writes them): arXiv v1, and the
 # latest manuscript at a commit, whose claims are numbered differently and linked differently.
-two = {**paper, "id": "arxiv:2601.00003", "title": "A paper in two versions"}
+# Project A has an audit of each version (#42): the panel names each one's version and commit.
+two = {**paper, "id": "arxiv:2601.00003", "title": "A paper in two versions",
+       "formalisations": [{**paper["formalisations"][0], "audits": [
+           {"url": "https://audit.example/a/v1/", "author": "A. Author"},
+           {"url": "https://audit.example/a/latest", "author": "A. Author"}]},
+                          paper["formalisations"][1]]}
 versions = [{"id": "arxiv:2601.00003v1", "kind": "published", "href": "/versions/v1/",
-             "pdf": "https://arxiv.org/pdf/2601.00003v1", "audits": []},
+             "pdf": "https://arxiv.org/pdf/2601.00003v1", "audits": [
+                 {"url": "https://audit.example/a/v1/", "author": "A. Author", "repository": A, "commit": "1" * 40}]},
             {"id": "manuscript:abc1234", "kind": "manuscript", "revision": "abc1234" + "0" * 33,
-             "href": "../latest/", "label": "arXiv v2", "audits": []}]
+             "href": "../latest/", "label": "arXiv v2", "audits": [
+                 {"url": "https://audit.example/a/latest/", "author": "A. Author", "repository": A, "commit": "2" * 40}]}]
 pages = {"v1": ([anchor("theorem", "1", 1, 100), anchor("theorem", "2", 1, 300)],
                 [("theorem", "1", ["A.one"])], [("theorem", "2", ["B.two"])], "Version one text."),
          "latest": ([anchor("lemma", "1", 1, 100), anchor("theorem", "2", 1, 300),
@@ -119,7 +126,7 @@ for (name, (anchors, a_rows, b_rows, text)), v in zip(pages.items(), versions):
     site = Path(sys.argv[1]).parent / "versions" / name
     cl = paper_claims(anchors, two["title"], [(two["formalisations"][0], fy(a_rows)),
                                               (two["formalisations"][1], fy(b_rows))])
-    write_paper_site(site, two, cl, [612, 792], "paper.pdf", Path(sys.argv[2]),
+    write_paper_site(site, two, cl, [612, 792], "paper.pdf", Path(sys.argv[2]), audits={},
                      versions=versions, version=v["id"])
     (site / "paper.pdf").write_bytes(pdf(1, text))
     # On v1, project A's audit pins the version without pinning every claim; B's checks it.
@@ -575,6 +582,112 @@ for (const width of [1300, 390]) {
     assert.match(await pg.locator("aside h1").textContent(), /Theorem 2/);
     assert.equal(await pg.inputValue(VERSION), "arxiv:2601.00003v1");
     assert.equal(await pg.locator("aside [data-status]").first().getAttribute("data-status"), "link.none");
+  });
+}
+
+// #42: each audit in the panel names the version it pins and its commit; the audit of the page's
+// version is the action, and audits of other versions link to their own pages.
+const showPanel = async (pg, width) => {
+  if (width <= 1180) await pg.locator(".reader-tools button", { hasText: "Formalisations" }).click();
+  await pg.waitForSelector(".info .card");
+};
+for (const width of [1300, 390]) {
+  await check("each audit names its version and commit; other versions link to their pages", width, async (pg) => {
+    await pg.goto(origin + `/versions/v1/?project=${encodeURIComponent(A)}`);
+    await showPanel(pg, width);
+    const card = pg.locator(`.info .card[data-repository="${A}"]`);
+    assert.deepEqual((await card.locator(".audit.here .btn").allTextContents()).map((t) => t.trim()), ["Open the audit of arXiv v1"]);
+    assert.match(await card.locator(".audit.here").textContent(), /by A\. Author · commit 111111111111/);
+    assert.equal(decodeURIComponent(await card.locator(".audit.here .btn").getAttribute("href")), "/read/?audit=https://audit.example/a/v1/");
+    const other = card.locator(".elsewhere a");
+    assert.deepEqual((await other.allTextContents()).map((t) => t.trim()), ["Latest manuscript (commit abc1234)"]);
+    assert.match(await card.locator(".elsewhere li").textContent(), /commit 222222222222/);
+    const to = new URL(await other.getAttribute("href"));
+    assert.equal(to.pathname, "/versions/latest/");
+    assert.equal(to.searchParams.get("project"), A);
+
+    await pg.goto(origin + `/versions/latest/?project=${encodeURIComponent(A)}`);
+    await showPanel(pg, width);
+    assert.deepEqual((await pg.locator(".info .audit.here .btn").allTextContents()).map((t) => t.trim()), ["Open the audit of Latest manuscript (commit abc1234)"]);
+    assert.deepEqual((await pg.locator(".info .elsewhere a").allTextContents()).map((t) => t.trim()), ["arXiv v1"]);
+    const [scroll, client] = await pg.evaluate(() => [document.documentElement.scrollWidth, document.documentElement.clientWidth]);
+    assert.ok(scroll <= client, `the page scrolls sideways (${scroll} > ${client})`);
+  });
+}
+
+// #212: a page with two audits of one version opens on the most-starred one; a claim it does not
+// map shows the next audit's evidence, labelled with that audit; choosing one audit shows only its
+// evidence and flags the claims it does not map. Statuses are each one audit's, never combined.
+const CA = "synthetic/alpha", CB = "synthetic/beta", FORMAL = "select[aria-label='Formalisation shown']";
+const SOURCE = "aside [data-source]";
+const sourceOf = async (pg) => (await pg.locator(SOURCE).count()) ? pg.locator(SOURCE).first().getAttribute("data-source") : null;
+for (const width of [1300, 390]) {
+  await check("the audits of a version open together, the most-starred first, each claim labelled", width, async (pg) => {
+    await pg.goto(origin + "/combined/");
+    await pg.waitForSelector(FORMAL);
+    assert.equal(await pg.inputValue(FORMAL), "", "the audits together are the default");
+    assert.equal((await pg.locator(FORMAL + " option").first().textContent()).trim(), "All audits, by stars");
+    assert.match(await pg.locator("[data-together]").textContent(), /audit of synthetic\/alpha by A\. Author \(most GitHub stars\)/);
+    assert.equal(await statusOf(pg, "P:theorem-1"), "formal.author-reviewed", "the default audit's status");
+    assert.equal(await sourceOf(pg), "default");
+    assert.match(await pg.locator(SOURCE).textContent(), /From the audit of synthetic\/alpha by A\. Author at commit aaaaaaaaaaaa/);
+    assert.equal(await statusOf(pg, "P:theorem-2"), "formal.refuted.corrected", "the second audit's own status");
+    assert.equal(await sourceOf(pg), "filled");
+    assert.match(await pg.locator(SOURCE).textContent(), /From another audit\..*synthetic\/beta by B\. Author at commit cccccccccccc/s);
+    assert.equal(await statusOf(pg, "P:theorem-3"), "link.none", "a claim no audit maps keeps the default's state");
+    assert.equal(await sourceOf(pg), "unmapped", "and is attributed to no audit");
+    if (width > 1180) {
+      await pg.goto(origin + "/combined/");
+      await pg.waitForSelector(".reader-layout > nav.toc li");
+      assert.deepEqual(await pg.locator(".reader-layout > nav.toc li .from").allTextContents(), ["From synthetic/beta"]);
+      assert.deepEqual(await pg.locator(".info .card .rank").allTextContents(), ["Default audit · 10 GitHub stars", "Audit 2 · 3 GitHub stars"]);
+    }
+    if (process.env.SHOTS) await pg.screenshot({ path: path.join(process.env.SHOTS, `combined-${width}.png`) });
+    const [scroll, client] = await pg.evaluate(() => [document.documentElement.scrollWidth, document.documentElement.clientWidth]);
+    assert.ok(scroll <= client, `the page scrolls sideways (${scroll} > ${client})`);
+  });
+
+  await check("choosing one audit shows only its evidence and flags the claims it lacks", width, async (pg) => {
+    await pg.goto(origin + "/combined/#/r/paper/read/P/P%3Atheorem-1");
+    await pg.waitForSelector("aside h1");
+    await pg.selectOption(FORMAL, CB);
+    await pg.waitForFunction(() => document.querySelector("aside [data-status]")?.getAttribute("data-status") === "formal.open");
+    assert.equal(new URL(pg.url()).searchParams.get("project"), CB);
+    assert.equal(await sourceOf(pg), null, "one audit chosen: no attribution to another");
+    assert.equal(await statusOf(pg, "P:theorem-3"), "link.none");
+    assert.equal(await sourceOf(pg), "missing");
+    assert.match(await pg.locator(SOURCE).textContent(), /Not in this audit: the audit of synthetic\/beta does not map this claim/);
+    await pg.selectOption(FORMAL, CA);
+    assert.equal(await statusOf(pg, "P:theorem-2"), "link.none", "never the other audit's status");
+    assert.equal(await sourceOf(pg), "missing");
+    if (width > 1180) {
+      await pg.goto(origin + `/combined/?project=${encodeURIComponent(CA)}`);
+      await pg.waitForSelector(".reader-layout > nav.toc li");
+      assert.deepEqual(await pg.locator(".reader-layout > nav.toc li .from").allTextContents(), ["Not in this audit", "Not in this audit"]);
+      assert.equal(await pg.locator(".info .card").count(), 1);
+    }
+    await pg.selectOption(FORMAL, "");
+    assert.equal(new URL(pg.url()).searchParams.get("project"), null, "the audits together leave the address plain");
+    assert.equal(await statusOf(pg, "P:theorem-2"), "formal.refuted.corrected");
+  });
+
+  await check("the stars choose the default audit, and the listing's order holds without them", width, async (pg) => {
+    await pg.goto(origin + "/combined-beta/");
+    await pg.waitForSelector(FORMAL);
+    assert.match(await pg.locator("[data-together]").textContent(), /audit of synthetic\/beta by B\. Author/);
+    assert.equal(await statusOf(pg, "P:theorem-1"), "formal.open");
+    assert.equal(await sourceOf(pg), "default");
+    if (width > 1180) {
+      await pg.goto(origin + "/combined-beta/");
+      await pg.waitForSelector(".reader-layout > nav.toc li");
+      const prose = pg.locator(".reader-layout > nav.toc li", { hasText: "Paragraph 2" });
+      assert.equal((await prose.locator(".from").textContent()).trim(), "From synthetic/alpha");
+    }
+    await pg.goto(origin + "/combined-unranked/");
+    await pg.waitForSelector(FORMAL);
+    assert.equal((await pg.locator(FORMAL + " option").first().textContent()).trim(), "All audits, listing order");
+    assert.doesNotMatch(await pg.locator("[data-together]").textContent(), /most GitHub stars/);
+    assert.equal(await statusOf(pg, "P:theorem-1"), "formal.author-reviewed");
   });
 }
 

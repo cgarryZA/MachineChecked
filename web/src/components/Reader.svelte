@@ -70,7 +70,7 @@
       <li><a class:sel={c.id === claimId} href={href(index.release, "read", paperId, c.id)} title={statusView(c).label}
         onclick={(e) => { if (!e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) { e.preventDefault(); select(c.id); } }}>
         <span class={"dot st-" + statusView(c).class} aria-hidden="true"></span>
-        <span><strong>{c.number || c.id}</strong>{#if c.heading || c.title}<span class="t"><TexInline text={c.heading || c.title} /></span>{/if}</span>
+        <span><strong>{c.number || c.id}</strong>{#if c.heading || c.title}<span class="t"><TexInline text={c.heading || c.title} /></span>{/if}{#if c.filled}<span class="from" data-from={c.evidence_from}>From {c.evidence_from}</span>{:else if c.missing}<span class="from" data-from="missing">Not in this audit</span>{/if}</span>
       </a></li>
     {/each}</ol>
     {#if scoped}<button class="more" onclick={() => showScope = !showScope}>{showScope ? "Hide scope decisions" : `Include scope decisions (${scoped})`}</button>{/if}
@@ -108,7 +108,7 @@
             aria-valuemin="320" aria-valuemax={maxWidth} aria-valuenow={Math.min(sideWidth, maxWidth)} aria-valuetext={`${Math.min(sideWidth, maxWidth)} pixels`}
             onpointerdown={drag} onkeydown={resizeKey}></div>{/if}
           {#if claimId}<Passport {index} {claimId} {editable} comparison={comparing} />
-          {:else}<div class="side-head"><strong>About this paper</strong><button class="x" onclick={() => showInfo = false} aria-label="Close formalisations">×</button></div><PaperInfo paper={index.paper} />{/if}
+          {:else}<div class="side-head"><strong>About this paper</strong><button class="x" onclick={() => showInfo = false} aria-label="Close formalisations">×</button></div><PaperInfo paper={index.paper} {index} />{/if}
         </aside>
       {/if}
     </div>
@@ -146,6 +146,7 @@
   .toc a { display: flex; gap: 8px; padding: 8px; border-radius: var(--radius); color: var(--text); font-size: 14px; text-decoration: none; }
   .toc a:hover { background: var(--surface-2); }
   .toc a.sel { background: var(--accent-soft); }
+  .from { display: block; font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
   .t { display: block; color: var(--muted); line-height: 1.4; overflow-wrap: anywhere; }
   .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--st); flex: none; margin-top: 7px; }
   .x { border: 0; background: none; font-size: 22px; cursor: pointer; min-width: var(--control-height); }

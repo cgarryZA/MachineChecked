@@ -135,3 +135,44 @@ def test_publication_change_during_download_requires_retry():
         return raw(url,limit)
     with pytest.raises(AuditError,match='changed during'):
         load_published_audit(PAPER,PAPER['formalisations'][0],{'url':BASE},changing)
+
+
+def test_audits_of_one_version_are_ordered_by_stars_and_never_combined(tmp_path):
+    """#212: the most-starred audit is the default, the others follow by stars, and each claim
+    keeps every audit's own status; without a count for every audit, the listing's order holds."""
+    from published_fixture import BETA, combined
+    idx = combined(tmp_path / 'a', stars={REPO: 3, BETA: 7})
+    assert (idx['audit_order'], idx['audit_order_by']) == ([BETA, REPO], 'stars')
+    assert idx['stars'] == {BETA: 7, REPO: 3}
+    rows = {c['number']: c for c in idx['claims']}
+    assert rows['Theorem 1']['status_code'] == 'formal.open', 'the default audit gives the summary'
+    assert rows['Theorem 1']['by_project'][REPO]['status_code'] == 'formal.author-reviewed'
+    assert 'audit' not in rows['Theorem 2']['by_project'][REPO]
+    assert rows['Theorem 2']['by_project'][BETA]['audit']['claim'] == 'T:two'
+    for stars in (None, {REPO: 3}, {REPO: 3, BETA: -1}, {REPO: 3, BETA: '7'}):
+        idx = combined(tmp_path / 'b', stars=stars)
+        assert (idx['audit_order'], idx['audit_order_by']) == ([REPO, BETA], 'listing')
+        assert 'stars' not in idx or idx['stars'] == {}
+
+
+def test_audits_of_another_version_are_not_drawn_on():
+    from prooflens.paper import audit_order
+    v1 = {'state': 'loaded', 'paper_version': {'id': 'arxiv:2601.01234v1'}}
+    v2 = {'state': 'loaded', 'paper_version': {'id': 'arxiv:2601.01234v2'}}
+    m = {'state': 'loaded', 'paper_version': {'id': 'manuscript:abc1234'}}
+    m2 = {'state': 'loaded', 'paper_version': {'id': 'manuscript:abc1234' + '0' * 33}}
+    audits = {'a/x': v1, 'b/y': v2, 'c/z': {'state': 'unavailable'}, 'd/w': {'state': 'loaded'}}
+    assert audit_order(['a/x', 'b/y', 'c/z', 'd/w'], audits, None) == (['a/x'], 'listing')
+    assert audit_order(['a/x', 'b/y'], audits, {'a/x': 1, 'b/y': 2}) == (['b/y'], 'stars')
+    assert audit_order(['d/w', 'a/x'], audits, None) == (['d/w'], 'listing')
+    assert audit_order(['a/x', 'b/y'], {'a/x': m, 'b/y': m2}, None)[0] == ['a/x', 'b/y']
+    assert audit_order(['c/z'], audits, None) == ([], 'listing')
+
+
+def test_a_version_entry_carries_its_audits_commits():
+    from prooflens.paper import page_versions
+    entry = {'id': 'arxiv:2601.01234v1', 'kind': 'published', 'href': '/p/v1/',
+             'audits': [{'url': BASE, 'author': 'A', 'repository': REPO, 'commit': 'a' * 40},
+                        {'url': BASE + 'x/', 'author': 'B', 'commit': 'not a commit'}]}
+    out = page_versions([entry], entry['id'])[0]['audits']
+    assert out[0]['commit'] == 'a' * 40 and 'commit' not in out[1]
