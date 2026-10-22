@@ -196,18 +196,20 @@ def _fetch_paper(root: Path, url: str, title: str | None = None) -> Path:
     return out
 
 
-def _simple_view(root: Path, paper: Path, reuse_lean: bool = False) -> dict:
+def _simple_view(root: Path, paper: Path, reuse_lean: bool = False,
+                 refresh: bool = False) -> dict:
     """What the reader would show, without writing it (`check` needs no site). With
-    `reuse_lean`, only stored Lean facts are used."""
+    `reuse_lean`, only stored Lean facts are used; with `refresh`, none."""
     from .simple import build_view
     out = root / cfgmod.work_dir_name(root)
     return build_view(root, paper, out, log=lambda m: print("  " + m, file=sys.stderr),
-                      reuse_only=reuse_lean)
+                      reuse_only=reuse_lean, refresh=refresh)
 
 
-def _simple_site(root: Path, paper: Path, web: str | None, reuse_lean: bool = False):
+def _simple_site(root: Path, paper: Path, web: str | None, reuse_lean: bool = False,
+                 refresh: bool = False):
     from .simple import write_view_site
-    view = _simple_view(root, paper, reuse_lean)
+    view = _simple_view(root, paper, reuse_lean, refresh)
     site = root / cfgmod.work_dir_name(root) / "site"
     index = write_view_site(view, site, _web_dist(web), root)
     return site, index, view
@@ -252,7 +254,7 @@ def cmd_view(a):
 
         from .workspace import api
         serve(res["site"], a.port, None, not a.no_browser, on_symbol=on_symbol,
-              api=_with_uses(api(cfg.out_dir, res["site"] / "data", cfg.root), cfg.lean_root,
+              api=_with_uses(api(cfg.out_dir, res["site"] / "data", cfg.lean_root), cfg.lean_root,
                              res["site"] / "data"))
         return
     from . import authoring
@@ -364,10 +366,11 @@ def cmd_link(a):
 
 
 def _workspace_place(a):
-    """The working directory, the build's site data and the project of a workspace command."""
+    """The working directory, the build's site data and the Lean project of a workspace
+    command."""
     if _assurance_config(a):
         cfg = cfgmod.load(_assurance_config(a))
-        return cfg.out_dir, cfg.out_dir / "site" / "data", cfg.root
+        return cfg.out_dir, cfg.out_dir / "site" / "data", cfg.lean_root
     from .simple import find_lake_root
     root = find_lake_root(Path.cwd().resolve())
     if root is None:
@@ -377,6 +380,8 @@ def _workspace_place(a):
 
 
 def _print_workspace(v: dict) -> None:
+    from .estimates import certificate_scope
+    from .workspace import ref_text
     print(f"workspace {v['id']} ({v['mode']}), {v['reviewer']}, revision {v['revision']}"
           + (f", made at release {v['release']}" if v.get("release") else ""))
     cur = (v.get("current_sources") or {}).get("release")
@@ -396,20 +401,20 @@ def _print_workspace(v: dict) -> None:
         print(cid)
         for e in c["evidence"]:
             ref = e["ref"]
-            fact = ref.get("fact")
-            what = ref.get("decl") or (ref.get("source") or {}).get("file") or \
-                (f"{fact.get('name') or fact.get('head') or 'a fact'} : {fact.get('type')}, "
-                 f"inside the proof of {fact['decl']}" if fact else "paper passage")
-            print(f"  evidence {e['id']}  {e['role']:9} {what}  [{e['currency']['state']}]"
+            fact, cert = ref.get("fact"), ref.get("certificate")
+            print(f"  evidence {e['id']}  {e['role']:9} {ref_text(ref)}  "
+                  f"[{e['currency']['state']}]"
                   + (f" (module not built)" if ref.get("build") == "unbuilt" else ""))
             if fact:
                 print(f"           {fact['basis']}"
                       + (f"; assuming {'; '.join(fact['assumptions'])}"
                          if fact.get("assumptions") else "")
                       + "".join(f"; {c}" for c in fact.get("cases") or []))
-                for ch in e["currency"].get("changes") or []:
-                    if ch.get("reason"):
-                        print(f"           {ch['reason']}")
+            if cert:
+                print(f"           {certificate_scope(cert)}")
+            for ch in e["currency"].get("changes") or []:
+                if ch.get("reason"):
+                    print(f"           {ch['reason']}")
         for f in c["findings"]:
             tag = f["state"] + ("" if f["in_force"] else ", superseded")
             print(f"  finding  {f['id']}  {tag}: coverage {f.get('coverage') or '-'}"
@@ -547,7 +552,8 @@ def cmd_build_simple(a):
     from .bundle import bundle
     root, paper = _simple_target(a)
     _settings(a, root)
-    site, index, view = _simple_site(root, paper, a.web, a.reuse_lean)
+    site, index, view = _simple_site(root, paper, a.web, a.reuse_lean,
+                                     getattr(a, "refresh", False))
     _print_simple(view["body"])
     if a.site:
         import shutil
@@ -734,12 +740,25 @@ def _check_json(a):
         sys.exit(1)
 
 
+def _forget_indexes(cfg) -> None:
+    """`build --refresh` in a full assessment. Its probe asks Lean afresh on every build without
+    `--reuse-lean`; the module indexes and recorded load failures kept in the facts store
+    (`facts.py`) are discarded, so the build extracts again whatever it reads from there."""
+    from .facts import Store
+    st = Store(cfg.lean_root, [], cfg.out_dir / "build", [])
+    with st.lock(lambda m: print(m, file=sys.stderr)):
+        for kind in ("index", "failed", "attempt"):
+            st.drop(kind)
+
+
 def cmd_build(a):
     if not _assurance_config(a):
         return cmd_build_simple(a)
     from .pipeline import build
     cfg = cfgmod.load(_config_arg(a))
     dest = _site_dest(a.site, cfg.root) if getattr(a, "site", None) else None
+    if getattr(a, "refresh", False):
+        _forget_indexes(cfg)
     res = build(cfg, release=a.release, skip_lean=a.skip_lean, skip_tex=a.skip_tex, lake=a.lake,
                 web_dist=_web_dist(a.web), lean_build=not a.no_lean_build,
                 reuse_lean=a.reuse_lean)
@@ -1025,7 +1044,8 @@ def cmd_compare(a):
             op, target = a.query
             out = cmp.query(site, op, target, a.limit, a.after, root,
                             log=lambda m: print(m, file=sys.stderr), match=a.match,
-                            workspace=a.workspace)
+                            workspace=a.workspace, main=a.main,
+                            every_library=a.all_libraries)
             if a.json:
                 return _print_json(out)
             if not out["available"]:
@@ -1036,6 +1056,11 @@ def cmd_compare(a):
                 claims = cmp.linked_claims(site)
                 for r in out["results"]:
                     print(text(r, claims))
+                return
+            if op == "impact":
+                from .impact import text as impact_text
+                for r in out["results"]:
+                    print(impact_text(r))
                 return
             if op == "search":
                 print(cmp.search_text(out))
@@ -1101,25 +1126,36 @@ def cmd_review_step(a):
     try:
         s = rc.Session(work, rc.parse_reviewer(a.reviewer, a.same_family))
         if a.action == "next":
-            u = next(iter(s.open_units()), None)
+            u = next(iter(s.open_units(a.order)), None)
             if as_json:
                 _print_json({"schema": "machinechecked/review-next@1",
                              "release": s.index["release"], "mode": s.queue.get("mode"),
-                             "unit": u and {k: u.get(k) for k in ("id", "kind", "reason")}})
+                             "order": a.order,
+                             "unit": u and {k: u.get(k) for k in ("id", "kind", "reason",
+                                                                  "priority")}})
             else:
                 print(f"{u['id']}  ({u['reason']})" if u else "nothing left to review")
+                for sig in ((u or {}).get("priority") or {}).get("signals") or []:
+                    for q in sig.get("questions") or []:
+                        print(f"  question: {q}")
         elif a.action == "status":
+            units = s.open_units(a.order)
             if as_json:
                 _print_json({"schema": "machinechecked/review-status@1",
                              "release": s.index["release"], "mode": s.queue.get("mode"),
                              "reports": len(s.work["reports"]),
                              "drafts": {i: d["stage"] for i, d in s.work["drafts"].items()},
-                             "open": [u["id"] for u in s.open_units()]})
+                             "order": {"by": a.order, **({"queue": s.queue["order"]}
+                                                         if s.queue.get("order") else {})},
+                             "open": [u["id"] for u in units]})
                 return
             print(f"{len(s.work['reports'])} report(s), {len(s.work['drafts'])} in progress, "
-                  f"{len(s.open_units())} unit(s) left to review (release {s.index['release']})")
+                  f"{len(units)} unit(s) left to review (release {s.index['release']})")
             for uid, d in s.work["drafts"].items():
                 print(f"  {uid}: at step '{d['stage']}'")
+            for name, sig in ((s.queue.get("order") or {}).get("signals") or {}).items():
+                if sig.get("state") != "read":
+                    print(f"  order: {name} {sig['state']}: {sig.get('why')}")
         elif a.action in ("read", "show", "author"):
             out = getattr(s, a.action)(a.unit, as_json)
             _print_json(out) if as_json else print(out)
@@ -1187,7 +1223,8 @@ def cmd_review(a):
             sys.exit(r.returncode)
 
 
-INVENTORY = {"regions": "source_regions", "repin": "repin", "rebound": "rebound"}
+INVENTORY = {"regions": "source_regions", "repin": "repin", "rebound": "rebound",
+             "retire": "retire"}
 
 
 def cmd_inventory(a):
@@ -1255,9 +1292,18 @@ def main(argv=None):
     b.add_argument("--skip-tex", action="store_true", help=argparse.SUPPRESS)
     b.add_argument("--lake", default="lake", help=argparse.SUPPRESS)
     b.add_argument("--no-lean-build", action="store_true", help=argparse.SUPPRESS)
-    b.add_argument("--reuse-lean", action="store_true",
-                   help="use only the stored Lean results, starting no Lean session; stop and say "
-                        "what must be extracted when they do not cover the build")
+    lean_facts = b.add_mutually_exclusive_group()
+    lean_facts.add_argument("--reuse-lean", action="store_true",
+                            help="use only the stored Lean results, starting no Lean session; "
+                                 "stop and say what must be extracted when they do not cover "
+                                 "the build")
+    lean_facts.add_argument("--refresh", action="store_true",
+                            help="ask Lean again for every Lean fact this build reads (the index "
+                                 "of each module it indexes, the records of linked and suggested "
+                                 "declarations, the modules recorded as failing to load) instead "
+                                 "of reusing those kept in .machinechecked/build/facts, and keep "
+                                 "the new ones in their place; the other kept facts (inspect "
+                                 "answers, the libraries of other papers) stay")
     b.add_argument("--web", help=argparse.SUPPRESS)
     b.add_argument("--fail-on-violation", action="store_true", help=argparse.SUPPRESS)
     b.set_defaults(func=cmd_build)
@@ -1401,15 +1447,23 @@ def main(argv=None):
                     "search CLAIM-OR-TEXT (the project's declarations by statement content), "
                     "proof-facts NAME (the facts inside its proof), uses NAME (where it is "
                     "applied, with the source of each premise), composition CLAIM (the "
-                    "auditors' compositions for it, with --workspace for one workspace); impact "
-                    "says what is not extracted yet")
+                    "auditors' compositions for it, with --workspace for one workspace), impact "
+                    "NAME (how each main result uses it, and which claims' Lean uses it)")
     co.add_argument("--match", metavar="TEXT",
                     help="with proof-facts: rank the facts by the symbols they share with TEXT")
+    co.add_argument("--main", action="append", metavar="NAME",
+                    help="with impact: a main result to trace from, a declaration or a claim "
+                    "(its linked Lean); repeat for several (default: the declarations linked to "
+                    "the paper's theorems)")
     co.add_argument("--limit", type=int, help="return at most this many definitions or results")
     co.add_argument("--after", metavar="ID", help="continue a list after this item")
     co.add_argument("--workspace", metavar="ID", help="include this workspace's requirements and "
                     "compositions of the claim (informed stage only); with --query composition, "
                     "only this workspace's")
+    co.add_argument("--all-libraries", action="store_true",
+                    help="with --query search: search every library of the project, also those "
+                    "the paper's build leaves out because formalization.yaml maps them only to "
+                    "other papers (Lean indexes what the facts store does not hold)")
     co.add_argument("--json", action="store_true", help="print one JSON document")
     co.add_argument("-c", "--config", default=None, help=argparse.SUPPRESS)
     co.set_defaults(func=cmd_compare)
@@ -1566,6 +1620,13 @@ def main(argv=None):
         if name in ("next", "status", "read", "show", "author"):
             sp.add_argument("--json", action="store_true",
                             help="print one JSON document holding only what this step shows")
+        if name in ("next", "status"):
+            sp.add_argument("--order", choices=["priority", "document", "informed"],
+                            default="priority",
+                            help="priority: changed evidence and proof use first (default); "
+                                 "document: the paper's order; informed: also what the "
+                                 "auditors' workspaces record as open, which records that "
+                                 "you have seen prior interpretations")
         sp.add_argument("--as", dest="reviewer", default=os.environ.get("MACHINECHECKED_REVIEWER"),
                         help="human:NAME or llm:MODEL (default: $MACHINECHECKED_REVIEWER)")
         sp.add_argument("--same-family", choices=["yes", "no", "unknown"], default="unknown",
@@ -1574,10 +1635,11 @@ def main(argv=None):
         sp.set_defaults(func=cmd_review_step)
 
     iv = sub.add_parser(
-        "inventory", help="pin the claims' source passages",
+        "inventory", help="pin the claims' source passages, and retire stale readings",
         description="regions: hash line pins as regions at the revision they were pinned at "
         "(docs/SOURCE_REGIONS.md); rebound: change the bounds of claims' regions there; repin: "
-        "move the claims to a new revision of the paper. "
+        "move the claims to a new revision of the paper; retire: remove the readings review markers "
+        "record of passages that no longer use their declaration. "
         "Each prints a plan, and changes files only with --write; pass --help after the action "
         "for its options.")
     iv.add_argument("action", choices=sorted(INVENTORY))
@@ -1594,11 +1656,17 @@ def main(argv=None):
     a = p.parse_args(argv)
     try:
         a.func(a)
+        sys.stdout.flush()  # what is still buffered, so that a closed pipe is handled below
     except SystemExit as e:
         # `sys.exit("message")` is a command that could not do its job; an integer is its result.
         if isinstance(e.code, str):
             _could_not_run(a, "error", e.code.removeprefix("machinechecked: "))
+        _flush_output()
         raise
+    except BrokenPipeError as e:
+        # The output's reader stopped reading (`… | head`); any other broken pipe is unexpected.
+        _stop_if_reader_gone()
+        _could_not_run(a, "internal", _crash(e))
     except FileNotFoundError as e:
         tool = Path(str(e.filename or "")).name
         if tool in MISSING:
@@ -1615,7 +1683,8 @@ def main(argv=None):
 
 
 # Exit codes: 0 the command did its job (and `check` found nothing wrong), 1 `check` (or
-# `build --fail-on-violation`) found a problem, 2 the command could not run.
+# `build --fail-on-violation`) found a problem, 2 the command could not run; 141 (128 + SIGPIPE)
+# the reader of its output stopped reading.
 COULD_NOT_RUN = 2
 
 
@@ -1633,6 +1702,43 @@ def _crash(e: Exception) -> str:
     import traceback
     traceback.print_exc()
     return f"unexpected error ({type(e).__name__}: {e}); please report it with the traceback above"
+
+
+def _flush_output() -> None:
+    """Write what is still buffered of standard output, stopping quietly if its reader has
+    gone (`_stop_if_reader_gone`)."""
+    try:
+        sys.stdout.flush()
+    except BrokenPipeError:
+        _stop_if_reader_gone()
+        raise
+
+
+def _stop_if_reader_gone() -> None:
+    """Exit quietly if the reader of standard output or error has closed its end
+    (`machinechecked … | head`, once `head` has its lines): no message, and the status of a
+    program stopped by SIGPIPE, 128 + 13. What is left to write goes to /dev/null, so that
+    Python's flush at exit does not fail again. Without `poll` (Windows) a broken pipe is taken
+    to be the output's."""
+    import select
+    import signal
+    gone = []
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            fd = stream.fileno()
+        except (AttributeError, OSError, ValueError):
+            continue
+        if hasattr(select, "poll"):
+            poll = select.poll()
+            poll.register(fd, select.POLLOUT)
+            if not any(ev & (select.POLLERR | select.POLLHUP) for _, ev in poll.poll(0)):
+                continue
+        gone.append(fd)
+    if gone:
+        null = os.open(os.devnull, os.O_WRONLY)
+        for fd in gone:
+            os.dup2(null, fd)
+        raise SystemExit(128 + getattr(signal, "SIGPIPE", 13))
 
 
 def _could_not_run(a, kind: str, message: str, **extra):

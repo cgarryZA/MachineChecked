@@ -229,6 +229,12 @@ def test_the_build_writes_the_reverse_references_and_compare_answers(project, tm
     # The reader's local server gives the same document.
     get = us.route(project, project / ".machinechecked" / "site" / "data")
     assert get({"name": ["Uses.half_lt_four"]})["applications"] == doc["applications"]
+    # The review queue puts first the lemma whose Lean the theorem's proof uses, and says so.
+    queue = json.loads((data / "review-queue.json").read_text())
+    assert queue["order"]["signals"]["proof use"] == {"state": "read"}
+    first = next(u for u in queue["units"] if u["state"] != "reviewed")
+    assert first["id"] == "link:lem:half"
+    assert first["reason"].startswith("Used in the proof of Theorem 2;")
 
 
 @needs_lean

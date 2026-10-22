@@ -390,7 +390,9 @@ def _claim_ref(ch: dict) -> dict:
 
 # Content a packet leaves to a targeted query, because it runs Lean.
 ON_REQUEST = [{"what": "where each declaration is used, each application's arguments and the "
-                       "source of each premise", "query": "uses"}]
+                       "source of each premise", "query": "uses"},
+              {"what": "how each main result uses a linked declaration, and which claims' Lean "
+                       "uses it", "query": "impact"}]
 
 
 def _retrieval(stage: str, sections: list[str], page: dict | None, extra: list | None = None):
@@ -579,9 +581,11 @@ QUERIES = {
                    "cases (Lean reads the proof once; the answer is cached)",
     "composition": "the auditors' compositions for a claim: the steps, the results each rests "
                    "on, substitutions, identifications, obligations and any Lean bridge",
-    "impact": "which main result uses a declaration",
+    "impact": "how each main result uses a declaration (the path from its proof or its "
+              "statement, and the applications at the end), and which claims' Lean uses it",
 }
-NOT_YET = {"impact": "#112"}
+# Queries the engine does not answer yet, by owner issue.
+NOT_YET: dict[str, str] = {}
 
 
 def linked_claims(site: Site) -> dict[str, list[str]]:
@@ -616,14 +620,19 @@ def mark_claims(doc: dict, claims: dict[str, list[str]]) -> dict:
 
 def query(site: Site, op: str, target: str, limit: int | None = None, after: str | None = None,
           root: Path | None = None, log=None, match: str | None = None,
-          workspace: str | None = None) -> dict:
+          workspace: str | None = None, main: list[str] | None = None,
+          every_library: bool = False) -> dict:
     """One targeted query: `{op, context, target, results, provenance, retrieval}`. An
     operation the engine does not extract yet answers `available: false` with its owner.
+    `search` with `every_library` searches every library of the project, also those the
+    build's index leaves out.
     `proof-facts` answers with the facts inside the target's proof (ranked against `match` when
     given), and the declaration, locals, cases and source-only lines in `subject`.
     `composition` answers with the compositions recorded for the target claim in the
     workspaces of the build's working directory (or in `workspace`): prior interpretations,
-    which an independent review reads only after its verdict."""
+    which an independent review reads only after its verdict. `impact` traces the target from
+    the main results named in `main` (declarations or claims), else from the declarations
+    linked to the paper's theorems (`impact.py`)."""
     if op not in QUERIES:
         raise CompareError(f"no query {op!r}; the queries are: {', '.join(QUERIES)}", "bad-query")
     out = {"schema": QUERY_SCHEMA, "op": op, "target": target, "limit": limit, "after": after,
@@ -650,8 +659,15 @@ def query(site: Site, op: str, target: str, limit: int | None = None, after: str
         from .uses import uses
         results = [mark_claims(uses(root, target, None, log=log), linked_claims(site))]
         prov = "Lean (the elaborated terms of the project), cached until a Lean input changes"
+    elif op == "impact":
+        results = [_impact(site, root, target, main, log)]
+        prov = ("Lean (the references of the project's declarations and the applications of the "
+                "target, from its elaborated terms), cached until a Lean input changes")
     elif op == "search":
-        return {**out, **search(site, target, limit, after)}
+        if every_library and root is None:
+            raise CompareError("searching every library needs the Lean project", "no-project")
+        return {**out, **search(site, target, limit, after, root if every_library else None,
+                                log)}
     elif op == "composition":
         from . import composition as cp
         from .targets import Snapshot, TargetError
@@ -694,13 +710,20 @@ def query(site: Site, op: str, target: str, limit: int | None = None, after: str
     return {**out, "available": True, "results": part, "provenance": prov, "retrieval": page}
 
 
-def search(site: Site, target: str, limit: int | None = None, after: str | None = None) -> dict:
+def search(site: Site, target: str, limit: int | None = None, after: str | None = None,
+           every_library: Path | None = None, log=None) -> dict:
     """The content search (`retrieval.Retrieval.search`) the reader and the suggestions use. A
     target naming a claim searches with its printed statement, over declarations of its sort;
     any other target is the query itself. Nothing recorded by people (links, rejections, notes)
-    enters the search or its results."""
+    enters the search or its results. It searches the build's content index; with
+    `every_library` (the Lean project), the index of every built module instead, from the
+    facts store, extracting what it does not hold (a paper's build leaves out the libraries
+    formalization.yaml maps only to other papers)."""
     from .retrieval import paper_quantifiers
-    ret = site.retrieval()
+    if every_library is not None:
+        ret, scope = _every_library(every_library, log)
+    else:
+        ret, scope = site.retrieval(), _build_scope(site)
     if ret is None:
         return {"available": False, "results": [],
                 "reason": "this build has no content index of the project's declarations; "
@@ -727,14 +750,58 @@ def search(site: Site, target: str, limit: int | None = None, after: str | None 
         raise CompareError(str(e), "bad-cursor") from None
     for r in res["results"]:
         r["id"] = f"decl:{r['name']}"
+    content = "complete statements, docstrings, names and the definitions each statement uses"
+    prov = f"the build's content index ({content}); no Lean session" if every_library is None \
+        else f"the index of every built module ({content}), from the facts store; Lean " \
+             "indexes what it does not hold"
     return {"available": True, "subject": subject, "results": res["results"],
-            "query": res["query"],
-            "scope": {"declarations": len(ret),
-                      "what": "every user-facing declaration of the project's built modules, "
-                              "linked or not"},
-            "provenance": "the build's content index (complete statements, docstrings, names "
-                          "and the definitions each statement uses); no Lean session",
-            "retrieval": res["page"]}
+            "query": res["query"], "scope": {"declarations": len(ret), **scope},
+            "provenance": prov, "retrieval": res["page"]}
+
+
+def _build_scope(site: Site) -> dict:
+    """What the build's content index covers: every built module, unless the build left out
+    the libraries formalization.yaml maps only to other papers (`simple.index_scope`)."""
+    left = site.index.get("index_scope") or {}
+    if not left.get("left_out"):
+        return {"what": "every user-facing declaration of the project's built modules, linked "
+                        "or not"}
+    return {"what": "every user-facing declaration of the built modules this paper's build "
+                    "indexes, linked or not",
+            "left_out": left["left_out"],
+            "note": f"{left.get('modules')} built module(s) of {', '.join(left['left_out'])}, "
+                    "which formalization.yaml maps only to other papers, are not in this "
+                    "build's index; --all-libraries searches every library"}
+
+
+def _every_library(root: Path, log) -> tuple:
+    """The content index of every built module of the project, and what it covers."""
+    from .retrieval import Retrieval
+    from .simple import ViewError, project_index
+    try:
+        full, failed = project_index(root, log=log)
+    except ViewError as e:
+        raise CompareError(str(e), "no-project") from None
+    scope = {"what": "every user-facing declaration of the project's built modules, linked or "
+                     "not, whatever paper maps them"}
+    if failed:
+        scope["note"] = (f"{len(failed)} built module(s) could not be loaded and are not "
+                         f"searched: {', '.join(sorted(failed)[:5])}"
+                         + ("…" if len(failed) > 5 else ""))
+    return Retrieval.build(full), scope
+
+
+def _impact(site: Site, root: Path | None, target: str, main: list[str] | None, log) -> dict:
+    """The impact document of `target` (`impact.impact`), or the reason there is none, as a
+    refusal."""
+    if root is None:
+        raise CompareError("`impact` needs the Lean project", "no-project")
+    from .impact import impact
+    from .simple import ViewError
+    try:
+        return impact(site, root, target, main, log)
+    except ViewError as e:
+        raise CompareError(str(e), "no-project") from None
 
 
 def _proof_facts(root: Path, target: str, log) -> dict:
@@ -793,6 +860,8 @@ def search_text(out: dict) -> str:
     head = (f"Declarations ({sub.get('kinds')}) matching {sub['claim']}" if sub.get("claim")
             else f"Declarations matching {sub.get('text')!r}")
     lines = [f"{head}, among {out['scope']['declarations']} declarations of the project:"]
+    if out["scope"].get("note"):
+        lines.append(f"({out['scope']['note']})")
     for r in out["results"]:
         lines.append(f"\n{r['name']}  ({r.get('kind')}, {r.get('module')})")
         for x in r["reasons"]:
@@ -806,7 +875,13 @@ def search_text(out: dict) -> str:
 
 
 def statement_lines(d: dict) -> list[str]:
-    """A declaration for the terminal: its binders and conclusion, then its exact text."""
+    """A declaration for the terminal: its binders and conclusion, then its exact text. An
+    `inspect` answer (the result of the `dependencies` query) is shown by
+    `dependencies_lines`."""
+    if d.get("schema"):
+        from .deps import SCHEMA as INSPECT_SCHEMA
+        if d["schema"] == INSPECT_SCHEMA:
+            return dependencies_lines(d)
     st = d.get("statement")
     name = d.get("name")
     if st is None:
@@ -827,6 +902,58 @@ def statement_lines(d: dict) -> list[str]:
     if d.get("witness"):
         lines.append(f"\nWitness: {d['witness']}")
     return lines
+
+
+def dependencies_lines(doc: dict) -> list[str]:
+    """An `inspect` answer for the terminal, naming everything its JSON names: the
+    declaration's statement and Lean's checks, the project declarations its statement and its
+    proof (or body) use, the constants outside the project they use, and every project
+    declaration they reach (the packages outside it are summed up, as `inspect` does). A
+    declaration Lean did not find is shown with Lean's answer and its reason."""
+    name = doc.get("name")
+    if not doc.get("ok"):
+        where = ", ".join(doc.get("modules") or [])
+        out = [f"{name}: {doc.get('status')}" + (f" ({where})" if where else "")
+               + (f": {doc['reason']}" if doc.get("reason") else "")]
+        if doc.get("status") == "ambiguous":
+            out.append(f"  name its module with `machinechecked inspect {name} --module MODULE`")
+        return out
+    d = doc["declaration"]
+    vk = doc.get("value_kind") or "none"
+    line = (d.get("range") or {}).get("line")
+    out = [f"{d['name']}  ({d['kind']}, {d['file']}" + (f":{line}" if line else "") + ")",
+           f"  statement: {d['statement']}",
+           f"  axioms: {', '.join(d.get('axioms') or []) or 'none'}"
+           + ("  (uses sorry)" if d.get("sorry") else "")]
+    ext = doc.get("external_dependencies") or {}
+    out.append(f"  statement uses (this project): "
+               f"{', '.join(doc.get('statement_dependencies') or []) or 'nothing'}")
+    if vk == "none":
+        out.append("  it has no proof or body")
+    else:
+        out.append(f"  {vk} uses (this project): "
+                   f"{', '.join(doc.get('proof_dependencies') or []) or 'nothing'}")
+    out.append(f"  statement uses (outside this project): "
+               f"{', '.join(ext.get('statement') or []) or 'nothing'}")
+    if vk != "none":
+        out.append(f"  {vk} uses (outside this project): "
+                   f"{', '.join(ext.get('proof') or []) or 'nothing'}")
+    c = doc.get("closure") or {}
+    outside = c.get("external") or {}
+    packages = list((outside.get("by_package") or {}).items())
+    by = ", ".join(f"{k} {v}" for k, v in packages[:5]) + (", …" if len(packages) > 5 else "")
+    out.append(f"  reaches {c.get('declarations', 0)} declaration(s) of this project (deepest "
+               f"{c.get('deepest', 0)} step(s)), and {outside.get('constants', 0)} constant(s) "
+               "outside it" + (f": {by}" if by else ""))
+    for m in c.get("members") or []:
+        out.append(f"    {m['depth']:>3}  {m['name']}  ({m['kind']}, {m['module']})")
+    if c.get("generated"):
+        out.append(f"  ({c['generated']} constant(s) Lean generated were followed, not listed)")
+    if doc.get("note"):
+        out.append(f"  {doc['note']}")
+    if (doc.get("cache") or {}).get("hit"):
+        out.append("  (from the cache: no Lean input changed)")
+    return out
 
 
 def proof_facts_text(q: dict) -> str:

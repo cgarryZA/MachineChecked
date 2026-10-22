@@ -375,6 +375,31 @@ def _ref(ref, snap, root) -> dict:
                       "quote": _text(p.get("quote"), "the quotation")}}
 
 
+def ref_text(ref: dict) -> str:
+    """What a stored evidence reference names, in the reader's words: the declaration, the
+    application (`callee applied in caller`), the fact inside a proof, the certificate, the
+    source location or the paper passage."""
+    ref = ref or {}
+    if ref.get("decl"):
+        return ref["decl"]
+    if ref.get("app"):
+        a = ref["app"]
+        return f"{a.get('callee')} applied in {a.get('caller')}"
+    if ref.get("fact"):
+        f = ref["fact"]
+        return (f"{f.get('name') or f.get('head') or 'a fact'} : {f.get('type')}, "
+                f"inside the proof of {f.get('decl')}")
+    if ref.get("certificate"):
+        c = ref["certificate"]
+        return f"{c.get('theorem')}, certificate for {c.get('target')}"
+    if ref.get("source"):
+        s = ref["source"]
+        return f"{s.get('file')}" + (f":{s['line']}" if s.get("line") else "")
+    if ref.get("paper"):
+        return "paper passage"
+    return "a reference of no known kind"
+
+
 def _claim(q, snap) -> str:
     if not isinstance(q, str) or not q.strip():
         raise WorkspaceError("a record names its claim (`claim`)")
@@ -936,6 +961,19 @@ def exposed(ws: dict, claim_ids: list[str]) -> list[dict]:
     """The exposure entries of the workspace that cover any of `claim_ids`."""
     return [e for e in ws.get("exposure") or []
             if e.get("claims") is None or set(e["claims"]) & set(claim_ids)]
+
+
+def auditors(ws: dict) -> set[str]:
+    """Everyone the workspace records as having worked in it: its reviewer, the authors of its
+    records and of its edits (refused ones too), whoever set where to resume, and whoever changed
+    its mode or imported it. What the workspace records as seen, each of them had seen."""
+    out = {(ws.get("reviewer") or {}).get("id"), (ws.get("resume") or {}).get("by")}
+    for r in (ws.get("records") or {}).values():
+        if isinstance(r, dict):
+            out |= {r.get(k) for k in ("created_by", "updated_by", "state_by")}
+    for k in ("conflicts", "provenance"):
+        out |= {e.get("by") for e in ws.get(k) or [] if isinstance(e, dict)}
+    return {x for x in out if isinstance(x, str) and x}
 
 
 # -- moving it between machines -------------------------------------------------------------

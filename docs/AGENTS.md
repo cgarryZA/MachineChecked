@@ -150,10 +150,11 @@ target searches with its printed statement, over declarations of its sort, and s
 result orders `∀` and `∃` differently. Each result has its complete `statement`, its `score`
 and its `reasons`; a result reached through a close match it uses says so (`signal` `uses`,
 with `via`). It is the search the suggestions and the reader use, from the build's content
-index (`data/retrieval.json`), with no Lean session; `--limit` and `--after` page it.
-Nothing people recorded (links, rejections, notes) enters it. In zero configuration,
-`mentions` reads the complete statements of that index; with an older build it reads previews
-(`complete: false` on such a result: get its statement with `dependencies`).
+index (`data/retrieval.json`), with no Lean session; `--limit` and `--after` page it. The
+zero-configuration build writes that index; on a full assessment's build `search` answers
+`available: false`. Nothing people recorded (links, rejections, notes) enters it. In zero
+configuration, `mentions` reads the complete statements of that index; with an older build it
+reads previews (`complete: false` on such a result: get its statement with `dependencies`).
 
 `uses` (also `machinechecked inspect NAME --used-by`) answers with one document
 (`machinechecked/uses@1`) read from Lean's elaborated terms:
@@ -197,25 +198,37 @@ gives another. Lean runs once per declaration; the answer is kept in the facts s
 `inspect`'s, and reused until the declaration's module or a module it imports changes.
 `--query composition CLAIM` gives the compositions the workspaces record for the claim (one
 workspace's with `--workspace ID`), each as `workspace show` gives it: its steps, `basis`, `gaps`,
-`next_step` and `bridge_check`. They are prior interpretations (`subject.contains`). The query
-`impact` answers `available: false` with the issue that owns its extraction. An error is `{"ok": false, "error": {kind, message,
-candidates}}` with exit 1 (exit 2, kind `no-build`, when there is no build to read: run
-`view` or `build`); `candidates` lists the claims or declarations you may have meant.
+`next_step` and `bridge_check`. They are prior interpretations (`subject.contains`). A query
+kind whose extraction is not built yet, or that this build cannot answer, gives `available:
+false` with its `reason`, which names the issue that owns it when there is one. An error is `{"ok": false, "error":
+{kind, message, candidates}}` with exit 1 (exit 2, kind `no-build`, when there is no build to
+read: run `view` or `build`); `candidates` lists the claims or declarations you may have meant.
 
-A complete inspection, in the toy example:
+### Partial answers and paging
 
-```sh
-cd examples/toy-paper && machinechecked build
-machinechecked compare thm:bound --json > packet.json      # read paper.passages[0].text
-machinechecked compare --query definition Toy.triangle      # what T_n is in Lean
-machinechecked compare --query mentions Toy.triangle        # other results about T_n
-```
+Every document says how much it holds; read these fields before concluding that something is
+absent:
 
-The passage says there is one constant `C` for every `n`; the locked statement's text is
-`∃ (C : Nat), ∀ (n : Nat), Toy.triangle n ≤ C * (n * n)`, which chooses `C` before `n`, and
-`Toy.triangle` is the recursion `T_(n+1) = T_n + n + 1`. A finding records that, quoting the
-`snapshot` and the declaration's `fingerprint`; as a review it goes through `machinechecked
-review` (below), which keeps the protocol's order.
+- `compare`: a passage with `available: false` is not in the build (read it in the paper at its
+  `source`), and `complete: false` marks PDF text the extraction cut. `retrieval.unavailable`
+  names what is not extracted yet, each with the issue that owns it and, where there is one,
+  the query that gives it on `request`; `retrieval.on_request` lists the targeted queries.
+- Lists: the packet's `retrieval.definitions` and the `retrieval` of a query give `total`,
+  `returned` and `complete`; `--limit N` pages them, and `--after` with the `next` they return
+  continues. A `mentions` result with `complete: false` holds a preview: get its statement with
+  `dependencies`.
+- `uses`: `scope` gives the libraries and the number of modules searched, the modules
+  `unbuilt` and those that `failed` to load; `complete: false` says that some were not
+  searched, so an `answer` of `not traced` (no use in the modules searched) leaves the others
+  open. `applications_complete` says whether every application was read.
+- `proof-facts`: `subject.proof.complete: false` (with `cut`) when the walk reached its limit;
+  `auxiliary` lists the lemmas Lean generated for parts of the proof, each to be asked about by
+  its own name, and `not_inspected` what the walk does not read.
+- `inspect`: `closure.generated` counts the compiler-generated constants it followed without
+  listing.
+
+A search that finds nothing describes the scope it searched. Report the query, the scope and
+what was not built.
 
 ### What changed since the last release
 
@@ -244,7 +257,9 @@ counts the same marker. A review that read a passage the manuscript no longer ma
 reopened (`because` names the passage), and a `caveat` marks one that a build counted
 against a pinned earlier text before such reviews were reopened.
 Nothing in the document is a status: report `status.to` as the claim's status. `--workspace ID`
-adds `workspace.records`, the saved investigation's records that are not current.
+adds `workspace.records`: the saved investigation's evidence, findings, questions,
+counterexamples and compositions that are not current, each with its `state` and `changes`
+(`workspace show --json` gives the currency of its requirements and passages).
 
 ### Reviewing from the terminal
 
@@ -323,6 +338,250 @@ is read against its requirement's quantifiers, and a Lean certificate is evidenc
 `{"certificate": {theorem, target, certifies}}` that Lean checks when it is recorded. A
 workspace started in informed mode records that the Lean was seen; `{"op": "exposure", "what":
 "external material"}` records anything else you read.
+
+## A worked investigation
+
+This investigation asks whether the toy paper's Theorem 2.5 is formalised as printed: "There
+is a constant $C$, independent of $n$, such that $T_n \le C n^2$ for every natural number $n$."
+It runs in zero configuration, as in an ordinary Lean project, on a copy of the toy example's
+Lean project with its paper inside (the example's own directory is a full assessment, whose
+build holds no content index for `search`). Every command below runs as shown; `MODEL` stands
+for your model's name.
+
+```sh
+cp -r examples/toy-paper/lean toy && mkdir toy/paper && cp examples/toy-paper/paper/toy.tex toy/paper/
+cd toy && lake build Toy ToyAudit
+export MACHINECHECKED_REVIEWER=llm:MODEL
+machinechecked check --json > check.json
+machinechecked build
+```
+
+**1. Read the claim and record its requirements.** `machinechecked compare "Theorem 2.5"
+--stage read --json` gives the passage alone. The claim asks for one constant chosen before
+every `n`. Record that reading, each requirement with the lines of the build's copy of the
+source (`.machinechecked/sources/P/toy.tex`) it comes from:
+
+```sh
+machinechecked workspace open --mode informed
+machinechecked workspace update - <<'JSON'
+{"op_id": "t25-reading", "ops": [
+ {"op": "put", "record": {"kind": "requirement", "claim": "Theorem 2.5", "local_id": "c",
+  "form": "there is", "binds": ["C"], "independent_of": ["n"],
+  "text": "a constant C, independent of n"}},
+ {"op": "put", "record": {"kind": "requirement", "claim": "Theorem 2.5", "local_id": "c.1",
+  "parent": "c", "form": "for every", "binds": ["n"], "domain": "n ≥ 0",
+  "text": "for every natural number n"}},
+ {"op": "put", "record": {"kind": "requirement", "claim": "Theorem 2.5", "local_id": "c.1.1",
+  "parent": "c.1", "form": "conclusion", "text": "T_n ≤ C n²"}},
+ {"op": "put", "record": {"kind": "fragment", "claim": "Theorem 2.5", "requirement": "c",
+  "role": "constant dependence", "region": {"file": "toy.tex", "start_line": 66}}},
+ {"op": "put", "record": {"kind": "fragment", "claim": "Theorem 2.5", "requirement": "c.1",
+  "role": "quantifier domain", "region": {"file": "toy.tex", "start_line": 66}}},
+ {"op": "put", "record": {"kind": "fragment", "claim": "Theorem 2.5", "requirement": "c.1.1",
+  "role": "statement", "passage": {"claim": "Theorem 2.5"}}}]}
+JSON
+machinechecked workspace show --claim "Theorem 2.5"
+```
+
+`show` prints the reading, including `witness C: the claim produces it; chosen before n;
+independent of n`.
+
+**2. Find the Lean by its mathematics.**
+
+```sh
+machinechecked compare --query search "Theorem 2.5" --limit 3
+machinechecked compare --query search 'triangle n ≤ C * n ^ 2' --limit 3
+```
+
+The claim's own search returns `ToyAudit.bound_range_corrected_holds`,
+`Toy.Acceptance.thm_bound` and `ToyAudit.bound_range_at_one_false`, each with the terms it
+shares. The expression search ranks `Toy.Acceptance.thm_triangle` first and reaches
+`Toy.Acceptance.thm_bound` through it: "its proof uses Toy.Acceptance.thm_triangle, a close
+match". The paper numbers in the Lean are leads. In `check.json`, Theorem 2.5's first
+suggestion is `ToyAudit.bound_range_corrected_holds`, with a `number` reason from a module
+docstring that cites Theorem 2.5 for a step of its proof; and `warnings` says that the
+docstring of `Toy.PaperSpec.thm_bound` cites "Theorem 2.4", where the paper's 2.4 is Remark 2.4
+(`numbering` gives that reference `status: other-kind`).
+
+**3. Inspect the statement and its definitions.**
+
+```sh
+machinechecked compare "Theorem 2.5" --json > packet.json
+machinechecked compare --query definition Toy.triangle
+machinechecked compare --query dependencies Toy.Acceptance.thm_bound --json > deps.json
+```
+
+`lean.candidates` in `packet.json` gives both suggestions with their complete statements.
+`ToyAudit.bound_range_corrected_holds` states `∀ (n k : Nat), 1 ≤ k → n ≤ k * n ^ 2`, a bound
+on `n` for each `k`, with no triangular number. `Toy.Acceptance.thm_bound` states `∃ (C : Nat),
+∀ (n : Nat), Toy.triangle n ≤ C * (n * n)`: `C` is chosen before `n`, as the paper
+requires. `Toy.triangle` is a recursion (`T_0 = 0`, `T_(n+1) = T_n +
+(n + 1)`, in `Toy.triangle._f`), the paper's sum in another representation. `deps.json` lists
+`Toy.Acceptance.thm_triangle` among the proof's dependencies. With the user's agreement, record
+the link and build again, so that a requirement can name a part of the linked statement:
+
+```sh
+machinechecked link "Theorem 2.5" Toy.Acceptance.thm_bound --as llm:MODEL --json
+machinechecked build
+```
+
+**4. Follow the objects through the proof.**
+
+```sh
+machinechecked compare --query uses Toy.Acceptance.thm_triangle
+machinechecked compare --query proof-facts Toy.Acceptance.thm_bound --match "n ≤ n * n"
+```
+
+`uses` finds one application, `app:Toy.Acceptance.thm_bound:0`: `parameter n : Nat := n (the
+variable n introduced in the proof)`, giving `2 * Toy.triangle n = n * (n + 1)`. `proof-facts`
+ranks first `f2`, `hn : n ≤ n * n` at `Toy/Acceptance.lean:44`, in the case `n : Nat`;
+its basis is "established inside this proof under this context".
+
+**5. Assemble the evidence.** Cite the application and the fact, and combine them. The
+composition's bridge asks Lean to check that `Toy.Acceptance.thm_bound` proves
+`Toy.PaperSpec.thm_bound` exactly; that this target says what the paper says remains your
+reading, and its review is separate.
+
+```sh
+machinechecked workspace update - <<'JSON'
+{"op_id": "t25-evidence", "ops": [
+ {"op": "put", "record": {"kind": "alignment", "claim": "Theorem 2.5", "requirements": ["c.1.1"],
+  "lean": [{"decl": "Toy.Acceptance.thm_bound", "conclusion": true}]}},
+ {"op": "put", "record": {"id": "e-gauss", "kind": "evidence", "claim": "Theorem 2.5",
+  "role": "supports", "ref": {"app": {"callee": "Toy.Acceptance.thm_triangle",
+                                      "id": "app:Toy.Acceptance.thm_bound:0"}}}},
+ {"op": "put", "record": {"id": "e-square", "kind": "evidence", "claim": "Theorem 2.5",
+  "role": "supports", "ref": {"fact": {"decl": "Toy.Acceptance.thm_bound", "at": "/1/1/2"}}}},
+ {"op": "put", "record": {"id": "c-bound", "kind": "composition", "claim": "Theorem 2.5",
+  "coverage": "full", "steps": [
+   {"id": "s1", "establishes": "2 T_n = n(n + 1) for the n the proof fixes",
+    "uses": ["e-gauss"], "substitutions": [{"variable": "n", "value": "n", "in": "e-gauss"}]},
+   {"id": "s2", "establishes": "n ≤ n²", "uses": ["e-square"]},
+   {"id": "s3", "establishes": "T_n ≤ 1 · n² for every n", "after": ["s1", "s2"],
+    "requirements": ["c"], "inference": "2 T_n = n² + n ≤ 2 n²"}],
+  "identifications": [{"left": {"step": "s1", "object": "n"},
+                       "right": {"step": "s2", "object": "n"},
+                       "how": "evidence", "evidence": ["e-gauss", "e-square"]}],
+  "obligations": [{"id": "o1", "kind": "constant dependence", "text": "C = 1 is chosen before n",
+                   "state": "discharged", "by": {"steps": ["s3"]}}],
+  "bridge": {"theorem": "Toy.Acceptance.thm_bound", "target": "Toy.PaperSpec.thm_bound"}}},
+ {"op": "put", "record": {"id": "f-bound", "kind": "finding", "claim": "Theorem 2.5",
+  "coverage": "full", "basis": "checked_bridge", "composition": "c-bound",
+  "note": "Gauss's identity at the proof's n and n ≤ n² give C = 1, chosen before n."}}]}
+JSON
+machinechecked compare --query composition "Theorem 2.5"
+```
+
+The fact's `at` is its position in the proof term, as `proof-facts` gives it in `ref`; the
+workspace keeps the fact's hashes and type with it. The composition reads `every clause, through
+a bridge Lean checks`.
+
+**6. Compare the estimate and the printed proof.** The Lean writes `C * (n * n)` for `C n²`, a
+difference of notation only. The proof's Equation (3), "for every natural number $k \ge 0$, $n
+\le k n^2$", is a claim of its own: it fails at `k = 0`, `n = 1`, and the Lean proof uses
+`n ≤ n * n` instead. `ToyAudit` holds a Lean certificate of the failure. Record the formal
+route the Lean takes, then the difference, the step's reading, the counterexample and the
+verdict:
+
+```sh
+machinechecked compare "Equation (3)"
+machinechecked link "Equation (3)" Toy.Acceptance.thm_bound --route --as llm:MODEL
+machinechecked build
+machinechecked compare "Equation (3)" --json > step.json
+machinechecked workspace update - <<'JSON'
+{"op_id": "eq3", "ops": [
+ {"op": "put", "record": {"id": "f-power", "kind": "finding", "claim": "Theorem 2.5",
+  "requirement": "c.1.1", "note": "Lean writes n² as n * n.",
+  "difference": {"feature": "power", "paper": "C n^2", "lean": "C * (n * n)",
+                 "outcome": "no difference", "why": "n * n is n² in ℕ"}}},
+ {"op": "put", "record": {"kind": "requirement", "claim": "Equation (3)", "local_id": "n",
+  "form": "for every", "binds": ["n"], "domain": "n ≥ 0", "text": "the n the proof fixes"}},
+ {"op": "put", "record": {"kind": "fragment", "claim": "Equation (3)", "requirement": "n",
+  "role": "earlier choice", "region": {"file": "toy.tex", "start_line": 71}}},
+ {"op": "put", "record": {"kind": "requirement", "claim": "Equation (3)", "local_id": "n.k",
+  "parent": "n", "form": "for every", "binds": ["k"], "domain": "k ≥ 0",
+  "text": "for every natural number k ≥ 0"}},
+ {"op": "put", "record": {"kind": "fragment", "claim": "Equation (3)", "requirement": "n.k",
+  "role": "quantifier domain", "region": {"file": "toy.tex", "start_line": 75}}},
+ {"op": "put", "record": {"kind": "requirement", "claim": "Equation (3)", "local_id": "n.k.1",
+  "parent": "n.k", "form": "conclusion", "text": "n ≤ k n²"}},
+ {"op": "put", "record": {"kind": "fragment", "claim": "Equation (3)", "requirement": "n.k.1",
+  "role": "statement", "passage": {"claim": "Equation (3)"}}},
+ {"op": "put", "record": {"id": "e-refutes", "kind": "evidence", "claim": "Equation (3)",
+  "role": "supports", "ref": {"certificate": {"theorem": "ToyAudit.bound_range_at_one_false",
+                                              "target": "ToyAudit.bound_range_at_one",
+                                              "certifies": "refutes"}}}},
+ {"op": "put", "record": {"id": "x-zero", "kind": "counterexample", "claim": "Equation (3)",
+  "requirement": "n.k.1", "specialisation": {"assign": {"n": 1, "k": 0}},
+  "reduced": "1 ≤ k · 1²", "violation": "at k = 0 it reads 1 ≤ 0", "evidence": ["e-refutes"],
+  "admissibility": [{"obligation": "the proof may fix n = 1", "state": "verified",
+                     "method": "read from the proof"},
+                    {"obligation": "k = 0 satisfies k ≥ 0", "state": "verified",
+                     "method": "arithmetic"}]}},
+ {"op": "put", "record": {"id": "f-step", "kind": "finding", "claim": "Equation (3)",
+  "requirement": "n.k.1", "verdict": "false as printed", "counterexamples": ["x-zero"],
+  "note": "It fails at k = 0, n = 1; the proof uses only k = 1, and the Lean proof uses n ≤ n * n."}}]}
+JSON
+machinechecked workspace show --claim "Equation (3)"
+```
+
+The first `compare` shows the step with the proof around it. In `step.json`,
+`Toy.Acceptance.thm_bound` has the role `formal route used instead`: it does not state the
+step. `show` reads the step as `for every n (n ≥ 0); for every k (k ≥ 0): n ≤ k n²` and the
+counterexample as `an admissible counterexample to this reading`, with the certificate's scope:
+it certifies `ToyAudit.bound_range_at_one` only, not the reading. Run before that fragment is
+recorded, `workspace suggest --claim "Equation (3)" --requirement n.k` proposes the same line 75,
+the sentence before the display, as the quantifier's domain; `--apply` saves it as a proposal,
+and a `put` of it with `"state": "accepted"` accepts it.
+
+**7. Record what is open, and hand the work on.**
+
+```sh
+machinechecked workspace update - <<'JSON'
+{"op_id": "t25-question", "ops": [
+ {"op": "put", "record": {"id": "q-domain", "kind": "question", "claim": "Theorem 2.5",
+  "requirement": "c", "text": "Lean takes C : Nat; the paper does not say where C lives. Is a real constant intended?"}},
+ {"op": "submit", "id": "f-bound", "base_rev": 1},
+ {"op": "submit", "id": "f-power", "base_rev": 1},
+ {"op": "submit", "id": "f-step", "base_rev": 1},
+ {"op": "resume", "state": {"claim": "Theorem 2.5", "question": "q-domain"}}]}
+JSON
+machinechecked workspace export --out ../t25-work.json
+machinechecked build --site ../site
+```
+
+Another agent, in its own copy of the project, runs `machinechecked workspace import
+../t25-work.json --as llm:OTHER` and `machinechecked workspace show --id ws-… --json`: `resume`
+names the claim and the open question, and each record's `currency` is `current` while the
+paper and the Lean are those it was recorded against. It continues with `workspace update --id
+ws-…`, under its own name. `../site/data/work/` holds the submitted findings, the composition
+and the reading; the reader shows them on the claim under **Auditors' readings**, attributed to
+`llm:MODEL`, informed investigation. Theorem 2.5 reads `linked: Lean proof checked`: a
+finding changes no status. An independent review of the claim goes through `machinechecked
+review`, whose report lists this workspace's exposure in `reading.revealed_by`.
+
+**8. Resume after a change.** Change the claim in `paper/toy.tex` to "for every positive
+natural number $n$" and run `machinechecked build`. `workspace show` marks the three
+requirements, whose passages changed, `stale`, and with them the findings and the composition;
+the bridge reads "out of date: the paper's passage is not the version the auditor read", so
+`f-bound` reads as `reviewed_composition` again. The evidence in the Lean stays `current`.
+Read the new text, then put each record again with its `base_rev` and `"repin": true` (here
+`c.1` with `"domain": "n ≥ 1"` and its new text, and the three fragments as they were; `show
+--json` gives their ids and revisions). A
+composition that a submitted finding rests on is not edited: record a new one, which Lean
+checks again with its bridge, and supersede the finding:
+
+```json
+{"op": "supersede", "id": "f-bound", "base_rev": 2,
+ "reason": "the passage now says positive n; the argument covers every n",
+ "record": {"id": "f-bound-2", "coverage": "full", "basis": "checked_bridge",
+            "composition": "c-bound-2",
+            "note": "The argument gives C = 1 for every n, positive or not."}}
+```
+
+Both findings remain, and `show` lists `f-bound-2` as current. In a full assessment,
+`machinechecked changes --workspace ID` lists the stale evidence, findings, questions,
+counterexamples and compositions beside the reviews the new release reopened.
 
 ## A note for your project's AGENTS.md or CLAUDE.md
 

@@ -16,16 +16,13 @@ Each review has three stages:
 
 **3. Read the author's review.** Only after recording your verdict does the queue show the existing author review. Record disagreements alongside your initial interpretation.
 
-The report records the steps completed in this reader.
-
-**Review order.** The queue puts definitions before statements that use them. It records material
-revealed by earlier units in `reading.revealed_by`, including shared author-review sections.
-This record covers work saved in the current browser.
+The report records the steps completed in this reader. The queue offers changed evidence first
+and says why each unit comes where it does ([Review order](#review-order)).
 
 **From the command line.** The same three steps, with the same locks, for a reviewer without a browser (a scripted or batch reviewer, say). Name yourself with `--as human:NAME` or `--as llm:MODEL` (or `MACHINECHECKED_REVIEWER`); texts are files, or `-` for standard input:
 
 ```sh
-machinechecked review next                          # the next unit to review
+machinechecked review next                          # the next unit to review, and why
 machinechecked review read UNIT                     # step 1: the paper's statement only
 machinechecked review lock UNIT reading.md          # locks your reading
 machinechecked review show UNIT                     # step 2 (refused before lock): the Lean
@@ -65,13 +62,64 @@ inspection: someone who has used it on a claim has seen its Lean and its interpr
 later review of that claim is not blind. Say so in the reading, and record it in your
 workspace (an `exposure` operation, below) so that the report lists it.
 
+## Review order
+
+The queue suggests what to review next, and each unit says why it comes where it does. The order
+changes no status and no review, and every unit keeps its three steps and their locks. Open units
+come in this order:
+
+1. **Reopened since the last release**: a review that the comparison with the previous release
+   no longer counts ([What changed since the last release](ASSURANCE.md#what-changed-since-the-last-release)).
+   The reason names what changed: a claim's passage or its context, the Lean statement, or the
+   definition. `review next` also prints the question a new reading answers.
+2. **Changed since the last release**: a unit with no review to reopen whose Lean statement, a
+   definition that statement uses, its definition, or a passage it is read against changed. A
+   change of a proof alone moves nothing: a review of a statement does not read its proof.
+3. The other units, in the queue's own order: less effort first, preferring units that many
+   claims depend on.
+
+Within each group, a unit whose Lean is used in the proof of another claim's Lean comes first
+(*used in the proof of Theorem 2*), directly or through other declarations, from the reverse
+references the zero-configuration build extracts. Ties keep the queue's order. A definition comes
+just before the statement whose review shows its Lean, so that its own reading stays blind
+(*comes before the review of Theorem 2, which shows its Lean*). The report records material
+revealed by earlier units in `reading.revealed_by`, including shared author-review sections; in
+the reader, this covers work saved in the current browser.
+
+A missing record leaves the order as it was, never a guess. The full assessment extracts no
+reverse references, so proof use plays no part in its order; the zero-configuration view keeps no
+earlier release, so changes play no part in its order; a first release has nothing to compare
+with. When modules of the project are not built,
+uses in them are not traced, so a unit with no use found is not known to be unused. `review
+status` names each record that was not read, and why. The reasons name the paper's claims and
+never a Lean declaration, since you read them before the Lean is shown.
+
+`review next` and `review status` take `--order`:
+
+- `priority` (the default): the order above.
+- `document`: the paper's order. Any unit can also be taken directly by its id (`review read
+  UNIT`), and the reader keeps its choice of paper and section.
+- `informed`: the order above, with what the auditors' workspaces in the working directory
+  record as still open placed after the changes. First open questions (an open obligation of a
+  composition, such as compatible witness choices; a requirement that no step of a composition
+  establishes; a finding that is unresolved or covers part of the claim; an open question), then
+  differences that are not resolved (a recorded difference, such as a derivative order, or a
+  finding that the Lean states the claim differently), then hints (a hypothesis of an aligned Lean
+  statement that no requirement is aligned with). A difference that is resolved or found to be
+  none, and a hint it settles, no longer raise the claim; the workspace keeps their explanation.
+  These records are prior interpretations: asking for this order records in your workspace that
+  you have seen them, for the claims it drew on. A later reading of those claims is then not
+  blind, its report says so, and `review promote` refuses it without `--allow-revealed`.
+
 ## Saved investigations
 
 A workspace keeps an investigation of the paper against the Lean so that you, or another auditor
 or agent, can continue it: the evidence chosen for each claim (and the candidates rejected), the
 findings, the open questions, and where you stopped. It lives in the project's working directory
 (`.machinechecked/review-work/`), survives rebuilds and browser restarts, and changes no status.
-Its format is in [the data model](DATA_MODEL.md#workspace-prooflensworkspace1-written-by-the-reader-and-the-command-line).
+Its format is in [the data model](DATA_MODEL.md#workspace-prooflensworkspace1-written-by-the-reader-and-the-command-line);
+[a worked investigation](AGENTS.md#a-worked-investigation) carries one through every step on the
+toy example.
 
 **In the reader.** Under `machinechecked view`, a claim page has an **Investigation** section:
 start one under your name, record a finding (its coverage and note, citing the linked
@@ -185,7 +233,9 @@ one by putting it with `"state": "accepted"`, or remove it with `"state": "remov
 `why_removed`, which keeps who removed it and why. In the reader, the Investigation section
 shows the requirements with their passages and alignments, and offers **Add a requirement**,
 **Suggest nearby context**, **Accept** and **Remove**. When a governing passage changes, its
-requirement goes stale even if the display itself did not change. `machinechecked compare CLAIM
+requirement goes stale even if the display itself did not change; in a full assessment,
+`machinechecked changes --workspace ID` lists the stale requirements, passages and alignments
+with the other records. `machinechecked compare CLAIM
 --workspace ID` adds the requirements to the informed packet; the read and compare stages of an
 independent review withhold them. A requirement and its alignments are your reading: they
 change no status.
@@ -248,8 +298,12 @@ lists them beside the review markers the new release reopened, each with what ch
 ([What changed since the last release](ASSURANCE.md#what-changed-since-the-last-release)). A cited fact inside a proof is `stale` once that proof
 changes, even when the theorem's statement does not. Re-pin a record with `"repin": true` once you have checked it
 again. Changing to independent mode, or importing, keeps what the workspace records you had seen,
-so an informed investigation never becomes a blind review: a report made with `machinechecked
-review` lists that exposure, and `review promote` refuses it without `--allow-revealed`.
+so an informed investigation never becomes a blind review. A report made with `machinechecked
+review` lists the exposure of every workspace in the working directory that you (the reviewer
+`--as` names) opened, imported or recorded work in, and the units whose Lean or author's review
+your review work in them showed. Exposure that an import brings after you lock a reading counts
+when it was recorded before the lock. `review promote` refuses the report without
+`--allow-revealed`.
 
 **What a published audit carries.** `machinechecked export` (and `build --site`, `check --site`)
 publishes, for each claim, the records you have accepted: the requirements, the passages

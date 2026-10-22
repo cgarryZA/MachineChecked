@@ -89,6 +89,8 @@ Other clause fields include `refute` (a proof of the printed proposition's negat
 
 A proposition with hypotheses and no `witness` (a theorem that meets them) carries a `witness` obligation, which names the hypotheses that need it. Instances of standard classes over the proposition's own variables (`[MeasurableSpace Ω]`, `[IsProbabilityMeasure P]`, `[InnerProductSpace ℝ F]`, `[NeZero N]`) have canonical instances, so a proposition whose only hypotheses are such instances gets a low-signal warning instead (code `witness-instances`), which lists the classes and can be dismissed like any warning. An instance of `Fact`, of a class of the project, or of a class applied to anything but a variable bound before it or a number system (`[NeZero 0]`) still needs a witness. `inhabited_classes` under `[project]` replaces the built-in list of classes treated as inhabited (`assess.INHABITED_CLASSES`); `inhabited_classes = []` raises the obligation for every instance. Neither finding changes a status.
 
+A proposition that uses an operation Lean totalises (division, `0⁻¹`, the Bochner integral, a supremum, `∞.toReal`) gets a warning (code `totalised`, the operation as `trigger`) that says what the operation gives where the paper's would be undefined, so a reviewer can check the statement's side conditions; a dismissal records why the use is justified. A supremum or infimum is judged by the type it is taken in, which the probe reads from each application: in a complete lattice (a join of σ-algebras, a supremum in `ℝ≥0∞`) every family has one and there is no warning; in `ℝ` an empty or unbounded family gets 0; in another conditionally complete type it gets a default value, named with the type; when Lean finds neither lattice structure on the type (a type the statement quantifies over), the warning says the question is unresolved, as it does when the statement is too large for the probe to read the type of every application. A conversion `ENNReal.toReal` keeps its own warning. Evidence recorded before the probe read these types leaves the question unresolved. The warning changes no status.
+
 A witness is only as good as the declarations that choose its instance. When a witness's statement uses a project declaration that no proposition's closure includes and no definition claim maps (an `abbrev` holding the paper's example values, say), `check` lists it while it has no current `def-review` (a warning, code `witness-def-review`, subject the declaration, trigger the witnesses; a dismissal lapses when the declaration changes), `check --json` gives the list under each claim (`witness_defs`), and the claim's audit details show it. A definition claim's audit details list the witness-only declarations whose type or body uses a definition it maps, as candidates for its mapping (`witness_candidates`). The list changes no status. `require_witness_def_reviews = true` under `[project]` asks a review of each such declaration, as of the definitions a proposition depends on: until it has one, the claim reads review pending.
 
 Out-of-scope labels such as `part-of`, `proof-step`, `duplicate`, `literature` and `empirical` require explicit reasons. Each scope decision is recorded for review.
@@ -105,7 +107,7 @@ Reviewer's independent interpretation, comparison and verdict.
 <!-- spec-review: MyPaper.PaperSpec.thm_main HASH by=reviewer kind=human source=MyPaper:thm:main@DIGEST -->
 ```
 
-For definitions use `def-review`. The hash records the declaration version reviewed; relevant definition changes reopen the obligation. `source` records, per claim, the digest of the paper passage read (the claim's `source_sha256` pin); a change to that text reopens the obligation too. A claim id may hold `@` (the digest follows the last one); `build` refuses one with white space or `-->`, since a marker cannot carry it. Reviewer identity is a record, not authenticated proof of identity. A section that reviews several declarations ends with one marker for each, and every marker carries the section's text.
+For definitions use `def-review`. The hash records the declaration version reviewed; relevant definition changes reopen the obligation. `source` records, per claim, the digest of the paper passage read (the claim's `source_sha256` pin); a change to that text reopens the obligation too. A claim id may hold `@` (the digest follows the last one); `build` refuses one with white space or `-->`, since a marker cannot carry it. A definition claim counts as reviewed only through a marker that read its own passage, so a later reading of another passage that names the same definition does not change it; its audit details name the marker its state rests on (`rests_on` in the assessment), and `check` warns when that marker's review text names another such claim and not this one (code `def-review-other-claim`). A definition in a statement's closure needs one review that read every passage naming it: separate readings do not combine, and the finding says where each passage was read. Reviewer identity is a record, not authenticated proof of identity. A section that reviews several declarations ends with one marker for each, and every marker carries the section's text.
 
 A marker records a reading, so one with no review text before it (a heading followed only by markers, as when markers are copied without their reviews) counts as no review: the declaration reads as not reviewed, its claim as review pending, and `build` lists each such marker with its file and line (an obligation, code `review-without-reading`). `bare_markers_by = ["reviewer"]` under `[project]` lets the markers of the reviewers it names count without text.
 
@@ -131,6 +133,8 @@ machinechecked changes
 ```
 
 `build --site DIR` builds and then writes the same export to `DIR` in one step (as the reusable audit workflow does); it refuses a directory that is the project or holds anything but a previous site.
+
+Without `--reuse-lean`, every build asks Lean for its probe records afresh. `build --refresh` also discards the module indexes and load failures kept in the Lean facts store, so whatever the build reads from that store is extracted again.
 
 `symbol add` links a symbol of a claim's printed statement to a variable (or a binder's type) of its Lean statement, under your name; the reader marks it in the claim's text and highlights each side from the other. A link is an assertion, pinned to the statement and the text and shown as stale when either changes; no status reads it (docs/SYMBOL_LINKS.md).
 
@@ -188,15 +192,17 @@ a claim's own changed passage too (a folder's text is shown only when it is the 
 recorded).
 
 `--workspace ID` adds the records of a saved investigation that are no longer current against
-the later release ([Saved investigations](REVIEWING.md#saved-investigations)), each with the
-change that made it stale; an unchecked record is listed too, since it is not known to be
-current.
+the later release ([Saved investigations](REVIEWING.md#saved-investigations)), of every kind
+(the claim's requirements, the passages that govern them and their alignments included), each
+with the change that made it stale; an unchecked record is listed too, since it is not known
+to be current. The terminal output lists them after the claims.
 
 The reader shows the same comparison on its **Details** page, and `export` publishes it with
 what each paper's `publish` settings allow (its passages' places and text only with its source
 text, the Lean statements only with its Lean). The comparison changes no status and writes
 nothing: a reopened review needs a new reading at the new revision, and the earlier reading
-stays in the review files as it was.
+stays in the review files as it was. The review queue offers the reopened reviews first, with
+their questions ([Review order](REVIEWING.md#review-order)).
 
 ## What the evidence says
 

@@ -287,6 +287,132 @@ def test_an_informed_investigation_stays_informed_through_mode_import_and_review
     assert "informed investigation" in seen[0]["unit"]
 
 
+THIRD = rc.parse_reviewer("human:C-Referee")
+MAIN = {"id": "spec:Ex.main", "kind": "spec", "name": "Ex.main", "claims": [{"id": "P:thm:main"}],
+        "state": "open", "fingerprint": "fp:main-1"}
+BOUND = {"id": "spec:Ex.inverse_bound", "kind": "spec", "name": "Ex.inverse_bound",
+         "claims": [{"id": "P:lem:bound"}], "state": "open", "fingerprint": "fp:bound-1",
+         "reveals": {"lean": [], "author": ["spec:Ex.main"]}}
+
+
+def queued(work, *units):
+    (work / "site" / "data" / "review-queue.json").write_text(
+        json.dumps({"release": "v-1", "units": list(units or [MAIN])}))
+
+
+def session(work, who=WHO):
+    return rc.Session(types.SimpleNamespace(out_dir=work), who)
+
+
+def reviewed(s, uid="spec:Ex.main") -> dict:
+    """Take `uid` through the protocol's steps and return its report."""
+    s.read(uid)
+    s.lock(uid, "The statement holds for every case, as printed.")
+    s.show(uid)
+    s.decide(uid, "faithful", "The Lean states it.")
+    s.author(uid)
+    return s.submit(uid, "none")
+
+
+def informed_seen(wid):
+    return [{"unit": f"workspace {wid} (informed investigation)", "what": "Lean"},
+            {"unit": f"workspace {wid} (informed investigation)", "what": "author's review"}]
+
+
+def test_a_review_after_importing_ones_informed_workspace_records_that_exposure(work, tmp_path):
+    """#252: the investigation is imported under its own id, beside the reviewer's review file;
+    the review there lists its exposure, and a reviewer who has not seen it stays blind."""
+    data = wsp.export(opened(work, mode="informed"))
+    other = tmp_path / "elsewhere" / ".machinechecked"
+    make_build(other)
+    queued(other)
+    wsp.import_(other, json.loads(json.dumps(data)), snap_of(other), WHO["id"])
+    s = session(other)
+    assert s.workspace["id"] != data["id"]            # the review keeps its own file
+    assert "will not be blind" in s.read("spec:Ex.main")
+    r = reviewed(s)
+    assert r["reading"]["revealed_by"] == informed_seen(data["id"])
+    assert r["reviewer"]["id"] == WHO["id"]
+    # Another reviewer of the same working directory has not seen it.
+    r = reviewed(session(other, THIRD))
+    assert r["reading"]["revealed_by"] == []
+
+
+def test_an_informed_workspace_beside_ones_review_file_is_exposure(work):
+    """The same in the project where it was made: the reviewer's review file exists already, so
+    the informed investigation is a workspace of its own."""
+    queued(work)
+    s = session(work)
+    s.read("spec:Ex.main")                              # the review file, independent
+    p = opened(work, mode="informed")
+    wid = wsp.read(p)["id"]
+    assert p != s.path and wsp.read(s.path)["mode"] == "independent"
+    assert session(work).revealed_by(MAIN) == informed_seen(wid)
+    assert session(work, THIRD).revealed_by(MAIN) == []
+
+
+def test_whoever_works_in_an_informed_workspace_has_seen_what_it_records(work):
+    """A co-auditor who records work in someone's informed investigation, or imports it, has
+    seen what it records; a reviewer who has done neither has not."""
+    queued(work)
+    p = opened(work, mode="informed")
+    wid = wsp.read(p)["id"]
+    assert session(work, OTHER).revealed_by(MAIN) == []
+    wsp.update(p, [EVIDENCE[2]], snap_of(work), by=OTHER["id"])
+    assert session(work, OTHER).revealed_by(MAIN) == informed_seen(wid)
+    importer = rc.parse_reviewer("human:D-Referee")
+    wsp.import_(work, {**wsp.export(p), "id": "ws-0123456789ab"}, snap_of(work), importer["id"])
+    assert session(work, importer).revealed_by(MAIN) == informed_seen("ws-0123456789ab")
+    assert session(work, THIRD).revealed_by(MAIN) == []
+
+
+def test_exposure_imported_after_the_lock_counts_when_it_was_recorded_before_it(work):
+    """A reading locked here, then an investigation imported that the reviewer made before the
+    lock: the report lists it. What was recorded after the lock leaves the reading blind."""
+    queued(work, MAIN, {**BOUND, "reveals": {"lean": [], "author": []}})
+    s = session(work)
+    for uid in ("spec:Ex.main", "spec:Ex.inverse_bound"):
+        s.read(uid)
+        s.lock(uid, "The statement holds for every case, as printed.")
+        s.show(uid)
+        s.decide(uid, "faithful", "The Lean states it.")
+        s.author(uid)
+        assert s.work["drafts"][uid]["revealed_by"] == []
+    ws = wsp.new(WHO, "independent", wid="ws-00000000aaaa")
+    ws["exposure"] = [
+        {"what": ["Lean"], "claims": ["P:thm:main"], "at": "2000-01-01T00:00:00Z", "how": "earlier"},
+        {"what": ["Lean"], "claims": ["P:lem:bound"], "at": "2999-01-01T00:00:00Z", "how": "later"}]
+    wsp.import_(work, ws, snap_of(work), WHO["id"])
+    assert s.submit("spec:Ex.main", "none")["reading"]["revealed_by"] == [
+        {"unit": "workspace ws-00000000aaaa (earlier)", "what": "Lean"}]
+    assert s.submit("spec:Ex.inverse_bound", "none")["reading"]["revealed_by"] == []
+
+
+def test_review_work_imported_from_elsewhere_is_what_the_reviewer_had_seen(work, tmp_path):
+    """The reviewer's review work from another copy, imported here: a unit they reached step 2
+    of there, and a unit whose step 3 there showed this one's author's review, are exposure;
+    their report of other Lean of a unit is an earlier review, as a reopened review is here."""
+    queued(work, MAIN, BOUND)
+    ws = wsp.new(WHO, "independent", wid="ws-00000000bbbb")
+    old = reviewed(session(work), "spec:Ex.main")
+    (wsp.store(work) / "human_A-Auditor.json").unlink()
+    ws["review"]["reports"] = [{**old, "pins": {**old["pins"], "fingerprint": "fp:main-0"}}]
+    assert session(work).revealed_by(MAIN) == []
+    wsp.import_(work, ws, snap_of(work), WHO["id"])
+    assert session(work).revealed_by(MAIN) == []        # a review of earlier Lean
+    ws["review"]["drafts"] = {"spec:Ex.main": {"stage": "compare", "reading": "r",
+                                               "locked_at": "2026-01-01T00:00:00Z"},
+                              "spec:Ex.inverse_bound": {"stage": "author", "reading": "r",
+                                                        "locked_at": "2026-01-01T00:00:00Z",
+                                                        "decided_at": "2026-01-01T00:01:00Z",
+                                                        "author_shown_at": "2026-01-01T00:02:00Z"}}
+    wsp.save_review(wsp.find(work, ws["id"]), ws["review"])
+    assert session(work).revealed_by(MAIN) == [
+        {"unit": "spec:Ex.main (workspace ws-00000000bbbb)", "what": "Lean"},
+        {"unit": "spec:Ex.inverse_bound (workspace ws-00000000bbbb)", "what": "author's review"}]
+    assert session(work, OTHER).revealed_by(MAIN) == []
+
+
 def test_independent_review_work_is_kept_and_upgraded(work):
     legacy = {"reviewer": WHO, "drafts": {"spec:Ex.main": {"stage": "compare", "reading": "r",
                                                            "locked_at": "2026-01-01T00:00:00Z"}},

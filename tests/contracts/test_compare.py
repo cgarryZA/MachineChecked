@@ -133,7 +133,7 @@ def test_a_packet_holds_the_whole_passage_and_the_whole_statement(site):
     assert pk["snapshot"]["release"] == "v-synthetic" and pk["snapshot"]["project"]["commit"]
     # What the build does not extract is named with its owner, not implied absent.
     assert {u["owner"] for u in pk["retrieval"]["unavailable"]} >= {"#97", "#98"}
-    assert [q["query"] for q in pk["retrieval"]["on_request"]] == ["uses"]
+    assert [q["query"] for q in pk["retrieval"]["on_request"]] == ["uses", "impact"]
 
 
 def test_pdf_text_and_missing_text_say_where_they_come_from(site):
@@ -262,6 +262,37 @@ def test_the_toy_packet_matches_the_reader_records(toy, monkeypatch, capsys):
     assert "interpretations" in pk
     q = run_json(capsys, "compare", "--query", "definition", "Toy.triangle", "--json")
     assert {"Toy.triangle", "Toy.triangle._f"} <= {r["name"] for r in q["results"]}
+
+
+@needs_lean
+@needs_tex
+def test_the_dependencies_text_names_what_its_json_holds(toy, monkeypatch, capsys):
+    """The terminal answer of `--query dependencies` shows the statement and every dependency
+    the JSON answer gives, and says a declaration is missing only when Lean did not find it."""
+    build(toy)
+    monkeypatch.chdir(toy)
+
+    def answer(name):
+        r, = run_json(capsys, "compare", "--query", "dependencies", name, "--json")["results"]
+        cli.main(["compare", "--query", "dependencies", name])
+        return r, capsys.readouterr().out.splitlines()
+
+    r, lines = answer("Toy.Acceptance.thm_bound")
+    d = r["declaration"]
+    assert r["ok"] and r["status"] == "found" and r["proof_dependencies"]
+    assert not any("no statement" in x or "not found" in x for x in lines)
+    assert lines[0].startswith(f"{d['name']}  ({d['kind']}, {d['file']}")
+    assert f"  statement: {d['statement']}" in lines
+    assert f"  axioms: {', '.join(d['axioms'])}" in lines
+    assert "  statement uses (this project): " + ", ".join(r["statement_dependencies"]) in lines
+    assert "  proof uses (this project): " + ", ".join(r["proof_dependencies"]) in lines
+    assert "  proof uses (outside this project): " + \
+        ", ".join(r["external_dependencies"]["proof"]) in lines
+    for m in r["closure"]["members"]:
+        assert f"    {m['depth']:>3}  {m['name']}  ({m['kind']}, {m['module']})" in lines
+    r, lines = answer("Toy.Nothing")
+    assert not r["ok"] and r["status"] == "not found"
+    assert lines == ["Toy.Nothing: not found"]
 
 
 PLAIN = ROOT / "examples" / "plain-paper"

@@ -73,7 +73,9 @@ audit whose terms allow it carries its pinned PDF.
   computed by `assess.py`. An existing acceptance system stays authoritative; MachineChecked reads
   its outputs and never modifies its tools.
 - **Review queue**: reading locked before the Lean is shown, verdict recorded before the author's
-  review; a report is exported, and only `machinechecked review promote` writes a marker.
+  review; a report is exported, and only `machinechecked review promote` writes a marker. Its
+  order (changed evidence first, each unit with its reason) is a suggestion drawn from records
+  and changes nothing; an order that uses the auditors' interpretations is recorded as exposure.
 - **Proof steps are targets of their own** (#125): an equation or passage of a printed proof has
   its own links (the Lean that establishes it, or the different formal route used instead) and
   its own review, apart from its enclosing result. A `proof-step` scope decision is about formal

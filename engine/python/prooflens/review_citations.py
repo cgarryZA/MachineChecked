@@ -20,7 +20,7 @@ import os
 import re
 from pathlib import Path
 
-from .reviews import MARKER, PROMOTED, review_files
+from .reviews import ANY, PROMOTED, review_files
 from .source_names import SourceNames, last
 
 # Mathematical notation written in code spans: a symbol of one letter (perhaps primed) with a
@@ -61,8 +61,8 @@ def citations(files: list[Path], root: Path, ignore: list[str] | None = None) ->
             text = f.read_text(encoding="utf-8")
         except (OSError, UnicodeError):
             continue
-        reviewers = {dict(a.split("=", 1) for a in m.group(4).split() if "=" in a).get("by")
-                     for m in MARKER.finditer(text)}
+        reviewers = {dict(a.split("=", 1) for a in (m.group(4) or m.group(8)).split()
+                          if "=" in a).get("by") for m in ANY.finditer(text)}
         rel = f.resolve().relative_to(root.resolve()).as_posix() \
             if f.resolve().is_relative_to(root.resolve()) else f.name
         fence = False
@@ -72,7 +72,7 @@ def citations(files: list[Path], root: Path, ignore: list[str] | None = None) ->
                 continue
             if fence or PROMOTED.match(line):
                 continue
-            for m in CODE.finditer(MARKER.sub("", line)):
+            for m in CODE.finditer(ANY.sub("", line)):
                 tok = m.group(1).strip()
                 kind = classify(tok)
                 if kind is None or tok in reviewers or any(p.search(tok) for p in pats):

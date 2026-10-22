@@ -213,3 +213,67 @@ def test_a_paper_page_offers_its_versions_with_their_own_labels(tmp_path):
     with pytest.raises(ValueError, match="does not pin manuscript:abc1234"):
         write_paper_site(tmp_path / "latest", PAPER, claims, None, None, audits={REPO: audit},
                          versions=entries, version="manuscript:abc1234")
+
+
+def test_a_claim_map_relates_the_claims_of_two_versions_and_changes_no_status(tmp_path):
+    """#225: the map of a paper's claims between two versions, computed from their inventories
+    (by label, else by statement text) or given by a listing, is written into each version's page
+    on the claims it names; the statuses are those of the pages written without it."""
+    from prooflens.paper import check_claim_map, claim_map, paper_claims, write_paper_site
+    v1, latest = "arxiv:2601.01234v1", "manuscript:abc1234"
+    entries = [{"id": v1, "kind": "published", "href": "/v1/"},
+               {"id": latest, "kind": "manuscript", "revision": "abc1234" + "0" * 33,
+                "href": "/latest/"}]
+
+    def inv(*rows):
+        return [{"key": k, "number": n, "label": l, "statement": t} for k, n, l, t in rows]
+    m = claim_map(v1, inv(("theorem-1", "Theorem 1", "thm:a", "A bound."),
+                          ("theorem-2", "Theorem 2", None, "An  identity."),
+                          ("theorem-3", "Theorem 3", None, "A remark."),
+                          ("theorem-4", "Theorem 4", None, None)),
+                  latest, inv(("lemma-1", "Lemma 1", None, "An identity."),
+                              ("theorem-2", "Theorem 2", None, "Another."),
+                              ("theorem-3", "Theorem 3", "thm:a", "A sharper bound.")))
+    assert [(e["change"], [r["key"] for r in e["from"]], [r["key"] for r in e["to"]])
+            for e in m["claims"]] == [("changed", ["theorem-1"], ["theorem-3"]),
+                                      ("renumbered", ["theorem-2"], ["lemma-1"]),
+                                      ("removed", ["theorem-3"], []),
+                                      ("new", [], ["theorem-2"])]
+    # A listing states a split; a change that does not fit its claims is refused.
+    split = {"from": [{"key": "theorem-4", "number": "Theorem 4"}],
+             "to": [{"key": "lemma-2", "number": "Lemma 2"}, {"key": "lemma-3", "number": "Lemma 3"}],
+             "change": "split"}
+    listed = check_claim_map({**m, "claims": m["claims"] + [split]})
+    for bad in ({**split, "change": "same"}, {**split, "change": "moved"},
+                {**split, "to": [{"key": "a b", "number": "Lemma 2"}]}):
+        with pytest.raises(ValueError, match="claim map"):
+            check_claim_map({**m, "claims": [bad]})
+
+    def page(version, keys, maps):
+        anchors = [{"env": k.split("-")[0], "number": k.split("-")[1], "page": 1} for k in keys]
+        claims = paper_claims(anchors, "T", [])
+        return write_paper_site(tmp_path / version.split(":")[0], {"title": "T"}, claims, None,
+                                None, versions=entries, version=version, claim_maps=maps)
+    one = page(v1, ["theorem-1", "theorem-2", "theorem-3", "theorem-4", "theorem-5"], [listed])
+    two = page(latest, ["lemma-1", "lemma-2", "lemma-3", "theorem-2", "theorem-3"], [listed])
+    by = {c["id"]: c.get("counterparts") for c in one["claims"]}
+    assert by["P:theorem-1"] == [{"version": latest, "later": True, "change": "changed",
+                                  "claims": [{"id": "P:theorem-3", "number": "Theorem 3"}]}]
+    assert by["P:theorem-3"] == [{"version": latest, "later": True, "change": "removed",
+                                  "claims": []}]
+    assert [c["id"] for c in by["P:theorem-4"][0]["claims"]] == ["P:lemma-2", "P:lemma-3"]
+    assert by["P:theorem-5"] is None  # a claim the map does not name shows nothing
+    by = {c["id"]: c.get("counterparts") for c in two["claims"]}
+    assert by["P:theorem-2"] == [{"version": v1, "later": False, "change": "new", "claims": []}]
+    assert by["P:lemma-3"][0]["claims"] == [{"id": "P:theorem-4", "number": "Theorem 4"}]
+    stored = json.loads((tmp_path / "manuscript" / "data" / "index.json").read_text())
+    assert [c.get("counterparts") for c in stored["claims"]] == [c.get("counterparts")
+                                                                for c in two["claims"]]
+    plain = page(latest, ["lemma-1", "lemma-2", "lemma-3", "theorem-2", "theorem-3"], None)
+    assert [(c["status_code"], c["status"]) for c in plain["claims"]] == \
+        [(c["status_code"], c["status"]) for c in two["claims"]]
+    # A map of versions the page does not offer is not written.
+    assert not any(c.get("counterparts") for c in page(
+        latest, ["theorem-2"], [{**listed, "from": "arxiv:2601.01234v2"}])["claims"])
+    with pytest.raises(ValueError, match="relate versions"):
+        write_paper_site(tmp_path / "x", {"title": "T"}, [], None, None, claim_maps=[listed])

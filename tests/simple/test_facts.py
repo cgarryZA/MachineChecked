@@ -209,6 +209,62 @@ def test_deleting_the_store_reproduces_the_same_facts(plain):
     assert (root / "machinechecked.links.json").read_bytes() == links
 
 
+def test_a_full_assessment_refresh_discards_the_stored_indexes(tmp_path):
+    """In a full assessment, which asks Lean for its probe records on every build, `--refresh`
+    discards the module indexes and load failures kept in the facts store; the rest stays."""
+    from types import SimpleNamespace
+    from prooflens.cli import _forget_indexes
+    st = facts.Store(tmp_path, [], tmp_path / "work" / "build", [])
+    kinds = ("index", "failed", "attempt", "deps")
+    for kind in kinds:
+        st.put(kind, "Toy.Basic", {}, records=[])
+    _forget_indexes(SimpleNamespace(lean_root=tmp_path, out_dir=tmp_path / "work"))
+    assert [k for k in kinds if st.peek(k, "Toy.Basic")] == ["deps"]
+
+
+def site_data(v):
+    """What the site of a view is written from, but the time it is written."""
+    return content_id(v["body"]), v["retrieval"].export(), v["uses"]
+
+
+@needs_lean
+@needs_tex
+def test_a_refresh_extracts_again_what_the_build_reads_and_changes_nothing(plain):
+    """`build --refresh`: no stored fact is used; every module is indexed again and every
+    linked or suggested declaration checked again, and the view is the one the stored facts
+    give. The refreshed facts replace the stored ones, so the next build reuses them."""
+    root, sessions = plain
+    save_link(root, PAPER, "thm:sum-odd", ["Plain.oddSum_eq_sq"])
+    view(root)
+    sessions.clear()
+    warm = view(root)
+    assert sessions == []
+
+    said = []
+    fresh = view(root, said, refresh=True)
+    assert sessions and fresh["lean"]["sessions"] == len(sessions)
+    assert any("a refresh was asked" in m for m in said), said
+    indexed = set().union(*(set(s["modules"]) for s in sessions if "index" in s["kinds"]))
+    assert indexed == set(built_modules(root, ["Plain"])[0])
+    shown = {l["name"] for c in warm["body"]["claims"] for l in c["links"]} | \
+        {s["name"] for c in warm["body"]["claims"] for s in c.get("suggestions", [])
+         if s.get("kind")}
+    assert shown and shown <= set().union(*(s["links"] for s in sessions))
+    assert statuses(fresh) == statuses(warm)
+    assert site_data(fresh) == site_data(warm)
+
+    sessions.clear()
+    assert site_data(view(root)) == site_data(warm) and sessions == []
+
+    # From the command line; it cannot be asked with `--reuse-lean`.
+    r = subprocess.run([sys.executable, "-m", "prooflens.cli", "build", "--refresh"],
+                       cwd=root, capture_output=True, text=True)
+    assert r.returncode == 0 and "refreshing" in r.stderr, r.stderr
+    r = subprocess.run([sys.executable, "-m", "prooflens.cli", "build", "--refresh",
+                        "--reuse-lean"], cwd=root, capture_output=True, text=True)
+    assert r.returncode == 2 and "not allowed with" in r.stderr, r.stderr
+
+
 # How a Lean session that loads `Plain.Sums` fails, for each kind of failure: the exit code and
 # what Lean printed, as the session reports them, or None for a session the probe stops itself.
 DETERMINISTIC = (1, "Probe.lean:3:0: error: object file Plain/Sums.olean of module Plain.Sums "
@@ -287,6 +343,23 @@ def test_an_error_in_a_module_is_kept_with_the_others_facts(plain, monkeypatch):
     v = view(root)
     assert not any("could not be loaded" in n for n in v["body"]["notes"])
     assert sessions and all(set(s["modules"]) <= {"Plain", "Plain.Sums"} for s in sessions)
+    assert facts.load_failures(root / ".machinechecked" / "build") == {}
+
+
+@needs_lean
+@needs_tex
+def test_a_refresh_loads_the_modules_recorded_as_failing_again(plain, monkeypatch):
+    from prooflens import probe
+    root, sessions = plain
+    real = fail_sums(monkeypatch, DETERMINISTIC)
+    view(root)
+    assert set(facts.load_failures(root / ".machinechecked" / "build")) == {"Plain", "Plain.Sums"}
+    monkeypatch.setattr(probe, "_run_watched", real)
+    sessions.clear()
+    v = view(root, refresh=True)
+    assert any("Plain.Sums" in s["modules"] for s in sessions)
+    assert not any("could not be loaded" in n for n in v["body"]["notes"])
+    assert statuses(v)["Theorem 1"] == "linked: Lean proof checked"
     assert facts.load_failures(root / ".machinechecked" / "build") == {}
 
 

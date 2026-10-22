@@ -58,7 +58,12 @@ passage of its own.
   (`notation_macros`), the digest also covers their definitions, so a changed definition
   reopens the reading too, and a reading that did not record them does not count
   ([notation macros](SOURCE_REGIONS.md#notation-macros)). A definition's review in the closure of a statement must have read the
-  current passage of every claim that names the definition.
+  current passage of every claim that names the definition, in one reading: readings of the
+  passages made in separate reviews do not combine, and the finding names the marker that read
+  each. A definition claim's review is the last marker at the definition's current hash that
+  read that claim's passage; the assessment records it (`rests_on`), and a warning
+  (`def-review-other-claim`) names one whose review text names another claim that names the
+  definition, and not this one.
 - **The manuscript must match the pin.** A reading counts against the text the paper prints.
   When the source check finds that the manuscript no longer matches a claim's pin (its
   passage, a further passage in `source_parts`, or a pinned macro definition: a
@@ -79,6 +84,14 @@ passage of its own.
 - **Migration.** `python -m prooflens.review_sources --config FILE` lists the markers without
   digests and, with `--write`, adds the digest of each claim whose passage the history shows
   unchanged. It adds nothing for any other claim: those need a new reading.
+- **A reading of a passage that no longer uses the declaration.** When the inventory moves a
+  clause to another claim, a marker's reading of the old claim's passage is no reading of a
+  passage that uses the declaration now. `inventory retire` lists such readings and, with
+  `--write`, removes exactly them: it never rewrites one to the new claim and adds none, and a
+  marker left with no reading records `source=none`, so that the history rule above does not
+  apply to it. The claims that now use the declaration read as unread until someone reads them
+  ([moving a clause](SOURCE_REGIONS.md#moving-a-clause-to-another-claim)). A marker retired whole
+  (`<!-- retired spec-review: ... -->`) records no review; it keeps its review text in the file.
 
 ## Gates
 
@@ -149,7 +162,18 @@ dependencies), the probe, the toolchain, the lakefiles and the Lake manifest are
 extracts again only what a change reopens. A link, a note or an edit to the paper extracts
 nothing. `machinechecked build --reuse-lean` uses the stored facts alone: when they do not cover
 the build it starts no Lean session, stops with exit code 2 and names the modules to index or the
-declarations to check, with the reason.
+declarations to check, with the reason. `machinechecked build --refresh` uses no stored fact: it
+extracts again everything the build reads and stores it in place of what was kept. Reuse never
+changes what is assessed: for the same sources, a build from stored facts and a refreshed one
+give the same statuses. A paper's build leaves out of its index the libraries formalization.yaml
+maps only to other papers, and its notes say so. A module of such a library is indexed all the
+same when it could hold a linked name: its source uses one of the name's words (a component of
+the name, or its start up to an underscore, in any case) or an attribute that renames
+declarations (`to_additive`, `to_dual`). Every library is indexed when a linked name is one Lean
+gives an instance (`inst…`) or the project defines commands. A link into another library is
+then checked by Lean there, and a name two libraries hold reads ambiguous without its module, as
+when every library is indexed. A dependency's command that names a declaration with words its
+call does not contain is not detected ([DEVELOPMENT.md](DEVELOPMENT.md)).
 
 Evidence records are content-addressed and never rewritten. A release name, once given, keeps its
 evidence.

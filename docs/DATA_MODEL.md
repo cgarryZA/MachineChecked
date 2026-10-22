@@ -68,8 +68,11 @@ Markdown files with markers:
 definition claim that names the definition) and the digest of that passage as read, its
 `source_sha256` pin; a declaration no claim names has none. The claim id is everything before the
 last `@`, so an id may hold `@`; `build` refuses a claim id with white space or `-->`, which no
-marker can carry, and zero configuration percent-encodes them in the ids it makes. A marker without `source` is read as
-the [evidence policy](EVIDENCE_POLICY.md#a-review-is-a-reading-of-a-text) says. The section the
+marker can carry, and zero configuration percent-encodes them in the ids it makes. A marker
+without `source` is read as the [evidence policy](EVIDENCE_POLICY.md#a-review-is-a-reading-of-a-text)
+says; one with `source=none` read none of the passages. A marker written
+`<!-- retired spec-review: ... -->` (`inventory retire --markers`) records no review and still
+closes its review text. The section the
 marker closes is the text of the review. The last marker of a declaration, reading the files in
 order (a directory's `.md` files by name), is its current record.
 
@@ -177,7 +180,7 @@ derived from them alone; no status, fingerprint or gate reads it.
 | `evidence[]` | per review: `target` (`spec`, `def`, `step`), `name`, `clause`, `from` and `to` (`state`, `marker`: `by`, `kind`, `file`, `line`, `hash`, `source`; `"same"` for a kept marker), `outcome`, and `because`, `question`, `caveat`, `kept_through` |
 | `declarations[]` | every project declaration whose statement or proof changed, or that one release has alone: `name`, `change`, `from`, `to`, `claims` |
 | `counts` | per paper class, per evidence outcome and per declaration change, and `status_changed` |
-| `workspace` | with `--workspace`: the workspace's records that are not current (`id`, `kind`, `claim`, `state`, `changes`, `pinned_release`) |
+| `workspace` | with `--workspace`: the workspace's records that are not current, of every kind, the claim's requirements, fragments and alignments included (`id`, `kind`, `claim`, `state`, `changes`, `pinned_release`; `submitted` for a submitted finding, `proposed` for a proposed fragment) |
 
 The export keeps a passage's places and text only when its paper publishes its source text, the
 Lean `text` only when every paper publishes its Lean, and a marker's `file` and `line` only
@@ -273,6 +276,35 @@ project selector when there are several versions: choosing one opens that versio
 the chosen project and without the claim (claim numbers can differ between versions); a link to
 a claim opens it in its own version's page. Statuses belong to each version's page, so switching
 never changes one.
+
+**Claim maps between versions.** `write_paper_site(..., claim_maps=[...])` takes maps that relate
+the claims of two versions. Each map has `from` (the earlier version's `id`), `to` (the later
+version's) and `claims`. Each entry of `claims` names claims on each side (`from` and `to`, lists
+of `key` and `number`, where `key` is the claim's key on that page, such as `theorem-3`) and its
+`change`:
+
+| `change` | Claims (`from` → `to`) | What it says |
+|---|---|---|
+| `same` | 1 → 1 | the same statement, under the same number |
+| `renumbered` | 1 → 1 | the same statement, under another number |
+| `changed` | 1 → 1 | the statement changed |
+| `split` | 1 → 2 or more | the claim became several |
+| `removed` | 1 → 0 | the later version does not have it |
+| `new` | 0 → 1 | the earlier version does not have it |
+
+A listing can supply the map. `claim_map(earlier, claims, later, claims)` can also compute it
+from the two versions' claim inventories, where each claim gives `key`, `number`, and optionally
+`label` (its source pin) and `statement` (its text). It matches a claim by its label, or else by
+its statement text when exactly one claim of the other version has that text. It maps only claims
+that have a statement, and never infers a split. `check_claim_map` refuses a change that does not
+fit its claims.
+
+Each claim a map names gets `counterparts` on its row of `index.json`, provided the page offers
+the other version. Each counterpart gives `version`, `later` (whether the other version is the
+later one), `change` and `claims` (`id`, `number` on the other page). The claim view shows it,
+for example "Theorem 3 in Latest manuscript (commit abc1234), statement changed", and links
+the number to that claim on the other version's page. A claim the map does not name shows
+nothing. A map never changes a status.
 
 ## Audit descriptor (`audit.json`), written by the engine
 
@@ -476,8 +508,14 @@ accepted.
 
 **Mode and exposure.** An informed workspace records at its creation that the Lean and prior
 interpretations were open to its auditor; it has no locked reading. A mode change and an import
-add exposure and never remove it. A report made with `machinechecked review` lists that exposure in
-`reading.revealed_by`, so `review promote` refuses it unless the maintainer passes
+add exposure and never remove it. A workspace's exposure is that of everyone it records as having
+worked in it: its `reviewer`, the authors of its records and of its edits (refused ones in
+`conflicts` too), whoever set its `resume`, and the people its `provenance` names (who changed
+its mode or imported it). A report made with `machinechecked review` lists, in `reading.revealed_by`, the exposure of
+every workspace of the working directory its reviewer has worked in, and the units whose step 2
+or 3 the reviewer's review work in any of their workspaces reached and whose material includes
+the unit's; an entry an import brings after the reading was locked counts when its `at` is not
+later than the lock. So `review promote` refuses the report unless the maintainer passes
 `--allow-revealed`.
 
 **Export and import.** `workspace export` writes the whole workspace (less `ops`) as one file;

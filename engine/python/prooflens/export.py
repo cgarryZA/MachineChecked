@@ -393,7 +393,7 @@ def export(cfg: Config, out: Path, release: str | None = None,
     paper_of = {c["id"]: c["paper"] for c in chunks.values()}
     try:
         published_work.write(data, cfg.out_dir, lambda cid: pubs[paper_of[cid]],
-                             cfg.out_dir / "sources", cfg.root)
+                             cfg.out_dir / "sources", cfg.lean_root)
     except published_work.PublishError as e:
         shutil.rmtree(out)
         raise ExportError(str(e)) from None

@@ -13,7 +13,8 @@ For a specification the record holds two representations of the proposition:
 
 * the verification representation: the declaration, its axioms, the constants it uses, its
   structural hashes (`legacy_hash`, a 128-bit structural hash kept for compatibility with
-  existing review markers, and `canon`, a canonical serialisation the CLI hashes with SHA-256);
+  existing review markers, and `canon`, a canonical serialisation the CLI hashes with SHA-256),
+  and each application of a supremum or infimum with the type it is taken in (`order_ops`);
 * the inspection representation: the body of the definition split into a quantifier prefix
   (universal variables, hypotheses, instances, existential witnesses) and a conclusion, each
   pretty-printed with the constants it mentions marked for navigation.
@@ -848,6 +849,100 @@ def emitClosure (h : IO.FS.Handle) (inside : Name → Bool) (root : Name) (used 
     stack := stack ++ more
   return members.qsort (· < ·)
 
+/-! ## Suprema and infima, with their carriers
+
+Whether a supremum can take a default value depends on the type it is taken in: in a complete
+lattice (a lattice of σ-algebras, the extended nonnegative reals) every family has one; in a
+conditionally complete one (the reals) a family that is empty or unbounded gets a default value.
+For each application of these operations in a statement, its carrier is recorded: the type
+argument after reducible unfolding, its head constant, and which of the two lattice instances
+Lean finds for it. The names are matched by value, so the probe needs no import of the library
+that declares them. -/
+
+/-- The operations whose value at a family with no supremum (or infimum) depends on the type. -/
+def orderOps : Array Name := #[`iSup, `iInf, `SupSet.sSup, `InfSet.sInf, `sSup, `sInf]
+
+/-- The most nodes of a statement visited for its order operations. -/
+def opsNodes : Nat := 50000
+
+/-- `x`, or `d` when it fails, including by running out of heartbeats (a runtime exception,
+which `try` does not catch). `x` has a budget of its own. -/
+def orDefault (d : α) (x : MetaM α) : MetaM α :=
+  tryCatchRuntimeEx (withCurrHeartbeats x) fun _ => pure d
+
+/-- `complete` when Lean finds `CompleteLattice α`, `conditional` when it finds only
+`ConditionallyCompleteLattice α`, `unknown` otherwise (also when the search fails). -/
+def latticeOf (α : Expr) : MetaM String := do
+  let has (c : Name) : MetaM Bool :=
+    orDefault false do return (← synthInstance? (← mkAppM c #[α])).isSome
+  if ← has `CompleteLattice then return "complete"
+  if ← has `ConditionallyCompleteLattice then return "conditional"
+  return "unknown"
+
+/-- The record of a carrier, computed once per walk. -/
+def carrierJson (α : Expr) (cache : IO.Ref (Array (Expr × List (String × Json)))) :
+    MetaM (List (String × Json)) := do
+  if let some (_, j) := (← cache.get).find? (·.1 == α) then return j
+  let r ← orDefault α (whnfR α)
+  let head := match r.getAppFn with
+    | .const h _ => h.toString
+    | _ => ""
+  let carrier ← orDefault "" (toString <$> ppExpr α)
+  let j := [("carrier", Json.str carrier), ("carrier_head", Json.str head),
+    ("lattice", Json.str (← latticeOf α))]
+  cache.modify (·.push (α, j))
+  return j
+
+/-- The state of one walk: the applications found, the nodes left, the carriers read and the
+subterms already visited (a statement shares subterms, which a walk would otherwise repeat). -/
+structure OpsWalk where
+  out : IO.Ref (Array Json)
+  budget : IO.Ref Nat
+  cache : IO.Ref (Array (Expr × List (String × Json)))
+  seen : IO.Ref (Std.HashSet Expr)
+
+partial def opsVisit (e : Expr) (w : OpsWalk) : MetaM Unit := do
+  if (← w.budget.get) == 0 then return
+  if (← w.seen.get).contains e then return
+  w.seen.modify (·.insert e)
+  w.budget.modify (· - 1)
+  match e with
+  | .forallE n t b bi | .lam n t b bi =>
+    opsVisit t w
+    withLocalDecl n bi t fun x => opsVisit (b.instantiate1 x) w
+  | .letE n t v b _ =>
+    opsVisit t w
+    opsVisit v w
+    withLetDecl n t v fun x => opsVisit (b.instantiate1 x) w
+  | .mdata _ b => opsVisit b w
+  | .proj _ _ b => opsVisit b w
+  | .app .. =>
+    let f := e.getAppFn
+    let args := e.getAppArgs
+    if let .const c _ := f then
+      if orderOps.contains c && args.size > 0 then
+        let j ← carrierJson args[0]! w.cache
+        w.out.modify (·.push (Json.mkObj (("const", Json.str c.toString) :: j)))
+    else
+      opsVisit f w
+    for a in args do
+      opsVisit a w
+  | _ => pure ()
+
+/-- Each application of an order operation in `e`, with its carrier. `complete: false` when
+some applications may be missing, with the reason in `stopped`: the walk reached its limit of
+nodes (`nodes`), or failed, for example by running out of heartbeats (`error`). -/
+def orderOpsJson (e : Expr) : MetaM Json := do
+  let w : OpsWalk := { out := ← IO.mkRef #[], budget := ← IO.mkRef opsNodes,
+                       cache := ← IO.mkRef #[], seen := ← IO.mkRef {} }
+  let finished ← orDefault false do
+    opsVisit e w
+    return true
+  let left ← w.budget.get
+  let stopped := if !finished then "error" else if left == 0 then "nodes" else ""
+  return Json.mkObj ([("occurrences", Json.arr (← w.out.get)), ("complete", stopped == "")] ++
+    (if stopped == "" then [] else [("stopped", Json.str stopped)]))
+
 def disallowed (allowed : Array Name) (axs : Array Name) : Array Name :=
   axs.filter (!allowed.contains ·)
 
@@ -877,10 +972,14 @@ def specRecord (h : IO.FS.Handle) (q : Query) (inside : Name → Bool) (seen : I
   let consts := match ci with
     | .defnInfo d => d.value.getUsedConstants.map toString
     | _ => #[]
+  let ops ← match ci with
+    | .defnInfo d => orderOpsJson d.value
+    | _ => pure Json.null
   emit h (Json.mkObj [("record", "spec"), ("name", spec.toString), ("errors", toJson errs),
     ("axioms", toJson (axs.map toString)), ("decl", j),
     ("binders", Json.arr binders), ("conclusion", concl), ("exact", exact),
-    ("direct", toJson direct), ("consts", toJson consts), ("closure", toJson closure)])
+    ("direct", toJson direct), ("consts", toJson consts), ("order_ops", ops),
+    ("closure", toJson closure)])
 
 def levelsMatch (ls : List Level) (params : List Name) : Bool :=
   let ps := ls.filterMap fun l => match l with | .param p => some p | _ => none

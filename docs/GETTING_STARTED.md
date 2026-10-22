@@ -58,6 +58,17 @@ MachineChecked reads an existing [`formalization.yaml`](https://github.com/mathl
 - its review status and counts appear as the project’s reported metadata.
 
 When the file names several sources, a mapping is used for a paper only if it names that paper by a word distinctive to its title.
+A library whose namespace the file maps only to other papers is not indexed for this paper: its
+suggestions, search and paper-number checks cover the paper's own libraries, and the reader's
+notes name the libraries left out. A module of such a library is still indexed when it could
+hold a name the paper links: its source uses one of the name's words (a part of the name between
+dots, or the start of one up to an underscore, in any case) or an attribute that renames
+declarations, such as `to_additive`. Every library is indexed when a linked name is one Lean
+gives an instance (`inst…`), or when the project defines its own commands. A link into the
+other library is therefore checked there, and a name both libraries hold reads ambiguous, as
+with every library indexed ([evidence policy](EVIDENCE_POLICY.md) names the case this does not
+detect). `machinechecked compare --query search TEXT --all-libraries` searches every library,
+and `machinechecked inspect NAME` reaches any declaration.
 
 Build the Lean project to check its linked declarations.
 
@@ -99,6 +110,24 @@ application** asks Lean for every application: the argument supplied for each bi
 the caller assumes each premise or proves it (and with what), and the conclusion obtained. From
 a terminal: `machinechecked inspect NAME --used-by`, or `machinechecked compare --query uses
 NAME --json`.
+
+**How the main results use a declaration.** `machinechecked compare --query impact NAME` traces
+NAME from each main result of the paper. The main results are the declarations linked to the
+paper's theorems, shown as a suggestion; `--main` chooses them instead (a declaration, or a claim
+for its linked declarations; repeat it for several). Each main result has its own answer: *used
+by its proof*, *in its statement only*, *formalized separately: not used by this main result*,
+or *not traced*. A use comes with the shortest path of Lean references from the main result to
+NAME, direct or through other declarations, and with the applications of NAME at the end of a
+proof's path: their arguments, each premise with how it is supplied, and the result. Importing a
+module is not a use. A trace that reaches a module not built or not loaded reads *not traced*
+and names the module. The answer also lists the claims whose linked Lean uses NAME: a difference
+between NAME and the paper can matter only to these.
+
+The trace is a fact about the Lean terms of the build. *Formalized separately* describes the
+Lean: the declaration keeps its own correspondence review, and no status changes. Whether a
+difference matters at a use (say the lemma's Lean needs one more derivative than the paper
+prints, and the main proof needs only finitely many) is a reviewer's judgement: record it as a
+finding in a workspace, attributed to you ([saved investigations](REVIEWING.md#saved-investigations)).
 
 Click the evidence summary for proof checks, reviews and provenance. The ⋯ menu contains
 **Copy link**, **Report issue** and **Review it**; reviewing opens the selected claim.
@@ -285,6 +314,10 @@ Select a claim to see the printed statement beside its Lean statement. For a LaT
 - **Definition / declaration not found:** the linked item is not a checked theorem or cannot be resolved from the built modules.
 
 MachineChecked keeps what Lean reported in `.machinechecked/`, so the next `view`, `build` or `check` asks Lean again only about modules that changed (and the modules that import them). Linking a claim, writing a note or editing the paper starts no Lean session. `machinechecked build --reuse-lean` builds from what is kept alone, and names what Lean must be asked when that is not enough. A module that Lean reports an error in stays unindexed until the project's Lean files, toolchain or Lake manifest change; a module that could not be loaded for want of memory or time, or because the Lean session was stopped, is tried again on the next build.
+`machinechecked build --refresh` asks Lean again for everything the build reads (the index of
+each module, the records of linked and suggested declarations, the modules recorded as failing
+to load) and keeps the new answers in place of the old; `inspect` answers and the facts of other
+papers' libraries stay. When nothing changed, it gives the statuses that reusing them gives.
 
 For projects with a separate acceptance framework, further statuses and evidence are available. [Read the evidence policy](EVIDENCE_POLICY.md) before interpreting them.
 
@@ -381,6 +414,8 @@ jobs:
 A deploy replaces the whole site, so every run builds every audit; a saved build (`cache-repo`) keeps the frozen one quick. Each audit's `site_url` (in the configuration on its ref) is its own address, such as `https://you.github.io/project/v1/`.
 
 A paper page that lists audits of several versions gives each version its own page, and the reader a drop-down beside the formalisation selector to switch between them ([data model](DATA_MODEL.md)). Each version keeps its own PDF, claim numbers and statuses.
+
+When the site relates the claims of two versions, a claim says what it became in the other version and links to it: "Theorem 3 in Latest manuscript (commit abc1234), statement changed", "Lemma 1 in arXiv v1, renumbered", or "Removed in Latest manuscript (commit abc1234)". This relation never changes a status.
 
 In the panel beside the paper, each audit names the version it pins and its commit. **Open the audit** opens the audit of the version shown; audits of other versions link to their own version's page.
 

@@ -10,7 +10,10 @@ after their own verdict) and why it sits where it does in the order. A unit is r
 fingerprint, however many claims depend on it.
 
 The order is a suggestion: less effort first, with a preference for units that many claims depend
-on. Reviewing a definition settles that definition only; no claim is approved by it.
+on. Reviewing a definition settles that definition only; no claim is approved by it. Once the
+units are built, `prioritise` puts first the units whose evidence changed since the last release
+and those whose Lean another claim's proof uses, from the build's own records, and says why each
+comes where it does (see "The investigation order" below).
 
 A unit also says what reviewing it shows of other units (`reveals`): the Lean of the definitions
 a statement uses (its phase 2), and the author's review it shares with other units (its phase 3,
@@ -22,6 +25,7 @@ one of them cannot be blind, and the report of the later one records it.
 
 from __future__ import annotations
 
+import copy
 import math
 import re
 
@@ -246,3 +250,407 @@ def simple_queue(index: dict, chunks: dict) -> dict:
     units.sort(key=lambda u: (u["state"] == "reviewed", u["order"], u["id"]))
     return {"schema": SCHEMA, "release": index["release"], "mode": "simple", "authors": [],
             "units": with_steps(units, step_units(index, chunks)), "needs_statement": []}
+
+
+# -- the investigation order ------------------------------------------------------------------
+#
+# `prioritise` reorders the open units of a built queue by what the build's records say about
+# them: the comparison with the previous release (`changes.py`) and the reverse references of
+# the Lean (`uses.site_index`). `arrange` does the same for the command line with the records of
+# the auditors' workspaces (`workspace_signals`), or in the paper's order. Each reads records
+# only and starts no Lean; none changes a unit's state, a status or a marker, and the steps of
+# each unit keep their locks. A signal's words name the paper's claims, never a Lean
+# declaration: a reviewer reads them before the Lean is shown.
+
+# The signals that order the units, strongest first. A unit's place is set by its strongest one;
+# being used in another claim's proof (`proof use`) comes next, then the queue's own order.
+TIERS = ("reopened", "changed", "open question", "difference", "hint")
+RELEVANCE = "proof use"
+ORDERS = ("priority", "document", "informed")
+ORDER_NOTE = ("The order suggests what to review next. It changes no status and no review; "
+              "where a record is missing, the queue's order stands.")
+TRACE_DEPTH = 6  # how far a use is followed through other declarations
+NAMED = 3        # claims a reason names before "and N more"
+
+
+def _priority(u: dict) -> dict:
+    """A copy of a unit's priority record: the reason the queue gave it (`base`) and its
+    signals."""
+    p = u.get("priority") or {}
+    return {"base": p.get("base", u.get("reason", "")),
+            "signals": copy.deepcopy(p.get("signals") or [])}
+
+
+def _label(cid: str, numbers: dict) -> str:
+    return numbers.get(cid) or cid
+
+
+def _list(items: list[str]) -> str:
+    items = list(dict.fromkeys(items))
+    if len(items) > NAMED:
+        return ", ".join(items[:NAMED]) + f" and {len(items) - NAMED} more"
+    return items[0] if len(items) == 1 else ", ".join(items[:-1]) + " and " + items[-1]
+
+
+def _numbers(units: list[dict], extra: dict | None = None) -> dict[str, str]:
+    out = dict(extra or {})
+    for u in units:
+        for c in u.get("claims") or []:
+            if c.get("number"):
+                out.setdefault(c["id"], c["number"])
+    return out
+
+
+def _add(found: list[dict], kind: str, text: str, claims=(), questions=()) -> None:
+    """Add a signal to `found`, once per text, keeping the claims and questions it came from."""
+    s = next((x for x in found if x["kind"] == kind and x["text"] == text), None)
+    if s is None:
+        s = {"kind": kind, "text": text, "claims": []}
+        found.append(s)
+    s["claims"] += [c for c in dict.fromkeys(claims) if c and c not in s["claims"]]
+    for q in questions:
+        if q and q not in s.setdefault("questions", []):
+            s["questions"].append(q)
+
+
+def _cause(e: dict, u: dict, numbers: dict) -> str:
+    """Why a review stopped counting, in words that name claims and not the Lean: from an
+    evidence entry of the comparison (`changes.review_outcome`)."""
+    out = []
+    for d in e.get("because") or []:
+        dep = d.get("dependency")
+        if dep == "lean":
+            own = d.get("name") == u.get("name")
+            if not d.get("now"):
+                out.append("its Lean declaration is not in this build" if own else
+                           "a declaration it depends on is not in this build")
+            elif own:
+                out.append("this definition's Lean changed" if u["kind"] == "def" else
+                           "its Lean statement changed")
+            else:
+                out.append("a declaration it depends on changed")
+        elif dep == "paper":
+            lab = _label(d.get("claim") or "", numbers)
+            ch = d.get("change")
+            if d.get("detail"):
+                out.append(f"the paper no longer prints the pinned passage of {lab}")
+            elif ch == "context-changed":
+                out.append(f"the context of {lab}'s passage changed")
+            elif ch == "repinned":
+                out.append(f"the passage of {lab} was pinned again")
+            elif ch == "context-repinned":
+                out.append(f"the context of {lab}'s passage was pinned again")
+            else:
+                out.append(f"the passage of {lab} changed")
+        elif dep == "review":
+            out.append("no review of it is recorded now")
+        else:
+            out.append(d.get("detail") or "its last review is not current")
+    return "; ".join(dict.fromkeys(out)) or "its last review is not current"
+
+
+def change_signals(units: list[dict], changes: dict) -> dict[str, list[dict]]:
+    """What changed since the previous release in what each open unit's review reads, from the
+    comparison of the two releases (`changes.compare`). A review the comparison reopened gives
+    `reopened`, with its cause and the question a new reading answers. A unit with no review to
+    reopen gives `changed` when its Lean statement, a definition that statement uses, its
+    definition, or a passage it is read against changed. A proof that changed alone gives
+    nothing: a review of a statement does not read its proof."""
+    by_claim = {c["claim"]: c for c in changes.get("claims") or []}
+    decls = {d["name"]: d.get("change") for d in changes.get("declarations") or []}
+    numbers = _numbers(units, {c["claim"]: c["number"] for c in changes.get("claims") or []
+                               if c.get("number")})
+    out: dict[str, list[dict]] = {}
+    for u in units:
+        if u["state"] == "reviewed":
+            continue
+        kind, cids = u["kind"], [c["id"] for c in u.get("claims") or []]
+        found: list[dict] = []
+        for cid in cids:
+            for e in (by_claim.get(cid) or {}).get("evidence") or []:
+                if e.get("outcome") != "reopened" or e.get("target") != kind or \
+                        e.get("name") != (cid if kind == "step" else u.get("name")):
+                    continue
+                _add(found, "reopened",
+                     f"reopened since the last release: {_cause(e, u, numbers)}", [cid],
+                     [e.get("question")])
+        if not found:
+            what: list[tuple[str, str]] = []
+            for cid in cids if kind == "spec" else []:
+                for row in (by_claim.get(cid) or {}).get("lean") or []:
+                    prop = row.get("proposition") or {}
+                    if prop.get("name") != u.get("name"):
+                        continue
+                    if prop.get("change") in ("statement", "renamed"):
+                        what.append(("its Lean statement", cid))
+                    if row.get("definitions"):
+                        what.append(("a definition its Lean statement uses", cid))
+            if kind == "def" and decls.get(u.get("name")) == "statement":
+                what.append(("this definition's Lean", ""))
+            # A definition is read against the passages of the claims that name it.
+            read = list(u.get("source_sha256") or {}) if kind == "def" else cids
+            for cid in read:
+                cls = ((by_claim.get(cid) or {}).get("paper_change") or {}).get("class")
+                lab = _label(cid, numbers)
+                if cls == "changed":
+                    what.append((f"the passage of {lab}", cid))
+                elif cls == "context-changed":
+                    what.append((f"the context of {lab}'s passage", cid))
+            for w, cid in what:
+                _add(found, "changed", f"changed since the last release: {w}", [cid])
+        if found:
+            out[u["id"]] = found
+    return out
+
+
+def proof_use_signals(units: list[dict], uses: dict) -> dict[str, list[dict]]:
+    """Which other claims' Lean proofs use each open unit's Lean, from the build's reverse
+    references (`uses.site_index`): a declaration linked to the unit is used in the proof of a
+    declaration linked to another claim, directly or through other declarations (followed
+    `TRACE_DEPTH` steps). A use found is a fact about Lean terms; finding none says nothing, so
+    it gives no words."""
+    users: dict[str, dict[str, set]] = {}
+    for name, entries in ((uses or {}).get("by_name") or {}).items():
+        for e in entries:
+            for x in e.get("users") or []:
+                users.setdefault(name, {}).setdefault(x["name"], set()).update(x.get("refs") or [])
+    linked: dict[str, list[str]] = {}
+    for u in units:
+        if u["kind"] in ("link", "step"):
+            for n in (u.get("lean") or []) + (u.get("route") or []):
+                for c in u.get("claims") or []:
+                    if c["id"] not in linked.setdefault(n, []):
+                        linked[n].append(c["id"])
+    numbers = _numbers(units)
+    out: dict[str, list[dict]] = {}
+    for u in units:
+        if u["state"] == "reviewed" or u["kind"] not in ("link", "step"):
+            continue
+        mine = list(dict.fromkeys((u.get("lean") or []) + (u.get("route") or [])))
+        own = {c["id"] for c in u.get("claims") or []}
+        found: list[str] = []
+        seen, frontier = set(mine), mine
+        for _ in range(TRACE_DEPTH):
+            nxt = []
+            for n in frontier:
+                for user in sorted(users.get(n, {})):
+                    if "proof" in users[n][user]:
+                        found += [c for c in linked.get(user, [])
+                                  if c not in own and c not in found]
+                    if user not in seen:
+                        seen.add(user)
+                        nxt.append(user)
+            frontier = nxt
+        if found:
+            out[u["id"]] = [{"kind": RELEVANCE, "claims": found, "text": (
+                "used in the proof of " if len(found) == 1 else "used in the proofs of ")
+                + _list([_label(c, numbers) for c in found])}]
+    return out
+
+
+def workspace_signals(units: list[dict], workspaces: list[dict], site=None
+                      ) -> tuple[dict[str, list[dict]], list[str]]:
+    """What the auditors' workspaces record as still open for each open unit's claims: an open
+    obligation of a composition, a requirement no step of it establishes, a finding that is
+    unresolved or covers part of the claim, an open question (`open question`); a difference
+    that is not resolved, or a finding that the Lean states the claim differently (`difference`);
+    a hypothesis of an aligned Lean statement that no requirement is aligned with and no
+    difference settles (`hint`). A difference resolved or found to be none, and a hint a
+    difference settles, give no words: the workspace keeps their explanation. A definition takes
+    no words from its claims' records. `site` (the build's claims) gives the statements of the
+    hints. Returns the signals by unit and the claims whose records they come from: those are
+    prior interpretations."""
+    from . import composition as cp
+    from . import estimates as est
+    from .workspace import current_findings
+    per: dict[str, list[tuple[str, str]]] = {}
+
+    def add(cid, kind, text):
+        if cid and (kind, text) not in per.setdefault(cid, []):
+            per[cid].append((kind, text))
+
+    for ws in workspaces:
+        recs = [r for r in (ws.get("records") or {}).values() if isinstance(r, dict)]
+        in_force = {f["id"] for f in current_findings(ws)}
+        for r in recs:
+            cid, kind = r.get("claim"), r.get("kind")
+            if kind == "composition":
+                g = cp.gaps(r, ws)
+                for o in r.get("obligations") or []:
+                    if o.get("id") in g["open"]:
+                        add(cid, "open question", "an open obligation is recorded: "
+                            + cp.OBLIGATION_WORDS.get(o.get("kind"), "an obligation"))
+                if g["requirements"] and g["uncovered"]:
+                    add(cid, "open question", "a recorded composition leaves a requirement "
+                        "that no step establishes")
+            elif kind == "finding" and r["id"] in in_force:
+                d = r.get("difference") or {}
+                if r.get("coverage") == "unresolved":
+                    add(cid, "open question", "a recorded finding leaves an open question")
+                elif r.get("coverage") == "partial":
+                    add(cid, "open question", "a recorded finding covers part of the claim")
+                if d.get("outcome") in ("open", "difference"):
+                    add(cid, "difference", f"a recorded difference ({d.get('feature')})"
+                        + (", not yet decided" if d["outcome"] == "open" else ""))
+                elif r.get("coverage") == "changed":
+                    add(cid, "difference", "a recorded finding says the Lean states it "
+                        "differently")
+            elif kind == "question" and r.get("state") == "open":
+                add(cid, "open question", "an open question is recorded")
+        for cid in sorted({r["claim"] for r in recs if r.get("kind") == "alignment"}):
+            hs, _ = est.hints([r for r in recs if r.get("claim") == cid], site, cid)
+            n = sum(1 for h in hs if not h.get("settled_by"))
+            if n:
+                add(cid, "hint", "a hypothesis of its Lean statement is aligned with no "
+                    "requirement" if n == 1 else f"{n} hypotheses of its Lean statement are "
+                    "aligned with no requirement")
+    out: dict[str, list[dict]] = {}
+    drawn: list[str] = []
+    for u in units:
+        if u["state"] == "reviewed" or u["kind"] == "def":
+            continue
+        for c in u.get("claims") or []:
+            for kind, text in per.get(c["id"], []):
+                _add(out.setdefault(u["id"], []), kind, text, [c["id"]])
+                if c["id"] not in drawn:
+                    drawn.append(c["id"])
+    return out, drawn
+
+
+def _tier(u: dict) -> str | None:
+    """A unit's strongest signal of `TIERS`, or None."""
+    kinds = [s["kind"] for s in u["priority"]["signals"] if s["kind"] in TIERS]
+    return min(kinds, key=TIERS.index) if kinds else None
+
+
+def _rank(u: dict) -> tuple[int, bool]:
+    t = _tier(u)
+    return (TIERS.index(t) if t else len(TIERS),
+            not any(s["kind"] == RELEVANCE for s in u["priority"]["signals"]))
+
+
+def _revealed_first(units: list[dict]) -> list[dict]:
+    """`units` (in their order) with the units each one reveals placed just before it, theirs
+    before them, so that a unit is not held behind later ones while what it reveals waits
+    (`reveal_order` holds it back instead). Units that reveal each other keep their order."""
+    pos = {u["id"]: i for i, u in enumerate(units)}
+    by = {u["id"]: u for u in units}
+
+    def shows(u):
+        r = u.get("reveals") or {}
+        return set(r.get("lean") or []) | set(r.get("author") or [])
+
+    out, done, open_ = [], set(), set()
+
+    def place(u):
+        if u["id"] in done or u["id"] in open_:
+            return
+        open_.add(u["id"])
+        for v in sorted((v for v in shows(u) if v in by and u["id"] not in shows(by[v])),
+                        key=pos.get):
+            place(by[v])
+        open_.discard(u["id"])
+        done.add(u["id"])
+        out.append(u)
+
+    for u in units:
+        place(u)
+    return out
+
+
+def _unit_label(v: dict, numbers: dict) -> str:
+    if v["kind"] == "def" or not v.get("claims"):
+        return "another definition" if v["kind"] == "def" else "another unit"
+    return _list([_label(c["id"], numbers) for c in v["claims"]])
+
+
+def _reason(u: dict, ahead: list[dict], numbers: dict, by: str) -> str:
+    """The reason a unit comes where it does: in the paper's order (for `document`), its
+    signals, strongest first, the units it comes before because their review shows it, then the
+    reason the queue gave it."""
+    p = u["priority"]
+    kinds = TIERS + (RELEVANCE,)
+    parts = ["in the paper's order"] if by == "document" else []
+    parts += [s["text"] for s in sorted(p["signals"], key=lambda s: kinds.index(s["kind"])
+                                        if s["kind"] in kinds else len(kinds))]
+    for what, key in (("its Lean", "lean"), ("its author's review", "author")):
+        later = [v for v in ahead if u["id"] in ((v.get("reveals") or {}).get(key) or [])]
+        if later:
+            names = _list([_unit_label(v, numbers) for v in later])
+            parts.append(f"comes before the review of {names}, which shows {what}")
+    if not parts:
+        return p["base"]
+    base = p["base"][:1].lower() + p["base"][1:]
+    text = "; ".join(parts + ([base] if base else []))
+    return text[:1].upper() + text[1:]
+
+
+def arrange(units: list[dict], signals: dict[str, list[dict]], by: str = "priority",
+            claims: list[dict] | None = None) -> list[dict]:
+    """Copies of `units` (open units, in the queue's order) with `signals` added to the signals
+    each already has, in the order `by` gives. `priority`: by the strongest signal (`TIERS`),
+    then units used in another claim's proof, then the queue's order; with no signal at all, the
+    queue's order and reasons stand. `document`: by the place in `claims` (the paper's claims, in
+    order) of the unit's first claim, then the queue's order. Either way a unit that another
+    reveals comes just before it (`_revealed_first`) and says so, and each unit's `reason` says
+    why it comes where it does."""
+    pos = {u["id"]: i for i, u in enumerate(units)}
+    out = []
+    for u in units:
+        p = _priority(u)
+        for s in signals.get(u["id"]) or []:
+            _add(p["signals"], s["kind"], s["text"], s.get("claims") or (),
+                 s.get("questions") or ())
+        out.append({**u, "priority": p})
+    if by == "document":
+        at = {c["id"]: i for i, c in enumerate(claims or [])}
+        ranked = sorted(out, key=lambda u: (min((at.get(c["id"], len(at)) for c in
+                                                 u.get("claims") or []), default=len(at)),
+                                            pos[u["id"]]))
+    elif any(u["priority"]["signals"] for u in out):
+        ranked = sorted(out, key=lambda u: (_rank(u), pos[u["id"]]))
+    else:
+        for u in out:
+            u["reason"] = u["priority"]["base"]
+            u["priority"]["tier"] = None
+        return out
+    final = _revealed_first(ranked)
+    rank = {u["id"]: i for i, u in enumerate(ranked)}
+    placed = {u["id"]: i for i, u in enumerate(final)}
+    numbers = _numbers(units)
+    for u in final:
+        ahead = [v for v in ranked[:rank[u["id"]]] if placed[v["id"]] > placed[u["id"]]]
+        u["priority"]["tier"] = _tier(u)
+        u["reason"] = _reason(u, ahead, numbers, by)
+    return final
+
+
+def prioritise(queue: dict, changes: dict | None = None, uses: dict | None = None,
+               unbuilt: int = 0) -> dict:
+    """The queue with its open units in investigation order (`arrange`), from the build's
+    records: `changes`, the comparison with the previous release (`changes.compare`), and
+    `uses`, the reverse references of the Lean (`uses.site_index`), with `unbuilt` the number of
+    the project's modules not built, whose uses are not traced. Reviewed units stay last, as
+    they were. `order` says which records were read and why any was not."""
+    signals: dict[str, list[dict]] = {}
+    for got in (change_signals(queue["units"], changes) if changes else {},
+                proof_use_signals(queue["units"], uses) if uses else {}):
+        for k, v in got.items():
+            signals.setdefault(k, []).extend(v)
+    units = arrange([u for u in queue["units"] if u["state"] != "reviewed"], signals)
+    units += [{**u, "priority": {**_priority(u), "tier": None}} for u in queue["units"]
+              if u["state"] == "reviewed"]
+    full = queue.get("mode") != "simple"
+    record = {
+        "changes": {"state": "read", "from": (changes.get("from") or {}).get("release"),
+                    "to": (changes.get("to") or {}).get("release")} if changes else
+        {"state": "not available", "why": "no earlier release with other evidence to compare "
+         "with" if full else "the zero-configuration view keeps no earlier release"},
+        RELEVANCE: ({"state": "incomplete", "why": f"{unbuilt} module(s) of the project are "
+                     "not built: uses in them are not traced"} if unbuilt else {"state": "read"})
+        if uses else {"state": "not available", "why": "the full assessment extracts no "
+                      "reverse references" if full else "this build extracted no reverse "
+                      "references"}}
+    return {**queue, "units": units,
+            "order": {"by": "priority" if signals else "effort", "signals": record,
+                      "note": ORDER_NOTE}}
