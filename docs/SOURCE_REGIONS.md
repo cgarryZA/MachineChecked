@@ -46,6 +46,7 @@ a review responsibility.
 | `starts-mid-sentence` | the line before the region is part of its paragraph and does not end a sentence |
 | `ends-mid-sentence` | the region's last line does not end a sentence and the paragraph continues on the next line |
 | `spans-section` | a heading (`\part` to `\subparagraph`, `\appendix`) occurs after the region's first line |
+| `cuts-environment` | the region holds the `\begin` or the `\end` of a display (`equation`, `align`, …), a `proof` or a theorem-like environment (one declared with `\newtheorem`) without the other; the environments are named, with the bounds that contain them whole and, when some of the region's text remains, the bounds that leave them out |
 
 A region pinned at a label line gives no protection: a change of the paragraph it is about
 reopens nothing. Pin the paragraph instead, from its first line with an explicit end:
@@ -54,8 +55,27 @@ reopens nothing. Pin the paragraph instead, from its first line with an explicit
 {"location": "paper/main.tex:4", "source_region": {"end_line": 5}}
 ```
 
-then pin it again (above) and review the passage. The sentence checks apply to regions of whole
-lines; a display environment, and a region bounded by columns, are checked only for a heading.
+then pin it again (above) and review the passage. A region that cuts an environment pins part
+of another statement or misses part of its own: in
+
+```tex
+40  \begin{theorem}\label{X:thm:rate}
+41  The error is $O(h)$.
+42  \end{theorem}
+43  Hence the scheme converges:
+44  \begin{equation}\label{X:eq:bound}
+45  e_h \le C h ,
+46  \end{equation}
+47  uniformly in the data.
+```
+
+a region of lines 41-45 holds the end of the theorem and half of the display, so a change to
+the theorem reopens its reviews while a change to line 46 or 47 does not. The advice names the
+theorem at lines 40-42 and the equation at lines 44-46, and suggests lines 40-46 (both whole) or
+line 43 (neither); here the claim's sentence is lines 43-47, its display whole.
+
+The sentence and environment checks apply to regions of whole lines; a display environment,
+and a region bounded by columns, are checked only for a heading.
 The advice never changes a status; an auditor can dismiss it (`dismissals`: the claim as
 `subject`, the kind as `trigger`, the finding's `fingerprint`), and the dismissal lapses when
 the region's text changes. The repin plan lists the same advice for each claim at the new

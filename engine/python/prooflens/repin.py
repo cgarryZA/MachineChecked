@@ -24,7 +24,7 @@ import tempfile
 from .source_regions import (
     DISPLAYS, ENV, SCHEMES, RegionError, advice_message, changed_line, definition_part,
     extract, location, part_claim, pin as pin_of, region_advice, same_revision, source_file,
-    tex_sources, write_plan,
+    tex_sources, theorem_names, write_plan,
 )
 
 LABEL = re.compile(r"\\label\s*\{([^{}]*)\}")
@@ -357,6 +357,7 @@ def repin_plan(inventory: dict, paper: str, old_root: Path, new_root: Path, old_
     paper_pin = (inventory.get("papers") or {}).get(paper, {}).get("commit")
     old_files, new_files = tex_files(old_root), tex_files(new_root)
     entries, plans = [], []
+    theorems = None  # the new snapshot's theorem-like environments, read when first needed
     # Verify every claim at the original revision before relocating any of them.
     for claim in claims:
         if location(claim) is None and not claim.get("source_sha256"):
@@ -457,7 +458,9 @@ def repin_plan(inventory: dict, paper: str, old_root: Path, new_root: Path, old_
             entry["to"] = placed["location"]
             entry["to_region"] = _bounds(new)
             # Where the region at the new revision may not hold the claim's text (advice only).
-            notes = region_advice(new_root, new)
+            if theorems is None:
+                theorems = theorem_names(tex_sources(new_root))
+            notes = region_advice(new_root, new, theorems)
             if notes:
                 rec = new.record()
                 entry["advice"] = [{**a, "message": advice_message(claim["id"], rec, a)}

@@ -944,7 +944,7 @@ class Assessor:
     def region_advice(self, claim: dict, region: dict):
         """A warning for each way the claim's source region may not hold its text
         (`source_regions.advice`): a label line, a region that starts or ends inside a sentence,
-        one that runs into another section. It names the passage likely meant, never changes a
+        one that runs into another section, one that cuts an environment. It names the passage likely meant, never changes a
         status, and an auditor can dismiss it (code `source-region`, the claim as subject, the
         kind as trigger); a dismissal lapses when the region's text changes."""
         from .source_regions import SCHEME, advice_message
