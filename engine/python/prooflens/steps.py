@@ -28,6 +28,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from .review_sources import marker_safe
+
 UNITS = ("statement", "proof-equation", "proof-passage")
 COVERAGE = ("full", "partial", "changed", "related", "unresolved")
 BASIS = ("direct", "reviewed_composition", "checked_bridge")
@@ -347,10 +349,10 @@ def step_claims(pid: str, statements: list[dict], snap: Path, files: list[str],
                 region = extract(snap, claim).record()
             except (RegionError, OSError, UnicodeError):
                 continue
-            key = st["label"]
+            key = marker_safe(st["label"])
             out.append({
                 "id": f"{pid}:{key}", "key": key, "paper": pid, "kind": "equation",
-                "number": f"Equation ({st['number']})", "title": "", "label": key,
+                "number": f"Equation ({st['number']})", "title": "", "label": st["label"],
                 "location": claim["location"], "line": st["line"],
                 "source_sha256": region["sha256"], "source_hash_scheme": region["scheme"],
                 "source_region": {"end_line": region["end_line"]},

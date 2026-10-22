@@ -13,9 +13,10 @@ from . import evidence as ev
 from . import manifest as mf
 from . import review_queue as rq
 from .assess import Assessor, line_location
-from .config import Config
+from .config import Config, ConfigError
 from .probe import FINGERPRINT_VERSION, MODDOCS, requests_from_inventory, run_probe
 from .reviews import load_dismissals, load_reviews
+from .review_sources import carried
 from .schemas import validate
 from .sources import acquire
 from .excerpt import collect as collect_excerpts, read_aux
@@ -51,12 +52,24 @@ def project_provenance(cfg: Config) -> dict:
     return prov
 
 
+def validate_inventory(inv: dict) -> None:
+    """Check the claim inventory against its schema, and that a review marker can record each
+    claim id (`review_sources.carried`)."""
+    validate(inv, "inventory")
+    bad = [c["id"] for c in inv["claims"] if not carried(c["id"])]
+    if bad:
+        raise ConfigError(
+            "a review marker cannot record the claim id " + ", ".join(repr(b) for b in bad[:5])
+            + (f" and {len(bad) - 5} more" if len(bad) > 5 else "") + ": a claim id may not "
+            "hold white space or `-->`; rename the claim in the inventory")
+
+
 def build(cfg: Config, release: str | None = None, skip_lean: bool = False,
           skip_tex: bool = False, lake: str = "lake", web_dist: Path | None = None,
           lean_build: bool = True, reuse_lean: bool = False, log=print) -> dict:
     prepare_work_dir(cfg.out_dir)
     inv = read_json(cfg.inventory)
-    validate(inv, "inventory")
+    validate_inventory(inv)
     reviews, review_hashes = load_reviews(cfg.reviews, cfg.ai_reviewers, cfg.root)
     dismissals = load_dismissals(cfg.dismissals)
 
@@ -284,7 +297,7 @@ def inventory_changed(cfg: Config, body: dict) -> str | None:
     """Why the stored evidence `body` does not cover the current claim inventory, if it does
     not."""
     inv = read_json(cfg.inventory)
-    validate(inv, "inventory")
+    validate_inventory(inv)
     if canonical_json(inv["claims"]) != canonical_json(body["inventory"]["claims"]):
         return ("the claim inventory changed since the last build: its Lean and LaTeX results "
                 "may not cover it; run `machinechecked build --reuse-lean` (or `machinechecked "
