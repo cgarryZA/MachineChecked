@@ -186,9 +186,10 @@ a claim's own changed passage too (a folder's text is shown only when it is the 
 recorded).
 
 `--workspace ID` adds the records of a saved investigation that are no longer current against
-the later release ([Saved investigations](REVIEWING.md#saved-investigations)), each with the
-change that made it stale; an unchecked record is listed too, since it is not known to be
-current.
+the later release ([Saved investigations](REVIEWING.md#saved-investigations)), of every kind
+(the claim's requirements, the passages that govern them and their alignments included), each
+with the change that made it stale; an unchecked record is listed too, since it is not known
+to be current. The terminal output lists them after the claims.
 
 The reader shows the same comparison on its **Details** page, and `export` publishes it with
 what each paper's `publish` settings allow (its passages' places and text only with its source

@@ -180,7 +180,7 @@ derived from them alone; no status, fingerprint or gate reads it.
 | `evidence[]` | per review: `target` (`spec`, `def`, `step`), `name`, `clause`, `from` and `to` (`state`, `marker`: `by`, `kind`, `file`, `line`, `hash`, `source`; `"same"` for a kept marker), `outcome`, and `because`, `question`, `caveat`, `kept_through` |
 | `declarations[]` | every project declaration whose statement or proof changed, or that one release has alone: `name`, `change`, `from`, `to`, `claims` |
 | `counts` | per paper class, per evidence outcome and per declaration change, and `status_changed` |
-| `workspace` | with `--workspace`: the workspace's records that are not current (`id`, `kind`, `claim`, `state`, `changes`, `pinned_release`) |
+| `workspace` | with `--workspace`: the workspace's records that are not current, of every kind, the claim's requirements, fragments and alignments included (`id`, `kind`, `claim`, `state`, `changes`, `pinned_release`; `submitted` for a submitted finding, `proposed` for a proposed fragment) |
 
 The export keeps a passage's places and text only when its paper publishes its source text, the
 Lean `text` only when every paper publishes its Lean, and a marker's `file` and `line` only
