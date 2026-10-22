@@ -572,6 +572,17 @@ for (const width of [1300, 390]) {
     assert.equal(await pg.inputValue(VERSION), "manuscript:abc1234");
     assert.equal(await pg.inputValue("select[aria-label='Formalisation shown']"), B);
     await pg.waitForFunction(() => document.querySelector(".paperpane")?.textContent.includes("Latest manuscript text."));
+    // The chosen version's label is shown whole, at a phone's width too.
+    const cut = await pg.locator(VERSION).evaluate((sel) => {
+      const cs = getComputedStyle(sel);
+      const ctx = document.createElement("canvas").getContext("2d");
+      ctx.font = `${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+      const text = ctx.measureText(sel.selectedOptions[0].textContent.trim()).width;
+      const room = sel.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight) - 20;
+      return text > room ? `${Math.round(text)} > ${Math.round(room)}` : null;
+    });
+    assert.equal(cut, null, `the version's label is cut off (${cut})`);
+    if (process.env.SHOTS) await pg.screenshot({ path: path.join(process.env.SHOTS, `versions-latest-${width}.png`) });
     await pg.selectOption("select[aria-label='Formalisation shown']", A);
     assert.deepEqual(await statuses(pg, ["P:lemma-1", "P:theorem-2", "P:theorem-3"]), ["link.none", "link.none", "link.no-audit"]);
 

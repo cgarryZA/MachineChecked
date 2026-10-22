@@ -185,4 +185,11 @@
   .version { font-size: 13px; color: var(--muted); white-space: nowrap; }
   .version.unchecked { white-space: normal; font-style: italic; }
   .project select { font: inherit; min-width: 0; max-width: min(42vw, 320px); padding: 3px 6px; border-radius: 6px; border: 1px solid var(--accent); background: var(--surface); color: var(--text); }
+  /* On a phone each selector takes its own row, so a long label ("Latest manuscript (commit …)")
+     is shown whole. */
+  @media (max-width: 640px) {
+    .choices { flex: 1 1 100%; }
+    .project { flex: 1 1 100%; }
+    .project select { flex: 1 1 auto; max-width: none; }
+  }
 </style>
