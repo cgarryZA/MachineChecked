@@ -230,6 +230,16 @@
 
 </script>
 
+<!-- The Lean's references to the paper's numbers that disagree with the paper read here. -->
+{#snippet paperNumbers()}
+  {#if claim.references?.some((o) => o.status !== "exact" || o.stale_lead)}
+    <h3>Paper numbers in the Lean</h3>
+    <ul class="reasons small">
+      {#each claim.references.filter((o) => o.status !== "exact" || o.stale_lead) as o (o.id)}<li>{o.message}</li>{/each}
+    </ul>
+  {/if}
+{/snippet}
+
 {#if error}
   <p role="alert">{error} <button class="act" onclick={() => attempt++}>Try again</button></p>
 {:else if !claim}
@@ -409,12 +419,7 @@
             </div>
           {/each}
         {/if}
-        {#if claim.references?.some((o) => o.status !== "exact" || o.stale_lead)}
-          <h3>Paper numbers in the Lean</h3>
-          <ul class="reasons small">
-            {#each claim.references.filter((o) => o.status !== "exact" || o.stale_lead) as o (o.id)}<li>{o.message}</li>{/each}
-          </ul>
-        {/if}
+        {@render paperNumbers()}
         {#if editable}
           <LinkPicker {index} {claim} disabled={!!busy} onpick={(name) => act({ lean: [...claim.links.map((x) => x.name), name] }, "link")} />
         {/if}
@@ -451,6 +456,7 @@
         {:else}
           <p class="muted">No Lean statement has been written for this claim.</p>
         {/each}
+        {@render paperNumbers()}
       {/if}
     </section>
     <section class="exact-pane">

@@ -157,7 +157,7 @@ class Site:
 
     def retrieval(self):
         """The build's content index of every project declaration (`retrieval.py`), or None
-        when the build has none (a full assessment, or a build before it existed)."""
+        when the build has none (no Lean was read, or a build before it existed)."""
         if not hasattr(self, "_retrieval"):
             from .retrieval import Retrieval
             p = self.data / "retrieval.json"
@@ -704,7 +704,7 @@ def search(site: Site, target: str, limit: int | None = None, after: str | None 
     if ret is None:
         return {"available": False, "results": [],
                 "reason": "this build has no content index of the project's declarations; "
-                          "`machinechecked view` or `build` in zero configuration writes one"}
+                          "`machinechecked view` or `build` with the project built writes one"}
     try:
         cid = site.resolve_claim(target)
     except CompareError:

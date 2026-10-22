@@ -57,8 +57,10 @@ dismissed. A warning with code `module-doc-name` is a name a module docstring li
 declares: its `subject` is the module, its `trigger` the name, and it has `file` and `line`.
 A warning with code `review-citation` is a name or file that review text cites and nothing
 resolves: its `subject` is the review file, its `trigger` the token, with `file` and `line`.
-Report the violations and obligations by subject and message; they are what blocks a
-claim from being accepted. `replay` is null when no Comparator replay counts; otherwise it
+When the configuration has one paper and the project is built, the document
+also has `warnings` with the `paper-reference` warnings and `numbering`, as in zero
+configuration; with several papers they are absent. Report the violations and obligations by
+subject and message; they are what blocks a claim from being accepted. `replay` is null when no Comparator replay counts; otherwise it
 gives the record's `guard` (`guarded`, `unguarded`, or `unrecorded` for an older record), the
 number of proofs `replayed`, and a `message` when they were not shown to run under the sandbox
 guard.

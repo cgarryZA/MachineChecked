@@ -103,7 +103,11 @@ words (split at underscores and capitals, lower case, lightly stemmed), symbols 
 `<=` are one term; `≥` is folded into `≤`), numerals and dotted constants. A declaration's
 score is the share of the query's rarity-weighted terms it carries; the users of the ten best
 matches join the results through them. The zero-configuration view writes the index to
-`data/retrieval.json` with its word tables; `web/src/lib/retrieval.js` reads the tables from it
+`data/retrieval.json` with its word tables, and so does the full assessment (`content.py`: the
+index of every built module from the facts store, with `LeanFacts.index`, and the paper-number
+check of a one-paper configuration, kept in `<work>/content/<evidence id>.json` beside the
+evidence record and never in it; a reassessed record shows the content of the record it was
+reassessed from); `web/src/lib/retrieval.js` reads the tables from it
 and implements the same scoring. `tests/fixtures/retrieval/make_cases.py` writes the cases both
 must answer alike (`tests/contracts/test_retrieval.py` checks the file is current, and
 `web/tests/retrieval.test.mjs` runs the reader's side): regenerate it after changing either.

@@ -144,7 +144,9 @@ A reference to an existing number whose declaration reads much closer to another
 named as a possibly stale lead, with the closer statement. `check` prints each disagreement
 with its file and line. When several references disagree, the reader's notes say that the Lean
 appears to follow another version of the paper, and suggestions then rank content further
-above cited numbers. None of this links a declaration or changes a status.
+above cited numbers. None of this links a declaration or changes a status. A full assessment
+(a project with a `machinechecked.toml` and one paper) checks the same references
+([ASSURANCE.md](ASSURANCE.md)).
 
 The local reader saves your decisions in `machinechecked.links.json` at the repository root and refreshes the view. Commit that small file if you want the associations to travel with the project.
 
