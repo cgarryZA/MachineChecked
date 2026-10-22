@@ -625,21 +625,36 @@ def _declaration_changes(old: Version, new: Version) -> list[dict]:
 def workspace_due(view: dict, wid: str) -> dict:
     """The records of a workspace (`workspace.view` against the later release's site) that are
     not current: `stale`, with the changes their currency names, or `unchecked`, which the build
-    cannot check and are never taken as current. A superseded finding stays as it was and is not
-    listed."""
+    cannot check and are never taken as current. Every kind is listed: evidence, findings,
+    questions, counterexamples, compositions, and the claim's reading (requirements, the
+    fragments of the paper that govern them or are proposed for them, and alignments). A
+    superseded finding and a removed fragment stay as they were and are not listed."""
     rows = []
+
+    def add(r, cid):
+        cur = r.get("currency") or {"state": "unchecked", "changes": []}
+        if cur.get("state") == "current":
+            return
+        rows.append({"id": r["id"], "kind": r["kind"], "claim": cid,
+                     "state": cur.get("state"), "changes": cur.get("changes") or [],
+                     "pinned_release": (r.get("pins") or {}).get("release"),
+                     **({"submitted": True} if r.get("state") == "submitted" else {}),
+                     **({"proposed": True} if r.get("state") == "proposed" else {})})
+
     for cid, c in sorted((view.get("claims") or {}).items()):
         for group in ("evidence", "findings", "questions", "counterexamples"):
             for r in c.get(group) or []:
                 if group == "findings" and not r.get("in_force", True):
                     continue
-                cur = r.get("currency") or {"state": "unchecked", "changes": []}
-                if cur.get("state") == "current":
-                    continue
-                rows.append({"id": r["id"], "kind": r["kind"], "claim": cid,
-                             "state": cur.get("state"), "changes": cur.get("changes") or [],
-                             "pinned_release": (r.get("pins") or {}).get("release"),
-                             **({"submitted": True} if r.get("state") == "submitted" else {})})
+                add(r, cid)
+        rd = c.get("reading") or {}
+        for req in rd.get("requirements") or []:
+            add(req, cid)
+            for part in ("governing", "later_uses", "proposed"):
+                for f in (req.get("fragments") or {}).get(part) or []:
+                    add(f, cid)
+        for al in rd.get("alignments") or []:
+            add(al, cid)
         for comp in c.get("compositions") or []:
             cur = comp.get("currency") or {}
             if cur.get("state") and cur.get("state") != "current":
@@ -875,9 +890,44 @@ def text(doc: dict, everything: bool = False) -> str:
                 lines.append(f"    note: {e['caveat']}")
             for t in e.get("kept_through") or []:
                 lines.append(f"    stands through a change of {t}, which it does not read")
+    if doc.get("workspace"):
+        lines.append("")
+        lines += workspace_lines(doc["workspace"])
     lines.append("")
     lines.append(doc["note"])
     return "\n".join(lines)
+
+
+def workspace_lines(due: dict) -> list[str]:
+    """The records of a workspace that are not current (`workspace_due`), for a terminal."""
+    rows = due.get("records") or []
+    out = [f"workspace {due['workspace']}: "
+           + (f"{len(rows)} record(s) not current" if rows else "every record is current")]
+    for r in rows:
+        out.append(f"  {r['kind']} {r['id']} ({r['claim']}): {r['state']}"
+                   + (", submitted" if r.get("submitted") else "")
+                   + (", proposed" if r.get("proposed") else ""))
+        for words in dict.fromkeys(_record_change_words(ch) for ch in r.get("changes") or []):
+            out.append("    because: " + words)
+    if rows:
+        out.append("  " + due["note"])
+    return out
+
+
+def _record_change_words(ch: dict) -> str:
+    """One change a workspace record's currency names (`workspace.currency`), in words."""
+    if ch.get("reason"):
+        return ch["reason"]
+    if ch.get("decl"):
+        return f"{ch['decl']} changed" if ch.get("now") else f"{ch['decl']} is not in the build"
+    if ch.get("region"):
+        return f"the paper's text at {ch['region']} changed" if ch.get("now") else \
+            f"the paper has no text at {ch['region']}"
+    what = ch.get("passage") or ch.get("claim")
+    if what:
+        return f"the passage of {what} changed" if ch.get("now") else \
+            f"{what} is not in the build"
+    return "changed since it was recorded"
 
 
 def shown_texts(p: dict) -> list[tuple[str, str, str]]:

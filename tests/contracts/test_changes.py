@@ -407,3 +407,103 @@ def test_toy_a_context_change_beside_an_unchanged_display(toy, capsys):
     capsys.readouterr()
     cli.main(["changes", "-c", str(toy / "machinechecked.toml"), "--from", current])
     assert "question: Does the step Equation (3)" in capsys.readouterr().out
+
+
+def _stale_in_show(view):
+    """The ids of the records `workspace show --json` gives as stale, of every kind: a
+    superseded finding is kept as it was."""
+    out = set()
+    for c in view["claims"].values():
+        for group in ("evidence", "findings", "questions", "counterexamples", "compositions"):
+            out |= {r["id"] for r in c.get(group) or []
+                    if r["currency"]["state"] == "stale" and r.get("in_force", True)}
+        rd = c.get("reading") or {}
+        for r in rd.get("requirements") or []:
+            frags = [f for part in r["fragments"].values() for f in part]
+            out |= {x["id"] for x in [r, *frags] if x["currency"]["state"] == "stale"}
+        out |= {a["id"] for a in rd.get("alignments") or [] if a["currency"]["state"] == "stale"}
+    return out
+
+
+@needs_lean
+@needs_tex
+def test_toy_changes_lists_every_workspace_record_show_marks_stale(toy, capsys):
+    """After an edit of the paper and of a definition, `changes --workspace` lists every record
+    `workspace show` marks stale, the claim's reading included (#251)."""
+    from prooflens import review_cli as rc
+    from prooflens import workspace as wsp
+    from prooflens.targets import Snapshot
+    _, _, cfg = build(toy)
+    snap = Snapshot(cfg.out_dir / "site" / "data")
+    tex = (cfg.out_dir / "sources" / "T" / "toy.tex").read_text(encoding="utf-8").splitlines()
+    proof = next(i for i, t in enumerate(tex, 1) if t.startswith("Write $a = 2j$"))
+    p = wsp.open_for(cfg.out_dir, rc.parse_reviewer("human:A-Auditor"), "informed",
+                     sources=snap.sources())
+
+    def put(rec):
+        return {"op": "put", "record": rec}
+
+    wsp.update(p, [
+        # Theorem 2.1's reading: its statement, and a sentence of its proof as context.
+        put({"id": "q-add", "kind": "requirement", "claim": "T:thm:even-add", "local_id": "r1",
+             "form": "for every", "binds": ["a", "b"], "text": "every even a and b"}),
+        put({"id": "p-stmt", "kind": "fragment", "claim": "T:thm:even-add", "requirement": "r1",
+             "role": "statement", "passage": {"claim": "T:thm:even-add"}}),
+        put({"id": "p-proof", "kind": "fragment", "claim": "T:thm:even-add",
+             "requirement": "r1", "role": "context",
+             "region": {"file": "toy.tex", "start_line": proof}}),
+        put({"id": "p-maybe", "kind": "fragment", "claim": "T:thm:even-add",
+             "requirement": "r1", "role": "context", "state": "proposed",
+             "region": {"file": "toy.tex", "start_line": proof}}),
+        # Definition 1.1's reading, aligned with its Lean definition.
+        put({"id": "q-even", "kind": "requirement", "claim": "T:def:even", "local_id": "even",
+             "form": "definition", "text": "n is even if n = 2k for some natural k"}),
+        put({"id": "a-even", "kind": "alignment", "claim": "T:def:even",
+             "requirements": ["even"], "lean": [{"decl": "Toy.IsEven"}]}),
+        # Theorem 2.2's reading and a finding on it, which nothing changes.
+        put({"id": "q-tri", "kind": "requirement", "claim": "T:thm:triangle", "local_id": "r1",
+             "form": "for every", "binds": ["n"], "text": "every natural number n"}),
+        put({"id": "p-tri", "kind": "fragment", "claim": "T:thm:triangle", "requirement": "r1",
+             "role": "statement", "passage": {"claim": "T:thm:triangle"}}),
+        put({"id": "f-tri", "kind": "finding", "claim": "T:thm:triangle", "coverage": "full",
+             "note": "Direct."}),
+        # Evidence and a finding that cite the definition.
+        put({"id": "e-even", "kind": "evidence", "claim": "T:thm:even-add",
+             "ref": {"decl": "Toy.IsEven"}, "role": "supports"}),
+        put({"id": "f-even", "kind": "finding", "claim": "T:thm:even-add", "coverage": "full",
+             "evidence": ["e-even"], "note": "Direct."})], snap, cfg.lean_root)
+    wid = wsp.read(p)["id"]
+    edit(toy / "paper/toy.tex", "Write $a = 2j$ and $b = 2k$; then",
+         "Write $a = 2j$ and $b = 2k$, so that")
+    edit(toy / "lean/Toy/Defs.lean", "∃ k, n = 2 * k", "∃ k, n = k + k")
+    build(toy)
+
+    toml = str(toy / "machinechecked.toml")
+    capsys.readouterr()
+    cli.main(["workspace", "show", "-c", toml, "--id", wid, "--json"])
+    stale = _stale_in_show(json.loads(capsys.readouterr().out))
+    assert stale == {"q-add", "p-proof", "p-maybe", "q-even", "a-even", "e-even", "f-even"}
+    doc = changes_json(toy, capsys, "--workspace", wid)
+    rows = {r["id"]: r for r in doc["workspace"]["records"]}
+    assert {i for i, r in rows.items() if r["state"] == "stale"} == stale
+    assert {r["kind"] for r in rows.values()} == {"requirement", "fragment", "alignment",
+                                                  "evidence", "finding"}
+    assert rows["p-proof"]["changes"][0]["region"] == f"toy.tex:{proof}"
+    assert rows["p-maybe"]["proposed"] and "proposed" not in rows["p-proof"]
+    assert rows["a-even"]["changes"][0]["decl"] == "Toy.IsEven"
+    assert rows["q-add"]["changes"] == rows["p-proof"]["changes"] + rows["p-maybe"]["changes"]
+    assert not {"p-stmt", "q-tri", "p-tri", "f-tri"} & set(rows)
+
+    # The terminal output lists the same records.
+    capsys.readouterr()
+    cli.main(["changes", "-c", toml, "--workspace", wid])
+    out = capsys.readouterr().out
+    head = f"workspace {wid}: {len(rows)} record(s) not current"
+    assert head in out
+    out = out[out.index(head):]
+    for r in rows.values():
+        assert f"  {r['kind']} {r['id']} ({r['claim']}): {r['state']}" in out
+    # Each record says why once: the requirement, its fragment and the proposal; and the four
+    # records that rest on the definition.
+    assert out.count(f"because: the paper's text at toy.tex:{proof} changed") == 3
+    assert out.count("because: Toy.IsEven changed") == 4

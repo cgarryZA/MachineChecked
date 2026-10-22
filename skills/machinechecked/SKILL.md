@@ -108,8 +108,9 @@ violations and obligations by subject; `findings` holds only their totals.
   --json` marks the saved records whose paper text, statement, proof or certificate changed
   `stale`. In a full assessment, `machinechecked changes --json` compares two releases claim by
   claim and names every review the later build no longer counts, with the dependency that
-  changed; `--workspace ID` adds the workspace's evidence, findings, questions,
-  counterexamples and compositions that are not current.
+  changed; `--workspace ID` adds the workspace's records that are not current, of every
+  kind: evidence, findings, questions, counterexamples, compositions, requirements, fragments
+  and alignments.
 - **A shareable report**: `machinechecked build` writes `.machinechecked/MachineChecked.html`
   (one file, opens from disk; Git ignores it there, and `--out` puts it elsewhere). `machinechecked build --site public/ --author "Name" --issues owner/repo` writes a
   directory to publish (for example on GitHub Pages) with `audit.json` describing it. Both

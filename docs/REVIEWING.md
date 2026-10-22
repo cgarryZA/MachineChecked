@@ -233,7 +233,9 @@ one by putting it with `"state": "accepted"`, or remove it with `"state": "remov
 `why_removed`, which keeps who removed it and why. In the reader, the Investigation section
 shows the requirements with their passages and alignments, and offers **Add a requirement**,
 **Suggest nearby context**, **Accept** and **Remove**. When a governing passage changes, its
-requirement goes stale even if the display itself did not change. `machinechecked compare CLAIM
+requirement goes stale even if the display itself did not change; in a full assessment,
+`machinechecked changes --workspace ID` lists the stale requirements, passages and alignments
+with the other records. `machinechecked compare CLAIM
 --workspace ID` adds the requirements to the informed packet; the read and compare stages of an
 independent review withhold them. A requirement and its alignments are your reading: they
 change no status.
