@@ -34,6 +34,8 @@ root = "main.tex"
 publish = { pdf = false, source_text = false, lean = false, reviews = false }
 ```
 
+`spec_prefix` and `accept_prefix` name the modules of the statement layer and of the proof layer. A project whose layers span several namespaces, for example its own and those of a formalisation it builds on, lists them: `spec_prefix = ["MyPaper.PaperSpec", "Base.PaperSpec"]`. A specification or acceptance theorem under any listed prefix is in its layer, and no statement module under any of them may import a proof module under any of them. List those namespaces in `scope_roots` too, so that the definitions they declare are hashed and reviewed.
+
 The probe loads the modules listed in `modules` and what they import. A proposition, proof, witness or definition the inventory names outside them is a violation that names it, with the project module that declares it when its source shows one: list that module in `modules`, or import it from a listed one.
 
 Sources can also be a pinned Git revision (`source = { git = "owner/repo", rev = "<commit>" }`, of which only that revision is fetched) or a versioned arXiv record (`source = { arxiv = "2601.01234v2" }`: its source is downloaded from arXiv once and kept in the working directory, so later builds work offline; the version is required). Say which public record the paper is with `published` (an arXiv identifier with version such as `"arXiv:2601.01234v2"`, a DOI, or a URL) and, if the audited revision differs from it, how with `note` (for example `"This revision corrects Proposition 2.3."`); both go into `audit.json` and the reader, and change no status.

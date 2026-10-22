@@ -69,6 +69,10 @@ class Config:
     papers: list[Paper]
     out_dir: Path
     review_check: str | None = None
+    # Every prefix of the statement layer and of the proof layer: `spec_prefix` and
+    # `accept_prefix` may each be a list, of which the first is `spec_prefix`, `accept_prefix`.
+    spec_prefixes: list[str] = field(default_factory=list)
+    accept_prefixes: list[str] = field(default_factory=list)
     display: Path | None = None
     symbols: Path | None = None
     issues: str | None = None         # "owner/repo" where the reader's "Raise issue" opens issues
@@ -120,6 +124,15 @@ def issue_repo(value: str | None, where: str) -> str | None:
     return v
 
 
+def _prefixes(d: dict, key: str, where: str) -> list[str]:
+    """A layer's prefixes: one string, or a non-empty list of strings."""
+    v = _req(d, key, where)
+    vs = [v] if isinstance(v, str) else v
+    if not isinstance(vs, list) or not vs or not all(isinstance(x, str) for x in vs):
+        raise ConfigError(f"{where}: `{key}` must be a string or a non-empty list of strings")
+    return vs
+
+
 def _req(d: dict, key: str, where: str):
     if key not in d:
         raise ConfigError(f"{where}: missing `{key}`")
@@ -153,8 +166,10 @@ def load(path: str | Path) -> Config:
         lean_root=(base / proj.get("lean_root", ".")).resolve(),
         modules=_req(proj, "modules", "project"),
         scope_roots=_req(proj, "scope_roots", "project"),
-        spec_prefix=_req(proj, "spec_prefix", "project"),
-        accept_prefix=_req(proj, "accept_prefix", "project"),
+        spec_prefix=_prefixes(proj, "spec_prefix", "project")[0],
+        accept_prefix=_prefixes(proj, "accept_prefix", "project")[0],
+        spec_prefixes=_prefixes(proj, "spec_prefix", "project"),
+        accept_prefixes=_prefixes(proj, "accept_prefix", "project"),
         allowed_axioms=proj.get("allowed_axioms", STANDARD_AXIOMS),
         inventory=(base / _req(proj, "inventory", "project")).resolve(),
         reviews=[(base / r).resolve() for r in proj.get("reviews", [])],
