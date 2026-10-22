@@ -73,7 +73,10 @@ export async function loadIndex() {
   siteIndex = await loadIndexData();
   if (siteIndex.schema !== "prooflens/manifest@1") throw new Error("Old reader data: rebuild the audit with the current MachineChecked version.");
   // A paper page lists the Lean projects that formalise the paper; one is shown at a time.
-  if (Array.isArray(siteIndex.projects)) settleProject(siteIndex.projects.filter((r) => typeof r === "string"));
+  if (Array.isArray(siteIndex.projects)) {
+    settleProject(siteIndex.projects.filter((r) => typeof r === "string"),
+                  (Array.isArray(siteIndex.audit_order) ? siteIndex.audit_order : []).filter((r) => auditOf(siteIndex, r)));
+  }
   return siteIndex;
 }
 
@@ -161,11 +164,54 @@ export function inProject(c, repo) {
 
 }
 
-// The claims of the index for the chosen project (reactive on the choice).
+// A paper page's loaded audit of a repository (`index.audits`), or null.
+export function auditOf(index, repo) {
+  const a = index?.audits?.[repo];
+  return a && a.state === "loaded" ? a : null;
+}
+
+// The project whose evidence a claim shows: the chosen one; or, with the audits shown together,
+// the first audit (in `project.order`) that maps the claim, `filled` when that is not the
+// default one, and `mapped` false (with the default project) when none does. An audit maps a
+// claim when its record of the claim is on the page.
+export function evidenceFor(c) {
+  const repo = project.repo;
+  if (!project.combined || !c.by_project) return { repo, filled: false, mapped: true };
+  if (c.projects) return { repo: c.projects.includes(repo) ? repo : c.projects[0], filled: !c.projects.includes(repo), mapped: true };
+  if (c.by_project[repo]?.audit) return { repo, filled: false, mapped: true };
+  const other = project.order.find((r) => r !== repo && c.by_project[r]?.audit);
+  return other ? { repo: other, filled: true, mapped: true } : { repo, filled: false, mapped: false };
+}
+
+// A claim as the page shows it: through the project whose evidence it shows (`evidenceFor`), with
+// `evidence_from` (that project), `filled` (taken from an audit other than the default one), and
+// `missing` (one audit is chosen and it does not map the claim), `unmapped` (the audits are shown
+// together and none maps it). Statuses are never combined:
+// each claim carries exactly one audit's status, or the chosen project's.
+export function shownClaim(c) {
+  if (!c.by_project) return c;
+  const { repo, filled, mapped } = evidenceFor(c);
+  return { ...inProject(c, repo), evidence_from: repo, filled, unmapped: !mapped,
+    missing: !project.combined && !!auditOf(siteIndex, repo) && !c.by_project[repo]?.audit };
+}
+
+// The claims of the index for the chosen project, or for the audits shown together (reactive on
+// the choice). Together, a claim another audit lists only by its own record (an equation or a
+// passage the paper's headings do not give) is shown when no claim shown has its number.
 export function projectClaims(index) {
   if (!index.projects) return index.claims;
-  return index.claims.filter((c) => !c.projects || c.projects.includes(project.repo)).map((c) => {
-    const row = inProject(c, project.repo);
+  const own = (c) => !c.projects || c.projects.includes(project.repo);
+  let rows = index.claims.filter(own);
+  if (project.combined) {
+    const numbers = new Set(rows.map((c) => c.number).filter(Boolean));
+    for (const r of project.order.slice(1)) {
+      for (const c of index.claims) {
+        if (c.projects?.[0] === r && c.number && !numbers.has(c.number)) { rows.push(c); numbers.add(c.number); }
+      }
+    }
+  }
+  return rows.map((c) => {
+    const row = shownClaim(c);
     if (project.edition !== "original") {
       return { ...row, anchor: row.audit?.edition === project.edition ? row.audit.audit_anchor : null };
     }

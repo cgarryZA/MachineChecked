@@ -39,6 +39,10 @@ structure Query where
   scope_roots : Array String
   spec_prefix : String
   accept_prefix : String
+  /-- Every prefix of the statement layer, and of the proof layer, when a layer has several;
+  `spec_prefix`, `accept_prefix` alone if none. -/
+  spec_prefixes : Option (Array String) := none
+  accept_prefixes : Option (Array String) := none
   allowed_axioms : Array String
   requests : Array Request
   /-- Each request's heartbeat budget, in thousands as `maxHeartbeats`; Lean's default if none. -/
@@ -48,6 +52,19 @@ structure Query where
   facts_nodes : Option Nat := none
   facts_items : Option Nat := none
   deriving FromJson, Inhabited
+
+/-- The module prefixes of a layer: the listed ones, or the single one when none are listed. -/
+def layerPrefixes (one : String) (many : Option (Array String)) : Array Name :=
+  match many with
+  | some ps => if ps.isEmpty then #[one.toName] else ps.map (·.toName)
+  | none => #[one.toName]
+
+def Query.specLayer (q : Query) : Array Name := layerPrefixes q.spec_prefix q.spec_prefixes
+
+def Query.acceptLayer (q : Query) : Array Name := layerPrefixes q.accept_prefix q.accept_prefixes
+
+/-- Whether a module lies in a layer: under one of the layer's prefixes. -/
+def inLayer (layer : Array Name) (mod : Name) : Bool := layer.any (·.isPrefixOf mod)
 
 /-- Runs `x` with a heartbeat budget of `n` thousand heartbeats when one is given. -/
 def withBudget (n? : Option Nat) (x : MetaM α) : MetaM α :=
@@ -842,7 +859,7 @@ def specRecord (h : IO.FS.Handle) (q : Query) (inside : Name → Bool) (seen : I
   let mut errs : Array String := #[]
   unless ci matches .defnInfo _ do errs := errs.push "not-a-def"
   unless ci.type == .sort .zero do errs := errs.push "type-not-Prop"
-  unless q.spec_prefix.toName.isPrefixOf (moduleOf env spec) do errs := errs.push "outside-spec-layer"
+  unless inLayer q.specLayer (moduleOf env spec) do errs := errs.push "outside-spec-layer"
   let axs ← collectAxioms spec
   let bad := disallowed (q.allowed_axioms.map (·.toName)) axs
   unless bad.isEmpty do errs := errs.push s!"axioms={bad.toList}"
@@ -880,7 +897,7 @@ def proofRecord (h : IO.FS.Handle) (q : Query) (inside : Name → Bool) (seen : 
     | emit h (Json.mkObj [("record", kind), ("name", thm.toString), ("errors", toJson #["missing"])])
   let mut errs : Array String := #[]
   unless ci matches .thmInfo _ do errs := errs.push "not-a-theorem"
-  unless q.accept_prefix.toName.isPrefixOf (moduleOf env thm) do
+  unless inLayer q.acceptLayer (moduleOf env thm) do
     errs := errs.push "outside-accept-layer"
   match kind, spec with
   | "accept", some s =>
@@ -1583,7 +1600,7 @@ def moduleRecords (h : IO.FS.Handle) : CoreM Unit := do
 def layering (h : IO.FS.Handle) (q : Query) : CoreM Unit := do
   -- Without both layers named (the zero-configuration view) there is no layering to check;
   -- every module would otherwise count as both layers and every import as a violation.
-  if q.spec_prefix.isEmpty || q.accept_prefix.isEmpty then
+  if q.specLayer.any (·.isAnonymous) || q.acceptLayer.any (·.isAnonymous) then
     emit h (Json.mkObj [("record", "layering"), ("violations", Json.arr #[])])
     return
   let env ← getEnv
@@ -1591,7 +1608,7 @@ def layering (h : IO.FS.Handle) (q : Query) : CoreM Unit := do
   let mut violations : Array Json := #[]
   for i in [:names.size] do
     let mod := names[i]!
-    unless q.spec_prefix.toName.isPrefixOf mod do continue
+    unless inLayer q.specLayer mod do continue
     let mut seen : NameSet := {}
     let mut stack : Array Name := #[mod]
     while !stack.isEmpty do
@@ -1599,7 +1616,7 @@ def layering (h : IO.FS.Handle) (q : Query) : CoreM Unit := do
       stack := stack.pop
       if seen.contains m then continue
       seen := seen.insert m
-      if q.accept_prefix.toName.isPrefixOf m then
+      if inLayer q.acceptLayer m then
         violations := violations.push (Json.mkObj [("module", mod.toString), ("imports", m.toString)])
       let some idx := env.getModuleIdx? m | continue
       for imp in env.header.moduleData[idx.toNat]!.imports do

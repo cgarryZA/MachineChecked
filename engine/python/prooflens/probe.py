@@ -289,8 +289,10 @@ def run_probe(cfg: Config, requests: list[dict], lake: str = "lake",
         if r.returncode != 0:
             raise ProbeError(f"lake build failed:\n{r.stdout[-4000:]}\n{r.stderr[-4000:]}")
     query = {"scope_roots": cfg.scope_roots, "spec_prefix": cfg.spec_prefix,
-             "accept_prefix": cfg.accept_prefix, "allowed_axioms": cfg.allowed_axioms,
-             "requests": requests}
+             "accept_prefix": cfg.accept_prefix,
+             "spec_prefixes": cfg.spec_prefixes or [cfg.spec_prefix],
+             "accept_prefixes": cfg.accept_prefixes or [cfg.accept_prefix],
+             "allowed_axioms": cfg.allowed_axioms, "requests": requests}
     groups = by_library(cfg.modules, lib_names(cfg.lean_root))
     work = cfg.out_dir / "build"
     if len(groups) == 1:

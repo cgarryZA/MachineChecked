@@ -70,7 +70,7 @@
       <li><a class:sel={c.id === claimId} href={href(index.release, "read", paperId, c.id)} title={statusView(c).label}
         onclick={(e) => { if (!e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) { e.preventDefault(); select(c.id); } }}>
         <span class={"dot st-" + statusView(c).class} aria-hidden="true"></span>
-        <span><strong>{c.number || c.id}</strong>{#if c.heading || c.title}<span class="t"><TexInline text={c.heading || c.title} /></span>{/if}</span>
+        <span><strong>{c.number || c.id}</strong>{#if c.heading || c.title}<span class="t"><TexInline text={c.heading || c.title} /></span>{/if}{#if c.filled}<span class="from" data-from={c.evidence_from}>From {c.evidence_from}</span>{:else if c.missing}<span class="from" data-from="missing">Not in this audit</span>{/if}</span>
       </a></li>
     {/each}</ol>
     {#if scoped}<button class="more" onclick={() => showScope = !showScope}>{showScope ? "Hide scope decisions" : `Include scope decisions (${scoped})`}</button>{/if}
@@ -108,7 +108,7 @@
             aria-valuemin="320" aria-valuemax={maxWidth} aria-valuenow={Math.min(sideWidth, maxWidth)} aria-valuetext={`${Math.min(sideWidth, maxWidth)} pixels`}
             onpointerdown={drag} onkeydown={resizeKey}></div>{/if}
           {#if claimId}<Passport {index} {claimId} {editable} comparison={comparing} />
-          {:else}<div class="side-head"><strong>About this paper</strong><button class="x" onclick={() => showInfo = false} aria-label="Close formalisations">×</button></div><PaperInfo paper={index.paper} />{/if}
+          {:else}<div class="side-head"><strong>About this paper</strong><button class="x" onclick={() => showInfo = false} aria-label="Close formalisations">×</button></div><PaperInfo paper={index.paper} {index} />{/if}
         </aside>
       {/if}
     </div>
@@ -126,24 +126,27 @@
   .grow { flex: 1; }
   .edition { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 14px; }
   .edition select { min-width: 0; max-width: min(440px, 65vw); }
+  /* Each pane is the containing block of its absolutely positioned content (KaTeX's hidden
+     MathML among it), so that content scrolls inside the pane and never lengthens the page. */
   .reader-layout { display: grid; grid-template-columns: minmax(0, 1fr); flex: 1; min-height: 0; }
   .reader-layout.contents { grid-template-columns: 260px minmax(0, 1fr); }
   .reader-layout.open { grid-template-columns: minmax(0, 1fr) minmax(320px, var(--side-w)); }
   .reader-layout.contents.open { grid-template-columns: 260px minmax(0, 1fr) minmax(320px, var(--side-w)); }
   .reader-layout.comparing { grid-template-columns: minmax(0, 1fr); }
   .reader-layout.contents.comparing { grid-template-columns: 260px minmax(0, 1fr); }
-  .paperpane { min-width: 0; min-height: 0; overflow: auto; background: var(--surface-2); }
+  .paperpane { position: relative; min-width: 0; min-height: 0; overflow: auto; background: var(--surface-2); }
   .concealed { display: none; }
   .side { position: relative; min-width: 0; min-height: 0; overflow: auto; border-left: 1px solid var(--border); padding: 20px 20px 48px; }
   .side-head, .toc-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
   .drag { position: absolute; left: 0; top: 0; bottom: 0; width: 8px; cursor: col-resize; z-index: 4; }
   .drag:hover, .drag:focus-visible { background: var(--accent-soft); }
-  .toc { overflow: auto; background: var(--surface); border-right: 1px solid var(--border); min-height: 0; }
+  .toc { position: relative; overflow: auto; background: var(--surface); border-right: 1px solid var(--border); min-height: 0; }
   .toc-head { position: sticky; top: 0; background: var(--surface); padding: 8px 12px; border-bottom: 1px solid var(--border); }
   .toc ol { list-style: none; margin: 0; padding: 6px; }
   .toc a { display: flex; gap: 8px; padding: 8px; border-radius: var(--radius); color: var(--text); font-size: 14px; text-decoration: none; }
   .toc a:hover { background: var(--surface-2); }
   .toc a.sel { background: var(--accent-soft); }
+  .from { display: block; font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
   .t { display: block; color: var(--muted); line-height: 1.4; overflow-wrap: anywhere; }
   .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--st); flex: none; margin-top: 7px; }
   .x { border: 0; background: none; font-size: 22px; cursor: pointer; min-width: var(--control-height); }

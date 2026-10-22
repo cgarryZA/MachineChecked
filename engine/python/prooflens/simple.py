@@ -20,6 +20,7 @@ from importlib import resources
 from pathlib import Path
 
 from .config import STANDARD_AXIOMS, Config, Paper, Publish
+from .review_sources import marker_safe, report_digests
 from .probe import ProbeError, by_library, fingerprint, lean_session, lean_source, lib_names
 from .sources import acquire
 from .moddocs import stale_doc_names
@@ -101,9 +102,12 @@ def find_papers(root: Path) -> list[Path]:
 # -- claims from the paper -------------------------------------------------------------------
 
 def anchor_key(a: dict) -> str:
-    """The key a statement environment's claim has in zero configuration."""
+    """The key a statement environment's claim has in zero configuration: its label, its
+    environment and number, or its environment and place; made safe for a review marker to
+    record (`review_sources.marker_safe`)."""
     num = a.get("number")
-    return a.get("label") or (f"{a['env']}-{num}" if num else f"{a['env']}@{a['file']}:{a['line']}")
+    return marker_safe(a.get("label") or (f"{a['env']}-{num}" if num
+                                          else f"{a['env']}@{a['file']}:{a['line']}"))
 
 
 def claims_from_anchors(pid: str, anchors: list[dict], snap: Path) -> list[dict]:
@@ -541,6 +545,11 @@ def load_review_reports(root: Path) -> tuple[dict[str, list[dict]], list[str]]:
             if not isinstance(unit, str) or key in seen:
                 continue
             seen.add(key)
+            # A report made before claim keys were made safe for markers names the key as it
+            # was (`anchor_key`).
+            kind, _, rest = unit.partition(":")
+            if kind in ("link", "step"):
+                unit = f"{kind}:{marker_safe(rest)}"
             out.setdefault(unit, []).append(r)
     return out, notes
 
@@ -549,20 +558,29 @@ def _text(x) -> str:
     return x[:REVIEW_TEXT_CHARS] if isinstance(x, str) else ""
 
 
-def review_view(r: dict, links: list[dict]) -> dict:
-    """A report as the reader shows it, and whether it is current: it reviewed exactly the
-    claim's linked declarations, with the statements they have now (`None` when the Lean was
-    not checked, so their statements are unknown)."""
+def review_view(r: dict, links: list[dict], claim: dict) -> dict:
+    """A report as the reader shows it, and whether it is current: it read the claim's passage
+    as the paper now prints it (the digest it pinned is the claim's `source_sha256`) and
+    reviewed exactly the claim's linked declarations, with the statements they have now
+    (`None` when the passage is unchanged but the Lean was not checked, so their statements are
+    unknown). A report that is not current says why (`why`): `declarations`, `source-changed`
+    (it read another text of the passage) or `source-unrecorded` (it pinned no text)."""
     pins = r.get("pins") or {}
     fps = pins.get("fingerprints") or {}
     now = {}
     for l in links:
         rec = l.get("record") or {}
         now[l["name"]] = rec.get("fingerprint") or (rec.get("decl") or {}).get("fingerprint")
+    read = (report_digests(r) or {}).get(claim["id"])
+    why = None
     if not links or any(v is None for v in now.values()):
         current = None
+    elif set(fps) != set(now) or any(fps[n] != now[n] for n in now):
+        current, why = False, "declarations"
     else:
-        current = set(fps) == set(now) and all(fps[n] == now[n] for n in now)
+        current = True
+    if why is None and (read is None or read != claim.get("source_sha256")):
+        current, why = False, "source-unrecorded" if read is None else "source-changed"
     rv, verdict = r.get("reviewer") or {}, r.get("verdict") or {}
     return {"reviewer": {k: rv.get(k) for k in ("id", "kind", "name", "model", "identity",
                                                  "same_family_as_author")},
@@ -574,7 +592,8 @@ def review_view(r: dict, links: list[dict]) -> dict:
             "locked_at": (r.get("reading") or {}).get("locked_at"),
             "submitted_at": r.get("submitted_at"),
             "reviewed": sorted(fps), "release": pins.get("release"),
-            "project_commit": pins.get("project_commit"), "current": current}
+            "project_commit": pins.get("project_commit"), "current": current,
+            **({"why": why} if why else {})}
 
 
 def route_link_names(claim: dict, entry: dict) -> list[str]:
@@ -650,10 +669,17 @@ def links_key(root: Path, paper_path: Path) -> str:
 
 
 def load_links(root: Path) -> dict:
+    """The links file, its claims keyed as `anchor_key` now keys them: a key written before keys
+    were made safe for markers is read as its safe form, unless that form is there too."""
     p = links_file(root)
     if not p.exists():
         return {"version": 1, "papers": {}}
-    return read_json(p)
+    data = read_json(p)
+    for paper, links in (data.get("papers") or {}).items():
+        if isinstance(links, dict) and any(marker_safe(k) != k for k in links):
+            data["papers"][paper] = {
+                (k if marker_safe(k) in links else marker_safe(k)): v for k, v in links.items()}
+    return data
 
 
 def save_link(root: Path, paper: str, key: str, lean: list[str] | None, rejected: list[str]
@@ -1606,7 +1632,7 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
                 "missing" in (r.get("errors") or []) for r in recs) else None)
             bridge = bridge_evidence(c, entry, accept, _one(linkrecs.get(target, [])), decls)
         c["correspondence"] = correspondence(c, entry, bridge) if c["links"] else None
-        c["reviews"] = [review_view(r, c["links"]) for r in reports.get("link:" + c["key"], [])]
+        c["reviews"] = [review_view(r, c["links"], c) for r in reports.get("link:" + c["key"], [])]
         c["references"] = claim_references(c, numbering)
         if c["links"]:
             worst = max(c["links"], key=lambda l: ["proved", "unspecified", "open", "malformed"]
@@ -1707,7 +1733,7 @@ def write_view_site(view: dict, site: Path, web_dist: Path | None,
     by_id = {c["id"]: c for c in body["claims"]}
     for c in body["claims"]:
         anchor = next((a for a in body["tex"].get("anchors", [])
-                       if (a.get("label") or f"{a['env']}-{a.get('number')}") == c["key"]), None)
+                       if anchor_key(a) == c["key"]), None)
         fname = mf.claim_file(c["id"])
         akind = "approximate" if anchor and anchor.get("kind") == "pdf" else "exact"
         la = c.get("line_anchor")

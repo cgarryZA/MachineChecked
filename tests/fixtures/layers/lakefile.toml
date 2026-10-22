@@ -1,0 +1,10 @@
+name = "layers"
+defaultTargets = ["Base", "Ext"]
+
+[[lean_lib]]
+name = "Base"
+globs = ["Base.+"]
+
+[[lean_lib]]
+name = "Ext"
+globs = ["Ext.+"]
