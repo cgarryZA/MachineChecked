@@ -2,6 +2,7 @@
 the exported report is one `review promote` accepts unchanged."""
 
 import json
+import shutil
 from pathlib import Path
 
 import pytest
@@ -61,6 +62,54 @@ def test_a_unit_from_the_queue_to_a_promotable_report(toy, tmp_path, monkeypatch
     assert r["reading"]["locked_at"] <= r["comparison"]["decided_at"] <= \
         r["author_review"]["shown_at"] <= r["submitted_at"]
     (_, _, why), = pr.plan(cfg, reports)
+    assert not why, why
+
+
+@needs_lean
+@needs_tex
+def test_a_review_after_importing_an_informed_investigation_is_not_blind(toy, tmp_path,
+                                                                         monkeypatch, capsys):
+    """#252: an informed investigation made in another copy of the project and imported here is
+    what its reviewer had seen. Their report lists it and `review promote` refuses it without
+    --allow-revealed; another reviewer's report of the same unit is blind."""
+    _, _, cfg = build(toy)
+    monkeypatch.chdir(toy)
+    saved = tmp_path / "work.json"
+    cli.main(["workspace", "open", "--mode", "informed", *WHO])
+    cli.main(["workspace", "export", "--out", str(saved), *WHO])
+    shutil.rmtree(cfg.out_dir / "review-work")
+    cli.main(["workspace", "import", str(saved), *WHO])
+    wid = json.loads(saved.read_text())["id"]
+    reading, comparison, none = (tmp_path / n for n in ("reading.md", "comparison.md", "none.md"))
+    reading.write_text("T_n is the sum 0 + 1 + ... + n, defined for every natural number n.")
+    comparison.write_text("The recursion adds n + 1 to T_n; T_0 = 0. It is the paper's sum.")
+    none.write_text("none")
+    capsys.readouterr()
+    reports = {}
+    for who in (WHO, ["--as", "human:Other-Referee"]):
+        def step(*args):
+            cli.main(["review", *args, *who])
+            return capsys.readouterr().out
+        seen = "will not be blind" in step("read", UNIT)
+        assert seen == (who == WHO)
+        step("lock", UNIT, str(reading))
+        step("show", UNIT)
+        step("decide", UNIT, "faithful", str(comparison))
+        step("author", UNIT)
+        step("submit", UNIT, str(none))
+        out = tmp_path / f"reports-{len(reports)}.json"
+        step("export", "--out", str(out))
+        reports[who[1]], = pr.load_reports([out])
+    mine, theirs = reports[WHO[1]], reports["human:Other-Referee"]
+    assert {(s["unit"], s["what"]) for s in mine["reading"]["revealed_by"]} == {
+        (f"workspace {wid} (informed investigation)", "Lean"),
+        (f"workspace {wid} (informed investigation)", "author's review")}
+    assert theirs["reading"]["revealed_by"] == []
+    (_, _, why), = pr.plan(cfg, [mine])
+    assert any("not blind" in w for w in why), why
+    (_, _, why), = pr.plan(cfg, [mine], allow_revealed=True)
+    assert not why, why
+    (_, _, why), = pr.plan(cfg, [theirs])
     assert not why, why
 
 

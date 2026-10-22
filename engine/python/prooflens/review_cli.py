@@ -10,8 +10,10 @@ kept in the reviewer's workspace (`workspace.py`, `<work dir>/review-work/<revie
 
 As on the page, the order is what this program recorded: it cannot show that the reviewer did
 not read the Lean elsewhere. What other units had already shown a unit's material to this
-reviewer is recorded in the report (`reading.revealed_by`), and so is what the workspace
-records the reviewer had seen (an informed investigation has seen the Lean of every claim).
+reviewer is recorded in the report (`reading.revealed_by`), and so is what the workspaces of the
+working directory record the reviewer had seen: their own, and every other they have worked in,
+such as an informed investigation they opened or imported (which has seen the Lean of every
+claim).
 
 `next` and `status` give the open units in the queue's order (`review_queue.prioritise`), in the
 paper's, or in an order that also uses what the auditors' workspaces record as open; that last
@@ -53,6 +55,37 @@ class ReviewError(RuntimeError):
 
 def now() -> str:
     return _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _time(t) -> _dt.datetime | None:
+    """A recorded time (UTC unless it says otherwise), or None when it is not one."""
+    try:
+        at = _dt.datetime.fromisoformat(str(t).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return at if at.tzinfo else at.replace(tzinfo=_dt.timezone.utc)
+
+
+def _pinned(r: dict) -> str:
+    """The Lean a report reviewed, in the form of `Session._fp`."""
+    pins = r.get("pins") or {}
+    return pins.get("fingerprint") or json.dumps(pins.get("fingerprints") or {}, sort_keys=True)
+
+
+def _passes(work: dict, by) -> list[tuple[str, bool, bool, str | None]]:
+    """For each unit of the review work `work` (a workspace's `review`) that reached step 2 or 3:
+    its id, whether its Lean and its author's review had been shown at a time `by` accepts, and,
+    for a report, the Lean it reviewed (`_pinned`)."""
+    out = []
+    for r in work.get("reports") or []:
+        out.append(((r.get("unit") or {}).get("id"),
+                    by((r.get("reading") or {}).get("locked_at")),
+                    by((r.get("author_review") or {}).get("shown_at")), _pinned(r)))
+    for i, d in (work.get("drafts") or {}).items():
+        out.append((i, d.get("stage") != "read" and by(d.get("locked_at")),
+                    d.get("stage") == "author" and by(d.get("author_shown_at")
+                                                       or d.get("decided_at")), None))
+    return out
 
 
 def parse_reviewer(who: str, same_family: str = "unknown") -> dict:
@@ -111,9 +144,8 @@ class Session:
         return u.get("fingerprint") or json.dumps(u.get("fingerprints") or {}, sort_keys=True)
 
     def reported(self, u: dict) -> bool:
-        return any(r["unit"]["id"] == u["id"] and (r["pins"].get("fingerprint") or json.dumps(
-            r["pins"].get("fingerprints") or {}, sort_keys=True)) == self._fp(u)
-            for r in self.work["reports"])
+        return any(r["unit"]["id"] == u["id"] and _pinned(r) == self._fp(u)
+                   for r in self.work["reports"])
 
     def open_units(self, order: str = "priority") -> list[dict]:
         """The units left to review, in the order asked (`review_queue.ORDERS`): the queue's
@@ -158,27 +190,67 @@ class Session:
                               f"(read → compare → author → submitted)")
         return d
 
-    def revealed_by(self, u: dict) -> list[dict]:
-        """The units this reviewer has reached step 2 or 3 of here whose material includes u's
-        Lean or u's author review."""
-        passed = [(r["unit"]["id"], True, True) for r in self.work["reports"]]
-        passed += [(i, d["stage"] != "read", d["stage"] == "author")
-                   for i, d in self.work["drafts"].items()]
+    def is_reviewer(self, who: str | None) -> bool:
+        """Whether `who` names this reviewer, as the protocol keys a reviewer's work (the file
+        `review-work/<reviewer>.json`)."""
+        return bool(who) and wsp.reviewer_slug(who) == wsp.reviewer_slug(self.reviewer["id"])
+
+    def other_workspaces(self) -> list[dict]:
+        """The other workspaces of the working directory that this reviewer has worked in
+        (`workspace.auditors`): one they opened in another mode, one they imported, one in which
+        they recorded work."""
+        here = self.path.resolve()
+        return [ws for p, ws in wsp.list_all(self.work_dir)
+                if p.resolve() != here and any(map(self.is_reviewer, wsp.auditors(ws)))]
+
+    def revealed_by(self, u: dict, before: str | None = None) -> list[dict]:
+        """What this reviewer had already seen of u's Lean or u's author review: what each
+        workspace they have worked in records they had seen of u's claims (an informed
+        investigation has seen the Lean and the interpretations of every claim), and the units
+        whose step 2 or 3 they reached, here or in another workspace of theirs, whose material
+        includes u's Lean or u's author review. With `before`, only what was recorded by that
+        time; a record without its time counts."""
+        def by(t) -> bool:
+            if before is None or not t:
+                return True
+            at, limit = _time(t), _time(before)
+            return at is None or limit is None or at <= limit
+
         out = []
-        for e in wsp.exposed(self.workspace, [c["id"] for c in u.get("claims") or []]):
-            for what in e["what"]:
-                what = {"prior interpretations": "author's review"}.get(what, what)
-                item = {"unit": f"workspace {self.workspace['id']} ({e.get('how')})",
-                        "what": what}
-                if what in ("Lean", "author's review") and item not in out:
-                    out.append(item)
-        for i, lean, author in passed:
-            r = (self.units.get(i) or {}).get("reveals") or {}
-            if i == u["id"]:
-                continue
-            for what, ok, key in (("Lean", lean, "lean"), ("author's review", author, "author")):
-                if ok and u["id"] in r.get(key, []) and {"unit": i, "what": what} not in out:
-                    out.append({"unit": i, "what": what})
+
+        def add(unit: str, what: str) -> None:
+            if {"unit": unit, "what": what} not in out:
+                out.append({"unit": unit, "what": what})
+
+        others = self.other_workspaces()
+        ids = [c["id"] for c in u.get("claims") or []]
+        for ws in [self.workspace, *others]:
+            for e in wsp.exposed(ws, ids):
+                if not by(e.get("at")):
+                    continue
+                for what in e["what"]:
+                    what = {"prior interpretations": "author's review"}.get(what, what)
+                    if what in ("Lean", "author's review"):
+                        add(f"workspace {ws['id']} ({e.get('how')})", what)
+        mine = [ws for ws in others if self.is_reviewer((ws.get("reviewer") or {}).get("id"))]
+        for ws in [self.workspace, *mine]:
+            own = ws is self.workspace
+            for i, lean, author, pinned in _passes(ws.get("review") or {}, by):
+                unit = i if own else f"{i} (workspace {ws['id']})"
+                if i == u["id"]:
+                    # Here the unit's draft is this review. Another workspace's draft of it, or
+                    # its report of the same Lean, is this reviewer's earlier sight of it; a
+                    # report of other Lean is an earlier review, as a reopened review is here.
+                    if not own and pinned in (None, self._fp(u)):
+                        for what, ok in (("Lean", lean), ("author's review", author)):
+                            if ok:
+                                add(unit, what)
+                    continue
+                r = (self.units.get(i) or {}).get("reveals") or {}
+                for what, ok, key in (("Lean", lean, "lean"),
+                                      ("author's review", author, "author")):
+                    if ok and u["id"] in r.get(key, []):
+                        add(unit, what)
         return out
 
     # -- what each step shows --------------------------------------------------------------
@@ -279,6 +351,11 @@ class Session:
         d = self.draft(u, "author")
         if "author_shown_at" not in d:
             raise ReviewError(f"{uid}: read the author's review first (`review author`)")
+        # What reached this working directory after the lock (an investigation imported since,
+        # say) but was seen before it is part of what the reading was not blind to.
+        seen = list(d.get("revealed_by") or [])
+        seen += [s for s in self.revealed_by(u, before=d.get("locked_at")) if s not in seen]
+        d["revealed_by"] = seen
         r = report(self.index, u, d, self.reviewer, disagreements or "none")
         self.work["reports"].append(r)
         del self.work["drafts"][uid]

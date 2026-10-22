@@ -296,8 +296,12 @@ lists them beside the review markers the new release reopened, each with what ch
 ([What changed since the last release](ASSURANCE.md#what-changed-since-the-last-release)). A cited fact inside a proof is `stale` once that proof
 changes, even when the theorem's statement does not. Re-pin a record with `"repin": true` once you have checked it
 again. Changing to independent mode, or importing, keeps what the workspace records you had seen,
-so an informed investigation never becomes a blind review: a report made with `machinechecked
-review` lists that exposure, and `review promote` refuses it without `--allow-revealed`.
+so an informed investigation never becomes a blind review. A report made with `machinechecked
+review` lists the exposure of every workspace in the working directory that you (the reviewer
+`--as` names) opened, imported or recorded work in, and the units whose Lean or author's review
+your review work in them showed. Exposure that an import brings after you lock a reading counts
+when it was recorded before the lock. `review promote` refuses the report without
+`--allow-revealed`.
 
 **What a published audit carries.** `machinechecked export` (and `build --site`, `check --site`)
 publishes, for each claim, the records you have accepted: the requirements, the passages

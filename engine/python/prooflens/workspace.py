@@ -938,6 +938,19 @@ def exposed(ws: dict, claim_ids: list[str]) -> list[dict]:
             if e.get("claims") is None or set(e["claims"]) & set(claim_ids)]
 
 
+def auditors(ws: dict) -> set[str]:
+    """Everyone the workspace records as having worked in it: its reviewer, the authors of its
+    records and of its edits (refused ones too), whoever set where to resume, and whoever changed
+    its mode or imported it. What the workspace records as seen, each of them had seen."""
+    out = {(ws.get("reviewer") or {}).get("id"), (ws.get("resume") or {}).get("by")}
+    for r in (ws.get("records") or {}).values():
+        if isinstance(r, dict):
+            out |= {r.get(k) for k in ("created_by", "updated_by", "state_by")}
+    for k in ("conflicts", "provenance"):
+        out |= {e.get("by") for e in ws.get(k) or [] if isinstance(e, dict)}
+    return {x for x in out if isinstance(x, str) and x}
+
+
 # -- moving it between machines -------------------------------------------------------------
 
 def export(path: Path) -> dict:
