@@ -3,12 +3,13 @@
 The probe reports every backticked name in a module docstring (`/-! … -/`) of the project that
 resolves to no declaration of the project or its dependencies (`moddoc` records). It resolves a
 name as Lean resolves an identifier, inside the namespaces the module's file enters or declares
-into and with every namespace the file opens (#198), and says when the name is only a module or
-a namespace (#202). Most names that resolve to nothing are notation or variables; the ones
-listed here have the shape of a declaration of the project, and a module or namespace is always
-listed. Both modes report them: the zero-configuration view as warnings of
-`check` and a note in the reader, the full assessment as findings of the `warning` tier, which
-never change a status and can be dismissed.
+into and with every namespace the file opens (#198). A module or namespace written in full is
+accepted; a shorter name that reaches only a module or a namespace through the file's namespaces
+is reported as what it reaches (#202). Most names that resolve to nothing are notation or
+variables; the ones listed here have the shape of a declaration of the project. Both modes
+report them: the zero-configuration view as warnings of `check` and a note in the reader, the
+full assessment as findings of the `warning` tier, which never change a status and can be
+dismissed.
 """
 
 from __future__ import annotations
@@ -21,9 +22,9 @@ def stale_doc_names(records: list[dict]) -> list[dict]:
     (`moddoc` records, which hold every backticked name the environment does not know): a
     dotted name whose first part is capitalised (`Widget.foo_le_bar`), or the name a list item
     under a "Main …" heading begins with. Short and symbol-like names (`L`, `W₂`) are left
-    alone, as notation more often than a declaration. A name that is only a module or a
-    namespace (`kind`) is listed when it is capitalised or dotted, as the name of a declaration
-    that is gone. Each once, by file and line."""
+    alone, as notation more often than a declaration. A short name that reaches only a module
+    or a namespace (`kind`) is listed when it is capitalised or dotted, as the name of a
+    declaration that is gone. Each once, by file and line."""
     out, seen = [], set()
     for r in records:
         n = r["name"]
@@ -46,9 +47,7 @@ def stale_doc_message(d: dict) -> str:
     where = f"{d['file']}:{d['line']}: module docstring names {d['name']}"
     kind = d.get("kind", "none")
     if kind in ("module", "namespace"):
-        full = d.get("full") or d["name"]
-        what = f"a {kind}" if full == d["name"] else f"the {kind} {full}"
-        return f"{where}, which is {what}, not a declaration"
+        return f"{where}, which is the {kind} {d.get('full') or d['name']}, not a declaration"
     return f"{where}, which is not declared"
 
 

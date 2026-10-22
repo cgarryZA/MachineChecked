@@ -1057,17 +1057,12 @@ def fileScopes (src : String) : MetaM (Array Name × List OpenDecl) := do
     | _ => pure ()
   return (spaces, opens)
 
-/-- Whether the line `l` calls what it names a module or a namespace. -/
-def saysModule (l : List Char) : Bool :=
-  let w := charsToString (l.map Char.toLower)
-  (w.splitOn "module").length > 1 || (w.splitOn "namespace").length > 1
-
 /-- Every backticked name in the docstrings of the modules of `roots` that resolves to no
 constant: its module, its line, the heading it is under, whether it begins a list item, and
 what it is instead (`kind`: a `module`, a `namespace`, or `none`, with its `full` name). A name
 is resolved as Lean resolves an identifier, inside each namespace the module's file enters or
-declares into and with every namespace its file opens (`scopes`). A module or namespace named
-in full on a line that calls it a module or a namespace is not reported. -/
+declares into and with every namespace its file opens (`scopes`). A module or namespace written
+in full is not reported: only a shorter name that reaches one through the file's namespaces. -/
 def moduleDocRecords (h : IO.FS.Handle) (roots : Array Name) : MetaM Unit := do
   let env ← getEnv
   let names := env.header.moduleNames
@@ -1133,19 +1128,16 @@ def moduleDocRecords (h : IO.FS.Handle) (roots : Array Name) : MetaM Unit := do
             if nameLike tok then
               let n := (splitChars '.' tok).foldl (fun n p => Name.str n (charsToString p))
                 .anonymous
-              unless ← constant n do
+              let inFull := (env.getModuleIdx? n).isSome || env.isNamespace n
+              unless inFull || (← constant n) do
                 let what ← other n
-                let marked := match what with
-                  | some (_, full) => full == n && saysModule l
-                  | none => false
-                unless marked do
-                  emit h (Json.mkObj [("record", "moddoc"), ("module", mod.toString),
-                    ("line", toJson line), ("name", Json.str (charsToString tok)),
-                    ("heading", Json.str (charsToString heading)),
-                    ("item_lead", toJson (item && k == 1)),
-                    ("kind", Json.str (what.map (·.1) |>.getD "none")),
-                    ("full", Json.str ((what.map (·.2)).getD n).toString),
-                    ("scopes", scopesJson)])
+                emit h (Json.mkObj [("record", "moddoc"), ("module", mod.toString),
+                  ("line", toJson line), ("name", Json.str (charsToString tok)),
+                  ("heading", Json.str (charsToString heading)),
+                  ("item_lead", toJson (item && k == 1)),
+                  ("kind", Json.str (what.map (·.1) |>.getD "none")),
+                  ("full", Json.str ((what.map (·.2)).getD n).toString),
+                  ("scopes", scopesJson)])
             k := k + 2
         line := line + 1
 

@@ -38,7 +38,8 @@ statuses come from (it changes when the paper, the links or the Lean change). Ea
 `unspecified`), and the skill explains both.
 Without a `machinechecked.toml`, `warnings` lists names in module docstrings that the project
 and its dependencies do not declare (`kind` `module-doc-name`, with `file`, `line`, `name` and
-`message`; the message says when the name is only a module or a namespace), and references to the paper's numbers that disagree with the paper read here
+`message`; the message says when a short name reaches only a module or a namespace), and
+references to the paper's numbers that disagree with the paper read here
 (`kind` `paper-reference`, with `file`, `line`, `reference`, `status`, `id` and `message`);
 they do not change the exit code. `numbering` holds every such reference
 (`numbering.references`: `reference`, its exact `text` and `context`, its `source` with

@@ -2,8 +2,8 @@
 synthetic project tests/fixtures/structure with one more module: `check` lists each such name
 with its file and line, the reader's notes say so, and names that resolve to a declaration (in
 the namespaces the module enters or opens, a private declaration, a dependency's) are not
-listed. A name that is only a module or a namespace is listed as such, unless the line calls it
-a module or a namespace and writes it in full."""
+listed. A module or namespace written in full is accepted; a shorter name that reaches only a
+module or a namespace through the file's namespaces is listed as what it reaches."""
 
 import json
 import shutil
@@ -35,11 +35,11 @@ WIDGETS = '''import Shape.Gizmo
 * `gone_lemma` — deleted too.
 * `L` — notation, not checked.
 
-See the module `Shape.Main`, `Nat.le_refl` and the namespace `Shape`; the proofs use `omega`,
-and a widget `w` has `w.bar`.
+See `Shape.Main`, `Nat.le_refl`, `Shape` and `Gizmo.Parts`; the proofs use `omega`, and a
+widget `w` has `w.bar`.
 
 The parts are bounded by `Parts.part_le`, through the namespace opened below; `Parts.part_gone`
-is gone. The old structure `Widgets` and `Gizmo.Parts` are no declarations.
+is gone. The old structures `Widgets` and `Parts` are no declarations.
 
 ```
 example : Shape.Widget.ghost := sorry
@@ -69,11 +69,13 @@ end Gizmo.Parts
 '''
 
 # Each listed name, by line of WIDGETS: a declaration that is gone, a name that resolves to
-# nothing, and a module and a namespace named where a declaration is expected.
+# nothing, and short names that reach a module and a namespace where a declaration is expected.
+# The module `Shape.Main` and the namespaces `Shape` and `Gizmo.Parts`, written in full, are not
+# listed.
 EXPECTED = [("Shape/Widgets.lean", 14, "Shape.Widget.foo_le_bar"),
             ("Shape/Widgets.lean", 15, "gone_lemma"),
             ("Shape/Widgets.lean", 21, "Parts.part_gone"),
-            ("Shape/Widgets.lean", 22, "Gizmo.Parts"),
+            ("Shape/Widgets.lean", 22, "Parts"),
             ("Shape/Widgets.lean", 22, "Widgets")]
 
 
@@ -113,8 +115,10 @@ def test_stale_names_in_module_docstrings_are_listed(tmp_path, monkeypatch, caps
             "which is not declared") in out
     assert ("warning: Shape/Widgets.lean:22: module docstring names Widgets, which is the "
             "module Shape.Widgets, not a declaration") in out
-    assert ("warning: Shape/Widgets.lean:22: module docstring names Gizmo.Parts, which is a "
-            "namespace, not a declaration") in out
+    assert ("warning: Shape/Widgets.lean:22: module docstring names Parts, which is the "
+            "namespace Gizmo.Parts, not a declaration") in out
+    # Modules and namespaces written in full are not listed, whatever the line says.
+    assert not any(f"names {n}," in out for n in ("Shape.Main", "Shape", "Gizmo.Parts"))
     # A name that resolves through the namespace the file opens is not listed.
     assert "Parts.part_le," not in out
     cli.main(["check", "--json", "paper/main.tex"])
@@ -162,16 +166,18 @@ def test_docstring_names_are_kept_with_the_facts_until_the_module_changes(tmp_pa
 
 
 def test_a_module_or_namespace_is_listed_as_what_it_is():
-    """A name that is only a module or a namespace is listed whatever its shape (a capitalised
-    word is the name of a structure that is gone), and its message says what it is."""
+    """A short name that reaches only a module or a namespace is listed when it is capitalised
+    or dotted (a capitalised word is the name of a structure that is gone), and its message
+    names what it reaches."""
     from prooflens.moddocs import stale_doc_message
 
     def rec(name, kind, full=None):
         return {"record": "moddoc", "module": "A.B", "line": 3, "name": name, "heading": "",
                 "item_lead": False, "kind": kind, "full": full or name}
-    found = stale_doc_names([rec("Widget", "module", "A.Widget"), rec("Tools", "namespace"),
+    found = stale_doc_names([rec("Widget", "module", "A.Widget"), rec("Tools", "namespace", "A.Tools"),
                              rec("Widget", "none"), rec("tools", "namespace")])
     assert [stale_doc_message(d) for d in found] == [
-        "A/B.lean:3: module docstring names Tools, which is a namespace, not a declaration",
+        "A/B.lean:3: module docstring names Tools, which is the namespace A.Tools, not a "
+        "declaration",
         "A/B.lean:3: module docstring names Widget, which is the module A.Widget, not a "
         "declaration"]
