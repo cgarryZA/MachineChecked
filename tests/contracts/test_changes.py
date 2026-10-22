@@ -320,6 +320,13 @@ def test_toy_a_definition_change_and_a_proof_edit(toy, capsys):
     assert chg.due(site) == chg.due({k: v for k, v in doc.items() if k != "workspace"})
     assert json.loads((cfg.out_dir / "site/data/index.json").read_text())["changes"] == \
         "data/changes.json"
+    # The review queue offers the reopened definition first, with why (#128).
+    queue = json.loads((cfg.out_dir / "site/data/review-queue.json").read_text())
+    first = next(u for u in queue["units"] if u["state"] != "reviewed")
+    assert first["id"] == "def:Toy.IsEven" and first["priority"]["tier"] == "reopened"
+    assert first["reason"].startswith("Reopened since the last release: this definition's Lean "
+                                      "changed;")
+    assert queue["order"]["signals"]["changes"]["state"] == "read"
     out = toy.parent / "export"
     cli.main(["export", "-c", str(toy / "machinechecked.toml"), "--out", str(out),
               "--data-only"])

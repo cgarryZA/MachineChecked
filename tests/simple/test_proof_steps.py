@@ -10,7 +10,7 @@ import pytest
 
 from conftest import needs_lean, needs_tex
 from prooflens.manifest import claim_file
-from prooflens.review_queue import simple_queue
+from prooflens.review_queue import prioritise, simple_queue
 from prooflens.simple import build_view, built_modules, save_link, save_route, write_view_site
 from prooflens.steps import aux_numbers, find_proof_equations
 
@@ -144,8 +144,9 @@ def test_proof_steps_in_zero_configuration(proj):
         ids["step:P:eq:bound-range"]["state"] == "reviewed"
     assert ids["step:P:eq:bound-sum"]["state"] == "pending"
     assert "link:eq:bound-sum" not in ids
-    assert q == simple_queue(json.loads((site / "data/index.json").read_text()),
-                             {c["file"]: chunk(c["id"]) for c in index["claims"]})
+    assert q == prioritise(simple_queue(json.loads((site / "data/index.json").read_text()),
+                                        {c["file"]: chunk(c["id"]) for c in index["claims"]}),
+                           uses=v.get("uses"), unbuilt=v["body"]["project"]["unbuilt"])
 
     # Removing the route leaves the step unlinked again.
     save_route(proj, PAPER, "eq:bound-range", None)

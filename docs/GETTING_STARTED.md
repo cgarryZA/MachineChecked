@@ -100,6 +100,24 @@ the caller assumes each premise or proves it (and with what), and the conclusion
 a terminal: `machinechecked inspect NAME --used-by`, or `machinechecked compare --query uses
 NAME --json`.
 
+**How the main results use a declaration.** `machinechecked compare --query impact NAME` traces
+NAME from each main result of the paper. The main results are the declarations linked to the
+paper's theorems, shown as a suggestion; `--main` chooses them instead (a declaration, or a claim
+for its linked declarations; repeat it for several). Each main result has its own answer: *used
+by its proof*, *in its statement only*, *formalized separately: not used by this main result*,
+or *not traced*. A use comes with the shortest path of Lean references from the main result to
+NAME, direct or through other declarations, and with the applications of NAME at the end of a
+proof's path: their arguments, each premise with how it is supplied, and the result. Importing a
+module is not a use. A trace that reaches a module not built or not loaded reads *not traced*
+and names the module. The answer also lists the claims whose linked Lean uses NAME: a difference
+between NAME and the paper can matter only to these.
+
+The trace is a fact about the Lean terms of the build. *Formalized separately* describes the
+Lean: the declaration keeps its own correspondence review, and no status changes. Whether a
+difference matters at a use (say the lemma's Lean needs one more derivative than the paper
+prints, and the main proof needs only finitely many) is a reviewer's judgement: record it as a
+finding in a workspace, attributed to you ([saved investigations](REVIEWING.md#saved-investigations)).
+
 Click the evidence summary for proof checks, reviews and provenance. The ⋯ menu contains
 **Copy link**, **Report issue** and **Review it**; reviewing opens the selected claim.
 

@@ -390,7 +390,9 @@ def _claim_ref(ch: dict) -> dict:
 
 # Content a packet leaves to a targeted query, because it runs Lean.
 ON_REQUEST = [{"what": "where each declaration is used, each application's arguments and the "
-                       "source of each premise", "query": "uses"}]
+                       "source of each premise", "query": "uses"},
+              {"what": "how each main result uses a linked declaration, and which claims' Lean "
+                       "uses it", "query": "impact"}]
 
 
 def _retrieval(stage: str, sections: list[str], page: dict | None, extra: list | None = None):
@@ -579,9 +581,11 @@ QUERIES = {
                    "cases (Lean reads the proof once; the answer is cached)",
     "composition": "the auditors' compositions for a claim: the steps, the results each rests "
                    "on, substitutions, identifications, obligations and any Lean bridge",
-    "impact": "which main result uses a declaration",
+    "impact": "how each main result uses a declaration (the path from its proof or its "
+              "statement, and the applications at the end), and which claims' Lean uses it",
 }
-NOT_YET = {"impact": "#112"}
+# Queries the engine does not answer yet, by owner issue.
+NOT_YET: dict[str, str] = {}
 
 
 def linked_claims(site: Site) -> dict[str, list[str]]:
@@ -616,14 +620,16 @@ def mark_claims(doc: dict, claims: dict[str, list[str]]) -> dict:
 
 def query(site: Site, op: str, target: str, limit: int | None = None, after: str | None = None,
           root: Path | None = None, log=None, match: str | None = None,
-          workspace: str | None = None) -> dict:
+          workspace: str | None = None, main: list[str] | None = None) -> dict:
     """One targeted query: `{op, context, target, results, provenance, retrieval}`. An
     operation the engine does not extract yet answers `available: false` with its owner.
     `proof-facts` answers with the facts inside the target's proof (ranked against `match` when
     given), and the declaration, locals, cases and source-only lines in `subject`.
     `composition` answers with the compositions recorded for the target claim in the
     workspaces of the build's working directory (or in `workspace`): prior interpretations,
-    which an independent review reads only after its verdict."""
+    which an independent review reads only after its verdict. `impact` traces the target from
+    the main results named in `main` (declarations or claims), else from the declarations
+    linked to the paper's theorems (`impact.py`)."""
     if op not in QUERIES:
         raise CompareError(f"no query {op!r}; the queries are: {', '.join(QUERIES)}", "bad-query")
     out = {"schema": QUERY_SCHEMA, "op": op, "target": target, "limit": limit, "after": after,
@@ -650,6 +656,10 @@ def query(site: Site, op: str, target: str, limit: int | None = None, after: str
         from .uses import uses
         results = [mark_claims(uses(root, target, None, log=log), linked_claims(site))]
         prov = "Lean (the elaborated terms of the project), cached until a Lean input changes"
+    elif op == "impact":
+        results = [_impact(site, root, target, main, log)]
+        prov = ("Lean (the references of the project's declarations and the applications of the "
+                "target, from its elaborated terms), cached until a Lean input changes")
     elif op == "search":
         return {**out, **search(site, target, limit, after)}
     elif op == "composition":
@@ -735,6 +745,19 @@ def search(site: Site, target: str, limit: int | None = None, after: str | None 
             "provenance": "the build's content index (complete statements, docstrings, names "
                           "and the definitions each statement uses); no Lean session",
             "retrieval": res["page"]}
+
+
+def _impact(site: Site, root: Path | None, target: str, main: list[str] | None, log) -> dict:
+    """The impact document of `target` (`impact.impact`), or the reason there is none, as a
+    refusal."""
+    if root is None:
+        raise CompareError("`impact` needs the Lean project", "no-project")
+    from .impact import impact
+    from .simple import ViewError
+    try:
+        return impact(site, root, target, main, log)
+    except ViewError as e:
+        raise CompareError(str(e), "no-project") from None
 
 
 def _proof_facts(root: Path, target: str, log) -> dict:

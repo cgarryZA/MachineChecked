@@ -23,6 +23,8 @@ valid, and a Comparator replay of every proof).
 
 from __future__ import annotations
 
+import re
+
 from .status import fields
 
 from . import review_sources
@@ -264,7 +266,7 @@ class Assessor:
         last = hist[-1] if hist else None
         readers = review_sources.digests(self.inv, target, name, self.tex)
         need = {claim: readers[claim]} if claim in readers else readers
-        why = source_claim = bare = None
+        why = source_claim = bare = split = None
         record = last
         if last is None:
             state = "pending"
@@ -279,19 +281,69 @@ class Assessor:
             elif record is None:
                 why, source_claim = self._unread(last, need)
                 state = "stale"
+                split = self._split(at, need)
             else:
                 state = "author-reviewed" if record.by in self.authors else "reviewed"
-        out = {"state": state, "current": [record.to_json()] if state in (
-                   "reviewed", "author-reviewed") else [],
+        current = state in ("reviewed", "author-reviewed")
+        out = {"state": state, "current": [record.to_json()] if current else [],
                "stale": [r.to_json() for r in hist if r is not record or state == "stale"],
                "source_sha256": readers}
+        if current:
+            # The marker the state rests on, and the passages whose reading it counts for here.
+            out["rests_on"] = {"file": record.file, "line": record.line, "by": record.by,
+                               "passages": sorted(need)}
         if why:
             out["why"] = why
             if source_claim:
                 out["source_claim"] = source_claim
             if bare is not None:
                 out["marker"] = {"file": bare.file, "line": bare.line}
+            if split:
+                out["split"] = split
         return out
+
+    @staticmethod
+    def _mentions(text: str, claim: dict) -> bool:
+        """Whether review text names a claim, by its id or its printed number."""
+        if claim["id"] in text:
+            return True
+        num = claim.get("number")
+        return bool(num) and re.search(r"(?<![\w.])" + re.escape(num) + r"(?![\w]|\.\d)",
+                                       text) is not None
+
+    def _warn_other_section(self, claim: dict, subj: str, name: str, r: dict, rec: dict):
+        """A warning when the definition claim `claim` is reviewed through a marker whose review
+        text names another claim that names `name`, and not this one: the reading may have been
+        written against the other passage."""
+        if not r.get("current"):
+            return
+        text = r["current"][0].get("text") or ""
+        if self._mentions(text, claim):
+            return
+        others = [c for c in review_sources.reading_claims(self.inv, "def", name)
+                  if c["id"] != claim["id"] and self._mentions(text, c)]
+        if others:
+            m = r["current"][0]
+            self.add_warning(
+                "def-review-other-claim", subj, name,
+                {"fingerprint": rec.get("fingerprint") or rec.get("legacy_hash")},
+                f"{self._claim_label(claim['id'])} is reviewed through the review of {name} at "
+                f"{m['file']}:{m['line']}, whose text names "
+                + ", ".join(self._claim_label(c["id"]) for c in others)
+                + " and not this claim: check that it read this claim's passage",
+                f"{m['file']}:{m['line']}")
+
+    def _split(self, at: list[Review], need: dict[str, str]) -> dict | None:
+        """When every passage in `need` has a current reading, but no one marker read them all:
+        for each passage, the markers at the declaration's current hash that read it. A review
+        must read together every passage it is asked for (a definition in a statement's closure:
+        every passage that names it), so such readings do not combine."""
+        if len(need) < 2:
+            return None
+        parts = {cid: [{"file": r.file, "line": r.line, "by": r.by} for r in at
+                       if self.has_reading(r) and self._read_one(r, cid, sha) == "current"]
+                 for cid, sha in sorted(need.items())}
+        return parts if all(parts.values()) else None
 
     def has_reading(self, review: Review) -> bool:
         """Whether a marker records a reading: review text precedes it (its section, or the
@@ -366,6 +418,12 @@ class Assessor:
         if why == "source-unpinned":
             return (f" ({self.unpinned_note(r.get('source_claim'))}; pin the passage again and "
                     "record a reading of the new text)")
+        if why == "source-unread" and r.get("split"):
+            return (" (no single review read all the passages that name it, and a review must "
+                    "read them together: " + "; ".join(
+                        f"{self._claim_label(cid)} read at "
+                        + ", ".join(f"{m['file']}:{m['line']}" for m in ms)
+                        for cid, ms in r["split"].items()) + ")")
         if why == "source-unread":
             return (f" (its last review did not read the passage of "
                     f"{self._claim_label(r.get('source_claim'))})")
@@ -589,6 +647,9 @@ class Assessor:
         if cl.get("defs") and not spec:
             res["witness_candidates"] = self.witness_candidates(cl["defs"])
         res["def_reviews"] = dr
+        if not spec:
+            for n in names:
+                self._warn_other_section(claim, subj, n, dr[n], lean["decls"].get(n) or {})
         for n, d in dr.items():
             if d["state"] in ("pending", "stale"):
                 self.findings.append(_finding(

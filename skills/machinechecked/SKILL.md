@@ -90,6 +90,14 @@ violations and obligations by subject; `findings` holds only their totals.
   the lemmas a paper statement may correspond to; also search the rest of the project, since
   a lemma can be formalised without being used by that proof. If two modules declare the
   name, pass `--module`. A dependency identifies constants used by Lean terms.
+- **Does the main result use this lemma?** `machinechecked compare --query impact NAME --json`
+  answers for each main result (the declarations linked to the paper's theorems, or those
+  `--main` names): used by its proof, in its statement only, formalized separately, or not
+  traced, with the path of references and the applications of NAME at its end, and lists the
+  claims whose linked Lean uses NAME. *Formalized separately* says only that this main
+  result's Lean does not refer to NAME; *not traced* says the trace is incomplete, never that
+  NAME is unused. Whether a difference in NAME matters at a use is your reading, for the user
+  to judge.
 - **Link a claim to a declaration**: the user does it in `machinechecked view` (Link / Not
   this); with the user's agreement, `machinechecked link "Theorem 2" Pkg.name --as NAME --json`
   records it (`--reject NAME`, `--clear`; `--dry-run` first), or a `\lean{Name}` tag in the
