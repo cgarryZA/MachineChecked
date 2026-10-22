@@ -82,10 +82,14 @@ def _order_warning(c: str, spec: str, ops) -> str | None:
     unknown = sorted({o.get("carrier") or "?" for o in occ
                       if o.get("carrier_head") != "Real"
                       and o.get("lattice") not in ("complete", "conditional")})
-    if not occ:
-        unknown = ["not read: the statement is too large to walk" if not ops.get("complete", True)
-                   else "not read: it is used without its type"]
+    walked = ops.get("complete", True)
+    if not occ and walked:
+        unknown = ["not read: it is used without its type"]
     parts = []
+    if not walked:
+        # The walk stopped early: an application it did not reach may be in any type.
+        parts.append(f"the statement is too large to read the type of every {what}, so whether "
+                     "one can take a default value is unresolved")
     if real:
         parts.append(TOTALISED[c])
     if other:

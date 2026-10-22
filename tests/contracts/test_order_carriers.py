@@ -18,7 +18,7 @@ from prooflens.assess import TOTALISED, totalised
 from prooflens.probe import lean_session, parse_records
 
 SRC = ROOT / "tests" / "fixtures" / "carriers"
-SPECS = ["join", "extended", "real", "alias", "both", "sets", "plain", "poly"]
+SPECS = ["join", "extended", "real", "alias", "both", "sets", "plain", "poly", "deep"]
 REAL = TOTALISED["iSup"]
 
 
@@ -77,6 +77,13 @@ def test_each_supremum_is_judged_by_its_type(tmp_path, toolchain):
         (msg,) = warnings(recs[s]).values()
         assert "unresolved" in msg and f"({ty})" in msg and "ℝ" not in msg
 
+    # A type whose lattice search does not end: the search fails on its own, the type is
+    # unresolved, and the statement's other supremum is still read in the reals.
+    ops = {o["carrier"]: o["lattice"] for o in recs["deep"]["order_ops"]["occurrences"]}
+    assert ops == {"Deep 0": "unknown", "Real": "conditional"}
+    (msg,) = warnings(recs["deep"]).values()
+    assert msg.startswith(REAL) and "(Deep 0)" in msg and "unresolved" in msg
+
 
 def test_a_record_without_types_is_unresolved_not_real():
     rec = {"name": "P.s", "consts": ["iSup", "HDiv.hDiv"]}
@@ -85,6 +92,11 @@ def test_a_record_without_types_is_unresolved_not_real():
     assert w["HDiv.hDiv"] == f"{TOTALISED['HDiv.hDiv']} (HDiv.hDiv occurs in P.s)"
     # A walk that stopped before reaching the operation leaves it unresolved too.
     rec = {"name": "P.s", "consts": ["iSup"], "order_ops": {"occurrences": [], "complete": False}}
+    assert "too large" in warnings(rec)["iSup"]
+    # One that read some applications before it stopped still leaves the rest unresolved: a
+    # join it read does not silence a supremum it did not reach.
+    rec["order_ops"]["occurrences"] = [
+        {"const": "iSup", "carrier": "ENNReal", "carrier_head": "ENNReal", "lattice": "complete"}]
     assert "too large" in warnings(rec)["iSup"]
     # Every occurrence in a complete lattice: nothing to warn about.
     rec["order_ops"] = {"complete": True, "occurrences": [

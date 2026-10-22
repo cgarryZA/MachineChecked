@@ -72,3 +72,15 @@ structure Plain where
 
 instance : SupSet Plain where
   sSup _ := ⟨0⟩
+
+/-- A family of types whose lattice instances each ask for the next one: a search for them
+does not end. -/
+structure Deep (n : Nat) where
+  val : Nat
+
+instance (n : Nat) [CompleteLattice (Deep (n + 1))] : CompleteLattice (Deep n) where
+  sSup _ := ⟨0⟩
+  sInf _ := ⟨0⟩
+
+instance (n : Nat) : SupSet (Deep n) where
+  sSup _ := ⟨0⟩

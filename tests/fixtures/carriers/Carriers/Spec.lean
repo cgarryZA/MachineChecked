@@ -30,4 +30,7 @@ def plain : Prop := ∀ f : Nat → Plain, iSup f = iSup f
 /-- A supremum in a type the statement quantifies over. -/
 def poly : Prop := ∀ (α : Type) [SupSet α] (f : Nat → α), iSup f = iSup f
 
+/-- A supremum in a type whose lattice search does not end, beside one on the number line. -/
+def deep : Prop := ∀ (f : Nat → Deep 0) (g : Nat → Real), iSup f = iSup f ∧ iSup g = iSup g
+
 end Carriers.Spec

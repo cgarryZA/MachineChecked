@@ -865,57 +865,72 @@ def orderOps : Array Name := #[`iSup, `iInf, `SupSet.sSup, `InfSet.sInf, `sSup, 
 /-- The most nodes of a statement visited for its order operations. -/
 def opsNodes : Nat := 50000
 
+/-- `x`, or `d` when it fails, including by running out of heartbeats (a runtime exception,
+which `try` does not catch). `x` has a budget of its own. -/
+def orDefault (d : α) (x : MetaM α) : MetaM α :=
+  tryCatchRuntimeEx (withCurrHeartbeats x) fun _ => pure d
+
 /-- `complete` when Lean finds `CompleteLattice α`, `conditional` when it finds only
-`ConditionallyCompleteLattice α`, `unknown` otherwise. -/
+`ConditionallyCompleteLattice α`, `unknown` otherwise (also when the search fails). -/
 def latticeOf (α : Expr) : MetaM String := do
-  let has (c : Name) : MetaM Bool := do
-    try
-      return (← synthInstance? (← mkAppM c #[α])).isSome
-    catch _ => return false
+  let has (c : Name) : MetaM Bool :=
+    orDefault false do return (← synthInstance? (← mkAppM c #[α])).isSome
   if ← has `CompleteLattice then return "complete"
   if ← has `ConditionallyCompleteLattice then return "conditional"
   return "unknown"
 
-partial def opsVisit (e : Expr) (out : IO.Ref (Array Json)) (budget : IO.Ref Nat) :
-    MetaM Unit := do
+/-- The record of a carrier, computed once per walk. -/
+def carrierJson (α : Expr) (cache : IO.Ref (Array (Expr × List (String × Json)))) :
+    MetaM (List (String × Json)) := do
+  if let some (_, j) := (← cache.get).find? (·.1 == α) then return j
+  let r ← orDefault α (whnfR α)
+  let head := match r.getAppFn with
+    | .const h _ => h.toString
+    | _ => ""
+  let carrier ← orDefault "" (toString <$> ppExpr α)
+  let j := [("carrier", Json.str carrier), ("carrier_head", Json.str head),
+    ("lattice", Json.str (← latticeOf α))]
+  cache.modify (·.push (α, j))
+  return j
+
+partial def opsVisit (e : Expr) (out : IO.Ref (Array Json)) (budget : IO.Ref Nat)
+    (cache : IO.Ref (Array (Expr × List (String × Json)))) : MetaM Unit := do
   if (← budget.get) == 0 then return
   budget.modify (· - 1)
   match e with
   | .forallE n t b bi | .lam n t b bi =>
-    opsVisit t out budget
-    withLocalDecl n bi t fun x => opsVisit (b.instantiate1 x) out budget
+    opsVisit t out budget cache
+    withLocalDecl n bi t fun x => opsVisit (b.instantiate1 x) out budget cache
   | .letE n t v b _ =>
-    opsVisit t out budget
-    opsVisit v out budget
-    withLetDecl n t v fun x => opsVisit (b.instantiate1 x) out budget
-  | .mdata _ b => opsVisit b out budget
-  | .proj _ _ b => opsVisit b out budget
+    opsVisit t out budget cache
+    opsVisit v out budget cache
+    withLetDecl n t v fun x => opsVisit (b.instantiate1 x) out budget cache
+  | .mdata _ b => opsVisit b out budget cache
+  | .proj _ _ b => opsVisit b out budget cache
   | .app .. =>
     let f := e.getAppFn
     let args := e.getAppArgs
     if let .const c _ := f then
       if orderOps.contains c && args.size > 0 then
-        let α := args[0]!
-        let r ← try whnfR α catch _ => pure α
-        let head := match r.getAppFn with
-          | .const h _ => h.toString
-          | _ => ""
-        let carrier ← try (toString <$> ppExpr α) catch _ => pure ""
-        out.modify (·.push (Json.mkObj [("const", c.toString), ("carrier", carrier),
-          ("carrier_head", head), ("lattice", ← latticeOf α)]))
+        let j ← carrierJson args[0]! cache
+        out.modify (·.push (Json.mkObj (("const", Json.str c.toString) :: j)))
     else
-      opsVisit f out budget
+      opsVisit f out budget cache
     for a in args do
-      opsVisit a out budget
+      opsVisit a out budget cache
   | _ => pure ()
 
 /-- Each application of an order operation in `e`, with its carrier; `complete: false` when
-the walk reached its limit. -/
+the walk reached its limit or failed, so that some applications may be missing. -/
 def orderOpsJson (e : Expr) : MetaM Json := do
   let out ← IO.mkRef #[]
   let budget ← IO.mkRef opsNodes
-  opsVisit e out budget
-  return Json.mkObj [("occurrences", Json.arr (← out.get)), ("complete", (← budget.get) != 0)]
+  let cache ← IO.mkRef #[]
+  let finished ← orDefault false do
+    opsVisit e out budget cache
+    return true
+  return Json.mkObj [("occurrences", Json.arr (← out.get)),
+    ("complete", finished && (← budget.get) != 0)]
 
 def disallowed (allowed : Array Name) (axs : Array Name) : Array Name :=
   axs.filter (!allowed.contains ·)
