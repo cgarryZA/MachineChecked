@@ -133,7 +133,7 @@ def test_a_packet_holds_the_whole_passage_and_the_whole_statement(site):
     assert pk["snapshot"]["release"] == "v-synthetic" and pk["snapshot"]["project"]["commit"]
     # What the build does not extract is named with its owner, not implied absent.
     assert {u["owner"] for u in pk["retrieval"]["unavailable"]} >= {"#97", "#98"}
-    assert [q["query"] for q in pk["retrieval"]["on_request"]] == ["uses"]
+    assert [q["query"] for q in pk["retrieval"]["on_request"]] == ["uses", "impact"]
 
 
 def test_pdf_text_and_missing_text_say_where_they_come_from(site):

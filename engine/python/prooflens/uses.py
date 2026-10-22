@@ -485,6 +485,29 @@ def app_currency(root: Path | None, ref: dict, check_now: bool = False) -> dict:
                                            "now": now, "reason": "the application changed"}]}
 
 
+def reference_records(root: Path) -> dict:
+    """The `refs` records of the project's built modules that the facts store holds current,
+    read without starting Lean (`compare --query impact` reads them after `uses`):
+    `{records, built, unbuilt, missing}`, where `missing` lists the built modules whose records it
+    does not hold (changed since they were read, or not loaded)."""
+    libs = lib_names(root)
+    built, unbuilt = built_modules(root, libs) if libs else ([], [])
+    from .deps import store
+    st = store(root, libs)
+    out, missing = [], []
+    for m in built:
+        e, _ = st.get("index", m)
+        if e is None or "refs" not in e:
+            missing.append(m)
+        else:
+            out += e["refs"]
+    if missing:
+        e, _ = st.get("refs", "")
+        if e is not None:
+            out, missing = list(e["records"]), []
+    return {"records": out, "built": built, "unbuilt": unbuilt, "missing": missing}
+
+
 def _stored_refs(st, built: list[str]) -> list[dict] | None:
     """The reverse references of the built modules, as the facts store holds them current: from
     the index a build stored per module, else from an earlier query; None when it holds neither
