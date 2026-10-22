@@ -264,6 +264,37 @@ def test_the_toy_packet_matches_the_reader_records(toy, monkeypatch, capsys):
     assert {"Toy.triangle", "Toy.triangle._f"} <= {r["name"] for r in q["results"]}
 
 
+@needs_lean
+@needs_tex
+def test_the_dependencies_text_names_what_its_json_holds(toy, monkeypatch, capsys):
+    """The terminal answer of `--query dependencies` shows the statement and every dependency
+    the JSON answer gives, and says a declaration is missing only when Lean did not find it."""
+    build(toy)
+    monkeypatch.chdir(toy)
+
+    def answer(name):
+        r, = run_json(capsys, "compare", "--query", "dependencies", name, "--json")["results"]
+        cli.main(["compare", "--query", "dependencies", name])
+        return r, capsys.readouterr().out.splitlines()
+
+    r, lines = answer("Toy.Acceptance.thm_bound")
+    d = r["declaration"]
+    assert r["ok"] and r["status"] == "found" and r["proof_dependencies"]
+    assert not any("no statement" in x or "not found" in x for x in lines)
+    assert lines[0].startswith(f"{d['name']}  ({d['kind']}, {d['file']}")
+    assert f"  statement: {d['statement']}" in lines
+    assert f"  axioms: {', '.join(d['axioms'])}" in lines
+    assert "  statement uses (this project): " + ", ".join(r["statement_dependencies"]) in lines
+    assert "  proof uses (this project): " + ", ".join(r["proof_dependencies"]) in lines
+    assert "  proof uses (outside this project): " + \
+        ", ".join(r["external_dependencies"]["proof"]) in lines
+    for m in r["closure"]["members"]:
+        assert f"    {m['depth']:>3}  {m['name']}  ({m['kind']}, {m['module']})" in lines
+    r, lines = answer("Toy.Nothing")
+    assert not r["ok"] and r["status"] == "not found"
+    assert lines == ["Toy.Nothing: not found"]
+
+
 PLAIN = ROOT / "examples" / "plain-paper"
 
 
