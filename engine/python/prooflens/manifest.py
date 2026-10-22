@@ -249,6 +249,8 @@ def build(evidence: dict, release: str, display: dict | None = None
             names.update(st.get("closure", []))
             names.update(cl.get("defs", []))
             names.update((cl.get("def_reviews") or {}).keys())
+            names.update(e["name"] for e in cl.get("witness_defs") or [])
+            names.update(e["name"] for e in cl.get("witness_candidates") or [])
             # A definition's review belongs to the definition (shared store); the clause keeps
             # its state and reviewer.
             cl["def_reviews"] = {n: {"state": r["state"],

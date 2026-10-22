@@ -32,7 +32,10 @@ A proof that fails a check (wrong type, disallowed axiom,
 and fails the paper's consistency check.
 
 Every definition in the closure of a proposition needs its own review, including the auxiliary
-declarations Lean generates (`match_1`, `_f`): they are part of the definition's meaning.
+declarations Lean generates (`match_1`, `_f`): they are part of the definition's meaning. A
+declaration that only a witness's statement uses needs no review; it is listed while it has
+none, and a project can require its review (`require_witness_def_reviews`), which can only hold
+a status back.
 
 ## A review is a reading of a text
 

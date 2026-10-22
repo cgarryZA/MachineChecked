@@ -156,6 +156,7 @@ class Assessor:
         self._history = None
         self._unlisted: list[str] | None = None
         self._pins: dict[str, str | None] | None = None
+        self._witness_only: dict[str, list[str]] | None = None
         self._unpinned: dict[str, str] | None = None
 
     # -- declarations the probe did not find ------------------------------------------------
@@ -343,6 +344,56 @@ class Assessor:
                 out[d] = self.review_state("def", d, lean["decls"].get(d))
         return out
 
+    def witness_only(self) -> dict[str, list[str]]:
+        """The project declarations in the closure of a witness's statement that the assessment
+        asks no review for otherwise (outside every proposition, its closure, the definitions a
+        definition claim maps and their closures), each with the witnesses that use it."""
+        if self._witness_only is None:
+            lean = self.lean
+            covered = set(lean["specs"])
+            for rec in lean["specs"].values():
+                covered.update(rec.get("closure") or [])
+            out: dict[str, set[str]] = {}
+            for c in self.inv["claims"]:
+                for cl in c.get("clauses") or []:
+                    for d in cl.get("defs") or []:
+                        covered.add(d)
+                        covered.update((lean["defs"].get(d) or {}).get("closure") or [])
+                    for w in self._witnesses(cl):
+                        for d in (self._proof("witness", w, None) or {}).get("closure") or []:
+                            out.setdefault(d, set()).add(w)
+            self._witness_only = {d: sorted(ws) for d, ws in out.items() if d not in covered}
+        return self._witness_only
+
+    @staticmethod
+    def _witnesses(cl: dict) -> list[str]:
+        return [w for w in [cl.get("witness")] + [r.get("witness")
+                                                  for r in cl.get("regimes") or []] if w]
+
+    def witness_defs(self, cl: dict) -> dict[str, tuple[list[str], dict]]:
+        """The witness-only declarations (`witness_only`) the witnesses of clause `cl` use, each
+        with those witnesses and its review state. A list for the reviewer: unless the
+        configuration requires their reviews (`require_witness_def_reviews`), they change no
+        status."""
+        only = self.witness_only()
+        mine = self._witnesses(cl)
+        out = {}
+        for d, ws in only.items():
+            used = [w for w in ws if w in mine]
+            if used:
+                out[d] = (used, self.review_state("def", d, self.lean["decls"].get(d)))
+        return out
+
+    def witness_candidates(self, defs: list[str]) -> list[dict]:
+        """The witness-only declarations whose type or body uses one of `defs` (the definitions
+        a definition claim maps): candidates for its mapping, for the reader. Display only."""
+        out = []
+        for d, ws in sorted(self.witness_only().items()):
+            uses = sorted(set((self.lean["decls"].get(d) or {}).get("uses") or []) & set(defs))
+            if uses:
+                out.append({"name": d, "uses": uses, "witnesses": ws})
+        return out
+
     # -- clauses --------------------------------------------------------------------------
 
     def replay(self, thm: str) -> dict:
@@ -450,6 +501,32 @@ class Assessor:
             dr.update({d: r for d, r in self.closure_reviews(names).items() if d not in dr})
             res["spec_review"] = None
             states = [d["state"] for d in dr.values()]
+        wd = self.witness_defs(cl)
+        if wd and getattr(self.cfg, "require_witness_def_reviews", False):
+            # Declared required: each is reviewed like a definition of the proposition, so it
+            # can only hold a status back.
+            for n in wd:
+                if n not in dr:
+                    dr[n] = self.review_state("def", n, lean["decls"].get(n))
+            states += [dr[n]["state"] for n in wd]
+            wd = {}
+        res["witness_defs"] = [
+            {"name": n, "witnesses": w, "state": r["state"]}
+            for n, (w, r) in sorted(wd.items())
+            if r["state"] not in ("reviewed", "author-reviewed")]
+        for e in res["witness_defs"]:
+            rec = lean["decls"].get(e["name"]) or {}
+            self.add_warning(
+                "witness-def-review", subj, e["name"],
+                {"fingerprint": rec.get("fingerprint") or rec.get("legacy_hash")},
+                f"the witness {', '.join(e['witnesses'])} uses {e['name']}, which is in no "
+                "proposition's definitions and "
+                + ("has no review" if e["state"] == "pending" else
+                   "has no current review")
+                + "; the instance a witness exhibits is fixed by such declarations",
+                ",".join(e["witnesses"]))
+        if cl.get("defs") and not spec:
+            res["witness_candidates"] = self.witness_candidates(cl["defs"])
         res["def_reviews"] = dr
         for n, d in dr.items():
             if d["state"] in ("pending", "stale"):

@@ -149,3 +149,43 @@ def test_specification_layer_importing_the_acceptance_layer(toy):
     edit(toy / "lean/Toy.lean", "import Toy.Acceptance", "import Toy.Acceptance\nimport Toy.PaperSpec.Extra")
     _, body, _ = build(toy)
     assert findings(body, "layering")
+
+
+@needs_lean
+@needs_tex
+def test_a_witness_instance_in_an_unreviewed_declaration_is_listed(toy):
+    # The instance of Theorem 2.1's witness moves into an abbreviation no proposition uses.
+    edit(toy / L / "Acceptance.lean", "/-- The hypotheses of Theorem 2.1",
+         "/-- The summands the paper's example uses. -/\n"
+         "abbrev paperSummands : Prop := IsEven 2 ∧ IsEven 4\n\n"
+         "/-- The hypotheses of Theorem 2.1")
+    edit(toy / L / "Acceptance.lean", "theorem thm_even_add_hypotheses : IsEven 2 ∧ IsEven 4 ∧",
+         "theorem thm_even_add_hypotheses : paperSummands ∧")
+    edit(toy / L / "Acceptance.lean", "⟨⟨1, rfl⟩, ⟨2, rfl⟩, by decide, by decide⟩",
+         "⟨⟨⟨1, rfl⟩, ⟨2, rfl⟩⟩, by decide, by decide⟩")
+    index, body, cfg = build(toy)
+    clause = next(c for c in body["assessment"]["claims"]
+                  if c["id"] == "T:thm:even-add")["clauses"][0]
+    record = body["lean"]["proofs"]["witness:Toy.Acceptance.thm_even_add_hypotheses:"]
+    assert "Toy.Acceptance.paperSummands" in record["closure"]
+    assert clause["witness_defs"] == [{"name": "Toy.Acceptance.paperSummands",
+                                       "witnesses": ["Toy.Acceptance.thm_even_add_hypotheses"],
+                                       "state": "pending"}]
+    f = findings(body, "witness-def-review", "T:thm:even-add")
+    assert len(f) == 1 and f[0]["tier"] == "warning"
+    assert status(index, "T:thm:even-add") == "formal: accepted"
+    # The definition claim of `IsEven` names it as a candidate for its mapping.
+    defn = next(c for c in body["assessment"]["claims"] if c["id"] == "T:def:even")
+    assert defn["clauses"][0]["witness_candidates"][0]["name"] == "Toy.Acceptance.paperSummands"
+    # `check --json` gives both lists under their claims.
+    from prooflens.cli import _witness_lists
+    lists = _witness_lists(cfg, index["evidence"])
+    assert lists["T:thm:even-add"]["witness_defs"][0]["clause"] == "statement"
+    assert lists["T:def:even"]["witness_candidates"][0]["uses"] == ["Toy.IsEven"]
+    # Required by the configuration, its missing review holds the claim back.
+    edit(toy / "machinechecked.toml", 'inventory = "claims.json"',
+         'inventory = "claims.json"\nrequire_witness_def_reviews = true')
+    index, body, _ = build(toy)
+    assert status(index, "T:thm:even-add") != "formal: accepted"
+    assert any(f["trigger"] == "Toy.Acceptance.paperSummands"
+               for f in findings(body, "def-review", "T:thm:even-add"))

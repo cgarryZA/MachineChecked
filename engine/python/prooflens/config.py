@@ -85,6 +85,9 @@ class Config:
     # Type classes treated as inhabited by the witness check (`assess.INHABITED_CLASSES` when
     # not configured).
     inhabited_classes: list[str] | None = None
+    # Whether the declarations only witnesses use need a review like the definitions of the
+    # propositions (`assess.witness_defs`); otherwise they are listed as advice.
+    require_witness_def_reviews: bool = False
 
     @property
     def root(self) -> Path:
@@ -179,7 +182,16 @@ def load(path: str | Path) -> Config:
         review_citations_strict=bool(proj.get("review_citations_strict", False)),
         bare_markers_by=_names(proj, "bare_markers_by", str(path)) or [],
         inhabited_classes=_names(proj, "inhabited_classes", str(path)),
+        require_witness_def_reviews=_flag(proj, "require_witness_def_reviews", str(path)),
     )
+
+
+def _flag(proj: dict, key: str, where: str) -> bool:
+    """A true/false option of the configuration, false when absent."""
+    v = proj.get(key, False)
+    if not isinstance(v, bool):
+        raise ConfigError(f"{where}: {key} must be true or false")
+    return v
 
 
 def _names(proj: dict, key: str, where: str) -> list[str] | None:
