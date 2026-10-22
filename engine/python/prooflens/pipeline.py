@@ -205,9 +205,11 @@ def build(cfg: Config, release: str | None = None, skip_lean: bool = False,
     index.update(issues=cfg.issues, site_url=cfg.site_url)
     index["project"].update(source_info(cfg))
     site = cfg.out_dir / "site"
+    changes = release_changes(cfg, rel)
     write_preview(site, index, chunks, store, pdfs, web_dist,
-                  rq.assurance_queue(index, chunks, store, cfg.statement_authors),
-                  changes=release_changes(cfg, rel))
+                  rq.prioritise(rq.assurance_queue(index, chunks, store, cfg.statement_authors),
+                                changes),
+                  changes=changes)
     log(f"evidence {eid[:12]}  release {rel}  site {site}")
     return {"evidence": eid, "release": rel, "site": site, "index": index}
 
@@ -367,9 +369,11 @@ def rebuild_site(cfg: Config, web_dist: Path | None = None, release: str | None 
     index.update(issues=cfg.issues, site_url=cfg.site_url)
     index["project"].update(source_info(cfg))
     site = cfg.out_dir / "site"
+    changes = release_changes(cfg, rel["release"])
     write_preview(site, index, chunks, store, pdf_paths(cfg, record["body"]), web_dist,
-                  rq.assurance_queue(index, chunks, store, cfg.statement_authors),
-                  changes=release_changes(cfg, rel["release"]))
+                  rq.prioritise(rq.assurance_queue(index, chunks, store, cfg.statement_authors),
+                                changes),
+                  changes=changes)
     return {"release": rel["release"], "site": site, "index": index}
 
 
