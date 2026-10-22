@@ -829,7 +829,13 @@ def search_text(out: dict) -> str:
 
 
 def statement_lines(d: dict) -> list[str]:
-    """A declaration for the terminal: its binders and conclusion, then its exact text."""
+    """A declaration for the terminal: its binders and conclusion, then its exact text. An
+    `inspect` answer (the result of the `dependencies` query) is shown by
+    `dependencies_lines`."""
+    if d.get("schema"):
+        from .deps import SCHEMA as INSPECT_SCHEMA
+        if d["schema"] == INSPECT_SCHEMA:
+            return dependencies_lines(d)
     st = d.get("statement")
     name = d.get("name")
     if st is None:
@@ -850,6 +856,58 @@ def statement_lines(d: dict) -> list[str]:
     if d.get("witness"):
         lines.append(f"\nWitness: {d['witness']}")
     return lines
+
+
+def dependencies_lines(doc: dict) -> list[str]:
+    """An `inspect` answer for the terminal, naming everything its JSON names: the
+    declaration's statement and Lean's checks, the project declarations its statement and its
+    proof (or body) use, the constants outside the project they use, and every project
+    declaration they reach (the packages outside it are summed up, as `inspect` does). A
+    declaration Lean did not find is shown with Lean's answer and its reason."""
+    name = doc.get("name")
+    if not doc.get("ok"):
+        where = ", ".join(doc.get("modules") or [])
+        out = [f"{name}: {doc.get('status')}" + (f" ({where})" if where else "")
+               + (f": {doc['reason']}" if doc.get("reason") else "")]
+        if doc.get("status") == "ambiguous":
+            out.append(f"  name its module with `machinechecked inspect {name} --module MODULE`")
+        return out
+    d = doc["declaration"]
+    vk = doc.get("value_kind") or "none"
+    line = (d.get("range") or {}).get("line")
+    out = [f"{d['name']}  ({d['kind']}, {d['file']}" + (f":{line}" if line else "") + ")",
+           f"  statement: {d['statement']}",
+           f"  axioms: {', '.join(d.get('axioms') or []) or 'none'}"
+           + ("  (uses sorry)" if d.get("sorry") else "")]
+    ext = doc.get("external_dependencies") or {}
+    out.append(f"  statement uses (this project): "
+               f"{', '.join(doc.get('statement_dependencies') or []) or 'nothing'}")
+    if vk == "none":
+        out.append("  it has no proof or body")
+    else:
+        out.append(f"  {vk} uses (this project): "
+                   f"{', '.join(doc.get('proof_dependencies') or []) or 'nothing'}")
+    out.append(f"  statement uses (outside this project): "
+               f"{', '.join(ext.get('statement') or []) or 'nothing'}")
+    if vk != "none":
+        out.append(f"  {vk} uses (outside this project): "
+                   f"{', '.join(ext.get('proof') or []) or 'nothing'}")
+    c = doc.get("closure") or {}
+    outside = c.get("external") or {}
+    packages = list((outside.get("by_package") or {}).items())
+    by = ", ".join(f"{k} {v}" for k, v in packages[:5]) + (", …" if len(packages) > 5 else "")
+    out.append(f"  reaches {c.get('declarations', 0)} declaration(s) of this project (deepest "
+               f"{c.get('deepest', 0)} step(s)), and {outside.get('constants', 0)} constant(s) "
+               "outside it" + (f": {by}" if by else ""))
+    for m in c.get("members") or []:
+        out.append(f"    {m['depth']:>3}  {m['name']}  ({m['kind']}, {m['module']})")
+    if c.get("generated"):
+        out.append(f"  ({c['generated']} constant(s) Lean generated were followed, not listed)")
+    if doc.get("note"):
+        out.append(f"  {doc['note']}")
+    if (doc.get("cache") or {}).get("hit"):
+        out.append("  (from the cache: no Lean input changed)")
+    return out
 
 
 def proof_facts_text(q: dict) -> str:
