@@ -142,7 +142,8 @@
   .app-shell.reading { height: 100dvh; }
   .shell-top { min-width: 0; z-index: 20; }
   .workspace { min-width: 0; min-height: 0; }
-  .reading .workspace { overflow: hidden; }
+  /* On a reader route nothing in the workspace lengthens the page or is scrolled into view by it. */
+  .reading .workspace { position: relative; overflow: clip; }
   .state { max-width: 640px; margin: 15vh auto; padding: 0 16px; }
   .top {
     position: sticky; top: 0; z-index: 20;
