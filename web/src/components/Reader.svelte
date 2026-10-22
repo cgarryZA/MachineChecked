@@ -126,19 +126,21 @@
   .grow { flex: 1; }
   .edition { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 14px; }
   .edition select { min-width: 0; max-width: min(440px, 65vw); }
+  /* Each pane is the containing block of its absolutely positioned content (KaTeX's hidden
+     MathML among it), so that content scrolls inside the pane and never lengthens the page. */
   .reader-layout { display: grid; grid-template-columns: minmax(0, 1fr); flex: 1; min-height: 0; }
   .reader-layout.contents { grid-template-columns: 260px minmax(0, 1fr); }
   .reader-layout.open { grid-template-columns: minmax(0, 1fr) minmax(320px, var(--side-w)); }
   .reader-layout.contents.open { grid-template-columns: 260px minmax(0, 1fr) minmax(320px, var(--side-w)); }
   .reader-layout.comparing { grid-template-columns: minmax(0, 1fr); }
   .reader-layout.contents.comparing { grid-template-columns: 260px minmax(0, 1fr); }
-  .paperpane { min-width: 0; min-height: 0; overflow: auto; background: var(--surface-2); }
+  .paperpane { position: relative; min-width: 0; min-height: 0; overflow: auto; background: var(--surface-2); }
   .concealed { display: none; }
   .side { position: relative; min-width: 0; min-height: 0; overflow: auto; border-left: 1px solid var(--border); padding: 20px 20px 48px; }
   .side-head, .toc-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
   .drag { position: absolute; left: 0; top: 0; bottom: 0; width: 8px; cursor: col-resize; z-index: 4; }
   .drag:hover, .drag:focus-visible { background: var(--accent-soft); }
-  .toc { overflow: auto; background: var(--surface); border-right: 1px solid var(--border); min-height: 0; }
+  .toc { position: relative; overflow: auto; background: var(--surface); border-right: 1px solid var(--border); min-height: 0; }
   .toc-head { position: sticky; top: 0; background: var(--surface); padding: 8px 12px; border-bottom: 1px solid var(--border); }
   .toc ol { list-style: none; margin: 0; padding: 6px; }
   .toc a { display: flex; gap: 8px; padding: 8px; border-radius: var(--radius); color: var(--text); font-size: 14px; text-decoration: none; }
