@@ -36,10 +36,11 @@ def write(path, text):
 
 
 def test_declarations_track_namespaces_and_skip_comments():
-    names, entered = declarations(EXTRA)
+    names, entered, opened = declarations(EXTRA + "open Base.Extra Other in\nopen scoped Base\n")
     assert names == {"Base.Extra.lemma_x", "Base.Extra.helper", "Base.Extra.instShow",
                      "Other.rooted", "Base.Data"}
     assert entered == {"Base", "Base.Extra"}
+    assert opened == {"Base"}
 
 
 def cite(token):
@@ -63,12 +64,14 @@ def doc(module, name):
 
 def test_docstring_names_resolve_in_the_sources_and_dependencies_are_left_out(tmp_path):
     write(tmp_path / "Lib" / "A.lean", "/-! The data is built by `Lib.Data.ofSolves`. -/\n"
-          "namespace Lib\ntheorem a : True := trivial\nend Lib\n")
-    write(tmp_path / "Lib" / "B.lean", "namespace Lib.Data\ndef ofSolves : Nat := 0\nend Lib.Data\n")
+          "namespace Lib\ntheorem a : True := trivial\nend Lib\nopen Base\n")
+    write(tmp_path / "Lib" / "B.lean",
+          "namespace Lib.Data\ndef ofSolves : Nat := 0\nend Lib.Data\n")
     write(tmp_path / ".lake" / "packages" / "base" / "Base" / "Extra.lean", EXTRA)
     docs = [doc("Lib.A", "Lib.Data.ofSolves"),   # another module of the library, not loaded
             doc("Lib.A", "Data.ofSolves"),       # inside the namespace the file enters
             doc("Lib.A", "Base.Extra.lemma_x"),  # a dependency's module, not loaded
+            doc("Lib.A", "Extra.lemma_x"),       # through the namespace the file opens
             doc("Lib.A", "Lib.Data.gone"),
             doc("Base.Extra", "Base.Extra.gone")]  # a dependency's own docstring
     assert [(d["module"], d["name"]) for d in undeclared_doc_names(docs, tmp_path)] == [

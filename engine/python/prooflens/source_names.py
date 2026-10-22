@@ -49,11 +49,13 @@ def strip_comments(text: str) -> str:
     return "".join(out)
 
 
-def declarations(text: str) -> tuple[set[str], set[str]]:
-    """The full names a Lean file declares, and the namespaces it enters, tracking `namespace`,
-    `section`, `mutual` and `end`."""
+def declarations(text: str) -> tuple[set[str], set[str], set[str]]:
+    """The full names a Lean file declares, the namespaces it enters, tracking `namespace`,
+    `section`, `mutual` and `end`, and the namespaces its `open` commands name (an `open … in`,
+    which opens for one command, left out)."""
     names: set[str] = set()
     entered: set[str] = set()
+    opened: set[str] = set()
     stack: list[list[str]] = []
     for line in strip_comments(text).splitlines():
         s = line.strip()
@@ -64,6 +66,13 @@ def declarations(text: str) -> tuple[set[str], set[str]]:
             for part in words[1].split("."):
                 stack.append([part])
                 entered.add(".".join(p for e in stack for p in e))
+            continue
+        if words[0] == "open" and "in" not in words:
+            for w in words[1:]:
+                if w in ("hiding", "renaming") or w.startswith("("):
+                    break
+                if w != "scoped":
+                    opened.add(w)
             continue
         if words[0] in ("section", "mutual") or words[:2] == ["noncomputable", "section"]:
             stack.append([])
@@ -81,7 +90,7 @@ def declarations(text: str) -> tuple[set[str], set[str]]:
         else:
             ns = ".".join(p for e in stack for p in e)
             names.add(f"{ns}.{name}" if ns else name)
-    return names, entered
+    return names, entered, opened
 
 
 def lean_files(roots: list[Path]):
@@ -138,19 +147,22 @@ def undeclared_doc_names(docs: list[dict], lean_root: Path) -> list[dict]:
     packages' do not declare either. A module whose file is not in the project is a
     dependency's, whose own audit checks its docstrings. A name is tried as written and inside
     each namespace the docstring's file enters, as the probe tries it in the namespaces the
-    module declares into."""
+    module declares into, and inside each namespace it opens, as Lean resolves the name in the
+    file (#198)."""
     own = [d for d in docs if (lean_root / d["file"]).is_file()]
     if not own:
         return []
     src = SourceNames([lean_root], {last(d["name"]) for d in own})
-    entered: dict[str, set[str]] = {}
+    scopes: dict[str, set[str]] = {}
     out = []
     for d in own:
-        if d["file"] not in entered:
+        if d["file"] not in scopes:
             text = (lean_root / d["file"]).read_text(encoding="utf-8", errors="replace")
-            entered[d["file"]] = declarations(text)[1]
+            _, entered, opened = declarations(text)
+            scopes[d["file"]] = {""} | entered | opened | {
+                f"{e}.{o}" for e in entered for o in opened}
         if not any(src.known(f"{ns}.{d['name']}" if ns else d["name"])
-                   for ns in {""} | entered[d["file"]]):
+                   for ns in scopes[d["file"]]):
             out.append(d)
     return out
 
