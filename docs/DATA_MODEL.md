@@ -66,10 +66,13 @@ Markdown files with markers:
 `<hash>` is the `legacy_hash` or the `pl-fp-v1:` fingerprint the review was made at. Each
 `source` names a claim whose passage the reviewer read (a claim that states the proposition, or a
 definition claim that names the definition) and the digest of that passage as read, its
-`source_sha256` pin; a declaration no claim names has none. A marker without `source` is read as
-the [evidence policy](EVIDENCE_POLICY.md#a-review-is-a-reading-of-a-text) says; one with
-`source=none` read none of the passages. A marker written `<!-- retired spec-review: ... -->`
-(`inventory retire --markers`) records no review and still closes its review text. The section the
+`source_sha256` pin; a declaration no claim names has none. The claim id is everything before the
+last `@`, so an id may hold `@`; `build` refuses a claim id with white space or `-->`, which no
+marker can carry, and zero configuration percent-encodes them in the ids it makes. A marker
+without `source` is read as the [evidence policy](EVIDENCE_POLICY.md#a-review-is-a-reading-of-a-text)
+says; one with `source=none` read none of the passages. A marker written
+`<!-- retired spec-review: ... -->` (`inventory retire --markers`) records no review and still
+closes its review text. The section the
 marker closes is the text of the review. The last marker of a declaration, reading the files in
 order (a directory's `.md` files by name), is its current record.
 
@@ -239,8 +242,17 @@ same format, with `mode: "paper"`: the paper's registry entry (`paper`), the Lea
 state they formalise it (`projects`, as `owner/repo`), and the statements found in its PDF, each
 with its links (each naming its `repository`) and, per project, the status that project's links
 give it (`by_project`). Without an audit nothing has run Lean, so a linked statement reads
-"linked: Lean not checked here (no audit published)" (class `declared`). The reader shows one
-project at a time and never combines them. No statement text is written.
+"linked: Lean not checked here (no audit published)" (class `declared`). No statement text is
+written.
+
+`audit_order` lists the page's loaded audits that pin the same version as the first, in the order
+the reader draws on them, and `audit_order_by` says what orders them: `stars` (the site's GitHub
+star count for every one, given to `write_paper_site` as `stars` and kept in `stars`; most first,
+ties in listing order) or `listing` (the registry's order). The first is the default audit, whose
+status is each claim's top-level `status`. With several, the reader shows each claim through the
+first audit that maps it (whose record of the claim is in `by_project`), labelled with that audit;
+choosing one project shows only its evidence, and a claim its audit does not map is marked. A
+claim's statuses from different projects are never combined.
 
 **Versions of a paper.** A paper with several versions (published `vN`, an unpublished
 manuscript at a commit) has one page per version, each written by `write_paper_site` with its own
@@ -254,7 +266,7 @@ The site supplies each version as:
 | `revision` | a manuscript's commit (required for a manuscript) |
 | `href` | the address of that version's page on the same site, such as `/papers/2601.01234/v1/` (absolute path or relative; never another site) |
 | `pdf` | the version's PDF (https, or on the site); optional |
-| `audits` | the audits of that version: `url` (https), `author`, `repository`; optional |
+| `audits` | the audits of that version: `url` (https), `author`, `repository`, `commit` (the audited project commit, 40 hex digits); optional |
 
 `page_versions` checks the list and sets each `label` from `kind` and `id` ("arXiv v1", "Latest
 manuscript (commit abc1234)"), ignoring a label the site gives. Every audit loaded for a page

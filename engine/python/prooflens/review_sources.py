@@ -2,7 +2,8 @@
 
 A review reads a claim's source passage beside a Lean declaration. A marker records, for each
 claim whose passage was shown to the reviewer, the digest of that passage as read:
-`source=<claim id>@<sha256>`, one attribute per claim, the digest being the claim's pin
+`source=<claim id>@<sha256>`, one attribute per claim (the id is everything before the last `@`,
+since the digest is 64 hexadecimal digits), the digest being the claim's pin
 (`source_sha256`, scheme `tex-region-v1` for a line-located claim). A proposition's review reads
 the claims whose clauses state it; a definition's review reads the definition claims that name
 it. A declaration no claim names (a definition only in a closure) has no passage, and its marker
@@ -38,7 +39,24 @@ from pathlib import Path
 
 from .source_regions import SCHEME, same_revision
 
-SOURCE = re.compile(r"(?:^|\s)source=([^\s@]+)@([0-9a-f]{64})(?=\s|$)")
+# The id runs to the last `@`: the digest after it is fixed-length hex, so an id may hold `@`.
+SOURCE = re.compile(r"(?:^|\s)source=(\S+)@([0-9a-f]{64})(?=\s|$)")
+
+
+def carried(cid: str) -> bool:
+    """Whether a marker can record the claim id `cid`: a marker's words are separated by white
+    space and the marker ends at `-->`, so an id holds neither."""
+    return bool(cid) and not re.search(r"\s", cid) and "-->" not in cid
+
+
+def marker_safe(key: str) -> str:
+    """`key` with each white-space character and the `>` of `-->` percent-encoded (UTF-8), so
+    that a marker can record an id built from it (`carried`). A key a marker can already carry is
+    returned unchanged."""
+    if carried(key):
+        return key
+    key = re.sub(r"\s", lambda m: "".join(f"%{b:02X}" for b in m.group().encode()), key)
+    return key.replace("-->", "--%3E")
 
 NONE = re.compile(r"(?:^|\s)source=none(?=\s|$)")
 

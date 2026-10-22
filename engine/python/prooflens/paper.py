@@ -104,6 +104,7 @@ def _state(links: list[dict], audit: dict | None = None, audited: bool = False) 
 
 HREF = re.compile(r"(?!//)(?![a-z][\w+.-]*:)[\w./~%-]*", re.I)
 HTTPS = re.compile(r"https://[^\s\"'<>]+")
+COMMIT = re.compile(r"[0-9a-f]{40}")
 
 
 def page_versions(entries: list[dict], current: str) -> list[dict]:
@@ -111,7 +112,7 @@ def page_versions(entries: list[dict], current: str) -> list[dict]:
     claim numbering and audits), as the reader's version drop-down receives them. Each entry
     gives `id` and `kind` as an audit's `paper_version` does (a manuscript also its `revision`),
     `href` (the address of that version's page, on the same site), and optionally `pdf` and
-    `audits` (`url`, `author`, `repository`). The label is MachineChecked's for that version,
+    `audits` (`url`, `author`, `repository`, `commit`). The label is MachineChecked's for that version,
     never one the entry supplies; `current` is the id of the version this page shows."""
     from .published import AuditError, paper_version
     out = []
@@ -127,7 +128,8 @@ def page_versions(entries: list[dict], current: str) -> list[dict]:
         if pdf is not None and not (isinstance(pdf, str) and (HTTPS.fullmatch(pdf) or
                                                                HREF.fullmatch(pdf))):
             raise ValueError(f"paper version {rec['id']}: pdf must be https or on this site")
-        audits = [{k: a.get(k) for k in ("url", "author", "repository") if a.get(k)}
+        audits = [{**{k: a.get(k) for k in ("url", "author", "repository") if a.get(k)},
+                   **({"commit": a["commit"]} if COMMIT.fullmatch(str(a.get("commit", ""))) else {})}
                   for a in e.get("audits") or [] if HTTPS.fullmatch(str(a.get("url", "")))]
         out.append({"id": rec["id"], "kind": rec["kind"], "label": rec["label"],
                     **({"revision": rec["revision"]} if rec.get("revision") else {}),
@@ -138,16 +140,40 @@ def page_versions(entries: list[dict], current: str) -> list[dict]:
     return out
 
 
+def audit_order(projects: list[str], audits: dict, stars: dict | None) -> tuple[list[str], str]:
+    """The loaded audits of a page, in the order the reader draws on them, and what orders them:
+    `"stars"` (the repositories' GitHub star counts, most first, ties in listing order) when the
+    site gives a count for every one, else `"listing"` (the registry's order). The first is the
+    page's default audit; only audits that pin the same version of the paper as it are listed,
+    since claim numbers can differ between versions."""
+    loaded = [r for r in projects if (audits.get(r) or {}).get("state") == "loaded"]
+    counts = {r: (stars or {}).get(r) for r in loaded}
+    by = "stars" if loaded and all(type(n) is int and n >= 0 for n in counts.values()) else "listing"
+    if by == "stars":
+        loaded.sort(key=lambda r: -counts[r])
+    if not loaded:
+        return [], by
+    from .published import same_version
+
+    def pin(r):
+        return ((audits[r].get("paper_version") or {}).get("id"))
+    first = pin(loaded[0])
+    return [r for r in loaded if (pin(r) is None and first is None) or
+            (pin(r) and first and same_version(pin(r), first))], by
+
+
 def write_paper_site(site: Path, paper: dict, claims: list[dict],
                      page_size: list | tuple | None, pdf_url: str | None,
                      web_dist: Path | None = None, audits: dict | None = None,
-                     versions: list[dict] | None = None, version: str | None = None) -> dict:
+                     versions: list[dict] | None = None, version: str | None = None,
+                     stars: dict[str, int] | None = None) -> dict:
     """Write the paper page's data under `site/data/` (and the reader, given its built
     directory). `paper` is the paper's registry entry (its identifier, title, authors, links and
     formalisations), which the reader's panel beside the paper shows; `claims` are from
     `paper_claims`. A paper with several versions has a page per version: `version` is the id of
     this page's, `versions` every version's entry (`page_versions`), and every audit loaded for
-    this page must pin this version. Replaces whatever is at `site`."""
+    this page must pin this version. `stars` gives each audited repository's GitHub star count,
+    which orders the audits the reader draws on (`audit_order`). Replaces whatever is at `site`."""
     from .pipeline import write_preview
     from .published import same_version
     audits_loaded = audits or {}
@@ -159,6 +185,7 @@ def write_paper_site(site: Path, paper: dict, claims: list[dict],
                 raise ValueError(f"the audit of {r} does not pin {version}: load it with the "
                                  "listing's version (load_published_audit)")
     projects = [f["repository"] for f in paper.get("formalisations", [])]
+    order, order_by = audit_order(projects, audits_loaded, stars)
     audited = {r for r, a in audits_loaded.items() if a.get("state") == "loaded"} if audits is not None else {f["repository"] for f in paper.get("formalisations", []) if f.get("audits")}
     index_claims, chunks = [], {}
     for c in claims:
@@ -175,7 +202,7 @@ def write_paper_site(site: Path, paper: dict, claims: list[dict],
                 state = fields("audit." + failure["state"])
             by_project[r] = {**state,
                              **({"audit": audits[r]} if r in audits else {})}
-        first = projects[0] if projects else None
+        first = order[0] if order else projects[0] if projects else None
         state = {k: by_project[first][k] for k in ("status_code", "status", "class")} if first else fields("link.none")
         common = {**({"projects": c["projects"]} if c.get("projects") else {}), "id": cid, "paper": "P", "number": c["number"], "title": c.get("title"),
                   "heading": c.get("title") or None, "kind": c["kind"], "scope": "formal",
@@ -219,6 +246,8 @@ def write_paper_site(site: Path, paper: dict, claims: list[dict],
                         for r, a in audits_loaded.items()}, "mode": "paper", "release": "paper", "evidence": eid,
              "tool": {"name": "machinechecked"}, "project": {}, "projects": projects,
              "paper": paper, "notes": [],
+             "audit_order": order, "audit_order_by": order_by,
+             **({"stars": {r: stars[r] for r in order if order_by == "stars"}} if stars else {}),
              **({"version": version, "versions": offered} if offered else {}),
              "papers": [{"id": "P", "title": paper.get("title", ""), "mode": "pdf", "pdf": None,
                          "pdf_url": pdf_url, "page_size": list(page_size) if page_size else None,

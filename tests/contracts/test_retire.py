@@ -116,3 +116,14 @@ def test_markers_of_a_declaration_no_claim_uses_are_retired_whole(tmp_path, caps
     assert [(r.name, r.text) for r in left] == [
         ("X.r", "The statement says what the paper says."),
         ("X.inner", "The definition is the paper's.")]
+
+
+def test_a_reading_of_a_claim_id_with_an_at_sign_is_retired_exactly(tmp_path, capsys):
+    review = ("## Q\n\nRead.\n\n"
+              f"<!-- spec-review: X.q 0123 by=r source=X:sec:a@{A} source=X:sec:a@2@{B} -->\n")
+    root = project(tmp_path, [claim("X:sec:a", A, "X.q"), claim("X:sec:a@2", B, "X.p")], review)
+    assert run(root, "--write") == 0
+    assert [r["retire"] for r in json.loads(capsys.readouterr().out)["readings"]] == [
+        ["X:sec:a@2"]]
+    q, = parse_file(root / "reviews" / "r.md", [], root)
+    assert q.source == {"X:sec:a": A}
