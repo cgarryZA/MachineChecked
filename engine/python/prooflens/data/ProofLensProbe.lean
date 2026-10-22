@@ -6,7 +6,8 @@ Body of the probe that `prooflens probe` runs inside a Lean project. The CLI pre
 has no imports of its own and is not built as part of any library.
 
 Input: the JSON query named by `PROOFLENS_QUERY`. Output: JSON lines written to the file named
-by `PROOFLENS_OUT`, one record per request and one per declaration of the definition closure.
+by `PROOFLENS_OUT`, one record per request and one per declaration of the definition closure,
+and last a `done` record with the number of bytes written before it.
 
 For a specification the record holds two representations of the proposition:
 
@@ -1975,4 +1976,10 @@ open ProofLensProbe in
           emit h (Json.mkObj [("record", if r.kind == "decl" then "defclosure" else r.kind),
             ("name", r.name), ("spec", match r.spec with | some x => Json.str x | none => Json.null),
             ("errors", toJson #[s!"probe-error: {← err.toMessageData.toString}"])]))
-    emit h (Json.mkObj [("record", "done")])
+    -- Every record reaches the file before `done` says how many bytes precede it, so a
+    -- reader can tell a complete output from one cut short. A write that fails (a full disk)
+    -- raises here or in `emit`, and the session ends with an error.
+    h.flush
+    let bytes := (← System.FilePath.metadata opath).byteSize
+    emit h (Json.mkObj [("record", "done"), ("bytes", toJson bytes.toNat)])
+    h.flush

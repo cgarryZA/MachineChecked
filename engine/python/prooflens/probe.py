@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import tempfile
 import tomllib
 from importlib import resources
@@ -35,9 +36,10 @@ class ProbeError(RuntimeError):
 
 # What Lean or the system prints when a session runs out of a resource rather than meeting an
 # error in its input. A heartbeat budget is a resource: a larger budget or another machine may
-# finish where this one did not.
+# finish where this one did not. So is the disk: a write that fails for lack of space.
 RESOURCE_SIGNS = ("out of memory", "bad_alloc", "cannot allocate memory", "heartbeats",
-                  "(deterministic) timeout", "stack overflow", "killed", "timed out")
+                  "(deterministic) timeout", "stack overflow", "killed", "timed out",
+                  "no space left on device", "disk quota exceeded", "resource exhausted")
 
 
 def failure_is_deterministic(returncode: int, text: str) -> bool:
@@ -172,6 +174,10 @@ def lean_session(root: Path, modules: list[str], query: dict, read, lake: str = 
                    PROOFLENS_OUT=str(tmp / "out.jsonl"))
         out = tmp / "out.jsonl"
         cmd = [lake, "env", "lean", str(tmp / "Probe.lean")]
+        try:
+            before = shutil.disk_usage(tmp).free
+        except OSError:
+            before = None
         if log is None:
             import subprocess
             try:
@@ -184,11 +190,92 @@ def lean_session(root: Path, modules: list[str], query: dict, read, lake: str = 
             r = _run_watched(cmd, root, env, timeout, out, log, label)
         if r.returncode != 0 or not out.exists():
             text = f"{r.stdout[-3000:]}\n{r.stderr[-3000:]}"
-            raise ProbeError(f"the Lean probe failed ({r.returncode}):\n{text}",
-                             deterministic=r.returncode != 0
+            low = _free_space(tmp, before, low_only=True)
+            raise ProbeError(f"the Lean probe failed ({r.returncode}):\n{text}"
+                             + (f"\n{low}" if low else ""),
+                             deterministic=r.returncode != 0 and not low
                              and failure_is_deterministic(r.returncode, text))
-        with out.open(encoding="utf-8") as f:
-            return read(line for line in f if line.strip())
+        lineno = 0
+
+        def lines(f):
+            nonlocal lineno
+            for line in f:
+                lineno += 1
+                if line.strip():
+                    yield line
+        try:
+            why = output_incomplete(out)
+            if why is None:
+                with out.open(encoding="utf-8") as f:
+                    return read(lines(f))
+        except (json.JSONDecodeError, UnicodeDecodeError) as e:
+            why = f"line {lineno} is not a complete record ({e})"
+        raise ProbeError(f"the Lean probe's output is incomplete: {out}, {why}. "
+                         + _free_space(tmp, before) + " A full disk is the usual cause, and "
+                         "the Lean results of this session are not used. "
+                         + _keep_partial(out, work))
+
+
+# Set to keep a probe output that is incomplete, for inspection, in the build's work directory.
+KEEP_ENV = "MACHINECHECKED_KEEP_PROBE"
+LOW_SPACE = 256 * 2**20
+
+
+def _free_space(path: Path, before: int | None, low_only: bool = False) -> str:
+    """The free space of the file system holding `path`, now and when the session began; with
+    `low_only`, only when it is low (under 256 MB), as the likely cause of a failure."""
+    try:
+        now = shutil.disk_usage(path).free
+    except OSError:
+        return ""
+    if low_only and now >= LOW_SPACE:
+        return ""
+    mb = lambda n: f"{n / 2**20:.0f} MB"
+    return (f"The file system of the output has {mb(now)} free"
+            + (f" ({mb(before)} when the session began)." if before is not None else "."))
+
+
+def output_incomplete(out: Path) -> str | None:
+    """Why the probe's output file is incomplete, naming the line, or None when it ends with
+    its `done` record and that record's byte count is the size of everything before it."""
+    size = out.stat().st_size
+    if not size:
+        return "it is empty"
+    with out.open("rb") as f:
+        f.seek(max(0, size - 65536))
+        tail = f.read()
+
+    def last_line() -> int:
+        with out.open("rb") as f:
+            return sum(chunk.count(b"\n") for chunk in iter(lambda: f.read(1 << 20), b"")) \
+                + (0 if tail.endswith(b"\n") else 1)
+    if not tail.endswith(b"\n"):
+        return f"line {last_line()} is cut off"
+    last = tail[:-1].rsplit(b"\n", 1)[-1]
+    try:
+        rec = json.loads(last)
+    except ValueError:
+        return f"line {last_line()} is not a complete record"
+    if not isinstance(rec, dict) or rec.get("record") != "done":
+        return f"it ends at line {last_line()}, before its `done` record"
+    if rec.get("bytes") is not None and rec["bytes"] != size - len(last) - 1:
+        return (f"its `done` record (line {last_line()}) counts {rec['bytes']} bytes before "
+                f"it, and the file has {size - len(last) - 1}")
+    return None
+
+
+def _keep_partial(out: Path, work: Path | None) -> str:
+    """Move an incomplete output out of the session's temporary folder when `KEEP_ENV` is set,
+    and say where it is (or how to keep it)."""
+    if not os.environ.get(KEEP_ENV):
+        return f"Set {KEEP_ENV}=1 to keep the partial output for inspection."
+    dest = Path(tempfile.mkstemp(prefix="probe-output-", suffix=".jsonl",
+                                 dir=work or out.parent.parent)[1])
+    try:
+        shutil.move(str(out), dest)
+    except OSError as e:
+        return f"The partial output could not be kept ({e})."
+    return f"The partial output is kept at {dest}."
 
 
 def run_probe(cfg: Config, requests: list[dict], lake: str = "lake",
