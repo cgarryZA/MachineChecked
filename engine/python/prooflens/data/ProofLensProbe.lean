@@ -893,44 +893,55 @@ def carrierJson (α : Expr) (cache : IO.Ref (Array (Expr × List (String × Json
   cache.modify (·.push (α, j))
   return j
 
-partial def opsVisit (e : Expr) (out : IO.Ref (Array Json)) (budget : IO.Ref Nat)
-    (cache : IO.Ref (Array (Expr × List (String × Json)))) : MetaM Unit := do
-  if (← budget.get) == 0 then return
-  budget.modify (· - 1)
+/-- The state of one walk: the applications found, the nodes left, the carriers read and the
+subterms already visited (a statement shares subterms, which a walk would otherwise repeat). -/
+structure OpsWalk where
+  out : IO.Ref (Array Json)
+  budget : IO.Ref Nat
+  cache : IO.Ref (Array (Expr × List (String × Json)))
+  seen : IO.Ref (Std.HashSet Expr)
+
+partial def opsVisit (e : Expr) (w : OpsWalk) : MetaM Unit := do
+  if (← w.budget.get) == 0 then return
+  if (← w.seen.get).contains e then return
+  w.seen.modify (·.insert e)
+  w.budget.modify (· - 1)
   match e with
   | .forallE n t b bi | .lam n t b bi =>
-    opsVisit t out budget cache
-    withLocalDecl n bi t fun x => opsVisit (b.instantiate1 x) out budget cache
+    opsVisit t w
+    withLocalDecl n bi t fun x => opsVisit (b.instantiate1 x) w
   | .letE n t v b _ =>
-    opsVisit t out budget cache
-    opsVisit v out budget cache
-    withLetDecl n t v fun x => opsVisit (b.instantiate1 x) out budget cache
-  | .mdata _ b => opsVisit b out budget cache
-  | .proj _ _ b => opsVisit b out budget cache
+    opsVisit t w
+    opsVisit v w
+    withLetDecl n t v fun x => opsVisit (b.instantiate1 x) w
+  | .mdata _ b => opsVisit b w
+  | .proj _ _ b => opsVisit b w
   | .app .. =>
     let f := e.getAppFn
     let args := e.getAppArgs
     if let .const c _ := f then
       if orderOps.contains c && args.size > 0 then
-        let j ← carrierJson args[0]! cache
-        out.modify (·.push (Json.mkObj (("const", Json.str c.toString) :: j)))
+        let j ← carrierJson args[0]! w.cache
+        w.out.modify (·.push (Json.mkObj (("const", Json.str c.toString) :: j)))
     else
-      opsVisit f out budget cache
+      opsVisit f w
     for a in args do
-      opsVisit a out budget cache
+      opsVisit a w
   | _ => pure ()
 
-/-- Each application of an order operation in `e`, with its carrier; `complete: false` when
-the walk reached its limit or failed, so that some applications may be missing. -/
+/-- Each application of an order operation in `e`, with its carrier. `complete: false` when
+some applications may be missing, with the reason in `stopped`: the walk reached its limit of
+nodes (`nodes`), or failed, for example by running out of heartbeats (`error`). -/
 def orderOpsJson (e : Expr) : MetaM Json := do
-  let out ← IO.mkRef #[]
-  let budget ← IO.mkRef opsNodes
-  let cache ← IO.mkRef #[]
+  let w : OpsWalk := { out := ← IO.mkRef #[], budget := ← IO.mkRef opsNodes,
+                       cache := ← IO.mkRef #[], seen := ← IO.mkRef {} }
   let finished ← orDefault false do
-    opsVisit e out budget cache
+    opsVisit e w
     return true
-  return Json.mkObj [("occurrences", Json.arr (← out.get)),
-    ("complete", finished && (← budget.get) != 0)]
+  let left ← w.budget.get
+  let stopped := if !finished then "error" else if left == 0 then "nodes" else ""
+  return Json.mkObj ([("occurrences", Json.arr (← w.out.get)), ("complete", stopped == "")] ++
+    (if stopped == "" then [] else [("stopped", Json.str stopped)]))
 
 def disallowed (allowed : Array Name) (axs : Array Name) : Array Name :=
   axs.filter (!allowed.contains ·)
