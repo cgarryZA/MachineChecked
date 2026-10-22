@@ -162,7 +162,18 @@ dependencies), the probe, the toolchain, the lakefiles and the Lake manifest are
 extracts again only what a change reopens. A link, a note or an edit to the paper extracts
 nothing. `machinechecked build --reuse-lean` uses the stored facts alone: when they do not cover
 the build it starts no Lean session, stops with exit code 2 and names the modules to index or the
-declarations to check, with the reason.
+declarations to check, with the reason. `machinechecked build --refresh` uses no stored fact: it
+extracts again everything the build reads and stores it in place of what was kept. Reuse never
+changes what is assessed: for the same sources, a build from stored facts and a refreshed one
+give the same statuses. A paper's build leaves out of its index the libraries formalization.yaml
+maps only to other papers, and its notes say so. A module of such a library is indexed all the
+same when it could hold a linked name: its source uses one of the name's words (a component of
+the name, or its start up to an underscore, in any case) or an attribute that renames
+declarations (`to_additive`, `to_dual`). Every library is indexed when a linked name is one Lean
+gives an instance (`inst…`) or the project defines commands. A link into another library is
+then checked by Lean there, and a name two libraries hold reads ambiguous without its module, as
+when every library is indexed. A dependency's command that names a declaration with words its
+call does not contain is not detected ([DEVELOPMENT.md](DEVELOPMENT.md)).
 
 Evidence records are content-addressed and never rewritten. A release name, once given, keeps its
 evidence.

@@ -196,18 +196,20 @@ def _fetch_paper(root: Path, url: str, title: str | None = None) -> Path:
     return out
 
 
-def _simple_view(root: Path, paper: Path, reuse_lean: bool = False) -> dict:
+def _simple_view(root: Path, paper: Path, reuse_lean: bool = False,
+                 refresh: bool = False) -> dict:
     """What the reader would show, without writing it (`check` needs no site). With
-    `reuse_lean`, only stored Lean facts are used."""
+    `reuse_lean`, only stored Lean facts are used; with `refresh`, none."""
     from .simple import build_view
     out = root / cfgmod.work_dir_name(root)
     return build_view(root, paper, out, log=lambda m: print("  " + m, file=sys.stderr),
-                      reuse_only=reuse_lean)
+                      reuse_only=reuse_lean, refresh=refresh)
 
 
-def _simple_site(root: Path, paper: Path, web: str | None, reuse_lean: bool = False):
+def _simple_site(root: Path, paper: Path, web: str | None, reuse_lean: bool = False,
+                 refresh: bool = False):
     from .simple import write_view_site
-    view = _simple_view(root, paper, reuse_lean)
+    view = _simple_view(root, paper, reuse_lean, refresh)
     site = root / cfgmod.work_dir_name(root) / "site"
     index = write_view_site(view, site, _web_dist(web), root)
     return site, index, view
@@ -550,7 +552,8 @@ def cmd_build_simple(a):
     from .bundle import bundle
     root, paper = _simple_target(a)
     _settings(a, root)
-    site, index, view = _simple_site(root, paper, a.web, a.reuse_lean)
+    site, index, view = _simple_site(root, paper, a.web, a.reuse_lean,
+                                     getattr(a, "refresh", False))
     _print_simple(view["body"])
     if a.site:
         import shutil
@@ -725,12 +728,25 @@ def _check_json(a):
         sys.exit(1)
 
 
+def _forget_indexes(cfg) -> None:
+    """`build --refresh` in a full assessment. Its probe asks Lean afresh on every build without
+    `--reuse-lean`; the module indexes and recorded load failures kept in the facts store
+    (`facts.py`) are discarded, so the build extracts again whatever it reads from there."""
+    from .facts import Store
+    st = Store(cfg.lean_root, [], cfg.out_dir / "build", [])
+    with st.lock(lambda m: print(m, file=sys.stderr)):
+        for kind in ("index", "failed", "attempt"):
+            st.drop(kind)
+
+
 def cmd_build(a):
     if not _assurance_config(a):
         return cmd_build_simple(a)
     from .pipeline import build
     cfg = cfgmod.load(_config_arg(a))
     dest = _site_dest(a.site, cfg.root) if getattr(a, "site", None) else None
+    if getattr(a, "refresh", False):
+        _forget_indexes(cfg)
     res = build(cfg, release=a.release, skip_lean=a.skip_lean, skip_tex=a.skip_tex, lake=a.lake,
                 web_dist=_web_dist(a.web), lean_build=not a.no_lean_build,
                 reuse_lean=a.reuse_lean)
@@ -1011,7 +1027,8 @@ def cmd_compare(a):
             op, target = a.query
             out = cmp.query(site, op, target, a.limit, a.after, root,
                             log=lambda m: print(m, file=sys.stderr), match=a.match,
-                            workspace=a.workspace, main=a.main)
+                            workspace=a.workspace, main=a.main,
+                            every_library=a.all_libraries)
             if a.json:
                 return _print_json(out)
             if not out["available"]:
@@ -1258,9 +1275,18 @@ def main(argv=None):
     b.add_argument("--skip-tex", action="store_true", help=argparse.SUPPRESS)
     b.add_argument("--lake", default="lake", help=argparse.SUPPRESS)
     b.add_argument("--no-lean-build", action="store_true", help=argparse.SUPPRESS)
-    b.add_argument("--reuse-lean", action="store_true",
-                   help="use only the stored Lean results, starting no Lean session; stop and say "
-                        "what must be extracted when they do not cover the build")
+    lean_facts = b.add_mutually_exclusive_group()
+    lean_facts.add_argument("--reuse-lean", action="store_true",
+                            help="use only the stored Lean results, starting no Lean session; "
+                                 "stop and say what must be extracted when they do not cover "
+                                 "the build")
+    lean_facts.add_argument("--refresh", action="store_true",
+                            help="ask Lean again for every Lean fact this build reads (the index "
+                                 "of each module it indexes, the records of linked and suggested "
+                                 "declarations, the modules recorded as failing to load) instead "
+                                 "of reusing those kept in .machinechecked/build/facts, and keep "
+                                 "the new ones in their place; the other kept facts (inspect "
+                                 "answers, the libraries of other papers) stay")
     b.add_argument("--web", help=argparse.SUPPRESS)
     b.add_argument("--fail-on-violation", action="store_true", help=argparse.SUPPRESS)
     b.set_defaults(func=cmd_build)
@@ -1417,6 +1443,10 @@ def main(argv=None):
     co.add_argument("--workspace", metavar="ID", help="include this workspace's requirements and "
                     "compositions of the claim (informed stage only); with --query composition, "
                     "only this workspace's")
+    co.add_argument("--all-libraries", action="store_true",
+                    help="with --query search: search every library of the project, also those "
+                    "the paper's build leaves out because formalization.yaml maps them only to "
+                    "other papers (Lean indexes what the facts store does not hold)")
     co.add_argument("--json", action="store_true", help="print one JSON document")
     co.add_argument("-c", "--config", default=None, help=argparse.SUPPRESS)
     co.set_defaults(func=cmd_compare)
