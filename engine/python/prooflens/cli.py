@@ -1008,7 +1008,7 @@ def cmd_compare(a):
             op, target = a.query
             out = cmp.query(site, op, target, a.limit, a.after, root,
                             log=lambda m: print(m, file=sys.stderr), match=a.match,
-                            workspace=a.workspace)
+                            workspace=a.workspace, main=a.main)
             if a.json:
                 return _print_json(out)
             if not out["available"]:
@@ -1019,6 +1019,11 @@ def cmd_compare(a):
                 claims = cmp.linked_claims(site)
                 for r in out["results"]:
                     print(text(r, claims))
+                return
+            if op == "impact":
+                from .impact import text as impact_text
+                for r in out["results"]:
+                    print(impact_text(r))
                 return
             if op == "search":
                 print(cmp.search_text(out))
@@ -1384,10 +1389,14 @@ def main(argv=None):
                     "search CLAIM-OR-TEXT (the project's declarations by statement content), "
                     "proof-facts NAME (the facts inside its proof), uses NAME (where it is "
                     "applied, with the source of each premise), composition CLAIM (the "
-                    "auditors' compositions for it, with --workspace for one workspace); impact "
-                    "says what is not extracted yet")
+                    "auditors' compositions for it, with --workspace for one workspace), impact "
+                    "NAME (how each main result uses it, and which claims' Lean uses it)")
     co.add_argument("--match", metavar="TEXT",
                     help="with proof-facts: rank the facts by the symbols they share with TEXT")
+    co.add_argument("--main", action="append", metavar="NAME",
+                    help="with impact: a main result to trace from, a declaration or a claim "
+                    "(its linked Lean); repeat for several (default: the declarations linked to "
+                    "the paper's theorems)")
     co.add_argument("--limit", type=int, help="return at most this many definitions or results")
     co.add_argument("--after", metavar="ID", help="continue a list after this item")
     co.add_argument("--workspace", metavar="ID", help="include this workspace's requirements and "
