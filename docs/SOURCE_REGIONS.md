@@ -378,6 +378,47 @@ found in another file is moved with a note to check that the paper still reads t
 The plan also lists labels that are new in the new revision (`new_passages`): passages that
 may need an inventory entry.
 
+### Proposed bounds for a changed span
+
+A span (a passage with `source_region`) that is `changed` or `not-found` gets bounds proposed
+from the line diff of its file (`proposed` on its entry; the claims are listed under `proposed`
+in the plan). Its first and last lines are mapped through the unchanged blocks of the diff; a
+line inside a rewritten block maps to the whole of that block's replacement, so the proposal
+errs on the wide side, and blank or comment-only lines are trimmed from its ends. A column
+bound is kept when its line is unchanged; otherwise the proposal takes the whole line and says
+so (`columns`). For a paragraph pinned at lines 40-46, with two lines inserted above it and
+line 43 rewritten, the proposal is lines 42-48, with the first line that changed (`where`, here
+line 45) and the diff of the old and new passage at those bounds (`diff`).
+
+The proposal carries the region advice at its bounds (`advice`, [above](#pinning-manuscript-source-regions)),
+and `flagged` names what makes it doubtful: bounds that cut an environment
+(`cuts-environment`) or cross a heading (`spans-section`). A passage whose lines were all
+removed has no proposal, only a `reason`.
+
+A proposal is advice. `--write` alone leaves the claim where it was; `--accept-bounds CLAIM`
+(repeatable, with `--write` to write it) gives the claim its proposed place and bounds, and
+nothing else: it keeps its digests and the revision they were made at, so the source check
+goes on reporting it until it is reviewed and pinned again. A claim without a proposal, or
+whose proposal is flagged, is refused; set its bounds by hand.
+
+### Line references in scope notes
+
+A claim's `scope_note` often cites lines of the manuscript (`lines 120–122`, `line 4`,
+`ll. 3-5`, `lines 1-2 of appendix.tex`, `appendix.tex:12-14`). The plan lists them under
+`notes`, per claim whose pin is of the original revision: each reference with its `file` (the
+file it names, else the claim's own) and its class:
+
+| Class | Meaning |
+|---|---|
+| `unchanged` | its lines are unchanged and keep their numbers |
+| `moved` | its lines are unchanged and still adjacent; `to` gives their new numbers |
+| `changed` | some of its lines changed or were removed (`changed_lines`), or lines were inserted between them: read the note again by hand |
+| `unread` | its file is not in both revisions, it names no file and the claim has none, or the lines are not in the file |
+
+`rewritten` shows the note with every `moved` reference given its new numbers.
+`--rewrite-notes` (with `--write`) writes it; without it the notes are not touched. Other
+references are left as they are, for review by hand.
+
 For an `unchanged` or `moved` passage the plan says whether the lines beside it changed
 (`context_changed`). The audited text is the same; an excerpt, a description or a symbol link
 that rests on the surrounding text needs checking. The plan counts the symbol links of each
@@ -388,8 +429,10 @@ made on and shows as stale in the reader when that text changes.
 inventory nor the configuration changed during planning. It changes only the selected paper's
 claims (`location`, `source_region`, `commit`, and line digests a claim was pinned without),
 the paper's `commit` under `papers`, and the paper's source revision in the configuration.
-Reviews, clauses, dismissals, Lean and other papers are not touched; free text such as notes
-or URLs naming the old revision is left to edit by hand. Rerunning the same command writes
+With `--accept-bounds` it also gives the claims named their proposed bounds, and with
+`--rewrite-notes` the scope notes their moved line references (above). Reviews, clauses,
+dismissals, Lean and other papers are not touched; other free text, such as URLs naming the
+old revision, is left to edit by hand. Rerunning the same command writes
 nothing more. Evidence and releases built before the repin keep the snapshot they were
 built from.
 

@@ -236,6 +236,8 @@ def simple_queue(index: dict, chunks: dict) -> dict:
             "id": "link:" + ch["key"], "kind": "link", "key": ch["key"],
             "name": ", ".join(l["name"] for l in links), "lean": [l["name"] for l in links],
             "fingerprints": {l["name"]: l.get("fingerprint") for l in links},
+            # The passage shown, which the report pins: a change to it reopens the review.
+            "source_sha256": {c["id"]: ch["source_sha256"]} if ch.get("source_sha256") else {},
             "paper": c["paper"], "papers": [c["paper"]], "section": section_of(c["number"]),
             "claims": [{"id": c["id"], "number": c["number"], "title": c["title"],
                         "file": c["file"], "status": c["status"]}],

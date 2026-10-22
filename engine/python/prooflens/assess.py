@@ -833,12 +833,23 @@ class Assessor:
                     "reading: no review text precedes it", file=r.file, line=r.line))
 
     def module_doc_checks(self):
-        """A warning for each name a module docstring lists that nothing declares: prose that
-        advertises a result the project does not contain. It never changes a status, and an
+        """A warning for each name a module docstring of the project lists that nothing
+        declares: prose that advertises a result the project does not contain. A name of a
+        module the probe did not load is looked up in the sources (`undeclared_doc_names`), and
+        a dependency's docstrings are its own audit's. It never changes a status, and an
         auditor can dismiss it (code `module-doc-name`, the module as subject, the name as
         trigger)."""
         from .moddocs import stale_doc_fingerprint, stale_doc_message, stale_doc_names
-        for d in stale_doc_names(self.lean.get("moddocs", [])):
+        from .source_names import undeclared_doc_names
+        lean_root = getattr(self.cfg, "lean_root", None)
+        docs = stale_doc_names(self.lean.get("moddocs", []), lean_root)
+        if lean_root is not None:
+            # The sources are searched only for names that resolve to nothing; a short name
+            # that reaches a module or a namespace stays reported.
+            plain = [d for d in docs if d.get("kind", "none") == "none"]
+            found = {id(d) for d in plain} - {id(d) for d in undeclared_doc_names(plain, lean_root)}
+            docs = [d for d in docs if id(d) not in found]
+        for d in docs:
             self.add_warning("module-doc-name", d["module"], d["module"],
                              {"fingerprint": stale_doc_fingerprint(d)},
                              stale_doc_message(d), d["name"])

@@ -20,7 +20,7 @@ from importlib import resources
 from pathlib import Path
 
 from .config import STANDARD_AXIOMS, Config, Paper, Publish
-from .review_sources import marker_safe
+from .review_sources import marker_safe, report_digests
 from .probe import ProbeError, by_library, fingerprint, lean_session, lean_source, lib_names
 from .sources import acquire
 from .moddocs import stale_doc_names
@@ -558,20 +558,29 @@ def _text(x) -> str:
     return x[:REVIEW_TEXT_CHARS] if isinstance(x, str) else ""
 
 
-def review_view(r: dict, links: list[dict]) -> dict:
-    """A report as the reader shows it, and whether it is current: it reviewed exactly the
-    claim's linked declarations, with the statements they have now (`None` when the Lean was
-    not checked, so their statements are unknown)."""
+def review_view(r: dict, links: list[dict], claim: dict) -> dict:
+    """A report as the reader shows it, and whether it is current: it read the claim's passage
+    as the paper now prints it (the digest it pinned is the claim's `source_sha256`) and
+    reviewed exactly the claim's linked declarations, with the statements they have now
+    (`None` when the passage is unchanged but the Lean was not checked, so their statements are
+    unknown). A report that is not current says why (`why`): `declarations`, `source-changed`
+    (it read another text of the passage) or `source-unrecorded` (it pinned no text)."""
     pins = r.get("pins") or {}
     fps = pins.get("fingerprints") or {}
     now = {}
     for l in links:
         rec = l.get("record") or {}
         now[l["name"]] = rec.get("fingerprint") or (rec.get("decl") or {}).get("fingerprint")
+    read = (report_digests(r) or {}).get(claim["id"])
+    why = None
     if not links or any(v is None for v in now.values()):
         current = None
+    elif set(fps) != set(now) or any(fps[n] != now[n] for n in now):
+        current, why = False, "declarations"
     else:
-        current = set(fps) == set(now) and all(fps[n] == now[n] for n in now)
+        current = True
+    if why is None and (read is None or read != claim.get("source_sha256")):
+        current, why = False, "source-unrecorded" if read is None else "source-changed"
     rv, verdict = r.get("reviewer") or {}, r.get("verdict") or {}
     return {"reviewer": {k: rv.get(k) for k in ("id", "kind", "name", "model", "identity",
                                                  "same_family_as_author")},
@@ -583,7 +592,8 @@ def review_view(r: dict, links: list[dict]) -> dict:
             "locked_at": (r.get("reading") or {}).get("locked_at"),
             "submitted_at": r.get("submitted_at"),
             "reviewed": sorted(fps), "release": pins.get("release"),
-            "project_commit": pins.get("project_commit"), "current": current}
+            "project_commit": pins.get("project_commit"), "current": current,
+            **({"why": why} if why else {})}
 
 
 def route_link_names(claim: dict, entry: dict) -> list[str]:
@@ -1164,7 +1174,7 @@ class LeanFacts:
         docstrings that the environment it was indexed in does not know. A module indexed with
         only some of the project loaded may report a name another project module declares, so
         a name the project's index holds is left out: as written, or inside a namespace the
-        module declares into, as the probe tries it."""
+        module declares into, enters or opens, as the probe tries it (`scopes`)."""
         names = {r["name"] for r in index}
         spaces: dict[str, set[str]] = {}
         for r in index:
@@ -1173,7 +1183,8 @@ class LeanFacts:
                 ".".join(parts[:i]) for i in range(1, len(parts)))
         return [d for m in sorted(self.docs) for d in self.docs[m]
                 if d["name"] not in names
-                and not any(f"{ns}.{d['name']}" in names for ns in spaces.get(m, ()))]
+                and not any(f"{ns}.{d['name']}" in names
+                            for ns in spaces.get(m, set()) | set(d.get("scopes", ())))]
 
     def _accept_answers(self, name: str, where: dict[str, set[str]], groups: list[list[str]]
                         ) -> tuple[dict | None, str | None]:
@@ -1546,7 +1557,7 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
         with lean.store.lock(log):
             full, failed = lean.index(linked)
             index = [index_preview(r) for r in full]
-            module_docs = stale_doc_names(lean.module_docs(index))
+            module_docs = stale_doc_names(lean.module_docs(index), root)
             if module_docs:
                 notes.append(stale_docs_note(module_docs))
             wanted = set(linked)
@@ -1621,7 +1632,7 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
                 "missing" in (r.get("errors") or []) for r in recs) else None)
             bridge = bridge_evidence(c, entry, accept, _one(linkrecs.get(target, [])), decls)
         c["correspondence"] = correspondence(c, entry, bridge) if c["links"] else None
-        c["reviews"] = [review_view(r, c["links"]) for r in reports.get("link:" + c["key"], [])]
+        c["reviews"] = [review_view(r, c["links"], c) for r in reports.get("link:" + c["key"], [])]
         c["references"] = claim_references(c, numbering)
         if c["links"]:
             worst = max(c["links"], key=lambda l: ["proved", "unspecified", "open", "malformed"]
