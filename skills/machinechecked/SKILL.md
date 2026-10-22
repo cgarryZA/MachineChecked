@@ -157,7 +157,9 @@ carries every step out on the toy example.
    expressions, the outcome) on the requirement it affects, and a `counterexample` against one
    reading, with a Lean certificate as evidence when you have one. A printed proof step is a
    claim of its own (`compare "Equation (3)"`), with its own verdict, such as `false as
-   printed`.
+   printed`. `--query impact NAME` says whether each main result uses NAME (`--main NAME`
+   chooses them) and lists the claims whose Lean uses it: a difference between NAME and the
+   paper can matter only to those.
 7. **Conclude.** A finding gives the coverage and its basis: `direct` (one Lean statement),
    `reviewed_composition` (your argument) or `checked_bridge`. It is your reading, attributed
    to you, and changes no status. Save what remains open as a `question` and set the `resume`
@@ -182,7 +184,9 @@ scope with modules not built, a proof walk that reached its limit) marks a parti
   with their recorded scope and provenance; report an author's review as the author's.
 - Present your interpretation of the paper as yours: it is saved under your name and stays
   editable. An informed investigation has seen the Lean; an independent review goes through
-  `machinechecked review`, which records that exposure.
+  `machinechecked review`, which records that exposure. `review next --order informed` also
+  ranks the units by what auditors' workspaces record as open, and records that you have seen
+  those prior interpretations, so a later reading of those claims is not blind.
 - In a non-interactive session, use `check --json` and `build`. `view` starts a local browser session.
 - Save links through the reader, `machinechecked link` or an authorized source tag, preserving who
   made the association.
