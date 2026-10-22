@@ -1,8 +1,10 @@
 """Exit codes: 1 means the check ran and found a problem, 2 that it could not run. With --json a
-check that could not run still prints one JSON document, saying so."""
+check that could not run still prints one JSON document, saying so. A command whose output's
+reader stops reading exits quietly with 141 (128 + SIGPIPE)."""
 
 import json
 import os
+import signal
 import subprocess
 import sys
 
@@ -83,6 +85,55 @@ def test_a_missing_program_is_reported_before_a_paper_is_downloaded(tmp_path):
                            env={**os.environ, "PATH": str(tmp_path / "nothing")})
     assert code == 2 and not_run(out)["kind"] == "missing-tool"
     assert "downloading" not in err and not (tmp_path / ".machinechecked").exists()
+
+
+# A command (`validate`, replaced) that writes a long output; or a short one, still buffered
+# when it returns, once its reader has gone; or into a pipe of its own whose reader has gone.
+WRITER = '''
+import select, subprocess, sys, time
+from prooflens import cli
+
+def run(a):
+    if a.file == "long":
+        for i in range(100000):
+            print(f"line {i} of a long output")
+    elif a.file == "buffered":
+        print("a short output")
+        poll = select.poll()
+        poll.register(sys.stdout.fileno(), select.POLLOUT)
+        while not any(ev & select.POLLERR for _, ev in poll.poll(0)):
+            time.sleep(0.01)
+    else:
+        p = subprocess.Popen(["true"], stdin=subprocess.PIPE)
+        p.wait()
+        p.stdin.write(b"x" * 100000)
+
+cli.cmd_validate = run
+cli.main(["validate", sys.argv[1], "--schema", "inventory"])
+'''
+
+
+@pytest.mark.skipif(not hasattr(signal, "SIGPIPE"), reason="no SIGPIPE on this platform")
+@pytest.mark.parametrize("output", ["long", "buffered"])
+def test_a_reader_that_stops_reading_ends_the_command_quietly(output):
+    """`machinechecked … | head`: once the reader closes the pipe, the command stops with the
+    status of a program stopped by SIGPIPE, and prints nothing more, on either stream."""
+    env = {k: v for k, v in os.environ.items() if k != "PYTHONUNBUFFERED"}  # output buffered
+    p = subprocess.Popen([sys.executable, "-c", WRITER, output], stdout=subprocess.PIPE,
+                         stderr=subprocess.PIPE, text=True, env=env)
+    if output == "long":
+        assert p.stdout.readline() == "line 0 of a long output\n"
+    p.stdout.close()
+    err = p.stderr.read()
+    assert p.wait(timeout=60) == 128 + signal.SIGPIPE and err == ""
+
+
+@pytest.mark.skipif(not hasattr(signal, "SIGPIPE"), reason="no SIGPIPE on this platform")
+def test_a_broken_pipe_of_the_command_s_own_is_an_error():
+    r = subprocess.run([sys.executable, "-c", WRITER, "own"], capture_output=True, text=True,
+                       timeout=60)
+    assert r.returncode == 2
+    assert "unexpected error (BrokenPipeError" in r.stderr and "Traceback" in r.stderr
 
 
 def test_the_full_assessment_records_the_installed_release():

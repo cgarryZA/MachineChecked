@@ -1606,11 +1606,17 @@ def main(argv=None):
     a = p.parse_args(argv)
     try:
         a.func(a)
+        sys.stdout.flush()  # what is still buffered, so that a closed pipe is handled below
     except SystemExit as e:
         # `sys.exit("message")` is a command that could not do its job; an integer is its result.
         if isinstance(e.code, str):
             _could_not_run(a, "error", e.code.removeprefix("machinechecked: "))
+        _flush_output()
         raise
+    except BrokenPipeError as e:
+        # The output's reader stopped reading (`… | head`); any other broken pipe is unexpected.
+        _stop_if_reader_gone()
+        _could_not_run(a, "internal", _crash(e))
     except FileNotFoundError as e:
         tool = Path(str(e.filename or "")).name
         if tool in MISSING:
@@ -1627,7 +1633,8 @@ def main(argv=None):
 
 
 # Exit codes: 0 the command did its job (and `check` found nothing wrong), 1 `check` (or
-# `build --fail-on-violation`) found a problem, 2 the command could not run.
+# `build --fail-on-violation`) found a problem, 2 the command could not run; 141 (128 + SIGPIPE)
+# the reader of its output stopped reading.
 COULD_NOT_RUN = 2
 
 
@@ -1645,6 +1652,43 @@ def _crash(e: Exception) -> str:
     import traceback
     traceback.print_exc()
     return f"unexpected error ({type(e).__name__}: {e}); please report it with the traceback above"
+
+
+def _flush_output() -> None:
+    """Write what is still buffered of standard output, stopping quietly if its reader has
+    gone (`_stop_if_reader_gone`)."""
+    try:
+        sys.stdout.flush()
+    except BrokenPipeError:
+        _stop_if_reader_gone()
+        raise
+
+
+def _stop_if_reader_gone() -> None:
+    """Exit quietly if the reader of standard output or error has closed its end
+    (`machinechecked … | head`, once `head` has its lines): no message, and the status of a
+    program stopped by SIGPIPE, 128 + 13. What is left to write goes to /dev/null, so that
+    Python's flush at exit does not fail again. Without `poll` (Windows) a broken pipe is taken
+    to be the output's."""
+    import select
+    import signal
+    gone = []
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            fd = stream.fileno()
+        except (AttributeError, OSError, ValueError):
+            continue
+        if hasattr(select, "poll"):
+            poll = select.poll()
+            poll.register(fd, select.POLLOUT)
+            if not any(ev & (select.POLLERR | select.POLLHUP) for _, ev in poll.poll(0)):
+                continue
+        gone.append(fd)
+    if gone:
+        null = os.open(os.devnull, os.O_WRONLY)
+        for fd in gone:
+            os.dup2(null, fd)
+        raise SystemExit(128 + getattr(signal, "SIGPIPE", 13))
 
 
 def _could_not_run(a, kind: str, message: str, **extra):
