@@ -841,10 +841,14 @@ class Assessor:
         trigger)."""
         from .moddocs import stale_doc_fingerprint, stale_doc_message, stale_doc_names
         from .source_names import undeclared_doc_names
-        docs = stale_doc_names(self.lean.get("moddocs", []))
         lean_root = getattr(self.cfg, "lean_root", None)
+        docs = stale_doc_names(self.lean.get("moddocs", []), lean_root)
         if lean_root is not None:
-            docs = undeclared_doc_names(docs, lean_root)
+            # The sources are searched only for names that resolve to nothing; a short name
+            # that reaches a module or a namespace stays reported.
+            plain = [d for d in docs if d.get("kind", "none") == "none"]
+            found = {id(d) for d in plain} - {id(d) for d in undeclared_doc_names(plain, lean_root)}
+            docs = [d for d in docs if id(d) not in found]
         for d in docs:
             self.add_warning("module-doc-name", d["module"], d["module"],
                              {"fingerprint": stale_doc_fingerprint(d)},
