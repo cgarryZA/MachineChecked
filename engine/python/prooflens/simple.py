@@ -1531,7 +1531,7 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
         with lean.store.lock(log):
             full, failed = lean.index(linked)
             index = [index_preview(r) for r in full]
-            module_docs = stale_doc_names(lean.module_docs(index))
+            module_docs = stale_doc_names(lean.module_docs(index), root)
             if module_docs:
                 notes.append(stale_docs_note(module_docs))
             wanted = set(linked)

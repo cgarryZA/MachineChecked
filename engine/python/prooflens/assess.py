@@ -838,7 +838,8 @@ class Assessor:
         auditor can dismiss it (code `module-doc-name`, the module as subject, the name as
         trigger)."""
         from .moddocs import stale_doc_fingerprint, stale_doc_message, stale_doc_names
-        for d in stale_doc_names(self.lean.get("moddocs", [])):
+        for d in stale_doc_names(self.lean.get("moddocs", []),
+                                 getattr(self.cfg, "lean_root", None)):
             self.add_warning("module-doc-name", d["module"], d["module"],
                              {"fingerprint": stale_doc_fingerprint(d)},
                              stale_doc_message(d), d["name"])

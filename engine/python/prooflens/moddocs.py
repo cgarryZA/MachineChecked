@@ -15,17 +15,76 @@ dismissed.
 from __future__ import annotations
 
 import hashlib
+import json
+from pathlib import Path
 
 
-def stale_doc_names(records: list[dict]) -> list[dict]:
+def library_dirs(lean_root: Path) -> list[Path]:
+    """The folders that may hold a library's sources: the project and each package of its Lake
+    manifest (a path dependency where it points, any other in `.lake/packages`)."""
+    dirs = [lean_root]
+    try:
+        packages = json.loads((lean_root / "lake-manifest.json").read_text()).get("packages", [])
+    except (OSError, ValueError):
+        packages = []
+    for p in packages:
+        d = lean_root / p["dir"] if p.get("type") == "path" and p.get("dir") else \
+            lean_root / ".lake" / "packages" / str(p.get("name", ""))
+        if d not in dirs:
+            dirs.append(d)
+    return dirs
+
+
+class LibrarySources:
+    """The modules and declarations of a library as its source files show them, for every
+    module of the library, imported by the project or not (#213)."""
+
+    def __init__(self, lean_root: Path | None):
+        self.lean_root = lean_root
+        self._libs: dict[str, tuple[set[str], set[str]]] = {}
+
+    def library(self, root: str) -> tuple[set[str], set[str]]:
+        if root not in self._libs:
+            from .simple import declared_names
+            mods, names = set(), set()
+            for d in library_dirs(self.lean_root) if self.lean_root else []:
+                files = ([d / f"{root}.lean"] if (d / f"{root}.lean").is_file() else []) + \
+                    (sorted((d / root).rglob("*.lean")) if (d / root).is_dir() else [])
+                for f in files:
+                    if ".lake" in f.relative_to(d).parts:
+                        continue
+                    mods.add(".".join(f.relative_to(d).with_suffix("").parts))
+                    try:
+                        names |= declared_names(f.read_text(encoding="utf-8", errors="replace"))
+                    except OSError:
+                        continue
+                if files:
+                    break
+            self._libs[root] = (mods, names)
+        return self._libs[root]
+
+    def declares(self, r: dict) -> bool:
+        """Whether the library of the record's module has a module of that full name, or a
+        source that declares the name inside one of the record's scopes."""
+        mods, names = self.library(r["module"].split(".")[0])
+        n = r["name"]
+        return n in mods or any(c in names for c in
+                                [n] + [f"{ns}.{n}" for ns in r.get("scopes", ())])
+
+
+def stale_doc_names(records: list[dict], lean_root: Path | None = None) -> list[dict]:
     """The names in module docstrings that look like declarations of the project and are not
     (`moddoc` records, which hold every backticked name the environment does not know): a
     dotted name whose first part is capitalised (`Widget.foo_le_bar`), or the name a list item
     under a "Main …" heading begins with. Short and symbol-like names (`L`, `W₂`) are left
     alone, as notation more often than a declaration. A short name that reaches only a module
     or a namespace (`kind`) is listed when it is capitalised or dotted, as the name of a
-    declaration that is gone. Each once, by file and line."""
+    declaration that is gone. A name the environment does not hold but a module of the same
+    library declares, or a module of that library named in full, is left out (`lean_root`
+    locates the sources): the project need not import every module of a library its
+    docstrings mention. Each once, by file and line."""
     out, seen = [], set()
+    library = LibrarySources(lean_root)
     for r in records:
         n = r["name"]
         kind = r.get("kind", "none")
@@ -33,6 +92,8 @@ def stale_doc_names(records: list[dict]) -> list[dict]:
         listed = r.get("item_lead") and r.get("heading", "").lower().startswith("main")
         other = kind in ("module", "namespace") and ("." in n or n[:1].isupper())
         if not (dotted or other or listed and len(n) >= 3 and n.isascii()):
+            continue
+        if kind == "none" and lean_root is not None and library.declares(r):
             continue
         file = r["module"].replace(".", "/") + ".lean"
         if (file, r["line"], n) not in seen:

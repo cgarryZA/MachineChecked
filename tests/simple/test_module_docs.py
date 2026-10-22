@@ -41,6 +41,8 @@ widget `w` has `w.bar`.
 The parts are bounded by `Parts.part_le`, through the namespace opened below; `Parts.part_gone`
 is gone. The old structures `Widgets` and `Parts` are no declarations.
 
+Spare parts come from `Spare.helper`, in the module `Shape.Spare` that nothing here imports.
+
 ```
 example : Shape.Widget.ghost := sorry
 ```
@@ -68,10 +70,19 @@ theorem part_le (n : Nat) : n ≤ n := Nat.le_refl n
 end Gizmo.Parts
 '''
 
+# A module of the library that no module of the project imports, so the probe never loads it:
+# the names WIDGETS gives of it are declared all the same (#213).
+SPARE = '''namespace Shape.Spare
+
+theorem helper (n : Nat) : n ≤ n := Nat.le_refl n
+
+end Shape.Spare
+'''
+
 # Each listed name, by line of WIDGETS: a declaration that is gone, a name that resolves to
 # nothing, and short names that reach a module and a namespace where a declaration is expected.
 # The module `Shape.Main` and the namespaces `Shape` and `Gizmo.Parts`, written in full, are not
-# listed.
+# listed, nor are `Spare.helper` and `Shape.Spare` of the module nothing imports.
 EXPECTED = [("Shape/Widgets.lean", 14, "Shape.Widget.foo_le_bar"),
             ("Shape/Widgets.lean", 15, "gone_lemma"),
             ("Shape/Widgets.lean", 21, "Parts.part_gone"),
@@ -85,6 +96,7 @@ def project(tmp_path, toolchain):
     (root / "Shape.lean").write_text((SRC / "Shape.lean").read_text() + "import Shape.Widgets\n")
     (root / "Shape" / "Widgets.lean").write_text(WIDGETS)
     (root / "Shape" / "Gizmo.lean").write_text(GIZMO)
+    (root / "Shape" / "Spare.lean").write_text(SPARE)
     if toolchain:
         (root / "lean-toolchain").write_text(toolchain + "\n")
         if subprocess.run(["elan", "toolchain", "list"], capture_output=True,
@@ -118,7 +130,8 @@ def test_stale_names_in_module_docstrings_are_listed(tmp_path, monkeypatch, caps
     assert ("warning: Shape/Widgets.lean:22: module docstring names Parts, which is the "
             "namespace Gizmo.Parts, not a declaration") in out
     # Modules and namespaces written in full are not listed, whatever the line says.
-    assert not any(f"names {n}," in out for n in ("Shape.Main", "Shape", "Gizmo.Parts"))
+    assert not any(f"names {n}," in out for n in ("Shape.Main", "Shape", "Gizmo.Parts",
+                                                    "Spare.helper", "Shape.Spare"))
     # A name that resolves through the namespace the file opens is not listed.
     assert "Parts.part_le," not in out
     cli.main(["check", "--json", "paper/main.tex"])
@@ -181,3 +194,23 @@ def test_a_module_or_namespace_is_listed_as_what_it_is():
         "declaration",
         "A/B.lean:3: module docstring names Widget, which is the module A.Widget, not a "
         "declaration"]
+
+
+def test_a_name_of_a_module_the_project_does_not_import_is_declared(tmp_path):
+    """A name the probe's environment lacks is not listed when a module of the same library
+    declares it, inside one of the scopes of the docstring's module, or when it names a module
+    of that library in full; a name no source of the library declares is listed (#213)."""
+    lib = tmp_path / ".lake" / "packages" / "lib"
+    (lib / "Lib").mkdir(parents=True)
+    (tmp_path / "lake-manifest.json").write_text(json.dumps(
+        {"packages": [{"type": "git", "name": "lib"}]}))
+    (lib / "Lib" / "B.lean").write_text("namespace Lib.Data\n\ndef ofSolves : Nat := 0\n\n"
+                                        "end Lib.Data\n")
+
+    def rec(name):
+        return {"record": "moddoc", "module": "Lib.A", "line": 3, "name": name, "heading": "",
+                "item_lead": False, "kind": "none", "scopes": ["Lib"]}
+    names = ["Lib.Data.ofSolves", "Data.ofSolves", "Lib.B", "Data.gone", "Lib.C"]
+    found = stale_doc_names([rec(n) for n in names], tmp_path)
+    assert [d["name"] for d in found] == ["Data.gone", "Lib.C"]
+    assert len(stale_doc_names([rec(n) for n in names])) == 5
