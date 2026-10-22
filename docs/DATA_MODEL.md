@@ -67,7 +67,9 @@ Markdown files with markers:
 `source` names a claim whose passage the reviewer read (a claim that states the proposition, or a
 definition claim that names the definition) and the digest of that passage as read, its
 `source_sha256` pin; a declaration no claim names has none. A marker without `source` is read as
-the [evidence policy](EVIDENCE_POLICY.md#a-review-is-a-reading-of-a-text) says. The section the
+the [evidence policy](EVIDENCE_POLICY.md#a-review-is-a-reading-of-a-text) says; one with
+`source=none` read none of the passages. A marker written `<!-- retired spec-review: ... -->`
+(`inventory retire --markers`) records no review and still closes its review text. The section the
 marker closes is the text of the review. The last marker of a declaration, reading the files in
 order (a directory's `.md` files by name), is its current record.
 

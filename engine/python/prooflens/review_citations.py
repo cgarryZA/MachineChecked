@@ -19,7 +19,7 @@ import os
 import re
 from pathlib import Path
 
-from .reviews import MARKER, PROMOTED, review_files
+from .reviews import ANY, MARKER, PROMOTED, review_files
 
 # Mathematical notation written in code spans: a symbol of one letter (perhaps primed) with a
 # subscript or a field (`x_i`, `C_rel`, `X'_T`, `μ.law`), or of two letters with a short
@@ -70,7 +70,7 @@ def citations(files: list[Path], root: Path, ignore: list[str] | None = None) ->
                 continue
             if fence or PROMOTED.match(line):
                 continue
-            for m in CODE.finditer(MARKER.sub("", line)):
+            for m in CODE.finditer(ANY.sub("", line)):
                 tok = m.group(1).strip()
                 kind = classify(tok)
                 if kind is None or tok in reviewers or any(p.search(tok) for p in pats):

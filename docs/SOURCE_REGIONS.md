@@ -233,6 +233,31 @@ becomes `false`, and every review marker that recorded the claim's old digest re
 changed, so the reviews of the propositions and definitions it states reopen; readings of
 other claims stand. Bounds that select the same text change nothing.
 
+## Moving a clause to another claim
+
+When no single region can hold a claim, or a passage belongs to a new entry, move the clause in
+the inventory (split the claim, or give the clause to the claim that prints it), pin the new
+claim, and then retire the readings that the old claim's passage no longer supports:
+
+```sh
+machinechecked inventory retire
+machinechecked inventory retire --write
+```
+
+The plan lists, per review marker, the claims whose recorded reading (`source=CLAIM@DIGEST`) no
+longer states or names the marker's declaration, and the readings the marker keeps. `--write`
+removes exactly those entries and adds none; a marker left with none records `source=none`. A
+reading is never moved to the new claim: the new claim's passage reads as unread until a
+reviewer reads it, and `review promote` records that reading.
+
+With `--markers`, the plan also lists the markers whose declaration no claim uses any more: a
+proposition no clause states (a statement retired at a new revision of the paper, or a refuted
+reading after a correction), or a definition no claim names that is in no closure of the last
+build's Lean results. Without a build such a definition's markers are listed as `left`.
+`--write --markers` retires them whole: each stays in its file, with its review text, as
+`<!-- retired spec-review: ... -->` (or `def-review`), which records no review, and the plan
+names the declaration, hash and reviewer of each.
+
 ## Display excerpts
 
 The reader shows a claim's statement typeset from the paper's source when the **whole** passage

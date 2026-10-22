@@ -40,6 +40,8 @@ from .source_regions import SCHEME, same_revision
 
 SOURCE = re.compile(r"(?:^|\s)source=([^\s@]+)@([0-9a-f]{64})(?=\s|$)")
 
+NONE = re.compile(r"(?:^|\s)source=none(?=\s|$)")
+
 
 # -- what a review reads ------------------------------------------------------------------------
 
@@ -92,7 +94,8 @@ def attribute(values: dict[str, str]) -> str:
 
 def parse(attrs: str, step: str | None = None, step_hash: str | None = None
           ) -> dict[str, str] | None:
-    """The digests recorded by a marker's attributes, by claim; None when it records none. A
+    """The digests recorded by a marker's attributes, by claim; None when it records none
+    (empty when it records `source=none`). A
     `step-review` marker of the step `step` records its own passage as its hash `step_hash`; a
     `source` attribute that gives that step another digest leaves the step without one."""
     found = dict(SOURCE.findall(attrs or ""))
@@ -102,7 +105,10 @@ def parse(attrs: str, step: str | None = None, step_hash: str | None = None
         else:
             found.pop(step)
         return found
-    return found or None
+    # `source=none`: the marker records that it read none of the passages (`retire.py` writes
+    # it when it removes a marker's last reading), so the history rule of a marker written
+    # before digests were recorded does not apply to it.
+    return found if found or NONE.search(attrs or "") else None
 
 
 def marker_state(review, cid: str, sha: str, history: "History | None" = None) -> str:
