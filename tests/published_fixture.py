@@ -142,6 +142,41 @@ def build(path, reader=None, work=False):
     return index, audit
 
 
+BETA, BETA_BASE = 'synthetic/beta', 'https://audit-b.example/'
+
+
+def second_audit(audit):
+    """Another project's audit of the same paper version, made from `audit`: it gives Theorem 1
+    another status, maps Theorem 2 (which the first audit does not), and has no prose entry."""
+    b = copy.deepcopy(audit)
+    b.update(author='B. Author', url=BETA_BASE, commit='c' * 40)
+    b['context']['project'] = {'repository': BETA, 'commit': 'c' * 40}
+    one, prose = b['claims']
+    for rec in (one, one['record']):
+        rec.update(fields('formal.open'))
+    prose['number'] = prose['record']['number'] = 'Theorem 2'
+    prose['id'] = prose['record']['id'] = 'T:two'
+    return b
+
+
+def combined(path, reader=None, stars=None):
+    """A paper page with two audits of one version (`REPO`'s and `BETA`'s), ordered by `stars`;
+    the paper's headings give Theorems 1 to 3."""
+    a = snapshot()
+    b = second_audit(a)
+    paper = copy.deepcopy(PAPER)
+    paper['formalisations'][1]['audits'] = [{'url': BETA_BASE, 'author': 'B. Author'}]
+    claims = [{'key': f'theorem-{n}', 'number': f'Theorem {n}', 'kind': 'theorem', 'links': [],
+               'anchor': {'begin': [1, 0, 100 * n], 'end': [1, 0, 100 * n + 40]}} for n in (1, 2, 3)]
+    apply_audits(claims, {REPO: a, BETA: b})
+    return write_paper_site(path, paper, claims, [595.28, 841.89], None, reader,
+                            {REPO: a, BETA: b}, stars=stars)
+
+
 if __name__ == '__main__':
     import sys
     build(Path(sys.argv[1]), Path(sys.argv[2]), work=True)
+    root = Path(sys.argv[1]).parent
+    combined(root / 'combined', Path(sys.argv[2]), {REPO: 10, BETA: 3})
+    combined(root / 'combined-beta', Path(sys.argv[2]), {REPO: 2, BETA: 50})
+    combined(root / 'combined-unranked', Path(sys.argv[2]), None)
