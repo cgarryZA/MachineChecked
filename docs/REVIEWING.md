@@ -71,7 +71,9 @@ A workspace keeps an investigation of the paper against the Lean so that you, or
 or agent, can continue it: the evidence chosen for each claim (and the candidates rejected), the
 findings, the open questions, and where you stopped. It lives in the project's working directory
 (`.machinechecked/review-work/`), survives rebuilds and browser restarts, and changes no status.
-Its format is in [the data model](DATA_MODEL.md#workspace-prooflensworkspace1-written-by-the-reader-and-the-command-line).
+Its format is in [the data model](DATA_MODEL.md#workspace-prooflensworkspace1-written-by-the-reader-and-the-command-line);
+[a worked investigation](AGENTS.md#a-worked-investigation) carries one through every step on the
+toy example.
 
 **In the reader.** Under `machinechecked view`, a claim page has an **Investigation** section:
 start one under your name, record a finding (its coverage and note, citing the linked
