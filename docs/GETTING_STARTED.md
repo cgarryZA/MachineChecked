@@ -380,6 +380,19 @@ A deploy replaces the whole site, so every run builds every audit; a saved build
 
 A paper page that lists audits of several versions gives each version its own page, and the reader a drop-down beside the formalisation selector to switch between them ([data model](DATA_MODEL.md)). Each version keeps its own PDF, claim numbers and statuses.
 
+In the panel beside the paper, each audit names the version it pins and its commit. **Open the audit** opens the audit of the version shown; audits of other versions link to their own version's page.
+
+## Paper pages with several audits
+
+On machinechecked.org, a paper version with audits from several Lean projects opens with all of them, under **All audits** in the formalisation selector:
+
+- Each claim shows the evidence of the default audit: the audit whose repository has the most GitHub stars (or the first listed, when the site has no star counts).
+- A claim the default audit does not map shows the evidence of the next audit, by stars, that maps it. The claim panel names that audit's author, repository and commit, and the contents list marks the claim with its repository.
+- Each claim carries one audit's status; statuses from different audits are never combined.
+- Choosing one project shows only its evidence. A claim its audit does not map is marked **Not in this audit**.
+
+Audits are shown together only on the page of the paper version they pin.
+
 ## A badge for your README
 
 Once your paper is listed on machinechecked.org (a repository whose `formalization.yaml` names an

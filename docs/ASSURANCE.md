@@ -34,6 +34,8 @@ root = "main.tex"
 publish = { pdf = false, source_text = false, lean = false, reviews = false }
 ```
 
+`spec_prefix` and `accept_prefix` name the modules of the statement layer and of the proof layer. A project whose layers span several namespaces, for example its own and those of a formalisation it builds on, lists them: `spec_prefix = ["MyPaper.PaperSpec", "Base.PaperSpec"]`. A specification or acceptance theorem under any listed prefix is in its layer, and no statement module under any of them may import a proof module under any of them. List those namespaces in `scope_roots` too, so that the definitions they declare are hashed and reviewed.
+
 The probe loads the modules listed in `modules` and what they import. A proposition, proof, witness or definition the inventory names outside them is a violation that names it, with the project module that declares it when its source shows one: list that module in `modules`, or import it from a listed one.
 
 Sources can also be a pinned Git revision (`source = { git = "owner/repo", rev = "<commit>" }`, of which only that revision is fetched) or a versioned arXiv record (`source = { arxiv = "2601.01234v2" }`: its source is downloaded from arXiv once and kept in the working directory, so later builds work offline; the version is required). Say which public record the paper is with `published` (an arXiv identifier with version such as `"arXiv:2601.01234v2"`, a DOI, or a URL) and, if the audited revision differs from it, how with `note` (for example `"This revision corrects Proposition 2.3."`); both go into `audit.json` and the reader, and change no status.
@@ -103,7 +105,7 @@ Reviewer's independent interpretation, comparison and verdict.
 <!-- spec-review: MyPaper.PaperSpec.thm_main HASH by=reviewer kind=human source=MyPaper:thm:main@DIGEST -->
 ```
 
-For definitions use `def-review`. The hash records the declaration version reviewed; relevant definition changes reopen the obligation. `source` records, per claim, the digest of the paper passage read (the claim's `source_sha256` pin); a change to that text reopens the obligation too. Reviewer identity is a record, not authenticated proof of identity. A section that reviews several declarations ends with one marker for each, and every marker carries the section's text.
+For definitions use `def-review`. The hash records the declaration version reviewed; relevant definition changes reopen the obligation. `source` records, per claim, the digest of the paper passage read (the claim's `source_sha256` pin); a change to that text reopens the obligation too. A claim id may hold `@` (the digest follows the last one); `build` refuses one with white space or `-->`, since a marker cannot carry it. Reviewer identity is a record, not authenticated proof of identity. A section that reviews several declarations ends with one marker for each, and every marker carries the section's text.
 
 A marker records a reading, so one with no review text before it (a heading followed only by markers, as when markers are copied without their reviews) counts as no review: the declaration reads as not reviewed, its claim as review pending, and `build` lists each such marker with its file and line (an obligation, code `review-without-reading`). `bare_markers_by = ["reviewer"]` under `[project]` lets the markers of the reviewers it names count without text.
 

@@ -251,3 +251,85 @@ def test_a_step_marker_follows_the_same_rule(tmp_path):
     assert rs.report_digests({"unit": {"id": "step:P:eq:s"},
                               "pins": {"source_sha256": {"P:eq:s": b},
                                        "fingerprints": {"source": a}}}) == {"P:eq:s": b}
+
+
+def test_a_marker_records_a_claim_id_that_holds_an_at_sign(tmp_path):
+    """#199: the digest is the fixed-length hex after the last `@`, so a claim id may hold `@`;
+    a review of a proposition two such claims state counts for both."""
+    from types import SimpleNamespace
+    from prooflens.assess import Assessor
+    from prooflens.reviews import parse_file
+    a, b = "a" * 64, "b" * 64
+    ids = {"X:eq:bound": a, "X:eq:bound@120": b}
+    assert rs.parse(rs.attribute(ids)) == ids
+    f = tmp_path / "r.md"
+    f.write_text("## Bound\n\nIt says what the paper says.\n\n<!-- spec-review: Example.bound "
+                 "synthetic-fingerprint by=auditor kind=human " + rs.attribute(ids) + " -->\n")
+    r, = parse_file(f, [], tmp_path)
+    assert r.source == ids
+    # A step marker of such a claim reads its id the same way.
+    f.write_text(f"## S\n\nIt holds.\n\n<!-- step-review: P:eq:s@3 {a} verdict=holds by=r "
+                 f"source=P:eq:s@3@{a} -->\n")
+    s, = parse_file(f, [], tmp_path)
+    assert s.name == "P:eq:s@3" and s.source == {"P:eq:s@3": a}
+
+    clause = {"name": "main", "spec": "Example.bound", "accept": "Example.bound_holds"}
+    inv = {"claims": [{"id": cid, "paper": "X", "scope": "formal", "scope_reviewed": True,
+                       "source_sha256": sha, "clauses": [clause]} for cid, sha in ids.items()]}
+    lean = {"specs": {"Example.bound": {"fingerprint": "synthetic-fingerprint", "errors": [],
+                                        "closure": [], "binders": [], "consts": []}},
+            "proofs": {"accept:Example.bound_holds:Example.bound": {
+                "errors": [], "sorry": False, "axioms": []}},
+            "decls": {}, "defs": {}, "layering": []}
+    cfg = SimpleNamespace(statement_authors=[], papers=[], lean_root=None)
+    out = {c["id"]: c["status"] for c in Assessor(cfg, inv, lean, {}, [r], []).run()["claims"]}
+    assert out == {"X:eq:bound": "formal: accepted", "X:eq:bound@120": "formal: accepted"}
+
+
+def test_the_build_refuses_a_claim_id_no_marker_can_record():
+    """#199: a marker's words are separated by white space and it ends at `-->`, so an
+    inventory id holding either is refused with a message that says so."""
+    import pytest
+    from prooflens.config import ConfigError
+    from prooflens.pipeline import validate_inventory
+
+    def inv(*ids):
+        return {"claims": [{"id": i, "paper": "X", "scope": "formal", "clauses": []}
+                           for i in ids]}
+
+    validate_inventory(inv("X:eq:bound", "X:eq:bound@120"))
+    for bad in ("X:eq: bound", "X:a-->b"):
+        with pytest.raises(ConfigError, match="a review marker cannot record the claim id"):
+            validate_inventory(inv("X:ok", bad))
+
+
+def test_generated_claim_ids_can_be_recorded():
+    """#199: the ids zero configuration makes from labels, numbers and places can be recorded;
+    a label or file name with white space, or a label with `-->`, is percent-encoded."""
+    from prooflens.simple import anchor_key
+    assert anchor_key({"env": "theorem", "number": "2.1", "label": None}) == "theorem-2.1"
+    assert anchor_key({"env": "remark", "file": "s.tex", "line": 9}) == "remark@s.tex:9"
+    assert anchor_key({"env": "remark", "file": "part one.tex", "line": 9}) == \
+        "remark@part%20one.tex:9"
+    assert anchor_key({"env": "lemma", "label": "lem: key"}) == "lem:%20key"
+    assert anchor_key({"env": "lemma", "label": "a-->b"}) == "a--%3Eb"
+    for key in ("remark@s.tex:9", "remark@part%20one.tex:9", "lem:%20key", "a--%3Eb"):
+        cid = f"P:{key}"
+        assert rs.carried(cid) and rs.parse(rs.attribute({cid: "c" * 64})) == {cid: "c" * 64}
+
+
+def test_links_and_reports_of_a_key_made_safe_are_kept(tmp_path):
+    """#199: a links file entry or a review report written under a key with white space is read
+    under the key's safe form."""
+    from prooflens.simple import LINKS, REVIEWS_DIR, load_links, load_review_reports
+    (tmp_path / LINKS).write_text(json.dumps({"version": 1, "papers": {"p.tex": {
+        "lem: key": {"lean": ["Example.key"]}, "thm:ok": {"lean": ["Example.ok"]}}}}))
+    assert load_links(tmp_path)["papers"]["p.tex"] == {
+        "lem:%20key": {"lean": ["Example.key"]}, "thm:ok": {"lean": ["Example.ok"]}}
+    (tmp_path / REVIEWS_DIR).mkdir()
+    report = {"schema": "prooflens/review-report@1", "unit": {"id": "link:lem: key"},
+              "reviewer": {"id": "r"}, "submitted_at": "2026-01-01T00:00:00Z"}
+    (tmp_path / REVIEWS_DIR / "r.json").write_text(json.dumps(
+        {"schema": "prooflens/review-reports@1", "reports": [report]}))
+    reports, notes = load_review_reports(tmp_path)
+    assert not notes and list(reports) == ["link:lem:%20key"]
