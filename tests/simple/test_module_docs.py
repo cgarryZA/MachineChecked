@@ -11,7 +11,7 @@ import subprocess
 
 import pytest
 
-from conftest import ROOT, needs_lean, needs_tex
+from conftest import ROOT, TOY, needs_lean, needs_tex
 from prooflens import cli
 from prooflens.moddocs import stale_doc_names
 from prooflens.simple import build_view
@@ -214,3 +214,29 @@ def test_a_name_of_a_module_the_project_does_not_import_is_declared(tmp_path):
     found = stale_doc_names([rec(n) for n in names], tmp_path)
     assert [d["name"] for d in found] == ["Data.gone", "Lib.C"]
     assert len(stale_doc_names([rec(n) for n in names])) == 5
+
+
+@needs_lean
+@needs_tex
+def test_the_toy_example_names_only_what_its_modules_resolve(tmp_path, monkeypatch):
+    """The toy example's module docstrings name only what each module resolves: a build of its
+    Lean project with both libraries, in zero configuration, lists no name, and the probe
+    reports none for the sources to resolve either (#254)."""
+    import prooflens.simple as simple
+    probed = []
+
+    def spy(records, lean_root=None):
+        probed.append(list(records))
+        return stale_doc_names(records, lean_root)
+    monkeypatch.setattr(simple, "stale_doc_names", spy)
+    root = tmp_path / "toy"
+    shutil.copytree(TOY / "lean", root, ignore=shutil.ignore_patterns(".lake"))
+    (root / "paper").mkdir()
+    shutil.copy(TOY / "paper" / "toy.tex", root / "paper")
+    subprocess.run(["lake", "build", "Toy", "ToyAudit"], cwd=root, check=True,
+                   capture_output=True, timeout=900)
+    view = build_view(root, root / "paper/toy.tex", root / ".machinechecked",
+                      log=lambda m: None)
+    assert view["body"]["module_docs"] == []
+    assert not any("module docstrings" in n for n in view["body"]["notes"])
+    assert probed and all(stale_doc_names(records) == [] for records in probed)
