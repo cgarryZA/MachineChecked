@@ -252,7 +252,7 @@ def cmd_view(a):
 
         from .workspace import api
         serve(res["site"], a.port, None, not a.no_browser, on_symbol=on_symbol,
-              api=_with_uses(api(cfg.out_dir, res["site"] / "data", cfg.root), cfg.lean_root,
+              api=_with_uses(api(cfg.out_dir, res["site"] / "data", cfg.lean_root), cfg.lean_root,
                              res["site"] / "data"))
         return
     from . import authoring
@@ -364,10 +364,11 @@ def cmd_link(a):
 
 
 def _workspace_place(a):
-    """The working directory, the build's site data and the project of a workspace command."""
+    """The working directory, the build's site data and the Lean project of a workspace
+    command."""
     if _assurance_config(a):
         cfg = cfgmod.load(_assurance_config(a))
-        return cfg.out_dir, cfg.out_dir / "site" / "data", cfg.root
+        return cfg.out_dir, cfg.out_dir / "site" / "data", cfg.lean_root
     from .simple import find_lake_root
     root = find_lake_root(Path.cwd().resolve())
     if root is None:
