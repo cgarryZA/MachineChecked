@@ -37,3 +37,32 @@ export function versionHref(v, repo) {
 export function pageVersions(index) {
   return (Array.isArray(index?.versions) ? index.versions : []).filter((v) => versionLabel(v) && versionHref(v));
 }
+
+// A claim's counterparts in the other versions of its paper (`counterparts` on the claim's index
+// row, from a claim map the site supplies), as the claim view shows them: each with the other
+// version's label and a link to each counterpart claim on that version's page. A version the page
+// does not offer is left out. A counterpart says how the claim relates; it never changes a status.
+const CHANGE = { same: "same statement", renumbered: "renumbered", changed: "statement changed" };
+
+export function counterpartViews(index, row, repo) {
+  const versions = pageVersions(index);
+  const out = [];
+  for (const cp of Array.isArray(row?.counterparts) ? row.counterparts : []) {
+    const v = versions.find((x) => x.id === cp.version);
+    const page = v && v.id !== index.version ? versionHref(v, repo) : null;
+    if (!page) continue;
+    const label = versionLabel(v);
+    const claims = (Array.isArray(cp.claims) ? cp.claims : [])
+      .filter((c) => typeof c?.id === "string" && typeof c?.number === "string")
+      .map((c) => ({ number: c.number, href: page + "#/r/paper/read/P/" + encodeURIComponent(c.id) }));
+    let before = "", after = "";
+    if (cp.change === "removed" && cp.later && !claims.length) before = "Removed in " + label;
+    else if (cp.change === "new" && !cp.later && !claims.length) before = "New in this version: not in " + label;
+    else if (cp.change === "split" && cp.later && claims.length >= 2) { before = "Split into "; after = " in " + label; }
+    else if (cp.change === "split" && !cp.later && claims.length === 1) { before = "Part of "; after = " in " + label + ", which was split"; }
+    else if (CHANGE[cp.change] && claims.length === 1) after = " in " + label + ", " + CHANGE[cp.change];
+    else continue;
+    out.push({ change: cp.change, version: v.id, before, claims, after });
+  }
+  return out;
+}
