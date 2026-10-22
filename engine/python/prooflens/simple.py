@@ -20,6 +20,7 @@ from importlib import resources
 from pathlib import Path
 
 from .config import STANDARD_AXIOMS, Config, Paper, Publish
+from .review_sources import marker_safe
 from .probe import ProbeError, by_library, fingerprint, lean_session, lean_source, lib_names
 from .sources import acquire
 from .moddocs import stale_doc_names
@@ -101,9 +102,12 @@ def find_papers(root: Path) -> list[Path]:
 # -- claims from the paper -------------------------------------------------------------------
 
 def anchor_key(a: dict) -> str:
-    """The key a statement environment's claim has in zero configuration."""
+    """The key a statement environment's claim has in zero configuration: its label, its
+    environment and number, or its environment and place; made safe for a review marker to
+    record (`review_sources.marker_safe`)."""
     num = a.get("number")
-    return a.get("label") or (f"{a['env']}-{num}" if num else f"{a['env']}@{a['file']}:{a['line']}")
+    return marker_safe(a.get("label") or (f"{a['env']}-{num}" if num
+                                          else f"{a['env']}@{a['file']}:{a['line']}"))
 
 
 def claims_from_anchors(pid: str, anchors: list[dict], snap: Path) -> list[dict]:
@@ -541,6 +545,11 @@ def load_review_reports(root: Path) -> tuple[dict[str, list[dict]], list[str]]:
             if not isinstance(unit, str) or key in seen:
                 continue
             seen.add(key)
+            # A report made before claim keys were made safe for markers names the key as it
+            # was (`anchor_key`).
+            kind, _, rest = unit.partition(":")
+            if kind in ("link", "step"):
+                unit = f"{kind}:{marker_safe(rest)}"
             out.setdefault(unit, []).append(r)
     return out, notes
 
@@ -650,10 +659,17 @@ def links_key(root: Path, paper_path: Path) -> str:
 
 
 def load_links(root: Path) -> dict:
+    """The links file, its claims keyed as `anchor_key` now keys them: a key written before keys
+    were made safe for markers is read as its safe form, unless that form is there too."""
     p = links_file(root)
     if not p.exists():
         return {"version": 1, "papers": {}}
-    return read_json(p)
+    data = read_json(p)
+    for paper, links in (data.get("papers") or {}).items():
+        if isinstance(links, dict) and any(marker_safe(k) != k for k in links):
+            data["papers"][paper] = {
+                (k if marker_safe(k) in links else marker_safe(k)): v for k, v in links.items()}
+    return data
 
 
 def save_link(root: Path, paper: str, key: str, lean: list[str] | None, rejected: list[str]
@@ -1706,7 +1722,7 @@ def write_view_site(view: dict, site: Path, web_dist: Path | None,
     by_id = {c["id"]: c for c in body["claims"]}
     for c in body["claims"]:
         anchor = next((a for a in body["tex"].get("anchors", [])
-                       if (a.get("label") or f"{a['env']}-{a.get('number')}") == c["key"]), None)
+                       if anchor_key(a) == c["key"]), None)
         fname = mf.claim_file(c["id"])
         akind = "approximate" if anchor and anchor.get("kind") == "pdf" else "exact"
         la = c.get("line_anchor")

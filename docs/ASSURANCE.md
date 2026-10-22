@@ -103,7 +103,7 @@ Reviewer's independent interpretation, comparison and verdict.
 <!-- spec-review: MyPaper.PaperSpec.thm_main HASH by=reviewer kind=human source=MyPaper:thm:main@DIGEST -->
 ```
 
-For definitions use `def-review`. The hash records the declaration version reviewed; relevant definition changes reopen the obligation. `source` records, per claim, the digest of the paper passage read (the claim's `source_sha256` pin); a change to that text reopens the obligation too. Reviewer identity is a record, not authenticated proof of identity. A section that reviews several declarations ends with one marker for each, and every marker carries the section's text.
+For definitions use `def-review`. The hash records the declaration version reviewed; relevant definition changes reopen the obligation. `source` records, per claim, the digest of the paper passage read (the claim's `source_sha256` pin); a change to that text reopens the obligation too. A claim id may hold `@` (the digest follows the last one); `build` refuses one with white space or `-->`, since a marker cannot carry it. Reviewer identity is a record, not authenticated proof of identity. A section that reviews several declarations ends with one marker for each, and every marker carries the section's text.
 
 A marker records a reading, so one with no review text before it (a heading followed only by markers, as when markers are copied without their reviews) counts as no review: the declaration reads as not reviewed, its claim as review pending, and `build` lists each such marker with its file and line (an obligation, code `review-without-reading`). `bare_markers_by = ["reviewer"]` under `[project]` lets the markers of the reviewers it names count without text.
 
