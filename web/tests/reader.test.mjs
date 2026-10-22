@@ -93,6 +93,16 @@ site = Path(sys.argv[1]).parent / "long"
 write_paper_site(site, long_paper, long_claims, [612, 792], "paper.pdf", Path(sys.argv[2]))
 (site / "paper.pdf").write_bytes(pdf(30))
 
+# A long paper whose many claims have titles with mathematics, so the contents list is far taller
+# than the window and holds KaTeX's absolutely positioned MathML.
+tall_paper = {**paper, "id": "arxiv:2601.00004", "title": "A paper with many titled claims", "formalisations": []}
+tall_anchors = [{**anchor("theorem", str(i), 1 + i // 2, 100 + 300 * (i % 2)), "title": f"Bound on $x_{{{i}}}^2 + \\sum_k a_k$"}
+                for i in range(1, 61)]
+tall_claims = paper_claims(tall_anchors, tall_paper["title"], [])
+site = Path(sys.argv[1]).parent / "tall"
+write_paper_site(site, tall_paper, tall_claims, [612, 792], "paper.pdf", Path(sys.argv[2]))
+(site / "paper.pdf").write_bytes(pdf(31))
+
 # A paper in two versions, one page each (as machinechecked.org writes them): arXiv v1, and the
 # latest manuscript at a commit, whose claims are numbered differently and linked differently.
 # Project A has an audit of each version (#42): the panel names each one's version and commit.
@@ -351,8 +361,8 @@ const browser = await chromium.launch({ executablePath: process.env.CHROMIUM || 
 let failures = 0;
 if (process.env.SHOTS) fs.mkdirSync(process.env.SHOTS, { recursive: true });
 
-async function check(name, width, fn) {
-  const pg = await browser.newPage({ viewport: { width, height: 900 } });
+async function check(name, width, fn, height = 900) {
+  const pg = await browser.newPage({ viewport: { width, height } });
   pg.setDefaultTimeout(10000);
   const errors = [];
   pg.on("pageerror", (e) => { errors.push(String(e)); console.log(`PAGE ERROR ${name}: ${e.stack || e}`); });
@@ -472,6 +482,41 @@ await check("a claim chosen in a long paper stays in view (contents and deep lin
     await cold.close();
   }
 });
+
+// The reader fills the window and the document never scrolls (#65, #214): not after opening a
+// claim deep in a long paper by its link, and not after wheel scrolling in any pane.
+const pageScroll = (pg) => pg.evaluate(() => ({ height: innerHeight, scrollHeight: document.scrollingElement.scrollHeight, scrollY }));
+const assertNoPageScroll = async (pg, when) => {
+  const s = await pageScroll(pg);
+  assert.equal(s.scrollHeight, s.height, `document taller than the window ${when}: ${JSON.stringify(s)}`);
+  assert.equal(s.scrollY, 0, `document scrolled ${when}: ${JSON.stringify(s)}`);
+};
+for (const [width, height] of [[1440, 900], [2000, 1000], [390, 844]]) {
+  await check("the document never scrolls after a deep link or scrolling a pane", width, async (pg) => {
+    await pg.goto(origin + `/tall/#/r/paper/read/P/${encodeURIComponent("P:theorem-55")}`);
+    await pg.waitForSelector("aside h1");
+    await pg.waitForTimeout(1500);
+    await assertNoPageScroll(pg, "after opening a claim by its link");
+    const panes = { contents: ".reader-layout > nav.toc", paper: ".paperpane", claim: "aside.side" };
+    let scrolled = 0;
+    for (const [name, sel] of Object.entries(panes)) {
+      const pane = pg.locator(sel);
+      if (!(await pane.count()) || !(await pane.isVisible())) continue;
+      const box = await pane.boundingBox();
+      if (!box || box.width < 2 || box.height < 2) continue;
+      await pg.mouse.move(box.x + box.width / 2, box.y + Math.min(box.height / 2, 200));
+      for (const dy of [4000, -1500, 8000]) { await pg.mouse.wheel(0, dy); await pg.waitForTimeout(150); }
+      await assertNoPageScroll(pg, `after scrolling the ${name} pane`);
+      scrolled++;
+    }
+    assert.ok(scrolled >= 1, "no pane was scrolled");
+    if (width > 1180) {
+      assert.equal(scrolled, 3, "contents, paper and claim panes all scrolled");
+      const toc = await pg.locator(".reader-layout > nav.toc").evaluate((n) => [n.scrollTop, n.scrollHeight > n.clientHeight]);
+      assert.ok(toc[1] && toc[0] > 0, `the contents pane scrolls inside its own box (${toc})`);
+    }
+  }, height);
+}
 
 // A paper in two versions: the drop-down beside the project selector opens the other version's
 // page, with its own PDF, claim numbers and statuses; the address keeps the version and the
