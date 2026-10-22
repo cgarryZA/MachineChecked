@@ -4,9 +4,10 @@ A review often justifies its reading by citing a lemma (`Foo.bar_eq_span`) or a 
 backticked token of a review file that looks like a Lean name (no spaces, and an `_` or a `.`)
 is resolved by the probe against the environment: the project, its dependencies and Lean's own
 library (`names` request). A name resolves when a declaration, namespace or module has it, or
-has it as its last components. A backticked token that looks like a path (one with a file
-extension, or a folder ending in `/`) resolves when a file or folder of the project or of its
-Lake packages ends with it. What does not resolve is a finding of the `warning` tier (code
+has it as its last components; one the environment lacks is looked up in the Lean sources of the
+project and its Lake packages, which hold the modules the probe did not load (#221). A
+backticked token that looks like a path (one with a file extension, or a folder ending in `/`)
+resolves when a file or folder of the project or of its Lake packages ends with it. What does not resolve is a finding of the `warning` tier (code
 `review-citation`), with its file and line; `review_citations_strict = true` makes it a
 violation. Fenced code blocks, the `Review by` lines promotion writes, reviewers' names and
 tokens matching `review_citations_ignore` (mathematical notation such as `x_i`) are skipped.
@@ -20,6 +21,7 @@ import re
 from pathlib import Path
 
 from .reviews import MARKER, PROMOTED, review_files
+from .source_names import SourceNames, last
 
 # Mathematical notation written in code spans: a symbol of one letter (perhaps primed) with a
 # subscript or a field (`x_i`, `C_rel`, `X'_T`, `μ.law`), or of two letters with a short
@@ -126,6 +128,11 @@ def unresolved(cites: list[dict], names: dict | None, roots: list[Path]) -> list
                 out.append(c)
         elif not path_exists(c["token"], paths):
             out.append(c)
+    # A name the probe's environment lacks may be declared by a module it did not load (#221).
+    missing_names = {c["token"] for c in out if c["kind"] == "name"}
+    if missing_names:
+        src = SourceNames(roots, {last(t) for t in missing_names})
+        out = [c for c in out if c["kind"] != "name" or not src.known_suffix(c["token"])]
     return out
 
 

@@ -321,7 +321,7 @@
       {/if}
       {#each claim.reviews || [] as r}
         <details class="review" data-verdict={r.verdict.value}>
-          <summary class="small"><strong>Review: {VERDICT_LABEL[r.verdict.value] || r.verdict.value}</strong>, by {reviewer(r)}, {(r.submitted_at || "").slice(0, 10)}{r.current === false ? " · recorded for other declarations or statements" : r.current === null ? " · not compared with the current Lean" : ""}</summary>
+          <summary class="small"><strong>Review: {VERDICT_LABEL[r.verdict.value] || r.verdict.value}</strong>, by {reviewer(r)}, {(r.submitted_at || "").slice(0, 10)}{r.current === false ? (r.why === "source-changed" ? " · made on other paper text" : r.why === "source-unrecorded" ? " · does not record the paper text it read" : " · recorded for other declarations or statements") : r.current === null ? " · not compared with the current Lean" : ""}</summary>
           {#if r.verdict.detail}<p class="small pre">{r.verdict.detail}</p>{/if}
           <p class="small pre">{r.comparison}</p>
           <details>
