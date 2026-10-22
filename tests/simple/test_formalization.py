@@ -160,7 +160,8 @@ def test_an_exported_review_is_shown_and_changes_no_status(plain):
     status, fp = c["status"], rec.get("fingerprint") or rec["decl"]["fingerprint"]
     report = {"schema": "prooflens/review-report@1",
               "unit": {"id": "link:" + c["key"], "kind": "link"},
-              "pins": {"fingerprints": {"Plain.oddSum_eq_sq": fp}},
+              "pins": {"fingerprints": {"Plain.oddSum_eq_sq": fp},
+                       "source_sha256": {c["id"]: c["source_sha256"]}},
               "reviewer": {"id": "human:a-reviewer", "kind": "human", "name": "A. Reviewer",
                            "identity": "self-declared"},
               "reading": {"text": "The sum of the first n odd numbers is n^2.",
@@ -180,4 +181,57 @@ def test_an_exported_review_is_shown_and_changes_no_status(plain):
     # Linking other declarations makes the review one of other declarations.
     save_link(plain, "paper/main.tex", "thm:sum-odd", ["Plain.oddSum_eq_sq", "Plain.oddSum"])
     c, _ = theorem2()
-    assert [r["current"] for r in c["reviews"]] == [False]
+    assert [(r["current"], r["why"]) for r in c["reviews"]] == [(False, "declarations")]
+
+
+@needs_lean
+@needs_tex
+def test_a_link_review_of_an_earlier_text_is_not_current(plain):
+    """#206: a link review pins the passage it read; once the paper prints another text, or
+    when the report pins none, it is no longer current."""
+    if not built_modules(plain, ["Plain"])[0]:
+        pytest.skip("the plain example is not built")
+    import json
+    from prooflens.simple import write_view_site
+    save_link(plain, "paper/main.tex", "thm:sum-odd", ["Plain.oddSum_eq_sq"])
+
+    def theorem2():
+        view = build_view(plain, plain / "paper/main.tex", plain / ".machinechecked",
+                          log=lambda m: None)
+        return next(c for c in view["body"]["claims"] if c["number"] == "Theorem 2"), view
+
+    c, view = theorem2()
+    # The queue's unit carries the digest of the passage it shows, for the report to pin.
+    site = plain / ".machinechecked" / "site"
+    write_view_site(view, site, None)
+    unit = next(u for u in json.loads((site / "data/review-queue.json").read_text())["units"]
+                if u["id"] == "link:" + c["key"])
+    assert unit["source_sha256"] == {c["id"]: c["source_sha256"]}
+    rec = c["links"][0]["record"]
+    fp = rec.get("fingerprint") or rec["decl"]["fingerprint"]
+
+    def report(who, pins):
+        return {"schema": "prooflens/review-report@1",
+                "unit": {"id": "link:" + c["key"], "kind": "link"},
+                "pins": {"fingerprints": {"Plain.oddSum_eq_sq": fp}, **pins},
+                "reviewer": {"id": f"human:{who}", "kind": "human", "name": who,
+                             "identity": "self-declared"},
+                "reading": {"text": "A reading.", "locked_at": "2026-01-01T00:00:00Z"},
+                "comparison": {"text": "Same statement.", "checklist": {}},
+                "verdict": {"group": "matches", "value": "exact", "detail": ""},
+                "submitted_at": "2026-01-01T00:05:00Z"}
+    (plain / "machinechecked-reviews").mkdir()
+    (plain / "machinechecked-reviews" / "a.json").write_text(json.dumps(
+        {"schema": "prooflens/review-reports@1", "reports": [
+            report("pinned", {"source_sha256": unit["source_sha256"]}),
+            report("unpinned", {})]}))
+    c, _ = theorem2()
+    assert [(r["reviewer"]["name"], r["current"], r.get("why")) for r in c["reviews"]] == [
+        ("pinned", True, None), ("unpinned", False, "source-unrecorded")]
+    tex = plain / "paper/main.tex"
+    tex.write_text(tex.read_text().replace(
+        "the sum of the first $n$ odd numbers is $n^2$.",
+        "the sum of the first $n$ odd natural numbers is $n^2$."))
+    c, _ = theorem2()
+    assert [(r["reviewer"]["name"], r["current"], r.get("why")) for r in c["reviews"]] == [
+        ("pinned", False, "source-changed"), ("unpinned", False, "source-unrecorded")]
