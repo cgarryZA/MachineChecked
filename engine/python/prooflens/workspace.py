@@ -375,6 +375,31 @@ def _ref(ref, snap, root) -> dict:
                       "quote": _text(p.get("quote"), "the quotation")}}
 
 
+def ref_text(ref: dict) -> str:
+    """What a stored evidence reference names, in the reader's words: the declaration, the
+    application (`callee applied in caller`), the fact inside a proof, the certificate, the
+    source location or the paper passage."""
+    ref = ref or {}
+    if ref.get("decl"):
+        return ref["decl"]
+    if ref.get("app"):
+        a = ref["app"]
+        return f"{a.get('callee')} applied in {a.get('caller')}"
+    if ref.get("fact"):
+        f = ref["fact"]
+        return (f"{f.get('name') or f.get('head') or 'a fact'} : {f.get('type')}, "
+                f"inside the proof of {f.get('decl')}")
+    if ref.get("certificate"):
+        c = ref["certificate"]
+        return f"{c.get('theorem')}, certificate for {c.get('target')}"
+    if ref.get("source"):
+        s = ref["source"]
+        return f"{s.get('file')}" + (f":{s['line']}" if s.get("line") else "")
+    if ref.get("paper"):
+        return "paper passage"
+    return "a reference of no known kind"
+
+
 def _claim(q, snap) -> str:
     if not isinstance(q, str) or not q.strip():
         raise WorkspaceError("a record names its claim (`claim`)")
