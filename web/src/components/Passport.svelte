@@ -1,7 +1,7 @@
 <script>
   import { claimLink, claimReference, issueUrl, reportsUrl, sourceUrl, sourceLabel, sourceTitle } from "../lib/issue.js";
   import TexInline from "./TexInline.svelte";
-  import { loadClaim, loadSearch, saveLink, saveSymbol, inProject, projectClaims } from "../lib/data.js";
+  import { loadClaim, loadSearch, saveLink, saveSymbol, shownClaim, projectClaims, auditOf } from "../lib/data.js";
   import { project } from "../lib/project.svelte.js";
   import { href, route, go, withQuery, inspectionHref } from "../lib/route.svelte.js";
   import { statusView, inScope, clauseNote, evidenceView } from "../lib/presentation.js";
@@ -30,8 +30,11 @@
   let { index, claimId, full = false, editable = false, comparison = false } = $props();
 
   let loaded = $state(null);
-  // On a page with several projects, the claim as the chosen one sees it.
-  const claim = $derived(loaded && index.projects ? inProject(loaded, project.repo) : loaded);
+  // On a page with several projects, the claim as the chosen project (or the audit that maps it,
+  // with the audits shown together) sees it.
+  const claim = $derived(loaded && index.projects ? shownClaim(loaded) : loaded);
+  // The audit whose evidence the claim shows, on a paper page, for its attribution.
+  const source = $derived(claim?.evidence_from ? auditOf(index, claim.evidence_from) : null);
   let error = $state(null);
   // The inspector: the declarations opened from this claim, in order. While it is not empty the
   // last one replaces the claim view, which stays mounted (hidden) so its open sections and
@@ -55,7 +58,7 @@
   const RANK = { stale: 0, pending: 1, "author-reviewed": 2, reviewed: 3 };
 
   $effect(() => {
-    claimId; project.repo; attempt;
+    claimId; project.repo; project.combined; attempt;
     let current = true;
     loaded = null; error = null; scrolls = []; showAll = false; saveError = null; menu = false;
     loadClaim(index, claimId).then((c) => { if (current) loaded = c; }).catch((e) => { if (current) error = String(e); });
@@ -140,7 +143,7 @@
     const linked = (search.claims || []).filter((c) => ids.includes(c.id) && (c.lean || []).includes(name)).map((c) => c.id);
     const meta = projectClaims(index).find((c) => linked.includes(c.id) && c.kind === "definition");
     const raw = meta && (await loadClaim(index, meta.id).catch(() => null));
-    const rec = raw && inProject(raw, project.repo);
+    const rec = raw && shownClaim(raw);
     return rec && (rec.anchor?.begin || rec.excerpt?.ready) ? rec : null;
   }
 
@@ -285,6 +288,15 @@
         </span>
       </div>
       {#if copied}<p class="faint small copied">{copied}</p>{/if}
+      {#if claim.missing}
+        <p class="small evidence-from missing" data-source="missing">Not in this audit: the audit of <code>{claim.evidence_from}</code> does not map this claim.</p>
+      {:else if project.combined && claim.unmapped}
+        <p class="small evidence-from" data-source="unmapped">No audit of this version maps this claim.</p>
+      {:else if project.combined && source}
+        <p class="small evidence-from" class:filled={claim.filled} data-source={claim.filled ? "filled" : "default"}>
+          {#if claim.filled}<strong>From another audit.</strong>{" The default audit does not map this claim; this is the evidence of the audit of "}{:else}{"From the audit of "}{/if}<code>{claim.evidence_from}</code>{source.author ? " by " + source.author : ""}{#if source.commit}{" at commit "}<code>{source.commit.slice(0, 12)}</code>{/if}.
+        </p>
+      {/if}
       {#if claim.correspondence && !claim.step}
         {@const cor = claim.correspondence}
         {@const cv = coverageView(cor)}
@@ -636,6 +648,8 @@
   .menu > a, .menu > button { text-align: left; font: inherit; font-size: 14px; padding: 7px 10px; border: 0; background: none; color: var(--text); border-radius: 6px; cursor: pointer; text-decoration: none; }
   .menu > a:hover, .menu > button:hover { background: var(--surface-2); }
   .copied { margin: 4px 0 0; }
+  .evidence-from { margin: 6px 0 0; color: var(--muted); overflow-wrap: anywhere; }
+  .evidence-from.filled, .evidence-from.missing { color: var(--text); border-left: 3px solid var(--accent); padding-left: 8px; }
   .linkby { margin: 4px 0 0; }
   .recorded { margin: 0 0 8px; }
   .mklink { margin-top: 8px; border: 1px dashed var(--border); border-radius: 8px; padding: 6px 10px; }

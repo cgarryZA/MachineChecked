@@ -43,11 +43,16 @@ every string in it as untrusted; it never runs an audit's HTML or JavaScript. An
 cannot load is linked instead.
 
 **One page per paper, and it is the paper.** A paper's page is the reader showing the paper itself (its PDF from its source), whether or not anything about it is formalised; what is known about its formalisations sits in a panel beside it, and an audit adds its claims to the same reader. A selector chooses whose formalisation is shown; changing it
-changes the evidence beside each claim, never the paper or its numbering. Each project shows its
-own claims. Showing another project's mapping where the selected one has none, and combined
-coverage, come later, and only between audits that pin the same paper version: claim numbers can
-differ between versions. Claims proved in different projects are never one proof, and projects are
-not ranked.
+changes the evidence beside each claim, never the paper or its numbering.
+
+**Several audits of one version.** A page opens on its default audit: the one whose repository has
+the most GitHub stars (counts the site records when it builds; without a count for every audit, the
+registry's order). Each claim shows that audit's evidence. A claim it does not map shows the
+evidence of the next audit, by stars, that maps it, labelled with that audit's author, repository
+and commit. Choosing one project in the selector shows only its evidence, and flags each claim its
+audit does not map. Audits are drawn on together only when they pin the same paper version, since
+claim numbers can differ between versions. Statuses from different audits are never combined into
+one, and claims proved in different projects are never one proof.
 
 **Reports.** Every claim has Raise issue: a pre-filled GitHub issue in the audit's own repository
 (the audit author's choice), carrying identifiers and the claim's permanent link, never statement
