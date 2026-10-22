@@ -3,7 +3,8 @@
 
 Equation (3) of the toy paper, in the proof of Theorem 2.5, states `n ≤ k n²` for every natural
 number `k ≥ 0`. These declarations are an auditor's evidence about that printed step. They are
-outside the paper's statements (`Toy.PaperSpec`) and their proofs (`Toy.Acceptance`).
+outside the paper's statements (Toy.PaperSpec) and their proofs (Toy.Acceptance), which this
+library does not import.
 -/
 
 namespace ToyAudit
