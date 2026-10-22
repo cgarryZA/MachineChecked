@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Setup of a Claude Code cloud environment (or any Ubuntu 24.04 machine) for ProofLens and the
-# Lean projects it reads: elan with the toolchains they pin, TeX Live with latexmk, the Python
-# package and the web app's dependencies. Idempotent; safe to run at every session start.
+# Lean projects it reads: elan with the toolchains they pin, TeX Live with latexmk, zstd for the
+# Lean build cache, the Python package and the web app's dependencies. Idempotent; safe to run at every session start.
 set -euo pipefail
 
 export DEBIAN_FRONTEND=noninteractive
@@ -13,6 +13,12 @@ if ! command -v latexmk >/dev/null || ! kpsewhich lmodern.sty >/dev/null 2>&1; t
   $SUDO apt-get install -y -qq --no-install-recommends \
     latexmk texlive-latex-recommended texlive-latex-extra texlive-science \
     texlive-fonts-recommended texlive-bibtex-extra texlive-pictures biber lmodern cm-super >/dev/null
+fi
+
+# zstd: the Lean build cache compresses its archives with it.
+if ! command -v zstd >/dev/null; then
+  $SUDO apt-get update -qq
+  $SUDO apt-get install -y -qq --no-install-recommends zstd >/dev/null
 fi
 
 # elan and the Lean toolchain of the toy paper (other projects' toolchains install on first use).
