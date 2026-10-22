@@ -54,7 +54,64 @@ TOTALISED = {
     "MeasureTheory.condExp": "the conditional expectation is 0 for a non-integrable function",
     "ENNReal.toReal": "∞.toReal = 0",
     "ENNReal.toNNReal": "∞.toNNReal = 0",
+    "SupSet.sSup": "a supremum in ℝ is 0 when the set is unbounded or empty",
+    "InfSet.sInf": "an infimum in ℝ is 0 when the set is unbounded below or empty",
 }
+
+# Suprema and infima: a family with none gets a default value only in a type where it need not
+# exist. The probe records each application's type (`order_ops`), and the warning names it.
+ORDER_OPS = {"iSup": "supremum", "sSup": "supremum", "SupSet.sSup": "supremum",
+             "iInf": "infimum", "sInf": "infimum", "InfSet.sInf": "infimum"}
+
+
+def _order_warning(c: str, spec: str, ops) -> str | None:
+    """The warning for the order operation `c` in `spec`, from the types of its applications
+    there: none when each is taken in a complete lattice (every family has one), the real-number
+    rule for the reals, a default value in another conditionally complete type, and an
+    unresolved type otherwise. A record without `order_ops` (an older probe) leaves the type
+    unresolved."""
+    what = ORDER_OPS[c]
+    side = "above" if what == "supremum" else "below"
+    occ = [o for o in (ops or {}).get("occurrences") or [] if o.get("const") == c]
+    if not isinstance(ops, dict):
+        return (f"the type of this {what} is not recorded (the evidence predates the record), so "
+                f"whether it can take a default value is unresolved ({c} occurs in {spec})")
+    real = [o for o in occ if o.get("carrier_head") == "Real"]
+    other = sorted({o.get("carrier") or o.get("carrier_head") or "?" for o in occ
+                    if o.get("lattice") == "conditional" and o.get("carrier_head") != "Real"})
+    unknown = sorted({o.get("carrier") or "?" for o in occ
+                      if o.get("carrier_head") != "Real"
+                      and o.get("lattice") not in ("complete", "conditional")})
+    if not occ:
+        unknown = ["not read: the statement is too large to walk" if not ops.get("complete", True)
+                   else "not read: it is used without its type"]
+    parts = []
+    if real:
+        parts.append(TOTALISED[c])
+    if other:
+        parts.append(f"a {what} in {', '.join(other)} is a default value when the family is "
+                     f"empty or not bounded {side}")
+    if unknown:
+        parts.append(f"Lean finds no lattice structure on the type of a {what} "
+                     f"({', '.join(unknown)}), so whether it can take a default value is "
+                     "unresolved")
+    if not parts:
+        return None
+    return "; ".join(parts) + f" ({c} occurs in {spec})"
+
+
+def totalised(srec: dict, spec: str) -> list[tuple[str, str]]:
+    """The totalised operations `spec` uses, each with its warning (`TOTALISED`): the operation
+    is the trigger. Suprema and infima are judged by the types they are taken in."""
+    out = []
+    for c in srec.get("consts", []):
+        if c not in TOTALISED:
+            continue
+        msg = (_order_warning(c, spec, srec.get("order_ops")) if c in ORDER_OPS
+               else f"{TOTALISED[c]} ({c} occurs in {spec})")
+        if msg:
+            out.append((c, msg))
+    return out
 
 
 # Totalised operations so common in analysis that a warning about them is rarely informative,
@@ -570,10 +627,8 @@ class Assessor:
             # S's hypotheses (were they never met, S would hold vacuously and not be refutable).
             if not cl.get("witness") and not res.get("refute_ok"):
                 self.witness_check(subj, spec, srec)
-            for c in srec.get("consts", []):
-                if c in TOTALISED:
-                    self.add_warning("totalised", subj, spec, srec,
-                                     f"{TOTALISED[c]} ({c} occurs in {spec})", c)
+            for c, msg in totalised(srec, spec):
+                self.add_warning("totalised", subj, spec, srec, msg, c)
         regs = []
         for r in cl.get("regimes", []):
             w = r.get("witness")
