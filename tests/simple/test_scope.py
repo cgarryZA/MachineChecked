@@ -221,6 +221,50 @@ def test_an_instance_lean_names_brings_in_every_library(pair):
     assert not any("are not indexed for this paper" in n for n in v["body"]["notes"])
 
 
+NOTES = """/-!
+# Notes
+
+A point of the Beta paper has its coordinate `Beta.Pt.x`, is made by `Beta.Pt.mk` and is
+printed by `Beta.instReprPt`; `Beta.Pt.gone` is no declaration.
+-/
+
+theorem Alpha.noted : True := trivial
+"""
+
+
+@needs_lean
+@needs_tex
+def test_a_docstring_name_a_library_left_out_generates_is_declared(pair):
+    """A module docstring of Alpha names the projection, the constructor and the derived `Repr`
+    instance of `Beta.Pt`, which Lean generates in `Beta.Other` and no source declares, and a
+    name nothing declares. With Beta left out of the Alpha paper's index, the modules of Beta
+    that could hold the names are indexed for them alone, and only the last name is reported;
+    with those modules in the index, the same (#276)."""
+    root, sessions = pair
+    (root / "Alpha" / "Notes.lean").write_text(NOTES)
+    (root / "Alpha.lean").write_text("import Alpha.Main\nimport Alpha.Cell\nimport Alpha.Notes\n")
+    (root / "Beta" / "Other.lean").write_text(BETA_OTHER.replace("  x : Nat\n",
+                                                                 "  x : Nat\nderiving Repr\n"))
+    r = subprocess.run(["lake", "build", "Alpha", "Beta"], cwd=root, capture_output=True,
+                       text=True, timeout=900)
+    assert r.returncode == 0, r.stdout + r.stderr
+    stale = [("Alpha/Notes.lean", 5, "Beta.Pt.gone")]
+    v = view(root)
+    assert [(d["file"], d["line"], d["name"]) for d in v["body"]["module_docs"]] == stale
+    assert {d["module"].split(".")[0] for d in v["body"]["index"]} == {"Alpha"}
+    assert v["body"]["index_scope"] == {"left_out": ["Beta"], "modules": 5}
+    assert [s["kinds"] for s in sessions if s["modules"] & BETA_MODULES] == \
+        [{"index", "refs", "modules"}]
+    sessions.clear()
+    assert content_id(view(root)["body"]) == content_id(v["body"]) and sessions == []
+
+    # A link into Beta brings `Beta.Other` into the index: its constants answer the names.
+    save_link(root, "alpha.tex", "thm:two", ["Beta.linked_from_alpha"])
+    w = view(root)
+    assert "Beta.Other" in {d["module"] for d in w["body"]["index"]}
+    assert [(d["file"], d["line"], d["name"]) for d in w["body"]["module_docs"]] == stale
+
+
 @needs_lean
 def test_a_name_no_library_in_scope_declares_is_looked_for_in_those_left_out(pair):
     """When the scope misses the module that holds a linked name, the name is looked for in
