@@ -106,21 +106,33 @@ jobs:
       - name: Install elan, poppler and zstd (and TeX Live)
         timeout-minutes: 30
         run: |
-          # apt stops a download only when its server sends nothing for a minute, then tries it
-          # again from where it stopped, so a slow mirror costs time rather than the job; it logs
-          # each package as it starts, with its size. The downloads share 25 of the step's 30
-          # minutes, and a command that fails is run again, three times in all.
+          # A download stops when it stops making progress, not after a fixed time, so a slow
+          # mirror costs time rather than the job. apt gives up on a server that sends nothing for
+          # 30 seconds and tries again from where it stopped, then the next mirror; `fetch` also
+          # stops a command that has downloaded nothing for 5 minutes (a connection can hang
+          # without apt noticing) and runs it again, three times in all. The downloads share 25
+          # of the step's 30 minutes. apt logs each package as it starts, with its size.
           deadline=$(( $(date +%s) + 25 * 60 ))
           fetch() {
             for i in 1 2 3; do
               left=$(( deadline - $(date +%s) ))
               [ "$left" -gt 0 ] || { echo "no time left for downloads: $*" >&2; return 1; }
-              timeout "$left" "$@" && return 0
+              timeout "$left" "$@" & pid=$!
+              # Progress is growth of the files the downloads write: apt's, and elan's in the
+              # temporary directory.
+              idle=0; size=
+              while kill -0 "$pid" 2>/dev/null; do
+                now=$(sudo du -sb /var/lib/apt/lists /var/cache/apt/archives "${TMPDIR:-/tmp}" 2>/dev/null) || true
+                if [ "$now" = "$size" ]; then idle=$((idle + 1)); else size=$now; idle=0; fi
+                if [ "$idle" = 300 ]; then echo "nothing downloaded for 5 minutes: $*" >&2; kill "$pid"; fi
+                sleep 1
+              done
+              wait "$pid" && return 0
               echo "attempt $i failed: $*" >&2; sleep 10
             done
             return 1
           }
-          NET="-o Acquire::http::Timeout=60 -o Acquire::https::Timeout=60 -o Acquire::Retries=5"
+          NET="-o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o Acquire::Retries=3"
           PKGS="poppler-utils zstd ${{ inputs.tex && 'latexmk texlive-latex-recommended texlive-latex-extra texlive-science texlive-fonts-recommended' || '' }}"
           mkdir -p ~/apt-archives
           sudo cp -n ~/apt-archives/*.deb /var/cache/apt/archives/ 2>/dev/null || true
@@ -134,8 +146,7 @@ jobs:
           echo "packages kept for the cache: $(ls ~/apt-archives | wc -l), $(du -sh ~/apt-archives | cut -f1)"
           # The packages install from what was downloaded.
           sudo apt-get install -y -qq --no-install-recommends $PKGS
-          # elan's installer downloads with no timeout of its own, so each of its tries has 5 minutes.
-          fetch timeout 300 sh -c 'curl -sSfL --connect-timeout 30 --max-time 120 --retry 4 https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain none'
+          fetch sh -c 'curl -sSfL --connect-timeout 30 --max-time 120 --retry 4 https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain none'
           echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
       - name: Install the project's Lean toolchain (a failed download is retried)
         timeout-minutes: 20

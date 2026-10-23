@@ -28,21 +28,34 @@ runs:
       shell: bash
       working-directory: web
       run: |
-        # apt and Playwright stop a download only when its server sends nothing for a while (apt a
-        # minute, Playwright 30 seconds), then try it again, so a slow mirror costs time rather
-        # than the job; both log their progress. The downloads share 15 minutes (the reader job
-        # has 30), and a command that fails is run again, three times in all.
+        # A download stops when it stops making progress, not after a fixed time, so a slow
+        # mirror costs time rather than the job. apt gives up on a server that sends nothing for
+        # 30 seconds and tries again from where it stopped, then the next mirror; Playwright
+        # gives up after 30 seconds and tries again; `fetch` also stops a command that has
+        # downloaded nothing for 5 minutes (a connection can hang without either noticing) and
+        # runs it again, three times in all. The downloads share 15 minutes (the reader job has
+        # 30). Both log their progress.
         deadline=$(( $(date +%s) + 15 * 60 ))
         fetch() {
           for i in 1 2 3; do
             left=$(( deadline - $(date +%s) ))
             [ "$left" -gt 0 ] || { echo "no time left for downloads: $*" >&2; return 1; }
-            timeout "$left" "$@" && return 0
+            timeout "$left" "$@" & pid=$!
+            # Progress is growth of the files the downloads write: apt's, and Playwright's in
+            # the temporary directory.
+            idle=0; size=
+            while kill -0 "$pid" 2>/dev/null; do
+              now=$(sudo du -sb /var/lib/apt/lists /var/cache/apt/archives "${TMPDIR:-/tmp}" 2>/dev/null) || true
+              if [ "$now" = "$size" ]; then idle=$((idle + 1)); else size=$now; idle=0; fi
+              if [ "$idle" = 300 ]; then echo "nothing downloaded for 5 minutes: $*" >&2; kill "$pid"; fi
+              sleep 1
+            done
+            wait "$pid" && return 0
             echo "attempt $i failed: $*" >&2; sleep 10
           done
           return 1
         }
-        NET="-o Acquire::http::Timeout=60 -o Acquire::https::Timeout=60 -o Acquire::Retries=5"
+        NET="-o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o Acquire::Retries=3"
         # The packages Playwright's own install-deps would install, from the command it prints.
         PKGS=$(npx --no-install playwright install-deps --dry-run chromium | sed -n 's/.*--no-install-recommends \([^"]*\)".*/\1/p')
         test -n "$PKGS" || { echo "no package list from playwright install-deps --dry-run" >&2; exit 1; }
