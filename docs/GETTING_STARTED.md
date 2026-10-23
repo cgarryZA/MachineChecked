@@ -169,8 +169,17 @@ compare it with the paper read here:
 - the reference is to another work (`Theorem 4.1 of [Gauss]`), or in a namespace the project
   maps to another paper.
 
-A reference to an existing number whose declaration reads much closer to another statement is
-named as a possibly stale lead, with the closer statement. `check` prints each disagreement
+Digits that run together in a name (`lem41_bound`, or `Assumption22` written as an
+identifier in a docstring) are read in every way the paper could mean them, `4.1` and `41`: the
+reading the paper has a statement of that kind for is checked, a name whose readings the paper
+has several of is left unchecked, and the name disagrees with the paper only when no reading
+fits. A number written in prose (`Lemma 41`) is read as written.
+
+A declaration's name and its docstring's opening citation (`/-- Theorem 3.1. … -/`) name what
+the declaration states. When that number exists but the declaration reads much closer to
+another statement, the reference is named as a possibly stale lead, with the closer statement.
+A later citation in the docstring (`under Assumption 2.2`) names what the statement relies on,
+and is checked only for the number and kind it cites. `check` prints each disagreement
 with its file and line. When several references disagree, the reader's notes say that the Lean
 appears to follow another version of the paper, and suggestions then rank content further
 above cited numbers. None of this links a declaration or changes a status. A full assessment

@@ -137,3 +137,81 @@ def test_module_docstrings_are_read_with_their_lines(tmp_path):
     lem = next(o for o in out["references"] if o["reference"] == "Lemma 8.1")
     assert lem["status"] == "absent" and lem["source"]["line"] == 6
     assert lem["source"]["where"] == "module docstring"
+
+
+LEMMA_41 = CLAIMS + [{"id": "P:l41", "kind": "lemma", "number": "Lemma 4.1", "scope": "formal",
+                      "statement": "Every even square is even."},
+                     {"id": "P:a22", "kind": "assumption", "number": "Assumption 2.2",
+                      "scope": "formal", "statement": "The coefficients are bounded."}]
+
+
+def test_run_together_digits_in_names_follow_the_papers_numbering():
+    # `lem41` drops the dot of Lemma 4.1: the paper's numbering decides how it is read, and a
+    # name in a docstring written as an identifier (`Assumption22`) is read the same way.
+    index = [decl("P.lem41_bound"), decl("P.thm21_odd"), decl("P.sec31_intro"),
+             decl("P.a", "Uses `Assumption22` throughout."), decl("P.b", "Lemma 41.")]
+    out = nb.analyse(index, LEMMA_41, nb.inventory(LEMMA_41, True, sections={"1", "3.1"}))
+    by = {(o["source"]["declaration"], o["source"]["where"]): o for o in out["references"]}
+    lem = by[("P.lem41_bound", "name")]
+    assert lem["status"] == "exact" and lem["reference"] == "Lemma 4.1"
+    assert lem["readings"] == ["4.1", "41"] and lem["paper"]["claims"] == ["P:l41"]
+    assert "could mean 4.1 or 41" in lem["detail"]
+    assert by[("P.thm21_odd", "name")]["reference"] == "Theorem 2.1"
+    assert by[("P.sec31_intro", "name")]["status"] == "exact"
+    assert by[("P.a", "docstring")]["reference"] == "Assumption 2.2"
+    assert by[("P.a", "docstring")]["status"] == "exact"
+    # A number written out in prose is read as written.
+    b = by[("P.b", "docstring")]
+    assert b["status"] == "absent" and b["reference"] == "Lemma 41" and "readings" not in b
+    assert [o["source"]["declaration"] for o in out["references"] if nb.suspect(o)] == ["P.b"]
+
+
+def test_run_together_digits_no_reading_matches_or_several_do():
+    # Without a Lemma 4.1 or 41 the name still disagrees with the paper, naming both readings.
+    out = nb.analyse([decl("P.lem41_bound"), decl("P.lem23_odd"), decl("P.sec45_x")],
+                     CLAIMS, INV)
+    by = {o["source"]["declaration"]: o for o in out["references"]}
+    assert by["P.lem41_bound"]["status"] == "absent"
+    assert "no statement numbered 4.1 or 41" in by["P.lem41_bound"]["detail"]
+    # 2.3 exists as a proposition: the reading names another kind of statement.
+    assert by["P.lem23_odd"]["status"] == "other-kind"
+    assert by["P.lem23_odd"]["reference"] == "Lemma 2.3"
+    assert "Proposition 2.3" in by["P.lem23_odd"]["detail"]
+    assert by["P.sec45_x"]["status"] == "absent" and "Section 4.5 or 45" in \
+        by["P.sec45_x"]["detail"]
+    # When the paper has a statement for two readings, the name does not say which.
+    both = LEMMA_41 + [{"id": "P:l41b", "kind": "lemma", "number": "Lemma 41",
+                        "scope": "formal", "statement": "x"}]
+    out = nb.analyse([decl("P.lem41_bound")], both, nb.inventory(both, True))
+    o = out["references"][0]
+    assert o["status"] == "unchecked" and "Lemma 4.1 or Lemma 41" in o["detail"]
+    assert not nb.suspect(o)
+
+
+def test_a_citation_of_what_a_statement_relies_on_is_not_a_stale_lead():
+    # P.bound states Theorem 3.1 and relies on Assumption 2.2. Its statement reads like
+    # Theorem 3.1, not like Assumption 2.2, which is fine for a citation of a hypothesis: only
+    # the opening citation is compared with the content. A missing or wrong-kind citation is
+    # still reported.
+    tri = decl("P.triangle", "The triangle number.", "ℕ → ℕ", kind="def")
+    bound_type = "∃ C, ∀ (n : ℕ), P.triangle n ≤ C * n ^ 2"
+    index = [tri,
+             {**decl("P.bound", "**Theorem 3.1.** A bound for triangle numbers by a constant, "
+                     "under Assumption 2.2, Lemma 2.3 and Assumption 9.9.", bound_type),
+              "uses": ["P.triangle"]},
+             {**decl("P.stale", "**Assumption 2.2.** A bound for triangle numbers by a "
+                     "constant.", bound_type), "uses": ["P.triangle"]}]
+    ret = Retrieval.build(index)
+    out = nb.analyse(index, LEMMA_41, nb.inventory(LEMMA_41, True), retrieval=ret,
+                     claim_text=lambda c: c["statement"])
+    by = {(o["source"]["declaration"], o["reference"]): o for o in out["references"]}
+    t31, a22 = by[("P.bound", "Theorem 3.1")], by[("P.bound", "Assumption 2.2")]
+    assert t31["role"] == "statement" and a22["role"] == "cited"
+    assert t31["status"] == a22["status"] == "exact"
+    assert not t31.get("stale_lead") and not a22.get("stale_lead") and "content" not in a22
+    assert by[("P.bound", "Lemma 2.3")]["status"] == "other-kind"
+    assert by[("P.bound", "Assumption 9.9")]["status"] == "absent"
+    # A docstring that opens with a citation of another statement still gets the lead.
+    stale = by[("P.stale", "Assumption 2.2")]
+    assert stale["role"] == "statement" and stale["stale_lead"]
+    assert stale["content"]["closer"]["number"] == "Theorem 3.1"
