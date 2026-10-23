@@ -6,7 +6,7 @@
   import { counterpartViews } from "../lib/versions.js";
   import { href, route, go, withQuery, inspectionHref } from "../lib/route.svelte.js";
   import { statusView, inScope, clauseNote, evidenceView } from "../lib/presentation.js";
-  import { coverageView } from "../lib/coverage.js";
+  import { coverageView, recordedBasisText } from "../lib/coverage.js";
   import ExactLean from "./ExactLean.svelte";
   import EvidenceSummary from "./EvidenceSummary.svelte";
   import PaperStatement from "./PaperStatement.svelte";
@@ -347,6 +347,17 @@
         <details class="review" data-verdict={r.verdict.value}>
           <summary class="small"><strong>Review: {VERDICT_LABEL[r.verdict.value] || r.verdict.value}</strong>, by {reviewer(r)}, {(r.submitted_at || "").slice(0, 10)}{r.current === false ? (r.why === "source-changed" ? " · made on other paper text" : r.why === "source-unrecorded" ? " · does not record the paper text it read" : " · recorded for other declarations or statements") : r.current === null ? " · not compared with the current Lean" : ""}</summary>
           {#if r.verdict.detail}<p class="small pre">{r.verdict.detail}</p>{/if}
+          {#if r.correspondence}
+            {@const rc = coverageView(r.correspondence)}
+            <div class="report-coverage" data-coverage={rc.coverage} data-basis={rc.basis || "unspecified"} data-tone={rc.tone}>
+              <p class="small"><strong>{rc.headline}</strong> <span class="faint">(the reviewer's coverage, recorded with the verdict)</span></p>
+              {#each rc.lines as line}
+                <p class="small basis-line"><span class="faint">{line.label}:</span>
+                  {#each line.names || [] as n, i}{#if i}{", "}{/if}<button class="ref" onclick={() => showDecl(n)}><code>{n}</code></button>{/each}{#if line.names?.length && line.text}{". "}{/if}{#if line.text}<span class="basis-text pre">{line.text}</span>{/if}{#if line.note}{" "}<span class="faint">{line.note}</span>{/if}</p>
+              {/each}
+              {#if recordedBasisText(r.correspondence)}<p class="faint small">{recordedBasisText(r.correspondence)}</p>{/if}
+            </div>
+          {/if}
           <p class="small pre">{r.comparison}</p>
           <details>
             <summary class="faint small">The reading, locked {r.locked_at} before the Lean was shown</summary>
@@ -656,6 +667,8 @@
   .coverage[data-tone="warning"] { border-left-color: var(--tier-warning); }
   .coverage[data-tone="full"] { border-left-color: var(--st-proved); }
   .coverage[data-tone="reading"], .coverage[data-tone="open"] { border-left-color: var(--accent); }
+  .report-coverage { margin: 4px 0; }
+  .report-coverage p { margin: 2px 0; }
   .basis-line .ref { font: inherit; padding: 0; border: 0; background: none; color: var(--accent); cursor: pointer; }
   .basis-line .ref:hover code { text-decoration: underline; }
   .basis-text { white-space: pre-line; }

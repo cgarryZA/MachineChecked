@@ -182,11 +182,28 @@ const READINGS = {
                                  pinned: {}, current: {} } },
   "P:thm:shapes": { coverage: "unresolved", question: "Is the paper's set finite?", would_decide: "Its Section 1." },
 };
+// And reviewers' reports with the coverage recorded with their verdicts, as `simple.review_view`
+// shows them: a checked bridge the engine reads as the reviewer's composition, and an unresolved
+// coverage whose question is the verdict's detail.
+const REPORT = (verdict, correspondence) => ({
+  reviewer: { id: "human:B-Reviewer", kind: "human", name: "B. Reviewer", identity: "self-declared" },
+  verdict, reading: "A synthetic reading.", comparison: "A synthetic comparison.", checklist: {},
+  locked_at: "2026-01-01T00:00:00Z", submitted_at: "2026-01-01T00:05:00Z", reviewed: ["Shape.layout"],
+  current: true, correspondence: { refs: [], argument: null, next_step: null, bridge: null, question: null, would_decide: null, ...correspondence } });
+const REPORTS = {
+  "P:thm:layout": [REPORT({ group: "matches", value: "faithful", detail: "" },
+    { coverage: "full", basis: "reviewed_composition", refs: ["Shape.layout"], next_step: "State the combination as one Lean result.",
+      recorded_basis: "checked_bridge", basis_reason: ["the target is not the version the reviewer read"],
+      bridge: { theorem: "Shape.layout", target: "Shape.Spec.layout" } })],
+  "P:thm:shapes": [REPORT({ group: "cannot", value: "cannot determine", detail: "Is the set finite?" },
+    { coverage: "unresolved", basis: null, question: "Is the set finite?", would_decide: "Its Section 1." })],
+};
 for (const c of SHAPE.claims) {
   const f = path.join(root, "basis", "data", "claims", c.file);
   const chunk = JSON.parse(fs.readFileSync(f, "utf8"));
   chunk.correspondence = { source: "confirmed", basis: null, refs: [], argument: null, bridge: null, question: null,
                            would_decide: null, confidence: null, note: "", by: "A. Auditor", ...READINGS[c.id] };
+  chunk.reviews = REPORTS[c.id] || [];
   fs.writeFileSync(f, JSON.stringify(chunk));
 }
 
@@ -1275,6 +1292,27 @@ await check("in the local reader a symbol is linked by choosing it and clicking 
     await pg.waitForFunction(() => decodeURIComponent(location.hash).includes("Shape.layout"));
   });
 
+  await check("a review shows the coverage recorded with its verdict, never more than the engine read", width, async (pg) => {
+    const report = async (id) => {
+      await pg.goto(origin + `/basis/#/r/${SHAPE.release}/read/P/${encodeURIComponent(id)}`);
+      const r = pg.locator("details.review");
+      await r.locator(":scope > summary").click();
+      const box = r.locator(".report-coverage");
+      await box.waitFor();
+      return { text: (await box.textContent()).replace(/\s+/g, " ").trim(), basis: await box.getAttribute("data-basis") };
+    };
+    const bridge = await report("P:thm:layout");
+    assert.equal(bridge.basis, "reviewed_composition");
+    assert.match(bridge.text, /^Every clause, by the auditor's composition \(the reviewer's coverage, recorded with the verdict\)/);
+    assert.match(bridge.text, /Lean has not checked this combination\.\s*Next step: State the combination as one Lean result\./);
+    assert.match(bridge.text, /Recorded as a checked bridge \(Shape\.layout for Shape\.Spec\.layout\); no bridge Lean checks now: the target is not the version the reviewer read\./);
+    assert.doesNotMatch(bridge.text, /through a checked bridge/);
+    const open = await report("P:thm:shapes");
+    assert.equal(open.basis, "unspecified");
+    assert.match(open.text, /^Unresolved/);
+    assert.match(open.text, /Open question: Is the set finite\?\s*Would decide it: Its Section 1\./);
+  });
+
   await check("a \"there is\" inside a conclusion shows its witness's type and scope", width, async (pg) => {
     await pg.goto(origin + `/structure/#/r/${SHAPE.release}/read/P/${encodeURIComponent("P:thm:witnesses")}`);
     const st = pg.locator("aside .view :not(.suggestion) > .stmt").first();
@@ -1761,14 +1799,26 @@ await check("review opens the selected claim, keeps protocol order and exports a
   await pg.getByRole("textbox", { name: "Comparison", exact: true }).fill("The quantifiers and conclusion agree in this synthetic example.");
   await pg.getByRole("button", { name: "Matches the paper", exact: true }).click();
   await pg.getByRole("radio", { name: "Faithful", exact: true }).check();
+  // The coverage is recorded with the verdict, from the values that agree with it, and its
+  // basis separately; the author's review is still hidden.
+  const coverage = pg.getByRole("combobox", { name: "Coverage of the claim", exact: true });
+  assert.deepEqual(await coverage.locator("option").allTextContents(), ["Not recorded", "Every clause", "Part of the claim"]);
+  await coverage.selectOption({ label: "Every clause" });
+  await pg.getByRole("combobox", { name: "How it is supported", exact: true }).selectOption({ label: "By my composition of these results" });
+  await pg.getByRole("textbox", { name: "Your argument: how these results together give the claim" }).fill("The sum of two even numbers is even, applied once.");
+  assert.equal(await pg.locator(".review .author").count(), 0);
   await pg.getByRole("button", { name: "Record verdict and show the author's review" }).click();
   await pg.locator(".review .author").waitFor();
+  assert.match(await pg.locator(".review .unit").textContent(), /Your coverage: Every clause, by my composition of these results/);
   await pg.getByRole("button", { name: "Save report", exact: true }).click();
   await pg.getByRole("button", { name: "Export reports (1 new)", exact: true }).waitFor();
   const report = await pg.evaluate(() => JSON.parse(localStorage.getItem("prooflens-review:toy-paper")).reports[0]);
   assert.deepEqual(report.unit.claims, ["T:thm:even-add"]);
   assert.equal(report.reading.revealed_by[0].what, "Lean");
   assert.equal(report.verdict.value, "faithful");
+  assert.deepEqual(report.correspondence, { coverage: "full", basis: "reviewed_composition",
+                                            argument: "The sum of two even numbers is even, applied once." });
+  assert.ok(report.reading.locked_at <= report.comparison.decided_at && report.comparison.decided_at <= report.author_review.shown_at);
   assert.equal(await pg.evaluate((id) => JSON.parse(localStorage.getItem("prooflens-review:toy-paper")).drafts[id].reading, reviewUnits[0].id), "Preserve this other unfinished reading.");
   const download = pg.waitForEvent("download");
   await pg.getByRole("button", { name: "Export reports (1 new)", exact: true }).click();
@@ -1928,6 +1978,7 @@ await check("a proof step with no Lean link is reviewed as printed and reported 
   await pg.getByRole("button", { name: "It fails as printed", exact: true }).click();
   await pg.getByRole("radio", { name: "False as printed", exact: true }).check();
   await pg.locator("#verdict-detail").fill("Fails at k = 0, n = 1; holds for k >= 1.");
+  assert.equal(await pg.locator(".review .cover").count(), 0, "a step's review records no coverage");
   await pg.getByRole("button", { name: "Record verdict and show the author's review" }).click();
   await pg.getByRole("button", { name: "Save report", exact: true }).click();
   await pg.getByRole("button", { name: "Export reports (1 new)", exact: true }).waitFor();
@@ -1938,6 +1989,7 @@ await check("a proof step with no Lean link is reviewed as printed and reported 
   assert.deepEqual(report.unit.parent, { id: "T:thm:bound", number: "Theorem 2.5" });
   assert.equal(report.pins.fingerprints.source, stepChunk.source_sha256);
   assert.equal(report.verdict.value, "false as printed");
+  assert.equal(report.correspondence, null);
   assert.equal(report.issue_draft.title, "Equation (3) in the proof of Theorem 2.5: false as printed");
 });
 

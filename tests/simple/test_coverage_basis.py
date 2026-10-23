@@ -186,6 +186,173 @@ def test_unknown_values_and_an_unspecified_basis():
     assert c["refs"] == ["A.c"]
 
 
+@needs_lean
+@needs_tex
+def test_a_review_records_its_coverage_with_the_verdict(cover, tmp_path, monkeypatch, capsys):
+    """`review decide` records the reviewer's coverage and, separately, its basis with the
+    verdict, before the author's review is shown; the exported report carries them, the
+    passport and `check --json` show them without changing a status, a checked bridge reads as
+    one only while it holds, and an unresolved coverage stays an open question."""
+    from prooflens import cli
+    write_links(cover, readings())
+    _, first = view(cover)
+    pins = first["thm:three"]["correspondence"]["bridge"]["current"]
+    write_links(cover, readings({"target_fingerprint": pins["target_fingerprint"],
+                                 "source_sha256": pins["source_sha256"]}))
+    v, before = view(cover)
+    write_view_site(v, cover / ".machinechecked" / "site", None, cover)
+    monkeypatch.chdir(cover)
+    who = ["--as", "human:Test-Referee"]
+    files = {n: tmp_path / f"{n}.md" for n in ("reading", "comparison", "none", "question",
+                                                "decide")}
+    files["reading"].write_text("The sum of three even natural numbers is even, for any three.")
+    files["comparison"].write_text("The theorem's type is the target, which states the claim.")
+    files["none"].write_text("none")
+    files["question"].write_text(QUESTION)
+    files["decide"].write_text("The paper's standing conventions.")
+
+    def step(*args):
+        cli.main(["review", *args, *who])
+        return capsys.readouterr().out
+
+    def refused(*args):
+        with pytest.raises(SystemExit) as e:
+            cli.main(["review", *args, *who])
+        assert e.value.code == 2
+        return capsys.readouterr().err
+
+    three, double = "link:thm:three", "link:thm:double"
+    step("read", three)
+    step("lock", three, str(files["reading"]))
+    step("show", three)
+    bridge = ["--coverage", "full", "--basis", "checked_bridge", "--bridge"]
+    assert "does not agree with the verdict 'faithful'" in refused(
+        "decide", three, "faithful", str(files["comparison"]), "--coverage", "related")
+    assert "is not one of the unit's declarations" in refused(
+        "decide", three, "faithful", str(files["comparison"]), *bridge, "Cover.even_add",
+        "Cover.Spec.three_even")
+    step("decide", three, "faithful", str(files["comparison"]), *bridge, "Cover.three_even",
+         "Cover.Spec.three_even")
+    step("author", three)
+    step("submit", three, str(files["none"]))
+    step("read", double)
+    step("lock", double, str(files["reading"]))
+    step("show", double)
+    step("decide", double, "cannot determine", str(files["comparison"]), "--detail",
+         str(files["question"]), "--coverage", "unresolved", "--would-decide",
+         str(files["decide"]))
+    step("author", double)
+    step("submit", double, str(files["none"]))
+    (cover / "machinechecked-reviews").mkdir()
+    out = cover / "machinechecked-reviews" / "reports.json"
+    step("export", "--out", str(out))
+    reports = {r["unit"]["id"]: r for r in json.loads(out.read_text())["reports"]}
+    assert reports[three]["correspondence"] == {
+        "coverage": "full", "basis": "checked_bridge",
+        "bridge": {"theorem": "Cover.three_even", "target": "Cover.Spec.three_even",
+                   "target_fingerprint": pins["target_fingerprint"]}}
+    assert reports[double]["correspondence"] == {"coverage": "unresolved",
+                                                 "would_decide": "The paper's standing "
+                                                                 "conventions."}
+    d = reports[double]["issue_draft"]
+    assert d["kind"] == "unresolved question" and QUESTION in d["body"] and \
+        "**Would decide it.** The paper's standing conventions." in d["body"]
+
+    v, claims = view(cover)
+    assert statuses(claims) == statuses(before)
+    shown = claims["thm:three"]["reviews"][0]["correspondence"]
+    assert (shown["coverage"], shown["basis"], shown["bridge"]["state"], shown["refs"]) == (
+        "full", "checked_bridge", "checked", ["Cover.three_even"])
+    shown = claims["thm:double"]["reviews"][0]["correspondence"]
+    assert (shown["coverage"], shown["basis"], shown["question"], shown["would_decide"]) == (
+        "unresolved", None, QUESTION, "The paper's standing conventions.")
+    r = subprocess.run([sys.executable, "-m", "prooflens.cli", "check", "--json"], cwd=cover,
+                       capture_output=True, text=True)
+    listed = {c["number"]: [x["correspondence"] for x in c["reviews"]]
+              for c in json.loads(r.stdout)["claims"]}
+    assert sorted(map(json.dumps, sum(listed.values(), []))) == sorted(
+        json.dumps(c["reviews"][0]["correspondence"]) for c in claims.values() if c["reviews"])
+
+    # Once the paper prints another passage, the report is not current, and its checked bridge
+    # reads as the reviewer's composition, saying what it was recorded as and why.
+    tex = cover / PAPER
+    tex.write_text(tex.read_text().replace("three even natural numbers", "three even numbers"))
+    _, claims = view(cover)
+    shown = claims["thm:three"]["reviews"][0]["correspondence"]
+    assert (shown["basis"], shown["recorded_basis"]) == ("reviewed_composition",
+                                                        "checked_bridge")
+    assert "the report was made for other paper text or other declarations" in \
+        shown["basis_reason"]
+
+
+def test_a_report_shows_its_coverage_and_basis_and_never_guesses_one():
+    """A review report's coverage (recorded with its verdict) is shown beside it in the form of
+    a claim's reading. An older report records none and shows none; a value outside the supported
+    ones is dropped; an unresolved coverage's question is the verdict's detail; a checked bridge
+    reads as one only while the report is current, the claim's links record that bridge, Lean
+    checks it and the target is the version the reviewer read."""
+    from prooflens.simple import review_view
+    digest = "a" * 64
+    bridge = {"theorem": "Cover.three_even", "target": "Cover.Spec.three_even", "state": "checked",
+              "reasons": [], "current": {"target_fingerprint": "tf-1", "source_sha256": digest}}
+    claim = {"id": "P:thm:three", "key": "thm:three", "source_sha256": digest,
+             "correspondence": {"coverage": "full", "basis": "checked_bridge", "bridge": bridge}}
+    links = [{"name": "Cover.three_even", "record": {"fingerprint": "fp-1"}}]
+
+    def rep(cor=..., verdict="faithful", detail="", fp="fp-1"):
+        r = {"schema": "prooflens/review-report@1",
+             "unit": {"id": "link:thm:three", "kind": "link", "lean": ["Cover.three_even"]},
+             "pins": {"fingerprints": {"Cover.three_even": fp},
+                      "source_sha256": {"P:thm:three": digest}},
+             "reviewer": {"id": "human:A"}, "verdict": {"value": verdict, "detail": detail},
+             "reading": {"text": "r"}, "comparison": {"text": "c"}}
+        return r if cor is ... else {**r, "correspondence": cor}
+
+    assert review_view(rep(), links, claim)["correspondence"] is None
+    assert review_view(rep(None), links, claim)["correspondence"] is None
+    assert review_view(rep({"coverage": "verified"}), links, claim)["correspondence"] is None
+    v = review_view(rep({"coverage": "full", "basis": "checked"}), links, claim)["correspondence"]
+    assert (v["coverage"], v["basis"], v["refs"]) == ("full", None, [])
+    v = review_view(rep({"coverage": "full", "basis": "reviewed_composition",
+                         "argument": ARGUMENT}), links, claim)["correspondence"]
+    assert (v["basis"], v["argument"], v["refs"], v["next_step"]) == (
+        "reviewed_composition", ARGUMENT, ["Cover.three_even"],
+        "State the combination as one Lean result.")
+    v = review_view(rep({"coverage": "unresolved", "would_decide": "Its Section 1."},
+                        "cannot determine", QUESTION), links, claim)["correspondence"]
+    assert (v["coverage"], v["basis"], v["question"], v["would_decide"]) == (
+        "unresolved", None, QUESTION, "Its Section 1.")
+
+    pinned = {"coverage": "full", "basis": "checked_bridge",
+              "bridge": {"theorem": "Cover.three_even", "target": "Cover.Spec.three_even",
+                         "target_fingerprint": "tf-1"}}
+    v = review_view(rep(pinned), links, claim)["correspondence"]
+    assert (v["basis"], v["bridge"]["state"], v["refs"]) == (
+        "checked_bridge", "checked", ["Cover.three_even"])
+    assert v["bridge"]["pinned"] == {"target_fingerprint": "tf-1", "source_sha256": digest}
+
+    def downgraded(r, c=claim):
+        v = review_view(r, links, c)["correspondence"]
+        assert (v["basis"], v["recorded_basis"], v["next_step"]) == (
+            "reviewed_composition", "checked_bridge", "State the combination as one Lean result.")
+        return v["basis_reason"]
+    # The target changed since the review, or its version was not recorded.
+    other = {**claim, "correspondence": {**claim["correspondence"], "bridge": {
+        **bridge, "state": "stale", "current": {**bridge["current"], "target_fingerprint": "tf-2"}}}}
+    assert downgraded(rep(pinned), other) == ["the target is not the version the reviewer read"]
+    unpinned = {**pinned, "bridge": {**pinned["bridge"], "target_fingerprint": None}}
+    assert downgraded(rep(unpinned)) == ["no reviewed version of the target is recorded"]
+    # The report was made for other declarations.
+    assert downgraded(rep(pinned, fp="fp-0")) == [
+        "the report was made for other paper text or other declarations"]
+    # Lean does not check it, or the claim's links record no such bridge.
+    off = {**claim, "correspondence": {**claim["correspondence"], "bridge": {
+        **bridge, "state": "unchecked", "reasons": ["its proof uses sorry"]}}}
+    assert downgraded(rep(pinned), off) == ["its proof uses sorry"]
+    assert downgraded(rep(pinned), {**claim, "correspondence": None}) == [
+        "the claim's links record no such bridge, so Lean does not check it"]
+
+
 def test_linking_other_declarations_retires_the_whole_reading(tmp_path):
     """Every field of the reading leaves the entry and is kept, with the list it described,
     under `earlier_notes`."""
