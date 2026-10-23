@@ -74,7 +74,9 @@ says; one with `source=none` read none of the passages. A marker written
 `<!-- retired spec-review: ... -->` (`inventory retire --markers`) records no review and still
 closes its review text. The section the
 marker closes is the text of the review. The last marker of a declaration, reading the files in
-order (a directory's `.md` files by name), is its current record.
+order (a directory's `.md` files by name), is its current record. When it is at another hash
+and an earlier marker would count, the review's state is `stale` with `why` `shadowed`, and
+`shadowed` gives both markers (`reading` and `record`, each `{file, line, hash, by}`).
 
 A `step-review` marker records a review of a printed proof step; its hash is the digest of the
 step's source text as read, and `review promote`, which writes it from an accepted report of the
