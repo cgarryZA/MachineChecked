@@ -14,11 +14,22 @@ with the numbering of the paper at the revision the audit reads:
 - `other-source`: the reference is to another work (`Theorem 3 of [AB]`) or sits in a namespace
   the project maps to another paper; it says nothing about this paper.
 
-An exact reference whose declaration's statement reads much closer to another statement of the
-paper (`retrieval.py`) keeps its status and is marked as a possibly stale lead, with the closer
-statement named. When several references disagree with the paper, in number and in proportion,
-the project-level pattern says the Lean appears to follow another version of the paper; one
-stray reference is reported alone and never read as a version change. An explicit map between
+A number whose digits run together in a name (`lem41_bound`, or `Assumption22` written as an
+identifier in a docstring) is read in every way the paper could mean it (`4.1`, `41`): the
+paper's numbering decides which, and the reference disagrees with the paper only when no
+reading names a statement of its kind. A number written out in prose (`Lemma 41`) is read as
+written.
+
+A reference names either what its declaration states (a declaration's name, a docstring's
+opening citation) or something the statement relies on (`under Assumption 2.2` later in the
+docstring). An exact reference of the first sort whose declaration's statement reads much
+closer to another statement of the paper (`retrieval.py`) keeps its status and is marked as a
+possibly stale lead, with the closer statement named; a reference of the second sort is checked
+only for the existence and kind of the statement it cites.
+
+When several references disagree with the paper, in number and in proportion, the
+project-level pattern says the Lean appears to follow another version of the paper; one stray
+reference is reported alone and never read as a version change. An explicit map between
 two versions of the paper resolves a renumbered reference when it names one current statement,
 and keeps every candidate when it names several.
 
@@ -47,7 +58,7 @@ WORD = {"theorem": "Theorem", "lemma": "Lemma", "proposition": "Proposition",
 
 REF = re.compile(r"(?<![\w.])(Theorem|Thm|Lemma|Lem|Proposition|Prop|Corollary|Cor|Definition|"
                  r"Defn|Def|Remark|Rem|Example|Assumption|Hypothesis|Conjecture|Claim|"
-                 r"Subsection|Section|Sec|§)\.?[ \t~]*(\d+(?:\.\d+)*)(?![\w]|\.\d)", re.I)
+                 r"Subsection|Section|Sec|§)(\.?[ \t~]*)(\d+(?:\.\d+)*)(?![\w]|\.\d)", re.I)
 NAME_REF = re.compile(r"(?:^|_)(theorem|thm|lemma|lem|proposition|prop|corollary|cor|"
                       r"definition|defn|def|section|sec)_?(\d+(?:_\d+)*)(?=_|$)")
 _ELSEWHERE_AFTER = re.compile(
@@ -59,6 +70,9 @@ DRIFT_MIN = 3           # disagreeing references needed before a pattern is repo
 DRIFT_SHARE = 0.3       # ... and their share of the references checked
 CLOSER_MIN = 0.4        # an exact reference reads elsewhere when another statement is at
 CLOSER_MARGIN = 0.15    # least this similar to the declaration, and this much more than the cited
+RUN_MAX = 4             # run-together digits read in every split up to this many digits
+# What may precede a docstring's opening citation: whitespace and Markdown emphasis.
+_OPENING = re.compile(r"[\s*_#>`]*")
 
 
 def canonical(kind_word: str) -> str:
@@ -113,6 +127,20 @@ def _elsewhere(text: str, start: int, end: int) -> str | None:
     return None
 
 
+def readings(digits: str) -> list[str]:
+    """Every number that run-together digits could mean, the most dotted first: `41` gives
+    `4.1` and `41`; `312` gives `3.1.2`, `3.12`, `31.2` and `312`."""
+    if len(digits) < 2 or len(digits) > RUN_MAX or not digits.isdigit():
+        return [digits]
+    out = []
+    for mask in range(2 ** (len(digits) - 1) - 1, -1, -1):
+        n = digits[0]
+        for i, ch in enumerate(digits[1:]):
+            n += ("." if mask >> (len(digits) - 2 - i) & 1 else "") + ch
+        out.append(n)
+    return sorted(out, key=lambda n: -n.count("."))
+
+
 def _context(text: str, start: int, end: int) -> str:
     a, b = max(0, start - 60), min(len(text), end + 60)
     return (("…" if a else "") + re.sub(r"\s+", " ", text[a:b]).strip()
@@ -125,13 +153,15 @@ def find_references(index: list[dict], blocks: list[dict], foreign=frozenset()) 
     out = []
     foreign = set(foreign)
 
-    def obs(kind_word, number, exact, context, source, scope_note):
+    def obs(kind_word, number, exact, context, source, scope_note, role, run=False):
         kind = canonical(kind_word)
         key = "\n".join([source.get("declaration") or "", source.get("file") or "",
                          str(source.get("line")), source["where"], exact])
         o = {"id": "ref:" + hashlib.sha256(key.encode()).hexdigest()[:12],
              "reference": printed(kind, number), "kind": kind, "number": number,
-             "text": exact, "context": context, "source": source}
+             "text": exact, "context": context, "source": source, "role": role}
+        if run and len(readings(number)) > 1:
+            o["readings"] = readings(number)
         if scope_note:
             o["status"], o["detail"] = "other-source", scope_note
         out.append(o)
@@ -143,25 +173,30 @@ def find_references(index: list[dict], blocks: list[dict], foreign=frozenset()) 
         file = (d.get("module") or "").replace(".", "/") + ".lean" if d.get("module") else None
         line = (d.get("range") or {}).get("line")
         doc = d.get("doc") or ""
-        for m in REF.finditer(doc):
-            obs(m.group(1), m.group(2), m.group(0), _context(doc, m.start(), m.end()),
+        for i, m in enumerate(REF.finditer(doc)):
+            # The docstring's opening citation names what the declaration states; a later one
+            # names something the statement relies on.
+            opening = i == 0 and _OPENING.fullmatch(doc[:m.start()]) is not None
+            obs(m.group(1), m.group(3), m.group(0), _context(doc, m.start(), m.end()),
                 {"declaration": d["name"], "module": d.get("module"), "file": file,
                  "line": line, "where": "docstring"},
-                mapped or _elsewhere(doc, m.start(), m.end()))
+                mapped or _elsewhere(doc, m.start(), m.end()),
+                "statement" if opening else "cited", run=not m.group(2))
         for comp in d["name"].split("."):
             for m in NAME_REF.finditer(comp.lower()):
                 obs(m.group(1), m.group(2).replace("_", "."), comp, d["name"],
                     {"declaration": d["name"], "module": d.get("module"), "file": file,
-                     "line": line, "where": "name"}, mapped)
+                     "line": line, "where": "name"}, mapped, "statement", run=True)
     for b in blocks:
         mapped = ("its module is in a namespace the project maps to another paper"
                   if b["module"].split(".")[0] in foreign else None)
         for m in REF.finditer(b["text"]):
-            obs(m.group(1), m.group(2), m.group(0), _context(b["text"], m.start(), m.end()),
+            obs(m.group(1), m.group(3), m.group(0), _context(b["text"], m.start(), m.end()),
                 {"declaration": None, "module": b["module"], "file": b["file"],
                  "line": b["line"] + b["text"].count("\n", 0, m.start()),
                  "where": "module docstring"},
-                mapped or _elsewhere(b["text"], m.start(), m.end()))
+                mapped or _elsewhere(b["text"], m.start(), m.end()), "cited",
+                run=not m.group(2))
     return out
 
 
@@ -181,7 +216,7 @@ def inventory(claims: list[dict], complete: bool, reason: str = "",
 
 def _norm_ref(s: str) -> str | None:
     m = REF.fullmatch(s.strip())
-    return printed(canonical(m.group(1)), m.group(2)) if m else None
+    return printed(canonical(m.group(1)), m.group(3)) if m else None
 
 
 def analyse(index: list[dict], claims: list[dict], inv: dict, blocks: list[dict] = (),
@@ -200,6 +235,9 @@ def analyse(index: list[dict], claims: list[dict], inv: dict, blocks: list[dict]
     claim_by_id = {c["id"]: c for c in claims}
     for o in refs:
         if o.get("status"):
+            continue
+        if o.get("readings"):
+            _check_readings(o, inv, by_number)
             continue
         k, n = o["kind"], o["number"]
         if k == "section":
@@ -240,10 +278,66 @@ def analyse(index: list[dict], claims: list[dict], inv: dict, blocks: list[dict]
     return {"references": refs, "pattern": pattern(refs, inv)}
 
 
+def _either(ns: list[str]) -> str:
+    return ns[0] if len(ns) == 1 else ", ".join(ns[:-1]) + " or " + ns[-1]
+
+
+def _check_readings(o: dict, inv: dict, by_number: dict) -> None:
+    """The status of a reference whose digits run together (`lem41`): the reading the paper
+    has a statement of its kind for, when there is exactly one."""
+    k, rs, st = o["kind"], o["readings"], inv["statements"]
+    shown, digits = _either(rs), o["number"]
+    if k == "section":
+        secs = inv.get("sections")
+        if secs is None:
+            o["status"], o["detail"] = "unchecked", ("the paper's section numbers are not "
+                                                     "known in this build")
+            return
+        hits = [r for r in rs if r in secs]
+    else:
+        hits = [r for r in rs if (k, r) in st]
+    if len(hits) == 1:
+        o["number"], o["reference"] = hits[0], printed(k, hits[0])
+        o["status"] = "exact"
+        if k != "section":
+            o["paper"] = {"claims": st[(k, hits[0])], "reference": o["reference"]}
+        o["detail"] = (f"the paper has {o['reference']} (the run-together {digits} could mean "
+                       f"{shown}; the paper has only {hits[0]})")
+        return
+    if hits:
+        o["status"] = "unchecked"
+        o["detail"] = (f"the run-together {digits} could mean "
+                       f"{_either([printed(k, r) for r in hits])}, all of which the paper has")
+        return
+    others = [] if k == "section" else [r for r in rs if r in by_number]
+    if others:
+        names = [printed(kk, nn) for r in others for kk, nn in by_number[r]]
+        if len(others) == 1:
+            o["number"] = others[0]
+            o["reference"] = printed(k, others[0])
+        o["status"] = "other-kind"
+        o["paper"] = {"claims": [i for r in others for x in by_number[r] for i in st[x]],
+                      "reference": ", ".join(names)}
+        o["detail"] = (f"the run-together {digits} could mean {shown}; the paper's "
+                       f"{_either(others)} is {' and '.join(names)}, not "
+                       f"{'an' if k[0] in 'aeiou' else 'a'} {k}")
+    elif not inv["complete"]:
+        o["status"], o["detail"] = "unchecked", inv["reason"]
+    elif k == "section":
+        o["status"] = "absent"
+        o["detail"] = f"this version of the paper has no Section {shown}"
+    else:
+        o["status"] = "absent"
+        o["detail"] = f"this version of the paper has no statement numbered {shown}"
+
+
 def _content_check(refs, claims, claim_by_id, retrieval, claim_text):
     queries = {}
     for o in refs:
-        if o["status"] != "exact" or not o["source"].get("declaration") or "paper" not in o:
+        # Only a reference that names what its declaration states is compared with the
+        # declaration's content: a docstring's citation of what the statement relies on is not.
+        if o["status"] != "exact" or not o["source"].get("declaration") or "paper" not in o \
+                or o.get("role") == "cited":
             continue
         i = retrieval.by_name.get(o["source"]["declaration"])
         if i is None:
