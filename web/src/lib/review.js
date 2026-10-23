@@ -90,6 +90,114 @@ export const GROUPS = [
   { key: "cannot", label: "Cannot determine" },
 ];
 
+// The reviewer's coverage, recorded with the verdict: how far the unit's Lean states the claim
+// (the links file's words), and separately how that is supported. A verdict allows the coverage
+// that agrees with it (`review_cli.COVERAGE_FOR`); with "Cannot determine" it is unresolved, and
+// the verdict's detail is the open question.
+export const COVERAGE_FOR = {
+  matches: ["full", "partial"],
+  problem: ["partial", "changed", "related"],
+  cannot: ["unresolved"],
+};
+export const COVERAGE_CHOICES = [
+  { value: "full", label: "Every clause" },
+  { value: "partial", label: "Part of the claim" },
+  { value: "changed", label: "States it differently" },
+  { value: "related", label: "A related result, not this claim" },
+  { value: "unresolved", label: "Unresolved" },
+];
+export const BASIS_CHOICES = [
+  { value: "direct", label: "In one Lean statement" },
+  { value: "reviewed_composition", label: "By my composition of these results" },
+  { value: "checked_bridge", label: "Through a checked bridge" },
+];
+const COVERAGE = COVERAGE_CHOICES.map((c) => c.value);
+const BASIS = BASIS_CHOICES.map((b) => b.value);
+const ARGUMENT_CHARS = 8000;
+const NOTE_CHARS = 2000;
+
+export function verdictGroup(unit, verdict) {
+  const table = unit?.kind === "step" ? STEP_VERDICTS : VERDICTS;
+  return Object.keys(table).find((g) => table[g].some((v) => v.value === verdict)) || null;
+}
+
+const isObject = (v) => v != null && typeof v === "object" && !Array.isArray(v);
+
+// `{correspondence, problems}`: the coverage a report records beside the verdict, and what is
+// wrong with `given` (`{coverage, basis, argument, bridge, would_decide}`), as the command line's
+// `review_cli.correspondence` says: a basis needs a coverage, an argument belongs to a reviewed
+// composition, a bridge (one of the unit's theorems, and its target) to a checked bridge, and what
+// would decide it to an unresolved coverage. Null when nothing is given; a proof step records none.
+export function reportCorrespondence(unit, verdict, given) {
+  given = isObject(given) ? given : {};
+  const why = [];
+  const text = (v, what) => {
+    if (v == null || typeof v === "string") return (v || "").trim();
+    why.push(`${what} is not text`);
+    return "";
+  };
+  const cov = text(given.coverage, "the coverage"), basis = text(given.basis, "the basis");
+  const argument = text(given.argument, "the argument");
+  const would = text(given.would_decide, "what would decide it");
+  if (given.bridge != null && !isObject(given.bridge)) why.push("a bridge is {theorem, target}");
+  const b = isObject(given.bridge) ? given.bridge : {};
+  const bridge = { theorem: text(b.theorem, "the bridge's theorem"), target: text(b.target, "the bridge's target") };
+  if (!(cov || basis || argument || would || bridge.theorem || bridge.target)) return { correspondence: null, problems: why };
+  const out = { coverage: cov || null };
+  if (unit?.kind === "step") why.push("a review of a proof step records whether the step holds, not a coverage");
+  if (cov && !COVERAGE.includes(cov)) why.push(`coverage '${cov}' is not one of: ${COVERAGE.join(", ")}`);
+  const group = verdictGroup(unit, verdict);
+  if (COVERAGE.includes(cov) && COVERAGE_FOR[group] && !COVERAGE_FOR[group].includes(cov)) {
+    why.push(`coverage '${cov}' does not agree with the verdict '${verdict}': with it the coverage is ${COVERAGE_FOR[group].join(" or ")}`);
+  }
+  if (basis) {
+    out.basis = basis;
+    if (!BASIS.includes(basis)) why.push(`basis '${basis}' is not one of: ${BASIS.join(", ")}`);
+    if (!cov) why.push("a basis says how a coverage is supported: give the coverage too");
+  }
+  if (argument) {
+    out.argument = argument;
+    if (basis !== "reviewed_composition") why.push("an argument belongs to a reviewed composition (basis reviewed_composition)");
+    if (argument.length > ARGUMENT_CHARS) why.push(`the argument is longer than ${ARGUMENT_CHARS} characters`);
+  }
+  if ((bridge.theorem || bridge.target) && basis !== "checked_bridge") why.push("a bridge belongs to a checked bridge (basis checked_bridge)");
+  if (basis === "checked_bridge") {
+    const lean = Array.isArray(unit?.lean) && unit.lean.length ? unit.lean : [unit?.name];
+    if (!(bridge.theorem && bridge.target)) why.push("a checked bridge names its theorem and its target");
+    else if (!lean.includes(bridge.theorem)) why.push(`the bridge theorem ${bridge.theorem} is not one of the unit's declarations (${lean.join(", ")})`);
+    // The version of the target the reviewer was shown, when the build checks this bridge.
+    const pin = b.target_fingerprint;
+    out.bridge = { ...bridge, target_fingerprint: typeof pin === "string" && pin ? pin : null };
+  }
+  if (would) {
+    out.would_decide = would;
+    if (cov !== "unresolved") why.push("what would decide it belongs to an unresolved coverage");
+    if (would.length > NOTE_CHARS) why.push(`what would decide it is longer than ${NOTE_CHARS} characters`);
+  }
+  return { correspondence: out, problems: why };
+}
+
+// The coverage fields of the review page's draft as the reviewer has chosen them: a field the
+// chosen coverage or basis does not have is left out.
+export function draftCoverage(draft) {
+  const cov = draft?.coverage || null;
+  const basis = cov ? draft.basis || null : null;
+  return {
+    coverage: cov, basis,
+    argument: basis === "reviewed_composition" ? draft.argument || null : null,
+    bridge: basis === "checked_bridge" ? draft.bridge || null : null,
+    would_decide: cov === "unresolved" ? draft.would_decide || null : null,
+  };
+}
+
+// The recorded coverage in words, for the reviewer's own record of it.
+export function coverageWords(cor) {
+  const c = COVERAGE_CHOICES.find((x) => x.value === cor?.coverage);
+  if (!c) return null;
+  const b = BASIS_CHOICES.find((x) => x.value === cor.basis);
+  return c.label + (b ? ", " + b.label.toLowerCase() : "");
+}
+
 const EMPTY = () => ({ reviewer: null, drafts: {}, reports: [], skipped: [], exported: 0 });
 
 function storeKey(project) {
@@ -146,7 +254,8 @@ const DRAFT_KIND = {
 const UNRESOLVED_BODY = "The reviewer could not determine whether the Lean statement says what the "
   + "paper says. This is an open question, not a difference that was found.";
 
-export function issueDraft(unit, verdict, detail) {
+// An open question carries what would decide it, when the report's coverage (`cor`) says.
+export function issueDraft(unit, verdict, detail, cor = null) {
   if (unit.kind === "step") return stepIssueDraft(unit, verdict, detail);
   const kind = Object.hasOwn(DRAFT_KIND, verdict) ? DRAFT_KIND[verdict] : null;
   if (!kind) return null;
@@ -154,10 +263,12 @@ export function issueDraft(unit, verdict, detail) {
   const suffix = claims ? ` (${claims})` : "";
   const text = String(detail || "").trim();
   if (kind === "unresolved question") {
+    const would = String(cor?.would_decide || "").trim();
     return {
       kind, title: `${unit.name}: open question${suffix}`,
       body: `Review unit \`${unit.id}\`, verdict **${verdict}**. ${UNRESOLVED_BODY}`
-        + (text ? `\n\n**Open question.** ${text}` : ""),
+        + (text ? `\n\n**Open question.** ${text}` : "")
+        + (would ? `\n\n**Would decide it.** ${would}` : ""),
     };
   }
   return {
@@ -211,9 +322,11 @@ export function buildReport({ index, unit, draft, reviewer }) {
     comparison: { text: draft.comparison || "", witness: draft.witness || "",
                   checklist: draft.checklist || {}, decided_at: draft.decided_at },
     verdict: { group: draft.group, value: verdict, detail: draft.detail || "" },
+    // Recorded with the verdict (`reportCorrespondence`); null when the reviewer recorded no coverage.
+    correspondence: draft.correspondence ?? null,
     author_review: { shown_at: draft.author_shown_at, disagreements: draft.disagreements || "none" },
     submitted_at: now(),
-    issue_draft: issueDraft(unit, verdict, draft.detail),
+    issue_draft: issueDraft(unit, verdict, draft.detail, draft.correspondence ?? null),
   };
 }
 

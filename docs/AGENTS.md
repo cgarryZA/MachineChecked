@@ -309,11 +309,14 @@ machinechecked review next --json            # {"unit": {"id": "link:thm:odd-add
 machinechecked review read link:thm:odd-add --json    # the paper only
 machinechecked review lock link:thm:odd-add reading.md
 machinechecked review show link:thm:odd-add --json    # and the Lean
-machinechecked review decide link:thm:odd-add faithful comparison.md
+machinechecked review decide link:thm:odd-add faithful comparison.md --coverage full --basis direct
 machinechecked review author link:thm:odd-add          # what was recorded before
 machinechecked review submit link:thm:odd-add none.md
 machinechecked review export --out machinechecked-reviews/my-reviews.json
 ```
+
+`decide` records the coverage and its basis with the verdict, both optional
+([Coverage with the verdict](REVIEWING.md#coverage-with-the-verdict)).
 
 Run `compare` on a claim only after its review, or say in the reading that you had: its default
 stage shows the Lean and what others recorded. The steps are saved in your workspace
