@@ -33,4 +33,13 @@ def poly : Prop := ∀ (α : Type) [SupSet α] (f : Nat → α), iSup f = iSup f
 /-- A supremum in a type whose lattice search does not end, beside one on the number line. -/
 def deep : Prop := ∀ (f : Nat → Deep 0) (g : Nat → Real), iSup f = iSup f ∧ iSup g = iSup g
 
+/-- Two suprema on the number line, of different families. -/
+def two : Prop := ∀ (f : Nat → Real) (g : Nat → Real), iSup f = iSup g
+
+/-- The same, with the second family's values in another type. -/
+def twoMixed : Prop := ∀ (f : Nat → Real) (g : Nat → Value), iSup f = iSup g
+
+/-- The same as `two`, with a premise about the first family and a conjunct before it. -/
+def twoMoved : Prop := ∀ (f : Nat → Real) (g : Nat → Real), True ∧ iSup f = iSup g
+
 end Carriers.Spec
