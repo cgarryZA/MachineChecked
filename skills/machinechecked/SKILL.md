@@ -41,6 +41,8 @@ MachineChecked version; `release` identifies the evidence the statuses were comp
 changes when the paper, the links or the Lean change), for quoting which run a report is about.
 Per claim: `number` ("Theorem 2.1"), `status_code`, `status`, `links`
 (each with `name`, `status`, `source`) and `suggestions` (unconfirmed candidates, with `why`).
+A link whose module is not built or could not be loaded, or whose name is ambiguous, also has
+`status_detail`, naming the module or the modules that declare the name.
 
 | status | meaning |
 |---|---|
