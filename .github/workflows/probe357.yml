@@ -1,0 +1,39 @@
+name: concurrency probe 357
+
+# Throwaway check for #357: does a job skipped by its `if` (or by a skipped `needs`) enter its
+# job-level concurrency group? Same shape as pages.yml: latest -> build -> deploy.
+on:
+  push:
+    branches: [concurrency-probe-357]
+
+permissions:
+  contents: read
+
+jobs:
+  latest:
+    runs-on: ubuntu-24.04
+    outputs:
+      publish: ${{ steps.p.outputs.publish }}
+    steps:
+      - id: p
+        env:
+          MSG: ${{ github.event.head_commit.message }}
+        run: |
+          case "$MSG" in publish*) echo "publish=true" >> "$GITHUB_OUTPUT";; *) echo "publish=false" >> "$GITHUB_OUTPUT";; esac
+
+  build:
+    needs: latest
+    if: needs.latest.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - run: echo build
+
+  deploy:
+    needs: build
+    concurrency:
+      group: probe357
+      cancel-in-progress: true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - run: sleep 600
