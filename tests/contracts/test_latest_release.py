@@ -10,7 +10,7 @@ import os
 from conftest import build, edit, needs_lean, needs_tex
 from test_promote import queue, report
 from prooflens import changes as chg
-from prooflens import cli, config as cfgmod, evidence as ev, promote as pr, retire
+from prooflens import cli, config as cfgmod, evidence as ev, pipeline, promote as pr, retire
 from prooflens.export import export
 from prooflens.pipeline import lean_inputs_digest, reassess
 from prooflens.symbols import add as add_symbol
@@ -152,11 +152,9 @@ def test_commands_read_the_release_a_reverted_build_reproduces(toy, monkeypatch,
     assert [ln["claim"] for ln in json.loads((toy / "symbols.json").read_text())["links"]] \
         == ["T:thm:even-add"]
 
+    # Nothing changed since the third build: reassessing the first release reproduces it.
     res = reassess(cfg, log=lambda *a: None)
-    last = ev.latest(cfg.out_dir)
-    assert last["release"] == res["release"] not in (r1, r2)
-    body = ev.load(cfg.out_dir, last["evidence"])["body"]
-    assert body["provenance"]["reassessed_from"] == first["evidence"]
+    assert res["release"] == ev.latest(cfg.out_dir)["release"] == r1
     assert statuses(res["index"]) == statuses(first)
 
 
@@ -216,7 +214,40 @@ def test_review_promote_and_symbol_add_read_the_latest_release_not_the_newest_fi
         link = add_symbol(cfg, "T:thm:even-add", "a", spec, "human:A-Referee", var="a")
         assert link["pins"]["statement"] == body2["lean"]["specs"][spec]["fingerprint"]
         assert export(cfg, toy.parent / "export")["release"] == second["release"]
-    res = reassess(cfg, log=lambda *a: None)
-    body = ev.load(cfg.out_dir, ev.latest(cfg.out_dir)["evidence"])["body"]
-    assert body["provenance"]["reassessed_from"] == second["evidence"]
+    res = reassess(cfg, log=lambda *a: None)  # nothing changed: it reproduces the second release
+    assert res["release"] == ev.latest(cfg.out_dir)["release"] == second["release"]
     assert statuses(res["index"]) == statuses(second)
+
+
+def test_a_reassessment_that_changes_nothing_reproduces_its_release(toy):
+    """#385: a build, then two reassessments, make one release, which the release log records
+    three times. A changed review file makes a new release, which names the record it was
+    reassessed from; reassessing it again reproduces it. (A build without Lean or TeX, so
+    that no Lean runs; the Lean tests above reassess real builds.)"""
+    cfg = cfgmod.load(toy / "machinechecked.toml")
+
+    def quiet(*_):
+        pass
+    first = pipeline.build(cfg, skip_lean=True, skip_tex=True, log=quiet)
+    r1 = first["release"]
+    for _ in range(2):
+        res = reassess(cfg, log=quiet)
+        assert res["release"] == r1 and statuses(res["index"]) == statuses(first["index"])
+    assert [p.stem for p in ev.releases(cfg.out_dir)] == [r1]
+    assert len(list((cfg.out_dir / "evidence").glob("*.json"))) == 1
+    assert ev.built(cfg.out_dir) == [r1] * 3
+    assert not (cfg.out_dir / "site" / "data" / "changes.json").exists()
+
+    with (toy / "reviews" / "T.md").open("a") as f:
+        f.write("\nA note after the last review.\n")
+    second = reassess(cfg, log=quiet)
+    r2 = second["release"]
+    assert r2 != r1 and ev.latest(cfg.out_dir)["evidence"] != first["evidence"]
+    body = ev.load(cfg.out_dir, ev.latest(cfg.out_dir)["evidence"])["body"]
+    assert body["provenance"]["reassessed_from"] == first["evidence"]
+    assert reassess(cfg, log=quiet)["release"] == r2
+    assert [p.stem for p in ev.releases(cfg.out_dir)] == [r1, r2]
+    assert ev.built(cfg.out_dir) == [r1] * 3 + [r2] * 2
+    assert chg.previous_release(cfg.out_dir, r2) == r1
+    shown = json.loads((cfg.out_dir / "site" / "data" / "changes.json").read_text())
+    assert (shown["from"]["release"], shown["to"]["release"]) == (r1, r2)

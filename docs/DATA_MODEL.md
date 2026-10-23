@@ -101,11 +101,13 @@ whole proposition and its `fingerprint` is the proposition's ([ASSURANCE.md](ASS
 `.machinechecked/releases/<release>.json` names a release: `{release, evidence, created}`.
 `.machinechecked/release-log.jsonl` has one line `{release, evidence, at}` per build or
 reassessment, for the release it produced or reproduced (a build that stores evidence an earlier
-build stored names that build's release again). The latest release is the release of the last
-line whose release still names that evidence; in a store without the log, the release created
-last. The release before a release, which `changes` and a site's `data/changes.json` compare it
-with, is the last release with other evidence among those built before its last build; when the
-log names none, the last release with other evidence created before it. Releases are ordered by
+build stored names that build's release again, and so does a reassessment that changes
+nothing, whose record would differ from the one it read only in `reassessed_from`). The
+latest release is the release of the last line whose release still names that evidence; in a
+store without the log, the release created last. The release before a release, which
+`changes` and a site's `data/changes.json` compare it with, is the last release with other
+evidence among those built before its last build; when the log names none, the last release
+with other evidence created before it. Releases are ordered by
 `created`, and those created in the same second by the log, then by name; no file time is read,
 so copying or restoring `.machinechecked/` changes no command's release.
 
