@@ -21,7 +21,7 @@ from .review_sources import carried
 from .schemas import validate
 from .sources import acquire
 from .excerpt import collect as collect_excerpts, read_aux
-from .source_regions import collect as collect_source_regions, part_texts
+from .source_regions import collect as collect_source_regions, part_texts, region_texts
 from .tex import DEFAULT_ENVS, TexError, anchors_for, theorem_envs
 from . import versions as paper_versions
 from .util import (canonical_json, git_dirty, git_head, link_or_copy, prepare_work_dir,
@@ -168,7 +168,13 @@ def build(cfg: Config, release: str | None = None, skip_lean: bool = False,
                 from .steps import step_texts
                 tex[paper.id]["step_text"] = step_texts(inv, paper.id, snap.dir,
                                                         tex[paper.id]["regions"])
-                locs = [c["location"] for c in inv["claims"]
+                # The passage of each claim located by line, read from the file that holds it:
+                # its printed statement, as an environment's body is an anchor's (display only;
+                # published only with the source text).
+                texts = region_texts(inv, paper.id, snap.dir, tex[paper.id]["regions"])
+                if texts:
+                    tex[paper.id]["region_text"] = texts
+                locs =[c["location"] for c in inv["claims"]
                         if c["paper"] == paper.id and line_location(c) is not None]
                 tex[paper.id]["line_anchors"] = t["line_anchors"](locs)
                 # Display only: the passages the reader typesets, read from this snapshot and

@@ -1,4 +1,4 @@
-"""Shared fixtures: a private copy of the toy paper, and a build of it."""
+"""Shared fixtures: a private copy of the toy paper, and a build of it; and CI's `--shard`."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+import shards
 from prooflens import config as cfgmod
 from prooflens import evidence as ev
 from prooflens.pipeline import build as pl_build
@@ -24,6 +25,18 @@ HAVE_TEX = shutil.which("latexmk") is not None and shutil.which("pdflatex") is n
 
 needs_lean = pytest.mark.skipif(not HAVE_LAKE, reason="lake not installed")
 needs_tex = pytest.mark.skipif(not HAVE_TEX, reason="latexmk/pdflatex not installed")
+
+
+def pytest_addoption(parser):
+    parser.addoption("--shard", metavar="I/N",
+                     help="run only the I-th of N disjoint parts of the suite (see tests/shards.py)")
+    parser.addoption("--shard-times", metavar="PATH",
+                     help="write the time each test file took to PATH, for tests/durations.json")
+
+
+def pytest_configure(config):
+    if config.getoption("shard") or config.getoption("shard_times"):
+        config.pluginmanager.register(shards.Shards(config), "shards")
 
 
 @pytest.fixture

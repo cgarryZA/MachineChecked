@@ -26,7 +26,7 @@ def serve(site: Path, port: int, on_link=None, open_browser: bool = True, on_sym
           api: tuple[dict, dict] | None = None):
     httpd = make_server(site, port, on_link, on_symbol, api)
     url = f"http://127.0.0.1:{httpd.server_address[1]}/"
-    print(f"ProofLens: {url}  (Ctrl-C to stop)")
+    print(f"MachineChecked: {url}  (Ctrl-C to stop)")
     if open_browser:
         try:
             import webbrowser

@@ -142,6 +142,13 @@ def page_versions(entries: list[dict], current: str) -> list[dict]:
 
 CHANGES = ("same", "renumbered", "changed", "split", "removed", "new")
 KEY = re.compile(r"[\w.:-]+")
+LABEL = re.compile(r"\\label\s*\{[^{}]*\}")
+
+
+def statement_key(text) -> str:
+    """A statement text as `claim_map` compares it: without its `\\label` commands, which are
+    not printed, and with its white space collapsed."""
+    return " ".join(LABEL.sub(" ", str(text or "")).split())
 
 
 def claim_map(earlier: str, earlier_claims: list[dict], later: str,
@@ -149,33 +156,89 @@ def claim_map(earlier: str, earlier_claims: list[dict], later: str,
     """The map of the claims of one version of a paper (`earlier`, a version id) to those of
     another (`later`), computed from the two versions' claim inventories. Each claim gives `key`
     and `number`, and may give `label` (its source pin, such as the LaTeX label) and `statement`
-    (its text). A claim is matched by its label, else by its statement text when exactly one
-    claim of the other version has it; only claims with a statement are mapped, since without one
-    nothing says whether it changed. A matched claim is `same`, `renumbered` (same statement,
-    another number) or `changed` (another statement); an unmatched one is `removed` (from the
-    earlier version) or `new` (in the later). A split is never inferred: a listing states it."""
-    def norm(t):
-        return " ".join(str(t).split())
+    (its text). Statement texts are compared without their `\\label` commands and with white
+    space collapsed (`statement_key`).
 
+    A claim's counterpart is, in this order: the claim of the other version with its label, when
+    each version has one claim with it; else the claim of the other version with its statement
+    text, when each version has one such claim not matched by a label; else the claim of the
+    other version under its number, when each version has one claim there not matched before
+    and neither claim has a label that the other version gives a claim. A claim and its
+    counterpart are `same`, `renumbered` (same statement, another number) or `changed` (another
+    statement); when either has no statement text, nothing says whether it changed, and the pair
+    is left out.
+
+    A claim with a statement and no counterpart is `removed` (from the earlier version) or `new`
+    (in the later) only when the other version certainly has none: the claim has a label, no
+    claim of the other version has that label, and none there under its number is unmatched or
+    lacks a statement text. Any other claim without a counterpart is left out, as is a claim
+    without a statement. A split is never inferred: a listing states it."""
     def ref(c):
         return {"key": c["key"], "number": c["number"]}
-    a = [c for c in earlier_claims if c.get("statement")]
-    b = [c for c in later_claims if c.get("statement")]
-    used, out = set(), []
-    for c in a:
-        same_label = [d for d in b if c.get("label") and d.get("label") == c["label"]]
-        same_text = [d for d in b if norm(d["statement"]) == norm(c["statement"])]
-        match = same_label if len(same_label) == 1 else same_text if len(same_text) == 1 else []
-        match = [d for d in match if d["key"] not in used]
-        if not match:
+    sides = (list(earlier_claims), list(later_claims))
+    text = [[statement_key(c.get("statement")) for c in cs] for cs in sides]
+    labels = [{} for _ in sides]          # label -> indices of the claims with it, per side
+    for s, cs in enumerate(sides):
+        for i, c in enumerate(cs):
+            if c.get("label"):
+                labels[s].setdefault(c["label"], []).append(i)
+    match: dict[int, int] = {}            # earlier index -> later index
+
+    def unmatched(s):
+        taken = set(match) if s == 0 else set(match.values())
+        return [i for i in range(len(sides[s])) if i not in taken]
+
+    # By label: certain when each version has one claim with it.
+    for lab, ii in labels[0].items():
+        jj = labels[1].get(lab, [])
+        if len(ii) == 1 and len(jj) == 1:
+            match[ii[0]] = jj[0]
+    # By statement text, among the claims a label did not match.
+    by_text = [{}, {}]
+    for s in (0, 1):
+        for i in unmatched(s):
+            if text[s][i]:
+                by_text[s].setdefault(text[s][i], []).append(i)
+    for t, ii in by_text[0].items():
+        jj = by_text[1].get(t, [])
+        if len(ii) == 1 and len(jj) == 1:
+            match[ii[0]] = jj[0]
+    # By number, among the claims still unmatched, when neither has a label the other version
+    # gives a claim (that claim may be its counterpart).
+    by_number = [{}, {}]
+    for s in (0, 1):
+        for i in unmatched(s):
+            by_number[s].setdefault(sides[s][i]["number"], []).append(i)
+    for n, ii in by_number[0].items():
+        jj = by_number[1].get(n, [])
+        if len(ii) == 1 and len(jj) == 1 and \
+                (sides[0][ii[0]].get("label") or None) not in labels[1] and \
+                (sides[1][jj[0]].get("label") or None) not in labels[0]:
+            match[ii[0]] = jj[0]
+
+    # The numbers under which a claim's counterpart may be, per side: those of a claim left
+    # unmatched or without a statement text.
+    left = [set(unmatched(0)), set(unmatched(1))]
+    unsure = [{c["number"] for i, c in enumerate(cs) if i in left[s] or not text[s][i]}
+              for s, cs in enumerate(sides)]
+
+    def certain(s, i):
+        lab = sides[s][i].get("label")
+        return bool(lab) and lab not in labels[1 - s] and sides[s][i]["number"] not in unsure[1 - s]
+
+    out = []
+    for i, c in enumerate(sides[0]):
+        j = match.get(i)
+        if j is not None:
+            d = sides[1][j]
+            if text[0][i] and text[1][j]:
+                change = ("changed" if text[0][i] != text[1][j] else
+                          "renumbered" if d["number"] != c["number"] else "same")
+                out.append({"from": [ref(c)], "to": [ref(d)], "change": change})
+        elif text[0][i] and certain(0, i):
             out.append({"from": [ref(c)], "to": [], "change": "removed"})
-            continue
-        d = match[0]
-        used.add(d["key"])
-        change = ("changed" if norm(d["statement"]) != norm(c["statement"]) else
-                  "renumbered" if d["number"] != c["number"] else "same")
-        out.append({"from": [ref(c)], "to": [ref(d)], "change": change})
-    out += [{"from": [], "to": [ref(d)], "change": "new"} for d in b if d["key"] not in used]
+    out += [{"from": [], "to": [ref(d)], "change": "new"} for j, d in enumerate(sides[1])
+            if j in left[1] and text[1][j] and certain(1, j)]
     return check_claim_map({"from": earlier, "to": later, "claims": out})
 
 

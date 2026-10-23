@@ -339,7 +339,7 @@
             <p class="small inherited" data-binder={h.binder}>{h.decl} assumes <code>{h.lean}</code>: inherited from {h.from} ({h.requirement})</p>
           {/each}
           {#each est.hints || [] as h}
-            <p class="small hint" data-binder={h.binder}>{h.text} <span class="faint">(a computed pointer to inspect, not a finding)</span></p>
+            <p class="small hint" data-binder={h.binder}>{h.text} <span class="faint">(computed hint: inspect it)</span></p>
           {/each}
           {#each reading.alignments.filter((a) => !a.requirements.length) as a (a.id)}
             <p class="small lean" data-alignment={a.id}><span class="faint">Lean only ({a.relation}):</span> {a.lean.map(targetText).join("; ")} <span class="faint">· recorded by {a.created_by}</span>{#if a.note} <span class="text">{a.note}</span>{/if}</p>
