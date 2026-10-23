@@ -408,6 +408,13 @@ async function check(name, width, fn, height = 900) {
   }
 }
 
+// Whether `cond` holds within `ms` milliseconds, asked every 25 ms: for a state of this process
+// (a request the test server received) that the page changes in its own time.
+const until = async (cond, ms = 5000) => {
+  for (const end = Date.now() + ms; !cond() && Date.now() < end;) await new Promise((r) => setTimeout(r, 25));
+  return cond();
+};
+
 // The Lean names the open claim's panel lists.
 const panelNames = async (pg) => (await pg.locator("aside .lean .block .decl code").allTextContents()).map((s) => s.trim());
 const open = async (pg, claim) => {
@@ -483,28 +490,40 @@ await check("a long Lean name stays inside the claim panel on a phone", 390, asy
 
 // The paper pane shows a claim's band when the claim is chosen, wherever it is in a long paper,
 // even though choosing it opens the side panel and narrows the pages.
-const inView = (pg, id) => pg.evaluate((id) => {
+const bandInView = (id) => {
   const band = document.querySelector(`[data-claim="${CSS.escape(id)}"]`);
   const pane = band?.closest(".paperpane");
   if (!band || !pane) return false;
   const b = band.getBoundingClientRect(), p = pane.getBoundingClientRect();
   return b.top >= p.top - 1 && b.top <= p.bottom;
-}, id);
+};
+// After `n` frames are drawn: the layout a change set off (a resize, the scroll that follows it)
+// has run.
+const frames = (pg, n) => pg.evaluate((n) => new Promise((done) => {
+  const next = (k) => (k ? requestAnimationFrame(() => next(k - 1)) : done());
+  next(n);
+}), n);
+// The band comes into view within a bounded time, and is still in view once the frames after
+// it are drawn.
+const comesIntoView = async (pg, id) => {
+  if (!(await pg.waitForFunction(bandInView, id, { timeout: 10000 }).then(() => true, () => false))) return false;
+  await frames(pg, 2);
+  return pg.evaluate(bandInView, id);
+};
 const ids = ["P:theorem-2", "P:theorem-15", "P:theorem-28"];
 await check("a claim chosen in a long paper stays in view (contents and deep links)", 1300, async (pg) => {
   await pg.goto(origin + "/long/");
   await pg.waitForSelector("nav.toc li");
   for (const id of [...ids, ids[0]]) {
     await pg.locator(".reader-layout > nav.toc strong", { hasText: new RegExp(`^Theorem ${id.split("-")[1]}$`) }).click();
-    await pg.waitForTimeout(600);
-    assert.ok(await inView(pg, id), `${id} not in view after choosing it`);
+    await pg.locator("aside h1", { hasText: new RegExp(`^Theorem ${id.split("-")[1]}\\b`) }).waitFor();
+    assert.ok(await comesIntoView(pg, id), `${id} not in view after choosing it`);
   }
   for (const id of ids) {
     const cold = await browser.newPage({ viewport: { width: 1300, height: 900 } });
     await cold.goto(origin + `/long/#/r/paper/read/P/${encodeURIComponent(id)}`);
     await cold.waitForSelector("aside h1");
-    await cold.waitForTimeout(800);
-    assert.ok(await inView(cold, id), `${id} not in view when opened by its link`);
+    assert.ok(await comesIntoView(cold, id), `${id} not in view when opened by its link`);
     await cold.close();
   }
 });
@@ -1090,8 +1109,11 @@ await check("in the local reader a symbol is linked by choosing it and clicking 
     await mk.locator(".chip[data-tex='a']").click();
     await pg.locator("aside .view .lean .ribbon .v", { hasText: /^a$/ }).click();
     await mk.locator("input.who").fill("Test Referee");
+    // Saving posts the link, then reloads the page.
+    const sent = posted.length, reloaded = pg.waitForEvent("load").then(() => true, () => false);
     await mk.locator("button", { hasText: "Save link" }).click();
-    await pg.waitForTimeout(500);
+    assert.ok(await until(() => posted.length > sent), "the link is posted");
+    assert.ok(await reloaded, "the page reloads after saving");
     assert.deepEqual(posted.at(-1), { action: "add", claim: "T:thm:even-add", tex: "a",
       decl: "Toy.PaperSpec.thm_even_add", var: "a", by: "human:Test-Referee" });
     // A published audit offers no such control.
@@ -1703,10 +1725,17 @@ await check("expression controls have names and pane resizing works by keyboard"
   assert.equal(await pages.getAttribute("tabindex"), "0");
   assert.match(await pg.locator("#" + await pages.getAttribute("aria-describedby")).textContent(), /arrow keys, Page Up and Page Down/);
   await pg.locator(".pdf canvas").first().waitFor();
+  // End widened the panel. The pages take their new width a frame later and scroll to keep the
+  // claim in view; until then the pane's position is the one of the earlier width, so it is read
+  // once those frames are drawn.
+  await frames(pg, 2);
   const scroller = await pages.evaluateHandle((e) => [e, e.parentElement].find((x) => x.scrollHeight > x.clientHeight));
   const top = await scroller.evaluate((e) => e.scrollTop);
-  await pages.focus(); await pg.keyboard.press("PageDown"); await pg.waitForTimeout(300);
-  assert.ok(await scroller.evaluate((e) => e.scrollTop) > top, "Page Down scrolls the pages");
+  await pages.focus(); await pg.keyboard.press("PageDown");
+  // The browser scrolls after the key, sooner or later on a loaded machine.
+  const scrolled = await pg.waitForFunction(([e, from]) => e.scrollTop > from, [scroller, top], { timeout: 5000 })
+    .then(() => true, () => false);
+  assert.ok(scrolled, "Page Down scrolls the pages");
 });
 
 for (const scheme of ["light", "dark"]) await check(`${scheme} theme text meets contrast requirements`, 1300, async (pg) => {
