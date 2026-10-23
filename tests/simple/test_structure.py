@@ -9,6 +9,7 @@ import subprocess
 import pytest
 
 from conftest import ROOT, needs_lean, needs_tex
+from prooflens import symbols
 from prooflens.simple import build_view
 
 SRC = ROOT / "tests" / "fixtures" / "structure"
@@ -79,6 +80,15 @@ def test_variables_and_logic_are_exported(tmp_path, toolchain):
     assert var_refs(b["leaf"]) == [("j", 0), ("x", 1), ("j", 0)]
     assert var_refs(right["args"][0]["leaf"]) == [("x", 2)]
     assert rec["exact"]["text"].startswith("∀ (j : Nat), (∃ (x : Nat → Nat)")
+    # Each occurrence of a variable has an identity of its own beside the variable's number, the
+    # same in the readable parts and in the exact Lean, apart from the other x's (#73).
+    xs = [x for leaf in (a["leaf"], b["leaf"]) for x in leaf["segments"] if x.get("var") == 1]
+    assert [x["t"] for x in xs] == ["x", "x"] and len({x["at"] for x in xs}) == 2
+    exact_at = {x["at"]: x["t"] for x in rec["exact"]["segments"] if "at" in x}
+    assert all(exact_at.get(x["at"]) == "x" for x in xs), (xs, exact_at)
+    other = [x["at"] for x in right["args"][0]["leaf"]["segments"] if x.get("var") == 2]
+    assert other and not set(other) & {x["at"] for x in xs}
+    assert [symbols.term_by_id(rec, x["at"]) for x in xs] == ["x", "x"]
     # Negation, implication and "for every" inside a part keep their scope; an instance says
     # whether it supplies data or a proposition (#67).
     assert [x.get("supplies") for x in statement(root)["binders"]
@@ -168,6 +178,8 @@ def test_definitions_are_exported_as_written(tmp_path, toolchain):
     eq, whole = texts(e3["equation"]), texts(e3["statement"])
     assert eq and all(i.startswith("Shape.fib.eq_3:") and whole.get(i) == t
                       for i, t in eq.items())
+    # ... and a link or an alignment can name them by that identity (#73).
+    assert all(symbols.term_by_id({"definition": f}, i) == t for i, t in eq.items())
     assert "| n + 2 => fib n + fib (n + 1)" in f["lean_source"]["text"]
     assert "body" not in f, "the compiled recursion is only the value"
 
@@ -259,6 +271,17 @@ def test_properties_carried_by_types(tmp_path, toolchain):
     assert [f for f, _ in props(ms, "data")] == ["measurable", "measure"]
     assert [f for f, _ in props(ms)] == ["measurable_compl", "measure_empty"]
     assert props(prob) == [("measure_univ", "(Shape.MeasureData.measure fun (x : Ω) => True) = 1")]
+    # The same field of two objects of one type: each is specialised to its own object, with an
+    # identity under that object's, which names it and only it (#73).
+    rec = statement(root, "Shape.two_solutions")
+    s, t = rec["binders"][1:]
+    ss, ts = (next(p for p in o["properties"] if p["field"] == "start") for o in (s, t))
+    assert (ss["type"]["text"], ts["type"]["text"]) == ("s.path 0 = d", "t.path 0 = d")
+    assert ss["type"]["id"] == s["id"] + "#start:/" and ts["type"]["id"] == t["id"] + "#start:/"
+    assert [symbols.term_by_id(rec, p["type"]["id"]) for p in (ss, ts)] == \
+        ["s.path 0 = d", "t.path 0 = d"]
+    for p in (ss, ts):
+        assert all(symbols.term_by_id(rec, i) == t for i, t in texts(p["type"]).items())
     # A conjunction or an equivalence assumed is not a structure to list.
     assert all("properties" not in x for x in statement(root, "Shape.both")["binders"])
     # Inside a negation, the solution is the negated claim's: its properties are on its node.

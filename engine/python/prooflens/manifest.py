@@ -94,11 +94,13 @@ def clause_evidence(cl: dict, anchor: dict | None, mode: str | None, src_ok: boo
 
 def symbol_links(display: dict | None, cid: str, tex: str | None, lean: dict,
                  excerpt: dict | None = None) -> list[dict]:
-    """The claim's symbol links, each as its author recorded it and whether it is stale: the
-    statement it points into has another fingerprint now, or the claim's printed text changed.
-    A link made on a typeset excerpt (`pins.excerpt`) is also stale when that excerpt, or the
-    macros and references it is typeset with, changed or can no longer be typeset. Display
-    only (docs/SYMBOL_LINKS.md)."""
+    """The claim's symbol links, each as its author recorded it and whether it is stale, with why
+    (`stale_because`, codes of `symbols.STALE`): the statement it points into has another
+    fingerprint now, the claim's printed text changed, or the Lean object it names is no longer
+    the one it was made on. A link made on a typeset excerpt (`pins.excerpt`) is also stale when
+    that excerpt, or the macros and references it is typeset with, changed or can no longer be
+    typeset. Display only (docs/SYMBOL_LINKS.md)."""
+    from .symbols import stale_reasons
     ready = excerpt if excerpt and excerpt.get("ready") else None
     out = []
     for ln in (display or {}).get("symbols", []):
@@ -107,21 +109,15 @@ def symbol_links(display: dict | None, cid: str, tex: str | None, lean: dict,
         target = ln.get("lean") or {}
         spec = (lean.get("specs") or {}).get(target.get("decl")) or {}
         pins = ln.get("pins") or {}
-        # A link to a sub-term is located by numbers that depend on how the statement is
-        # printed, so it also needs the text it was made on (older links have none).
-        from .symbols import target_text
-        shown = target_text(spec, target)
         if "excerpt" in pins:
             moved = (ready is None or pins["excerpt"] != ready.get("fingerprint")
                      or pins.get("source") != sha256_text(ready.get("text") or ""))
         else:
             moved = not tex or pins.get("source") != sha256_text(tex)
-        stale = (pins.get("statement") != spec.get("fingerprint") or moved
-                 or shown is None
-                 or ("target" in pins and pins["target"] != shown)
-                 or (("term" in target or "at" in target) and "target" not in pins))
+        why = stale_reasons(spec, target, pins,
+                            ("excerpt" if "excerpt" in pins else "source") if moved else None)
         out.append({"symbol": ln.get("symbol") or {}, "lean": target, "by": ln.get("by"),
-                    "stale": bool(stale)})
+                    "stale": bool(why), "stale_because": why})
     return out
 
 

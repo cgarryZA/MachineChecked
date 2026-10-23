@@ -10,8 +10,8 @@
   // binder's type ({type}); `onactive` hears which variable is highlighted here.
   // `onpinned` hears which variable is held (clicked), and `onterm` which sub-term is selected
   // ({where, k}: `b:<binder>` for a binder's type, `c` for the conclusion, `l:<n>` for the n-th
-  // part of a conclusion split by its logic), for choosing one. `ext` may also be {term}, or
-  // {at}: a sub-term by its identity in the proposition. `selId` is the sub-term selected in
+  // part of a conclusion split by its logic), for choosing one. `ext` may also be {at}: a
+  // sub-term, or one occurrence of a variable, by its identity. `selId` is the sub-term selected in
   // another view of the same statement (the exact Lean), by that identity; `onselect` hears the
   // identity of the one selected here. `mark` lists positions of applications to mark (the
   // occurrences of a warning).
@@ -63,7 +63,7 @@
   let pinned = $state(null);
   const active = $derived(hover ?? pinned ?? ext?.var ?? null);
   $effect(() => { onactive?.(hover ?? pinned); });
-  $effect(() => { onpinned?.(pinned); });
+  $effect(() => { onpinned?.(pinned, pinned != null ? vars[pinned]?.name ?? null : null); });
 
   // A selected sub-term, and where it is.
   let termSel = $state(null);
@@ -73,7 +73,7 @@
   $effect(() => { if (selId != null && termSel && idOf(termSel) !== selId) termSel = null; });
   const outerId = $derived(termSel ? null : selId ?? ext?.at ?? null);
   const termAt = (where) => where == null ? null
-    : termSel?.where === where ? termSel.k : ext?.term?.where === where ? ext.term.k : null;
+    : termSel?.where === where ? termSel.k : null;
   // Only a choice made here is reported: dropping this view's selection for one made in another
   // view must not clear that one.
   function setTerm(where, k) {

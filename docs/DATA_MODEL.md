@@ -106,9 +106,10 @@ Dismissals of warnings (`dismissals.json`):
 | `assessment` | per claim: status and clauses (for a proof step, also its `step_review` from its markers); all findings |
 
 A pretty-printed Lean term (a binder's type, a conclusion, a signature) is `{text, segments}`:
-each segment is a piece of the text, with `ref` when it names a constant and `var` when it is an
-occurrence of one of the statement's own variables (the index, in `binders`, of the binder that
-introduced it). A conclusion that is a conjunction, disjunction or equivalence also has
+each segment is a piece of the text, with `ref` when it names a constant and, when it is an
+occurrence of a variable, `at`, the identity of that occurrence (its position, as for a sub-term
+below), and `var` when the variable is one of the statement's own (the index, in `binders`, of
+the binder that introduced it). A conclusion that is a conjunction, disjunction or equivalence also has
 `logic`, a tree of `{op, args}` whose leaves are `{leaf: {text, segments}}`. A term also lists its sub-terms as `terms`, ranges `{from, to}` of its segments (outer before inner; none for a very large term), so that a reader can select a whole sub-term. Both are for
 display: no status, fingerprint or hash reads them.
 

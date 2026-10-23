@@ -213,36 +213,37 @@ def constPrint (ci : ConstantInfo) : MetaM (String × String × Array Name) := d
 
 /-! ## Pretty-printing with navigation -/
 
-/-- Flatten tagged code into segments; a segment carries the constant it names (`ref`), or the
-index of the statement's binder it refers to (`var`, a position in `vars`), when the innermost
-subexpression around it is one. Each tagged subexpression is also recorded as the range of
-segments it covers (`terms`, in printing order, an outer one before those inside it), so that the
-reader can select a whole sub-term, with its position in the whole proposition (`root`, the
-position of the printed expression, extended by the tag's own `subexprPos`): the identity of a
-sub-term, which depends on the proposition only, not on how it is printed or split. An expression
-that is not part of the proposition (a defining equation) has a prefix (`pfx`, the equation
-theorem's name) before its positions. -/
+/-- Flatten tagged code into segments; a segment carries the constant it names (`ref`) or, for an
+occurrence of a variable, the identity of that occurrence (`at`) and, when the variable is one of
+the statement's own (`vars`), its number (`var`), when the innermost subexpression around it is
+one. A variable thus has one number, shared by all its occurrences, and each occurrence an
+identity of its own. Each tagged subexpression is also recorded as the range of segments it
+covers (`terms`, in printing order, an outer one before those inside it), so that the reader can
+select a whole sub-term, with its position in the whole proposition (`root`, the position of the
+printed expression, extended by the tag's own `subexprPos`): the identity of a sub-term, which
+depends on the proposition only, not on how it is printed or split. An expression that is not
+part of the proposition (a defining equation) has a prefix (`pfx`, the equation theorem's name)
+before its positions. -/
 partial def segments (vars : Array FVarId) (root : SubExpr.Pos) (pfx : String)
     (t : Widget.CodeWithInfos)
-    (ref : Option (String × Json)) (acc : Array Json) (terms : Array (Nat × Nat × String)) :
+    (ref : List (String × Json)) (acc : Array Json) (terms : Array (Nat × Nat × String)) :
     Array Json × Array (Nat × Nat × String) :=
   match t with
-  | Widget.TaggedText.text s =>
-    match ref with
-    | some (k, v) => (acc.push (Json.mkObj [("t", s), (k, v)]), terms)
-    | none => (acc.push (Json.mkObj [("t", s)]), terms)
+  | Widget.TaggedText.text s => (acc.push (Json.mkObj (("t", Json.str s) :: ref)), terms)
   | Widget.TaggedText.append xs =>
     xs.foldl (fun (a, ts) x => segments vars root pfx x ref a ts) (acc, terms)
   | Widget.TaggedText.tag info sub =>
+    let id := pfx ++ toString (root.append info.subexprPos)
     let r := match info.info.val.info with
       | .ofTermInfo ti => match ti.expr with
-        | .const n _ => some ("ref", Json.str n.toString)
-        | .fvar id => (vars.findIdx? (· == id)).map fun i => ("var", toJson i)
-        | _ => none
-      | _ => none
+        | .const n _ => [("ref", Json.str n.toString)]
+        | .fvar fv => match vars.findIdx? (· == fv) with
+          | some i => [("var", toJson i), ("at", Json.str id)]
+          | none => [("at", Json.str id)]
+        | _ => []
+      | _ => []
     let start := acc.size
     let slot := terms.size
-    let id := pfx ++ toString (root.append info.subexprPos)
     let (acc', terms') := segments vars root pfx sub r acc (terms.push (start, start, id))
     (acc', terms'.set! slot (start, acc'.size, id))
 
@@ -270,7 +271,7 @@ def ppFields (e : Expr) (vars : Array FVarId := #[]) (root : SubExpr.Pos := .roo
     let typed := fun (o : Options) => o.setBool `pp.funBinderTypes true
     let code ← withOptions (fun o => (typed o).setBool `pp.tagAppFns true) (Widget.ppExprTagged e)
     let text := toString (← withOptions typed (ppExpr e))
-    let (segs, terms) := segments vars root pfx code none #[] #[]
+    let (segs, terms) := segments vars root pfx code [] #[] #[]
     return [("text", Json.str text), ("segments", Json.arr segs), ("terms", termsJson terms),
       ("id", Json.str (pfx ++ toString root))]
   catch _ =>

@@ -268,12 +268,14 @@ def fragment_content(out: dict, rec: dict, ws: dict, snap, cur: dict | None,
 
 
 def _statements(snap, claim: str) -> dict[str, dict]:
-    """The statements of the claim's declarations the build holds, by name."""
+    """The statements of the claim's declarations the build holds, by name; a linked
+    definition's with what it says (`definition`), whose sub-terms can be named too."""
     ch = (snap.chunk(claim) or {}) if snap is not None else {}
     out = {}
     for l in (ch.get("links") or []) + (ch.get("suggestions") or []):
         if l.get("name") and l.get("statement"):
-            out.setdefault(l["name"], l["statement"])
+            out.setdefault(l["name"], {**l["statement"], "definition": l["definition"]}
+                           if l.get("definition") else l["statement"])
     for cl in ch.get("clauses") or []:
         if cl.get("spec") and cl.get("statement"):
             out.setdefault(cl["spec"], cl["statement"])

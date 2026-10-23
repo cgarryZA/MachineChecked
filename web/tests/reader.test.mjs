@@ -747,6 +747,31 @@ for (const width of [1300, 390]) {
     assert.equal(await statusOf(pg, "P:theorem-2"), "formal.refuted.corrected");
   });
 
+  await check("choosing another audit clears a selection made in the first one's statement", width, async (pg) => {
+    // Both audits state Theorem 1 with a declaration of the same name; an expression selected in
+    // one build names nothing in the other (#73).
+    await pg.route("**/combined/data/claims/*theorem-1*", async (route) => {
+      const response = await route.fetch();
+      const rec = await response.json();
+      const seg = (t) => ({ t });
+      for (const p of Object.values(rec.by_project || {})) {
+        const cl = p.record?.clauses?.[0];
+        if (cl?.statement) cl.statement.conclusion = { id: "/", text: "a + b ≤ b + a",
+          segments: ["a", " + ", "b", " ≤ ", "b + a"].map(seg),
+          terms: [{ id: "/", from: 0, to: 5 }, { id: "/0/1", from: 0, to: 3 }] };
+      }
+      route.fulfill({ response, json: rec });
+    });
+    await pg.goto(origin + `/combined/?project=${encodeURIComponent(CA)}#/r/paper/read/P/P%3Atheorem-1`);
+    const st = pg.locator("aside .view .stmt").first();
+    await st.locator(".p", { hasText: "+" }).first().click();
+    assert.equal((await st.locator(".in").allTextContents()).join(""), "a + b");
+    await pg.selectOption(FORMAL, CB);
+    await pg.waitForFunction(() => document.querySelector("aside [data-status]")?.getAttribute("data-status") === "formal.open");
+    await st.locator(".p", { hasText: "+" }).first().waitFor();
+    assert.equal(await pg.locator("aside .view .stmt .in").count(), 0, "nothing selected in the other audit's statement");
+  });
+
   await check("the stars choose the default audit, and the listing's order holds without them", width, async (pg) => {
     await pg.goto(origin + "/combined-beta/");
     await pg.waitForSelector(FORMAL);
@@ -1024,6 +1049,28 @@ for (const width of [1300, 390]) {
 }
 
 for (const width of [1300, 390]) {
+  await check("a link to one occurrence of a variable lights that occurrence only", width, async (pg) => {
+    // The probe gives each occurrence of a variable its own identity (`at`) beside the variable's
+    // number (#73); a link may name one occurrence.
+    await pg.route("**/toy/data/claims/*even-add*", async (route) => {
+      const response = await route.fetch();
+      const rec = await response.json();
+      const cl = rec.clauses.find((c) => c.spec === "Toy.PaperSpec.thm_even_add");
+      // An identity no sub-term of the data has: the occurrence's own.
+      const at = "/occurrence-of-b";
+      cl.statement.conclusion.segments = cl.statement.conclusion.segments.map((x) => x.var === 1 ? { ...x, at } : x);
+      rec.symbols = [{ symbol: { tex: "b", occurrence: "all" }, lean: { decl: cl.spec, at }, by: "human:A-Referee", stale: false }];
+      route.fulfill({ response, json: rec });
+    });
+    await toyClaim(pg, "T:thm:even-add");
+    const tex = pg.locator("aside .view .paper .tex");
+    await tex.locator("[data-sym]").first().waitFor();
+    await tex.locator("[data-sym]").first().hover();
+    const lean = pg.locator("aside .view .lean");
+    assert.deepEqual(await lean.locator(".in").allTextContents(), ["b"], "the conclusion's b, not the binder");
+    assert.equal(await lean.locator(".var.hl").count(), 0, "a link to an occurrence is not a link to the variable");
+  });
+
 await check("in the local reader a symbol is linked by choosing it and clicking its variable", width, async (pg) => {
     await pg.goto(origin + `/toyedit/#/r/${TOY.release}/read/T/${encodeURIComponent("T:thm:even-add")}`);
     await pg.waitForSelector("aside .view h1");
@@ -1034,13 +1081,32 @@ await check("in the local reader a symbol is linked by choosing it and clicking 
     await mk.locator(".chip[data-tex='a']").click();
     await pg.locator("aside .view .lean .ribbon .v", { hasText: /^a$/ }).click();
     await mk.locator("input.who").fill("Test Referee");
+    assert.match(await mk.textContent(), /to the variable a of Toy\.PaperSpec\.thm_even_add/);
     await mk.locator("button", { hasText: "Save link" }).click();
     await pg.waitForTimeout(500);
+    // The variable is sent by its number: two variables can share a name (#73).
     assert.deepEqual(posted.at(-1), { action: "add", claim: "T:thm:even-add", tex: "a",
-      decl: "Toy.PaperSpec.thm_even_add", var: "a", by: "human:Test-Referee" });
+      decl: "Toy.PaperSpec.thm_even_add", var: "0", by: "human:Test-Referee" });
     // A published audit offers no such control.
     await toyClaim(pg, "T:thm:even-add");
     assert.equal(await pg.locator("aside .mklink").count(), 0);
+  });
+
+  await check("a link that no longer holds says why, and is not drawn", width, async (pg) => {
+    await pg.route("**/toyedit/data/claims/*even-add*", async (route) => {
+      const response = await route.fetch();
+      const rec = await response.json();
+      rec.symbols = [{ symbol: { tex: "b" }, lean: { decl: "Toy.PaperSpec.thm_even_add", term: 3, in: "c" }, by: "human:Old",
+                       stale: true, stale_because: ["positional"] }];
+      route.fulfill({ response, json: rec });
+    });
+    await pg.goto(origin + `/toyedit/#/r/${TOY.release}/read/T/${encodeURIComponent("T:thm:even-add")}`);
+    await pg.waitForSelector("aside .view h1");
+    const mk = pg.locator("aside .mklink");
+    await mk.locator("summary").click();
+    const old = mk.locator("[data-link='b']");
+    assert.match((await old.textContent()).replace(/\s+/g, " "), /\(stale\).*Not shown: it names its Lean object by place and number in an earlier display\. Link it again, or remove it\./);
+    assert.equal(await pg.locator("aside .view .paper .tex [data-sym]").count(), 0, "a stale link is not drawn");
   });
 
   await check("a linked definition keeps its parameters in order, and a recursive one shows its equations", width, async (pg) => {
@@ -1278,6 +1344,24 @@ await check("in the local reader a symbol is linked by choosing it and clicking 
     const there = await lit(exact);
     assert.ok(there.includes("≤"), there);
     assert.equal(await lit(st), there);
+  });
+
+  await check("a selection belongs to its claim: choosing another claim clears it", width, async (pg) => {
+    const go = async (id) => {
+      await pg.goto(origin + `/structure/#/r/${SHAPE.release}/read/P/${encodeURIComponent(id)}`);
+      const st = pg.locator("aside .view :not(.suggestion) > .stmt").first();
+      await st.locator(".concl").waitFor();
+      return st;
+    };
+    let st = await go("P:thm:layout");
+    await st.locator(".concl .parts > li").nth(1).locator(".p", { hasText: "+" }).first().click();
+    const exact = pg.locator("aside .exact pre").first();
+    assert.equal((await exact.locator(".in").allTextContents()).join("").trim(), "n + x");
+    await go("P:thm:witnesses");
+    st = await go("P:thm:layout");
+    await exact.waitFor();
+    assert.equal(await st.locator(".in").count(), 0, "nothing selected in the readable statement");
+    assert.equal(await exact.locator(".in").count(), 0, "nor in the exact Lean");
   });
 
   await check("a name's plain-English note appears only on request, beside the name", width, async (pg) => {
