@@ -342,8 +342,9 @@ def message(o: dict) -> str:
     return out
 
 
-def drift_note(p: dict, refs: list[dict]) -> str | None:
-    """The project-level note when the references show a pattern."""
+def drift_note(p: dict, refs: list[dict], suggestions: bool = True) -> str | None:
+    """The project-level note when the references show a pattern; `suggestions` when the build
+    makes suggestions, whose ranking the note then explains."""
     if not p["drift"]:
         return None
     parts = [f"{p['absent']} cite numbers this version does not have" if p["absent"] else "",
@@ -355,7 +356,8 @@ def drift_note(p: dict, refs: list[dict]) -> str | None:
     return (f"the Lean's references to the paper appear to follow another version of it: "
             f"{p['absent'] + p['other_kind'] + p['reads_elsewhere']} of the {p['checked']} "
             f"references checked disagree with this version ({', '.join(x for x in parts if x)})"
-            f", for example {ex}. Suggestions rank statement content above these numbers.")
+            f", for example {ex}."
+            + (" Suggestions rank statement content above these numbers." if suggestions else ""))
 
 
 def reliability(numbering: dict | None, decl: str, reference: str) -> tuple[float, str | None]:
