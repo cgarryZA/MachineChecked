@@ -171,15 +171,17 @@ compare it with the paper read here:
 - the reference is to another work, or in a namespace the project maps to another paper.
 
 A reference is to another work when a citation follows its number (`Theorem 4.1 of [Gauss]`,
-`Theorem 3 in Hardy and Wright`, `Lemma 9 [AB]`) or comes just before it: an open citation
-bracket (`[AB, Lemma 9]`), `et al.`, an author's possessive (`Gauss's Lemma 4.22`,
-`[AB]'s Lemma 9`, `Smith et al.'s Theorem 3`), or a chapter after a comma, as a book's citation
-gives it (`Hardy–Wright, *An Introduction*, Ch. IV, Prop. 4.7`). A possessive of the paper,
-a part of it or the Lean (`the paper's Lemma 2.1`, `Lean's Theorem 2.1`), a part of the paper
-or the Lean after the number (`Lemma 7.7 in Section 7`, `from Appendix A`, `in Lean`), a
-possessive earlier in the sentence (`By Gauss's lemma and Lemma 2.1`) and a chapter in prose
-(`In Chapter 4, Lemma 4.2`) leave the reference checked against the paper. A citation after
-the part names another work (`Lemma 4.1 in Section 4 of [AB]`).
+`Theorem 3 in Hardy and Wright`, `Lemma 9 of ref. [3]`, `Lemma 9 [AB]`) or comes just before
+it: an open citation bracket (`[AB, Lemma 9]`), `et al.`, an author's possessive
+(`Gauss's Lemma 4.22`, `[AB]'s Lemma 9`, `Smith et al.'s Theorem 3`), or a chapter after a
+comma, as a book's citation gives it (`Hardy–Wright, *An Introduction*, Ch. IV, Prop. 4.7`).
+A possessive of the paper, a part of it or the Lean (`the paper's Lemma 2.1`,
+`Lean's Theorem 2.1`), a part of the paper or the Lean after the number
+(`Lemma 7.7 in Section 7`, `from Appendix A`, `in Lean`), an ordinary word after it
+(`in refined form`, `in reference to Lemma 2`), a possessive earlier in the sentence
+(`By Gauss's lemma and Lemma 2.1`) and a chapter in prose (`In Chapter 4, Lemma 4.2`) leave
+the reference checked against the paper. A citation after the part names another work
+(`Lemma 4.1 in Section 4 of [AB]`).
 
 Digits that run together in a name (`lem41_bound`, or `Assumption22` written as an
 identifier in a docstring) are read in every way the paper could mean them, `4.1` and `41`: the
@@ -288,7 +290,8 @@ A numbered equation inside a printed proof is a target of its own. In zero confi
 every numbered display with one `\label` inside a `proof` environment is listed as **Equation (n)**
 under the result whose proof holds it (the result the proof's optional argument names, else the
 statement just before the proof). Its passport shows the equation, its context in the proof and
-its own review; the enclosing result lists its steps.
+its own review; the enclosing result lists its steps. A context kept only in part is marked
+**(cut)**, with the line where it was cut.
 
 A step is linked in two ways, kept apart:
 
@@ -331,7 +334,7 @@ Select a claim to see the printed statement beside its Lean statement. For a LaT
 - **Linked, proof checked:** Lean accepts the named formal theorem, subject to its axioms.
 - **Linked, Lean definition:** the link is to a definition, which introduces a mathematical object.
 - **Linked, Lean not checked:** the project, or the declaration's own module, is not built, so Lean has not been run on it here. A project can be partly built: what is built is checked, and each link says whether its module is.
-- **Linked, Lean name is ambiguous:** several modules declare the same name (a statement left as a challenge and its solution, for instance). Name the intended module in the `formalization.yaml` row (`module: …`). Each Lean library is inspected in its own Lean session, so libraries that cannot be loaded together are handled; a module MachineChecked cannot load at all is reported as such, with the loading error.
+- **Linked, Lean name is ambiguous:** several modules declare the same name (a statement left as a challenge and its solution, for instance). Name the intended module in the `formalization.yaml` row (`module: …`). Each Lean library is inspected in its own Lean session, so libraries that cannot be loaded together are handled. A library that cannot be loaded in one session is loaded a few modules at a time; a module that still cannot be loaded on its own is reported as such (**Linked, Lean not checked (module could not be loaded)**), and each link into it, the build's note and `check` give the first lines of what Lean reported, and say when the module's library was loaded apart first.
 - **Incomplete (`sorry`):** the formal proof has unfinished obligations.
 - **Further axioms:** the proof relies on axioms beyond the default allowlist.
 - **Definition / declaration not found:** the linked item is not a checked theorem or cannot be resolved from the built modules.
@@ -427,11 +430,11 @@ jobs:
     permissions: { pages: write, id-token: write }
     environment: github-pages
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with: { pattern: machinechecked-audit*, merge-multiple: true, path: site }
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
         with: { path: site }
-      - uses: actions/deploy-pages@v4
+      - uses: actions/deploy-pages@v5
 ```
 
 A deploy replaces the whole site, so every run builds every audit; a saved build (`cache-repo`) keeps the frozen one quick. Each audit's `site_url` (in the configuration on its ref) is its own address, such as `https://you.github.io/project/v1/`.
