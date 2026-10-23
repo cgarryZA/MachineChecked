@@ -25,17 +25,19 @@ def reuse(toy):
     return res["index"], ev.load(res["site"].parent, res["evidence"])["body"], said
 
 
-def site_data(cfg):
-    """The preview site's data, without what names the release itself or compares it with the
-    releases before it (which differ between any two builds)."""
+def site_data(cfg, index):
+    """The preview site's data of the build whose manifest index is `index`, with its release's
+    own names in placeholders and without its comparison with the releases before it: these
+    differ between any two builds."""
     data = cfg.out_dir / "site" / "data"
     out = {}
     for p in sorted(data.rglob("*.json")):
         if p.name in ("changes.json", "review-queue.json"):
             continue
-        d = json.loads(p.read_text())
-        if p.name == "index.json" and p.parent == data:
-            for k in ("release", "evidence", "created", "changes"):
+        d = json.loads(p.read_text().replace(index["release"], "RELEASE")
+                       .replace(index["evidence"], "EVIDENCE"))
+        if p == data / "index.json":
+            for k in ("created", "changes"):
                 d.pop(k, None)
         out[str(p.relative_to(data))] = d
     return out
@@ -60,7 +62,7 @@ def test_reuse_finds_the_matching_release_after_another_probe(toy, monkeypatch, 
     third, _, _ = build(toy)
     assert third["evidence"] == first["evidence"] and third["release"] == first["release"]
     assert latest(cfg) == second["release"]
-    fresh = site_data(cfg)
+    fresh = site_data(cfg, third)
 
     index, body, said = reuse(toy)
     assert any(f"reusing the probe records of release {first['release']}" in m for m in said)
@@ -68,7 +70,7 @@ def test_reuse_finds_the_matching_release_after_another_probe(toy, monkeypatch, 
     assert body["lean"] == body1["lean"]
     assert body["assessment"] == body1["assessment"]
     assert statuses(index) == statuses(first)
-    assert site_data(cfg) == fresh
+    assert site_data(cfg, index) == fresh
 
     # With P2, the records of P2's own release are reused.
     monkeypatch.setattr(pipeline, "probe_digest", lambda: OTHER_PROBE)
