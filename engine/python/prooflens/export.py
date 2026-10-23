@@ -110,6 +110,8 @@ def public_claim(chunk: dict, pub) -> dict:
     out["location"] = chunk.get("location") if pub.source_text else None
     out["statement_tex"] = chunk.get("statement_tex") if pub.source_text else None
     out["context_tex"] = chunk.get("context_tex") if pub.source_text else None
+    if chunk.get("context_cut") and pub.source_text:
+        out["context_cut"] = chunk["context_cut"]
     out["excerpt"] = chunk.get("excerpt") if pub.source_text else None
     if chunk.get("source_parts") and pub.source_text:
         out["source_parts"] = chunk["source_parts"]

@@ -298,10 +298,14 @@ def build(evidence: dict, release: str, display: dict | None = None
             "unit": unit, "parent": c.get("parent"),
             **({"step": step} if step else {})}
         if step and (t.get("step_text") or {}).get(c["id"]):
-            # A proof step's printed text and its context in the proof, from the snapshot.
+            # A proof step's printed text and its context in the proof, from the snapshot,
+            # with where the context was cut when it was.
             chunks[fname]["statement_tex"] = chunks[fname]["statement_tex"] or \
                 t["step_text"][c["id"]]["text"]
             chunks[fname]["context_tex"] = t["step_text"][c["id"]]["context"]
+            cut = steps.context_cut(t["step_text"][c["id"]])
+            if cut:
+                chunks[fname]["context_cut"] = cut
 
     steps.attach_parents(index_claims, chunks)
     prov = body["provenance"]
