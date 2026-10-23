@@ -865,8 +865,7 @@ def probe_modules(root: Path, modules: list[str], libs: list[str], requests: lis
                 if split is not None and whole is not None:
                     split[group[0]] = dict(whole)
                 return
-            errors = [l.strip() for l in str(e).splitlines() if "error" in l]
-            reason = errors[0].split("error:", 1)[-1].strip()[:200] if errors else "no error message"
+            reason = loading_error(str(e), root, lines=1) or "no error message"
             log(f"lean: {label} could not be loaded in one session ({reason}); splitting it")
             whole = whole or {"library": label, "modules": len(group)}
             half = len(group) // 2
