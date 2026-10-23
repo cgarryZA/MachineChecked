@@ -46,7 +46,8 @@ Without a `machinechecked.toml`, `warnings` lists names in module docstrings tha
 and its dependencies do not declare (`kind` `module-doc-name`, with `file`, `line`, `name` and
 `message`; the message says when a short name reaches only a module or a namespace), and
 references to the paper's numbers that disagree with the paper read here
-(`kind` `paper-reference`, with `file`, `line`, `reference`, `status`, `id` and `message`);
+(`kind` `paper-reference`, with `file`, `line`, `reference`, `status`, `id` and `message`;
+each reference has its own `id`, a second copy of the same text in one place included);
 they do not change the exit code. `numbering` holds every such reference
 (`numbering.references`: `reference`, its exact `text` and `context`, its `source` with
 declaration, module, file, line and `where` it is, and `status`: `exact`, `other-kind`,
@@ -208,7 +209,8 @@ reads previews (`complete: false` on such a result: get its statement with `depe
   variable by its index in `locals`, whose `id` is the position of its binder, so two variables
   printed alike in different scopes stay distinct. `location.path` is the application's
   position in the elaborated term; its line is the enclosing declaration's.
-- `scope`, `complete` and `answer`: the modules searched, those not built or not loaded, and
+- `scope`, `complete` and `answer`: the modules searched, those not built, those not loaded
+  (`failed`, each with the first lines of what Lean reported, as `check` gives them), and
   `used`, `no use found in this scope`, or `not traced` when some modules were not searched.
 
 The first `uses` query after a change runs Lean once over the project; later queries reuse the
