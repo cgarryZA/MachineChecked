@@ -42,7 +42,8 @@
   const terms = $derived(pp?.terms || []);
   const cur = $derived(term ?? (selId != null ? terms.findIndex((t) => t.id === selId) : -1));
   const sel = $derived(cur != null && cur >= 0 ? terms[cur] : null);
-  const lit = (i) => !!sel && sel.from <= i && i < sel.to;
+  // A selection by identity may also name one occurrence of a variable (its segment's `at`).
+  const lit = (i) => (!!sel && sel.from <= i && i < sel.to) || (selId != null && pp?.segments?.[i]?.at === selId);
   const at = (id, a) => id === a || (id.startsWith(a + "/") && /^(\/0)+$/.test(id.slice(a.length)));
   const marked = $derived.by(() => {
     if (!mark?.length) return [];

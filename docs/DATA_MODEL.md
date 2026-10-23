@@ -106,32 +106,52 @@ whole proposition and its `fingerprint` is the proposition's ([ASSURANCE.md](ASS
 | `inventory` | the inventory as read |
 | `reviews` | the review files' hashes and every parsed marker |
 | `dismissals` | as read |
-| `lean` | the probe records: specifications (binders, conclusion, closure, constants, hashes), proofs (exact-type check, axioms), declarations (signature, value, definition content, authored source, doc, hashes, `proposition`: whether the type is a proposition, null when Lean could not tell; `auto_param`: whether it is the tactic script of a tactic default), layering |
+| `lean` | the probe records: specifications (the statement's tree, binders, conclusion, closure, constants, hashes), proofs (exact-type check, axioms), declarations (signature, value, definition content, authored source, doc, hashes, `proposition`: whether the type is a proposition, null when Lean could not tell; `auto_param`: whether it is the tactic script of a tactic default), layering |
 | `tex` | per paper: mode, page size, anchors (env, number, labels, file:line, begin/head/end positions, source hash), files read, source regions, the text of the passage of each claim located by line (`region_text`), and the display excerpts of its claims (`excerpts`, [SOURCE_REGIONS.md](SOURCE_REGIONS.md#display-excerpts)) |
 | `assessment` | per claim: status and clauses (for a proof step, also its `step_review` from its markers); all findings |
 
 A pretty-printed Lean term (a binder's type, a conclusion, a signature) is `{text, segments}`:
-each segment is a piece of the text, with `ref` when it names a constant and `var` when it is an
-occurrence of one of the statement's own variables (the index, in `binders`, of the binder that
-introduced it). A conclusion that is a conjunction, disjunction or equivalence also has
-`logic`, a tree of `{op, args}` whose leaves are `{leaf: {text, segments}}`. A term also lists its sub-terms as `terms`, ranges `{from, to}` of its segments (outer before inner; none for a very large term), so that a reader can select a whole sub-term. Both are for
-display: no status, fingerprint or hash reads them.
+each segment is a piece of the text, with `ref` when it names a constant and, when it is an
+occurrence of a variable, `at`, the identity of that occurrence (its position, as for a sub-term
+below), and `var` when the variable is one of the statement's own (its number, below). A term
+also lists its sub-terms as `terms`, ranges `{from, to}` of its segments (outer before inner; none
+for a very large term), so that a reader can select a whole sub-term.
+
+A statement record holds the whole proposition as one tree, `tree`. Its `binders` (the binders
+that open it, each `{role, name, id, type, binder, supplies}`, `role` one of `forall`,
+`hypothesis`, `instance`, `exists`) and its `conclusion` (the rest, printed whole) are read off the
+same tree. A node of the tree is a connective `{op, id, args}` (`and`, `or`, `iff`, `not`, or
+`implies` with its premise and its conclusion), a leaf `{leaf: term}`, or a binder `{op, name, var,
+id, binder, supplies, type, scope, within, after, args}` whose one part is its body. The binders
+that open the statement come first, each with its role as `op` and its place in `binders` as
+`var`. A binder inside the conclusion or inside a hypothesis is a `forall` or an `exists`, numbered
+after them, those of the conclusion first, so that two variables of the same name never share a
+number. `binder` is how it is written (`explicit`, `implicit`, `strict-implicit`, `instance`) and
+`supplies` whether it binds an object (`data`) or a proof (`proposition`). `scope` is how it
+stands, decided by the nearest negation, alternative, equivalence, premise or hypothesis that
+encloses it (`denied`, `alternative`, `equivalent`, `assumed`); outside all of them a `there is`
+is `produced` (the statement establishes it) and any other binder is `given`. `within` lists the
+connectives around it, outermost first (`and`, `or`, `iff`, `not`, `if` and `then` for the two
+sides of an implication, `assume` inside a hypothesis), and `after` the numbers of the objects
+bound around it: those it may depend on. A hypothesis whose proposition has a connective or a
+quantifier at its head has that proposition's tree as `logic` (a failure is `logic_error`), whose
+nodes stand inside it. The tree and the terms are for display: no status, fingerprint or hash reads
+them. Records written before the tree give the conclusion's shape as `conclusion.logic` and the
+objects inside a hypothesis as `objects`; the reader and `symbols.tree` rebuild the tree from them.
 
 An object of a statement whose type is a subtype, structure or class with a field that is a
-proposition (a prefix binder that is not a hypothesis, or a `forall`/`exists` node of `logic`)
-has `properties`: every field of its type, inherited ones included and each once, projected from
+proposition (a binder of the tree that binds an object) has `properties` on its node: every field
+of its type, inherited ones included and each once, projected from
 the object, as `{field, kind, structure, declared_in, inherited, projection, module, range, term,
 type}`. `kind` is `data` or `proposition`; `type` is the field's type at the object (for a
 proposition, what it states), with identities prefixed by the object's identity and the field
 (`<id>#<field>:`). At most 32 are listed (`properties_omitted` counts the rest); a failed
 extraction is `properties_error`. A hypothesis whose type is a structure of propositions (a
 class such as `[IsProbability Ω]`; not a conjunction or an equivalence) has the same
-`properties`: what its fields state. A hypothesis lists as `objects` the objects quantified inside it
-whose type carries a property, each `{op, name, id, type, scope, properties}`, with the
-connectives that enclose it (`scope`): they belong to the hypothesis. The reader shows a given
-object's properties as included in its type, a witness's as established with it (an object under
-a negation, an alternative, an equivalence or the premise of an implication keeps them local to
-that clause), and an object inside a hypothesis inside that hypothesis.
+`properties`: what its fields state. The reader shows a given object's properties as included in
+its type, a witness's as established with it, an object's inside a hypothesis as inside that
+hypothesis, and any other object's (one `denied`, `alternative` or `equivalent`, or under a
+premise) as local to the clause that contains it.
 
 A declaration record of a definition of data or of a predicate (not a proposition, an instance or
 a generated helper) also says what the definition says. `defined_by` is `body` or `equations`.
