@@ -187,4 +187,6 @@ when every library is indexed. A dependency's command that names a declaration w
 call does not contain is not detected ([DEVELOPMENT.md](DEVELOPMENT.md)).
 
 Evidence records are content-addressed and never rewritten. A release name, once given, keeps its
-evidence.
+evidence. A build that reproduces an earlier evidence record names that record's release again,
+and every command that reads the latest release reads the one the last build produced or
+reproduced.

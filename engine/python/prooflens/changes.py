@@ -685,14 +685,24 @@ def due(doc: dict) -> list[dict]:
 # -- reading releases ------------------------------------------------------------------------------
 
 def previous_release(out_dir, release: str) -> str | None:
-    """The latest release before `release` whose evidence differs from it."""
+    """The release before `release` whose evidence differs from it: the last one a build
+    produced or reproduced before the last build of `release` (`evidence.built`). When no
+    recorded build gives one (a store made before builds were recorded, or no earlier build
+    with other evidence), the latest release made before it."""
     from . import evidence as ev
     from .util import read_json
     rels = [read_json(p) for p in ev.releases(out_dir)]
     names = [r["release"] for r in rels]
     if release not in names:
         return None
-    mine = rels[names.index(release)]["evidence"]
+    evidence = {r["release"]: r["evidence"] for r in rels}
+    mine = evidence[release]
+    made = ev.built(out_dir)
+    if release in made:
+        last = max(i for i, name in enumerate(made) if name == release)
+        for name in reversed(made[:last]):
+            if evidence.get(name, mine) != mine:
+                return name
     for r in reversed(rels[:names.index(release)]):
         if r["evidence"] != mine:
             return r["release"]
@@ -700,14 +710,14 @@ def previous_release(out_dir, release: str) -> str | None:
 
 
 def between(out_dir, old_release: str | None = None, new_release: str | None = None) -> dict:
-    """The comparison of two named releases of `out_dir`: by default the latest and the one
-    before it."""
+    """The comparison of two named releases of `out_dir`: by default the latest
+    (`evidence.latest`) and the one before it."""
     from . import evidence as ev
     from .util import read_json
     rels = ev.releases(out_dir)
     if not rels:
         raise ChangesError("no release: run `machinechecked build` first")
-    new_release = new_release or read_json(rels[-1])["release"]
+    new_release = new_release or ev.latest(out_dir)["release"]
     old_release = old_release or previous_release(out_dir, new_release)
     if old_release is None:
         raise ChangesError(f"release {new_release} has no earlier release with other evidence "
