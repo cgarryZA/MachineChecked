@@ -43,11 +43,12 @@ In zero configuration, export into `machinechecked-reviews/` to publish the repo
 audit.
 
 `read` gives every passage of the unit in full: a statement stated in several places, or a
-definition used by many claims, is read in all of them. Each passage says where it is and how it
-was obtained (the LaTeX source, or text extracted from the PDF at an approximate position). A
-passage the build does not hold is marked UNAVAILABLE with its source reference, and PDF text
-cut by the extraction is marked INCOMPLETE: read those in the paper. The paper's `\lean{...}`
-tags are removed from the reading, since they name declarations.
+definition used by many claims, is read in all of them. Each passage says where it is, where its
+text comes from (the LaTeX source, or text extracted from the PDF) and whether its position is
+exact or approximate (approximate for a PDF's statements and for proof steps located by their
+line). A passage the build does not hold is marked UNAVAILABLE with its source reference, and
+PDF text cut by the extraction is marked INCOMPLETE: read those in the paper. The paper's
+`\lean{...}` tags are removed from the reading, since they name declarations.
 
 `next`, `status`, `read`, `show` and `author` take `--json`: one document holding only what
 that step shows, in the form of `machinechecked compare` (below). `read` holds the paper;

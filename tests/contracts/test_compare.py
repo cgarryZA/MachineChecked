@@ -146,6 +146,34 @@ def test_pdf_text_and_missing_text_say_where_they_come_from(site):
     assert "UNAVAILABLE" in cmp.passage_text(gone)
 
 
+def test_the_text_source_and_the_position_are_reported_apart():
+    """An approximate position does not make a passage's text PDF extraction: a proof step of
+    a LaTeX paper, placed by its line, gives its LaTeX source; a paper read from its PDF gives
+    extracted text however it is placed."""
+    tex = "\\begin{equation}\\label{eq:s} " + "x_i + " * 800 + "y \\end{equation}"  # > 4000
+    step = {"id": "S:eq:s", "number": "Equation (1)", "location": "main.tex:40",
+            "anchor": {"kind": "approximate", "file": "main.tex", "line": 40,
+                       "begin": [2, 0, 300.0], "end": [2, 0, 320.0]},
+            "source_evidence": {"state": "pass", "placement": "approximate"},
+            "statement_tex": tex}
+    p = cmp.passage(step, "read")
+    assert (p["quality"], p["source"]["position"]) == ("LaTeX source", "approximate")
+    # The PDF extraction's length limit does not apply to source text.
+    assert p["complete"] and p["text"] == tex and "reason" not in p
+    assert "(LaTeX source, approximate position; main.tex:40, page 2)" in cmp.passage_text(p)
+    exact = cmp.passage({**step, "anchor": {**step["anchor"], "kind": "exact"}}, "read")
+    assert (exact["quality"], exact["source"]["position"]) == ("LaTeX source", "exact")
+    # A paper read from its PDF gives extracted text, here as `statement_tex`.
+    pdf = {"id": "S:thm:p", "number": "Theorem 3", "location": "paper.pdf",
+           "anchor": {"kind": "approximate", "begin": [5, 0, 100.0], "end": [5, 0, 130.0],
+                      "statement": "Theorem 3. Every n is a number."},
+           "source_evidence": {"state": "pdf-only", "placement": "approximate"},
+           "statement_tex": "Theorem 3. Every n is a number."}
+    q = cmp.passage(pdf, "read")
+    assert (q["quality"], q["source"]["position"]) == ("text extracted from the PDF",
+                                                      "approximate")
+
+
 def test_definitions_continue_by_cursor_and_never_silently(site):
     first = cmp.claim_packet(site, "thm:t0", limit=1)
     page = first["retrieval"]["definitions"]

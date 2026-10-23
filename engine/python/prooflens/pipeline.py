@@ -9,6 +9,7 @@ from importlib import resources
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
+from . import content as content_mod
 from . import evidence as ev
 from . import manifest as mf
 from . import review_queue as rq
@@ -108,7 +109,7 @@ def build(cfg: Config, release: str | None = None, skip_lean: bool = False,
         lean = run_probe(cfg, requests_from_inventory(inv) + [MODDOCS]
                          + ([cited] if cited else []), lake=lake, build=lean_build)
 
-    tex, papers_prov, pdfs = {}, {}, {}
+    tex, papers_prov, pdfs, auxes = {}, {}, {}, {}
     display = load_display(cfg)
     for paper in cfg.papers:
         snap = snaps[paper.id]
@@ -140,6 +141,7 @@ def build(cfg: Config, release: str | None = None, skip_lean: bool = False,
             prov["pdf_sha256"] = t["pdf_sha256"]
             prov["pdf_origin"] = "compiled"
             pdfs[paper.id] = t["pdf"]
+            auxes[paper.id] = Path(t["cwd"]) / (Path(snap.root).stem + ".aux")
         elif snap.pdf:
             # The source is a PDF: its numbered statements are found by their bold headings
             # (positions approximate). The PDF counts as source evidence for the release gate
@@ -180,6 +182,12 @@ def build(cfg: Config, release: str | None = None, skip_lean: bool = False,
             tex[paper.id]["manual_anchors"] = manual_anchors(cfg, paper.id)
         papers_prov[paper.id] = prov
 
+    # Content search and the paper-number check read every declaration of the built modules,
+    # from the Lean facts store; they are display, kept beside the evidence (`content.py`).
+    found = None
+    if lean is not None:
+        found = content_mod.build(cfg, tex, inv["claims"], auxes, lake, log, reuse_only=reuse_lean)
+
     comp = cfg.comparator_log
     comp_text = comp.read_text(errors="replace") if comp and comp.exists() else None
     assessment = Assessor(cfg, inv, lean, tex, reviews, dismissals, comp_text,
@@ -198,6 +206,7 @@ def build(cfg: Config, release: str | None = None, skip_lean: bool = False,
         "dismissals": dismissals,
         "lean": lean, "tex": tex, "assessment": assessment}
     eid = ev.store(cfg.out_dir, body)
+    content_mod.save(cfg.out_dir, eid, found)
     rel = release or f"r-{eid[:12]}"
     ev.record_release(cfg.out_dir, rel, eid)
     record = ev.load(cfg.out_dir, eid)
@@ -205,13 +214,16 @@ def build(cfg: Config, release: str | None = None, skip_lean: bool = False,
     index.update(issues=cfg.issues, site_url=cfg.site_url)
     index["project"].update(source_info(cfg))
     site = cfg.out_dir / "site"
+    found = content_mod.load(cfg.out_dir, eid, record["body"])
     changes = release_changes(cfg, rel)
     write_preview(site, index, chunks, store, pdfs, web_dist,
                   rq.prioritise(rq.assurance_queue(index, chunks, store, cfg.statement_authors),
                                 changes),
-                  changes=changes)
+                  changes=changes, content=found)
+    for n in (found or {}).get("notes", []):
+        log(f"note: {n}")
     log(f"evidence {eid[:12]}  release {rel}  site {site}")
-    return {"evidence": eid, "release": rel, "site": site, "index": index}
+    return {"evidence": eid, "release": rel, "site": site, "index": index, "content": found}
 
 
 LEAN_INPUTS = ["*.lean", "lakefile.toml", "lakefile.lean", "lake-manifest.json", "lean-toolchain"]
@@ -369,12 +381,13 @@ def rebuild_site(cfg: Config, web_dist: Path | None = None, release: str | None 
     index.update(issues=cfg.issues, site_url=cfg.site_url)
     index["project"].update(source_info(cfg))
     site = cfg.out_dir / "site"
+    found = content_mod.load(cfg.out_dir, rel["evidence"], record["body"])
     changes = release_changes(cfg, rel["release"])
     write_preview(site, index, chunks, store, pdf_paths(cfg, record["body"]), web_dist,
                   rq.prioritise(rq.assurance_queue(index, chunks, store, cfg.statement_authors),
                                 changes),
-                  changes=changes)
-    return {"release": rel["release"], "site": site, "index": index}
+                  changes=changes, content=found)
+    return {"release": rel["release"], "site": site, "index": index, "content": found}
 
 
 def release_changes(cfg: Config, release: str) -> dict | None:
@@ -401,11 +414,14 @@ def load_display(cfg: Config) -> dict | None:
 
 def write_preview(site: Path, index: dict, chunks: dict, store: dict, pdfs: dict,
                   web_dist: Path | None, queue: dict | None = None,
-                  expansions: dict | None = None, changes: dict | None = None):
+                  expansions: dict | None = None, changes: dict | None = None,
+                  content: dict | None = None):
     """Write the reader and its data to `site`. Definitions expanded at their applications are
     written on their own (`data/expansions/<key>.json`, `mf.split_expansions`), together with
     `expansions` already split off (those of published audits). `changes`, the comparison with
-    the release before, is written as `data/changes.json`."""
+    the release before, is written as `data/changes.json`; `content`, the content index and
+    the paper-number check (`content.py`), as `data/retrieval.json` and `data/numbering.json`."""
+    index, chunks = content_mod.apply(index, chunks, content)
     expansions = dict(expansions or {})
     # A declaration record without its expansions is a different record: it gets its own key.
     rekey, split_store = {}, {}
@@ -441,6 +457,7 @@ def write_preview(site: Path, index: dict, chunks: dict, store: dict, pdfs: dict
         write_json(data / "review-queue.json", queue, indent=None)
     if changes is not None:
         write_json(data / "changes.json", changes, indent=None)
+    content_mod.write(data, content)
     for pid, pdf in pdfs.items():
         (data / "papers").mkdir(parents=True, exist_ok=True)
         link_or_copy(pdf, data / "papers" / f"{pid}.pdf")

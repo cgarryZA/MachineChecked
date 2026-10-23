@@ -69,8 +69,10 @@ when the type gives the operation no exceptional case, or `unresolved`), `rule` 
 operation gives there, when it applies) and `at` (its positions in the proposition, the `id`s of
 the printed sub-terms). `occurrences_complete` is false when the statement was too large to read
 every application. The site data and `export` carry the same fields.
-Report the violations and obligations by subject and message; they are what blocks a
-claim from being accepted. `replay` is null when no Comparator replay counts; otherwise it
+When the configuration has one paper and the project is built, the document
+also has `warnings` with the `paper-reference` warnings and `numbering`, as in zero
+configuration; with several papers they are absent. Report the violations and obligations by
+subject and message; they are what blocks a claim from being accepted. `replay` is null when no Comparator replay counts; otherwise it
 gives the record's `guard` (`guarded`, `unguarded`, or `unrecorded` for an older record), the
 number of proofs `replayed`, and a `message` when they were not shown to run under the sandbox
 guard.
@@ -151,6 +153,7 @@ machinechecked compare --query search 'n ≤ C * n ^ 2' --json   # ... or an exp
 machinechecked compare --query proof-facts Example.bound --json  # facts inside its proof
 machinechecked compare --query proof-facts Example.bound --match "C * h"   # ranked by symbols
 machinechecked compare --query uses Toy.IsEven --json          # where it is used, and how
+machinechecked compare --query impact Toy.triangle --json      # which main results use it
 ```
 
 `search` ranks every declaration of the project's built modules, linked or not, by how much of
@@ -189,6 +192,29 @@ reads previews (`complete: false` on such a result: get its statement with `depe
 
 The first `uses` query after a change runs Lean once over the project; later queries reuse the
 answers until a Lean input changes.
+
+`impact NAME` traces the same references and answers whether each main result uses NAME, with
+one result (`machinechecked/impact@1`):
+
+- `selection`: which main results are traced. By default (`basis` `suggested`) they are the
+  declarations linked to the paper's theorems; `--main NAME`, repeated, names them instead
+  (`basis` `given`), each a declaration or a claim standing for its linked Lean, and
+  `unlinked_claims` lists a named claim that has none.
+- `main_results`: for each, `use` (`proof`, `definition body`, `statement` when it is in the
+  statement only, `none`, `not traced`, or `itself`), the `answer` in words ("used by its proof,
+  directly; also in its statement", "formalized separately: not used by this main result") and
+  `paths`: for each kind of use, the shortest path of references (`steps`, each with `from`,
+  `to` and `refs`, and `via` for a constant Lean generated), with the ids of the `applications`
+  of NAME at the end of the proof's path.
+- `claims`: every claim with linked Lean, its `relation` (`linked`, `uses`, `not traced`,
+  `none`) and each declaration's `use`, `answer` and `paths`. A difference between NAME and the
+  paper can matter only to the claims that use it.
+- `applications` as `uses` gives them (with `applications_complete`), `imports_without_use`,
+  `locations` (the module, kind and line of each declaration on a path), `scope`, and
+  `complete: false` when an answer is `not traced`.
+
+*Formalized separately* says only that this main result's Lean does not refer to NAME; *not
+traced* gives what is missing and never means unused. The answer changes no status.
 
 `proof-facts NAME` asks Lean, for that one declaration, for the propositions its proof establishes
 along the way: each `have` (and `let` of a proposition), each goal a `show` states, and each
@@ -294,6 +320,34 @@ stage shows the Lean and what others recorded. The steps are saved in your works
 (`review-work/`, below); record an informed `compare` there before reviewing the same claim with
 `{"op": "exposure", "what": ["Lean", "prior interpretations"], "claims": ["thm:bound"],
 "how": "compare"}`, so the report lists it.
+
+`review next` and `review status` take `--order` ([Review order](REVIEWING.md#review-order)):
+`priority` (the default), `document` (the paper's order), or `informed`, which also ranks the
+units by what the auditors' workspaces in the working directory record as open. `next --json`
+gives the `order` and the unit's `priority`: its `base` reason in the queue, the `signals` that
+move it (each with `kind`, `text` and `claims`: `reopened`, with the `questions` a new reading
+answers, and `changed` since the last release; `open question`, `difference` and `hint` from the
+workspaces; `proof use` when another claim's proof uses its Lean), and its `tier`, the strongest
+signal other than `proof use`, or null. `reason` puts them in words. `status --json` gives the
+`open` units in that order and `order`: the order asked (`by`) and the queue's own record
+(`queue`, with each signal's `state`, `read` or `not available` with `why`). On the toy example,
+with Theorem 2.5 linked and an open question another auditor recorded on it, `review next
+--order informed --json` gives (release and mode left out):
+
+```json
+{"schema": "machinechecked/review-next@1", "order": "informed",
+ "unit": {"id": "link:thm:bound", "kind": "link",
+          "reason": "An open question is recorded; short statement",
+          "priority": {"base": "Short statement",
+                       "signals": [{"kind": "open question", "text": "an open question is recorded",
+                                    "claims": ["P:thm:bound"]}],
+                       "tier": "open question"}}}
+```
+
+The workspaces' records are prior interpretations. Asking for the `informed` order records in
+your workspace that you have seen them, for the claims it drew on (`workspace show`: "had seen:
+prior interpretations of P:thm:bound (interpretation-informed review order, …)"). A later
+reading of those claims is then not blind, and its report says so.
 
 ### Recording links and findings
 
@@ -439,12 +493,16 @@ machinechecked build
 ```sh
 machinechecked compare --query uses Toy.Acceptance.thm_triangle
 machinechecked compare --query proof-facts Toy.Acceptance.thm_bound --match "n ≤ n * n"
+machinechecked compare --query impact Toy.triangle
 ```
 
 `uses` finds one application, `app:Toy.Acceptance.thm_bound:0`: `parameter n : Nat := n (the
 variable n introduced in the proof)`, giving `2 * Toy.triangle n = n * (n + 1)`. `proof-facts`
 ranks first `f2`, `hn : n ≤ n * n` at `Toy/Acceptance.lean:44`, in the case `n : Nat`;
-its basis is "established inside this proof under this context".
+its basis is "established inside this proof under this context". `impact` traces from the main
+result now linked to Theorem 2.5: `Toy.Acceptance.thm_bound` is "used by its proof, directly;
+also in its statement" (through `Toy.PaperSpec.thm_bound`), and Theorem 2.5 is the one claim
+whose Lean uses `Toy.triangle`.
 
 **5. Assemble the evidence.** Cite the application and the fact, and combine them. The
 composition's bridge asks Lean to check that `Toy.Acceptance.thm_bound` proves

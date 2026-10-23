@@ -5,6 +5,10 @@ the app's script and styles (fonts as data URIs, WOFF2 only), the pdf.js worker'
 data file of the site in `window.__PROOFLENS__` (keyed by the path the app would fetch), and the
 PDFs, base64, in `window.__PROOFLENS_PDF__`. The data scripts come first, so they are defined
 before the app (a deferred module) runs.
+
+The content index of every project declaration (`data/retrieval.json`) is carried only up to
+`CONTENT_LIMIT` bytes: a larger one would make the file slow to open, so the bundle leaves it
+out, its reader searches by name, and the result says so (`omitted`).
 """
 
 from __future__ import annotations
@@ -33,7 +37,11 @@ def _inline_css(css: str, assets: Path) -> str:
     return re.sub(r'url\((?:\./)?(?:assets/)?([^)]+\.woff2)\)\s*format\("woff2"\)', font, css)
 
 
-def bundle(site: Path, out: Path, title: str | None = None) -> dict:
+CONTENT_LIMIT = 8_000_000
+
+
+def bundle(site: Path, out: Path, title: str | None = None,
+           content_limit: int = CONTENT_LIMIT) -> dict:
     html = (site / "index.html").read_text(encoding="utf-8")
     assets = site / "assets"
     js_src = re.search(r'<script type="module"[^>]*src="\./(assets/[^"]+\.js)"[^>]*></script>', html)
@@ -44,9 +52,18 @@ def bundle(site: Path, out: Path, title: str | None = None) -> dict:
     css = _inline_css((site / css_href.group(1)).read_text(encoding="utf-8"), assets)
     worker = next(assets.glob("pdf.worker*.mjs"), None)
 
-    data = {}
+    data, omitted = {}, []
     for f in sorted((site / "data").rglob("*.json")):
-        data[str(f.relative_to(site))] = json.loads(f.read_text(encoding="utf-8"))
+        key = str(f.relative_to(site))
+        if key == "data/retrieval.json" and f.stat().st_size > content_limit:
+            omitted.append(f"the content index ({f.stat().st_size / 1e6:.1f} MB, over the "
+                           f"bundle's limit of {content_limit / 1e6:.0f} MB): the bundle's "
+                           "search finds claims and declarations by name")
+            continue
+        data[key] = json.loads(f.read_text(encoding="utf-8"))
+    if omitted and isinstance(data.get("data/index.json"), dict):
+        data["data/index.json"] = {k: v for k, v in data["data/index.json"].items()
+                                   if k != "retrieval"}
     pdfs = {str(f.relative_to(site)): base64.b64encode(f.read_bytes()).decode()
             for f in sorted((site / "data").rglob("*.pdf"))}
 
@@ -67,4 +84,5 @@ def bundle(site: Path, out: Path, title: str | None = None) -> dict:
         html = re.sub(r"<title>.*?</title>", f"<title>{title}</title>", html, count=1)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(html, encoding="utf-8")
-    return {"out": out, "size": out.stat().st_size, "files": len(data), "pdfs": len(pdfs)}
+    return {"out": out, "size": out.stat().st_size, "files": len(data), "pdfs": len(pdfs),
+            "omitted": omitted}

@@ -580,6 +580,8 @@ def cmd_build_simple(a):
     out = Path(a.out or (root / cfgmod.work_dir_name(root) / "MachineChecked.html")).resolve()
     res = bundle(site, out, f"MachineChecked — {index['papers'][0]['title']}")
     print(f"wrote {res['out']} ({res['size'] / 1e6:.1f} MB): open it in a browser")
+    for o in res["omitted"]:
+        print(f"note: left out {o}")
 
 
 def cmd_check(a):
@@ -656,6 +658,16 @@ def _replay_guard(cfg, eid: str) -> dict | None:
     return guard_summary(ev.load(cfg.out_dir, eid)["body"]["assessment"])
 
 
+def _reference_warnings(num: dict | None) -> list[dict]:
+    """The references to the paper's numbers that disagree with the paper read here, as
+    `check --json` warnings (`kind` `paper-reference`), with their sources."""
+    from . import numbering as nb
+    return [{"kind": "paper-reference", "file": o["source"].get("file"),
+             "line": o["source"].get("line"), "reference": o["reference"],
+             "status": o["status"], "id": o["id"], "message": nb.message(o)}
+            for o in (num or {}).get("references", []) if nb.suspect(o)]
+
+
 def _check_json(a):
     """`check --json`: every claim with its status and links, as one JSON document on stdout
     (progress goes to stderr). Exit 1 if a linked declaration is missing or not proved."""
@@ -679,6 +691,10 @@ def _check_json(a):
                    "findings": idx["findings"]["total"],
                    "finding_details": _finding_details(cfg, res["evidence"]),
                    "replay": _replay_guard(cfg, res["evidence"])}
+            num = (res.get("content") or {}).get("numbering")
+            if num is not None:
+                out["warnings"] = _reference_warnings(num)
+                out["numbering"] = num
             failed = bool(idx["findings"]["total"].get("violation"))
         else:
             root, paper = _simple_target(a)
@@ -702,7 +718,6 @@ def _check_json(a):
                        "unit": c.get("unit", "statement"), "parent": c.get("parent"),
                        **(_step_json(c) if c.get("unit") else {})}
                       for c in body["claims"]]
-            from . import numbering as nb
             num = body.get("numbering") or {"references": [], "pattern": None}
             out = {"mode": "simple", "paper": body["paper"], "title": body["title"],
                    "release": view_release(body), "commit": body.get("commit"),
@@ -712,10 +727,7 @@ def _check_json(a):
                    "warnings": [{"kind": "module-doc-name", "file": d["file"], "line": d["line"],
                                  "name": d["name"], "message": stale_doc_message(d)}
                                 for d in body.get("module_docs", [])]
-                   + [{"kind": "paper-reference", "file": o["source"].get("file"),
-                       "line": o["source"].get("line"), "reference": o["reference"],
-                       "status": o["status"], "id": o["id"], "message": nb.message(o)}
-                      for o in num["references"] if nb.suspect(o)],
+                   + _reference_warnings(num),
                    "numbering": num}
             failed = any(l["class"] != "proved" for c in claims for l in c["links"])
     summary = {}
@@ -769,6 +781,9 @@ def cmd_build(a):
                 and f["tier"] == "warning" \
                 and not f.get("dismissed"):
             print(f"  warning  {f['message']}")
+    # The Lean's references to the paper's numbers that disagree with it (`numbering.py`).
+    for w in _reference_warnings((res.get("content") or {}).get("numbering")):
+        print(f"  warning  {w['message']}")
     if idx["findings"]["total"].get("warning"):
         print("  (warnings: see `check --json` or the reader)")
     rg = _replay_guard(cfg, res["evidence"])
@@ -850,6 +865,8 @@ def cmd_bundle(a):
     res = bundle(site, Path(a.out).resolve(), a.title)
     print(f"wrote {res['out']}: {res['size'] / 1e6:.1f} MB, {res['files']} data files, "
           f"{res['pdfs']} PDFs; open it in a browser, no server needed")
+    for o in res["omitted"]:
+        print(f"note: left out {o}")
 
 
 def cmd_export(a):
