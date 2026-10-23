@@ -345,6 +345,16 @@ def _because(target: str, name: str, old_r: dict, new_r: dict, cid: str, old: Ve
                **_paper_dependency(paper, sc)}
         return [dep], (f"Pin {_label(new, sc)} again at the text the paper now prints, then: "
                        f"does {name} still {what} it?")
+    if why == "shadowed":
+        # A review at the current hash exists, but a later marker at another hash is the
+        # record. The markers keep their places only where the reviews are published (`_strip`).
+        s = new_r.get("shadowed") or {}
+        return ([{"dependency": "record", "reason": why, "claim": None,
+                  "reading": dict(s.get("reading") or {}), "record": dict(s.get("record") or {}),
+                  "detail": "its review at the current hash is followed in the review files by "
+                            "a marker at another hash, which is the record"}],
+                f"Record the review of {name} again after the later marker at another hash, or "
+                "retire that marker.")
     detail = WHY.get(why, "its last review is not current")
     sc = new_r.get("source_claim")
     return ([{"dependency": "record", "reason": why, "claim": sc, "detail": detail}],
