@@ -95,10 +95,14 @@ jobs:
       - name: Install elan, poppler and zstd (and TeX Live)
         timeout-minutes: 20
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq --no-install-recommends poppler-utils zstd \
-            ${{ inputs.tex && 'latexmk texlive-latex-recommended texlive-latex-extra texlive-science texlive-fonts-recommended' || '' }}
-          curl -sSfL --retry 4 https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain none
+          # Each download stops after 5 minutes and is tried three times, so a stalled mirror costs
+          # a retry; the packages are then installed from what was downloaded.
+          retry() { for i in 1 2 3; do timeout 300 "$@" && return 0; echo "attempt $i failed or stalled: $*" >&2; sleep 5; done; return 1; }
+          PKGS="poppler-utils zstd ${{ inputs.tex && 'latexmk texlive-latex-recommended texlive-latex-extra texlive-science texlive-fonts-recommended' || '' }}"
+          retry sudo apt-get -o Acquire::Retries=3 update -qq
+          retry sudo apt-get -o Acquire::Retries=3 install -y -qq --no-install-recommends --download-only $PKGS
+          sudo apt-get install -y -qq --no-install-recommends $PKGS
+          retry sh -c 'curl -sSfL --connect-timeout 30 --max-time 120 --retry 4 https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain none'
           echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
       - name: Install the project's Lean toolchain (a failed download is retried)
         timeout-minutes: 20
