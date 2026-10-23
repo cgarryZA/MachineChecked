@@ -639,7 +639,8 @@ CHECK_NOTE = "Results describe the linked Lean declarations; correspondence revi
 
 
 FINDING_KEYS = ("id", "tier", "code", "subject", "message", "trigger", "file", "line",
-                "dismissed", "occurrences", "occurrences_complete")
+                "fingerprint", "at", "dismissed", "dismissal_stale", "resolved", "occurrences",
+                "occurrences_complete")
 
 
 def _finding_details(cfg, eid: str) -> list[dict]:
@@ -810,6 +811,11 @@ def cmd_build(a):
         print(f"  warning  {w['message']}")
     if idx["findings"]["total"].get("warning"):
         print("  (warnings: see `check --json` or the reader)")
+    whole = [f for f in details if (f.get("dismissed") or {}).get("form") == "statement"]
+    if whole:
+        print(f"note: {len(whole)} totalisation warning(s) are dismissed by a dismissal of the "
+              "operation in the whole statement, which holds until the statement changes; a "
+              "dismissal with the warning's `at` and `fingerprint` names one application")
     rg = _replay_guard(cfg, res["evidence"])
     if rg and rg["message"]:
         print(f"note: independent replay: {rg['message']}")
