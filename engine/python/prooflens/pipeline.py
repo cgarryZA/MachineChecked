@@ -94,8 +94,14 @@ def build(cfg: Config, release: str | None = None, skip_lean: bool = False,
         log(f"probe: reusing the probe records of release {reused} (the same Lean inputs, "
             "probe and probe settings)")
     elif not skip_lean:
-        lean_digest = lean_inputs_digest(cfg)
+        # Without `lake build` the probe reads the build files as they are, which may be older
+        # than the sources: its records are not known to describe these Lean inputs, so none
+        # are recorded, and reuse, promotion and symbol links do not take them as current.
+        lean_digest = lean_inputs_digest(cfg) if lean_build else None
         log(f"probe: {len(requests_from_inventory(inv))} requests in {cfg.lean_root}")
+        if not lean_build:
+            log("probe: the Lean project is not built first (`--no-lean-build`), so this build "
+                "records no digest of its Lean inputs and `--reuse-lean` will not reuse it")
         from .review_citations import citations, names_request
         cited = names_request(citations(cfg.reviews, cfg.root,
                                         getattr(cfg, "review_citations_ignore", None)))
@@ -318,7 +324,9 @@ def _reuse_stage(lean: dict, prov: dict, want: tuple[str, str, str],
     inputs, probe, settings = (prov.get("lean_inputs_sha256"), prov.get("probe_sha256"),
                                prov.get("probe_settings_sha256"))
     if not inputs or not probe:
-        return 0, "the stored Lean results do not record their Lean inputs"
+        return 0, ("the stored Lean results do not record their Lean inputs (a build with "
+                   "`--no-lean-build` records none: its build files may be older than the "
+                   "sources)")
     if inputs != want[0]:
         return 1, ("Lean inputs changed since the stored Lean results (here or in a path "
                    "dependency)")
