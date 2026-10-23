@@ -319,6 +319,12 @@ def export(cfg: Config, out: Path, release: str | None = None,
     from .pipeline import load_display
     index, chunks, store = mf.build(record, relrec["release"], load_display(cfg))
     pubs = {p.id: p.publish for p in cfg.papers}
+    # The content index and the paper-number check hold every declaration of the project: they
+    # are published with the whole audit when every paper publishes its Lean (`content.py`).
+    from . import content as content_mod
+    found = content_mod.load(cfg.out_dir, relrec["evidence"], record["body"]) \
+        if paper is None and all(p.publish.lean for p in cfg.papers) else None
+    _, ref_chunks = content_mod.apply(index, chunks, found)
     full_index, full_chunks, full_store = index, chunks, store
     if paper is not None:
         index, chunks, store = _one_paper(index, chunks, store, paper)
@@ -363,9 +369,10 @@ def export(cfg: Config, out: Path, release: str | None = None,
     # a published statement or declaration refers to (`mf.split_expansions`).
     expansions: dict[str, dict] = {}
     for name, chunk in chunks.items():
-        write_json(data / "claims" / name,
-                   mf.split_expansions(public_claim(chunk, pubs[chunk["paper"]]), expansions),
-                   indent=None)
+        pc = public_claim(chunk, pubs[chunk["paper"]])
+        if (ref_chunks.get(name) or {}).get("references"):
+            pc["references"] = ref_chunks[name]["references"]
+        write_json(data / "claims" / name, mf.split_expansions(pc, expansions), indent=None)
     # Declarations are shared between papers: their Lean text and review texts are exported only
     # when every paper allows it. A redacted record is a different record, so it gets its own key.
     shown = [p for p in cfg.papers if paper is None or p.id == paper]
@@ -413,6 +420,11 @@ def export(cfg: Config, out: Path, release: str | None = None,
         pub_search["claims"].append({**c, "statement": c["statement"] if pub.source_text else "",
                                      "lean": c["lean"] if pub.lean else []})
     write_json(data / "search.json", pub_search, indent=None)
+    if found:
+        content_mod.write(data, found)
+        pidx.update({k: v for k, v in content_mod.apply(pidx, {}, found)[0].items()
+                     if k in ("retrieval", "numbering")})
+        write_json(data / "index.json", pidx, indent=None)
     from . import audit
     arx = [p.source["arxiv"] for p in shown if p.source.get("arxiv")]
     write_json(out / audit.NAME, audit.descriptor(
