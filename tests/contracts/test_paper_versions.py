@@ -314,6 +314,19 @@ def test_a_claim_map_calls_a_claim_removed_or_new_only_when_it_has_no_counterpar
         inv(("eq-2", "(2)", "eq:two", "\\begin{equation}\\label{eq:two}\n  x \\le y\n\\end{equation}"),
             ("eq-4", "(4)", "eq:new", "\\begin{equation}\\label {eq:new}  y \\le z\n\\end{equation}"))) \
         == [("same", ["eq-2"], ["eq-2"]), ("renumbered", ["eq-3"], ["eq-4"])]
+    # Removing a label leaves no space of its own (#315), except between a control word and
+    # a letter, which it keeps apart.
+    assert changes(
+        inv(("eq-5", "(5)", "eq:a", "\\begin{equation}\\label{eq:a}x = y\\end{equation}"),
+            ("item-1", "(i)", "it:a", "\\item\\label{it:a}Each $n$ is even.")),
+        inv(("eq-5", "(5)", None, "\\begin{equation}x = y\\end{equation}"),
+            ("item-1", "(i)", None, "\\item Each $n$ is even."))) \
+        == [("same", ["eq-5"], ["eq-5"]), ("same", ["item-1"], ["item-1"])]
+    from prooflens.paper import statement_key
+    assert statement_key("\\begin{equation}\\label{eq:a}x") == "\\begin{equation}x"
+    assert statement_key("\\begin{equation}\n  \\label{eq:b}\n  x") == "\\begin{equation} x"
+    assert statement_key("\\item\\label{it:a}Each") == "\\item Each" != statement_key("\\itemEach")
+    assert statement_key("a\\label{x}b") == "ab" and statement_key("a \\label{x} b") == "a b"
 
     # Removed and new when certain: the claim has a label the other version does not give, and
     # every claim there under its number has a statement and a counterpart.
