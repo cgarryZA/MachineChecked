@@ -631,7 +631,7 @@ CHECK_NOTE = "Results describe the linked Lean declarations; correspondence revi
 
 
 FINDING_KEYS = ("id", "tier", "code", "subject", "message", "trigger", "file", "line",
-                "dismissed")
+                "dismissed", "occurrences", "occurrences_complete")
 
 
 def _finding_details(cfg, eid: str) -> list[dict]:

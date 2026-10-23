@@ -58,6 +58,17 @@ dismissed. A warning with code `module-doc-name` is a name a module docstring li
 declares: its `subject` is the module, its `trigger` the name, and it has `file` and `line`.
 A warning with code `review-citation` is a name or file that review text cites and nothing
 resolves: its `subject` is the review file, its `trigger` the token, with `file` and `line`.
+A warning with code `totalised` names the operation in `trigger`. For a supremum, an infimum, a
+division, an inverse, an integral, a sum, a root, a logarithm, a derivative or a conditional
+expectation it also has `occurrences`: each application of that operation the probe read in the
+statement, with `operation`, its `type` (as Lean prints it; null when it could not be read) and
+`type_head` (the type's head constant), `structure` (what decides the rule: `complete-lattice`,
+`conditionally-complete-lattice`, `group`, `group-with-zero`, `one-element`, `unknown` when Lean
+finds none of those, or null when the rule does not depend on one), `state` (`applies`, `none`
+when the type gives the operation no exceptional case, or `unresolved`), `rule` (what the
+operation gives there, when it applies) and `at` (its positions in the proposition, the `id`s of
+the printed sub-terms). `occurrences_complete` is false when the statement was too large to read
+every application. The site data and `export` carry the same fields.
 When the configuration has one paper and the project is built, the document
 also has `warnings` with the `paper-reference` warnings and `numbering`, as in zero
 configuration; with several papers they are absent. Report the violations and obligations by
