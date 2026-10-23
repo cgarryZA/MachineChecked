@@ -1466,8 +1466,8 @@ class Assessor:
                         self.findings.append(_finding(
                             "violation", "source-hash-scheme", c["id"],
                             f"{c['location']}: source regions must be pinned at the original "
-                            "revision (python -m prooflens.source_regions --config FILE "
-                            f"--paper {pid}); then rebuild"))
+                            "revision (machinechecked inventory regions --paper "
+                            f"{pid}); then rebuild"))
                     elif c["id"] in self.unpinned():
                         self.findings.append(_finding(
                             "violation", "source-changed", c["id"],

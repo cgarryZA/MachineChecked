@@ -314,7 +314,7 @@ def export(cfg: Config, out: Path, release: str | None = None,
         raise ExportError(f"no paper {paper} in the configuration")
     last = ev.latest(cfg.out_dir)
     if last is None:
-        raise ExportError("no release: run `prooflens build` first")
+        raise ExportError("no release: run `machinechecked build` first")
     relrec = read_json(cfg.out_dir / "releases" / f"{release}.json") if release else last
     record = ev.load(cfg.out_dir, relrec["evidence"])
     # With the display layer the site is built with (descriptions, printed numbers, symbol
