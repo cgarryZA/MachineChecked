@@ -75,12 +75,17 @@ break stored evidence and exported reports for no user-visible gain.
 
 ```sh
 pip install -e '.[test]'
-pytest -q                                   # ~4 min; needs elan + TeX Live for most tests
+pytest -q tests/contracts/test_display.py   # the test files a change touches; most need elan + TeX Live
+pytest -q                                   # the whole suite: about 55 min on CI's runners
 (cd examples/plain-paper && lake build)     # the zero-configuration tests need it built
 (cd web && npm ci && npm run build)         # after any change under web/src: commit the result
 (cd web && node tests/reader.test.mjs)      # the reader in a browser (CHROMIUM=/opt/pw-browsers/chromium in cloud sessions)
 ```
 
+- CI runs the suite on every push in four shards on parallel runners (`pytest --shard I/N`,
+  `docs/DEVELOPMENT.md`), each about 15 minutes of tests and 18 with its setup. Locally, run the
+  test files a change touches and the tests of the modules they import or that import them; CI
+  is the full check.
 - After changing `web/src`, rebuild and commit `engine/python/prooflens/web/`; CI fails if the
   committed build differs from the sources. The build is deterministic.
 - After changing `data/prooflens.sty` or `tex.py`, the zero-configuration TeX cache is keyed on

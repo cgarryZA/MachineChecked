@@ -61,6 +61,39 @@ def test_another_works_numbers_are_not_this_papers():
     assert out["pattern"]["other_source"] == 4 and not out["pattern"]["drift"]
 
 
+def test_a_part_of_the_paper_or_the_lean_after_the_number_is_not_another_work():
+    # After "of", "in" or "from", a part of this paper or of its formalisation names no other
+    # work, so a stale number written that way is checked (#308); a citation after the part, or
+    # another work's name, still names another work.
+    checked = {"P.a": "Lemma 7.7 in Section 7.", "P.b": "Lemma 7.7 of Section 7.",
+               "P.c": "Lemma 7.7 from Appendix A.", "P.d": "Theorem 9.9 in Lean.",
+               "P.e": "Theorem 9.9 in Mathlib form.", "P.f": "Theorem 9.9 in the Appendix.",
+               "P.g": "Theorem 9.9, in Sec. 9.", "P.h": "Theorem 9.9 of Part II.",
+               "P.i": "Theorem 9.9 in Sections 2 and 3.", "P.j": "Theorem 9.9 in Lemma 3.2.",
+               "P.k": "Theorem 9.9 in Lean 4."}
+    elsewhere = {"Q.a": "Theorem 4.1 of [Gauss].", "Q.b": "Theorem 3 in Hardy and Wright.",
+                 "Q.c": "Lemma 7.7 in Section 7 of [AB].", "Q.d": "Lemma 7.7 from Appendix A [AB].",
+                 "Q.e": "Theorem 9.9 in Chapter IV of Hardy and Wright.",
+                 "Q.f": "Theorem 9.9 in Prop. 4.7 of [AB].", "Q.g": "Theorem 9.9 of Paper B.",
+                 "Q.h": "Theorem 9.9 in Sections 4 and 5 of [AB]."}
+    index = [decl(n, d) for n, d in {**checked, **elsewhere}.items()]
+    out = nb.analyse(index, CLAIMS, INV)
+    first = {}
+    for o in out["references"]:
+        first.setdefault(o["source"]["declaration"], o)
+    for n in checked:
+        assert first[n]["status"] == "absent" and nb.suspect(first[n]), (n, first[n])
+    for n in elsewhere:
+        assert first[n]["status"] == "other-source", (n, first[n])
+        assert first[n]["detail"] == "it refers to another work"
+    # The current numbers, written the same way, are exact.
+    index = [decl("R.a", "Theorem 2.1 in Section 2."), decl("R.b", "Theorem 3.1 from Appendix A."),
+             decl("R.c", "Proposition 2.3 in Lean.")]
+    assert statuses(nb.analyse(index, CLAIMS, INV)) == {
+        ("R.a", "Theorem 2.1"): "exact", ("R.a", "Section 2"): "exact",
+        ("R.b", "Theorem 3.1"): "exact", ("R.c", "Proposition 2.3"): "exact"}
+
+
 def test_an_authors_possessive_or_a_books_chapter_before_the_number_is_another_work():
     # What comes just before the number names another work: an author's possessive, or a
     # chapter after a comma as a book's citation gives it (#287).
@@ -126,6 +159,7 @@ def test_correct_references_are_quiet():
     index = [decl("P.a", "Theorem 2.1."), decl("P.b", "Proposition 2.3."),
              decl("P.c", "Theorem 3.1, in Section 3.")]
     out = nb.analyse(index, CLAIMS, INV)
+    assert set(statuses(out).values()) == {"exact"} and len(out["references"]) == 4
     assert not [o for o in out["references"] if nb.suspect(o)]
     assert not out["pattern"]["drift"]
 
