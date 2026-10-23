@@ -430,6 +430,46 @@ def test_several_papers_leave_an_unattributable_reference_unchecked():
     assert any("2 of the Lean's references" in n for n in notes)
 
 
+def test_several_papers_read_a_cite_as_a_bracket():
+    # A `\cite` names a paper as a bracket does (#350): the `\cite` whose note holds the
+    # number, or one after it before the next reference; one of several works names none.
+    papers = [("U", ""), ("A", "")]
+
+    def named(doc):
+        return [nb.attribute(o, {}, papers)[0]
+                for o in nb.find_references([decl("P.a", doc)], [])]
+
+    assert named("Theorem 9.9 of \\cite{U}.") == named("\\cite[Lemma 2.1]{U}.") == ["U"]
+    assert named("\\citet[Lemma 2.1]{ U }.") == named("\\cite[see][Lemma 2.1]{U}.") == ["U"]
+    assert named("\\cite[Lemma 2.1, Lemma 2.2]{U}.") == ["U", "U"]
+    assert named("\\cite[Lemma 2.1]{U} and \\cite[Lemma 3.2]{A}.") == ["U", "A"]
+    assert named("Lemma 2.1 of \\cite{A} and Lemma 2.1 of \\cite{U}.") == ["A", "U"]
+    assert named("Lemma 2.1 of \\cite[Section 3]{U} and Lemma 2.1 of \\cite{A}.") == \
+        ["U", "U", "A"]
+    assert named("\\cite[Lemma 2.1]{A,U}.") == named("Lemma 2.1 of \\cite{A, U}.") == [None]
+    assert named("\\cite[Lemma 2.1]{Gauss} and Lemma 2.2 of \\cite{U}.") == [None, "U"]
+    # Each is then checked against the paper it names.
+    from types import SimpleNamespace
+    from prooflens import content
+    papers = [SimpleNamespace(id="A", title="Odd squares"),
+              SimpleNamespace(id="B", title="Triangle bounds")]
+    tex = {"A": {"mode": "latex", "anchors": [{"env": "lemma", "number": "2.2"}]},
+           "B": {"mode": "latex", "anchors": [{"env": "theorem", "number": "1.1"}]}}
+    inv_claims = [{"id": "A:l22", "paper": "A", "kind": "lemma", "number": "Lemma 2.2",
+                   "clauses": [{"spec": "PA.l22"}]},
+                  {"id": "B:t11", "paper": "B", "kind": "theorem", "number": "Theorem 1.1",
+                   "clauses": [{"spec": "PB.t11"}]}]
+    full = [decl("Common.c", "\\cite[Lemma 2.2]{A} and Theorem 1.1 of \\cite{B}.",
+                 module="Common"),
+            decl("Common.d", "\\cite[Lemma 2.2]{B} and \\cite[Lemma 2.2]{Gauss}.",
+                 module="Common")]
+    num = content.several(papers, tex, inv_claims, {}, full, [], None, None, [])
+    assert [(o["source"]["declaration"], o["reference"], o.get("attributed"), o["status"])
+            for o in num["references"]] == [
+        ("Common.c", "Lemma 2.2", "A", "exact"), ("Common.c", "Theorem 1.1", "B", "exact"),
+        ("Common.d", "Lemma 2.2", "B", "absent"), ("Common.d", "Lemma 2.2", None, "other-source")]
+
+
 def test_formalization_rows_name_their_papers_declarations():
     from prooflens import formalization as fz
     fy = {"sources": [{"title": "Odd squares in arithmetic"},
