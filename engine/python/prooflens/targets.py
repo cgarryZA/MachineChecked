@@ -215,18 +215,16 @@ def resolve_declaration(name: str, snap: Snapshot, root: Path | None, module: st
     (the build indexed it), `unbuilt` (its module's source declares it and the module is not
     built), `not loaded` (its module is built but could not be loaded) or `external` (not a
     project declaration; accepted only with `external`, and checked by Lean at the next
-    build). A name the project does not declare is refused, with the nearest names."""
-    from .probe import lib_names
-    from .simple import built_modules, declaring_modules
+    build). A name the project does not declare is refused, with the nearest names. With
+    `module`, only that module is searched (`_in_module`)."""
+    from .simple import declaring_modules
     name = str(name or "").strip()
     if not re.fullmatch(r"[^\s]+", name):
         raise TargetError(f"{name!r} is not a declaration name")
     index = snap.lean_index() or []
     mods = sorted({d.get("module") for d in index if d.get("name") == name})
     if module:
-        if module in mods:
-            return {"name": name, "module": module, "build": "built"}
-        mods = []
+        return _in_module(name, module, snap, root, index, mods, external)
     if len(mods) > 1:
         raise TargetError(f"{name} is declared in several modules: {', '.join(mods)}; the links "
                           "file cannot yet record which one is meant", [{"name": name, "module": m}
@@ -235,29 +233,82 @@ def resolve_declaration(name: str, snap: Snapshot, root: Path | None, module: st
     if mods:
         return {"name": name, "module": mods[0], "build": "built"}
     if not index:
-        # A full assessment keeps no Lean index: the declarations its probe recorded (the
-        # shared store) are the build's own.
-        stored = sorted({r.get("module") for r in snap.store_records(name) if r.get("module")})
-        if module in stored or (len(stored) == 1 and not module):
-            return {"name": name, "module": module or stored[0], "build": "built"}
+        stored = _stored_modules(snap, name)
+        if len(stored) == 1:
+            return {"name": name, "module": stored[0], "build": "built"}
     if root is not None:
-        libs = lib_names(root)
-        built, unbuilt = built_modules(root, libs) if libs else ([], [])
-        # The working directory holds the site (`site/data`) and the facts store beside it.
-        from .facts import load_failures
-        failed = load_failures(snap.data.parent.parent / "build")
-        for m in declaring_modules(root, [module] if module in unbuilt else unbuilt, name):
+        built, unbuilt, failed = _project_modules(snap, root)
+        for m in declaring_modules(root, unbuilt, name):
             return {"name": name, "module": m, "build": "unbuilt"}
         for m in declaring_modules(root, list(failed), name):
             return {"name": name, "module": m, "build": "not loaded"}
-        if not index and built and not module:
+        if not index and built:
             # No index of a built project: this build did not run Lean.
             raise TargetError(f"{name}: this build has no Lean index; run `machinechecked view` "
                               "after `lake build`", kind="no-build")
     if external:
-        return {"name": name, "module": module, "build": "external"}
-    names = [d["name"] for d in index if d.get("name")]
-    near = [n for n in names if n.endswith("." + name)][:5] or \
-        difflib.get_close_matches(name, names, n=5, cutoff=0.6)
+        return {"name": name, "module": None, "build": "external"}
     raise TargetError(f"{name} is not a declaration of the project (pass --external for one "
-                      "from a dependency)", [{"name": n} for n in near])
+                      "from a dependency)", [{"name": n} for n in _near(index, name)])
+
+
+def _stored_modules(snap: Snapshot, name: str) -> list[str]:
+    """The modules of the shared store's records of `name`: a full assessment keeps no Lean
+    index, and the declarations its probe recorded are the build's own."""
+    return sorted({r.get("module") for r in snap.store_records(name) if r.get("module")})
+
+
+def _project_modules(snap: Snapshot, root: Path) -> tuple[list[str], list[str], dict]:
+    """The project's built and unbuilt modules, and those the last extraction could not load
+    (with the reason)."""
+    from .facts import load_failures
+    from .probe import lib_names
+    from .simple import built_modules
+    libs = lib_names(root)
+    built, unbuilt = built_modules(root, libs) if libs else ([], [])
+    # The working directory holds the site (`site/data`) and the facts store beside it.
+    return built, unbuilt, load_failures(snap.data.parent.parent / "build")
+
+
+def _near(index: list[dict], name: str) -> list[str]:
+    names = [d["name"] for d in index if d.get("name")]
+    return [n for n in names if n.endswith("." + name)][:5] or \
+        difflib.get_close_matches(name, names, n=5, cutoff=0.6)
+
+
+def _in_module(name: str, module: str, snap: Snapshot, root: Path | None, index: list[dict],
+               indexed: list[str], external: bool) -> dict:
+    """`name` in `module` and nowhere else: `built` when the build's index (or, without one,
+    the shared store) has it there, `unbuilt` when the module is not built and its source
+    declares it, `not loaded` when the module could not be loaded and its source declares it.
+    Anything else is refused, naming the modules that do declare it; a name the project declares
+    nowhere is `external` only with `external`."""
+    from .simple import declaring_modules
+    if module in indexed:
+        return {"name": name, "module": module, "build": "built"}
+    stored = [] if index else _stored_modules(snap, name)
+    if module in stored:
+        return {"name": name, "module": module, "build": "built"}
+    elsewhere, cannot_tell = set(indexed) | set(stored), False
+    if root is not None:
+        built, unbuilt, failed = _project_modules(snap, root)
+        if module in unbuilt and declaring_modules(root, [module], name):
+            return {"name": name, "module": module, "build": "unbuilt"}
+        if module in failed and declaring_modules(root, [module], name):
+            return {"name": name, "module": module, "build": "not loaded"}
+        elsewhere |= set(declaring_modules(root, unbuilt, name))
+        elsewhere |= set(declaring_modules(root, list(failed), name))
+        cannot_tell = not index and bool(built)
+    elsewhere.discard(module)
+    if elsewhere:
+        where = sorted(elsewhere)
+        raise TargetError(f"{name} is not declared in {module}; it is declared in "
+                          f"{', '.join(where)}", [{"name": name, "module": m} for m in where])
+    if external:
+        return {"name": name, "module": module, "build": "external"}
+    if cannot_tell:
+        raise TargetError(f"{name}: this build has no Lean index to find it in {module}; run "
+                          "`machinechecked view` after `lake build`", kind="no-build")
+    raise TargetError(f"{name} is not declared in {module}, nor elsewhere in the project (pass "
+                      "--external for one from a dependency)",
+                      [{"name": n} for n in _near(index, name)])

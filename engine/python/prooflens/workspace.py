@@ -792,7 +792,9 @@ def _main_decl(name: str, module: str | None, snap, root) -> dict:
             mods = ", ".join(c["module"] for c in e.candidates)
             raise WorkspaceError(f"{name} is declared in several modules ({mods}); name one as "
                                  "MODULE:NAME") from None
-        if e.kind == "no-build":
+        if e.kind == "no-build" or any(c.get("module") for c in e.candidates):
+            # The build has no index to look in, or the name is declared in other modules
+            # than the one given: the reason says which.
             raise WorkspaceError(str(e)) from None
         near = list(dict.fromkeys(c["name"] for c in e.candidates if c.get("name")))
         raise WorkspaceError(
@@ -882,9 +884,11 @@ def main_results_problems(sel: dict | None, snap, root: Path | None = None) -> l
         except TargetError as err:
             if err.kind == "no-build":
                 continue
+            now = sorted({c["module"] for c in err.candidates if c.get("module")})
             out.append({"decl": name, **({"module": module} if module else {}), "problem": (
                 f"{name} is declared in several modules of this build" if err.kind == "ambiguous"
-                else f"{name} is not declared in {module} in this build" if module
+                else f"{name} is not declared in {module} in this build"
+                + (f"; it is declared in {', '.join(now)}" if now else "") if module
                 else f"{name} is not a declaration of this build")})
     return out
 

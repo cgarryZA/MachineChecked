@@ -157,7 +157,7 @@ def test_what_the_build_no_longer_has_is_reported_not_dropped(work, lean):
         {"decl": "Syn.retired", "module": "Syn.Main",
          "problem": "Syn.retired is not declared in Syn.Main in this build"},
         {"decl": "Syn.twin", "module": "Syn.B",
-         "problem": "Syn.twin is not declared in Syn.B in this build"}]
+         "problem": "Syn.twin is not declared in Syn.B in this build; it is declared in Syn.A"}]
     assert sel["note"] == "saved against project commit ccccccc; this build is of commit ddddddd"
     # A declaration stays a main result, not traced; the selection is not quietly narrowed.
     mains = by_name(doc)
