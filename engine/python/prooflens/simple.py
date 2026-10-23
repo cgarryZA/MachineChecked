@@ -939,7 +939,7 @@ def resolve_link(name: str, records: list[dict], module: str | None, root: Path,
         if module in failed:
             return None, fields("link.module-failed", f"Module {module} could not be loaded.")
     elif len({mod_of(r) for r in found}) > 1:
-        mods = ", ".join(sorted(str(mod_of(r)) for r in found))
+        mods = ", ".join(sorted({str(mod_of(r)) for r in found}))
         return None, fields("link.ambiguous", f"Declared in {mods}.")
     elif found:
         return found[0], None
@@ -1185,6 +1185,7 @@ class LeanFacts:
         self.docs: dict[str, list[dict]] = {}        # `moddoc` records, by module
         self.fresh_refs: dict[str, list[dict]] = {}
         self.refs: dict[str, list[dict]] = {}        # `refs` records (reverse uses), by module
+        self.loaded: set[str] = set()                # modules this build's index sessions loaded
 
     def _accept_requests(self, names) -> list[dict]:
         """The `accept` requests of the bridges whose theorem is among `names`."""
@@ -1319,10 +1320,10 @@ class LeanFacts:
 
     def _answers(self, name: str, where: dict[str, set[str]], groups: list[list[str]],
                  wider: list[list[str]] = ()) -> tuple[list[dict] | None, str | None]:
-        """The stored answers for `name`: one for each module the index says declares it, or,
-        for a name the index does not hold, one for each library's session; and when no such
-        session finds it, one for each session of the libraries the index leaves out
-        (`wider`)."""
+        """The stored answers for `name`: one for each module that holds it (`where`, from the
+        index and the `refs` records), or, for a name no module holds, one for each library's
+        session; and when no such session finds it, one for each session of the libraries the
+        index leaves out (`wider`)."""
         if name in where:
             return self._stored([f"{name}\0module:{m}" for m in sorted(where[name])])
         out, why = self._stored([f"{name}\0{_session_key(g)}" for g in groups])
@@ -1442,7 +1443,8 @@ class LeanFacts:
                                by_mod.values(), self.built)
         if stale:
             self._need(f"{len(stale)} module(s) to index ({_reasons(stale)})")
-            where = _where(linked, by_mod.values(), self.built)
+            where = _where(linked, [*by_mod.values(), *(self.refs[m] for m in by_mod)],
+                           self.built)
             ask = sorted(n for n in linked
                          if not (n in where and self._answers(n, where, [])[0] is not None
                                  and self._accept_answers(n, where, [])[0] is not None)
@@ -1457,6 +1459,7 @@ class LeanFacts:
                              + [{"kind": "link", "name": n} for n in ask]
                              + self._accept_requests(ask))
             failed.update(more)
+            self.loaded = {m for m in stale if m not in failed}
             for m in stale:
                 if m in failed:
                     continue
@@ -1477,12 +1480,17 @@ class LeanFacts:
     def links(self, wanted: set[str], index: list[dict], failed: dict[str, str]
               ) -> tuple[dict[str, list[dict]], dict[str, dict]]:
         """The records of the linked and suggested names, and of the declarations in their
-        closures. Only the modules that declare a name without a stored answer are loaded (with
-        what they import); a name the index does not hold (from a dependency, say) is looked
-        for in every loadable module in scope, and when none declares it, in the built modules
-        the index leaves out, unless its source shows it in a module that is not built."""
+        closures. A name is held by the modules whose index records declare it or whose `refs`
+        records list it: those name every constant of a module, the ones Lean generates
+        (constructors, recursors, equation lemmas, instances, projections) included, so a name
+        one library declares by hand and another generates is answered in both. Only the
+        modules that hold a name without a stored answer are loaded (with what they import); a
+        name no module in scope holds (from a dependency, say) is looked for in every loadable
+        module in scope, and when none declares it, in the built modules the index leaves out,
+        unless its source shows it in a module that is not built."""
         loadable = [m for m in self.scope if m not in failed]
-        where = _where(wanted, [index], loadable)
+        held = [r for m in loadable for r in self.refs.get(m, [])]
+        where = _where(wanted, [index, held], loadable)
         groups = [g for _, g in by_library(sorted(loadable), self.libs)]
         in_scope = set(self.scope)
         others = [m for m in self.built if m not in in_scope and m not in failed
@@ -1527,10 +1535,12 @@ class LeanFacts:
         for n in sorted(wanted):
             if n not in where and declaring_modules(self.root, self.unbuilt, n):
                 continue
-            # A name the index sessions of this build answered needs no second session, unless
-            # none of them found it and the index leaves libraries out.
-            if n in self.fresh and all(p in self.fresh_accepts for p in self.bridges
-                                       if p[0] == n) \
+            # A name the index sessions of this build answered needs no second session when
+            # they loaded every module that holds it (every loadable module, for a name none in
+            # scope holds), unless none of them found it and the index leaves libraries out.
+            covered = where[n] <= self.loaded if n in where else set(loadable) <= self.loaded
+            if n in self.fresh and covered and all(p in self.fresh_accepts for p in self.bridges
+                                                   if p[0] == n) \
                     and not (wider and n not in where and self._unfound(n, groups)):
                 settle(n, last=True)
                 continue
@@ -1539,7 +1549,11 @@ class LeanFacts:
             self._need(f"{len(need)} declaration(s) to check ({_reasons(need)})")
             self.log(f"lean: checking {len(need)} linked or suggested declaration(s) "
                      f"({_reasons(need)})")
-            mine = {n: where[n] for n in need if n in where}
+            # A name is asked in the modules that hold it without a stored answer, and in all of
+            # them when its bridges' answers are missing.
+            mine = {n: where[n] if self._accept_answers(n, where, groups)[0] is None
+                    else {m for m in where[n] if self._stored([f"{n}\0module:{m}"])[0] is None}
+                    for n in need if n in where}
             elsewhere = sorted(n for n in need if n not in where)
             runs = [(sorted(set().union(*mine.values())), sorted(mine))] if mine else []
             keys = lambda n, gs: [f"{n}\0{_session_key(g)}" for g in gs]
