@@ -39,6 +39,7 @@ To exercise the zero-configuration flow, use `examples/plain-paper/`. For the lo
 | `engine/python/prooflens/bundle.py` | Portable HTML |
 | `engine/python/prooflens/export.py` | Explicitly approved public exports |
 | `web/src/` | Browser reader |
+| `.github/actions/browser/` | CI's Chromium: the browser of the pinned Playwright version and the system packages it needs, with bounded, retried downloads kept in caches |
 | `.github/workflows/pages.yml` | Publishes the toy audit CI built (its data only) for machinechecked.org's demo; the site itself is the `cgarryZA/machinechecked.org` repository |
 
 ## How a full assessment flows
