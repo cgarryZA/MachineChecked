@@ -341,7 +341,8 @@ def test_a_module_that_fails_alone_is_named_with_its_error(tmp_path, monkeypatch
 def test_a_module_that_fails_within_a_split_group_says_so(tmp_path, monkeypatch):
     """A library whose modules cannot be loaded in one session is loaded apart; the module that
     still fails on its own is named with the library's session it was split from and with what
-    Lean reported, its paths given from the project's root. The others load."""
+    Lean reported, its paths given from the project's root, as is the line that says why the
+    library was split. The others load."""
     from prooflens import simple
     olean = tmp_path / ".lake" / "build" / "lib" / "lean" / "Pair" / "Bad.olean"
     calls = lean_fails_on(monkeypatch, ["Pair.Bad"],
@@ -354,7 +355,7 @@ def test_a_module_that_fails_within_a_split_group_says_so(tmp_path, monkeypatch)
     assert list(failed) == ["Pair.Bad"]
     assert split == {"Pair.Bad": {"library": "Pair", "modules": 3}}
     assert said[0] == ("lean: Pair could not be loaded in one session (failed to read file "
-                       f"'{olean}', invalid header); splitting it")
+                       "'.lake/build/lib/lean/Pair/Bad.olean', invalid header); splitting it")
     (tmp_path / "Pair").mkdir()
     (tmp_path / "Pair" / "Bad.lean").write_text("theorem Pair.result : True := trivial\n")
     _, state = simple.resolve_link("Pair.result", [], None, tmp_path, [], failed, split)
@@ -363,6 +364,18 @@ def test_a_module_that_fails_within_a_split_group_says_so(tmp_path, monkeypatch)
         "Module Pair.Bad could not be loaded on its own, after 3 modules of Pair could not be "
         "loaded in one Lean session: failed to read file "
         "'.lake/build/lib/lean/Pair/Bad.olean', invalid header")
+
+
+def test_the_split_line_gives_the_first_error_without_the_probe_file(tmp_path, monkeypatch):
+    """The line that says why a library was split gives Lean's first error as `loading_error`
+    does: without the position in the probe's temporary file, and with "…" when Lean reported
+    more."""
+    from prooflens import simple
+    lean_fails_on(monkeypatch, ["Pair.Bad"], many_errors(tmp_path / "work", "Boom"))
+    said = []
+    simple.probe_modules(tmp_path, ["Pair.Bad", "Pair.Good"], ["Pair"], [], log=said.append)
+    assert said == ["lean: Pair could not be loaded in one session (unknown constant "
+                    "'Boom.missing0'; …); splitting it"]
 
 
 def test_a_failure_with_no_error_line_says_what_ended_it():
