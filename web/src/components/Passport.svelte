@@ -269,12 +269,13 @@
 
 </script>
 
-<!-- The Lean's references to the paper's numbers that disagree with the paper read here. -->
+<!-- The Lean's references to the paper's numbers that disagree with the paper read here. The list
+     is not keyed by id, which audits written by older engines repeat for a repeated reference. -->
 {#snippet paperNumbers()}
   {#if claim.references?.some((o) => o.status !== "exact" || o.stale_lead)}
     <h3>Paper numbers in the Lean</h3>
     <ul class="reasons small">
-      {#each claim.references.filter((o) => o.status !== "exact" || o.stale_lead) as o (o.id)}<li>{o.message}</li>{/each}
+      {#each claim.references.filter((o) => o.status !== "exact" || o.stale_lead) as o}<li>{o.message}</li>{/each}
     </ul>
   {/if}
 {/snippet}

@@ -1044,6 +1044,23 @@ for (const width of [1300, 390]) {
     assert.deepEqual(items, ["the docstring of Toy.PaperSpec.thm_bound (Toy/PaperSpec.lean:25) cites Theorem 2.4: the paper's 2.4 is Remark 2.4, not a theorem"]);
   });
 
+  // #348: a docstring that repeats a stale number gives two references, and the claim lists
+  // both, also from data whose two references share an id (as an earlier engine wrote them).
+  await check("a stale number repeated in one docstring is listed twice", width, async (pg) => {
+    const src = { declaration: "Toy.PaperSpec.thm_bound", module: "Toy.PaperSpec", file: "Toy/PaperSpec.lean", line: 25, where: "docstring" };
+    const message = "the docstring of Toy.PaperSpec.thm_bound (Toy/PaperSpec.lean:25) cites Lemma 7.7: this version of the paper has no statement numbered 7.7";
+    await pg.route("**/toy/data/claims/T_thm_bound-*", async (route) => {
+      const response = await route.fetch();
+      const rec = await response.json();
+      rec.references = [0, 21].map((at) => ({ id: "ref:000000000003", reference: "Lemma 7.7", status: "absent", source: src, at, message }));
+      route.fulfill({ response, json: rec });
+    });
+    await toyClaim(pg, "T:thm:bound");
+    const h = pg.locator("aside h3", { hasText: "Paper numbers in the Lean" });
+    await h.waitFor();
+    assert.deepEqual(await h.locator("xpath=following-sibling::ul[1]/li").allTextContents(), [message, message]);
+  });
+
   await check("a definition opens beside its paper definition; reviews and provenance are under Details", width, async (pg) => {
     await toyClaim(pg, "T:thm:even-add");
     await pg.locator("aside .lean .r", { hasText: "IsEven" }).first().click();
