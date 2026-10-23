@@ -387,7 +387,9 @@ optional `clause` and `note`, `rev`, `created_at`/`created_by`, `updated_at`/`up
 `pins` (`release`, `statement_sha256`: the claim's printed-text hash when written).
 
 - **`evidence`**: `ref` is one of `{decl, module, build, fingerprint, digest}` (a declaration of
-  the selected build; `build` is `built`, `unbuilt`, `not loaded` or `external`), `{source:
+  the selected build; `build` is `built`, `unbuilt`, `not loaded` or `external`; a `module` given
+  is the only one searched, and a declaration it does not declare is refused with the modules
+  that do, as is an alignment's target), `{source:
   {file, line}}`, `{paper: {claim, quote}}`, `{app: {...}}`: an application of a declaration, as
   `compare --query uses` gives it (`callee`, `module`, `id`, `caller`, `via`, the `arguments`
   and `premises` with how each is supplied, the `result`, and `app_hash`, a digest of them; it is
