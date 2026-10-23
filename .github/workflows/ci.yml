@@ -3,8 +3,7 @@ name: CI
 # A pull request's pushes run once, as `pull_request`, in one concurrency group per pull request,
 # so a newer push cancels the older run, running or waiting. Each push to main has a group of its
 # own (its run's id), so it neither waits for nor cancels another run: every commit on main gets
-# a full run, and the demo audit (pages.yml) publishes after each one that passes while its commit
-# is still main's head.
+# a full run, and the demo audit (pages.yml) publishes the newest one that passed.
 on:
   push:
     branches: [main]
