@@ -146,8 +146,8 @@ def check_report(r: dict, body: dict, cfg: Config, accept_same_family: bool,
             why.append(f"paper {pid} is at another revision than the one reviewed")
     v = r["verdict"]["value"]
     if v == "cannot determine":
-        why.append("verdict 'cannot determine' leaves an open question: it records no review, "
-                   "and no defect")
+        why.append("verdict 'cannot determine' is not one that is recorded as a review: it "
+                   "leaves an open question, and no defect")
     elif v not in (STEP_ACCEPTABLE if step else ACCEPTABLE):
         why.append(f"verdict {v!r} is not one that is recorded as a review")
     elif v in (STEP_NEEDS_DETAIL if step else NEEDS_DETAIL) and \

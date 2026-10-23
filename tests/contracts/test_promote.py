@@ -91,8 +91,8 @@ def test_promotion_end_to_end(toy, tmp_path):
         (_, _, why), = pr.plan(cfg, [r])
         assert why, k
     (_, _, why), = pr.plan(cfg, [bad["open question"]])
-    assert why == ["verdict 'cannot determine' leaves an open question: it records no review, "
-                   "and no defect"]
+    assert why == ["verdict 'cannot determine' is not one that is recorded as a review: it "
+                   "leaves an open question, and no defect"]
     (_, _, why), = pr.plan(cfg, [bad["unresolved"]])
     assert any("unresolved: an open question records no review, and no defect" in w for w in why)
     (_, _, why), = pr.plan(cfg, [bad["coverage"]])
