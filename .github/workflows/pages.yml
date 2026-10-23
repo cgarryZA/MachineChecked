@@ -3,8 +3,9 @@ name: Demo audit
 # Publishes the synthetic toy paper's audit at cgarryza.github.io/MachineChecked/demo/, where
 # machinechecked.org/demo/ reads it with its own reader. The audit is the one CI built and
 # exported (approved fields only, scanned for leaks, data only: audit.json and data/); this
-# workflow builds nothing. Runs after CI passes on main; Pages must have "GitHub Actions" as its
-# source.
+# workflow builds nothing. Runs after CI passes on main and publishes only while the commit CI
+# tested is still main's head; Pages must have "GitHub Actions" as its source. A manual run
+# publishes the CI run it names.
 on:
   workflow_run:
     workflows: [CI]
@@ -22,13 +23,38 @@ permissions:
   pages: write
   id-token: write
 
-concurrency:
-  group: pages
-  cancel-in-progress: true
-
 jobs:
-  build:
+  # Each push to main has its own CI run, so runs of pushes seconds apart run at the same time and
+  # can finish in either order. A run whose commit is no longer main's head when it finishes
+  # publishes nothing, so an older commit never replaces a newer one; the run of main's head
+  # publishes when it passes.
+  latest:
+    name: the commit is main's head
     if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+    runs-on: ubuntu-24.04
+    outputs:
+      publish: ${{ steps.head.outputs.publish }}
+    steps:
+      - id: head
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TESTED: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          main=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)
+          if [ "$main" = "$TESTED" ]; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::Not published: CI tested $TESTED, and main is now at $main, whose CI run publishes the demo when it passes."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    needs: latest
+    if: needs.latest.outputs.publish == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/download-artifact@v8
@@ -49,8 +75,13 @@ jobs:
         with:
           path: public
 
+  # One deployment at a time: a newer one cancels an older one still in progress. Only runs that
+  # publish join the group, so a run that publishes nothing cancels nothing.
   deploy:
     needs: build
+    concurrency:
+      group: pages
+      cancel-in-progress: true
     runs-on: ubuntu-24.04
     environment:
       name: github-pages
