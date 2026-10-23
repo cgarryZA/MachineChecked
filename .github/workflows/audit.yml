@@ -90,7 +90,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      # The packages downloaded last are kept for a week (TeX Live is several hundred MB, and
+      # The packages a run installs are kept for a week (TeX Live is several hundred MB, and
       # Ubuntu's mirror is often slow), so most runs download only what changed.
       - name: This week
         id: week
@@ -104,19 +104,38 @@ jobs:
       # The install steps stop if they hang; the build has no limit of its own, since a project's
       # Lean build can take as long as it takes.
       - name: Install elan, poppler and zstd (and TeX Live)
-        timeout-minutes: 20
+        timeout-minutes: 30
         run: |
-          # Each download stops after 5 minutes and is tried three times, so a stalled mirror costs
-          # a retry; the packages are then installed from what was downloaded.
-          retry() { for i in 1 2 3; do timeout 300 "$@" && return 0; echo "attempt $i failed or stalled: $*" >&2; sleep 5; done; return 1; }
+          # apt stops a download only when its server sends nothing for a minute, then tries it
+          # again from where it stopped, so a slow mirror costs time rather than the job; it logs
+          # each package as it starts, with its size. The downloads share 25 of the step's 30
+          # minutes, and a command that fails is run again, three times in all.
+          deadline=$(( $(date +%s) + 25 * 60 ))
+          fetch() {
+            for i in 1 2 3; do
+              left=$(( deadline - $(date +%s) ))
+              [ "$left" -gt 0 ] || { echo "no time left for downloads: $*" >&2; return 1; }
+              timeout "$left" "$@" && return 0
+              echo "attempt $i failed: $*" >&2; sleep 10
+            done
+            return 1
+          }
+          NET="-o Acquire::http::Timeout=60 -o Acquire::https::Timeout=60 -o Acquire::Retries=5"
           PKGS="poppler-utils zstd ${{ inputs.tex && 'latexmk texlive-latex-recommended texlive-latex-extra texlive-science texlive-fonts-recommended' || '' }}"
           mkdir -p ~/apt-archives
           sudo cp -n ~/apt-archives/*.deb /var/cache/apt/archives/ 2>/dev/null || true
-          retry sudo apt-get -o Acquire::Retries=3 update -qq
-          retry sudo apt-get -o Acquire::Retries=3 install -y -qq --no-install-recommends --download-only $PKGS
-          cp -n /var/cache/apt/archives/*.deb ~/apt-archives/ 2>/dev/null || true
+          fetch sudo apt-get -q $NET update
+          fetch sudo apt-get -q $NET install -y --no-install-recommends --download-only $PKGS
+          # The saved packages are then exactly those this install uses: the files apt would
+          # download into an empty archive.
+          rm -f ~/apt-archives/*.deb
+          apt-get -qq install --no-install-recommends --print-uris -o Dir::Cache::Archives=/nonexistent/ $PKGS |
+            sed -n "s/^'[^']*' \([^ ]*\) .*/\1/p" | (cd /var/cache/apt/archives && xargs -r cp -t ~/apt-archives/)
+          echo "packages kept for the cache: $(ls ~/apt-archives | wc -l), $(du -sh ~/apt-archives | cut -f1)"
+          # The packages install from what was downloaded.
           sudo apt-get install -y -qq --no-install-recommends $PKGS
-          retry sh -c 'curl -sSfL --connect-timeout 30 --max-time 120 --retry 4 https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain none'
+          # elan's installer downloads with no timeout of its own, so each of its tries has 5 minutes.
+          fetch timeout 300 sh -c 'curl -sSfL --connect-timeout 30 --max-time 120 --retry 4 https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain none'
           echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
       - name: Install the project's Lean toolchain (a failed download is retried)
         timeout-minutes: 20

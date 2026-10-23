@@ -4,8 +4,8 @@ description: >-
   packages it needs, taking both from caches when it can. Run it after `npm ci` in web/.
 
 # What `playwright install --with-deps chromium` does, with the downloads bounded and kept: the
-# browser is kept for its Playwright version, and the system packages for a week (Ubuntu's mirror
-# is often slow), so most runs download nothing but the package lists.
+# browser is kept for its Playwright version, and the system packages it installs for a week
+# (Ubuntu's mirror is often slow), so most runs download nothing but the package lists.
 runs:
   using: composite
   steps:
@@ -28,18 +28,33 @@ runs:
       shell: bash
       working-directory: web
       run: |
-        # Each download stops after 5 minutes and is tried three times, so a stalled mirror costs
-        # a retry; the packages are then installed from what was downloaded.
-        retry() { for i in 1 2 3; do timeout 300 "$@" && return 0; echo "attempt $i failed or stalled: $*" >&2; sleep 5; done; return 1; }
+        # apt and Playwright stop a download only when its server sends nothing for a while (apt a
+        # minute, Playwright 30 seconds), then try it again, so a slow mirror costs time rather
+        # than the job; both log their progress. The downloads share 15 minutes (the reader job
+        # has 30), and a command that fails is run again, three times in all.
+        deadline=$(( $(date +%s) + 15 * 60 ))
+        fetch() {
+          for i in 1 2 3; do
+            left=$(( deadline - $(date +%s) ))
+            [ "$left" -gt 0 ] || { echo "no time left for downloads: $*" >&2; return 1; }
+            timeout "$left" "$@" && return 0
+            echo "attempt $i failed: $*" >&2; sleep 10
+          done
+          return 1
+        }
+        NET="-o Acquire::http::Timeout=60 -o Acquire::https::Timeout=60 -o Acquire::Retries=5"
         # The packages Playwright's own install-deps would install, from the command it prints.
         PKGS=$(npx --no-install playwright install-deps --dry-run chromium | sed -n 's/.*--no-install-recommends \([^"]*\)".*/\1/p')
         test -n "$PKGS" || { echo "no package list from playwright install-deps --dry-run" >&2; exit 1; }
-        # The package cache starts empty, so only the browser's packages are kept (test shard 1
-        # has installed TeX Live from it already).
-        sudo apt-get clean
         mkdir -p ~/apt-browser; sudo cp -n ~/apt-browser/*.deb /var/cache/apt/archives/ 2>/dev/null || true
-        retry sudo apt-get -o Acquire::Retries=3 update -qq
-        retry sudo apt-get -o Acquire::Retries=3 install -y -qq --no-install-recommends --download-only $PKGS
-        cp -n /var/cache/apt/archives/*.deb ~/apt-browser/ 2>/dev/null || true
+        fetch sudo apt-get -q $NET update
+        fetch sudo apt-get -q $NET install -y --no-install-recommends --download-only $PKGS
+        # The saved packages are then exactly those this install uses: the files apt would
+        # download into an empty archive (not the TeX Live test shard 1 installed before).
+        rm -f ~/apt-browser/*.deb
+        apt-get -qq install --no-install-recommends --print-uris -o Dir::Cache::Archives=/nonexistent/ $PKGS |
+          sed -n "s/^'[^']*' \([^ ]*\) .*/\1/p" | (cd /var/cache/apt/archives && xargs -r cp -t ~/apt-browser/)
+        echo "packages kept for the cache: $(ls ~/apt-browser | wc -l), $(du -sh ~/apt-browser | cut -f1)"
+        # The packages install from what was downloaded.
         sudo apt-get install -y -qq --no-install-recommends $PKGS
-        retry npx --no-install playwright install chromium
+        fetch npx --no-install playwright install chromium
