@@ -93,12 +93,12 @@
     "link.unbuilt": {
       "label": "linked: Lean not checked (the project is not built)",
       "class": "unspecified",
-      "explanation": "The project is not built, so the linked declaration has not been checked."
+      "explanation": "Build the project to check the linked declaration."
     },
     "link.module-unbuilt": {
       "label": "linked: Lean not checked (module not built)",
       "class": "unspecified",
-      "explanation": "The declaration’s module is not built, so the link has not been checked."
+      "explanation": "Build the declaration’s module to check the link."
     },
     "link.module-failed": {
       "label": "linked: Lean not checked (module could not be loaded)",
@@ -273,7 +273,7 @@
         },
         "unverified": {
           "label": "unverified",
-          "explanation": "The supplied replay record does not establish replay for this proof and build."
+          "explanation": "The supplied replay log is for another build, records a run that did not pass, or is not a structured Comparator record."
         }
       }
     },
@@ -298,7 +298,7 @@
         },
         "pdf-only": {
           "label": "PDF only",
-          "explanation": "Source evidence comes from a PDF. Its integrity and placement are reported separately."
+          "explanation": "The claim is read from the PDF; the PDF hash and the claim's placement are shown beside it."
         }
       }
     },

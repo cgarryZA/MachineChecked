@@ -50,9 +50,9 @@ Per claim: `number` ("Theorem 2.1"), `status_code`, `status`, `links`
 | `linked: Lean declaration not found` | the name does not exist in the built project |
 | `linked: Lean definition` | the link names a definition |
 | `linked: Lean not checked (the project is not built)` | Lean was not run |
-| `linked: Lean not checked (its module M is not built)` | the declaration's module is not built yet; build it to check |
-| `linked: Lean not checked (its module M could not be loaded)` | the module failed to load; report the loading error |
-| `linked: Lean name is ambiguous (declared in A, B)` | several modules declare the name (e.g. a challenge statement and its solution); name the module in `formalization.yaml` |
+| `linked: Lean not checked (module not built)` | the declaration's module is not built yet; build it to check |
+| `linked: Lean not checked (module could not be loaded)` | the module failed to load; report the loading error |
+| `linked: Lean name is ambiguous` | several modules declare the name (e.g. a challenge statement and its solution); name the module in `formalization.yaml` |
 | `suggested link, not confirmed` | a candidate awaiting confirmation |
 | `not linked` | no Lean counterpart is known |
 
