@@ -149,11 +149,15 @@ Every evidence record contains:
   the files read during compilation;
 - the hashes of the review files.
 
-`machinechecked build --reuse-lean` reuses stored probe records only when a SHA-256 over every Lean input
-(the project's and every path dependency's sources, lakefiles, manifest and toolchain) and the
-probe itself are unchanged; otherwise it stops with exit code 2 and says to run `machinechecked
-build` without `--reuse-lean`. `machinechecked reassess` applies new reviews and dismissals to stored
-evidence, and refuses when the claim inventory changed.
+`machinechecked build --reuse-lean` reuses the probe records of the newest stored release made
+from the same Lean inputs (a SHA-256 over the project's and every path dependency's sources,
+lakefiles, manifest and toolchain), by the same probe and with the same probe settings (`modules`,
+`scope_roots`, the layer prefixes and `allowed_axioms`), when they answer every request of the
+claim inventory. A later release made otherwise does not hide it. A record that does not state
+its probe settings (stored by an earlier version) is not reused. When no release qualifies, the
+build stops with exit code 2, names the condition the closest release fails, and says to run
+`machinechecked build` without `--reuse-lean`. `machinechecked reassess` applies new reviews and
+dismissals to stored evidence, and refuses when the claim inventory changed.
 
 In zero configuration, every build reuses the Lean facts it extracted before (a module's index, a
 linked declaration's record, an `inspect` answer) while the modules of the environment they came

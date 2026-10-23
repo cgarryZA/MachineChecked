@@ -278,6 +278,17 @@ def _keep_partial(out: Path, work: Path | None) -> str:
     return f"The partial output is kept at {dest}."
 
 
+def probe_query(cfg: Config, requests: list[dict]) -> dict:
+    """What the probe is told: the configuration's scope roots, layer prefixes and allowed
+    axioms, and the requests. Its records depend on these settings as on the Lean, so stored
+    records are reused only under the same ones (`pipeline.probe_settings_digest`)."""
+    return {"scope_roots": cfg.scope_roots, "spec_prefix": cfg.spec_prefix,
+            "accept_prefix": cfg.accept_prefix,
+            "spec_prefixes": cfg.spec_prefixes or [cfg.spec_prefix],
+            "accept_prefixes": cfg.accept_prefixes or [cfg.accept_prefix],
+            "allowed_axioms": cfg.allowed_axioms, "requests": requests}
+
+
 def run_probe(cfg: Config, requests: list[dict], lake: str = "lake",
               timeout: int = 3600, build: bool = True) -> dict:
     """Build the project's modules (unless `build` is false), run the probe on them, one Lean
@@ -288,11 +299,7 @@ def run_probe(cfg: Config, requests: list[dict], lake: str = "lake",
         r = run([lake, "build", *cfg.modules], cwd=cfg.lean_root, timeout=timeout)
         if r.returncode != 0:
             raise ProbeError(f"lake build failed:\n{r.stdout[-4000:]}\n{r.stderr[-4000:]}")
-    query = {"scope_roots": cfg.scope_roots, "spec_prefix": cfg.spec_prefix,
-             "accept_prefix": cfg.accept_prefix,
-             "spec_prefixes": cfg.spec_prefixes or [cfg.spec_prefix],
-             "accept_prefixes": cfg.accept_prefixes or [cfg.accept_prefix],
-             "allowed_axioms": cfg.allowed_axioms, "requests": requests}
+    query = probe_query(cfg, requests)
     groups = by_library(cfg.modules, lib_names(cfg.lean_root))
     work = cfg.out_dir / "build"
     if len(groups) == 1:
