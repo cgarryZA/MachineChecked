@@ -125,12 +125,13 @@ pages = {"v1": ([anchor("theorem", "1", 1, 100), anchor("theorem", "2", 1, 300),
                     [("theorem", "3", ["A.three"])], [], "Latest manuscript text.")}
 # The claim map between them (#225), from the two inventories: v1's Theorem 1 is the latest
 # Theorem 3 with its statement changed (the same label), Theorem 2 became Lemma 1 (the same
-# statement), Theorem 3 was removed, and the latest Theorem 2 is new.
+# statement), Theorem 3 was removed, and the latest Theorem 2 is new (each has a label the other
+# version lacks, so a removal and an addition are certain, #296).
 inventory = {"v1": [("theorem-1", "Theorem 1", "thm:bound", "A bound."),
                     ("theorem-2", "Theorem 2", None, "An identity."),
-                    ("theorem-3", "Theorem 3", None, "A remark.")],
+                    ("theorem-3", "Theorem 3", "rem:old", "A remark.")],
              "latest": [("lemma-1", "Lemma 1", None, "An identity."),
-                        ("theorem-2", "Theorem 2", None, "Another identity."),
+                        ("theorem-2", "Theorem 2", "thm:new", "Another identity."),
                         ("theorem-3", "Theorem 3", "thm:bound", "A sharper bound.")]}
 claim_maps = [claim_map(versions[0]["id"], [{"key": k, "number": n, "label": l, "statement": t}
                                             for k, n, l, t in inventory["v1"]],

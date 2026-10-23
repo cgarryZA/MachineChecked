@@ -294,10 +294,17 @@ of `key` and `number`, where `key` is the claim's key on that page, such as `the
 
 A listing can supply the map. `claim_map(earlier, claims, later, claims)` can also compute it
 from the two versions' claim inventories, where each claim gives `key`, `number`, and optionally
-`label` (its source pin) and `statement` (its text). It matches a claim by its label, or else by
-its statement text when exactly one claim of the other version has that text. It maps only claims
-that have a statement, and never infers a split. `check_claim_map` refuses a change that does not
-fit its claims.
+`label` (its source pin) and `statement` (its text). It compares statements without their
+`\label` commands and with white space collapsed. It matches a claim by its label, when each
+version has one claim with it; else by its statement text, when each version has one such claim
+not matched by a label; else by its number, when each version has one claim there not matched
+before and neither has a label the other version gives a claim. A matched claim is `same`,
+`renumbered` or `changed`; a match with no statement text on one side is left out, since nothing
+says whether it changed. A claim is `removed` (or `new`) only when the other version certainly
+has no counterpart: the claim has a label, no claim of the other version has that label, and none
+there under its number is unmatched or lacks a statement text; any other unmatched claim is left
+out, and the claim view shows nothing for it. It maps only claims that have a statement, and
+never infers a split. `check_claim_map` refuses a change that does not fit its claims.
 
 Each claim a map names gets `counterparts` on its row of `index.json`, provided the page offers
 the other version. Each counterpart gives `version`, `later` (whether the other version is the
