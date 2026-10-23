@@ -385,7 +385,9 @@ def reassess(cfg: Config, web_dist: Path | None = None, release: str | None = No
              log=print) -> dict:
     """Assess the latest release's evidence (`evidence.latest`) again with the current rules and
     the current review files, without probing or compiling, and store the result as a new
-    evidence record and release."""
+    evidence record and release. When nothing changed (the record would differ from the one
+    read only in naming it in `reassessed_from`), the reassessment reproduces the release it
+    read, as a repeated build does."""
     last = ev.latest(cfg.out_dir)
     if last is None:
         raise StaleEvidence(NO_RELEASE)
@@ -409,11 +411,25 @@ def reassess(cfg: Config, web_dist: Path | None = None, release: str | None = No
                            "comparator_log_sha256": sha256_file(comp) if comp_text else None,
                            "reassessed_from": last["evidence"]}}
     body.pop("schema", None)
+    if _apart_from_origin(body) == _apart_from_origin(old):
+        eid, rel = last["evidence"], release or last["release"]
+        ev.record_release(cfg.out_dir, rel, eid)
+        log(f"evidence {eid[:12]}  release {rel} (reassessed: nothing changed)")
+        return rebuild_site(cfg, web_dist, rel)
     eid = ev.store(cfg.out_dir, body)
     rel = release or f"r-{eid[:12]}"
     ev.record_release(cfg.out_dir, rel, eid)
     log(f"evidence {eid[:12]}  release {rel} (reassessed)")
     return rebuild_site(cfg, web_dist, rel)
+
+
+def _apart_from_origin(body: dict) -> str:
+    """An evidence body's canonical JSON without its schema and without the record it was
+    reassessed from: what a reassessment shares with the record it read when nothing
+    changed."""
+    prov = {k: v for k, v in body["provenance"].items() if k != "reassessed_from"}
+    return canonical_json({**{k: v for k, v in body.items() if k != "schema"},
+                           "provenance": prov})
 
 
 def pdf_paths(cfg: Config, body: dict) -> dict:
