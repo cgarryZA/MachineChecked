@@ -75,7 +75,7 @@ class Config:
     accept_prefixes: list[str] = field(default_factory=list)
     display: Path | None = None
     symbols: Path | None = None
-    issues: str | None = None         # "owner/repo" where the reader's "Raise issue" opens issues
+    issues: str | None = None         # "owner/repo" where the reader's "Report issue" opens issues
     site_url: str | None = None       # the public address of the published site, for permalinks
     author: str | None = None         # the name the audit is published under (audit.json)
     repository: str | None = None     # "owner/repo" of the Lean source, if not the git remote
