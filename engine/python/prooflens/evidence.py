@@ -50,15 +50,20 @@ def checked(rec: dict, eid: str, path: Path) -> dict:
 
 
 def releases(out_dir: Path) -> list[Path]:
-    """The named releases, oldest first by the time recorded in each (a copied directory's file
-    times say nothing about when a release was made); ties by name. The latest release is not
-    always the last of these: see `latest`."""
+    """The named releases, oldest first by the time recorded in each; releases recorded in the
+    same second in the order the builds first named them (the release log), then by name. No
+    file time is read: a copied or restored directory's file times say nothing about when a
+    release was made. The latest release is not always the last of these: see `latest`."""
+    first: dict[str, int] = {}
+    for i, name in enumerate(built(out_dir)):
+        first.setdefault(name, i)
+
     def when(p: Path):
         try:
             created = read_json(p).get("created") or ""
         except (OSError, ValueError):
             created = ""
-        return (created, p.stat().st_mtime, p.name)  # file time only breaks a same-second tie
+        return (created, first.get(p.stem, -1), p.name)
     return sorted((out_dir / "releases").glob("*.json"), key=when)
 
 

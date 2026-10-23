@@ -103,7 +103,9 @@ build stored names that build's release again). The latest release is the releas
 line whose release still names that evidence; in a store without the log, the release created
 last. The release before a release, which `changes` and a site's `data/changes.json` compare it
 with, is the last release with other evidence among those built before its last build; when the
-log names none, the last release with other evidence created before it.
+log names none, the last release with other evidence created before it. Releases are ordered by
+`created`, and those created in the same second by the log, then by name; no file time is read,
+so copying or restoring `.machinechecked/` changes no command's release.
 
 `.machinechecked/evidence/<id>.json` (`.prooflens/` in older projects), with `id` the SHA-256 of the canonical JSON of `body`:
 

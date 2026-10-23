@@ -1,19 +1,23 @@
 """The latest release is the one the last build produced or reproduced (#353). A build that
 reproduces an earlier evidence record names that record's release again, which keeps its
 `created` time; every command that reads the latest release reads that one, and the
-comparison with the release before is with the one the build before made."""
+comparison with the release before is with the one the build before made. No command chooses a
+release by its file's time (#354)."""
 
 import json
+import os
 
 from conftest import build, edit, needs_lean, needs_tex
 from test_promote import queue, report
 from prooflens import changes as chg
-from prooflens import cli, evidence as ev, promote as pr, retire
-from prooflens.pipeline import reassess
+from prooflens import cli, config as cfgmod, evidence as ev, promote as pr, retire
+from prooflens.export import export
+from prooflens.pipeline import lean_inputs_digest, reassess
 from prooflens.symbols import add as add_symbol
 
 DEFS = "lean/Toy/Defs.lean"
 EVEN, EVEN_EDITED = "∃ k, n = 2 * k", "∃ k, n = k + k"
+LATER = 4_000_000_000  # a file time later than any release file's
 
 
 def statuses(index):
@@ -25,6 +29,15 @@ def name_release(out, name, eid, created):
     path = out / "releases" / f"{name}.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({"release": name, "evidence": eid, "created": created}))
+
+
+def set_created(out, name, created):
+    path = out / "releases" / f"{name}.json"
+    path.write_text(json.dumps({**json.loads(path.read_text()), "created": created}))
+
+
+def touch(path):
+    os.utime(path, (LATER, LATER))
 
 
 def test_the_release_log_names_the_latest_release(tmp_path):
@@ -145,3 +158,65 @@ def test_commands_read_the_release_a_reverted_build_reproduces(toy, monkeypatch,
     body = ev.load(cfg.out_dir, last["evidence"])["body"]
     assert body["provenance"]["reassessed_from"] == first["evidence"]
     assert statuses(res["index"]) == statuses(first)
+
+
+def test_a_touched_older_release_file_changes_no_commands_release(toy):
+    """Over stored records alone (no Lean): an older release whose file is the newest, as after
+    copying or restoring `.machinechecked/`, changes neither the release order nor the latest
+    release, so `review promote` checks reports against the newer release. So with the release
+    log and without it, and with two releases recorded in the same second."""
+    cfg = cfgmod.load(toy / "machinechecked.toml")
+    out = cfg.out_dir
+    claims = json.loads((toy / "claims.json").read_text())["claims"]
+
+    def record(inputs):
+        return ev.store(out, {
+            "provenance": {"tool": {}, "project": {}, "papers": {}, "lean_inputs_sha256": inputs},
+            "inventory": {"claims": claims}, "reviews": {"files": {}, "records": []}, "tex": {},
+            "lean": {}, "assessment": {"claims": [], "findings": []}})
+    older, newer = record("0" * 64), record(lean_inputs_digest(cfg))
+    ev.record_release(out, "r-older", older)
+    ev.record_release(out, "r-newer", newer)
+
+    def reads_the_newer_release():
+        touch(out / "releases" / "r-older.json")
+        assert [p.stem for p in ev.releases(out)] == ["r-older", "r-newer"]
+        assert ev.latest(out)["release"] == "r-newer"
+        assert pr.latest_record(cfg)["id"] == newer
+        assert pr.plan(cfg, []) == []  # not refused as made before a change of the Lean
+
+    set_created(out, "r-older", "2026-01-01T00:00:00+00:00")
+    set_created(out, "r-newer", "2026-01-01T00:00:01+00:00")
+    reads_the_newer_release()
+    set_created(out, "r-older", "2026-01-01T00:00:01+00:00")  # the same second
+    reads_the_newer_release()
+    (out / ev.RELEASE_LOG).unlink()  # a store an earlier version wrote
+    set_created(out, "r-older", "2026-01-01T00:00:00+00:00")
+    reads_the_newer_release()
+
+
+@needs_lean
+@needs_tex
+def test_review_promote_and_symbol_add_read_the_latest_release_not_the_newest_file(toy):
+    """Build, change a definition and build again, then touch the first release's file: `review
+    promote`, `symbol add`, `export` and `reassess` all read the second release, with the
+    release log and without it."""
+    first, _, cfg = build(toy)
+    edit(toy / DEFS, EVEN, EVEN_EDITED)
+    second, body2, _ = build(toy)
+    spec = "Toy.PaperSpec.thm_even_add"
+    units = {u["name"]: u for u in queue(cfg)["units"]}
+    for kept in (True, False):
+        if not kept:
+            (cfg.out_dir / ev.RELEASE_LOG).unlink()  # a store an earlier version wrote
+        touch(cfg.out_dir / "releases" / f"{first['release']}.json")
+        assert pr.latest_record(cfg)["id"] == second["evidence"]
+        (_, _, why), = pr.plan(cfg, [report(second, units["Toy.triangle"])])
+        assert why == []
+        link = add_symbol(cfg, "T:thm:even-add", "a", spec, "human:A-Referee", var="a")
+        assert link["pins"]["statement"] == body2["lean"]["specs"][spec]["fingerprint"]
+        assert export(cfg, toy.parent / "export")["release"] == second["release"]
+    res = reassess(cfg, log=lambda *a: None)
+    body = ev.load(cfg.out_dir, ev.latest(cfg.out_dir)["evidence"])["body"]
+    assert body["provenance"]["reassessed_from"] == second["evidence"]
+    assert statuses(res["index"]) == statuses(second)
