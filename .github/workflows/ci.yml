@@ -14,12 +14,20 @@ concurrency:
 permissions:
   contents: read
 
-# Each job stops well above its slowest passing runs (test 30 to 85 minutes, depending on the
-# runner; the others a few), so a hung step fails instead of holding a runner for six hours.
+# Each job stops well above its slowest passing runs (a test shard 12 to 20 minutes, depending on
+# the runner; the others a few), so a hung step fails instead of holding a runner for six hours.
 jobs:
-  test:
+  # The suite runs in parts on parallel runners: `pytest --shard I/N` (tests/shards.py) deals out
+  # whole test files by their times in tests/durations.json, and each part sets up its own runner.
+  # Shard 1 also exports the demo and checks the wheel. The `test` job passes when every part does.
+  test-shard:
+    name: test (shard ${{ matrix.shard }} of ${{ strategy.job-total }})
     runs-on: ubuntu-24.04
-    timeout-minutes: 150
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -35,14 +43,25 @@ jobs:
         with:
           path: ~/.elan/toolchains
           key: elan-${{ runner.os }}-v4.24.0-${{ hashFiles('examples/*/lean-toolchain', 'tests/fixtures/*/lean-toolchain') }}
+      # The TeX Live packages are kept for a week, so the shards download only what changed; all
+      # shards share the key, and whichever finishes first saves it.
+      - id: week
+        run: echo "week=$(date -u +%G-%V)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        with:
+          path: ~/apt-archives
+          key: apt-test-${{ runner.os }}-${{ steps.week.outputs.week }}
+          restore-keys: apt-test-${{ runner.os }}-
       - name: Install TeX Live and elan
         run: |
           # Each download stops after 5 minutes and is tried three times, so a stalled mirror costs
           # a retry; the packages are then installed from what was downloaded.
           retry() { for i in 1 2 3; do timeout 300 "$@" && return 0; echo "attempt $i failed or stalled: $*" >&2; sleep 5; done; return 1; }
           PKGS="latexmk texlive-latex-recommended texlive-latex-extra texlive-science texlive-fonts-recommended poppler-utils"
+          mkdir -p ~/apt-archives; sudo cp -n ~/apt-archives/*.deb /var/cache/apt/archives/ 2>/dev/null || true
           retry sudo apt-get -o Acquire::Retries=3 update -qq
           retry sudo apt-get -o Acquire::Retries=3 install -y -qq --no-install-recommends --download-only $PKGS
+          cp -n /var/cache/apt/archives/*.deb ~/apt-archives/ 2>/dev/null || true
           sudo apt-get install -y -qq --no-install-recommends $PKGS
           retry sh -c 'curl -sSfL --connect-timeout 30 --max-time 120 --retry 4 https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain none'
           echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
@@ -56,34 +75,58 @@ jobs:
         run: pip install -e '.[test]'
       - name: Build the plain example (zero-configuration tests use it)
         run: cd examples/plain-paper && lake build
-      - name: Prepare the preview browser
-        run: cd web && npm ci && npx playwright install --with-deps chromium
-      - name: Build the toy paper
+      - name: Build the toy paper (the tests copy its build)
         run: cd examples/toy-paper && prooflens build --fail-on-violation
+      - name: Prepare the preview browser
+        if: matrix.shard == 1
+        run: cd web && npm ci && npx playwright install --with-deps chromium
       - name: Export the demo (approved fields only, scanned; data only, the Demo audit workflow publishes it)
+        if: matrix.shard == 1
         run: cd examples/toy-paper && prooflens export --data-only --out ../../demo-site
       - name: Capture the exported reader in both themes and viewport sizes
+        if: matrix.shard == 1
         run: READER=engine/python/prooflens/web node web/scripts/preview.mjs demo-site "$RUNNER_TEMP/reader-preview"
       - uses: actions/upload-artifact@v4
+        if: matrix.shard == 1
         with:
           name: reader-preview
           path: ${{ runner.temp }}/reader-preview
           retention-days: 7
       - uses: actions/upload-artifact@v4
+        if: matrix.shard == 1
         with:
           name: demo-site
           path: demo-site
           retention-days: 14
 
-      - name: Tests (contracts, mutations, security, zero-configuration)
-        run: pytest -q
+      - name: Tests (contracts, mutations, security, zero-configuration), shard ${{ matrix.shard }} of ${{ strategy.job-total }}
+        run: pytest -q --shard ${{ matrix.shard }}/${{ strategy.job-total }} --shard-times "$RUNNER_TEMP/test-times.json"
+      # Each test file's time, for rebalancing the shards (tests/shards.py says how).
+      - uses: actions/upload-artifact@v4
+        if: success() || failure()
+        with:
+          name: test-times-${{ matrix.shard }}
+          path: ${{ runner.temp }}/test-times.json
+          retention-days: 14
       - name: An installed wheel needs no Node and no checkout
+        if: matrix.shard == 1
         run: |
           pip wheel . --no-deps -w /tmp/wheel
           python -m venv /tmp/venv && /tmp/venv/bin/pip install /tmp/wheel/*.whl
           cd examples/plain-paper && /tmp/venv/bin/prooflens build --out /tmp/plain.html
           grep -q __PROOFLENS__ /tmp/plain.html
 
+  # The check named `test`: every shard passed (a failed or cancelled shard fails it).
+  test:
+    needs: test-shard
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Every shard of the suite passed
+        env:
+          RESULT: ${{ needs.test-shard.result }}
+        run: test "$RESULT" = success
 
   reader:
     runs-on: ubuntu-24.04
