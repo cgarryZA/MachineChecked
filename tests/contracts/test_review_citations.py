@@ -59,6 +59,55 @@ def test_notation_in_code_spans_is_not_cited(tmp_path):
     assert [c["token"] for c in citations([f], tmp_path)] == ["Foo.baz"]
 
 
+# A synthetic re-pin (#270): its removal record and archived markers name the declarations that
+# were removed, which must be named there; a live reading around them cites names too.
+REPIN = """## Re-pin to rev2
+
+**Clauses removed.** `Foo.Spec.old_claim` (`X:sec2:thing`): the sentence it stated is deleted at
+rev2; the proposition is removed with `Foo.Acc.old_claim` and its witness.
+
+The live reading below still cites `Foo.Spec.live_gap`.
+
+<!-- archived at rev2 (a passage read here is deleted): spec-review-record: Foo.Spec.old_claim
+by=a.referee, read with `Foo.old_lemma` and ```Foo.old_fenced``` -->
+<!-- ARCHIVED AT rev1: `Foo.Spec.first_claim` -->
+
+- **Retired at rev2.** `Foo.Spec.old_item`, with
+  - `Foo.Spec.old_nested`
+- `Foo.Spec.live_item` is read against the new passage.
+
+**Removed:**
+1. `Foo.Spec.old_listed`
+
+The reading of `Foo.Spec.new_claim` uses `Foo.Spec.older` (removed at rev1) and
+`Foo.Spec.oldest` (Retired), and `Foo.Spec.live_missing`.
+
+**Note.** `Foo.removed_lemma_name` is cited by a live reading.
+
+<!-- spec-review: Foo.Spec.new_claim 0123456789abcdef0123456789abcdef by=a.referee -->
+"""
+
+
+def test_review_text_that_records_a_removal_cites_nothing(tmp_path):
+    f = tmp_path / "reviews.md"
+    f.write_text(REPIN)
+    cites = citations([f], tmp_path)
+    live = ["Foo.Spec.live_gap", "Foo.Spec.live_item", "Foo.Spec.new_claim",
+            "Foo.Spec.live_missing", "Foo.removed_lemma_name"]
+    assert [c["token"] for c in cites] == live
+    assert [c["line"] for c in cites] == [6, 14, 19, 20, 22]
+    # Every name the probe finds nowhere: only those of live readings are reported.
+    gone = live + ["Foo.Spec.old_claim", "Foo.Acc.old_claim", "Foo.old_lemma",
+                   "Foo.Spec.old_item", "Foo.Spec.old_nested", "Foo.Spec.old_listed",
+                   "Foo.Spec.older", "Foo.Spec.oldest", "Foo.Spec.first_claim"]
+    names = {"checked": gone, "unresolved": gone}
+    assert [c["token"] for c in unresolved(cites, names, [tmp_path])] == live
+    # The same names cited outside a removal record are reported.
+    f.write_text("A reading that cites `Foo.Spec.old_claim` and `Foo.old_lemma`.\n")
+    assert [c["token"] for c in unresolved(citations([f], tmp_path), names, [tmp_path])] == [
+        "Foo.Spec.old_claim", "Foo.old_lemma"]
+
+
 @needs_lean
 @pytest.mark.parametrize("toolchain", [None, "leanprover/lean4:v4.24.0"])
 def test_the_probe_resolves_names_by_their_last_components(tmp_path, toolchain):
@@ -86,6 +135,12 @@ CITING = """
 The bound follows from `Toy.Acceptance.thm_bound`, as `Nat.le_refl` and `thm_even_add_hypotheses`
 show, together with `Toy.bound_of_span` (see `reviews/definitions.md` and `notes/missing.md`).
 
+**Clauses removed.** `Toy.PaperSpec.thm_old` (`T:thm:old`): the sentence it stated is deleted
+at rev2, with `Toy.Acceptance.thm_old`; `Toy.gone_def` (removed at rev2) went with it.
+
+<!-- archived at rev2 (a passage read here is deleted): spec-review-record:
+Toy.PaperSpec.thm_old, read with `Toy.old_lemma` -->
+
 <!-- spec-review: Toy.PaperSpec.thm_even_add pl-fp-v1:551fc041080c4c0d6511fdb7ea708af7cdc3dd106c870a6619677829587f7ce8 by=a.referee kind=human source=T:thm:even-add@50d67d3f6936ce366dc5aef10344224a217e728079aafcaa78e2bc5a5e733b43 -->
 """
 
@@ -99,6 +154,7 @@ def test_a_dangling_citation_is_a_warning_or_in_strict_mode_a_violation(toy):
     with open(toy / "reviews" / "T.md", "a") as f:
         f.write(CITING)
     index, body, _ = build(toy)
+    # The names its removal record and archived marker cite (#270) are not reported.
     got = sorted((f["trigger"], f["file"], f["tier"]) for f in findings(body, "review-citation"))
     assert got == [("Toy.bound_of_span", "reviews/T.md", "warning"),
                    ("notes/missing.md", "reviews/T.md", "warning")]

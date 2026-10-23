@@ -4,6 +4,12 @@ import Renum.Basic
 # Bounds for triangle numbers
 
 The bounds of Section 2 of the paper (Theorem 2.1 and Corollary 2.4).
+
+The closed form is Gauss's Lemma 4.22, as in
+
+* Hardy–Wright, *An Introduction*, Ch. IV, Prop. 4.7.
+
+Gauss's lemma is classical; the paper's Lemma 2.6 is not formalised here.
 -/
 
 namespace Renum

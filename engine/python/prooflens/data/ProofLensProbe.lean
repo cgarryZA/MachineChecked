@@ -862,11 +862,12 @@ def declRecord (inside : Name → Bool) (n : Name) (ci : ConstantInfo) : MetaM (
   let env ← getEnv
   let (lh, c, used) ← constPrint ci
   let sig ← ppJson ci.type
-  let value ← match ci with
-    | .defnInfo d =>
-      if (← isProp ci.type) then pure Json.null
-      else ppJson d.value
-    | _ => pure Json.null
+  -- Whether the type is a proposition: the declaration is a proof (a theorem, a proof Lean
+  -- generates, a `Prop`-valued instance) and carries no data. Unknown when Lean cannot tell.
+  let prop ← tryCatchRuntimeEx (some <$> isProp ci.type) fun _ => pure none
+  let value ← match ci, prop with
+    | .defnInfo d, some false => ppJson d.value
+    | _, _ => pure Json.null
   -- What a definition says, for the definitions a reader looks for (not a compiler's helper, not
   -- an instance, not a proposition such as a locked statement).
   let defn ← match ci with
@@ -880,6 +881,7 @@ def declRecord (inside : Name → Bool) (n : Name) (ci : ConstantInfo) : MetaM (
     ("module", (moduleOf env n).toString), ("range", ← rangeJson n),
     ("doc", match doc with | some d => Json.str d | none => Json.null),
     ("legacy_hash", lh), ("canon", c), ("signature", sig), ("value", value),
+    ("proposition", toJson prop),
     ("uses", Json.arr ((used.filter fun u => inside u && !u.isInternal).map
       (Json.str ·.toString)))]
   return (Json.mkObj (fields ++ defn), used)
