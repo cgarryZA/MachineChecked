@@ -43,7 +43,7 @@ def _web_dist(arg: str | None) -> Path | None:
 
 MISSING = {
     "lake": "install elan (https://github.com/leanprover/elan) and put ~/.elan/bin on PATH",
-    "latexmk": "install TeX Live with latexmk, or point ProofLens at the paper's PDF",
+    "latexmk": "install TeX Live with latexmk, or give the paper's PDF",
     "synctex": "install TeX Live (it provides synctex)",
     "pdftohtml": "install poppler (poppler-utils) to read a PDF, or give the paper's LaTeX source",
     "pdfinfo": "install poppler (poppler-utils) to read a PDF, or give the paper's LaTeX source",
@@ -1272,7 +1272,7 @@ def main(argv=None):
                    help="the paper: a .tex (its LaTeX root), a .pdf, or a URL of a PDF; "
                    "found in the project when not given")
     w.add_argument("--issues", metavar="OWNER/REPO",
-                        help="the GitHub repository where the reader's Raise issue opens reports")
+                        help="the GitHub repository where the reader's Report issue opens reports")
     w.add_argument("--site-url", help="the public address of the published reader, "
                         "for links to claims")
     w.add_argument("--author", help="the name the audit is published under (in audit.json)")
@@ -1290,7 +1290,7 @@ def main(argv=None):
                    help="the paper: a .tex (its LaTeX root), a .pdf, or a URL of a PDF; "
                    "found in the project when not given")
     b.add_argument("--issues", metavar="OWNER/REPO",
-                        help="the GitHub repository where the reader's Raise issue opens reports")
+                        help="the GitHub repository where the reader's Report issue opens reports")
     b.add_argument("--site-url", help="the public address of the published reader, "
                         "for links to claims")
     b.add_argument("--author", help="the name the audit is published under (in audit.json)")
