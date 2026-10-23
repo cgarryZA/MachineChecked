@@ -4,8 +4,8 @@ description: >-
   packages it needs, taking both from caches when it can. Run it after `npm ci` in web/.
 
 # What `playwright install --with-deps chromium` does, with the downloads bounded and kept: the
-# browser is kept for its Playwright version, and the system packages for a week (Ubuntu's mirror
-# is often slow), so most runs download nothing but the package lists.
+# browser is kept for its Playwright version, and the system packages it installs for a week
+# (Ubuntu's mirror is often slow), so most runs download nothing but the package lists.
 runs:
   using: composite
   steps:
@@ -15,11 +15,11 @@ runs:
       run: |
         echo "week=$(date -u +%G-%V)" >> "$GITHUB_OUTPUT"
         echo "playwright=$(node -p "require('playwright-core/package.json').version")" >> "$GITHUB_OUTPUT"
-    - uses: actions/cache@v4
+    - uses: actions/cache@v6
       with:
         path: ~/.cache/ms-playwright
         key: playwright-${{ runner.os }}-${{ steps.keys.outputs.playwright }}
-    - uses: actions/cache@v4
+    - uses: actions/cache@v6
       with:
         path: ~/apt-browser
         key: apt-browser-${{ runner.os }}-${{ steps.keys.outputs.week }}
@@ -28,18 +28,46 @@ runs:
       shell: bash
       working-directory: web
       run: |
-        # Each download stops after 5 minutes and is tried three times, so a stalled mirror costs
-        # a retry; the packages are then installed from what was downloaded.
-        retry() { for i in 1 2 3; do timeout 300 "$@" && return 0; echo "attempt $i failed or stalled: $*" >&2; sleep 5; done; return 1; }
+        # A download stops when it stops making progress, not after a fixed time, so a slow
+        # mirror costs time rather than the job. apt gives up on a server that sends nothing for
+        # 30 seconds and tries again from where it stopped, then the next mirror; Playwright
+        # gives up after 30 seconds and tries again; `fetch` also stops a command that has
+        # downloaded nothing for 5 minutes (a connection can hang without either noticing) and
+        # runs it again, three times in all. The downloads share 15 minutes (the reader job has
+        # 30). Both log their progress.
+        deadline=$(( $(date +%s) + 15 * 60 ))
+        fetch() {
+          for i in 1 2 3; do
+            left=$(( deadline - $(date +%s) ))
+            [ "$left" -gt 0 ] || { echo "no time left for downloads: $*" >&2; return 1; }
+            timeout "$left" "$@" & pid=$!
+            # Progress is growth of the files the downloads write: apt's, and Playwright's in
+            # the temporary directory.
+            idle=0; size=
+            while kill -0 "$pid" 2>/dev/null; do
+              now=$(sudo du -sb /var/lib/apt/lists /var/cache/apt/archives "${TMPDIR:-/tmp}" 2>/dev/null) || true
+              if [ "$now" = "$size" ]; then idle=$((idle + 1)); else size=$now; idle=0; fi
+              if [ "$idle" = 300 ]; then echo "nothing downloaded for 5 minutes: $*" >&2; kill "$pid"; fi
+              sleep 1
+            done
+            wait "$pid" && return 0
+            echo "attempt $i failed: $*" >&2; sleep 10
+          done
+          return 1
+        }
+        NET="-o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o Acquire::Retries=3"
         # The packages Playwright's own install-deps would install, from the command it prints.
         PKGS=$(npx --no-install playwright install-deps --dry-run chromium | sed -n 's/.*--no-install-recommends \([^"]*\)".*/\1/p')
         test -n "$PKGS" || { echo "no package list from playwright install-deps --dry-run" >&2; exit 1; }
-        # The package cache starts empty, so only the browser's packages are kept (test shard 1
-        # has installed TeX Live from it already).
-        sudo apt-get clean
         mkdir -p ~/apt-browser; sudo cp -n ~/apt-browser/*.deb /var/cache/apt/archives/ 2>/dev/null || true
-        retry sudo apt-get -o Acquire::Retries=3 update -qq
-        retry sudo apt-get -o Acquire::Retries=3 install -y -qq --no-install-recommends --download-only $PKGS
-        cp -n /var/cache/apt/archives/*.deb ~/apt-browser/ 2>/dev/null || true
+        fetch sudo apt-get -q $NET update
+        fetch sudo apt-get -q $NET install -y --no-install-recommends --download-only $PKGS
+        # The saved packages are then exactly those this install uses: the files apt would
+        # download into an empty archive (not the TeX Live test shard 1 installed before).
+        rm -f ~/apt-browser/*.deb
+        apt-get -qq install --no-install-recommends --print-uris -o Dir::Cache::Archives=/nonexistent/ $PKGS |
+          sed -n "s/^'[^']*' \([^ ]*\) .*/\1/p" | (cd /var/cache/apt/archives && xargs -r cp -t ~/apt-browser/)
+        echo "packages kept for the cache: $(ls ~/apt-browser | wc -l), $(du -sh ~/apt-browser | cut -f1)"
+        # The packages install from what was downloaded.
         sudo apt-get install -y -qq --no-install-recommends $PKGS
-        retry npx --no-install playwright install chromium
+        fetch npx --no-install playwright install chromium

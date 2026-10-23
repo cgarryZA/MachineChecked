@@ -484,17 +484,22 @@ class Assessor:
         marker is at that hash. A marker without digests read a passage only while the history
         shows it unchanged since the marker was written. A marker with no review text records
         no reading and does not count (`why` "no-reading"), unless its reviewer is one the
-        configuration allows bare markers by (`bare_markers_by`)."""
+        configuration allows bare markers by (`bare_markers_by`). When the last marker is at
+        another hash but an earlier one would be the record without it, `why` is "shadowed" and
+        `shadowed` names both markers; the state is stale all the same."""
         hist = history(self.reviews, target, name)
         last = hist[-1] if hist else None
         readers = review_sources.digests(self.inv, target, name, self.tex)
         need = {claim: readers[claim]} if claim in readers else readers
-        why = source_claim = bare = split = None
+        why = source_claim = bare = split = shadowed = None
         record = last
         if last is None:
             state = "pending"
         elif rec is None or last.hash not in _hashes(rec):
             state, why = "stale", "declaration"
+            shadowed = self._shadowed(hist, rec, need)
+            if shadowed:
+                why = "shadowed"
         else:
             at = [r for r in hist if r.hash in _hashes(rec)]
             read = [r for r in at if self._reads(r, need)]
@@ -523,7 +528,36 @@ class Assessor:
                 out["marker"] = {"file": bare.file, "line": bare.line}
             if split:
                 out["split"] = split
+            if shadowed:
+                out["shadowed"] = shadowed
         return out
+
+    def _shadowed(self, hist: list[Review], rec: dict | None,
+                  need: dict[str, str]) -> dict | None:
+        """When the last marker of `hist` is at another hash than the declaration's current
+        one, but an earlier marker would be the record without it (at a current hash, with a
+        reading of every passage in `need`): that marker (`reading`) and the last one
+        (`record`), each with its file, line, hash and reviewer. The last marker is the
+        record, so the review is stale; this says where to act."""
+        if rec is None or not hist:
+            return None
+        hashes = _hashes(rec)
+        reading = next((r for r in reversed(hist[:-1]) if r.hash in hashes
+                        and self._reads(r, need) and self.has_reading(r)), None)
+        if reading is None:
+            return None
+        return {k: {"file": r.file, "line": r.line, "hash": r.hash, "by": r.by}
+                for k, r in (("reading", reading), ("record", hist[-1]))}
+
+    @staticmethod
+    def _shadowed_words(r: dict) -> str:
+        """The two markers of `shadowed`, each with its place, reviewer and hash, for a finding
+        or a blocker: what follows "the review". The hashes are given in full: legacy hashes of
+        different declarations can share a long prefix."""
+        a, b = r["shadowed"]["reading"], r["shadowed"]["record"]
+        return (f"at {a['file']}:{a['line']} by {a['by']} records the current hash {a['hash']}, "
+                f"but a marker later in the review files, at {b['file']}:{b['line']} by "
+                f"{b['by']}, records {b['hash']} and is the record")
 
     @staticmethod
     def _mentions(text: str, claim: dict) -> bool:
@@ -661,12 +695,17 @@ class Assessor:
             return (" (its last review was made before source pins were recorded, and the "
                     f"source text of {self._claim_label(r.get('source_claim'))} cannot be shown "
                     "unchanged since)")
+        if why == "shadowed":
+            return (f" (its review {self._shadowed_words(r)}: record the review again after that "
+                    "marker, or retire that marker)")
         return " (its last review is stale)"
 
     @staticmethod
     def _stale_fields(r: dict) -> dict:
         if r.get("why") == "no-reading":
             return {"reason": "no-reading", **(r.get("marker") or {})}
+        if r.get("why") == "shadowed":
+            return {"reason": "shadowed", **r["shadowed"]}
         if r["state"] == "stale" and r.get("why", "declaration") != "declaration":
             return {"reason": r["why"], "source_claim": r.get("source_claim")}
         return {}
@@ -1122,6 +1161,7 @@ class Assessor:
             reasons.setdefault(reason, []).append(clause["name"])
 
         defs: dict[str, str] = {}
+        shadowed: dict[str, dict] = {}
         for c in clauses:
             st = c["state"]
             if st == "unspecified":
@@ -1139,6 +1179,8 @@ class Assessor:
                     add("the proposition was reviewed only by the author of the statements", c)
                 elif srs == "pending":
                     add("the proposition has no review", c)
+                elif srs == "stale" and c["spec_review"].get("why") == "shadowed":
+                    add("the proposition's review " + self._shadowed_words(c["spec_review"]), c)
                 elif srs == "stale":
                     add({"source-changed": "the paper's text changed after the proposition's "
                                            "last review",
@@ -1161,8 +1203,10 @@ class Assessor:
                 why = r.get("why")
                 defs[d] = why if r["state"] == "stale" and why in (
                     "source-changed", "source-unread", "source-unrecorded",
-                    "source-notation-unrecorded", "source-unpinned", "no-reading") \
-                    else r["state"]
+                    "source-notation-unrecorded", "source-unpinned", "no-reading",
+                    "shadowed") else r["state"]
+                if defs[d] == "shadowed":
+                    shadowed[d] = r
             if c.get("witness") and not c.get("witness_ok"):
                 add("the witness that the hypotheses can be met fails its check", c)
             if any(not r["discharged"] for r in c.get("regimes", [])):
@@ -1199,6 +1243,11 @@ class Assessor:
             if counts.get(state):
                 out.append(f"{counts[state]} definition{'s' if counts[state] > 1 else ''} its "
                            f"meaning depends on {words}")
+        # A review that a later marker shadows is named with both markers: the maintainer acts
+        # on them, not on the definition.
+        for d, r in shadowed.items():
+            if defs[d] == "shadowed":
+                out.append(f"the review of the definition {d} " + self._shadowed_words(r))
         if claim["scope"] == "definition" and self.claim_code(claim, clauses) != "definition.reviewed" and not out:
             out.append("its definitions are not independently reviewed")
         return list(dict.fromkeys(out))

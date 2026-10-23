@@ -8,7 +8,13 @@ import { readFileSync } from "node:fs";
 export default defineConfig({
   base: "./",
   plugins: [
-    svelte(),
+    // An accessibility warning fails the build, so that a new one cannot hide among others.
+    svelte({
+      onwarn(warning, warn) {
+        if (warning.code?.startsWith("a11y")) throw new Error(`${warning.filename}:${warning.start?.line}: ${warning.message}`);
+        warn(warning);
+      },
+    }),
     {
       name: "woff2-only",
       generateBundle(_, bundle) {
