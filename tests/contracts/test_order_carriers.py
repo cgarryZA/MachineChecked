@@ -17,7 +17,7 @@ import subprocess
 import pytest
 
 from conftest import ROOT, needs_lean
-from prooflens.assess import TOTALISED, totalised
+from prooflens.assess import TOTALISED, occurrences, totalised
 from prooflens.probe import lean_session, parse_records
 
 SRC = ROOT / "tests" / "fixtures" / "carriers"
@@ -71,6 +71,12 @@ def test_each_supremum_is_judged_by_its_type(tmp_path, toolchain):
 
     # A join and a real supremum in one statement: only the numeric warning.
     assert warnings(recs["both"]) == {"iSup": f"{REAL} (iSup occurs in Carriers.Spec.both)"}
+    # Its occurrences say which supremum the warning is about, each at its own place.
+    occ = occurrences(recs["both"], "iSup")
+    assert sorted((o["type"], o["structure"], o["state"], o["rule"]) for o in occ) == [
+        ("MeasurableSpace Ω", "complete-lattice", "none", None),
+        ("Real", "conditionally-complete-lattice", "applies", REAL)]
+    assert all(len(o["at"]) == 2 for o in occ) and len({a for o in occ for a in o["at"]}) == 4
 
     # The supremum of a set, and nested infima over a bounded index, are read in the reals.
     w = warnings(recs["sets"])
@@ -99,6 +105,7 @@ def test_each_supremum_is_judged_by_its_type(tmp_path, toolchain):
     assert {(o["const"], o["algebra"]) for o in recs["divGroup"]["order_ops"]["occurrences"]} == \
         {("HDiv.hDiv", "group"), ("Inv.inv", "group")}
     assert warnings(recs["divGroup"]) == {}
+    assert {o["structure"] for o in occurrences(recs["divGroup"], "HDiv.hDiv")} == {"group"}
     # A type with no group structure, or one the statement quantifies over: unresolved.
     for s, ty in (("divPlain", "Plain"), ("divPoly", "α")):
         msg = warnings(recs[s])["HDiv.hDiv"]

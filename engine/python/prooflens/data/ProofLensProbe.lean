@@ -923,65 +923,84 @@ def carrierJson (kind : String) (α : Expr)
   cache.modify (·.push ((kind, α), j))
   return j
 
-/-- The state of one walk: the applications found, the nodes left, the carriers read and the
-subterms already visited (a statement shares subterms, which a walk would otherwise repeat). -/
+/-- The state of one walk: the applications found (each with the positions it was met at), the
+nodes left, the carriers read and the subterms already visited, with the application found at
+each (a statement shares subterms, which a walk would otherwise repeat). -/
 structure OpsWalk where
-  out : IO.Ref (Array Json)
+  out : IO.Ref (Array (List (String × Json) × Array String))
   budget : IO.Ref Nat
   cache : IO.Ref (Array ((String × Expr) × List (String × Json)))
-  seen : IO.Ref (Std.HashSet Expr)
+  seen : IO.Ref (Std.HashMap Expr (Option Nat))
 
-/-- Record the application `e` of the operation `c`, with arguments `args`. The carrier is the
+/-- Record the application `e` of the operation `c`, with arguments `args`, at position `pos`;
+its index among the applications found, or none when `c` is not recorded. The carrier is the
 first argument or, for an operation whose type is fixed by its arguments, the type of the value
 once every argument is supplied (a value that is a function is read at its result). -/
-def opsRecord (e : Expr) (c : Name) (args : Array Expr) (w : OpsWalk) : MetaM Unit := do
-  let some (_, kind, first) := totalOps.find? (·.1 == c) | return
-  if first && args.size == 0 then return
+def opsRecord (e : Expr) (c : Name) (args : Array Expr) (pos : SubExpr.Pos) (w : OpsWalk) :
+    MetaM (Option Nat) := do
+  let some (_, kind, first) := totalOps.find? (·.1 == c) | return none
+  if first && args.size == 0 then return none
   let j ← if first then carrierJson kind args[0]! w.cache
     else
       orDefault [("carrier", Json.str ""), ("carrier_head", Json.str "")] do
         forallTelescope (← inferType e) fun _ ty => carrierJson kind ty w.cache
-  w.out.modify (·.push (Json.mkObj (("const", Json.str c.toString) :: j)))
+  let i := (← w.out.get).size
+  w.out.modify (·.push (("const", Json.str c.toString) :: j, #[toString pos]))
+  return some i
 
-partial def opsVisit (e : Expr) (w : OpsWalk) : MetaM Unit := do
+/-- The position of the function of an application with `n` arguments at `pos`. -/
+def appFnPos : Nat → SubExpr.Pos → SubExpr.Pos
+  | 0, pos => pos
+  | n + 1, pos => appFnPos n pos.pushAppFn
+
+/-- Visit `e`, at position `pos` of the proposition (the positions of its printed sub-terms).
+A subterm met again adds its position to the application it is, if any; the applications
+inside it are listed at the positions they were first met. -/
+partial def opsVisit (e : Expr) (pos : SubExpr.Pos) (w : OpsWalk) : MetaM Unit := do
   if (← w.budget.get) == 0 then return
-  if (← w.seen.get).contains e then return
-  w.seen.modify (·.insert e)
+  if let some found := (← w.seen.get)[e]? then
+    if let some i := found then
+      w.out.modify fun out => out.modify i fun (j, at_) => (j, at_.push (toString pos))
+    return
+  w.seen.modify (·.insert e none)
   w.budget.modify (· - 1)
+  let note (i : Option Nat) : MetaM Unit := if i.isSome then w.seen.modify (·.insert e i) else pure ()
   match e with
   | .forallE n t b bi | .lam n t b bi =>
-    opsVisit t w
-    withLocalDecl n bi t fun x => opsVisit (b.instantiate1 x) w
+    opsVisit t pos.pushBindingDomain w
+    withLocalDecl n bi t fun x => opsVisit (b.instantiate1 x) pos.pushBindingBody w
   | .letE n t v b _ =>
-    opsVisit t w
-    opsVisit v w
-    withLetDecl n t v fun x => opsVisit (b.instantiate1 x) w
-  | .mdata _ b => opsVisit b w
-  | .proj _ _ b => opsVisit b w
-  | .const c _ => opsRecord e c #[] w
+    opsVisit t pos.pushLetVarType w
+    opsVisit v pos.pushLetValue w
+    withLetDecl n t v fun x => opsVisit (b.instantiate1 x) pos.pushLetBody w
+  | .mdata _ b => opsVisit b pos w
+  | .proj _ _ b => opsVisit b pos.pushProj w
+  | .const c _ => note (← opsRecord e c #[] pos w)
   | .app .. =>
     let f := e.getAppFn
     let args := e.getAppArgs
     if let .const c _ := f then
-      opsRecord e c args w
+      note (← opsRecord e c args pos w)
     else
-      opsVisit f w
-    for a in args do
-      opsVisit a w
+      opsVisit f (appFnPos args.size pos) w
+    for h : i in [0:args.size] do
+      opsVisit args[i] (pos.pushNaryArg args.size i) w
   | _ => pure ()
 
-/-- Each application of a totalised operation in `e`, with its carrier. `complete: false` when
-some applications may be missing, with the reason in `stopped`: the walk reached its limit of
-nodes (`nodes`), or failed, for example by running out of heartbeats (`error`). -/
+/-- Each application of a totalised operation in `e`, with its carrier and the positions it
+occurs at in `e` (`at`, as the printed sub-terms name them). `complete: false` when some
+applications may be missing, with the reason in `stopped`: the walk reached its limit of nodes
+(`nodes`), or failed, for example by running out of heartbeats (`error`). -/
 def orderOpsJson (e : Expr) : MetaM Json := do
   let w : OpsWalk := { out := ← IO.mkRef #[], budget := ← IO.mkRef opsNodes,
                        cache := ← IO.mkRef #[], seen := ← IO.mkRef {} }
   let finished ← orDefault false do
-    opsVisit e w
+    opsVisit e .root w
     return true
   let left ← w.budget.get
   let stopped := if !finished then "error" else if left == 0 then "nodes" else ""
-  return Json.mkObj ([("occurrences", Json.arr (← w.out.get)), ("complete", stopped == "")] ++
+  let occ := (← w.out.get).map fun (j, at_) => Json.mkObj (j ++ [("at", toJson at_)])
+  return Json.mkObj ([("occurrences", Json.arr occ), ("complete", stopped == "")] ++
     (if stopped == "" then [] else [("stopped", Json.str stopped)]))
 
 def disallowed (allowed : Array Name) (axs : Array Name) : Array Name :=
