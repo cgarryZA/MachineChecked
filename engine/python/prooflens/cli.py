@@ -664,7 +664,8 @@ def _reference_warnings(num: dict | None) -> list[dict]:
     from . import numbering as nb
     return [{"kind": "paper-reference", "file": o["source"].get("file"),
              "line": o["source"].get("line"), "reference": o["reference"],
-             "status": o["status"], "id": o["id"], "message": nb.message(o)}
+             "status": o["status"], "id": o["id"], "message": nb.message(o),
+             **({"paper": o["attributed"]} if o.get("attributed") else {})}
             for o in (num or {}).get("references", []) if nb.suspect(o)]
 
 
@@ -695,6 +696,12 @@ def _check_json(a):
             if num is not None:
                 out["warnings"] = _reference_warnings(num)
                 out["numbering"] = num
+                # With several papers, each paper's references and warnings by themselves.
+                if num.get("papers"):
+                    from .numbering import paper_view
+                    out["papers"] = {pid: {"warnings": _reference_warnings(paper_view(num, pid)),
+                                           "numbering": paper_view(num, pid)}
+                                     for pid in num["papers"]}
             failed = bool(idx["findings"]["total"].get("violation"))
         else:
             root, paper = _simple_target(a)

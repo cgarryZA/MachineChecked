@@ -33,6 +33,10 @@ reference is reported alone and never read as a version change. An explicit map 
 two versions of the paper resolves a renumbered reference when it names one current statement,
 and keeps every candidate when it names several.
 
+With several papers in one configuration, each reference is attributed to one paper
+(`attribute`) and checked against that paper's numbering; one that cannot be attributed is
+`unchecked`, with the reason (`combine` gathers the papers' references and patterns).
+
 This changes what suggestions say and how much a cited number counts; it never creates a link
 or changes a status.
 """
@@ -221,13 +225,15 @@ def _norm_ref(s: str) -> str | None:
 
 def analyse(index: list[dict], claims: list[dict], inv: dict, blocks: list[dict] = (),
             foreign=frozenset(), retrieval=None, claim_text=None,
-            version_map: dict | None = None) -> dict:
+            version_map: dict | None = None, refs: list[dict] | None = None) -> dict:
     """The references of the project to the paper, each with its status, and the project-level
     pattern. `retrieval` (a `retrieval.Retrieval` of `index`) and `claim_text` (a claim's
     printed statement) let an exact reference be compared with the content it cites.
     `version_map` (`{"source": …, "entries": [{"old": "Theorem 2.1", "new": ["Theorem 3.1"]}]}`)
-    maps references of an earlier version of the paper to this one."""
-    refs = find_references(index, list(blocks), foreign)
+    maps references of an earlier version of the paper to this one. `refs`, when given, are the
+    references to check (those `attribute` gives this paper), instead of all of the project's."""
+    if refs is None:
+        refs = find_references(index, list(blocks), foreign)
     st = inv["statements"]
     by_number: dict[str, list[tuple[str, str]]] = {}
     for (k, n) in st:
@@ -428,7 +434,8 @@ def where(o: dict) -> str:
 
 def message(o: dict) -> str:
     """One line for the terminal."""
-    out = f"{where(o)} cites {o['reference']}: {o['detail']}"
+    of = f" of paper {o['attributed']}" if o.get("attributed") else ""
+    out = f"{where(o)} cites {o['reference']}{of}: {o['detail']}"
     cur = o.get("current")
     if cur:
         out += (f"; the version map gives {cur['reference']}" if cur.get("reference")
@@ -468,3 +475,91 @@ def reliability(numbering: dict | None, decl: str, reference: str) -> tuple[floa
         return 0.4, ("a possibly stale number: the Lean's references appear to follow another "
                      "version of the paper")
     return 1.0, None
+
+
+# -- several papers -----------------------------------------------------------------------------
+
+def owners(names_by_paper: dict[str, set[str]], index: list[dict],
+           stated_by_paper: dict[str, set[str]] | None = None) -> dict[str, dict]:
+    """For each paper, the declarations its claims (and the project's alignment) name, and the
+    places that the declarations stating its claims lie in (`stated_by_paper`, by default all
+    of them): their namespaces and modules. Definitions, which papers often share, are named
+    declarations but give no place."""
+    module = {d["name"]: d.get("module") for d in index}
+    out = {}
+    for pid, names in names_by_paper.items():
+        places = set()
+        for n in (stated_by_paper or names_by_paper).get(pid, ()):
+            if "." in n:
+                places.add(n.rsplit(".", 1)[0])
+            if module.get(n):
+                places.add(module[n])
+        out[pid] = {"names": set(names), "places": places}
+    return out
+
+
+def _depth(name: str, places: set[str]) -> int:
+    """The number of leading components of `name` that form a place of `places` (0 if none)."""
+    parts = name.split(".")
+    return next((i for i in range(len(parts), 0, -1) if ".".join(parts[:i]) in places), 0)
+
+
+def _named_paper(o: dict, papers: list[tuple[str, str]]) -> str | None:
+    """The one paper a reference to another work names after it (`Theorem 2.1 of [U]`, or the
+    paper's title), if exactly one is named."""
+    ctx = o.get("context") or ""
+    after = ctx.split(o["text"], 1)[1][:80] if o["text"] in ctx else ""
+    hits = [pid for pid, title in papers
+            if re.search(r"\[" + re.escape(pid) + r"\]", after)
+            or (title and re.sub(r"\s+", " ", title).lower() in after.lower())]
+    return hits[0] if len(hits) == 1 else None
+
+
+def attribute(o: dict, own: dict[str, dict], papers: list[tuple[str, str]]) \
+        -> tuple[str | None, str]:
+    """The paper of the configuration a reference cites, or None with the reason: the paper
+    it names (`Theorem 2.1 of [U]`); else the paper whose claims name its declaration; else the
+    paper owning the longest namespace or module that contains its declaration or module, when
+    one paper owns it."""
+    if o.get("status") == "other-source":
+        pid = _named_paper(o, papers)
+        return (pid, "") if pid else (None, "")
+    src = o["source"]
+    decl = src.get("declaration")
+    if decl:
+        named = sorted(p for p, w in own.items() if decl in w["names"])
+        if len(named) == 1:
+            return named[0], ""
+        if named:
+            return None, f"its declaration is named by claims of papers {' and '.join(named)}"
+    spots = [s for s in (decl.rsplit(".", 1)[0] if decl and "." in decl else None,
+                         src.get("module")) if s]
+    depth = {p: max((_depth(s, w["places"]) for s in spots), default=0) for p, w in own.items()}
+    top = max(depth.values(), default=0)
+    best = sorted(p for p, d in depth.items() if d == top)
+    if top == 0:
+        return None, "no claim of any paper names a declaration in its namespace or module"
+    if len(best) > 1:
+        return None, f"its namespace or module holds claims of papers {' and '.join(best)}"
+    return best[0], ""
+
+
+def combine(per: dict[str, dict], invs: dict[str, dict], refs: list[dict]) -> dict:
+    """One numbering for a configuration with several papers: every reference (each checked
+    against the paper it is attributed to, `attributed`, or unchecked), the counts over all of
+    them, and each paper's own pattern."""
+    inv = {"complete": all(i["complete"] for i in invs.values()),
+           "reason": "; ".join(f"paper {p}: {i['reason']}" for p, i in invs.items()
+                               if i["reason"]),
+           "statements": {}, "sections": None}
+    p = pattern(refs, inv)
+    p["drift"] = any(n["pattern"]["drift"] for n in per.values())
+    p["inventory"]["statements"] = sum(len(i["statements"]) for i in invs.values())
+    return {"references": refs, "pattern": p,
+            "papers": {pid: n["pattern"] for pid, n in per.items()}}
+
+
+def paper_view(numbering: dict, pid: str) -> dict:
+    """One paper's references and pattern, from a numbering of several papers."""
+    return {"references": [o for o in numbering["references"] if o.get("attributed") == pid],
+            "pattern": numbering["papers"][pid]}

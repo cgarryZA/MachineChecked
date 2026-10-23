@@ -183,8 +183,8 @@ and is checked only for the number and kind it cites. `check` prints each disagr
 with its file and line. When several references disagree, the reader's notes say that the Lean
 appears to follow another version of the paper, and suggestions then rank content further
 above cited numbers. None of this links a declaration or changes a status. A full assessment
-(a project with a `machinechecked.toml` and one paper) checks the same references
-([ASSURANCE.md](ASSURANCE.md)).
+(a project with a `machinechecked.toml`) checks the same references, each against the paper it
+belongs to when there are several ([ASSURANCE.md](ASSURANCE.md)).
 
 The local reader saves your decisions in `machinechecked.links.json` at the repository root and refreshes the view. Commit that small file if you want the associations to travel with the project.
 
