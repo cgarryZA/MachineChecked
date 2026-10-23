@@ -104,7 +104,7 @@ Dismissals of warnings (`dismissals.json`):
 | `reviews` | the review files' hashes and every parsed marker |
 | `dismissals` | as read |
 | `lean` | the probe records: specifications (binders, conclusion, closure, constants, hashes), proofs (exact-type check, axioms), declarations (signature, value, definition content, authored source, doc, hashes), layering |
-| `tex` | per paper: mode, page size, anchors (env, number, labels, file:line, begin/head/end positions, source hash), files read, source regions, and the display excerpts of its claims (`excerpts`, [SOURCE_REGIONS.md](SOURCE_REGIONS.md#display-excerpts)) |
+| `tex` | per paper: mode, page size, anchors (env, number, labels, file:line, begin/head/end positions, source hash), files read, source regions, the text of the passage of each claim located by line (`region_text`), and the display excerpts of its claims (`excerpts`, [SOURCE_REGIONS.md](SOURCE_REGIONS.md#display-excerpts)) |
 | `assessment` | per claim: status and clauses (for a proof step, also its `step_review` from its markers); all findings |
 
 A pretty-printed Lean term (a binder's type, a conclusion, a signature) is `{text, segments}`:
@@ -194,8 +194,10 @@ The current format is `prooflens/manifest@1`; older display data must be rebuilt
 See [the structured status contract](STATUS_CONTRACT.md) for the complete code inventory.
 
 `data/index.json` lists the papers, every claim's `status_code`, derived status/class and anchor, the summary and the
-findings counts. `data/claims/<file>.json` holds one passport: the printed statement (and its
-display `excerpt`, when the paper publishes its source text), each
+findings counts. `data/claims/<file>.json` holds one passport: the printed statement
+(`statement_tex`: a statement environment's body, or the pinned passage of a claim located by
+line, each read from the source file that holds it, also when the main file `\input`s or
+`\include`s its sections; and its display `excerpt`, when the paper publishes its source text), each
 clause's unfolded statement, proofs, witness, regimes, reviews and structured `evidence`, the
 declarations of its closure, and its findings. A clause also lists `witness_defs`, the
 declarations only its witnesses use that have no current review (`{name, witnesses, state}`),
@@ -296,10 +298,17 @@ of `key` and `number`, where `key` is the claim's key on that page, such as `the
 
 A listing can supply the map. `claim_map(earlier, claims, later, claims)` can also compute it
 from the two versions' claim inventories, where each claim gives `key`, `number`, and optionally
-`label` (its source pin) and `statement` (its text). It matches a claim by its label, or else by
-its statement text when exactly one claim of the other version has that text. It maps only claims
-that have a statement, and never infers a split. `check_claim_map` refuses a change that does not
-fit its claims.
+`label` (its source pin) and `statement` (its text). It compares statements without their
+`\label` commands and with white space collapsed. It matches a claim by its label, when each
+version has one claim with it; else by its statement text, when each version has one such claim
+not matched by a label; else by its number, when each version has one claim there not matched
+before and neither has a label the other version gives a claim. A matched claim is `same`,
+`renumbered` or `changed`; a match with no statement text on one side is left out, since nothing
+says whether it changed. A claim is `removed` (or `new`) only when the other version certainly
+has no counterpart: the claim has a label, no claim of the other version has that label, and none
+there under its number is unmatched or lacks a statement text; any other unmatched claim is left
+out, and the claim view shows nothing for it. It maps only claims that have a statement, and
+never infers a split. `check_claim_map` refuses a change that does not fit its claims.
 
 Each claim a map names gets `counterparts` on its row of `index.json`, provided the page offers
 the other version. Each counterpart gives `version`, `later` (whether the other version is the

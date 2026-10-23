@@ -41,7 +41,7 @@ machinechecked view paper/main.pdf
 
 MachineChecked looks for a root LaTeX document first, otherwise a PDF. If several candidates remain, it lets you choose. Leanblueprint projects can use their existing `\lean{...}` tags; `blueprint/src/print.tex` is the paper, and an engine the blueprint's `latexmkrc` names is used (the engine name is read from the file).
 
-## Papers that are only a PDF, or at a URL
+## Open a PDF or a paper at a URL
 
 A paper can be a URL: `machinechecked view https://…/paper.pdf` downloads it once into `.machinechecked/papers/`.
 
@@ -49,7 +49,7 @@ LaTeX environments supply statement boundaries. For PDFs, MachineChecked detects
 headings and estimates each statement’s end at the next proof, section or statement. PDF detection
 requires a text layer and recognisable headings. The reader marks these locations as approximate.
 
-## Projects with a formalization.yaml
+## Use a formalization.yaml
 
 MachineChecked reads an existing [`formalization.yaml`](https://github.com/mathlib-initiative/formalization.yaml):
 
@@ -71,6 +71,8 @@ detect). `machinechecked compare --query search TEXT --all-libraries` searches e
 and `machinechecked inspect NAME` reaches any declaration.
 
 Build the Lean project to check its linked declarations.
+
+## Select a claim
 
 The reader opens on the paper. Select a numbered statement in the contents or its margin marker.
 The panel shows **Paper**, **Readable Lean** and **Exact Lean**. **Expand comparison** gives
@@ -166,8 +168,16 @@ compare it with the paper read here:
 - this version of the paper has no statement with that number;
 - the paper's numbering is not completely known (a PDF read by its headings), so it is not
   checked;
-- the reference is to another work (`Theorem 4.1 of [Gauss]`), or in a namespace the project
-  maps to another paper.
+- the reference is to another work, or in a namespace the project maps to another paper.
+
+A reference is to another work when a citation follows its number (`Theorem 4.1 of [Gauss]`,
+`Theorem 3 in Hardy and Wright`, `Lemma 9 [AB]`) or comes just before it: an open citation
+bracket (`[AB, Lemma 9]`), `et al.`, an author's possessive (`Gauss's Lemma 4.22`,
+`[AB]'s Lemma 9`, `Smith et al.'s Theorem 3`), or a chapter after a comma, as a book's citation
+gives it (`Hardy–Wright, *An Introduction*, Ch. IV, Prop. 4.7`). A possessive of the paper,
+a part of it or the Lean (`the paper's Lemma 2.1`, `Lean's Theorem 2.1`), a possessive earlier
+in the sentence (`By Gauss's lemma and Lemma 2.1`) and a chapter in prose (`In Chapter 4,
+Lemma 4.2`) leave the reference checked against the paper.
 
 Digits that run together in a name (`lem41_bound`, or `Assumption22` written as an
 identifier in a docstring) are read in every way the paper could mean them, `4.1` and `41`: the
@@ -185,6 +195,8 @@ appears to follow another version of the paper, and suggestions then rank conten
 above cited numbers. None of this links a declaration or changes a status. A full assessment
 (a project with a `machinechecked.toml`) checks the same references, each against the paper it
 belongs to when there are several ([ASSURANCE.md](ASSURANCE.md)).
+
+### Save and record links
 
 The local reader saves your decisions in `machinechecked.links.json` at the repository root and refreshes the view. Commit that small file if you want the associations to travel with the project.
 
@@ -266,9 +278,9 @@ An `unresolved` reading records the question and what would decide it:
                "would_decide": "The paper's standing conventions."}
 ```
 
-The reader shows **Unresolved** with the question. It records an open question, not a difference.
+The reader shows **Unresolved** with the open question and what would decide it.
 
-## Proof steps
+## Link a proof step
 
 A numbered equation inside a printed proof is a target of its own. In zero configuration,
 every numbered display with one `\label` inside a `proof` environment is listed as **Equation (n)**
@@ -307,9 +319,9 @@ result's status, coverage or review: until a reviewer reports on it, it reads **
 In a full assessment, a step is an inventory entry with `unit` and `parent` (see the
 [data model](DATA_MODEL.md)).
 
-## Read a claim
+## Compare the printed and Lean statements
 
-Select a claim to see the printed statement beside its Lean statement. For a LaTeX paper the statement is typeset from its source when the whole passage can be, under the paper's own macros and with its printed reference and equation numbers; otherwise it is the excerpt of the PDF, which is always available under **As printed in the PDF** ([what decides](SOURCE_REGIONS.md#display-excerpts)). The Lean statement is set out as its variables, its hypotheses in order, and its conclusion. A “there is” inside the conclusion shows its witness with its type, and the parts that use that witness beneath it; two witnesses of the same name in different parts are different variables. When the project's repository is on GitHub, **Lean source** opens the declaration at the exact commit and line. Where a corrected statement stands beside the printed one, a box says what the correction changes: the hypotheses it adds or drops, and whether the conclusion is the same. **Review it** opens the review queue, and **Raise issue** a report to the audit's repository.
+Select a claim to see the printed statement beside its Lean statement. For a LaTeX paper the statement is typeset from its source when the whole passage can be, under the paper's own macros and with its printed reference and equation numbers; otherwise it is the excerpt of the PDF, which is always available under **As printed in the PDF** ([what decides](SOURCE_REGIONS.md#display-excerpts)). The Lean statement is set out as its variables, its hypotheses in order, and its conclusion. A “there is” inside the conclusion shows its witness with its type, and the parts that use that witness beneath it; two witnesses of the same name in different parts are different variables. When the project's repository is on GitHub, **Lean source** opens the declaration at the exact commit and line. Where a corrected statement stands beside the printed one, a box says what the correction changes: the hypotheses it adds or drops, and whether the conclusion is the same. **Review it** opens the review queue, and **Report issue** a report to the audit's repository.
 
 ## Interpret the status
 
@@ -363,7 +375,7 @@ It also warns, with the file and line, about each name a module docstring lists 
 Generated files in `.machinechecked/` are Git-ignored. Use `--out` to save the HTML elsewhere.
 The bundle contains the paper and Lean statements; share it with an appropriate audience.
 
-## Build on your own CI, and save the build
+## Build in your own CI and save the build
 
 A large project can take hours to build. Two things save that time, both on your own resources:
 
@@ -391,7 +403,7 @@ jobs:
 
 The workflow uses your repository’s GitHub Actions runners and build cache.
 
-## Several audits of one repository
+## Publish an audit of each paper version
 
 An audit pins one version of its paper: a published version (`published = "arXiv:2601.01234v1"`, labelled "arXiv v1") or an unpublished manuscript at a commit (`version = "manuscript"` with the source's `rev`, labelled "Latest manuscript (commit abc1234)"). The [full assessment guide](ASSURANCE.md) says how to declare it; `build` refuses an audit whose claim inventory is pinned to another version. When some claims carry no pin, the version is shown as declared by the author and not checked against the claims.
 
@@ -424,22 +436,22 @@ A deploy replaces the whole site, so every run builds every audit; a saved build
 
 A paper page that lists audits of several versions gives each version its own page, and the reader a drop-down beside the formalisation selector to switch between them ([data model](DATA_MODEL.md)). Each version keeps its own PDF, claim numbers and statuses.
 
-When the site relates the claims of two versions, a claim says what it became in the other version and links to it: "Theorem 3 in Latest manuscript (commit abc1234), statement changed", "Lemma 1 in arXiv v1, renumbered", or "Removed in Latest manuscript (commit abc1234)". This relation never changes a status.
+When the site relates the claims of two versions, a claim says what it became in the other version and links to it: "Theorem 3 in Latest manuscript (commit abc1234), statement changed", "Lemma 1 in arXiv v1, renumbered", or "Removed in Latest manuscript (commit abc1234)".
 
 In the panel beside the paper, each audit names the version it pins and its commit. **Open the audit** opens the audit of the version shown; audits of other versions link to their own version's page.
 
-## Paper pages with several audits
+## Read a paper with several audits
 
 On machinechecked.org, a paper version with audits from several Lean projects opens with all of them, under **All audits** in the formalisation selector:
 
 - Each claim shows the evidence of the default audit: the audit whose repository has the most GitHub stars (or the first listed, when the site has no star counts).
 - A claim the default audit does not map shows the evidence of the next audit, by stars, that maps it. The claim panel names that audit's author, repository and commit, and the contents list marks the claim with its repository.
-- Each claim carries one audit's status; statuses from different audits are never combined.
+- Each claim's status comes from one audit, named in the claim panel.
 - Choosing one project shows only its evidence. A claim its audit does not map is marked **Not in this audit**.
 
 Audits are shown together only on the page of the paper version they pin.
 
-## A badge for your README
+## Add a badge to your README
 
 Once your paper is listed on machinechecked.org (a repository whose `formalization.yaml` names an
 arXiv paper is listed within a day), its page has a badge that says how far the site's knowledge
@@ -449,14 +461,13 @@ of it goes ("Lean repository linked", or "audit published"):
 [![MachineChecked](https://machinechecked.org/papers/2601.01234/badge.svg)](https://machinechecked.org/papers/2601.01234/)
 ```
 
-Use your paper's arXiv identifier. The badge says what is listed, never that anything is
-verified.
+Use your paper's arXiv identifier.
 
 ## Share a claim or report a problem
 
 A claim has **Copy link**, which copies its permanent address when the site is hosted. On an unhosted local copy, it copies a claim reference instead.
 
-To enable **Raise issue**, launch the reader with a repository for reports and the eventual public address:
+To enable **Report issue**, launch the reader with a repository for reports and the eventual public address:
 
 ```sh
 machinechecked view --issues owner/repo --site-url https://example.org/audit/

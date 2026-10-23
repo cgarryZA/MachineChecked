@@ -76,6 +76,11 @@ def test_stale_numbers_are_reported_and_content_finds_each_claim(tmp_path, capsy
     assert st[("Renum.lemma_2_5", "Lemma 2.5")] == ("absent", False)
     assert st[("Renum.gauss_sum", "Theorem 4.1")] == ("other-source", False)
     assert st[("Renum.Bounds", "Section 2")] == ("exact", False)
+    # An author's possessive and a book's chapter before the number cite another work; the
+    # paper's own possessive after an unrelated one is still checked (#287).
+    assert st[("Renum.Bounds", "Lemma 4.22")] == ("other-source", False)
+    assert st[("Renum.Bounds", "Proposition 4.7")] == ("other-source", False)
+    assert st[("Renum.Bounds", "Lemma 2.6")] == ("absent", False)
     o = refs[("Renum.two_mul_triangle", "Lemma 2.2")]
     assert o["source"]["file"] == "Renum/Basic.lean" and o["source"]["line"] == 17
     assert o["content"]["closer"]["number"] == "Lemma 3.2"

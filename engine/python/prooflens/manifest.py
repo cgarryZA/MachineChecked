@@ -205,6 +205,10 @@ def build(evidence: dict, release: str, display: dict | None = None
         counts = Counter(f["tier"] for f in fs if not f.get("dismissed"))
         summary.setdefault(c["paper"], Counter())[a["status"]] += 1
         fname = claim_file(c["id"])
+        # The printed statement: an environment's body, or the passage of a claim located by
+        # line, each read from the file that holds it (display only).
+        statement = (anchor or {}).get("statement") or \
+            (t.get("region_text") or {}).get(c["id"])
         index_claims.append({
             "id": c["id"], "paper": c["paper"], "number": number,
             "title": description, "heading": heading, "kind": c.get("kind", ""),
@@ -281,7 +285,7 @@ def build(evidence: dict, release: str, display: dict | None = None
             "scope_reviewed": c.get("scope_reviewed"), "location": c.get("location"),
             "source_sha256": c.get("source_sha256"), **status, "anchor": anchor, "source_matches": src_ok,
             "source_evidence": source_evidence(anchor, t.get("mode"), src_ok, t),
-            "statement_tex": (anchor or {}).get("statement"),
+            "statement_tex": statement,
             # The passage the reader typesets, when it can be typeset faithfully (display only).
             "excerpt": (t.get("excerpts") or {}).get(c["id"]),
             # Every passage of a pin that lists several, in order (display only).
@@ -289,7 +293,7 @@ def build(evidence: dict, release: str, display: dict | None = None
                if (t.get("part_text") or {}).get(c["id"]) else {}),
             "blockers": [shown_names(b, clause_tex) for b in a.get("blockers", [])],
             "clauses": clauses, "decls": decls, "findings": fs,
-            "symbols": symbol_links(display, c["id"], (anchor or {}).get("statement"), lean,
+            "symbols": symbol_links(display, c["id"], statement, lean,
                                     (t.get("excerpts") or {}).get(c["id"])),
             "unit": unit, "parent": c.get("parent"),
             **({"step": step} if step else {})}

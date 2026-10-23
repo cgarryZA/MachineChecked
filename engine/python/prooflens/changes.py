@@ -605,7 +605,7 @@ def compare(old_record: dict, old_release: str, new_record: dict, new_release: s
                                          != (c["status"]["to"] or {}).get("status_code")
                                          for c in claims)},
         "claims": claims, "declarations": decls,
-        "note": ("Each status is the one its own build computed; this comparison changes none. "
+        "note": ("Each status is the one its own build computed. "
                  "A reopened review needs a new reading at the later revision; the earlier "
                  "reading stays in the review files as it was.")}
 
