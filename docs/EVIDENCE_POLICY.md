@@ -33,11 +33,16 @@ and fails the paper's consistency check.
 
 Every definition in the closure of a proposition needs its own review, including the auxiliary
 declarations Lean generates (`match_1`, `_f`): they are part of the definition's meaning. A
-declaration that only a witness's statement uses needs no review; it is listed while it has
-none, and a project can require its review (`require_witness_def_reviews`), which can only hold
-a status back. A proof (a declaration whose type is a proposition: a theorem, a `_proof_1` Lean
-generates, a `Prop`-valued instance such as `Fact (2 ≠ 0)`) carries no data, so it cannot fix
-the instance a witness exhibits: it is not listed and needs no review.
+closure is taken with the proofs in each statement and definition erased, a witness's as a
+proposition's. A declaration that only a witness's statement uses needs no review; it is listed
+while it has none, and a project can require its review (`require_witness_def_reviews`), which
+can only hold a status back. A proof (a declaration whose type is a proposition: a theorem, a
+`_proof_1` Lean generates, a `Prop`-valued instance such as `Fact (2 ≠ 0)`) carries no data, so
+it cannot fix the instance a witness exhibits: it is not listed and needs no review. The tactic
+script Lean stores for a tactic default (`pos : 0 < val := by decide`, an auto-parameter such as
+`Pos.pos._autoParam`) gives only a proof of the proposition its field or binder states, and that
+proposition is reviewed with the structure or definition: the script needs no review, in a
+proposition's closure or a witness's.
 
 ## A review is a reading of a text
 
@@ -151,11 +156,15 @@ Every evidence record contains:
   the files read during compilation;
 - the hashes of the review files.
 
-`machinechecked build --reuse-lean` reuses stored probe records only when a SHA-256 over every Lean input
-(the project's and every path dependency's sources, lakefiles, manifest and toolchain) and the
-probe itself are unchanged; otherwise it stops with exit code 2 and says to run `machinechecked
-build` without `--reuse-lean`. `machinechecked reassess` applies new reviews and dismissals to stored
-evidence, and refuses when the claim inventory changed.
+`machinechecked build --reuse-lean` reuses the probe records of the newest stored release made
+from the same Lean inputs (a SHA-256 over the project's and every path dependency's sources,
+lakefiles, manifest and toolchain), by the same probe and with the same probe settings (`modules`,
+`scope_roots`, the layer prefixes and `allowed_axioms`), when they answer every request of the
+claim inventory. A later release made otherwise does not hide it. A record that does not state
+its probe settings (stored by an earlier version) is not reused. When no release qualifies, the
+build stops with exit code 2, names the condition the closest release fails, and says to run
+`machinechecked build` without `--reuse-lean`. `machinechecked reassess` applies new reviews and
+dismissals to stored evidence, and refuses when the claim inventory changed.
 
 In zero configuration, every build reuses the Lean facts it extracted before (a module's index, a
 linked declaration's record, an `inspect` answer) while the modules of the environment they came

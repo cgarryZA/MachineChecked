@@ -15,7 +15,7 @@ from . import manifest as mf
 from . import review_queue as rq
 from .assess import Assessor, line_location
 from .config import Config, ConfigError
-from .probe import FINGERPRINT_VERSION, MODDOCS, requests_from_inventory, run_probe
+from .probe import FINGERPRINT_VERSION, MODDOCS, probe_query, requests_from_inventory, run_probe
 from .reviews import load_dismissals, load_reviews
 from .review_sources import carried
 from .schemas import validate
@@ -87,19 +87,12 @@ def build(cfg: Config, release: str | None = None, skip_lean: bool = False,
     lean = None
     lean_digest = None
     probe_used = probe_digest()  # the probe this build runs, read before it runs
+    settings_used = probe_settings_digest(cfg)
     if reuse_lean:
-        lean = reusable_lean(cfg)
-        missing = [r["name"] for r in requests_from_inventory(inv)
-                   if (r["kind"] == "spec" and r["name"] not in lean["specs"])
-                   or (r["kind"] == "decl" and r["name"] not in lean["defs"])
-                   or (r["kind"] == "link" and r["name"] not in lean.get("links", {}))
-                   or (r["kind"] in ("accept", "refute", "witness") and
-                       f"{r['kind']}:{r['name']}:{r.get('spec') or ''}" not in lean["proofs"])]
-        if missing:
-            raise StaleEvidence(f"the stored Lean results do not cover {', '.join(missing[:5])}"
-                                + (", …" if len(missing) > 5 else "") + "; " + RUN_PROBE)
+        reused, lean = reusable_lean(cfg, requests_from_inventory(inv))
         lean_digest = lean_inputs_digest(cfg)
-        log("probe: reusing the stored probe records (no Lean input changed)")
+        log(f"probe: reusing the probe records of release {reused} (the same Lean inputs, "
+            "probe and probe settings)")
     elif not skip_lean:
         lean_digest = lean_inputs_digest(cfg)
         log(f"probe: {len(requests_from_inventory(inv))} requests in {cfg.lean_root}")
@@ -202,6 +195,7 @@ def build(cfg: Config, release: str | None = None, skip_lean: bool = False,
         "provenance": {"tool": {"name": "prooflens", "version": tool_version(),
                                 "fingerprint": FINGERPRINT_VERSION},
                        "probe_sha256": probe_used if lean else None,
+                       "probe_settings_sha256": settings_used if lean else None,
                        "lean_inputs_sha256": lean_digest,
                        "lean_reused": reuse_lean,
                        "lean": (lean or {}).get("env"), "project": project_provenance(cfg),
@@ -269,6 +263,14 @@ def probe_digest() -> str:
                        .read_text())
 
 
+def probe_settings_digest(cfg: Config) -> str:
+    """SHA-256 over what the probe's records depend on besides the Lean, the probe and the
+    requests: the modules it loads, and the scope roots, layer prefixes and allowed axioms it is
+    given (`probe.probe_query`)."""
+    return sha256_text(canonical_json({"modules": cfg.modules,
+                                       "query": probe_query(cfg, [])}))
+
+
 def source_info(cfg: Config) -> dict:
     """The project's source repository, for the reader's Lean source links."""
     from . import audit
@@ -276,23 +278,69 @@ def source_info(cfg: Config) -> dict:
                              cfg.repository_private)
 
 
-def reusable_lean(cfg: Config) -> dict:
-    """The probe records of the latest evidence, if they still describe this checkout: the same
-    content of every Lean input (here and in every path dependency) and the same probe."""
-    rels = ev.releases(cfg.out_dir)
-    if not rels:
-        raise StaleEvidence("no stored Lean results to reuse; " + RUN_PROBE)
-    body = ev.load(cfg.out_dir, read_json(rels[-1])["evidence"])["body"]
-    lean, prov = body.get("lean"), body["provenance"]
-    if not lean or not prov.get("lean_inputs_sha256") or not prov.get("probe_sha256"):
-        raise StaleEvidence("the stored Lean results do not record their Lean inputs; "
-                            + RUN_PROBE)
-    if prov["lean_inputs_sha256"] != lean_inputs_digest(cfg):
-        raise StaleEvidence("Lean inputs changed since the stored Lean results (here or in a "
-                            "path dependency); " + RUN_PROBE)
-    if prov["probe_sha256"] != probe_digest():
-        raise StaleEvidence("the Lean probe changed since the stored Lean results; " + RUN_PROBE)
-    return lean
+def reusable_lean(cfg: Config, requests: list[dict]) -> tuple[str, dict]:
+    """The newest stored release whose probe records describe this checkout, and those records:
+    made from the same content of every Lean input (here and in every path dependency), by the
+    same probe, with the same probe settings, and answering every one of `requests`. It need
+    not be the latest release: a build that reproduces an earlier evidence record names no new
+    release. When no release qualifies, the refusal says how far the closest came."""
+    want = (lean_inputs_digest(cfg), probe_digest(), probe_settings_digest(cfg))
+    closest, why, seen = -1, "no stored Lean results to reuse", set()
+    for rel in reversed(ev.releases(cfg.out_dir)):
+        try:
+            named = read_json(rel)
+            name, eid = named["release"], named["evidence"]
+            if eid in seen:
+                continue
+            seen.add(eid)
+            path = cfg.out_dir / "evidence" / f"{eid}.json"
+            rec = read_json(path)
+            body = rec["body"]
+            lean, prov = body.get("lean"), body["provenance"]
+        except (OSError, ValueError, KeyError, TypeError):
+            continue  # a record that cannot be read cannot be reused
+        if not lean:
+            continue
+        stage, reason = _reuse_stage(lean, prov, want, requests)
+        if reason is None:
+            # The id is checked only for the record reused: each is a large file.
+            return name, ev.checked(rec, eid, path)["body"]["lean"]
+        if stage > closest:
+            closest, why = stage, reason
+    raise StaleEvidence(why + "; " + RUN_PROBE)
+
+
+def _reuse_stage(lean: dict, prov: dict, want: tuple[str, str, str],
+                 requests: list[dict]) -> tuple[int, str | None]:
+    """How far stored probe records `lean`, with provenance `prov`, match the checkout's Lean
+    inputs, probe and probe settings `want` and cover `requests`: the number of conditions met
+    in turn, and why the next one fails (None when every one holds)."""
+    inputs, probe, settings = (prov.get("lean_inputs_sha256"), prov.get("probe_sha256"),
+                               prov.get("probe_settings_sha256"))
+    if not inputs or not probe:
+        return 0, "the stored Lean results do not record their Lean inputs"
+    if inputs != want[0]:
+        return 1, ("Lean inputs changed since the stored Lean results (here or in a path "
+                   "dependency)")
+    if probe != want[1]:
+        return 2, "the Lean probe changed since the stored Lean results"
+    if not settings:
+        return 3, ("the stored Lean results do not record the probe's settings (an earlier "
+                   "version of MachineChecked stored them)")
+    if settings != want[2]:
+        return 4, ("the probe's settings (`modules`, `scope_roots`, `spec_prefix`, "
+                   "`accept_prefix` or `allowed_axioms` in the configuration) changed since the "
+                   "stored Lean results")
+    missing = [r["name"] for r in requests
+               if (r["kind"] == "spec" and r["name"] not in lean.get("specs", {}))
+               or (r["kind"] == "decl" and r["name"] not in lean.get("defs", {}))
+               or (r["kind"] == "link" and r["name"] not in lean.get("links", {}))
+               or (r["kind"] in ("accept", "refute", "witness") and
+                   f"{r['kind']}:{r['name']}:{r.get('spec') or ''}" not in lean.get("proofs", {}))]
+    if missing:
+        return 5, (f"the stored Lean results do not cover {', '.join(missing[:5])}"
+                   + (", …" if len(missing) > 5 else ""))
+    return 6, None
 
 
 def manual_anchors(cfg: Config, pid: str) -> dict:
