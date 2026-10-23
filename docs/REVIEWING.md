@@ -135,6 +135,7 @@ earlier interpretations, and it has no blind reading. Independent review uses th
 machinechecked workspace open --mode informed --as human:NAME   # start or resume
 machinechecked workspace show [--claim "Lemma 2.3"] [--json]    # evidence, findings, questions
 machinechecked workspace update ops.json [--dry-run]            # apply operations (- for stdin)
+machinechecked workspace main "Theorem 1" [NAME...] [--clear]   # the paper's main results
 machinechecked workspace export --out work.json                 # hand it on
 machinechecked workspace import work.json                       # continue it elsewhere
 ```
@@ -158,6 +159,17 @@ changed it meanwhile, nothing is written and both versions are returned (and kep
 changes nothing. A finding is a draft until `{"op": "submit", "id", "base_rev"}`; a submitted
 finding is never edited, but `{"op": "supersede", "id", "base_rev", "reason", "record"}` records a
 later one with its reason, and both remain.
+
+**Main results.** `workspace main NAME...` saves which claims (each standing for its linked Lean)
+and declarations are the paper's main results (in an update file: `{"op": "main-results", "main":
+[NAME, ...]}`); without names it shows them, or, when none are saved, the suggestion: the
+declarations linked to the paper's theorems. Each name is checked against the build when saved.
+`compare --query impact NAME` then traces NAME from them and says whose selection it used, when it
+was saved and against which project commit; `--main` names others for one query, and
+`--workspace ID` chooses between several workspaces' selections. A later build that no longer has
+a claim or a declaration of the selection lists it under `problems`, in `workspace show` and in
+the impact answer. A replaced selection is kept in the workspace's provenance. The selection
+changes no status.
 
 **Facts inside a proof.** An exported theorem can prove more than it states. Under `view`, a linked
 theorem has **Facts inside the proof**: *Read the proof* asks Lean for the propositions its proof
@@ -315,7 +327,9 @@ when it was recorded before the lock. `review promote` refuses the report withou
 publishes, for each claim, the records you have accepted: the requirements, the passages
 accepted as governing them, the alignments with Lean, and the submitted findings (superseded ones
 too, with the reason) with the evidence and counterexamples they cite. Each keeps its author, its pins and whether it
-is current against the published build. Proposed and removed passages, draft findings, evidence
+is current against the published build. The main results you saved are published too, with who
+saved them, when, the project commit they were checked against and what the published build no
+longer has of them. Proposed and removed passages, draft findings, evidence
 no submitted finding cites, questions, exposure and the review protocol's drafts stay in the
 workspace. The paper's `publish` settings apply: a passage's text and lines appear only when the
 source text is published, and your notes and reasons only when reviews are. The reader shows the

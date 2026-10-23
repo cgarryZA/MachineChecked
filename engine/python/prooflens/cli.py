@@ -391,6 +391,13 @@ def _print_workspace(v: dict) -> None:
     if r:
         print("  resume at " + ", ".join(f"{k} {r[k]}" for k in ("claim", "clause", "question")
                                           if r.get(k)))
+    m = v.get("main_results")
+    if m:
+        print("  main results: " + ", ".join(e.get("claim") or e.get("decl")
+                                             for e in m["selected"])
+              + f" (saved by {m.get('by')} at {m.get('at')})")
+        for p in m.get("problems") or []:
+            print(f"    {p.get('claim') or p.get('decl')}: {p['problem']}")
     for e in v.get("exposure") or []:
         print(f"  had seen: {', '.join(e['what'])} of "
               f"{'every claim' if e.get('claims') is None else ', '.join(e['claims'])} "
@@ -454,9 +461,64 @@ def _print_workspace(v: dict) -> None:
                 print("  " + line)
 
 
+def _workspace_main(a, snap, root, p: Path) -> None:
+    """`workspace main [NAME...] [--clear]`: save the main results in the workspace at `p`, or
+    show those it saves, or, when it saves none, the suggestion `compare --query impact` traces
+    from."""
+    from . import workspace as wsp
+    if a.names and a.clear:
+        sys.exit("machinechecked: give the main results or --clear, not both")
+    changed = None
+    if a.names or a.clear:
+        changed = wsp.update(p, [{"op": wsp.MAIN_OP, "main": [] if a.clear else a.names}], snap,
+                             root, a.reviewer or None)["changed"]
+    ws = wsp.read(p)
+    sel = wsp.main_results_view(ws, snap, root)
+    suggested = None
+    if sel is None and snap is not None:
+        from . import compare as cmp
+        from .impact import selection
+        site = cmp.Site(snap.data)
+        s = selection(site, None, cmp.linked_claims(site))
+        suggested = {"rule": s["rule"],
+                     "main_results": [{k: e[k] for k in ("name", "claims")}
+                                      for e in s["main_results"]]}
+    if a.json:
+        return _print_json({"workspace": ws["id"], "main_results": sel, "suggested": suggested,
+                            **({"changed": changed} if changed is not None else {})})
+    if sel is None:
+        print(f"workspace {ws['id']} saves no main results; `compare --query impact` traces "
+              + (f"the suggestion ({suggested['rule']}):" if suggested else "the suggestion"))
+        for e in (suggested or {}).get("main_results") or []:
+            print(f"  {e['name']}" + (f"  [{', '.join(e['claims'])}]" if e["claims"] else ""))
+        print("save others: machinechecked workspace main NAME... (a claim, for its linked "
+              "Lean, or a declaration)")
+        return
+    from .impact import root_names
+    pins = sel.get("pins") or {}
+    print(f"workspace {ws['id']}: main results saved by {sel.get('by')} at {sel.get('at')}"
+          + (f", against release {pins['release']}" if pins.get("release") else "")
+          + (f", project commit {pins['commit'][:7]}" if pins.get("commit") else "") + ":")
+    now = ((snap.sources() if snap is not None else {}).get("project") or {}).get("commit")
+    if pins.get("commit") and now and now != pins["commit"]:
+        print(f"  (this build is of commit {now[:7]})")
+    problems = {(p_.get("claim"), p_.get("decl")): p_["problem"] for p_ in sel["problems"]}
+    for e in sel["selected"]:
+        why = problems.get((e.get("claim"), e.get("decl")))
+        if e.get("claim"):
+            ch = (snap.chunk(e["claim"]) if snap is not None else None) or {}
+            line = f"  {e['claim']}" + (f" ({ch['number']})" if ch.get("number") else "")
+            if not why:
+                line += ", its linked Lean" if root_names(ch) else ": no Lean is linked to it"
+        else:
+            line = f"  {e['decl']}" + (f" ({e['module']})" if e.get("module") else "")
+        print(line + (f": {why}" if why else ""))
+    print("`machinechecked compare --query impact NAME` traces from these")
+
+
 def cmd_workspace(a):
-    """`machinechecked workspace open|list|show|update|suggest|export|import`: the saved investigation
-    (`workspace.py`), as the reader saves it."""
+    """`machinechecked workspace open|list|show|update|suggest|export|import|main`: the saved
+    investigation (`workspace.py`), as the reader saves it."""
     from . import review_cli as rc
     from . import workspace as wsp
     from .targets import Snapshot, TargetError
@@ -523,6 +585,8 @@ def cmd_workspace(a):
                 return _print_json({"ok": True, "changed": [], "suggested": 0})
             ack = wsp.update(p, ops, snap, root, a.reviewer or None, a.op_id)
             _print_json({**ack, "suggested": len(ops)})
+        elif a.action == "main":
+            _workspace_main(a, snap, root, path())
         elif a.action == "export":
             body = wsp.export(path())
             Path(a.out).write_text(json.dumps(body, indent=1, ensure_ascii=False) + "\n",
@@ -1483,13 +1547,13 @@ def main(argv=None):
                     help="with proof-facts: rank the facts by the symbols they share with TEXT")
     co.add_argument("--main", action="append", metavar="NAME",
                     help="with impact: a main result to trace from, a declaration or a claim "
-                    "(its linked Lean); repeat for several (default: the declarations linked to "
-                    "the paper's theorems)")
+                    "(its linked Lean); repeat for several (default: those `workspace main` "
+                    "saved, else the declarations linked to the paper's theorems)")
     co.add_argument("--limit", type=int, help="return at most this many definitions or results")
     co.add_argument("--after", metavar="ID", help="continue a list after this item")
     co.add_argument("--workspace", metavar="ID", help="include this workspace's requirements and "
                     "compositions of the claim (informed stage only); with --query composition, "
-                    "only this workspace's")
+                    "only this workspace's; with --query impact, the main results it saves")
     co.add_argument("--all-libraries", action="store_true",
                     help="with --query search: search every library of the project, also those "
                     "the paper's build leaves out because formalization.yaml maps them only to "
@@ -1576,12 +1640,23 @@ def main(argv=None):
                         "suggest": "propose the passages near a claim that may govern a "
                                    "requirement (printed as operations, or saved with --apply)",
                         "export": "write a workspace as one file",
-                        "import": "bring in an exported workspace"}.items():
+                        "import": "bring in an exported workspace",
+                        "main": "save the paper's main results, which `compare --query impact` "
+                                "traces from (without NAME: show them)"}.items():
         sp = wss.add_parser(name, help=help_)
         if name in ("update", "import"):
             sp.add_argument("file", help="a JSON file, or - for standard input")
-        if name in ("open", "show", "update", "export", "suggest"):
+        if name in ("open", "show", "update", "export", "suggest", "main"):
             sp.add_argument("--id", help="the workspace (default: yours)")
+        if name == "main":
+            sp.add_argument("names", nargs="*", metavar="NAME",
+                            help="a claim (id, key or number; its linked Lean) or a declaration "
+                                 "(MODULE:NAME when several modules declare it); they replace "
+                                 "the main results saved")
+            sp.add_argument("--clear", action="store_true",
+                            help="remove the main results saved (impact traces the suggestion "
+                                 "again)")
+            sp.add_argument("--json", action="store_true")
         if name == "suggest":
             sp.add_argument("--claim", required=True, help="the claim (id, key or number)")
             sp.add_argument("--requirement", required=True,
