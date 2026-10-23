@@ -10,8 +10,8 @@ A project with a `machinechecked.toml` (an acceptance layer: locked statements, 
 the full assessment; any other project gets the zero-configuration view, whose only file in the
 repository is `machinechecked.links.json` (its working files, a downloaded paper among them, are
 in `.machinechecked/`, which Git ignores). The full assessment has further commands: reassess,
-site, bundle, export, serve, review promote, replay and validate; `cache` saves and restores
-the Lean build, and `inventory` pins the claims' source passages (each with --help). `compare` gives a claim's passage, Lean statements and
+site, bundle, export, serve, review promote, replay and validate; `evidence` lists and prunes
+its stored evidence; `cache` saves and restores the Lean build, and `inventory` pins the claims' source passages (each with --help). `compare` gives a claim's passage, Lean statements and
 definitions as JSON, and `review` takes the review protocol's steps in either kind of project.
 `link` records a claim's links from the terminal, and `workspace` keeps a saved investigation,
 as the reader does.
@@ -910,6 +910,36 @@ def cmd_export(a):
     print(f"exported release {res['release']} to {res['out']}")
 
 
+def cmd_evidence(a):
+    """`machinechecked evidence list|prune`: the full assessment's stored evidence, one file per
+    build, and deleting the files no release still needs (`evidence.prune`)."""
+    from . import evidence as ev
+    from .util import read_json
+    if not _assurance_config(a):
+        sys.exit("`evidence` manages the full assessment's stored evidence: run it beside "
+                 "machinechecked.toml (or pass -c)")
+    cfg = cfgmod.load(_config_arg(a))
+    out = cfg.out_dir
+    if a.action == "list":
+        rels = [read_json(p) for p in ev.releases(out)]
+        if not rels:
+            print("no release: run `machinechecked build` first")
+            return
+        for r in reversed(rels):
+            f = out / "evidence" / f"{r['evidence']}.json"
+            size = f"{f.stat().st_size / 1e6:.1f} MB" if f.exists() else \
+                ev.absence(out, r["evidence"])
+            print(f"{r['release']}  evidence {r['evidence'][:12]}  {r.get('created', '')}  {size}")
+        return
+    res = ev.prune(out, a.keep, dry_run=a.dry_run)
+    verb = "would delete" if a.dry_run else "deleted"
+    for eid, names in res["deleted"].items():
+        print(f"{verb} {eid[:12]}" + (f" (release {', '.join(names)})" if names else ""))
+    for eid, why in res["kept"].items():
+        print(f"kept {eid[:12]}: {'; '.join(why)}")
+    print(f"{verb} {len(res['deleted'])} evidence file(s), {res['bytes'] / 1e6:.1f} MB")
+
+
 def cmd_cache(a):
     from . import cache
     from .simple import find_lake_root
@@ -1403,6 +1433,26 @@ def main(argv=None):
                    help="write the audit's data only, without the reader (for a site that "
                    "reads it with its own reader, such as machinechecked.org)")
     e.set_defaults(func=cmd_export)
+
+    # The full assessment's stored evidence; maintenance, kept out of the command list.
+    evp = sub.add_parser("evidence", description="List and prune the full assessment's stored "
+                         "evidence (one file per build, in .machinechecked/evidence/).")
+    evs = evp.add_subparsers(dest="action", required=True)
+    eli = evs.add_parser("list", help="each release, newest first, with its evidence file's size")
+    epr = evs.add_parser(
+        "prune", help="delete the evidence files no release still needs",
+        description="Delete stored evidence files, keeping the newest KEEP distinct records "
+        "(the latest is what `build --reuse-lean`, `reassess` and `site` read; the one before it "
+        "is what the next build's change summary compares with), the evidence of every release "
+        "given its own name with `build --release NAME`, and what a kept record was reassessed "
+        "from. Release records are kept; a release whose evidence was pruned says so.")
+    epr.add_argument("--keep", type=int, default=2,
+                     help="how many of the newest evidence records to keep (at least 2; "
+                     "default 2)")
+    epr.add_argument("--dry-run", action="store_true", help="list what would be deleted")
+    for x in (eli, epr):
+        x.add_argument("-c", "--config", default=None, help=argparse.SUPPRESS)
+    evp.set_defaults(func=cmd_evidence)
 
     ca = sub.add_parser("cache", help="save and restore the Lean build as release assets")
     cas = ca.add_subparsers(dest="action", required=True)

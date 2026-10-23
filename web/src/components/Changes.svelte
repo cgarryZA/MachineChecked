@@ -164,6 +164,8 @@
       {/each}
       {#if !shown.length}<p class="faint">No claim changed and no review was reopened.</p>{/if}
     </section>
+  {:else if index.changes_unavailable}
+    <p class="note" data-changes-unavailable>{index.changes_unavailable}</p>
   {/if}
 </main>
 

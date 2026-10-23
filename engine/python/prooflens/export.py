@@ -401,11 +401,15 @@ def export(cfg: Config, out: Path, release: str | None = None,
     # What changed since the release before, with what the papers publish.
     from . import changes as chg
     from .pipeline import release_changes
-    doc = release_changes(cfg, relrec["release"])
+    unavailable = []
+    doc = release_changes(cfg, relrec["release"], unavailable)
     if doc is not None:
         write_json(data / "changes.json", chg.public(doc, pubs, lean_ok, rev_ok, paper),
                    indent=None)
         pidx["changes"] = "data/changes.json"
+        write_json(data / "index.json", pidx, indent=None)
+    elif unavailable:
+        pidx["changes_unavailable"] = unavailable[0]
         write_json(data / "index.json", pidx, indent=None)
     # The workspace records the auditors accepted, with what each paper publishes, and what Lean
     # says of them now when the Lean project is the one the release was built from.

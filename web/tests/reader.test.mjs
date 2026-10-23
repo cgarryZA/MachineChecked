@@ -307,6 +307,9 @@ const CHANGES = {
   declarations: [], note: "Each status is the one its own build computed. A reopened review needs a new reading at the later revision; the earlier reading stays in the review files as it was." };
 fs.writeFileSync(path.join(root, "toychanges/data/changes.json"), JSON.stringify(CHANGES));
 fs.writeFileSync(path.join(root, "toychanges/data/index.json"), JSON.stringify({ ...TOY, changes: "data/changes.json" }));
+// The same audit after the earlier release's evidence was pruned: no comparison, and the reason.
+fs.cpSync(path.join(root, "toy"), path.join(root, "toypruned"), { recursive: true });
+fs.writeFileSync(path.join(root, "toypruned/data/index.json"), JSON.stringify({ ...TOY, changes_unavailable: "No change summary: the evidence of release r-earlier was pruned on 2026-01-02." }));
 
 fs.cpSync(path.join(root, "toy"), path.join(root, "long-statement"), { recursive: true });
 const longFile = TOY.claims.find((c) => c.id === "T:thm:even-add").file;
@@ -1445,6 +1448,11 @@ for (const width of [1300, 390]) {
     await pg.goto(origin + "/toy/" + `#/r/${TOY.release}/changes`);
     await pg.waitForSelector("main.ch");
     assert.equal(await pg.locator("[data-changes]").count(), 0, "a release without an earlier one shows no comparison");
+    assert.equal(await pg.locator("[data-changes-unavailable]").count(), 0);
+    await pg.goto(origin + "/toypruned/" + `#/r/${TOY.release}/changes`);
+    await pg.waitForSelector("main.ch [data-changes-unavailable]");
+    assert.match(await pg.locator("[data-changes-unavailable]").textContent(), /evidence of release r-earlier was pruned on 2026-01-02/);
+    assert.equal(await pg.locator("[data-changes]").count(), 0, "a pruned earlier release is not compared");
     await pg.goto(origin + "/toychanges/" + `#/r/${TOY.release}/changes`);
     const section = pg.locator("[data-changes]");
     await section.waitFor();
