@@ -188,7 +188,22 @@ def _exempt(c: str, ops) -> bool:
 
 # The operations the probe reads with their types (its `totalOps`).
 READ_BY_TYPE = {*ORDER_OPS, *DIVISION_OPS, "MeasureTheory.integral", "tsum",
-                "MeasureTheory.condExp", "deriv", "Real.sqrt", "Real.log"}
+                "MeasureTheory.condExp", "deriv", "Real.sqrt", "Real.log", "ENNReal.toReal"}
+
+# The conditions the probe looks for at an application (its `conditionsOf`), in words.
+CONDITIONS = {"bounded-above": "bounded above", "bounded-below": "bounded below",
+              "nonempty-index": "a nonempty index type", "nonempty-set": "a nonempty set",
+              "integrable": "the function integrable for this measure",
+              "finite": "a finite value"}
+
+
+def condition_state(conds: list[dict]) -> str:
+    """The state of an application's conditions together: `refuted` when a premise refutes one,
+    `established` when every one is established, `unresolved` otherwise."""
+    states = {c.get("state") for c in conds}
+    if "refuted" in states:
+        return "refuted"
+    return "established" if states == {"established"} else "unresolved"
 
 STRUCTURES = {("lattice", "complete"): "complete-lattice",
               ("lattice", "conditional"): "conditionally-complete-lattice",
@@ -232,9 +247,14 @@ def occurrences(srec: dict, c: str) -> list[dict] | None:
         state, rule = _rule(c, o)
         structure = next((v for (k, val), v in STRUCTURES.items() if o.get(k) == val
                           and k in o), None)
-        out.append({"operation": c, "type": o.get("carrier") or None,
-                    "type_head": o.get("carrier_head") or None, "structure": structure,
-                    "state": state, "rule": rule, "at": list(o.get("at") or [])})
+        rec = {"operation": c, "type": o.get("carrier") or None,
+               "type_head": o.get("carrier_head") or None, "structure": structure,
+               "state": state, "rule": rule, "at": list(o.get("at") or [])}
+        if state == "applies" and o.get("conditions"):
+            conds = [{k: d[k] for k in ("condition", "state", "by", "premise", "statement")
+                      if k in d} for d in o["conditions"]]
+            rec.update(conditions=conds, condition_state=condition_state(conds))
+        out.append(rec)
     return out
 
 
@@ -995,6 +1015,10 @@ class Assessor:
                          "statement_fingerprint": fp}
             elif i.get("incomplete"):
                 extra = {"occurrences": [], "occurrences_complete": False}
+            if o is not None and o.get("condition_state") == "established":
+                # Every condition of the rule is supplied: the warning is resolved, with the
+                # evidence in its occurrence. No status depends on it.
+                extra["resolved"] = True
             self.add_warning("totalised", subj, spec, srec, i["message"], c, fingerprint=ofp,
                              legacy_only=o is not None, **extra)
             f = self.findings[-1]

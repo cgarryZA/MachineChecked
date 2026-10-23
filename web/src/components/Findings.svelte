@@ -3,7 +3,8 @@
   // are open work, listed as review tasks. Warnings are heuristics, shown as heuristic findings:
   // they are grouped by the operation that raised them and folded away, low-signal ones last. A warning about a
   // totalised operation lists the applications it read (`occurrences`), each with its type and
-  // what the type gives; `onshow` marks them in the statement. Such a warning is about one
+  // what the type gives, and the conditions its rule needs there with what establishes or
+  // refutes them; `onshow` marks them in the statement. Such a warning is about one
   // application (`at`), and its dismissal names that application.
   let { findings, onshow = null } = $props();
 
@@ -27,6 +28,10 @@
     "complete-lattice": "a complete lattice", "conditionally-complete-lattice": "a conditionally complete lattice",
     group: "a group", "group-with-zero": "a group with zero", "one-element": "a type with one element",
     unknown: "no structure Lean finds",
+  };
+  const CONDITION = {
+    "bounded-above": "bounded above", "bounded-below": "bounded below", "nonempty-index": "a nonempty index type",
+    "nonempty-set": "a nonempty set", integrable: "integrable for this measure", finite: "a finite value",
   };
   const outcome = (o) => o.state === "applies" ? o.rule : o.state === "none" ? "no exceptional case in this type" : "unresolved";
   const shown = (f) => (f.occurrences || []).filter((o) => o.state !== "none" && o.at?.length);
@@ -63,17 +68,26 @@
           {#if g.low}<span class="pill">low signal</span>{/if}</p>
         <ul>
           {#each g.items as f (f.id)}
-            <li class:dismissed={f.dismissed} data-finding={f.id}>
+            <li class:dismissed={f.dismissed || f.resolved} data-finding={f.id}>
               in clause {f.subject.split("#")[1] ?? ""}{#if !shared(g)} — {reason(f)}{/if}
               {#if f.occurrences?.length}
                 <ul class="occ">
                   {#each f.occurrences as o, i (i)}
-                    <li data-state={o.state}><span class="ty">in <code>{o.type || "a type not read"}</code>{#if STRUCTURE[o.structure]}, {STRUCTURE[o.structure]}{/if}</span>: {outcome(o)}</li>
+                    <li data-state={o.state}><span class="ty">in <code>{o.type || "a type not read"}</code>{#if STRUCTURE[o.structure]}, {STRUCTURE[o.structure]}{/if}</span>: {outcome(o)}
+                      {#if o.conditions?.length}
+                        <ul class="conds">
+                          {#each o.conditions as c, j (j)}
+                            <li data-cond={c.state}>needs {CONDITION[c.condition] ?? c.condition}: {c.state}{#if c.by === "premise"}{" "}by the premise <code>{c.premise ? `${c.premise} : ` : ""}{c.statement}</code>{:else if c.by === "type"}{" "}({c.statement}){/if}</li>
+                          {/each}
+                        </ul>
+                      {/if}
+                    </li>
                   {/each}
                   {#if f.occurrences_complete === false}<li data-state="unresolved">the statement is too large to read every application</li>{/if}
                 </ul>
                 {#if onshow && shown(f).length}<button class="show" onclick={() => onshow(f)}>Show in the statement</button>{/if}
               {/if}
+              {#if f.resolved}<span class="dz">resolved: the statement supplies every condition the rule needs here</span>{/if}
               {#if f.dismissed}<span class="dz">dismissed by {f.dismissed.by}: “{f.dismissed.rationale}”{#if f.dismissed.form === "statement"} (a dismissal of the operation in the whole statement: it holds until the statement changes){/if}</span>
               {:else if f.dismissal_stale}<span class="dz">an earlier dismissal no longer applies: {f.at ? "this application changed" : "the statement changed"}</span>{/if}
             </li>
@@ -102,5 +116,7 @@
   .occ { list-style: none; padding-left: 8px; font-size: 12px; color: var(--muted); }
   .occ li { margin: 1px 0; overflow-wrap: anywhere; }
   .occ .ty code { color: var(--text, inherit); }
+  .conds { list-style: none; padding-left: 10px; }
+  .conds code { overflow-wrap: anywhere; }
   .show { border: 0; padding: 0; background: none; font: inherit; font-size: 12px; color: var(--accent); cursor: pointer; text-decoration: underline; min-height: 0; }
 </style>

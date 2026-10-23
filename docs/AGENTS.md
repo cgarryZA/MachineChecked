@@ -60,14 +60,22 @@ A warning with code `review-citation` is a name or file that review text cites a
 resolves: its `subject` is the review file, its `trigger` the token, with `file` and `line`.
 A warning with code `totalised` names the operation in `trigger`. For a supremum, an infimum, a
 division, an inverse, an integral, a sum, a root, a logarithm, a derivative or a conditional
-expectation it also has `occurrences`: each application of that operation the probe read in the
+expectation, or `ENNReal.toReal`, it also has `occurrences`: each application of that operation the probe read in the
 statement, with `operation`, its `type` (as Lean prints it; null when it could not be read) and
 `type_head` (the type's head constant), `structure` (what decides the rule: `complete-lattice`,
 `conditionally-complete-lattice`, `group`, `group-with-zero`, `one-element`, `unknown` when Lean
 finds none of those, or null when the rule does not depend on one), `state` (`applies`, `none`
 when the type gives the operation no exceptional case, or `unresolved`), `rule` (what the
 operation gives there, when it applies) and `at` (its positions in the proposition, the `id`s of
-the printed sub-terms). Each application whose rule applies or is unresolved is its own warning:
+the printed sub-terms). Where the rule needs a condition (a supremum or infimum in a
+conditionally complete type, an integral, `ENNReal.toReal`), the record also has `conditions`,
+each with `condition` (`bounded-above`, `bounded-below`, `nonempty-index`, `nonempty-set`,
+`integrable`, `finite`), `state` (`established`, `refuted`, `unresolved`), and for an
+established or refuted one `by` (`premise` or `type`), `premise` (its name, empty when Lean
+named it) and `statement` (the premise as Lean prints it, or the property of the types), and
+`condition_state` for them together; a warning whose conditions are all established has
+`resolved: true` and is left out of the open warnings' counts. Each application whose rule
+applies or is unresolved is its own warning:
 its `occurrences` holds that one record, `at` is its first position (the finding's `id` ends in
 `@` and that position) and `fingerprint` identifies it in its scope (what a dismissal of it
 records, with `at`). A warning about the applications a statement too large to read did not

@@ -850,6 +850,34 @@ for (const width of [1300, 390]) {
     assert.equal(await view.locator(".mk").count(), 0, "cleared");
   });
 }
+// A warning lists the conditions its rule needs at the application, with what establishes them;
+// one whose conditions are all established reads as resolved.
+for (const width of [1300, 390]) {
+  await check("a warning shows the conditions of its rule and whether the statement supplies them", width, async (pg) => {
+    await pg.route("**/toy/data/claims/*prop_pred*", async (route) => {
+      const response = await route.fetch();
+      const json = await response.json();
+      json.findings = json.findings.map((f) => f.subject.endsWith("#0") ? { ...f, resolved: true, at: "/1/0/1", occurrences: [
+        { operation: f.trigger, type: "Real", type_head: "Real", structure: "conditionally-complete-lattice", state: "applies",
+          rule: "a supremum in ℝ is 0 when the set is unbounded or empty", at: ["/1/0/1"], condition_state: "established",
+          conditions: [
+            { condition: "bounded-above", state: "established", by: "premise", premise: "hf", statement: "BddAbove (Set.range f)" },
+            { condition: "nonempty-index", state: "established", by: "type", statement: "Lean finds Nonempty ℕ" }] }] } : f);
+      route.fulfill({ response, json });
+    });
+    await toyClaim(pg, "T:prop:pred");
+    await pg.locator("aside .view .chipbtn").click();
+    await pg.locator("aside details.warning summary").click();
+    const item = pg.locator("aside [data-finding='totalised:T:prop:pred#0:instSubNat']");
+    const conds = await item.locator(".conds li").allTextContents();
+    assert.deepEqual(conds.map((t) => t.replace(/\s+/g, " ").trim()), [
+      "needs bounded above: established by the premise hf : BddAbove (Set.range f)",
+      "needs a nonempty index type: established (Lean finds Nonempty ℕ)"]);
+    assert.match(await item.textContent(), /resolved: the statement supplies every condition/);
+    const box = await item.locator(".conds li").first().boundingBox();
+    assert.ok(box && box.x >= 0 && box.x + box.width <= width, "on screen");
+  });
+}
 await check("a theorem of the toy paper is typeset with its equation number", 1300, async (pg) => {
   await toyClaim(pg, "T:thm:triangle");
   const ex = pg.locator("aside .view .paper .excerpt");

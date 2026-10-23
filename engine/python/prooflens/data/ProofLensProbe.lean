@@ -866,13 +866,15 @@ of the library that declares them. -/
 
 /-- The operations recorded, each with the structure that decides its rule (`order`: the lattice
 instances, `division`: the group instances, `integral`: whether the type has one element, `""`:
-none) and where its carrier is: its first argument (`true`) or the type of its value. -/
-def totalOps : Array (Name × String × Bool) := #[
-  (`iSup, "order", true), (`iInf, "order", true), (`SupSet.sSup, "order", true),
-  (`InfSet.sInf, "order", true), (`sSup, "order", true), (`sInf, "order", true),
-  (`HDiv.hDiv, "division", true), (`Inv.inv, "division", true), (`tsum, "", true),
-  (`MeasureTheory.integral, "integral", false), (`MeasureTheory.condExp, "", false),
-  (`deriv, "", false), (`Real.sqrt, "", false), (`Real.log, "", false)]
+none) and where its carrier is: its first argument (`arg`), the type of its value (`value`), or
+the type of its last argument (`operand`, for a conversion such as `ENNReal.toReal`). -/
+def totalOps : Array (Name × String × String) := #[
+  (`iSup, "order", "arg"), (`iInf, "order", "arg"), (`SupSet.sSup, "order", "arg"),
+  (`InfSet.sInf, "order", "arg"), (`sSup, "order", "arg"), (`sInf, "order", "arg"),
+  (`HDiv.hDiv, "division", "arg"), (`Inv.inv, "division", "arg"), (`tsum, "", "arg"),
+  (`MeasureTheory.integral, "integral", "value"), (`MeasureTheory.condExp, "", "value"),
+  (`deriv, "", "value"), (`Real.sqrt, "", "value"), (`Real.log, "", "value"),
+  (`ENNReal.toReal, "", "operand")]
 
 /-- The most nodes of a statement visited for its totalised operations. -/
 def opsNodes : Nat := 50000
@@ -977,21 +979,221 @@ def occurrenceIdentity (e : Expr) (inside : Name → Bool) : MetaM (List (String
     return [("canon", Json.str (canonString t none)), ("vars", toJson vars),
       ("uses", toJson (used.qsort (· < ·)))]
 
+/-! ## Side conditions of an application
+
+The condition an operation's rule needs at one application, and whether the statement supplies
+it: a hypothesis in scope (a premise of the chain of quantifiers and implications the application
+is in, or of an enclosing binder), possibly quantified over data and specialised, or inside a
+conjunction; or a property its types carry. The condition must be about the same family, set,
+function, measure or value, under the same binders, up to unfolding instances. A premise that
+negates the condition refutes it. Nothing found leaves it unresolved: a failed search says
+nothing about whether the condition holds. A condition holding almost everywhere is not matched
+by one holding everywhere, nor the reverse. -/
+
+/-- Whether the proposition `h`, or a conjunct of it, or its conclusion after its universally
+quantified data variables are replaced by unknowns, satisfies `test` (which unifies what it
+compares). A quantified premise with a hypothesis of its own is conditional and is not used. -/
+partial def premiseSatisfies (h : Expr) (test : Expr → MetaM Bool) (depth : Nat := 4) :
+    MetaM Bool := do
+  let h := (← instantiateMVars h).consumeMData
+  if ← orDefault false (test h) then return true
+  if depth == 0 then return false
+  if h.isAppOfArity `And 2 then
+    if ← premiseSatisfies h.appFn!.appArg! test (depth - 1) then return true
+    return ← premiseSatisfies h.appArg! test (depth - 1)
+  if h.isForall then
+    let (ms, _, body) ← forallMetaTelescope h
+    for m in ms do
+      if ← orDefault true (isProp (← inferType m)) then return false
+    return ← premiseSatisfies body test (depth - 1)
+  return false
+
+/-- Whether `a` and `b` are the same term, up to unfolding instances; unknowns in either may be
+assigned. -/
+def sameTerm (a b : Expr) : MetaM Bool :=
+  withTransparency .instances (isDefEq a b)
+
+/-- `test` applied to the proposition `p` when it is `¬ q`, to `q`. -/
+def negationOf (test : Expr → MetaM Bool) (p : Expr) : MetaM Bool := do
+  let p := p.consumeMData
+  if p.isAppOfArity `Not 1 then test p.appArg!.consumeMData else return false
+
+/-- A condition: its name, what establishes it in a premise and what refutes it. -/
+structure Condition where
+  name : String
+  holds : Expr → MetaM Bool
+  fails : Expr → MetaM Bool
+
+/-- Whether `e` is `⊤`. -/
+def isTop (e : Expr) : Bool := e.consumeMData.isAppOf `Top.top
+
+/-- The conditions of the rule of `c` at an application with arguments `args`: a supremum or
+infimum in a conditionally complete type needs its family (or set) bounded on that side and
+nonempty; a Bochner integral needs its function integrable for its measure; `ENNReal.toReal x`
+needs `x` finite. -/
+def conditionsOf (c : Name) (args : Array Expr) : List Condition :=
+  let bound (above : Bool) (s : Expr) (range : Bool) : Condition :=
+    let cls := if above then `BddAbove else `BddBelow
+    let isIt (p : Expr) : MetaM Bool := do
+      let p := p.consumeMData
+      unless p.isAppOf cls && p.getAppNumArgs ≥ 1 do return false
+      let t := p.appArg!.consumeMData
+      if range then
+        unless t.isAppOf `Set.range && t.getAppNumArgs ≥ 1 do return false
+        sameTerm t.appArg! s
+      else sameTerm t s
+    { name := if above then "bounded-above" else "bounded-below", holds := isIt,
+      fails := negationOf isIt }
+  let nonemptyType (ι : Expr) : Condition :=
+    let isIt (p : Expr) : MetaM Bool := do
+      let p := p.consumeMData
+      unless p.isAppOfArity `Nonempty 1 do return false
+      sameTerm p.appArg! ι
+    { name := "nonempty-index", holds := isIt, fails := negationOf isIt }
+  let nonemptySet (s : Expr) : Condition :=
+    let isIt (p : Expr) : MetaM Bool := do
+      let p := p.consumeMData
+      unless p.isAppOf `Set.Nonempty && p.getAppNumArgs ≥ 1 do return false
+      sameTerm p.appArg! s
+    { name := "nonempty-set", holds := isIt, fails := negationOf isIt }
+  match c with
+  | `iSup | `iInf =>
+    if args.size < 4 then [] else
+      [bound (c == `iSup) args[3]! true, nonemptyType args[1]!]
+  | `sSup | `sInf | `SupSet.sSup | `InfSet.sInf =>
+    if args.size < 3 then [] else
+      let above := c == `sSup || c == `SupSet.sSup
+      [bound above args[2]! false, nonemptySet args[2]!]
+  | `MeasureTheory.integral =>
+    if args.size < 2 then [] else
+      let μ := args[args.size - 2]!
+      let f := args[args.size - 1]!
+      let isIt (p : Expr) : MetaM Bool := do
+        let p := p.consumeMData
+        let n := p.getAppNumArgs
+        if p.isAppOf `MeasureTheory.Integrable && n ≥ 2 then
+          let a := p.getAppArgs
+          return (← sameTerm a[n - 2]! f) && (← sameTerm a[n - 1]! μ)
+        -- `IntegrableOn f s ν` is integrability for the restriction of `ν` to `s`.
+        if p.isAppOf `MeasureTheory.IntegrableOn && n ≥ 3 then
+          let a := p.getAppArgs
+          let m := μ.consumeMData
+          unless m.isAppOf `MeasureTheory.Measure.restrict && m.getAppNumArgs ≥ 2 do
+            return false
+          let b := m.getAppArgs
+          let k := b.size
+          return (← sameTerm a[n - 3]! f) && (← sameTerm a[n - 2]! b[k - 1]!) &&
+            (← sameTerm a[n - 1]! b[k - 2]!)
+        return false
+      [{ name := "integrable", holds := isIt, fails := negationOf isIt }]
+  | `ENNReal.toReal =>
+    if args.size < 1 then [] else
+      let x := args.back!
+      let holds (p : Expr) : MetaM Bool := do
+        let p := p.consumeMData
+        if p.isAppOfArity `Ne 3 && isTop p.appArg! then return ← sameTerm p.appFn!.appArg! x
+        if p.isAppOfArity `LT.lt 4 && isTop p.appArg! then
+          return ← sameTerm p.appFn!.appArg! x
+        if p.isAppOfArity `Not 1 then
+          let q := p.appArg!.consumeMData
+          if q.isAppOfArity `Eq 3 && isTop q.appArg! then return ← sameTerm q.appFn!.appArg! x
+        return false
+      let fails (p : Expr) : MetaM Bool := do
+        let p := p.consumeMData
+        if p.isAppOfArity `Eq 3 && isTop p.appArg! then return ← sameTerm p.appFn!.appArg! x
+        return false
+      [{ name := "finite", holds, fails }]
+  | _ => []
+
+/-- A property the types or the form of the application carry that gives the condition `name`,
+in words, or none: a family indexed by a proposition has at most one value, so it is bounded; a
+type with a top (bottom) element bounds every family above (below); Lean finds `Nonempty ι`; a
+value `ENNReal.ofReal r` or `ENNReal.ofNNReal r` is finite. -/
+def carried (c : Name) (args : Array Expr) (name : String) : MetaM (Option String) := do
+  match c, name with
+  | `iSup, "bounded-above" | `iInf, "bounded-below" =>
+    if ← orDefault false (isProp args[1]!) then
+      return some "the family is indexed by a proposition, so it has at most one value"
+    let cls := if name == "bounded-above" then `OrderTop else `OrderBot
+    if ← hasInstance cls args[0]! then
+      return some s!"the type has a {if cls == `OrderTop then "top" else "bottom"} element"
+    return none
+  | _, "bounded-above" =>
+    if ← hasInstance `OrderTop args[0]! then return some "the type has a top element"
+    return none
+  | _, "bounded-below" =>
+    if ← hasInstance `OrderBot args[0]! then return some "the type has a bottom element"
+    return none
+  | _, "nonempty-index" =>
+    if ← hasInstance `Nonempty args[1]! then
+      return some s!"Lean finds Nonempty {← orDefault "?" (toString <$> ppExpr args[1]!)}"
+    return none
+  | `ENNReal.toReal, "finite" =>
+    let x := args.back!.consumeMData
+    if x.isAppOf `ENNReal.ofReal || x.isAppOf `ENNReal.ofNNReal then
+      return some "the value is a real number taken into ℝ≥0∞, which is finite"
+    return none
+  | _, _ => return none
+
+/-- The conditions of the rule at the application of `c` with arguments `args` (for a supremum
+or infimum, only in a conditionally complete type; for an integral, only when its type has more
+than one element), each `established` (by a hypothesis, cited with its statement and its name,
+empty when Lean named it, or by a property the types carry), `refuted` (by a hypothesis), or
+`unresolved`. -/
+def conditionsJson (c : Name) (args : Array Expr) (carrier : List (String × Json)) :
+    MetaM (List (String × Json)) := do
+  match carrier.lookup "lattice" with
+  | some (.str "conditional") | none => pure ()
+  | _ => return []
+  if let some (.bool true) := carrier.lookup "subsingleton" then return []
+  let conds := conditionsOf c args
+  if conds.isEmpty then return []
+  let hyps := (← getLCtx).foldl (init := #[]) fun (acc : Array LocalDecl) d =>
+    if d.isImplementationDetail then acc else acc.push d
+  let mut out : Array Json := #[]
+  for cond in conds do
+    let mut found : Option Json := none
+    for d in hyps do
+      unless ← orDefault false (isProp d.type) do continue
+      let st ← if ← orDefault false (withNewMCtxDepth (premiseSatisfies d.type cond.holds)) then
+          pure "established"
+        else if ← orDefault false (withNewMCtxDepth (premiseSatisfies d.type cond.fails)) then
+          pure "refuted"
+        else pure ""
+      if st != "" then
+        found := some (Json.mkObj [("condition", Json.str cond.name), ("state", Json.str st),
+          ("by", "premise"),
+          ("premise", Json.str (if d.userName.hasMacroScopes then "" else d.userName.toString)),
+          ("statement", Json.str (← orDefault "" (toString <$> ppExpr d.type)))])
+        break
+    if found.isNone then
+      if let some why ← orDefault none (carried c args cond.name) then
+        found := some (Json.mkObj [("condition", Json.str cond.name),
+          ("state", "established"), ("by", "type"), ("statement", Json.str why)])
+    out := out.push (found.getD (Json.mkObj [("condition", Json.str cond.name),
+      ("state", "unresolved")]))
+  return [("conditions", Json.arr out)]
+
 /-- Record the application `e` of the operation `c`, with arguments `args`, at position `pos`;
 its index among the applications found, or none when `c` is not recorded. The carrier is the
 first argument or, for an operation whose type is fixed by its arguments, the type of the value
 once every argument is supplied (a value that is a function is read at its result). -/
 def opsRecord (e : Expr) (c : Name) (args : Array Expr) (pos : SubExpr.Pos) (w : OpsWalk) :
     MetaM (Option Nat) := do
-  let some (_, kind, first) := totalOps.find? (·.1 == c) | return none
-  if first && args.size == 0 then return none
-  let j ← if first then carrierJson kind args[0]! w.cache
-    else
+  let some (_, kind, where_) := totalOps.find? (·.1 == c) | return none
+  if where_ != "value" && args.size == 0 then return none
+  let j ← match where_ with
+    | "arg" => carrierJson kind args[0]! w.cache
+    | "operand" =>
+      orDefault [("carrier", Json.str ""), ("carrier_head", Json.str "")] do
+        carrierJson kind (← inferType args.back!) w.cache
+    | _ =>
       orDefault [("carrier", Json.str ""), ("carrier_head", Json.str "")] do
         forallTelescope (← inferType e) fun _ ty => carrierJson kind ty w.cache
   let ident ← occurrenceIdentity e w.inside
+  let conds ← conditionsJson c args j
   let i := (← w.out.get).size
-  w.out.modify (·.push (("const", Json.str c.toString) :: j ++ ident, #[toString pos]))
+  w.out.modify (·.push (("const", Json.str c.toString) :: j ++ ident ++ conds, #[toString pos]))
   return some i
 
 /-- The position of the function of an application with `n` arguments at `pos`. -/
