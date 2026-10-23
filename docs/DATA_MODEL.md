@@ -106,7 +106,7 @@ whole proposition and its `fingerprint` is the proposition's ([ASSURANCE.md](ASS
 | `inventory` | the inventory as read |
 | `reviews` | the review files' hashes and every parsed marker |
 | `dismissals` | as read |
-| `lean` | the probe records: specifications (binders, conclusion, closure, constants, hashes), proofs (exact-type check, axioms), declarations (signature, value, definition content, authored source, doc, hashes, `proposition`: whether the type is a proposition, null when Lean could not tell), layering |
+| `lean` | the probe records: specifications (binders, conclusion, closure, constants, hashes), proofs (exact-type check, axioms), declarations (signature, value, definition content, authored source, doc, hashes, `proposition`: whether the type is a proposition, null when Lean could not tell; `auto_param`: whether it is the tactic script of a tactic default), layering |
 | `tex` | per paper: mode, page size, anchors (env, number, labels, file:line, begin/head/end positions, source hash), files read, source regions, the text of the passage of each claim located by line (`region_text`), and the display excerpts of its claims (`excerpts`, [SOURCE_REGIONS.md](SOURCE_REGIONS.md#display-excerpts)) |
 | `assessment` | per claim: status and clauses (for a proof step, also its `step_review` from its markers); all findings |
 
@@ -203,8 +203,8 @@ line, each read from the source file that holds it, also when the main file `\in
 `\include`s its sections; and its display `excerpt`, when the paper publishes its source text), each
 clause's unfolded statement, proofs, witness, regimes, reviews and structured `evidence`, the
 declarations of its closure, and its findings. A clause also lists `witness_defs`, the
-declarations only its witnesses use that carry data (proofs are left out) and have no current
-review (`{name, witnesses, state}`),
+declarations only its witnesses use that carry data (proofs and the tactic scripts of tactic
+defaults are left out) and have no current review (`{name, witnesses, state}`),
 and a definition claim's clause `witness_candidates`, the witness-only declarations that use a
 definition it maps (`{name, uses, witnesses}`). A claim is loaded only when it is opened.
 In zero configuration a passport also has `correspondence` (or `null`): the mapper's reading of how

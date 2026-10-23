@@ -223,6 +223,30 @@ def test_a_version_map_resolves_one_target_and_keeps_several():
         next(o for o in out["references"] if o["source"]["declaration"] == "P.a"))
 
 
+def test_a_repeated_reference_has_its_own_id(tmp_path):
+    # The same text twice in one docstring, name or module docstring line gives two references
+    # with different ids (#348); the first keeps the id it has alone.
+    pad = "x " * 40
+    index = [decl("P.a", "Lemma 7.7, and again Lemma 7.7."), decl("P.lemma_7_7_lemma_7_7"),
+             decl("P.b", f"{pad}Lemma 7.7 {pad}Lemma 7.7 {pad}")]
+    (tmp_path / "P").mkdir()
+    (tmp_path / "P" / "Main.lean").write_text("/-! Lemma 8.1 and Lemma 8.1. -/\n")
+    out = nb.analyse(index, CLAIMS, INV, nb.module_doc_blocks(tmp_path, ["P.Main"]))
+    refs = out["references"]
+    by = {}
+    for o in refs:
+        by.setdefault((o["source"]["declaration"] or o["source"]["module"],
+                       o["source"]["where"]), []).append(o)
+    assert sorted(len(v) for v in by.values()) == [2, 2, 2, 2]
+    assert len({o["id"] for o in refs}) == len(refs) == 8
+    # Long enough apart, two copies have the same context and place in it: only the id differs.
+    b1, b2 = by[("P.b", "docstring")]
+    assert (b1["context"], b1["at"]) == (b2["context"], b2["at"]) and b1["id"] != b2["id"]
+    assert {o["status"] for o in refs} == {"absent"} and out["pattern"]["absent"] == 8
+    alone = nb.find_references([decl("P.a", "Lemma 7.7.")], [])
+    assert alone[0]["id"] == by[("P.a", "docstring")][0]["id"]
+
+
 def test_module_docstrings_are_read_with_their_lines(tmp_path):
     (tmp_path / "P").mkdir()
     (tmp_path / "P" / "Main.lean").write_text(
