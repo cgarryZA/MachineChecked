@@ -25,7 +25,10 @@ from prooflens.probe import lean_session, parse_records
 SRC = ROOT / "tests" / "fixtures" / "carriers"
 SPECS = ["join", "extended", "real", "alias", "both", "sets", "plain", "poly", "deep",
          "divNat", "divField", "divExtended", "divGroup", "divPlain", "divPoly", "integrals",
-         "integralUnit", "sumExtended", "sumReal", "roots", "two", "twoMixed", "twoMoved"]
+         "integralUnit", "sumExtended", "sumReal", "roots", "two", "twoMixed", "twoMoved",
+         "supBounded", "supUnbounded", "supOther", "supLater", "supQuantified", "supConditional",
+         "supEmpty", "supRefuted", "infAndSet", "integrable", "integrableOn", "finite",
+         "finiteAE"]
 REAL = TOTALISED["iSup"]
 
 
@@ -129,6 +132,7 @@ def test_each_supremum_is_judged_by_its_type(tmp_path, toolchain):
     assert set(warnings(recs["roots"])) == {"Real.sqrt"}
 
     each_occurrence_has_its_own_finding(recs)
+    side_conditions(recs)
 
 
 def assess(rec, dismissals, fp="fp-1"):
@@ -236,3 +240,63 @@ def test_division_and_exemptions_from_recorded_types():
         assert warnings(r) == {"MeasureTheory.integral":
                                f"{TOTALISED['MeasureTheory.integral']} "
                                "(MeasureTheory.integral occurs in P.s)"}
+
+
+def conds(rec, c):
+    """Each recorded application of `c` in `rec`: its conditions' states, and their state
+    together."""
+    return [({d["condition"]: d["state"] for d in o.get("conditions", [])},
+             o.get("condition_state")) for o in occurrences(rec, c)]
+
+
+def side_conditions(recs):
+    # A real supremum with a correctly scoped bound is established, by the premise, and the
+    # index type's nonemptiness by Lean's instance; the warning is resolved, nothing else.
+    (o,) = occurrences(recs["supBounded"], "iSup")
+    assert o["condition_state"] == "established"
+    bound = next(d for d in o["conditions"] if d["condition"] == "bounded-above")
+    assert bound["by"] == "premise" and bound["statement"] == "BddAbove (Set.range f)"
+    (f,) = assess(recs["supBounded"], [])
+    assert f["resolved"] is True and not f.get("dismissed") and f["tier"] == "warning"
+    # With no bound, or a bound for another family, or one that needs a further hypothesis:
+    # unresolved, never refuted, and the warning stays open.
+    for s in ("supUnbounded", "supOther", "supConditional"):
+        assert conds(recs[s], "iSup") == [({"bounded-above": "unresolved",
+                                            "nonempty-index": "established"}, "unresolved")]
+        assert not any(f.get("resolved") for f in assess(recs[s], []))
+    # A later premise of the same statement, and a quantified premise specialised to the
+    # family, establish it too.
+    for s in ("supLater", "supQuantified"):
+        assert conds(recs[s], "iSup")[0][1] == "established"
+    # An index type that may be empty leaves nonemptiness unresolved.
+    assert conds(recs["supEmpty"], "iSup") == [({"bounded-above": "established",
+                                                 "nonempty-index": "unresolved"}, "unresolved")]
+    # A premise that the family is unbounded refutes the condition, with that premise.
+    (o,) = occurrences(recs["supRefuted"], "iSup")
+    assert o["condition_state"] == "refuted" and o["conditions"][0]["statement"].startswith("¬")
+    # An infimum needs a lower bound; the supremum of a set a bound and nonemptiness of the set,
+    # here from one premise's conjuncts.
+    assert conds(recs["infAndSet"], "iInf")[0][1] == "established"
+    assert conds(recs["infAndSet"], "SupSet.sSup") == [
+        ({"bounded-above": "established", "nonempty-set": "established"}, "established")]
+
+    # `Integrable f μ` establishes `∫ f ∂μ` and not `∫ g ∂μ` or `∫ f ∂ν`.
+    assert sorted(st for _, st in conds(recs["integrable"], "MeasureTheory.integral")) == [
+        "established", "unresolved", "unresolved"]
+    found = assess(recs["integrable"], [])
+    assert len(found) == 3 and sum(bool(f.get("resolved")) for f in found) == 1
+    # Integrability on a set establishes the integral for the restricted measure.
+    assert conds(recs["integrableOn"], "MeasureTheory.integral")[0][1] == "established"
+
+    # `x ≠ ⊤` establishes the finiteness of `x.toReal` and not of `y.toReal`; a value taken
+    # from the nonnegative numbers is finite by its form. Finiteness almost everywhere does not
+    # establish finiteness at a point.
+    states = sorted(st for _, st in conds(recs["finite"], "ENNReal.toReal"))
+    assert states == ["established", "established", "unresolved"]
+    assert {o["type"] for o in occurrences(recs["finite"], "ENNReal.toReal")} == {"ENNReal"}
+    assert conds(recs["finiteAE"], "ENNReal.toReal") == [({"finite": "unresolved"},
+                                                          "unresolved")]
+
+    # A resolved warning changes nothing but itself: its message is the rule's, as before.
+    (f,) = assess(recs["supBounded"], [])
+    assert f["message"] == f"{REAL} (iSup occurs in P.s)"

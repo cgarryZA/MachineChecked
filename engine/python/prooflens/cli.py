@@ -631,7 +631,7 @@ CHECK_NOTE = "Results describe the linked Lean declarations; correspondence revi
 
 
 FINDING_KEYS = ("id", "tier", "code", "subject", "message", "trigger", "file", "line",
-                "fingerprint", "at", "dismissed", "dismissal_stale", "occurrences",
+                "fingerprint", "at", "dismissed", "dismissal_stale", "resolved", "occurrences",
                 "occurrences_complete")
 
 
