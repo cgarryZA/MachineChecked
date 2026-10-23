@@ -925,10 +925,55 @@ def carrierJson (kind : String) (α : Expr)
 nodes left, the carriers read and the subterms already visited, with the application found at
 each (a statement shares subterms, which a walk would otherwise repeat). -/
 structure OpsWalk where
+  inside : Name → Bool
   out : IO.Ref (Array (List (String × Json) × Array String))
   budget : IO.Ref Nat
   cache : IO.Ref (Array ((String × Expr) × List (String × Json)))
   seen : IO.Ref (Std.HashMap Expr (Option Nat))
+
+/-- The local variables and hypotheses an application `e` depends on, in the order of the local
+context: those it mentions and those their types mention, with each local hypothesis (a
+declaration whose type is a proposition) whose type mentions one of them, and what its type
+mentions. Another variable of the statement, and a hypothesis about it only, are left out. -/
+def occurrenceScope (e : Expr) : MetaM (Array Expr) := do
+  let decls := (← getLCtx).foldl (init := #[]) fun (acc : Array LocalDecl) d =>
+    if d.isImplementationDetail then acc else acc.push d
+  -- `need` closed under the types of what it marks (a type mentions only earlier ones)
+  let close (need : Array Bool) : Array Bool := Id.run do
+    let mut need := need
+    for k in [0:decls.size] do
+      let i := decls.size - 1 - k
+      if need[i]! then
+        for j in [0:i] do
+          if !need[j]! && decls[i]!.type.containsFVar decls[j]!.fvarId then
+            need := need.set! j true
+    return need
+  let need := close (decls.map fun d => e.containsFVar d.fvarId)
+  let mut more := need
+  for i in [0:decls.size] do
+    let d := decls[i]!
+    if need[i]! then continue
+    let about := (List.range i).any fun j => need[j]! && d.type.containsFVar decls[j]!.fvarId
+    if about && (← orDefault false (isProp d.type)) then more := more.set! i true
+  let need := close more
+  return (decls.zip need).filterMap fun (d, n) => if n then some d.toExpr else none
+
+/-- The canonical serialisation of the application `e` in its scope (`occurrenceScope`), with
+proofs erased, the names of the variables of that scope that are not hypotheses (the
+serialisation omits names, and `⨆ i, f i` and `⨆ i, g i` differ only in them), and the
+project's constants it uses: what identifies one occurrence of an operation, whatever happens
+elsewhere in the statement. -/
+def occurrenceIdentity (e : Expr) (inside : Name → Bool) : MetaM (List (String × Json)) :=
+  orDefault [] do
+    let xs ← occurrenceScope e
+    let mut vars : Array String := #[]
+    for x in xs do
+      unless ← orDefault false (isProp (← inferType x)) do
+        vars := vars.push (← x.fvarId!.getUserName).eraseMacroScopes.toString
+    let t ← erase (← mkLambdaFVars xs e)
+    let used := (t.getUsedConstants.filter inside).map toString
+    return [("canon", Json.str (canonString t none)), ("vars", toJson vars),
+      ("uses", toJson (used.qsort (· < ·)))]
 
 /-- Record the application `e` of the operation `c`, with arguments `args`, at position `pos`;
 its index among the applications found, or none when `c` is not recorded. The carrier is the
@@ -942,14 +987,17 @@ def opsRecord (e : Expr) (c : Name) (args : Array Expr) (pos : SubExpr.Pos) (w :
     else
       orDefault [("carrier", Json.str ""), ("carrier_head", Json.str "")] do
         forallTelescope (← inferType e) fun _ ty => carrierJson kind ty w.cache
+  let ident ← occurrenceIdentity e w.inside
   let i := (← w.out.get).size
-  w.out.modify (·.push (("const", Json.str c.toString) :: j, #[toString pos]))
+  w.out.modify (·.push (("const", Json.str c.toString) :: j ++ ident, #[toString pos]))
   return some i
 
 /-- The position of the function of an application with `n` arguments at `pos`. -/
 def appFnPos : Nat → SubExpr.Pos → SubExpr.Pos
   | 0, pos => pos
   | n + 1, pos => appFnPos n pos.pushAppFn
+
+mutual
 
 /-- Visit `e`, at position `pos` of the proposition (the positions of its printed sub-terms).
 A subterm met again adds its position to the application it is, if any; the applications
@@ -964,7 +1012,8 @@ partial def opsVisit (e : Expr) (pos : SubExpr.Pos) (w : OpsWalk) : MetaM Unit :
   w.budget.modify (· - 1)
   let note (i : Option Nat) : MetaM Unit := if i.isSome then w.seen.modify (·.insert e i) else pure ()
   match e with
-  | .forallE n t b bi | .lam n t b bi =>
+  | .forallE .. => opsForall e pos #[] w
+  | .lam n t b bi =>
     opsVisit t pos.pushBindingDomain w
     withLocalDecl n bi t fun x => opsVisit (b.instantiate1 x) pos.pushBindingBody w
   | .letE n t v b _ =>
@@ -985,12 +1034,27 @@ partial def opsVisit (e : Expr) (pos : SubExpr.Pos) (w : OpsWalk) : MetaM Unit :
       opsVisit args[i] (pos.pushNaryArg args.size i) w
   | _ => pure ()
 
+/-- Visit a chain of universal quantifiers and implications with all its binders in scope, so
+that an application in one of its domains or in its body sees every premise of the chain (its
+domains are visited first, in order, then its body, as one binder at a time would). -/
+partial def opsForall (e : Expr) (pos : SubExpr.Pos) (domains : Array (Expr × SubExpr.Pos))
+    (w : OpsWalk) : MetaM Unit := do
+  match e with
+  | .forallE n t b bi =>
+    withLocalDecl n bi t fun x =>
+      opsForall (b.instantiate1 x) pos.pushBindingBody (domains.push (t, pos.pushBindingDomain)) w
+  | _ =>
+    for (t, p) in domains do
+      opsVisit t p w
+    opsVisit e pos w
+end
+
 /-- Each application of a totalised operation in `e`, with its carrier and the positions it
 occurs at in `e` (`at`, as the printed sub-terms name them). `complete: false` when some
 applications may be missing, with the reason in `stopped`: the walk reached its limit of nodes
 (`nodes`), or failed, for example by running out of heartbeats (`error`). -/
-def orderOpsJson (e : Expr) : MetaM Json := do
-  let w : OpsWalk := { out := ← IO.mkRef #[], budget := ← IO.mkRef opsNodes,
+def orderOpsJson (e : Expr) (inside : Name → Bool) : MetaM Json := do
+  let w : OpsWalk := { inside, out := ← IO.mkRef #[], budget := ← IO.mkRef opsNodes,
                        cache := ← IO.mkRef #[], seen := ← IO.mkRef {} }
   let finished ← orDefault false do
     opsVisit e .root w
@@ -1031,7 +1095,7 @@ def specRecord (h : IO.FS.Handle) (q : Query) (inside : Name → Bool) (seen : I
     | .defnInfo d => d.value.getUsedConstants.map toString
     | _ => #[]
   let ops ← match ci with
-    | .defnInfo d => orderOpsJson d.value
+    | .defnInfo d => orderOpsJson d.value inside
     | _ => pure Json.null
   emit h (Json.mkObj [("record", "spec"), ("name", spec.toString), ("errors", toJson errs),
     ("axioms", toJson (axs.map toString)), ("decl", j),

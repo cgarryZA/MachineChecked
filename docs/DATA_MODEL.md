@@ -89,7 +89,10 @@ A review report (`prooflens/review-report@1`) pins the same digests as `pins.sou
 digests are missing or differ from the current ones.
 
 Dismissals of warnings (`dismissals.json`):
-`[{"code", "subject", "trigger", "fingerprint", "rationale", "by"}]`.
+`[{"code", "subject", "trigger", "fingerprint", "rationale", "by"}]`. A dismissal of a
+totalisation warning about one application also has `at` (the warning's `at`), and its
+`fingerprint` is the application's (`pl-occ-v1:…`); without `at` it names the operation in the
+whole proposition and its `fingerprint` is the proposition's ([ASSURANCE.md](ASSURANCE.md)).
 
 ## Evidence (`evidence.schema.json`), written by the engine
 

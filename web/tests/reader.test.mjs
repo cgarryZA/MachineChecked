@@ -819,7 +819,8 @@ for (const width of [1300, 390]) {
       json.findings = json.findings.map((f) => f.subject.endsWith("#0") ? { ...f, occurrences: [
         { operation: f.trigger, type: "Nat", type_head: "Nat", structure: null, state: "applies",
           rule: "truncated subtraction on ℕ: a - b = 0 when a < b", at: ["/1/0/1"] },
-        { operation: f.trigger, type: "Nat", type_head: "Nat", structure: "group", state: "none", rule: null, at: [] }] } : f);
+        { operation: f.trigger, type: "Nat", type_head: "Nat", structure: "group", state: "none", rule: null, at: [] }] }
+        : f.dismissed ? { ...f, at: "/1/1/1", dismissed: { ...f.dismissed, form: "statement" } } : f);
       route.fulfill({ response, json });
     });
     await toyClaim(pg, "T:prop:pred");
@@ -831,6 +832,9 @@ for (const width of [1300, 390]) {
       "in Nat: truncated subtraction on ℕ: a - b = 0 when a < b",
       "in Nat, a group: no exceptional case in this type"]);
     assert.equal(await pg.locator("aside [data-finding='totalised:T:prop:pred#1:instSubNat'] .show").count(), 0, "nothing to mark");
+    // A dismissal of the operation in the whole statement says so.
+    assert.match(await pg.locator("aside [data-finding='totalised:T:prop:pred#1:instSubNat'] .dz").textContent(),
+      /dismissal of the operation in the whole statement/);
     await item.locator(".show").click();
     const view = pg.locator("aside .view");
     await view.locator(".mk").first().waitFor();

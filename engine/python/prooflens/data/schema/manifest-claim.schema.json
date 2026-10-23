@@ -383,6 +383,28 @@
         },
         "occurrences_complete": {
           "type": "boolean"
+        },
+        "at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "For a warning about one application of a totalised operation: its first position in the proposition (also the end of the finding's id, after @)"
+        },
+        "dismissed": {
+          "type": "object",
+          "properties": {
+            "by": {
+              "type": "string"
+            },
+            "rationale": {
+              "type": "string"
+            },
+            "form": {
+              "const": "statement",
+              "description": "The dismissal names the operation in the whole statement, not one application: it holds until the statement changes"
+            }
+          }
         }
       }
     },
