@@ -39,6 +39,7 @@ To exercise the zero-configuration flow, use `examples/plain-paper/`. For the lo
 | `engine/python/prooflens/bundle.py` | Portable HTML |
 | `engine/python/prooflens/export.py` | Explicitly approved public exports |
 | `web/src/` | Browser reader |
+| `.github/actions/browser/` | CI's Chromium: the browser of the pinned Playwright version and the system packages it needs, with bounded, retried downloads kept in caches |
 | `.github/workflows/pages.yml` | Publishes the toy audit CI built (its data only) for machinechecked.org's demo; the site itself is the `cgarryZA/machinechecked.org` repository |
 
 ## How a full assessment flows
@@ -76,6 +77,8 @@ Each failure a full assessment must catch has a test, mostly in `tests/mutations
 | Claim pinned at its label line, or mid-sentence | `source-region` warning naming the paragraph; no status changes | `test_label_lines_partial_sentences_and_section_crossings`, `test_advice_is_a_dismissible_warning_that_changes_no_status` |
 | Author review declared human | still author-reviewed | `test_author_review_declared_human_is_still_not_independent` |
 | Justified totalised operation | warning dismissed; dismissal lapses when the statement changes | `test_dismissal_lapses_when_the_statement_changes` |
+| Two suprema in one statement, one dismissed; one's type changed; both moved | two warnings, the other stays open; only the changed one's dismissal lapses; both dismissals follow; a dismissal of the old form dismisses both until the statement changes | `test_each_supremum_is_judged_by_its_type` (`each_occurrence_has_its_own_finding`) |
+| A real supremum with or without its bound, a bound for another family, `Integrable f μ` beside `∫ g ∂μ` and `∫ f ∂ν`, finiteness almost everywhere | established and the warning resolved; unresolved, never refuted; only `∫ f ∂μ` established; unresolved | `test_each_supremum_is_judged_by_its_type` (`side_conditions`) |
 | Review text citing a lemma or file that does not exist | warning with file and line (violation with `review_citations_strict`); no status changes | `test_a_dangling_citation_is_a_warning_or_in_strict_mode_a_violation` |
 | A proposition, proof, witness or definition the probe cannot find (its module not in `modules`) | violation naming the declaration, and the module that declares it when the source shows one; clause open; no statement shown or queued | `test_a_module_left_out_of_modules`, `test_a_proposition_in_a_module_the_probe_does_not_load` |
 | Specification layer imports acceptance layer | layering violation | `test_specification_layer_importing_the_acceptance_layer` |

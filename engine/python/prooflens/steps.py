@@ -306,11 +306,17 @@ def find_proof_equations(lines: list[str], file: str, numbers: dict[str, str]) -
     return out
 
 
+def context_start(step: dict) -> int:
+    """The line a step's context in the proof starts on: the proof's opening, or
+    `CONTEXT_LINES` lines before the step when the proof opens earlier."""
+    return max(step["proof_line"], step["line"] - CONTEXT_LINES)
+
+
 def context_lines(lines: list[str], step: dict) -> str:
     """The proof up to the step and the sentence after it: what fixes the step's quantities and
     how it is used (at most `CONTEXT_LINES` lines before it). Shown with the step; it is not
     part of the step's pinned source."""
-    start = max(step["proof_line"], step["line"] - CONTEXT_LINES)
+    start = context_start(step)
     k = step["end_line"]
     while k < len(lines) and k - step["end_line"] < 3:
         text = _uncomment(lines[k])
@@ -391,11 +397,35 @@ def full_block(claim: dict, parent: dict | None, lean: dict, reviewed: dict | No
                  reviewed or {"state": "unreviewed", "finding": None, "reports": []}, unit), names
 
 
+def cut_text(text: str, file: str, first_line: int) -> tuple[str, dict | None]:
+    """`text`, which starts on line `first_line` of `file`, kept to its first `TEXT_CHARS`
+    characters; and, when that shortens it, where it was cut: the line holding the first
+    character left out (`line`), the last line of the whole text (`end_line`), and how many of
+    its characters were kept (`kept` of `chars`)."""
+    if len(text) <= TEXT_CHARS:
+        return text, None
+    kept = text[:TEXT_CHARS]
+    return kept, {"file": file, "line": first_line + kept.count("\n"),
+                  "end_line": first_line + text.count("\n"), "kept": len(kept),
+                  "chars": len(text)}
+
+
+def context_cut(rec: dict) -> dict | None:
+    """Where the context of a `step_texts` record was cut, or None when it is whole. Evidence
+    written before cuts were recorded holds a context cut at the limit with no record of
+    where: such a context is taken as cut, at a place it does not record."""
+    if rec.get("context_cut"):
+        return rec["context_cut"]
+    context = rec.get("context") or ""
+    return {"kept": len(context)} if len(context) >= TEXT_CHARS else None
+
+
 def step_texts(inv: dict, paper: str, root: Path, regions: dict) -> dict[str, dict]:
-    """For each proof step of `paper` in the inventory: the text of its pinned region, and its
-    context in the proof (`context_lines`: from the proof's opening, at most `CONTEXT_LINES`
-    lines before it, to the sentence after it). Read from the snapshot the source evidence was
-    computed on."""
+    """For each proof step of `paper` in the inventory: the text of its pinned region, whole,
+    and its context in the proof (`context_lines`: from the proof's opening, at most
+    `CONTEXT_LINES` lines before it, to the sentence after it), kept to `TEXT_CHARS`
+    characters, with where it was cut when it was (`context_cut`, from `cut_text`). Read from
+    the snapshot the source evidence was computed on."""
     from .source_regions import RegionError, extract
     out = {}
     for c in inv["claims"]:
@@ -411,8 +441,9 @@ def step_texts(inv: dict, paper: str, root: Path, regions: dict) -> dict[str, di
         proof = next((i + 1 for i in range(start - 1, -1, -1)
                       if PROOF.search(_uncomment(lines[i]))
                       and "begin" in PROOF.search(_uncomment(lines[i])).group(1)), start)
-        out[c["id"]] = {"text": text[:TEXT_CHARS], "context": context_lines(
-            lines, {"proof_line": proof, "line": start, "end_line": end})[:TEXT_CHARS]}
+        where = {"proof_line": proof, "line": start, "end_line": end}
+        context, cut = cut_text(context_lines(lines, where), reg["file"], context_start(where))
+        out[c["id"]] = {"text": text, "context": context, **({"context_cut": cut} if cut else {})}
     return out
 
 
