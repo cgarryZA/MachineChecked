@@ -94,6 +94,10 @@ def test_a_proof_step_has_its_own_links_route_and_review(toy, tmp_path):
     p0 = read["paper"]["passages"][0]
     assert p0["step"]["parent"] == {"id": "T:thm:bound", "number": "Theorem 2.5"}
     assert "the choice $k = 1$" in p0["context"] and "lean" not in read
+    # Its text is the LaTeX source, and its position approximate: two facts, reported apart.
+    assert (p0["quality"], p0["source"]["position"]) == ("LaTeX source", "approximate")
+    assert p0["text"] == r["statement_tex"] and p0["complete"]
+    assert "(LaTeX source, approximate position" in cmp.passage_text(p0)
     comp = cmp.claim_packet(site, "T:eq:bound-range", "compare")
     assert [(d["name"], d["role"]) for d in comp["lean"]["declarations"]] == [
         ("Toy.Acceptance.thm_bound", "formal route used instead")]

@@ -180,15 +180,20 @@ class Site:
 
 def passage(ch: dict, stage: str) -> dict:
     """A claim's printed passage, complete, with where it is and how it was obtained. A passage
-    the build does not hold is `available: false`, with its source reference."""
+    the build does not hold is `available: false`, with its source reference. Where the text
+    comes from (`quality`) and how precisely it is placed (`source.position`) are separate
+    facts: a paper read from its PDF gives text extracted from the PDF; a LaTeX paper gives its
+    source text, placed exactly by its anchor or approximately (a proof step located by its
+    line)."""
     anchor = ch.get("anchor") or {}
     approx = anchor.get("kind") in ("approximate", "pdf")
+    from_pdf = ((ch.get("source_evidence") or {}).get("state") == "pdf-only"
+                or anchor.get("kind") == "pdf")
     text = ch.get("statement_tex")
-    quality = "LaTeX source"
+    quality = "text extracted from the PDF" if from_pdf else "LaTeX source"
     if not text and anchor.get("statement"):
+        # Only an anchor found in the PDF keeps its text apart from `statement_tex`.
         text, quality = anchor["statement"], "text extracted from the PDF"
-    elif text and approx:
-        quality = "text extracted from the PDF"
     begin, end = anchor.get("begin") or [None], anchor.get("end") or [None]
     source = {"file": anchor.get("file") or ch.get("location"), "line": anchor.get("line"),
               "label": anchor.get("label"), "page": begin[0], "page_end": end[0],
