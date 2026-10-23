@@ -172,8 +172,9 @@ def test_a_definition_claim_lists_witness_only_declarations_that_use_its_definit
 
 
 # A synthetic project for the probe: a structure with a proof field, the paper's instance of it,
-# a `Prop` class with an instance, a definition that needs that instance, and a theorem about the
-# instance; a proposition about the structure, its proof and a witness that uses all of them.
+# a `Prop` class with an instance, a definition that needs that instance, a theorem about the
+# instance and a function of `Fin 3`; a proposition about the structure, its proof, and a witness
+# that uses all of them and whose statement has proofs Lean makes auxiliary (`_proof_1`).
 WIT = {
     "lakefile.toml": 'name = "wit"\ndefaultTargets = ["Wit"]\n\n[[lean_lib]]\nname = "Wit"\n',
     "Wit.lean": "import Wit.Defs\nimport Wit.Spec\nimport Wit.Acceptance\n",
@@ -198,6 +199,9 @@ def ofFact (n : Nat) [Fact (n ≠ 0)] : Pos := ⟨n, Nat.pos_of_ne_zero Fact.out
 
 theorem three_val : three.val = 3 := rfl
 
+/-- A number below three, read off. -/
+def pick (x : Fin 3) : Nat := x.val
+
 end Wit
 """,
     "Wit/Spec.lean": """import Wit.Defs
@@ -215,10 +219,11 @@ namespace Wit.Acceptance
 
 theorem pos_ge_one : Wit.Spec.pos_ge_one := fun p => p.pos
 
-/-- The paper's example, with its value, and the number two. -/
+/-- The paper's example, with its value, the number two, and a number below three. -/
 theorem pos_ge_one_hypotheses :
-    ∃ q : {p : Wit.Pos // p.val = 3}, q = ⟨Wit.three, Wit.three_val⟩ ∧ (Wit.ofFact 2).val = 2 :=
-  ⟨_, rfl, rfl⟩
+    ∃ q : {p : Wit.Pos // p.val = 3}, q = ⟨Wit.three, Wit.three_val⟩ ∧ (Wit.ofFact 2).val = 2 ∧
+      Wit.pick ⟨1, by omega⟩ = Wit.pick ⟨1, by decide⟩ :=
+  ⟨_, rfl, rfl, rfl⟩
 
 end Wit.Acceptance
 """}
@@ -232,9 +237,10 @@ WIT_CLAIM = {"id": "P:pos", "paper": "P", "scope": "formal", "scope_reviewed": T
 @pytest.mark.parametrize("toolchain", ["leanprover/lean4:v4.32.0", "leanprover/lean4:v4.24.0"])
 def test_the_probe_reports_which_declarations_of_a_witness_closure_are_proofs(tmp_path,
                                                                               toolchain):
-    """As Lean elaborates them: the theorem, the `Prop`-valued instance and the constructor of the
-    `Prop` class are propositions and are not listed; the instance, the definition that needs
-    the `Prop` instance and the class are listed."""
+    """As Lean elaborates them: the auxiliary proof of the witness's statement, the theorem, the
+    `Prop`-valued instance and the constructor of the `Prop` class are propositions and are not
+    listed; the instance, the definitions that use the `Prop` instance and `Fin 3`, and the class
+    are listed."""
     if subprocess.run(["elan", "toolchain", "list"], capture_output=True,
                       text=True).stdout.find(toolchain) < 0:
         pytest.skip(f"{toolchain} is not installed")
@@ -251,11 +257,13 @@ def test_the_probe_reports_which_declarations_of_a_witness_closure_are_proofs(tm
     w = lean["proofs"]["witness:Wit.Acceptance.pos_ge_one_hypotheses:"]
     assert w["errors"] == []
     prop = {n: lean["decls"][n]["proposition"] for n in w["closure"]}
-    assert {n for n, p in prop.items() if p is True} == \
-        {"Wit.three_val", "Wit.two_ne_zero", "Wit.Fact.mk"}, prop
+    aux = {n for n in prop if n.startswith("Wit.Acceptance.pos_ge_one_hypotheses._proof_")}
+    assert aux and {n for n, p in prop.items() if p is True} == \
+        {"Wit.three_val", "Wit.two_ne_zero", "Wit.Fact.mk"} | aux, prop
     assert {n for n, p in prop.items() if p is False} == \
-        {"Wit.Fact", "Wit.Pos", "Wit.Pos.mk", "Wit.Pos.val", "Wit.ofFact", "Wit.three"}, prop
+        {"Wit.Fact", "Wit.Pos", "Wit.Pos.mk", "Wit.Pos.val", "Wit.ofFact", "Wit.pick",
+         "Wit.three"}, prop
     claims, findings = run(reviews=[], claims=[WIT_CLAIM], lean=lean)
     assert [e["name"] for e in claims["P:pos"]["clauses"][0]["witness_defs"]] == \
-        ["Wit.Fact", "Wit.ofFact", "Wit.three"]
-    assert len([f for f in findings if f["code"] == "witness-def-review"]) == 3
+        ["Wit.Fact", "Wit.ofFact", "Wit.pick", "Wit.three"]
+    assert len([f for f in findings if f["code"] == "witness-def-review"]) == 4
