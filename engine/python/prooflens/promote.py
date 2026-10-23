@@ -43,7 +43,6 @@ from . import evidence as ev
 from . import review_sources
 from .config import Config
 from .reviews import history, load_reviews, review_files
-from .util import read_json
 
 ACCEPTABLE = {"faithful", "faithful with representation choices", "broader"}
 NEEDS_DETAIL = {"faithful with representation choices", "broader"}
@@ -58,10 +57,12 @@ class PromoteError(RuntimeError):
 
 
 def latest_record(cfg: Config) -> dict:
-    rels = sorted((cfg.out_dir / "releases").glob("*.json"), key=lambda p: p.stat().st_mtime)
-    if not rels:
+    """The evidence record of the latest release (`evidence.latest`), which every command that
+    reads the latest release reads."""
+    last = ev.latest(cfg.out_dir)
+    if last is None:
         raise PromoteError("no release: run `machinechecked build` first")
-    return ev.load(cfg.out_dir, read_json(rels[-1])["evidence"])
+    return ev.load(cfg.out_dir, last["evidence"])
 
 
 def load_reports(paths: list[Path]) -> list[dict]:

@@ -375,12 +375,13 @@ def inventory_changed(cfg: Config, body: dict) -> str | None:
 
 def reassess(cfg: Config, web_dist: Path | None = None, release: str | None = None,
              log=print) -> dict:
-    """Assess the latest evidence again with the current rules and the current review files,
-    without probing or compiling, and store the result as a new evidence record and release."""
-    rels = ev.releases(cfg.out_dir)
-    if not rels:
+    """Assess the latest release's evidence (`evidence.latest`) again with the current rules and
+    the current review files, without probing or compiling, and store the result as a new
+    evidence record and release."""
+    last = ev.latest(cfg.out_dir)
+    if last is None:
         raise StaleEvidence(NO_RELEASE)
-    old = ev.load(cfg.out_dir, read_json(rels[-1])["evidence"])["body"]
+    old = ev.load(cfg.out_dir, last["evidence"])["body"]
     why = inventory_changed(cfg, old)
     if why:
         raise StaleEvidence(why)
@@ -398,7 +399,7 @@ def reassess(cfg: Config, web_dist: Path | None = None, release: str | None = No
             "provenance": {**old["provenance"],
                            "tool": {**old["provenance"]["tool"], "version": tool_version()},
                            "comparator_log_sha256": sha256_file(comp) if comp_text else None,
-                           "reassessed_from": read_json(rels[-1])["evidence"]}}
+                           "reassessed_from": last["evidence"]}}
     body.pop("schema", None)
     eid = ev.store(cfg.out_dir, body)
     rel = release or f"r-{eid[:12]}"
@@ -423,13 +424,13 @@ def pdf_paths(cfg: Config, body: dict) -> dict:
 
 
 def rebuild_site(cfg: Config, web_dist: Path | None = None, release: str | None = None) -> dict:
-    """The preview site again from a stored release, without probing or compiling. A PDF is
-    included only if the one on disk is the one the evidence records."""
-    rels = ev.releases(cfg.out_dir)
-    if not rels:
+    """The preview site again from a stored release (by default the latest, `evidence.latest`),
+    without probing or compiling. A PDF is included only if the one on disk is the one the
+    evidence records."""
+    last = ev.latest(cfg.out_dir)
+    if last is None:
         raise StaleEvidence(NO_RELEASE)
-    rel = read_json(cfg.out_dir / "releases" / f"{release}.json") if release else \
-        read_json(rels[-1])
+    rel = read_json(cfg.out_dir / "releases" / f"{release}.json") if release else last
     record = ev.load(cfg.out_dir, rel["evidence"])
     index, chunks, store = mf.build(record, rel["release"], load_display(cfg))
     index.update(issues=cfg.issues, site_url=cfg.site_url)

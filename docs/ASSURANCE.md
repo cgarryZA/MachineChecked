@@ -156,8 +156,11 @@ The export is a complete site, reader included; with `--data-only` it holds only
 
 ## What changed since the last release
 
-Each build is a release. When the paper or the Lean changes, compare the new release with the
-one before it:
+Each build is a release. A build that reproduces the evidence of an earlier one (after a change
+is reverted, say) names that earlier release again. The latest release is the one the last build
+produced or reproduced: `site`, `export` and `changes` read it unless given a release, and
+`reassess`, `inventory retire --markers`, `review promote` and `symbol add` always read it. When
+the paper or the Lean changes, compare the new release with the one before it:
 
 ```sh
 machinechecked changes                       # the latest release against the one before it
