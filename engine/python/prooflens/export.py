@@ -407,16 +407,6 @@ def export(cfg: Config, out: Path, release: str | None = None,
                    indent=None)
         pidx["changes"] = "data/changes.json"
         write_json(data / "index.json", pidx, indent=None)
-    # The workspace records the auditors accepted, with what each paper publishes, and what Lean
-    # says of them now when the Lean project is the one the release was built from.
-    from . import published_work
-    paper_of = {c["id"]: c["paper"] for c in chunks.values()}
-    try:
-        published_work.write(data, cfg.out_dir, lambda cid: pubs[paper_of[cid]],
-                             cfg.out_dir / "sources", built_lean_root(cfg, record))
-    except published_work.PublishError as e:
-        shutil.rmtree(out)
-        raise ExportError(str(e)) from None
     # The search index, with only what each paper allows.
     srch = mf.search_index(index, chunks)
     pub_search = {"claims": [], "decls": srch["decls"] if lean_ok else []}
@@ -430,6 +420,17 @@ def export(cfg: Config, out: Path, release: str | None = None,
         pidx.update({k: v for k, v in content_mod.apply(pidx, {}, found)[0].items()
                      if k in ("retrieval", "numbering")})
         write_json(data / "index.json", pidx, indent=None)
+    # The workspace records the auditors accepted, with what each paper publishes, and what Lean
+    # says of them now when the Lean project is the one the release was built from; and the
+    # main results the auditors saved, which it adds to the index written above.
+    from . import published_work
+    paper_of = {c["id"]: c["paper"] for c in chunks.values()}
+    try:
+        published_work.write(data, cfg.out_dir, lambda cid: pubs[paper_of[cid]],
+                             cfg.out_dir / "sources", built_lean_root(cfg, record))
+    except published_work.PublishError as e:
+        shutil.rmtree(out)
+        raise ExportError(str(e)) from None
     from . import audit
     arx = [p.source["arxiv"] for p in shown if p.source.get("arxiv")]
     write_json(out / audit.NAME, audit.descriptor(

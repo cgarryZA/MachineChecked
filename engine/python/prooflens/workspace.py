@@ -20,6 +20,10 @@ auditor's compositions: arguments that combine several results, with an optional
 (`composition.py`), and, for an estimate, the differences found, candidate counterexamples and
 Lean certificates (`estimates.py`).
 
+A workspace also keeps the auditor's choice of the paper's main results (`main_results`): the
+claims and declarations `compare --query impact` traces from, with who chose them and the
+release and project commit they were checked against.
+
 A workspace records evidence and readings; it changes no status. A submitted finding is never
 edited: a later one supersedes it, with its reason, and both remain. Exposure (what the auditor
 had seen) is only ever added to, so neither resuming nor importing makes an investigation blind.
@@ -760,6 +764,152 @@ def _workspace_op(ws, op, snap, by, at, changed):
         raise WorkspaceError(f"unknown operation {kind!r}")
 
 
+# -- the main results ------------------------------------------------------------------------
+
+MAIN_OP = "main-results"
+
+
+def _main_claim(q: str, snap) -> str | None:
+    """The claim `q` names, or None when it names none; a name several claims share is
+    refused."""
+    from .targets import TargetError
+    try:
+        return snap.resolve_claim(q)
+    except TargetError as e:
+        if e.kind == "ambiguous":
+            raise WorkspaceError(str(e) + ": " + ", ".join(c["id"] for c in e.candidates)) \
+                from None
+        return None
+
+
+def _main_decl(name: str, module: str | None, snap, root) -> dict:
+    """The project declaration `name` (in `module`, when given), as the build has it."""
+    from .targets import TargetError, resolve_declaration
+    try:
+        r = resolve_declaration(name, snap, root, module)
+    except TargetError as e:
+        if e.kind == "ambiguous":
+            mods = ", ".join(c["module"] for c in e.candidates)
+            raise WorkspaceError(f"{name} is declared in several modules ({mods}); name one as "
+                                 "MODULE:NAME") from None
+        if e.kind == "no-build":
+            raise WorkspaceError(str(e)) from None
+        near = list(dict.fromkeys(c["name"] for c in e.candidates if c.get("name")))
+        raise WorkspaceError(
+            f"{name if not module else f'{module}:{name}'} is neither a claim of release "
+            f"{snap.index.get('release')} nor a declaration of the project"
+            + (f" (did you mean: {', '.join(near)})" if near else "")) from None
+    return {"decl": r["name"], "module": r["module"], "build": r["build"]}
+
+
+def main_result_entries(names, snap, root: Path | None = None) -> list[dict]:
+    """The main results `names` names, checked against the build `snap`: each a claim (by id,
+    key or number), standing for its linked Lean, as `{claim}`, or a declaration of the project
+    (`NAME`, or `MODULE:NAME` when several modules declare it; or `{decl, module}`), as `{decl,
+    module, build}`. A name is read as a claim first."""
+    if snap is None:
+        raise WorkspaceError("main results are checked against a build: run `machinechecked view` "
+                             "or `build` first")
+    if not isinstance(names, list):
+        raise WorkspaceError("`main` is a list of claims and declarations")
+    out: list[dict] = []
+    for n in names:
+        if isinstance(n, dict) and isinstance(n.get("claim"), str) and not n.get("decl"):
+            cid = _main_claim(n["claim"], snap)
+            if cid is None:
+                raise WorkspaceError(f"no claim {n['claim']!r} in release "
+                                     f"{snap.index.get('release')}")
+            e = {"claim": cid}
+        elif isinstance(n, dict) and isinstance(n.get("decl"), str) and not n.get("claim"):
+            e = _main_decl(n["decl"].strip(), _text(n.get("module"), "the module") or None,
+                           snap, root)
+        elif isinstance(n, str) and n.strip():
+            q = n.strip()
+            cid = _main_claim(q, snap)
+            if cid is not None:
+                e = {"claim": cid}
+            else:
+                module, _, name = q.rpartition(":") if ":" in q else ("", "", q)
+                e = _main_decl(name, module or None, snap, root)
+        else:
+            raise WorkspaceError("a main result is a claim or a declaration: its name, or "
+                                 "{claim} or {decl, module}")
+        if e not in out:
+            out.append(e)
+    return out
+
+
+def _main_results_op(ws, op, snap, root, by, at, changed) -> None:
+    """Save the main results `op['main']` names, replacing those saved (kept in `provenance`);
+    an empty list removes them."""
+    entries = main_result_entries(op.get("main"), snap, root)
+    prev = ws.get("main_results")
+    if entries == ((prev or {}).get("selected") or []):
+        return
+    if prev:
+        ws.setdefault("provenance", []).append({"event": "main results replaced", "at": at,
+                                                "by": by, "was": prev})
+    if entries:
+        src = snap.sources()
+        ws["main_results"] = {"selected": entries, "by": by, "at": at,
+                              "pins": {"release": src.get("release"),
+                                       **{k: v for k, v in (src.get("project") or {}).items()
+                                          if k in ("commit", "repository")}}}
+    else:
+        ws.pop("main_results", None)
+    changed.append("main_results")
+
+
+def main_results_problems(sel: dict | None, snap, root: Path | None = None) -> list[dict]:
+    """The entries of a saved main-result selection that the build `snap` does not have: a claim
+    not in its release, a declaration it does not declare (in the module recorded) or that
+    several of its modules declare. A declaration the build cannot look up (it keeps no index of
+    the project's declarations and no record of this one) is not counted as missing."""
+    from .targets import TargetError, resolve_declaration
+    out = []
+    index = snap.lean_index()
+    for e in (sel or {}).get("selected") or []:
+        if e.get("claim"):
+            if snap.chunk(e["claim"]) is None:
+                out.append({"claim": e["claim"], "problem": f"no claim {e['claim']} in release "
+                                                            f"{snap.index.get('release')}"})
+            continue
+        name, module = e.get("decl"), e.get("module")
+        if index is None and not snap.store_records(name):
+            continue
+        try:
+            resolve_declaration(name, snap, root, module)
+        except TargetError as err:
+            if err.kind == "no-build":
+                continue
+            out.append({"decl": name, **({"module": module} if module else {}), "problem": (
+                f"{name} is declared in several modules of this build" if err.kind == "ambiguous"
+                else f"{name} is not declared in {module} in this build" if module
+                else f"{name} is not a declaration of this build")})
+    return out
+
+
+def main_results_view(ws: dict, snap, root: Path | None = None) -> dict | None:
+    """The workspace's saved main results, with what the build `snap` lacks of them
+    (`problems`), or None when it saves none."""
+    sel = ws.get("main_results")
+    if not sel:
+        return None
+    return {**sel, "problems": main_results_problems(sel, snap, root) if snap is not None
+            else []}
+
+
+def main_result_selections(work_dir: Path, wid: str | None = None) -> list[dict]:
+    """The main-result selections saved in the workspaces of `work_dir` (only in `wid`, when one
+    is named), each with its workspace's id, reviewer and mode."""
+    rows = list_all(work_dir)
+    if wid and not any(ws["id"] == wid for _, ws in rows):
+        raise WorkspaceError(f"no workspace {wid} in {store(work_dir)}")
+    return [{"workspace": ws["id"], "reviewer": (ws.get("reviewer") or {}).get("id"),
+             "mode": ws.get("mode"), **ws["main_results"]}
+            for _, ws in rows if (not wid or ws["id"] == wid) and ws.get("main_results")]
+
+
 def apply(ws: dict, ops: list[dict], snap=None, root: Path | None = None, by: str | None = None,
           op_id: str | None = None) -> dict:
     """Apply `ops` to `ws` in memory, all or none. Returns the acknowledgement; raises
@@ -777,6 +927,8 @@ def apply(ws: dict, ops: list[dict], snap=None, root: Path | None = None, by: st
             raise WorkspaceError("each operation is an object")
         if op.get("op") in ("resume", "mode", "exposure"):
             _workspace_op(work, op, snap, by, at, changed)
+        elif op.get("op") == MAIN_OP:
+            _main_results_op(work, op, snap, root, by, at, changed)
         else:
             c = _record_op(work, op, snap, root, by, at, changed)
             if c:
@@ -953,6 +1105,7 @@ def view(ws: dict, snap=None, claim: str | None = None, root: Path | None = None
                                   snap, cid)
     return {"schema": "prooflens/workspace-view@1", **summary(ws),
             "selection": ws.get("selection") or {}, "sources": ws.get("sources") or {},
+            "main_results": main_results_view(ws, snap, root),
             "current_sources": snap.sources() if snap is not None else None,
             "exposure": ws.get("exposure") or [], "conflicts": ws.get("conflicts") or [],
             "claims": claims}
@@ -966,9 +1119,11 @@ def exposed(ws: dict, claim_ids: list[str]) -> list[dict]:
 
 def auditors(ws: dict) -> set[str]:
     """Everyone the workspace records as having worked in it: its reviewer, the authors of its
-    records and of its edits (refused ones too), whoever set where to resume, and whoever changed
-    its mode or imported it. What the workspace records as seen, each of them had seen."""
-    out = {(ws.get("reviewer") or {}).get("id"), (ws.get("resume") or {}).get("by")}
+    records and of its edits (refused ones too), whoever set where to resume or chose its main
+    results, and whoever changed its mode or imported it. What the workspace records as seen,
+    each of them had seen."""
+    out = {(ws.get("reviewer") or {}).get("id"), (ws.get("resume") or {}).get("by"),
+           (ws.get("main_results") or {}).get("by")}
     for r in (ws.get("records") or {}).values():
         if isinstance(r, dict):
             out |= {r.get(k) for k in ("created_by", "updated_by", "state_by")}
@@ -992,8 +1147,9 @@ def import_(work_dir: Path, data: dict, snap=None, by: str | None = None,
             source: str | None = None) -> dict:
     """Bring an exported workspace into this working directory. It keeps its id, authors,
     pins, mode and exposure. A workspace already here with the same id gains the records it
-    lacks; a record both hold in different versions is kept as here and reported as a
-    conflict. References the current build cannot resolve are reported as `problems`; the
+    lacks, and the main results when it saves none; a record (or main-result selection) both
+    hold in different versions is kept as here and reported as a conflict. References the
+    current build cannot resolve, main results included, are reported as `problems`; the
     records stay as they were written and are not counted as resolved."""
     ws_in = upgrade(dict(data))
     ws_in.pop("exported_at", None)
@@ -1020,6 +1176,9 @@ def import_(work_dir: Path, data: dict, snap=None, by: str | None = None,
         for e in r.get("evidence") or []:
             if e not in ws_in["records"]:
                 problems.append({"record": r.get("id"), "problem": f"evidence {e} is missing"})
+    if snap is not None:
+        problems += [{"record": "main_results", "problem": p["problem"]}
+                     for p in main_results_problems(ws_in.get("main_results"), snap)]
     at = now()
     event = {"event": "imported", "at": at, "by": by, "from": source}
     try:
@@ -1044,6 +1203,15 @@ def import_(work_dir: Path, data: dict, snap=None, by: str | None = None,
                      "at": at, "by": by, "how": "import"}
                 ws.setdefault("conflicts", []).append(c)
                 conflicts.append(c)
+        theirs, mine = ws_in.get("main_results"), ws.get("main_results")
+        if theirs and not mine:
+            ws["main_results"] = theirs
+            added.append("main_results")
+        elif theirs and theirs != mine:
+            c = {"id": "main_results", "current": mine, "proposed": theirs, "at": at, "by": by,
+                 "how": "import"}
+            ws.setdefault("conflicts", []).append(c)
+            conflicts.append(c)
         for e in ws_in["exposure"]:
             if e not in ws["exposure"]:
                 ws["exposure"].append(e)

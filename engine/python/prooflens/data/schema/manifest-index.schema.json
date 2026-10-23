@@ -179,6 +179,128 @@
     "changes": {
       "type": "string",
       "description": "What changed since the release before this one, and the evidence it reopens (data/changes.json, prooflens/changes@1)."
+    },
+    "main_results": {
+      "type": "array",
+      "maxItems": 200,
+      "description": "The main results each auditor's workspace saves (`workspace main`, published_work.py): attributed readings, never an input to a status.",
+      "items": {
+        "type": "object",
+        "required": [
+          "workspace",
+          "mode",
+          "reviewer",
+          "selected",
+          "by",
+          "at",
+          "pins",
+          "problems"
+        ],
+        "properties": {
+          "workspace": {
+            "type": "string"
+          },
+          "mode": {
+            "enum": [
+              "independent",
+              "informed"
+            ]
+          },
+          "reviewer": {
+            "type": "object"
+          },
+          "selected": {
+            "type": "array",
+            "maxItems": 1000,
+            "items": {
+              "type": "object",
+              "properties": {
+                "claim": {
+                  "type": "string"
+                },
+                "decl": {
+                  "type": "string"
+                },
+                "module": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "build": {
+                  "type": "string"
+                }
+              },
+              "oneOf": [
+                {
+                  "required": [
+                    "claim"
+                  ]
+                },
+                {
+                  "required": [
+                    "decl"
+                  ]
+                }
+              ]
+            }
+          },
+          "by": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "at": {
+            "type": "string"
+          },
+          "pins": {
+            "type": "object",
+            "properties": {
+              "release": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "commit": {
+                "type": "string"
+              },
+              "repository": {
+                "type": "string"
+              }
+            }
+          },
+          "problems": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "problem"
+              ],
+              "properties": {
+                "problem": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "left_out": {
+            "type": "object",
+            "required": [
+              "count"
+            ],
+            "properties": {
+              "count": {
+                "type": "integer"
+              },
+              "why": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
     }
   }
 }

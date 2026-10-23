@@ -197,7 +197,8 @@ The current format is `prooflens/manifest@1`; older display data must be rebuilt
 See [the structured status contract](STATUS_CONTRACT.md) for the complete code inventory.
 
 `data/index.json` lists the papers, every claim's `status_code`, derived status/class and anchor, the summary and the
-findings counts. `data/claims/<file>.json` holds one passport: the printed statement
+findings counts; a published audit's index also has the auditors' `main_results`
+([below](#published-workspace-records-prooflenspublished-work1-written-by-the-export)). `data/claims/<file>.json` holds one passport: the printed statement
 (`statement_tex`: a statement environment's body, or the pinned passage of a claim located by
 line, each read from the source file that holds it, also when the main file `\input`s or
 `\include`s its sections; and its display `excerpt`, when the paper publishes its source text), each
@@ -375,9 +376,10 @@ path. A workspace records evidence and readings and is never an input to a statu
 | `selection`, `sources` | the paper and project selected; the build it was made against (`release`, project `commit`/`repository`, each paper's `revision` and `pdf_sha256`) |
 | `records` | evidence, findings and questions, by record id (below) |
 | `resume` | where to continue: `claim`, `clause`, `question`, `pinned` references, `at`, `by`; kept apart from the evidence |
+| `main_results` | the paper's main results as the auditor chose them (`workspace main`), which `compare --query impact` traces from: `selected` (each `{claim}`, standing for the claim's linked Lean, or `{decl, module, build}`, a project declaration), `by`, `at`, and `pins` (`release`, project `commit` and `repository` of the build they were checked against); absent until chosen |
 | `review` | the review protocol's `drafts` (locked reading, verdict, author-review step) and submitted `reports` (`prooflens/review-report@1`) |
 | `conflicts` | refused edits, each with the saved record (`current`) and the proposal (`proposed`) |
-| `provenance` | upgrades, mode changes and imports, with time and person |
+| `provenance` | upgrades, mode changes, imports and replaced main results (`was`), with time and person |
 | `ops` | acknowledgements of requests by their `op_id`, so a repeated request changes nothing (not exported) |
 
 Every record has `id`, `kind`, `claim` (a claim id, resolved from a key or a number when written),
@@ -498,9 +500,21 @@ optional `clause` and `note`, `rev`, `created_at`/`created_by`, `updated_at`/`up
 An update is a list of operations applied together or not at all: `put` (create, or replace a
 record's content, given `base_rev`, the revision it was read at), `delete` (a draft or an unused
 record), `submit` (a draft finding), `supersede` (a submitted finding, with `reason` and the new
-`record`), `resume`, `mode` and `exposure`. An edit made from an older revision of a record is a
-conflict: nothing is applied, and the answer (and `conflicts`) holds both versions; edits of
-different records are both kept. Writes replace the file atomically under a lock file beside it.
+`record`), `resume`, `mode`, `exposure` and `main-results`. An edit made from an older revision of
+a record is a conflict: nothing is applied, and the answer (and `conflicts`) holds both versions;
+edits of different records are both kept. Writes replace the file atomically under a lock file
+beside it.
+
+`{"op": "main-results", "main": [...]}` replaces the main results: each entry a claim (its id,
+key or number) or a declaration (`NAME`, `MODULE:NAME` when several modules declare it, or
+`{decl, module}`), read as a claim first. It needs a build: a claim must be in its release and a
+declaration must be one the project declares (built, or in a module not built or not loaded), or
+the whole update is refused. The selection replaced is kept in `provenance`; an empty list
+removes it. Against a later build, `workspace show`, `workspace main` and `compare --query impact`
+list what the build no longer has under `problems` (a claim not in its release, a declaration not
+declared, or not in the module recorded); a build that keeps no index of the project's
+declarations cannot tell, and lists none for a declaration it holds no record of. A selection
+changes no status.
 
 **Currency.** Evidence on a declaration is pinned to its `fingerprint` and to a `digest` of that
 fingerprint with those of the constants Lean generated for it (`N._f`, `N.match_1`, `N.eq_1`), which
@@ -543,10 +557,11 @@ later than the lock. So `review promote` refuses the report unless the maintaine
 
 **Export and import.** `workspace export` writes the whole workspace (less `ops`) as one file;
 `workspace import` keeps its id, authors, pins, mode and exposure. Into a workspace already
-present, it adds the records that are missing and keeps a record both hold in different versions
-as it is, listing the other under `conflicts`. References the current build cannot resolve are
-reported as `problems`. A published audit carries the accepted records of every workspace in
-the working directory, below; the workspace itself stays local.
+present, it adds the records that are missing (and the main results, when it has none) and keeps
+a record, or main results, both hold in different versions as it is, listing the other under
+`conflicts`. References the current build cannot resolve, main results included, are reported as
+`problems`. A published audit carries the accepted records and the main results of every
+workspace in the working directory, below; the workspace itself stays local.
 
 ## Published workspace records (`prooflens/published-work@1`), written by the export
 
@@ -595,6 +610,14 @@ finding recorded as `checked_bridge` without a composition reads as `reviewed_co
 checked at export. Without `reviews`, `note`,
 `argument`, `question`, `would_decide`, `reason` and `why_rejected` are left out. The export
 scans these files with the rest. A claim file larger than 2 MB is refused.
+
+The main results each workspace saves are in the data index, `main_results`: one entry per
+workspace, with `workspace`, `mode`, `reviewer`, the `selected` claims and declarations, `by`,
+`at`, `pins` (the release and project `commit` and `repository` they were checked against, which
+may be earlier than the audit's own) and `problems` (what the published build no longer has, as
+above). An entry the published data cannot name (a claim of a paper the export leaves out, or a
+declaration it neither records nor indexes) is counted in `left_out` (`{count, why}`), never
+named. They are readings: no status depends on them.
 
 A site loading an audit (`load_published_audit`) reads the file the passport names (only
 `work/<the claim's file>`), checks it against the schema and that its `claim` and `release` are
