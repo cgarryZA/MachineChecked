@@ -74,7 +74,8 @@ def test_a_part_of_the_paper_or_the_lean_after_the_number_is_not_another_work():
     elsewhere = {"Q.a": "Theorem 4.1 of [Gauss].", "Q.b": "Theorem 3 in Hardy and Wright.",
                  "Q.c": "Lemma 7.7 in Section 7 of [AB].", "Q.d": "Lemma 7.7 from Appendix A [AB].",
                  "Q.e": "Theorem 9.9 in Chapter IV of Hardy and Wright.",
-                 "Q.f": "Theorem 9.9 in Prop. 4.7 of [AB].", "Q.g": "Theorem 9.9 of Paper B."}
+                 "Q.f": "Theorem 9.9 in Prop. 4.7 of [AB].", "Q.g": "Theorem 9.9 of Paper B.",
+                 "Q.h": "Theorem 9.9 in Sections 4 and 5 of [AB]."}
     index = [decl(n, d) for n, d in {**checked, **elsewhere}.items()]
     out = nb.analyse(index, CLAIMS, INV)
     first = {}

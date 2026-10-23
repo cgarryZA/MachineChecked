@@ -72,8 +72,10 @@ NAME_REF = re.compile(r"(?:^|_)(theorem|thm|lemma|lem|proposition|prop|corollary
 _ELSEWHERE_AFTER = re.compile(
     r"\s*(?:,\s*)?(?:of|in|from)\s+(?!(?:the|this|our)\s+(?:paper|article|manuscript|note|text|"
     r"preprint)\b)(?:\[|\\cite|(?:the\s+)?([A-Z][\w\-–]*)|arXiv|ref)|\s*\[")
-# The label of a part after its word (`Section 7.2`, `Appendix A`, `Part II`, `Lean 4`).
-_PART_LABEL = re.compile(r"\.?[ \t~]*(?:(?:[IVXLCDM]+|[A-Z]|\d+)(?:\.\d+)*\b)?")
+# The label or labels of a part after its word (`Section 7.2`, `Appendix A`, `Part II`,
+# `Lean 4`, `Sections 4 and 5`).
+_LABEL = r"(?:[IVXLCDM]+|[A-Z]|\d+)(?:\.\d+)*\b"
+_PART_LABEL = re.compile(rf"\.?[ \t~]*(?:{_LABEL}(?:\s*(?:,|and|or|–|--?)\s*{_LABEL})*)?")
 # Just before a number: an open citation bracket (`[AB, Lemma 9`), `et al.`, or the possessive
 # of a bracketed citation or of `et al.` (`[AB]'s Lemma 9`, `Smith et al.'s Theorem 3`).
 _ELSEWHERE_BEFORE = re.compile(r"\[[^\]]*$|\bet al\.?\s*,?\s*$"
