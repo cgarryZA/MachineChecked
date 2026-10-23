@@ -177,7 +177,7 @@ def test_pins_baselines_and_other_revisions(tmp_path):
         repin_plan({"claims": [wrong]}, "T", old, new, OLD, NEW)
     legacy = {**a}
     del legacy["source_hash_scheme"]
-    with pytest.raises(RegionError, match="source_regions"):
+    with pytest.raises(RegionError, match=r"\(machinechecked inventory regions\)"):
         repin_plan({"claims": [legacy]}, "T", old, new, OLD, NEW)
 
 
