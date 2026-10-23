@@ -6,8 +6,13 @@ declaration whose type is a proposition is a proof: it carries no data, so it ca
 instance a witness exhibits, and it is not listed (#243)."""
 
 import copy
+import subprocess
 from types import SimpleNamespace
 
+import pytest
+
+from conftest import needs_lean
+from prooflens import probe
 from prooflens.assess import Assessor
 from prooflens.reviews import Review
 
@@ -164,3 +169,93 @@ def test_a_definition_claim_lists_witness_only_declarations_that_use_its_definit
         {"name": "S.Model.r", "uses": ["S.Model"], "witnesses": ["S.rate_bound_hypotheses"]},
         {"name": "S.paperModel", "uses": ["S.Model"], "witnesses": ["S.rate_bound_hypotheses"]}]
     assert claims["P:model"]["status_code"] == "definition.reviewed"
+
+
+# A synthetic project for the probe: a structure with a proof field, the paper's instance of it,
+# a `Prop` class with an instance, a definition that needs that instance, and a theorem about the
+# instance; a proposition about the structure, its proof and a witness that uses all of them.
+WIT = {
+    "lakefile.toml": 'name = "wit"\ndefaultTargets = ["Wit"]\n\n[[lean_lib]]\nname = "Wit"\n',
+    "Wit.lean": "import Wit.Defs\nimport Wit.Spec\nimport Wit.Acceptance\n",
+    "Wit/Defs.lean": """namespace Wit
+
+/-- A proposition held as a class, as `Fact` is in Mathlib. -/
+class Fact (p : Prop) : Prop where
+  out : p
+
+/-- A positive number. -/
+structure Pos where
+  val : Nat
+  pos : 0 < val
+
+/-- The paper's example. -/
+def three : Pos := ⟨3, by decide⟩
+
+instance two_ne_zero : Fact (2 ≠ 0) := ⟨by decide⟩
+
+/-- The positive number `n`, for `n` known to be nonzero. -/
+def ofFact (n : Nat) [Fact (n ≠ 0)] : Pos := ⟨n, Nat.pos_of_ne_zero Fact.out⟩
+
+theorem three_val : three.val = 3 := rfl
+
+end Wit
+""",
+    "Wit/Spec.lean": """import Wit.Defs
+
+namespace Wit.Spec
+
+/-- Every positive number is at least one. -/
+def pos_ge_one : Prop := ∀ p : Wit.Pos, 1 ≤ p.val
+
+end Wit.Spec
+""",
+    "Wit/Acceptance.lean": """import Wit.Spec
+
+namespace Wit.Acceptance
+
+theorem pos_ge_one : Wit.Spec.pos_ge_one := fun p => p.pos
+
+/-- The paper's example, with its value, and the number two. -/
+theorem pos_ge_one_hypotheses :
+    ∃ q : {p : Wit.Pos // p.val = 3}, q = ⟨Wit.three, Wit.three_val⟩ ∧ (Wit.ofFact 2).val = 2 :=
+  ⟨_, rfl, rfl⟩
+
+end Wit.Acceptance
+"""}
+WIT_CLAIM = {"id": "P:pos", "paper": "P", "scope": "formal", "scope_reviewed": True,
+             "clauses": [{"name": "main", "spec": "Wit.Spec.pos_ge_one",
+                          "accept": "Wit.Acceptance.pos_ge_one",
+                          "witness": "Wit.Acceptance.pos_ge_one_hypotheses"}]}
+
+
+@needs_lean
+@pytest.mark.parametrize("toolchain", ["leanprover/lean4:v4.32.0", "leanprover/lean4:v4.24.0"])
+def test_the_probe_reports_which_declarations_of_a_witness_closure_are_proofs(tmp_path,
+                                                                              toolchain):
+    """As Lean elaborates them: the theorem, the `Prop`-valued instance and the constructor of the
+    `Prop` class are propositions and are not listed; the instance, the definition that needs
+    the `Prop` instance and the class are listed."""
+    if subprocess.run(["elan", "toolchain", "list"], capture_output=True,
+                      text=True).stdout.find(toolchain) < 0:
+        pytest.skip(f"{toolchain} is not installed")
+    root = tmp_path / "wit"
+    for path, text in WIT.items():
+        (root / path).parent.mkdir(parents=True, exist_ok=True)
+        (root / path).write_text(text)
+    (root / "lean-toolchain").write_text(toolchain + "\n")
+    subprocess.run(["lake", "build"], cwd=root, check=True, capture_output=True, timeout=900)
+    query = {"scope_roots": ["Wit"], "spec_prefix": "Wit.Spec", "accept_prefix": "Wit.Acceptance",
+             "allowed_axioms": ["propext", "Classical.choice", "Quot.sound"],
+             "requests": probe.requests_from_inventory({"claims": [WIT_CLAIM]})}
+    lean = probe.lean_session(root, ["Wit"], query, probe.parse_records)
+    w = lean["proofs"]["witness:Wit.Acceptance.pos_ge_one_hypotheses:"]
+    assert w["errors"] == []
+    prop = {n: lean["decls"][n]["proposition"] for n in w["closure"]}
+    assert {n for n, p in prop.items() if p is True} == \
+        {"Wit.three_val", "Wit.two_ne_zero", "Wit.Fact.mk"}, prop
+    assert {n for n, p in prop.items() if p is False} == \
+        {"Wit.Fact", "Wit.Pos", "Wit.Pos.mk", "Wit.Pos.val", "Wit.ofFact", "Wit.three"}, prop
+    claims, findings = run(reviews=[], claims=[WIT_CLAIM], lean=lean)
+    assert [e["name"] for e in claims["P:pos"]["clauses"][0]["witness_defs"]] == \
+        ["Wit.Fact", "Wit.ofFact", "Wit.three"]
+    assert len([f for f in findings if f["code"] == "witness-def-review"]) == 3
