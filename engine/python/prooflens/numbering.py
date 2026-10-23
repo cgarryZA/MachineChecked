@@ -74,10 +74,11 @@ _ELSEWHERE_AFTER = re.compile(
 _ELSEWHERE_BEFORE = re.compile(r"\[[^\]]*$|\bet al\.?\s*,?\s*$"
                                r"|(?:\bet al\.?|\])['’]s[\s~*_]*$")
 # An author's possessive just before the number (`Gauss's Lemma 4.22`, `Revuz–Yor's`,
-# `Gauss' Lemma`): a capitalised word of at least two letters, not one naming this paper.
+# `Gauss' Lemma`): a capitalised word of at least two letters, not one naming this paper, a
+# part of it or its formalisation (`Lean's Theorem 2.1`).
 _POSSESSIVE = re.compile(r"(?<![\w'’.\-–])([^\W\d_][\w\-–]+)(?:['’]s|(?<=s)['’])[\s~*_]*$")
 _OWN_WORDS = {"paper", "article", "manuscript", "note", "preprint", "thesis", "author",
-              "authors"}
+              "authors", "section", "chapter", "appendix", "part", "lean"}
 # A chapter after a comma just before the number, as a citation of a book gives it
 # (`Hardy–Wright, *An Introduction*, Ch. IV, Prop. 4.7`); a chapter in prose (`In Chapter 4,
 # Lemma 4.2`) is not one.

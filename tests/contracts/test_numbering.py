@@ -78,7 +78,8 @@ def test_an_authors_possessive_or_a_books_chapter_before_the_number_is_another_w
                "Q.f": "Gauss's lemma (Lemma 4.22 here) holds.",
                "Q.g": "In Chapter 4, Lemma 4.22 holds.", "Q.h": "Chapter IV, Lemma 4.22.",
                "Q.i": "Following [AB], Lemma 2.1 bounds it.", "Q.j": "Paper A's Lemma 2.1.",
-               "Q.k": "Theorem 2.1's Lemma 4.22."}
+               "Q.k": "Theorem 2.1's Lemma 4.22.", "Q.l": "Lean's Lemma 4.22.",
+               "Q.m": "The Appendix's Lemma 4.22."}
     index = [decl(n, d) for n, d in {**elsewhere, **checked}.items()]
     out = nb.analyse(index, CLAIMS, INV)
     # Each declaration's last reference (Q.k's second).
