@@ -90,7 +90,68 @@ export const GROUPS = [
   { key: "cannot", label: "Cannot determine" },
 ];
 
-const EMPTY = () => ({ reviewer: null, drafts: {}, reports: [], skipped: [], exported: 0 });
+// The orders of the queue, as `machinechecked review next --order` names them. The queue the
+// build writes holds the first two; the informed order also reads the auditors' workspaces, so
+// only the local server of `machinechecked view` gives it.
+export const ORDERS = [
+  { value: "priority", label: "Priority", hint: "Changed evidence and proof use first, then less effort" },
+  { value: "document", label: "Paper order", hint: "The paper's order" },
+  { value: "informed", label: "Informed", hint: "Also what the auditors' workspaces record as open: prior interpretations" },
+];
+
+// How a report names what showed its reviewer prior interpretations through the informed order
+// (`review_cli.ORDER_EXPOSURE`, which the command line records in the reviewer's workspace).
+export const ORDER_EXPOSURE = "interpretation-informed review order";
+export const ORDER_SEEN = `review page (${ORDER_EXPOSURE})`;
+// The signals the informed order adds from the workspaces (`review_queue.workspace_signals`).
+const WORKSPACE_SIGNALS = ["open question", "difference", "hint"];
+
+// The queue's units in an order the engine arranged: `arranged` lists open units with their
+// reasons (and priority records), as the build's paper order or the local server's informed
+// order gives them. Units it does not list (reviewed ones) follow in the queue's order; without
+// a list, the queue's own order stands.
+export function orderedUnits(units, arranged) {
+  if (!arranged) return units;
+  const byId = new Map(units.map((u) => [u.id, u]));
+  const listed = arranged.filter((x) => byId.has(x.id))
+    .map((x) => ({ ...byId.get(x.id), reason: x.reason, ...(x.priority ? { priority: x.priority } : {}) }));
+  const placed = new Set(listed.map((u) => u.id));
+  return [...listed, ...units.filter((u) => !placed.has(u.id))];
+}
+
+// Records in the reviewer's work that they have seen prior interpretations of `claims` (the
+// claims the informed order drew on), unless an entry already covers them all, as
+// `Session.expose` does. Returns whether it recorded anything.
+export function recordExposure(work, claims, at) {
+  if (!claims?.length) return false;
+  const covered = (work.exposure || []).some((e) => (e.what || []).includes("prior interpretations")
+    && (e.claims == null || claims.every((c) => e.claims.includes(c))));
+  if (covered) return false;
+  work.exposure = [...(work.exposure || []),
+    { what: ["prior interpretations"], claims: [...claims].sort(), how: ORDER_EXPOSURE, at }];
+  return true;
+}
+
+// What the recorded exposure says this reviewer had seen of unit `u`, in the form of
+// `reading.revealed_by`: prior interpretations of one of its claims count, as on the command
+// line, as its author's review.
+export function exposureOf(work, u) {
+  const ids = (u.claims || []).map((c) => c.id);
+  const seen = (work.exposure || []).some((e) => (e.what || []).includes("prior interpretations")
+    && (e.claims == null || e.claims.some((c) => ids.includes(c))));
+  return seen ? [{ unit: ORDER_SEEN, what: "author's review" }] : [];
+}
+
+// Whether the card holds back the informed order's reason for unit `u`: the reviewer locked its
+// reading without having seen the workspaces' records of it, and has not recorded a verdict.
+// Those records are prior interpretations, which the protocol shows only after the verdict.
+export function holdsBack(order, u, draft) {
+  return order === "informed" && draft?.stage === "compare"
+    && (u.priority?.signals || []).some((s) => WORKSPACE_SIGNALS.includes(s.kind))
+    && !(draft.revealed_by || []).some((s) => s.unit === ORDER_SEEN);
+}
+
+const EMPTY = () => ({ reviewer: null, drafts: {}, reports: [], skipped: [], exported: 0, exposure: [] });
 
 function storeKey(project) {
   return `prooflens-review:${project || "project"}`;

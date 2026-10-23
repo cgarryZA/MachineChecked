@@ -1,8 +1,9 @@
 <script>
-  import { loadQueue, loadClaim } from "../lib/data.js";
+  import { loadQueue, loadClaim, canEdit, askReviewOrder } from "../lib/data.js";
   import { href, route, go, withQuery } from "../lib/route.svelte.js";
   import { VERDICTS, GROUPS, CHECKLIST, MARKS, STEP_VERDICTS, STEP_GROUPS, loadWork, saveWork, now, reviewerId,
-           needsDetail, buildReport, exportFile } from "../lib/review.js";
+           needsDetail, buildReport, exportFile, ORDERS, ORDER_SEEN, orderedUnits, recordExposure, exposureOf,
+           holdsBack } from "../lib/review.js";
   import ProofStep from "./ProofStep.svelte";
   import StepContext from "./StepContext.svelte";
   import PaperStatement from "./PaperStatement.svelte";
@@ -43,13 +44,53 @@
   const groupLabel = (g) => g.startsWith("def:") ? "Definitions · " + g.slice(4)
     : "Statements · " + (index.papers.length > 1 ? "Paper " + g.split(":")[1] + " " : "") + "§" + g.split(":")[2];
 
-  const inPaper = $derived(queue ? queue.units.filter((u) => paper === "all" || (u.papers || []).includes(paper)) : []);
+  // The order: the queue's own (priority), the paper's, or the informed order, which also uses
+  // what the auditors' workspaces record as open. The build writes the first two; the informed
+  // order comes from the local server of `machinechecked view`. Its records are prior
+  // interpretations: choosing it asks first, and the exposure is recorded before the order is
+  // shown, so that a reading of a claim it drew on is not taken as blind.
+  const local = canEdit(index);
+  const offered = (o) => o === "priority" || (o === "document" ? !!queue?.orders?.document : o === "informed" && local);
+  const order = $derived(offered(work.order) ? work.order : "priority");
+  let informed = $state(null);
+  let orderError = $state(null);
+  let asking = $state(false);
+  let fetching = false;
+  async function loadInformed() {
+    if (fetching) return;
+    fetching = true; orderError = null;
+    try {
+      const got = await askReviewOrder("informed");
+      if (recordExposure(work, got.drawn, now())) persist();
+      informed = got;
+    } catch (e) {
+      orderError = String(e?.message || e);
+    } finally { fetching = false; }
+  }
+  $effect(() => { if (queue && order === "informed" && !informed && !orderError) loadInformed(); });
+  function chooseOrder(o) {
+    if (o === order) return;
+    if (o === "informed") { asking = true; return; }
+    asking = false;
+    work.order = o; go(withQuery(location.hash, { claim: null, seen: null })); persist();
+  }
+  async function useInformed() {
+    asking = false;
+    informed = null;
+    await loadInformed();
+    if (!informed) return;
+    work.order = "informed"; go(withQuery(location.hash, { claim: null, seen: null })); persist();
+  }
+  const arranged = $derived(order === "document" ? queue?.orders?.document : order === "informed" ? informed?.units : null);
+  const ordered = $derived(queue ? orderedUnits(queue.units, arranged) : []);
+
+  const inPaper = $derived(ordered.filter((u) => paper === "all" || (u.papers || []).includes(paper)));
   const groups = $derived([...new Set(inPaper.map(groupOf))].sort());
   const selected = $derived(inPaper.filter((u) => group === "all" || groupOf(u) === group));
   const open = $derived(selected.filter((u) => u.state !== "reviewed" && !reportFor(u)));
   const fresh = $derived(open.filter((u) => !work.skipped.includes(u.id)));
   const skippedHere = $derived(open.filter((u) => work.skipped.includes(u.id)));
-  const requested = $derived(queue?.units.find((u) => u.claims.some((c) => c.id === route.target) && !reportFor(u) && !work.skipped.includes(u.id)));
+  const requested = $derived(ordered.find((u) => u.claims.some((c) => c.id === route.target) && !reportFor(u) && !work.skipped.includes(u.id)));
   const current = $derived(requested || fresh[0] || skippedHere[0] || null);
   const savedHere = $derived(selected.filter((u) => reportFor(u)).length);
   const doneBefore = $derived(selected.filter((u) => u.state === "reviewed").length);
@@ -83,7 +124,8 @@
   const paperOf = (c) => index.papers.find((p) => p.id === c.paper);
 
   // What this reviewer has already seen of unit `u`, in this browser: the units whose Lean
-  // (step 2) or author's review (step 3) they reached, and that show u's Lean or u's review.
+  // (step 2) or author's review (step 3) they reached, and that show u's Lean or u's review,
+  // and the prior interpretations of its claims an informed order drew on.
   function revealedBy(u) {
     const byId = Object.fromEntries(queue.units.map((x) => [x.id, x]));
     const passed = [
@@ -91,6 +133,7 @@
       ...Object.entries(work.drafts).map(([id, d]) => ({ id, lean: d.stage !== "read", author: d.stage === "author" })),
     ];
     const out = work.drafts[u.id]?.reader_exposure ? [{ unit: u.id, what: "Lean" }] : [];
+    out.push(...exposureOf(work, u));
     for (const p of passed) {
       const r = p.id !== u.id && byId[p.id]?.reveals;
       if (!r) continue;
@@ -100,6 +143,14 @@
     return out;
   }
   const seenBefore = $derived(current && draft?.stage === "read" ? revealedBy(current) : []);
+  const seenText = (s) => s.unit === ORDER_SEEN ? "prior interpretations of its claims (through the informed order)"
+    : `the ${s.what} of this unit (in ${s.unit})`;
+  // The reason the card gives: the order's own, unless the informed order's would show prior
+  // interpretations before the verdict of a reading locked without them (`holdsBack`).
+  const withheld = $derived(!!current && !!draft && holdsBack(order, current, draft));
+  const reason = $derived(!current ? "" : withheld
+    ? (queue.units.find((u) => u.id === current.id)?.reason || "") + " · the informed order's reason for it is shown after your verdict"
+    : current.reason);
 
   function lockReading() {
     if ((draft.reading || "").trim().length < 20) return;
@@ -190,6 +241,15 @@
           {#each groups as g}<option value={g}>{groupLabel(g)}</option>{/each}
         </select>
       </label>
+      <label title={queue.order?.note || ""}>Order
+        <select aria-label="Order" value={order} onchange={(e) => { chooseOrder(e.currentTarget.value); e.currentTarget.value = order; }}>
+          {#each ORDERS as o}
+            <option value={o.value} disabled={!offered(o.value)} title={offered(o.value) ? o.hint
+              : o.value === "informed" ? "Offered by machinechecked view, which reads the auditors' workspaces"
+              : "This build's queue has no paper order; build again to add it"}>{o.label}</option>
+          {/each}
+        </select>
+      </label>
       <span class="progress">
         {savedHere} saved · {skippedHere.length} skipped · {fresh.length} to review{doneBefore ? ` · ${doneBefore} already independently reviewed` : ""}
       </span>
@@ -199,6 +259,27 @@
     </div>
     {#if unexported > 0 || !stored}
       <p class="warn" role="status">{!stored ? "Browser storage unavailable. Export after every report." : `${unexported} report(s) saved in this browser. Export to keep a copy.`}</p>
+    {/if}
+    {#if asking}
+      <section class="card ask" aria-labelledby="informed-title">
+        <p id="informed-title"><strong>The informed order</strong></p>
+        <p class="small">It also uses what the auditors' workspaces record as open for each claim: open questions,
+          differences and hints. These are prior interpretations, which a review otherwise shows after its verdict.
+          Your readings of the claims it draws on are then recorded as not blind, and their reports are promoted
+          only with <code>--allow-revealed</code>.</p>
+        <div class="row">
+          <button class="btn" onclick={useInformed}>Use the informed order</button>
+          <button class="btn ghost" onclick={() => (asking = false)}>Keep the {order === "document" ? "paper" : "priority"} order</button>
+        </div>
+      </section>
+    {/if}
+    {#if orderError}
+      <p class="warn" role="alert">The informed order could not be loaded: {orderError}{order === "informed" ? " The queue's own order is shown." : ""}
+        {#if order === "informed"}<button class="btn ghost" onclick={() => (orderError = null)}>Try again</button>{/if}</p>
+    {:else if order === "informed" && informed}
+      <p class="faint small" role="status">{informed.drawn.length
+        ? `The informed order draws on the workspaces' records of ${informed.drawn.length} claim(s); your readings of them are recorded as not blind.`
+        : "The auditors' workspaces record nothing open for these units."}</p>
     {/if}
     {#if queue.needs_statement.length && (paper === "all" || queue.needs_statement.some((c) => c.paper === paper))}
       <p class="faint small">{queue.needs_statement.filter((c) => paper === "all" || c.paper === paper).length} claim(s) await a formal statement before review.</p>
@@ -214,7 +295,9 @@
       </section>
     {/if}
 
-    {#if !current}
+    {#if order === "informed" && !informed && !orderError}
+      <p class="muted">Loading the informed order…</p>
+    {:else if !current}
       <section class="card"><p>Review complete for this selection.</p></section>
     {:else if !draft}
       <p class="muted">Loading…</p>
@@ -225,7 +308,7 @@
           <li class:on={draft.stage === "compare"}>2. Compare</li>
           <li class:on={draft.stage === "author"}>3. Author's review</li>
         </ol>
-        <p class="why faint">{current.kind === "def" ? "Definition" : current.kind === "link" ? "Linked claim" : current.kind === "step" ? "Proof step" : "Statement"} · {current.reason}{work.skipped.includes(current.id) ? " · skipped before" : ""}</p>
+        <p class="why faint">{current.kind === "def" ? "Definition" : current.kind === "link" ? "Linked claim" : current.kind === "step" ? "Proof step" : "Statement"} · {reason}{work.skipped.includes(current.id) ? " · skipped before" : ""}</p>
 
         {#if current.kind === "def"}
           <h2>A definition used by {current.claims.length} claim(s)</h2>
@@ -257,7 +340,7 @@
         <h3 id="reading-label">Your reading{draft.stage !== "read" ? " (locked " + draft.locked_at + ")" : ""}</h3>
         {#if draft.stage === "read"}
           {#if seenBefore.length}
-            <p class="warn">You have already seen {seenBefore.map((s) => `the ${s.what} of this unit (in ${s.unit})`).join(" and ")}. The report records this prior exposure.</p>
+            <p class="warn">You have already seen {seenBefore.map(seenText).join(" and ")}. The report records this prior exposure.</p>
           {/if}
           <p class="faint small">{current.kind === "def"
             ? "What is this object in the paper? Its setting, what it is built from, and anything left ambiguous."
@@ -364,7 +447,9 @@
   input:not([type]), select, textarea { font: inherit; font-size: 16px; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; }
   textarea { width: 100%; box-sizing: border-box; margin: 6px 0; font-family: var(--sans); }
   .bar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; font-size: 14px; }
-  .bar label { display: flex; gap: 6px; align-items: center; }
+  .bar label { display: flex; gap: 6px; align-items: center; min-width: 0; max-width: 100%; }
+  /* A long paper title narrows its select instead of widening the page. */
+  .bar select { min-width: 0; max-width: 100%; }
   .progress { color: var(--muted); }
   .who { margin-left: auto; font-family: var(--mono); font-size: 12px; }
   .warn { background: var(--surface-2); border-left: 3px solid var(--st-open); padding: 6px 10px; font-size: 13px; }

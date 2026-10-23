@@ -228,6 +228,32 @@ fs.writeFileSync(path.join(root, "review-step/data/review-queue.json"), JSON.str
   parent: { id: "T:thm:bound", number: "Theorem 2.5" }, state: "pending", reason: "Proof step of Theorem 2.5; no Lean is linked to it",
   claims: [{ id: "T:eq:bound-range" }], papers: ["T"], paper: "T", section: "2", author_review: [] }] }));
 
+// The toy example's review queue as the engine builds it from the audit's data, with the paper's
+// order (#128): `queueFor(DATA)` writes it beside the data and names it in the index.
+const QUEUE = String.raw`
+import json, sys
+from pathlib import Path
+from prooflens import review_queue as rq
+d = Path(sys.argv[1])
+index = json.loads((d / "index.json").read_text())
+chunks = {c["file"]: json.loads((d / "claims" / c["file"]).read_text()) for c in index["claims"]}
+store = {p.stem: json.loads(p.read_text()) for p in (d / "decls").glob("*.json")}
+q = rq.prioritise(rq.assurance_queue(index, chunks, store, []), claims=index["claims"])
+(d / "review-queue.json").write_text(json.dumps(q))
+(d / "index.json").write_text(json.dumps({**index, "review_queue": "data/review-queue.json"}))
+print(json.dumps(q))`;
+function queueFor(data) {
+  const r = spawnSync(process.env.PYTHON || "python3", ["-c", QUEUE, data], { encoding: "utf8" });
+  if (r.status !== 0) throw new Error("the engine could not build the review queue:\n" + r.stderr);
+  return JSON.parse(r.stdout);
+}
+fs.cpSync(path.join(root, "toy"), path.join(root, "review-order"), { recursive: true });
+const ORDER_QUEUE = queueFor(path.join(root, "review-order", "data"));
+const REVIEW_KEY = "prooflens-review:toy-paper";
+const kindWord = (u) => ({ def: "Definition", link: "Linked claim", step: "Proof step" })[u.kind] || "Statement";
+const whyIs = (pg, text) => pg.waitForFunction((t) => document.querySelector(".review .unit .why")?.textContent === t, text)
+  .catch(async (e) => { throw new Error(`the card's reason is ${JSON.stringify(await pg.locator(".review .unit .why").textContent())}, not ${JSON.stringify(text)}`); });
+
 // The same review queue on a build that holds the step's context in the proof only in part, as
 // the engine records it (`context_cut`), and one whose evidence predates the record of where.
 for (const [dir, cut] of [["cut-step", { file: "toy.tex", line: 71, end_line: 80, kept: 20000, chars: 28000 }], ["cut-step-old", { kept: 20000 }]]) {
@@ -1776,6 +1802,37 @@ await check("review opens the selected claim, keeps protocol order and exports a
   assert.deepEqual(exported.reports[0], report);
 });
 
+// The review page's order (#128): the queue's priority order, or the paper's order the build
+// wrote, each with the engine's reasons; a static copy offers no informed order.
+await check("the review page offers the priority and paper orders with the engine's reasons", 390, async (pg) => {
+  await pg.goto(origin + `/review-order/#/r/${TOY.release}/review`);
+  await pg.evaluate((k) => localStorage.setItem(k, JSON.stringify({ reviewer: { kind: "human", name: "Synthetic reviewer" } })), REVIEW_KEY);
+  await pg.reload();
+  const order = pg.getByRole("combobox", { name: "Order", exact: true });
+  const first = ORDER_QUEUE.units.find((u) => u.state !== "reviewed");
+  await whyIs(pg, `${kindWord(first)} · ${first.reason}`);
+  assert.equal(await order.inputValue(), "priority");
+  const disabled = (v) => order.locator(`option[value=${v}]`).evaluate((o) => o.disabled);
+  assert.equal(await disabled("informed"), true, "a static copy has no informed order");
+  assert.equal(await disabled("document"), false);
+  await order.selectOption("document");
+  const paper = ORDER_QUEUE.orders.document[0], unit = ORDER_QUEUE.units.find((u) => u.id === paper.id);
+  assert.match(paper.reason, /^In the paper's order; /);
+  assert.notEqual(paper.id, first.id, "the paper's order starts elsewhere");
+  await whyIs(pg, `${kindWord(unit)} · ${paper.reason}`);
+  assert.equal(await pg.evaluate((k) => JSON.parse(localStorage.getItem(k)).order, REVIEW_KEY), "document");
+  // The choice is kept, and the next unit is the paper order's next.
+  await pg.reload();
+  await whyIs(pg, `${kindWord(unit)} · ${paper.reason}`);
+  assert.equal(await order.inputValue(), "document");
+  await pg.getByRole("button", { name: "Skip", exact: true }).click();
+  const second = ORDER_QUEUE.orders.document[1];
+  await whyIs(pg, `${kindWord(ORDER_QUEUE.units.find((u) => u.id === second.id))} · ${second.reason}`);
+  await order.selectOption("priority");
+  await whyIs(pg, `${kindWord(first)} · ${first.reason}`);
+  assert.ok(await pg.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), "no horizontal scroll");
+});
+
 await check("a declaration lists its users; a static copy names the command for its applications", 390, async (pg) => {
   await pg.goto(origin + `/uses/#/r/${USES.release}/read/P/${encodeURIComponent("P:lem:half")}?inspect=Uses.half_lt`);
   const uses = pg.locator("aside .decl.inspector details.uses");
@@ -2206,6 +2263,90 @@ print("null")`);
       assert.match(await fixed.locator("strong").first().textContent(), /^Every clause, by the auditor's composition$/);
       assert.equal(await fixed.locator("[data-line='recorded']").textContent(),
                    "Recorded as a checked bridge; no bridge Lean checks now: no bridge is recorded.");
+    });
+
+    // The informed order (#128), from the engine's own local server: asked for before anything is
+    // fetched, its exposure recorded before it is shown, the order and reasons the engine gives,
+    // and held back from a reading locked without it until that reading's verdict.
+    await check("the informed review order is asked for, recorded as exposure and held back before a verdict", 1300, async (pg) => {
+      const queue = queueFor(path.join(root, "toyws", "data"));
+      const expected = engine(String.raw`
+import json, sys
+from pathlib import Path
+from prooflens import workspace as wsp
+from prooflens.review_cli import order_route
+from prooflens.targets import Snapshot
+work = Path(sys.argv[1])
+data = work.parent / "toyws" / "data"
+(p, ws), = wsp.list_all(work)
+wsp.update(p, [{"op": "put", "record": {"kind": "question", "claim": "T:prop:pred", "text": "Is n = 0 allowed?"}},
+               {"op": "put", "record": {"kind": "finding", "claim": "T:cor:even-triangle", "coverage": "changed", "note": "Stated for n ≥ 1."}}], Snapshot(data))
+print(json.dumps(order_route(work, data)({"order": ["informed"]})))`);
+      const byId = Object.fromEntries(queue.units.map((u) => [u.id, u]));
+      const locked = "spec:Toy.PaperSpec.prop_pred";
+      assert.equal(queue.units[0].id, locked, "first in the queue's order");
+      assert.equal(expected.units[0].id, locked, "first in the informed order");
+      assert.match(expected.units[0].reason, /^An open question is recorded; /);
+      assert.ok(expected.drawn.includes("T:prop:pred") && expected.drawn.includes("T:cor:even-triangle"));
+      assert.notDeepEqual(expected.units.map((u) => u.id), queue.units.filter((u) => u.state !== "reviewed").map((u) => u.id));
+      const saved = () => pg.evaluate((k) => JSON.parse(localStorage.getItem(k) || "{}"), REVIEW_KEY);
+      await pg.goto(`http://127.0.0.1:${port}/#/r/${TOY.release}/review`);
+      // A reading locked before the informed order is chosen; its verdict is not yet recorded.
+      await pg.evaluate(([k, id]) => localStorage.setItem(k, JSON.stringify({ reviewer: { kind: "human", name: "Synthetic reviewer" },
+        drafts: { [id]: { stage: "compare", reading: "A reading locked before the informed order.", locked_at: "2026-01-01T00:00:00Z", revealed_by: [] } } })), [REVIEW_KEY, locked]);
+      const asked = [];
+      pg.on("request", (r) => { if (r.url().includes("/api/review-order")) asked.push(r.url()); });
+      await pg.reload();
+      await whyIs(pg, `Statement · ${byId[locked].reason}`);
+      const order = pg.getByRole("combobox", { name: "Order", exact: true });
+      assert.equal(await order.locator("option[value=informed]").evaluate((o) => o.disabled), false, "the local server offers it");
+      // Choosing it asks first; nothing is fetched or recorded until the reviewer agrees.
+      await order.selectOption("informed");
+      const ask = pg.getByRole("region", { name: "The informed order" });
+      await ask.waitFor();
+      assert.match(await ask.textContent(), /prior interpretations[\s\S]*recorded as not blind/);
+      assert.equal(await order.inputValue(), "priority");
+      await ask.getByRole("button", { name: "Keep the priority order" }).click();
+      assert.equal(await ask.count(), 0);
+      assert.deepEqual(asked, []);
+      assert.deepEqual((await saved()).exposure || [], []);
+      await order.selectOption("informed");
+      await ask.getByRole("button", { name: "Use the informed order" }).click();
+      await pg.locator(".review [role=status]", { hasText: "draws on the workspaces' records" }).waitFor();
+      let work = await saved();
+      assert.equal(work.order, "informed");
+      assert.deepEqual(work.exposure.map((e) => [e.what, e.claims, e.how]),
+                       [[["prior interpretations"], [...expected.drawn].sort(), "interpretation-informed review order"]]);
+      // The reading locked without it: its card keeps the queue's reason until the verdict.
+      await whyIs(pg, `Statement · ${byId[locked].reason} · the informed order's reason for it is shown after your verdict`);
+      await pg.getByRole("textbox", { name: "Comparison", exact: true }).fill("The synthetic comparison of this reading.");
+      await pg.getByRole("button", { name: "Matches the paper", exact: true }).click();
+      await pg.getByRole("radio", { name: "Faithful", exact: true }).check();
+      await pg.getByRole("button", { name: "Record verdict and show the author's review" }).click();
+      await whyIs(pg, `Statement · ${expected.units[0].reason}`);
+      await pg.getByRole("button", { name: "Save report", exact: true }).click();
+      assert.deepEqual((await saved()).reports[0].reading.revealed_by, [], "that reading was blind");
+      // The next units come in the engine's informed order, with its reasons; a reading of a claim
+      // the order drew on is recorded as not blind.
+      const next = expected.units[1];
+      assert.match(next.reason, /^An open question is recorded; /);
+      await whyIs(pg, `${kindWord(byId[next.id])} · ${next.reason}`);
+      assert.match(await pg.locator(".review .unit .warn").textContent(), /prior interpretations of its claims \(through the informed order\)/);
+      await pg.getByRole("textbox", { name: "Your reading", exact: true }).fill("A reading made after choosing the informed order.");
+      await pg.getByRole("button", { name: "Lock my reading and show the Lean" }).click();
+      await whyIs(pg, `${kindWord(byId[next.id])} · ${next.reason}`);
+      work = await saved();
+      assert.deepEqual(work.drafts[next.id].revealed_by, [{ unit: "review page (interpretation-informed review order)", what: "author's review" }]);
+      await pg.getByRole("button", { name: "Skip", exact: true }).click();
+      for (const u of expected.units.slice(2, 5)) {
+        await whyIs(pg, `${kindWord(byId[u.id])} · ${u.reason}`);
+        await pg.getByRole("button", { name: "Skip", exact: true }).click();
+      }
+      // The choice is kept; loading it again records nothing new.
+      await pg.reload();
+      await pg.locator(".review [role=status]", { hasText: "draws on the workspaces' records" }).waitFor();
+      assert.equal(await order.inputValue(), "informed");
+      assert.equal((await saved()).exposure.length, 1);
     });
   } finally { py.kill(); }
 }
