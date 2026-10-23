@@ -1,8 +1,15 @@
 name: CI
 
+# A pull request's pushes run once, as `pull_request`; a newer push cancels the older run.
+# Runs on main always finish: the demo audit (pages.yml) publishes after them.
 on:
   push:
+    branches: [main]
   pull_request:
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
