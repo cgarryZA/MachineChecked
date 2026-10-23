@@ -57,8 +57,8 @@ def _one_paper(index: dict, chunks: dict, store: dict, pid: str):
     claim_ids = {c["id"] for c in kept.values()}
     general = [f for f in index["findings"]["general"]]
     tiers = Counter(f["tier"] for c in kept.values() for f in c.get("findings", [])
-                    if not f.get("dismissed"))
-    tiers.update(f["tier"] for f in general if not f.get("dismissed"))
+                    if not (f.get("dismissed") or f.get("resolved")))
+    tiers.update(f["tier"] for f in general if not (f.get("dismissed") or f.get("resolved")))
     one = {**index,
            "papers": [p for p in index["papers"] if p["id"] == pid],
            "claims": [c for c in index["claims"] if c["id"] in claim_ids],
@@ -110,6 +110,8 @@ def public_claim(chunk: dict, pub) -> dict:
     out["location"] = chunk.get("location") if pub.source_text else None
     out["statement_tex"] = chunk.get("statement_tex") if pub.source_text else None
     out["context_tex"] = chunk.get("context_tex") if pub.source_text else None
+    if chunk.get("context_cut") and pub.source_text:
+        out["context_cut"] = chunk["context_cut"]
     out["excerpt"] = chunk.get("excerpt") if pub.source_text else None
     if chunk.get("source_parts") and pub.source_text:
         out["source_parts"] = chunk["source_parts"]
@@ -143,7 +145,7 @@ def public_claim(chunk: dict, pub) -> dict:
     out["decls"] = dict(chunk.get("decls", {}))
     out["findings"] = [_pick(f, ["id", "tier", "code", "subject", "message", "trigger",
                                  "signal", "dismissed", "dismissal_stale", "occurrences",
-                                 "occurrences_complete"])
+                                 "occurrences_complete", "at", "resolved"])
                        for f in chunk["findings"]]
     out["unit"] = chunk.get("unit") or "statement"
     out["parent"] = chunk.get("parent")
@@ -360,7 +362,8 @@ def export(cfg: Config, out: Path, release: str | None = None,
     pidx["findings"] = {"total": index["findings"]["total"],
                         "general": [_pick(f, ["id", "tier", "code", "subject", "message",
                                               "trigger", "dismissed", "dismissal_stale",
-                                              "occurrences", "occurrences_complete"])
+                                              "occurrences", "occurrences_complete", "at",
+                                              "resolved"])
                                     for f in index["findings"]["general"]]}
     pidx["claims"] = [_pick(c, ["id", "paper", "number", "title", "kind", "scope", "unit",
                                 "parent", "step_review", "status", "status_code", "class", "anchor", "counts",
