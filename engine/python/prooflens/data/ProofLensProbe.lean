@@ -868,6 +868,13 @@ def declRecord (inside : Name → Bool) (n : Name) (ci : ConstantInfo) : MetaM (
   let value ← match ci, prop with
     | .defnInfo d, some false => ppJson d.value
     | _, _ => pure Json.null
+  -- Whether the declaration is the tactic script Lean stores for a tactic default (`:= by tac`
+  -- in a binder or a structure field: an auto-parameter, such as `Pos.pos._autoParam`): an
+  -- internal, opaque definition of type `Lean.Syntax`. Running the script gives a proof, so it
+  -- fixes nothing a statement says.
+  let autoParam := match ci with
+    | .defnInfo d => n.isInternal && d.type == mkConst ``Lean.Syntax && (d.hints matches .opaque)
+    | _ => false
   -- What a definition says, for the definitions a reader looks for (not a compiler's helper, not
   -- an instance, not a proposition such as a locked statement).
   let defn ← match ci with
@@ -881,7 +888,7 @@ def declRecord (inside : Name → Bool) (n : Name) (ci : ConstantInfo) : MetaM (
     ("module", (moduleOf env n).toString), ("range", ← rangeJson n),
     ("doc", match doc with | some d => Json.str d | none => Json.null),
     ("legacy_hash", lh), ("canon", c), ("signature", sig), ("value", value),
-    ("proposition", toJson prop),
+    ("proposition", toJson prop), ("auto_param", toJson autoParam),
     ("uses", Json.arr ((used.filter fun u => inside u && !u.isInternal).map
       (Json.str ·.toString)))]
   return (Json.mkObj (fields ++ defn), used)
@@ -1370,7 +1377,7 @@ def levelsMatch (ls : List Level) (params : List Name) : Bool :=
 
 /-- `accept`: the type is exactly the specification; `refute`: exactly its negation; `witness`:
 any theorem of the acceptance layer, with the project declarations in the closure of its type
-(the instance it exhibits lives in them). -/
+with its proofs erased (the instance it exhibits lives in them). -/
 def proofRecord (h : IO.FS.Handle) (q : Query) (inside : Name → Bool) (seen : IO.Ref NameSet)
     (kind : String) (thm : Name) (spec : Option Name) : MetaM Unit := do
   let env ← getEnv
@@ -1397,7 +1404,11 @@ def proofRecord (h : IO.FS.Handle) (q : Query) (inside : Name → Bool) (seen : 
   unless bad.isEmpty do errs := errs.push s!"axioms={bad.toList}"
   let ty ← ppJson ci.type
   let closure : List (String × Json) ← if kind == "witness" then
-      pure [("closure", toJson (← emitClosure h inside thm ci.type.getUsedConstants seen))]
+      -- The constants of the statement with its proofs erased, as in every other closure: the
+      -- instance a witness exhibits is fixed by the data its statement names, not by the proofs
+      -- inside it. If the erasure fails, every constant of the statement is followed.
+      let stmt ← tryCatchRuntimeEx (withCurrHeartbeats (erase ci.type)) fun _ => pure ci.type
+      pure [("closure", toJson (← emitClosure h inside thm stmt.getUsedConstants seen))]
     else pure []
   let fields : List (String × Json) := [("record", kind), ("name", thm.toString),
     ("spec", match spec with | some s => Json.str s.toString | none => Json.null),
