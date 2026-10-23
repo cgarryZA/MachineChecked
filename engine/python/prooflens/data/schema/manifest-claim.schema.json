@@ -374,6 +374,73 @@
             "warning",
             "obligation"
           ]
+        },
+        "occurrences": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/occurrence"
+          }
+        },
+        "occurrences_complete": {
+          "type": "boolean"
+        }
+      }
+    },
+    "occurrence": {
+      "type": "object",
+      "required": [
+        "operation",
+        "type",
+        "structure",
+        "state",
+        "rule",
+        "at"
+      ],
+      "properties": {
+        "operation": {
+          "type": "string"
+        },
+        "type": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "type_head": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "structure": {
+          "enum": [
+            "complete-lattice",
+            "conditionally-complete-lattice",
+            "group",
+            "group-with-zero",
+            "one-element",
+            "unknown",
+            null
+          ]
+        },
+        "state": {
+          "enum": [
+            "applies",
+            "none",
+            "unresolved"
+          ]
+        },
+        "rule": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "at": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
         }
       }
     }
