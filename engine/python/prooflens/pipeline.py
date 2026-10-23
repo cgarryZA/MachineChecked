@@ -94,8 +94,14 @@ def build(cfg: Config, release: str | None = None, skip_lean: bool = False,
         log(f"probe: reusing the probe records of release {reused} (the same Lean inputs, "
             "probe and probe settings)")
     elif not skip_lean:
-        lean_digest = lean_inputs_digest(cfg)
+        # Without `lake build` the probe reads the build files as they are, which may be older
+        # than the sources: its records are not known to describe these Lean inputs, so none
+        # are recorded, and reuse, promotion and symbol links do not take them as current.
+        lean_digest = lean_inputs_digest(cfg) if lean_build else None
         log(f"probe: {len(requests_from_inventory(inv))} requests in {cfg.lean_root}")
+        if not lean_build:
+            log("probe: the Lean project is not built first (`--no-lean-build`), so this build "
+                "records no digest of its Lean inputs and `--reuse-lean` will not reuse it")
         from .review_citations import citations, names_request
         cited = names_request(citations(cfg.reviews, cfg.root,
                                         getattr(cfg, "review_citations_ignore", None)))
@@ -318,7 +324,9 @@ def _reuse_stage(lean: dict, prov: dict, want: tuple[str, str, str],
     inputs, probe, settings = (prov.get("lean_inputs_sha256"), prov.get("probe_sha256"),
                                prov.get("probe_settings_sha256"))
     if not inputs or not probe:
-        return 0, "the stored Lean results do not record their Lean inputs"
+        return 0, ("the stored Lean results do not record their Lean inputs (a build with "
+                   "`--no-lean-build` records none: its build files may be older than the "
+                   "sources)")
     if inputs != want[0]:
         return 1, ("Lean inputs changed since the stored Lean results (here or in a path "
                    "dependency)")
@@ -375,12 +383,13 @@ def inventory_changed(cfg: Config, body: dict) -> str | None:
 
 def reassess(cfg: Config, web_dist: Path | None = None, release: str | None = None,
              log=print) -> dict:
-    """Assess the latest evidence again with the current rules and the current review files,
-    without probing or compiling, and store the result as a new evidence record and release."""
-    rels = ev.releases(cfg.out_dir)
-    if not rels:
+    """Assess the latest release's evidence (`evidence.latest`) again with the current rules and
+    the current review files, without probing or compiling, and store the result as a new
+    evidence record and release."""
+    last = ev.latest(cfg.out_dir)
+    if last is None:
         raise StaleEvidence(NO_RELEASE)
-    old = ev.load(cfg.out_dir, read_json(rels[-1])["evidence"])["body"]
+    old = ev.load(cfg.out_dir, last["evidence"])["body"]
     why = inventory_changed(cfg, old)
     if why:
         raise StaleEvidence(why)
@@ -398,7 +407,7 @@ def reassess(cfg: Config, web_dist: Path | None = None, release: str | None = No
             "provenance": {**old["provenance"],
                            "tool": {**old["provenance"]["tool"], "version": tool_version()},
                            "comparator_log_sha256": sha256_file(comp) if comp_text else None,
-                           "reassessed_from": read_json(rels[-1])["evidence"]}}
+                           "reassessed_from": last["evidence"]}}
     body.pop("schema", None)
     eid = ev.store(cfg.out_dir, body)
     rel = release or f"r-{eid[:12]}"
@@ -423,13 +432,13 @@ def pdf_paths(cfg: Config, body: dict) -> dict:
 
 
 def rebuild_site(cfg: Config, web_dist: Path | None = None, release: str | None = None) -> dict:
-    """The preview site again from a stored release, without probing or compiling. A PDF is
-    included only if the one on disk is the one the evidence records."""
-    rels = ev.releases(cfg.out_dir)
-    if not rels:
+    """The preview site again from a stored release (by default the latest, `evidence.latest`),
+    without probing or compiling. A PDF is included only if the one on disk is the one the
+    evidence records."""
+    last = ev.latest(cfg.out_dir)
+    if last is None:
         raise StaleEvidence(NO_RELEASE)
-    rel = read_json(cfg.out_dir / "releases" / f"{release}.json") if release else \
-        read_json(rels[-1])
+    rel = read_json(cfg.out_dir / "releases" / f"{release}.json") if release else last
     record = ev.load(cfg.out_dir, rel["evidence"])
     index, chunks, store = mf.build(record, rel["release"], load_display(cfg))
     index.update(issues=cfg.issues, site_url=cfg.site_url)

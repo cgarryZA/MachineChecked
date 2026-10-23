@@ -306,16 +306,16 @@ def built_lean_root(cfg: Config, record: dict) -> Path | None:
 
 def export(cfg: Config, out: Path, release: str | None = None,
            web_dist: Path | None = None, paper: str | None = None) -> dict:
-    """The approved public fields of a release, scanned for private material. With `paper`, only
-    that paper: its claims, the declarations they depend on (their closure) and their reviews,
-    scanned also against what belongs to the other papers alone."""
+    """The approved public fields of a release (by default the latest, `evidence.latest`),
+    scanned for private material. With `paper`, only that paper: its claims, the declarations
+    they depend on (their closure) and their reviews, scanned also against what belongs to the
+    other papers alone."""
     if paper is not None and paper not in {p.id for p in cfg.papers}:
         raise ExportError(f"no paper {paper} in the configuration")
-    rels = ev.releases(cfg.out_dir)
-    if not rels:
+    last = ev.latest(cfg.out_dir)
+    if last is None:
         raise ExportError("no release: run `prooflens build` first")
-    relrec = read_json(cfg.out_dir / "releases" / f"{release}.json") if release \
-        else read_json(rels[-1])
+    relrec = read_json(cfg.out_dir / "releases" / f"{release}.json") if release else last
     record = ev.load(cfg.out_dir, relrec["evidence"])
     # With the display layer the site is built with (descriptions, printed numbers, symbol
     # links): what is shown changes, never what is assessed.
