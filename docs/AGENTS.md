@@ -130,7 +130,8 @@ prints one JSON document (`machinechecked/compare@1`) for one claim, read from t
 - `paper.passages`: the complete printed passage, with `source` (file, line, label, pages,
   `position` exact or approximate) and `quality` (`LaTeX source`, or `text extracted from the
   PDF`). `available: false` means the build holds no text for it; `complete: false` means the
-  PDF extraction cut it. Read those in the paper.
+  PDF extraction cut it, or that a proof step's context in the proof was cut (`context_cut`
+  gives the file and line, and `reason` says it in words). Read those in the paper.
 - `lean.declarations`: every linked declaration (or locked statement) with its complete
   statement: `statement.text` exactly as Lean prints it, `binders` and `conclusion` with their
   expression ids, and Lean's checks (axioms, sorry, errors). `lean.candidates` are suggestions
@@ -259,7 +260,8 @@ Every document says how much it holds; read these fields before concluding that 
 absent:
 
 - `compare`: a passage with `available: false` is not in the build (read it in the paper at its
-  `source`), and `complete: false` marks PDF text the extraction cut. `retrieval.unavailable`
+  `source`), and `complete: false` marks PDF text the extraction cut or a proof step's context
+  that was cut (at its `context_cut`). `retrieval.unavailable`
   names what is not extracted yet, each with the issue that owns it and, where there is one,
   the query that gives it on `request`; `retrieval.on_request` lists the targeted queries.
 - Lists: the packet's `retrieval.definitions` and the `retrieval` of a query give `total`,
