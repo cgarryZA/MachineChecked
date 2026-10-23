@@ -13,9 +13,10 @@
   // part of a conclusion split by its logic), for choosing one. `ext` may also be {term}, or
   // {at}: a sub-term by its identity in the proposition. `selId` is the sub-term selected in
   // another view of the same statement (the exact Lean), by that identity; `onselect` hears the
-  // identity of the one selected here.
+  // identity of the one selected here. `mark` lists positions of applications to mark (the
+  // occurrences of a warning).
   let { st, spec = null, onref, compact = false, ext = null, onactive = null, onpinned = null,
-        onterm = null, selId = null, onselect = null } = $props();
+        onterm = null, selId = null, onselect = null, mark = null } = $props();
 
   const binders = $derived(st.binders || []);
   const refs = $derived([...(st.closure || []), ...(st.direct || [])].sort((a, b) => b.length - a.length));
@@ -146,7 +147,7 @@
   const SCOPE = { forall: "for every", exists: "there is", if: "if", then: "then", and: "and", or: "or", iff: "iff", not: "not" };
 </script>
 
-{#snippet lean(pp, where = null)}<LeanText {pp} {onref} {refs} {active} {onvar} {ongloss} term={termAt(where)} selId={outerId} onterm={where == null ? null : (k) => setTerm(where, k)} />{#if where != null}{@const os = expansionsOf(pp)}{#if os.length}{" "}<span class="xs">expand{#each os as o}{" "}<button class="xb" class:on={o.k >= 0 ? termSel?.where === where && termSel.k === o.k : alone === o.x} aria-label={"Expand " + o.text + " at its arguments"} onclick={() => expand(where, o)}>{o.label}</button>{/each}</span>{/if}{/if}{/snippet}
+{#snippet lean(pp, where = null)}<LeanText {pp} {onref} {refs} {active} {onvar} {ongloss} {mark} term={termAt(where)} selId={outerId} onterm={where == null ? null : (k) => setTerm(where, k)} />{#if where != null}{@const os = expansionsOf(pp)}{#if os.length}{" "}<span class="xs">expand{#each os as o}{" "}<button class="xb" class:on={o.k >= 0 ? termSel?.where === where && termSel.k === o.k : alone === o.x} aria-label={"Expand " + o.text + " at its arguments"} onclick={() => expand(where, o)}>{o.label}</button>{/each}</span>{/if}{/if}{/snippet}
 
 {#snippet name(i)}<span class="v" class:hl={active === i} role="button" tabindex="0" onmouseenter={() => onvar(i, "hover")} onmouseleave={() => onvar(null, "hover")} onclick={() => onvar(i, "pin")} onkeydown={(e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), onvar(i, "pin"))}>{vars[i].name}</span>{/snippet}
 
