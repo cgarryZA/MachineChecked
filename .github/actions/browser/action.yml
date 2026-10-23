@@ -15,11 +15,11 @@ runs:
       run: |
         echo "week=$(date -u +%G-%V)" >> "$GITHUB_OUTPUT"
         echo "playwright=$(node -p "require('playwright-core/package.json').version")" >> "$GITHUB_OUTPUT"
-    - uses: actions/cache@v4
+    - uses: actions/cache@v6
       with:
         path: ~/.cache/ms-playwright
         key: playwright-${{ runner.os }}-${{ steps.keys.outputs.playwright }}
-    - uses: actions/cache@v4
+    - uses: actions/cache@v6
       with:
         path: ~/apt-browser
         key: apt-browser-${{ runner.os }}-${{ steps.keys.outputs.week }}
