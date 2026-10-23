@@ -34,6 +34,10 @@ project, unreadable paper or failed Lean probe). In that last case the document 
 `message`) and an empty claims list: report the execution error. Progress goes to stderr, so stdout is only
 the JSON. `version` is MachineChecked's version, and `release` identifies the evidence the
 statuses come from (it changes when the paper, the links or the Lean change). Each `status_code` is a stable machine-readable result; `status` is its display label.
+A link whose module is not built (`link.module-unbuilt`) or could not be loaded
+(`link.module-failed`) has a `status_detail` naming that module; an ambiguous link
+(`link.ambiguous`) has one naming the modules that declare the name. `check` prints the same
+detail after the link's status.
 `class` is only its coarse group for colouring (`proved`, `open`, `malformed`,
 `unspecified`), and the skill explains both.
 Without a `machinechecked.toml`, `warnings` lists names in module docstrings that the project

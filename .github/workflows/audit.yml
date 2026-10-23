@@ -83,11 +83,11 @@ jobs:
             exit 1
           fi
           echo "artifact=machinechecked-audit${SUBPATH:+-${SUBPATH//\//-}}" >> "$GITHUB_OUTPUT"
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.ref }}
           fetch-depth: 0   # the history, so a saved build of an earlier commit can be used
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       # The packages a run installs are kept for a week (TeX Live is several hundred MB, and
@@ -96,7 +96,7 @@ jobs:
         id: week
         run: echo "week=$(date -u +%G-%V)" >> "$GITHUB_OUTPUT"
       - name: Saved packages
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/apt-archives
           key: apt-audit-${{ runner.os }}-${{ inputs.tex }}-${{ steps.week.outputs.week }}
@@ -185,7 +185,7 @@ jobs:
           machinechecked build --site "$RUNNER_TEMP/machinechecked-audit/$SUBPATH" \
             ${AUTHOR:+--author "$AUTHOR"} ${PAPER:+"$PAPER"}
           test -f "$RUNNER_TEMP/machinechecked-audit/$SUBPATH/audit.json"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ steps.where.outputs.artifact }}
           path: ${{ runner.temp }}/machinechecked-audit
