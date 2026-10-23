@@ -106,15 +106,91 @@ def _order_warning(c: str, spec: str, ops) -> str | None:
     return "; ".join(parts) + f" ({c} occurs in {spec})"
 
 
+# Division and inverse: what `x / 0` and `0⁻¹` give depends on the type. In a group there is no
+# exceptional case; in a group with zero (a field) both are 0; ℕ and ℤ round; ℝ≥0∞ gives ∞.
+DIVISION_OPS = {"HDiv.hDiv": ("division", "what x / 0 gives"),
+                "Inv.inv": ("inverse", "what 0⁻¹ gives")}
+DIVISION_BY_HEAD = {
+    ("HDiv.hDiv", "Nat"): "division in ℕ rounds down and n / 0 = 0",
+    ("HDiv.hDiv", "Int"): "division in ℤ rounds and n / 0 = 0",
+    ("HDiv.hDiv", "ENNReal"): "division in ℝ≥0∞: x / 0 = ∞ when x ≠ 0, 0 / 0 = 0 and ∞ / ∞ = 0",
+    ("Inv.inv", "ENNReal"): "inverse in ℝ≥0∞: 0⁻¹ = ∞ and ∞⁻¹ = 0",
+}
+
+# Operations with no exceptional case in some types: the Bochner integral of a function into a
+# type with one element (every such function is integrable), and a sum in ℝ≥0∞ (every family
+# is summable there). In any other type, or one not read, the operation keeps its warning.
+EXEMPT = {"MeasureTheory.integral": lambda o: o.get("subsingleton") is True,
+          "tsum": lambda o: o.get("carrier_head") == "ENNReal"}
+
+
+def _occurrences(c: str, ops) -> list[dict]:
+    return [o for o in (ops or {}).get("occurrences") or [] if o.get("const") == c] \
+        if isinstance(ops, dict) else []
+
+
+def _division_warning(c: str, spec: str, ops) -> str | None:
+    """The warning for a division or an inverse `c` in `spec`, from the types of its
+    applications there: none in a group, `0` in a group with zero, the rule of ℕ, ℤ or ℝ≥0∞ in
+    those types, and an unresolved type otherwise (also for a record without `order_ops`)."""
+    what, outcome = DIVISION_OPS[c]
+    if not isinstance(ops, dict):
+        return (f"the type of this {what} is not recorded (the evidence predates the record), so "
+                f"{outcome} is unresolved ({c} occurs in {spec})")
+    occ = _occurrences(c, ops)
+    walked = ops.get("complete", True)
+    parts, unknown = [], []
+    if not walked:
+        parts.append(f"the statement is too large to read the type of every {what}, so "
+                     f"{outcome} is unresolved")
+    elif not occ:
+        unknown.append("not read: it is used without its type")
+    zero = "x / 0 = 0" if what == "division" else "0⁻¹ = 0"
+    for o in occ:
+        rule = DIVISION_BY_HEAD.get((c, o.get("carrier_head")))
+        if rule is None and o.get("algebra") == "group":
+            continue
+        if rule is None and o.get("algebra") == "group-with-zero":
+            rule = f"{what} in {o.get('carrier') or o.get('carrier_head')}: {zero}"
+        if rule is None:
+            ty = o.get("carrier") or "?"
+            if ty not in unknown:
+                unknown.append(ty)
+        elif rule not in parts:
+            parts.append(rule)
+    if unknown:
+        article = "an" if what == "inverse" else "a"
+        parts.append(f"Lean finds neither a group nor a field structure on the type of {article} "
+                     f"{what} ({', '.join(unknown)}), so {outcome} is unresolved")
+    if not parts:
+        return None
+    return "; ".join(parts) + f" ({c} occurs in {spec})"
+
+
+def _exempt(c: str, ops) -> bool:
+    """Whether every application of `c` was read and each is in a type where it has no
+    exceptional case (`EXEMPT`)."""
+    occ = _occurrences(c, ops)
+    return bool(occ) and ops.get("complete", True) and all(EXEMPT[c](o) for o in occ)
+
+
 def totalised(srec: dict, spec: str) -> list[tuple[str, str]]:
     """The totalised operations `spec` uses, each with its warning (`TOTALISED`): the operation
-    is the trigger. Suprema and infima are judged by the types they are taken in."""
+    is the trigger. Suprema, infima, divisions, inverses, integrals and sums are judged by the
+    types they are taken in."""
     out = []
+    ops = srec.get("order_ops")
     for c in srec.get("consts", []):
         if c not in TOTALISED:
             continue
-        msg = (_order_warning(c, spec, srec.get("order_ops")) if c in ORDER_OPS
-               else f"{TOTALISED[c]} ({c} occurs in {spec})")
+        if c in ORDER_OPS:
+            msg = _order_warning(c, spec, ops)
+        elif c in DIVISION_OPS:
+            msg = _division_warning(c, spec, ops)
+        elif c in EXEMPT and _exempt(c, ops):
+            msg = None
+        else:
+            msg = f"{TOTALISED[c]} ({c} occurs in {spec})"
         if msg:
             out.append((c, msg))
     return out
