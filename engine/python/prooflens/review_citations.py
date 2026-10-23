@@ -10,7 +10,11 @@ backticked token that looks like a path (one with a file extension, or a folder 
 resolves when a file or folder of the project or of its Lake packages ends with it. What does not resolve is a finding of the `warning` tier (code
 `review-citation`), with its file and line; `review_citations_strict = true` makes it a
 violation. Fenced code blocks, the `Review by` lines promotion writes, reviewers' names and
-tokens matching `review_citations_ignore` (mathematical notation such as `x_i`) are skipped.
+tokens matching `review_citations_ignore` (mathematical notation such as `x_i`) are skipped, and
+so is review text that records the removal of a declaration, which must name it (#270): an
+archived marker (`<!-- archived at … -->`), a removal record (a paragraph or list item that opens
+with a bold lead-in saying that something was removed or retired, `**Clauses removed.**`), and a
+name followed by such a note (`` `Foo.old` (removed at rev2) ``).
 """
 
 from __future__ import annotations
@@ -20,7 +24,7 @@ import os
 import re
 from pathlib import Path
 
-from .reviews import ANY, PROMOTED, review_files
+from .reviews import ANY, HEADING, PROMOTED, review_files
 from .source_names import SourceNames, last
 
 # Mathematical notation written in code spans: a symbol of one letter (perhaps primed) with a
@@ -33,6 +37,16 @@ NAME_PART = r"[^\W\d][\w'!?₀-₉]*"
 NAME = re.compile(rf"{NAME_PART}(?:\.{NAME_PART})*")
 EXTENSIONS = (".lean", ".tex", ".md", ".json", ".toml", ".yaml", ".yml", ".py", ".sty", ".bib",
               ".txt", ".pdf", ".sh", ".cfg")
+
+# Review text that records the removal of a declaration. An archived marker is an HTML comment
+# that may span lines. A removal record opens with a bold lead-in and runs to the end of its
+# paragraph, with a list directly under it, or of its list item, with the items nested in it. A
+# note follows the cited name.
+ARCHIVED = re.compile(r"<!--\s*archived\s+at\b.*?-->", re.S | re.I)
+ITEM = re.compile(r"^(\s*)(?:[-*+]|\d+[.)])\s")
+LEAD = re.compile(r"^\s*(?:(?:[-*+]|\d+[.)])\s+)?(\*\*|__)(.+?)\1")
+REMOVED = re.compile(r"\b(?:removed|retired)\b", re.I)
+NOTE = re.compile(r"\s*\((?:removed|retired)\b", re.I)
 
 
 def classify(token: str) -> str | None:
@@ -61,21 +75,37 @@ def citations(files: list[Path], root: Path, ignore: list[str] | None = None) ->
             text = f.read_text(encoding="utf-8")
         except (OSError, UnicodeError):
             continue
+        # An archived marker is blanked out, keeping its line breaks so that lines keep their
+        # numbers.
+        text = ARCHIVED.sub(lambda m: re.sub(r"[^\n]", " ", m.group()), text)
         reviewers = {dict(a.split("=", 1) for a in (m.group(4) or m.group(8)).split()
                           if "=" in a).get("by") for m in ANY.finditer(text)}
         rel = f.resolve().relative_to(root.resolve()).as_posix() \
             if f.resolve().is_relative_to(root.resolve()) else f.name
-        fence = False
+        # In a removal record: -1 when it is a paragraph, the indentation of its list item
+        # when it is one, None outside.
+        fence, removal = False, None
         for i, line in enumerate(text.split("\n"), 1):
             if line.lstrip().startswith(("```", "~~~")):
-                fence = not fence
+                fence, removal = not fence, None
                 continue
             if fence or PROMOTED.match(line):
                 continue
-            for m in CODE.finditer(ANY.sub("", line)):
+            item = ITEM.match(line)
+            if not line.strip() or HEADING.match(line) or ANY.search(line) or (
+                    item and removal is not None and len(item.group(1)) <= removal):
+                removal = None
+            lead = LEAD.match(line)
+            if lead and REMOVED.search(lead.group(2)):
+                removal = len(item.group(1)) if item else -1
+            if removal is not None:
+                continue
+            bare = ANY.sub("", line)
+            for m in CODE.finditer(bare):
                 tok = m.group(1).strip()
                 kind = classify(tok)
-                if kind is None or tok in reviewers or any(p.search(tok) for p in pats):
+                if kind is None or tok in reviewers or any(p.search(tok) for p in pats) \
+                        or NOTE.match(bare, m.end()):
                     continue
                 out.append({"file": rel, "line": i, "token": tok, "kind": kind})
     return out

@@ -268,7 +268,7 @@
             {#if !c.heading && c.title}<p class="desc"><TexInline text={c.title} /></p>{/if}
             <PaperStatement claim={c} paper={paperOf(c)} evidence={false} />
             {#if c.step}
-              <p class="small">A step of the proof of {c.step.parent?.number || c.step.parent?.id || "its result"}. Is it valid as printed? Its parent's status plays no part.</p>
+              <p class="small">A step of the proof of {c.step.parent?.number || c.step.parent?.id || "its result"}. Is it valid as printed? Judge the step on its own.</p>
               {#if c.context_tex}<details open><summary class="small">Its context in the proof</summary><Tex text={c.context_tex} /></details>{/if}
             {/if}
             <p class="small"><a href={href(index.release, "read", c.paper, c.id)} target="_blank" rel="noopener" title="Opens the paper and Lean reader">Open in the paper ↗</a></p>

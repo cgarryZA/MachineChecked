@@ -477,7 +477,7 @@
               </div>
             {/if}
             {#if cl.statement}
-              {#if markFor(k)}<p class="small marknote">Marked: the operation a warning is about{marking.what ? ", in " + marking.what : ""}. <button class="act" onclick={() => (marking = null)}>Clear</button></p>{/if}
+              {#if markFor(k)}<p class="small marknote">Marked: the operation this finding is about{marking.what ? ", in " + marking.what : ""}. <button class="act" onclick={() => (marking = null)}>Clear</button></p>{/if}
               <Statement st={cl.statement} spec={cl.spec} onref={showDecl} compact ext={extFor(cl.spec)} mark={markFor(k)}
                 selId={selFor(cl.spec)} onselect={(id) => select(cl.spec, id)}
                 onpinned={(v) => { if (linking) pickVar = v == null ? (pickVar?.spec === cl.spec && pickVar.var != null ? null : pickVar) : { spec: cl.spec, var: v }; }}
@@ -529,7 +529,7 @@
         <h3><code>{l.name}</code></h3>
         <p class="small">{statusView(l).explanation}</p>
         {#if l.status_detail}<p class="small">{l.status_detail}</p>{/if}
-        <p class="faint small">{l.source === "paper" ? "Linked by a \\lean{…} tag in the paper's source" : l.source === "formalization.yaml" ? "Declared in the project's formalization.yaml" + (index.formalization?.review_status ? ` (the project describes its review as “${index.formalization.review_status}”)` : "") : "Linked in the reader (machinechecked.links.json)"}{#if l.repository} · {l.repository}{/if}{#if l.module} · {l.module}{l.range ? ":" + l.range.line : ""}{/if}</p>
+        <p class="faint small">{l.source === "paper" ? "Linked by a \\lean{…} tag in the paper's source" : l.source === "formalization.yaml" ? "Declared in the project's formalization.yaml" + (index.formalization?.review_status ? ` · project review: “${index.formalization.review_status}”` : "") : "Linked in the reader (machinechecked.links.json)"}{#if l.repository} · {l.repository}{/if}{#if l.module} · {l.module}{l.range ? ":" + l.range.line : ""}{/if}</p>
       {/each}
     {:else}
       {#if claim.blockers?.length}

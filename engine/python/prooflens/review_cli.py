@@ -484,7 +484,7 @@ DRAFT_KIND = {"faithful with representation choices": "explanatory note",
               **{v: "defect" for v in VERDICTS["problem"]},
               "cannot determine": "unresolved question"}
 UNRESOLVED_BODY = ("The reviewer could not determine whether the Lean statement says what the "
-                   "paper says. This is an open question, not a difference that was found.")
+                   "paper says; this is an open question.")
 
 
 def issue_draft(u: dict, verdict: str, detail: str, cor: dict | None = None) -> dict | None:

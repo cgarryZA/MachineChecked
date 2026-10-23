@@ -1,12 +1,12 @@
 # Reviewing paper-to-Lean correspondence
 
-**A linked Lean theorem is not automatically a faithful formalisation of the paper.** MachineChecked's Review view helps a mathematician examine the correspondence one unit at a time and record a reproducible judgement.
+A correspondence review records whether a linked Lean statement says what the paper says. MachineChecked's **Review** view takes one unit at a time through three stages (read the paper, compare the Lean, read the author's review) and saves each judgement as a report for the maintainer.
 
 The queue supports two settings: ordinary projects with linked statements, and projects with locked paper specifications, dependency-level definition reviews and an acceptance policy. It uses the same reader in both. In both, the steps of printed proofs have units of their own (see [Proof steps](#proof-steps)).
 
 ## One claim at a time
 
-The queue prefers smaller review units and takes shared definitions into account. Choose a paper or section to avoid jumping between unrelated mathematics. You can skip a unit, undo the last decision and return to skipped units.
+The queue prefers smaller review units and takes shared definitions into account. Choose a paper or section to avoid jumping between unrelated mathematics. You can skip a unit, undo the last decision and return to skipped units. **Review it**, in a claim's ⋯ menu, starts with that claim and records that its Lean was already shown.
 
 Each review has three stages:
 
@@ -370,7 +370,7 @@ The review page offers the same choices under the verdict. A report records them
 A review of a proof step records whether the step holds, and no coverage. Coverage and basis
 change no status, and promotion writes the same marker with them or without them.
 
-A review may be useful before a theorem is proved, provided the formal specification exists. Claims without a formal statement cannot yet undergo comparison; the queue lists them separately.
+A review can start before a theorem is proved, once its formal statement exists. The queue lists the claims that still await one.
 
 ## Proof steps
 
@@ -411,7 +411,7 @@ Theorem 2.5: false as printed”).
 
 ## Review records and identity
 
-The reviewer supplies their name or model identity. On a standalone HTML bundle, identity is **self-declared**; a Git name or a typed username is not proof of authorship.
+The reviewer supplies their name or model identity, and the report records it as **self-declared**.
 
 Drafts are saved in this browser’s local storage. **Export reports regularly** to keep a durable
 copy and share your work. The JSON contains your interpretation, comparison, verdict, source
@@ -448,7 +448,3 @@ Promotion records the maintainer’s decision for the reviewed proposition or de
 Acceptance also requires the claim’s proofs and all other required checks.
 
 For details of the acceptance states, see [Evidence policy](EVIDENCE_POLICY.md). For the required configuration and review-marker format, see [Full assessment](ASSURANCE.md).
-
-Reports and drafts are saved in this browser. **Export reports** downloads the reports for sharing
-with the maintainer. **Review it** starts with the selected claim and records prior Lean exposure
-when opened from the reader.

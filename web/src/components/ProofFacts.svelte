@@ -50,7 +50,7 @@
   {:else}
     <p class="small"><input class="q" bind:value={match} placeholder="a bound or symbol to look for" aria-label="Look for" onkeydown={(e) => e.key === "Enter" && load()} />
       <button class="act" disabled={busy} onclick={load}>{match.trim() ? "Rank" : "Show all"}</button></p>
-    {#if doc.match}<p class="faint small">{doc.match.candidates} of {doc.match.of} facts share symbols with “{doc.match.query}”. Sharing symbols does not mean one bound gives another.</p>{/if}
+    {#if doc.match}<p class="faint small">{doc.match.candidates} of {doc.match.of} facts share symbols with “{doc.match.query}”; read each fact to judge whether it gives what you need.</p>{/if}
     {#each doc.results as f (f.id)}
       <div class="fact" data-kind={f.kind} data-fact={f.id}>
         <p class="small"><span class="what">{f.what}</span>{#if label(f)} <code>{label(f)}</code>{/if}

@@ -252,7 +252,7 @@ const DRAFT_KIND = {
   "cannot determine": "unresolved question",
 };
 const UNRESOLVED_BODY = "The reviewer could not determine whether the Lean statement says what the "
-  + "paper says. This is an open question, not a difference that was found.";
+  + "paper says; this is an open question.";
 
 // An open question carries what would decide it, when the report's coverage (`cor`) says.
 export function issueDraft(unit, verdict, detail, cor = null) {
