@@ -666,10 +666,21 @@ class Assessor:
                 out[d] = self.review_state("def", d, lean["decls"].get(d))
         return out
 
+    def _is_proof(self, name: str) -> bool:
+        """Whether the declaration `name` is a proof: its type is a proposition (a theorem, a
+        proof Lean generates such as `_proof_1`, a `Prop`-valued instance). A record without the
+        probe's `proposition` field counts a theorem only; an unknown answer counts as data."""
+        rec = self.lean["decls"].get(name) or {}
+        if "proposition" in rec:
+            return rec["proposition"] is True
+        return rec.get("kind") == "theorem"
+
     def witness_only(self) -> dict[str, list[str]]:
         """The project declarations in the closure of a witness's statement that the assessment
         asks no review for otherwise (outside every proposition, its closure, the definitions a
-        definition claim maps and their closures), each with the witnesses that use it."""
+        definition claim maps and their closures), each with the witnesses that use it. Proofs
+        (`_is_proof`) are left out: they carry no data, so they cannot fix the instance a
+        witness exhibits."""
         if self._witness_only is None:
             lean = self.lean
             covered = set(lean["specs"])
@@ -684,7 +695,8 @@ class Assessor:
                     for w in self._witnesses(cl):
                         for d in (self._proof("witness", w, None) or {}).get("closure") or []:
                             out.setdefault(d, set()).add(w)
-            self._witness_only = {d: sorted(ws) for d, ws in out.items() if d not in covered}
+            self._witness_only = {d: sorted(ws) for d, ws in out.items()
+                                  if d not in covered and not self._is_proof(d)}
         return self._witness_only
 
     @staticmethod

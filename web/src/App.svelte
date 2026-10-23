@@ -106,7 +106,7 @@
     </div>
   {/if}
   {#if lead}
-    <div class="banner together" data-together title="Each claim carries one audit's status; statuses from different audits are never combined">
+    <div class="banner together" data-together title="Each claim shows the status of one audit, named in its panel">
       Showing the audit of <code>{project.repo}</code>{lead.author ? " by " + lead.author : ""}{byStars ? " (most GitHub stars)" : ""}. Claims it does not map show the next audit that does, labelled.
     </div>
   {/if}

@@ -161,11 +161,11 @@ def test_the_skill_defines_evidence_and_machine_statuses():
     head = skill.split("---")[1]
     assert "name: machinechecked" in head and "description:" in head
     from prooflens.status import STATUSES
-    src = "\n".join(v["label"] for v in STATUSES.values())
-    # Every status the skill explains is one the engine writes.
+    labels = {v["label"] for v in STATUSES.values()}
+    # Every status the skill explains is one the engine writes, word for word.
     for st in re.findall(r"^\| `(linked: [^`]+|suggested link, not confirmed|not linked)` \|",
                          skill, re.M):
-        assert st.split(" (")[0] in src or st in src, st
+        assert st in labels, st
     assert "status_code" in skill
     assert "correspondence reviews" in skill and "independent kernel replay" in skill
 

@@ -1,7 +1,7 @@
 <script>
   // Findings by tier. A violation contradicts acceptance and is always shown. Review obligations
-  // are open work and are listed. Warnings are heuristics that can be wrong: they are grouped by
-  // the operation that raised them and folded away, low-signal ones last. A warning about a
+  // are open work, listed as review tasks. Warnings are heuristics, shown as heuristic findings:
+  // they are grouped by the operation that raised them and folded away, low-signal ones last. A warning about a
   // totalised operation lists the applications it read (`occurrences`), each with its type and
   // what the type gives; `onshow` marks them in the statement. Such a warning is about one
   // application (`at`), and its dismissal names that application.
@@ -38,14 +38,14 @@
 
 {#if violations.length}
   <div class="tier violation">
-    <h3>Violations <span class="faint">· mechanical facts that contradict acceptance</span></h3>
+    <h3>Violations <span class="faint">· failed mechanical checks</span></h3>
     <ul>{#each violations as f (f.id)}<li>{f.message}</li>{/each}</ul>
   </div>
 {/if}
 
 {#if obligations.length}
   <div class="tier obligation">
-    <h3>Review obligations <span class="faint">· mathematical judgements</span></h3>
+    <h3>Review tasks</h3>
     <ul>{#each obligations as f (f.id)}<li>{f.message}</li>{/each}</ul>
   </div>
 {/if}
@@ -53,8 +53,8 @@
 {#if warnings.length}
   <details class="tier warning">
     <summary>
-      <strong>Warnings</strong>
-      <span class="faint">· heuristics that may be wrong ·
+      <strong>Heuristic findings</strong>
+      <span class="faint">·
         {groups.map((g) => `${g.trigger} ×${g.items.length}`).join(", ")}</span>
     </summary>
     {#each groups as g (g.trigger)}

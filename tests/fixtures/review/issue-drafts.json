@@ -76,7 +76,7 @@
    "draft": {
     "kind": "unresolved question",
     "title": "Toy.even_add: open question (Theorem 2.1)",
-    "body": "Review unit `thm:Toy.even_add`, verdict **cannot determine**. The reviewer could not determine whether the Lean statement says what the paper says. This is an open question, not a difference that was found.\n\n**Open question.** Does the paper's 'number' mean a natural number or an integer? The paper's Section 1 would decide it."
+    "body": "Review unit `thm:Toy.even_add`, verdict **cannot determine**. The reviewer could not determine whether the Lean statement says what the paper says; this is an open question.\n\n**Open question.** Does the paper's 'number' mean a natural number or an integer? The paper's Section 1 would decide it."
    }
   },
   {
@@ -85,7 +85,7 @@
    "draft": {
     "kind": "unresolved question",
     "title": "Toy.even_add: open question (Theorem 2.1)",
-    "body": "Review unit `thm:Toy.even_add`, verdict **cannot determine**. The reviewer could not determine whether the Lean statement says what the paper says. This is an open question, not a difference that was found."
+    "body": "Review unit `thm:Toy.even_add`, verdict **cannot determine**. The reviewer could not determine whether the Lean statement says what the paper says; this is an open question."
    }
   },
   {
