@@ -215,15 +215,21 @@ def _context(text: str, start: int, end: int) -> tuple[str, int]:
 
 def find_references(index: list[dict], blocks: list[dict], foreign=frozenset()) -> list[dict]:
     """Every reference to a numbered statement or section in the project's declaration
-    docstrings, declaration names and module docstrings, with its source, its context and
-    where its text starts in the context (`at`)."""
+    docstrings, declaration names and module docstrings, with its source, its context, where
+    its text starts in the context (`at`) and an id that no other reference has."""
     out = []
     foreign = set(foreign)
+    seen: dict[str, int] = {}
 
     def obs(kind_word, number, exact, context, source, scope_note, role, run=False):
         kind = canonical(kind_word)
         key = "\n".join([source.get("declaration") or "", source.get("file") or "",
                          str(source.get("line")), source["where"], exact])
+        # The same text again in the same place (`Lemma 7.7, and again Lemma 7.7.`) is told
+        # apart by which occurrence it is; the first keeps the id it would have alone.
+        seen[key] = seen.get(key, 0) + 1
+        if seen[key] > 1:
+            key += f"\n{seen[key]}"
         o = {"id": "ref:" + hashlib.sha256(key.encode()).hexdigest()[:12],
              "reference": printed(kind, number), "kind": kind, "number": number,
              "text": exact, "context": context[0], "at": context[1], "source": source,

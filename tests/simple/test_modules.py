@@ -156,12 +156,17 @@ def test_check_names_the_modules_of_links_lean_did_not_check(twins, monkeypatch,
     assert "status_detail" not in links["Theorem 1"] and "status_detail" not in links["Theorem 4"]
 
 
+# How a session fails that cannot load `Broken.Main`, as `probe_modules` stores it.
+BROKEN = ("the Lean probe failed (1):\nProbe.lean:3:0: error: object file Broken/Main.olean of "
+          "module Broken.Main does not exist\n")
+
+
 def synthetic_view(root):
     """A view with one claim per state Lean did not check a link in, each state and its detail
     as `resolve_link` gives them."""
     from prooflens.simple import resolve_link
     cases = [("Theorem 1", "Later.result", "Later.Main", [], ["Later.Main"], {}),
-             ("Theorem 2", "Broken.result", "Broken.Main", [], [], {"Broken.Main": "error"}),
+             ("Theorem 2", "Broken.result", "Broken.Main", [], [], {"Broken.Main": BROKEN}),
              ("Theorem 3", "Twin.target", None,
               [{"module": "Challenge.Main"}, {"module": "Solution.Main"}], [], {})]
     claims = []
@@ -179,13 +184,16 @@ def synthetic_view(root):
 
 @pytest.mark.parametrize("number, code, detail", [
     ("Theorem 1", "link.module-unbuilt", "Module Later.Main is not built."),
-    ("Theorem 2", "link.module-failed", "Module Broken.Main could not be loaded."),
+    ("Theorem 2", "link.module-failed", "Module Broken.Main could not be loaded on its own: "
+                                        "object file Broken/Main.olean of module Broken.Main "
+                                        "does not exist"),
     ("Theorem 3", "link.ambiguous", "Declared in Challenge.Main, Solution.Main."),
 ])
 def test_check_names_the_module_behind_each_unchecked_state(tmp_path, monkeypatch, capsys,
                                                              number, code, detail):
-    """Each of the three states: `check` prints the module after the status words, which stay
-    the engine's, and `check --json` gives it as the link's `status_detail`."""
+    """Each of the three states: `check` prints the module (and for one that could not be
+    loaded, what Lean reported) after the status words, which stay the engine's, and
+    `check --json` gives it as the link's `status_detail`."""
     from prooflens import cli
     from prooflens.status import STATUSES
     view = synthetic_view(tmp_path)
@@ -280,3 +288,176 @@ def test_a_session_that_is_split_says_why(monkeypatch):
     simple.probe_modules(ROOT, ["A.One", "A.Two"], ["A"], [], log=said.append)
     assert said[0] == ("lean: A could not be loaded in one session "
                        "((deterministic) timeout at `whnf`); splitting it")
+
+
+def lean_fails_on(monkeypatch, bad, message):
+    """Make every Lean session that loads a module of `bad` fail with `message` (an error Lean
+    reported, so the same inputs fail again); the others finish with no records. Returns the
+    modules of each session started."""
+    from prooflens import simple
+    calls = []
+
+    def probe(root, group, *a, **k):
+        calls.append(list(group))
+        if set(group) & set(bad):
+            raise simple.ViewError(message, deterministic=True)
+        return [{"record": "done"}]
+    monkeypatch.setattr(simple, "run_simple_probe", probe)
+    return calls
+
+
+def many_errors(work, module, n=40):
+    """What Lean prints when it cannot load `module`: `n` errors, each at a position in the
+    probe's temporary file, longer in all than what is kept of a failure."""
+    probe = work / "prooflens-probe-k2x9" / "Probe.lean"
+    return ("the Lean probe failed (1):\n"
+            + "".join(f"{probe}:{i + 2}:0: error: unknown constant '{module}.missing{i}'\n"
+                      for i in range(n)))
+
+
+def test_a_module_that_fails_alone_is_named_with_its_error(tmp_path, monkeypatch):
+    """A library of one module that Lean cannot load: the link's detail says it could not be
+    loaded on its own and gives the first errors Lean reported, without the probe's temporary
+    file and trimmed to a few, though Lean printed more than the failure keeps."""
+    from prooflens import simple
+    from prooflens.status import STATUSES
+    calls = lean_fails_on(monkeypatch, ["Solo"], many_errors(tmp_path / "work", "Solo"))
+    split = {}
+    recs, failed = simple.probe_modules(tmp_path, ["Solo"], ["Solo"], [], log=lambda m: None,
+                                        split=split)
+    assert calls == [["Solo"]] and list(failed) == ["Solo"] and split == {}
+    # The first errors are kept, not only the end of Lean's output.
+    assert "Solo.missing0'" in failed["Solo"] and "Solo.missing39'" in failed["Solo"]
+    assert len(failed["Solo"]) < 1300
+    rec, state = simple.resolve_link("Solo.result", [], "Solo", tmp_path, [], failed, split)
+    assert rec is None
+    assert state == {"status_code": "link.module-failed",
+                     "status": STATUSES["link.module-failed"]["label"], "class": "unspecified",
+                     "status_detail": "Module Solo could not be loaded on its own: unknown "
+                                      "constant 'Solo.missing0'; unknown constant "
+                                      "'Solo.missing1'; unknown constant 'Solo.missing2'; …"}
+
+
+def test_a_module_that_fails_within_a_split_group_says_so(tmp_path, monkeypatch):
+    """A library whose modules cannot be loaded in one session is loaded apart; the module that
+    still fails on its own is named with the library's session it was split from and with what
+    Lean reported, its paths given from the project's root. The others load."""
+    from prooflens import simple
+    olean = tmp_path / ".lake" / "build" / "lib" / "lean" / "Pair" / "Bad.olean"
+    calls = lean_fails_on(monkeypatch, ["Pair.Bad"],
+                          f"the Lean probe failed (1):\nProbe.lean:2:0: error: failed to read "
+                          f"file '{olean}', invalid header\n")
+    split, said = {}, []
+    recs, failed = simple.probe_modules(tmp_path, ["Pair", "Pair.Bad", "Pair.Good"], ["Pair"],
+                                        [], log=said.append, split=split)
+    assert calls[0] == ["Pair", "Pair.Bad", "Pair.Good"] and ["Pair.Bad"] in calls
+    assert list(failed) == ["Pair.Bad"]
+    assert split == {"Pair.Bad": {"library": "Pair", "modules": 3}}
+    assert said[0] == ("lean: Pair could not be loaded in one session (failed to read file "
+                       f"'{olean}', invalid header); splitting it")
+    (tmp_path / "Pair").mkdir()
+    (tmp_path / "Pair" / "Bad.lean").write_text("theorem Pair.result : True := trivial\n")
+    _, state = simple.resolve_link("Pair.result", [], None, tmp_path, [], failed, split)
+    assert state["status_code"] == "link.module-failed"
+    assert state["status_detail"] == (
+        "Module Pair.Bad could not be loaded on its own, after 3 modules of Pair could not be "
+        "loaded in one Lean session: failed to read file "
+        "'.lake/build/lib/lean/Pair/Bad.olean', invalid header")
+
+
+def test_a_failure_with_no_error_line_says_what_ended_it():
+    """A session that ran out of a resource, or that ended with no message: the detail says what
+    there is, one line each."""
+    from prooflens.simple import loading_error
+    assert loading_error("the Lean probe failed (1):\nINTERNAL PANIC: out of memory\n") == \
+        "INTERNAL PANIC: out of memory"
+    assert loading_error("the Lean probe failed (-9):\n\n") == "the Lean probe failed (-9)"
+    assert loading_error("the Lean probe (Solo) timed out after 3600 s") == \
+        "the Lean probe (Solo) timed out after 3600 s"
+    assert loading_error("") == ""
+
+
+LOADS = r"""\documentclass{article}
+\usepackage{amsthm}
+\newtheorem{theorem}{Theorem}
+\begin{document}
+\begin{theorem}\label{thm:a} Something true. \end{theorem}
+\begin{theorem}\label{thm:b} Something else true. \end{theorem}
+\end{document}
+"""
+
+
+@needs_tex
+def test_check_and_the_reader_give_the_loading_error(tmp_path, monkeypatch, capsys):
+    """A module that fails alone and one that fails within a split group, through `check`,
+    `check --json` (the second from the stored failures, with no Lean session) and the site's
+    data: each link's detail gives what Lean reported, and the build's note names each module
+    with its first error. The status words are the engine's."""
+    from prooflens import cli
+    from prooflens.status import STATUSES
+    root = tmp_path / "proj"
+    root.mkdir()
+    shutil.copyfile(ROOT / "examples" / "plain-paper" / "lean-toolchain", root / "lean-toolchain")
+    (root / "lakefile.toml").write_text('name = "proj"\n\n[[lean_lib]]\nname = "Solo"\n\n'
+                                        '[[lean_lib]]\nname = "Pair"\n')
+    (root / "Solo.lean").write_text("theorem Solo.result : True := trivial\n")
+    (root / "Pair").mkdir()
+    (root / "Pair.lean").write_text("import Pair.Bad\n")
+    (root / "Pair" / "Bad.lean").write_text("theorem Pair.result : True := trivial\n")
+    built = root / ".lake" / "build" / "lib" / "lean"
+    (built / "Pair").mkdir(parents=True)
+    for m in ["Solo", "Pair", "Pair/Bad"]:
+        (built / f"{m}.olean").write_bytes(b"")
+    (root / "paper.tex").write_text(LOADS)
+    (root / "formalization.yaml").write_text(
+        'version: "v0.4"\nsources:\n  - title: "Loads"\n    relationship: "formalizes"\n'
+        'alignment:\n  statements:\n    - source: "Theorem 1"\n      lean: "Solo.result"\n'
+        '      module: "Solo"\n    - source: "Theorem 2"\n      lean: "Pair.result"\n')
+    work = root / ".machinechecked" / "build"
+    calls = lean_fails_on(monkeypatch, ["Solo", "Pair.Bad"], many_errors(work, "Boom"))
+    monkeypatch.chdir(root)
+    label = STATUSES["link.module-failed"]["label"]
+    errors = ("unknown constant 'Boom.missing0'; unknown constant 'Boom.missing1'; "
+              "unknown constant 'Boom.missing2'; …")
+    alone = f"Module Solo could not be loaded on its own: {errors}"
+    apart = ("Module Pair.Bad could not be loaded on its own, after 2 modules of Pair could not "
+             f"be loaded in one Lean session: {errors}")
+    note = ("2 built module(s) could not be loaded by MachineChecked and are not indexed: "
+            "Pair.Bad (unknown constant 'Boom.missing0'; …), "
+            "Solo (unknown constant 'Boom.missing0'; …)")
+
+    capsys.readouterr()
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["check"])
+    assert exc.value.code == 1
+    out = capsys.readouterr().out
+    assert f"FAIL Theorem 1 -> Solo.result: {label}. {alone}\n" in out
+    assert f"FAIL Theorem 2 -> Pair.result: {label}. {apart}\n" in out
+    assert f"note: {note}\n" in out
+    assert "prooflens-probe-" not in out and str(root) not in out
+
+    # The failures are stored: the next check asks Lean nothing about those modules.
+    calls.clear()
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["check", "--json"])
+    assert exc.value.code == 1
+    assert not any({"Solo", "Pair.Bad"} & set(g) for g in calls)
+    doc = json.loads(capsys.readouterr().out)
+    links = {c["number"]: c["links"][0] for c in doc["claims"]}
+    assert {n: (l["status_code"], l["status"], l["status_detail"]) for n, l in links.items()} == {
+        "Theorem 1": ("link.module-failed", label, alone),
+        "Theorem 2": ("link.module-failed", label, apart)}
+    assert note in doc["notes"]
+
+    # The reader's data: the note in the index, the detail on each claim's link.
+    capsys.readouterr()
+    cli.main(["build"])
+    data = root / ".machinechecked" / "site" / "data"
+    index = json.loads((data / "index.json").read_text())
+    assert note in index["notes"]
+    shown = {}
+    for c in index["claims"]:
+        chunk = json.loads((data / "claims" / c["file"]).read_text())
+        shown[c["number"]] = [(l["status"], l["status_detail"]) for l in chunk["links"]]
+    assert shown == {"Theorem 1": [(label, alone)], "Theorem 2": [(label, apart)]}
+    assert "prooflens-probe-" not in (data / "index.json").read_text()

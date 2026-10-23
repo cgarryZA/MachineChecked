@@ -35,7 +35,9 @@ project, unreadable paper or failed Lean probe). In that last case the document 
 the JSON. `version` is MachineChecked's version, and `release` identifies the evidence the
 statuses come from (it changes when the paper, the links or the Lean change). Each `status_code` is a stable machine-readable result; `status` is its display label.
 A link whose module is not built (`link.module-unbuilt`) or could not be loaded
-(`link.module-failed`) has a `status_detail` naming that module; an ambiguous link
+(`link.module-failed`) has a `status_detail` naming that module (for one that could not be
+loaded, with the first lines of what Lean reported, and whether the module's library could not
+be loaded in one session first); an ambiguous link
 (`link.ambiguous`) has one naming the modules that declare the name. `check` prints the same
 detail after the link's status.
 `class` is only its coarse group for colouring (`proved`, `open`, `malformed`,
@@ -44,7 +46,8 @@ Without a `machinechecked.toml`, `warnings` lists names in module docstrings tha
 and its dependencies do not declare (`kind` `module-doc-name`, with `file`, `line`, `name` and
 `message`; the message says when a short name reaches only a module or a namespace), and
 references to the paper's numbers that disagree with the paper read here
-(`kind` `paper-reference`, with `file`, `line`, `reference`, `status`, `id` and `message`);
+(`kind` `paper-reference`, with `file`, `line`, `reference`, `status`, `id` and `message`;
+each reference has its own `id`, a second copy of the same text in one place included);
 they do not change the exit code. `numbering` holds every such reference
 (`numbering.references`: `reference`, its exact `text` and `context`, its `source` with
 declaration, module, file, line and `where` it is, and `status`: `exact`, `other-kind`,

@@ -263,6 +263,40 @@ def test_a_comparison_publishes_only_what_the_papers_allow():
     assert "m + 5" in json.dumps(doc)
 
 
+def test_a_review_a_later_marker_shadows_is_reopened_by_the_record_not_the_lean():
+    c = claim("P:main", H["a"], clauses=[{"name": "statement", "spec": SPEC, "accept": THM}],
+              number="Theorem 1")
+    now = marker(SPEC, "fp:spec", "P:main", H["a"])
+    later = {**marker(SPEC, "fp:old", "P:main", H["a"], line=7), "file": "later.md"}
+    specs = {SPEC: {"fingerprint": "fp:spec", "closure": []}}
+    decls = [decl(SPEC, "fp:spec", "∀ m, m = m"), decl(THM, "fp:thm", "", "theorem", "p1")]
+
+    def cl(r):
+        return {"name": "statement", "spec": SPEC, "accept": THM, "accept_ok": True,
+                "spec_review": r, "def_reviews": {}}
+    old = record("e1", [c], [assessed("P:main", "formal.accepted", [
+        cl(review("reviewed", now, readers={"P:main": H["a"]}))])], decls, specs,
+        {"P:main": region(H["a"])})
+    stale = review("stale", why="shadowed", readers={"P:main": H["a"]})
+    stale["stale"] = [now, later]
+    stale["shadowed"] = {k: {x: m[x] for x in ("file", "line", "hash", "by")}
+                         for k, m in (("reading", now), ("record", later))}
+    new = record("e2", [c], [assessed("P:main", "formal.review-pending", [cl(stale)])], decls,
+                 specs, {"P:main": region(H["a"])})
+    doc = chg.compare(old, "r-1", new, "r-2")
+    e = doc["claims"][0]["evidence"][0]
+    assert e["outcome"] == "reopened"
+    dep, = e["because"]
+    assert dep["dependency"] == "record" and dep["reason"] == "shadowed"
+    assert (dep["reading"]["file"], dep["record"]["file"], dep["record"]["line"]) == (
+        "reviews.md", "later.md", 7)
+    assert e["question"] == (f"Record the review of {SPEC} again after the later marker at "
+                             "another hash, or retire that marker.")
+    # The markers' places are published only with the reviews.
+    closed = SimpleNamespace(source_text=False, lean=False, reviews=False)
+    assert "later.md" not in json.dumps(chg.public(doc, {"P": closed}, False, False))
+
+
 # -- the toy paper, built again after each change -------------------------------------------------
 
 def changes_json(root, capsys, *args):
