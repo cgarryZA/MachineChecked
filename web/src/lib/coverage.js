@@ -76,6 +76,26 @@ export function coverageView(cor) {
   return { coverage, basis, headline, tone, lines };
 }
 
+// A finding that rests on no composition (a workspace's or a published one), as `coverageView`
+// reads it, with its own bridge as the engine checked it (`bridge_check`): a bridge without the
+// engine's check reads as one Lean does not check.
+export function findingCoverageView(f) {
+  if (!f) return null;
+  const check = f.bridge_check && typeof f.bridge_check === "object" ? f.bridge_check : null;
+  const bridge = f.bridge && typeof f.bridge === "object" ? f.bridge : null;
+  return coverageView(check ? { ...f, bridge: { ...(bridge || {}), ...check } } : f);
+}
+
+// The sentence beside a finding recorded as a checked bridge that the engine reads as the
+// auditor's composition (`recorded_basis`), with the engine's reasons; null otherwise.
+export function recordedBasisText(f) {
+  if (f?.recorded_basis !== "checked_bridge") return null;
+  const b = f.bridge && typeof f.bridge === "object" ? f.bridge : {};
+  const named = text(b.theorem) && text(b.target) ? ` (${text(b.theorem)} for ${text(b.target)})` : "";
+  const why = names(f.basis_reason);
+  return `Recorded as a checked bridge${named}; no bridge Lean checks now${why.length ? ": " + why.join("; ") : ""}.`;
+}
+
 // An auditor's composition (`composition.view` of the engine): `{headline, tone, basis,
 // bridgeState, nextStep, open, uncovered}`. The basis is a checked bridge only when the engine
 // says Lean checks it now; otherwise it is the auditor's composition, with the next step beside

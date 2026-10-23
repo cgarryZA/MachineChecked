@@ -2,7 +2,7 @@
   import { listWorkspaces, openWorkspace, showWorkspace, updateWorkspace, suggestContext, newId,
     rememberedWorkspace, rememberWorkspace, humanId } from "../lib/workspace.js";
   import { href } from "../lib/route.svelte.js";
-  import { coverageView, compositionView } from "../lib/coverage.js";
+  import { compositionView, findingCoverageView, recordedBasisText } from "../lib/coverage.js";
   import Composition from "./Composition.svelte";
 
   // The auditor's saved investigation of this claim, under `machinechecked view`: its open
@@ -199,9 +199,9 @@
   }
 
   // A finding that rests on a composition reads as that composition: its argument is shown
-  // with the composition, under Compositions.
+  // with the composition, under Compositions. Its own bridge reads as the engine checked it.
   function findingView(f) {
-    if (!f.composition) return coverageView(f);
+    if (!f.composition) return findingCoverageView(f);
     const c = (here.compositions || []).find((x) => x.id === f.composition);
     return { headline: compositionView({ coverage: f.coverage, basis: f.basis, bridge_check: c?.bridge_check }).headline, lines: [] };
   }
@@ -242,7 +242,8 @@
             <span class="faint">· {f.in_force ? (f.state === "submitted" ? "submitted" : "draft") : "superseded"} · {f.created_by}{f.requirement ? ` · on ${f.requirement}` : ""}</span>
             {#if f.currency?.state === "stale"}<span class="stale"> · evidence changed since</span>{/if}</p>
           {#each cv?.lines || [] as line}<p class="small" data-line={line.label}><span class="faint">{line.label}:</span> {line.names?.join(", ") || ""}{line.names?.length && line.text ? ". " : ""}<span class="text">{line.text || ""}</span>{#if line.note} <span class="faint">{line.note}</span>{/if}</p>{/each}
-          {#if f.composition}<p class="small faint">Rests on composition {f.composition}{f.recorded_basis ? `; recorded as ${f.recorded_basis === "checked_bridge" ? "a checked bridge" : f.recorded_basis}, its bridge is not checked now` : ""}.</p>{/if}
+          {#if f.composition}<p class="small faint">Rests on composition {f.composition}{f.recorded_basis ? `; recorded as ${f.recorded_basis === "checked_bridge" ? "a checked bridge" : f.recorded_basis}, its bridge is not checked now` : ""}.</p>
+          {:else if recordedBasisText(f)}<p class="small faint" data-line="recorded">{recordedBasisText(f)}</p>{/if}
           {#if f.note}<p class="small text">{f.note}</p>{/if}
           {#if f.supersedes}<p class="faint small">Supersedes {f.supersedes}: {f.reason}</p>{/if}
           {#if f.state === "draft"}<button class="act" disabled={busy} onclick={() => submit(f)}>Submit</button>{/if}

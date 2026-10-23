@@ -1,6 +1,6 @@
 <script>
   import { loadWork } from "../lib/data.js";
-  import { coverageView, compositionView } from "../lib/coverage.js";
+  import { compositionView, findingCoverageView, recordedBasisText } from "../lib/coverage.js";
   import Composition from "./Composition.svelte";
 
   // The workspace records the audit publishes for this claim (`published_work.py`): each
@@ -61,7 +61,7 @@
     // A finding that rests on a composition reads as that composition, shown below it.
     const c = f.composition && (rd.compositions || []).find((x) => x.id === f.composition);
     if (c) return { headline: compositionView({ coverage: f.coverage, basis: f.basis, bridge_check: c.bridge_check }).headline, lines: [] };
-    return coverageView({ ...f, refs: cited(rd, f).map((e) => e.ref?.decl).filter(Boolean) });
+    return findingCoverageView({ ...f, refs: cited(rd, f).map((e) => e.ref?.decl).filter(Boolean) });
   };
   const OUTCOME = { open: "not yet decided", difference: "a difference", resolved: "resolved", "no difference": "no difference" };
   const counterexamples = (rd, lid) => (rd.counterexamples || []).filter((c) => c.requirement === lid);
@@ -88,6 +88,7 @@
               {#if stale(f)}<span class="stale"> · its evidence {STALE}</span>{/if}</p>
             {#each cv?.lines || [] as line}<p class="small" data-line={line.label}><span class="faint">{line.label}:</span> {line.names?.join(", ") || ""}{line.names?.length && line.text ? ". " : ""}<span class="text">{line.text || ""}</span>{#if line.note} <span class="faint">{line.note}</span>{/if}</p>{/each}
             {#if f.difference}{@const d = f.difference}<p class="small diff" data-feature={d.feature}>{#if d.paper}paper <code>{d.paper}</code>{/if}{#if d.lean}{d.paper ? "; " : ""}Lean <code>{d.lean}</code>{/if}{#if d.transport}<span class="faint">{` · transport inspected: ${d.transport}`}</span>{/if}{#if d.resolution}<span class="faint">{` · resolved by ${d.resolution.by}${d.resolution.text ? ": " + d.resolution.text : ""}`}</span>{/if}{#if d.why}<span class="faint">{` · ${d.why}`}</span>{/if}</p>{/if}
+            {#if !f.composition && recordedBasisText(f)}<p class="small faint" data-line="recorded">{recordedBasisText(f)}</p>{/if}
             {#if f.note}<p class="small text">{f.note}</p>{/if}
             {#each (rd.compositions || []).filter((c) => c.id === f.composition) as c (c.id)}<Composition {c} evidence={rd.evidence} />{/each}
             {#if f.supersedes}<p class="faint small">Supersedes {f.supersedes}{f.reason ? `: ${f.reason}` : ""}</p>{/if}
