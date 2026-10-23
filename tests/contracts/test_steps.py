@@ -182,6 +182,110 @@ def test_unit_kinds():
     assert unit_of({"scope": "formal", "unit": "nonsense"}) == "statement"
 
 
+def step_source(root, n_lines: int) -> tuple[list[str], dict]:
+    """A synthetic source whose proof has `n_lines` long lines before its one display, and the
+    display as a proof step claim."""
+    lines = ["\\begin{theorem}\\label{thm:x}", "Every $x$ equals $x$.", "\\end{theorem}",
+             "\\begin{proof}"] + [f"Line {i}. " + "Take $x$ as given. " * 50
+                                  for i in range(n_lines)] + [
+             "\\begin{equation}\\label{eq:x}", "  x = x,", "\\end{equation}",
+             "which is the claim.", "\\end{proof}"]
+    (root / "p.tex").write_text("\n".join(lines) + "\n")
+    line = lines.index("\\begin{equation}\\label{eq:x}") + 1
+    return lines, {"id": "P:eq:x", "paper": "P", "kind": "equation", "unit": "proof-equation",
+                   "parent": "P:thm:x", "scope": "proof-step", "location": f"p.tex:{line}"}
+
+
+def step_chunk(claim: dict, rec: dict) -> dict:
+    """A proof step's passport, with the fields the manifest takes from `step_texts`."""
+    from prooflens import steps
+    line = int(claim["location"].rpartition(":")[2])
+    return {"id": claim["id"], "number": "Equation (1)", "location": claim["location"],
+            "anchor": {"kind": "approximate", "file": "p.tex", "line": line},
+            "statement_tex": rec["text"], "context_tex": rec["context"],
+            **({"context_cut": steps.context_cut(rec)} if steps.context_cut(rec) else {}),
+            "step": {"unit": "proof-equation",
+                     "parent": {"id": "P:thm:x", "number": "Theorem 1"}}}
+
+
+def test_a_cut_context_is_not_complete_and_says_where_it_was_cut(tmp_path):
+    """A proof step's context in the proof is kept to its first `TEXT_CHARS` characters: a
+    passage whose context was cut reports `complete: false` and the line where it was cut,
+    and its printed text stays whole (#314)."""
+    from prooflens import compare as cmp
+    from prooflens import steps
+    from prooflens.source_regions import extract
+
+    def texts(claim):
+        region = extract(tmp_path, claim).record()
+        return steps.step_texts({"claims": [claim]}, "P", tmp_path, {claim["id"]: region})[
+            claim["id"]]
+
+    lines, claim = step_source(tmp_path, 30)        # about 28000 characters of context
+    rec = texts(claim)
+    whole = "\n".join(lines[3:-1])                  # from the proof's opening to the sentence
+    assert len(whole) > steps.TEXT_CHARS
+    assert rec["text"] == "\\begin{equation}\\label{eq:x}\n  x = x,\n\\end{equation}"
+    assert rec["context"] == whole[:steps.TEXT_CHARS]
+    # The line holding the first character left out, counted from the proof's opening (line 4).
+    n, line = 0, 4
+    while n + len(lines[line - 1]) + 1 <= steps.TEXT_CHARS:
+        n, line = n + len(lines[line - 1]) + 1, line + 1
+    cut = rec["context_cut"]
+    assert cut == {"file": "p.tex", "line": line, "end_line": len(lines) - 1,
+                   "kept": steps.TEXT_CHARS, "chars": len(whole)}
+    assert lines[line - 1].startswith(rec["context"].split("\n")[-1])
+    assert lines[line - 1] not in rec["context"]
+
+    p = cmp.passage(step_chunk(claim, rec), "read")
+    assert p["available"] and p["text"] == rec["text"] and p["complete"] is False
+    assert p["context_cut"] == cut
+    assert f"its context in the proof is cut at p.tex:{line}, after the first 20000 of its " \
+        f"{len(whole)} characters (it runs to line {len(lines) - 1})" in p["reason"]
+    assert f"INCOMPLETE: {p['reason']}" in cmp.passage_text(p)
+
+    # A context within the limit is whole, and so is its passage.
+    _, claim = step_source(tmp_path, 3)
+    rec = texts(claim)
+    assert "context_cut" not in rec and steps.context_cut(rec) is None
+    p = cmp.passage(step_chunk(claim, rec), "read")
+    assert p["complete"] and "context_cut" not in p and "reason" not in p
+
+    # Evidence written before cuts were recorded: a context at the limit is taken as cut.
+    old = {"text": rec["text"], "context": "x" * steps.TEXT_CHARS}
+    assert steps.context_cut(old) == {"kept": steps.TEXT_CHARS}
+    p = cmp.passage(step_chunk(claim, old), "read")
+    assert p["complete"] is False
+    assert "its context in the proof keeps only its first 20000 characters" in p["reason"]
+
+
+@needs_lean
+@needs_tex
+def test_a_cut_context_reaches_the_packet_and_changes_no_status(toy, tmp_path):
+    """A proof step whose context in the proof is longer than the limit: the build records
+    where it was cut, the comparison packet and the export carry it, and no status moves."""
+    from prooflens import compare as cmp
+    from prooflens import steps
+    # Line 71 opens the proof of Theorem 2.5, before both of its steps; neither pin covers it.
+    edit(toy / "paper/toy.tex", "Fix $n$. By", "Fix $n$. " + "Recall that $n$ is a "
+         "natural number. " * 600 + "By")
+    index, _, cfg = build(toy)
+    assert {c["id"]: c["status"] for c in index["claims"]} == {**EXPECTED, **STEPS}
+    r = chunk(cfg, "T:eq:bound-range")
+    cut = r["context_cut"]
+    assert (cut["file"], cut["line"], cut["end_line"], cut["kept"]) == (
+        "toy.tex", 71, 79, steps.TEXT_CHARS)
+    assert len(r["context_tex"]) == steps.TEXT_CHARS < cut["chars"]
+    assert "n \\le k\\,n^2" in r["statement_tex"] and "Recall" not in r["statement_tex"]
+    p0 = cmp.claim_packet(cmp.Site(cfg.out_dir / "site/data"), "T:eq:bound-range",
+                          "read")["paper"]["passages"][0]
+    assert p0["complete"] is False and p0["context_cut"] == cut
+    assert "cut at toy.tex:71" in p0["reason"]
+    out = export(cfg, tmp_path / "pub")["out"]
+    pub = json.loads((out / "data/claims" / claim_file("T:eq:bound-range")).read_text())
+    assert pub["context_cut"] == cut
+
+
 @needs_lean
 @needs_tex
 def test_a_proof_step_is_reviewed_from_the_command_line(toy, tmp_path, monkeypatch, capsys):

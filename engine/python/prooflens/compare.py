@@ -18,7 +18,8 @@ reading is locked and `compare` before its verdict; any other use is an informed
 What a build does not hold is said, not implied: a section the stage withholds is listed in
 `retrieval.withheld`, content not extracted yet in `retrieval.unavailable` (with the issue that
 owns it), and a list cut by `limit` gives the cursor that continues it. Passages and linked
-statements are never cut.
+statements are never cut; a proof step's context in the proof is kept to its first 20000
+characters, and a passage whose context was cut says where.
 """
 
 from __future__ import annotations
@@ -178,13 +179,24 @@ class Site:
 
 # -- the paper ---------------------------------------------------------------------------------
 
+def context_cut_reason(cut: dict) -> str:
+    """Where a proof step's context in the proof was cut (`steps.cut_text`), in words."""
+    if not cut.get("line"):
+        # Evidence written before cuts were recorded does not say where.
+        return f"its context in the proof keeps only its first {cut.get('kept')} characters"
+    return (f"its context in the proof is cut at {cut.get('file')}:{cut['line']}, after the "
+            f"first {cut.get('kept')} of its {cut.get('chars')} characters (it runs to line "
+            f"{cut.get('end_line')})")
+
+
 def passage(ch: dict, stage: str) -> dict:
     """A claim's printed passage, complete, with where it is and how it was obtained. A passage
     the build does not hold is `available: false`, with its source reference. Where the text
     comes from (`quality`) and how precisely it is placed (`source.position`) are separate
     facts: a paper read from its PDF gives text extracted from the PDF; a LaTeX paper gives its
     source text, placed exactly by its anchor or approximately (a proof step located by its
-    line)."""
+    line). A proof step's context in the proof that the build holds only in part makes the
+    passage `complete: false`, with where it was cut (`context_cut`)."""
     anchor = ch.get("anchor") or {}
     approx = anchor.get("kind") in ("approximate", "pdf")
     from_pdf = ((ch.get("source_evidence") or {}).get("state") == "pdf-only"
@@ -211,6 +223,8 @@ def passage(ch: dict, stage: str) -> dict:
                        "question": "Does the printed step hold, in its context?"}
         if ch.get("context_tex"):
             out["context"] = ch["context_tex"]
+            if ch.get("context_cut"):
+                out["context_cut"] = ch["context_cut"]
     parts = [{k: p.get(k) for k in ("file", "start_line", "end_line", "macro", "text")
               if p.get(k) is not None} for p in ch.get("source_parts") or []]
     if not text and parts:
@@ -220,7 +234,13 @@ def passage(ch: dict, stage: str) -> dict:
         return {**out, "available": False, "text": None,
                 "reason": "the build holds no printed text for this claim; read it in the paper "
                           "at the source given"}
-    complete = not (quality.startswith("text extracted") and len(text) >= PDF_TEXT_CHARS)
+    cuts = []
+    if quality.startswith("text extracted") and len(text) >= PDF_TEXT_CHARS:
+        cuts.append(f"the PDF extraction keeps the first {PDF_TEXT_CHARS} characters of a "
+                    "statement")
+    if out.get("context_cut"):
+        cuts.append(context_cut_reason(out["context_cut"]))
+    complete = not cuts
     removed = []
     if stage == "read" and LEAN_TAGS.search(text):
         text = re.sub(r"[ \t]{2,}", " ", LEAN_TAGS.sub("", text)).strip()
@@ -237,8 +257,7 @@ def passage(ch: dict, stage: str) -> dict:
                                        "declarations")
         out["parts"] = parts
     if not complete:
-        out["reason"] = (f"the PDF extraction keeps the first {PDF_TEXT_CHARS} characters of a "
-                         "statement; read the rest in the paper at the source given")
+        out["reason"] = "; ".join(cuts) + "; read the rest in the paper at the source given"
     if removed:
         out["removed"] = removed
     return out
@@ -247,16 +266,16 @@ def passage(ch: dict, stage: str) -> dict:
 # -- the Lean ----------------------------------------------------------------------------------
 
 def _statement(st: dict | None) -> dict | None:
-    """A statement in full: its exact text, and its binders and conclusion with their
-    expression identifiers."""
+    """A statement in full: its exact text, its binders and conclusion with their expression
+    identifiers, and the whole of it as one tree (`tree`), with where each variable stands."""
     if not st:
         return None
     exact = st.get("exact")
     return {"text": _text(exact) if exact else None, "exact": exact,
             "binders": [{k: b.get(k) for k in ("id", "name", "role", "binder", "supplies", "type")
                          if b.get(k) is not None} for b in st.get("binders") or []],
-            "conclusion": st.get("conclusion"), "closure": list(st.get("closure") or []),
-            "fingerprint": st.get("fingerprint")}
+            "conclusion": st.get("conclusion"), "tree": st.get("tree"),
+            "closure": list(st.get("closure") or []), "fingerprint": st.get("fingerprint")}
 
 
 def _link(l: dict, role: str) -> dict:

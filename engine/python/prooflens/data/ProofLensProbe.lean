@@ -16,9 +16,10 @@ For a specification the record holds two representations of the proposition:
   existing review markers, and `canon`, a canonical serialisation the CLI hashes with SHA-256),
   and each application of a totalised operation (a supremum, a division, an integral) with the
   type it is taken in (`order_ops`);
-* the inspection representation: the body of the definition split into a quantifier prefix
-  (universal variables, hypotheses, instances, existential witnesses) and a conclusion, each
-  pretty-printed with the constants it mentions marked for navigation.
+* the inspection representation: the body of the definition as one tree of its binders and
+  connectives, with the binders that open it (universal variables, hypotheses, instances,
+  existential witnesses) and its conclusion read off the same tree, each part pretty-printed with
+  the constants it mentions marked for navigation.
 -/
 
 open Lean Meta Elab
@@ -603,102 +604,134 @@ def propertiesOf (x : Expr) (vars : Array FVarId) (pfx : String) (ofProp : Bool 
   tryCatchRuntimeEx act fun err => do
     return [("properties_error", Json.str s!"probe-error: {← err.toMessageData.toString}")]
 
-/-- The objects a proposition quantifies over inside itself (a hypothesis's own "for every" and
-"there is"), each with the connectives that enclose it (`scope`, outermost first) and the
-properties its type carries; only those whose type carries one. Their occurrences are not
-numbered as variables of the statement: they belong to the proposition. -/
-partial def innerObjects (e : Expr) (vars : Array FVarId) (pos : SubExpr.Pos)
-    (scope : Array String := #[]) : MetaM (Array Json) := do
-  let two : String → MetaM (Array Json) := fun op => do
-    let a ← innerObjects e.appFn!.appArg! vars pos.pushAppFn.pushAppArg (scope.push op)
-    let b ← innerObjects e.appArg! vars pos.pushAppArg (scope.push op)
-    return a ++ b
-  if e.isAppOfArity ``And 2 then return ← two "and"
-  if e.isAppOfArity ``Or 2 then return ← two "or"
-  if e.isAppOfArity ``Iff 2 then return ← two "iff"
-  if e.isAppOfArity ``Not 1 then
-    return ← innerObjects e.appArg! vars pos.pushAppArg (scope.push "not")
-  let one : String → Name → Expr → Expr → BinderInfo → SubExpr.Pos → MetaM (Array Json) :=
-    fun op n t body bi at_ => withLocalDecl n bi t fun x => do
-      let props ← propertiesOf x vars s!"{at_}#"
-      let inner ← innerObjects (body.instantiate1 x) vars at_.pushBindingBody (scope.push op)
-      if props.isEmpty then return inner
-      let tj ← ppJson t vars at_.pushBindingDomain
-      return #[Json.mkObj ([("op", Json.str op), ("name", Json.str (binderName n)),
-        ("id", Json.str (toString at_)), ("type", tj), ("scope", toJson scope)] ++ props)] ++ inner
-  if let .forallE n t body bi := e then
-    if (← isProp t) && !body.hasLooseBVars then
-      let a ← innerObjects t vars pos.pushBindingDomain (scope.push "if")
-      let b ← innerObjects body vars pos.pushBindingBody (scope.push "then")
-      return a ++ b
-    return ← one "forall" n t body bi pos
-  match isExistsApp e with
-  | some (_, .lam n t body bi) => one "exists" n t body bi pos.pushAppArg
-  | _ => return #[]
+/-! ## The statement as one tree
 
+The whole proposition as one tree (`tree`): every binder, whether it opens the statement, stands
+inside its conclusion or inside one of its hypotheses, is a node of the same form, and every
+connective is a node with its parts. The binders that open the statement (`binders`) and its
+conclusion (`conclusion`) are read off the same walk. Display only; it changes no record that is
+assessed. -/
 
-/-- The logical shape of a conclusion: a conjunction, disjunction, equivalence, negation,
-implication, "for every" or "there is" as a tree whose leaves are pretty-printed propositions. A
-quantifier inside the conclusion is a node (`forall`, `exists`) with its variable's name, type and
-number, and its body as its one part. `vars` is
-threaded through the tree, so that every witness has a variable of its own: two witnesses in
-sibling parts never share one. `pos` is the position of `e` in the whole proposition; each
-node and variable carries its own (`id`). Display only; it changes no record that is assessed. -/
-partial def logicJson (inside : Name → Bool) (vars : Array FVarId) (e : Expr) (pos : SubExpr.Pos) :
-    MetaM (Json × Array FVarId) := do
+/-- Where a node of the tree stands: the connectives around it, outermost first (`within`: `and`,
+`or`, `iff`, `not`, `if` and `then` for the two sides of an implication, `assume` inside a
+hypothesis of the statement), the objects bound around it, by number (`after`: what it may depend
+on), and the word for the nearest negation, alternative, equivalence, premise or hypothesis that
+encloses it (`decided`), if any. -/
+structure Place where
+  within : Array String := #[]
+  after : Array Nat := #[]
+  decided : Option String := none
+
+/-- The place inside the connective `c`. -/
+def Place.enter (p : Place) (c : String) : Place :=
+  let word : Option String := match c with
+    | "not" => some "denied"
+    | "or" => some "alternative"
+    | "iff" => some "equivalent"
+    | "if" => some "assumed"
+    | "assume" => some "assumed"
+    | _ => none
+  { p with within := p.within.push c,
+           decided := match word with | some w => some w | none => p.decided }
+
+/-- How a binder at `p` stands in the statement (`scope`): as the nearest enclosing negation,
+alternative, equivalence, premise or hypothesis decides (`denied`, `alternative`, `equivalent`,
+`assumed`); outside all of them, a "there is" is `produced` (the statement establishes it) and any
+other binder is `given` (whoever uses the statement chooses it). With where it stands. -/
+def Place.fields (p : Place) (op : String) : List (String × Json) :=
+  let scope := p.decided.getD (if op == "exists" then "produced" else "given")
+  [("scope", Json.str scope), ("within", toJson p.within), ("after", toJson p.after)]
+
+/-- Whether a proposition has a shape the tree shows: a connective or a quantifier at its head. -/
+def shaped (e : Expr) : Bool :=
+  e.isAppOfArity ``And 2 || e.isAppOfArity ``Or 2 || e.isAppOfArity ``Iff 2
+    || e.isAppOfArity ``Not 1 || (isExistsApp e).isSome || e.isForall
+
+/-- The tree of `e`, at position `pos` of the whole proposition, standing at `p`. A conjunction,
+disjunction, equivalence, negation or implication is a node with its parts (`args`). A "for
+every" or a "there is" is a node with its variable's name and number (`var`), how it is written
+(`binder`), whether it binds an object or a proof (`supplies`), its type, the properties its type
+carries, where it stands (`Place.fields`) and its body as its one part. Anything else is a leaf,
+pretty-printed, with the applications of the project's definitions expanded to `depth`. `vars` is
+threaded through the tree, so that every variable has a number of its own: two witnesses in
+sibling parts never share one. Each node carries its position (`id`). -/
+partial def treeJson (inside : Name → Bool) (depth : Nat) (vars : Array FVarId) (e : Expr)
+    (pos : SubExpr.Pos) (p : Place) : MetaM (Json × Array FVarId) := do
+  let node := fun (op : String) (args : Array Json) =>
+    Json.mkObj [("op", Json.str op), ("id", Json.str (toString pos)), ("args", Json.arr args)]
   let op := if e.isAppOfArity ``And 2 then some "and"
     else if e.isAppOfArity ``Or 2 then some "or"
     else if e.isAppOfArity ``Iff 2 then some "iff" else none
-  match op with
-  | some o =>
-    let (a, vars) ← logicJson inside vars e.appFn!.appArg! pos.pushAppFn.pushAppArg
-    let (b, vars) ← logicJson inside vars e.appArg! pos.pushAppArg
-    return (Json.mkObj [("op", o), ("id", Json.str (toString pos)),
-      ("args", Json.arr #[a, b])], vars)
-  | none =>
-    if e.isAppOfArity ``Not 1 then
-      let (a, vars) ← logicJson inside vars e.appArg! pos.pushAppArg
-      return (Json.mkObj [("op", "not"), ("id", Json.str (toString pos)),
-        ("args", Json.arr #[a])], vars)
-    if let .forallE n t body bi := e then
-      if (← isProp t) && !body.hasLooseBVars then
-        -- An implication inside a part: its premise is a part of its own, not an assumption
-        -- of the whole statement.
-        let (a, vars) ← logicJson inside vars t pos.pushBindingDomain
-        let (b, vars) ← logicJson inside vars body pos.pushBindingBody
-        return (Json.mkObj [("op", "implies"), ("id", Json.str (toString pos)),
-          ("args", Json.arr #[a, b])], vars)
-      let tj ← ppExpanded inside statementDepth t vars pos.pushBindingDomain
-      return ← withLocalDecl n bi t fun x => do
-        let idx := vars.size
-        let props ← propertiesOf x (vars.push x.fvarId!) s!"{pos}#"
-        let (b, vars') ←
-          logicJson inside (vars.push x.fvarId!) (body.instantiate1 x) pos.pushBindingBody
-        return (Json.mkObj (([("op", "forall"), ("name", n.eraseMacroScopes.toString),
-          ("var", toJson idx), ("id", Json.str (toString pos)), ("type", tj),
-          ("args", Json.arr #[b])] : List (String × Json)) ++ props), vars')
-    match isExistsApp e with
-    | some (_, .lam n t body bi) =>
-      -- The witness is bound by the predicate `fun x => …`, the second argument of `Exists`.
-      let lam := pos.pushAppArg
-      let tj ← ppExpanded inside statementDepth t vars lam.pushBindingDomain
-      withLocalDecl n bi t fun x => do
-        let idx := vars.size
-        let props ← propertiesOf x (vars.push x.fvarId!) s!"{lam}#"
-        let (b, vars') ←
-          logicJson inside (vars.push x.fvarId!) (body.instantiate1 x) lam.pushBindingBody
-        return (Json.mkObj (([("op", "exists"), ("name", n.eraseMacroScopes.toString),
-          ("var", toJson idx), ("id", Json.str (toString lam)), ("type", tj),
-          ("args", Json.arr #[b])] : List (String × Json)) ++ props), vars')
-    | _ => return (Json.mkObj [("leaf", ← ppExpanded inside statementDepth e vars pos)], vars)
+  if let some o := op then
+    let (a, vars) ← treeJson inside depth vars e.appFn!.appArg! pos.pushAppFn.pushAppArg (p.enter o)
+    let (b, vars) ← treeJson inside depth vars e.appArg! pos.pushAppArg (p.enter o)
+    return (node o #[a, b], vars)
+  if e.isAppOfArity ``Not 1 then
+    let (a, vars) ← treeJson inside depth vars e.appArg! pos.pushAppArg (p.enter "not")
+    return (node "not" #[a], vars)
+  let binder : String → Name → Expr → Expr → BinderInfo → SubExpr.Pos →
+      MetaM (Json × Array FVarId) := fun op n t body bi at_ => do
+    let tj ← ppExpanded inside depth t vars at_.pushBindingDomain
+    let data := !(← isProp t)
+    withLocalDecl n bi t fun x => do
+      let idx := vars.size
+      let vs := vars.push x.fvarId!
+      let props ← propertiesOf x vs s!"{at_}#"
+      let (b, vs') ← treeJson inside depth vs (body.instantiate1 x) at_.pushBindingBody
+        { p with after := if data then p.after.push idx else p.after }
+      let fields : List (String × Json) := [("op", Json.str op),
+        ("name", Json.str n.eraseMacroScopes.toString), ("var", toJson idx),
+        ("id", Json.str (toString at_)), ("binder", Json.str (binderStr bi)),
+        ("supplies", Json.str (if data then "data" else "proposition")), ("type", tj)]
+      return (Json.mkObj (fields ++ p.fields op ++ [("args", Json.arr #[b])] ++ props), vs')
+  if let .forallE n t body bi := e then
+    if (← isProp t) && !body.hasLooseBVars then
+      -- An implication inside a part: its premise is a part of its own, not an assumption of
+      -- the whole statement.
+      let (a, vars) ← treeJson inside depth vars t pos.pushBindingDomain (p.enter "if")
+      let (b, vars) ← treeJson inside depth vars body pos.pushBindingBody (p.enter "then")
+      return (node "implies" #[a, b], vars)
+    return ← binder "forall" n t body bi pos
+  match isExistsApp e with
+  | some (_, .lam n t body bi) =>
+    -- The witness is bound by the predicate `fun x => …`, the second argument of `Exists`.
+    binder "exists" n t body bi pos.pushAppArg
+  | _ => return (Json.mkObj [("leaf", ← ppExpanded inside depth e vars pos)], vars)
 
-/-! ## The inspection representation -/
+/-- A binder that opens the statement, as `statementJson` meets it: its fields as one of the
+statement's `binders`, its role, whether it binds an object, the properties its type carries and,
+for a hypothesis, its proposition and the position of that proposition. -/
+structure Opener where
+  base : List (String × Json)
+  role : String
+  data : Bool
+  extra : List (String × Json)
+  hyp : Option (Expr × SubExpr.Pos) := none
+  deriving Inhabited
 
-/-- Split a proposition into its quantifier prefix and its conclusion. Universal binders are
-`forall` (data), `hypothesis` (a proposition) or `instance`; existential binders are `exists`.
-Definitions are not unfolded: the prefix is the one written in the specification. -/
-partial def telescope (inside : Name → Bool) (e : Expr) (acc : Array Json) (vars : Array FVarId := #[])
-    (pos : SubExpr.Pos := .root) : MetaM (Array Json × Json) := do
+/-- The tree of a hypothesis's proposition (`logic`), when it has a shape, its variables numbered
+from `vars.size`; its nodes stand inside the hypothesis (`assume`) and may depend on the objects
+`after`. Its leaves are printed without expansions (the hypothesis's type has them). A failure is
+recorded (`logic_error`) and stops nothing else. -/
+def hypothesisTree (inside : Name → Bool) (vars : Array FVarId) (t : Expr) (pos : SubExpr.Pos)
+    (after : Array Nat) : MetaM (List (String × Json) × Array FVarId) := do
+  unless shaped t do return ([], vars)
+  let act : MetaM (List (String × Json) × Array FVarId) := withCurrHeartbeats do
+    let (j, vs) ← treeJson inside 0 vars t pos (({ after := after } : Place).enter "assume")
+    return ([("logic", j)], vs)
+  tryCatchRuntimeEx act fun err => do
+    return ([("logic_error", Json.str s!"probe-error: {← err.toMessageData.toString}")], vars)
+
+/-- The proposition `e` as one tree (`tree`), with the binders that open it (`binders`) and its
+conclusion (`conclusion`) read off the same walk. An opening universal binder is `forall` (data),
+`hypothesis` (a proposition) or `instance`, an opening existential binder `exists`; in the tree,
+that role is the node's `op`, its number is its place in `binders`, and a hypothesis with a shape
+has its own tree (`logic`). Definitions are not unfolded: the binders are those written in the
+specification. The opening binders are numbered first, in order, then the variables inside the
+conclusion, then those inside each hypothesis. -/
+partial def statementJson (inside : Name → Bool) (e : Expr) (acc : Array Opener := #[])
+    (vars : Array FVarId := #[]) (pos : SubExpr.Pos := .root) :
+    MetaM (Array Json × Json × Json) := do
   match e with
   | .forallE n t body bi =>
     let isHyp ← isProp t
@@ -706,41 +739,64 @@ partial def telescope (inside : Name → Bool) (e : Expr) (acc : Array Json) (va
       if bi.isInstImplicit then "instance" else if isHyp then "hypothesis" else "forall"
     let tj ← ppExpanded inside statementDepth t vars pos.pushBindingDomain
     withLocalDecl n bi t fun x => do
-      let hyps := (acc.filter fun j => j.getObjValD "role" == Json.str "hypothesis").size
+      let hyps := (acc.filter (·.role == "hypothesis")).size
       let nm := if n.hasMacroScopes || n.isAnonymous then s!"h{hyps + 1}"
         else n.toString
       -- What an instance supplies: a proposition (`[Nonempty E]`) or data (`[Inhabited E]`).
       let supplies := if isHyp then "proposition" else "data"
-      -- What the object's type carries, or, for a hypothesis, the objects inside it whose type
-      -- carries something. A hypothesis whose type is a structure of propositions
+      -- What the object's type carries. A hypothesis whose type is a structure of propositions
       -- (`[IsProbability Ω]`) lists what its fields state.
-      let extra ← if isHyp then do
-          let objs ← innerObjects t vars pos.pushBindingDomain
-          let states ← propertiesOf x (vars.push x.fvarId!) s!"{pos}#" (ofProp := true)
-          pure ((if objs.isEmpty then [] else [("objects", Json.arr objs)]) ++ states)
-        else propertiesOf x (vars.push x.fvarId!) s!"{pos}#"
-      let j := Json.mkObj (([("role", role), ("name", nm), ("id", Json.str (toString pos)),
-        ("type", tj), ("binder", binderStr bi), ("supplies", supplies)] : List (String × Json))
-        ++ extra)
-      telescope inside (body.instantiate1 x) (acc.push j) (vars.push x.fvarId!) pos.pushBindingBody
+      let extra ← propertiesOf x (vars.push x.fvarId!) s!"{pos}#" (ofProp := isHyp)
+      let base := [("role", Json.str role), ("name", Json.str nm),
+        ("id", Json.str (toString pos)), ("type", tj), ("binder", Json.str (binderStr bi)),
+        ("supplies", Json.str supplies)]
+      let o : Opener := { base, role, data := !isHyp, extra,
+                          hyp := if isHyp then some (t, pos.pushBindingDomain) else none }
+      statementJson inside (body.instantiate1 x) (acc.push o) (vars.push x.fvarId!)
+        pos.pushBindingBody
   | _ =>
     match isExistsApp e with
     | some (_, .lam n t body bi) =>
       let lam := pos.pushAppArg
       let tj ← ppExpanded inside statementDepth t vars lam.pushBindingDomain
+      let data := !(← isProp t)
       withLocalDecl n bi t fun x => do
         let props ← propertiesOf x (vars.push x.fvarId!) s!"{lam}#"
-        let j := Json.mkObj (([("role", "exists"), ("name", n.eraseMacroScopes.toString),
-          ("id", Json.str (toString lam)), ("type", tj), ("binder", binderStr bi)]
-          : List (String × Json)) ++ props)
-        telescope inside (body.instantiate1 x) (acc.push j) (vars.push x.fvarId!) lam.pushBindingBody
+        let base := [("role", Json.str "exists"),
+          ("name", Json.str n.eraseMacroScopes.toString), ("id", Json.str (toString lam)),
+          ("type", tj), ("binder", Json.str (binderStr bi))]
+        let o : Opener := { base, role := "exists", data, extra := props }
+        statementJson inside (body.instantiate1 x) (acc.push o) (vars.push x.fvarId!)
+          lam.pushBindingBody
     | _ =>
-      -- The conclusion, with its logical shape when it has one (`logic`, display only).
-      -- Without a shape, the conclusion is the one leaf, with its expansions.
-      let (logic, _) ← logicJson inside vars e pos
-      match logic.getObjVal? "leaf" with
-      | .ok leaf => return (acc, leaf)
-      | .error _ => return (acc, Json.mkObj ((← ppFields e vars pos) ++ [("logic", logic)]))
+      -- The objects among the first `k` opening binders, by number.
+      let objects := fun (k : Nat) => (List.range k).toArray.filter fun i => acc[i]!.data
+      let (concl, vars') ← treeJson inside statementDepth vars e pos { after := objects acc.size }
+      -- Each hypothesis's own tree, its variables numbered after the conclusion's.
+      let mut vs := vars'
+      let mut logics : Array (List (String × Json)) := #[]
+      for i in [:acc.size] do
+        match acc[i]!.hyp with
+        | some (t, tp) =>
+          let (l, vs') ← hypothesisTree inside vs t tp (objects i)
+          vs := vs'
+          logics := logics.push l
+        | none => logics := logics.push []
+      -- Each opening binder is a node whose one part is the rest of the statement.
+      let mut tree := concl
+      for k in (List.range acc.size).reverse do
+        let o := acc[k]!
+        let supplies : List (String × Json) := if o.role == "exists" then
+            [("supplies", Json.str (if o.data then "data" else "proposition"))] else []
+        let place : Place := { after := objects k }
+        tree := Json.mkObj ([("op", Json.str o.role), ("var", toJson k)]
+          ++ o.base.filter (·.1 != "role") ++ supplies ++ place.fields o.role
+          ++ [("args", Json.arr #[tree])] ++ o.extra ++ logics[k]!)
+      -- The conclusion: the one leaf, with its expansions, or the whole of it printed.
+      let conclusion ← match concl.getObjVal? "leaf" with
+        | .ok leaf => pure leaf
+        | .error _ => pure (Json.mkObj (← ppFields e vars pos))
+      return (acc.map (Json.mkObj ·.base), conclusion, tree)
 
 /-- Constants of the project that `e` uses directly. -/
 def projectConsts (inside : Name → Bool) (e : Expr) : MetaM (Array String) := do
@@ -867,13 +923,15 @@ of the library that declares them. -/
 
 /-- The operations recorded, each with the structure that decides its rule (`order`: the lattice
 instances, `division`: the group instances, `integral`: whether the type has one element, `""`:
-none) and where its carrier is: its first argument (`true`) or the type of its value. -/
-def totalOps : Array (Name × String × Bool) := #[
-  (`iSup, "order", true), (`iInf, "order", true), (`SupSet.sSup, "order", true),
-  (`InfSet.sInf, "order", true), (`sSup, "order", true), (`sInf, "order", true),
-  (`HDiv.hDiv, "division", true), (`Inv.inv, "division", true), (`tsum, "", true),
-  (`MeasureTheory.integral, "integral", false), (`MeasureTheory.condExp, "", false),
-  (`deriv, "", false), (`Real.sqrt, "", false), (`Real.log, "", false)]
+none) and where its carrier is: its first argument (`arg`), the type of its value (`value`), or
+the type of its last argument (`operand`, for a conversion such as `ENNReal.toReal`). -/
+def totalOps : Array (Name × String × String) := #[
+  (`iSup, "order", "arg"), (`iInf, "order", "arg"), (`SupSet.sSup, "order", "arg"),
+  (`InfSet.sInf, "order", "arg"), (`sSup, "order", "arg"), (`sInf, "order", "arg"),
+  (`HDiv.hDiv, "division", "arg"), (`Inv.inv, "division", "arg"), (`tsum, "", "arg"),
+  (`MeasureTheory.integral, "integral", "value"), (`MeasureTheory.condExp, "", "value"),
+  (`deriv, "", "value"), (`Real.sqrt, "", "value"), (`Real.log, "", "value"),
+  (`ENNReal.toReal, "", "operand")]
 
 /-- The most nodes of a statement visited for its totalised operations. -/
 def opsNodes : Nat := 50000
@@ -928,10 +986,250 @@ def carrierJson (kind : String) (α : Expr)
 nodes left, the carriers read and the subterms already visited, with the application found at
 each (a statement shares subterms, which a walk would otherwise repeat). -/
 structure OpsWalk where
+  inside : Name → Bool
   out : IO.Ref (Array (List (String × Json) × Array String))
   budget : IO.Ref Nat
   cache : IO.Ref (Array ((String × Expr) × List (String × Json)))
   seen : IO.Ref (Std.HashMap Expr (Option Nat))
+
+/-- The local variables and hypotheses an application `e` depends on, in the order of the local
+context: those it mentions and those their types mention, with each local hypothesis (a
+declaration whose type is a proposition) whose type mentions one of them, and what its type
+mentions. Another variable of the statement, and a hypothesis about it only, are left out. -/
+def occurrenceScope (e : Expr) : MetaM (Array Expr) := do
+  let decls := (← getLCtx).foldl (init := #[]) fun (acc : Array LocalDecl) d =>
+    if d.isImplementationDetail then acc else acc.push d
+  -- `need` closed under the types of what it marks (a type mentions only earlier ones)
+  let close (need : Array Bool) : Array Bool := Id.run do
+    let mut need := need
+    for k in [0:decls.size] do
+      let i := decls.size - 1 - k
+      if need[i]! then
+        for j in [0:i] do
+          if !need[j]! && decls[i]!.type.containsFVar decls[j]!.fvarId then
+            need := need.set! j true
+    return need
+  let need := close (decls.map fun d => e.containsFVar d.fvarId)
+  let mut more := need
+  for i in [0:decls.size] do
+    let d := decls[i]!
+    if need[i]! then continue
+    let about := (List.range i).any fun j => need[j]! && d.type.containsFVar decls[j]!.fvarId
+    if about && (← orDefault false (isProp d.type)) then more := more.set! i true
+  let need := close more
+  return (decls.zip need).filterMap fun (d, n) => if n then some d.toExpr else none
+
+/-- The canonical serialisation of the application `e` in its scope (`occurrenceScope`), with
+proofs erased, the names of the variables of that scope that are not hypotheses (the
+serialisation omits names, and `⨆ i, f i` and `⨆ i, g i` differ only in them), and the
+project's constants it uses: what identifies one occurrence of an operation, whatever happens
+elsewhere in the statement. -/
+def occurrenceIdentity (e : Expr) (inside : Name → Bool) : MetaM (List (String × Json)) :=
+  orDefault [] do
+    let xs ← occurrenceScope e
+    let mut vars : Array String := #[]
+    for x in xs do
+      unless ← orDefault false (isProp (← inferType x)) do
+        vars := vars.push (← x.fvarId!.getUserName).eraseMacroScopes.toString
+    let t ← erase (← mkLambdaFVars xs e)
+    let used := (t.getUsedConstants.filter inside).map toString
+    return [("canon", Json.str (canonString t none)), ("vars", toJson vars),
+      ("uses", toJson (used.qsort (· < ·)))]
+
+/-! ## Side conditions of an application
+
+The condition an operation's rule needs at one application, and whether the statement supplies
+it: a hypothesis in scope (a premise of the chain of quantifiers and implications the application
+is in, or of an enclosing binder), possibly quantified over data and specialised, or inside a
+conjunction; or a property its types carry. The condition must be about the same family, set,
+function, measure or value, under the same binders, up to unfolding instances. A premise that
+negates the condition refutes it. Nothing found leaves it unresolved: a failed search says
+nothing about whether the condition holds. A condition holding almost everywhere is not matched
+by one holding everywhere, nor the reverse. -/
+
+/-- Whether the proposition `h`, or a conjunct of it, or its conclusion after its universally
+quantified data variables are replaced by unknowns, satisfies `test` (which unifies what it
+compares). A quantified premise with a hypothesis of its own is conditional and is not used. -/
+partial def premiseSatisfies (h : Expr) (test : Expr → MetaM Bool) (depth : Nat := 4) :
+    MetaM Bool := do
+  let h := (← instantiateMVars h).consumeMData
+  if ← orDefault false (test h) then return true
+  if depth == 0 then return false
+  if h.isAppOfArity `And 2 then
+    if ← premiseSatisfies h.appFn!.appArg! test (depth - 1) then return true
+    return ← premiseSatisfies h.appArg! test (depth - 1)
+  if h.isForall then
+    let (ms, _, body) ← forallMetaTelescope h
+    for m in ms do
+      if ← orDefault true (isProp (← inferType m)) then return false
+    return ← premiseSatisfies body test (depth - 1)
+  return false
+
+/-- Whether `a` and `b` are the same term, up to unfolding instances; unknowns in either may be
+assigned. -/
+def sameTerm (a b : Expr) : MetaM Bool :=
+  withTransparency .instances (isDefEq a b)
+
+/-- `test` applied to the proposition `p` when it is `¬ q`, to `q`. -/
+def negationOf (test : Expr → MetaM Bool) (p : Expr) : MetaM Bool := do
+  let p := p.consumeMData
+  if p.isAppOfArity `Not 1 then test p.appArg!.consumeMData else return false
+
+/-- A condition: its name, what establishes it in a premise and what refutes it. -/
+structure Condition where
+  name : String
+  holds : Expr → MetaM Bool
+  fails : Expr → MetaM Bool
+
+/-- Whether `e` is `⊤`. -/
+def isTop (e : Expr) : Bool := e.consumeMData.isAppOf `Top.top
+
+/-- The conditions of the rule of `c` at an application with arguments `args`: a supremum or
+infimum in a conditionally complete type needs its family (or set) bounded on that side and
+nonempty; a Bochner integral needs its function integrable for its measure; `ENNReal.toReal x`
+needs `x` finite. -/
+def conditionsOf (c : Name) (args : Array Expr) : List Condition :=
+  let bound (above : Bool) (s : Expr) (range : Bool) : Condition :=
+    let cls := if above then `BddAbove else `BddBelow
+    let isIt (p : Expr) : MetaM Bool := do
+      let p := p.consumeMData
+      unless p.isAppOf cls && p.getAppNumArgs ≥ 1 do return false
+      let t := p.appArg!.consumeMData
+      if range then
+        unless t.isAppOf `Set.range && t.getAppNumArgs ≥ 1 do return false
+        sameTerm t.appArg! s
+      else sameTerm t s
+    { name := if above then "bounded-above" else "bounded-below", holds := isIt,
+      fails := negationOf isIt }
+  let nonemptyType (ι : Expr) : Condition :=
+    let isIt (p : Expr) : MetaM Bool := do
+      let p := p.consumeMData
+      unless p.isAppOfArity `Nonempty 1 do return false
+      sameTerm p.appArg! ι
+    { name := "nonempty-index", holds := isIt, fails := negationOf isIt }
+  let nonemptySet (s : Expr) : Condition :=
+    let isIt (p : Expr) : MetaM Bool := do
+      let p := p.consumeMData
+      unless p.isAppOf `Set.Nonempty && p.getAppNumArgs ≥ 1 do return false
+      sameTerm p.appArg! s
+    { name := "nonempty-set", holds := isIt, fails := negationOf isIt }
+  match c with
+  | `iSup | `iInf =>
+    if args.size < 4 then [] else
+      [bound (c == `iSup) args[3]! true, nonemptyType args[1]!]
+  | `sSup | `sInf | `SupSet.sSup | `InfSet.sInf =>
+    if args.size < 3 then [] else
+      let above := c == `sSup || c == `SupSet.sSup
+      [bound above args[2]! false, nonemptySet args[2]!]
+  | `MeasureTheory.integral =>
+    if args.size < 2 then [] else
+      let μ := args[args.size - 2]!
+      let f := args[args.size - 1]!
+      let isIt (p : Expr) : MetaM Bool := do
+        let p := p.consumeMData
+        let n := p.getAppNumArgs
+        if p.isAppOf `MeasureTheory.Integrable && n ≥ 2 then
+          let a := p.getAppArgs
+          return (← sameTerm a[n - 2]! f) && (← sameTerm a[n - 1]! μ)
+        -- `IntegrableOn f s ν` is integrability for the restriction of `ν` to `s`.
+        if p.isAppOf `MeasureTheory.IntegrableOn && n ≥ 3 then
+          let a := p.getAppArgs
+          let m := μ.consumeMData
+          unless m.isAppOf `MeasureTheory.Measure.restrict && m.getAppNumArgs ≥ 2 do
+            return false
+          let b := m.getAppArgs
+          let k := b.size
+          return (← sameTerm a[n - 3]! f) && (← sameTerm a[n - 2]! b[k - 1]!) &&
+            (← sameTerm a[n - 1]! b[k - 2]!)
+        return false
+      [{ name := "integrable", holds := isIt, fails := negationOf isIt }]
+  | `ENNReal.toReal =>
+    if args.size < 1 then [] else
+      let x := args.back!
+      let holds (p : Expr) : MetaM Bool := do
+        let p := p.consumeMData
+        if p.isAppOfArity `Ne 3 && isTop p.appArg! then return ← sameTerm p.appFn!.appArg! x
+        if p.isAppOfArity `LT.lt 4 && isTop p.appArg! then
+          return ← sameTerm p.appFn!.appArg! x
+        if p.isAppOfArity `Not 1 then
+          let q := p.appArg!.consumeMData
+          if q.isAppOfArity `Eq 3 && isTop q.appArg! then return ← sameTerm q.appFn!.appArg! x
+        return false
+      let fails (p : Expr) : MetaM Bool := do
+        let p := p.consumeMData
+        if p.isAppOfArity `Eq 3 && isTop p.appArg! then return ← sameTerm p.appFn!.appArg! x
+        return false
+      [{ name := "finite", holds, fails }]
+  | _ => []
+
+/-- A property the types or the form of the application carry that gives the condition `name`,
+in words, or none: a family indexed by a proposition has at most one value, so it is bounded; a
+type with a top (bottom) element bounds every family above (below); Lean finds `Nonempty ι`; a
+value `ENNReal.ofReal r` or `ENNReal.ofNNReal r` is finite. -/
+def carried (c : Name) (args : Array Expr) (name : String) : MetaM (Option String) := do
+  match c, name with
+  | `iSup, "bounded-above" | `iInf, "bounded-below" =>
+    if ← orDefault false (isProp args[1]!) then
+      return some "the family is indexed by a proposition, so it has at most one value"
+    let cls := if name == "bounded-above" then `OrderTop else `OrderBot
+    if ← hasInstance cls args[0]! then
+      return some s!"the type has a {if cls == `OrderTop then "top" else "bottom"} element"
+    return none
+  | _, "bounded-above" =>
+    if ← hasInstance `OrderTop args[0]! then return some "the type has a top element"
+    return none
+  | _, "bounded-below" =>
+    if ← hasInstance `OrderBot args[0]! then return some "the type has a bottom element"
+    return none
+  | _, "nonempty-index" =>
+    if ← hasInstance `Nonempty args[1]! then
+      return some s!"Lean finds Nonempty {← orDefault "?" (toString <$> ppExpr args[1]!)}"
+    return none
+  | `ENNReal.toReal, "finite" =>
+    let x := args.back!.consumeMData
+    if x.isAppOf `ENNReal.ofReal || x.isAppOf `ENNReal.ofNNReal then
+      return some "the value is a real number taken into ℝ≥0∞, which is finite"
+    return none
+  | _, _ => return none
+
+/-- The conditions of the rule at the application of `c` with arguments `args` (for a supremum
+or infimum, only in a conditionally complete type; for an integral, only when its type has more
+than one element), each `established` (by a hypothesis, cited with its statement and its name,
+empty when Lean named it, or by a property the types carry), `refuted` (by a hypothesis), or
+`unresolved`. -/
+def conditionsJson (c : Name) (args : Array Expr) (carrier : List (String × Json)) :
+    MetaM (List (String × Json)) := do
+  match carrier.lookup "lattice" with
+  | some (.str "conditional") | none => pure ()
+  | _ => return []
+  if let some (.bool true) := carrier.lookup "subsingleton" then return []
+  let conds := conditionsOf c args
+  if conds.isEmpty then return []
+  let hyps := (← getLCtx).foldl (init := #[]) fun (acc : Array LocalDecl) d =>
+    if d.isImplementationDetail then acc else acc.push d
+  let mut out : Array Json := #[]
+  for cond in conds do
+    let mut found : Option Json := none
+    for d in hyps do
+      unless ← orDefault false (isProp d.type) do continue
+      let st ← if ← orDefault false (withNewMCtxDepth (premiseSatisfies d.type cond.holds)) then
+          pure "established"
+        else if ← orDefault false (withNewMCtxDepth (premiseSatisfies d.type cond.fails)) then
+          pure "refuted"
+        else pure ""
+      if st != "" then
+        found := some (Json.mkObj [("condition", Json.str cond.name), ("state", Json.str st),
+          ("by", "premise"),
+          ("premise", Json.str (if d.userName.hasMacroScopes then "" else d.userName.toString)),
+          ("statement", Json.str (← orDefault "" (toString <$> ppExpr d.type)))])
+        break
+    if found.isNone then
+      if let some why ← orDefault none (carried c args cond.name) then
+        found := some (Json.mkObj [("condition", Json.str cond.name),
+          ("state", "established"), ("by", "type"), ("statement", Json.str why)])
+    out := out.push (found.getD (Json.mkObj [("condition", Json.str cond.name),
+      ("state", "unresolved")]))
+  return [("conditions", Json.arr out)]
 
 /-- Record the application `e` of the operation `c`, with arguments `args`, at position `pos`;
 its index among the applications found, or none when `c` is not recorded. The carrier is the
@@ -939,20 +1237,28 @@ first argument or, for an operation whose type is fixed by its arguments, the ty
 once every argument is supplied (a value that is a function is read at its result). -/
 def opsRecord (e : Expr) (c : Name) (args : Array Expr) (pos : SubExpr.Pos) (w : OpsWalk) :
     MetaM (Option Nat) := do
-  let some (_, kind, first) := totalOps.find? (·.1 == c) | return none
-  if first && args.size == 0 then return none
-  let j ← if first then carrierJson kind args[0]! w.cache
-    else
+  let some (_, kind, where_) := totalOps.find? (·.1 == c) | return none
+  if where_ != "value" && args.size == 0 then return none
+  let j ← match where_ with
+    | "arg" => carrierJson kind args[0]! w.cache
+    | "operand" =>
+      orDefault [("carrier", Json.str ""), ("carrier_head", Json.str "")] do
+        carrierJson kind (← inferType args.back!) w.cache
+    | _ =>
       orDefault [("carrier", Json.str ""), ("carrier_head", Json.str "")] do
         forallTelescope (← inferType e) fun _ ty => carrierJson kind ty w.cache
+  let ident ← occurrenceIdentity e w.inside
+  let conds ← conditionsJson c args j
   let i := (← w.out.get).size
-  w.out.modify (·.push (("const", Json.str c.toString) :: j, #[toString pos]))
+  w.out.modify (·.push (("const", Json.str c.toString) :: j ++ ident ++ conds, #[toString pos]))
   return some i
 
 /-- The position of the function of an application with `n` arguments at `pos`. -/
 def appFnPos : Nat → SubExpr.Pos → SubExpr.Pos
   | 0, pos => pos
   | n + 1, pos => appFnPos n pos.pushAppFn
+
+mutual
 
 /-- Visit `e`, at position `pos` of the proposition (the positions of its printed sub-terms).
 A subterm met again adds its position to the application it is, if any; the applications
@@ -967,7 +1273,8 @@ partial def opsVisit (e : Expr) (pos : SubExpr.Pos) (w : OpsWalk) : MetaM Unit :
   w.budget.modify (· - 1)
   let note (i : Option Nat) : MetaM Unit := if i.isSome then w.seen.modify (·.insert e i) else pure ()
   match e with
-  | .forallE n t b bi | .lam n t b bi =>
+  | .forallE .. => opsForall e pos #[] w
+  | .lam n t b bi =>
     opsVisit t pos.pushBindingDomain w
     withLocalDecl n bi t fun x => opsVisit (b.instantiate1 x) pos.pushBindingBody w
   | .letE n t v b _ =>
@@ -988,12 +1295,27 @@ partial def opsVisit (e : Expr) (pos : SubExpr.Pos) (w : OpsWalk) : MetaM Unit :
       opsVisit args[i] (pos.pushNaryArg args.size i) w
   | _ => pure ()
 
+/-- Visit a chain of universal quantifiers and implications with all its binders in scope, so
+that an application in one of its domains or in its body sees every premise of the chain (its
+domains are visited first, in order, then its body, as one binder at a time would). -/
+partial def opsForall (e : Expr) (pos : SubExpr.Pos) (domains : Array (Expr × SubExpr.Pos))
+    (w : OpsWalk) : MetaM Unit := do
+  match e with
+  | .forallE n t b bi =>
+    withLocalDecl n bi t fun x =>
+      opsForall (b.instantiate1 x) pos.pushBindingBody (domains.push (t, pos.pushBindingDomain)) w
+  | _ =>
+    for (t, p) in domains do
+      opsVisit t p w
+    opsVisit e pos w
+end
+
 /-- Each application of a totalised operation in `e`, with its carrier and the positions it
 occurs at in `e` (`at`, as the printed sub-terms name them). `complete: false` when some
 applications may be missing, with the reason in `stopped`: the walk reached its limit of nodes
 (`nodes`), or failed, for example by running out of heartbeats (`error`). -/
-def orderOpsJson (e : Expr) : MetaM Json := do
-  let w : OpsWalk := { out := ← IO.mkRef #[], budget := ← IO.mkRef opsNodes,
+def orderOpsJson (e : Expr) (inside : Name → Bool) : MetaM Json := do
+  let w : OpsWalk := { inside, out := ← IO.mkRef #[], budget := ← IO.mkRef opsNodes,
                        cache := ← IO.mkRef #[], seen := ← IO.mkRef {} }
   let finished ← orDefault false do
     opsVisit e .root w
@@ -1020,9 +1342,9 @@ def specRecord (h : IO.FS.Handle) (q : Query) (inside : Name → Bool) (seen : I
   let bad := disallowed (q.allowed_axioms.map (·.toName)) axs
   unless bad.isEmpty do errs := errs.push s!"axioms={bad.toList}"
   let (j, used) ← declRecord inside spec ci
-  let (binders, concl) ← match ci with
-    | .defnInfo d => telescope inside d.value #[]
-    | _ => pure (#[], Json.null)
+  let (binders, concl, tree) ← match ci with
+    | .defnInfo d => statementJson inside d.value
+    | _ => pure (#[], Json.null, Json.null)
   let exact ← match ci with
     | .defnInfo d => ppJson d.value
     | _ => pure Json.null
@@ -1034,11 +1356,11 @@ def specRecord (h : IO.FS.Handle) (q : Query) (inside : Name → Bool) (seen : I
     | .defnInfo d => d.value.getUsedConstants.map toString
     | _ => #[]
   let ops ← match ci with
-    | .defnInfo d => orderOpsJson d.value
+    | .defnInfo d => orderOpsJson d.value inside
     | _ => pure Json.null
   emit h (Json.mkObj [("record", "spec"), ("name", spec.toString), ("errors", toJson errs),
     ("axioms", toJson (axs.map toString)), ("decl", j),
-    ("binders", Json.arr binders), ("conclusion", concl), ("exact", exact),
+    ("binders", Json.arr binders), ("conclusion", concl), ("tree", tree), ("exact", exact),
     ("direct", toJson direct), ("consts", toJson consts), ("order_ops", ops),
     ("closure", toJson closure)])
 
@@ -1361,7 +1683,7 @@ def namesRecord (h : IO.FS.Handle) (names : Array String) : MetaM Unit := do
   emit h (Json.mkObj [("record", "names"), ("checked", toJson names),
     ("unresolved", toJson unresolved)])
 
-/-- A theorem of a link: its statement split like a specification, and its axioms. -/
+/-- A theorem of a link: its statement as a tree like a specification's, and its axioms. -/
 def linkRecord (h : IO.FS.Handle) (q : Query) (inside : Name → Bool) (seen : IO.Ref NameSet)
     (n : Name) : MetaM Unit := do
   let env ← getEnv
@@ -1373,7 +1695,7 @@ def linkRecord (h : IO.FS.Handle) (q : Query) (inside : Name → Bool) (seen : I
       | some (.defnInfo d) => if d.type == .sort .zero then pure d.value else pure ci.type
       | _ => pure ci.type
     | _ => pure ci.type
-  let (binders, concl) ← telescope inside stmt #[]
+  let (binders, concl, tree) ← statementJson inside stmt
   let exact ← ppJson stmt
   let axs ← collectAxioms n
   let bad := disallowed (q.allowed_axioms.map (·.toName)) axs
@@ -1382,8 +1704,8 @@ def linkRecord (h : IO.FS.Handle) (q : Query) (inside : Name → Bool) (seen : I
   emit h (Json.mkObj [("record", "link"), ("name", n.toString), ("kind", kindOf ci),
     ("errors", toJson (if bad.isEmpty then #[] else #[s!"axioms={bad.toList}"])),
     ("axioms", toJson (axs.map toString)), ("sorry", toJson (axs.contains ``sorryAx)),
-    ("decl", j), ("binders", Json.arr binders), ("conclusion", concl), ("exact", exact),
-    ("closure", toJson closure)])
+    ("decl", j), ("binders", Json.arr binders), ("conclusion", concl), ("tree", tree),
+    ("exact", exact), ("closure", toJson closure)])
 
 /-! ## Dependencies, proofs included
 

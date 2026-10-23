@@ -80,4 +80,22 @@ A vector bounded by $i$ is bounded by $i + 1$; vectors bounded by $7$ are bounde
 The number of steps down from $k + 3$ is positive, and $\mathrm{pick}(k + 1, 0) = 1$.
 \end{theorem}
 
+\begin{theorem}\label{thm:conditional}\lean{Shape.conditional}
+If every $x$ with $A(x)$ has some $y$ with $B(x, y)$, and $A(a)$ holds, then some $y$ has
+$B(a, y)$.
+\end{theorem}
+
+\begin{theorem}\label{thm:alternating}\lean{Shape.alternating}
+For every $x$ there is $y$ such that $x + z \le y + z$ for every $z$.
+\end{theorem}
+
+\begin{theorem}\label{thm:premised}\lean{Shape.premised}
+If $P$ holds, some $x$ is $0$; $Q$ holds exactly when some $n$ equals itself; and either some $x$
+is $1$ or $Q$ holds.
+\end{theorem}
+
+\begin{theorem}\label{thm:one-map}\lean{Shape.one_map}
+Some map $\Phi \colon G \to H$ over $\mathbb{N}$ has both $A$ and $B$.
+\end{theorem}
+
 \end{document}

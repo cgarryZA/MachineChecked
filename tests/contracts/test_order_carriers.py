@@ -17,13 +17,18 @@ import subprocess
 import pytest
 
 from conftest import ROOT, needs_lean
-from prooflens.assess import TOTALISED, occurrences, totalised
+from types import SimpleNamespace
+
+from prooflens.assess import TOTALISED, Assessor, occurrences, totalised
 from prooflens.probe import lean_session, parse_records
 
 SRC = ROOT / "tests" / "fixtures" / "carriers"
 SPECS = ["join", "extended", "real", "alias", "both", "sets", "plain", "poly", "deep",
          "divNat", "divField", "divExtended", "divGroup", "divPlain", "divPoly", "integrals",
-         "integralUnit", "sumExtended", "sumReal", "roots"]
+         "integralUnit", "sumExtended", "sumReal", "roots", "two", "twoMixed", "twoMoved",
+         "supBounded", "supUnbounded", "supOther", "supLater", "supQuantified", "supConditional",
+         "supEmpty", "supRefuted", "infAndSet", "integrable", "integrableOn", "finite",
+         "finiteAE"]
 REAL = TOTALISED["iSup"]
 
 
@@ -126,6 +131,64 @@ def test_each_supremum_is_judged_by_its_type(tmp_path, toolchain):
         {("Real.sqrt", "Real")}
     assert set(warnings(recs["roots"])) == {"Real.sqrt"}
 
+    each_occurrence_has_its_own_finding(recs)
+    side_conditions(recs)
+
+
+def assess(rec, dismissals, fp="fp-1"):
+    """The totalisation warnings of `rec` as the clause `T:x#0` of the statement `P.s` with
+    fingerprint `fp`, under `dismissals`."""
+    a = Assessor(SimpleNamespace(statement_authors=[]), {}, {"decls": {}}, {}, [], dismissals)
+    a.totalised_warnings("T:x#0", "P.s", {**rec, "fingerprint": fp})
+    return a.findings
+
+
+def dismissal(f, **kw):
+    return {"code": "totalised", "subject": "P.s", "trigger": f["trigger"], "at": f["at"],
+            "fingerprint": f["fingerprint"], "rationale": "bounded", "by": "auditor", **kw}
+
+
+def each_occurrence_has_its_own_finding(recs):
+    # Two suprema on the number line: two warnings, each about one application, with its own
+    # position and fingerprint.
+    two = assess(recs["two"], [])
+    assert len(two) == 2 and len({f["id"] for f in two}) == 2
+    assert all(f["id"] == f"totalised:T:x#0:iSup@{f['at']}" and len(f["occurrences"]) == 1
+               and f["occurrences"][0]["at"][0] == f["at"] and f["statement_fingerprint"] == "fp-1"
+               for f in two)
+    assert len({f["fingerprint"] for f in two}) == 2
+    assert all(f["fingerprint"].startswith("pl-occ-v1:") for f in two)
+    first, second = sorted(two, key=lambda f: f["at"])
+
+    # Dismissing one leaves the other open.
+    fs = {f["at"]: f for f in assess(recs["two"], [dismissal(first)])}
+    assert fs[first["at"]]["dismissed"] == {"rationale": "bounded", "by": "auditor"}
+    assert not fs[second["at"]].get("dismissed") and not fs[second["at"]].get("dismissal_stale")
+
+    # The second family's values change type: only the second application's dismissal lapses,
+    # although the statement changed.
+    both = [dismissal(first), dismissal(second)]
+    mixed = {f["at"]: f for f in assess(recs["twoMixed"], both, fp="fp-2")}
+    assert set(mixed) == {first["at"], second["at"]}
+    assert mixed[first["at"]].get("dismissed") and not mixed[first["at"]].get("dismissal_stale")
+    assert not mixed[second["at"]].get("dismissed") and mixed[second["at"]]["dismissal_stale"]
+
+    # A conjunct added before them moves both applications: each dismissal follows its own.
+    moved = assess(recs["twoMoved"], both, fp="fp-3")
+    assert {f["at"] for f in moved}.isdisjoint({first["at"], second["at"]})
+    assert all(f.get("dismissed") and not f.get("dismissal_stale") for f in moved)
+    assert {f["fingerprint"] for f in moved} == {first["fingerprint"], second["fingerprint"]}
+
+    # A dismissal of the old form (the operation in the statement, without `at`) still dismisses
+    # every application of the operation while the statement is unchanged, and says so; once
+    # the statement changes it lapses for all of them.
+    old = [{"code": "totalised", "subject": "P.s", "trigger": "iSup", "fingerprint": "fp-1",
+            "rationale": "bounded", "by": "auditor"}]
+    assert all(f["dismissed"] == {"rationale": "bounded", "by": "auditor", "form": "statement"}
+               for f in assess(recs["two"], old))
+    assert all(not f.get("dismissed") and f["dismissal_stale"]
+               for f in assess(recs["two"], old, fp="fp-2"))
+
 
 def test_a_record_without_types_is_unresolved_not_real():
     rec = {"name": "P.s", "consts": ["iSup", "HDiv.hDiv"]}
@@ -177,3 +240,63 @@ def test_division_and_exemptions_from_recorded_types():
         assert warnings(r) == {"MeasureTheory.integral":
                                f"{TOTALISED['MeasureTheory.integral']} "
                                "(MeasureTheory.integral occurs in P.s)"}
+
+
+def conds(rec, c):
+    """Each recorded application of `c` in `rec`: its conditions' states, and their state
+    together."""
+    return [({d["condition"]: d["state"] for d in o.get("conditions", [])},
+             o.get("condition_state")) for o in occurrences(rec, c)]
+
+
+def side_conditions(recs):
+    # A real supremum with a correctly scoped bound is established, by the premise, and the
+    # index type's nonemptiness by Lean's instance; the warning is resolved, nothing else.
+    (o,) = occurrences(recs["supBounded"], "iSup")
+    assert o["condition_state"] == "established"
+    bound = next(d for d in o["conditions"] if d["condition"] == "bounded-above")
+    assert bound["by"] == "premise" and bound["statement"] == "BddAbove (Set.range f)"
+    (f,) = assess(recs["supBounded"], [])
+    assert f["resolved"] is True and not f.get("dismissed") and f["tier"] == "warning"
+    # With no bound, or a bound for another family, or one that needs a further hypothesis:
+    # unresolved, never refuted, and the warning stays open.
+    for s in ("supUnbounded", "supOther", "supConditional"):
+        assert conds(recs[s], "iSup") == [({"bounded-above": "unresolved",
+                                            "nonempty-index": "established"}, "unresolved")]
+        assert not any(f.get("resolved") for f in assess(recs[s], []))
+    # A later premise of the same statement, and a quantified premise specialised to the
+    # family, establish it too.
+    for s in ("supLater", "supQuantified"):
+        assert conds(recs[s], "iSup")[0][1] == "established"
+    # An index type that may be empty leaves nonemptiness unresolved.
+    assert conds(recs["supEmpty"], "iSup") == [({"bounded-above": "established",
+                                                 "nonempty-index": "unresolved"}, "unresolved")]
+    # A premise that the family is unbounded refutes the condition, with that premise.
+    (o,) = occurrences(recs["supRefuted"], "iSup")
+    assert o["condition_state"] == "refuted" and o["conditions"][0]["statement"].startswith("¬")
+    # An infimum needs a lower bound; the supremum of a set a bound and nonemptiness of the set,
+    # here from one premise's conjuncts.
+    assert conds(recs["infAndSet"], "iInf")[0][1] == "established"
+    assert conds(recs["infAndSet"], "SupSet.sSup") == [
+        ({"bounded-above": "established", "nonempty-set": "established"}, "established")]
+
+    # `Integrable f μ` establishes `∫ f ∂μ` and not `∫ g ∂μ` or `∫ f ∂ν`.
+    assert sorted(st for _, st in conds(recs["integrable"], "MeasureTheory.integral")) == [
+        "established", "unresolved", "unresolved"]
+    found = assess(recs["integrable"], [])
+    assert len(found) == 3 and sum(bool(f.get("resolved")) for f in found) == 1
+    # Integrability on a set establishes the integral for the restricted measure.
+    assert conds(recs["integrableOn"], "MeasureTheory.integral")[0][1] == "established"
+
+    # `x ≠ ⊤` establishes the finiteness of `x.toReal` and not of `y.toReal`; a value taken
+    # from the nonnegative numbers is finite by its form. Finiteness almost everywhere does not
+    # establish finiteness at a point.
+    states = sorted(st for _, st in conds(recs["finite"], "ENNReal.toReal"))
+    assert states == ["established", "established", "unresolved"]
+    assert {o["type"] for o in occurrences(recs["finite"], "ENNReal.toReal")} == {"ENNReal"}
+    assert conds(recs["finiteAE"], "ENNReal.toReal") == [({"finite": "unresolved"},
+                                                          "unresolved")]
+
+    # A resolved warning changes nothing but itself: its message is the rule's, as before.
+    (f,) = assess(recs["supBounded"], [])
+    assert f["message"] == f"{REAL} (iSup occurs in P.s)"

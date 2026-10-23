@@ -845,7 +845,8 @@ for (const width of [1300, 390]) {
       json.findings = json.findings.map((f) => f.subject.endsWith("#0") ? { ...f, occurrences: [
         { operation: f.trigger, type: "Nat", type_head: "Nat", structure: null, state: "applies",
           rule: "truncated subtraction on ℕ: a - b = 0 when a < b", at: ["/1/0/1"] },
-        { operation: f.trigger, type: "Nat", type_head: "Nat", structure: "group", state: "none", rule: null, at: [] }] } : f);
+        { operation: f.trigger, type: "Nat", type_head: "Nat", structure: "group", state: "none", rule: null, at: [] }] }
+        : f.dismissed ? { ...f, at: "/1/1/1", dismissed: { ...f.dismissed, form: "statement" } } : f);
       route.fulfill({ response, json });
     });
     await toyClaim(pg, "T:prop:pred");
@@ -857,6 +858,9 @@ for (const width of [1300, 390]) {
       "in Nat: truncated subtraction on ℕ: a - b = 0 when a < b",
       "in Nat, a group: no exceptional case in this type"]);
     assert.equal(await pg.locator("aside [data-finding='totalised:T:prop:pred#1:instSubNat'] .show").count(), 0, "nothing to mark");
+    // A dismissal of the operation in the whole statement says so.
+    assert.match(await pg.locator("aside [data-finding='totalised:T:prop:pred#1:instSubNat'] .dz").textContent(),
+      /dismissal of the operation in the whole statement/);
     await item.locator(".show").click();
     const view = pg.locator("aside .view");
     await view.locator(".mk").first().waitFor();
@@ -869,6 +873,34 @@ for (const width of [1300, 390]) {
     assert.ok(box && box.x >= 0 && box.x + box.width <= width, "on screen");
     await view.locator(".marknote button").click();
     assert.equal(await view.locator(".mk").count(), 0, "cleared");
+  });
+}
+// A warning lists the conditions its rule needs at the application, with what establishes them;
+// one whose conditions are all established reads as resolved.
+for (const width of [1300, 390]) {
+  await check("a warning shows the conditions of its rule and whether the statement supplies them", width, async (pg) => {
+    await pg.route("**/toy/data/claims/*prop_pred*", async (route) => {
+      const response = await route.fetch();
+      const json = await response.json();
+      json.findings = json.findings.map((f) => f.subject.endsWith("#0") ? { ...f, resolved: true, at: "/1/0/1", occurrences: [
+        { operation: f.trigger, type: "Real", type_head: "Real", structure: "conditionally-complete-lattice", state: "applies",
+          rule: "a supremum in ℝ is 0 when the set is unbounded or empty", at: ["/1/0/1"], condition_state: "established",
+          conditions: [
+            { condition: "bounded-above", state: "established", by: "premise", premise: "hf", statement: "BddAbove (Set.range f)" },
+            { condition: "nonempty-index", state: "established", by: "type", statement: "Lean finds Nonempty ℕ" }] }] } : f);
+      route.fulfill({ response, json });
+    });
+    await toyClaim(pg, "T:prop:pred");
+    await pg.locator("aside .view .chipbtn").click();
+    await pg.locator("aside details.warning summary").click();
+    const item = pg.locator("aside [data-finding='totalised:T:prop:pred#0:instSubNat']");
+    const conds = await item.locator(".conds li").allTextContents();
+    assert.deepEqual(conds.map((t) => t.replace(/\s+/g, " ").trim()), [
+      "needs bounded above: established by the premise hf : BddAbove (Set.range f)",
+      "needs a nonempty index type: established (Lean finds Nonempty ℕ)"]);
+    assert.match(await item.textContent(), /resolved: the statement supplies every condition/);
+    const box = await item.locator(".conds li").first().boundingBox();
+    assert.ok(box && box.x >= 0 && box.x + box.width <= width, "on screen");
   });
 }
 await check("a theorem of the toy paper is typeset with its equation number", 1300, async (pg) => {
@@ -1148,7 +1180,7 @@ await check("in the local reader a symbol is linked by choosing it and clicking 
     st = await open("P:thm:assumed");
     const inner = st.locator(".ribbon li.hypothesis .inner");
     assert.equal(await inner.count(), 1);
-    assert.match(await inner.textContent(), /inside this assumption \(for every › then\):\s*there is s/);
+    assert.match(await inner.textContent(), /Inside this assumption:\s*for every\s*d.*if\s*Shape\.Admissible d\s*then\s*there is\s*s/s);
     assert.equal(await inner.locator(".carried.inside .prop").count(), 2);
     assert.equal(await st.locator(".ribbon > li.exists .carried.produced").count(), 1);
     // An established solution is produced under the condition on d.
@@ -1311,6 +1343,56 @@ await check("in the local reader a symbol is linked by choosing it and clicking 
     assert.equal(parts.length, 2, parts.join(" | "));
     assert.equal(parts[0], "itisnotthecasethatthereisx:Natsuchthatx<0");
     assert.equal(parts[1], "atleastoneofthefollowingforeveryn:Nat,0≤nif1=1thenthereism:Natsuchthatm=1");
+  });
+
+  await check("each binder reads in its scope: an assumption's own existence stays inside it", width, async (pg) => {
+    const open = async (id) => {
+      await pg.goto(origin + `/structure/#/r/${SHAPE.release}/read/P/${encodeURIComponent(id)}`);
+      const st = pg.locator("aside .view :not(.suggestion) > .stmt").first();
+      await st.locator(".concl").waitFor();
+      return st;
+    };
+    const flat = (t) => t.replace(/\s+/g, "");
+    const reading = async (st, v) => {
+      await st.locator(`.var[data-var='${v}']`).first().click();
+      await pg.mouse.move(0, 0);
+      return (await st.locator(".inspect").textContent()).replace(/\s+/g, " ");
+    };
+    // (h : ∀ x, A x → ∃ y, B x y): the assumption's structure is shown inside it, and its y is
+    // a variable of its own, apart from the y the statement establishes.
+    let st = await open("P:thm:conditional");
+    const within = st.locator(".ribbon li .inner.within");
+    assert.equal(await within.count(), 1, "only the assumption that quantifies shows its structure");
+    assert.equal(flat(await within.textContent()), "Insidethisassumption:foreveryx:Nat,ifAxthenthereisy:NatsuchthatBxy");
+    const rows = (await st.locator(".ribbon > li").allTextContents()).map((t) => t.replace(/\s+/g, " ").trim());
+    assert.match(rows.at(-1), /^there is y ?: ?Nat$/);
+    await within.locator(".var[data-var='7']").first().hover();
+    assert.equal(await st.locator(".var.hl").count(), 1, "only the assumption's y");
+    assert.equal(await st.locator(".concl .var.hl").count(), 0, "not the statement's y");
+    assert.match(await reading(st, 7), /y ?: ?Nat.*Inside an assumption: not chosen by the statement/);
+    assert.match(await reading(st, 5), /y ?: ?Nat.*Chosen by the statement \(there is\)/);
+    // An existence established under a premise, one inside a side of an equivalence and one in
+    // an alternative: each keeps its place.
+    st = await open("P:thm:premised");
+    const parts = (await st.locator(".concl .body > .parts > li").allTextContents()).map(flat);
+    assert.deepEqual(parts, ["ifPthenthereisx:Natsuchthatx=0",
+      "thefollowingareequivalentQthereisn:Natsuchthatn=n",
+      "atleastoneofthefollowingthereisx:Natsuchthatx=1Q"]);
+    // P, Q and hq are 0, 1 and 2; the variables bound inside the conclusion follow them.
+    const vs = await st.locator(".concl .var").evaluateAll((es) => [...new Set(es.map((e) => +e.dataset.var))].filter((v) => v >= 3).sort());
+    assert.deepEqual(vs, [3, 4, 5], "three variables bound inside, two of them named x");
+    assert.match(await reading(st, vs[0]), /Chosen by the statement \(there is\), for the part it belongs to/);
+    assert.match(await reading(st, vs[1]), /Inside one side of an equivalence/);
+    assert.match(await reading(st, vs[2]), /Inside one alternative of an “or”/);
+    // ∃ Φ : G →[Nat] H, A Φ ∧ B Φ: one witness with its whole type, in both parts; each
+    // assumption's Φ is its own.
+    st = await open("P:thm:one-map");
+    const last = (await st.locator(".ribbon > li").allTextContents()).at(-1).replace(/\s+/g, " ").trim();
+    assert.match(last, /^there is Φ ?: ?G →\[Nat\] H$/);
+    await st.locator(".concl .var[data-var='7']").first().hover();
+    assert.equal(await st.locator(".var.hl").count(), 2, "the witness in both of its parts");
+    assert.equal(await st.locator(".ribbon .inner.within").count(), 2);
+    assert.equal(await st.locator(".ribbon .inner.within .var.hl").count(), 0, "not the assumptions' Φ");
   });
 
   await check("clicking inside an expression selects it, and each click widens it", width, async (pg) => {
