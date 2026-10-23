@@ -290,10 +290,10 @@ def test_a_session_that_is_split_says_why(monkeypatch):
                        "((deterministic) timeout at `whnf`); splitting it")
 
 
-def lean_fails_on(monkeypatch, bad, message):
+def lean_fails_on(monkeypatch, bad, message, records=()):
     """Make every Lean session that loads a module of `bad` fail with `message` (an error Lean
-    reported, so the same inputs fail again); the others finish with no records. Returns the
-    modules of each session started."""
+    reported, so the same inputs fail again); the others finish with a copy of `records` (none
+    by default). Returns the modules of each session started."""
     from prooflens import simple
     calls = []
 
@@ -301,7 +301,7 @@ def lean_fails_on(monkeypatch, bad, message):
         calls.append(list(group))
         if set(group) & set(bad):
             raise simple.ViewError(message, deterministic=True)
-        return [{"record": "done"}]
+        return [dict(r) for r in records] + [{"record": "done"}]
     monkeypatch.setattr(simple, "run_simple_probe", probe)
     return calls
 
@@ -461,3 +461,55 @@ def test_check_and_the_reader_give_the_loading_error(tmp_path, monkeypatch, caps
         shown[c["number"]] = [(l["status"], l["status_detail"]) for l in chunk["links"]]
     assert shown == {"Theorem 1": [(label, alone)], "Theorem 2": [(label, apart)]}
     assert "prooflens-probe-" not in (data / "index.json").read_text()
+
+
+def test_uses_inspect_and_proof_facts_give_the_loading_error(tmp_path, monkeypatch, capsys):
+    """A module that Lean cannot load, beside a library that loads: `uses` lists it in its
+    scope, and `inspect`, proof facts and a certificate check stop on it, each with what Lean
+    reported as `check` gives it, without the probe's temporary file or the project's path."""
+    from prooflens import cli
+    from prooflens.deps import inspect
+    from prooflens.estimates import check
+    from prooflens.proof_facts import extract
+    from prooflens.simple import ViewError
+    from prooflens.uses import uses
+    root = tmp_path / "proj"
+    root.mkdir()
+    (root / "lakefile.toml").write_text('name = "proj"\n\n[[lean_lib]]\nname = "Solo"\n\n'
+                                        '[[lean_lib]]\nname = "Good"\n')
+    (root / "Solo.lean").write_text("theorem Solo.result : True := trivial\n")
+    (root / "Good.lean").write_text("theorem Good.base : True := trivial\n")
+    built = root / ".lake" / "build" / "lib" / "lean"
+    built.mkdir(parents=True)
+    for m in ["Solo", "Good"]:
+        (built / f"{m}.olean").write_bytes(b"")
+    lean_fails_on(monkeypatch, ["Solo"], many_errors(root / ".machinechecked" / "build", "Boom"),
+                  [{"record": "uses", "name": "Good.base", "module": "Good", "kind": "theorem",
+                    "searched": 1}])
+    errors = ("unknown constant 'Boom.missing0'; unknown constant 'Boom.missing1'; "
+              "unknown constant 'Boom.missing2'; …")
+    alone = f"Module Solo could not be loaded on its own: {errors}"
+
+    doc = uses(root, "Good.base")
+    assert doc["ok"] and not doc["complete"]
+    assert doc["scope"]["failed"] == {"Solo": errors}
+    for ask in [lambda: inspect(root, "Solo.result"), lambda: extract(root, "Solo.result"),
+                lambda: check(root, "Solo.result", "Solo.claim", "proves")]:
+        with pytest.raises(ViewError) as e:
+            ask()
+        assert str(e.value) == alone
+
+    # The commands print the same.
+    monkeypatch.chdir(root)
+    capsys.readouterr()
+    cli.main(["inspect", "--used-by", "Good.base", "--json"])
+    out = capsys.readouterr().out
+    assert json.loads(out)["scope"]["failed"] == {"Solo": errors}
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["inspect", "Solo.result", "--json"])
+    assert exc.value.code == 2
+    said = capsys.readouterr()
+    assert json.loads(said.out)["error"] == {"kind": "error", "message": alone}
+    assert f"machinechecked: {alone}\n" in said.err
+    for text in [out, said.out, said.err]:
+        assert "prooflens-probe-" not in text and str(tmp_path) not in text

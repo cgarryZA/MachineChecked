@@ -209,7 +209,8 @@ reads previews (`complete: false` on such a result: get its statement with `depe
   variable by its index in `locals`, whose `id` is the position of its binder, so two variables
   printed alike in different scopes stay distinct. `location.path` is the application's
   position in the elaborated term; its line is the enclosing declaration's.
-- `scope`, `complete` and `answer`: the modules searched, those not built or not loaded, and
+- `scope`, `complete` and `answer`: the modules searched, those not built, those not loaded
+  (`failed`, each with the first lines of what Lean reported, as `check` gives them), and
   `used`, `no use found in this scope`, or `not traced` when some modules were not searched.
 
 The first `uses` query after a change runs Lean once over the project; later queries reuse the
