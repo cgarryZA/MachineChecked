@@ -16,9 +16,10 @@ For a specification the record holds two representations of the proposition:
   existing review markers, and `canon`, a canonical serialisation the CLI hashes with SHA-256),
   and each application of a totalised operation (a supremum, a division, an integral) with the
   type it is taken in (`order_ops`);
-* the inspection representation: the body of the definition split into a quantifier prefix
-  (universal variables, hypotheses, instances, existential witnesses) and a conclusion, each
-  pretty-printed with the constants it mentions marked for navigation.
+* the inspection representation: the body of the definition as one tree of its binders and
+  connectives, with the binders that open it (universal variables, hypotheses, instances,
+  existential witnesses) and its conclusion read off the same tree, each part pretty-printed with
+  the constants it mentions marked for navigation.
 -/
 
 open Lean Meta Elab
@@ -602,102 +603,134 @@ def propertiesOf (x : Expr) (vars : Array FVarId) (pfx : String) (ofProp : Bool 
   tryCatchRuntimeEx act fun err => do
     return [("properties_error", Json.str s!"probe-error: {← err.toMessageData.toString}")]
 
-/-- The objects a proposition quantifies over inside itself (a hypothesis's own "for every" and
-"there is"), each with the connectives that enclose it (`scope`, outermost first) and the
-properties its type carries; only those whose type carries one. Their occurrences are not
-numbered as variables of the statement: they belong to the proposition. -/
-partial def innerObjects (e : Expr) (vars : Array FVarId) (pos : SubExpr.Pos)
-    (scope : Array String := #[]) : MetaM (Array Json) := do
-  let two : String → MetaM (Array Json) := fun op => do
-    let a ← innerObjects e.appFn!.appArg! vars pos.pushAppFn.pushAppArg (scope.push op)
-    let b ← innerObjects e.appArg! vars pos.pushAppArg (scope.push op)
-    return a ++ b
-  if e.isAppOfArity ``And 2 then return ← two "and"
-  if e.isAppOfArity ``Or 2 then return ← two "or"
-  if e.isAppOfArity ``Iff 2 then return ← two "iff"
-  if e.isAppOfArity ``Not 1 then
-    return ← innerObjects e.appArg! vars pos.pushAppArg (scope.push "not")
-  let one : String → Name → Expr → Expr → BinderInfo → SubExpr.Pos → MetaM (Array Json) :=
-    fun op n t body bi at_ => withLocalDecl n bi t fun x => do
-      let props ← propertiesOf x vars s!"{at_}#"
-      let inner ← innerObjects (body.instantiate1 x) vars at_.pushBindingBody (scope.push op)
-      if props.isEmpty then return inner
-      let tj ← ppJson t vars at_.pushBindingDomain
-      return #[Json.mkObj ([("op", Json.str op), ("name", Json.str (binderName n)),
-        ("id", Json.str (toString at_)), ("type", tj), ("scope", toJson scope)] ++ props)] ++ inner
-  if let .forallE n t body bi := e then
-    if (← isProp t) && !body.hasLooseBVars then
-      let a ← innerObjects t vars pos.pushBindingDomain (scope.push "if")
-      let b ← innerObjects body vars pos.pushBindingBody (scope.push "then")
-      return a ++ b
-    return ← one "forall" n t body bi pos
-  match isExistsApp e with
-  | some (_, .lam n t body bi) => one "exists" n t body bi pos.pushAppArg
-  | _ => return #[]
+/-! ## The statement as one tree
 
+The whole proposition as one tree (`tree`): every binder, whether it opens the statement, stands
+inside its conclusion or inside one of its hypotheses, is a node of the same form, and every
+connective is a node with its parts. The binders that open the statement (`binders`) and its
+conclusion (`conclusion`) are read off the same walk. Display only; it changes no record that is
+assessed. -/
 
-/-- The logical shape of a conclusion: a conjunction, disjunction, equivalence, negation,
-implication, "for every" or "there is" as a tree whose leaves are pretty-printed propositions. A
-quantifier inside the conclusion is a node (`forall`, `exists`) with its variable's name, type and
-number, and its body as its one part. `vars` is
-threaded through the tree, so that every witness has a variable of its own: two witnesses in
-sibling parts never share one. `pos` is the position of `e` in the whole proposition; each
-node and variable carries its own (`id`). Display only; it changes no record that is assessed. -/
-partial def logicJson (inside : Name → Bool) (vars : Array FVarId) (e : Expr) (pos : SubExpr.Pos) :
-    MetaM (Json × Array FVarId) := do
+/-- Where a node of the tree stands: the connectives around it, outermost first (`within`: `and`,
+`or`, `iff`, `not`, `if` and `then` for the two sides of an implication, `assume` inside a
+hypothesis of the statement), the objects bound around it, by number (`after`: what it may depend
+on), and the word for the nearest negation, alternative, equivalence, premise or hypothesis that
+encloses it (`decided`), if any. -/
+structure Place where
+  within : Array String := #[]
+  after : Array Nat := #[]
+  decided : Option String := none
+
+/-- The place inside the connective `c`. -/
+def Place.enter (p : Place) (c : String) : Place :=
+  let word : Option String := match c with
+    | "not" => some "denied"
+    | "or" => some "alternative"
+    | "iff" => some "equivalent"
+    | "if" => some "assumed"
+    | "assume" => some "assumed"
+    | _ => none
+  { p with within := p.within.push c,
+           decided := match word with | some w => some w | none => p.decided }
+
+/-- How a binder at `p` stands in the statement (`scope`): as the nearest enclosing negation,
+alternative, equivalence, premise or hypothesis decides (`denied`, `alternative`, `equivalent`,
+`assumed`); outside all of them, a "there is" is `produced` (the statement establishes it) and any
+other binder is `given` (whoever uses the statement chooses it). With where it stands. -/
+def Place.fields (p : Place) (op : String) : List (String × Json) :=
+  let scope := p.decided.getD (if op == "exists" then "produced" else "given")
+  [("scope", Json.str scope), ("within", toJson p.within), ("after", toJson p.after)]
+
+/-- Whether a proposition has a shape the tree shows: a connective or a quantifier at its head. -/
+def shaped (e : Expr) : Bool :=
+  e.isAppOfArity ``And 2 || e.isAppOfArity ``Or 2 || e.isAppOfArity ``Iff 2
+    || e.isAppOfArity ``Not 1 || (isExistsApp e).isSome || e.isForall
+
+/-- The tree of `e`, at position `pos` of the whole proposition, standing at `p`. A conjunction,
+disjunction, equivalence, negation or implication is a node with its parts (`args`). A "for
+every" or a "there is" is a node with its variable's name and number (`var`), how it is written
+(`binder`), whether it binds an object or a proof (`supplies`), its type, the properties its type
+carries, where it stands (`Place.fields`) and its body as its one part. Anything else is a leaf,
+pretty-printed, with the applications of the project's definitions expanded to `depth`. `vars` is
+threaded through the tree, so that every variable has a number of its own: two witnesses in
+sibling parts never share one. Each node carries its position (`id`). -/
+partial def treeJson (inside : Name → Bool) (depth : Nat) (vars : Array FVarId) (e : Expr)
+    (pos : SubExpr.Pos) (p : Place) : MetaM (Json × Array FVarId) := do
+  let node := fun (op : String) (args : Array Json) =>
+    Json.mkObj [("op", Json.str op), ("id", Json.str (toString pos)), ("args", Json.arr args)]
   let op := if e.isAppOfArity ``And 2 then some "and"
     else if e.isAppOfArity ``Or 2 then some "or"
     else if e.isAppOfArity ``Iff 2 then some "iff" else none
-  match op with
-  | some o =>
-    let (a, vars) ← logicJson inside vars e.appFn!.appArg! pos.pushAppFn.pushAppArg
-    let (b, vars) ← logicJson inside vars e.appArg! pos.pushAppArg
-    return (Json.mkObj [("op", o), ("id", Json.str (toString pos)),
-      ("args", Json.arr #[a, b])], vars)
-  | none =>
-    if e.isAppOfArity ``Not 1 then
-      let (a, vars) ← logicJson inside vars e.appArg! pos.pushAppArg
-      return (Json.mkObj [("op", "not"), ("id", Json.str (toString pos)),
-        ("args", Json.arr #[a])], vars)
-    if let .forallE n t body bi := e then
-      if (← isProp t) && !body.hasLooseBVars then
-        -- An implication inside a part: its premise is a part of its own, not an assumption
-        -- of the whole statement.
-        let (a, vars) ← logicJson inside vars t pos.pushBindingDomain
-        let (b, vars) ← logicJson inside vars body pos.pushBindingBody
-        return (Json.mkObj [("op", "implies"), ("id", Json.str (toString pos)),
-          ("args", Json.arr #[a, b])], vars)
-      let tj ← ppExpanded inside statementDepth t vars pos.pushBindingDomain
-      return ← withLocalDecl n bi t fun x => do
-        let idx := vars.size
-        let props ← propertiesOf x (vars.push x.fvarId!) s!"{pos}#"
-        let (b, vars') ←
-          logicJson inside (vars.push x.fvarId!) (body.instantiate1 x) pos.pushBindingBody
-        return (Json.mkObj (([("op", "forall"), ("name", n.eraseMacroScopes.toString),
-          ("var", toJson idx), ("id", Json.str (toString pos)), ("type", tj),
-          ("args", Json.arr #[b])] : List (String × Json)) ++ props), vars')
-    match isExistsApp e with
-    | some (_, .lam n t body bi) =>
-      -- The witness is bound by the predicate `fun x => …`, the second argument of `Exists`.
-      let lam := pos.pushAppArg
-      let tj ← ppExpanded inside statementDepth t vars lam.pushBindingDomain
-      withLocalDecl n bi t fun x => do
-        let idx := vars.size
-        let props ← propertiesOf x (vars.push x.fvarId!) s!"{lam}#"
-        let (b, vars') ←
-          logicJson inside (vars.push x.fvarId!) (body.instantiate1 x) lam.pushBindingBody
-        return (Json.mkObj (([("op", "exists"), ("name", n.eraseMacroScopes.toString),
-          ("var", toJson idx), ("id", Json.str (toString lam)), ("type", tj),
-          ("args", Json.arr #[b])] : List (String × Json)) ++ props), vars')
-    | _ => return (Json.mkObj [("leaf", ← ppExpanded inside statementDepth e vars pos)], vars)
+  if let some o := op then
+    let (a, vars) ← treeJson inside depth vars e.appFn!.appArg! pos.pushAppFn.pushAppArg (p.enter o)
+    let (b, vars) ← treeJson inside depth vars e.appArg! pos.pushAppArg (p.enter o)
+    return (node o #[a, b], vars)
+  if e.isAppOfArity ``Not 1 then
+    let (a, vars) ← treeJson inside depth vars e.appArg! pos.pushAppArg (p.enter "not")
+    return (node "not" #[a], vars)
+  let binder : String → Name → Expr → Expr → BinderInfo → SubExpr.Pos →
+      MetaM (Json × Array FVarId) := fun op n t body bi at_ => do
+    let tj ← ppExpanded inside depth t vars at_.pushBindingDomain
+    let data := !(← isProp t)
+    withLocalDecl n bi t fun x => do
+      let idx := vars.size
+      let vs := vars.push x.fvarId!
+      let props ← propertiesOf x vs s!"{at_}#"
+      let (b, vs') ← treeJson inside depth vs (body.instantiate1 x) at_.pushBindingBody
+        { p with after := if data then p.after.push idx else p.after }
+      let fields : List (String × Json) := [("op", Json.str op),
+        ("name", Json.str n.eraseMacroScopes.toString), ("var", toJson idx),
+        ("id", Json.str (toString at_)), ("binder", Json.str (binderStr bi)),
+        ("supplies", Json.str (if data then "data" else "proposition")), ("type", tj)]
+      return (Json.mkObj (fields ++ p.fields op ++ [("args", Json.arr #[b])] ++ props), vs')
+  if let .forallE n t body bi := e then
+    if (← isProp t) && !body.hasLooseBVars then
+      -- An implication inside a part: its premise is a part of its own, not an assumption of
+      -- the whole statement.
+      let (a, vars) ← treeJson inside depth vars t pos.pushBindingDomain (p.enter "if")
+      let (b, vars) ← treeJson inside depth vars body pos.pushBindingBody (p.enter "then")
+      return (node "implies" #[a, b], vars)
+    return ← binder "forall" n t body bi pos
+  match isExistsApp e with
+  | some (_, .lam n t body bi) =>
+    -- The witness is bound by the predicate `fun x => …`, the second argument of `Exists`.
+    binder "exists" n t body bi pos.pushAppArg
+  | _ => return (Json.mkObj [("leaf", ← ppExpanded inside depth e vars pos)], vars)
 
-/-! ## The inspection representation -/
+/-- A binder that opens the statement, as `statementJson` meets it: its fields as one of the
+statement's `binders`, its role, whether it binds an object, the properties its type carries and,
+for a hypothesis, its proposition and the position of that proposition. -/
+structure Opener where
+  base : List (String × Json)
+  role : String
+  data : Bool
+  extra : List (String × Json)
+  hyp : Option (Expr × SubExpr.Pos) := none
+  deriving Inhabited
 
-/-- Split a proposition into its quantifier prefix and its conclusion. Universal binders are
-`forall` (data), `hypothesis` (a proposition) or `instance`; existential binders are `exists`.
-Definitions are not unfolded: the prefix is the one written in the specification. -/
-partial def telescope (inside : Name → Bool) (e : Expr) (acc : Array Json) (vars : Array FVarId := #[])
-    (pos : SubExpr.Pos := .root) : MetaM (Array Json × Json) := do
+/-- The tree of a hypothesis's proposition (`logic`), when it has a shape, its variables numbered
+from `vars.size`; its nodes stand inside the hypothesis (`assume`) and may depend on the objects
+`after`. Its leaves are printed without expansions (the hypothesis's type has them). A failure is
+recorded (`logic_error`) and stops nothing else. -/
+def hypothesisTree (inside : Name → Bool) (vars : Array FVarId) (t : Expr) (pos : SubExpr.Pos)
+    (after : Array Nat) : MetaM (List (String × Json) × Array FVarId) := do
+  unless shaped t do return ([], vars)
+  let act : MetaM (List (String × Json) × Array FVarId) := withCurrHeartbeats do
+    let (j, vs) ← treeJson inside 0 vars t pos (({ after := after } : Place).enter "assume")
+    return ([("logic", j)], vs)
+  tryCatchRuntimeEx act fun err => do
+    return ([("logic_error", Json.str s!"probe-error: {← err.toMessageData.toString}")], vars)
+
+/-- The proposition `e` as one tree (`tree`), with the binders that open it (`binders`) and its
+conclusion (`conclusion`) read off the same walk. An opening universal binder is `forall` (data),
+`hypothesis` (a proposition) or `instance`, an opening existential binder `exists`; in the tree,
+that role is the node's `op`, its number is its place in `binders`, and a hypothesis with a shape
+has its own tree (`logic`). Definitions are not unfolded: the binders are those written in the
+specification. The opening binders are numbered first, in order, then the variables inside the
+conclusion, then those inside each hypothesis. -/
+partial def statementJson (inside : Name → Bool) (e : Expr) (acc : Array Opener := #[])
+    (vars : Array FVarId := #[]) (pos : SubExpr.Pos := .root) :
+    MetaM (Array Json × Json × Json) := do
   match e with
   | .forallE n t body bi =>
     let isHyp ← isProp t
@@ -705,41 +738,64 @@ partial def telescope (inside : Name → Bool) (e : Expr) (acc : Array Json) (va
       if bi.isInstImplicit then "instance" else if isHyp then "hypothesis" else "forall"
     let tj ← ppExpanded inside statementDepth t vars pos.pushBindingDomain
     withLocalDecl n bi t fun x => do
-      let hyps := (acc.filter fun j => j.getObjValD "role" == Json.str "hypothesis").size
+      let hyps := (acc.filter (·.role == "hypothesis")).size
       let nm := if n.hasMacroScopes || n.isAnonymous then s!"h{hyps + 1}"
         else n.toString
       -- What an instance supplies: a proposition (`[Nonempty E]`) or data (`[Inhabited E]`).
       let supplies := if isHyp then "proposition" else "data"
-      -- What the object's type carries, or, for a hypothesis, the objects inside it whose type
-      -- carries something. A hypothesis whose type is a structure of propositions
+      -- What the object's type carries. A hypothesis whose type is a structure of propositions
       -- (`[IsProbability Ω]`) lists what its fields state.
-      let extra ← if isHyp then do
-          let objs ← innerObjects t vars pos.pushBindingDomain
-          let states ← propertiesOf x (vars.push x.fvarId!) s!"{pos}#" (ofProp := true)
-          pure ((if objs.isEmpty then [] else [("objects", Json.arr objs)]) ++ states)
-        else propertiesOf x (vars.push x.fvarId!) s!"{pos}#"
-      let j := Json.mkObj (([("role", role), ("name", nm), ("id", Json.str (toString pos)),
-        ("type", tj), ("binder", binderStr bi), ("supplies", supplies)] : List (String × Json))
-        ++ extra)
-      telescope inside (body.instantiate1 x) (acc.push j) (vars.push x.fvarId!) pos.pushBindingBody
+      let extra ← propertiesOf x (vars.push x.fvarId!) s!"{pos}#" (ofProp := isHyp)
+      let base := [("role", Json.str role), ("name", Json.str nm),
+        ("id", Json.str (toString pos)), ("type", tj), ("binder", Json.str (binderStr bi)),
+        ("supplies", Json.str supplies)]
+      let o : Opener := { base, role, data := !isHyp, extra,
+                          hyp := if isHyp then some (t, pos.pushBindingDomain) else none }
+      statementJson inside (body.instantiate1 x) (acc.push o) (vars.push x.fvarId!)
+        pos.pushBindingBody
   | _ =>
     match isExistsApp e with
     | some (_, .lam n t body bi) =>
       let lam := pos.pushAppArg
       let tj ← ppExpanded inside statementDepth t vars lam.pushBindingDomain
+      let data := !(← isProp t)
       withLocalDecl n bi t fun x => do
         let props ← propertiesOf x (vars.push x.fvarId!) s!"{lam}#"
-        let j := Json.mkObj (([("role", "exists"), ("name", n.eraseMacroScopes.toString),
-          ("id", Json.str (toString lam)), ("type", tj), ("binder", binderStr bi)]
-          : List (String × Json)) ++ props)
-        telescope inside (body.instantiate1 x) (acc.push j) (vars.push x.fvarId!) lam.pushBindingBody
+        let base := [("role", Json.str "exists"),
+          ("name", Json.str n.eraseMacroScopes.toString), ("id", Json.str (toString lam)),
+          ("type", tj), ("binder", Json.str (binderStr bi))]
+        let o : Opener := { base, role := "exists", data, extra := props }
+        statementJson inside (body.instantiate1 x) (acc.push o) (vars.push x.fvarId!)
+          lam.pushBindingBody
     | _ =>
-      -- The conclusion, with its logical shape when it has one (`logic`, display only).
-      -- Without a shape, the conclusion is the one leaf, with its expansions.
-      let (logic, _) ← logicJson inside vars e pos
-      match logic.getObjVal? "leaf" with
-      | .ok leaf => return (acc, leaf)
-      | .error _ => return (acc, Json.mkObj ((← ppFields e vars pos) ++ [("logic", logic)]))
+      -- The objects among the first `k` opening binders, by number.
+      let objects := fun (k : Nat) => (List.range k).toArray.filter fun i => acc[i]!.data
+      let (concl, vars') ← treeJson inside statementDepth vars e pos { after := objects acc.size }
+      -- Each hypothesis's own tree, its variables numbered after the conclusion's.
+      let mut vs := vars'
+      let mut logics : Array (List (String × Json)) := #[]
+      for i in [:acc.size] do
+        match acc[i]!.hyp with
+        | some (t, tp) =>
+          let (l, vs') ← hypothesisTree inside vs t tp (objects i)
+          vs := vs'
+          logics := logics.push l
+        | none => logics := logics.push []
+      -- Each opening binder is a node whose one part is the rest of the statement.
+      let mut tree := concl
+      for k in (List.range acc.size).reverse do
+        let o := acc[k]!
+        let supplies : List (String × Json) := if o.role == "exists" then
+            [("supplies", Json.str (if o.data then "data" else "proposition"))] else []
+        let place : Place := { after := objects k }
+        tree := Json.mkObj ([("op", Json.str o.role), ("var", toJson k)]
+          ++ o.base.filter (·.1 != "role") ++ supplies ++ place.fields o.role
+          ++ [("args", Json.arr #[tree])] ++ o.extra ++ logics[k]!)
+      -- The conclusion: the one leaf, with its expansions, or the whole of it printed.
+      let conclusion ← match concl.getObjVal? "leaf" with
+        | .ok leaf => pure leaf
+        | .error _ => pure (Json.mkObj (← ppFields e vars pos))
+      return (acc.map (Json.mkObj ·.base), conclusion, tree)
 
 /-- Constants of the project that `e` uses directly. -/
 def projectConsts (inside : Name → Bool) (e : Expr) : MetaM (Array String) := do
@@ -1017,9 +1073,9 @@ def specRecord (h : IO.FS.Handle) (q : Query) (inside : Name → Bool) (seen : I
   let bad := disallowed (q.allowed_axioms.map (·.toName)) axs
   unless bad.isEmpty do errs := errs.push s!"axioms={bad.toList}"
   let (j, used) ← declRecord inside spec ci
-  let (binders, concl) ← match ci with
-    | .defnInfo d => telescope inside d.value #[]
-    | _ => pure (#[], Json.null)
+  let (binders, concl, tree) ← match ci with
+    | .defnInfo d => statementJson inside d.value
+    | _ => pure (#[], Json.null, Json.null)
   let exact ← match ci with
     | .defnInfo d => ppJson d.value
     | _ => pure Json.null
@@ -1035,7 +1091,7 @@ def specRecord (h : IO.FS.Handle) (q : Query) (inside : Name → Bool) (seen : I
     | _ => pure Json.null
   emit h (Json.mkObj [("record", "spec"), ("name", spec.toString), ("errors", toJson errs),
     ("axioms", toJson (axs.map toString)), ("decl", j),
-    ("binders", Json.arr binders), ("conclusion", concl), ("exact", exact),
+    ("binders", Json.arr binders), ("conclusion", concl), ("tree", tree), ("exact", exact),
     ("direct", toJson direct), ("consts", toJson consts), ("order_ops", ops),
     ("closure", toJson closure)])
 
@@ -1358,7 +1414,7 @@ def namesRecord (h : IO.FS.Handle) (names : Array String) : MetaM Unit := do
   emit h (Json.mkObj [("record", "names"), ("checked", toJson names),
     ("unresolved", toJson unresolved)])
 
-/-- A theorem of a link: its statement split like a specification, and its axioms. -/
+/-- A theorem of a link: its statement as a tree like a specification's, and its axioms. -/
 def linkRecord (h : IO.FS.Handle) (q : Query) (inside : Name → Bool) (seen : IO.Ref NameSet)
     (n : Name) : MetaM Unit := do
   let env ← getEnv
@@ -1370,7 +1426,7 @@ def linkRecord (h : IO.FS.Handle) (q : Query) (inside : Name → Bool) (seen : I
       | some (.defnInfo d) => if d.type == .sort .zero then pure d.value else pure ci.type
       | _ => pure ci.type
     | _ => pure ci.type
-  let (binders, concl) ← telescope inside stmt #[]
+  let (binders, concl, tree) ← statementJson inside stmt
   let exact ← ppJson stmt
   let axs ← collectAxioms n
   let bad := disallowed (q.allowed_axioms.map (·.toName)) axs
@@ -1379,8 +1435,8 @@ def linkRecord (h : IO.FS.Handle) (q : Query) (inside : Name → Bool) (seen : I
   emit h (Json.mkObj [("record", "link"), ("name", n.toString), ("kind", kindOf ci),
     ("errors", toJson (if bad.isEmpty then #[] else #[s!"axioms={bad.toList}"])),
     ("axioms", toJson (axs.map toString)), ("sorry", toJson (axs.contains ``sorryAx)),
-    ("decl", j), ("binders", Json.arr binders), ("conclusion", concl), ("exact", exact),
-    ("closure", toJson closure)])
+    ("decl", j), ("binders", Json.arr binders), ("conclusion", concl), ("tree", tree),
+    ("exact", exact), ("closure", toJson closure)])
 
 /-! ## Dependencies, proofs included
 
