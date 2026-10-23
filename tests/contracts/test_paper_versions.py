@@ -229,10 +229,10 @@ def test_a_claim_map_relates_the_claims_of_two_versions_and_changes_no_status(tm
         return [{"key": k, "number": n, "label": l, "statement": t} for k, n, l, t in rows]
     m = claim_map(v1, inv(("theorem-1", "Theorem 1", "thm:a", "A bound."),
                           ("theorem-2", "Theorem 2", None, "An  identity."),
-                          ("theorem-3", "Theorem 3", None, "A remark."),
+                          ("theorem-3", "Theorem 3", "rem:old", "A remark."),
                           ("theorem-4", "Theorem 4", None, None)),
                   latest, inv(("lemma-1", "Lemma 1", None, "An identity."),
-                              ("theorem-2", "Theorem 2", None, "Another."),
+                              ("theorem-2", "Theorem 2", "thm:new", "Another."),
                               ("theorem-3", "Theorem 3", "thm:a", "A sharper bound.")))
     assert [(e["change"], [r["key"] for r in e["from"]], [r["key"] for r in e["to"]])
             for e in m["claims"]] == [("changed", ["theorem-1"], ["theorem-3"]),
@@ -277,3 +277,59 @@ def test_a_claim_map_relates_the_claims_of_two_versions_and_changes_no_status(tm
         latest, ["theorem-2"], [{**listed, "from": "arxiv:2601.01234v2"}])["claims"])
     with pytest.raises(ValueError, match="relate versions"):
         write_paper_site(tmp_path / "x", {"title": "T"}, [], None, None, claim_maps=[listed])
+
+
+def test_a_claim_map_calls_a_claim_removed_or_new_only_when_it_has_no_counterpart():
+    """#296: a claim whose counterpart has no statement text, an unlabelled claim whose statement
+    was edited, and a statement that only gains or renames a `\\label` keep their counterpart; a
+    claim is removed (or new) only when the other version certainly has none."""
+    from prooflens.paper import claim_map
+    v1, v2 = "arxiv:2601.01234v1", "arxiv:2601.01234v2"
+
+    def inv(*rows):
+        return [{"key": k, "number": n, "label": l, "statement": t} for k, n, l, t in rows]
+
+    def changes(earlier, later):
+        return [(e["change"], [r["key"] for r in e["from"]], [r["key"] for r in e["to"]])
+                for e in claim_map(v1, earlier, v2, later)["claims"]]
+
+    # The counterpart has no statement text: nothing says whether the claim changed, and it is
+    # not removed (nor new, the other way), whether the counterpart has its label or none.
+    bound = inv(("theorem-1", "Theorem 1", "thm:a", "A bound."))
+    for other in (inv(("theorem-1", "Theorem 1", "thm:a", None)),
+                  inv(("theorem-1", "Theorem 1", None, ""))):
+        assert changes(bound, other) == [] and changes(other, bound) == []
+
+    # An unlabelled claim whose statement was edited is its own counterpart, changed.
+    assert changes(inv(("remark-1", "Remark 1", None, "A remark."),
+                       ("eq-1", "(1)", None, "\\begin{equation}\n  a = b\n\\end{equation}")),
+                   inv(("remark-1", "Remark 1", None, "A remark, edited."),
+                       ("eq-1", "(1)", None, "\\begin{equation}\n  a = c\n\\end{equation}"))) \
+        == [("changed", ["remark-1"], ["remark-1"]), ("changed", ["eq-1"], ["eq-1"])]
+
+    # A `\label` is not printed: a statement that only gains or renames one is the same text.
+    assert changes(
+        inv(("eq-2", "(2)", None, "\\begin{equation}\n  x \\le y\n\\end{equation}"),
+            ("eq-3", "(3)", "eq:old", "\\begin{equation}\\label{eq:old}\n  y \\le z\n\\end{equation}")),
+        inv(("eq-2", "(2)", "eq:two", "\\begin{equation}\\label{eq:two}\n  x \\le y\n\\end{equation}"),
+            ("eq-4", "(4)", "eq:new", "\\begin{equation}\\label {eq:new}  y \\le z\n\\end{equation}"))) \
+        == [("same", ["eq-2"], ["eq-2"]), ("renumbered", ["eq-3"], ["eq-4"])]
+
+    # Removed and new when certain: the claim has a label the other version does not give, and
+    # every claim there under its number has a statement and a counterpart.
+    earlier = inv(("lemma-1", "Lemma 1", "lem:gone", "Gone."),
+                  ("lemma-2", "Lemma 2", "lem:kept", "Kept."))
+    later = inv(("lemma-1", "Lemma 1", "lem:kept", "Kept."))
+    assert changes(earlier, later) == [("removed", ["lemma-1"], []),
+                                       ("renumbered", ["lemma-2"], ["lemma-1"])]
+    assert changes(later, earlier) == [("renumbered", ["lemma-1"], ["lemma-2"]),
+                                       ("new", [], ["lemma-1"])]
+    # Without a label, its counterpart may be an edited claim under another number.
+    unlabelled = inv(("lemma-1", "Lemma 1", None, "Gone."), ("lemma-2", "Lemma 2", "lem:kept", "Kept."))
+    assert changes(unlabelled, later) == [("renumbered", ["lemma-2"], ["lemma-1"])]
+    # A claim of the other version under its number that is unmatched (here: its label is given
+    # to two claims, so it matches neither) may be its counterpart.
+    assert changes(inv(("lemma-1", "Lemma 1", "lem:gone", "Gone."),
+                       ("lemma-2", "Lemma 2", "lem:dup", "Two."),
+                       ("lemma-3", "Lemma 3", "lem:dup", "Three.")),
+                   inv(("lemma-1", "Lemma 1", "lem:dup", "One."))) == []
