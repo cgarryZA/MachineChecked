@@ -7,10 +7,14 @@ the mean time per test of the files it lists. The split depends only on the coll
 that file, so every shard computes the same split, and each collected test is in exactly one part.
 
 `--shard-times PATH` writes the time each test file took (setup, call and teardown) to PATH as
-JSON. Run this module on every shard's file from one CI run to rewrite `durations.json`:
+JSON. Run this module on every shard's file from one or more CI runs to rewrite `durations.json`:
 
-    gh run download RUN_ID -p 'test-times-*'
-    python tests/shards.py test-times-*/test-times.json
+    gh run download RUN_ID -p 'test-times-*' -D run-a    # and another run into run-b
+    python tests/shards.py run-*/test-times-*/test-times.json
+
+Each shard runs on its own runner, and runners differ in speed by a third or more. Given several
+runs, whose shards hold different files, each file's time is fitted as its time on a runner of
+the runs' mean speed, with every report's times its runner's factor times the files' times.
 """
 
 from __future__ import annotations
@@ -96,18 +100,31 @@ class Shards:
                 f"{self.summary}, took {(time.monotonic() - self.start) / 60:.1f} min")
 
 
+def ratio(a: float, b: float) -> float:
+    return a / b if a > 0 and b > 0 else 1.0
+
+
+def fit(reports: list[dict[str, float]]) -> dict[str, float]:
+    """Each file's time on a runner of mean speed, from the reports of shards that ran on
+    different runners (a file in one report only keeps that time, scaled by its runner)."""
+    files = sorted({f for rep in reports for f in rep})
+    factor = [1.0] * len(reports)
+    for _ in range(100):
+        base = {f: sum(rep[f] / factor[k] for k, rep in enumerate(reports) if f in rep)
+                   / sum(f in rep for rep in reports) for f in files}
+        factor = [ratio(sum(rep.values()), sum(base[f] for f in rep)) for rep in reports]
+        mean = sum(factor) / len(factor)
+        factor = [x / mean for x in factor]
+    return base
+
+
 def main(paths: list[str]) -> int:
     if not paths:
         print(__doc__, file=sys.stderr)
         return 2
-    merged: dict[str, float] = {}
-    for p in paths:
-        for f, t in json.loads(Path(p).read_text()).items():
-            if f in merged:
-                raise SystemExit(f"{f} is in two of the files given: pass one CI run's shards")
-            merged[f] = t
-    DURATIONS.write_text(json.dumps(dict(sorted(merged.items())), indent=1) + "\n")
-    print(f"wrote {DURATIONS} ({len(merged)} files, {sum(merged.values()) / 60:.1f} min)")
+    times = fit([json.loads(Path(p).read_text()) for p in paths])
+    DURATIONS.write_text(json.dumps({f: round(t, 1) for f, t in sorted(times.items())}, indent=1) + "\n")
+    print(f"wrote {DURATIONS} ({len(times)} files, {sum(times.values()) / 60:.1f} min)")
     return 0
 
 

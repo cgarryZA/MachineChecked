@@ -17,6 +17,15 @@ def test_whole_files_are_dealt_longest_first_to_the_least_loaded_part():
     assert shards.split(counts, {}, 3) == [(["d.py"], 5.0), (["a.py"], 3.0), (["c.py", "b.py"], 3.0)]
 
 
+def test_file_times_are_fitted_across_runners_of_different_speeds():
+    # Two runs of two shards each; the first and last runners are twice as slow as the others.
+    reports = [{"a.py": 20.0, "b.py": 40.0}, {"c.py": 30.0}, {"a.py": 10.0}, {"b.py": 40.0, "c.py": 60.0}]
+    fitted = shards.fit(reports)
+    assert {f: round(t, 6) for f, t in fitted.items()} == {"a.py": 15.0, "b.py": 30.0, "c.py": 45.0}
+    # One run: each file keeps its time.
+    assert shards.fit(reports[:2]) == {"a.py": 20.0, "b.py": 40.0, "c.py": 30.0}
+
+
 def collected(*args: str) -> list[str]:
     out = subprocess.run([sys.executable, "-m", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider",
                           *args], cwd=ROOT, capture_output=True, text=True, check=True).stdout
