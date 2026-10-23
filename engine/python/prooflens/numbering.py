@@ -66,9 +66,14 @@ REF = re.compile(r"(?<![\w.])(Theorem|Thm|Lemma|Lem|Proposition|Prop|Corollary|C
                  r"Subsection|Section|Sec|§)(\.?[ \t~]*)(\d+(?:\.\d+)*)(?![\w]|\.\d)", re.I)
 NAME_REF = re.compile(r"(?:^|_)(theorem|thm|lemma|lem|proposition|prop|corollary|cor|"
                       r"definition|defn|def|section|sec)_?(\d+(?:_\d+)*)(?=_|$)")
+# Just after a number: a citation (`of [AB]`, `in Hardy and Wright`, `[AB]`). Group 1 is the
+# capitalised word it starts with, which may instead name a part of this paper or of its
+# formalisation (`in Section 7`, `_OWN_PARTS`).
 _ELSEWHERE_AFTER = re.compile(
     r"\s*(?:,\s*)?(?:of|in|from)\s+(?!(?:the|this|our)\s+(?:paper|article|manuscript|note|text|"
-    r"preprint)\b)(?:\[|\\cite|[A-Z]|the\s+[A-Z]|arXiv|ref)|\s*\[")
+    r"preprint)\b)(?:\[|\\cite|(?:the\s+)?([A-Z][\w\-–]*)|arXiv|ref)|\s*\[")
+# The label of a part after its word (`Section 7.2`, `Appendix A`, `Part II`, `Lean 4`).
+_PART_LABEL = re.compile(r"\.?[ \t~]*(?:(?:[IVXLCDM]+|[A-Z]|\d+)(?:\.\d+)*\b)?")
 # Just before a number: an open citation bracket (`[AB, Lemma 9`), `et al.`, or the possessive
 # of a bracketed citation or of `et al.` (`[AB]'s Lemma 9`, `Smith et al.'s Theorem 3`).
 _ELSEWHERE_BEFORE = re.compile(r"\[[^\]]*$|\bet al\.?\s*,?\s*$"
@@ -77,8 +82,17 @@ _ELSEWHERE_BEFORE = re.compile(r"\[[^\]]*$|\bet al\.?\s*,?\s*$"
 # `Gauss' Lemma`): a capitalised word of at least two letters, not one naming this paper, a
 # part of it or its formalisation (`Lean's Theorem 2.1`).
 _POSSESSIVE = re.compile(r"(?<![\w'’.\-–])([^\W\d_][\w\-–]+)(?:['’]s|(?<=s)['’])[\s~*_]*$")
-_OWN_WORDS = {"paper", "article", "manuscript", "note", "preprint", "thesis", "author",
-              "authors", "section", "chapter", "appendix", "part", "lean"}
+# Words naming a part of this paper or of its formalisation, its statements among them: after a
+# number they name no other work (`Lemma 7.7 in Section 7`, `Theorem 9.9 in Lean`, `Theorem 2.1
+# in Lemma 3.2`).
+_OWN_PARTS = set(KINDS) | {"sections", "chapter", "chapters", "ch", "chap", "appendix",
+                           "appendices", "app", "supplement", "part", "parts", "step", "lean",
+                           "mathlib"}
+# Those words and the words naming the paper or its authors: a possessive of any of them is no
+# author's (`the paper's Lemma 2.1`, `Lean's Theorem 2.1`). After a number, a capitalised word
+# of the second sort may name another work (`Theorem 2.1 of Paper B`).
+_OWN_WORDS = _OWN_PARTS | {"paper", "article", "manuscript", "note", "preprint", "thesis",
+                           "author", "authors"}
 # A chapter after a comma just before the number, as a citation of a book gives it
 # (`Hardy–Wright, *An Introduction*, Ch. IV, Prop. 4.7`); a chapter in prose (`In Chapter 4,
 # Lemma 4.2`) is not one.
@@ -141,10 +155,22 @@ def module_doc_blocks(root: Path | None, modules) -> list[dict]:
 
 def _elsewhere(text: str, start: int, end: int) -> str | None:
     before = text[max(0, start - 60):start]
-    if _ELSEWHERE_AFTER.match(text[end:end + 60]) or _ELSEWHERE_BEFORE.search(before) \
+    if _cited_after(text[end:end + 60]) or _ELSEWHERE_BEFORE.search(before) \
             or _CHAPTER.search(before) or _authors(before):
         return "it refers to another work"
     return None
+
+
+def _cited_after(after: str) -> bool:
+    """Whether the text just after a number cites another work. A part of this paper or of its
+    formalisation (`in Section 7`, `from Appendix A`, `in Lean`) does not, unless a citation
+    follows it (`in Section 4 of [AB]`)."""
+    m = _ELSEWHERE_AFTER.match(after)
+    while m and m.group(1) and m.group(1).lower() in _OWN_PARTS:
+        after = after[m.end():]
+        after = after[_PART_LABEL.match(after).end():]
+        m = _ELSEWHERE_AFTER.match(after)
+    return bool(m)
 
 
 def _authors(before: str) -> bool:

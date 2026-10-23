@@ -175,9 +175,11 @@ A reference is to another work when a citation follows its number (`Theorem 4.1 
 bracket (`[AB, Lemma 9]`), `et al.`, an author's possessive (`Gauss's Lemma 4.22`,
 `[AB]'s Lemma 9`, `Smith et al.'s Theorem 3`), or a chapter after a comma, as a book's citation
 gives it (`Hardy–Wright, *An Introduction*, Ch. IV, Prop. 4.7`). A possessive of the paper,
-a part of it or the Lean (`the paper's Lemma 2.1`, `Lean's Theorem 2.1`), a possessive earlier
-in the sentence (`By Gauss's lemma and Lemma 2.1`) and a chapter in prose (`In Chapter 4,
-Lemma 4.2`) leave the reference checked against the paper.
+a part of it or the Lean (`the paper's Lemma 2.1`, `Lean's Theorem 2.1`), a part of the paper
+or the Lean after the number (`Lemma 7.7 in Section 7`, `from Appendix A`, `in Lean`), a
+possessive earlier in the sentence (`By Gauss's lemma and Lemma 2.1`) and a chapter in prose
+(`In Chapter 4, Lemma 4.2`) leave the reference checked against the paper. A citation after
+the part names another work (`Lemma 4.1 in Section 4 of [AB]`).
 
 Digits that run together in a name (`lem41_bound`, or `Assumption22` written as an
 identifier in a docstring) are read in every way the paper could mean them, `4.1` and `41`: the
