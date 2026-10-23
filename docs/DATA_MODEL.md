@@ -74,7 +74,9 @@ says; one with `source=none` read none of the passages. A marker written
 `<!-- retired spec-review: ... -->` (`inventory retire --markers`) records no review and still
 closes its review text. The section the
 marker closes is the text of the review. The last marker of a declaration, reading the files in
-order (a directory's `.md` files by name), is its current record.
+order (a directory's `.md` files by name), is its current record. When it is at another hash
+and an earlier marker would count, the review's state is `stale` with `why` `shadowed`, and
+`shadowed` gives both markers (`reading` and `record`, each `{file, line, hash, by}`).
 
 A `step-review` marker records a review of a printed proof step; its hash is the digest of the
 step's source text as read, and `review promote`, which writes it from an accepted report of the
@@ -107,7 +109,10 @@ it and `target_fingerprint` is the target's current version, and otherwise as
 `reviewed_composition`, with `recorded_basis` and `basis_reason`.
 
 Dismissals of warnings (`dismissals.json`):
-`[{"code", "subject", "trigger", "fingerprint", "rationale", "by"}]`.
+`[{"code", "subject", "trigger", "fingerprint", "rationale", "by"}]`. A dismissal of a
+totalisation warning about one application also has `at` (the warning's `at`), and its
+`fingerprint` is the application's (`pl-occ-v1:…`); without `at` it names the operation in the
+whole proposition and its `fingerprint` is the proposition's ([ASSURANCE.md](ASSURANCE.md)).
 
 ## Evidence (`evidence.schema.json`), written by the engine
 
@@ -119,7 +124,7 @@ Dismissals of warnings (`dismissals.json`):
 | `inventory` | the inventory as read |
 | `reviews` | the review files' hashes and every parsed marker |
 | `dismissals` | as read |
-| `lean` | the probe records: specifications (binders, conclusion, closure, constants, hashes), proofs (exact-type check, axioms), declarations (signature, value, definition content, authored source, doc, hashes), layering |
+| `lean` | the probe records: specifications (binders, conclusion, closure, constants, hashes), proofs (exact-type check, axioms), declarations (signature, value, definition content, authored source, doc, hashes, `proposition`: whether the type is a proposition, null when Lean could not tell), layering |
 | `tex` | per paper: mode, page size, anchors (env, number, labels, file:line, begin/head/end positions, source hash), files read, source regions, the text of the passage of each claim located by line (`region_text`), and the display excerpts of its claims (`excerpts`, [SOURCE_REGIONS.md](SOURCE_REGIONS.md#display-excerpts)) |
 | `assessment` | per claim: status and clauses (for a proof step, also its `step_review` from its markers); all findings |
 
@@ -216,7 +221,8 @@ line, each read from the source file that holds it, also when the main file `\in
 `\include`s its sections; and its display `excerpt`, when the paper publishes its source text), each
 clause's unfolded statement, proofs, witness, regimes, reviews and structured `evidence`, the
 declarations of its closure, and its findings. A clause also lists `witness_defs`, the
-declarations only its witnesses use that have no current review (`{name, witnesses, state}`),
+declarations only its witnesses use that carry data (proofs are left out) and have no current
+review (`{name, witnesses, state}`),
 and a definition claim's clause `witness_candidates`, the witness-only declarations that use a
 definition it maps (`{name, uses, witnesses}`). A claim is loaded only when it is opened.
 In zero configuration a passport also has `correspondence` (or `null`): the mapper's reading of how
@@ -249,7 +255,9 @@ apart. A proof step's row also has `step_review`. A proof step's passport has `s
 
 A step's passport also has its printed text (`statement_tex`) and its context in the proof
 (`context_tex`): from the proof's opening (at most 40 lines before the step) to the sentence after
-it. A parent's passport lists its steps (`steps`: id, number, unit, status, review state, linked
+it, kept to its first 20000 characters. A context cut there has `context_cut`: the `file`, the
+`line` holding the first character left out, the context's last line (`end_line`), and the
+characters `kept` of its `chars`. A parent's passport lists its steps (`steps`: id, number, unit, status, review state, linked
 and route names). In zero configuration the links file holds a step's links under its label
 (`lean`, with `coverage`, `basis`, `note`, `by`) and its formal route under `route`
 (`{lean, note, by}`); a step whose only links are a formal route has the status

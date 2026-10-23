@@ -1,14 +1,16 @@
 name: CI
 
-# A pull request's pushes run once, as `pull_request`; a newer push cancels the older run.
-# Runs on main always finish: the demo audit (pages.yml) publishes after them.
+# A pull request's pushes run once, as `pull_request`, in one concurrency group per pull request,
+# so a newer push cancels the older run, running or waiting. Each push to main has a group of its
+# own (its run's id), so it neither waits for nor cancels another run: every commit on main gets
+# a full run, and the demo audit (pages.yml) publishes after each one that passes.
 on:
   push:
     branches: [main]
   pull_request:
 
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.ref }}
+  group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
@@ -29,41 +31,71 @@ jobs:
       matrix:
         shard: [1, 2, 3, 4]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
           cache: npm
           cache-dependency-path: web/package-lock.json
       # The Lean toolchains are kept between runs, keyed on the versions the examples pin.
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: ~/.elan/toolchains
           key: elan-${{ runner.os }}-v4.24.0-${{ hashFiles('examples/*/lean-toolchain', 'tests/fixtures/*/lean-toolchain') }}
-      # The TeX Live packages are kept for a week, so the shards download only what changed; all
-      # shards share the key, and whichever finishes first saves it.
+      # The TeX Live packages a run installs are kept for a week, so the shards download only what
+      # changed; all shards share the key, and whichever finishes first saves it.
       - id: week
         run: echo "week=$(date -u +%G-%V)" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: ~/apt-archives
           key: apt-test-${{ runner.os }}-${{ steps.week.outputs.week }}
           restore-keys: apt-test-${{ runner.os }}-
       - name: Install TeX Live and elan
         run: |
-          # Each download stops after 5 minutes and is tried three times, so a stalled mirror costs
-          # a retry; the packages are then installed from what was downloaded.
-          retry() { for i in 1 2 3; do timeout 300 "$@" && return 0; echo "attempt $i failed or stalled: $*" >&2; sleep 5; done; return 1; }
+          # A download stops when it stops making progress, not after a fixed time, so a slow
+          # mirror costs time rather than the job. apt gives up on a server that sends nothing for
+          # 30 seconds and tries again from where it stopped, then the next mirror; `fetch` also
+          # stops a command that has downloaded nothing for 5 minutes (a connection can hang
+          # without apt noticing) and runs it again, three times in all. The downloads share 25
+          # of the job's 60 minutes. apt logs each package as it starts, with its size.
+          deadline=$(( $(date +%s) + 25 * 60 ))
+          fetch() {
+            for i in 1 2 3; do
+              left=$(( deadline - $(date +%s) ))
+              [ "$left" -gt 0 ] || { echo "no time left for downloads: $*" >&2; return 1; }
+              timeout "$left" "$@" & pid=$!
+              # Progress is growth of the files the downloads write: apt's, and elan's in the
+              # temporary directory.
+              idle=0; size=
+              while kill -0 "$pid" 2>/dev/null; do
+                now=$(sudo du -sb /var/lib/apt/lists /var/cache/apt/archives "${TMPDIR:-/tmp}" 2>/dev/null) || true
+                if [ "$now" = "$size" ]; then idle=$((idle + 1)); else size=$now; idle=0; fi
+                if [ "$idle" = 300 ]; then echo "nothing downloaded for 5 minutes: $*" >&2; kill "$pid"; fi
+                sleep 1
+              done
+              wait "$pid" && return 0
+              echo "attempt $i failed: $*" >&2; sleep 10
+            done
+            return 1
+          }
+          NET="-o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o Acquire::Retries=3"
           PKGS="latexmk texlive-latex-recommended texlive-latex-extra texlive-science texlive-fonts-recommended poppler-utils"
           mkdir -p ~/apt-archives; sudo cp -n ~/apt-archives/*.deb /var/cache/apt/archives/ 2>/dev/null || true
-          retry sudo apt-get -o Acquire::Retries=3 update -qq
-          retry sudo apt-get -o Acquire::Retries=3 install -y -qq --no-install-recommends --download-only $PKGS
-          cp -n /var/cache/apt/archives/*.deb ~/apt-archives/ 2>/dev/null || true
+          fetch sudo apt-get -q $NET update
+          fetch sudo apt-get -q $NET install -y --no-install-recommends --download-only $PKGS
+          # The saved packages are then exactly those this install uses: the files apt would
+          # download into an empty archive.
+          rm -f ~/apt-archives/*.deb
+          apt-get -qq install --no-install-recommends --print-uris -o Dir::Cache::Archives=/nonexistent/ $PKGS |
+            sed -n "s/^'[^']*' \([^ ]*\) .*/\1/p" | (cd /var/cache/apt/archives && xargs -r cp -t ~/apt-archives/)
+          echo "packages kept for the cache: $(ls ~/apt-archives | wc -l), $(du -sh ~/apt-archives | cut -f1)"
+          # The packages install from what was downloaded.
           sudo apt-get install -y -qq --no-install-recommends $PKGS
-          retry sh -c 'curl -sSfL --connect-timeout 30 --max-time 120 --retry 4 https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain none'
+          fetch sh -c 'curl -sSfL --connect-timeout 30 --max-time 120 --retry 4 https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain none'
           echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
           # The examples' toolchains, and an older Lean too: the probe must compile on the
           # versions users have (tests/simple/test_structure.py runs it on both). A download
@@ -77,22 +109,25 @@ jobs:
         run: cd examples/plain-paper && lake build
       - name: Build the toy paper (the tests copy its build)
         run: cd examples/toy-paper && prooflens build --fail-on-violation
-      - name: Prepare the preview browser
+      - name: The reader's npm packages (Playwright, for the preview)
         if: matrix.shard == 1
-        run: cd web && npm ci && npx playwright install --with-deps chromium
+        run: cd web && npm ci
+      - name: The preview browser (Playwright's Chromium, from caches when it can)
+        if: matrix.shard == 1
+        uses: ./.github/actions/browser
       - name: Export the demo (approved fields only, scanned; data only, the Demo audit workflow publishes it)
         if: matrix.shard == 1
         run: cd examples/toy-paper && prooflens export --data-only --out ../../demo-site
       - name: Capture the exported reader in both themes and viewport sizes
         if: matrix.shard == 1
         run: READER=engine/python/prooflens/web node web/scripts/preview.mjs demo-site "$RUNNER_TEMP/reader-preview"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: matrix.shard == 1
         with:
           name: reader-preview
           path: ${{ runner.temp }}/reader-preview
           retention-days: 7
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: matrix.shard == 1
         with:
           name: demo-site
@@ -102,7 +137,7 @@ jobs:
       - name: Tests (contracts, mutations, security, zero-configuration), shard ${{ matrix.shard }} of ${{ strategy.job-total }}
         run: pytest -q --shard ${{ matrix.shard }}/${{ strategy.job-total }} --shard-times "$RUNNER_TEMP/test-times.json"
       # Each test file's time, for rebalancing the shards (tests/shards.py says how).
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: success() || failure()
         with:
           name: test-times-${{ matrix.shard }}
@@ -132,11 +167,11 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
           cache: npm
@@ -147,10 +182,12 @@ jobs:
           cd web && npm ci && npm run build && cd ..
           git status --porcelain -- engine/python/prooflens/web
           test -z "$(git status --porcelain -- engine/python/prooflens/web)"
+      - name: The browser (Playwright's Chromium, from caches when it can)
+        uses: ./.github/actions/browser
       - name: The reader in a browser (web/tests)
         run: |
-          cd web && npx playwright install --with-deps chromium && SHOTS="$RUNNER_TEMP/reader-shots" node tests/reader.test.mjs
-      - uses: actions/upload-artifact@v4
+          cd web && SHOTS="$RUNNER_TEMP/reader-shots" node tests/reader.test.mjs
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: reader-screenshots
@@ -184,7 +221,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: machinechecked-audit*
           merge-multiple: true

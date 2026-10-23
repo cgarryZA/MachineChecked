@@ -34,6 +34,12 @@ project, unreadable paper or failed Lean probe). In that last case the document 
 `message`) and an empty claims list: report the execution error. Progress goes to stderr, so stdout is only
 the JSON. `version` is MachineChecked's version, and `release` identifies the evidence the
 statuses come from (it changes when the paper, the links or the Lean change). Each `status_code` is a stable machine-readable result; `status` is its display label.
+A link whose module is not built (`link.module-unbuilt`) or could not be loaded
+(`link.module-failed`) has a `status_detail` naming that module (for one that could not be
+loaded, with the first lines of what Lean reported, and whether the module's library could not
+be loaded in one session first); an ambiguous link
+(`link.ambiguous`) has one naming the modules that declare the name. `check` prints the same
+detail after the link's status.
 `class` is only its coarse group for colouring (`proved`, `open`, `malformed`,
 `unspecified`), and the skill explains both.
 Without a `machinechecked.toml`, `warnings` lists names in module docstrings that the project
@@ -60,15 +66,29 @@ A warning with code `review-citation` is a name or file that review text cites a
 resolves: its `subject` is the review file, its `trigger` the token, with `file` and `line`.
 A warning with code `totalised` names the operation in `trigger`. For a supremum, an infimum, a
 division, an inverse, an integral, a sum, a root, a logarithm, a derivative or a conditional
-expectation it also has `occurrences`: each application of that operation the probe read in the
+expectation, or `ENNReal.toReal`, it also has `occurrences`: each application of that operation the probe read in the
 statement, with `operation`, its `type` (as Lean prints it; null when it could not be read) and
 `type_head` (the type's head constant), `structure` (what decides the rule: `complete-lattice`,
 `conditionally-complete-lattice`, `group`, `group-with-zero`, `one-element`, `unknown` when Lean
 finds none of those, or null when the rule does not depend on one), `state` (`applies`, `none`
 when the type gives the operation no exceptional case, or `unresolved`), `rule` (what the
 operation gives there, when it applies) and `at` (its positions in the proposition, the `id`s of
-the printed sub-terms). `occurrences_complete` is false when the statement was too large to read
-every application. The site data and `export` carry the same fields.
+the printed sub-terms). Where the rule needs a condition (a supremum or infimum in a
+conditionally complete type, an integral, `ENNReal.toReal`), the record also has `conditions`,
+each with `condition` (`bounded-above`, `bounded-below`, `nonempty-index`, `nonempty-set`,
+`integrable`, `finite`), `state` (`established`, `refuted`, `unresolved`), and for an
+established or refuted one `by` (`premise` or `type`), `premise` (its name, empty when Lean
+named it) and `statement` (the premise as Lean prints it, or the property of the types), and
+`condition_state` for them together; a warning whose conditions are all established has
+`resolved: true` and is left out of the open warnings' counts. Each application whose rule
+applies or is unresolved is its own warning:
+its `occurrences` holds that one record, `at` is its first position (the finding's `id` ends in
+`@` and that position) and `fingerprint` identifies it in its scope (what a dismissal of it
+records, with `at`). A warning about the applications a statement too large to read did not
+reach has empty `occurrences` and `occurrences_complete: false`. A dismissed warning has
+`dismissed` (`by`, `rationale`, and `form: "statement"` when the dismissal names the operation in
+the whole statement rather than one application); `dismissal_stale` marks one whose dismissal no
+longer applies. The site data and `export` carry the same fields.
 When the configuration has one paper and the project is built, the document
 also has `warnings` with the `paper-reference` warnings and `numbering`, as in zero
 configuration; with several papers they are absent. Report the violations and obligations by
@@ -116,7 +136,8 @@ prints one JSON document (`machinechecked/compare@1`) for one claim, read from t
 - `paper.passages`: the complete printed passage, with `source` (file, line, label, pages,
   `position` exact or approximate) and `quality` (`LaTeX source`, or `text extracted from the
   PDF`). `available: false` means the build holds no text for it; `complete: false` means the
-  PDF extraction cut it. Read those in the paper.
+  PDF extraction cut it, or that a proof step's context in the proof was cut (`context_cut`
+  gives the file and line, and `reason` says it in words). Read those in the paper.
 - `lean.declarations`: every linked declaration (or locked statement) with its complete
   statement: `statement.text` exactly as Lean prints it, `binders` and `conclusion` with their
   expression ids, and Lean's checks (axioms, sorry, errors). `lean.candidates` are suggestions
@@ -245,7 +266,8 @@ Every document says how much it holds; read these fields before concluding that 
 absent:
 
 - `compare`: a passage with `available: false` is not in the build (read it in the paper at its
-  `source`), and `complete: false` marks PDF text the extraction cut. `retrieval.unavailable`
+  `source`), and `complete: false` marks PDF text the extraction cut or a proof step's context
+  that was cut (at its `context_cut`). `retrieval.unavailable`
   names what is not extracted yet, each with the issue that owns it and, where there is one,
   the query that gives it on `request`; `retrieval.on_request` lists the targeted queries.
 - Lists: the packet's `retrieval.definitions` and the `retrieval` of a query give `total`,

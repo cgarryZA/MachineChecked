@@ -61,6 +61,64 @@ def test_another_works_numbers_are_not_this_papers():
     assert out["pattern"]["other_source"] == 4 and not out["pattern"]["drift"]
 
 
+def test_a_part_of_the_paper_or_the_lean_after_the_number_is_not_another_work():
+    # After "of", "in" or "from", a part of this paper or of its formalisation names no other
+    # work, so a stale number written that way is checked (#308); a citation after the part, or
+    # another work's name, still names another work.
+    checked = {"P.a": "Lemma 7.7 in Section 7.", "P.b": "Lemma 7.7 of Section 7.",
+               "P.c": "Lemma 7.7 from Appendix A.", "P.d": "Theorem 9.9 in Lean.",
+               "P.e": "Theorem 9.9 in Mathlib form.", "P.f": "Theorem 9.9 in the Appendix.",
+               "P.g": "Theorem 9.9, in Sec. 9.", "P.h": "Theorem 9.9 of Part II.",
+               "P.i": "Theorem 9.9 in Sections 2 and 3.", "P.j": "Theorem 9.9 in Lemma 3.2.",
+               "P.k": "Theorem 9.9 in Lean 4."}
+    elsewhere = {"Q.a": "Theorem 4.1 of [Gauss].", "Q.b": "Theorem 3 in Hardy and Wright.",
+                 "Q.c": "Lemma 7.7 in Section 7 of [AB].", "Q.d": "Lemma 7.7 from Appendix A [AB].",
+                 "Q.e": "Theorem 9.9 in Chapter IV of Hardy and Wright.",
+                 "Q.f": "Theorem 9.9 in Prop. 4.7 of [AB].", "Q.g": "Theorem 9.9 of Paper B.",
+                 "Q.h": "Theorem 9.9 in Sections 4 and 5 of [AB]."}
+    index = [decl(n, d) for n, d in {**checked, **elsewhere}.items()]
+    out = nb.analyse(index, CLAIMS, INV)
+    first = {}
+    for o in out["references"]:
+        first.setdefault(o["source"]["declaration"], o)
+    for n in checked:
+        assert first[n]["status"] == "absent" and nb.suspect(first[n]), (n, first[n])
+    for n in elsewhere:
+        assert first[n]["status"] == "other-source", (n, first[n])
+        assert first[n]["detail"] == "it refers to another work"
+    # The current numbers, written the same way, are exact.
+    index = [decl("R.a", "Theorem 2.1 in Section 2."), decl("R.b", "Theorem 3.1 from Appendix A."),
+             decl("R.c", "Proposition 2.3 in Lean.")]
+    assert statuses(nb.analyse(index, CLAIMS, INV)) == {
+        ("R.a", "Theorem 2.1"): "exact", ("R.a", "Section 2"): "exact",
+        ("R.b", "Theorem 3.1"): "exact", ("R.c", "Proposition 2.3"): "exact"}
+
+
+def test_a_word_that_only_starts_like_ref_cites_no_other_work():
+    # After "of", "in" or "from", a lowercase reference word cites another work only with its
+    # label; any other word starting "ref" leaves a stale number checked (#329).
+    checked = {"P.a": "Theorem 9.9 in refined form.", "P.b": "Lemma 7.7 from refs.",
+               "P.c": "Theorem 9.9 in reference to Lemma 2.",
+               "P.d": "Lemma 7.7 of reflexive spaces.", "P.e": "Theorem 9.9, in refs."}
+    elsewhere = {"Q.a": "Theorem 9.9 of ref. [3].", "Q.b": "Lemma 7.7 in ref. 12.",
+                 "Q.c": "Theorem 9.9 in [ref].", "Q.d": "Lemma 7.7 from refs. [3, 4].",
+                 "Q.e": "Theorem 9.9 in reference [3].", "Q.f": "Lemma 7.7 of ref.~\\cite{AB}.",
+                 "Q.g": "Theorem 9.9 in Ref. [3]."}
+    index = [decl(n, d) for n, d in {**checked, **elsewhere}.items()]
+    out = nb.analyse(index, CLAIMS, INV)
+    first = {}
+    for o in out["references"]:
+        first.setdefault(o["source"]["declaration"], o)
+    for n in checked:
+        assert first[n]["status"] == "absent" and nb.suspect(first[n]), (n, first[n])
+    for n in elsewhere:
+        assert first[n]["status"] == "other-source", (n, first[n])
+        assert first[n]["detail"] == "it refers to another work"
+    # The current number, written the same way, is exact.
+    assert statuses(nb.analyse([decl("R.a", "Theorem 2.1 in refined form.")], CLAIMS, INV)) \
+        == {("R.a", "Theorem 2.1"): "exact"}
+
+
 def test_an_authors_possessive_or_a_books_chapter_before_the_number_is_another_work():
     # What comes just before the number names another work: an author's possessive, or a
     # chapter after a comma as a book's citation gives it (#287).
@@ -126,6 +184,7 @@ def test_correct_references_are_quiet():
     index = [decl("P.a", "Theorem 2.1."), decl("P.b", "Proposition 2.3."),
              decl("P.c", "Theorem 3.1, in Section 3.")]
     out = nb.analyse(index, CLAIMS, INV)
+    assert set(statuses(out).values()) == {"exact"} and len(out["references"]) == 4
     assert not [o for o in out["references"] if nb.suspect(o)]
     assert not out["pattern"]["drift"]
 
@@ -306,6 +365,46 @@ def test_several_papers_attribute_each_reference_to_one():
     assert nb.paper_view(num, "B")["references"] and all(
         o["attributed"] == "B" for o in nb.paper_view(num, "B")["references"])
     assert num["pattern"]["references"] == len(full)
+
+
+def test_several_papers_read_a_citation_at_the_references_own_place():
+    # A bracketed citation just before the number names its paper (#330), and each reference
+    # is attributed from its own place in its context, not from the first occurrence of its
+    # text there (#331).
+    papers = [("U", ""), ("A", "")]
+
+    def named(doc):
+        return [nb.attribute(o, {}, papers)[0]
+                for o in nb.find_references([decl("P.a", doc)], [])]
+
+    assert named("[U, Lemma 2.1].") == named("[U]'s Lemma 2.1.") == ["U"]
+    assert named("By [U]’s\n  Lemma 2.1.") == ["U"]
+    assert named("[U, Lemma 2.1 and Lemma 2.2].") == ["U", "U"]
+    assert named("[U, Lemma 2.1; A, Lemma 3.2].") == ["U", "A"]
+    assert named("Lemma 2.1 of [A] and Lemma 2.1 of [U].") == ["A", "U"]
+    assert named("Lemma 2.1 of [U, Section 3] and Lemma 2.1 of [A].") == ["U", "U", "A"]
+    # Another work's citation, or two papers cited at once, names neither paper.
+    assert named("[X, Lemma 2.1], as in [U].") == [None]
+    assert named("Lemma 2.1 of [A] or [U].") == [None]
+    assert named("[A]'s Lemma 2.1 and [Gauss, Lemma 3].") == ["A", None]
+    # Each is then checked against the paper it names.
+    from types import SimpleNamespace
+    from prooflens import content
+    papers = [SimpleNamespace(id="A", title="Odd squares"),
+              SimpleNamespace(id="B", title="Triangle bounds")]
+    tex = {"A": {"mode": "latex", "anchors": [{"env": "lemma", "number": "2.2"}]},
+           "B": {"mode": "latex", "anchors": [{"env": "theorem", "number": "1.1"}]}}
+    inv_claims = [{"id": "A:l22", "paper": "A", "kind": "lemma", "number": "Lemma 2.2",
+                   "clauses": [{"spec": "PA.l22"}]},
+                  {"id": "B:t11", "paper": "B", "kind": "theorem", "number": "Theorem 1.1",
+                   "clauses": [{"spec": "PB.t11"}]}]
+    full = [decl("Common.c", "[A, Lemma 2.2] and [B]'s Theorem 1.1.", module="Common"),
+            decl("Common.d", "Lemma 2.2 of [B] and Lemma 2.2 of [A].", module="Common")]
+    num = content.several(papers, tex, inv_claims, {}, full, [], None, None, [])
+    assert [(o["source"]["declaration"], o["reference"], o.get("attributed"), o["status"])
+            for o in num["references"]] == [
+        ("Common.c", "Lemma 2.2", "A", "exact"), ("Common.c", "Theorem 1.1", "B", "exact"),
+        ("Common.d", "Lemma 2.2", "B", "absent"), ("Common.d", "Lemma 2.2", "A", "exact")]
 
 
 def test_several_papers_leave_an_unattributable_reference_unchecked():

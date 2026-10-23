@@ -188,7 +188,22 @@ def _exempt(c: str, ops) -> bool:
 
 # The operations the probe reads with their types (its `totalOps`).
 READ_BY_TYPE = {*ORDER_OPS, *DIVISION_OPS, "MeasureTheory.integral", "tsum",
-                "MeasureTheory.condExp", "deriv", "Real.sqrt", "Real.log"}
+                "MeasureTheory.condExp", "deriv", "Real.sqrt", "Real.log", "ENNReal.toReal"}
+
+# The conditions the probe looks for at an application (its `conditionsOf`), in words.
+CONDITIONS = {"bounded-above": "bounded above", "bounded-below": "bounded below",
+              "nonempty-index": "a nonempty index type", "nonempty-set": "a nonempty set",
+              "integrable": "the function integrable for this measure",
+              "finite": "a finite value"}
+
+
+def condition_state(conds: list[dict]) -> str:
+    """The state of an application's conditions together: `refuted` when a premise refutes one,
+    `established` when every one is established, `unresolved` otherwise."""
+    states = {c.get("state") for c in conds}
+    if "refuted" in states:
+        return "refuted"
+    return "established" if states == {"established"} else "unresolved"
 
 STRUCTURES = {("lattice", "complete"): "complete-lattice",
               ("lattice", "conditional"): "conditionally-complete-lattice",
@@ -232,9 +247,77 @@ def occurrences(srec: dict, c: str) -> list[dict] | None:
         state, rule = _rule(c, o)
         structure = next((v for (k, val), v in STRUCTURES.items() if o.get(k) == val
                           and k in o), None)
-        out.append({"operation": c, "type": o.get("carrier") or None,
-                    "type_head": o.get("carrier_head") or None, "structure": structure,
-                    "state": state, "rule": rule, "at": list(o.get("at") or [])})
+        rec = {"operation": c, "type": o.get("carrier") or None,
+               "type_head": o.get("carrier_head") or None, "structure": structure,
+               "state": state, "rule": rule, "at": list(o.get("at") or [])}
+        if state == "applies" and o.get("conditions"):
+            conds = [{k: d[k] for k in ("condition", "state", "by", "premise", "statement")
+                      if k in d} for d in o["conditions"]]
+            rec.update(conditions=conds, condition_state=condition_state(conds))
+        out.append(rec)
+    return out
+
+
+OCCURRENCE_VERSION = "pl-occ-v1"
+
+
+def occurrence_fingerprint(o: dict, decls: dict) -> str | None:
+    """What a dismissal of one application records: the application in its scope (the
+    variables it depends on and the hypotheses about them, `term`, and the variables' names),
+    its type and the structure on it, and the fingerprints of the project's declarations it
+    uses. None for a record from before the probe read the application's scope."""
+    import json
+    from .util import sha256_text
+    if not o.get("term"):
+        return None
+    uses = sorted((n, (decls.get(n) or {}).get("fingerprint")) for n in o.get("uses") or [])
+    key = {"term": o["term"], "vars": o.get("vars") or [], "uses": uses,
+           **{k: o.get(k) for k in ("carrier", "carrier_head", "lattice", "algebra",
+                                     "subsingleton")}}
+    return f"{OCCURRENCE_VERSION}:" + sha256_text(json.dumps(key, sort_keys=True,
+                                                             ensure_ascii=False))
+
+
+def _unresolved(c: str, o: dict) -> str:
+    """Why the rule of `c` at one application is unresolved: Lean finds no structure on its
+    type that decides it."""
+    ty = o.get("carrier") or "?"
+    if c in ORDER_OPS:
+        return (f"Lean finds no lattice structure on the type of this {ORDER_OPS[c]} ({ty}), so "
+                "whether it can take a default value is unresolved")
+    what, outcome = DIVISION_OPS[c]
+    return (f"Lean finds neither a group nor a field structure on the type of this {what} "
+            f"({ty}), so {outcome} is unresolved")
+
+
+def totalised_findings(srec: dict, spec: str, decls: dict | None = None) -> list[dict]:
+    """The totalisation warnings of `spec`, one per application of an operation the probe read
+    by type whose rule applies or is unresolved there (`occurrence`: the record, with its
+    `fingerprint`), and one per operation for what is not read application by application: an
+    operation not read by type, evidence from before the record, an operation used without
+    being read, and the applications a walk that stopped early did not reach."""
+    ops = srec.get("order_ops")
+    out = []
+    for c, msg in totalised(srec, spec):
+        if c not in READ_BY_TYPE or not isinstance(ops, dict):
+            out.append({"trigger": c, "message": msg, "occurrence": None})
+            continue
+        occ = occurrences(srec, c)
+        raw = _occurrences(c, ops)
+        for o, r in zip(occ, raw):
+            if o["state"] == "none":
+                continue
+            why = o["rule"] if o["state"] == "applies" else _unresolved(c, r)
+            out.append({"trigger": c, "message": f"{why} ({c} occurs in {spec})",
+                        "occurrence": {**o, "fingerprint": occurrence_fingerprint(r, decls or {})}})
+        if not ops.get("complete", True):
+            what = ORDER_OPS.get(c) or (DIVISION_OPS.get(c) or (None,))[0] or "application"
+            out.append({"trigger": c, "occurrence": None, "incomplete": True,
+                        "message": f"the statement is too large to read every {what} of {c}, so "
+                                   f"the rule at the ones not read is unresolved ({c} occurs in "
+                                   f"{spec})"})
+        elif not occ:
+            out.append({"trigger": c, "message": msg, "occurrence": None})
     return out
 
 
@@ -401,17 +484,22 @@ class Assessor:
         marker is at that hash. A marker without digests read a passage only while the history
         shows it unchanged since the marker was written. A marker with no review text records
         no reading and does not count (`why` "no-reading"), unless its reviewer is one the
-        configuration allows bare markers by (`bare_markers_by`)."""
+        configuration allows bare markers by (`bare_markers_by`). When the last marker is at
+        another hash but an earlier one would be the record without it, `why` is "shadowed" and
+        `shadowed` names both markers; the state is stale all the same."""
         hist = history(self.reviews, target, name)
         last = hist[-1] if hist else None
         readers = review_sources.digests(self.inv, target, name, self.tex)
         need = {claim: readers[claim]} if claim in readers else readers
-        why = source_claim = bare = split = None
+        why = source_claim = bare = split = shadowed = None
         record = last
         if last is None:
             state = "pending"
         elif rec is None or last.hash not in _hashes(rec):
             state, why = "stale", "declaration"
+            shadowed = self._shadowed(hist, rec, need)
+            if shadowed:
+                why = "shadowed"
         else:
             at = [r for r in hist if r.hash in _hashes(rec)]
             read = [r for r in at if self._reads(r, need)]
@@ -440,7 +528,36 @@ class Assessor:
                 out["marker"] = {"file": bare.file, "line": bare.line}
             if split:
                 out["split"] = split
+            if shadowed:
+                out["shadowed"] = shadowed
         return out
+
+    def _shadowed(self, hist: list[Review], rec: dict | None,
+                  need: dict[str, str]) -> dict | None:
+        """When the last marker of `hist` is at another hash than the declaration's current
+        one, but an earlier marker would be the record without it (at a current hash, with a
+        reading of every passage in `need`): that marker (`reading`) and the last one
+        (`record`), each with its file, line, hash and reviewer. The last marker is the
+        record, so the review is stale; this says where to act."""
+        if rec is None or not hist:
+            return None
+        hashes = _hashes(rec)
+        reading = next((r for r in reversed(hist[:-1]) if r.hash in hashes
+                        and self._reads(r, need) and self.has_reading(r)), None)
+        if reading is None:
+            return None
+        return {k: {"file": r.file, "line": r.line, "hash": r.hash, "by": r.by}
+                for k, r in (("reading", reading), ("record", hist[-1]))}
+
+    @staticmethod
+    def _shadowed_words(r: dict) -> str:
+        """The two markers of `shadowed`, each with its place, reviewer and hash, for a finding
+        or a blocker: what follows "the review". The hashes are given in full: legacy hashes of
+        different declarations can share a long prefix."""
+        a, b = r["shadowed"]["reading"], r["shadowed"]["record"]
+        return (f"at {a['file']}:{a['line']} by {a['by']} records the current hash {a['hash']}, "
+                f"but a marker later in the review files, at {b['file']}:{b['line']} by "
+                f"{b['by']}, records {b['hash']} and is the record")
 
     @staticmethod
     def _mentions(text: str, claim: dict) -> bool:
@@ -578,12 +695,17 @@ class Assessor:
             return (" (its last review was made before source pins were recorded, and the "
                     f"source text of {self._claim_label(r.get('source_claim'))} cannot be shown "
                     "unchanged since)")
+        if why == "shadowed":
+            return (f" (its review {self._shadowed_words(r)}: record the review again after that "
+                    "marker, or retire that marker)")
         return " (its last review is stale)"
 
     @staticmethod
     def _stale_fields(r: dict) -> dict:
         if r.get("why") == "no-reading":
             return {"reason": "no-reading", **(r.get("marker") or {})}
+        if r.get("why") == "shadowed":
+            return {"reason": "shadowed", **r["shadowed"]}
         if r["state"] == "stale" and r.get("why", "declaration") != "declaration":
             return {"reason": r["why"], "source_claim": r.get("source_claim")}
         return {}
@@ -603,10 +725,21 @@ class Assessor:
                 out[d] = self.review_state("def", d, lean["decls"].get(d))
         return out
 
+    def _is_proof(self, name: str) -> bool:
+        """Whether the declaration `name` is a proof: its type is a proposition (a theorem, a
+        proof Lean generates such as `_proof_1`, a `Prop`-valued instance). A record without the
+        probe's `proposition` field counts a theorem only; an unknown answer counts as data."""
+        rec = self.lean["decls"].get(name) or {}
+        if "proposition" in rec:
+            return rec["proposition"] is True
+        return rec.get("kind") == "theorem"
+
     def witness_only(self) -> dict[str, list[str]]:
         """The project declarations in the closure of a witness's statement that the assessment
         asks no review for otherwise (outside every proposition, its closure, the definitions a
-        definition claim maps and their closures), each with the witnesses that use it."""
+        definition claim maps and their closures), each with the witnesses that use it. Proofs
+        (`_is_proof`) are left out: they carry no data, so they cannot fix the instance a
+        witness exhibits."""
         if self._witness_only is None:
             lean = self.lean
             covered = set(lean["specs"])
@@ -621,7 +754,8 @@ class Assessor:
                     for w in self._witnesses(cl):
                         for d in (self._proof("witness", w, None) or {}).get("closure") or []:
                             out.setdefault(d, set()).add(w)
-            self._witness_only = {d: sorted(ws) for d, ws in out.items() if d not in covered}
+            self._witness_only = {d: sorted(ws) for d, ws in out.items()
+                                  if d not in covered and not self._is_proof(d)}
         return self._witness_only
 
     @staticmethod
@@ -832,13 +966,7 @@ class Assessor:
             # S's hypotheses (were they never met, S would hold vacuously and not be refutable).
             if not cl.get("witness") and not res.get("refute_ok"):
                 self.witness_check(subj, spec, srec)
-            for c, msg in totalised(srec, spec):
-                occ = occurrences(srec, c)
-                extra = {} if occ is None else {
-                    "occurrences": occ,
-                    **({} if srec["order_ops"].get("complete", True)
-                       else {"occurrences_complete": False})}
-                self.add_warning("totalised", subj, spec, srec, msg, c, **extra)
+            self.totalised_warnings(subj, spec, srec)
         regs = []
         for r in cl.get("regimes", []):
             w = r.get("witness")
@@ -891,14 +1019,79 @@ class Assessor:
                 f"as inhabited ({names}), and no theorem shows them met together",
                 "witness-instances")
 
-    def add_warning(self, code, subj, name, rec, message, trigger, **extra):
+    def totalised_warnings(self, subj: str, spec: str, srec: dict) -> None:
+        """The totalisation warnings of a clause's proposition (`totalised_findings`). A warning
+        about one application has the application's `fingerprint` and its first position `at`
+        (with the statement's as `statement_fingerprint`), and its id ends in `@` and that
+        position. A dismissal naming `at` and an application's fingerprint dismisses that
+        application only: the one at `at` when its fingerprint matches, otherwise the one
+        application with that fingerprint (it moved), and it lapses when the application at `at`
+        changes. A dismissal without `at` (the form before applications were read one by one)
+        dismisses every warning of its operation in the statement while the statement's
+        fingerprint matches, and says so (`dismissed.form`: `statement`)."""
+        fp = srec.get("fingerprint")
+        items = totalised_findings(srec, spec, self.lean.get("decls") or {})
+        targets: dict[tuple[str, str], tuple[str, dict]] = {}
+        for d in self.dismissals:
+            if d.get("code") != "totalised" or d.get("subject") != spec or "at" not in d:
+                continue
+            here = [(i["occurrence"]["at"][0], i["occurrence"]["fingerprint"]) for i in items
+                    if i["trigger"] == d.get("trigger") and i["occurrence"]
+                    and i["occurrence"]["at"]]
+            same = [a for a, f in here if f and f == d.get("fingerprint")]
+            if d["at"] in same:
+                targets[(d["trigger"], d["at"])] = ("dismissed", d)
+            elif len(same) == 1:
+                targets.setdefault((d["trigger"], same[0]), ("dismissed", d))
+            if d["at"] not in same and any(a == d["at"] for a, _ in here):
+                targets.setdefault((d["trigger"], d["at"]), ("stale", d))
+        for i in items:
+            c, o = i["trigger"], i["occurrence"]
+            extra, ofp = {}, None
+            if o is not None:
+                ofp = o.pop("fingerprint")
+                extra = {"occurrences": [o], "at": o["at"][0] if o["at"] else None,
+                         "statement_fingerprint": fp}
+            elif i.get("incomplete"):
+                extra = {"occurrences": [], "occurrences_complete": False}
+            if o is not None and o.get("condition_state") == "established":
+                # Every condition of the rule is supplied: the warning is resolved, with the
+                # evidence in its occurrence. No status depends on it.
+                extra["resolved"] = True
+            self.add_warning("totalised", subj, spec, srec, i["message"], c, fingerprint=ofp,
+                             legacy_only=o is not None, **extra)
+            f = self.findings[-1]
+            if o is None or not extra["at"]:
+                continue
+            f["id"] += "@" + extra["at"]
+            hit = targets.get((c, extra["at"]))
+            if hit and hit[0] == "dismissed":
+                f.pop("dismissal_stale", None)
+                f["dismissed"] = {"rationale": hit[1].get("rationale", ""),
+                                  "by": hit[1].get("by", "")}
+            elif hit and not f.get("dismissed"):
+                f["dismissal_stale"] = True
+
+    def add_warning(self, code, subj, name, rec, message, trigger, fingerprint=None,
+                    legacy_only=False, **extra):
+        """A warning, dismissed by a dismissal of its code, subject (`name`) and trigger whose
+        fingerprint is the subject's current one (`rec`'s), and marked `dismissal_stale` when
+        such a dismissal's fingerprint is another. The finding records `fingerprint` when given
+        (what a dismissal of it records) and `rec`'s otherwise. With `legacy_only`, only
+        dismissals without `at` are considered here, and one that applies is marked as naming
+        the whole statement (`form`: `statement`)."""
         fp = rec.get("fingerprint")
-        f = _finding("warning", code, subj, message, trigger=trigger, fingerprint=fp,
+        f = _finding("warning", code, subj, message, trigger=trigger,
+                     fingerprint=fingerprint or fp,
                      signal="low" if trigger in LOW_SIGNAL else "normal", **extra)
         for d in self.dismissals:
             if d.get("code") == code and d.get("subject") == name and d.get("trigger") == trigger:
+                if "at" in d and (legacy_only or code == "totalised"):
+                    continue
                 if d.get("fingerprint") == fp:
                     f["dismissed"] = {"rationale": d.get("rationale", ""), "by": d.get("by", "")}
+                    if legacy_only:
+                        f["dismissed"]["form"] = "statement"
                 else:
                     f["dismissal_stale"] = True
         self.findings.append(f)
@@ -968,6 +1161,7 @@ class Assessor:
             reasons.setdefault(reason, []).append(clause["name"])
 
         defs: dict[str, str] = {}
+        shadowed: dict[str, dict] = {}
         for c in clauses:
             st = c["state"]
             if st == "unspecified":
@@ -985,6 +1179,8 @@ class Assessor:
                     add("the proposition was reviewed only by the author of the statements", c)
                 elif srs == "pending":
                     add("the proposition has no review", c)
+                elif srs == "stale" and c["spec_review"].get("why") == "shadowed":
+                    add("the proposition's review " + self._shadowed_words(c["spec_review"]), c)
                 elif srs == "stale":
                     add({"source-changed": "the paper's text changed after the proposition's "
                                            "last review",
@@ -1007,8 +1203,10 @@ class Assessor:
                 why = r.get("why")
                 defs[d] = why if r["state"] == "stale" and why in (
                     "source-changed", "source-unread", "source-unrecorded",
-                    "source-notation-unrecorded", "source-unpinned", "no-reading") \
-                    else r["state"]
+                    "source-notation-unrecorded", "source-unpinned", "no-reading",
+                    "shadowed") else r["state"]
+                if defs[d] == "shadowed":
+                    shadowed[d] = r
             if c.get("witness") and not c.get("witness_ok"):
                 add("the witness that the hypotheses can be met fails its check", c)
             if any(not r["discharged"] for r in c.get("regimes", [])):
@@ -1045,6 +1243,11 @@ class Assessor:
             if counts.get(state):
                 out.append(f"{counts[state]} definition{'s' if counts[state] > 1 else ''} its "
                            f"meaning depends on {words}")
+        # A review that a later marker shadows is named with both markers: the maintainer acts
+        # on them, not on the definition.
+        for d, r in shadowed.items():
+            if defs[d] == "shadowed":
+                out.append(f"the review of the definition {d} " + self._shadowed_words(r))
         if claim["scope"] == "definition" and self.claim_code(claim, clauses) != "definition.reviewed" and not out:
             out.append("its definitions are not independently reviewed")
         return list(dict.fromkeys(out))

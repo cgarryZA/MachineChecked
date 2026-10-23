@@ -39,7 +39,11 @@ def store(out_dir: Path, body: dict) -> str:
 
 def load(out_dir: Path, eid: str) -> dict:
     path = out_dir / "evidence" / f"{eid}.json"
-    rec = read_json(path)
+    return checked(read_json(path), eid, path)
+
+
+def checked(rec: dict, eid: str, path: Path) -> dict:
+    """`rec`, read from `path`, if its body is the one its id `eid` names."""
     if content_id(rec["body"]) != eid:
         raise EvidenceError(f"evidence record {path} does not match its id")
     return rec

@@ -5,7 +5,7 @@
            needsDetail, buildReport, exportFile, COVERAGE_FOR, COVERAGE_CHOICES, BASIS_CHOICES,
            reportCorrespondence, draftCoverage, coverageWords } from "../lib/review.js";
   import ProofStep from "./ProofStep.svelte";
-  import Tex from "./Tex.svelte";
+  import StepContext from "./StepContext.svelte";
   import PaperStatement from "./PaperStatement.svelte";
   import Statement from "./Statement.svelte";
   import Decl from "./Decl.svelte";
@@ -269,7 +269,7 @@
             <PaperStatement claim={c} paper={paperOf(c)} evidence={false} />
             {#if c.step}
               <p class="small">A step of the proof of {c.step.parent?.number || c.step.parent?.id || "its result"}. Is it valid as printed? Judge the step on its own.</p>
-              {#if c.context_tex}<details open><summary class="small">Its context in the proof</summary><Tex text={c.context_tex} /></details>{/if}
+              {#if c.context_tex}<StepContext text={c.context_tex} cut={c.context_cut} open />{/if}
             {/if}
             <p class="small"><a href={href(index.release, "read", c.paper, c.id)} target="_blank" rel="noopener" title="Opens the paper and Lean reader">Open in the paper ↗</a></p>
           {/snippet}

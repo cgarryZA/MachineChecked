@@ -245,6 +245,13 @@ fs.writeFileSync(path.join(root, "review-step/data/review-queue.json"), JSON.str
   parent: { id: "T:thm:bound", number: "Theorem 2.5" }, state: "pending", reason: "Proof step of Theorem 2.5; no Lean is linked to it",
   claims: [{ id: "T:eq:bound-range" }], papers: ["T"], paper: "T", section: "2", author_review: [] }] }));
 
+// The same review queue on a build that holds the step's context in the proof only in part, as
+// the engine records it (`context_cut`), and one whose evidence predates the record of where.
+for (const [dir, cut] of [["cut-step", { file: "toy.tex", line: 71, end_line: 80, kept: 20000, chars: 28000 }], ["cut-step-old", { kept: 20000 }]]) {
+  fs.cpSync(path.join(root, "review-step"), path.join(root, dir), { recursive: true });
+  fs.writeFileSync(path.join(root, dir, "data/claims", stepRow.file), JSON.stringify({ ...stepChunk, context_cut: cut }));
+}
+
 // The toy audit with an auditor's published workspace records on Definition 1.1, in the form
 // `published_work.py` writes them: the passport names their file.
 fs.cpSync(path.join(root, "toy"), path.join(root, "toywork"), { recursive: true });
@@ -321,7 +328,7 @@ const CHANGES = {
       lean_changed: false, due: false, lean: [],
       evidence: [{ target: "step", name: "T:eq:bound-range", outcome: "kept", from: { state: "false" }, to: { state: "false" }, caveat: "counted against the pinned earlier text; the paper now prints another" }] },
     unchangedRow("T:thm:triangle")],
-  declarations: [], note: "Each status is the one its own build computed; this comparison changes none." };
+  declarations: [], note: "Each status is the one its own build computed. A reopened review needs a new reading at the later revision; the earlier reading stays in the review files as it was." };
 fs.writeFileSync(path.join(root, "toychanges/data/changes.json"), JSON.stringify(CHANGES));
 fs.writeFileSync(path.join(root, "toychanges/data/index.json"), JSON.stringify({ ...TOY, changes: "data/changes.json" }));
 
@@ -837,7 +844,8 @@ for (const width of [1300, 390]) {
       json.findings = json.findings.map((f) => f.subject.endsWith("#0") ? { ...f, occurrences: [
         { operation: f.trigger, type: "Nat", type_head: "Nat", structure: null, state: "applies",
           rule: "truncated subtraction on ℕ: a - b = 0 when a < b", at: ["/1/0/1"] },
-        { operation: f.trigger, type: "Nat", type_head: "Nat", structure: "group", state: "none", rule: null, at: [] }] } : f);
+        { operation: f.trigger, type: "Nat", type_head: "Nat", structure: "group", state: "none", rule: null, at: [] }] }
+        : f.dismissed ? { ...f, at: "/1/1/1", dismissed: { ...f.dismissed, form: "statement" } } : f);
       route.fulfill({ response, json });
     });
     await toyClaim(pg, "T:prop:pred");
@@ -849,6 +857,9 @@ for (const width of [1300, 390]) {
       "in Nat: truncated subtraction on ℕ: a - b = 0 when a < b",
       "in Nat, a group: no exceptional case in this type"]);
     assert.equal(await pg.locator("aside [data-finding='totalised:T:prop:pred#1:instSubNat'] .show").count(), 0, "nothing to mark");
+    // A dismissal of the operation in the whole statement says so.
+    assert.match(await pg.locator("aside [data-finding='totalised:T:prop:pred#1:instSubNat'] .dz").textContent(),
+      /dismissal of the operation in the whole statement/);
     await item.locator(".show").click();
     const view = pg.locator("aside .view");
     await view.locator(".mk").first().waitFor();
@@ -861,6 +872,34 @@ for (const width of [1300, 390]) {
     assert.ok(box && box.x >= 0 && box.x + box.width <= width, "on screen");
     await view.locator(".marknote button").click();
     assert.equal(await view.locator(".mk").count(), 0, "cleared");
+  });
+}
+// A warning lists the conditions its rule needs at the application, with what establishes them;
+// one whose conditions are all established reads as resolved.
+for (const width of [1300, 390]) {
+  await check("a warning shows the conditions of its rule and whether the statement supplies them", width, async (pg) => {
+    await pg.route("**/toy/data/claims/*prop_pred*", async (route) => {
+      const response = await route.fetch();
+      const json = await response.json();
+      json.findings = json.findings.map((f) => f.subject.endsWith("#0") ? { ...f, resolved: true, at: "/1/0/1", occurrences: [
+        { operation: f.trigger, type: "Real", type_head: "Real", structure: "conditionally-complete-lattice", state: "applies",
+          rule: "a supremum in ℝ is 0 when the set is unbounded or empty", at: ["/1/0/1"], condition_state: "established",
+          conditions: [
+            { condition: "bounded-above", state: "established", by: "premise", premise: "hf", statement: "BddAbove (Set.range f)" },
+            { condition: "nonempty-index", state: "established", by: "type", statement: "Lean finds Nonempty ℕ" }] }] } : f);
+      route.fulfill({ response, json });
+    });
+    await toyClaim(pg, "T:prop:pred");
+    await pg.locator("aside .view .chipbtn").click();
+    await pg.locator("aside details.warning summary").click();
+    const item = pg.locator("aside [data-finding='totalised:T:prop:pred#0:instSubNat']");
+    const conds = await item.locator(".conds li").allTextContents();
+    assert.deepEqual(conds.map((t) => t.replace(/\s+/g, " ").trim()), [
+      "needs bounded above: established by the premise hf : BddAbove (Set.range f)",
+      "needs a nonempty index type: established (Lean finds Nonempty ℕ)"]);
+    assert.match(await item.textContent(), /resolved: the statement supplies every condition/);
+    const box = await item.locator(".conds li").first().boundingBox();
+    assert.ok(box && box.x >= 0 && box.x + box.width <= width, "on screen");
   });
 }
 await check("a theorem of the toy paper is typeset with its equation number", 1300, async (pg) => {
@@ -1673,6 +1712,22 @@ await check("expression controls have names and pane resizing works by keyboard"
   const splitter = pg.getByRole("separator", { name: "Claim panel width" });
   await splitter.focus(); const before = Number(await splitter.getAttribute("aria-valuenow"));
   await splitter.press("ArrowRight"); assert.ok(Number(await splitter.getAttribute("aria-valuenow")) < before);
+  // The separator names the panel it resizes and how its keys work; the value is the width.
+  const panel = await splitter.getAttribute("aria-controls");
+  assert.equal(await pg.locator(`#${panel}`).evaluate((e) => e.tagName), "ASIDE");
+  assert.match(await pg.locator("#" + await splitter.getAttribute("aria-describedby")).textContent(), /arrows widen and narrow the panel/);
+  assert.equal(await splitter.getAttribute("aria-valuetext"), `${await splitter.getAttribute("aria-valuenow")} pixels`);
+  await splitter.press("Home"); assert.equal(await splitter.getAttribute("aria-valuenow"), "320");
+  await splitter.press("End"); assert.equal(await splitter.getAttribute("aria-valuenow"), await splitter.getAttribute("aria-valuemax"));
+  // The paper's pages are a labelled region with a tab stop, which scrolls by keyboard.
+  const pages = pg.getByRole("region", { name: "Paper pages" });
+  assert.equal(await pages.getAttribute("tabindex"), "0");
+  assert.match(await pg.locator("#" + await pages.getAttribute("aria-describedby")).textContent(), /arrow keys, Page Up and Page Down/);
+  await pg.locator(".pdf canvas").first().waitFor();
+  const scroller = await pages.evaluateHandle((e) => [e, e.parentElement].find((x) => x.scrollHeight > x.clientHeight));
+  const top = await scroller.evaluate((e) => e.scrollTop);
+  await pages.focus(); await pg.keyboard.press("PageDown"); await pg.waitForTimeout(300);
+  assert.ok(await scroller.evaluate((e) => e.scrollTop) > top, "Page Down scrolls the pages");
 });
 
 for (const scheme of ["light", "dark"]) await check(`${scheme} theme text meets contrast requirements`, 1300, async (pg) => {
@@ -1839,6 +1894,48 @@ for (const width of [1300, 390]) {
     assert.equal(await pg.locator("aside .view .paper .finding").count(), 0, "the parent has no step finding");
     await rows.nth(1).locator("a").click();
     await pg.waitForFunction(() => decodeURIComponent(location.hash).endsWith("T:eq:bound-range"));
+  });
+}
+
+// A context the build holds only in part is drawn as partial, with where it was cut, in the step
+// view and on the review page; a whole context carries no such mark.
+for (const width of [1300, 390]) {
+  await check("a proof step's cut context says where it was cut, in the reader and the review", width, async (pg) => {
+    await toyClaim(pg, "T:eq:bound-range");
+    const whole = pg.locator("aside .view .paper .finding .context");
+    assert.equal(await whole.getAttribute("data-cut"), "whole");
+    assert.equal((await whole.locator("summary").textContent()).trim(), "Its context in the proof");
+    assert.equal(await whole.locator(".cut, .cut-end").count(), 0);
+
+    await pg.goto(origin + `/cut-step/#/r/${TOY.release}/read/T/${encodeURIComponent("T:eq:bound-range")}`);
+    await pg.waitForSelector("aside h1");
+    const ctx = pg.locator("aside .view .paper .finding .context");
+    assert.equal(await ctx.getAttribute("data-cut"), "cut");
+    assert.equal((await ctx.locator("summary").textContent()).trim(), "Its context in the proof (cut)");
+    await ctx.locator("summary").click();
+    assert.equal(await pg.getByRole("note").filter({ hasText: "Cut at" }).textContent(),
+      "Cut at toy.tex:71. This shows the first 20000 of its 28000 characters; the context runs on to line 80. Read the rest in the paper.");
+    assert.ok(await ctx.locator(".cut-end").isVisible(), "the text ends with a mark at the cut");
+    assert.match(await ctx.locator(".tex").textContent(), /k = 1/, "the kept text is still shown");
+    assert.equal(await pg.locator("aside .view .chipbtn [data-status]").getAttribute("data-status"), "scope.proof-step", "the status is unchanged");
+
+    // The review page shows the same cut before the reading is locked.
+    await pg.goto(origin + `/cut-step/#/r/${TOY.release}/review?claim=T%3Aeq%3Abound-range`);
+    await pg.getByRole("textbox", { name: "Your name" }).fill("Synthetic reviewer");
+    await pg.getByRole("button", { name: "Start", exact: true }).click();
+    const rctx = pg.locator(".review .unit .context");
+    await rctx.waitFor();
+    assert.equal(await rctx.getAttribute("data-cut"), "cut");
+    assert.match(await rctx.locator(".cut").textContent(), /^Cut at toy\.tex:71\. This shows the first 20000 of its 28000 characters/);
+    assert.ok(await rctx.locator(".cut").isVisible(), "the note is shown with the context, open");
+
+    // Evidence that does not record where it was cut says only how much is shown.
+    await pg.goto(origin + `/cut-step-old/#/r/${TOY.release}/read/T/${encodeURIComponent("T:eq:bound-range")}`);
+    await pg.waitForSelector("aside h1");
+    await pg.locator("aside .view .paper .finding .context summary").click();
+    assert.equal(await pg.locator("aside .view .paper .finding .context .cut").textContent(),
+      "This shows only its first 20000 characters; the build does not record where it was cut. Read the rest in the paper.");
+    assert.equal(await pg.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, "no horizontal scroll");
   });
 }
 

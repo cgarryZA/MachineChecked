@@ -10,6 +10,10 @@ The closed form is Gauss's Lemma 4.22, as in
 * Hardy–Wright, *An Introduction*, Ch. IV, Prop. 4.7.
 
 Gauss's lemma is classical; the paper's Lemma 2.6 is not formalised here.
+
+The monotonicity of Lemma 2.5 in Section 2 is `lemma_2_5`.
+
+Lemma 2.7 in refined form is not needed.
 -/
 
 namespace Renum

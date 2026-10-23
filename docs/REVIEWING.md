@@ -379,7 +379,9 @@ whether or not any Lean is linked to it. Its question is whether the printed ste
 context: step 1 shows the step and the proof up to it and the sentence after it; step 2 shows the
 Lean linked as establishing it and the formal route used instead, if any. The checklist covers
 what the proof has fixed before the step, its premises, the ranges and order of its quantifiers,
-its constants and its conclusion. Its verdicts are its own:
+its constants and its conclusion. A context longer than 20000 characters is kept in part: the
+reader marks it **(cut)**, says where it was cut and how much it shows, and the rest is read in
+the paper. Its verdicts are its own:
 
 | Verdict | What the reviewer must explain |
 |---|---|
