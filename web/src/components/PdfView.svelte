@@ -66,6 +66,12 @@
     tick().then(reveal);
   });
   function stopKeeping() { kept = null; }
+  // When the reader scrolls the pages by wheel, touch or key, the page kept in view is let go.
+  function scrolling(el) {
+    const stop = new AbortController(), opts = { passive: true, signal: stop.signal };
+    for (const kind of ["wheel", "touchmove", "keydown"]) el.addEventListener(kind, stopKeeping, opts);
+    return () => stop.abort();
+  }
   function pageObserver(node) {
     const io = new IntersectionObserver(() => {
       const line = (toolbar?.getBoundingClientRect().bottom || host?.parentElement.getBoundingClientRect().top || 0) + 8;
@@ -105,7 +111,12 @@
     <span class="find-status" role="status">{searchError || (searching ? "Searching…" : matches.length ? `${match + 1} of ${matches.length} matching pages` : searched ? "No matches" : "")}</span>
   </form>
 </div>
-<div class="pdf" bind:this={host} onwheel={stopKeeping} ontouchmove={stopKeeping} onkeydown={stopKeeping} role="region" aria-label="Paper pages" tabindex="0">
+<!-- The pages are a labelled region that scrolls; it takes a tab stop so that a keyboard user
+     can scroll it (WCAG 2.1.1). It handles no keys itself: `scrolling` only notices that the
+     reader scrolled. -->
+<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+<div class="pdf" bind:this={host} {@attach scrolling} role="region" aria-label="Paper pages" aria-describedby="pdf-pages-keys" tabindex="0">
+  <span id="pdf-pages-keys" hidden>Scroll the pages with the arrow keys, Page Up and Page Down.</span>
   {#if error}<div class="err"><p>Paper preview unavailable. <button onclick={() => attempt++}>Try again</button></p><details><summary>Details</summary>{error}</details></div>
   {:else if !doc}<p class="muted wait">Opening the paper…</p>
   {:else}

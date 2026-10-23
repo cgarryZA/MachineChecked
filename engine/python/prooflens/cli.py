@@ -603,10 +603,11 @@ def cmd_check(a):
     root, paper = _simple_target(a)
     view = _simple_view(root, paper)
     _print_simple(view["body"])
-    bad = [(c["number"], l["name"], l["status"]) for c in view["body"]["claims"]
+    bad = [(c["number"], l) for c in view["body"]["claims"]
            for l in c["links"] if l["class"] != "proved"]
-    for b in bad:
-        print(f"FAIL {b[0]} -> {b[1]}: {b[2]}")
+    for number, l in bad:
+        print(f"FAIL {number} -> {l['name']}: {l['status']}"
+              + (f". {l['status_detail']}" if l.get("status_detail") else ""))
     if bad:
         sys.exit(1)
     n = sum(len(c["links"]) for c in view["body"]["claims"])
@@ -616,11 +617,18 @@ def cmd_check(a):
     print(f"Lean checked all {n} linked declaration(s)")
 
 
+def _link_detail(l: dict) -> dict:
+    """A link's `status_detail`, when the engine gave one: the module that is not built or could
+    not be loaded, or the modules that declare an ambiguous name. It adds to the status, which
+    stays the engine's."""
+    return {"status_detail": l["status_detail"]} if l.get("status_detail") else {}
+
+
 def _step_json(c: dict) -> dict:
     """A proof step's formal route and its own review, for `check --json`."""
     from .steps import review
     rv = review(c.get("step_reports", []), c.get("source_sha256"))
-    return {"route": [{"name": l["name"], "status_code": l["status_code"]}
+    return {"route": [{"name": l["name"], "status_code": l["status_code"], **_link_detail(l)}
                       for l in c.get("route_links", [])],
             "step_review": rv["state"],
             "finding": {"verdict": rv["finding"]["verdict"]["value"],
@@ -631,7 +639,8 @@ CHECK_NOTE = "Results describe the linked Lean declarations; correspondence revi
 
 
 FINDING_KEYS = ("id", "tier", "code", "subject", "message", "trigger", "file", "line",
-                "dismissed", "occurrences", "occurrences_complete")
+                "fingerprint", "at", "dismissed", "dismissal_stale", "resolved", "occurrences",
+                "occurrences_complete")
 
 
 def _finding_details(cfg, eid: str) -> list[dict]:
@@ -720,7 +729,8 @@ def _check_json(a):
             claims = [{"id": c["id"], "number": c["number"], "title": c["title"],
                        "status": c["status"], "status_code": c["status_code"], "class": c["class"],
                        "links": [{"name": l["name"], "status": l["status"], "status_code": l["status_code"], "class": l["class"],
-                                  "source": l.get("source")} for l in c["links"]],
+                                  **_link_detail(l), "source": l.get("source")}
+                                 for l in c["links"]],
                        "correspondence": c.get("correspondence"),
                        "reviews": [{"reviewer": r["reviewer"], "verdict": r["verdict"]["value"],
                                     "submitted_at": r["submitted_at"], "current": r["current"],
@@ -801,6 +811,11 @@ def cmd_build(a):
         print(f"  warning  {w['message']}")
     if idx["findings"]["total"].get("warning"):
         print("  (warnings: see `check --json` or the reader)")
+    whole = [f for f in details if (f.get("dismissed") or {}).get("form") == "statement"]
+    if whole:
+        print(f"note: {len(whole)} totalisation warning(s) are dismissed by a dismissal of the "
+              "operation in the whole statement, which holds until the statement changes; a "
+              "dismissal with the warning's `at` and `fingerprint` names one application")
     rg = _replay_guard(cfg, res["evidence"])
     if rg and rg["message"]:
         print(f"note: independent replay: {rg['message']}")
