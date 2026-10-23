@@ -37,6 +37,21 @@ def store(root: Path, libs: list[str]) -> Store:
     return Store(root, libs, root / work_dir_name(root) / "build", STANDARD_AXIOMS)
 
 
+# The answers that say Lean did not look, not what it found: the declaration's module is not
+# built, a module could not be loaded, two modules declare the name, the request failed, or the
+# store has no answer since the Lean last changed. A record checked against one of these is
+# unchecked, never stale.
+NOT_CHECKED = frozenset({"not built", "not checked", "ambiguous", "probe error",
+                         "not extracted"})
+
+
+def not_checked_reason(name: str, doc: dict) -> str:
+    """Why Lean's answer `doc` about `name` says nothing about it, in words."""
+    mods = doc.get("modules") or []
+    return doc.get("reason") or (f"{name}: {doc.get('status')}"
+                                 + (f" ({', '.join(mods)})" if mods else ""))
+
+
 def _resolve(root: Path, name: str, module: str | None, built: list[str],
              unbuilt: list[str]) -> tuple[str | None, dict | None]:
     """The module to probe, or the answer when there is none to probe. A name two modules

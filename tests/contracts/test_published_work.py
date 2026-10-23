@@ -274,3 +274,160 @@ def test_a_cited_fact_inside_a_proof_is_published_with_its_basis(tmp_path):
     raw = json.dumps(rd)
     assert "LEAN-FACT-TYPE" not in raw and "LEAN-HYPOTHESIS" not in raw
     assert rd["evidence"][0]["ref"]["fact"]["basis"].startswith("established inside")
+
+
+# -- Lean-checked evidence at export (#272) ----------------------------------------------------
+
+class FakeLean:
+    """Lean's answers about one cited fact, application and certificate, as `proof_facts.extract`,
+    `uses.uses` and `estimates.check` give them. The facts store holds nothing, so an answer
+    exists only when Lean is asked (`cached_only=False`). `now` sets what Lean finds: `same`,
+    `changed`, or one of the answers that say Lean did not look."""
+
+    APP = {"id": "app:Syn.caller:0", "callee": "Syn.lemma", "caller": "Syn.caller",
+           "available": True, "params": [], "result": "LEAN-APP-RESULT"}
+
+    def __init__(self, monkeypatch):
+        from prooflens import estimates as est
+        from prooflens import proof_facts as pf
+        from prooflens import uses as us
+        self.now, self.asked = "same", []
+        monkeypatch.setattr(pf, "extract", self.extract)
+        monkeypatch.setattr(us, "uses", self.uses)
+        monkeypatch.setattr(est, "check", self.check)
+        self.app_hash = us.app_hash(self.APP)
+
+    def _answer(self, what, cached_only, ok):
+        self.asked.append((what, cached_only))
+        if cached_only:
+            return {"ok": False, "status": "not extracted", "reason": "not read since"}
+        if self.now not in ("same", "changed"):
+            return {"ok": False, "status": self.now, "modules": ["Syn.Main"]}
+        return ok
+
+    def extract(self, root, name, module=None, cached_only=False, **kw):
+        return self._answer("fact", cached_only, {
+            "ok": True, "status": "found",
+            "proof": {"hash": "b" * 16 if self.now == "same" else "c" * 16},
+            "facts": [{"at": "/1/1/1", "fact_hash": "a" * 16}]})
+
+    def uses(self, root, name, module=None, cached_only=False, **kw):
+        app = self.APP if self.now == "same" else {**self.APP, "result": "LEAN-OTHER-RESULT"}
+        return self._answer("app", cached_only, {
+            "ok": True, "status": "found", "complete": True, "applications_complete": True,
+            "users": [{"name": "Syn.caller"}], "applications": [app]})
+
+    def check(self, root, theorem, target, certifies, module=None, cached_only=False, **kw):
+        return self._answer("certificate", cached_only, {
+            "ok": True, "status": "checked", "type": "Syn.Spec", "result": "checked",
+            "target_fingerprint": "d" * 16 if self.now == "same" else "e" * 16})
+
+
+def _lean_cited(work, snap, claim, app_hash):
+    """A submitted finding resting on a cited fact, an application and a certificate, recorded
+    with the pins they carry without the Lean project."""
+    p = wsp.open_for(work, WHO, "informed", sources=snap.sources())
+    wsp.update(p, [
+        put({"id": "e-fact", "kind": "evidence", "claim": claim, "role": "supports",
+             "ref": {"fact": {"decl": "Syn.caller", "module": "Syn.Main", "at": "/1/1/1",
+                              "fact_hash": "a" * 16, "proof_hash": "b" * 16}}}),
+        put({"id": "e-app", "kind": "evidence", "claim": claim, "role": "supports",
+             "ref": {"app": {"callee": "Syn.lemma", "module": "Syn.Main",
+                             "id": FakeLean.APP["id"], "caller": "Syn.caller",
+                             "app_hash": app_hash}}}),
+        put({"id": "e-cert", "kind": "evidence", "claim": claim, "role": "supports",
+             "ref": {"certificate": {"theorem": "Syn.cert", "target": "Syn.Spec",
+                                     "certifies": "proves", "module": "Syn.Main",
+                                     "type": "Syn.Spec", "target_fingerprint": "d" * 16,
+                                     "result": "checked"}}}),
+        put({"id": "f-lean", "kind": "finding", "claim": claim, "coverage": "full",
+             "basis": "reviewed_composition", "evidence": ["e-fact", "e-app", "e-cert"],
+             "note": "n"})], snap)
+    wsp.update(p, [{"op": "submit", "id": "f-lean", "base_rev": 1}], snap)
+    return p
+
+
+def test_an_export_checks_lean_evidence_against_its_lean_project(tmp_path, monkeypatch):
+    """#272: a cited fact, application and certificate are published current when Lean finds
+    them as recorded, stale when it finds them changed, and unchecked without the Lean project
+    or when Lean did not look (a module not built, a module not loaded, a failed request)."""
+    work = tmp_path / ".machinechecked"
+    snap = make_build(work)
+    claim = "P:lem:bound"
+    lean = FakeLean(monkeypatch)
+    _lean_cited(work, snap, claim, lean.app_hash)
+    root = tmp_path / "lean"
+    root.mkdir()
+    (root / "lakefile.toml").write_text('name = "syn"\n[[lean_lib]]\nname = "Syn"\n')
+
+    def states(root):
+        rd, = pw.readings(work, snap, lambda cid: EVERYTHING, {claim}, root)[claim]
+        return {e["id"]: e["currency"]["state"] for e in rd["evidence"]} | \
+            {f["id"]: f["currency"]["state"] for f in rd["findings"]}
+
+    lean.now = "same"
+    assert states(root) == {"e-fact": "current", "e-app": "current", "e-cert": "current",
+                            "f-lean": "current"}
+    # The facts store had no answer, so the export asked Lean, as `workspace show` does.
+    assert {(what, cached) for what, cached in lean.asked} >= {
+        ("fact", False), ("app", False), ("certificate", False)}
+    lean.now = "changed"
+    assert states(root) == {"e-fact": "stale", "e-app": "stale", "e-cert": "stale",
+                            "f-lean": "stale"}
+    for silent in ("not built", "not checked", "probe error", "ambiguous"):
+        lean.now = silent
+        assert {k: v for k, v in states(root).items() if k.startswith("e-")} == {
+            "e-fact": "unchecked", "e-app": "unchecked", "e-cert": "unchecked"}, silent
+    # Without the Lean project nothing is asked, and nothing reads as current or stale.
+    lean.now, lean.asked = "same", []
+    assert {k: v for k, v in states(None).items() if k.startswith("e-")} == {
+        "e-fact": "unchecked", "e-app": "unchecked", "e-cert": "unchecked"}
+    assert lean.asked == []
+    # The published file says the same, and is valid.
+    data = tmp_path / "out" / "data"
+    import shutil
+    shutil.copytree(work / "site" / "data", data)
+    pw.write(data, work, lambda cid: EVERYTHING, root=root)
+    body = json.loads((data / "work" / "lem_bound.json").read_text())
+    from prooflens.schemas import validate
+    validate(body, "published-work")
+    assert {e["id"]: e["currency"]["state"] for e in body["readings"][0]["evidence"]} == {
+        "e-fact": "current", "e-app": "current", "e-cert": "current"}
+
+
+def test_an_application_lean_did_not_search_is_unchecked_not_gone(tmp_path, monkeypatch):
+    """An application not found in a search that left modules out (not built, not loaded) or
+    did not describe every application may only be out of sight: unchecked. Found nowhere in a
+    complete search, it is gone: stale."""
+    from prooflens import uses as us
+    root = tmp_path / "lean"
+    root.mkdir()
+    ref = {"callee": "Syn.lemma", "module": "Syn.Main", "id": FakeLean.APP["id"],
+           "caller": "Syn.caller", "app_hash": "x"}
+    answer = {"ok": True, "status": "found", "complete": True, "applications_complete": True,
+              "users": [], "applications": []}
+    for doc, state in (({}, "stale"), ({"complete": False}, "unchecked"),
+                       ({"applications_complete": False}, "unchecked"),
+                       ({"applications": [{"id": ref["id"], "available": False}],
+                         "users": [{"name": "Syn.caller"}]}, "unchecked"),
+                       ({"complete": False, "users": [{"name": "Syn.caller"}]}, "stale")):
+        monkeypatch.setattr(us, "uses", lambda *a, _d={**answer, **doc}, **k: _d)
+        assert us.app_currency(root, ref, check_now=True)["state"] == state, doc
+
+
+def test_the_lean_project_of_an_export_is_the_one_its_release_was_built_from(tmp_path):
+    """The export checks Lean evidence only against the Lean its release was built from: no
+    project when the build ran no Lean, or when a Lean input changed since."""
+    import types
+    from prooflens.export import built_lean_root
+    from prooflens.pipeline import lean_inputs_digest
+    root = tmp_path / "lean"
+    (root / "Syn").mkdir(parents=True)
+    (root / "lakefile.toml").write_text('name = "syn"\n[[lean_lib]]\nname = "Syn"\n')
+    (root / "Syn" / "Main.lean").write_text("theorem t : True := trivial\n")
+    cfg = types.SimpleNamespace(lean_root=root)
+    record = {"body": {"provenance": {"lean_inputs_sha256": lean_inputs_digest(cfg)}}}
+    assert built_lean_root(cfg, record) == root
+    assert built_lean_root(cfg, {"body": {"provenance": {"lean_inputs_sha256": None}}}) is None
+    (root / "Syn" / "Main.lean").write_text("theorem t : True := by trivial\n")
+    assert built_lean_root(cfg, record) is None
