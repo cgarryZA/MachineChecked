@@ -462,7 +462,10 @@ def find_application(doc: dict, ref: dict) -> dict | None:
 def app_currency(root: Path | None, ref: dict, check_now: bool = False) -> dict:
     """Whether a cited application still describes the caller's proof: `current` while it is
     elaborated the same way, `stale` when it changed or is gone, `unchecked` while its uses have
-    not been read since the Lean last changed (`check_now` reads them)."""
+    not been read since the Lean last changed (`check_now` reads them), or when Lean could not
+    read them all (a module not built or not loaded, applications not described), so that one
+    not found may only be out of sight."""
+    from .deps import NOT_CHECKED, not_checked_reason
     if root is None:
         return {"state": "unchecked", "changes": [], "reason": "no Lean project to check against"}
     try:
@@ -473,7 +476,22 @@ def app_currency(root: Path | None, ref: dict, check_now: bool = False) -> dict:
         return {"state": "unchecked", "changes": [],
                 "reason": f"{doc['reason']}; `machinechecked compare --query uses "
                           f"{ref['callee']}` reads them again"}
+    if not doc.get("ok") and doc.get("status") in NOT_CHECKED:
+        return {"state": "unchecked", "changes": [],
+                "reason": not_checked_reason(ref["callee"], doc)}
     found = find_application(doc, ref) if doc.get("ok") else None
+    if found is None and doc.get("ok"):
+        callers = {u.get("name") for u in doc.get("users") or []}
+        if any(a.get("id") == ref.get("id") for a in doc.get("applications") or []) or \
+                not doc.get("applications_complete"):
+            return {"state": "unchecked", "changes": [],
+                    "reason": "Lean did not describe every application of "
+                              f"{ref['callee']}"}
+        if ref.get("caller") not in callers and not doc.get("complete"):
+            return {"state": "unchecked", "changes": [],
+                    "reason": f"{ref.get('caller')} is not among the declarations Lean "
+                              "searched: some modules of the project are not built or could "
+                              "not be loaded"}
     if found is None:
         return {"state": "stale", "changes": [{"app": ref["id"], "was": ref.get("app_hash"),
                                                "now": None,

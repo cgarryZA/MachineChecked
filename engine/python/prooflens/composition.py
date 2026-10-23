@@ -443,6 +443,33 @@ def bridge_currency(b: dict, claim: str, snap, root, check_now: bool = False) ->
     return evaluate(b, body, passage)
 
 
+def finding_bridge(f: dict, compositions: dict, snap, root, check_now: bool = False) \
+        -> dict | None:
+    """The bridge check a finding recorded with basis `checked_bridge` rests on, or None for a
+    finding with another basis: its composition's (`compositions` holds each as `view` gives
+    it), else its own `bridge` against the current Lean and paper (`bridge_currency`), else an
+    unchecked one, since nothing names a bridge. The finding counts as a checked bridge only
+    while the state is `checked`."""
+    if f.get("basis") != BASIS_BRIDGE:
+        return None
+    cid = f.get("composition")
+    if cid:
+        c = compositions.get(cid)
+        if c is None:
+            reason = f"its composition {cid} is not among these records"
+        elif c.get("bridge_check"):
+            return c["bridge_check"]
+        else:
+            reason = f"its composition {cid} has no bridge"
+        return {"theorem": None, "target": None, "state": "unchecked", "reasons": [reason]}
+    b = f.get("bridge")
+    if isinstance(b, dict) and all(isinstance(b.get(k), str) and b[k]
+                                   for k in ("theorem", "target")):
+        return bridge_currency(b, f["claim"], snap, root, check_now)
+    return {"theorem": None, "target": None, "state": "unchecked",
+            "reasons": ["no bridge is recorded"]}
+
+
 # -- reading it back -------------------------------------------------------------------------
 
 def currency(rec: dict, ws: dict, cur: dict, snap) -> dict:

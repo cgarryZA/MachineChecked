@@ -429,6 +429,14 @@ def _print_workspace(v: dict) -> None:
                 print(f"           question: {f['question']}")
             if f.get("would_decide"):
                 print(f"           would decide it: {f['would_decide']}")
+            b = f.get("bridge_check") or {}
+            if f.get("basis") == "checked_bridge" and b.get("state") == "checked":
+                print(f"           bridge {b.get('theorem')} for {b.get('target')}: "
+                      "Lean checks it")
+            if f.get("recorded_basis"):
+                print(f"           recorded as {f['recorded_basis']}; no bridge Lean checks "
+                      "now" + (": " + "; ".join(f["basis_reason"])
+                               if f.get("basis_reason") else ""))
             if f.get("basis") == "reviewed_composition":
                 from .simple import COMPOSITION_NEXT_STEP
                 print("           Lean has not checked this combination. Next step: "
@@ -664,7 +672,8 @@ def _reference_warnings(num: dict | None) -> list[dict]:
     from . import numbering as nb
     return [{"kind": "paper-reference", "file": o["source"].get("file"),
              "line": o["source"].get("line"), "reference": o["reference"],
-             "status": o["status"], "id": o["id"], "message": nb.message(o)}
+             "status": o["status"], "id": o["id"], "message": nb.message(o),
+             **({"paper": o["attributed"]} if o.get("attributed") else {})}
             for o in (num or {}).get("references", []) if nb.suspect(o)]
 
 
@@ -695,6 +704,12 @@ def _check_json(a):
             if num is not None:
                 out["warnings"] = _reference_warnings(num)
                 out["numbering"] = num
+                # With several papers, each paper's references and warnings by themselves.
+                if num.get("papers"):
+                    from .numbering import paper_view
+                    out["papers"] = {pid: {"warnings": _reference_warnings(paper_view(num, pid)),
+                                           "numbering": paper_view(num, pid)}
+                                     for pid in num["papers"]}
             failed = bool(idx["findings"]["total"].get("violation"))
         else:
             root, paper = _simple_target(a)

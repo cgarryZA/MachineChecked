@@ -162,7 +162,8 @@ carries every step out on the toy example.
    chooses them) and lists the claims whose Lean uses it: a difference between NAME and the
    paper can matter only to those.
 7. **Conclude.** A finding gives the coverage and its basis: `direct` (one Lean statement),
-   `reviewed_composition` (your argument) or `checked_bridge`. It is your reading, attributed
+   `reviewed_composition` (your argument) or `checked_bridge` (a composition whose bridge Lean
+   checks; any other reads as your argument). It is your reading, attributed
    to you, and changes no status. Save what remains open as a `question` and set the `resume`
    point. Submit the findings that are final; `build --site DIR` publishes them with the audit.
 8. **Resume.** `workspace export` and `workspace import` hand a workspace on; `workspace show

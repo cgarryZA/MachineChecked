@@ -169,13 +169,22 @@ compare it with the paper read here:
 - the reference is to another work (`Theorem 4.1 of [Gauss]`), or in a namespace the project
   maps to another paper.
 
-A reference to an existing number whose declaration reads much closer to another statement is
-named as a possibly stale lead, with the closer statement. `check` prints each disagreement
+Digits that run together in a name (`lem41_bound`, or `Assumption22` written as an
+identifier in a docstring) are read in every way the paper could mean them, `4.1` and `41`: the
+reading the paper has a statement of that kind for is checked, a name whose readings the paper
+has several of is left unchecked, and the name disagrees with the paper only when no reading
+fits. A number written in prose (`Lemma 41`) is read as written.
+
+A declaration's name and its docstring's opening citation (`/-- Theorem 3.1. … -/`) name what
+the declaration states. When that number exists but the declaration reads much closer to
+another statement, the reference is named as a possibly stale lead, with the closer statement.
+A later citation in the docstring (`under Assumption 2.2`) names what the statement relies on,
+and is checked only for the number and kind it cites. `check` prints each disagreement
 with its file and line. When several references disagree, the reader's notes say that the Lean
 appears to follow another version of the paper, and suggestions then rank content further
 above cited numbers. None of this links a declaration or changes a status. A full assessment
-(a project with a `machinechecked.toml` and one paper) checks the same references
-([ASSURANCE.md](ASSURANCE.md)).
+(a project with a `machinechecked.toml`) checks the same references, each against the paper it
+belongs to when there are several ([ASSURANCE.md](ASSURANCE.md)).
 
 The local reader saves your decisions in `machinechecked.links.json` at the repository root and refreshes the view. Commit that small file if you want the associations to travel with the project.
 
@@ -349,7 +358,7 @@ machinechecked check
 
 The command exits with an error when a linked declaration is missing or unproved.
 
-It also warns, with the file and line, about each name a module docstring lists that the project and its dependencies do not declare: a dotted name such as `Widget.foo_le_bar`, or the name a list item begins with under a "Main …" heading. A deleted or renamed declaration often leaves such a name behind. Names resolve as in Lean, through the namespaces the file enters and opens. A module or namespace written in full (`Example.Shapes.Widget`) is accepted; a shorter name that reaches only a module or a namespace gets its own warning. A declaration or module of the same library counts even when the project does not import it. The reader's banner lists them too. A warning does not change the exit code.
+It also warns, with the file and line, about each name a module docstring lists that the project and its dependencies do not declare: a dotted name such as `Widget.foo_le_bar`, or the name a list item begins with under a "Main …" heading. A deleted or renamed declaration often leaves such a name behind. Names resolve as in Lean, through the namespaces the file enters and opens. A module or namespace written in full (`Example.Shapes.Widget`) is accepted; a shorter name that reaches only a module or a namespace gets its own warning. A declaration or module of the same library counts even when the project does not import it. A name Lean generates (a projection, a constructor, a derived instance) counts when a built module holds it, in a library the paper's index leaves out too. The reader's banner lists them too. A warning does not change the exit code.
 
 Generated files in `.machinechecked/` are Git-ignored. Use `--out` to save the HTML elsewhere.
 The bundle contains the paper and Lean statements; share it with an appropriate audience.

@@ -39,6 +39,28 @@ assert.doesNotMatch(text(unchecked), /Lean checks its proof/);
 const forged = coverageView({ ...base, basis: "checked_bridge", bridge: { ...bridge("verified") } });
 assert.equal(forged.headline, "Every clause, through a bridge Lean does not check");
 
+// A workspace finding's own bridge reads as the engine's check of it (`bridge_check`), never as
+// recorded; one the engine reads as the auditor's composition says what it was recorded as.
+{
+  const { findingCoverageView, recordedBasisText } = await import("../src/lib/coverage.js");
+  const named = { theorem: "Cover.three_even", target: "Cover.Spec.three_even" };
+  const finding = { coverage: "full", basis: "checked_bridge", bridge: named, note: "n" };
+  assert.equal(findingCoverageView(finding).headline, "Every clause, through a bridge Lean does not check");
+  assert.equal(findingCoverageView({ ...finding, bridge_check: { state: "checked", reasons: [] } }).headline,
+               "Every clause, through a checked bridge");
+  assert.match(text(findingCoverageView({ ...finding, bridge_check: { state: "checked", reasons: [] } })),
+               /Bridge Cover\.three_even/);
+  const read = { coverage: "full", basis: "reviewed_composition", recorded_basis: "checked_bridge",
+                 basis_reason: ["Lean finds no such theorem", "Lean finds no such target"] };
+  assert.equal(findingCoverageView({ ...read, bridge: named }).headline, "Every clause, by the auditor's composition");
+  assert.equal(recordedBasisText({ ...read, bridge: named }),
+               "Recorded as a checked bridge (Cover.three_even for Cover.Spec.three_even); no bridge Lean checks now: Lean finds no such theorem; Lean finds no such target.");
+  assert.equal(recordedBasisText({ ...read, basis_reason: ["no bridge is recorded"] }),
+               "Recorded as a checked bridge; no bridge Lean checks now: no bridge is recorded.");
+  assert.equal(recordedBasisText(finding), null);
+  assert.equal(findingCoverageView(null), null);
+}
+
 // An unresolved reading: its question, never a difference.
 const open = coverageView({ ...base, coverage: "unresolved", question: "Natural numbers or integers?", would_decide: "The conventions." });
 assert.equal(open.headline, "Unresolved");

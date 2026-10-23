@@ -203,7 +203,9 @@ when it is saved, and refuses a theorem whose type is not exactly the target. Th
 reads **Every clause, through a checked bridge** while the check holds; a change to the target, a
 definition it uses or the claim's passage puts it out of date, and it reads as your composition
 again. `workspace show` and `compare --query composition CLAIM` print the argument; no status
-changes either way.
+changes either way. A finding with basis `checked_bridge` reads so while it rests on such a
+composition and the check holds; any other reads as your composition, saying what it was recorded
+as and why, in `workspace show`, the reader and an export.
 
 **Requirements and the passages that govern them.** A claim's meaning can depend on sentences
 outside its display: "for every ε > 0" before an estimate, "with C independent of ε" after it, a
@@ -297,7 +299,10 @@ claim's printed text changes, `show` marks that evidence and the findings that c
 `stale`; the others stay current. In a full assessment, `machinechecked changes --workspace ID`
 lists them beside the review markers the new release reopened, each with what changed
 ([What changed since the last release](ASSURANCE.md#what-changed-since-the-last-release)). A cited fact inside a proof is `stale` once that proof
-changes, even when the theorem's statement does not. Re-pin a record with `"repin": true` once you have checked it
+changes, even when the theorem's statement does not; it, a cited application and a certificate
+read `unchecked` while Lean cannot look at them (their module is not built, a request failed). A
+published audit shows them as `show` does, checked against the Lean its release was built from,
+and as `unchecked` once that Lean has changed. Re-pin a record with `"repin": true` once you have checked it
 again. Changing to independent mode, or importing, keeps what the workspace records you had seen,
 so an informed investigation never becomes a blind review. A report made with `machinechecked
 review` lists the exposure of every workspace in the working directory that you (the reviewer

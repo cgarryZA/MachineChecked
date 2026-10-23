@@ -15,12 +15,17 @@ Lean is, and the auditor's prose (notes, arguments, questions, reasons, a counte
 specialisation and reduction) only when reviews are. A difference shows its paper expression when
 the source text is published and its Lean expression when the Lean is. A cited fact
 inside a proof keeps its basis, "established inside this proof under this context", and its
-pins; its proposition and context are Lean text. Its currency needs the Lean project, so it is
-published as `unchecked`, and so is a cited application's. A composition keeps its structure
+pins; its proposition and context are Lean text. Its currency, and that of a cited application
+or certificate, is checked against the Lean project the export was built from, asking Lean when
+the facts store has no answer; it is `unchecked` without that project or when Lean could not
+look (a module not built, a failed request). A composition keeps its structure
 (steps, the evidence each rests on, identifications, obligations and their state) always, the
 objects and substitutions it names when the Lean is published, and its prose when reviews are.
 Its basis is `checked_bridge` only when its bridge is checked against the Lean project at
-export (from the facts store); otherwise it is the auditor's composition.
+export (from the facts store); otherwise it is the auditor's composition. A finding recorded as
+`checked_bridge` reads the same way: as a checked bridge only while the bridge it rests on (its
+composition's, or its own) is checked at export, else as `reviewed_composition` with
+`recorded_basis` and the reasons.
 
 The records sit in `data/work/<claim file>`, one file per claim that has any, which the claim's
 passport names in `work`. They are readings: nothing here is an input to a status.
@@ -211,10 +216,12 @@ def _composition(r: dict, pub, view: dict) -> dict:
 
 def public_record(r: dict, pub, currency: dict, in_force: set[str],
                   compositions: dict | None = None,
-                  records: list[dict] | None = None) -> dict:
+                  records: list[dict] | None = None, bridges: dict | None = None) -> dict:
     """One accepted record with what `pub` allows; `compositions` holds each composition as
-    `composition.view` gives it. A counterexample also carries what it can show against its
-    reading (`estimates.analyse`, over the published `records`)."""
+    `composition.view` gives it, and `bridges` the bridge check of each finding recorded as a
+    checked bridge (`composition.finding_bridge`; without it, a finding's own bridge is not
+    counted). A counterexample also carries what it can show against its reading
+    (`estimates.analyse`, over the published `records`)."""
     k = r["kind"]
     out = {f: r[f] for f in (*COMMON, *FIELDS[k]) if r.get(f) is not None}
     if pub.reviews:
@@ -249,11 +256,17 @@ def public_record(r: dict, pub, currency: dict, in_force: set[str],
     elif k == "finding":
         out["evidence"] = list(r.get("evidence") or [])
         out["in_force"] = r["id"] in in_force
-        shown = ((compositions or {}).get(r.get("composition") or "") or {}).get("basis")
-        if r.get("basis") == "checked_bridge" and shown and shown != "checked_bridge":
-            # The composition's bridge is not checked at export: the finding reads as the
-            # auditor's composition.
-            out.update(basis="reviewed_composition", recorded_basis="checked_bridge")
+        from . import composition as cp
+        chk = bridges[r["id"]] if bridges is not None and r["id"] in bridges else \
+            cp.finding_bridge(r, compositions or {}, None, None)
+        if chk is not None and r.get("bridge") and not r.get("composition"):
+            out["bridge_check"] = {"state": chk.get("state") or "unchecked",
+                                   "reasons": list(chk.get("reasons") or [])}
+        if chk is not None and chk.get("state") != "checked":
+            # No bridge is checked at export (its composition's, or its own): the finding reads
+            # as the auditor's composition.
+            out.update(basis="reviewed_composition", recorded_basis="checked_bridge",
+                       basis_reason=list(chk.get("reasons") or []))
     elif k == "evidence":
         out["ref"] = _ref(r.get("ref") or {}, pub)
     elif k == "composition":
@@ -265,9 +278,11 @@ def readings(work_dir: Path, snap, pub_for, claims: set[str],
              root: Path | None = None) -> dict[str, list[dict]]:
     """Per claim of `claims`, one reading per workspace that has accepted records for it: the
     workspace, its auditor and mode, and its records in the form `public_record` gives.
-    `pub_for(claim)` is the publication settings of the claim's paper; a composition's bridge
-    is checked against the Lean project at `root` (from the facts store; without it, or when it
-    is not stored current, the bridge is not counted)."""
+    `pub_for(claim)` is the publication settings of the claim's paper. Cited facts, applications
+    and certificates are checked against the Lean project at `root`, asking Lean when the facts
+    store has no answer (without it they are `unchecked`); a composition's bridge is checked
+    against it from the facts store (without it, or when it is not stored current, the bridge is
+    not counted)."""
     from . import composition as cp
     out: dict[str, list[dict]] = {}
     for _, ws in wsp.list_all(work_dir):
@@ -275,11 +290,13 @@ def readings(work_dir: Path, snap, pub_for, claims: set[str],
         kept = {rid: r for rid, r in kept.items() if r.get("claim") in claims}
         if not kept:
             continue
-        cur = wsp.currency({"records": kept}, snap)
+        cur = wsp.currency({"records": kept}, snap, root, check_facts=root is not None)
         in_force = {r["id"] for r in wsp.current_findings({"records": kept})}
         comps = {r["id"]: cp.view(r, {"records": kept}, cur, cp.bridge_currency(
                      r["bridge"], r["claim"], snap, root) if r.get("bridge") else None)
                  for r in kept.values() if r["kind"] == "composition"}
+        bridges = {r["id"]: cp.finding_bridge(r, comps, snap, root)
+                   for r in kept.values() if r["kind"] == "finding"}
         who = ws.get("reviewer") or {}
         by_claim: dict[str, list[dict]] = {}
         for r in kept.values():
@@ -293,7 +310,7 @@ def readings(work_dir: Path, snap, pub_for, claims: set[str],
                                             "compositions": [], "counterexamples": []}
             for r in sorted(recs, key=lambda r: (order.get(r["id"], (0, 0))[0],
                                                  r.get("created_at") or "", r["id"])):
-                item = public_record(r, pub, cur, in_force, comps, recs)
+                item = public_record(r, pub, cur, in_force, comps, recs, bridges)
                 if r["kind"] == "requirement":
                     item["depth"] = order[r["id"]][1]
                 group[{"requirement": "requirements", "fragment": "fragments",
@@ -314,8 +331,8 @@ def write(data: Path, work_dir: Path, pub_for, sources: Path | None = None,
     (its `index.json` and claim passports already written): `data/work/<claim file>` for each
     claim that has any, named by the passport's `work`. Currency is computed against `data`
     itself, with the paper sources under `sources` (default: the sources of the build the data
-    was written from), and bridges against the Lean project at `root`. Returns the files
-    written, by claim id."""
+    was written from), and cited facts, applications, certificates and bridges against the Lean
+    project at `root`. Returns the files written, by claim id."""
     from .targets import Snapshot, TargetError
     if not wsp.store(work_dir).is_dir():
         return {}

@@ -384,7 +384,9 @@ optional `clause` and `note`, `rev`, `created_at`/`created_by`, `updated_at`/`up
   checked by the probe when recorded, keeping `type`, `target_statement`, `target_fingerprint`,
   `file`, `file_sha256`, `axioms`, `lean`, `toolchain`, `manifest_sha256`, `result` and
   `reasons`); it is `stale` once its source file, its checked type, its target or the result
-  changes. `role` is `candidate` (the default), `supports`,
+  changes. Each of these three is `unchecked`, never `stale`, while Lean cannot look: its
+  module is not built or could not be loaded, the request failed, or, for an application not
+  found, a module was not searched. `role` is `candidate` (the default), `supports`,
   `context` or `rejected` (with `why_rejected`). A candidate is a candidate until the auditor
   gives it another role.
 - **`finding`**: `coverage` (the links file's words: `full`, `partial`, `changed`, `related`,
@@ -396,9 +398,13 @@ optional `clause` and `note`, `rev`, `created_at`/`created_by`, `updated_at`/`up
   exported statement. A `composed` coverage is recorded as `full` with basis
   `reviewed_composition`. A finding may rest on a `composition` of the same claim (its id): its
   basis is then `reviewed_composition`, or `checked_bridge` when the composition carries a
-  bridge, and full coverage needs the composition complete (checked again at `submit`). Shown
-  while the bridge is not checked, a `checked_bridge` finding reads as `reviewed_composition`
-  (with `recorded_basis`). A finding may also record a `difference` on its `requirement`
+  bridge, and full coverage needs the composition complete (checked again at `submit`). Shown,
+  a `checked_bridge` finding reads as `reviewed_composition` (with `recorded_basis` and the
+  reasons, `basis_reason`) unless a bridge Lean checks now supports it: its composition's, or
+  else its own `bridge`, checked as a composition's is (`bridge_check`). A finding's own bridge
+  records no version of the target or of the passage the auditor read, so Lean's check of it
+  reads as out of date; a finding with no bridge reads as `reviewed_composition` too. A finding
+  may also record a `difference` on its `requirement`
   (`{feature, paper, lean, outcome, conditions, transport, resolution, why, hint}`), a `verdict`
   on a printed step (`holds as printed`, `holds, with a gap in the argument`, `false as
   printed`, `cannot determine`) and the `counterexamples` it rests on (pinned by digest); such a
@@ -556,14 +562,20 @@ The paper's `publish` settings apply. Without `source_text`, a region keeps only
 and a `paper` evidence reference loses its `quote`. Without `lean`, an alignment target loses its
 `target` text, a `source` evidence reference its file and line, and a `fact` evidence reference
 its `type`, `assumptions`, `variables`, `cases` and `source` (its declaration, position, pins and
-`basis` stay). A cited fact's (or application's) currency needs the Lean project, so it is
-published as `unchecked`; an `app` reference keeps its arguments, premises and result only with
-`lean`. A composition keeps its steps' ids, requirements, evidence and order, its
+`basis` stay). A cited fact's, application's or certificate's currency is checked against the
+Lean project the release was built from, as `workspace show` checks it (asking Lean when the
+facts store has no answer); it is published as `unchecked` when there is no such project (no Lean
+was built, or a Lean input changed since the build), or when Lean could not look (the module is
+not built or could not be loaded, the request failed). An `app` reference keeps its arguments,
+premises and result only with `lean`. A composition keeps its steps' ids, requirements, evidence and order, its
 identifications' steps and how they are known, and its obligations' kinds, states and discharges;
 its objects and substitutions only with `lean`; its statement, what each step establishes, the
 inferences, obligation texts and notes only with `reviews`. Its basis is `checked_bridge` only when
 the bridge is checked at export against the project's facts store; otherwise
-`reviewed_composition`, and a finding recorded as `checked_bridge` on it reads the same way. Without `reviews`, `note`,
+`reviewed_composition`, and a finding recorded as `checked_bridge` on it reads the same way. A
+finding recorded as `checked_bridge` without a composition reads as `reviewed_composition` (with
+`recorded_basis`, `basis_reason` and, for its own bridge, `bridge_check`) unless that bridge is
+checked at export. Without `reviews`, `note`,
 `argument`, `question`, `would_decide`, `reason` and `why_rejected` are left out. The export
 scans these files with the rest. A claim file larger than 2 MB is refused.
 
