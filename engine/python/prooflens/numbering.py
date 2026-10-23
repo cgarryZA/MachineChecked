@@ -66,16 +66,17 @@ REF = re.compile(r"(?<![\w.])(Theorem|Thm|Lemma|Lem|Proposition|Prop|Corollary|C
                  r"Subsection|Section|Sec|§)(\.?[ \t~]*)(\d+(?:\.\d+)*)(?![\w]|\.\d)", re.I)
 NAME_REF = re.compile(r"(?:^|_)(theorem|thm|lemma|lem|proposition|prop|corollary|cor|"
                       r"definition|defn|def|section|sec)_?(\d+(?:_\d+)*)(?=_|$)")
-# Just after a number, a bracket or `\cite` cites another work (`Lemma 9 [AB]`, `Lemma
-# 9~\cite{AB}`); other citations follow "of", "in" or "from" (`_AFTER_WORD`).
-_BRACKET_AFTER = re.compile(r"[\s~]*(?:\[|\\cite\b)")
+# Just after a number, a bracket or `\cite` (and `\citet`, `\citep`, …) cites another work
+# (`Lemma 9 [AB]`, `Lemma 9~\cite{AB}`); other citations follow "of", "in" or "from"
+# (`_AFTER_WORD`).
+_BRACKET_AFTER = re.compile(r"[\s~]*(?:\[|\\cite)")
 _AFTER_WORD = re.compile(r"\s*(?:,\s*)?(?:of|in|from)[\s~]+")
 # What, after that word, cites a work by itself: a bracket, `\cite`, an arXiv identifier, a
 # reference word with its label (`ref. [3]`, `Refs. 3, 4`, `reference \cite{AB}`; `in refined
 # form` and `in reference to Lemma 2` cite none), or an emphasised or quoted title (`of *An
 # Introduction*`, `of \emph{Elements}`).
 _TITLE = r"[*_“\"]|\\(?:emph|textit)\s*\{"
-_CITATION = re.compile(r"\[|\\cite\b|arXiv|[Rr]ef(?:s|erences?)?\b\.?[\s~]*(?:\[|\\cite|\d)|"
+_CITATION = re.compile(r"\[|\\cite|arXiv|[Rr]ef(?:s|erences?)?\b\.?[\s~]*(?:\[|\\cite|\d)|"
                        + _TITLE)
 # After that word, a capitalised word (group 1), with "the" before it or not: a part of this
 # paper or of its formalisation (`in Section 7`, `_OWN_PARTS`), this paper or another one (`of
@@ -89,7 +90,7 @@ _MORE_NAMES = re.compile(r"\s*(?:,\s*(?:and\s+)?|and\s+|&\s*)([A-Z][\w\-–]*)")
 # or `\cite`, a title after a comma, a colon or the possessive (`Hardy, *An Introduction*`,
 # `Serre's *A Course in Arithmetic*`), or the possessive of a work (`Serre's book`).
 _AUTHORS_THEN = re.compile(
-    r"\s*,?\s*(?:et\s+al\b|\(?(?:1[5-9]|20)\d\d[a-z]?\b|\[|\\cite\b)"
+    r"\s*,?\s*(?:et\s+al\b|\(?(?:1[5-9]|20)\d\d[a-z]?\b|\[|\\cite)"
     rf"|(?:['’]s)?\s*[,:]?\s*(?:{_TITLE})"
     r"|['’]s\s+(?:book|monograph|notes|lectures|paper|article|survey|thesis|treatise|text"
     r"|textbook)\b")
@@ -197,8 +198,9 @@ def _cited_after(after: str) -> bool:
     """Whether the text just after a number cites another work: a bracket or `\\cite`, or,
     after "of", "in" or "from", a citation, a title, another paper (`of Paper B`) or a work's
     authors (`_by_authors`). A part of this paper or of its formalisation (`in Section 7`, `in
-    Figure 2`, `in Lean`) does not, unless a citation follows it (`in Section 4 of [AB]`); nor
-    does this paper (`of the Paper`) or a mathematical term (`in Hilbert spaces`)."""
+    Figure 2`, `in Lean`), or any part given by its label (`in Volume 2`), does not, unless a
+    citation follows it (`in Section 4 of [AB]`, `in Volume 2 of [B]`); nor does this paper
+    (`of the Paper`) or a mathematical term (`in Hilbert spaces`)."""
     while not _BRACKET_AFTER.match(after):
         m = _AFTER_WORD.match(after)
         if not m:
@@ -213,7 +215,10 @@ def _cited_after(after: str) -> bool:
         if word.lower() in _PAPER_WORDS:
             return re.match(rf"[ \t~]+{_LABEL}", after) is not None
         if word.lower() not in _OWN_PARTS:
-            return _by_authors(word, after)
+            if _by_authors(word, after):
+                return True
+            if not re.match(rf"\.?[ \t~]+{_ONE_LABEL}", after):
+                return False
         after = after[_PART_LABEL.match(after).end():]
     return True
 

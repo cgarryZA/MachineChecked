@@ -131,7 +131,7 @@ def test_a_capitalised_word_after_the_number_names_a_work_only_as_a_citation():
                "P.i": "Theorem 9.9 of this Paper.",
                "P.j": "Theorem 9.9 in Hilbert and Banach spaces.",
                "P.k": "Theorem 9.9 in Navier–Stokes equations.", "P.l": "Theorem 9.9 in Rudin.",
-               "P.m": "Theorem 9.9 in Figure~2 and Table 1."}
+               "P.m": "Theorem 9.9 in Figure~2 and Table 1.", "P.n": "Theorem 9.9 in Dimension 3."}
     elsewhere = {"Q.a": "Theorem 4.1 of [Gauss].", "Q.b": "Theorem 9.9 of \\cite{AB}.",
                  "Q.c": "Theorem 9.9 of~\\cite{AB}.", "Q.d": "Theorem 9.9~\\cite{AB}.",
                  "Q.e": "Theorem 3 in Hardy and Wright (1979).",
@@ -144,7 +144,9 @@ def test_a_capitalised_word_after_the_number_names_a_work_only_as_a_citation():
                  "Q.n": "Theorem 9.9 in Hardy, Littlewood and Pólya.",
                  "Q.o": "Theorem 9.9 in Eq. (4) of [AB].",
                  "Q.p": "Theorem 9.9 in Proof of Lemma 3 of [AB].", "Q.q": "Theorem 9.9 of Paper B.",
-                 "Q.r": "Theorem 9.9 in Ref. [3]."}
+                 "Q.r": "Theorem 9.9 in Ref. [3].", "Q.s": "Theorem 9.9 of \\citet{AB}.",
+                 "Q.t": "Theorem 9.9~\\citep[Ch. 2]{AB}.", "Q.u": "Theorem 9.9 in Gauss \\citep{G}.",
+                 "Q.v": "Theorem 9.9 in Volume 2 of [B]."}
     index = [decl(n, d) for n, d in {**checked, **elsewhere}.items()]
     out = nb.analyse(index, CLAIMS, INV)
     first = {}
