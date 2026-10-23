@@ -17,13 +17,15 @@ import subprocess
 import pytest
 
 from conftest import ROOT, needs_lean
-from prooflens.assess import TOTALISED, occurrences, totalised
+from types import SimpleNamespace
+
+from prooflens.assess import TOTALISED, Assessor, occurrences, totalised
 from prooflens.probe import lean_session, parse_records
 
 SRC = ROOT / "tests" / "fixtures" / "carriers"
 SPECS = ["join", "extended", "real", "alias", "both", "sets", "plain", "poly", "deep",
          "divNat", "divField", "divExtended", "divGroup", "divPlain", "divPoly", "integrals",
-         "integralUnit", "sumExtended", "sumReal", "roots"]
+         "integralUnit", "sumExtended", "sumReal", "roots", "two", "twoMixed", "twoMoved"]
 REAL = TOTALISED["iSup"]
 
 
@@ -125,6 +127,63 @@ def test_each_supremum_is_judged_by_its_type(tmp_path, toolchain):
     assert {(o["const"], o["carrier"]) for o in recs["roots"]["order_ops"]["occurrences"]} == \
         {("Real.sqrt", "Real")}
     assert set(warnings(recs["roots"])) == {"Real.sqrt"}
+
+    each_occurrence_has_its_own_finding(recs)
+
+
+def assess(rec, dismissals, fp="fp-1"):
+    """The totalisation warnings of `rec` as the clause `T:x#0` of the statement `P.s` with
+    fingerprint `fp`, under `dismissals`."""
+    a = Assessor(SimpleNamespace(statement_authors=[]), {}, {"decls": {}}, {}, [], dismissals)
+    a.totalised_warnings("T:x#0", "P.s", {**rec, "fingerprint": fp})
+    return a.findings
+
+
+def dismissal(f, **kw):
+    return {"code": "totalised", "subject": "P.s", "trigger": f["trigger"], "at": f["at"],
+            "fingerprint": f["fingerprint"], "rationale": "bounded", "by": "auditor", **kw}
+
+
+def each_occurrence_has_its_own_finding(recs):
+    # Two suprema on the number line: two warnings, each about one application, with its own
+    # position and fingerprint.
+    two = assess(recs["two"], [])
+    assert len(two) == 2 and len({f["id"] for f in two}) == 2
+    assert all(f["id"] == f"totalised:T:x#0:iSup@{f['at']}" and len(f["occurrences"]) == 1
+               and f["occurrences"][0]["at"][0] == f["at"] and f["statement_fingerprint"] == "fp-1"
+               for f in two)
+    assert len({f["fingerprint"] for f in two}) == 2
+    assert all(f["fingerprint"].startswith("pl-occ-v1:") for f in two)
+    first, second = sorted(two, key=lambda f: f["at"])
+
+    # Dismissing one leaves the other open.
+    fs = {f["at"]: f for f in assess(recs["two"], [dismissal(first)])}
+    assert fs[first["at"]]["dismissed"] == {"rationale": "bounded", "by": "auditor"}
+    assert not fs[second["at"]].get("dismissed") and not fs[second["at"]].get("dismissal_stale")
+
+    # The second family's values change type: only the second application's dismissal lapses,
+    # although the statement changed.
+    both = [dismissal(first), dismissal(second)]
+    mixed = {f["at"]: f for f in assess(recs["twoMixed"], both, fp="fp-2")}
+    assert set(mixed) == {first["at"], second["at"]}
+    assert mixed[first["at"]].get("dismissed") and not mixed[first["at"]].get("dismissal_stale")
+    assert not mixed[second["at"]].get("dismissed") and mixed[second["at"]]["dismissal_stale"]
+
+    # A conjunct added before them moves both applications: each dismissal follows its own.
+    moved = assess(recs["twoMoved"], both, fp="fp-3")
+    assert {f["at"] for f in moved}.isdisjoint({first["at"], second["at"]})
+    assert all(f.get("dismissed") and not f.get("dismissal_stale") for f in moved)
+    assert {f["fingerprint"] for f in moved} == {first["fingerprint"], second["fingerprint"]}
+
+    # A dismissal of the old form (the operation in the statement, without `at`) still dismisses
+    # every application of the operation while the statement is unchanged, and says so; once
+    # the statement changes it lapses for all of them.
+    old = [{"code": "totalised", "subject": "P.s", "trigger": "iSup", "fingerprint": "fp-1",
+            "rationale": "bounded", "by": "auditor"}]
+    assert all(f["dismissed"] == {"rationale": "bounded", "by": "auditor", "form": "statement"}
+               for f in assess(recs["two"], old))
+    assert all(not f.get("dismissed") and f["dismissal_stale"]
+               for f in assess(recs["two"], old, fp="fp-2"))
 
 
 def test_a_record_without_types_is_unresolved_not_real():

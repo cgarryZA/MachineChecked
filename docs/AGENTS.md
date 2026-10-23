@@ -67,8 +67,14 @@ statement, with `operation`, its `type` (as Lean prints it; null when it could n
 finds none of those, or null when the rule does not depend on one), `state` (`applies`, `none`
 when the type gives the operation no exceptional case, or `unresolved`), `rule` (what the
 operation gives there, when it applies) and `at` (its positions in the proposition, the `id`s of
-the printed sub-terms). `occurrences_complete` is false when the statement was too large to read
-every application. The site data and `export` carry the same fields.
+the printed sub-terms). Each application whose rule applies or is unresolved is its own warning:
+its `occurrences` holds that one record, `at` is its first position (the finding's `id` ends in
+`@` and that position) and `fingerprint` identifies it in its scope (what a dismissal of it
+records, with `at`). A warning about the applications a statement too large to read did not
+reach has empty `occurrences` and `occurrences_complete: false`. A dismissed warning has
+`dismissed` (`by`, `rationale`, and `form: "statement"` when the dismissal names the operation in
+the whole statement rather than one application); `dismissal_stale` marks one whose dismissal no
+longer applies. The site data and `export` carry the same fields.
 When the configuration has one paper and the project is built, the document
 also has `warnings` with the `paper-reference` warnings and `numbering`, as in zero
 configuration; with several papers they are absent. Report the violations and obligations by

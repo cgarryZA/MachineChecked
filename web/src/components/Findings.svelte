@@ -3,7 +3,8 @@
   // are open work, listed as review tasks. Warnings are heuristics, shown as heuristic findings:
   // they are grouped by the operation that raised them and folded away, low-signal ones last. A warning about a
   // totalised operation lists the applications it read (`occurrences`), each with its type and
-  // what the type gives; `onshow` marks them in the statement.
+  // what the type gives; `onshow` marks them in the statement. Such a warning is about one
+  // application (`at`), and its dismissal names that application.
   let { findings, onshow = null } = $props();
 
   const live = $derived(findings.filter((f) => !f.dismissed));
@@ -73,8 +74,8 @@
                 </ul>
                 {#if onshow && shown(f).length}<button class="show" onclick={() => onshow(f)}>Show in the statement</button>{/if}
               {/if}
-              {#if f.dismissed}<span class="dz">dismissed by {f.dismissed.by}: “{f.dismissed.rationale}”</span>
-              {:else if f.dismissal_stale}<span class="dz">an earlier dismissal no longer applies: the statement changed</span>{/if}
+              {#if f.dismissed}<span class="dz">dismissed by {f.dismissed.by}: “{f.dismissed.rationale}”{#if f.dismissed.form === "statement"} (a dismissal of the operation in the whole statement: it holds until the statement changes){/if}</span>
+              {:else if f.dismissal_stale}<span class="dz">an earlier dismissal no longer applies: {f.at ? "this application changed" : "the statement changed"}</span>{/if}
             </li>
           {/each}
         </ul>
