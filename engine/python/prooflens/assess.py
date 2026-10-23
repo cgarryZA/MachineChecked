@@ -468,17 +468,13 @@ class Assessor:
 
     @staticmethod
     def _shadowed_words(r: dict) -> str:
-        """The two markers of `shadowed`, each with its place, reviewer and hash (shortened), for
-        a finding or a blocker: what follows "the review"."""
-        def short(h: str) -> str:
-            scheme, _, digest = h.rpartition(":")
-            return ((scheme + ":" if scheme else "") + digest[:12]
-                    + ("…" if len(digest) > 12 else ""))
+        """The two markers of `shadowed`, each with its place, reviewer and hash, for a finding
+        or a blocker: what follows "the review". The hashes are given in full: legacy hashes of
+        different declarations can share a long prefix."""
         a, b = r["shadowed"]["reading"], r["shadowed"]["record"]
-        return (f"at {a['file']}:{a['line']} by {a['by']} records the current hash "
-                f"{short(a['hash'])}, but a marker later in the review files, at "
-                f"{b['file']}:{b['line']} by {b['by']}, records {short(b['hash'])} and is the "
-                "record")
+        return (f"at {a['file']}:{a['line']} by {a['by']} records the current hash {a['hash']}, "
+                f"but a marker later in the review files, at {b['file']}:{b['line']} by "
+                f"{b['by']}, records {b['hash']} and is the record")
 
     @staticmethod
     def _mentions(text: str, claim: dict) -> bool:

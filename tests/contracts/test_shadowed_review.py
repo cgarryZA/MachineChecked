@@ -10,7 +10,8 @@ from prooflens.assess import Assessor
 from prooflens.reviews import Review, load_reviews
 
 D = "d" * 64
-H1, H2 = "pl-fp-v1:" + "1" * 64, "pl-fp-v1:" + "2" * 64
+# Legacy hashes of two versions of the proposition, which share their first 16 digits.
+H1, H2 = "abcdef0123456789" + "1" * 16, "abcdef0123456789" + "2" * 16
 HD = "pl-fp-v1:" + "7" * 64
 
 # A synthetic proposition whose statement uses one definition, and the theorem that proves it.
@@ -64,9 +65,8 @@ def test_a_later_marker_at_another_hash_is_named_with_the_review_it_shadows(tmp_
     assert sr["shadowed"] == {
         "reading": {"file": "reviews/a.md", "line": 5, "hash": H2, "by": "alice"},
         "record": {"file": "reviews/b.md", "line": 5, "hash": H1, "by": "alice"}}
-    words = ("at reviews/a.md:5 by alice records the current hash pl-fp-v1:222222222222…, but a "
-             "marker later in the review files, at reviews/b.md:5 by alice, records "
-             "pl-fp-v1:111111111111… and is the record")
+    words = (f"at reviews/a.md:5 by alice records the current hash {H2}, but a marker later in "
+             f"the review files, at reviews/b.md:5 by alice, records {H1} and is the record")
     assert claim["blockers"] == ["the proposition's review " + words,
                                  "Independent replay: not recorded (no Comparator record for "
                                  "this release)"]
@@ -109,9 +109,9 @@ def test_a_shadowed_definition_review_is_named_in_the_blocker_and_the_finding():
     assert claim["status"] == "formal: proved, review pending"
     r = claim["clauses"][0]["def_reviews"]["Toy.bar"]
     assert r["state"] == "stale" and r["why"] == "shadowed"
-    words = ("at reviews/a.md:9 by alice records the current hash pl-fp-v1:777777777777…, but a "
-             "marker later in the review files, at reviews/b.md:12 by bob, records "
-             "pl-fp-v1:666666666666… and is the record")
+    words = (f"at reviews/a.md:9 by alice records the current hash {HD}, but a marker later in "
+             f"the review files, at reviews/b.md:12 by bob, records pl-fp-v1:{'6' * 64} and is "
+             "the record")
     assert "the review of the definition Toy.bar " + words in claim["blockers"]
     assert not [b for b in claim["blockers"] if "changed after their review" in b]
     f, = [f for f in findings if f["code"] == "def-review"]
