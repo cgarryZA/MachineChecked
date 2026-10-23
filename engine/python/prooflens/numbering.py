@@ -86,6 +86,9 @@ _ELSEWHERE_BEFORE = re.compile(r"\[[^\]]*$|\bet al\.?\s*,?\s*$"
 # in (`[U, Lemma 2.1]`, or `[A, Lemma 3; U, Lemma 2.1]` for the second) or its possessive
 # (`[U]'s Lemma 2.1`).
 _KEY_BEFORE = re.compile(r"\[(?:[^\]]*;)?\s*([^\[\],;]+?)\s*(?:,[^\];]*|\]['’]s[\s~*_]*)$")
+# A `\cite` command (`\cite`, `\citet`, `\citep`, …) with its notes and its keys (group 1):
+# `\cite{U}`, `\cite[Lemma 2.1]{U}`, `\cite[see][Lemma 2.1]{U}`.
+_CITE = re.compile(r"\\cite[a-zA-Z]*\*?(?:\s*\[[^\]]*\])*\s*\{([^}]*)\}")
 # An author's possessive just before the number (`Gauss's Lemma 4.22`, `Revuz–Yor's`,
 # `Gauss' Lemma`): a capitalised word of at least two letters, not one naming this paper, a
 # part of it or its formalisation (`Lean's Theorem 2.1`).
@@ -575,19 +578,33 @@ def _depth(name: str, places: set[str]) -> int:
 
 def _named_paper(o: dict, papers: list[tuple[str, str]]) -> str | None:
     """The paper a reference to another work names, read from the reference's own place in its
-    context: the key of the bracketed citation just before its number (`[U, Lemma 2.1]`,
-    `[U]'s Lemma 2.1`) when there is one; else the one paper named after it and before the next
-    reference (`Lemma 2.1 of [U]`, `of [U, Section 3]`, or the paper's title), if exactly one
-    is named."""
+    context: the key of the `\\cite` whose note holds it (`\\cite[Lemma 2.1]{U}`) or of the
+    bracketed citation just before its number (`[U, Lemma 2.1]`, `[U]'s Lemma 2.1`) when there
+    is one; else the one paper named after it and before the next reference outside a `\\cite`
+    (`Lemma 2.1 of [U]`, `of \\cite{U}`, `of [U, Section 3]`, `of \\cite[Section 3]{U}`, or the
+    paper's title), if exactly one is named. A `\\cite` names a paper when the paper is its only
+    key (`\\cite{A,U}` names neither)."""
     ctx, at = o.get("context") or "", o["at"]
+    ids = {pid for pid, _ in papers}
+
+    def keyed(keys: str) -> str | None:
+        k = [x.strip() for x in keys.split(",")]
+        return k[0] if len(k) == 1 and k[0] in ids else None
+
+    cites = [(m.start(), m.end(), keyed(m.group(1))) for m in _CITE.finditer(ctx)]
+    held = next((c for c in cites if c[0] < at < c[1]), None)
+    if held:
+        return held[2]
     key = _KEY_BEFORE.search(ctx[:at])
     if key:
         return next((pid for pid, _ in papers if pid == key.group(1)), None)
     end = at + len(re.sub(r"\s+", " ", o["text"]))
-    nxt = REF.search(ctx, end)
+    nxt = next((r for r in REF.finditer(ctx, end)
+                if not any(s < r.start() < e for s, e, _ in cites)), None)
     after = ctx[end:nxt.start() if nxt else len(ctx)][:80]
     hits = [pid for pid, title in papers
             if re.search(r"\[" + re.escape(pid) + r"\s*[\],]", after)
+            or any(end <= s < end + len(after) and named == pid for s, _, named in cites)
             or (title and re.sub(r"\s+", " ", title).lower() in after.lower())]
     return hits[0] if len(hits) == 1 else None
 
