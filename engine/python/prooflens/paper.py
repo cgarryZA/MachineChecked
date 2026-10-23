@@ -145,10 +145,23 @@ KEY = re.compile(r"[\w.:-]+")
 LABEL = re.compile(r"\\label\s*\{[^{}]*\}")
 
 
+def _unlabelled(m: re.Match) -> str:
+    """What a `\\label` command leaves in a statement text: nothing, or a space when it stands
+    between a control word and a letter (`\\item\\label{a}Each`), which it keeps apart."""
+    s, i = m.string, m.start()
+    k = i
+    while k > 0 and s[k - 1].isascii() and s[k - 1].isalpha():
+        k -= 1
+    after = s[m.end():m.end() + 1]
+    return " " if 0 < k < i and s[k - 1] == "\\" and after.isascii() and after.isalpha() \
+        else ""
+
+
 def statement_key(text) -> str:
     """A statement text as `claim_map` compares it: without its `\\label` commands, which are
-    not printed, and with its white space collapsed."""
-    return " ".join(LABEL.sub(" ", str(text or "")).split())
+    not printed, and then with its white space collapsed, so that a statement that only gains,
+    loses or renames a label is the same text."""
+    return " ".join(LABEL.sub(_unlabelled, str(text or "")).split())
 
 
 def claim_map(earlier: str, earlier_claims: list[dict], later: str,
