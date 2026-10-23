@@ -665,6 +665,24 @@ def part_texts(inventory: dict, paper: str, root: Path) -> dict[str, list[dict]]
     return out
 
 
+def region_texts(inventory: dict, paper: str, root: Path, regions: dict) -> dict[str, str]:
+    """For each claim of `paper` located by line whose region was read (`regions`, from
+    `collect`): the text of its own passage, read from the file of the snapshot that holds it,
+    as the claim's printed statement for the reader, the search and the review packet
+    (published only with the source text). Display only."""
+    out = {}
+    for claim in inventory["claims"]:
+        if claim["paper"] != paper or (regions.get(claim["id"]) or {}).get("error"):
+            continue
+        try:
+            if location(claim) is None:
+                continue
+            out[claim["id"]] = extract(root, claim).text
+        except (RegionError, OSError, UnicodeError):
+            continue
+    return out
+
+
 def matches(claim: dict, tex: dict) -> bool:
     rec = (tex.get("regions") or {}).get(claim["id"], {})
     return bool(claim.get("source_sha256") and not rec.get("error")
