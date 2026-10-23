@@ -429,6 +429,14 @@ def _print_workspace(v: dict) -> None:
                 print(f"           question: {f['question']}")
             if f.get("would_decide"):
                 print(f"           would decide it: {f['would_decide']}")
+            b = f.get("bridge_check") or {}
+            if f.get("basis") == "checked_bridge" and b.get("state") == "checked":
+                print(f"           bridge {b.get('theorem')} for {b.get('target')}: "
+                      "Lean checks it")
+            if f.get("recorded_basis"):
+                print(f"           recorded as {f['recorded_basis']}; no bridge Lean checks "
+                      "now" + (": " + "; ".join(f["basis_reason"])
+                               if f.get("basis_reason") else ""))
             if f.get("basis") == "reviewed_composition":
                 from .simple import COMPOSITION_NEXT_STEP
                 print("           Lean has not checked this combination. Next step: "

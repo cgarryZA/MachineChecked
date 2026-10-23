@@ -203,7 +203,9 @@ when it is saved, and refuses a theorem whose type is not exactly the target. Th
 reads **Every clause, through a checked bridge** while the check holds; a change to the target, a
 definition it uses or the claim's passage puts it out of date, and it reads as your composition
 again. `workspace show` and `compare --query composition CLAIM` print the argument; no status
-changes either way.
+changes either way. A finding with basis `checked_bridge` reads so while it rests on such a
+composition and the check holds; any other reads as your composition, saying what it was recorded
+as and why, in `workspace show`, the reader and an export.
 
 **Requirements and the passages that govern them.** A claim's meaning can depend on sentences
 outside its display: "for every ε > 0" before an estimate, "with C independent of ε" after it, a

@@ -938,13 +938,14 @@ def view(ws: dict, snap=None, claim: str | None = None, root: Path | None = None
         item = {**r, "currency": cur.get(r["id"], {"state": "unchecked", "changes": []})}
         if r["kind"] == "finding":
             item["in_force"] = r["id"] in in_force
-            shown = (comps.get(r.get("composition")) or {}).get("basis")
-            if r.get("basis") == cp.BASIS_BRIDGE and shown and shown != cp.BASIS_BRIDGE:
-                # The composition's bridge is not checked now: the finding reads as the
-                # auditor's composition until it is.
+            chk = cp.finding_bridge(r, comps, snap, root, check_facts)
+            if chk is not None and r.get("bridge") and not r.get("composition"):
+                item["bridge_check"] = chk
+            if chk is not None and chk.get("state") != "checked":
+                # No bridge Lean checks now (its composition's, or its own): the finding reads
+                # as the auditor's composition until there is one.
                 item.update(basis=cp.BASIS_REVIEWED, recorded_basis=cp.BASIS_BRIDGE,
-                            basis_reason=(comps[r["composition"]].get("bridge_check") or {})
-                            .get("reasons") or [])
+                            basis_reason=list(chk.get("reasons") or []))
         c[{"evidence": "evidence", "finding": "findings", "question": "questions",
            "counterexample": "counterexamples"}[r["kind"]]].append(item)
     for cid, c in claims.items():
