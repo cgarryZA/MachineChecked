@@ -36,25 +36,57 @@ def _in_math(tex: str, symbol: str) -> bool:
     return any(re.search(pat, s) for s in spans)
 
 
-def variables(spec: dict) -> list[dict]:
-    """The statement's variables by number: the prefix's binders, then each "there is" inside
-    the conclusion at the number the probe gave it."""
-    out: list[dict] = list(spec.get("binders", []))
+def tree(spec: dict) -> dict:
+    """The statement as one tree (`tree`, from the probe): each binder that opens it a node (its
+    role as `op`, its place in `binders` as `var`) whose one part is the rest of the statement. A
+    record of an earlier probe, without one, is rebuilt from its binders and its conclusion's
+    `logic` in the same form."""
+    t = spec.get("tree")
+    if isinstance(t, dict):
+        return t
+    concl = spec.get("conclusion") or {}
+    node = concl.get("logic") or ({"leaf": concl} if concl else {})
+    for i, b in reversed(list(enumerate(spec.get("binders") or []))):
+        node = {**b, "op": b.get("role"), "var": i, "args": [node]}
+    return node
 
-    def walk(n):
-        if n.get("op") == "exists" and isinstance(n.get("var"), int):
-            out.extend({} for _ in range(n["var"] + 1 - len(out)))
-            out[n["var"]] = {"role": "exists", "name": n.get("name"), "type": n.get("type")}
-        for a in n.get("args", []):
-            walk(a)
-    walk((spec.get("conclusion") or {}).get("logic") or {})
+
+def nodes(spec: dict):
+    """Every node of the statement's tree, in reading order, hypotheses' own trees included."""
+    stack = [tree(spec)]
+    while stack:
+        n = stack.pop()
+        if not isinstance(n, dict):
+            continue
+        yield n
+        stack.extend(reversed([n.get("logic"), *(n.get("args") or [])]))
+
+
+def conclusion_tree(spec: dict) -> dict:
+    """The part of the tree under the binders that open the statement."""
+    n = tree(spec)
+    for _ in spec.get("binders") or []:
+        n = (n.get("args") or [{}])[0]
+    return n
+
+
+def variables(spec: dict) -> list[dict]:
+    """The statement's variables by number: the binders that open it, then each variable bound
+    inside its conclusion or inside a hypothesis, at the number the probe gave it."""
+    out: list[dict] = list(spec.get("binders", []))
+    opening = len(out)
+    for n in nodes(spec):
+        v = n.get("var")
+        if n.get("op") in ("exists", "forall") and isinstance(v, int) and v >= opening:
+            out.extend({} for _ in range(v + 1 - len(out)))
+            out[v] = {"role": n["op"], "name": n.get("name"), "type": n.get("type")}
     return out
 
 
 def _term_pp(spec: dict, where: str) -> dict | None:
     """The pretty-printed term a sub-term's place names: `b:<i>` a binder's type, `x:<i>` the
-    type of the i-th variable (a "there is" inside the conclusion included), `c` the
-    conclusion, `l:<n>` the n-th part of a conclusion split by its logic."""
+    type of the i-th variable (one bound inside the conclusion included), `c` the conclusion,
+    `l:<n>` the n-th part of the conclusion's tree."""
     concl = spec.get("conclusion") or {}
     if where == "c":
         return concl
@@ -71,8 +103,9 @@ def _term_pp(spec: dict, where: str) -> dict | None:
                 leaves.append(n["leaf"])
             for a in n.get("args", []):
                 walk(a)
-        if concl.get("logic"):
-            walk(concl["logic"])
+        shape = conclusion_tree(spec)
+        if "leaf" not in shape:
+            walk(shape)
         n = int(where[2:])
         return leaves[n] if n < len(leaves) else None
     return None
@@ -80,18 +113,14 @@ def _term_pp(spec: dict, where: str) -> dict | None:
 
 def printed(spec: dict):
     """Every printed expression of a statement record: the binders' types, the conclusion, the
-    parts and quantifiers of its logic, and the exact proposition."""
+    leaves and types of its tree (the hypotheses' own trees included), and the exact
+    proposition."""
     for b in spec.get("binders", []):
         yield b.get("type")
-    concl = spec.get("conclusion") or {}
-    yield concl
-
-    def walk(n):
+    yield spec.get("conclusion") or {}
+    for n in nodes(spec):
         yield n.get("leaf")
         yield n.get("type")
-        for a in n.get("args", []):
-            yield from walk(a)
-    yield from walk(concl.get("logic") or {})
     yield spec.get("exact")
 
 

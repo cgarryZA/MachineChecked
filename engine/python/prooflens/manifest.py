@@ -237,6 +237,7 @@ def build(evidence: dict, release: str, display: dict | None = None
                                                              cl.get("corrects")),
                             "statement": {
                 "binders": spec.get("binders", []), "conclusion": spec.get("conclusion"),
+                "tree": spec.get("tree"),
                 "exact": spec.get("exact") or (spec.get("decl") or lean.get("decls", {}).get(cl["spec"]) or {}).get("value"),
                 "axioms": spec.get("axioms", []), "closure": spec.get("closure", []),
                 "direct": spec.get("direct", []), "legacy_hash": spec.get("legacy_hash"),

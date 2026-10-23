@@ -63,8 +63,10 @@ table of `machinechecked.toml` names another):
   is the hash of its text and `excerpt` its fingerprint, which covers the macros and reference
   numbers it is typeset with. Such a link is stale when the excerpt's fingerprint changes or the
   passage is shown from the PDF.
-- A "there is" inside the conclusion is a variable too: the probe numbers it after the prefix's
-  binders, each witness its own number, so `--var` and `--type-of` accept it by name or number.
+- A variable bound inside the conclusion or inside a hypothesis (a "there is", a "for every") is
+  a variable too: the probe numbers it after the binders that open the statement, each its own
+  number (the statement's tree, [DATA_MODEL.md](DATA_MODEL.md)), so `--var` and `--type-of`
+  accept it by number, or by name (the first variable of that name).
 
 ## Display
 

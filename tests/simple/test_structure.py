@@ -1,7 +1,7 @@
-"""The statement structure the probe exports for display (#46), on the synthetic project
-tests/fixtures/structure: each occurrence of a statement's variable names the binder that
-introduced it, and a conjunctive conclusion carries its logical shape. Display only: the
-binders, their roles and the fingerprints are what they were."""
+"""The statement structure the probe exports for display (#46, #67), on the synthetic project
+tests/fixtures/structure: the whole proposition as one tree, from which the binders that open it
+and its conclusion are read; each occurrence of a statement's variable names the binder that
+introduced it. Display only: the binders, their roles and the fingerprints are what they were."""
 
 import shutil
 import subprocess
@@ -18,6 +18,34 @@ def statement(root, name="Shape.layout"):
     view = build_view(root, root / "paper/main.tex", root / ".machinechecked", log=lambda m: None)
     return next(l["record"] for c in view["body"]["claims"] for l in c["links"]
                 if l["name"] == name)
+
+
+def shape(rec):
+    """The part of a statement's tree under the binders that open it."""
+    n = rec["tree"]
+    for _ in rec["binders"]:
+        [n] = n["args"]
+    return n
+
+
+def spine(rec):
+    """The binders that open a statement, as nodes of its tree, each with its role."""
+    out, n = [], rec["tree"]
+    for _ in rec["binders"]:
+        out.append({**n, "role": n["op"]})
+        [n] = n["args"]
+    return out
+
+
+def nodes(n):
+    """Every node of a tree, hypotheses' own trees included."""
+    out, stack = [], [n]
+    while stack:
+        m = stack.pop()
+        if m:
+            out.append(m)
+            stack += [m.get("logic"), *m.get("args", [])]
+    return out
 
 
 def texts(pp):
@@ -55,7 +83,12 @@ def test_variables_and_logic_are_exported(tmp_path, toolchain):
     assert var_refs(b[1]["type"]) == [("E", 0)]
     assert var_refs(b[3]["type"]) == [("j", 2)]
     assert var_refs(b[5]["type"]) == [("j", 2), ("k", 4)]
-    logic = rec["conclusion"]["logic"]
+    # The binders that open the statement are the first nodes of its tree, in order, and the
+    # conclusion's shape is the part under them.
+    assert [(n["role"], n["var"], n["id"], n["type"]) for n in spine(rec)] == \
+        [(x["role"], i, x["id"], x["type"]) for i, x in enumerate(b)]
+    assert "logic" not in rec["conclusion"], "the shape is in the tree, once"
+    logic = shape(rec)
     assert logic["op"] == "and" and len(logic["args"]) == 2
     assert var_refs(logic["args"][0]["leaf"]) == [("x", 6), ("C", 7)]
     assert rec["conclusion"]["text"] == "x ≤ C ∧ n + x ≤ n + C"
@@ -69,7 +102,7 @@ def test_variables_and_logic_are_exported(tmp_path, toolchain):
     rec = statement(root, "Shape.witnesses")
     assert rec["conclusion"]["text"] == \
         "(∃ (x : Nat → Nat), x j = j ∧ j ≤ x j) ∧ ∃ (x : Bool), x = true"
-    left, right = rec["conclusion"]["logic"]["args"]
+    left, right = shape(rec)["args"]
     assert (left["op"], left["name"], left["type"]["text"], left["var"]) == \
         ("exists", "x", "Nat → Nat", 1)
     assert (right["op"], right["name"], right["type"]["text"], right["var"]) == \
@@ -86,7 +119,7 @@ def test_variables_and_logic_are_exported(tmp_path, toolchain):
     rec = statement(root, "Shape.shapes")
     assert [(x["role"], x["supplies"]) for x in rec["binders"]] == \
         [("forall", "data"), ("instance", "proposition")]
-    neg, alt = rec["conclusion"]["logic"]["args"]
+    neg, alt = shape(rec)["args"]
     assert neg["op"] == "not" and neg["args"][0]["op"] == "exists"
     assert neg["args"][0]["type"]["text"] == "Nat"
     assert alt["op"] == "or"
@@ -107,15 +140,12 @@ def test_variables_and_logic_are_exported(tmp_path, toolchain):
         tree = {}
         for b in rec["binders"]:
             tree.update(texts(b["type"]))
-        stack = [rec["conclusion"].get("logic") or {"leaf": rec["conclusion"]}]
-        while stack:
-            n = stack.pop()
+        for n in nodes(rec["tree"]):
             for pp in (n.get("leaf"), n.get("type")):
                 if pp:
                     tree.update(texts(pp))
-            stack += n.get("args", [])
         assert tree and all(exact.get(i) == t for i, t in tree.items()), (name, tree, exact)
-    left, right = statement(root, "Shape.witnesses")["conclusion"]["logic"]["args"]
+    left, right = shape(statement(root, "Shape.witnesses"))["args"]
     assert left["id"] != right["id"] and left["type"]["id"] != right["type"]["id"]
 
 
@@ -129,6 +159,102 @@ def build_copy(tmp_path, toolchain):
             pytest.skip(f"{toolchain} is not installed")
     subprocess.run(["lake", "build"], cwd=root, check=True, capture_output=True, timeout=900)
     return root
+
+
+@needs_lean
+@needs_tex
+@pytest.mark.parametrize("toolchain", [None, "leanprover/lean4:v4.24.0"])
+def test_each_binder_stands_in_its_scope(tmp_path, toolchain):
+    """The whole proposition is one tree (#67): each binder, whether it opens the statement or
+    stands inside its conclusion or one of its hypotheses, is a node with where it stands
+    (`scope`, decided by the nearest negation, alternative, equivalence, premise or hypothesis
+    around it), the connectives around it (`within`) and the objects it may depend on
+    (`after`). Each variable has a number of its own, so two of the same name resolve to their
+    own occurrences, and every printed part has the identity it has in the exact Lean."""
+    root = build_copy(tmp_path, toolchain)
+    view = build_view(root, root / "paper/main.tex", root / ".machinechecked", log=lambda m: None)
+    rec = {l["name"]: l["record"] for c in view["body"]["claims"] for l in c["links"]}
+
+    # ∀ x, ∃ y, ∀ z: given x, the statement establishes y, then the bound holds for every z.
+    alt = rec["Shape.alternating"]
+    assert [(n["role"], n["name"], n["scope"], n["after"]) for n in spine(alt)] == \
+        [("forall", "x", "given", []), ("exists", "y", "produced", [0]),
+         ("forall", "z", "given", [0, 1])]
+    assert var_refs(shape(alt)["leaf"]) == [("x", 0), ("z", 2), ("y", 1), ("z", 2)]
+
+    # An assumption containing a conditional existence claim: its x and y belong to it, numbered
+    # apart from the statement's own y, which the statement establishes.
+    cond = rec["Shape.conditional"]
+    sp = spine(cond)
+    assert [(n["role"], n["name"]) for n in sp] == [
+        ("forall", "A"), ("forall", "B"), ("hypothesis", "h"), ("forall", "a"),
+        ("hypothesis", "ha"), ("exists", "y")]
+    y = sp[5]
+    assert (y["scope"], y["var"], y["after"]) == ("produced", 5, [0, 1, 3])
+    assert "logic" not in sp[4], "a hypothesis without a shape has no tree of its own"
+    every = sp[2]["logic"]
+    assert (every["op"], every["name"], every["scope"], every["within"], every["after"]) == \
+        ("forall", "x", "assumed", ["assume"], [0, 1])
+    [imp] = every["args"]
+    assert imp["op"] == "implies" and imp["args"][0]["leaf"]["text"] == "A x"
+    inner = imp["args"][1]
+    assert (inner["op"], inner["name"], inner["scope"], inner["within"], inner["after"]) == \
+        ("exists", "y", "assumed", ["assume", "then"], [0, 1, every["var"]])
+    assert (every["var"], inner["var"]) == (6, 7), "numbered after the statement's own variables"
+    assert inner["id"] != y["id"] and inner["type"]["id"] != y["type"]["id"]
+    assert var_refs(inner["args"][0]["leaf"]) == [("B", 1), ("x", 6), ("y", 7)]
+    assert var_refs(shape(cond)["leaf"]) == [("B", 1), ("a", 3), ("y", 5)]
+
+    # Established under a premise, inside one side of an equivalence, inside one alternative.
+    pre = rec["Shape.premised"]
+    imp, rest = shape(pre)["args"]
+    iff, alt2 = rest["args"]
+    under = imp["args"][1]
+    assert (imp["op"], imp["args"][0]["leaf"]["text"]) == ("implies", "P")
+    assert (under["op"], under["name"], under["scope"], under["within"]) == \
+        ("exists", "x", "produced", ["and", "then"])
+    side = iff["args"][1]
+    assert (iff["op"], side["op"], side["scope"], side["within"]) == \
+        ("iff", "exists", "equivalent", ["and", "and", "iff"])
+    branch = alt2["args"][0]
+    assert (alt2["op"], branch["op"], branch["name"], branch["scope"]) == \
+        ("or", "exists", "x", "alternative")
+    assert under["var"] != branch["var"]
+
+    # One witness whose type names its domain, codomain and scalars, with both properties; each
+    # assumption's Φ is a variable of its own.
+    one = rec["Shape.one_map"]
+    sp = spine(one)
+    phi = sp[-1]
+    assert (phi["role"], phi["name"], phi["type"]["text"], phi["scope"], phi["var"]) == \
+        ("exists", "Φ", "G →[Nat] H", "produced", 7)
+    a, b = shape(one)["args"]
+    assert var_refs(a["leaf"]) == [("A", 3), ("Φ", 7)]
+    assert var_refs(b["leaf"]) == [("B", 4), ("Φ", 7)]
+    assumed = [sp[i]["logic"] for i in (5, 6)]
+    assert [(n["op"], n["name"], n["scope"]) for n in assumed] == [("forall", "Φ", "assumed")] * 2
+    assert len({phi["var"], *(n["var"] for n in assumed)}) == 3
+
+    # Every part of every tree, the hypotheses' own trees included, has the text its identity
+    # has in the exact Lean (but for the parentheses the exact Lean puts around an argument; a
+    # type the exact Lean prints once for several binders, `(A B : T)`, is there under the
+    # first), and the numbers of the variables are distinct.
+    for name in ("Shape.alternating", "Shape.conditional", "Shape.premised", "Shape.one_map",
+                 "Shape.assumed"):
+        r = rec[name]
+        exact, leaves, types, numbers = texts(r["exact"]), {}, {}, []
+        for n in nodes(r["tree"]):
+            if n.get("leaf"):
+                leaves.update(texts(n["leaf"]))
+            if n.get("type"):
+                types.update(texts(n["type"]))
+            if n.get("op") in ("forall", "exists", "hypothesis", "instance"):
+                numbers.append(n["var"])
+        assert leaves and all(bare(exact.get(i, "")) == bare(t) for i, t in leaves.items()), \
+            (name, leaves, exact)
+        assert all(bare(exact[i]) == bare(t) for i, t in types.items() if i in exact), \
+            (name, types, exact)
+        assert len(numbers) == len(set(numbers)), (name, numbers)
 
 
 @needs_lean
@@ -208,7 +334,7 @@ def test_properties_carried_by_types(tmp_path, toolchain):
     root = build_copy(tmp_path, toolchain)
     # A supplied solution: its proof fields (one inherited) apply to s; its data is listed as
     # data; the extra hypothesis stays a hypothesis of its own.
-    b = statement(root, "Shape.supplied")["binders"]
+    b = spine(statement(root, "Shape.supplied"))
     s = next(x for x in b if x["name"] == "s")
     assert s["role"] == "forall"
     assert props(s) == [("start", "s.path 0 = d"), ("le_bound", "∀ (n : Nat), s.path n ≤ s.bound")]
@@ -220,53 +346,56 @@ def test_properties_carried_by_types(tmp_path, toolchain):
     assert ("s", 1) in var_refs(start["type"]) and ("d", 0) in var_refs(start["type"])
     h = next(x for x in b if x["name"] == "h")
     assert h["role"] == "hypothesis" and h["type"]["text"] == "s.bound ≤ 5"
-    assert "properties" not in h and "objects" not in h
+    assert "properties" not in h and "logic" not in h
+    # Properties are on the nodes of the tree, not repeated in the binders.
+    assert all("properties" not in x for x in statement(root, "Shape.supplied")["binders"])
     # An assumed existence: the solution and its properties stay inside the assumption.
     rec = statement(root, "Shape.assumed")
-    h = rec["binders"][0]
+    h = spine(rec)[0]
     assert h["role"] == "hypothesis" and "properties" not in h
-    [obj] = h["objects"]
-    assert (obj["op"], obj["name"], obj["scope"]) == ("exists", "s", ["forall", "then"])
+    [obj] = [n for n in nodes(h["logic"]) if n.get("op") == "exists"]
+    assert (obj["op"], obj["name"], obj["scope"], obj["within"]) == \
+        ("exists", "s", "assumed", ["assume", "then"])
     assert props(obj)[0] == ("start", "s.path 0 = d")
-    out = rec["binders"][1]
+    out = spine(rec)[1]
     assert (out["role"], out["type"]["text"]) == ("exists", "Shape.Solution 0")
     assert props(out)[0] == ("start", "s.path 0 = 0")
     # An established existence: the solution is a witness, under the condition on d.
-    b = statement(root, "Shape.produced")["binders"]
-    assert [(x["role"], x["name"]) for x in b] == \
-        [("forall", "d"), ("hypothesis", "h1"), ("exists", "s")]
+    b = spine(statement(root, "Shape.produced"))
+    assert [(x["role"], x["name"], x["scope"]) for x in b] == \
+        [("forall", "d", "given"), ("hypothesis", "h1", "given"), ("exists", "s", "produced")]
     assert props(b[2])[1] == ("le_bound", "∀ (n : Nat), s.path n ≤ s.bound")
     # A subtype carries its predicate.
-    [p] = statement(root, "Shape.positive")["binders"]
+    [p] = spine(statement(root, "Shape.positive"))
     assert props(p) == [("property", "0 < p.val")] and props(p, "data") == [("val", "Nat")]
     # A class instance is an input carrying its law and its data (inherited from Inhabited);
     # `Subsingleton T` in the conclusion stays the proposition it is, and the existence part
     # keeps its witness.
     rec = statement(root, "Shape.single")
-    inst = rec["binders"][1]
+    inst = spine(rec)[1]
     assert (inst["role"], inst["supplies"]) == ("instance", "data")
     assert props(inst) == [("uniq", "∀ (a : T), a = default")]
     assert [(p["field"], p["declared_in"]) for p in inst["properties"] if p["kind"] == "data"] == \
         [("default", "Inhabited")]
-    sub, ex = rec["conclusion"]["logic"]["args"]
+    sub, ex = shape(rec)["args"]
     assert sub["leaf"]["text"] == "Subsingleton T"
     assert ex["op"] == "exists" and "properties" not in ex
     # A supplied measure space carries its data and its laws; that it is a probability space is
     # an additional assumption, which states what its field says.
-    ms, prob = statement(root, "Shape.probability")["binders"][1:]
+    ms, prob = spine(statement(root, "Shape.probability"))[1:]
     assert (ms["role"], ms["supplies"], prob["role"], prob["supplies"]) == \
         ("instance", "data", "instance", "proposition")
     assert [f for f, _ in props(ms, "data")] == ["measurable", "measure"]
     assert [f for f, _ in props(ms)] == ["measurable_compl", "measure_empty"]
     assert props(prob) == [("measure_univ", "(Shape.MeasureData.measure fun (x : Ω) => True) = 1")]
     # A conjunction or an equivalence assumed is not a structure to list.
-    assert all("properties" not in x for x in statement(root, "Shape.both")["binders"])
+    assert all("properties" not in x for x in spine(statement(root, "Shape.both")))
     # Inside a negation, the solution is the negated claim's: its properties are on its node.
-    neg = statement(root, "Shape.none_large")["conclusion"]["logic"]
+    neg = shape(statement(root, "Shape.none_large"))
     assert neg["op"] == "not" and neg["args"][0]["op"] == "exists"
     assert props(neg["args"][0])[0] == ("start", "s.path 0 = 0")
     # Objects whose type carries no proposition get nothing: a number, a type, a datum.
-    assert all("properties" not in x for x in statement(root)["binders"])
+    assert all("properties" not in x for x in spine(statement(root)))
 
 
 @needs_lean
