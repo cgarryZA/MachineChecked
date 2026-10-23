@@ -737,7 +737,7 @@ def save_route(root: Path, paper: str, key: str, lean: list[str] | None, note: s
 
 def save_settings(root: Path, issues: str | None = None, site_url: str | None = None,
                   author: str | None = None, repository_private: bool | None = None) -> dict:
-    """Record where the reader's Raise issue opens reports (`owner/repo`), the public address
+    """Record where the reader's Report issue opens reports (`owner/repo`), the public address
     of the published reader, and the name the audit is published under, in the links file."""
     data = load_links(root)
     if issues:

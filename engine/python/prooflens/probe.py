@@ -404,6 +404,17 @@ def _strip_decl(rec: dict) -> dict:
     return rec
 
 
+def _hash_occurrences(ops) -> None:
+    """Each recorded application's canonical serialisation in its scope, replaced by its
+    SHA-256 (`term`)."""
+    if not isinstance(ops, dict):
+        return
+    for o in ops.get("occurrences") or []:
+        canon = o.pop("canon", None)
+        if canon:
+            o["term"] = sha256_text(canon)
+
+
 def parse_records(lines) -> dict:
     res = {"env": None, "layering": [], "specs": {}, "proofs": {}, "decls": {}, "defs": {},
            "moddocs": [], "complete": False}
@@ -424,6 +435,7 @@ def parse_records(lines) -> dict:
         elif kind == "spec":
             rec = dict(rec)
             rec.pop("record")
+            _hash_occurrences(rec.get("order_ops"))
             if "decl" in rec:
                 d = _strip_decl(rec.pop("decl"))
                 res["decls"][d["name"]] = d
