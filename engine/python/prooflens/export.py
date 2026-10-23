@@ -142,7 +142,8 @@ def public_claim(chunk: dict, pub) -> dict:
     out["symbols"] = list(chunk.get("symbols", [])) if pub.source_text and pub.lean else []
     out["decls"] = dict(chunk.get("decls", {}))
     out["findings"] = [_pick(f, ["id", "tier", "code", "subject", "message", "trigger",
-                                 "signal", "dismissed", "dismissal_stale"])
+                                 "signal", "dismissed", "dismissal_stale", "occurrences",
+                                 "occurrences_complete"])
                        for f in chunk["findings"]]
     out["unit"] = chunk.get("unit") or "statement"
     out["parent"] = chunk.get("parent")
@@ -338,7 +339,8 @@ def export(cfg: Config, out: Path, release: str | None = None,
             shutil.copyfile(src, data / p["pdf"])
     pidx["findings"] = {"total": index["findings"]["total"],
                         "general": [_pick(f, ["id", "tier", "code", "subject", "message",
-                                              "trigger", "dismissed", "dismissal_stale"])
+                                              "trigger", "dismissed", "dismissal_stale",
+                                              "occurrences", "occurrences_complete"])
                                     for f in index["findings"]["general"]]}
     pidx["claims"] = [_pick(c, ["id", "paper", "number", "title", "kind", "scope", "unit",
                                 "parent", "step_review", "status", "status_code", "class", "anchor", "counts",

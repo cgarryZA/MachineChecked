@@ -805,6 +805,42 @@ for (const [name, why] of [["katex-refuses", "the reader cannot typeset its math
     assert.equal(await pg.locator("aside .paper summary", { hasText: "As printed in the PDF" }).count(), 0);
   });
 }
+// A totalisation warning lists the applications it read with their types, and marks them in
+// its clause's statement on request.
+for (const width of [1300, 390]) {
+  await check("a warning shows the type of its operation and marks it in the statement", width, async (pg) => {
+    await pg.route("**/toy/data/claims/*prop_pred*", async (route) => {
+      const response = await route.fetch();
+      const json = await response.json();
+      json.findings = json.findings.map((f) => f.subject.endsWith("#0") ? { ...f, occurrences: [
+        { operation: f.trigger, type: "Nat", type_head: "Nat", structure: null, state: "applies",
+          rule: "truncated subtraction on ℕ: a - b = 0 when a < b", at: ["/1/0/1"] },
+        { operation: f.trigger, type: "Nat", type_head: "Nat", structure: "group", state: "none", rule: null, at: [] }] } : f);
+      route.fulfill({ response, json });
+    });
+    await toyClaim(pg, "T:prop:pred");
+    await pg.locator("aside .view .chipbtn").click();
+    await pg.locator("aside details.warning summary").click();
+    const item = pg.locator("aside [data-finding='totalised:T:prop:pred#0:instSubNat']");
+    const occ = await item.locator(".occ li").allTextContents();
+    assert.deepEqual(occ.map((t) => t.replace(/\s+/g, " ").trim()), [
+      "in Nat: truncated subtraction on ℕ: a - b = 0 when a < b",
+      "in Nat, a group: no exceptional case in this type"]);
+    assert.equal(await pg.locator("aside [data-finding='totalised:T:prop:pred#1:instSubNat'] .show").count(), 0, "nothing to mark");
+    await item.locator(".show").click();
+    const view = pg.locator("aside .view");
+    await view.locator(".mk").first().waitFor();
+    assert.equal((await view.locator(".mk").allTextContents()).join(""), "n - 1", "the operation, not the whole statement");
+    assert.equal(await view.locator(".block").nth(0).locator(".mk").count() > 0, true, "in the printed clause");
+    assert.equal(await view.locator(".block").nth(1).locator(".mk").count(), 0, "not in the corrected one");
+    assert.match(await view.locator(".marknote").textContent(), /in Nat/);
+    assert.ok(await view.locator(".mk").first().isVisible());
+    const box = await view.locator(".mk").first().boundingBox();
+    assert.ok(box && box.x >= 0 && box.x + box.width <= width, "on screen");
+    await view.locator(".marknote button").click();
+    assert.equal(await view.locator(".mk").count(), 0, "cleared");
+  });
+}
 await check("a theorem of the toy paper is typeset with its equation number", 1300, async (pg) => {
   await toyClaim(pg, "T:thm:triangle");
   const ex = pg.locator("aside .view .paper .excerpt");

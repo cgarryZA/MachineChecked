@@ -115,6 +115,23 @@
   // The sub-term selected in a statement, by its identity in the proposition: shared between
   // the readable statement and its exact Lean ({spec, id}).
   let selAt = $state(null);
+  // The applications a warning is about, marked in its clause's statement ({subject, at, what}),
+  // and whether the view still has to scroll to them.
+  let marking = $state(null);
+  let markScroll = $state(false);
+  const markFor = (k) => (marking && marking.subject === `${claim.id}#${k}` ? marking.at : null);
+  function showOccurrences(f) {
+    const occ = (f.occurrences || []).filter((o) => o.state !== "none" && o.at?.length);
+    marking = { subject: f.subject, at: occ.flatMap((o) => o.at),
+                what: [...new Set(occ.map((o) => o.type).filter(Boolean))].join(", ") };
+    markScroll = true;
+    backTo(0);
+  }
+  $effect(() => {
+    if (!markScroll || stack.length || !article) return;
+    markScroll = false;
+    tick().then(() => article?.querySelector(".view .mk")?.scrollIntoView({ block: "center" }));
+  });
   const selFor = (spec) => (spec != null && selAt && selAt.spec === spec ? selAt.id : null);
   function select(spec, id) {
     if (spec == null) return;
@@ -444,7 +461,8 @@
               </div>
             {/if}
             {#if cl.statement}
-              <Statement st={cl.statement} spec={cl.spec} onref={showDecl} compact ext={extFor(cl.spec)}
+              {#if markFor(k)}<p class="small marknote">Marked: the operation a warning is about{marking.what ? ", in " + marking.what : ""}. <button class="act" onclick={() => (marking = null)}>Clear</button></p>{/if}
+              <Statement st={cl.statement} spec={cl.spec} onref={showDecl} compact ext={extFor(cl.spec)} mark={markFor(k)}
                 selId={selFor(cl.spec)} onselect={(id) => select(cl.spec, id)}
                 onpinned={(v) => { if (linking) pickVar = v == null ? (pickVar?.spec === cl.spec && pickVar.var != null ? null : pickVar) : { spec: cl.spec, var: v }; }}
                 onactive={(v) => (leanActive = v == null ? (leanActive?.spec === cl.spec ? null : leanActive) : { spec: cl.spec, var: v })} />
@@ -588,7 +606,7 @@
     {/if}
     {#if claim.findings?.length}
       <h3>Findings</h3>
-      <Findings findings={claim.findings} />
+      <Findings findings={claim.findings} onshow={claim.clauses?.length ? showOccurrences : null} />
     {/if}
     <p class="faint small foot">
       Release <code>{evidenceIndex.release}</code> · evidence <code title={evidenceIndex.evidence}>{evidenceIndex.evidence.slice(0, 12)}</code>
@@ -654,6 +672,7 @@
   .menu > a, .menu > button { text-align: left; font: inherit; font-size: 14px; padding: 7px 10px; border: 0; background: none; color: var(--text); border-radius: 6px; cursor: pointer; text-decoration: none; }
   .menu > a:hover, .menu > button:hover { background: var(--surface-2); }
   .copied { margin: 4px 0 0; }
+  .marknote { margin: 4px 0; color: var(--tier-warning); }
   .evidence-from { margin: 6px 0 0; color: var(--muted); overflow-wrap: anywhere; }
   .evidence-from.filled, .evidence-from.missing { color: var(--text); border-left: 3px solid var(--accent); padding-left: 8px; }
   .counterpart { margin: 6px 0 0; color: var(--muted); overflow-wrap: anywhere; }
