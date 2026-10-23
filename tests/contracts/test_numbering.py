@@ -137,3 +137,172 @@ def test_module_docstrings_are_read_with_their_lines(tmp_path):
     lem = next(o for o in out["references"] if o["reference"] == "Lemma 8.1")
     assert lem["status"] == "absent" and lem["source"]["line"] == 6
     assert lem["source"]["where"] == "module docstring"
+
+
+LEMMA_41 = CLAIMS + [{"id": "P:l41", "kind": "lemma", "number": "Lemma 4.1", "scope": "formal",
+                      "statement": "Every even square is even."},
+                     {"id": "P:a22", "kind": "assumption", "number": "Assumption 2.2",
+                      "scope": "formal", "statement": "The coefficients are bounded."}]
+
+
+def test_run_together_digits_in_names_follow_the_papers_numbering():
+    # `lem41` drops the dot of Lemma 4.1: the paper's numbering decides how it is read, and a
+    # name in a docstring written as an identifier (`Assumption22`) is read the same way.
+    index = [decl("P.lem41_bound"), decl("P.thm21_odd"), decl("P.sec31_intro"),
+             decl("P.a", "Uses `Assumption22` throughout."), decl("P.b", "Lemma 41.")]
+    out = nb.analyse(index, LEMMA_41, nb.inventory(LEMMA_41, True, sections={"1", "3.1"}))
+    by = {(o["source"]["declaration"], o["source"]["where"]): o for o in out["references"]}
+    lem = by[("P.lem41_bound", "name")]
+    assert lem["status"] == "exact" and lem["reference"] == "Lemma 4.1"
+    assert lem["readings"] == ["4.1", "41"] and lem["paper"]["claims"] == ["P:l41"]
+    assert "could mean 4.1 or 41" in lem["detail"]
+    assert by[("P.thm21_odd", "name")]["reference"] == "Theorem 2.1"
+    assert by[("P.sec31_intro", "name")]["status"] == "exact"
+    assert by[("P.a", "docstring")]["reference"] == "Assumption 2.2"
+    assert by[("P.a", "docstring")]["status"] == "exact"
+    # A number written out in prose is read as written.
+    b = by[("P.b", "docstring")]
+    assert b["status"] == "absent" and b["reference"] == "Lemma 41" and "readings" not in b
+    assert [o["source"]["declaration"] for o in out["references"] if nb.suspect(o)] == ["P.b"]
+
+
+def test_run_together_digits_no_reading_matches_or_several_do():
+    # Without a Lemma 4.1 or 41 the name still disagrees with the paper, naming both readings.
+    out = nb.analyse([decl("P.lem41_bound"), decl("P.lem23_odd"), decl("P.sec45_x")],
+                     CLAIMS, INV)
+    by = {o["source"]["declaration"]: o for o in out["references"]}
+    assert by["P.lem41_bound"]["status"] == "absent"
+    assert "no statement numbered 4.1 or 41" in by["P.lem41_bound"]["detail"]
+    # 2.3 exists as a proposition: the reading names another kind of statement.
+    assert by["P.lem23_odd"]["status"] == "other-kind"
+    assert by["P.lem23_odd"]["reference"] == "Lemma 2.3"
+    assert "Proposition 2.3" in by["P.lem23_odd"]["detail"]
+    assert by["P.sec45_x"]["status"] == "absent" and "Section 4.5 or 45" in \
+        by["P.sec45_x"]["detail"]
+    # When the paper has a statement for two readings, the name does not say which.
+    both = LEMMA_41 + [{"id": "P:l41b", "kind": "lemma", "number": "Lemma 41",
+                        "scope": "formal", "statement": "x"}]
+    out = nb.analyse([decl("P.lem41_bound")], both, nb.inventory(both, True))
+    o = out["references"][0]
+    assert o["status"] == "unchecked" and "Lemma 4.1 or Lemma 41" in o["detail"]
+    assert not nb.suspect(o)
+
+
+def test_a_citation_of_what_a_statement_relies_on_is_not_a_stale_lead():
+    # P.bound states Theorem 3.1 and relies on Assumption 2.2. Its statement reads like
+    # Theorem 3.1, not like Assumption 2.2, which is fine for a citation of a hypothesis: only
+    # the opening citation is compared with the content. A missing or wrong-kind citation is
+    # still reported.
+    tri = decl("P.triangle", "The triangle number.", "ℕ → ℕ", kind="def")
+    bound_type = "∃ C, ∀ (n : ℕ), P.triangle n ≤ C * n ^ 2"
+    index = [tri,
+             {**decl("P.bound", "**Theorem 3.1.** A bound for triangle numbers by a constant, "
+                     "under Assumption 2.2, Lemma 2.3 and Assumption 9.9.", bound_type),
+              "uses": ["P.triangle"]},
+             {**decl("P.stale", "**Assumption 2.2.** A bound for triangle numbers by a "
+                     "constant.", bound_type), "uses": ["P.triangle"]}]
+    ret = Retrieval.build(index)
+    out = nb.analyse(index, LEMMA_41, nb.inventory(LEMMA_41, True), retrieval=ret,
+                     claim_text=lambda c: c["statement"])
+    by = {(o["source"]["declaration"], o["reference"]): o for o in out["references"]}
+    t31, a22 = by[("P.bound", "Theorem 3.1")], by[("P.bound", "Assumption 2.2")]
+    assert t31["role"] == "statement" and a22["role"] == "cited"
+    assert t31["status"] == a22["status"] == "exact"
+    assert not t31.get("stale_lead") and not a22.get("stale_lead") and "content" not in a22
+    assert by[("P.bound", "Lemma 2.3")]["status"] == "other-kind"
+    assert by[("P.bound", "Assumption 9.9")]["status"] == "absent"
+    # A docstring that opens with a citation of another statement still gets the lead.
+    stale = by[("P.stale", "Assumption 2.2")]
+    assert stale["role"] == "statement" and stale["stale_lead"]
+    assert stale["content"]["closer"]["number"] == "Theorem 3.1"
+
+
+def test_several_papers_attribute_each_reference_to_one():
+    # Two papers in one configuration (#229). A reference is checked against the paper whose
+    # claims name its declaration, or whose namespace or module holds it, or that it names;
+    # one that nothing attributes stays unchecked, with the reason.
+    from types import SimpleNamespace
+    from prooflens import content
+    papers = [SimpleNamespace(id="A", title="Odd squares"),
+              SimpleNamespace(id="B", title="Triangle bounds")]
+    anchors = {"A": [{"env": "theorem", "number": "2.1", "statement": "Every odd square is odd."},
+                     {"env": "lemma", "number": "2.2", "statement": "x"}],
+               "B": [{"env": "theorem", "number": "1.1", "statement": "A triangle bound."}]}
+    tex = {p: {"mode": "latex", "anchors": a} for p, a in anchors.items()}
+    inv_claims = [{"id": "A:t21", "paper": "A", "kind": "theorem", "number": "Theorem 2.1",
+                   "clauses": [{"spec": "PA.Spec.odd_sq"}]},
+                  {"id": "B:t11", "paper": "B", "kind": "theorem", "number": "Theorem 1.1",
+                   "clauses": [{"spec": "PB.Spec.bound", "defs": ["Common.tri"]}]}]
+    full = [decl("PA.Spec.odd_sq", "Theorem 2.1: odd squares.", module="PA.Spec"),
+            decl("PA.Spec.helper", "Lemma 2.3 of this paper.", module="PA.Spec"),
+            decl("PB.Spec.bound", "Theorem 2.1: the triangle bound.", module="PB.Spec"),
+            decl("PB.Spec.lem11_tri", module="PB.Spec"),
+            decl("Common.tri", "Theorem 1.1 uses it.", module="Common"),
+            decl("Common.both", "Lemma 2.2 here.", module="Common"),
+            decl("Common.named", "As in Lemma 2.2 of [A].", module="Common"),
+            decl("Other.x", "Theorem 9.9 of [Gauss].", module="Other")]
+    notes = []
+    num = content.several(papers, tex, inv_claims, {}, full, [], None, None, notes)
+    by = {(o["source"]["declaration"], o["reference"]): o for o in num["references"]}
+    # Checked against A: its claim names the declaration, or A's namespace holds it.
+    assert by[("PA.Spec.odd_sq", "Theorem 2.1")]["attributed"] == "A"
+    assert by[("PA.Spec.odd_sq", "Theorem 2.1")]["status"] == "exact"
+    helper = by[("PA.Spec.helper", "Lemma 2.3")]
+    assert (helper["attributed"], helper["status"]) == ("A", "absent")
+    # B's bound cites Theorem 2.1, which B does not have: stale against B, not exact against A.
+    bound = by[("PB.Spec.bound", "Theorem 2.1")]
+    assert (bound["attributed"], bound["status"]) == ("B", "absent")
+    assert "of paper B" in bound["message"]
+    assert by[("PB.Spec.lem11_tri", "Lemma 1.1")]["status"] == "other-kind"
+    assert by[("Common.tri", "Theorem 1.1")]["attributed"] == "B"
+    # A definition B's claim names gives its namespace to no paper: papers share definitions,
+    # so Common.both is unattributed ...
+    both = by[("Common.both", "Lemma 2.2")]
+    assert both["status"] == "unchecked" and "attributed" not in both
+    # ... unless the reference names a paper.
+    named = by[("Common.named", "Lemma 2.2")]
+    assert (named["attributed"], named["status"]) == ("A", "exact")
+    # Another work stays another work; a namespace no paper's claims reach is unattributed.
+    assert by[("Other.x", "Theorem 9.9")]["status"] == "other-source"
+    assert "attributed" not in by[("Other.x", "Theorem 9.9")]
+    # Per paper, and in total.
+    assert num["papers"]["A"]["absent"] == 1 and num["papers"]["B"]["absent"] == 1
+    assert nb.paper_view(num, "B")["references"] and all(
+        o["attributed"] == "B" for o in nb.paper_view(num, "B")["references"])
+    assert num["pattern"]["references"] == len(full)
+
+
+def test_several_papers_leave_an_unattributable_reference_unchecked():
+    from types import SimpleNamespace
+    from prooflens import content
+    papers = [SimpleNamespace(id="A", title="One"), SimpleNamespace(id="B", title="Two")]
+    tex = {p: {"mode": "latex", "anchors": [{"env": "theorem", "number": "1.1"}]}
+           for p in ("A", "B")}
+    inv_claims = [{"id": f"{p}:t", "paper": p, "kind": "theorem", "number": "Theorem 1.1",
+                   "clauses": [{"spec": f"Spec.thm_{p.lower()}"}]} for p in ("A", "B")]
+    full = [decl("Spec.thm_a", "Theorem 1.1.", module="Spec"),
+            decl("Spec.shared", "Theorem 7.7.", module="Spec"),
+            decl("Loose.x", "Theorem 8.8.", module="Loose")]
+    notes = []
+    num = content.several(papers, tex, inv_claims, {}, full, [], None, None, notes)
+    by = {o["source"]["declaration"]: o for o in num["references"]}
+    assert by["Spec.thm_a"]["attributed"] == "A" and by["Spec.thm_a"]["status"] == "exact"
+    shared, loose = by["Spec.shared"], by["Loose.x"]
+    assert shared["status"] == loose["status"] == "unchecked"
+    assert "holds claims of papers A and B" in shared["detail"]
+    assert "no claim of any paper" in loose["detail"]
+    assert not nb.suspect(shared) and num["pattern"]["unchecked"] == 2
+    assert any("2 of the Lean's references" in n for n in notes)
+
+
+def test_formalization_rows_name_their_papers_declarations():
+    from prooflens import formalization as fz
+    fy = {"sources": [{"title": "Odd squares in arithmetic"},
+                      {"title": "Triangle bounds in arithmetic"}],
+          "alignment": {"statements": [
+              {"source": "Theorem 2.1 (odd squares)", "lean": "PA.odd_sq"},
+              {"source": "Theorem 1.1 (triangle bounds)", "lean": ["PB.bound", "PB.aux"]},
+              {"source": "Theorem 3.1", "lean": "Shared.x"}]}}
+    assert fz.paper_names(fy, "Odd squares") == {"PA.odd_sq"}
+    assert fz.paper_names(fy, "Triangle bounds") == {"PB.bound", "PB.aux"}
+    assert fz.paper_names({"sources": [{"title": "One"}]}, "One") == set()

@@ -398,9 +398,13 @@ optional `clause` and `note`, `rev`, `created_at`/`created_by`, `updated_at`/`up
   exported statement. A `composed` coverage is recorded as `full` with basis
   `reviewed_composition`. A finding may rest on a `composition` of the same claim (its id): its
   basis is then `reviewed_composition`, or `checked_bridge` when the composition carries a
-  bridge, and full coverage needs the composition complete (checked again at `submit`). Shown
-  while the bridge is not checked, a `checked_bridge` finding reads as `reviewed_composition`
-  (with `recorded_basis`). A finding may also record a `difference` on its `requirement`
+  bridge, and full coverage needs the composition complete (checked again at `submit`). Shown,
+  a `checked_bridge` finding reads as `reviewed_composition` (with `recorded_basis` and the
+  reasons, `basis_reason`) unless a bridge Lean checks now supports it: its composition's, or
+  else its own `bridge`, checked as a composition's is (`bridge_check`). A finding's own bridge
+  records no version of the target or of the passage the auditor read, so Lean's check of it
+  reads as out of date; a finding with no bridge reads as `reviewed_composition` too. A finding
+  may also record a `difference` on its `requirement`
   (`{feature, paper, lean, outcome, conditions, transport, resolution, why, hint}`), a `verdict`
   on a printed step (`holds as printed`, `holds, with a gap in the argument`, `false as
   printed`, `cannot determine`) and the `counterexamples` it rests on (pinned by digest); such a
@@ -568,7 +572,10 @@ identifications' steps and how they are known, and its obligations' kinds, state
 its objects and substitutions only with `lean`; its statement, what each step establishes, the
 inferences, obligation texts and notes only with `reviews`. Its basis is `checked_bridge` only when
 the bridge is checked at export against the project's facts store; otherwise
-`reviewed_composition`, and a finding recorded as `checked_bridge` on it reads the same way. Without `reviews`, `note`,
+`reviewed_composition`, and a finding recorded as `checked_bridge` on it reads the same way. A
+finding recorded as `checked_bridge` without a composition reads as `reviewed_composition` (with
+`recorded_basis`, `basis_reason` and, for its own bridge, `bridge_check`) unless that bridge is
+checked at export. Without `reviews`, `note`,
 `argument`, `question`, `would_decide`, `reason` and `why_rejected` are left out. The export
 scans these files with the rest. A claim file larger than 2 MB is refused.
 

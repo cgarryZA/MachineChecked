@@ -139,3 +139,73 @@ def test_a_bundle_leaves_out_a_content_index_over_its_limit(toy, tmp_path):
     data = carried(tmp_path / "b.html")
     assert "data/retrieval.json" not in data and "retrieval" not in data["data/index.json"]
     assert big["omitted"] and "content index" in big["omitted"][0]
+
+
+U_TEX = r"""\documentclass{article}
+\usepackage{amsthm}
+\newtheorem{theorem}{Theorem}
+\begin{document}
+\begin{theorem}[Uniform bound]\label{thm:bound}
+There is a constant $C$, independent of $n$, such that $T_n \le C n^2$ for every $n$.
+\end{theorem}
+\end{document}
+"""
+
+
+@needs_lean
+@needs_tex
+def test_two_papers_check_each_reference_against_its_paper(toy, monkeypatch, capsys):
+    # The toy with a second paper U, which holds the uniform bound as its Theorem 1: the
+    # bound's docstring (Theorem 2.4) is checked against U, the other claims' against T, and a
+    # reference that nothing attributes to one paper is left unchecked (#229).
+    (toy / "paper-u").mkdir()
+    (toy / "paper-u" / "u.tex").write_text(U_TEX)
+    with open(toy / "machinechecked.toml", "a") as f:
+        f.write('\n[[paper]]\nid = "U"\ntitle = "A second paper"\nsource = { path = "paper-u" }\n'
+                'root = "u.tex"\n')
+    inv = json.loads((toy / "claims.json").read_text())
+    inv["claims"] = [c for c in inv["claims"] if c.get("parent") != "T:thm:bound"]
+    for c in inv["claims"]:
+        if c["id"] == "T:thm:bound":
+            c.update(id="U:thm:bound", paper="U", location="u.tex", number="Theorem 1")
+    (toy / "claims.json").write_text(json.dumps(inv, indent=1))
+    # A lemma that no claim of either paper names, beside the shared definitions.
+    edit(toy / "lean" / "Toy" / "Defs.lean", "end Toy",
+         "/-- Lemma 7.7: a doubled number is even. -/\n"
+         "theorem double_even (n : Nat) : IsEven (2 * n) := ⟨n, rfl⟩\n\nend Toy")
+    res, cfg, lines = run(toy)
+    num = res["content"]["numbering"]
+    by = {o["source"]["declaration"]: o for o in num["references"]
+          if o["source"]["where"] == "docstring"}
+    bound = by["Toy.PaperSpec.thm_bound"]
+    assert (bound["attributed"], bound["status"]) == ("U", "absent")
+    assert "of paper U" in bound["message"]
+    assert (by["Toy.PaperSpec.thm_even_add"]["attributed"],
+            by["Toy.PaperSpec.thm_even_add"]["status"]) == ("T", "exact")
+    loose = by["Toy.double_even"]
+    assert loose["status"] == "unchecked" and "attributed" not in loose
+    assert "several papers" in loose["detail"]
+    assert set(num["papers"]) == {"T", "U"} and num["papers"]["U"]["absent"] == 1
+    assert any("not checked" in l for l in lines)
+
+    # `check --json` gives each paper's warnings and references, and all of them together.
+    monkeypatch.chdir(toy)
+    capsys.readouterr()
+    try:
+        cli.main(["check", "--json"])
+    except SystemExit:
+        pass
+    doc = json.loads(capsys.readouterr().out)
+    (w,) = [w for w in doc["warnings"] if w["id"] == bound["id"]]
+    assert w["paper"] == "U"
+    assert [x["id"] for x in doc["papers"]["U"]["warnings"]] == [bound["id"]]
+    assert bound["id"] not in [x["id"] for x in doc["papers"]["T"]["warnings"]]
+    assert {o["attributed"] for o in doc["papers"]["T"]["numbering"]["references"]} == {"T"}
+    assert doc["numbering"]["pattern"]["unchecked"] >= 1
+
+    # The reader's passport of each claim lists the references that concern it.
+    data = cfg.out_dir / "site" / "data"
+    index = json.loads((data / "index.json").read_text())
+    chunk = json.loads((data / "claims" / next(
+        c["file"] for c in index["claims"] if c["id"] == "U:thm:bound")).read_text())
+    assert bound["id"] in [r["id"] for r in chunk["references"]]

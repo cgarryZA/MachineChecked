@@ -247,6 +247,10 @@ fs.writeFileSync(path.join(root, "toywork/data/work", workRow.file), JSON.string
       { id: "f-c1", kind: "finding", claim: "T:def:even", coverage: "partial", basis: "reviewed_composition", composition: "c-1",
         state: "submitted", submitted_at: "2026-10-20T00:00:00Z", created_by: "llm:synthetic-model", evidence: [], in_force: true, currency: cur },
       { id: "f-c2", kind: "finding", claim: "T:def:even", coverage: "full", basis: "checked_bridge", composition: "c-2",
+        state: "submitted", submitted_at: "2026-10-20T00:00:00Z", created_by: "llm:synthetic-model", evidence: [], in_force: true, currency: cur },
+      { id: "f-c3", kind: "finding", claim: "T:def:even", coverage: "full", basis: "reviewed_composition", recorded_basis: "checked_bridge",
+        basis_reason: ["Lean finds no such theorem"], bridge: { theorem: "Toy.no_such_bridge", target: "Toy.Spec.synthetic" },
+        bridge_check: { state: "unchecked", reasons: ["Lean finds no such theorem"] },
         state: "submitted", submitted_at: "2026-10-20T00:00:00Z", created_by: "llm:synthetic-model", evidence: [], in_force: true, currency: cur }],
     evidence: [{ id: "e-1", kind: "evidence", claim: "T:def:even", role: "supports", ref: { decl: "Toy.IsEven" }, currency: cur },
                { id: "e-2", kind: "evidence", claim: "T:def:even", role: "supports",
@@ -1446,6 +1450,12 @@ await check("a direct audit shows its published readings beside an unchanged sta
   const t2 = (await work.locator("[data-composition='c-2']").textContent()).replace(/\s+/g, " ");
   assert.match(t2, /Bridge: Toy\.synthetic_bridge for the target Toy\.Spec\.synthetic\. Lean checks its proof/);
   assert.doesNotMatch(t2, /Next step/);
+  // A finding recorded as a checked bridge of its own, which Lean does not check, reads as the
+  // auditor's composition and says what it was recorded as.
+  assert.match(await findings.nth(2).locator("strong").first().textContent(), /^Every clause, by the auditor's composition$/);
+  assert.equal(await findings.nth(2).locator("[data-line='recorded']").textContent(),
+               "Recorded as a checked bridge (Toy.no_such_bridge for Toy.Spec.synthetic); no bridge Lean checks now: Lean finds no such theorem.");
+  assert.doesNotMatch(await findings.nth(2).textContent(), /through a checked bridge/);
   assert.doesNotMatch(await work.textContent(), /States every clause/);
 });
 
@@ -2040,6 +2050,11 @@ print("null")`);
       assert.match(await inv.locator("[data-req='n.k']").textContent(), /n\.k for every k \(k ≥ 0\): every natural number k ≥ 0/);
       assert.match(await req.locator(".diff[data-feature=domain]").textContent(), /Domain, a difference: paper k ≥ 0; Lean 1 ≤ k · transport inspected: none applies/);
       assert.match(await inv.locator("[data-kind=finding]", { hasText: "k = 0, n = 1." }).textContent(), /The printed step: false as printed/);
+      // A finding recorded as a checked bridge with no bridge reads as the auditor's composition.
+      const fixed = inv.locator("[data-kind=finding]", { hasText: "holds for k ≥ 1" });
+      assert.match(await fixed.locator("strong").first().textContent(), /^Every clause, by the auditor's composition$/);
+      assert.equal(await fixed.locator("[data-line='recorded']").textContent(),
+                   "Recorded as a checked bridge; no bridge Lean checks now: no bridge is recorded.");
     });
   } finally { py.kill(); }
 }

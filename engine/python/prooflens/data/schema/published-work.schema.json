@@ -679,6 +679,34 @@
                     "checked_bridge"
                   ]
                 },
+                "basis_reason": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "bridge_check": {
+                  "type": "object",
+                  "required": [
+                    "state",
+                    "reasons"
+                  ],
+                  "properties": {
+                    "state": {
+                      "enum": [
+                        "checked",
+                        "stale",
+                        "unchecked"
+                      ]
+                    },
+                    "reasons": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                },
                 "verdict": {
                   "enum": [
                     "holds as printed",

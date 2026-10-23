@@ -124,6 +124,23 @@ def foreign_roots(fy: dict | None, paper_title: str) -> set[str]:
     return others - mine
 
 
+def paper_names(fy: dict | None, paper_title: str) -> set[str]:
+    """When the file formalizes several sources: the Lean names its statements give for the
+    source this paper is (a row belongs to the source whose own title words it names, as in
+    `links_for`)."""
+    if not fy or "error" in fy:
+        return set()
+    srcs = [_tokens(s.get("title", "")) for s in formalized_sources(fy)]
+    if len(srcs) <= 1:
+        return set()
+    title = _tokens(paper_title)
+    best = max(range(len(srcs)), key=lambda i: len(srcs[i] & title))
+    if not srcs[best] & title:
+        return set()
+    own = srcs[best] - set().union(*(t for i, t in enumerate(srcs) if i != best))
+    return {n for st in statements(fy) if st["hint"] & own for n in st["lean"]}
+
+
 def summary(fy: dict | None) -> dict | None:
     """What the reader shows about the file: the project's own review status and methods."""
     if not fy:

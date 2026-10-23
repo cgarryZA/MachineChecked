@@ -1104,6 +1104,12 @@ def sources_declare(root: Path, modules: list[str]) -> set[str]:
     return out
 
 
+def doc_forms(d: dict) -> set[str]:
+    """The full names a `moddoc` record's name may stand for: as written, and inside each
+    namespace its module declares into, enters or opens (`scopes`)."""
+    return {d["name"], *(f"{ns}.{d['name']}" for ns in d.get("scopes", ()) if ns)}
+
+
 def project_index(root: Path, lake: str = "lake", log=None) -> tuple[list[dict], dict[str, str]]:
     """The complete index records of every built module of the project at `root`, whatever
     paper maps them, and the modules that could not be loaded: from the facts store, extracting
@@ -1349,9 +1355,11 @@ class LeanFacts:
         """The `moddoc` records of the indexed modules: the backticked names in a module's
         docstrings that the environment it was indexed in does not know. A module indexed with
         only some of the project loaded may report a name another project module declares, so
-        a name the project's index holds is left out: as written, or inside a namespace the
-        module declares into, enters or opens, as the probe tries it (`scopes`)."""
-        names = {r["name"] for r in index}
+        a name the project's index holds, or that the `refs` records of the indexed modules list
+        (every constant, those Lean generates included), is left out: as written, or inside a
+        namespace the module declares into, enters or opens, as the probe tries it
+        (`scopes`)."""
+        names = {r["name"] for r in index} | {r["name"] for rs in self.refs.values() for r in rs}
         spaces: dict[str, set[str]] = {}
         for r in index:
             parts = r["name"].split(".")
@@ -1361,6 +1369,31 @@ class LeanFacts:
                 if d["name"] not in names
                 and not any(f"{ns}.{d['name']}" in names
                             for ns in spaces.get(m, set()) | set(d.get("scopes", ())))]
+
+    def held(self, modules: list[str]) -> set[str]:
+        """The names of every constant of `modules`, built modules the index leaves out, as
+        their index and `refs` records list them (those Lean generates included): from the
+        store where it holds a module's index current, else from Lean, which then stores it as
+        any module's index. A module that cannot be loaded gives none."""
+        out: set[str] = set()
+        stale: dict[str, str] = {}
+        for m in modules:
+            e, why = self._get("index", m)
+            if e is not None:
+                out |= {r["name"] for r in e["records"] + e.get("refs", [])}
+            elif self._get("failed", m)[0] is None:
+                stale[m] = why
+        if stale:
+            self._need(f"{len(stale)} module(s) to index ({_reasons(stale)})")
+            self.log(f"lean: indexing {len(stale)} built module(s) the index leaves out, for "
+                     f"names in module docstrings ({_reasons(stale)})")
+            failed = self._run(sorted(stale), [{"kind": "index", "name": ""},
+                                               {"kind": "refs", "name": ""}])
+            for m in stale:
+                if m not in failed:
+                    out |= {r["name"] for r in self.fresh_index.get(m, [])
+                            + self.fresh_refs.get(m, [])}
+        return out
 
     def _accept_answers(self, name: str, where: dict[str, set[str]], groups: list[list[str]]
                         ) -> tuple[dict | None, str | None]:
@@ -1777,6 +1810,20 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
                     (f"{ns}.{d['name']}" if ns else d["name"]) in elsewhere
                     for ns in {"", *d.get("scopes", ())})]
             module_docs = stale_doc_names(docs, root)
+            if rest and module_docs:
+                # A name a library left out generates (a projection, constructor or instance)
+                # is declared by no source: it is looked for among the constants of the modules
+                # of that library whose sources could hold it (`index_scope`'s rule for a
+                # linked name), indexed for this question and not for the paper.
+                key = lambda d: (d["module"], d["line"], d["name"])
+                listed = {key(d) for d in module_docs if d["kind"] == "none"}
+                asked = [d for d in docs if key(d) in listed]
+                forms = {f for d in asked for f in doc_forms(d)}
+                left = set(rest)
+                held = lean.held([m for m in index_scope(root, libs, built, foreign, forms,
+                                                         set())[0] if m in left])
+                found = {key(d) for d in asked if doc_forms(d) & held}
+                module_docs = [d for d in module_docs if key(d) not in found]
             if module_docs:
                 notes.append(stale_docs_note(module_docs))
             wanted = set(linked)

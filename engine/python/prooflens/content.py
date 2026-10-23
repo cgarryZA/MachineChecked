@@ -4,7 +4,9 @@ A full assessment probes only what its inventory names. Content search (`retriev
 check of the Lean's references to the paper's numbers (`numbering.py`) read every declaration of
 the project's built modules, as zero configuration does: they are read from the Lean facts store
 (`simple.LeanFacts`), which a zero-configuration build of the same project shares, so a module
-whose index is stored current starts no Lean session.
+whose index is stored current starts no Lean session. With several papers, each reference is
+attributed to the paper that its declaration's claims, namespace or module belong to, or that
+it names, and checked against that paper's numbering.
 
 What this module computes is display: it is kept beside the evidence record it was built with
 (`<work>/content/<evidence id>.json`), never inside it, and it changes no status. A record
@@ -42,12 +44,90 @@ def numbering_claims(pid: str, inv_claims: list[dict], anchors: list[dict]) -> l
     return out
 
 
+def paper_inventory(pid: str, tex: dict, inv_claims: list[dict], auxes: dict) \
+        -> tuple[list[dict], dict]:
+    """A paper's numbered statements (`numbering_claims`) and its numbering
+    (`numbering.inventory`), complete when the paper's LaTeX compiled."""
+    from . import numbering as nb
+    t = tex.get(pid) or {}
+    claims = numbering_claims(pid, inv_claims, t.get("anchors") or [])
+    if t.get("mode") == "latex" and claims:
+        complete, reason = True, ""
+    elif t.get("mode") == "pdf" and claims:
+        complete, reason = False, ("the paper is a PDF whose statements were found by "
+                                   "their headings, so its numbering may be incomplete")
+    else:
+        complete, reason = False, "the paper's statements could not be read in this build"
+    aux = auxes.get(pid)
+    return claims, nb.inventory(claims, complete, reason,
+                                nb.sections_from_aux(aux) if aux is not None else None)
+
+
+def claim_declarations(c: dict, defs: bool = True) -> set[str]:
+    """The declarations an inventory claim names: its clauses' statements, acceptance and
+    refutation theorems and witnesses, its links, and (with `defs`) its definitions."""
+    names = {l["name"] for l in c.get("links") or [] if isinstance(l, dict) and l.get("name")}
+    for cl in c.get("clauses") or []:
+        names |= {n for n in (cl.get("spec"), cl.get("accept"), cl.get("refute"),
+                              cl.get("witness"), *(cl.get("defs") or [] if defs else ()))
+                  if n}
+    return names
+
+
+def several(papers, tex: dict, inv_claims: list[dict], auxes: dict, full: list[dict],
+            blocks: list[dict], fy, retrieval, notes: list[str]) -> dict:
+    """The Lean's references to the numbers of a configuration's several papers: each is
+    attributed to one paper (`numbering.attribute`) and checked against that paper's numbering;
+    one that cannot be attributed stays unchecked, with the reason."""
+    from . import formalization as fz
+    from . import numbering as nb
+    from .simple import claim_text
+    refs = nb.find_references(full, blocks)
+    def named(pid, defs):
+        return set().union(set(), *(claim_declarations(c, defs) for c in inv_claims
+                                    if c.get("paper") == pid))
+    aligned = {p.id: fz.paper_names(fy, p.title) for p in papers}
+    own = nb.owners({p.id: named(p.id, True) | aligned[p.id] for p in papers}, full,
+                    {p.id: named(p.id, False) | aligned[p.id] for p in papers})
+    ids = [(p.id, p.title) for p in papers]
+    mine: dict[str, list[dict]] = {p.id: [] for p in papers}
+    loose = 0
+    for o in refs:
+        pid, why = nb.attribute(o, own, ids)
+        if pid:
+            if o.get("status") == "other-source":
+                # A reference that names one of the configuration's papers cites that paper.
+                del o["status"], o["detail"]
+            o["attributed"] = pid
+            mine[pid].append(o)
+        elif o.get("status") != "other-source":
+            o["status"] = "unchecked"
+            o["detail"] = ("the configuration has several papers and nothing says which one it "
+                           f"cites: {why}")
+            o["message"] = nb.message(o)
+            loose += 1
+    per, invs = {}, {}
+    for p in papers:
+        claims, invs[p.id] = paper_inventory(p.id, tex, inv_claims, auxes)
+        per[p.id] = nb.analyse(full, claims, invs[p.id], retrieval=retrieval,
+                               claim_text=claim_text, refs=mine[p.id])
+        note = nb.drift_note(per[p.id]["pattern"], per[p.id]["references"], suggestions=False)
+        if note:
+            notes.append(f"paper {p.id}: {note}")
+    for o in refs:
+        o.setdefault("message", nb.message(o))
+    if loose:
+        notes.append(f"{loose} of the Lean's references to paper numbers are not checked: "
+                     "nothing attributes them to one of the configuration's papers")
+    return nb.combine(per, invs, refs)
+
+
 def build(cfg, tex: dict, inv_claims: list[dict], auxes: dict, lake: str = "lake", log=print,
           reuse_only: bool = False) -> dict | None:
-    """The content index of every declaration of the project's built modules and, for a
-    configuration with one paper, the Lean's references to that paper's numbers. None when the
-    project has no Lean library or nothing is built; with `reuse_only`, None (and a log line)
-    when the facts store does not hold the index."""
+    """The content index of every declaration of the project's built modules and the Lean's
+    references to the paper's numbers, attributed to one paper each when the configuration
+    has several (`several`). None when the project has no Lean library or nothing is built;
+    with `reuse_only`, None (and a log line) when the facts store does not hold the index."""
     from . import formalization as fz
     from . import numbering as nb
     from .probe import lib_names
@@ -73,23 +153,11 @@ def build(cfg, tex: dict, inv_claims: list[dict], auxes: dict, lake: str = "lake
         notes.append(f"{len(unbuilt)} module(s) of the project are not built and are not in "
                      "the content index")
     retrieval = Retrieval.build(full)
-    numbering = None
+    blocks = nb.module_doc_blocks(root, {d.get("module") for d in full if d.get("module")})
+    fy = fz.load(root)
     if len(cfg.papers) == 1:
         paper = cfg.papers[0]
-        t = tex.get(paper.id) or {}
-        claims = numbering_claims(paper.id, inv_claims, t.get("anchors") or [])
-        if t.get("mode") == "latex" and claims:
-            complete, reason = True, ""
-        elif t.get("mode") == "pdf" and claims:
-            complete, reason = False, ("the paper is a PDF whose statements were found by "
-                                       "their headings, so its numbering may be incomplete")
-        else:
-            complete, reason = False, "the paper's statements could not be read in this build"
-        aux = auxes.get(paper.id)
-        inv = nb.inventory(claims, complete, reason,
-                           nb.sections_from_aux(aux) if aux is not None else None)
-        blocks = nb.module_doc_blocks(root, {d.get("module") for d in full if d.get("module")})
-        fy = fz.load(root)
+        claims, inv = paper_inventory(paper.id, tex, inv_claims, auxes)
         foreign = fz.foreign_roots(fy, paper.title) if fy and "error" not in fy else set()
         numbering = nb.analyse(full, claims, inv, blocks, foreign, retrieval, claim_text)
         note = nb.drift_note(numbering["pattern"], numbering["references"],
@@ -97,8 +165,8 @@ def build(cfg, tex: dict, inv_claims: list[dict], auxes: dict, lake: str = "lake
         if note:
             notes.append(note)
     else:
-        notes.append("the Lean's references to the paper's numbers are checked only in a "
-                     "configuration with one paper")
+        numbering = several(cfg.papers, tex, inv_claims, auxes, full, blocks, fy, retrieval,
+                            notes)
     return {"schema": SCHEMA, "retrieval": retrieval.export(), "numbering": numbering,
             "notes": notes, "modules": {"indexed": len(built) - len(failed),
                                         "failed": len(failed), "unbuilt": len(unbuilt)}}

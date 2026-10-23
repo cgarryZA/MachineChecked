@@ -14,7 +14,8 @@ For a specification the record holds two representations of the proposition:
 * the verification representation: the declaration, its axioms, the constants it uses, its
   structural hashes (`legacy_hash`, a 128-bit structural hash kept for compatibility with
   existing review markers, and `canon`, a canonical serialisation the CLI hashes with SHA-256),
-  and each application of a supremum or infimum with the type it is taken in (`order_ops`);
+  and each application of a totalised operation (a supremum, a division, an integral) with the
+  type it is taken in (`order_ops`);
 * the inspection representation: the body of the definition split into a quantifier prefix
   (universal variables, hypotheses, instances, existential witnesses) and a conclusion, each
   pretty-printed with the constants it mentions marked for navigation.
@@ -849,20 +850,29 @@ def emitClosure (h : IO.FS.Handle) (inside : Name → Bool) (root : Name) (used 
     stack := stack ++ more
   return members.qsort (· < ·)
 
-/-! ## Suprema and infima, with their carriers
+/-! ## Totalised operations, with their carriers
 
-Whether a supremum can take a default value depends on the type it is taken in: in a complete
-lattice (a lattice of σ-algebras, the extended nonnegative reals) every family has one; in a
-conditionally complete one (the reals) a family that is empty or unbounded gets a default value.
-For each application of these operations in a statement, its carrier is recorded: the type
-argument after reducible unfolding, its head constant, and which of the two lattice instances
-Lean finds for it. The names are matched by value, so the probe needs no import of the library
-that declares them. -/
+What an operation gives outside its intended domain can depend on the type it is taken in. A
+supremum in a complete lattice (a lattice of σ-algebras, the extended nonnegative reals) always
+exists, and in a conditionally complete one (the reals) an empty or unbounded family gets a
+default value; division by zero rounds in `ℕ`, gives `0` in a field and `∞` in `ℝ≥0∞`, and has no
+exceptional case in a group; every function into a type with one element is integrable. For
+each application of such an operation in a statement, its carrier is recorded: a type argument
+(or the type of the value) after reducible unfolding, its head constant, and the structure Lean
+finds on it that decides the rule. The names are matched by value, so the probe needs no import
+of the library that declares them. -/
 
-/-- The operations whose value at a family with no supremum (or infimum) depends on the type. -/
-def orderOps : Array Name := #[`iSup, `iInf, `SupSet.sSup, `InfSet.sInf, `sSup, `sInf]
+/-- The operations recorded, each with the structure that decides its rule (`order`: the lattice
+instances, `division`: the group instances, `integral`: whether the type has one element, `""`:
+none) and where its carrier is: its first argument (`true`) or the type of its value. -/
+def totalOps : Array (Name × String × Bool) := #[
+  (`iSup, "order", true), (`iInf, "order", true), (`SupSet.sSup, "order", true),
+  (`InfSet.sInf, "order", true), (`sSup, "order", true), (`sInf, "order", true),
+  (`HDiv.hDiv, "division", true), (`Inv.inv, "division", true), (`tsum, "", true),
+  (`MeasureTheory.integral, "integral", false), (`MeasureTheory.condExp, "", false),
+  (`deriv, "", false), (`Real.sqrt, "", false), (`Real.log, "", false)]
 
-/-- The most nodes of a statement visited for its order operations. -/
+/-- The most nodes of a statement visited for its totalised operations. -/
 def opsNodes : Nat := 50000
 
 /-- `x`, or `d` when it fails, including by running out of heartbeats (a runtime exception,
@@ -870,27 +880,45 @@ which `try` does not catch). `x` has a budget of its own. -/
 def orDefault (d : α) (x : MetaM α) : MetaM α :=
   tryCatchRuntimeEx (withCurrHeartbeats x) fun _ => pure d
 
+/-- Whether Lean finds an instance of the class `c` at `α` (false also when the search fails). -/
+def hasInstance (c : Name) (α : Expr) : MetaM Bool :=
+  orDefault false do return (← synthInstance? (← mkAppM c #[α])).isSome
+
 /-- `complete` when Lean finds `CompleteLattice α`, `conditional` when it finds only
 `ConditionallyCompleteLattice α`, `unknown` otherwise (also when the search fails). -/
 def latticeOf (α : Expr) : MetaM String := do
-  let has (c : Name) : MetaM Bool :=
-    orDefault false do return (← synthInstance? (← mkAppM c #[α])).isSome
-  if ← has `CompleteLattice then return "complete"
-  if ← has `ConditionallyCompleteLattice then return "conditional"
+  if ← hasInstance `CompleteLattice α then return "complete"
+  if ← hasInstance `ConditionallyCompleteLattice α then return "conditional"
   return "unknown"
 
-/-- The record of a carrier, computed once per walk. -/
-def carrierJson (α : Expr) (cache : IO.Ref (Array (Expr × List (String × Json)))) :
+/-- `group` when Lean finds `Group α`, `group-with-zero` when it finds `GroupWithZero α` (a
+field, a division ring), `unknown` otherwise (also when the search fails). -/
+def algebraOf (α : Expr) : MetaM String := do
+  if ← hasInstance `Group α then return "group"
+  if ← hasInstance `GroupWithZero α then return "group-with-zero"
+  return "unknown"
+
+/-- The structure on `α` that decides the rule of an operation of kind `kind`. -/
+def structureJson (kind : String) (α : Expr) : MetaM (List (String × Json)) := do
+  match kind with
+  | "order" => return [("lattice", Json.str (← latticeOf α))]
+  | "division" => return [("algebra", Json.str (← algebraOf α))]
+  | "integral" => return [("subsingleton", Json.bool (← hasInstance `Subsingleton α))]
+  | _ => return []
+
+/-- The record of a carrier for an operation of kind `kind`, computed once per walk. -/
+def carrierJson (kind : String) (α : Expr)
+    (cache : IO.Ref (Array ((String × Expr) × List (String × Json)))) :
     MetaM (List (String × Json)) := do
-  if let some (_, j) := (← cache.get).find? (·.1 == α) then return j
+  if let some (_, j) := (← cache.get).find? (·.1 == (kind, α)) then return j
   let r ← orDefault α (whnfR α)
   let head := match r.getAppFn with
     | .const h _ => h.toString
     | _ => ""
   let carrier ← orDefault "" (toString <$> ppExpr α)
-  let j := [("carrier", Json.str carrier), ("carrier_head", Json.str head),
-    ("lattice", Json.str (← latticeOf α))]
-  cache.modify (·.push (α, j))
+  let j := [("carrier", Json.str carrier), ("carrier_head", Json.str head)] ++
+    (← orDefault [] (structureJson kind α))
+  cache.modify (·.push ((kind, α), j))
   return j
 
 /-- The state of one walk: the applications found, the nodes left, the carriers read and the
@@ -898,8 +926,20 @@ subterms already visited (a statement shares subterms, which a walk would otherw
 structure OpsWalk where
   out : IO.Ref (Array Json)
   budget : IO.Ref Nat
-  cache : IO.Ref (Array (Expr × List (String × Json)))
+  cache : IO.Ref (Array ((String × Expr) × List (String × Json)))
   seen : IO.Ref (Std.HashSet Expr)
+
+/-- Record the application `e` of the operation `c`, with arguments `args`. The carrier is the
+first argument or, for an operation whose type is fixed by its arguments, the type of the value
+once every argument is supplied (a value that is a function is read at its result). -/
+def opsRecord (e : Expr) (c : Name) (args : Array Expr) (w : OpsWalk) : MetaM Unit := do
+  let some (_, kind, first) := totalOps.find? (·.1 == c) | return
+  if first && args.size == 0 then return
+  let j ← if first then carrierJson kind args[0]! w.cache
+    else
+      orDefault [("carrier", Json.str ""), ("carrier_head", Json.str "")] do
+        forallTelescope (← inferType e) fun _ ty => carrierJson kind ty w.cache
+  w.out.modify (·.push (Json.mkObj (("const", Json.str c.toString) :: j)))
 
 partial def opsVisit (e : Expr) (w : OpsWalk) : MetaM Unit := do
   if (← w.budget.get) == 0 then return
@@ -916,20 +956,19 @@ partial def opsVisit (e : Expr) (w : OpsWalk) : MetaM Unit := do
     withLetDecl n t v fun x => opsVisit (b.instantiate1 x) w
   | .mdata _ b => opsVisit b w
   | .proj _ _ b => opsVisit b w
+  | .const c _ => opsRecord e c #[] w
   | .app .. =>
     let f := e.getAppFn
     let args := e.getAppArgs
     if let .const c _ := f then
-      if orderOps.contains c && args.size > 0 then
-        let j ← carrierJson args[0]! w.cache
-        w.out.modify (·.push (Json.mkObj (("const", Json.str c.toString) :: j)))
+      opsRecord e c args w
     else
       opsVisit f w
     for a in args do
       opsVisit a w
   | _ => pure ()
 
-/-- Each application of an order operation in `e`, with its carrier. `complete: false` when
+/-- Each application of a totalised operation in `e`, with its carrier. `complete: false` when
 some applications may be missing, with the reason in `stopped`: the walk reached its limit of
 nodes (`nodes`), or failed, for example by running out of heartbeats (`error`). -/
 def orderOpsJson (e : Expr) : MetaM Json := do

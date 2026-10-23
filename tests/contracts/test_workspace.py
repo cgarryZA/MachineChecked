@@ -549,3 +549,79 @@ def test_a_finding_uses_the_links_file_reading(work):
     assert (recs["f-open"]["question"], recs["f-open"]["would_decide"]) == \
         ("Which norm?", "Section 2's conventions.")
     assert "next_step" not in recs["f-comp"]
+
+
+BRIDGELESS = {"f-none": {},
+              "f-nope": {"bridge": {"theorem": "Nope.x", "target": "Nope.y"}}}
+
+
+def test_a_finding_recorded_as_a_checked_bridge_needs_one_lean_checks(work, monkeypatch, capsys,
+                                                                     tmp_path):
+    """#271: a finding recorded with basis checked_bridge and no bridge, or with a bridge
+    naming declarations that do not exist, reads as the auditor's composition, with what it was
+    recorded as and why, in `workspace show` (text and JSON) and in an export, as the reader
+    reads it. The record keeps what the auditor wrote."""
+    from prooflens import published_work as pw
+    from prooflens.config import Publish
+    from prooflens.schemas import validate
+    root = work.parent
+    (root / "lakefile.toml").write_text('name = "ex"\n[[lean_lib]]\nname = "Ex"\n')
+    monkeypatch.chdir(root)
+    p = opened(work, mode="informed")
+    for fid, extra in BRIDGELESS.items():
+        wsp.update(p, [put({"id": fid, "kind": "finding", "claim": "Theorem 1",
+                            "coverage": "full", "basis": "checked_bridge", "note": "n",
+                            **extra}),
+                       {"op": "submit", "id": fid, "base_rev": 1}], snap_of(work))
+    recs = wsp.read(p)["records"]
+    assert {recs[f]["basis"] for f in BRIDGELESS} == {"checked_bridge"}
+
+    def basis(f):
+        return f["basis"], f.get("recorded_basis"), f.get("basis_reason")
+
+    # Without the Lean project, and with one that is not built.
+    v = wsp.view(wsp.read(p), snap_of(work))
+    got = {f["id"]: basis(f) for f in v["claims"]["P:thm:main"]["findings"]}
+    assert got == {"f-none": ("reviewed_composition", "checked_bridge",
+                              ["no bridge is recorded"]),
+                   "f-nope": ("reviewed_composition", "checked_bridge",
+                              ["no Lean project to check the bridge against"])}
+    capsys.readouterr()
+    cli.main(["workspace", "show", "--as", WHO["id"], "--json"])
+    shown = json.loads(capsys.readouterr().out)["claims"]["P:thm:main"]["findings"]
+    got = {f["id"]: basis(f) for f in shown}
+    assert got["f-none"] == ("reviewed_composition", "checked_bridge", ["no bridge is recorded"])
+    assert got["f-nope"][:2] == ("reviewed_composition", "checked_bridge")
+    assert "not built" in got["f-nope"][2][0]
+    nope, = [f for f in shown if f["id"] == "f-nope"]
+    assert nope["bridge_check"]["state"] == "unchecked"
+    assert nope["bridge"] == {"theorem": "Nope.x", "target": "Nope.y"}
+    cli.main(["workspace", "show", "--as", WHO["id"]])
+    out = capsys.readouterr().out
+    assert "checked_bridge  [" not in out and "basis checked_bridge" not in out
+    assert out.count("basis reviewed_composition") == 2
+    assert "recorded as checked_bridge; no bridge Lean checks now: no bridge is recorded" in out
+    assert out.count("Lean has not checked this combination") == 2
+
+    # An export reads them the same way, and the published file is valid.
+    rd, = pw.readings(work, snap_of(work), lambda cid: Publish(True, True, True, True),
+                      {"P:thm:main"}, root)["P:thm:main"]
+    validate({"schema": pw.SCHEMA, "release": "v-1", "claim": "P:thm:main", "readings": [rd]},
+             "published-work")
+    got = {f["id"]: basis(f) for f in rd["findings"]}
+    assert got["f-none"] == ("reviewed_composition", "checked_bridge", ["no bridge is recorded"])
+    assert got["f-nope"][:2] == ("reviewed_composition", "checked_bridge")
+    assert rd["findings"][1]["bridge_check"]["state"] == "unchecked"
+
+    # An imported finding is read the same way, though import keeps records as written: here
+    # one recorded as a checked bridge through a composition that is not there.
+    data = wsp.export(p)
+    data["records"]["f-gone"] = {**data["records"]["f-none"], "id": "f-gone",
+                                 "composition": "c-gone"}
+    other = tmp_path / "elsewhere" / ".machinechecked"
+    make_build(other)
+    wsp.import_(other, data, snap_of(other))
+    v = wsp.view(wsp.read(wsp.find(other, data["id"])), snap_of(other))
+    got = {f["id"]: basis(f) for f in v["claims"]["P:thm:main"]["findings"]}
+    assert got["f-gone"] == ("reviewed_composition", "checked_bridge",
+                             ["its composition c-gone is not among these records"])

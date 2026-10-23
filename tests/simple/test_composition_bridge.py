@@ -162,3 +162,27 @@ def test_a_composition_with_a_checked_bridge(tmp_path, monkeypatch, capsys):
         c["bridge_check"]["reasons"]
     assert c["currency"]["state"] == "stale"
     assert "\n".join(cp.lines(c)).count("out of date") == 1
+
+    # A finding recorded as a checked bridge of its own (#271): Lean checks it, but nothing pins
+    # the target and the passage the auditor read, so it reads as the auditor's composition;
+    # one naming a theorem Lean does not find says so. Both everywhere: show and an export.
+    wsp.update(p, [put({"id": "f-own", "kind": "finding", "claim": CLAIM, "coverage": "full",
+                        "basis": "checked_bridge", "bridge": BRIDGE, "note": "n"}),
+                   put({"id": "f-missing", "kind": "finding", "claim": CLAIM, "coverage": "full",
+                        "basis": "checked_bridge", "note": "n",
+                        "bridge": {"theorem": "Comp.missing", "target": BRIDGE["target"]}}),
+                   {"op": "submit", "id": "f-own", "base_rev": 1},
+                   {"op": "submit", "id": "f-missing", "base_rev": 1}], snap, root)
+    v = wsp.view(wsp.read(p), snap, root=root, check_facts=True)
+    own = {f["id"]: f for f in v["claims"][CLAIM]["findings"]}
+    assert (own["f-own"]["basis"], own["f-own"]["recorded_basis"]) == \
+        ("reviewed_composition", "checked_bridge")
+    assert own["f-own"]["bridge_check"]["state"] == "stale"
+    assert "no reviewed version of the target is recorded" in own["f-own"]["basis_reason"]
+    assert own["f-missing"]["basis"] == "reviewed_composition"
+    assert own["f-missing"]["basis_reason"] == ["Lean finds no such theorem"]
+    rd, = pw.readings(work, snap, lambda cid: EVERYTHING, {CLAIM}, root)[CLAIM]
+    pub = {f["id"]: f for f in rd["findings"]}
+    assert {pub[f]["basis"] for f in ("f-own", "f-missing")} == {"reviewed_composition"}
+    assert pub["f-missing"]["bridge_check"] == {"state": "unchecked",
+                                                "reasons": ["Lean finds no such theorem"]}
