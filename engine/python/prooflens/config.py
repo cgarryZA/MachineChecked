@@ -201,6 +201,107 @@ def load(path: str | Path) -> Config:
     )
 
 
+# The `[project]` header, and the line that opens its `modules` array (`check --fix-modules`).
+_PROJECT_HEADER = re.compile(
+    r"""[ \t]*\[[ \t]*(?:project|"project"|'project')[ \t]*\][ \t]*(?:#.*)?""")
+_MODULES_KEY = re.compile(r"""[ \t]*(?:modules|"modules"|'modules')[ \t]*=[ \t]*\[""")
+
+
+def add_modules(path: str | Path, modules: list[str]) -> list[str]:
+    """Append `modules` to the `modules` array under `[project]` in the configuration at `path`,
+    after the modules it lists and in the order given, leaving every other byte of the file as
+    it is (comments, order, layout, line endings). Returns the modules added: those not listed
+    already. Writes nothing and raises ConfigError when the array is not one this can extend in
+    place (a `modules` given otherwise than as `modules = [...]` under a `[project]` header),
+    or when the edited file would not read as the same configuration with those modules
+    appended."""
+    path = Path(path)
+    text = path.read_bytes().decode("utf-8")
+    before = tomllib.loads(text)
+    listed = (before.get("project") or {}).get("modules")
+    if not isinstance(listed, list) or not all(isinstance(m, str) for m in listed):
+        raise ConfigError(f"{path}: `modules` under [project] is not a list of module names")
+    add = [m for m in dict.fromkeys(modules) if m not in listed]
+    if not add:
+        return []
+    after = _appended(text, add, path)
+    expected = {**before, "project": {**before["project"], "modules": listed + add}}
+    try:
+        same = tomllib.loads(after) == expected
+    except tomllib.TOMLDecodeError:
+        same = False
+    if not same:
+        raise ConfigError(f"{path}: `modules` could not be extended in place")
+    tmp = path.with_name(f".{path.name}.tmp")
+    tmp.write_bytes(after.encode("utf-8"))
+    tmp.chmod(path.stat().st_mode & 0o7777)
+    tmp.replace(path)
+    return add
+
+
+def _appended(text: str, add: list[str], path: Path) -> str:
+    """`text` with the strings `add` appended to its `[project]` table's `modules` array, in the
+    array's own layout: on its line when it is written on one line, else one per line with the
+    indentation and trailing comma of its last element."""
+    opening, in_project, pos = None, False, 0
+    for line in text.splitlines(keepends=True):
+        if re.match(r"[ \t]*\[", line):
+            in_project = bool(_PROJECT_HEADER.fullmatch(line.rstrip("\r\n")))
+        elif in_project and (m := _MODULES_KEY.match(line)):
+            opening = pos + m.end() - 1
+            break
+        pos += len(line)
+    if opening is None:
+        raise ConfigError(f"{path}: no `modules = [` line under a [project] header")
+    elems, i = [], opening + 1
+    while True:
+        if i >= len(text):
+            raise ConfigError(f"{path}: the `modules` array is not closed")
+        c = text[i]
+        if c in " \t\r\n,":
+            i += 1
+        elif c == "#":
+            i = text.find("\n", i)
+            i = len(text) if i < 0 else i
+        elif c == "]":
+            break
+        elif c in "\"'" and not text.startswith(c * 3, i):
+            j = i + 1
+            while j < len(text) and text[j] != c and text[j] != "\n":
+                j += 2 if c == '"' and text[j] == "\\" else 1
+            if j >= len(text) or text[j] != c:
+                raise ConfigError(f"{path}: a string in the `modules` array is not closed")
+            elems.append((i, j + 1, c))
+            i = j + 1
+        else:
+            raise ConfigError(f"{path}: the `modules` array holds something other than "
+                              "one-line strings")
+    closing = i
+    if not elems:
+        return text[:opening + 1] + ", ".join(map(_toml_string, add)) + text[opening + 1:]
+    start, end, quote = elems[-1]
+    new = [_toml_string(m, quote) for m in add]
+    if "\n" not in text[opening:start]:
+        return text[:end] + "".join(", " + q for q in new) + text[end:]
+    nl = "\r\n" if "\r\n" in text else "\n"
+    line_start = text.rfind("\n", 0, start) + 1
+    indent = re.match(r"[ \t]*", text[line_start:]).group(0)
+    tail = re.compile(r"[ \t]*(,)?[ \t]*(?:#[^\r\n]*)?").match(text, end, closing)
+    if tail.group(1):
+        return text[:tail.end()] + "".join(nl + indent + q + "," for q in new) + text[tail.end():]
+    return (text[:end] + "," + text[end:tail.end()] + ",".join(nl + indent + q for q in new)
+            + text[tail.end():])
+
+
+def _toml_string(s: str, quote: str = '"') -> str:
+    """`s` as a TOML string: a literal string when `quote` is `'` and `s` allows one, else a
+    basic string (JSON's escapes are TOML's)."""
+    import json
+    if quote == "'" and not re.search(r"['\x00-\x1f\x7f]", s):
+        return f"'{s}'"
+    return json.dumps(s, ensure_ascii=False)
+
+
 def _flag(proj: dict, key: str, where: str) -> bool:
     """A true/false option of the configuration, false when absent."""
     v = proj.get(key, False)
