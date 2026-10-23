@@ -297,7 +297,10 @@ claim's printed text changes, `show` marks that evidence and the findings that c
 `stale`; the others stay current. In a full assessment, `machinechecked changes --workspace ID`
 lists them beside the review markers the new release reopened, each with what changed
 ([What changed since the last release](ASSURANCE.md#what-changed-since-the-last-release)). A cited fact inside a proof is `stale` once that proof
-changes, even when the theorem's statement does not. Re-pin a record with `"repin": true` once you have checked it
+changes, even when the theorem's statement does not; it, a cited application and a certificate
+read `unchecked` while Lean cannot look at them (their module is not built, a request failed). A
+published audit shows them as `show` does, checked against the Lean its release was built from,
+and as `unchecked` once that Lean has changed. Re-pin a record with `"repin": true` once you have checked it
 again. Changing to independent mode, or importing, keeps what the workspace records you had seen,
 so an informed investigation never becomes a blind review. A report made with `machinechecked
 review` lists the exposure of every workspace in the working directory that you (the reviewer
