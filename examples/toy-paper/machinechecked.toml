@@ -15,7 +15,7 @@ dismissals = "reviews/dismissals.json"
 statement_authors = ["statement-author"]
 # Reviewers recorded as AI unless a marker says otherwise.
 ai_reviewers = ["statement-author", "claude*"]
-# Where the reader's "Raise issue" opens reports, and where the demo is published.
+# Where the reader's "Report issue" opens reports, and where the demo is published.
 issues = "cgarryZA/MachineChecked"
 site_url = "https://machinechecked.org/demo/"
 

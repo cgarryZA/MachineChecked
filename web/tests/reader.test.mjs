@@ -304,7 +304,7 @@ const CHANGES = {
       lean_changed: false, due: false, lean: [],
       evidence: [{ target: "step", name: "T:eq:bound-range", outcome: "kept", from: { state: "false" }, to: { state: "false" }, caveat: "counted against the pinned earlier text; the paper now prints another" }] },
     unchangedRow("T:thm:triangle")],
-  declarations: [], note: "Each status is the one its own build computed; this comparison changes none." };
+  declarations: [], note: "Each status is the one its own build computed. A reopened review needs a new reading at the later revision; the earlier reading stays in the review files as it was." };
 fs.writeFileSync(path.join(root, "toychanges/data/changes.json"), JSON.stringify(CHANGES));
 fs.writeFileSync(path.join(root, "toychanges/data/index.json"), JSON.stringify({ ...TOY, changes: "data/changes.json" }));
 
