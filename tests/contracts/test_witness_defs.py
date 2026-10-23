@@ -1,8 +1,11 @@
 """#191: the project declarations in the closure of a witness's statement that no proposition's
 closure includes are listed, while they lack a current review, as advice that changes no status;
 `require_witness_def_reviews` makes their reviews required, which can only lower a status. A
-definition claim lists the witness-only declarations that use a definition it maps."""
+definition claim lists the witness-only declarations that use a definition it maps. A
+declaration whose type is a proposition is a proof: it carries no data, so it cannot fix the
+instance a witness exhibits, and it is not listed (#243)."""
 
+import copy
 from types import SimpleNamespace
 
 from prooflens.assess import Assessor
@@ -45,9 +48,9 @@ REVIEWED = [review("spec", "S.rate_bound", "fp-spec"), review("def", "S.decay", 
             review("def", "S.Model", "fp-S.Model")]
 
 
-def run(reviews=REVIEWED, claims=(FORMAL, MODEL), dismissals=(), **cfg):
+def run(reviews=REVIEWED, claims=(FORMAL, MODEL), dismissals=(), lean=LEAN, **cfg):
     config = SimpleNamespace(statement_authors=[], papers=[], lean_root=None, **cfg)
-    out = Assessor(config, {"claims": list(claims)}, LEAN, {}, list(reviews),
+    out = Assessor(config, {"claims": list(claims)}, lean, {}, list(reviews),
                    list(dismissals)).run()
     return {c["id"]: c for c in out["claims"]}, out["findings"]
 
@@ -102,6 +105,57 @@ def test_the_option_requires_their_reviews_and_only_lowers_a_status():
     # Without the option, no review of a witness-only declaration changes a status.
     for reviews in (REVIEWED, every):
         assert run(reviews)[0]["P:rate"]["status_code"] == "formal.accepted"
+
+
+def with_decls(kinds: dict[str, tuple[str, object]]) -> dict:
+    """LEAN with more declarations in the witness's closure, each with the probe's `kind` and
+    `proposition` (left out for `"absent"`, as in a record of an earlier probe)."""
+    lean = copy.deepcopy(LEAN)
+    lean["proofs"]["witness:S.rate_bound_hypotheses:"]["closure"] += list(kinds)
+    for n, (kind, prop) in kinds.items():
+        lean["decls"][n] = {**decl(n), "kind": kind,
+                            **({} if prop == "absent" else {"proposition": prop})}
+    return lean
+
+
+# The witness's closure for the instance `S.paperModel` of a structure with a proof field: the
+# auxiliary proof Lean generates for that field, a theorem about the instance, a `Prop`-valued
+# instance (`Fact (2 ≠ 0)`) and the constructor of that `Prop` class are proofs. A definition
+# whose value is a structure instance with a data field, and the class (a predicate), are not.
+PROOFS = {"S.paperModel._proof_1": ("theorem", True), "S.paperModel_r": ("theorem", True),
+          "S.instFactTwoNeZero": ("def", True), "S.Fact.mk": ("ctor", True)}
+DATA = {"S.halfModel": ("def", False), "S.Fact": ("inductive", False)}
+
+
+def test_proofs_in_a_witness_closure_are_not_listed():
+    lean = with_decls({**PROOFS, **DATA})
+    claims, findings = run(lean=lean)
+    listed = [e["name"] for e in claims["P:rate"]["clauses"][0]["witness_defs"]]
+    assert listed == ["S.Fact", "S.Model.r", "S.halfModel", "S.paperModel"]
+    warned = [f for f in findings if f["code"] == "witness-def-review"]
+    assert len(warned) == 4 and not any(p in f["message"] for p in PROOFS for f in warned)
+    assert claims["P:rate"]["status_code"] == "formal.accepted"
+    # Required by the configuration, only the declarations that carry data need a review.
+    claims, findings = run(lean=lean, require_witness_def_reviews=True)
+    assert sorted(f["trigger"] for f in findings if f["code"] == "def-review") == listed
+    every = REVIEWED + [review("def", n, f"fp-{n}") for n in listed]
+    assert run(every, lean=lean, require_witness_def_reviews=True)[0]["P:rate"][
+        "status_code"] == "formal.accepted"
+    # A proof that uses a definition claim's definition is no candidate for its mapping.
+    lean["decls"]["S.paperModel_r"]["uses"] = ["S.Model"]
+    candidates = run(lean=lean)[0]["P:model"]["clauses"][0]["witness_candidates"]
+    assert "S.paperModel_r" not in [c["name"] for c in candidates]
+
+
+def test_a_record_without_the_probes_answer_counts_only_a_theorem_as_a_proof():
+    # A stored record of an earlier probe has no `proposition`: a theorem is a proof, any other
+    # declaration is listed. A declaration whose answer is unknown (null) is listed.
+    lean = with_decls({"S.paperModel_r": ("theorem", "absent"),
+                       "S.instFactTwoNeZero": ("def", "absent"), "S.Fact.mk": ("ctor", "absent"),
+                       "S.unknown": ("def", None)})
+    listed = [e["name"] for e in run(lean=lean)[0]["P:rate"]["clauses"][0]["witness_defs"]]
+    assert listed == ["S.Fact.mk", "S.Model.r", "S.instFactTwoNeZero", "S.paperModel",
+                      "S.unknown"]
 
 
 def test_a_definition_claim_lists_witness_only_declarations_that_use_its_definitions():
