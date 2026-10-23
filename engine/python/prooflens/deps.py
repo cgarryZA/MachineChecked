@@ -14,7 +14,8 @@ from pathlib import Path
 from .config import STANDARD_AXIOMS, work_dir_name
 from .facts import Store, graphs
 from .probe import lib_names
-from .simple import ViewError, built_modules, declaring_modules, probe_modules
+from .simple import (ViewError, built_modules, declaring_modules, module_failed_detail,
+                     probe_modules)
 
 SCHEMA = "machinechecked/inspect@1"
 NOTE = ("Dependencies are the constants Lean's terms mention: what a statement is stated with, "
@@ -181,7 +182,7 @@ def inspect(root: Path, name: str, module: str | None = None, lake: str = "lake"
             recs, failed = probe_modules(root, [target], libs, request, lake, log=quiet,
                                          work=work)
             if failed:
-                raise ViewError(failed[target])
+                raise ViewError(module_failed_detail(target, failed[target], root=root))
             nodes, summary = _read(recs, name)
             env = st.environment([target], next(iter(graphs(recs).values()), {}))
         else:
