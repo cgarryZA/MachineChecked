@@ -103,10 +103,18 @@
         {:else}<div class="msg"><p>Choose a claim to read its statements and evidence.</p></div>{/if}
       </section>
       {#if claimId || (paperMode && showInfo)}
-        <aside class="side" aria-label={claimId ? "The claim" : "Formalisations of this paper"} tabindex="-1" bind:this={side}>
-          {#if !comparing}<div class="drag" role="separator" tabindex="0" aria-orientation="vertical" aria-label="Claim panel width"
-            aria-valuemin="320" aria-valuemax={maxWidth} aria-valuenow={Math.min(sideWidth, maxWidth)} aria-valuetext={`${Math.min(sideWidth, maxWidth)} pixels`}
-            onpointerdown={drag} onkeydown={resizeKey}></div>{/if}
+        <aside class="side" id="side-panel" aria-label={claimId ? "The claim" : "Formalisations of this paper"} tabindex="-1" bind:this={side}>
+          {#if !comparing}
+            <!-- A focusable separator with a value is the ARIA window splitter, an interactive
+                 widget; Svelte's checker counts every separator as static, so its two warnings
+                 are silenced here and nowhere else. -->
+            <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
+            <div class="drag" role="separator" tabindex="0" aria-orientation="vertical" aria-label="Claim panel width"
+              aria-controls="side-panel" aria-describedby="side-panel-keys"
+              aria-valuemin="320" aria-valuemax={maxWidth} aria-valuenow={Math.min(sideWidth, maxWidth)} aria-valuetext={`${Math.min(sideWidth, maxWidth)} pixels`}
+              onpointerdown={drag} onkeydown={resizeKey}></div>
+            <span id="side-panel-keys" hidden>Left and right arrows widen and narrow the panel; Home and End make it narrowest and widest; Enter restores its usual width.</span>
+          {/if}
           {#if claimId}<Passport {index} {claimId} {editable} comparison={comparing} />
           {:else}<div class="side-head"><strong>About this paper</strong><button class="x" onclick={() => showInfo = false} aria-label="Close formalisations">×</button></div><PaperInfo paper={index.paper} {index} />{/if}
         </aside>

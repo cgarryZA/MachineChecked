@@ -182,6 +182,10 @@ def test_check_json_reports_a_step_review_apart():
     out = _step_json(c)
     assert out["step_review"] == "false" and out["finding"]["verdict"] == "false as printed"
     assert out["route"] == [{"name": BOUND, "status_code": "link.checked"}]
+    # A route link Lean did not check names its module, as a link does.
+    unbuilt = {"name": BOUND, "status_code": "link.module-unbuilt",
+               "status_detail": "Module Synthetic.Main is not built."}
+    assert _step_json({**c, "route_links": [unbuilt]})["route"] == [unbuilt]
     assert _step_json({**c, "source_sha256": "b"})["step_review"] == "stale"
     assert _step_json({**c, "step_reports": []})["step_review"] == "unreviewed"
 

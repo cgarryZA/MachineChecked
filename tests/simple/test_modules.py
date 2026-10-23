@@ -7,6 +7,7 @@ solution from the challenge by module, call a link without a module ambiguous ra
 guess, and say a declaration in an unbuilt module is not built, not "not found".
 """
 
+import json
 import shutil
 import subprocess
 
@@ -126,6 +127,86 @@ def test_lean_loads_only_what_it_must(twins, tmp_path, monkeypatch):
     target = [mods for mods, _, names in sessions if "Twin.target" in names]
     assert sorted(target) == [["Challenge.Main"], ["Solution.Main"]]
     assert not any("Later.result" in names for *_, names in sessions)
+
+
+@needs_lean
+@needs_tex
+def test_check_names_the_modules_of_links_lean_did_not_check(twins, monkeypatch, capsys):
+    """`check` and `check --json` name the module that is not built and the modules that declare
+    an ambiguous name, after the engine's own status words."""
+    from prooflens import cli
+    monkeypatch.chdir(twins)
+    capsys.readouterr()
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["check"])
+    assert exc.value.code == 1
+    out = capsys.readouterr().out
+    assert ("FAIL Theorem 2 -> Twin.target: linked: Lean name is ambiguous. "
+            "Declared in Challenge.Main, Solution.Main.") in out
+    assert ("FAIL Theorem 3 -> Later.result: linked: Lean not checked (module not built). "
+            "Module Later.Main is not built.") in out
+    assert "FAIL Theorem 4 -> Nowhere.result: linked: Lean declaration not found\n" in out
+    with pytest.raises(SystemExit):
+        cli.main(["check", "--json"])
+    links = {c["number"]: c["links"][0] for c in json.loads(capsys.readouterr().out)["claims"]}
+    assert links["Theorem 2"]["status_code"] == "link.ambiguous"
+    assert links["Theorem 2"]["status_detail"] == "Declared in Challenge.Main, Solution.Main."
+    assert links["Theorem 3"]["status_code"] == "link.module-unbuilt"
+    assert links["Theorem 3"]["status_detail"] == "Module Later.Main is not built."
+    assert "status_detail" not in links["Theorem 1"] and "status_detail" not in links["Theorem 4"]
+
+
+def synthetic_view(root):
+    """A view with one claim per state Lean did not check a link in, each state and its detail
+    as `resolve_link` gives them."""
+    from prooflens.simple import resolve_link
+    cases = [("Theorem 1", "Later.result", "Later.Main", [], ["Later.Main"], {}),
+             ("Theorem 2", "Broken.result", "Broken.Main", [], [], {"Broken.Main": "error"}),
+             ("Theorem 3", "Twin.target", None,
+              [{"module": "Challenge.Main"}, {"module": "Solution.Main"}], [], {})]
+    claims = []
+    for k, (number, name, module, recs, unbuilt, failed) in enumerate(cases, 1):
+        rec, state = resolve_link(name, recs, module, root, unbuilt, failed)
+        assert rec is None
+        claims.append({"id": f"P:thm:{k}", "key": f"thm:{k}", "number": number, "title": None,
+                       **state, "links": [{"name": name, **state, "source": "formalization.yaml",
+                                           "record": None}],
+                       "suggestions": [], "reviews": [], "references": []})
+    return {"body": {"mode": "simple", "paper": "P", "title": "Synthetic", "commit": None,
+                     "notes": [], "module_docs": [], "project": {"built": 2, "unbuilt": 1},
+                     "claims": claims}}
+
+
+@pytest.mark.parametrize("number, code, detail", [
+    ("Theorem 1", "link.module-unbuilt", "Module Later.Main is not built."),
+    ("Theorem 2", "link.module-failed", "Module Broken.Main could not be loaded."),
+    ("Theorem 3", "link.ambiguous", "Declared in Challenge.Main, Solution.Main."),
+])
+def test_check_names_the_module_behind_each_unchecked_state(tmp_path, monkeypatch, capsys,
+                                                             number, code, detail):
+    """Each of the three states: `check` prints the module after the status words, which stay
+    the engine's, and `check --json` gives it as the link's `status_detail`."""
+    from prooflens import cli
+    from prooflens.status import STATUSES
+    view = synthetic_view(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "_simple_target", lambda a: (tmp_path, tmp_path / "paper.tex"))
+    monkeypatch.setattr(cli, "_simple_view", lambda *a, **k: view)
+    name = next(c["links"][0]["name"] for c in view["body"]["claims"] if c["number"] == number)
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["check"])
+    assert exc.value.code == 1
+    assert f"FAIL {number} -> {name}: {STATUSES[code]['label']}. {detail}\n" in capsys.readouterr().out
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["check", "--json"])
+    assert exc.value.code == 1
+    doc = json.loads(capsys.readouterr().out)
+    claim = next(c for c in doc["claims"] if c["number"] == number)
+    assert claim["links"] == [{"name": name, "status": STATUSES[code]["label"],
+                               "status_code": code, "class": "unspecified",
+                               "status_detail": detail, "source": "formalization.yaml"}]
+    # The detail adds to the status: the claim's status is the link's, unchanged.
+    assert (claim["status_code"], claim["status"]) == (code, STATUSES[code]["label"])
 
 
 @needs_lean
