@@ -722,7 +722,8 @@ class Assessor:
 
     def closure_reviews(self, names: list[str]) -> dict:
         """The review state of every project declaration in the closures of `names`, other than
-        the propositions of the inventory (each reviewed by its own spec-review)."""
+        the propositions of the inventory (each reviewed by its own spec-review) and the tactic
+        scripts of tactic defaults (`_is_auto_param`)."""
         lean = self.lean
         out = {}
         for n in names:
@@ -730,7 +731,7 @@ class Assessor:
             clos = (lean["specs"][n] if n in lean["specs"] else
                     lean["defs"].get(n, {})).get("closure") or []
             for d in clos:
-                if d in lean["specs"] or d in out:
+                if d in lean["specs"] or d in out or self._is_auto_param(d):
                     continue
                 out[d] = self.review_state("def", d, lean["decls"].get(d))
         return out
@@ -744,12 +745,21 @@ class Assessor:
             return rec["proposition"] is True
         return rec.get("kind") == "theorem"
 
+    def _is_auto_param(self, name: str) -> bool:
+        """Whether the declaration `name` is the tactic script Lean stores for a tactic default
+        (`pos : 0 < val := by decide`: an auto-parameter, `Pos.pos._autoParam`). Running it gives
+        a proof of the proposition the field or binder states, so it fixes nothing a statement
+        or a witness says. Only the probe's `auto_param` answer counts: a record without it is a
+        definition like any other."""
+        return (self.lean["decls"].get(name) or {}).get("auto_param") is True
+
     def witness_only(self) -> dict[str, list[str]]:
         """The project declarations in the closure of a witness's statement that the assessment
         asks no review for otherwise (outside every proposition, its closure, the definitions a
         definition claim maps and their closures), each with the witnesses that use it. Proofs
-        (`_is_proof`) are left out: they carry no data, so they cannot fix the instance a
-        witness exhibits."""
+        (`_is_proof`) and the tactic scripts of tactic defaults (`_is_auto_param`) are left out:
+        a proof carries no data and a tactic script gives only a proof, so neither can fix the
+        instance a witness exhibits."""
         if self._witness_only is None:
             lean = self.lean
             covered = set(lean["specs"])
@@ -765,7 +775,8 @@ class Assessor:
                         for d in (self._proof("witness", w, None) or {}).get("closure") or []:
                             out.setdefault(d, set()).add(w)
             self._witness_only = {d: sorted(ws) for d, ws in out.items()
-                                  if d not in covered and not self._is_proof(d)}
+                                  if d not in covered and not self._is_proof(d)
+                                  and not self._is_auto_param(d)}
         return self._witness_only
 
     @staticmethod

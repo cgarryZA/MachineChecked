@@ -3,7 +3,11 @@ closure includes are listed, while they lack a current review, as advice that ch
 `require_witness_def_reviews` makes their reviews required, which can only lower a status. A
 definition claim lists the witness-only declarations that use a definition it maps. A
 declaration whose type is a proposition is a proof: it carries no data, so it cannot fix the
-instance a witness exhibits, and it is not listed (#243)."""
+instance a witness exhibits, and it is not listed (#243). The tactic script Lean stores for a
+tactic default gives only a proof: it needs no review in a proposition's closure, a definition
+claim's or a witness's (#325). The closure of a witness's statement is taken with its proofs
+erased, as the others are, so a definition that only a proof in the statement reaches is not in
+it (#326)."""
 
 import copy
 import subprocess
@@ -171,10 +175,71 @@ def test_a_definition_claim_lists_witness_only_declarations_that_use_its_definit
     assert claims["P:model"]["status_code"] == "definition.reviewed"
 
 
+def with_scripts(auto_param=True) -> dict:
+    """LEAN where a structure in each closure has a field with a tactic default, whose script
+    Lean stores as a definition reached through the constructor's type (`…._autoParam`); the
+    witness's closure also has a definition with a binder's tactic default (`S.half._auto_1`).
+    The probe says which declarations are such scripts (`auto_param`; left out for `None`, as in
+    a record of an earlier probe)."""
+    lean = copy.deepcopy(LEAN)
+    more = {"specs": ("S.Rate", "S.Rate.mk", "S.Rate.pos._autoParam"),
+            "defs": ("S.Model.mk", "S.Model.ok._autoParam"),
+            "witness": ("S.Pair", "S.Pair.mk", "S.Pair.pos._autoParam", "S.half",
+                        "S.half._auto_1")}
+    lean["specs"]["S.rate_bound"]["closure"] += more["specs"]
+    lean["defs"]["S.Model"]["closure"] += more["defs"]
+    lean["proofs"]["witness:S.rate_bound_hypotheses:"]["closure"] += more["witness"]
+    for n in sum(more.values(), ()):
+        script = "_auto" in n
+        lean["decls"][n] = {**decl(n), "kind": "ctor" if n.endswith(".mk") else "def",
+                            "proposition": False,
+                            **({} if auto_param is None else {"auto_param": script})}
+    return lean
+
+
+SCRIPTS = {"S.Rate.pos._autoParam", "S.Model.ok._autoParam", "S.Pair.pos._autoParam",
+           "S.half._auto_1"}
+
+
+def test_the_tactic_script_of_a_tactic_default_needs_no_review():
+    """#325: a field or binder with a tactic default (`pos : 0 < val := by decide`) makes Lean
+    store the tactic as a definition. Running it gives a proof of what the field states, so it
+    is left out of the definitions a proposition or a definition claim needs reviewed and out of
+    the witness-only declarations."""
+    lean = with_scripts()
+    claims, findings = run(lean=lean)
+    rate, model = claims["P:rate"]["clauses"][0], claims["P:model"]["clauses"][0]
+    assert sorted(rate["def_reviews"]) == ["S.Rate", "S.Rate.mk", "S.decay"]
+    assert sorted(model["def_reviews"]) == ["S.Model", "S.Model.mk"]
+    assert [e["name"] for e in rate["witness_defs"]] == [
+        "S.Model.r", "S.Pair", "S.Pair.mk", "S.half", "S.paperModel"]
+    assert not [f for f in findings if any(s in f["message"] for s in SCRIPTS)]
+    every = REVIEWED + [review("def", n, f"fp-{n}") for n in ("S.Rate", "S.Rate.mk",
+                                                              "S.Model.mk")]
+    claims, _ = run(every, lean=lean)
+    assert claims["P:rate"]["status_code"] == "formal.accepted"
+    assert claims["P:model"]["status_code"] == "definition.reviewed"
+    # Required by the configuration, the witness's declarations other than the scripts.
+    claims, findings = run(every, lean=lean, require_witness_def_reviews=True)
+    assert sorted(f["trigger"] for f in findings if f["code"] == "def-review") == [
+        "S.Model.r", "S.Pair", "S.Pair.mk", "S.half", "S.paperModel"]
+
+
+def test_a_record_without_the_probes_answer_is_reviewed_like_a_definition():
+    claims, findings = run(REVIEWED + [review("def", n, f"fp-{n}")
+                                       for n in ("S.Rate", "S.Rate.mk", "S.Model.mk")],
+                           lean=with_scripts(auto_param=None))
+    assert "S.Rate.pos._autoParam" in claims["P:rate"]["clauses"][0]["def_reviews"]
+    assert claims["P:rate"]["status_code"] == "formal.review-pending"
+    assert "S.Pair.pos._autoParam" in [
+        e["name"] for e in claims["P:rate"]["clauses"][0]["witness_defs"]]
+
+
 # A synthetic project for the probe: a structure with a proof field, the paper's instance of it,
 # a `Prop` class with an instance, a definition that needs that instance, a theorem about the
 # instance and a function of `Fin 3`; a proposition about the structure, its proof, and a witness
-# that uses all of them and whose statement has proofs Lean makes auxiliary (`_proof_1`).
+# that uses all of them and whose statement has proofs Lean makes auxiliary (`_proof_1`), and a
+# theorem about a bound that nothing else names.
 WIT = {
     "lakefile.toml": 'name = "wit"\ndefaultTargets = ["Wit"]\n\n[[lean_lib]]\nname = "Wit"\n',
     "Wit.lean": "import Wit.Defs\nimport Wit.Spec\nimport Wit.Acceptance\n",
@@ -202,6 +267,11 @@ theorem three_val : three.val = 3 := rfl
 /-- A number below three, read off. -/
 def pick (x : Fin 3) : Nat := x.val
 
+/-- A bound that only a proof in the witness's statement names. -/
+def bound : Nat := 3
+
+theorem one_lt_bound : 1 < bound := by decide
+
 end Wit
 """,
     "Wit/Spec.lean": """import Wit.Defs
@@ -222,8 +292,8 @@ theorem pos_ge_one : Wit.Spec.pos_ge_one := fun p => p.pos
 /-- The paper's example, with its value, the number two, and a number below three. -/
 theorem pos_ge_one_hypotheses :
     ∃ q : {p : Wit.Pos // p.val = 3}, q = ⟨Wit.three, Wit.three_val⟩ ∧ (Wit.ofFact 2).val = 2 ∧
-      Wit.pick ⟨1, by omega⟩ = Wit.pick ⟨1, by decide⟩ :=
-  ⟨_, rfl, rfl, rfl⟩
+      Wit.pick ⟨1, by omega⟩ = Wit.pick ⟨1, by decide⟩ ∧ Wit.pick ⟨1, Wit.one_lt_bound⟩ = 1 :=
+  ⟨_, rfl, rfl, rfl, rfl⟩
 
 end Wit.Acceptance
 """}
@@ -237,10 +307,12 @@ WIT_CLAIM = {"id": "P:pos", "paper": "P", "scope": "formal", "scope_reviewed": T
 @pytest.mark.parametrize("toolchain", ["leanprover/lean4:v4.32.0", "leanprover/lean4:v4.24.0"])
 def test_the_probe_reports_which_declarations_of_a_witness_closure_are_proofs(tmp_path,
                                                                               toolchain):
-    """As Lean elaborates them: the auxiliary proof of the witness's statement, the theorem, the
-    `Prop`-valued instance and the constructor of the `Prop` class are propositions and are not
-    listed; the instance, the definitions that use the `Prop` instance and `Fin 3`, and the class
-    are listed."""
+    """As Lean elaborates them: the proofs in the witness's statement (the theorems, the
+    `Prop`-valued instance, the auxiliary proofs Lean makes) are erased before its closure is
+    taken, so neither they nor the bound only a theorem's statement names are in it; the
+    constructor of the `Prop` class, which the closure reaches through the class, is a
+    proposition. None of them is listed. The instance, the definitions that use the `Prop`
+    instance and `Fin 3`, and the class are listed."""
     if subprocess.run(["elan", "toolchain", "list"], capture_output=True,
                       text=True).stdout.find(toolchain) < 0:
         pytest.skip(f"{toolchain} is not installed")
@@ -256,14 +328,113 @@ def test_the_probe_reports_which_declarations_of_a_witness_closure_are_proofs(tm
     lean = probe.lean_session(root, ["Wit"], query, probe.parse_records)
     w = lean["proofs"]["witness:Wit.Acceptance.pos_ge_one_hypotheses:"]
     assert w["errors"] == []
+    # The theorems are in the statement as Lean prints it, and are not in the closure.
+    assert "Wit.three_val" in w["type"]["text"] and "Wit.one_lt_bound" in w["type"]["text"]
     prop = {n: lean["decls"][n]["proposition"] for n in w["closure"]}
-    aux = {n for n in prop if n.startswith("Wit.Acceptance.pos_ge_one_hypotheses._proof_")}
-    assert aux and {n for n, p in prop.items() if p is True} == \
-        {"Wit.three_val", "Wit.two_ne_zero", "Wit.Fact.mk"} | aux, prop
-    assert {n for n, p in prop.items() if p is False} == \
-        {"Wit.Fact", "Wit.Pos", "Wit.Pos.mk", "Wit.Pos.val", "Wit.ofFact", "Wit.pick",
-         "Wit.three"}, prop
+    assert set(prop) == {"Wit.Fact", "Wit.Fact.mk", "Wit.Pos", "Wit.Pos.mk", "Wit.Pos.val",
+                         "Wit.ofFact", "Wit.pick", "Wit.three"}, prop
+    assert {n for n, p in prop.items() if p is True} == {"Wit.Fact.mk"}, prop
     claims, findings = run(reviews=[], claims=[WIT_CLAIM], lean=lean)
     assert [e["name"] for e in claims["P:pos"]["clauses"][0]["witness_defs"]] == \
         ["Wit.Fact", "Wit.ofFact", "Wit.pick", "Wit.three"]
     assert len([f for f in findings if f["code"] == "witness-def-review"]) == 4
+
+
+# A synthetic project for the tactic defaults of #325: two structures whose proof fields have
+# tactic defaults, and a definition whose proof binder has one. The proposition uses one of the
+# structures and the definition; the witness uses the other structure only.
+AUTO = {
+    "lakefile.toml": 'name = "auto"\ndefaultTargets = ["Auto"]\n\n[[lean_lib]]\nname = "Auto"\n',
+    "Auto.lean": "import Auto.Defs\nimport Auto.Spec\nimport Auto.Acceptance\n",
+    "Auto/Defs.lean": """namespace Auto
+
+/-- A number below ten. -/
+structure Small where
+  val : Nat
+  lt : val < 10 := by decide
+
+/-- Half of a positive number. -/
+def half (n : Nat) (_h : 0 < n := by omega) : Nat := n / 2
+
+/-- A positive number. -/
+structure Pos where
+  val : Nat
+  pos : 0 < val := by decide
+
+/-- The paper's example. -/
+def three : Pos := { val := 3 }
+
+end Auto
+""",
+    "Auto/Spec.lean": """import Auto.Defs
+
+namespace Auto.Spec
+
+/-- Half of one more than a number below ten is at most that number plus one. -/
+def half_le : Prop := ∀ s : Auto.Small, Auto.half (s.val + 1) ≤ s.val + 1
+
+end Auto.Spec
+""",
+    "Auto/Acceptance.lean": """import Auto.Spec
+
+namespace Auto.Acceptance
+
+theorem half_le : Auto.Spec.half_le := fun _ => Nat.div_le_self _ _
+
+/-- The paper's example. -/
+theorem half_le_hypotheses : ∃ p : Auto.Pos, p = Auto.three := ⟨_, rfl⟩
+
+end Auto.Acceptance
+"""}
+AUTO_CLAIM = {"id": "P:half", "paper": "P", "scope": "formal", "scope_reviewed": True,
+              "clauses": [{"name": "main", "spec": "Auto.Spec.half_le",
+                           "accept": "Auto.Acceptance.half_le",
+                           "witness": "Auto.Acceptance.half_le_hypotheses"}]}
+
+
+@needs_lean
+@pytest.mark.parametrize("toolchain", ["leanprover/lean4:v4.32.0", "leanprover/lean4:v4.24.0"])
+def test_the_probe_reports_the_tactic_scripts_of_tactic_defaults(tmp_path, toolchain):
+    """As Lean elaborates them: the scripts of the fields' tactic defaults (`…._autoParam`) and
+    of the binder's are in the closures of the proposition and of the witness, the probe says
+    they are scripts, and none of them needs a review or is listed."""
+    if subprocess.run(["elan", "toolchain", "list"], capture_output=True,
+                      text=True).stdout.find(toolchain) < 0:
+        pytest.skip(f"{toolchain} is not installed")
+    root = tmp_path / "auto"
+    for path, text in AUTO.items():
+        (root / path).parent.mkdir(parents=True, exist_ok=True)
+        (root / path).write_text(text)
+    (root / "lean-toolchain").write_text(toolchain + "\n")
+    subprocess.run(["lake", "build"], cwd=root, check=True, capture_output=True, timeout=900)
+    query = {"scope_roots": ["Auto"], "spec_prefix": "Auto.Spec",
+             "accept_prefix": "Auto.Acceptance",
+             "allowed_axioms": ["propext", "Classical.choice", "Quot.sound"],
+             "requests": probe.requests_from_inventory({"claims": [AUTO_CLAIM]})}
+    lean = probe.lean_session(root, ["Auto"], query, probe.parse_records)
+    spec = lean["specs"]["Auto.Spec.half_le"]
+    w = lean["proofs"]["witness:Auto.Acceptance.half_le_hypotheses:"]
+    assert spec["errors"] == [] and w["errors"] == []
+    flag = {n: lean["decls"][n]["auto_param"] for n in spec["closure"] + w["closure"]}
+    scripts = {n for n, a in flag.items() if a is True}
+    # The binder's script is `Auto.half._auto_1` on Lean 4.32, a name with macro scopes on 4.24.
+    fields = {"Auto.Small.lt._autoParam", "Auto.Pos.pos._autoParam"}
+    binder = scripts - fields
+    assert fields <= scripts and len(binder) == 1, flag
+    assert set(spec["closure"]) == {"Auto.Small", "Auto.Small.mk", "Auto.Small.val",
+                                    "Auto.Small.lt._autoParam", "Auto.half"} | binder
+    assert set(w["closure"]) == {"Auto.Pos", "Auto.Pos.mk", "Auto.Pos.pos._autoParam",
+                                 "Auto.three"}
+    assert {n for n, a in flag.items() if a is False} == set(flag) - scripts
+    claims, findings = run(reviews=[], claims=[AUTO_CLAIM], lean=lean)
+    cl = claims["P:half"]["clauses"][0]
+    assert sorted(cl["def_reviews"]) == ["Auto.Small", "Auto.Small.mk", "Auto.Small.val",
+                                         "Auto.half"]
+    assert [e["name"] for e in cl["witness_defs"]] == ["Auto.Pos", "Auto.Pos.mk", "Auto.three"]
+    assert not [f for f in findings
+                if f.get("trigger") in scripts or any(s in f["message"] for s in scripts)]
+    # Reviews of the proposition and of the definitions it uses accept the claim.
+    reviews = [review("spec", "Auto.Spec.half_le", spec["fingerprint"])] + [
+        review("def", n, lean["decls"][n]["fingerprint"]) for n in cl["def_reviews"]]
+    claims, _ = run(reviews=reviews, claims=[AUTO_CLAIM], lean=lean)
+    assert claims["P:half"]["status_code"] == "formal.accepted"
