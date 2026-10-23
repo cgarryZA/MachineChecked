@@ -221,7 +221,11 @@ def build(cfg: Config, release: str | None = None, skip_lean: bool = False,
     index["project"].update(source_info(cfg))
     site = cfg.out_dir / "site"
     found = content_mod.load(cfg.out_dir, eid, record["body"])
-    changes = release_changes(cfg, rel)
+    unavailable = []
+    changes = release_changes(cfg, rel, unavailable)
+    if unavailable:
+        index["changes_unavailable"] = unavailable[0]
+        log(f"note: {unavailable[0]}")
     write_preview(site, index, chunks, store, pdfs, web_dist,
                   rq.prioritise(rq.assurance_queue(index, chunks, store, cfg.statement_authors),
                                 changes),
@@ -282,7 +286,10 @@ def reusable_lean(cfg: Config) -> dict:
     rels = ev.releases(cfg.out_dir)
     if not rels:
         raise StaleEvidence("no stored Lean results to reuse; " + RUN_PROBE)
-    body = ev.load(cfg.out_dir, read_json(rels[-1])["evidence"])["body"]
+    try:
+        body = ev.load(cfg.out_dir, read_json(rels[-1])["evidence"])["body"]
+    except ev.EvidenceMissing as e:
+        raise StaleEvidence(f"no stored Lean results to reuse: {e}; " + RUN_PROBE) from e
     lean, prov = body.get("lean"), body["provenance"]
     if not lean or not prov.get("lean_inputs_sha256") or not prov.get("probe_sha256"):
         raise StaleEvidence("the stored Lean results do not record their Lean inputs; "
@@ -388,7 +395,10 @@ def rebuild_site(cfg: Config, web_dist: Path | None = None, release: str | None 
     index["project"].update(source_info(cfg))
     site = cfg.out_dir / "site"
     found = content_mod.load(cfg.out_dir, rel["evidence"], record["body"])
-    changes = release_changes(cfg, rel["release"])
+    unavailable = []
+    changes = release_changes(cfg, rel["release"], unavailable)
+    if unavailable:
+        index["changes_unavailable"] = unavailable[0]
     write_preview(site, index, chunks, store, pdf_paths(cfg, record["body"]), web_dist,
                   rq.prioritise(rq.assurance_queue(index, chunks, store, cfg.statement_authors),
                                 changes),
@@ -396,15 +406,23 @@ def rebuild_site(cfg: Config, web_dist: Path | None = None, release: str | None 
     return {"release": rel["release"], "site": site, "index": index, "content": found}
 
 
-def release_changes(cfg: Config, release: str) -> dict | None:
+def release_changes(cfg: Config, release: str, notes: list | None = None) -> dict | None:
     """What changed from the release before `release` to it (`changes.py`), for the reader;
-    None for a first release, or when the earlier evidence is of a form the comparison cannot
-    read. It changes nothing that is assessed."""
+    None for a first release, when the evidence of either release is no longer on disk (pruned
+    or deleted: then `notes` gets one sentence naming the release), or when the earlier evidence
+    is of a form the comparison cannot read. It changes nothing that is assessed."""
     from . import changes
     try:
-        if changes.previous_release(cfg.out_dir, release) is None:
+        before = changes.previous_release(cfg.out_dir, release)
+        if before is None:
             return None
-        return changes.between(cfg.out_dir, None, release)
+        for name in (before, release):
+            why = ev.release_unavailable(cfg.out_dir, name)
+            if why:
+                if notes is not None:
+                    notes.append(f"No change summary: {why}.")
+                return None
+        return changes.between(cfg.out_dir, before, release)
     except (changes.ChangesError, ev.EvidenceError, KeyError, TypeError, ValueError):
         return None
 

@@ -179,6 +179,10 @@
     "changes": {
       "type": "string",
       "description": "What changed since the release before this one, and the evidence it reopens (data/changes.json, prooflens/changes@1)."
+    },
+    "changes_unavailable": {
+      "type": "string",
+      "description": "Why there is no change summary although an earlier release exists: the evidence of that release (or of this one) is no longer on disk."
     }
   }
 }

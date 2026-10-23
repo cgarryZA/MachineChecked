@@ -178,4 +178,6 @@ when every library is indexed. A dependency's command that names a declaration w
 call does not contain is not detected ([DEVELOPMENT.md](DEVELOPMENT.md)).
 
 Evidence records are content-addressed and never rewritten. A release name, once given, keeps its
-evidence.
+evidence. `machinechecked evidence prune` may delete the file of an older record
+([Stored evidence](ASSURANCE.md#stored-evidence)); its release then says that its evidence was
+pruned, and nothing is compared with it or reassessed from it.

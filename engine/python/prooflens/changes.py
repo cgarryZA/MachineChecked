@@ -708,6 +708,9 @@ def between(out_dir, old_release: str | None = None, new_release: str | None = N
         if not path.exists():
             raise ChangesError(f"no release {name}: the releases are "
                                + ", ".join(read_json(p)["release"] for p in rels))
+        why = ev.release_unavailable(out_dir, name)
+        if why:
+            raise ChangesError(f"no comparison: {why}")
         recs[name] = ev.load(out_dir, read_json(path)["evidence"])
     return compare(recs[old_release], old_release, recs[new_release], new_release)
 

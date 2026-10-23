@@ -208,6 +208,25 @@ nothing: a reopened review needs a new reading at the new revision, and the earl
 stays in the review files as it was. The review queue offers the reopened reviews first, with
 their questions ([Review order](REVIEWING.md#review-order)).
 
+### Stored evidence
+
+Each build stores its evidence in `.machinechecked/evidence/`, one file per build, and names a
+release for it in `.machinechecked/releases/`. To bound the disk this uses:
+
+```sh
+machinechecked evidence list                 # each release, newest first, with its file's size
+machinechecked evidence prune --dry-run      # what pruning would delete, and why the rest stays
+machinechecked evidence prune [--keep N]     # delete it
+```
+
+Pruning keeps the newest `N` evidence records (at least 2, the default): the latest is what
+`build --reuse-lean`, `reassess` and `site` read, and the one before it is what the next build
+compares with. It also keeps the evidence of every release given its own name
+(`build --release NAME`), and what a kept record was reassessed from. Release records are never
+deleted. A release whose evidence was pruned or deleted has no comparison: `changes` names that
+release and says its evidence was pruned (with the date) or is missing, the build completes
+without a change summary and says the same, and the reader's **Details** page shows it.
+
 ## What the evidence says
 
 A **consistency check** ensures the recorded claims and the machine checks do not contradict one another. It can pass with unproved claims.

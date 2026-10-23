@@ -171,7 +171,11 @@ its claims and declarations refer to and checks each against its key.
 
 `machinechecked changes --json`, and `data/changes.json` of a site or an export whose release
 has an earlier one (the index names it as `changes`). It compares two evidence records and is
-derived from them alone; no status, fingerprint or gate reads it.
+derived from them alone; no status, fingerprint or gate reads it. When the evidence of either
+release is no longer on disk, there is no comparison and the index gives the reason as
+`changes_unavailable`. `machinechecked evidence prune` records what it deleted in
+`.machinechecked/pruned.json` (`{evidence id: {pruned, releases}}`), so that the reason can say
+"pruned" with its date rather than "missing".
 
 | Field | Content |
 |---|---|
