@@ -383,6 +383,32 @@
         },
         "occurrences_complete": {
           "type": "boolean"
+        },
+        "at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "For a warning about one application of a totalised operation: its first position in the proposition (also the end of the finding's id, after @)"
+        },
+        "dismissed": {
+          "type": "object",
+          "properties": {
+            "by": {
+              "type": "string"
+            },
+            "rationale": {
+              "type": "string"
+            },
+            "form": {
+              "const": "statement",
+              "description": "The dismissal names the operation in the whole statement, not one application: it holds until the statement changes"
+            }
+          }
+        },
+        "resolved": {
+          "type": "boolean",
+          "description": "Every condition of the rule at the warning's application is established; changes no status"
         }
       }
     },
@@ -441,6 +467,57 @@
           "items": {
             "type": "string"
           }
+        },
+        "conditions": {
+          "type": "array",
+          "description": "The conditions the rule needs at this application, and whether the statement supplies them",
+          "items": {
+            "type": "object",
+            "required": [
+              "condition",
+              "state"
+            ],
+            "properties": {
+              "condition": {
+                "enum": [
+                  "bounded-above",
+                  "bounded-below",
+                  "nonempty-index",
+                  "nonempty-set",
+                  "integrable",
+                  "finite"
+                ]
+              },
+              "state": {
+                "enum": [
+                  "established",
+                  "refuted",
+                  "unresolved"
+                ]
+              },
+              "by": {
+                "enum": [
+                  "premise",
+                  "type"
+                ]
+              },
+              "premise": {
+                "type": "string",
+                "description": "The premise's name; empty when Lean named it"
+              },
+              "statement": {
+                "type": "string",
+                "description": "The premise as Lean prints it, or the property of the types that gives the condition"
+              }
+            }
+          }
+        },
+        "condition_state": {
+          "enum": [
+            "established",
+            "refuted",
+            "unresolved"
+          ]
         }
       }
     }
