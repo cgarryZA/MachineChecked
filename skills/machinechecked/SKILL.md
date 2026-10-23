@@ -42,7 +42,9 @@ changes when the paper, the links or the Lean change), for quoting which run a r
 Per claim: `number` ("Theorem 2.1"), `status_code`, `status`, `links`
 (each with `name`, `status`, `source`) and `suggestions` (unconfirmed candidates, with `why`).
 A link whose module is not built or could not be loaded, or whose name is ambiguous, also has
-`status_detail`, naming the module or the modules that declare the name.
+`status_detail`, naming the module or the modules that declare the name; for a module that could
+not be loaded, it also gives the first lines of what Lean reported, and says when the module's
+library could not be loaded in one session first.
 
 | status | meaning |
 |---|---|
@@ -53,7 +55,7 @@ A link whose module is not built or could not be loaded, or whose name is ambigu
 | `linked: Lean definition` | the link names a definition |
 | `linked: Lean not checked (the project is not built)` | Lean was not run |
 | `linked: Lean not checked (module not built)` | the declaration's module is not built yet; build it to check |
-| `linked: Lean not checked (module could not be loaded)` | the module failed to load; report the loading error |
+| `linked: Lean not checked (module could not be loaded)` | the module failed to load; report the loading error its `status_detail` gives |
 | `linked: Lean name is ambiguous` | several modules declare the name (e.g. a challenge statement and its solution); name the module in `formalization.yaml` |
 | `suggested link, not confirmed` | a candidate awaiting confirmation |
 | `not linked` | no Lean counterpart is known |

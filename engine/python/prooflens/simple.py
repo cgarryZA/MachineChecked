@@ -832,7 +832,8 @@ def stale_docs_note(found: list[dict]) -> str:
 def probe_modules(root: Path, modules: list[str], libs: list[str], requests: list[dict],
                   lake: str = "lake", log=print, work: Path | None = None,
                   sessions: dict[str, list[str]] | None = None,
-                  retry: set[str] | None = None, extra: dict | None = None
+                  retry: set[str] | None = None, extra: dict | None = None,
+                  split: dict[str, dict] | None = None
                   ) -> tuple[list[dict], dict[str, str]]:
     """Probe the built modules without assuming they can all be imported into one Lean session.
 
@@ -844,10 +845,13 @@ def probe_modules(root: Path, modules: list[str], libs: list[str], requests: lis
     given. Returns the records and the modules that could not be loaded, with the reason;
     `sessions`, when given, receives the modules of each session started, by its label, and
     `retry` the failed modules whose failure was not an error Lean reported in them (out of
-    memory, a timeout, a killed or unfinished session): another attempt may load them."""
+    memory, a timeout, a killed or unfinished session): another attempt may load them. A module
+    fails only in a session of its own; `split`, when given, receives each failed module that
+    was loaded on its own because the session of its library's modules failed: that library
+    (`library`) and how many of its modules that session loaded (`modules`)."""
     recs, failed = [], {}
 
-    def run(group: list[str], label: str):
+    def run(group: list[str], label: str, whole: dict | None = None):
         if sessions is not None:
             sessions[label] = list(group)
         try:
@@ -855,16 +859,19 @@ def probe_modules(root: Path, modules: list[str], libs: list[str], requests: lis
                                    label=label, extra=extra)
         except ViewError as e:
             if len(group) == 1:
-                failed[group[0]] = str(e)[-600:]
+                failed[group[0]] = kept_failure(str(e))
                 if retry is not None and not getattr(e, "deterministic", False):
                     retry.add(group[0])
+                if split is not None and whole is not None:
+                    split[group[0]] = dict(whole)
                 return
             errors = [l.strip() for l in str(e).splitlines() if "error" in l]
             reason = errors[0].split("error:", 1)[-1].strip()[:200] if errors else "no error message"
             log(f"lean: {label} could not be loaded in one session ({reason}); splitting it")
+            whole = whole or {"library": label, "modules": len(group)}
             half = len(group) // 2
-            run(group[:half], label + "/a")
-            run(group[half:], label + "/b")
+            run(group[:half], label + "/a", whole)
+            run(group[half:], label + "/b", whole)
             return
         for r in out:
             r["probe_group"] = label
@@ -919,17 +926,75 @@ def declaring_modules(root: Path, modules: list[str], name: str) -> list[str]:
     return out
 
 
+def kept_failure(text: str, size: int = 600) -> str:
+    """What is kept of a failed session's message: all of it when it is short, else its first
+    and its last `size` characters, cut at whole lines where it has them: Lean's first errors,
+    and what its end says (a resource that ran out, the free space left)."""
+    if len(text) <= 2 * size:
+        return text
+    head, tail = text[:size], text[-size:]
+    head = head.rsplit("\n", 1)[0] if "\n" in head else head
+    tail = tail.split("\n", 1)[-1] if "\n" in tail else tail
+    return f"{head}\n…\n{tail}"
+
+
+PROBE_POSITION = re.compile(r"^(?:\S*prooflens-probe-[^/\\\s]*[/\\])?Probe\.lean:\d+:\d+:\s*")
+LEAN_ERROR = re.compile(r"\berror\b", re.I)
+SESSION_FAILED = re.compile(r"^the Lean probe failed \(-?\d+\):$")
+
+
+def loading_error(reason: str, root: Path | None = None, lines: int = 3,
+                  width: int = 160) -> str:
+    """What a session reported when it could not load a module, on one line, from the failure
+    `probe_modules` stored: its first lines that report an error (each without the position in
+    the probe's own file and the word `error:`), else those naming a resource it ran out of,
+    else its first lines; at most `lines` of them, each cut to `width` characters, and "…" when
+    there were more. Paths in the project are given from its root, and the home folder as `~`,
+    so that a published site does not show where the project was built."""
+    from .probe import RESOURCE_SIGNS
+    text = str(reason)
+    for path, short in [(root, ""), (Path.home(), "~/")]:
+        path = Path(path).resolve() if path is not None else None
+        if path is not None and len(path.parts) > 1:
+            text = text.replace(str(path) + os.sep, short)
+    rows = [PROBE_POSITION.sub("", l.strip()) for l in text.splitlines()
+            if l.strip() and l.strip() != "…"]
+    errors = [l.split("error:", 1)[-1].strip() if "error:" in l else l
+              for l in rows if LEAN_ERROR.search(l)]
+    picked = (errors or [l for l in rows if any(s in l.lower() for s in RESOURCE_SIGNS)]
+              or [l for l in rows if not SESSION_FAILED.match(l)] or rows)
+    picked = [l.rstrip(":").strip() for l in picked if l.rstrip(":").strip()]
+    shown = [l if len(l) <= width else l[:width - 1].rstrip() + "…" for l in picked[:lines]]
+    return "; ".join(shown + (["…"] if len(picked) > len(shown) else []))
+
+
+def module_failed_detail(module: str, reason: str, split: dict | None = None,
+                         root: Path | None = None) -> str:
+    """The detail of a link whose module could not be loaded: the module, how it was loaded (on
+    its own, after the session of its library's modules failed when `split` says so) and what
+    that session reported (`loading_error`)."""
+    how = (f", after {split['modules']} modules of {split['library']} could not be loaded in one "
+           f"Lean session" if split and split.get("library") and split.get("modules") else "")
+    error = loading_error(reason, root)
+    return f"Module {module} could not be loaded on its own{how}" + (f": {error}" if error
+                                                                     else ".")
+
+
 def resolve_link(name: str, records: list[dict], module: str | None, root: Path,
-                 unbuilt: list[str], failed: dict[str, str]) -> tuple[dict | None, dict | None]:
+                 unbuilt: list[str], failed: dict[str, str],
+                 split: dict[str, dict] | None = None) -> tuple[dict | None, dict | None]:
     """The probe record a link means, or why there is none.
 
     A declaration is identified by its name and its module: when several loaded modules declare
     the name, the module the project gave (formalization.yaml's `module`) decides, and without
     one the link is ambiguous rather than guessed. With no record, the source says whether the
     declaration's module is unbuilt or could not be loaded: only a declaration absent from the
-    modules that were inspected reads as not found."""
+    modules that were inspected reads as not found. A module that could not be loaded is named
+    with what Lean reported (`module_failed_detail`; `split` as `probe_modules` gives it)."""
     found = [r for r in records if "missing" not in r.get("errors", [])]
     mod_of = lambda r: (r.get("decl") or {}).get("module") or r.get("module")
+    not_loaded = lambda m: fields("link.module-failed", module_failed_detail(
+        m, failed[m], (split or {}).get(m), root))
     if module:
         mine = [r for r in found if mod_of(r) == module]
         if mine:
@@ -937,7 +1002,7 @@ def resolve_link(name: str, records: list[dict], module: str | None, root: Path,
         if module in unbuilt:
             return None, fields("link.module-unbuilt", f"Module {module} is not built.")
         if module in failed:
-            return None, fields("link.module-failed", f"Module {module} could not be loaded.")
+            return None, not_loaded(module)
     elif len({mod_of(r) for r in found}) > 1:
         mods = ", ".join(sorted({str(mod_of(r)) for r in found}))
         return None, fields("link.ambiguous", f"Declared in {mods}.")
@@ -946,7 +1011,7 @@ def resolve_link(name: str, records: list[dict], module: str | None, root: Path,
     for m in declaring_modules(root, unbuilt, name):
         return None, fields("link.module-unbuilt", f"Module {m} is not built.")
     for m in declaring_modules(root, list(failed), name):
-        return None, fields("link.module-failed", f"Module {m} could not be loaded.")
+        return None, not_loaded(m)
     return None, None
 
 
@@ -1149,7 +1214,9 @@ class LeanFacts:
     does not import or elaborate), a failure the same inputs repeat. A failure of resources or of
     the session (out of memory, a timeout, a heartbeat budget, a killed or unfinished session) is
     stored only as an attempt: the next build loads the module again and says that the earlier
-    attempt failed.
+    attempt failed. A stored failure keeps what the session reported and, for a module loaded
+    on its own after its library's session failed, that library (`split`), for the detail of
+    the links into it.
 
     A checked bridge (`bridges`, pairs of a theorem and its target) is checked by an `accept`
     request asked with the theorem's record. Its answer is stored like a link record, per pair
@@ -1177,6 +1244,7 @@ class LeanFacts:
         self.fresh_decls: dict[str, dict] = {}
         self.fresh_index: dict[str, list[dict]] = {}
         self.retry: set[str] = set()                 # failures of this build to try again
+        self.split: dict[str, dict] = {}             # failed modules loaded apart from their library
         self.bridges: set[tuple[str, str]] = set(bridges)
         self.fresh_accepts: dict[tuple[str, str], list[dict]] = {}
         self.acceptrecs: dict[tuple[str, str], list[dict]] = {}
@@ -1214,7 +1282,8 @@ class LeanFacts:
         sessions: dict[str, list[str]] = {}
         recs, failed = probe_modules(self.root, modules, self.libs,
                                      requests + [{"kind": "modules", "name": ""}], self.lake,
-                                     self.log, self.work, sessions=sessions, retry=self.retry)
+                                     self.log, self.work, sessions=sessions, retry=self.retry,
+                                     split=self.split)
         self.sessions += len(sessions)
         self._store(recs, sessions, failed, any(r["kind"] == "index" for r in requests))
         for r in recs:
@@ -1315,7 +1384,8 @@ class LeanFacts:
                     self._put("attempt", m, {}, reason=reason)
                     st.remove("failed", m)
                 else:
-                    self._put("failed", m, project, reason=reason)
+                    how = {"split": self.split[m]} if m in self.split else {}
+                    self._put("failed", m, project, reason=reason, **how)
                     st.remove("attempt", m)
 
     def _answers(self, name: str, where: dict[str, set[str]], groups: list[list[str]],
@@ -1435,6 +1505,8 @@ class LeanFacts:
             f, _ = self._get("failed", m)
             if f is not None:
                 failed[m] = f["reason"]
+                if f.get("split"):
+                    self.split[m] = f["split"]
                 continue
             earlier = None if self.refresh else st.peek("attempt", m)
             stale[m] = f"an earlier attempt failed: {_first_line(earlier['reason'])}" \
@@ -1757,7 +1829,7 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
     if fy and "error" in fy:
         notes.append(fy["error"])
     index, linkrecs, decls, acceptrecs, module_docs = [], {}, {}, {}, []
-    failed, facts_used, refs = {}, {"sessions": 0}, []
+    failed, split, facts_used, refs = {}, {}, {"sessions": 0}, []
     retrieval, numbering, index_scope_info = None, None, None
     if fy and "error" not in fy:
         for c in claims:
@@ -1864,17 +1936,17 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
             acceptrecs = lean.acceptrecs
         facts_used = {"sessions": lean.sessions, **lean.store.stats}
         refs = [r for m in sorted(lean.refs) for r in lean.refs[m]]
+        split = lean.split
         again = sorted(m for m in failed if m in lean.retry)
         kept = sorted(m for m in failed if m not in lean.retry)
         if kept:
             notes.append(f"{len(kept)} built module(s) could not be loaded by MachineChecked "
-                         f"and are not indexed: {', '.join(kept[:5])}"
-                         + ("…" if len(kept) > 5 else ""))
+                         f"and are not indexed: {failed_modules(kept, failed, root)}")
         if again:
             notes.append(f"{len(again)} built module(s) could not be loaded this time (out of "
                          "memory, a time limit or an interrupted Lean session) and are not "
-                         f"indexed; the next build tries them again: {', '.join(again[:5])}"
-                         + ("…" if len(again) > 5 else ""))
+                         f"indexed; the next build tries them again: "
+                         f"{failed_modules(again, failed, root)}")
 
     # Statuses.
     def checked(c, n, source):
@@ -1883,7 +1955,7 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
             state = fields("link.unbuilt")
         else:
             rec, why = resolve_link(n, linkrecs.get(n, []), c.get("declared_modules", {}).get(n),
-                                    root, unbuilt, failed)
+                                    root, unbuilt, failed, split)
             state = why or link_state(rec)
         return {"name": n, **state, "source": source, "record": rec}
 
@@ -1942,6 +2014,16 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
     from .uses import site_index
     return {"body": body, "pdf": pdf, "cfg": cfg, "lean": facts_used, "retrieval": retrieval,
             "uses": site_index(refs) if refs else None}
+
+
+def failed_modules(modules: list[str], failed: dict[str, str], root: Path) -> str:
+    """The first five of `modules` that could not be loaded, each with the first line of what
+    its session reported (`loading_error`), for the build's notes."""
+    shown = []
+    for m in modules[:5]:
+        error = loading_error(failed.get(m, ""), root, lines=1, width=120)
+        shown.append(f"{m} ({error})" if error else m)
+    return ", ".join(shown) + ("…" if len(modules) > 5 else "")
 
 
 def paper_numbering(root: Path, index: list[dict], claims: list[dict], tex: dict,
