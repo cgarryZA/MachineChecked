@@ -15,8 +15,10 @@ Lean is, and the auditor's prose (notes, arguments, questions, reasons, a counte
 specialisation and reduction) only when reviews are. A difference shows its paper expression when
 the source text is published and its Lean expression when the Lean is. A cited fact
 inside a proof keeps its basis, "established inside this proof under this context", and its
-pins; its proposition and context are Lean text. Its currency needs the Lean project, so it is
-published as `unchecked`, and so is a cited application's. A composition keeps its structure
+pins; its proposition and context are Lean text. Its currency, and that of a cited application
+or certificate, is checked against the Lean project the export was built from, asking Lean when
+the facts store has no answer; it is `unchecked` without that project or when Lean could not
+look (a module not built, a failed request). A composition keeps its structure
 (steps, the evidence each rests on, identifications, obligations and their state) always, the
 objects and substitutions it names when the Lean is published, and its prose when reviews are.
 Its basis is `checked_bridge` only when its bridge is checked against the Lean project at
@@ -265,9 +267,11 @@ def readings(work_dir: Path, snap, pub_for, claims: set[str],
              root: Path | None = None) -> dict[str, list[dict]]:
     """Per claim of `claims`, one reading per workspace that has accepted records for it: the
     workspace, its auditor and mode, and its records in the form `public_record` gives.
-    `pub_for(claim)` is the publication settings of the claim's paper; a composition's bridge
-    is checked against the Lean project at `root` (from the facts store; without it, or when it
-    is not stored current, the bridge is not counted)."""
+    `pub_for(claim)` is the publication settings of the claim's paper. Cited facts, applications
+    and certificates are checked against the Lean project at `root`, asking Lean when the facts
+    store has no answer (without it they are `unchecked`); a composition's bridge is checked
+    against it from the facts store (without it, or when it is not stored current, the bridge is
+    not counted)."""
     from . import composition as cp
     out: dict[str, list[dict]] = {}
     for _, ws in wsp.list_all(work_dir):
@@ -275,7 +279,7 @@ def readings(work_dir: Path, snap, pub_for, claims: set[str],
         kept = {rid: r for rid, r in kept.items() if r.get("claim") in claims}
         if not kept:
             continue
-        cur = wsp.currency({"records": kept}, snap)
+        cur = wsp.currency({"records": kept}, snap, root, check_facts=root is not None)
         in_force = {r["id"] for r in wsp.current_findings({"records": kept})}
         comps = {r["id"]: cp.view(r, {"records": kept}, cur, cp.bridge_currency(
                      r["bridge"], r["claim"], snap, root) if r.get("bridge") else None)
@@ -314,8 +318,8 @@ def write(data: Path, work_dir: Path, pub_for, sources: Path | None = None,
     (its `index.json` and claim passports already written): `data/work/<claim file>` for each
     claim that has any, named by the passport's `work`. Currency is computed against `data`
     itself, with the paper sources under `sources` (default: the sources of the build the data
-    was written from), and bridges against the Lean project at `root`. Returns the files
-    written, by claim id."""
+    was written from), and cited facts, applications, certificates and bridges against the Lean
+    project at `root`. Returns the files written, by claim id."""
     from .targets import Snapshot, TargetError
     if not wsp.store(work_dir).is_dir():
         return {}

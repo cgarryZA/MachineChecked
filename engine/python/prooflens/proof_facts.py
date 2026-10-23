@@ -30,7 +30,7 @@ import re
 from pathlib import Path
 
 from .config import work_dir_name
-from .deps import _resolve, _short, _tool_version, store
+from .deps import NOT_CHECKED, _resolve, _short, _tool_version, not_checked_reason, store
 from .facts import graphs
 from .probe import lib_names
 from .simple import ViewError, built_modules, probe_modules
@@ -344,7 +344,9 @@ def citation(f: dict) -> dict:
 def currency(root: Path | None, ref: dict, extract_now: bool = False) -> dict:
     """Whether a cited fact still describes the proof: `current` while the declaration's proof
     is unchanged, `stale` when it changed (saying whether a fact with the same proposition is
-    still there), `unchecked` when the proof has not been read since the Lean last changed."""
+    still there), `unchecked` when the proof has not been read since the Lean last changed or
+    Lean could not read it (its module is not built, a module could not be loaded, the request
+    failed)."""
     if root is None:
         return {"state": "unchecked", "changes": [], "reason": "no Lean project to check against"}
     try:
@@ -355,6 +357,9 @@ def currency(root: Path | None, ref: dict, extract_now: bool = False) -> dict:
         return {"state": "unchecked", "changes": [],
                 "reason": f"{doc['reason']}; `machinechecked compare --query proof-facts "
                           f"{ref['decl']}` reads it again"}
+    if not doc.get("ok") and doc.get("status") in NOT_CHECKED:
+        return {"state": "unchecked", "changes": [],
+                "reason": not_checked_reason(ref["decl"], doc)}
     if not doc.get("ok"):
         return {"state": "stale", "changes": [{"decl": ref["decl"], "was": ref.get("proof_hash"),
                                                "now": None, "reason": doc.get("status")}]}

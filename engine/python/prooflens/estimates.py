@@ -456,7 +456,10 @@ def certificate_scope(ref: dict) -> str:
 def certificate_currency(root: Path | None, ref: dict, check_now: bool = False) -> dict:
     """Whether a certificate is still what was recorded: its source file, its checked type, its
     target's statement and fingerprint and the result. A changed source file is seen without
-    Lean; the rest is read from the facts store, or asked of Lean when `check_now` is set."""
+    Lean; the rest is read from the facts store, or asked of Lean when `check_now` is set. An
+    answer that says Lean did not look (its module is not built, the request failed) leaves the
+    rest unchecked."""
+    from .deps import NOT_CHECKED, not_checked_reason
     lroot = lean_root(root)
     if lroot is None:
         return {"state": "unchecked", "changes": [], "reason": "no Lean project to check against"}
@@ -475,10 +478,10 @@ def certificate_currency(root: Path | None, ref: dict, check_now: bool = False) 
         return {"state": "stale" if changes else "unchecked", "changes": changes,
                 "reason": str(e)}
     if not doc.get("ok"):
-        if doc.get("status") == "not checked" and not changes:
-            return {"state": "unchecked", "changes": [], "reason": doc["reason"]}
-        if doc.get("status") != "not checked":
-            changes.append({"certificate": ref.get("theorem"), "reason": doc.get("status")})
+        if doc.get("status") in NOT_CHECKED:
+            return {"state": "stale" if changes else "unchecked", "changes": changes,
+                    "reason": not_checked_reason(ref.get("theorem"), doc)}
+        changes.append({"certificate": ref.get("theorem"), "reason": doc.get("status")})
     else:
         for k, why in (("type", "the checked proposition changed"),
                        ("target_fingerprint", "the target or a definition it uses changed"),

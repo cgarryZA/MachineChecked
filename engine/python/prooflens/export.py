@@ -287,6 +287,20 @@ def _strings(obj):
             yield from _strings(v)
 
 
+def built_lean_root(cfg: Config, record: dict) -> Path | None:
+    """The Lean project the evidence `record` was built from: the configuration's, while every
+    Lean input (here and in each path dependency) is as that build read it. Otherwise None, so
+    that nothing is checked against another version of the Lean."""
+    from .pipeline import lean_inputs_digest
+    built = ((record.get("body") or {}).get("provenance") or {}).get("lean_inputs_sha256")
+    if not built:
+        return None
+    try:
+        return cfg.lean_root if lean_inputs_digest(cfg) == built else None
+    except OSError:
+        return None
+
+
 def export(cfg: Config, out: Path, release: str | None = None,
            web_dist: Path | None = None, paper: str | None = None) -> dict:
     """The approved public fields of a release, scanned for private material. With `paper`, only
@@ -381,12 +395,13 @@ def export(cfg: Config, out: Path, release: str | None = None,
                    indent=None)
         pidx["changes"] = "data/changes.json"
         write_json(data / "index.json", pidx, indent=None)
-    # The workspace records the auditors accepted, with what each paper publishes.
+    # The workspace records the auditors accepted, with what each paper publishes, and what Lean
+    # says of them now when the Lean project is the one the release was built from.
     from . import published_work
     paper_of = {c["id"]: c["paper"] for c in chunks.values()}
     try:
         published_work.write(data, cfg.out_dir, lambda cid: pubs[paper_of[cid]],
-                             cfg.out_dir / "sources", cfg.lean_root)
+                             cfg.out_dir / "sources", built_lean_root(cfg, record))
     except published_work.PublishError as e:
         shutil.rmtree(out)
         raise ExportError(str(e)) from None

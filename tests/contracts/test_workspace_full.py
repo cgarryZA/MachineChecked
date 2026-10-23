@@ -1,12 +1,13 @@
 """Workspace records that Lean checks, in the toy paper's full assessment (#248): an
 application inside a proof (`app`), a fact inside a proof (`fact`) and a composition's bridge
 are recorded by `workspace update`, by the reader's local server and in an export, against the
-toy's Lean project (`lean_root`, the `lean/` folder beside `machinechecked.toml`). No status
-changes on the way."""
+toy's Lean project (`lean_root`, the `lean/` folder beside `machinechecked.toml`). An export
+checks the cited application and fact against the Lean project its release was built from
+(#272). No status changes on the way."""
 
 import json
 
-from conftest import build, needs_lean, needs_tex
+from conftest import build, edit, needs_lean, needs_tex
 
 from prooflens import cli
 from prooflens import server
@@ -19,6 +20,14 @@ BRIDGE = {"theorem": "Toy.Acceptance.thm_bound", "target": "Toy.PaperSpec.thm_bo
 
 def put(rec):
     return {"op": "put", "record": rec}
+
+
+def published(out):
+    """The currency of each published evidence record of CLAIM in the export at `out`."""
+    row = next(r for r in json.loads((out / "data" / "index.json").read_text())["claims"]
+               if r["id"] == CLAIM)
+    pub, = json.loads((out / "data" / "work" / row["file"]).read_text())["readings"]
+    return {e["id"]: e["currency"] for e in pub["evidence"]}
 
 
 def run_json(capsys, *argv):
@@ -93,6 +102,35 @@ def test_lean_checked_records_in_a_full_assessment(toy, tmp_path, monkeypatch, c
     assert pub["compositions"][0]["basis"] == "checked_bridge"
     assert pub["compositions"][0]["bridge_check"] == {"state": "checked", "reasons": []}
     assert pub["findings"][0]["basis"] == "checked_bridge"
+    # The cited application and fact are checked against the Lean project the release was
+    # built from, as `workspace show` checks them: current.
+    assert {k: c["state"] for k, c in published(tmp_path / "out").items()} == \
+        {"e-app": "current", "e-fact": "current"}
 
+    # Their module is not built: Lean cannot look, so they read unchecked, not stale.
+    olean = cfg.lean_root / ".lake" / "build" / "lib" / "lean" / "Toy" / "Acceptance.olean"
+    aside = olean.with_name("Acceptance.olean.aside")
+    olean.rename(aside)
+    try:
+        export(cfg, tmp_path / "unbuilt")
+    finally:
+        aside.rename(olean)
+    assert {k: c["state"] for k, c in published(tmp_path / "unbuilt").items()} == \
+        {"e-app": "unchecked", "e-fact": "unchecked"}
+
+    # The proof changes after the release: the Lean project is no longer the one the release
+    # was built from, so the export checks nothing against it.
+    edit(cfg.lean_root / "Toy" / "Acceptance.lean",
+         "  have hn : n ≤ n * n := Nat.le_mul_self n\n",
+         "  have h0 : 0 ≤ n := Nat.zero_le n\n  have hn : n ≤ n * n := Nat.le_mul_self n\n")
+    export(cfg, tmp_path / "changed")
+    assert {k: c["state"] for k, c in published(tmp_path / "changed").items()} == \
+        {"e-app": "unchecked", "e-fact": "unchecked"}
+
+    # A release built from the changed proof: the cited fact no longer describes it.
     index2, _, _ = build(toy)
     assert {c["id"]: c["status"] for c in index2["claims"]} == before
+    export(cfg, tmp_path / "rebuilt")
+    fact = published(tmp_path / "rebuilt")["e-fact"]
+    assert fact["state"] == "stale"
+    assert fact["changes"][0]["reason"].startswith("the proof changed")
