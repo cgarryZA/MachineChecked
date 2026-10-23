@@ -37,7 +37,11 @@ declaration that only a witness's statement uses needs no review; it is listed w
 none, and a project can require its review (`require_witness_def_reviews`), which can only hold
 a status back. A proof (a declaration whose type is a proposition: a theorem, a `_proof_1` Lean
 generates, a `Prop`-valued instance such as `Fact (2 ≠ 0)`) carries no data, so it cannot fix
-the instance a witness exhibits: it is not listed and needs no review.
+the instance a witness exhibits: it is not listed and needs no review. The tactic script Lean
+stores for a tactic default (`pos : 0 < val := by decide`, an auto-parameter such as
+`Pos.pos._autoParam`) gives only a proof of the proposition its field or binder states, and that
+proposition is reviewed with the structure or definition: the script needs no review, in a
+proposition's closure or a witness's.
 
 ## A review is a reading of a text
 
