@@ -1,9 +1,11 @@
 """`build --reuse-lean` reuses the probe records of the newest stored release made from the same
-Lean inputs, by the same probe and with the same probe settings, whichever releases came after
-it, and gives the statuses and site data of a fresh build. With no such release it refuses, and
-says which condition the closest release fails (#309)."""
+Lean inputs, by the same probe, with the same probe settings and read by the same version of
+MachineChecked, whichever releases came after it, and gives the statuses and site data of a
+fresh build. With no such release it refuses, and says which condition the closest release fails
+(#309, #356)."""
 
 import json
+import re
 
 import pytest
 
@@ -120,15 +122,16 @@ def test_the_closest_release_names_the_refusal(toy):
     condition that the release which came closest fails."""
     cfg = cfgmod.load(toy / "machinechecked.toml")
     want = (pipeline.lean_inputs_digest(cfg), pipeline.probe_digest(),
-            pipeline.probe_settings_digest(cfg))
+            pipeline.probe_settings_digest(cfg), pipeline.records_engine())
     requests = [{"kind": "spec", "name": "Toy.PaperSpec.thm_even_add"}]
     answers = {"specs": {"Toy.PaperSpec.thm_even_add": {}}, "defs": {}, "proofs": {}}
     made = []
 
-    def store(name, inputs, probe, settings, lean=answers):
+    def store(name, inputs, probe, settings, engine=want[3], lean=answers):
         eid = ev.store(cfg.out_dir, {
             "provenance": {"tool": {}, "project": {}, "papers": {}, "lean_inputs_sha256": inputs,
-                           "probe_sha256": probe, "probe_settings_sha256": settings},
+                           "probe_sha256": probe, "probe_settings_sha256": settings,
+                           "lean_records_engine": engine},
             "inventory": {"claims": []}, "reviews": {"files": {}, "records": []}, "tex": {},
             "lean": lean, "assessment": {"claims": [], "findings": [], "release": name}})
         ev.record_release(cfg.out_dir, name, eid)
@@ -152,9 +155,17 @@ def test_the_closest_release_names_the_refusal(toy):
     store("other-settings", want[0], want[1], "2" * 64)
     store("newer-other-probe", want[0], OTHER_PROBE, want[2])
     assert outcome().startswith("the probe's settings (`modules`, ")
+    store("no-engine", *want[:3], None)
+    assert outcome() == ("the stored Lean results do not record the version of MachineChecked "
+                         "that read them (an earlier version stored them)")
+    store("other-engine", *want[:3], {**want[3], "version": "0.0.1"})
+    fp, version = want[3]["fingerprint"], want[3]["version"]
+    assert outcome() == ("the stored Lean results were read by another version of MachineChecked "
+                         f"(0.0.1, fingerprints {fp}; this is {version}, fingerprints {fp})")
     store("answers", *want)
     store("answers-less", *want, lean={"specs": {}, "defs": {}, "proofs": {}})
     store("no-settings", want[0], want[1], None)
+    store("other-fingerprints", *want[:3], {**want[3], "fingerprint": "pl-fp-v0"})
     assert outcome() == "answers"
     (cfg.out_dir / "releases" / "answers.json").unlink()
     assert outcome() == "the stored Lean results do not cover Toy.PaperSpec.thm_even_add"
@@ -173,3 +184,55 @@ def test_records_without_probe_settings_are_not_reused(toy):
     with pytest.raises(pipeline.StaleEvidence, match="the stored Lean results do not record the "
                        r"probe's settings \(an earlier version of MachineChecked stored them\)"):
         reuse(toy)
+
+
+@needs_lean
+def test_reuse_requires_the_engine_that_read_the_records(toy, monkeypatch):
+    """The Lean records are this engine's reading of the probe's output (`probe.parse_records`,
+    `merge_records`, `attach_sources`, the fingerprints). Records read by another version of
+    MachineChecked, or under other fingerprints, are not reused, even after that version
+    reassesses them; nor is a record that does not say which version read it (#356)."""
+    first, body, cfg = build(toy, skip_tex=True)
+    engine = pipeline.records_engine()
+    assert body["provenance"]["lean_records_engine"] == engine
+
+    def reuse_without_tex():
+        said = []
+        res = pipeline.build(cfg, skip_tex=True, reuse_lean=True, log=said.append)
+        return res["index"], ev.load(cfg.out_dir, res["evidence"])["body"], said
+
+    index, reused, _ = reuse_without_tex()
+    assert reused["lean"] == body["lean"] and statuses(index) == statuses(first)
+    assert reused["provenance"]["lean_records_engine"] == engine
+
+    other = re.escape(f"read by another version of MachineChecked ({engine['version']}, "
+                      f"fingerprints {engine['fingerprint']}; this is 999.0, fingerprints "
+                      f"{engine['fingerprint']})")
+    monkeypatch.setattr(pipeline, "tool_version", lambda: "999.0")
+    with pytest.raises(pipeline.StaleEvidence, match=other):
+        reuse_without_tex()
+    # A reassessment carries the Lean records unchanged, so it keeps the engine that read them.
+    rel = pipeline.reassess(cfg, log=lambda *a: None)["release"]
+    named = json.loads((cfg.out_dir / "releases" / f"{rel}.json").read_text())
+    again = ev.load(cfg.out_dir, named["evidence"])["body"]["provenance"]
+    assert again["tool"]["version"] == "999.0" and again["lean_records_engine"] == engine
+    with pytest.raises(pipeline.StaleEvidence, match=other):
+        reuse_without_tex()
+    monkeypatch.undo()
+    monkeypatch.setattr(pipeline, "FINGERPRINT_VERSION", "pl-fp-v0")
+    with pytest.raises(pipeline.StaleEvidence, match="read by another version of MachineChecked"):
+        reuse_without_tex()
+    monkeypatch.undo()
+    _, _, said = reuse_without_tex()
+    assert any("reusing the probe records of release" in m for m in said)
+
+    # A record stored before the engine was recorded is not reused.
+    body["provenance"].pop("lean_records_engine")
+    eid = ev.store(cfg.out_dir, body)
+    for rel in ev.releases(cfg.out_dir):
+        rel.unlink()
+    ev.record_release(cfg.out_dir, "earlier", eid)
+    with pytest.raises(pipeline.StaleEvidence, match="the stored Lean results do not record the "
+                       r"version of MachineChecked that read them \(an earlier version stored "
+                       r"them\)"):
+        reuse_without_tex()

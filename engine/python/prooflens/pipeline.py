@@ -88,11 +88,12 @@ def build(cfg: Config, release: str | None = None, skip_lean: bool = False,
     lean_digest = None
     probe_used = probe_digest()  # the probe this build runs, read before it runs
     settings_used = probe_settings_digest(cfg)
+    engine_used = records_engine()
     if reuse_lean:
         reused, lean = reusable_lean(cfg, requests_from_inventory(inv))
         lean_digest = lean_inputs_digest(cfg)
         log(f"probe: reusing the probe records of release {reused} (the same Lean inputs, "
-            "probe and probe settings)")
+            "probe, probe settings and version of MachineChecked)")
     elif not skip_lean:
         lean_digest = lean_inputs_digest(cfg)
         log(f"probe: {len(requests_from_inventory(inv))} requests in {cfg.lean_root}")
@@ -196,6 +197,7 @@ def build(cfg: Config, release: str | None = None, skip_lean: bool = False,
                                 "fingerprint": FINGERPRINT_VERSION},
                        "probe_sha256": probe_used if lean else None,
                        "probe_settings_sha256": settings_used if lean else None,
+                       "lean_records_engine": engine_used if lean else None,
                        "lean_inputs_sha256": lean_digest,
                        "lean_reused": reuse_lean,
                        "lean": (lean or {}).get("env"), "project": project_provenance(cfg),
@@ -271,6 +273,14 @@ def probe_settings_digest(cfg: Config) -> str:
                                        "query": probe_query(cfg, [])}))
 
 
+def records_engine() -> dict:
+    """The engine that read the probe's output into Lean records (`probe.parse_records`,
+    `merge_records`, `attach_sources` and the fingerprints): its version and fingerprint
+    version. A record keeps it when reassessed, since its Lean records are carried unchanged,
+    and stored records are reused only by the same engine, as the facts store's are."""
+    return {"version": tool_version(), "fingerprint": FINGERPRINT_VERSION}
+
+
 def source_info(cfg: Config) -> dict:
     """The project's source repository, for the reader's Lean source links."""
     from . import audit
@@ -281,10 +291,12 @@ def source_info(cfg: Config) -> dict:
 def reusable_lean(cfg: Config, requests: list[dict]) -> tuple[str, dict]:
     """The newest stored release whose probe records describe this checkout, and those records:
     made from the same content of every Lean input (here and in every path dependency), by the
-    same probe, with the same probe settings, and answering every one of `requests`. It need
-    not be the latest release: a build that reproduces an earlier evidence record names no new
-    release. When no release qualifies, the refusal says how far the closest came."""
-    want = (lean_inputs_digest(cfg), probe_digest(), probe_settings_digest(cfg))
+    same probe, with the same probe settings, read by the same engine (`records_engine`), and
+    answering every one of `requests`. It need not be the latest release: a build that
+    reproduces an earlier evidence record names no new release. When no release qualifies, the
+    refusal says how far the closest came."""
+    want = (lean_inputs_digest(cfg), probe_digest(), probe_settings_digest(cfg),
+            records_engine())
     closest, why, seen = -1, "no stored Lean results to reuse", set()
     for rel in reversed(ev.releases(cfg.out_dir)):
         try:
@@ -310,13 +322,14 @@ def reusable_lean(cfg: Config, requests: list[dict]) -> tuple[str, dict]:
     raise StaleEvidence(why + "; " + RUN_PROBE)
 
 
-def _reuse_stage(lean: dict, prov: dict, want: tuple[str, str, str],
+def _reuse_stage(lean: dict, prov: dict, want: tuple[str, str, str, dict],
                  requests: list[dict]) -> tuple[int, str | None]:
     """How far stored probe records `lean`, with provenance `prov`, match the checkout's Lean
-    inputs, probe and probe settings `want` and cover `requests`: the number of conditions met
-    in turn, and why the next one fails (None when every one holds)."""
-    inputs, probe, settings = (prov.get("lean_inputs_sha256"), prov.get("probe_sha256"),
-                               prov.get("probe_settings_sha256"))
+    inputs, probe and probe settings and this engine, `want`, and cover `requests`: the number
+    of conditions met in turn, and why the next one fails (None when every one holds)."""
+    inputs, probe, settings, engine = (prov.get("lean_inputs_sha256"), prov.get("probe_sha256"),
+                                       prov.get("probe_settings_sha256"),
+                                       prov.get("lean_records_engine"))
     if not inputs or not probe:
         return 0, "the stored Lean results do not record their Lean inputs"
     if inputs != want[0]:
@@ -331,6 +344,13 @@ def _reuse_stage(lean: dict, prov: dict, want: tuple[str, str, str],
         return 4, ("the probe's settings (`modules`, `scope_roots`, `spec_prefix`, "
                    "`accept_prefix` or `allowed_axioms` in the configuration) changed since the "
                    "stored Lean results")
+    if not isinstance(engine, dict) or not engine:
+        return 5, ("the stored Lean results do not record the version of MachineChecked that "
+                   "read them (an earlier version stored them)")
+    if engine != want[3]:
+        name = lambda e: f"{e.get('version')}, fingerprints {e.get('fingerprint')}"
+        return 6, ("the stored Lean results were read by another version of MachineChecked "
+                   f"({name(engine)}; this is {name(want[3])})")
     missing = [r["name"] for r in requests
                if (r["kind"] == "spec" and r["name"] not in lean.get("specs", {}))
                or (r["kind"] == "decl" and r["name"] not in lean.get("defs", {}))
@@ -338,9 +358,9 @@ def _reuse_stage(lean: dict, prov: dict, want: tuple[str, str, str],
                or (r["kind"] in ("accept", "refute", "witness") and
                    f"{r['kind']}:{r['name']}:{r.get('spec') or ''}" not in lean.get("proofs", {}))]
     if missing:
-        return 5, (f"the stored Lean results do not cover {', '.join(missing[:5])}"
+        return 7, (f"the stored Lean results do not cover {', '.join(missing[:5])}"
                    + (", …" if len(missing) > 5 else ""))
-    return 6, None
+    return 8, None
 
 
 def manual_anchors(cfg: Config, pid: str) -> dict:
