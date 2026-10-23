@@ -441,6 +441,8 @@ class Assessor:
         self.authors = set(cfg.statement_authors)
         self._history = None
         self._unlisted: list[str] | None = None
+        # Each name the probe did not find that unlisted project modules declare: those modules.
+        self.unlisted_declarers: dict[str, list[str]] = {}
         self._pins: dict[str, str | None] | None = None
         self._witness_only: dict[str, list[str]] | None = None
         self._unpinned: dict[str, str] | None = None
@@ -450,7 +452,9 @@ class Assessor:
     def not_found(self, name: str) -> str:
         """Why the probe has no record of `name`, for a finding: the declaration is not in any
         module the probe loaded. When a project module that is not listed in `modules` declares
-        it (as far as its source text shows), that module is named."""
+        it (as far as its source text shows), that module is named, and recorded in
+        `unlisted_declarers` for `check --fix-modules`; when several do, they are named and none
+        is offered."""
         mods = []
         try:
             if self._unlisted is None:
@@ -465,8 +469,14 @@ class Assessor:
         except (OSError, ValueError, AttributeError):
             mods = []
         if mods:
+            self.unlisted_declarers[name] = mods
+        if len(mods) == 1:
+            return (f"{name}: not found by the probe; it is declared in {mods[0]}, which is not "
+                    "listed in `modules` (`machinechecked check --fix-modules` lists it)")
+        if mods:
             return (f"{name}: not found by the probe; it is declared in "
-                    f"{', '.join(mods)}, which is not listed in `modules`")
+                    f"{' and '.join([', '.join(mods[:-1]), mods[-1]])}, none of which is listed "
+                    "in `modules`: list the one meant")
         return f"{name}: not found by the probe; is its module listed in `modules`?"
 
     # -- reviews --------------------------------------------------------------------------
@@ -1281,7 +1291,11 @@ class Assessor:
             self.module_doc_checks()
             self.review_citation_checks()
         gates = self.gates(claims)
-        return {"claims": claims, "findings": self.findings, "gates": gates}
+        out = {"claims": claims, "findings": self.findings, "gates": gates}
+        if self.unlisted_declarers:
+            # What `check --fix-modules` adds to `modules`; configuration advice, not a status.
+            out["unlisted_modules"] = dict(sorted(self.unlisted_declarers.items()))
+        return out
 
     def bare_marker_checks(self):
         """An obligation for each declaration whose last review marker has no review text
