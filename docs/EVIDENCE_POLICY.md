@@ -35,7 +35,9 @@ Every definition in the closure of a proposition needs its own review, including
 declarations Lean generates (`match_1`, `_f`): they are part of the definition's meaning. A
 declaration that only a witness's statement uses needs no review; it is listed while it has
 none, and a project can require its review (`require_witness_def_reviews`), which can only hold
-a status back.
+a status back. A proof (a declaration whose type is a proposition: a theorem, a `_proof_1` Lean
+generates, a `Prop`-valued instance such as `Fact (2 ≠ 0)`) carries no data, so it cannot fix
+the instance a witness exhibits: it is not listed and needs no review.
 
 ## A review is a reading of a text
 

@@ -54,7 +54,7 @@ audit does not map. Audits are drawn on together only when they pin the same pap
 claim numbers can differ between versions. Statuses from different audits are never combined into
 one, and claims proved in different projects are never one proof.
 
-**Reports.** Every claim has Raise issue: a pre-filled GitHub issue in the audit's own repository
+**Reports.** Every claim has Report issue: a pre-filled GitHub issue in the audit's own repository
 (the audit author's choice), carrying identifiers and the claim's permanent link, never statement
 text. Listing and site problems go to the site's repository. A report is a question, not a finding:
 it changes no status. Counts of open issues per claim may later be added by a scheduled job.
