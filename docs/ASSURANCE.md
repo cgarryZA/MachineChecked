@@ -138,7 +138,7 @@ machinechecked changes
 
 `build --site DIR` builds and then writes the same export to `DIR` in one step (as the reusable audit workflow does); it refuses a directory that is the project or holds anything but a previous site.
 
-Without `--reuse-lean`, every build asks Lean for its probe records afresh. `build --refresh` also discards the module indexes and load failures kept in the Lean facts store, so whatever the build reads from that store is extracted again.
+`build --reuse-lean` takes its probe records from the newest stored release made from the same Lean inputs, by the same probe and with the same probe settings (`modules`, `scope_roots`, the layer prefixes and `allowed_axioms`), whichever releases came after it; when no release has records that answer every request of the inventory, it stops and names what differs. Without `--reuse-lean`, every build asks Lean for its probe records afresh. `build --refresh` also discards the module indexes and load failures kept in the Lean facts store, so whatever the build reads from that store is extracted again.
 
 `symbol add` links a symbol of a claim's printed statement to a variable (or a binder's type) of its Lean statement, under your name; the reader marks it in the claim's text and highlights each side from the other. A link is an assertion, pinned to the statement and the text and shown as stale when either changes; no status reads it (docs/SYMBOL_LINKS.md).
 
