@@ -11,6 +11,7 @@ permissions:
 
 jobs:
   latest:
+    if: ${{ !startsWith(github.event.head_commit.message, 'skip') }}
     runs-on: ubuntu-24.04
     outputs:
       publish: ${{ steps.p.outputs.publish }}
@@ -34,6 +35,6 @@ jobs:
       group: probe357
       cancel-in-progress: true
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
-      - run: sleep 600
+      - run: sleep 900
