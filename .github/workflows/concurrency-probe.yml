@@ -1,0 +1,27 @@
+name: Concurrency probe
+
+# A temporary check of ci.yml's concurrency groups for push events (#334), on a branch of its own.
+# Each push runs two jobs, one in a group with ci.yml's old expression, one with its new one.
+on:
+  push:
+    branches: [ci-concurrency-probe-334]
+
+permissions: {}
+
+jobs:
+  old-group:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    concurrency:
+      group: probe-old-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+    steps:
+      - run: sleep 90
+  new-group:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    concurrency:
+      group: probe-new-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+    steps:
+      - run: sleep 90
