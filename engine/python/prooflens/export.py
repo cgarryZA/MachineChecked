@@ -306,16 +306,16 @@ def built_lean_root(cfg: Config, record: dict) -> Path | None:
 
 def export(cfg: Config, out: Path, release: str | None = None,
            web_dist: Path | None = None, paper: str | None = None) -> dict:
-    """The approved public fields of a release, scanned for private material. With `paper`, only
-    that paper: its claims, the declarations they depend on (their closure) and their reviews,
-    scanned also against what belongs to the other papers alone."""
+    """The approved public fields of a release (by default the latest, `evidence.latest`),
+    scanned for private material. With `paper`, only that paper: its claims, the declarations
+    they depend on (their closure) and their reviews, scanned also against what belongs to the
+    other papers alone."""
     if paper is not None and paper not in {p.id for p in cfg.papers}:
         raise ExportError(f"no paper {paper} in the configuration")
-    rels = ev.releases(cfg.out_dir)
-    if not rels:
+    last = ev.latest(cfg.out_dir)
+    if last is None:
         raise ExportError("no release: run `prooflens build` first")
-    relrec = read_json(cfg.out_dir / "releases" / f"{release}.json") if release \
-        else read_json(rels[-1])
+    relrec = read_json(cfg.out_dir / "releases" / f"{release}.json") if release else last
     record = ev.load(cfg.out_dir, relrec["evidence"])
     # With the display layer the site is built with (descriptions, printed numbers, symbol
     # links): what is shown changes, never what is assessed.
@@ -407,16 +407,6 @@ def export(cfg: Config, out: Path, release: str | None = None,
                    indent=None)
         pidx["changes"] = "data/changes.json"
         write_json(data / "index.json", pidx, indent=None)
-    # The workspace records the auditors accepted, with what each paper publishes, and what Lean
-    # says of them now when the Lean project is the one the release was built from.
-    from . import published_work
-    paper_of = {c["id"]: c["paper"] for c in chunks.values()}
-    try:
-        published_work.write(data, cfg.out_dir, lambda cid: pubs[paper_of[cid]],
-                             cfg.out_dir / "sources", built_lean_root(cfg, record))
-    except published_work.PublishError as e:
-        shutil.rmtree(out)
-        raise ExportError(str(e)) from None
     # The search index, with only what each paper allows.
     srch = mf.search_index(index, chunks)
     pub_search = {"claims": [], "decls": srch["decls"] if lean_ok else []}
@@ -430,6 +420,17 @@ def export(cfg: Config, out: Path, release: str | None = None,
         pidx.update({k: v for k, v in content_mod.apply(pidx, {}, found)[0].items()
                      if k in ("retrieval", "numbering")})
         write_json(data / "index.json", pidx, indent=None)
+    # The workspace records the auditors accepted, with what each paper publishes, and what Lean
+    # says of them now when the Lean project is the one the release was built from; and the
+    # main results the auditors saved, which it adds to the index written above.
+    from . import published_work
+    paper_of = {c["id"]: c["paper"] for c in chunks.values()}
+    try:
+        published_work.write(data, cfg.out_dir, lambda cid: pubs[paper_of[cid]],
+                             cfg.out_dir / "sources", built_lean_root(cfg, record))
+    except published_work.PublishError as e:
+        shutil.rmtree(out)
+        raise ExportError(str(e)) from None
     from . import audit
     arx = [p.source["arxiv"] for p in shown if p.source.get("arxiv")]
     write_json(out / audit.NAME, audit.descriptor(

@@ -17,8 +17,11 @@ every declaration it reaches has its references recorded; otherwise it answers "
 never "not used". The claims whose linked Lean uses the declaration are traced the same way: a
 difference between the declaration and the paper can matter only to them.
 
-The main results are those named (`--main`), else a suggestion shown as such: the declarations
-linked to the paper's theorems.
+The main results are those named (`--main`), else those an auditor saved in a workspace
+(`workspace main`), else a suggestion shown as such: the declarations linked to the paper's
+theorems. A saved selection says whose it is, when it was saved and against which project commit,
+and names what it holds that the build does not (a claim no longer in the release, a declaration
+no longer declared).
 
 A trace is a fact about the Lean terms of this build; whether a difference matters at a use
 takes a reviewer. The answer changes no status.
@@ -34,7 +37,8 @@ NOTE = ("A use is a reference in Lean's elaborated terms, made directly or throu
         "declaration matters at a use takes a reviewer: compare the requirement at that "
         "application with the difference. This answer changes no status.")
 SUGGESTED = "the declarations linked to the paper's theorems"
-EDIT = "choose the main results with --main NAME (a declaration, or a claim for its linked Lean)"
+EDIT = ("choose the main results with --main NAME (a declaration, or a claim for its linked Lean); "
+        "`machinechecked workspace main NAME...` saves them in your workspace")
 CLAIMS_NOTE = ("the claims whose linked Lean uses the declaration, by its proof, its definition "
                "or its statement: a difference between the declaration and the paper can matter "
                "only to these")
@@ -185,9 +189,41 @@ def claim_names(ch: dict) -> list[str]:
     return list(dict.fromkeys(names))
 
 
-def selection(site, main: list[str] | None, claims_of: dict[str, list[str]]) -> dict:
+def _saved(site, saved: dict, add) -> dict:
+    """The selection saved in a workspace (`workspace.main_result_selections`, with its
+    `problems` against this build): a claim stands for its linked Lean; a claim no longer in the
+    build is among the problems, and a declaration stays a main result, traced or not."""
+    unlinked = []
+    for e in saved["selected"]:
+        if e.get("claim"):
+            ch = site.chunk(e["claim"])
+            if ch is None:
+                continue
+            names = root_names(ch)
+            if not names:
+                unlinked.append(e["claim"])
+            for n in names:
+                add(n, e["claim"])
+        else:
+            add(e["decl"], "named")
+    out = {"basis": "saved", **{k: saved[k] for k in ("workspace", "reviewer", "by", "at", "pins")
+                                if saved.get(k) is not None},
+           "selected": saved["selected"], "problems": saved.get("problems") or [],
+           "unlinked_claims": unlinked, "edit": EDIT}
+    was = (saved.get("pins") or {}).get("commit")
+    now = (site.snapshot().get("project") or {}).get("commit")
+    if was and now and was != now:
+        out["note"] = (f"saved against project commit {was[:7]}; this build is of commit "
+                       f"{now[:7]}")
+    return out
+
+
+def selection(site, main: list[str] | None, claims_of: dict[str, list[str]],
+              saved: dict | None = None) -> dict:
     """The main results to trace from: those named in `main` (a declaration, or a claim for its
-    linked Lean), else the suggestion, the declarations linked to the paper's theorems."""
+    linked Lean), else those `saved` in a workspace, else the suggestion, the declarations linked
+    to the paper's theorems. `saved` is `{workspace, selected: None}` when the workspace named
+    saves none."""
     from .compare import CompareError
     entries: list[dict] = []
 
@@ -215,12 +251,17 @@ def selection(site, main: list[str] | None, claims_of: dict[str, list[str]]) -> 
                 add(n, cid)
         return {"basis": "given", "main_results": entries, "unlinked_claims": unlinked,
                 "edit": EDIT}
+    if saved and saved.get("selected"):
+        return {**_saved(site, saved, add), "main_results": entries}
     for meta in site.claims:
         ch = site.chunk(meta["id"]) or {}
         if ch.get("kind") == "theorem" and not ch.get("step"):
             for n in root_names(ch):
                 add(n, ch["id"])
-    return {"basis": "suggested", "rule": SUGGESTED, "main_results": entries, "edit": EDIT}
+    out = {"basis": "suggested", "rule": SUGGESTED, "main_results": entries, "edit": EDIT}
+    if saved:
+        out["note"] = f"workspace {saved['workspace']} saves no main results"
+    return out
 
 
 # -- the answer ------------------------------------------------------------------------------
@@ -278,10 +319,12 @@ def _resolution(doc: dict) -> str:
     return doc.get("reason") or st or "its uses are not known"
 
 
-def impact(site, root: Path, target: str, main: list[str] | None = None, log=None) -> dict:
+def impact(site, root: Path, target: str, main: list[str] | None = None, log=None,
+           saved: dict | None = None) -> dict:
     """The impact document of `target` (a declaration name, or `Module:Name`) in the Lean project
-    at `root`, against the claims and links of `site` (a `compare.Site`). Lean is asked only for
-    the uses of `target` (`uses.uses`, cached); the rest is read from the facts store."""
+    at `root`, against the claims and links of `site` (a `compare.Site`), from the main results
+    `main` names, else those `saved` in a workspace (`selection`). Lean is asked only for the
+    uses of `target` (`uses.uses`, cached); the rest is read from the facts store."""
     from . import compare as cmp
     from . import uses as us
     module, _, name = target.rpartition(":") if ":" in target else ("", "", target)
@@ -349,7 +392,7 @@ def impact(site, root: Path, target: str, main: list[str] | None = None, log=Non
                            else ""))
         return out
 
-    sel = selection(site, main, claims_of)
+    sel = selection(site, main, claims_of, saved)
     mains = []
     for e in sel["main_results"]:
         mains.append({**{k: e[k] for k in ("name", "claims", "selected")},
@@ -419,6 +462,17 @@ def _application_lines(a: dict) -> list[str]:
     return out
 
 
+def _source_text(sel: dict) -> str:
+    """Where the main results come from, for the heading of their list."""
+    if sel["basis"] == "suggested":
+        return f" (suggested: {sel['rule']})"
+    if sel["basis"] == "saved":
+        commit = (sel.get("pins") or {}).get("commit")
+        return (f" (saved in workspace {sel['workspace']} by {sel.get('by')} at {sel.get('at')}"
+                + (f", against project commit {commit[:7]}" if commit else "") + ")")
+    return " (named with --main)"
+
+
 def text(doc: dict) -> str:
     """An impact document for the terminal."""
     if not doc.get("ok"):
@@ -427,8 +481,9 @@ def text(doc: dict) -> str:
     lines = [f"{d['name']}  ({d.get('kind')}, {d.get('module')})"
              + (f"  [linked to {', '.join(doc['linked_to'])}]" if doc["linked_to"] else "")]
     sel = doc["selection"]
-    lines.append("Main results" + (f" (suggested: {sel['rule']})" if sel["basis"] == "suggested"
-                                   else "") + ":")
+    lines.append("Main results" + _source_text(sel) + ":")
+    if sel.get("note"):
+        lines.append(f"  ({sel['note']})")
     if not doc["main_results"]:
         lines.append("  none")
     apps = {a["id"]: a for a in doc["applications"]}
@@ -443,6 +498,9 @@ def text(doc: dict) -> str:
             lines.append(f"      {m['applications_note']}")
     for c in sel.get("unlinked_claims") or []:
         lines.append(f"  {c}: no Lean is linked to this claim")
+    for p in sel.get("problems") or []:
+        lines.append(f"  {p.get('claim') or p.get('decl')}: saved as a main result, but "
+                     f"{p['problem']}")
     lines.append(f"  ({sel['edit']})")
     groups = {"linked": [], "uses": [], "not traced": [], "none": []}
     for c in doc["claims"]:

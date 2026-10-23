@@ -187,6 +187,61 @@ def test_records_without_probe_settings_are_not_reused(toy):
 
 
 @needs_lean
+def test_records_probed_without_building_are_not_reused(toy, monkeypatch, capsys):
+    """`build --no-lean-build` probes the build files as they are, which may be older than the
+    sources. It records no digest of the Lean inputs, so `--reuse-lean` never takes its records
+    for those of the current sources: a proof edited since the last `lake build` does not read
+    as checked (#355)."""
+    monkeypatch.chdir(toy)
+    cfg = cfgmod.load(toy / "machinechecked.toml")
+
+    def reuse_without_tex():
+        said = []
+        res = pipeline.build(cfg, skip_tex=True, reuse_lean=True, log=said.append)
+        return res["index"], ev.load(cfg.out_dir, res["evidence"])["body"], said
+
+    def made(*args):
+        """The release a build on the command line names, and its evidence."""
+        before = set(ev.releases(cfg.out_dir))
+        cli.main(["build", "--skip-tex", *args])
+        (new,) = set(ev.releases(cfg.out_dir)) - before
+        named = json.loads(new.read_text())
+        return named["release"], ev.load(cfg.out_dir, named["evidence"])["body"]
+
+    first, built = made()
+    assert built["provenance"]["lean_inputs_sha256"] == pipeline.lean_inputs_digest(cfg)
+    edit(toy / "lean/Toy/Acceptance.lean",
+         "  rintro a b ⟨j, rfl⟩ ⟨k, rfl⟩\n  exact ⟨j + k, by omega⟩", "  sorry")
+    _, stale = made("--no-lean-build")
+    # The probe read the build files of the earlier proof, so the record describes that proof.
+    proof = "accept:Toy.Acceptance.thm_even_add:Toy.PaperSpec.thm_even_add"
+    assert stale["lean"]["proofs"][proof] == built["lean"]["proofs"][proof]
+    assert stale["provenance"]["lean_inputs_sha256"] is None
+
+    capsys.readouterr()
+    with pytest.raises(SystemExit) as e:
+        cli.main(["build", "--skip-tex", "--reuse-lean"])
+    assert e.value.code == 2
+    assert capsys.readouterr().err.strip().splitlines() == [
+        "machinechecked: Lean inputs changed since the stored Lean results (here or in a path "
+        "dependency); run `machinechecked build` without `--reuse-lean`"]
+    # With only the records probed without building, the refusal says why they are not reused.
+    (cfg.out_dir / "releases" / f"{first}.json").unlink()
+    with pytest.raises(pipeline.StaleEvidence, match=r"^the stored Lean results do not record "
+                       r"their Lean inputs \(a build with `--no-lean-build` records none: its "
+                       r"build files may be older than the sources\); run "):
+        reuse_without_tex()
+
+    # A build that builds the project is reused, and gives the edited proof's result.
+    fresh, fresh_body, _ = build(toy, skip_tex=True)
+    assert fresh_body["lean"]["proofs"][proof] != built["lean"]["proofs"][proof]
+    index, body, said = reuse_without_tex()
+    assert any(f"reusing the probe records of release {fresh['release']}" in m for m in said)
+    assert body["lean"]["proofs"][proof] == fresh_body["lean"]["proofs"][proof]
+    assert statuses(index) == statuses(fresh)
+
+
+@needs_lean
 def test_reuse_requires_the_engine_that_read_the_records(toy, monkeypatch):
     """The Lean records are this engine's reading of the probe's output (`probe.parse_records`,
     `merge_records`, `attach_sources`, the fingerprints). Records read by another version of

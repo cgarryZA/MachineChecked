@@ -176,6 +176,7 @@ machinechecked compare --query proof-facts Example.bound --json  # facts inside 
 machinechecked compare --query proof-facts Example.bound --match "C * h"   # ranked by symbols
 machinechecked compare --query uses Toy.IsEven --json          # where it is used, and how
 machinechecked compare --query impact Toy.triangle --json      # which main results use it
+machinechecked workspace main "Theorem 2.5" --as llm:MODEL     # save the main results it traces
 ```
 
 `search` ranks every declaration of the project's built modules, linked or not, by how much of
@@ -219,10 +220,17 @@ answers until a Lean input changes.
 `impact NAME` traces the same references and answers whether each main result uses NAME, with
 one result (`machinechecked/impact@1`):
 
-- `selection`: which main results are traced. By default (`basis` `suggested`) they are the
-  declarations linked to the paper's theorems; `--main NAME`, repeated, names them instead
-  (`basis` `given`), each a declaration or a claim standing for its linked Lean, and
-  `unlinked_claims` lists a named claim that has none.
+- `selection`: which main results are traced, and where the choice comes from. `--main NAME`,
+  repeated, names them (`basis` `given`), each a declaration or a claim standing for its linked
+  Lean. Without it, the main results saved in a workspace are traced (`basis` `saved`, with the
+  `workspace`, `reviewer`, `by`, `at` and `pins`: the release and project commit they were
+  checked against, and a `note` when the build is of another commit). `machinechecked workspace
+  main NAME...` saves them; when several workspaces save some, `--workspace ID` chooses one (the
+  query is refused until it does). Without either, they are the declarations linked to the
+  paper's theorems (`basis` `suggested`). `unlinked_claims` lists a chosen claim with no linked
+  Lean, and `problems` what a saved selection names that the build no longer has (a claim not
+  in its release, a declaration not declared); such a declaration stays a main result, *not
+  traced*.
 - `main_results`: for each, `use` (`proof`, `definition body`, `statement` when it is in the
   statement only, `none`, `not traced`, or `itself`), the `answer` in words ("used by its proof,
   directly; also in its statement", "formalized separately: not used by this main result") and
