@@ -90,6 +90,17 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      # The packages downloaded last are kept for a week (TeX Live is several hundred MB, and
+      # Ubuntu's mirror is often slow), so most runs download only what changed.
+      - name: This week
+        id: week
+        run: echo "week=$(date -u +%G-%V)" >> "$GITHUB_OUTPUT"
+      - name: Saved packages
+        uses: actions/cache@v4
+        with:
+          path: ~/apt-archives
+          key: apt-audit-${{ runner.os }}-${{ inputs.tex }}-${{ steps.week.outputs.week }}
+          restore-keys: apt-audit-${{ runner.os }}-${{ inputs.tex }}-
       # The install steps stop if they hang; the build has no limit of its own, since a project's
       # Lean build can take as long as it takes.
       - name: Install elan, poppler and zstd (and TeX Live)
@@ -99,8 +110,11 @@ jobs:
           # a retry; the packages are then installed from what was downloaded.
           retry() { for i in 1 2 3; do timeout 300 "$@" && return 0; echo "attempt $i failed or stalled: $*" >&2; sleep 5; done; return 1; }
           PKGS="poppler-utils zstd ${{ inputs.tex && 'latexmk texlive-latex-recommended texlive-latex-extra texlive-science texlive-fonts-recommended' || '' }}"
+          mkdir -p ~/apt-archives
+          sudo cp -n ~/apt-archives/*.deb /var/cache/apt/archives/ 2>/dev/null || true
           retry sudo apt-get -o Acquire::Retries=3 update -qq
           retry sudo apt-get -o Acquire::Retries=3 install -y -qq --no-install-recommends --download-only $PKGS
+          cp -n /var/cache/apt/archives/*.deb ~/apt-archives/ 2>/dev/null || true
           sudo apt-get install -y -qq --no-install-recommends $PKGS
           retry sh -c 'curl -sSfL --connect-timeout 30 --max-time 120 --retry 4 https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain none'
           echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
