@@ -129,6 +129,21 @@ def _occurrences(c: str, ops) -> list[dict]:
         if isinstance(ops, dict) else []
 
 
+def _division_rule(c: str, o: dict) -> tuple[str, str | None]:
+    """The state of the rule for one division or inverse (`applies`, `none` or `unresolved`),
+    with the rule when it applies."""
+    what = DIVISION_OPS[c][0]
+    rule = DIVISION_BY_HEAD.get((c, o.get("carrier_head")))
+    if rule:
+        return "applies", rule
+    if o.get("algebra") == "group":
+        return "none", None
+    if o.get("algebra") == "group-with-zero":
+        zero = "x / 0 = 0" if what == "division" else "0⁻¹ = 0"
+        return "applies", f"{what} in {o.get('carrier') or o.get('carrier_head')}: {zero}"
+    return "unresolved", None
+
+
 def _division_warning(c: str, spec: str, ops) -> str | None:
     """The warning for a division or an inverse `c` in `spec`, from the types of its
     applications there: none in a group, `0` in a group with zero, the rule of ℕ, ℤ or ℝ≥0∞ in
@@ -145,13 +160,10 @@ def _division_warning(c: str, spec: str, ops) -> str | None:
                      f"{outcome} is unresolved")
     elif not occ:
         unknown.append("not read: it is used without its type")
-    zero = "x / 0 = 0" if what == "division" else "0⁻¹ = 0"
     for o in occ:
-        rule = DIVISION_BY_HEAD.get((c, o.get("carrier_head")))
-        if rule is None and o.get("algebra") == "group":
+        state, rule = _division_rule(c, o)
+        if state == "none":
             continue
-        if rule is None and o.get("algebra") == "group-with-zero":
-            rule = f"{what} in {o.get('carrier') or o.get('carrier_head')}: {zero}"
         if rule is None:
             ty = o.get("carrier") or "?"
             if ty not in unknown:
@@ -172,6 +184,58 @@ def _exempt(c: str, ops) -> bool:
     exceptional case (`EXEMPT`)."""
     occ = _occurrences(c, ops)
     return bool(occ) and ops.get("complete", True) and all(EXEMPT[c](o) for o in occ)
+
+
+# The operations the probe reads with their types (its `totalOps`).
+READ_BY_TYPE = {*ORDER_OPS, *DIVISION_OPS, "MeasureTheory.integral", "tsum",
+                "MeasureTheory.condExp", "deriv", "Real.sqrt", "Real.log"}
+
+STRUCTURES = {("lattice", "complete"): "complete-lattice",
+              ("lattice", "conditional"): "conditionally-complete-lattice",
+              ("lattice", "unknown"): "unknown", ("algebra", "group"): "group",
+              ("algebra", "group-with-zero"): "group-with-zero", ("algebra", "unknown"): "unknown",
+              ("subsingleton", True): "one-element"}
+
+
+def _rule(c: str, o: dict) -> tuple[str, str | None]:
+    """The state of the rule of `c` at one recorded application `o` (`applies`, `none`: the type
+    gives it no exceptional case, or `unresolved`), with the rule when it applies."""
+    if c in ORDER_OPS:
+        what = ORDER_OPS[c]
+        if o.get("carrier_head") == "Real":
+            return "applies", TOTALISED[c]
+        if o.get("lattice") == "complete":
+            return "none", None
+        if o.get("lattice") == "conditional":
+            side = "above" if what == "supremum" else "below"
+            return "applies", (f"a {what} in {o.get('carrier') or o.get('carrier_head')} is a "
+                               f"default value when the family is empty or not bounded {side}")
+        return "unresolved", None
+    if c in DIVISION_OPS:
+        return _division_rule(c, o)
+    if c in EXEMPT and EXEMPT[c](o):
+        return "none", None
+    return "applies", TOTALISED[c]
+
+
+def occurrences(srec: dict, c: str) -> list[dict] | None:
+    """The applications of the totalised operation `c` that the probe read in a statement, each
+    with its type (`type`, its head constant `type_head`), the structure on it that decides the
+    rule (`structure`), the state of the rule there and the rule itself, and the positions of
+    the application in the proposition (`at`). None for an operation the probe does not read
+    by type, and for a record from before it read them."""
+    ops = srec.get("order_ops")
+    if not isinstance(ops, dict) or c not in READ_BY_TYPE:
+        return None
+    out = []
+    for o in _occurrences(c, ops):
+        state, rule = _rule(c, o)
+        structure = next((v for (k, val), v in STRUCTURES.items() if o.get(k) == val
+                          and k in o), None)
+        out.append({"operation": c, "type": o.get("carrier") or None,
+                    "type_head": o.get("carrier_head") or None, "structure": structure,
+                    "state": state, "rule": rule, "at": list(o.get("at") or [])})
+    return out
 
 
 def totalised(srec: dict, spec: str) -> list[tuple[str, str]]:
@@ -812,7 +876,12 @@ class Assessor:
             if not cl.get("witness") and not res.get("refute_ok"):
                 self.witness_check(subj, spec, srec)
             for c, msg in totalised(srec, spec):
-                self.add_warning("totalised", subj, spec, srec, msg, c)
+                occ = occurrences(srec, c)
+                extra = {} if occ is None else {
+                    "occurrences": occ,
+                    **({} if srec["order_ops"].get("complete", True)
+                       else {"occurrences_complete": False})}
+                self.add_warning("totalised", subj, spec, srec, msg, c, **extra)
         regs = []
         for r in cl.get("regimes", []):
             w = r.get("witness")
@@ -865,10 +934,10 @@ class Assessor:
                 f"as inhabited ({names}), and no theorem shows them met together",
                 "witness-instances")
 
-    def add_warning(self, code, subj, name, rec, message, trigger):
+    def add_warning(self, code, subj, name, rec, message, trigger, **extra):
         fp = rec.get("fingerprint")
         f = _finding("warning", code, subj, message, trigger=trigger, fingerprint=fp,
-                     signal="low" if trigger in LOW_SIGNAL else "normal")
+                     signal="low" if trigger in LOW_SIGNAL else "normal", **extra)
         for d in self.dismissals:
             if d.get("code") == code and d.get("subject") == name and d.get("trigger") == trigger:
                 if d.get("fingerprint") == fp:
