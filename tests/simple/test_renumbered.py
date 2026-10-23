@@ -83,6 +83,8 @@ def test_stale_numbers_are_reported_and_content_finds_each_claim(tmp_path, capsy
     assert st[("Renum.Bounds", "Lemma 2.6")] == ("absent", False)
     # A part of the paper after the number leaves the reference checked (#308).
     assert st[("Renum.Bounds", "Lemma 2.5")] == ("absent", False)
+    # An ordinary word starting "ref" after the number cites no other work (#329).
+    assert st[("Renum.Bounds", "Lemma 2.7")] == ("absent", False)
     o = refs[("Renum.two_mul_triangle", "Lemma 2.2")]
     assert o["source"]["file"] == "Renum/Basic.lean" and o["source"]["line"] == 17
     assert o["content"]["closer"]["number"] == "Lemma 3.2"

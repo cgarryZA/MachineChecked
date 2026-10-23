@@ -171,15 +171,17 @@ compare it with the paper read here:
 - the reference is to another work, or in a namespace the project maps to another paper.
 
 A reference is to another work when a citation follows its number (`Theorem 4.1 of [Gauss]`,
-`Theorem 3 in Hardy and Wright`, `Lemma 9 [AB]`) or comes just before it: an open citation
-bracket (`[AB, Lemma 9]`), `et al.`, an author's possessive (`Gauss's Lemma 4.22`,
-`[AB]'s Lemma 9`, `Smith et al.'s Theorem 3`), or a chapter after a comma, as a book's citation
-gives it (`Hardy–Wright, *An Introduction*, Ch. IV, Prop. 4.7`). A possessive of the paper,
-a part of it or the Lean (`the paper's Lemma 2.1`, `Lean's Theorem 2.1`), a part of the paper
-or the Lean after the number (`Lemma 7.7 in Section 7`, `from Appendix A`, `in Lean`), a
-possessive earlier in the sentence (`By Gauss's lemma and Lemma 2.1`) and a chapter in prose
-(`In Chapter 4, Lemma 4.2`) leave the reference checked against the paper. A citation after
-the part names another work (`Lemma 4.1 in Section 4 of [AB]`).
+`Theorem 3 in Hardy and Wright`, `Lemma 9 of ref. [3]`, `Lemma 9 [AB]`) or comes just before
+it: an open citation bracket (`[AB, Lemma 9]`), `et al.`, an author's possessive
+(`Gauss's Lemma 4.22`, `[AB]'s Lemma 9`, `Smith et al.'s Theorem 3`), or a chapter after a
+comma, as a book's citation gives it (`Hardy–Wright, *An Introduction*, Ch. IV, Prop. 4.7`).
+A possessive of the paper, a part of it or the Lean (`the paper's Lemma 2.1`,
+`Lean's Theorem 2.1`), a part of the paper or the Lean after the number
+(`Lemma 7.7 in Section 7`, `from Appendix A`, `in Lean`), an ordinary word after it
+(`in refined form`, `in reference to Lemma 2`), a possessive earlier in the sentence
+(`By Gauss's lemma and Lemma 2.1`) and a chapter in prose (`In Chapter 4, Lemma 4.2`) leave
+the reference checked against the paper. A citation after the part names another work
+(`Lemma 4.1 in Section 4 of [AB]`).
 
 Digits that run together in a name (`lem41_bound`, or `Assumption22` written as an
 identifier in a docstring) are read in every way the paper could mean them, `4.1` and `41`: the
@@ -427,11 +429,11 @@ jobs:
     permissions: { pages: write, id-token: write }
     environment: github-pages
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with: { pattern: machinechecked-audit*, merge-multiple: true, path: site }
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
         with: { path: site }
-      - uses: actions/deploy-pages@v4
+      - uses: actions/deploy-pages@v5
 ```
 
 A deploy replaces the whole site, so every run builds every audit; a saved build (`cache-repo`) keeps the frozen one quick. Each audit's `site_url` (in the configuration on its ref) is its own address, such as `https://you.github.io/project/v1/`.
