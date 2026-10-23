@@ -61,6 +61,41 @@ def test_another_works_numbers_are_not_this_papers():
     assert out["pattern"]["other_source"] == 4 and not out["pattern"]["drift"]
 
 
+def test_an_authors_possessive_or_a_books_chapter_before_the_number_is_another_work():
+    # What comes just before the number names another work: an author's possessive, or a
+    # chapter after a comma as a book's citation gives it (#287).
+    elsewhere = {"P.a": "Gauss's Lemma 4.22 gives the closed form.",
+                 "P.b": "As in Gauss’s Lemma 4.22.", "P.c": "By Gauss' Lemma 4.22.",
+                 "P.d": "Revuz–Yor's Proposition 4.7.", "P.e": "Smith et al.'s Theorem 3.",
+                 "P.f": "By [AB]'s Lemma 9.", "P.g": "The closed form is Gauss's\nLemma 4.22.",
+                 "P.h": "Hardy–Wright, *An Introduction*, Ch. IV, Prop. 4.7.",
+                 "P.i": "Hardy and Wright (1979), Chapter 4, Theorem 4.1."}
+    # Near misses: each is checked against this paper (here, absent or other-kind).
+    checked = {"Q.a": "The paper's Lemma 2.1.", "Q.b": "This paper's Lemma 4.22.",
+               "Q.c": "Lemma 4.22.",
+               "Q.d": "Gauss's lemma is classical; this paper's Lemma 4.22 extends it.",
+               "Q.e": "By Gauss's reciprocity, Lemma 4.22 follows.",
+               "Q.f": "Gauss's lemma (Lemma 4.22 here) holds.",
+               "Q.g": "In Chapter 4, Lemma 4.22 holds.", "Q.h": "Chapter IV, Lemma 4.22.",
+               "Q.i": "Following [AB], Lemma 2.1 bounds it.", "Q.j": "Paper A's Lemma 2.1.",
+               "Q.k": "Theorem 2.1's Lemma 4.22."}
+    index = [decl(n, d) for n, d in {**elsewhere, **checked}.items()]
+    out = nb.analyse(index, CLAIMS, INV)
+    # Each declaration's last reference (Q.k's second).
+    last = {o["source"]["declaration"]: o for o in out["references"]}
+    for n in elsewhere:
+        assert last[n]["status"] == "other-source", (n, last[n])
+        assert last[n]["detail"] == "it refers to another work"
+    assert last["P.h"]["reference"] == "Proposition 4.7"
+    for n in checked:
+        assert last[n]["status"] in ("absent", "other-kind"), (n, last[n])
+        assert nb.suspect(last[n])
+    assert last["Q.a"]["status"] == "other-kind" and last["Q.b"]["status"] == "absent"
+    # Theorem 2.1, before the possessive, is this paper's and exact.
+    assert statuses(out)[("Q.k", "Theorem 2.1")] == "exact"
+    assert out["pattern"]["other_source"] == len(elsewhere)
+
+
 def test_an_incomplete_numbering_refutes_nothing():
     inv = nb.inventory(CLAIMS, False, "the paper is a PDF whose statements were found by their "
                        "headings, so its numbering may be incomplete")

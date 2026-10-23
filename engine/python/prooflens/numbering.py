@@ -11,8 +11,9 @@ with the numbering of the paper at the revision the audit reads:
 - `absent`: the paper, whose numbering is completely known, has no statement with that number;
 - `unchecked`: the paper's numbering is not completely known in this build (a PDF read by its
   headings, a paper that did not compile), so the reference is neither confirmed nor refuted;
-- `other-source`: the reference is to another work (`Theorem 3 of [AB]`) or sits in a namespace
-  the project maps to another paper; it says nothing about this paper.
+- `other-source`: the reference is to another work (`Theorem 3 of [AB]`, `Gauss's Lemma 4.22`,
+  `Hardy–Wright, *An Introduction*, Ch. IV, Prop. 4.7`) or sits in a namespace the project
+  maps to another paper; it says nothing about this paper.
 
 A number whose digits run together in a name (`lem41_bound`, or `Assumption22` written as an
 identifier in a docstring) is read in every way the paper could mean it (`4.1`, `41`): the
@@ -68,7 +69,20 @@ NAME_REF = re.compile(r"(?:^|_)(theorem|thm|lemma|lem|proposition|prop|corollary
 _ELSEWHERE_AFTER = re.compile(
     r"\s*(?:,\s*)?(?:of|in|from)\s+(?!(?:the|this|our)\s+(?:paper|article|manuscript|note|text|"
     r"preprint)\b)(?:\[|\\cite|[A-Z]|the\s+[A-Z]|arXiv|ref)|\s*\[")
-_ELSEWHERE_BEFORE = re.compile(r"\[[^\]]*$|\bet al\.?\s*,?\s*$")
+# Just before a number: an open citation bracket (`[AB, Lemma 9`), `et al.`, or the possessive
+# of a bracketed citation or of `et al.` (`[AB]'s Lemma 9`, `Smith et al.'s Theorem 3`).
+_ELSEWHERE_BEFORE = re.compile(r"\[[^\]]*$|\bet al\.?\s*,?\s*$"
+                               r"|(?:\bet al\.?|\])['’]s[\s~*_]*$")
+# An author's possessive just before the number (`Gauss's Lemma 4.22`, `Revuz–Yor's`,
+# `Gauss' Lemma`): a capitalised word of at least two letters, not one naming this paper.
+_POSSESSIVE = re.compile(r"(?<![\w'’.\-–])([^\W\d_][\w\-–]+)(?:['’]s|(?<=s)['’])[\s~*_]*$")
+_OWN_WORDS = {"paper", "article", "manuscript", "note", "preprint", "thesis", "author",
+              "authors"}
+# A chapter after a comma just before the number, as a citation of a book gives it
+# (`Hardy–Wright, *An Introduction*, Ch. IV, Prop. 4.7`); a chapter in prose (`In Chapter 4,
+# Lemma 4.2`) is not one.
+_CHAPTER = re.compile(r",[\s~*_]*(?:Ch|Chap|Chapter)\b\.?[\s~]*(?:[IVXLCDM]+|\d+(?:\.\d+)*)\b"
+                      r"[\s~*_]*[,;:]?\s*$")
 
 DRIFT_MIN = 3           # disagreeing references needed before a pattern is reported
 DRIFT_SHARE = 0.3       # ... and their share of the references checked
@@ -125,10 +139,17 @@ def module_doc_blocks(root: Path | None, modules) -> list[dict]:
 
 
 def _elsewhere(text: str, start: int, end: int) -> str | None:
-    if _ELSEWHERE_AFTER.match(text[end:end + 60]) or _ELSEWHERE_BEFORE.search(
-            text[max(0, start - 60):start]):
+    before = text[max(0, start - 60):start]
+    if _ELSEWHERE_AFTER.match(text[end:end + 60]) or _ELSEWHERE_BEFORE.search(before) \
+            or _CHAPTER.search(before) or _authors(before):
         return "it refers to another work"
     return None
+
+
+def _authors(before: str) -> bool:
+    """Whether the text just before a number ends with an author's possessive."""
+    m = _POSSESSIVE.search(before)
+    return bool(m) and m.group(1)[0].isupper() and m.group(1).lower() not in _OWN_WORDS
 
 
 def readings(digits: str) -> list[str]:
