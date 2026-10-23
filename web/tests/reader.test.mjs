@@ -919,6 +919,26 @@ for (const width of [1300, 390]) {
     assert.match(await cands.textContent(), /Toy\.triangle\s*— uses Toy\.IsEven; used by Toy\.Acceptance\.thm_even_add_hypotheses/);
   });
 
+  // #179: a full assessment's claim lists the Lean's references to the paper's numbers that
+  // disagree with the paper; one that agrees is not listed.
+  await check("a full-assessment claim lists the stale paper numbers in its Lean", width, async (pg) => {
+    const src = { declaration: "Toy.PaperSpec.thm_bound", module: "Toy.PaperSpec", file: "Toy/PaperSpec.lean", line: 25, where: "docstring" };
+    await pg.route("**/toy/data/claims/T_thm_bound-*", async (route) => {
+      const response = await route.fetch();
+      const rec = await response.json();
+      rec.references = [
+        { id: "ref:000000000001", reference: "Theorem 2.4", status: "other-kind", source: src,
+          message: "the docstring of Toy.PaperSpec.thm_bound (Toy/PaperSpec.lean:25) cites Theorem 2.4: the paper's 2.4 is Remark 2.4, not a theorem" },
+        { id: "ref:000000000002", reference: "Theorem 2.5", status: "exact", source: src, message: "an exact reference" }];
+      route.fulfill({ response, json: rec });
+    });
+    await toyClaim(pg, "T:thm:bound");
+    const h = pg.locator("aside h3", { hasText: "Paper numbers in the Lean" });
+    await h.waitFor();
+    const items = await h.locator("xpath=following-sibling::ul[1]/li").allTextContents();
+    assert.deepEqual(items, ["the docstring of Toy.PaperSpec.thm_bound (Toy/PaperSpec.lean:25) cites Theorem 2.4: the paper's 2.4 is Remark 2.4, not a theorem"]);
+  });
+
   await check("a definition opens beside its paper definition; reviews and provenance are under Details", width, async (pg) => {
     await toyClaim(pg, "T:thm:even-add");
     await pg.locator("aside .lean .r", { hasText: "IsEven" }).first().click();
