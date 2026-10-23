@@ -17,7 +17,8 @@ Each review has three stages:
 **3. Read the author's review.** Only after recording your verdict does the queue show the existing author review. Record disagreements alongside your initial interpretation.
 
 The report records the steps completed in this reader. The queue offers changed evidence first
-and says why each unit comes where it does ([Review order](#review-order)).
+and says why each unit comes where it does; **Order** chooses the paper's order or the informed
+order instead ([Review order](#review-order)).
 
 **From the command line.** The same three steps, with the same locks, for a reviewer without a browser (a scripted or batch reviewer, say). Name yourself with `--as human:NAME` or `--as llm:MODEL` (or `MACHINECHECKED_REVIEWER`); texts are files, or `-` for standard input:
 
@@ -111,6 +112,17 @@ never a Lean declaration, since you read them before the Lean is shown.
   These records are prior interpretations: asking for this order records in your workspace that
   you have seen them, for the claims it drew on. A later reading of those claims is then not
   blind, its report says so, and `review promote` refuses it without `--allow-revealed`.
+
+On the review page, **Order** offers the same three: *Priority*, *Paper order* and *Informed*,
+with the reasons the command line gives. The build writes the first two into the queue, so every
+copy of the site has them. The informed order reads the auditors' workspaces, so `machinechecked
+view` offers it. Choosing it first says what it uses; once you accept, the page records in your
+browser that you have seen prior interpretations of the claims it draws on, and only then shows
+the order. A reading of those claims that you lock afterwards lists *review page
+(interpretation-informed review order)* in `reading.revealed_by`. A reading you locked before
+choosing it keeps the queue's reason on its card until you record its verdict, since the
+protocol shows interpretations only after the verdict. The page keeps your choice of order, as
+it keeps your paper and part.
 
 ## Saved investigations
 

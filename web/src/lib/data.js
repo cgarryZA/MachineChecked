@@ -252,6 +252,16 @@ export function loadQueue(index) {
   return getJson(index.review_queue);
 }
 
+// The open units of the review queue in the informed order, with the claims it drew on, from
+// `machinechecked view`'s local server, which reads the auditors' workspaces
+// (`review_cli.order_route`). A static copy of the site has no such order.
+export async function askReviewOrder(order) {
+  const r = await fetch(`api/review-order?order=${encodeURIComponent(order)}`, { cache: "no-store" });
+  const out = await r.json().catch(() => ({ error: r.statusText }));
+  if (!r.ok) throw new Error(out.error || r.statusText);
+  return out;
+}
+
 // The reverse references of a declaration (`data/uses.json`, written by the zero-configuration
 // build): for the module that declares it, the declarations that use it and how. Null when the
 // build holds none; `{ ambiguous }` when several modules declare the name and none is given.

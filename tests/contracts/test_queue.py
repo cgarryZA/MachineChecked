@@ -24,6 +24,11 @@ def test_queue_of_a_full_assessment(toy):
     # Units already independently reviewed come last.
     states = [u["state"] == "reviewed" for u in q["units"]]
     assert states == sorted(states)
+    # The paper's order, for the reader's review page: every open unit once, with its reason.
+    paper = q["orders"]["document"]
+    assert sorted(x["id"] for x in paper) == sorted(u["id"] for u in q["units"]
+                                                   if u["state"] != "reviewed")
+    assert all(x["reason"].startswith("In the paper's order") for x in paper)
 
 
 @needs_lean
