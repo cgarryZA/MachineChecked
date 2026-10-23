@@ -2,7 +2,7 @@
   import Statement from "./Statement.svelte";
   import StatusChip from "./StatusChip.svelte";
   import LinkPicker from "./LinkPicker.svelte";
-  import Tex from "./Tex.svelte";
+  import StepContext from "./StepContext.svelte";
   import { evidenceView } from "../lib/presentation.js";
   import { href, withQuery } from "../lib/route.svelte.js";
   import { STEP_VERDICTS } from "../lib/review.js";
@@ -53,7 +53,7 @@
       </details>
     {/each}
     {#if claim.context_tex}
-      <details class="context"><summary class="small">Its context in the proof</summary><Tex text={claim.context_tex} /></details>
+      <StepContext text={claim.context_tex} cut={claim.context_cut} />
     {/if}
     {#if reviewHref}<p class="small"><a href={reviewHref}>Review this step</a></p>{/if}
   </div>
@@ -111,8 +111,8 @@
   .kind { color: var(--muted); }
   .word { font-size: 14px; }
   .pre { white-space: pre-wrap; overflow-wrap: anywhere; }
-  .report, .context { margin-top: 6px; }
-  .report summary, .context summary { cursor: pointer; }
+  .report { margin-top: 6px; }
+  .report summary { cursor: pointer; }
   .sub { font-size: 14px; font-weight: 600; margin: 14px 0 6px; }
   .block { margin-bottom: 14px; }
   .block.route { border-left: 3px dashed var(--border); padding-left: 10px; }

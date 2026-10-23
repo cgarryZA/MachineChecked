@@ -89,7 +89,10 @@ A review report (`prooflens/review-report@1`) pins the same digests as `pins.sou
 digests are missing or differ from the current ones.
 
 Dismissals of warnings (`dismissals.json`):
-`[{"code", "subject", "trigger", "fingerprint", "rationale", "by"}]`.
+`[{"code", "subject", "trigger", "fingerprint", "rationale", "by"}]`. A dismissal of a
+totalisation warning about one application also has `at` (the warning's `at`), and its
+`fingerprint` is the application's (`pl-occ-v1:…`); without `at` it names the operation in the
+whole proposition and its `fingerprint` is the proposition's ([ASSURANCE.md](ASSURANCE.md)).
 
 ## Evidence (`evidence.schema.json`), written by the engine
 
@@ -232,7 +235,9 @@ apart. A proof step's row also has `step_review`. A proof step's passport has `s
 
 A step's passport also has its printed text (`statement_tex`) and its context in the proof
 (`context_tex`): from the proof's opening (at most 40 lines before the step) to the sentence after
-it. A parent's passport lists its steps (`steps`: id, number, unit, status, review state, linked
+it, kept to its first 20000 characters. A context cut there has `context_cut`: the `file`, the
+`line` holding the first character left out, the context's last line (`end_line`), and the
+characters `kept` of its `chars`. A parent's passport lists its steps (`steps`: id, number, unit, status, review state, linked
 and route names). In zero configuration the links file holds a step's links under its label
 (`lean`, with `coverage`, `basis`, `note`, `by`) and its formal route under `route`
 (`{lean, note, by}`); a step whose only links are a formal route has the status
