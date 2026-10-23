@@ -288,7 +288,8 @@ A numbered equation inside a printed proof is a target of its own. In zero confi
 every numbered display with one `\label` inside a `proof` environment is listed as **Equation (n)**
 under the result whose proof holds it (the result the proof's optional argument names, else the
 statement just before the proof). Its passport shows the equation, its context in the proof and
-its own review; the enclosing result lists its steps.
+its own review; the enclosing result lists its steps. A context kept only in part is marked
+**(cut)**, with the line where it was cut.
 
 A step is linked in two ways, kept apart:
 
