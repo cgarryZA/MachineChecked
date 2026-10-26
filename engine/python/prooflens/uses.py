@@ -30,7 +30,7 @@ from pathlib import Path
 from .config import work_dir_name
 from .facts import graphs
 from .probe import lib_names
-from .simple import ViewError, built_modules, probe_modules
+from .simple import ViewError, built_modules, loading_error, probe_modules
 
 SCHEMA = "machinechecked/uses@1"
 NOTE = ("Uses are read from Lean's elaborated terms. Where a premise comes from is what the term "
@@ -257,9 +257,11 @@ def _further(idx: dict, group: str, name: str) -> list[dict]:
 
 
 def _assemble(name: str, recs: list[dict], groups: list[str], built: list[str],
-              unbuilt: list[str], failed: dict[str, str], idx: dict) -> dict:
+              unbuilt: list[str], failed: dict[str, str], idx: dict,
+              root: Path | None = None) -> dict:
     """The answer from the records of the sessions in `groups` (those whose environment holds
-    the declaration)."""
+    the declaration). Each module that could not be loaded is given with what its session
+    reported, as `check` gives it (`simple.loading_error`, paths from `root`)."""
     head = next(r for r in recs if r.get("record") == "uses" and r.get("probe_group") in groups
                 and not r.get("errors"))
     users: dict[tuple[str, str], dict] = {}
@@ -336,7 +338,7 @@ def _assemble(name: str, recs: list[dict], groups: list[str], built: list[str],
         "scope": {"libraries": sorted({r.get("probe_group") for r in recs
                                        if r.get("record") == "uses"}),
                   "modules": len(built), "unbuilt": sorted(unbuilt),
-                  "failed": dict(sorted(failed.items())),
+                  "failed": {m: loading_error(failed[m], root) for m in sorted(failed)},
                   "declarations_searched": head.get("searched")},
         "complete": complete, "answer": answer,
         "users": linked_users,
@@ -421,7 +423,7 @@ def uses(root: Path, name: str, module: str | None = None, lake: str = "lake", l
                     **({"reason": "some built modules could not be loaded"} if failed else {})}
         else:
             idx = refs_index([{**r, "probe_group": ""} for r in refs])
-            body = _assemble(name, recs, groups, built, unbuilt, failed, idx)
+            body = _assemble(name, recs, groups, built, unbuilt, failed, idx, root)
         if not failed:
             st.put("uses", key, st.environment(built, graph), body=body)
     return {**head, **body, "cache": {"hit": False}}

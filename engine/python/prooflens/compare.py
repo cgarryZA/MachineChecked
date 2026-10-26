@@ -655,7 +655,8 @@ def query(site: Site, op: str, target: str, limit: int | None = None, after: str
     `composition` answers with the compositions recorded for the target claim in the
     workspaces of the build's working directory (or in `workspace`): prior interpretations,
     which an independent review reads only after its verdict. `impact` traces the target from
-    the main results named in `main` (declarations or claims), else from the declarations
+    the main results named in `main` (declarations or claims), else from those saved in a
+    workspace of the working directory (in `workspace`, when named), else from the declarations
     linked to the paper's theorems (`impact.py`)."""
     if op not in QUERIES:
         raise CompareError(f"no query {op!r}; the queries are: {', '.join(QUERIES)}", "bad-query")
@@ -684,7 +685,7 @@ def query(site: Site, op: str, target: str, limit: int | None = None, after: str
         results = [mark_claims(uses(root, target, None, log=log), linked_claims(site))]
         prov = "Lean (the elaborated terms of the project), cached until a Lean input changes"
     elif op == "impact":
-        results = [_impact(site, root, target, main, log)]
+        results = [_impact(site, root, target, main, log, workspace)]
         prov = ("Lean (the references of the project's declarations and the applications of the "
                 "target, from its elaborated terms), cached until a Lean input changes")
     elif op == "search":
@@ -815,17 +816,41 @@ def _every_library(root: Path, log) -> tuple:
     return Retrieval.build(full), scope
 
 
-def _impact(site: Site, root: Path | None, target: str, main: list[str] | None, log) -> dict:
+def _impact(site: Site, root: Path | None, target: str, main: list[str] | None, log,
+            workspace: str | None = None) -> dict:
     """The impact document of `target` (`impact.impact`), or the reason there is none, as a
     refusal."""
     if root is None:
         raise CompareError("`impact` needs the Lean project", "no-project")
     from .impact import impact
     from .simple import ViewError
+    saved = None if main else saved_main_results(site, workspace, root)
     try:
-        return impact(site, root, target, main, log)
+        return impact(site, root, target, main, log, saved)
     except ViewError as e:
         raise CompareError(str(e), "no-project") from None
+
+
+def saved_main_results(site: Site, workspace: str | None, root: Path | None) -> dict | None:
+    """The main results saved in the workspace named, else in the one workspace of the build's
+    working directory that saves any, with what this build lacks of them (`problems`); None when
+    no workspace saves any, and `{workspace, selected: None}` when the one named saves none.
+    Several workspaces saving main results, and none named, is refused with their ids."""
+    from . import workspace as wsp
+    from .targets import Snapshot
+    try:
+        found = wsp.main_result_selections(site.data.parent.parent, workspace)
+    except wsp.WorkspaceError as e:
+        raise CompareError(str(e), "unknown-workspace") from None
+    if not found:
+        return {"workspace": workspace, "selected": None} if workspace else None
+    if len(found) > 1:
+        raise CompareError("several workspaces save main results ("
+                           + ", ".join(f"{s['workspace']} by {s['by']}" for s in found)
+                           + "): choose one with --workspace ID, or name the main results with "
+                             "--main", "ambiguous", [s["workspace"] for s in found])
+    (s,) = found
+    return {**s, "problems": wsp.main_results_problems(s, Snapshot(site.data), root)}
 
 
 def _proof_facts(root: Path, target: str, log) -> dict:

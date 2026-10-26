@@ -119,6 +119,52 @@ def test_a_word_that_only_starts_like_ref_cites_no_other_work():
         == {("R.a", "Theorem 2.1"): "exact"}
 
 
+def test_a_capitalised_word_after_the_number_names_a_work_only_as_a_citation():
+    # After "of", "in" or "from", a capitalised word names another work only as a citation
+    # does: authors with a year, a title or a citation, or several authors (#349). A term, a
+    # figure, table, equation or proof of this paper, the paper itself and one name alone leave
+    # a stale number checked.
+    checked = {"P.a": "Theorem 9.9 in Hilbert spaces.", "P.b": "Lemma 7.7 in Banach spaces.",
+               "P.c": "Theorem 9.9 from Fourier analysis.", "P.d": "Theorem 9.9 in Figure 2.",
+               "P.e": "Theorem 9.9 in Table 1.", "P.f": "Theorem 9.9 in Eq. (4).",
+               "P.g": "Theorem 9.9 in Proof of Lemma 3.", "P.h": "Theorem 9.9 of the Paper.",
+               "P.i": "Theorem 9.9 of this Paper.",
+               "P.j": "Theorem 9.9 in Hilbert and Banach spaces.",
+               "P.k": "Theorem 9.9 in Navier–Stokes equations.", "P.l": "Theorem 9.9 in Rudin.",
+               "P.m": "Theorem 9.9 in Figure~2 and Table 1.", "P.n": "Theorem 9.9 in Dimension 3."}
+    elsewhere = {"Q.a": "Theorem 4.1 of [Gauss].", "Q.b": "Theorem 9.9 of \\cite{AB}.",
+                 "Q.c": "Theorem 9.9 of~\\cite{AB}.", "Q.d": "Theorem 9.9~\\cite{AB}.",
+                 "Q.e": "Theorem 3 in Hardy and Wright (1979).",
+                 "Q.f": "Theorem 3 in Hardy–Wright, *An Introduction*, Ch. IV.",
+                 "Q.g": "Theorem 3 in Hardy and Wright.", "Q.h": "Theorem 9.9 of Gauss, 1801.",
+                 "Q.i": "Theorem 9.9 in Smith et al.", "Q.j": "Theorem 9.9 in Serre's book.",
+                 "Q.k": "Theorem 9.9 of Serre, *A Course in Arithmetic*.",
+                 "Q.l": "Theorem 9.9 of *An Introduction*.",
+                 "Q.m": "Theorem 9.9 in \\emph{Elements}.",
+                 "Q.n": "Theorem 9.9 in Hardy, Littlewood and Pólya.",
+                 "Q.o": "Theorem 9.9 in Eq. (4) of [AB].",
+                 "Q.p": "Theorem 9.9 in Proof of Lemma 3 of [AB].", "Q.q": "Theorem 9.9 of Paper B.",
+                 "Q.r": "Theorem 9.9 in Ref. [3].", "Q.s": "Theorem 9.9 of \\citet{AB}.",
+                 "Q.t": "Theorem 9.9~\\citep[Ch. 2]{AB}.", "Q.u": "Theorem 9.9 in Gauss \\citep{G}.",
+                 "Q.v": "Theorem 9.9 in Volume 2 of [B]."}
+    index = [decl(n, d) for n, d in {**checked, **elsewhere}.items()]
+    out = nb.analyse(index, CLAIMS, INV)
+    first = {}
+    for o in out["references"]:
+        first.setdefault(o["source"]["declaration"], o)
+    for n in checked:
+        assert first[n]["status"] == "absent" and nb.suspect(first[n]), (n, first[n])
+    for n in elsewhere:
+        assert first[n]["status"] == "other-source", (n, first[n])
+        assert first[n]["detail"] == "it refers to another work"
+    # The current numbers, written the same way, are exact.
+    index = [decl("R.a", "Theorem 2.1 in Hilbert spaces."), decl("R.b", "Theorem 3.1 in Figure 2."),
+             decl("R.c", "Proposition 2.3 of the Paper.")]
+    assert statuses(nb.analyse(index, CLAIMS, INV)) == {
+        ("R.a", "Theorem 2.1"): "exact", ("R.b", "Theorem 3.1"): "exact",
+        ("R.c", "Proposition 2.3"): "exact"}
+
+
 def test_an_authors_possessive_or_a_books_chapter_before_the_number_is_another_work():
     # What comes just before the number names another work: an author's possessive, or a
     # chapter after a comma as a book's citation gives it (#287).
@@ -431,6 +477,17 @@ def test_several_papers_read_a_citation_at_the_references_own_place():
         ("Common.d", "Lemma 2.2", "B", "absent"), ("Common.d", "Lemma 2.2", "A", "exact")]
 
 
+def test_several_papers_read_a_title_after_the_number():
+    # A paper's title after "of", "in" or "from" is no citation, so the reference is checked,
+    # against the paper whose title it is; a capitalised term that is no paper's title leaves
+    # the reference to be attributed as any other (#349).
+    papers = [("A", "Odd squares"), ("B", "Triangle bounds")]
+    refs = nb.find_references([decl("Common.c", "Lemma 2.2 of Odd squares, Lemma 2.2 in the "
+                                    "Triangle bounds and Lemma 2.2 in Hilbert spaces.")], [])
+    assert [o.get("status") for o in refs] == [None, None, None]
+    assert [nb.attribute(o, {}, papers)[0] for o in refs] == ["A", "B", None]
+
+
 def test_several_papers_leave_an_unattributable_reference_unchecked():
     from types import SimpleNamespace
     from prooflens import content
@@ -452,6 +509,46 @@ def test_several_papers_leave_an_unattributable_reference_unchecked():
     assert "no claim of any paper" in loose["detail"]
     assert not nb.suspect(shared) and num["pattern"]["unchecked"] == 2
     assert any("2 of the Lean's references" in n for n in notes)
+
+
+def test_several_papers_read_a_cite_as_a_bracket():
+    # A `\cite` names a paper as a bracket does (#350): the `\cite` whose note holds the
+    # number, or one after it before the next reference; one of several works names none.
+    papers = [("U", ""), ("A", "")]
+
+    def named(doc):
+        return [nb.attribute(o, {}, papers)[0]
+                for o in nb.find_references([decl("P.a", doc)], [])]
+
+    assert named("Theorem 9.9 of \\cite{U}.") == named("\\cite[Lemma 2.1]{U}.") == ["U"]
+    assert named("\\citet[Lemma 2.1]{ U }.") == named("\\cite[see][Lemma 2.1]{U}.") == ["U"]
+    assert named("\\cite[Lemma 2.1, Lemma 2.2]{U}.") == ["U", "U"]
+    assert named("\\cite[Lemma 2.1]{U} and \\cite[Lemma 3.2]{A}.") == ["U", "A"]
+    assert named("Lemma 2.1 of \\cite{A} and Lemma 2.1 of \\cite{U}.") == ["A", "U"]
+    assert named("Lemma 2.1 of \\cite[Section 3]{U} and Lemma 2.1 of \\cite{A}.") == \
+        ["U", "U", "A"]
+    assert named("\\cite[Lemma 2.1]{A,U}.") == named("Lemma 2.1 of \\cite{A, U}.") == [None]
+    assert named("\\cite[Lemma 2.1]{Gauss} and Lemma 2.2 of \\cite{U}.") == [None, "U"]
+    # Each is then checked against the paper it names.
+    from types import SimpleNamespace
+    from prooflens import content
+    papers = [SimpleNamespace(id="A", title="Odd squares"),
+              SimpleNamespace(id="B", title="Triangle bounds")]
+    tex = {"A": {"mode": "latex", "anchors": [{"env": "lemma", "number": "2.2"}]},
+           "B": {"mode": "latex", "anchors": [{"env": "theorem", "number": "1.1"}]}}
+    inv_claims = [{"id": "A:l22", "paper": "A", "kind": "lemma", "number": "Lemma 2.2",
+                   "clauses": [{"spec": "PA.l22"}]},
+                  {"id": "B:t11", "paper": "B", "kind": "theorem", "number": "Theorem 1.1",
+                   "clauses": [{"spec": "PB.t11"}]}]
+    full = [decl("Common.c", "\\cite[Lemma 2.2]{A} and Theorem 1.1 of \\cite{B}.",
+                 module="Common"),
+            decl("Common.d", "\\cite[Lemma 2.2]{B} and \\cite[Lemma 2.2]{Gauss}.",
+                 module="Common")]
+    num = content.several(papers, tex, inv_claims, {}, full, [], None, None, [])
+    assert [(o["source"]["declaration"], o["reference"], o.get("attributed"), o["status"])
+            for o in num["references"]] == [
+        ("Common.c", "Lemma 2.2", "A", "exact"), ("Common.c", "Theorem 1.1", "B", "exact"),
+        ("Common.d", "Lemma 2.2", "B", "absent"), ("Common.d", "Lemma 2.2", None, "other-source")]
 
 
 def test_formalization_rows_name_their_papers_declarations():

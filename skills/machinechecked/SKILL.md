@@ -71,7 +71,10 @@ Report correspondence using its own review records.
 
 With a `machinechecked.toml` (the full assessment), `finding_details` lists each finding
 (`tier`, `code`, `subject`, `message`, and `dismissed` when a warning was dismissed): quote the
-violations and obligations by subject; `findings` holds only their totals.
+violations and obligations by subject; `findings` holds only their totals. A violation saying
+`machinechecked check --fix-modules` lists a module is a declaration whose module is missing from
+`modules`: with the user's agreement, run `check --json --fix-modules`, which edits
+`machinechecked.toml`, checks again and lists the modules it added in `modules_added`.
 
 ## Typical tasks
 
@@ -95,8 +98,9 @@ violations and obligations by subject; `findings` holds only their totals.
   a lemma can be formalised without being used by that proof. If two modules declare the
   name, pass `--module`. A dependency identifies constants used by Lean terms.
 - **Does the main result use this lemma?** `machinechecked compare --query impact NAME --json`
-  answers for each main result (the declarations linked to the paper's theorems, or those
-  `--main` names): used by its proof, in its statement only, formalized separately, or not
+  answers for each main result (those `--main` names, else those saved with `machinechecked
+  workspace main NAME...`, which `selection` attributes, else the declarations linked to the
+  paper's theorems): used by its proof, in its statement only, formalized separately, or not
   traced, with the path of references and the applications of NAME at its end, and lists the
   claims whose linked Lean uses NAME. *Formalized separately* says only that this main
   result's Lean does not refer to NAME; *not traced* says the trace is incomplete, never that
@@ -163,8 +167,9 @@ carries every step out on the toy example.
    reading, with a Lean certificate as evidence when you have one. A printed proof step is a
    claim of its own (`compare "Equation (3)"`), with its own verdict, such as `false as
    printed`. `--query impact NAME` says whether each main result uses NAME (`--main NAME`
-   chooses them) and lists the claims whose Lean uses it: a difference between NAME and the
-   paper can matter only to those.
+   chooses them for one query; `workspace main NAME...` saves the user's choice in the
+   workspace, with your name and the project commit) and lists the claims whose Lean uses it: a
+   difference between NAME and the paper can matter only to those.
 7. **Conclude.** A finding gives the coverage and its basis: `direct` (one Lean statement),
    `reviewed_composition` (your argument) or `checked_bridge` (a composition whose bridge Lean
    checks; any other reads as your argument). It is your reading, attributed

@@ -290,10 +290,10 @@ def test_a_session_that_is_split_says_why(monkeypatch):
                        "((deterministic) timeout at `whnf`); splitting it")
 
 
-def lean_fails_on(monkeypatch, bad, message):
+def lean_fails_on(monkeypatch, bad, message, records=()):
     """Make every Lean session that loads a module of `bad` fail with `message` (an error Lean
-    reported, so the same inputs fail again); the others finish with no records. Returns the
-    modules of each session started."""
+    reported, so the same inputs fail again); the others finish with a copy of `records` (none
+    by default). Returns the modules of each session started."""
     from prooflens import simple
     calls = []
 
@@ -301,7 +301,7 @@ def lean_fails_on(monkeypatch, bad, message):
         calls.append(list(group))
         if set(group) & set(bad):
             raise simple.ViewError(message, deterministic=True)
-        return [{"record": "done"}]
+        return [dict(r) for r in records] + [{"record": "done"}]
     monkeypatch.setattr(simple, "run_simple_probe", probe)
     return calls
 
@@ -341,7 +341,8 @@ def test_a_module_that_fails_alone_is_named_with_its_error(tmp_path, monkeypatch
 def test_a_module_that_fails_within_a_split_group_says_so(tmp_path, monkeypatch):
     """A library whose modules cannot be loaded in one session is loaded apart; the module that
     still fails on its own is named with the library's session it was split from and with what
-    Lean reported, its paths given from the project's root. The others load."""
+    Lean reported, its paths given from the project's root, as is the line that says why the
+    library was split. The others load."""
     from prooflens import simple
     olean = tmp_path / ".lake" / "build" / "lib" / "lean" / "Pair" / "Bad.olean"
     calls = lean_fails_on(monkeypatch, ["Pair.Bad"],
@@ -354,7 +355,7 @@ def test_a_module_that_fails_within_a_split_group_says_so(tmp_path, monkeypatch)
     assert list(failed) == ["Pair.Bad"]
     assert split == {"Pair.Bad": {"library": "Pair", "modules": 3}}
     assert said[0] == ("lean: Pair could not be loaded in one session (failed to read file "
-                       f"'{olean}', invalid header); splitting it")
+                       "'.lake/build/lib/lean/Pair/Bad.olean', invalid header); splitting it")
     (tmp_path / "Pair").mkdir()
     (tmp_path / "Pair" / "Bad.lean").write_text("theorem Pair.result : True := trivial\n")
     _, state = simple.resolve_link("Pair.result", [], None, tmp_path, [], failed, split)
@@ -363,6 +364,18 @@ def test_a_module_that_fails_within_a_split_group_says_so(tmp_path, monkeypatch)
         "Module Pair.Bad could not be loaded on its own, after 3 modules of Pair could not be "
         "loaded in one Lean session: failed to read file "
         "'.lake/build/lib/lean/Pair/Bad.olean', invalid header")
+
+
+def test_the_split_line_gives_the_first_error_without_the_probe_file(tmp_path, monkeypatch):
+    """The line that says why a library was split gives Lean's first error as `loading_error`
+    does: without the position in the probe's temporary file, and with "…" when Lean reported
+    more."""
+    from prooflens import simple
+    lean_fails_on(monkeypatch, ["Pair.Bad"], many_errors(tmp_path / "work", "Boom"))
+    said = []
+    simple.probe_modules(tmp_path, ["Pair.Bad", "Pair.Good"], ["Pair"], [], log=said.append)
+    assert said == ["lean: Pair could not be loaded in one session (unknown constant "
+                    "'Boom.missing0'; …); splitting it"]
 
 
 def test_a_failure_with_no_error_line_says_what_ended_it():
@@ -461,3 +474,55 @@ def test_check_and_the_reader_give_the_loading_error(tmp_path, monkeypatch, caps
         shown[c["number"]] = [(l["status"], l["status_detail"]) for l in chunk["links"]]
     assert shown == {"Theorem 1": [(label, alone)], "Theorem 2": [(label, apart)]}
     assert "prooflens-probe-" not in (data / "index.json").read_text()
+
+
+def test_uses_inspect_and_proof_facts_give_the_loading_error(tmp_path, monkeypatch, capsys):
+    """A module that Lean cannot load, beside a library that loads: `uses` lists it in its
+    scope, and `inspect`, proof facts and a certificate check stop on it, each with what Lean
+    reported as `check` gives it, without the probe's temporary file or the project's path."""
+    from prooflens import cli
+    from prooflens.deps import inspect
+    from prooflens.estimates import check
+    from prooflens.proof_facts import extract
+    from prooflens.simple import ViewError
+    from prooflens.uses import uses
+    root = tmp_path / "proj"
+    root.mkdir()
+    (root / "lakefile.toml").write_text('name = "proj"\n\n[[lean_lib]]\nname = "Solo"\n\n'
+                                        '[[lean_lib]]\nname = "Good"\n')
+    (root / "Solo.lean").write_text("theorem Solo.result : True := trivial\n")
+    (root / "Good.lean").write_text("theorem Good.base : True := trivial\n")
+    built = root / ".lake" / "build" / "lib" / "lean"
+    built.mkdir(parents=True)
+    for m in ["Solo", "Good"]:
+        (built / f"{m}.olean").write_bytes(b"")
+    lean_fails_on(monkeypatch, ["Solo"], many_errors(root / ".machinechecked" / "build", "Boom"),
+                  [{"record": "uses", "name": "Good.base", "module": "Good", "kind": "theorem",
+                    "searched": 1}])
+    errors = ("unknown constant 'Boom.missing0'; unknown constant 'Boom.missing1'; "
+              "unknown constant 'Boom.missing2'; …")
+    alone = f"Module Solo could not be loaded on its own: {errors}"
+
+    doc = uses(root, "Good.base")
+    assert doc["ok"] and not doc["complete"]
+    assert doc["scope"]["failed"] == {"Solo": errors}
+    for ask in [lambda: inspect(root, "Solo.result"), lambda: extract(root, "Solo.result"),
+                lambda: check(root, "Solo.result", "Solo.claim", "proves")]:
+        with pytest.raises(ViewError) as e:
+            ask()
+        assert str(e.value) == alone
+
+    # The commands print the same.
+    monkeypatch.chdir(root)
+    capsys.readouterr()
+    cli.main(["inspect", "--used-by", "Good.base", "--json"])
+    out = capsys.readouterr().out
+    assert json.loads(out)["scope"]["failed"] == {"Solo": errors}
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["inspect", "Solo.result", "--json"])
+    assert exc.value.code == 2
+    said = capsys.readouterr()
+    assert json.loads(said.out)["error"] == {"kind": "error", "message": alone}
+    assert f"machinechecked: {alone}\n" in said.err
+    for text in [out, said.out, said.err]:
+        assert "prooflens-probe-" not in text and str(tmp_path) not in text

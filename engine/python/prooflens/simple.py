@@ -593,7 +593,66 @@ def review_view(r: dict, links: list[dict], claim: dict) -> dict:
             "submitted_at": r.get("submitted_at"),
             "reviewed": sorted(fps), "release": pins.get("release"),
             "project_commit": pins.get("project_commit"), "current": current,
+            "correspondence": report_coverage(r, claim, current),
             **({"why": why} if why else {})}
+
+
+def report_coverage(r: dict, claim: dict, current) -> dict | None:
+    """A report's coverage (its `correspondence`, recorded with the verdict) as the reader shows
+    it, in the form of a claim's reading (`correspondence`): `{coverage, basis, refs, argument,
+    next_step, bridge, question, would_decide}`. None when the report records no supported
+    coverage: an older report's coverage is not recorded, never guessed. Values outside the
+    supported ones are dropped. The open question of an unresolved coverage is the verdict's
+    detail. A checked bridge reads as one only while the report is current, the claim's links
+    record the same bridge, Lean checks it, and the target is the version the reviewer read
+    (`target_fingerprint`); otherwise it reads as the reviewer's composition, with what it was
+    recorded as (`recorded_basis`) and why (`basis_reason`)."""
+    cor = r.get("correspondence")
+    if not isinstance(cor, dict) or cor.get("coverage") not in COVERAGE:
+        return None
+    cov = cor["coverage"]
+    basis = cor.get("basis") if cor.get("basis") in BASIS else None
+    lean = (r.get("unit") or {}).get("lean")
+    reviewed = [n for n in lean if isinstance(n, str)] if isinstance(lean, list) else []
+    out = {"coverage": cov, "basis": basis, "refs": reviewed if basis else [], "argument": None,
+           "next_step": None, "bridge": None, "question": None, "would_decide": None}
+    if basis == "checked_bridge":
+        b = cor.get("bridge") if isinstance(cor.get("bridge"), dict) else {}
+        names = (b.get("theorem"), b.get("target"))
+        own = (claim.get("correspondence") or {}).get("bridge") or {}
+        why = []
+        if not all(isinstance(n, str) and n for n in names):
+            why.append("no bridge theorem and target are recorded")
+        elif (own.get("theorem"), own.get("target")) != names:
+            why.append("the claim's links record no such bridge, so Lean does not check it")
+        elif own.get("state") not in ("checked", "stale"):
+            why += own.get("reasons") or ["Lean does not check the bridge"]
+        if not why:
+            pin, now = b.get("target_fingerprint"), (own.get("current") or {}).get(
+                "target_fingerprint")
+            if current is not True:
+                why.append("the report was made for other paper text or other declarations")
+            if not pin:
+                why.append("no reviewed version of the target is recorded")
+            elif pin != now:
+                why.append("the target is not the version the reviewer read")
+        if why:
+            out.update(basis="reviewed_composition", recorded_basis="checked_bridge",
+                       basis_reason=why, bridge={"theorem": names[0], "target": names[1]})
+        else:
+            out.update(refs=[names[0]], bridge={
+                "theorem": names[0], "target": names[1], "state": "checked", "reasons": [],
+                "pinned": {"target_fingerprint": b.get("target_fingerprint"),
+                           "source_sha256": (report_digests(r) or {}).get(claim["id"])},
+                "current": own.get("current")})
+    if out["basis"] == "reviewed_composition":
+        out["next_step"] = COMPOSITION_NEXT_STEP
+        if basis == "reviewed_composition":
+            out["argument"] = _reading_text(cor.get("argument"), ARGUMENT_CHARS) or None
+    if cov == "unresolved":
+        out["question"] = _reading_text((r.get("verdict") or {}).get("detail")) or None
+        out["would_decide"] = _reading_text(cor.get("would_decide")) or None
+    return out
 
 
 def route_link_names(claim: dict, entry: dict) -> list[str]:
@@ -865,8 +924,7 @@ def probe_modules(root: Path, modules: list[str], libs: list[str], requests: lis
                 if split is not None and whole is not None:
                     split[group[0]] = dict(whole)
                 return
-            errors = [l.strip() for l in str(e).splitlines() if "error" in l]
-            reason = errors[0].split("error:", 1)[-1].strip()[:200] if errors else "no error message"
+            reason = loading_error(str(e), root, lines=1) or "no error message"
             log(f"lean: {label} could not be loaded in one session ({reason}); splitting it")
             whole = whole or {"library": label, "modules": len(group)}
             half = len(group) // 2
