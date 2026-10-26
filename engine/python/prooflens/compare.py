@@ -266,16 +266,16 @@ def passage(ch: dict, stage: str) -> dict:
 # -- the Lean ----------------------------------------------------------------------------------
 
 def _statement(st: dict | None) -> dict | None:
-    """A statement in full: its exact text, and its binders and conclusion with their
-    expression identifiers."""
+    """A statement in full: its exact text, its binders and conclusion with their expression
+    identifiers, and the whole of it as one tree (`tree`), with where each variable stands."""
     if not st:
         return None
     exact = st.get("exact")
     return {"text": _text(exact) if exact else None, "exact": exact,
             "binders": [{k: b.get(k) for k in ("id", "name", "role", "binder", "supplies", "type")
                          if b.get(k) is not None} for b in st.get("binders") or []],
-            "conclusion": st.get("conclusion"), "closure": list(st.get("closure") or []),
-            "fingerprint": st.get("fingerprint")}
+            "conclusion": st.get("conclusion"), "tree": st.get("tree"),
+            "closure": list(st.get("closure") or []), "fingerprint": st.get("fingerprint")}
 
 
 def _link(l: dict, role: str) -> dict:
