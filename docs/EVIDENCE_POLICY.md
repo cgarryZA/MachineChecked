@@ -168,7 +168,8 @@ the Lean build files as they are, which may be older than the sources: it record
 the Lean inputs, so its records are not reused. When no release qualifies, the build stops with
 exit code 2, names the condition the closest release fails, and says to run
 `machinechecked build` without `--reuse-lean`. `machinechecked reassess` applies new reviews and
-dismissals to stored evidence, and refuses when the claim inventory changed.
+dismissals to stored evidence, and refuses when the claim inventory changed; when nothing changed,
+it reproduces the release it read.
 
 In zero configuration, every build reuses the Lean facts it extracted before (a module's index, a
 linked declaration's record, an `inspect` answer) while the modules of the environment they came
