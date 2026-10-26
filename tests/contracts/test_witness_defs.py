@@ -7,7 +7,7 @@ instance a witness exhibits, and it is not listed (#243). The tactic script Lean
 tactic default gives only a proof: it needs no review in a proposition's closure, a definition
 claim's or a witness's (#325). The closure of a witness's statement is taken with its proofs
 erased, as the others are, so a definition that only a proof in the statement reaches is not in
-it (#326)."""
+it (#326). No auxiliary proof Lean generates is listed, however the closure reaches it (#382)."""
 
 import copy
 import subprocess
@@ -438,3 +438,100 @@ def test_the_probe_reports_the_tactic_scripts_of_tactic_defaults(tmp_path, toolc
         review("def", n, lean["decls"][n]["fingerprint"]) for n in cl["def_reviews"]]
     claims, _ = run(reviews=reviews, claims=[AUTO_CLAIM], lean=lean)
     assert claims["P:half"]["status_code"] == "formal.accepted"
+
+
+# The example of #382: a structure with a proof field, an instance of it whose proof Lean makes
+# an auxiliary theorem (`Bar.one._proof_1`), and a witness `⟨Bar.one, rfl⟩`. Further witnesses
+# reach auxiliary proofs in other ways: through the instance named in the statement, through a
+# proof the statement holds (`⟨2, by omega⟩` makes `omega_hypotheses._proof_1`), through an
+# instance and a function whose bodies hold proofs, and through a subtype and a definition by
+# cases (whose `match_1` is part of its meaning and is listed).
+PKG = {
+    "lakefile.toml": 'name = "pkg"\ndefaultTargets = ["Pkg"]\n\n[[lean_lib]]\nname = "Pkg"\n',
+    "Pkg.lean": "import Pkg.Defs\nimport Pkg.Spec\nimport Pkg.Acceptance\n",
+    "Pkg/Defs.lean": """namespace Pkg
+
+structure Bar where
+  n : Nat
+  pos : 0 < n
+
+def Bar.one : Bar := ⟨1, by decide⟩
+
+def Bar.ofSucc (k : Nat) : Bar := ⟨k + 1, by omega⟩
+
+instance : Inhabited Bar := ⟨⟨1, by omega⟩⟩
+
+def Bar.two : {n : Nat // 0 < n} := ⟨2, by decide⟩
+
+def Bar.f : Nat → Nat
+  | 0 => 1
+  | n + 1 => n
+
+end Pkg
+""",
+    "Pkg/Spec.lean": """import Pkg.Defs
+
+namespace Pkg.Spec
+
+def bar_pos : Prop := ∀ b : Pkg.Bar, 0 < b.n
+
+end Pkg.Spec
+""",
+    "Pkg/Acceptance.lean": """import Pkg.Spec
+
+namespace Pkg.Acceptance
+
+theorem bar_pos : Pkg.Spec.bar_pos := fun b => b.pos
+
+theorem foo_hypotheses : ∃ b : Pkg.Bar, b.n = 1 := ⟨Pkg.Bar.one, rfl⟩
+
+theorem named_hypotheses : ∃ b : Pkg.Bar, b = Pkg.Bar.one := ⟨_, rfl⟩
+
+theorem omega_hypotheses : ∃ b : Pkg.Bar, b = ⟨2, by omega⟩ := ⟨_, rfl⟩
+
+theorem default_hypotheses : ∃ b : Pkg.Bar, b = default ∧ (Pkg.Bar.ofSucc 0).n = 1 :=
+  ⟨_, rfl, rfl⟩
+
+theorem more_hypotheses : Pkg.Bar.two.val = 2 ∧ Pkg.Bar.f 3 = 2 := ⟨rfl, rfl⟩
+
+end Pkg.Acceptance
+"""}
+PKG_WITNESSES = {"foo_hypotheses": [], "named_hypotheses": ["Pkg.Bar.one"], "omega_hypotheses": [],
+                 "default_hypotheses": ["Pkg.Bar.ofSucc", "Pkg.instInhabitedBar"],
+                 "more_hypotheses": ["Pkg.Bar.f", "Pkg.Bar.f.match_1", "Pkg.Bar.two"]}
+PKG_CLAIMS = [{"id": f"P:{w}", "paper": "P", "scope": "formal", "scope_reviewed": True,
+               "clauses": [{"name": "main", "spec": "Pkg.Spec.bar_pos",
+                            "accept": "Pkg.Acceptance.bar_pos",
+                            "witness": f"Pkg.Acceptance.{w}"}]} for w in PKG_WITNESSES]
+
+
+@needs_lean
+@pytest.mark.parametrize("toolchain", ["leanprover/lean4:v4.32.0", "leanprover/lean4:v4.24.0"])
+def test_auxiliary_proofs_lean_generates_are_not_listed_for_a_witness(tmp_path, toolchain):
+    """#382: the declarations listed for a witness skip every constant whose type is a
+    proposition, such as the auxiliary proofs (`_proof_1`) Lean makes of the proofs in a
+    definition or in the witness's statement; the declarations that carry the instance's data
+    are listed."""
+    if subprocess.run(["elan", "toolchain", "list"], capture_output=True,
+                      text=True).stdout.find(toolchain) < 0:
+        pytest.skip(f"{toolchain} is not installed")
+    root = tmp_path / "pkg"
+    for path, text in PKG.items():
+        (root / path).parent.mkdir(parents=True, exist_ok=True)
+        (root / path).write_text(text)
+    (root / "lean-toolchain").write_text(toolchain + "\n")
+    subprocess.run(["lake", "build"], cwd=root, check=True, capture_output=True, timeout=900)
+    query = {"scope_roots": ["Pkg"], "spec_prefix": "Pkg.Spec", "accept_prefix": "Pkg.Acceptance",
+             "allowed_axioms": ["propext", "Classical.choice", "Quot.sound"],
+             "requests": probe.requests_from_inventory({"claims": PKG_CLAIMS})}
+    lean = probe.lean_session(root, ["Pkg"], query, probe.parse_records)
+    claims, findings = run(reviews=[], claims=PKG_CLAIMS, lean=lean)
+    for w, expected in PKG_WITNESSES.items():
+        rec = lean["proofs"][f"witness:Pkg.Acceptance.{w}:"]
+        assert rec["errors"] == [], w
+        listed = [e["name"] for e in claims[f"P:{w}"]["clauses"][0]["witness_defs"]]
+        assert listed == expected, (w, listed, rec["closure"])
+        # Nothing whose type is a proposition is listed, wherever the closure reached it.
+        assert not [n for n in listed if lean["decls"][n]["proposition"] is not False], w
+    warned = [f["message"] for f in findings if f["code"] == "witness-def-review"]
+    assert len(warned) == 6 and not [m for m in warned if "_proof_" in m], warned
