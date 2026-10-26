@@ -809,6 +809,7 @@ def _check_json(a):
                                  for l in c["links"]],
                        "correspondence": c.get("correspondence"),
                        "reviews": [{"reviewer": r["reviewer"], "verdict": r["verdict"]["value"],
+                                    "correspondence": r.get("correspondence"),
                                     "submitted_at": r["submitted_at"], "current": r["current"],
                                     **({"why": r["why"]} if r.get("why") else {})}
                                    for r in c.get("reviews", [])],
@@ -1306,7 +1307,11 @@ def cmd_review_step(a):
             print(f"reading locked; `review show {a.unit}` shows the Lean")
         elif a.action == "decide":
             s.decide(a.unit, a.verdict, _text_arg(a.comparison), _text_arg(a.detail),
-                     _text_arg(a.witness))
+                     _text_arg(a.witness),
+                     {"coverage": a.coverage, "basis": a.basis,
+                      "argument": _text_arg(a.argument),
+                      "bridge": dict(zip(("theorem", "target"), a.bridge)) if a.bridge else None,
+                      "would_decide": _text_arg(a.would_decide)})
             print(f"verdict recorded; `review author {a.unit}` shows the author's review")
         elif a.action == "submit":
             r = s.submit(a.unit, _text_arg(a.text).strip())
@@ -1334,6 +1339,8 @@ def cmd_review(a):
         u = r.get("unit", {})
         head = f"{u.get('name')} ({u.get('kind')}) by {r.get('reviewer', {}).get('id')}: " \
                f"{r.get('verdict', {}).get('value')}"
+        if pr.coverage_text(r):
+            head += f"; coverage: {pr.coverage_text(r)}"
         if why:
             print(f"REFUSED  {head}")
             for w in why:
@@ -1772,6 +1779,17 @@ def main(argv=None):
             sp.add_argument("comparison", help="a file holding your comparison, or -")
             sp.add_argument("--detail", help="a file holding what the verdict needs said")
             sp.add_argument("--witness", help="a file holding your note on the witness")
+            sp.add_argument("--coverage", help="how far the unit's Lean states the claim, agreeing "
+                            "with the verdict: full or partial (a match); partial, changed or "
+                            "related (a problem); unresolved (cannot determine)")
+            sp.add_argument("--basis", help="how that coverage is supported: direct (one Lean "
+                            "statement), reviewed_composition (your argument) or checked_bridge")
+            sp.add_argument("--argument", help="a file holding a reviewed composition's argument")
+            sp.add_argument("--bridge", nargs=2, metavar=("THEOREM", "TARGET"),
+                            help="a checked bridge: one of the unit's theorems, whose type is "
+                                 "exactly TARGET")
+            sp.add_argument("--would-decide", help="a file holding what would decide an "
+                            "unresolved coverage")
         if name == "export":
             sp.add_argument("--out", required=True)
         if name in ("next", "status", "read", "show", "author"):

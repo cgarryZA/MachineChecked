@@ -90,6 +90,24 @@ A review report (`prooflens/review-report@1`) pins the same digests as `pins.sou
 (claim id to digest), taken when the reading is locked; `review promote` refuses a report whose
 digests are missing or differ from the current ones.
 
+A report's `correspondence` is the coverage its reviewer recorded with the verdict (at
+`comparison.decided_at`), or `null`; an older report has none, and its coverage is not recorded.
+It has `coverage` (the links file's words, agreeing with the verdict's group: `full` or
+`partial` for a match, `partial`, `changed` or `related` for a problem, `unresolved` for *cannot
+determine*), and optionally `basis` (`direct`; `reviewed_composition`, with an optional
+`argument`; `checked_bridge`, with `bridge: {theorem, target, target_fingerprint}`, the theorem
+one of `unit.lean`) and, when unresolved, `would_decide`. The open question is
+`verdict.detail`. `target_fingerprint` is the target's version in the build the reviewer was
+shown (`correspondence.bridge.current` of the claim, below), or `null` when the claim's links
+record no such bridge. A proof step's report has none. `review promote` refuses a report whose
+`correspondence` is not one the protocol writes, or whose coverage is unresolved, and writes the
+same marker with or without one. In zero configuration, each report a passport lists
+(`reviews[]`) carries it as `correspondence`, in the form of the claim's own (`{coverage, basis,
+refs, argument, next_step, bridge, question, would_decide}`), or `null`; a checked bridge
+reads as one while the report is current, the claim's links record the same bridge, Lean checks
+it and `target_fingerprint` is the target's current version, and otherwise as
+`reviewed_composition`, with `recorded_basis` and `basis_reason`.
+
 Dismissals of warnings (`dismissals.json`):
 `[{"code", "subject", "trigger", "fingerprint", "rationale", "by"}]`. A dismissal of a
 totalisation warning about one application also has `at` (the warning's `at`), and its

@@ -2,9 +2,10 @@
 author|submit|status|export`), with the step locks of the reader's review page.
 
 A reviewer takes a unit of the review queue through three steps: read the paper and lock a
-reading; then see the Lean and record a verdict; then see the author's review and record any
-disagreement. Each step refuses to run before the one it follows, and each is timestamped, so
-the report is in exactly the form the reader exports and `review promote` checks. The work is
+reading; then see the Lean and record a verdict, with the coverage and its basis if they give
+them; then see the author's review and record any disagreement. Each step refuses to run
+before the one it follows, and each is timestamped, so the report is in exactly the form the
+reader exports and `review promote` checks. The work is
 kept in the reviewer's workspace (`workspace.py`, `<work dir>/review-work/<reviewer>.json`);
 `export` writes the reports as one file.
 
@@ -48,6 +49,13 @@ REFUTE_ONLY = {"refutation not valid"}
 # A proof step is reviewed as printed: does it hold? (`steps.VERDICTS`)
 from .steps import VERDICTS as STEP_VERDICTS
 
+# The coverage a verdict can be recorded with (the links file's words, `simple.COVERAGE`), as on
+# the review page: a match states every clause or part of the claim; a problem states part of
+# it, states it differently or is a related result; a reviewer who cannot determine it leaves it
+# unresolved, and the verdict's detail is the open question.
+COVERAGE_FOR = {"matches": ("full", "partial"), "problem": ("partial", "changed", "related"),
+                "cannot": ("unresolved",)}
+
 
 class ReviewError(RuntimeError):
     pass
@@ -86,6 +94,85 @@ def _passes(work: dict, by) -> list[tuple[str, bool, bool, str | None]]:
                     d.get("stage") == "author" and by(d.get("author_shown_at")
                                                        or d.get("decided_at")), None))
     return out
+
+
+def verdict_group(u: dict, verdict) -> str | None:
+    """The group of `verdict` among the verdicts of unit `u` (a step's own, or a statement's)."""
+    table = STEP_VERDICTS if u.get("kind") == "step" else VERDICTS
+    return next((g for g, vs in table.items() if verdict in vs), None)
+
+
+def correspondence(u: dict, verdict, given) -> tuple[dict | None, list[str]]:
+    """The reviewer's coverage as a report records it beside the verdict (its `correspondence`),
+    and what is wrong with `given`: the coverage (`simple.COVERAGE`, agreeing with the verdict as
+    `COVERAGE_FOR` says) and, separately, its basis (`simple.BASIS`), with a reviewed
+    composition's `argument`, a checked bridge's `bridge` (`{theorem, target}`, the theorem one of
+    the unit's declarations) and an unresolved coverage's `would_decide`. The open question of an
+    unresolved coverage is the verdict's detail. None when nothing is given; a review of a proof
+    step records whether the step holds, and no coverage. The review page writes the same
+    (`reportCorrespondence` in `web/src/lib/review.js`)."""
+    from .simple import ARGUMENT_CHARS, BASIS, COVERAGE, NOTE_CHARS
+    given = given if isinstance(given, dict) else {}
+    why: list[str] = []
+
+    def text(v, what: str) -> str:
+        if v is None or isinstance(v, str):
+            return (v or "").strip()
+        why.append(f"{what} is not text")
+        return ""
+
+    cov, basis = text(given.get("coverage"), "the coverage"), text(given.get("basis"), "the basis")
+    argument = text(given.get("argument"), "the argument")
+    would = text(given.get("would_decide"), "what would decide it")
+    b = given.get("bridge")
+    if b is not None and not isinstance(b, dict):
+        why.append("a bridge is {theorem, target}")
+    b = b if isinstance(b, dict) else {}
+    bridge = {k: text(b.get(k), f"the bridge's {k}") for k in ("theorem", "target")}
+    if not (cov or basis or argument or would or any(bridge.values())):
+        return None, why
+    out = {"coverage": cov or None}
+    if u.get("kind") == "step":
+        why.append("a review of a proof step records whether the step holds, not a coverage")
+    if cov and cov not in COVERAGE:
+        why.append(f"coverage {cov!r} is not one of: {', '.join(COVERAGE)}")
+    group = verdict_group(u, verdict)
+    if cov in COVERAGE and group in COVERAGE_FOR and cov not in COVERAGE_FOR[group]:
+        why.append(f"coverage {cov!r} does not agree with the verdict {verdict!r}: with it the "
+                   f"coverage is {' or '.join(COVERAGE_FOR[group])}")
+    if basis:
+        out["basis"] = basis
+        if basis not in BASIS:
+            why.append(f"basis {basis!r} is not one of: {', '.join(BASIS)}")
+        if not cov:
+            why.append("a basis says how a coverage is supported: give the coverage too")
+    if argument:
+        out["argument"] = argument
+        if basis != "reviewed_composition":
+            why.append("an argument belongs to a reviewed composition (basis "
+                       "reviewed_composition)")
+        if len(argument) > ARGUMENT_CHARS:
+            why.append(f"the argument is longer than {ARGUMENT_CHARS} characters")
+    if any(bridge.values()) and basis != "checked_bridge":
+        why.append("a bridge belongs to a checked bridge (basis checked_bridge)")
+    if basis == "checked_bridge":
+        lean = u["lean"] if isinstance(u.get("lean"), list) and u["lean"] else [u.get("name")]
+        if not all(bridge.values()):
+            why.append("a checked bridge names its theorem and its target")
+        elif bridge["theorem"] not in lean:
+            why.append(f"the bridge theorem {bridge['theorem']} is not one of the unit's "
+                       f"declarations ({', '.join(map(str, lean))})")
+        # The version of the target the reviewer was shown, when the build checks this bridge.
+        pin = b.get("target_fingerprint")
+        out["bridge"] = {**bridge, "target_fingerprint": pin if isinstance(pin, str) and pin
+                         else None}
+    if would:
+        out["would_decide"] = would
+        if cov != "unresolved":
+            why.append("what would decide it belongs to an unresolved coverage")
+        if len(would) > NOTE_CHARS:
+            why.append(f"what would decide it is longer than {NOTE_CHARS} characters")
+    return out, why
 
 
 def parse_reviewer(who: str, same_family: str = "unknown") -> dict:
@@ -309,11 +396,13 @@ class Session:
         return self.lean_text(u)
 
     def decide(self, uid: str, verdict: str, comparison: str, detail: str = "",
-               witness: str = "") -> None:
+               witness: str = "", coverage: dict | None = None) -> None:
+        """Step 2's record: the verdict, the comparison and, with them, the reviewer's coverage
+        (`correspondence`), all before the author's review is shown."""
         u = self.unit(uid)
         d = self.draft(u, "compare")
         table = STEP_VERDICTS if u["kind"] == "step" else VERDICTS
-        group = next((g for g, vs in table.items() if verdict in vs), None)
+        group = verdict_group(u, verdict)
         if group is None:
             raise ReviewError(f"verdict {verdict!r} is not one of: "
                               + ", ".join(v for vs in table.values() for v in vs))
@@ -323,9 +412,26 @@ class Session:
             raise ReviewError(f"verdict {verdict!r} needs --detail")
         if not comparison.strip():
             raise ReviewError("the comparison is empty")
+        if isinstance(coverage, dict) and isinstance(coverage.get("bridge"), dict):
+            coverage = {**coverage, "bridge": {**coverage["bridge"],
+                                               "target_fingerprint": self.target_pin(
+                                                   u, coverage["bridge"])}}
+        cor, why = correspondence(u, verdict, coverage)
+        if why:
+            raise ReviewError("; ".join(why))
         d.update(group=group, verdict=verdict, detail=detail, comparison=comparison,
-                 witness=witness, decided_at=now(), stage="author")
+                 witness=witness, correspondence=cor, decided_at=now(), stage="author")
         self.save()
+
+    def target_pin(self, u: dict, bridge: dict) -> str | None:
+        """The version of a bridge's target in this build (`target_fingerprint`), when the links
+        of one of the unit's claims record that bridge and the build checked it; it is read
+        from the build's data and shown to no one."""
+        for c in u.get("claims") or []:
+            b = ((self.site.chunk(c["id"]) or {}).get("correspondence") or {}).get("bridge") or {}
+            if (b.get("theorem"), b.get("target")) == (bridge.get("theorem"), bridge.get("target")):
+                return (b.get("current") or {}).get("target_fingerprint")
+        return None
 
     def author(self, uid: str, as_json: bool = False) -> str | dict:
         u = self.unit(uid)
@@ -381,8 +487,9 @@ UNRESOLVED_BODY = ("The reviewer could not determine whether the Lean statement 
                    "paper says; this is an open question.")
 
 
-def issue_draft(u: dict, verdict: str, detail: str) -> dict | None:
-    """The issue a maintainer may file for a verdict, as the reader's `issueDraft` writes it."""
+def issue_draft(u: dict, verdict: str, detail: str, cor: dict | None = None) -> dict | None:
+    """The issue a maintainer may file for a verdict, as the reader's `issueDraft` writes it.
+    An open question carries what would decide it, when the report's coverage (`cor`) says."""
     if u.get("kind") == "step":
         return step_issue_draft(u, verdict, detail)
     kind = DRAFT_KIND.get(verdict)
@@ -392,9 +499,11 @@ def issue_draft(u: dict, verdict: str, detail: str) -> dict | None:
     suffix = f" ({claims})" if claims else ""
     detail = (detail or "").strip()
     if kind == "unresolved question":
+        would = ((cor or {}).get("would_decide") or "").strip()
         return {"kind": kind, "title": f"{u['name']}: open question{suffix}",
                 "body": f"Review unit `{u['id']}`, verdict **{verdict}**. {UNRESOLVED_BODY}"
-                        + (f"\n\n**Open question.** {detail}" if detail else "")}
+                        + (f"\n\n**Open question.** {detail}" if detail else "")
+                        + (f"\n\n**Would decide it.** {would}" if would else "")}
     return {"kind": kind, "title": f"{u['name']}: {verdict}{suffix}",
             "body": f"Review unit `{u['id']}`, verdict **{verdict}**.\n\n{detail}".strip()}
 
@@ -436,7 +545,10 @@ def report(index: dict, u: dict, d: dict, reviewer: dict, disagreements: str) ->
         "comparison": {"text": d["comparison"], "witness": d.get("witness") or "",
                        "checklist": {}, "decided_at": d["decided_at"]},
         "verdict": {"group": d["group"], "value": d["verdict"], "detail": d.get("detail") or ""},
+        # Recorded with the verdict; None when the reviewer recorded no coverage.
+        "correspondence": d.get("correspondence"),
         "author_review": {"shown_at": d["author_shown_at"], "disagreements": disagreements},
         "submitted_at": now(),
-        "issue_draft": issue_draft(u, d["verdict"], d.get("detail") or ""),
+        "issue_draft": issue_draft(u, d["verdict"], d.get("detail") or "",
+                                   d.get("correspondence")),
     }

@@ -10,6 +10,9 @@ it now is, or that the acceptance rules cannot count as an independent review:
   report was made at, and the manuscript must still match the pin of each passage read;
 * the verdict must be faithful, faithful with representation choices (listed), or broader (with
   the instantiation that gives the printed claim);
+* the reviewer's coverage, when the report records one (`correspondence`), must be one the
+  review protocol writes, and not unresolved: an open question records neither a review nor a
+  defect. A report without one is promoted as before;
 * the reading must have been locked before the verdict, and the verdict recorded before the
   author's review was shown;
 * the reviewer must not be an author of the statements, and a model of the same family as the
@@ -143,13 +146,17 @@ def check_report(r: dict, body: dict, cfg: Config, accept_same_family: bool,
         if pid in papers and papers[pid].get("revision") != revn:
             why.append(f"paper {pid} is at another revision than the one reviewed")
     v = r["verdict"]["value"]
-    if v not in (STEP_ACCEPTABLE if step else ACCEPTABLE):
+    if v == "cannot determine":
+        why.append("verdict 'cannot determine' is not one that is recorded as a review: it "
+                   "leaves an open question, and no defect")
+    elif v not in (STEP_ACCEPTABLE if step else ACCEPTABLE):
         why.append(f"verdict {v!r} is not one that is recorded as a review")
     elif v in (STEP_NEEDS_DETAIL if step else NEEDS_DETAIL) and \
             not r["verdict"].get("detail", "").strip():
         why.append(f"verdict {v!r} needs its detail ("
                    + ("the argument or the failing case" if step else
                       "representation choices or instantiation") + ")")
+    why += coverage_refusals(r)
     if not r["reading"].get("text", "").strip():
         why.append("the report has no reading of the paper")
     t = [r["reading"].get("locked_at"), r["comparison"].get("decided_at"),
@@ -171,6 +178,45 @@ def check_report(r: dict, body: dict, cfg: Config, accept_same_family: bool,
     if not re.fullmatch(r"\S+", rid):
         why.append(f"reviewer id {rid!r} has spaces")
     return why
+
+
+def coverage_refusals(r: dict) -> list[str]:
+    """Why the reviewer's coverage (the report's `correspondence`, recorded with the verdict)
+    keeps the report from being promoted: a record the review protocol does not write
+    (`review_cli.correspondence`), or an unresolved coverage, which is an open question and records
+    neither a review nor a defect. A report without one is promoted as before: its coverage is
+    not recorded, and the marker is the same either way."""
+    from .review_cli import correspondence
+    cor = r.get("correspondence")
+    if cor is None:
+        return []
+    if not isinstance(cor, dict):
+        return ["the report's coverage is not a record the review protocol writes"]
+    verdict = (r.get("verdict") or {}).get("value")
+    _, problems = correspondence(r.get("unit") or {}, verdict, cor)
+    why = [f"the report's coverage: {p}" for p in problems]
+    if cor.get("coverage") == "unresolved" and verdict != "cannot determine":
+        why.append("the reviewer left the coverage unresolved: an open question records no "
+                   "review, and no defect")
+    return why
+
+
+def coverage_text(r: dict) -> str | None:
+    """The reviewer's coverage in words, for the maintainer's plan and the archived text block;
+    None when the report records none."""
+    from .simple import BASIS_WORDS, COVERAGE_WORDS
+    cor = r.get("correspondence")
+    if not isinstance(cor, dict) or not cor.get("coverage"):
+        return None
+    cov, basis = cor["coverage"], cor.get("basis")
+    out = COVERAGE_WORDS.get(cov, repr(cov)) if isinstance(cov, str) else repr(cov)
+    if basis:
+        out += ", " + (BASIS_WORDS.get(basis, repr(basis)) if isinstance(basis, str)
+                       else repr(basis))
+    b = cor.get("bridge") if isinstance(cor.get("bridge"), dict) else {}
+    if cor.get("basis") == "checked_bridge" and b:
+        out += f" ({b.get('theorem')} for {b.get('target')}, as the reviewer records it)"
+    return out
 
 
 def step_claim(body: dict, u: dict) -> dict | None:
@@ -236,8 +282,21 @@ def report_text(r: dict, cur: dict) -> str:
         f"Witness: {r['comparison'].get('witness') or '—'}",
         f"Verdict: {r['verdict']['value']}"
         + (f" — {r['verdict']['detail']}" if r['verdict'].get('detail') else ""),
+        *_coverage_lines(r),
         f"Disagreements with the author's review (shown {r['author_review']['shown_at']}): "
         f"{r['author_review'].get('disagreements') or 'none'}", ""])
+
+
+def _coverage_lines(r: dict) -> list[str]:
+    """The text block's lines for the reviewer's coverage: none when the report records none, so
+    an older report's block is as it was."""
+    head = coverage_text(r)
+    if head is None:
+        return []
+    cor = r["correspondence"]
+    return [f"Coverage (recorded with the verdict): {head}",
+            *([f"Argument: {cor['argument']}"] if cor.get("argument") else []),
+            *([f"Would decide it: {cor['would_decide']}"] if cor.get("would_decide") else [])]
 
 
 def target_file(cfg: Config, r: dict, reviews) -> tuple[Path, int | None]:

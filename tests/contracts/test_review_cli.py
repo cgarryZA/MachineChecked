@@ -10,7 +10,7 @@ import pytest
 from conftest import build, needs_lean, needs_tex
 from prooflens import cli
 from prooflens import promote as pr
-from prooflens.review_cli import issue_draft, report
+from prooflens.review_cli import correspondence, issue_draft, report
 
 UNIT = "def:Toy.triangle"
 WHO = ["--as", "human:Test-Referee"]
@@ -48,7 +48,11 @@ def test_a_unit_from_the_queue_to_a_promotable_report(toy, tmp_path, monkeypatch
     assert "Toy.triangle" in run(capsys, "show", UNIT)
     assert "needs step 'author'" in refused(capsys, "author", UNIT)
     assert "needs --detail" in refused(capsys, "decide", UNIT, "broader", str(comparison))
-    run(capsys, "decide", UNIT, "faithful", str(comparison))
+    # The coverage is recorded with the verdict, and agrees with it.
+    assert "does not agree with the verdict 'faithful'" in refused(
+        capsys, "decide", UNIT, "faithful", str(comparison), "--coverage", "unresolved")
+    run(capsys, "decide", UNIT, "faithful", str(comparison), "--coverage", "full",
+        "--basis", "direct")
     assert "read the author's review first" in refused(capsys, "submit", UNIT, str(none))
     run(capsys, "author", UNIT)
     run(capsys, "submit", UNIT, str(none))
@@ -61,6 +65,7 @@ def test_a_unit_from_the_queue_to_a_promotable_report(toy, tmp_path, monkeypatch
     r = reports[0]
     assert r["reading"]["locked_at"] <= r["comparison"]["decided_at"] <= \
         r["author_review"]["shown_at"] <= r["submitted_at"]
+    assert r["correspondence"] == {"coverage": "full", "basis": "direct"}
     (_, _, why), = pr.plan(cfg, reports)
     assert not why, why
 
@@ -132,6 +137,63 @@ def test_issue_drafts_are_those_the_reader_writes(case):
     assert issue_draft(DRAFTS["unit"], case["verdict"], case["detail"]) == case["draft"]
 
 
+COVER = json.loads((Path(__file__).resolve().parents[1] / "fixtures" / "review"
+                    / "report-coverage.json").read_text(encoding="utf-8"))
+
+
+@pytest.mark.parametrize("case", COVER["cases"], ids=lambda c: c["name"])
+def test_a_report_records_coverage_as_the_reader_does(case):
+    """The command line records, or refuses, the coverage of
+    tests/fixtures/review/report-coverage.json as web/tests/review.test.mjs checks the reader
+    does: the coverage agrees with the verdict, and the basis is recorded separately."""
+    cor, why = correspondence(COVER["units"][case["unit"]], case["verdict"], case["given"])
+    assert bool(why) == bool(case.get("refused")), why
+    if not case.get("refused"):
+        assert cor == case["correspondence"]
+
+
+def test_a_report_without_coverage_promotes_as_before_and_unresolved_never_does():
+    """An older report has no coverage: nothing about it changes, and nothing is guessed from its
+    verdict. A report whose coverage is unresolved is refused as an open question, whatever its
+    verdict, and never as a defect."""
+    unit = {"id": "spec:A.b", "kind": "spec", "name": "A.b", "lean": ["A.b"], "claims": []}
+    old = {"unit": unit, "verdict": {"group": "cannot", "value": "cannot determine"}}
+    assert pr.coverage_refusals(old) == [] and pr.coverage_text(old) is None
+    assert pr.coverage_refusals({**old, "correspondence": None}) == []
+    odd = {"unit": unit, "verdict": {"group": "matches", "value": "faithful"},
+           "correspondence": {"coverage": "unresolved"}}
+    why = pr.coverage_refusals(odd)
+    assert any("does not agree with the verdict" in w for w in why)
+    assert any("unresolved: an open question records no review, and no defect" in w for w in why)
+    assert not any("defect" in w and "no defect" not in w for w in why)
+    assert pr.coverage_refusals({**odd, "correspondence": "full"}) == [
+        "the report's coverage is not a record the review protocol writes"]
+    ok = {**odd, "correspondence": {"coverage": "full", "basis": "reviewed_composition",
+                                    "argument": "Chain the two bounds."}}
+    assert pr.coverage_refusals(ok) == []
+    assert pr.coverage_text(ok) == "every clause, by the auditor's composition"
+    from prooflens.promote import report_text
+    r = {**ok, "unit": {**unit, "claims": ["T:x"]}, "pins": {"fingerprint": "f"},
+         "reviewer": {"id": "human:A", "kind": "human"}, "submitted_at": "t",
+         "reading": {"text": "r", "locked_at": "t"},
+         "comparison": {"text": "c", "decided_at": "t"},
+         "verdict": {"value": "faithful", "detail": ""},
+         "author_review": {"shown_at": "t", "disagreements": "none"}}
+    text = report_text(r, {"legacy_hash": "0" * 32})
+    assert "Coverage (recorded with the verdict): every clause, by the auditor's composition" \
+        in text and "Argument: Chain the two bounds." in text
+    assert "Coverage" not in report_text({k: v for k, v in r.items() if k != "correspondence"},
+                                         {"legacy_hash": "0" * 32})
+
+
+def test_an_open_question_s_draft_says_what_would_decide_it():
+    unit = {**DRAFTS["unit"], "kind": "statement"}
+    d = issue_draft(unit, "cannot determine", "Is n allowed to be 0?",
+                    {"coverage": "unresolved", "would_decide": "The paper's Section 1."})
+    assert d["kind"] == "unresolved question"
+    assert d["body"].endswith("\n\n**Would decide it.** The paper's Section 1.")
+
+
 def test_cannot_determine_is_an_open_question_not_a_defect():
     """A reviewer who cannot decide leaves an open question: the report's issue draft says so,
     keeps the question, and never calls it a defect."""
@@ -146,3 +208,5 @@ def test_cannot_determine_is_an_open_question_not_a_defect():
     assert "defect" not in json.dumps(d) and "Is n allowed to be 0?" in d["body"]
     assert r["verdict"] == {"group": "cannot", "value": "cannot determine",
                             "detail": "Is n allowed to be 0?"}
+    # No coverage was recorded, and none is read from the verdict.
+    assert r["correspondence"] is None

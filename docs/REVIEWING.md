@@ -12,7 +12,7 @@ Each review has three stages:
 
 **1. Read the paper.** Before the Lean statement is revealed, write an independent interpretation of the setting, hypotheses, quantifiers, conclusion and any ambiguity. The app records a snapshot when you move on.
 
-**2. Compare with Lean.** Inspect the elaborated Lean proposition, relevant definitions, quantifier order and witnesses. A short checklist names what to compare (the setting, each hypothesis, quantifiers and their order, the definitions relied on, the conclusion, constants, and any result or axiom taken as an assumption; for a definition, the object, its parameters and its conventions at edge cases); marking each item *matches*, *differs* or *unsure* is optional and is kept in the report. Record how it compares with the paper. The review protocol has eight precise verdicts, grouped in the interface under *Matches*, *Problem* and *Cannot determine*.
+**2. Compare with Lean.** Inspect the elaborated Lean proposition, relevant definitions, quantifier order and witnesses. A short checklist names what to compare (the setting, each hypothesis, quantifiers and their order, the definitions relied on, the conclusion, constants, and any result or axiom taken as an assumption; for a definition, the object, its parameters and its conventions at edge cases); marking each item *matches*, *differs* or *unsure* is optional and is kept in the report. Record how it compares with the paper. The review protocol has eight precise verdicts, grouped in the interface under *Matches*, *Problem* and *Cannot determine*. With the verdict you may record the coverage and its basis ([below](#coverage-with-the-verdict)).
 
 **3. Read the author's review.** Only after recording your verdict does the queue show the existing author review. Record disagreements alongside your initial interpretation.
 
@@ -26,7 +26,7 @@ machinechecked review next                          # the next unit to review, a
 machinechecked review read UNIT                     # step 1: the paper's statement only
 machinechecked review lock UNIT reading.md          # locks your reading
 machinechecked review show UNIT                     # step 2 (refused before lock): the Lean
-machinechecked review decide UNIT VERDICT comparison.md [--detail detail.md]
+machinechecked review decide UNIT VERDICT comparison.md [--detail detail.md] [--coverage C ...]
 machinechecked review author UNIT                   # step 3 (refused before decide)
 machinechecked review submit UNIT disagreements.md  # finishes the report
 machinechecked review status
@@ -350,8 +350,39 @@ records read-only on the claim, under **Auditors' readings**; they change no sta
 
 A saved report carries an issue draft for the maintainer: an explanatory note for representation
 choices or a broader statement, a defect for a problem verdict, and an open question for *Cannot
-determine*, with the reviewer's question. The review page and the command line write the same
-drafts.
+determine*, with the reviewer's question and what would decide it. The review page and the
+command line write the same drafts.
+
+### Coverage with the verdict
+
+With the verdict, record how far the unit's Lean states the claim and, separately, how that is
+supported, in the words of the links file and of a workspace finding. The coverage agrees with
+the verdict:
+
+| Verdict | Coverage |
+|---|---|
+| *Matches* | `full` (every clause) or `partial` (part of the claim) |
+| *Problem* | `partial`, `changed` (states it differently) or `related` (a related result) |
+| *Cannot determine* | `unresolved`: the verdict's detail is the open question |
+
+The basis is `direct` (one Lean statement), `reviewed_composition` (your argument combining the
+unit's declarations, which Lean has not checked) or `checked_bridge` (one of the unit's theorems
+whose type Lean checks is exactly a target proposition you read against the paper). Both are
+optional, and both are recorded before the author's review is shown:
+
+```sh
+machinechecked review decide link:thm:four broader comparison.md --detail detail.md \
+  --coverage full --basis reviewed_composition --argument argument.md
+machinechecked review decide link:thm:three faithful comparison.md \
+  --coverage full --basis checked_bridge --bridge Cover.three_even Cover.Spec.three_even
+machinechecked review decide link:thm:double "cannot determine" comparison.md \
+  --detail question.md --coverage unresolved --would-decide decide.md
+```
+
+The review page offers the same choices under the verdict. A report records them as its
+`correspondence`; a report without one records no coverage, and none is read from its verdict.
+A review of a proof step records whether the step holds, and no coverage. Coverage and basis
+change no status, and promotion writes the same marker with them or without them.
 
 A review can start before a theorem is proved, once its formal statement exists. The queue lists the claims that still await one.
 
@@ -408,11 +439,14 @@ The maintainer reads the report and decides whether to promote its review marker
 
 In zero configuration, put exported report files in the project's `machinechecked-reviews/`
 folder and build again. Each statement shows its reports under its links: the verdict, the
-reviewer as recorded, the comparison and the locked reading. A report pins the text of the
-statement it read; it is marked when the paper now prints another text, when it pins none, or
-when the claim now links other declarations or their statements changed since it was recorded.
-Reports are shown as their reviewers wrote them and change no status; `check --json` lists them
-per claim.
+coverage recorded with it, the reviewer as recorded, the comparison and the locked reading. A
+report pins the text of the statement it read; it is marked when the paper now prints another
+text, when it pins none, or when the claim now links other declarations or their statements
+changed since it was recorded. A report's checked bridge reads as one while the report is
+current, the claim's links record the same bridge, Lean checks it and its target is the version
+the reviewer was shown; otherwise it reads as the reviewer's composition, saying what it was
+recorded as and why. Reports are shown as their reviewers wrote them and change no status;
+`check --json` lists them per claim, with their coverage.
 
 ## Maintainer acceptance
 
@@ -424,7 +458,7 @@ machinechecked review promote machinechecked-reviews-....json
 
 A directory of reports may be given instead of the files: it stands for the `*.json` files directly in it, in name order.
 
-Promotion checks that the manuscript, the passages read (their digests, pinned when the reading was locked) and the formal statements still match the review pins, that the review stages were recorded in the required order, and that the verdict is eligible. It displays the planned changes and requires the maintainer's decision. Model-family and author restrictions still apply. A report whose reading was not blind is refused unless the maintainer passes `--allow-revealed`.
+Promotion checks that the manuscript, the passages read (their digests, pinned when the reading was locked) and the formal statements still match the review pins, that the review stages were recorded in the required order, and that the verdict is eligible. An open question stays open: a report whose verdict is *Cannot determine*, or whose coverage is unresolved, records neither a review nor a defect, and promotion refuses it, as it refuses a coverage the protocol does not write. It displays the planned changes, with each report's coverage, and requires the maintainer's decision. Model-family and author restrictions still apply. A report whose reading was not blind is refused unless the maintainer passes `--allow-revealed`.
 
 Promotion records the maintainer’s decision for the reviewed proposition or definition. The marker it writes records the digests of the paper passages read, so a later change to that text reopens the review. A passage the manuscript no longer matches reads as unread until it is pinned again, and promotion refuses a report on it (see [Evidence policy](EVIDENCE_POLICY.md#a-review-is-a-reading-of-a-text), which also says how markers written before the digests were recorded are read, and how to add the digests to them).
 Acceptance also requires the claim’s proofs and all other required checks.
