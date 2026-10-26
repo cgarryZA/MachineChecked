@@ -147,8 +147,10 @@ prints one JSON document (`machinechecked/compare@1`) for one claim, read from t
   expression ids, and Lean's checks (axioms, sorry, errors). `lean.candidates` are suggestions
   nobody has confirmed, with their reasons. `lean.definitions` are the definitions the
   statements use, with their type and value; `generated_for` marks the equations Lean generated
-  for one of them. `lean.references` are the references to the paper's numbers that concern
-  the claim, and `lean.numbering` their project-level pattern (as in `check --json`).
+  for one of them, and the tactic script of a tactic default (`(h : 0 < n := by omega)`) with
+  the declaration whose type has the default. `lean.references` are the references to the
+  paper's numbers that concern the claim, and `lean.numbering` their project-level pattern (as
+  in `check --json`).
 - `interpretations` (stage `informed`, the default): the correspondence note, review reports,
   author's review markers, symbol links, the status and the assessment's findings.
 - `retrieval`: what is `included`, what the stage `withheld`, what is `unavailable` because it

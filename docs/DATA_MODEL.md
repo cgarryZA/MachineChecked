@@ -551,9 +551,10 @@ changes no status.
 
 **Currency.** Evidence on a declaration is pinned to its `fingerprint` and to a `digest` of that
 fingerprint with those of the constants Lean generated for it (`N._f`, `N.match_1`, `N.eq_1`), which
-carry a definition's equations. Against a later build, evidence whose digest changed is `stale`,
-and so is every finding or question that cites it, and every finding whose claim's printed text
-changed; the others stay `current` (`unchecked` when the build shows no fingerprint). A fragment
+carry a definition's equations, and of the tactic script of each tactic default its type has.
+Against a later build, evidence whose digest changed is `stale`, and so is every finding or
+question that cites it, and every finding whose claim's printed text changed; the others stay
+`current` (`unchecked` when the build shows no fingerprint). A fragment
 whose region of the source now reads differently (the lines that changed are listed), or whose
 claim's passage changed, is `stale`, and so is an alignment whose declaration changed, and every
 requirement they belong to, and every finding or question that names that requirement. The saved

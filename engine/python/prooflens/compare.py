@@ -145,6 +145,19 @@ class Site:
                     self._store.setdefault(rec["name"], {**rec, "_key": p.stem})
         return self._store
 
+    def script_owners(self) -> dict[str, str]:
+        """The declaration each tactic-default script of the store belongs to: the one whose
+        type has the default (`targets.script_owners`)."""
+        if not hasattr(self, "_scripts"):
+            from .targets import script_owners
+            self._scripts = script_owners(self.store().values())
+        return self._scripts
+
+    def generated(self, name: str, owner: str) -> bool:
+        """Whether `name` is a constant Lean generated for `owner`: by its name (`_generated`),
+        or, for the tactic script of a tactic default, by the records, whatever its name."""
+        return _generated(name, owner) or self.script_owners().get(name) == owner
+
     def queue(self) -> dict | None:
         p = self.data / "review-queue.json"
         return json.loads(p.read_text(encoding="utf-8")) if p.exists() else None
@@ -352,7 +365,7 @@ def _definitions(site: Site, ch_list: list[dict], names: list[str], stage: str,
             continue
         d = _definition(rec, stage)
         d["generated_for"] = next((m for m in [*owners, *names]
-                                   if m != n and _generated(n, m)), None)
+                                   if m != n and site.generated(n, m)), None)
         out.append(d)
     return out
 
@@ -511,7 +524,7 @@ def unit_packet(site: Site, unit: dict, stage: str) -> dict:
             rec = site.store().get(unit["name"])
             if rec:
                 decls.append({**_definition(rec, stage), "role": "definition under review"})
-                names = sorted(m for m in site.store() if _generated(m, rec["name"]))
+                names = sorted(m for m in site.store() if site.generated(m, rec["name"]))
                 names += [n for n in rec.get("uses") or [] if n not in names]
         for d in decls:
             names += [n for n in (d.get("statement") or {}).get("closure") or []
@@ -672,7 +685,7 @@ def query(site: Site, op: str, target: str, limit: int | None = None, after: str
             raise CompareError(f"{target}: this build holds no record of it; `dependencies` "
                                "asks Lean", "unknown-declaration",
                                difflib.get_close_matches(target, list(store), n=5, cutoff=0.5))
-        names = [target] + sorted(m for m in store if _generated(m, target))
+        names = [target] + sorted(m for m in store if site.generated(m, target))
         results = _definitions(site, [], names, "compare")
         prov = "the build's declaration records"
     elif op == "mentions":

@@ -19,6 +19,7 @@ from conftest import needs_lean
 from prooflens import probe
 from prooflens.assess import Assessor
 from prooflens.reviews import Review
+from prooflens.targets import script_owners
 
 
 def decl(name, uses=(), fp=None):
@@ -426,6 +427,11 @@ def test_the_probe_reports_the_tactic_scripts_of_tactic_defaults(tmp_path, toolc
     assert set(w["closure"]) == {"Auto.Pos", "Auto.Pos.mk", "Auto.Pos.pos._autoParam",
                                  "Auto.three"}
     assert {n for n, a in flag.items() if a is False} == set(flag) - scripts
+    # Each script is tied to the declaration whose printed type has its default, on either
+    # version, though only the 4.32 name of the binder's script says whose it is (#371).
+    assert script_owners(lean["decls"].values()) == {
+        "Auto.Small.lt._autoParam": "Auto.Small.mk", "Auto.Pos.pos._autoParam": "Auto.Pos.mk",
+        next(iter(binder)): "Auto.half"}
     claims, findings = run(reviews=[], claims=[AUTO_CLAIM], lean=lean)
     cl = claims["P:half"]["clauses"][0]
     assert sorted(cl["def_reviews"]) == ["Auto.Small", "Auto.Small.mk", "Auto.Small.val",
