@@ -22,6 +22,7 @@ namespace Renum
 
 /-- A triangle number is at most the square of its index. -/
 theorem triangle_le_sq (n : Nat) : triangle n ≤ n ^ 2 := by
+  -- Gauss's closed form (Theorem 4.1 of [Gauss]) is not needed: Corollary 2.3 is enough.
   have h := two_mul_triangle n
   rw [Nat.pow_two]
   have : n * (n + 1) ≤ 2 * (n * n) := by
@@ -44,6 +45,7 @@ theorem gauss_sum (n : Nat) : triangle n = n * (n + 1) / 2 := by
   have h := two_mul_triangle n
   omega
 
+-- Lemma 2.5 of the earlier version: the triangle numbers increase.
 theorem lemma_2_5 (n : Nat) : triangle n ≤ triangle (n + 1) := by
   rw [triangle_succ]; exact Nat.le_add_right _ _
 

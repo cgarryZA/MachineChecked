@@ -142,10 +142,12 @@ carries every step out on the toy example.
    the result later is a fragment with role `later use`, shown apart from the reading.
 2. **Search by content.** `compare --query search CLAIM` ranks the project's declarations by
    what their statements say; `search 'EXPRESSION'` takes a formula or words (both read the
-   zero-configuration build's content index). A paper number in a docstring is a lead:
-   `check --json` lists in `numbering` each number that names another kind of statement
+   zero-configuration build's content index). A paper number in a docstring or comment is a
+   lead: `check --json` lists in `numbering` each number that names another kind of statement
    (`other-kind`), none (`absent`), or a declaration that reads closer to another claim
-   (`stale_lead`). Before concluding that a requirement has no support, look at the results
+   (`stale_lead`), and a suggestion's `number` reason names the references it rests on
+   (`references`). Under `pattern.drift`, treat each cited number as possibly stale and decide
+   by content. Before concluding that a requirement has no support, look at the results
    that use the weaker ones (`--query uses`), the statements about the same objects (`--query
    mentions`) and the stronger wrappers a search reaches through a close match (`signal`
    `uses`).

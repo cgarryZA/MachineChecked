@@ -58,6 +58,10 @@ def test_stale_numbers_are_reported_and_content_finds_each_claim(tmp_path, capsy
                  if s["name"] == "Renum.triangle_bound")
     num = next(r for r in cited["reasons"] if r["signal"] == "number")
     assert num["basis"] == "a possibly stale lead" and "reads closer to Theorem 3.1" in num["text"]
+    # The citation rests on the docstring's reference, which the numbering lists.
+    stale = [o for o in body["numbering"]["references"] if o["id"] in num["references"]]
+    assert [(o["source"]["declaration"], o["reference"], o["status"], o["stale_lead"])
+            for o in stale] == [("Renum.triangle_bound", "Theorem 2.1", "exact", True)]
     # Corollary 3.4 reverses the quantifiers of Theorem 3.1: both are candidates, the
     # difference is said, and neither is linked.
     cor = {s["name"]: s for s in claims["Corollary 3.4"]["suggestions"]}
@@ -88,6 +92,15 @@ def test_stale_numbers_are_reported_and_content_finds_each_claim(tmp_path, capsy
     # A capitalised term or a figure after the number names no other work (#349).
     assert st[("Renum.Bounds", "Lemma 2.8")] == st[("Renum.Bounds", "Lemma 2.9")] \
         == ("absent", False)
+    # Source comments are read too, each on its declaration: one in a proof cites, one just
+    # before a declaration names what it states.
+    comments = [(o["source"]["declaration"], o["reference"], o["source"]["line"], o["role"],
+                 o["status"]) for o in body["numbering"]["references"]
+                if o["source"]["where"] == "comment"]
+    assert comments == [
+        ("Renum.triangle_le_sq", "Theorem 4.1", 25, "cited", "other-source"),
+        ("Renum.triangle_le_sq", "Corollary 2.3", 25, "cited", "absent"),
+        ("Renum.lemma_2_5", "Lemma 2.5", 48, "statement", "absent")]
     o = refs[("Renum.two_mul_triangle", "Lemma 2.2")]
     assert o["source"]["file"] == "Renum/Basic.lean" and o["source"]["line"] == 17
     assert o["content"]["closer"]["number"] == "Lemma 3.2"
