@@ -71,7 +71,10 @@ Report correspondence using its own review records.
 
 With a `machinechecked.toml` (the full assessment), `finding_details` lists each finding
 (`tier`, `code`, `subject`, `message`, and `dismissed` when a warning was dismissed): quote the
-violations and obligations by subject; `findings` holds only their totals.
+violations and obligations by subject; `findings` holds only their totals. A violation saying
+`machinechecked check --fix-modules` lists a module is a declaration whose module is missing from
+`modules`: with the user's agreement, run `check --json --fix-modules`, which edits
+`machinechecked.toml`, checks again and lists the modules it added in `modules_added`.
 
 ## Typical tasks
 

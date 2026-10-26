@@ -119,7 +119,7 @@ so copying or restoring `.machinechecked/` changes no command's release.
 | `dismissals` | as read |
 | `lean` | the probe records: specifications (binders, conclusion, closure, constants, hashes), proofs (exact-type check, axioms), declarations (signature, value, definition content, authored source, doc, hashes, `proposition`: whether the type is a proposition, null when Lean could not tell; `auto_param`: whether it is the tactic script of a tactic default), layering |
 | `tex` | per paper: mode, page size, anchors (env, number, labels, file:line, begin/head/end positions, source hash), files read, source regions, the text of the passage of each claim located by line (`region_text`), and the display excerpts of its claims (`excerpts`, [SOURCE_REGIONS.md](SOURCE_REGIONS.md#display-excerpts)) |
-| `assessment` | per claim: status and clauses (for a proof step, also its `step_review` from its markers); all findings |
+| `assessment` | per claim: status and clauses (for a proof step, also its `step_review` from its markers); all findings; `unlisted_modules` (when there are any): each declaration the probe did not find that project modules missing from `modules` declare, with those modules, which `check --fix-modules` reads |
 
 A pretty-printed Lean term (a binder's type, a conclusion, a signature) is `{text, segments}`:
 each segment is a piece of the text, with `ref` when it names a constant and `var` when it is an

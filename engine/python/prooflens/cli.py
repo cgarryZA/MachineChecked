@@ -664,6 +664,8 @@ def cmd_check(a):
         a.release = None; a.skip_lean = a.skip_tex = False; a.lake = "lake"
         a.no_lean_build = False; a.reuse_lean = False; a.fail_on_violation = True
         return cmd_build(a)
+    if getattr(a, "fix_modules", False):
+        sys.exit(NO_MODULES)
     root, paper = _simple_target(a)
     view = _simple_view(root, paper)
     _print_simple(view["body"])
@@ -700,6 +702,9 @@ def _step_json(c: dict) -> dict:
 
 
 CHECK_NOTE = "Results describe the linked Lean declarations; correspondence reviews compare them with the paper."
+
+NO_MODULES = ("--fix-modules: only a project with a machinechecked.toml lists `modules`; "
+              "zero configuration reads every built module")
 
 
 FINDING_KEYS = ("id", "tier", "code", "subject", "message", "trigger", "file", "line",
@@ -760,6 +765,10 @@ def _check_json(a):
             from .pipeline import build
             cfg = cfgmod.load(_assurance_config(a))
             res = build(cfg, web_dist=_web_dist(a.web))
+            added = None
+            if getattr(a, "fix_modules", False):
+                cfg, res, added = _fix_modules(
+                    cfg, res, lambda c: build(c, web_dist=_web_dist(a.web)))
             idx = res["index"]
             wit = _witness_lists(cfg, res["evidence"])
             claims = [{"id": c["id"], "paper": c["paper"], "number": c.get("number"),
@@ -772,7 +781,8 @@ def _check_json(a):
                    "project": idx.get("project", {}).get("commit"),
                    "findings": idx["findings"]["total"],
                    "finding_details": _finding_details(cfg, res["evidence"]),
-                   "replay": _replay_guard(cfg, res["evidence"])}
+                   "replay": _replay_guard(cfg, res["evidence"]),
+                   **({"modules_added": added} if added is not None else {})}
             num = (res.get("content") or {}).get("numbering")
             if num is not None:
                 out["warnings"] = _reference_warnings(num)
@@ -785,6 +795,8 @@ def _check_json(a):
                                      for pid in num["papers"]}
             failed = bool(idx["findings"]["total"].get("violation"))
         else:
+            if getattr(a, "fix_modules", False):
+                sys.exit(NO_MODULES)
             root, paper = _simple_target(a)
             from .moddocs import stale_doc_message
             from .simple import view_release
@@ -848,9 +860,13 @@ def cmd_build(a):
     dest = _site_dest(a.site, cfg.root) if getattr(a, "site", None) else None
     if getattr(a, "refresh", False):
         _forget_indexes(cfg)
-    res = build(cfg, release=a.release, skip_lean=a.skip_lean, skip_tex=a.skip_tex, lake=a.lake,
-                web_dist=_web_dist(a.web), lean_build=not a.no_lean_build,
-                reuse_lean=a.reuse_lean)
+    def run(cfg):
+        return build(cfg, release=a.release, skip_lean=a.skip_lean, skip_tex=a.skip_tex,
+                     lake=a.lake, web_dist=_web_dist(a.web), lean_build=not a.no_lean_build,
+                     reuse_lean=a.reuse_lean)
+    res = run(cfg)
+    if getattr(a, "fix_modules", False):
+        cfg, res, _ = _fix_modules(cfg, res, run)
     idx = res["index"]
     for pid, s in idx["summary"].items():
         print(f"paper {pid}:")
@@ -895,6 +911,38 @@ def cmd_build(a):
               "(audit.json describes it)")
     if a.fail_on_violation and idx["findings"]["total"].get("violation"):
         sys.exit(1)
+
+
+def _fix_modules(cfg, res, rebuild):
+    """`check --fix-modules`: add to `modules` each project module that the assessment of the
+    build `res` names as the one module declaring a name the probe did not find
+    (`Assessor.not_found`), say what it added, and build again with them. A name that several
+    unlisted modules declare adds none. Returns the configuration, the build and the modules
+    added."""
+    from . import evidence as ev
+    found = ev.load(cfg.out_dir, res["evidence"])["body"]["assessment"].get(
+        "unlisted_modules") or {}
+    names: dict[str, list[str]] = {}
+    for name, mods in found.items():
+        if len(mods) == 1:
+            names.setdefault(mods[0], []).append(name)
+        else:
+            print(f"--fix-modules: {name} is declared in {', '.join(mods[:-1])} and {mods[-1]}, "
+                  "none of which is listed in `modules`: list the one meant")
+    try:
+        added = cfgmod.add_modules(cfg.path, sorted(names))
+    except cfgmod.ConfigError as e:
+        whole = cfg.modules + [m for m in sorted(names) if m not in cfg.modules]
+        sys.exit(f"{e}; list them by hand: modules = {json.dumps(whole, ensure_ascii=False)}")
+    if not added:
+        print("--fix-modules: nothing to add to `modules`")
+        return cfg, res, []
+    print(f"--fix-modules: added to `modules` in {cfg.path.name}:")
+    for m in added:
+        print(f"  {m}, which declares {', '.join(names[m])}")
+    print("--fix-modules: assessing again with them")
+    cfg = cfgmod.load(cfg.path)
+    return cfg, rebuild(cfg), added
 
 
 def cmd_site(a):
@@ -1410,6 +1458,10 @@ def main(argv=None):
                    "found in the project when not given")
     k.add_argument("--json", action="store_true",
                    help="print every claim's status and links as JSON (for scripts and agents)")
+    k.add_argument("--fix-modules", action="store_true",
+                   help="with a machinechecked.toml: add to `modules` each project module that "
+                        "declares a proposition, proof, witness or definition the claims name "
+                        "and the check did not find, then check again")
     k.add_argument("-c", "--config", help=argparse.SUPPRESS)
     k.add_argument("--web", help=argparse.SUPPRESS)
     k.set_defaults(func=cmd_check)
