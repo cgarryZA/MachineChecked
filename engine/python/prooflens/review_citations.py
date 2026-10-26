@@ -65,6 +65,14 @@ def classify(token: str) -> str | None:
     return None
 
 
+def reviewer(m: re.Match) -> str | None:
+    """The reviewer a marker matched by `ANY` names (its `by` attribute), or None: its
+    attributes are group 4 of a live marker and group 8 of a retired one, and a marker may have
+    none."""
+    attrs = (m.group(4) if m.group(1) else m.group(8)) or ""
+    return dict(a.split("=", 1) for a in attrs.split() if "=" in a).get("by")
+
+
 def citations(files: list[Path], root: Path, ignore: list[str] | None = None) -> list[dict]:
     """Every name and path cited in backticks by the review files `files`, with the file (as
     relative to `root`) and line, in file order."""
@@ -78,8 +86,7 @@ def citations(files: list[Path], root: Path, ignore: list[str] | None = None) ->
         # An archived marker is blanked out, keeping its line breaks so that lines keep their
         # numbers.
         text = ARCHIVED.sub(lambda m: re.sub(r"[^\n]", " ", m.group()), text)
-        reviewers = {dict(a.split("=", 1) for a in (m.group(4) or m.group(8)).split()
-                          if "=" in a).get("by") for m in ANY.finditer(text)}
+        reviewers = {by for m in ANY.finditer(text) if (by := reviewer(m))}
         rel = f.resolve().relative_to(root.resolve()).as_posix() \
             if f.resolve().is_relative_to(root.resolve()) else f.name
         # In a removal record: -1 when it is a paragraph, the indentation of its list item
