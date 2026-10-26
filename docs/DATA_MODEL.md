@@ -228,7 +228,7 @@ The current format is `prooflens/manifest@1`; older display data must be rebuilt
 See [the structured status contract](STATUS_CONTRACT.md) for the complete code inventory.
 
 `data/index.json` lists the papers, every claim's `status_code`, derived status/class and anchor, the summary and the
-findings counts; a published audit's index also has the auditors' `main_results`
+findings counts, and the [semantic summary](#semantic-summary-prooflenssemantic-summary1-derived); a published audit's index also has the auditors' `main_results`
 ([below](#published-workspace-records-prooflenspublished-work1-written-by-the-export)). `data/claims/<file>.json` holds one passport: the printed statement
 (`statement_tex`: a statement environment's body, or the pinned passage of a claim located by
 line, each read from the source file that holds it, also when the main file `\input`s or
@@ -354,6 +354,73 @@ later one), `change` and `claims` (`id`, `number` on the other page). The claim 
 for example "Theorem 3 in Latest manuscript (commit abc1234), statement changed", and links
 the number to that claim on the other version's page. A claim the map does not name shows
 nothing. A map never changes a status.
+
+## Semantic summary (`prooflens/semantic-summary@1`), derived
+
+`data/index.json` has `semantic`, one summary of the semantic work the audit records, and each
+claim row has `semantic`, what the summary counts of that claim. `engine/python/prooflens/semantic.py`
+computes both from the records the data holds (the claim records, and the published workspace
+records they name); the words for every key are in `data/semantic.json`. A published audit's
+summary (`export`, `build --site`, `check --site`) is computed again from the records it
+publishes, so a record the export leaves out is not counted. `check --json` gives the same
+summary as `semantic` and each claim's facts as its `semantic`; `check` and `build` print it
+in short. The reader's Overview and machinechecked.org show its counts as they are. It makes no
+verdict, score or percentage, no count is added to another, and it is never an input to a
+status.
+
+**Units.** Every count names its unit: `statements` (a claim whose unit is `statement`, other
+than notation), `notation` (a statement whose kind is `notation`) and `proof_steps` (a proof
+equation or passage). A claim's declarations are those that state it: its links (zero
+configuration, and a proof step's links), or its clauses' propositions and definitions (a full
+assessment); a declaration linked twice to one claim counts once.
+
+**Sets of readings.** A reading says how far the Lean states a claim. `sets` lists the sets the
+summary counts, each counted apart and never combined, and `selected` is the one shown first,
+`audit`:
+
+| Set | Its readings |
+|---|---|
+| `audit` | the audit's own: the coverage the links file records with a claim's links (an unlinked claim keeps an `unresolved` reading), or the inventory with a proof step's; `by` lists their authors |
+| `review:<reviewer id>` | one reviewer's latest report of each statement, with the coverage it records with its verdict (zero configuration); `reviewer` as the report records it |
+| `workspace:<id>` | one published workspace's latest submitted finding in force that records a coverage of the whole statement; `mode` and `reviewer` as the workspace records them |
+
+A finding on a clause or a requirement is not a reading of the whole statement: a claim whose
+workspace has only those is counted as `clauses_only`, never as `full`.
+
+| Field | Content |
+|---|---|
+| `audit` | `author`, `release`, `evidence` and `project` (`repository`, `commit`) of the audit summarised |
+| `papers.<id>` | per paper: its `revision` and `paper_version` (an identifier), and the counts below |
+| `inventory` | per unit: `records`, `linked` (with a declaration), `links` (claim and declaration pairs) and `declarations` (distinct); and `proof_equations`, `proof_passages` |
+| `formal` | per unit, how many claims have each `status_code`: the formal status, with its own meaning |
+| `coverage` | per set and unit, each claim once: `full`, `partial`, `changed`, `related`, `unresolved`; `not_recorded` (a review that records no coverage); `stale` (a reading made for another text of the claim or other Lean); `clauses_only`; `not_assessed` |
+| `basis` | per set and unit, the claims counted under one of the five relations, each once: `direct`, `reviewed_composition`, `checked_bridge`, `unspecified` |
+| `currency` | per set and unit, the claims with a reading: `current` (pinned to this build), `unchecked` (this build could not check it), `unpinned` (a links-file reading, which records no version of what it read), `stale` |
+| `review` | per unit, each claim once: for statements and notation `independent`, `author`, `informed`, `stale`, `unchecked`, `none` (no current review of everything it needs); for proof steps the step's review as printed |
+| `findings` | per unit, how many claims have a recorded finding of each kind: `open-question`, `quantitative-difference`, `input-restriction`, `representation`, `other-difference`, `printed-step`; a claim may have several kinds, so these are never added |
+| `digest` | the SHA-256 of the summary and every claim's facts: it changes whenever a reading, a review or a finding changes, also when the Lean and the statuses do not |
+
+A checked bridge counts as `checked_bridge` only while Lean checks it and the target and passage
+are those the auditor read; a bridge Lean does not check counts as `reviewed_composition`, and the
+claim's reading says it was recorded as a checked bridge (`recorded_basis`); a links-file bridge
+whose target or passage changed counts as `stale`. In a full assessment a statement's review is
+read from its clauses' review states (`independent` only when every clause is `reviewed`,
+`stale` when one is pending and a review it needs is stale), in zero configuration from each
+reviewer's latest report: `independent` when a current one records that nothing of the Lean or
+the author's review was shown before its reading was locked (`reading.revealed_by`), `informed`
+when the current ones do not. The finding kinds read: an `unresolved` reading, a *cannot
+determine* report, an `undetermined` step and a difference still `open` (open questions); a
+workspace difference by its feature (constant dependence, derivative order, norm, power, weight
+or index offset; domain, additional assumption or lost case; representation, with its
+resolution; any other); a *faithful with representation choices* report; a *broader*,
+*narrower*, *mismatched*, *vacuous* or *refutation not valid* report (other differences); a step
+false as printed or with a gap. Readings and reports out of date are not counted as findings.
+
+A claim row's `semantic` is `{unit, declarations, readings, review, findings}`. Each reading is
+`{set, coverage, basis, currency, count}` (`count` is the coverage key it is counted under), with
+`recorded_basis`, `by`, `provenance` (`independent` or `informed`), `verdict`, `question` and,
+for `clauses_only`, `clauses` (how many findings) when they apply. The Overview filters by these
+keys, and its address names the filter: `#/r/<release>/overview?set=…&unit=…&coverage=…&basis=…&review=…&finding=…&status=…`.
 
 ## Audit descriptor (`audit.json`), written by the engine
 
@@ -650,7 +717,8 @@ workspace, with `workspace`, `mode`, `reviewer`, the `selected` claims and decla
 may be earlier than the audit's own) and `problems` (what the published build no longer has, as
 above). An entry the published data cannot name (a claim of a paper the export leaves out, or a
 declaration it neither records nor indexes) is counted in `left_out` (`{count, why}`), never
-named. They are readings: no status depends on them.
+named. They are readings: no status depends on them. The index's semantic summary counts each
+workspace's published findings as a set of readings of its own.
 
 A site loading an audit (`load_published_audit`) reads the file the passport names (only
 `work/<the claim's file>`), checks it against the schema and that its `claim` and `release` are

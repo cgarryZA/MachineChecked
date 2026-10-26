@@ -448,6 +448,14 @@ the reviewer was shown; otherwise it reads as the reviewer's composition, saying
 recorded as and why. Reports are shown as their reviewers wrote them and change no status;
 `check --json` lists them per claim, with their coverage.
 
+The Overview and the audit's [semantic summary](DATA_MODEL.md#semantic-summary-prooflenssemantic-summary1-derived)
+count each reviewer's latest report of each statement as a set of readings of its own (**Reviews
+by** the reviewer): its coverage, its basis, and whether it is current. A report that records no
+coverage counts as **Reviewed, coverage not recorded**; one made for another text or other Lean as
+**Out of date**. Two reviewers' readings are never combined. A report is counted as independent
+when it records that nothing of the Lean or the author's review had been shown to its reviewer
+before the reading was locked (`reading.revealed_by` is empty), and as informed otherwise.
+
 ## Maintainer acceptance
 
 In a project with formal review markers, a maintainer can evaluate saved reports with:

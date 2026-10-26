@@ -582,8 +582,15 @@ def review_view(r: dict, links: list[dict], claim: dict) -> dict:
     if why is None and (read is None or read != claim.get("source_sha256")):
         current, why = False, "source-unrecorded" if read is None else "source-changed"
     rv, verdict = r.get("reviewer") or {}, r.get("verdict") or {}
+    seen = (r.get("reading") or {}).get("revealed_by")
     return {"reviewer": {k: rv.get(k) for k in ("id", "kind", "name", "model", "identity",
                                                  "same_family_as_author")},
+            # What the report records its reviewer had seen of the Lean or the author's review
+            # before the reading was locked (`reading.revealed_by`), or None when it records
+            # nothing.
+            "revealed": sorted({e["what"] for e in seen if isinstance(e, dict)
+                                and isinstance(e.get("what"), str)})
+            if isinstance(seen, list) else None,
             "verdict": {"group": verdict.get("group"), "value": verdict.get("value"),
                         "detail": _text(verdict.get("detail"))},
             "reading": _text((r.get("reading") or {}).get("text")),
@@ -2040,7 +2047,11 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
             accept = _one(recs) or ({"errors": ["missing"]} if recs and all(
                 "missing" in (r.get("errors") or []) for r in recs) else None)
             bridge = bridge_evidence(c, entry, accept, _one(linkrecs.get(target, [])), decls)
-        c["correspondence"] = correspondence(c, entry, bridge) if c["links"] else None
+        # A reading describes the linked declarations; an unlinked claim keeps an unresolved
+        # one, whose open question may be whether any Lean states the claim.
+        cor = correspondence(c, entry, bridge)
+        c["correspondence"] = cor if c["links"] or (cor or {}).get("coverage") == "unresolved" \
+            else None
         c["reviews"] = [review_view(r, c["links"], c) for r in reports.get("link:" + c["key"], [])]
         c["references"] = claim_references(c, numbering)
         if c["links"]:
@@ -2215,6 +2226,7 @@ def write_view_site(view: dict, site: Path, web_dist: Path | None,
                          **source_info(root, body["project"]["libs"])},
              "tool": {"name": "machinechecked"},
              "issues": body.get("issues"), "site_url": body.get("site_url"),
+             "author": body.get("author"),
              "formalization": body.get("formalization"),
              "lean": None, "notes": body["notes"],
              "papers": [{"id": "P", "title": body["title"], "mode": body["tex"]["mode"],
