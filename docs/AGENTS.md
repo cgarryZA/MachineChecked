@@ -96,7 +96,10 @@ configuration; with several papers they are absent. Report the violations and ob
 subject and message; they are what blocks a claim from being accepted. `replay` is null when no Comparator replay counts; otherwise it
 gives the record's `guard` (`guarded`, `unguarded`, or `unrecorded` for an older record), the
 number of proofs `replayed`, and a `message` when they were not shown to run under the sandbox
-guard.
+guard. A violation whose message says `machinechecked check --fix-modules` lists a module names
+a declaration in a project module missing from `modules`: `check --json --fix-modules` adds each
+such module to `machinechecked.toml`, checks again, and gives the modules it added in
+`modules_added` (empty when there was nothing to add); what it did is on stderr.
 
 ### What a declaration rests on
 
@@ -141,7 +144,9 @@ prints one JSON document (`machinechecked/compare@1`) for one claim, read from t
   gives the file and line, and `reason` says it in words). Read those in the paper.
 - `lean.declarations`: every linked declaration (or locked statement) with its complete
   statement: `statement.text` exactly as Lean prints it, `binders` and `conclusion` with their
-  expression ids, and Lean's checks (axioms, sorry, errors). `lean.candidates` are suggestions
+  expression ids, `tree` (the whole statement as one tree, where each variable's `scope` says
+  whether the statement establishes it, it is given, or it stands inside an assumption, a
+  negation, an alternative or an equivalence), and Lean's checks (axioms, sorry, errors). `lean.candidates` are suggestions
   nobody has confirmed, with their reasons. `lean.definitions` are the definitions the
   statements use, with their type and value; `generated_for` marks the equations Lean generated
   for one of them. `lean.references` are the references to the paper's numbers that concern
@@ -176,6 +181,7 @@ machinechecked compare --query proof-facts Example.bound --json  # facts inside 
 machinechecked compare --query proof-facts Example.bound --match "C * h"   # ranked by symbols
 machinechecked compare --query uses Toy.IsEven --json          # where it is used, and how
 machinechecked compare --query impact Toy.triangle --json      # which main results use it
+machinechecked workspace main "Theorem 2.5" --as llm:MODEL     # save the main results it traces
 ```
 
 `search` ranks every declaration of the project's built modules, linked or not, by how much of
@@ -209,7 +215,8 @@ reads previews (`complete: false` on such a result: get its statement with `depe
   variable by its index in `locals`, whose `id` is the position of its binder, so two variables
   printed alike in different scopes stay distinct. `location.path` is the application's
   position in the elaborated term; its line is the enclosing declaration's.
-- `scope`, `complete` and `answer`: the modules searched, those not built or not loaded, and
+- `scope`, `complete` and `answer`: the modules searched, those not built, those not loaded
+  (`failed`, each with the first lines of what Lean reported, as `check` gives them), and
   `used`, `no use found in this scope`, or `not traced` when some modules were not searched.
 
 The first `uses` query after a change runs Lean once over the project; later queries reuse the
@@ -218,10 +225,17 @@ answers until a Lean input changes.
 `impact NAME` traces the same references and answers whether each main result uses NAME, with
 one result (`machinechecked/impact@1`):
 
-- `selection`: which main results are traced. By default (`basis` `suggested`) they are the
-  declarations linked to the paper's theorems; `--main NAME`, repeated, names them instead
-  (`basis` `given`), each a declaration or a claim standing for its linked Lean, and
-  `unlinked_claims` lists a named claim that has none.
+- `selection`: which main results are traced, and where the choice comes from. `--main NAME`,
+  repeated, names them (`basis` `given`), each a declaration or a claim standing for its linked
+  Lean. Without it, the main results saved in a workspace are traced (`basis` `saved`, with the
+  `workspace`, `reviewer`, `by`, `at` and `pins`: the release and project commit they were
+  checked against, and a `note` when the build is of another commit). `machinechecked workspace
+  main NAME...` saves them; when several workspaces save some, `--workspace ID` chooses one (the
+  query is refused until it does). Without either, they are the declarations linked to the
+  paper's theorems (`basis` `suggested`). `unlinked_claims` lists a chosen claim with no linked
+  Lean, and `problems` what a saved selection names that the build no longer has (a claim not
+  in its release, a declaration not declared); such a declaration stays a main result, *not
+  traced*.
 - `main_results`: for each, `use` (`proof`, `definition body`, `statement` when it is in the
   statement only, `none`, `not traced`, or `itself`), the `answer` in words ("used by its proof,
   directly; also in its statement", "formalized separately: not used by this main result") and
@@ -332,11 +346,14 @@ machinechecked review next --json            # {"unit": {"id": "link:thm:odd-add
 machinechecked review read link:thm:odd-add --json    # the paper only
 machinechecked review lock link:thm:odd-add reading.md
 machinechecked review show link:thm:odd-add --json    # and the Lean
-machinechecked review decide link:thm:odd-add faithful comparison.md
+machinechecked review decide link:thm:odd-add faithful comparison.md --coverage full --basis direct
 machinechecked review author link:thm:odd-add          # what was recorded before
 machinechecked review submit link:thm:odd-add none.md
 machinechecked review export --out machinechecked-reviews/my-reviews.json
 ```
+
+`decide` records the coverage and its basis with the verdict, both optional
+([Coverage with the verdict](REVIEWING.md#coverage-with-the-verdict)).
 
 Run `compare` on a claim only after its review, or say in the reading that you had: its default
 stage shows the Lean and what others recorded. The steps are saved in your workspace

@@ -14,6 +14,8 @@ Gauss's lemma is classical; the paper's Lemma 2.6 is not formalised here.
 The monotonicity of Lemma 2.5 in Section 2 is `lemma_2_5`.
 
 Lemma 2.7 in refined form is not needed.
+
+Lemma 2.8 in Euclidean space and Lemma 2.9 in Figure 1 are not needed either.
 -/
 
 namespace Renum

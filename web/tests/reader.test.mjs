@@ -182,11 +182,28 @@ const READINGS = {
                                  pinned: {}, current: {} } },
   "P:thm:shapes": { coverage: "unresolved", question: "Is the paper's set finite?", would_decide: "Its Section 1." },
 };
+// And reviewers' reports with the coverage recorded with their verdicts, as `simple.review_view`
+// shows them: a checked bridge the engine reads as the reviewer's composition, and an unresolved
+// coverage whose question is the verdict's detail.
+const REPORT = (verdict, correspondence) => ({
+  reviewer: { id: "human:B-Reviewer", kind: "human", name: "B. Reviewer", identity: "self-declared" },
+  verdict, reading: "A synthetic reading.", comparison: "A synthetic comparison.", checklist: {},
+  locked_at: "2026-01-01T00:00:00Z", submitted_at: "2026-01-01T00:05:00Z", reviewed: ["Shape.layout"],
+  current: true, correspondence: { refs: [], argument: null, next_step: null, bridge: null, question: null, would_decide: null, ...correspondence } });
+const REPORTS = {
+  "P:thm:layout": [REPORT({ group: "matches", value: "faithful", detail: "" },
+    { coverage: "full", basis: "reviewed_composition", refs: ["Shape.layout"], next_step: "State the combination as one Lean result.",
+      recorded_basis: "checked_bridge", basis_reason: ["the target is not the version the reviewer read"],
+      bridge: { theorem: "Shape.layout", target: "Shape.Spec.layout" } })],
+  "P:thm:shapes": [REPORT({ group: "cannot", value: "cannot determine", detail: "Is the set finite?" },
+    { coverage: "unresolved", basis: null, question: "Is the set finite?", would_decide: "Its Section 1." })],
+};
 for (const c of SHAPE.claims) {
   const f = path.join(root, "basis", "data", "claims", c.file);
   const chunk = JSON.parse(fs.readFileSync(f, "utf8"));
   chunk.correspondence = { source: "confirmed", basis: null, refs: [], argument: null, bridge: null, question: null,
                            would_decide: null, confidence: null, note: "", by: "A. Auditor", ...READINGS[c.id] };
+  chunk.reviews = REPORTS[c.id] || [];
   fs.writeFileSync(f, JSON.stringify(chunk));
 }
 
@@ -434,6 +451,13 @@ async function check(name, width, fn, height = 900) {
   }
 }
 
+// Whether `cond` holds within `ms` milliseconds, asked every 25 ms: for a state of this process
+// (a request the test server received) that the page changes in its own time.
+const until = async (cond, ms = 5000) => {
+  for (const end = Date.now() + ms; !cond() && Date.now() < end;) await new Promise((r) => setTimeout(r, 25));
+  return cond();
+};
+
 // The Lean names the open claim's panel lists.
 const panelNames = async (pg) => (await pg.locator("aside .lean .block .decl code").allTextContents()).map((s) => s.trim());
 const open = async (pg, claim) => {
@@ -509,28 +533,40 @@ await check("a long Lean name stays inside the claim panel on a phone", 390, asy
 
 // The paper pane shows a claim's band when the claim is chosen, wherever it is in a long paper,
 // even though choosing it opens the side panel and narrows the pages.
-const inView = (pg, id) => pg.evaluate((id) => {
+const bandInView = (id) => {
   const band = document.querySelector(`[data-claim="${CSS.escape(id)}"]`);
   const pane = band?.closest(".paperpane");
   if (!band || !pane) return false;
   const b = band.getBoundingClientRect(), p = pane.getBoundingClientRect();
   return b.top >= p.top - 1 && b.top <= p.bottom;
-}, id);
+};
+// After `n` frames are drawn: the layout a change set off (a resize, the scroll that follows it)
+// has run.
+const frames = (pg, n) => pg.evaluate((n) => new Promise((done) => {
+  const next = (k) => (k ? requestAnimationFrame(() => next(k - 1)) : done());
+  next(n);
+}), n);
+// The band comes into view within a bounded time, and is still in view once the frames after
+// it are drawn.
+const comesIntoView = async (pg, id) => {
+  if (!(await pg.waitForFunction(bandInView, id, { timeout: 10000 }).then(() => true, () => false))) return false;
+  await frames(pg, 2);
+  return pg.evaluate(bandInView, id);
+};
 const ids = ["P:theorem-2", "P:theorem-15", "P:theorem-28"];
 await check("a claim chosen in a long paper stays in view (contents and deep links)", 1300, async (pg) => {
   await pg.goto(origin + "/long/");
   await pg.waitForSelector("nav.toc li");
   for (const id of [...ids, ids[0]]) {
     await pg.locator(".reader-layout > nav.toc strong", { hasText: new RegExp(`^Theorem ${id.split("-")[1]}$`) }).click();
-    await pg.waitForTimeout(600);
-    assert.ok(await inView(pg, id), `${id} not in view after choosing it`);
+    await pg.locator("aside h1", { hasText: new RegExp(`^Theorem ${id.split("-")[1]}\\b`) }).waitFor();
+    assert.ok(await comesIntoView(pg, id), `${id} not in view after choosing it`);
   }
   for (const id of ids) {
     const cold = await browser.newPage({ viewport: { width: 1300, height: 900 } });
     await cold.goto(origin + `/long/#/r/paper/read/P/${encodeURIComponent(id)}`);
     await cold.waitForSelector("aside h1");
-    await cold.waitForTimeout(800);
-    assert.ok(await inView(cold, id), `${id} not in view when opened by its link`);
+    assert.ok(await comesIntoView(cold, id), `${id} not in view when opened by its link`);
     await cold.close();
   }
 });
@@ -778,6 +814,31 @@ for (const width of [1300, 390]) {
     await pg.selectOption(FORMAL, "");
     assert.equal(new URL(pg.url()).searchParams.get("project"), null, "the audits together leave the address plain");
     assert.equal(await statusOf(pg, "P:theorem-2"), "formal.refuted.corrected");
+  });
+
+  await check("choosing another audit clears a selection made in the first one's statement", width, async (pg) => {
+    // Both audits state Theorem 1 with a declaration of the same name; an expression selected in
+    // one build names nothing in the other (#73).
+    await pg.route("**/combined/data/claims/*theorem-1*", async (route) => {
+      const response = await route.fetch();
+      const rec = await response.json();
+      const seg = (t) => ({ t });
+      for (const p of Object.values(rec.by_project || {})) {
+        const cl = p.record?.clauses?.[0];
+        if (cl?.statement) cl.statement.conclusion = { id: "/", text: "a + b ≤ b + a",
+          segments: ["a", " + ", "b", " ≤ ", "b + a"].map(seg),
+          terms: [{ id: "/", from: 0, to: 5 }, { id: "/0/1", from: 0, to: 3 }] };
+      }
+      route.fulfill({ response, json: rec });
+    });
+    await pg.goto(origin + `/combined/?project=${encodeURIComponent(CA)}#/r/paper/read/P/P%3Atheorem-1`);
+    const st = pg.locator("aside .view .stmt").first();
+    await st.locator(".p", { hasText: "+" }).first().click();
+    assert.equal((await st.locator(".in").allTextContents()).join(""), "a + b");
+    await pg.selectOption(FORMAL, CB);
+    await pg.waitForFunction(() => document.querySelector("aside [data-status]")?.getAttribute("data-status") === "formal.open");
+    await st.locator(".p", { hasText: "+" }).first().waitFor();
+    assert.equal(await pg.locator("aside .view .stmt .in").count(), 0, "nothing selected in the other audit's statement");
   });
 
   await check("the stars choose the default audit, and the listing's order holds without them", width, async (pg) => {
@@ -1106,6 +1167,28 @@ for (const width of [1300, 390]) {
 }
 
 for (const width of [1300, 390]) {
+  await check("a link to one occurrence of a variable lights that occurrence only", width, async (pg) => {
+    // The probe gives each occurrence of a variable its own identity (`at`) beside the variable's
+    // number (#73); a link may name one occurrence.
+    await pg.route("**/toy/data/claims/*even-add*", async (route) => {
+      const response = await route.fetch();
+      const rec = await response.json();
+      const cl = rec.clauses.find((c) => c.spec === "Toy.PaperSpec.thm_even_add");
+      // An identity no sub-term of the data has: the occurrence's own.
+      const at = "/occurrence-of-b";
+      cl.statement.conclusion.segments = cl.statement.conclusion.segments.map((x) => x.var === 1 ? { ...x, at } : x);
+      rec.symbols = [{ symbol: { tex: "b", occurrence: "all" }, lean: { decl: cl.spec, at }, by: "human:A-Referee", stale: false }];
+      route.fulfill({ response, json: rec });
+    });
+    await toyClaim(pg, "T:thm:even-add");
+    const tex = pg.locator("aside .view .paper .tex");
+    await tex.locator("[data-sym]").first().waitFor();
+    await tex.locator("[data-sym]").first().hover();
+    const lean = pg.locator("aside .view .lean");
+    assert.deepEqual(await lean.locator(".in").allTextContents(), ["b"], "the conclusion's b, not the binder");
+    assert.equal(await lean.locator(".var.hl").count(), 0, "a link to an occurrence is not a link to the variable");
+  });
+
 await check("in the local reader a symbol is linked by choosing it and clicking its variable", width, async (pg) => {
     await pg.goto(origin + `/toyedit/#/r/${TOY.release}/read/T/${encodeURIComponent("T:thm:even-add")}`);
     await pg.waitForSelector("aside .view h1");
@@ -1116,13 +1199,35 @@ await check("in the local reader a symbol is linked by choosing it and clicking 
     await mk.locator(".chip[data-tex='a']").click();
     await pg.locator("aside .view .lean .ribbon .v", { hasText: /^a$/ }).click();
     await mk.locator("input.who").fill("Test Referee");
+    assert.match(await mk.textContent(), /to the variable a of Toy\.PaperSpec\.thm_even_add/);
+    // Saving posts the link, then reloads the page.
+    const sent = posted.length, reloaded = pg.waitForEvent("load").then(() => true, () => false);
     await mk.locator("button", { hasText: "Save link" }).click();
-    await pg.waitForTimeout(500);
+    assert.ok(await until(() => posted.length > sent), "the link is posted");
+    assert.ok(await reloaded, "the page reloads after saving");
+    // The variable is sent by its number: two variables can share a name (#73).
     assert.deepEqual(posted.at(-1), { action: "add", claim: "T:thm:even-add", tex: "a",
-      decl: "Toy.PaperSpec.thm_even_add", var: "a", by: "human:Test-Referee" });
+      decl: "Toy.PaperSpec.thm_even_add", var: "0", by: "human:Test-Referee" });
     // A published audit offers no such control.
     await toyClaim(pg, "T:thm:even-add");
     assert.equal(await pg.locator("aside .mklink").count(), 0);
+  });
+
+  await check("a link that no longer holds says why, and is not drawn", width, async (pg) => {
+    await pg.route("**/toyedit/data/claims/*even-add*", async (route) => {
+      const response = await route.fetch();
+      const rec = await response.json();
+      rec.symbols = [{ symbol: { tex: "b" }, lean: { decl: "Toy.PaperSpec.thm_even_add", term: 3, in: "c" }, by: "human:Old",
+                       stale: true, stale_because: ["positional"] }];
+      route.fulfill({ response, json: rec });
+    });
+    await pg.goto(origin + `/toyedit/#/r/${TOY.release}/read/T/${encodeURIComponent("T:thm:even-add")}`);
+    await pg.waitForSelector("aside .view h1");
+    const mk = pg.locator("aside .mklink");
+    await mk.locator("summary").click();
+    const old = mk.locator("[data-link='b']");
+    assert.match((await old.textContent()).replace(/\s+/g, " "), /\(stale\).*Not shown: it names its Lean object by place and number in an earlier display\. Link it again, or remove it\./);
+    assert.equal(await pg.locator("aside .view .paper .tex [data-sym]").count(), 0, "a stale link is not drawn");
   });
 
   await check("a linked definition keeps its parameters in order, and a recursive one shows its equations", width, async (pg) => {
@@ -1164,7 +1269,7 @@ await check("in the local reader a symbol is linked by choosing it and clicking 
     st = await open("P:thm:assumed");
     const inner = st.locator(".ribbon li.hypothesis .inner");
     assert.equal(await inner.count(), 1);
-    assert.match(await inner.textContent(), /inside this assumption \(for every › then\):\s*there is s/);
+    assert.match(await inner.textContent(), /Inside this assumption:\s*for every\s*d.*if\s*Shape\.Admissible d\s*then\s*there is\s*s/s);
     assert.equal(await inner.locator(".carried.inside .prop").count(), 2);
     assert.equal(await st.locator(".ribbon > li.exists .carried.produced").count(), 1);
     // An established solution is produced under the condition on d.
@@ -1301,6 +1406,27 @@ await check("in the local reader a symbol is linked by choosing it and clicking 
     await pg.waitForFunction(() => decodeURIComponent(location.hash).includes("Shape.layout"));
   });
 
+  await check("a review shows the coverage recorded with its verdict, never more than the engine read", width, async (pg) => {
+    const report = async (id) => {
+      await pg.goto(origin + `/basis/#/r/${SHAPE.release}/read/P/${encodeURIComponent(id)}`);
+      const r = pg.locator("details.review");
+      await r.locator(":scope > summary").click();
+      const box = r.locator(".report-coverage");
+      await box.waitFor();
+      return { text: (await box.textContent()).replace(/\s+/g, " ").trim(), basis: await box.getAttribute("data-basis") };
+    };
+    const bridge = await report("P:thm:layout");
+    assert.equal(bridge.basis, "reviewed_composition");
+    assert.match(bridge.text, /^Every clause, by the auditor's composition \(the reviewer's coverage, recorded with the verdict\)/);
+    assert.match(bridge.text, /Lean has not checked this combination\.\s*Next step: State the combination as one Lean result\./);
+    assert.match(bridge.text, /Recorded as a checked bridge \(Shape\.layout for Shape\.Spec\.layout\); no bridge Lean checks now: the target is not the version the reviewer read\./);
+    assert.doesNotMatch(bridge.text, /through a checked bridge/);
+    const open = await report("P:thm:shapes");
+    assert.equal(open.basis, "unspecified");
+    assert.match(open.text, /^Unresolved/);
+    assert.match(open.text, /Open question: Is the set finite\?\s*Would decide it: Its Section 1\./);
+  });
+
   await check("a \"there is\" inside a conclusion shows its witness's type and scope", width, async (pg) => {
     await pg.goto(origin + `/structure/#/r/${SHAPE.release}/read/P/${encodeURIComponent("P:thm:witnesses")}`);
     const st = pg.locator("aside .view :not(.suggestion) > .stmt").first();
@@ -1327,6 +1453,56 @@ await check("in the local reader a symbol is linked by choosing it and clicking 
     assert.equal(parts.length, 2, parts.join(" | "));
     assert.equal(parts[0], "itisnotthecasethatthereisx:Natsuchthatx<0");
     assert.equal(parts[1], "atleastoneofthefollowingforeveryn:Nat,0≤nif1=1thenthereism:Natsuchthatm=1");
+  });
+
+  await check("each binder reads in its scope: an assumption's own existence stays inside it", width, async (pg) => {
+    const open = async (id) => {
+      await pg.goto(origin + `/structure/#/r/${SHAPE.release}/read/P/${encodeURIComponent(id)}`);
+      const st = pg.locator("aside .view :not(.suggestion) > .stmt").first();
+      await st.locator(".concl").waitFor();
+      return st;
+    };
+    const flat = (t) => t.replace(/\s+/g, "");
+    const reading = async (st, v) => {
+      await st.locator(`.var[data-var='${v}']`).first().click();
+      await pg.mouse.move(0, 0);
+      return (await st.locator(".inspect").textContent()).replace(/\s+/g, " ");
+    };
+    // (h : ∀ x, A x → ∃ y, B x y): the assumption's structure is shown inside it, and its y is
+    // a variable of its own, apart from the y the statement establishes.
+    let st = await open("P:thm:conditional");
+    const within = st.locator(".ribbon li .inner.within");
+    assert.equal(await within.count(), 1, "only the assumption that quantifies shows its structure");
+    assert.equal(flat(await within.textContent()), "Insidethisassumption:foreveryx:Nat,ifAxthenthereisy:NatsuchthatBxy");
+    const rows = (await st.locator(".ribbon > li").allTextContents()).map((t) => t.replace(/\s+/g, " ").trim());
+    assert.match(rows.at(-1), /^there is y ?: ?Nat$/);
+    await within.locator(".var[data-var='7']").first().hover();
+    assert.equal(await st.locator(".var.hl").count(), 1, "only the assumption's y");
+    assert.equal(await st.locator(".concl .var.hl").count(), 0, "not the statement's y");
+    assert.match(await reading(st, 7), /y ?: ?Nat.*Inside an assumption: not chosen by the statement/);
+    assert.match(await reading(st, 5), /y ?: ?Nat.*Chosen by the statement \(there is\)/);
+    // An existence established under a premise, one inside a side of an equivalence and one in
+    // an alternative: each keeps its place.
+    st = await open("P:thm:premised");
+    const parts = (await st.locator(".concl .body > .parts > li").allTextContents()).map(flat);
+    assert.deepEqual(parts, ["ifPthenthereisx:Natsuchthatx=0",
+      "thefollowingareequivalentQthereisn:Natsuchthatn=n",
+      "atleastoneofthefollowingthereisx:Natsuchthatx=1Q"]);
+    // P, Q and hq are 0, 1 and 2; the variables bound inside the conclusion follow them.
+    const vs = await st.locator(".concl .var").evaluateAll((es) => [...new Set(es.map((e) => +e.dataset.var))].filter((v) => v >= 3).sort());
+    assert.deepEqual(vs, [3, 4, 5], "three variables bound inside, two of them named x");
+    assert.match(await reading(st, vs[0]), /Chosen by the statement \(there is\), for the part it belongs to/);
+    assert.match(await reading(st, vs[1]), /Inside one side of an equivalence/);
+    assert.match(await reading(st, vs[2]), /Inside one alternative of an “or”/);
+    // ∃ Φ : G →[Nat] H, A Φ ∧ B Φ: one witness with its whole type, in both parts; each
+    // assumption's Φ is its own.
+    st = await open("P:thm:one-map");
+    const last = (await st.locator(".ribbon > li").allTextContents()).at(-1).replace(/\s+/g, " ").trim();
+    assert.match(last, /^there is Φ ?: ?G →\[Nat\] H$/);
+    await st.locator(".concl .var[data-var='7']").first().hover();
+    assert.equal(await st.locator(".var.hl").count(), 2, "the witness in both of its parts");
+    assert.equal(await st.locator(".ribbon .inner.within").count(), 2);
+    assert.equal(await st.locator(".ribbon .inner.within .var.hl").count(), 0, "not the assumptions' Φ");
   });
 
   await check("clicking inside an expression selects it, and each click widens it", width, async (pg) => {
@@ -1360,6 +1536,24 @@ await check("in the local reader a symbol is linked by choosing it and clicking 
     const there = await lit(exact);
     assert.ok(there.includes("≤"), there);
     assert.equal(await lit(st), there);
+  });
+
+  await check("a selection belongs to its claim: choosing another claim clears it", width, async (pg) => {
+    const go = async (id) => {
+      await pg.goto(origin + `/structure/#/r/${SHAPE.release}/read/P/${encodeURIComponent(id)}`);
+      const st = pg.locator("aside .view :not(.suggestion) > .stmt").first();
+      await st.locator(".concl").waitFor();
+      return st;
+    };
+    let st = await go("P:thm:layout");
+    await st.locator(".concl .parts > li").nth(1).locator(".p", { hasText: "+" }).first().click();
+    const exact = pg.locator("aside .exact pre").first();
+    assert.equal((await exact.locator(".in").allTextContents()).join("").trim(), "n + x");
+    await go("P:thm:witnesses");
+    st = await go("P:thm:layout");
+    await exact.waitFor();
+    assert.equal(await st.locator(".in").count(), 0, "nothing selected in the readable statement");
+    assert.equal(await exact.locator(".in").count(), 0, "nor in the exact Lean");
   });
 
   await check("a name's plain-English note appears only on request, beside the name", width, async (pg) => {
@@ -1729,10 +1923,17 @@ await check("expression controls have names and pane resizing works by keyboard"
   assert.equal(await pages.getAttribute("tabindex"), "0");
   assert.match(await pg.locator("#" + await pages.getAttribute("aria-describedby")).textContent(), /arrow keys, Page Up and Page Down/);
   await pg.locator(".pdf canvas").first().waitFor();
+  // End widened the panel. The pages take their new width a frame later and scroll to keep the
+  // claim in view; until then the pane's position is the one of the earlier width, so it is read
+  // once those frames are drawn.
+  await frames(pg, 2);
   const scroller = await pages.evaluateHandle((e) => [e, e.parentElement].find((x) => x.scrollHeight > x.clientHeight));
   const top = await scroller.evaluate((e) => e.scrollTop);
-  await pages.focus(); await pg.keyboard.press("PageDown"); await pg.waitForTimeout(300);
-  assert.ok(await scroller.evaluate((e) => e.scrollTop) > top, "Page Down scrolls the pages");
+  await pages.focus(); await pg.keyboard.press("PageDown");
+  // The browser scrolls after the key, sooner or later on a loaded machine.
+  const scrolled = await pg.waitForFunction(([e, from]) => e.scrollTop > from, [scroller, top], { timeout: 5000 })
+    .then(() => true, () => false);
+  assert.ok(scrolled, "Page Down scrolls the pages");
 });
 
 for (const scheme of ["light", "dark"]) await check(`${scheme} theme text meets contrast requirements`, 1300, async (pg) => {
@@ -1787,14 +1988,26 @@ await check("review opens the selected claim, keeps protocol order and exports a
   await pg.getByRole("textbox", { name: "Comparison", exact: true }).fill("The quantifiers and conclusion agree in this synthetic example.");
   await pg.getByRole("button", { name: "Matches the paper", exact: true }).click();
   await pg.getByRole("radio", { name: "Faithful", exact: true }).check();
+  // The coverage is recorded with the verdict, from the values that agree with it, and its
+  // basis separately; the author's review is still hidden.
+  const coverage = pg.getByRole("combobox", { name: "Coverage of the claim", exact: true });
+  assert.deepEqual(await coverage.locator("option").allTextContents(), ["Not recorded", "Every clause", "Part of the claim"]);
+  await coverage.selectOption({ label: "Every clause" });
+  await pg.getByRole("combobox", { name: "How it is supported", exact: true }).selectOption({ label: "By my composition of these results" });
+  await pg.getByRole("textbox", { name: "Your argument: how these results together give the claim" }).fill("The sum of two even numbers is even, applied once.");
+  assert.equal(await pg.locator(".review .author").count(), 0);
   await pg.getByRole("button", { name: "Record verdict and show the author's review" }).click();
   await pg.locator(".review .author").waitFor();
+  assert.match(await pg.locator(".review .unit").textContent(), /Your coverage: Every clause, by my composition of these results/);
   await pg.getByRole("button", { name: "Save report", exact: true }).click();
   await pg.getByRole("button", { name: "Export reports (1 new)", exact: true }).waitFor();
   const report = await pg.evaluate(() => JSON.parse(localStorage.getItem("prooflens-review:toy-paper")).reports[0]);
   assert.deepEqual(report.unit.claims, ["T:thm:even-add"]);
   assert.equal(report.reading.revealed_by[0].what, "Lean");
   assert.equal(report.verdict.value, "faithful");
+  assert.deepEqual(report.correspondence, { coverage: "full", basis: "reviewed_composition",
+                                            argument: "The sum of two even numbers is even, applied once." });
+  assert.ok(report.reading.locked_at <= report.comparison.decided_at && report.comparison.decided_at <= report.author_review.shown_at);
   assert.equal(await pg.evaluate((id) => JSON.parse(localStorage.getItem("prooflens-review:toy-paper")).drafts[id].reading, reviewUnits[0].id), "Preserve this other unfinished reading.");
   const download = pg.waitForEvent("download");
   await pg.getByRole("button", { name: "Export reports (1 new)", exact: true }).click();
@@ -1985,6 +2198,7 @@ await check("a proof step with no Lean link is reviewed as printed and reported 
   await pg.getByRole("button", { name: "It fails as printed", exact: true }).click();
   await pg.getByRole("radio", { name: "False as printed", exact: true }).check();
   await pg.locator("#verdict-detail").fill("Fails at k = 0, n = 1; holds for k >= 1.");
+  assert.equal(await pg.locator(".review .cover").count(), 0, "a step's review records no coverage");
   await pg.getByRole("button", { name: "Record verdict and show the author's review" }).click();
   await pg.getByRole("button", { name: "Save report", exact: true }).click();
   await pg.getByRole("button", { name: "Export reports (1 new)", exact: true }).waitFor();
@@ -1995,6 +2209,7 @@ await check("a proof step with no Lean link is reviewed as printed and reported 
   assert.deepEqual(report.unit.parent, { id: "T:thm:bound", number: "Theorem 2.5" });
   assert.equal(report.pins.fingerprints.source, stepChunk.source_sha256);
   assert.equal(report.verdict.value, "false as printed");
+  assert.equal(report.correspondence, null);
   assert.equal(report.issue_draft.title, "Equation (3) in the proof of Theorem 2.5: false as printed");
 });
 

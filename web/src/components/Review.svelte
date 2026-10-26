@@ -3,7 +3,8 @@
   import { href, route, go, withQuery } from "../lib/route.svelte.js";
   import { VERDICTS, GROUPS, CHECKLIST, MARKS, STEP_VERDICTS, STEP_GROUPS, loadWork, saveWork, now, reviewerId,
            needsDetail, buildReport, exportFile, ORDERS, ORDER_SEEN, orderedUnits, recordExposure, exposureOf,
-           holdsBack } from "../lib/review.js";
+           holdsBack, COVERAGE_FOR, COVERAGE_CHOICES, BASIS_CHOICES, reportCorrespondence, draftCoverage,
+           coverageWords } from "../lib/review.js";
   import ProofStep from "./ProofStep.svelte";
   import StepContext from "./StepContext.svelte";
   import PaperStatement from "./PaperStatement.svelte";
@@ -162,12 +163,40 @@
   // A proof step is reviewed as printed, with verdicts of its own.
   const verdicts = $derived(current?.kind === "step" ? STEP_VERDICTS : VERDICTS);
   const groupsOf = $derived(current?.kind === "step" ? STEP_GROUPS : GROUPS);
-  function choose(g) { draft.group = g; draft.verdict = verdicts[g].length === 1 ? verdicts[g][0].value : null; persist(); }
+  function choose(g) {
+    draft.group = g; draft.verdict = verdicts[g].length === 1 ? verdicts[g][0].value : null;
+    // A coverage that does not agree with the new kind of verdict is not kept.
+    if (draft.coverage && !(COVERAGE_FOR[g] || []).includes(draft.coverage)) draft.coverage = null;
+    persist();
+  }
   const detailWanted = $derived(draft?.verdict ? needsDetail(draft.verdict) : null);
+  // The reviewer's coverage, recorded with the verdict, for a statement or a definition (a proof
+  // step's review records whether the step holds).
+  const coverageChoices = $derived(COVERAGE_CHOICES.filter((c) => (COVERAGE_FOR[draft?.group] || []).includes(c.value)));
+  const coverageProblems = $derived(current && current.kind !== "step" && draft?.stage === "compare"
+    ? reportCorrespondence(current, draft.verdict, draftCoverage(draft)).problems : []);
   const canDecide = $derived(!!draft?.verdict && (!detailWanted || (draft.detail || "").trim().length > 0)
-                             && (draft.comparison || "").trim().length > 0);
+                             && (draft.comparison || "").trim().length > 0 && !coverageProblems.length);
+  function chooseBasis() {
+    if (draft.basis === "checked_bridge" && !draft.bridge) draft.bridge = { theorem: (current.lean || [])[0] || "", target: "" };
+    persist();
+  }
+  // The version of a bridge's target in this build, when a claim's links record that bridge and
+  // the build checked it: the report pins it, so a later change to the target is seen.
+  function targetPin(b) {
+    for (const c of claims) {
+      const own = c?.correspondence?.bridge;
+      if (own && own.theorem === b.theorem && own.target === b.target) return own.current?.target_fingerprint || null;
+    }
+    return null;
+  }
   function decide() {
     if (!canDecide) return;
+    if (current.kind !== "step") {
+      const given = draftCoverage(draft);
+      if (given.bridge) given.bridge = { ...given.bridge, target_fingerprint: targetPin(given.bridge) };
+      draft.correspondence = reportCorrespondence(current, draft.verdict, given).correspondence;
+    }
     draft.decided_at = now(); draft.stage = "author"; draft.author_shown_at = now(); persist();
   }
   function saveReport() {
@@ -192,6 +221,7 @@
       source_sha256: r.pins.source_sha256,
       comparison: r.comparison.text, witness: r.comparison.witness, decided_at: r.comparison.decided_at,
       group: r.verdict.group, verdict: r.verdict.value, detail: r.verdict.detail,
+      correspondence: r.correspondence ?? null,
       author_shown_at: r.author_review.shown_at, disagreements: r.author_review.disagreements };
     work.exported = Math.min(work.exported || 0, work.reports.length);
     lastIssue = null;
@@ -411,6 +441,43 @@
                 <label for="verdict-detail">{detailWanted}</label>
                 <textarea id="verdict-detail" rows="3" bind:value={draft.detail} oninput={persist} placeholder={detailWanted}></textarea>
               {/if}
+              {#if current.kind !== "step"}
+                <div class="cover" role="group" aria-label="Coverage">
+                  <label>Coverage of the claim (optional)
+                    <select aria-label="Coverage of the claim" bind:value={draft.coverage} onchange={persist}>
+                      <option value={null}>Not recorded</option>
+                      {#each coverageChoices as c}<option value={c.value}>{c.label}</option>{/each}
+                    </select>
+                  </label>
+                  {#if draft.coverage}
+                    <label>How it is supported (optional)
+                      <select aria-label="How it is supported" bind:value={draft.basis} onchange={chooseBasis}>
+                        <option value={null}>Not recorded</option>
+                        <!-- A checked bridge is one of the claim's linked theorems. -->
+                        {#each BASIS_CHOICES.filter((b) => b.value !== "checked_bridge" || current.lean?.length) as b}<option value={b.value}>{b.label}</option>{/each}
+                      </select>
+                    </label>
+                  {/if}
+                  {#if draft.coverage && draft.basis === "reviewed_composition"}
+                    <label for="cover-argument">Your argument: how these results together give the claim</label>
+                    <textarea id="cover-argument" rows="3" bind:value={draft.argument} oninput={persist}></textarea>
+                    <p class="faint small">Lean has not checked this combination.</p>
+                  {/if}
+                  {#if draft.coverage && draft.basis === "checked_bridge" && draft.bridge}
+                    <label>Bridge theorem
+                      <select aria-label="Bridge theorem" bind:value={draft.bridge.theorem} onchange={persist}>
+                        {#each current.lean || [] as n}<option value={n}>{n}</option>{/each}
+                      </select>
+                    </label>
+                    <label>Its target, a proposition stated as a definition <input aria-label="Bridge target" bind:value={draft.bridge.target} oninput={persist} /></label>
+                  {/if}
+                  {#if draft.coverage === "unresolved"}
+                    <label for="cover-decide">What would decide it (optional)</label>
+                    <textarea id="cover-decide" rows="2" bind:value={draft.would_decide} oninput={persist}></textarea>
+                  {/if}
+                  {#each coverageProblems as p}<p class="warn">{p.charAt(0).toUpperCase() + p.slice(1)}.</p>{/each}
+                </div>
+              {/if}
             {/if}
             <div class="row">
               <button class="btn" disabled={!canDecide} onclick={decide}>Record verdict and show the author's review</button>
@@ -418,6 +485,7 @@
             </div>
           {:else}
             <p class="small"><strong>Your verdict:</strong> {draft.verdict}{draft.detail ? " — " + draft.detail : ""} <span class="faint">(recorded {draft.decided_at})</span></p>
+            {#if coverageWords(draft.correspondence)}<p class="small"><strong>Your coverage:</strong> {coverageWords(draft.correspondence)}</p>{/if}
             <h3>The author's review</h3>
             {#each current.author_review as r}
               <p class="lbl">{r.by}{r.file ? " · " + r.file + (r.line ? ":" + r.line : "") : ""}</p>
@@ -470,6 +538,9 @@
   .choice { flex: 1; min-width: 160px; padding: 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface-2); cursor: pointer; font-size: 14px; color: var(--text); }
   .choice.on { border-color: var(--accent); background: var(--accent-soft); }
   .verdicts { display: flex; flex-direction: column; gap: 4px; font-size: 14px; margin: 6px 0; }
+  .cover { display: flex; flex-direction: column; gap: 6px; font-size: 14px; margin: 10px 0 4px; }
+  .cover > label:not([for]) { display: flex; flex-direction: column; gap: 4px; }
+  .cover select, .cover input { max-width: 100%; }
   .lbl { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--faint); margin: 8px 0 2px; }
   .small { font-size: 13px; }
   .also summary { cursor: pointer; font-size: 13px; color: var(--accent); margin: 10px 0; }

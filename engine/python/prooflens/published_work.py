@@ -28,7 +28,10 @@ composition's, or its own) is checked at export, else as `reviewed_composition` 
 `recorded_basis` and the reasons.
 
 The records sit in `data/work/<claim file>`, one file per claim that has any, which the claim's
-passport names in `work`. They are readings: nothing here is an input to a status.
+passport names in `work`. The main results each workspace saves (`workspace main`) sit in the
+data index, `main_results`: the claims and declarations chosen, who chose them and when, the
+release and project commit they were checked against, and what the published build lacks of
+them. They are readings: nothing here is an input to a status.
 """
 
 from __future__ import annotations
@@ -325,14 +328,53 @@ def readings(work_dir: Path, snap, pub_for, claims: set[str],
     return out
 
 
+LEFT_OUT = ("main results this published data cannot name: claims of papers it does not "
+            "publish, or declarations it holds no record of")
+
+
+def main_results(work_dir: Path, snap, root: Path | None = None) -> list[dict]:
+    """The main results each workspace of `work_dir` saves, attributed to its workspace and
+    auditor, with who saved them, when, the release and project commit they were checked
+    against (`pins`), and what the published data `snap` lacks of them (`problems`). An entry
+    the data cannot name is counted in `left_out`, never named: a claim of a paper it does not
+    publish, or a declaration it neither records nor can look up (it keeps no index of the
+    project), which may belong to a paper it does not publish."""
+    papers = {p.get("id") for p in snap.index.get("papers") or []}
+    index = snap.lean_index()
+    out = []
+    for _, ws in wsp.list_all(work_dir):
+        sel = ws.get("main_results")
+        if not sel:
+            continue
+        kept, left = [], 0
+        for e in sel.get("selected") or []:
+            if e.get("claim"):
+                ok = snap.chunk(e["claim"]) is not None or e["claim"].split(":", 1)[0] in papers
+            else:
+                ok = index is not None or bool(snap.store_records(e.get("decl")))
+            if ok:
+                kept.append(e)
+            else:
+                left += 1
+        who = ws.get("reviewer") or {}
+        out.append({"workspace": ws["id"], "mode": ws.get("mode"),
+                    "reviewer": {k: who[k] for k in REVIEWER if who.get(k) is not None},
+                    "selected": kept, "by": sel.get("by"), "at": sel.get("at"),
+                    "pins": sel.get("pins") or {},
+                    "problems": wsp.main_results_problems({"selected": kept}, snap, root),
+                    **({"left_out": {"count": left, "why": LEFT_OUT}} if left else {})})
+    return out
+
+
 def write(data: Path, work_dir: Path, pub_for, sources: Path | None = None,
           root: Path | None = None) -> dict[str, str]:
     """Write the accepted workspace records of `work_dir` into the published data at `data`
     (its `index.json` and claim passports already written): `data/work/<claim file>` for each
-    claim that has any, named by the passport's `work`. Currency is computed against `data`
-    itself, with the paper sources under `sources` (default: the sources of the build the data
-    was written from), and cited facts, applications, certificates and bridges against the Lean
-    project at `root`. Returns the files written, by claim id."""
+    claim that has any, named by the passport's `work`, and the saved main results in the
+    index's `main_results`. Currency is computed against `data` itself, with the paper sources
+    under `sources` (default: the sources of the build the data was written from), and cited
+    facts, applications, certificates and bridges against the Lean project at `root`. Returns
+    the files written, by claim id."""
     from .targets import Snapshot, TargetError
     if not wsp.store(work_dir).is_dir():
         return {}
@@ -359,4 +401,10 @@ def write(data: Path, work_dir: Path, pub_for, sources: Path | None = None,
         chunk["work"] = rel
         write_json(chunk_path, chunk, indent=None)
         written[cid] = rel
+    mains = main_results(work_dir, snap, root)
+    if mains:
+        index_path = data / "index.json"
+        index = json.loads(index_path.read_text(encoding="utf-8"))
+        index["main_results"] = mains
+        write_json(index_path, index, indent=None)
     return written

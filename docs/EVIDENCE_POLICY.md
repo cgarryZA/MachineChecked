@@ -158,13 +158,18 @@ Every evidence record contains:
 
 `machinechecked build --reuse-lean` reuses the probe records of the newest stored release made
 from the same Lean inputs (a SHA-256 over the project's and every path dependency's sources,
-lakefiles, manifest and toolchain), by the same probe and with the same probe settings (`modules`,
-`scope_roots`, the layer prefixes and `allowed_axioms`), when they answer every request of the
-claim inventory. A later release made otherwise does not hide it. A record that does not state
-its probe settings (stored by an earlier version) is not reused. When no release qualifies, the
-build stops with exit code 2, names the condition the closest release fails, and says to run
+lakefiles, manifest and toolchain), by the same probe, with the same probe settings (`modules`,
+`scope_roots`, the layer prefixes and `allowed_axioms`) and read by the same version of
+MachineChecked (`lean_records_engine`: the records are its reading of the probe's output, and a
+reassessment keeps it), when they answer every request of the claim inventory. A later release
+made otherwise does not hide it. A record that does not state its probe settings or the version
+that read it (stored by an earlier version) is not reused. A build with `--no-lean-build` probes
+the Lean build files as they are, which may be older than the sources: it records no digest of
+the Lean inputs, so its records are not reused. When no release qualifies, the build stops with
+exit code 2, names the condition the closest release fails, and says to run
 `machinechecked build` without `--reuse-lean`. `machinechecked reassess` applies new reviews and
-dismissals to stored evidence, and refuses when the claim inventory changed.
+dismissals to stored evidence, and refuses when the claim inventory changed; when nothing changed,
+it reproduces the release it read.
 
 In zero configuration, every build reuses the Lean facts it extracted before (a module's index, a
 linked declaration's record, an `inspect` answer) while the modules of the environment they came
@@ -187,4 +192,6 @@ when every library is indexed. A dependency's command that names a declaration w
 call does not contain is not detected ([DEVELOPMENT.md](DEVELOPMENT.md)).
 
 Evidence records are content-addressed and never rewritten. A release name, once given, keeps its
-evidence.
+evidence. A build that reproduces an earlier evidence record names that record's release again,
+and every command that reads the latest release reads the one the last build produced or
+reproduced.

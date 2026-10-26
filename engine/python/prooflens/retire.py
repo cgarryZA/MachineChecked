@@ -128,15 +128,14 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
     from .config import load
     from . import evidence as ev
-    from .util import read_json
     try:
         cfg = load(args.config)
         inventory = json.loads(cfg.inventory.read_text(encoding="utf-8"))
         reviews, _ = load_reviews(cfg.reviews, cfg.ai_reviewers, cfg.root)
         lean = None
-        rels = ev.releases(cfg.out_dir) if args.markers else []
-        if rels:
-            lean = ev.load(cfg.out_dir, read_json(rels[-1])["evidence"])["body"].get("lean")
+        last = ev.latest(cfg.out_dir) if args.markers else None
+        if last is not None:
+            lean = ev.load(cfg.out_dir, last["evidence"])["body"].get("lean")
         result = plan(inventory, reviews, lean, args.markers)
         if args.write:
             apply(cfg.root, result)

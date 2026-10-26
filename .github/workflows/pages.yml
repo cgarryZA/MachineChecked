@@ -3,8 +3,9 @@ name: Demo audit
 # Publishes the synthetic toy paper's audit at cgarryza.github.io/MachineChecked/demo/, where
 # machinechecked.org/demo/ reads it with its own reader. The audit is the one CI built and
 # exported (approved fields only, scanned for leaks, data only: audit.json and data/); this
-# workflow builds nothing. Runs after CI passes on main; Pages must have "GitHub Actions" as its
-# source.
+# workflow builds nothing. Runs after each CI run on main and publishes the newest one that
+# passed, unless a newer one has not finished; Pages must have "GitHub Actions" as its source. A
+# manual run publishes the CI run it names.
 on:
   workflow_run:
     workflows: [CI]
@@ -22,20 +23,65 @@ permissions:
   pages: write
   id-token: write
 
+# One run at a time, never cancelled while it runs: a run that arrives meanwhile waits, and
+# replaces any run already waiting. Each run reads the CI runs when it starts and publishes before
+# the next starts, so the last run to start decides, from the newest state.
 concurrency:
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
+  # Each push to main has its own CI run, so runs of pushes seconds apart run at the same time and
+  # can finish in either order, and a commit that skips CI has none. The run published is the
+  # newest CI run of a push to main that passed, unless a newer one has not finished: its own
+  # completion decides then. Runs that did not pass are passed over. So an older commit never
+  # replaces a newer one, and a commit without a CI run, or whose run fails, holds nothing back.
+  latest:
+    name: the newest CI run of main that passed
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.event == 'push'
+    runs-on: ubuntu-24.04
+    outputs:
+      publish: ${{ steps.pick.outputs.publish }}
+      run_id: ${{ steps.pick.outputs.run_id }}
+    steps:
+      - id: pick
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WORKFLOW: ${{ github.event.workflow_run.workflow_id }}
+          NAMED: ${{ inputs.run_id }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+            echo "run_id=$NAMED" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          gh api "repos/$GITHUB_REPOSITORY/actions/workflows/$WORKFLOW/runs?branch=main&event=push&per_page=100" > runs.json
+          # The newest run that passed or has not finished, as "id status number commit".
+          pick=$(jq -r '[.workflow_runs[] | select(.status != "completed" or .conclusion == "success")]
+            | max_by(.run_number) // empty | "\(.id) \(.status) \(.run_number) \(.head_sha)"' runs.json)
+          read -r id status number sha <<< "$pick"
+          if [ -z "$id" ]; then
+            echo "::notice::Not published: no CI run of main has passed."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          elif [ "$status" != completed ]; then
+            echo "::notice::Not published: CI run #$number of main (commit $sha) has not finished; the demo is published when it has."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::Publishing CI run #$number of main (commit $sha), the newest that passed."
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+            echo "run_id=$id" >> "$GITHUB_OUTPUT"
+          fi
+
   build:
-    if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+    needs: latest
+    if: needs.latest.outputs.publish == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/download-artifact@v8
         with:
           name: demo-site
           path: public/demo
-          run-id: ${{ github.event.workflow_run.id || inputs.run_id }}
+          run-id: ${{ needs.latest.outputs.run_id }}
           github-token: ${{ github.token }}
       - name: The demo is data only, with its descriptor
         run: |

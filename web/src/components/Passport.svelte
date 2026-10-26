@@ -6,7 +6,7 @@
   import { counterpartViews } from "../lib/versions.js";
   import { href, route, go, withQuery, inspectionHref } from "../lib/route.svelte.js";
   import { statusView, inScope, clauseNote, evidenceView } from "../lib/presentation.js";
-  import { coverageView } from "../lib/coverage.js";
+  import { coverageView, recordedBasisText } from "../lib/coverage.js";
   import ExactLean from "./ExactLean.svelte";
   import EvidenceSummary from "./EvidenceSummary.svelte";
   import PaperStatement from "./PaperStatement.svelte";
@@ -58,10 +58,18 @@
   let saveError = $state(null);
   const RANK = { stale: 0, pending: 1, "author-reviewed": 2, reviewed: 3 };
 
+  // The claim, project and release shown: a selection names an expression of this claim's
+  // statements in this build, so it is cleared when any of them changes.
+  let shownKey = null;
   $effect(() => {
     claimId; project.repo; project.combined; attempt;
     let current = true;
     loaded = null; error = null; scrolls = []; showAll = false; saveError = null; menu = false;
+    const key = [claimId, project.repo, project.combined, index.release].join("\u0000");
+    if (key !== shownKey) {
+      shownKey = key;
+      selAt = null; pickVar = null; pickSym = null; marking = null; symPinned = null; symHover = null; leanActive = null;
+    }
     loadClaim(index, claimId).then((c) => { if (current) loaded = c; }).catch((e) => { if (current) error = String(e); });
     return () => { current = false; };
   });
@@ -86,6 +94,18 @@
   // person, to a variable or a binder's type of the Lean statement. Only links that are not stale
   // are drawn. Hovering either side highlights the other; a click holds a symbol.
   const links = $derived((claim?.symbols || []).filter((l) => !l.stale).map((l, i) => ({ ...l, id: i })));
+  // Why a link is not drawn, from the reasons the build records (`stale_because`).
+  const STALE = {
+    statement: "the Lean statement changed since it was made",
+    source: "the paper's text changed since it was made",
+    excerpt: "the typeset passage changed since it was made",
+    missing: "the Lean statement no longer has the object it names",
+    target: "the Lean object at its place is a different one now",
+    unpinned: "it was made without the text of its Lean object",
+    positional: "it names its Lean object by place and number in an earlier display",
+    ids: "it was made with an earlier scheme of identities",
+  };
+  const staleWhy = (l) => (l.stale_because || []).map((c) => STALE[c] || c).join("; ") || "what it relates changed";
   let symHover = $state(null);
   let symPinned = $state(null);
   let leanActive = $state(null);
@@ -100,7 +120,6 @@
     const l = links.find((x) => x.id === symActive);
     if (!l || l.lean.decl !== spec) return null;
     if (l.lean.at != null) return { at: l.lean.at };
-    if (l.lean.term != null) return { term: { where: l.lean.in, k: l.lean.term } };
     return l.lean.var != null ? { var: l.lean.var } : { type: l.lean.binder };
   }
 
@@ -347,6 +366,17 @@
         <details class="review" data-verdict={r.verdict.value}>
           <summary class="small"><strong>Review: {VERDICT_LABEL[r.verdict.value] || r.verdict.value}</strong>, by {reviewer(r)}, {(r.submitted_at || "").slice(0, 10)}{r.current === false ? (r.why === "source-changed" ? " · made on other paper text" : r.why === "source-unrecorded" ? " · does not record the paper text it read" : " · recorded for other declarations or statements") : r.current === null ? " · not compared with the current Lean" : ""}</summary>
           {#if r.verdict.detail}<p class="small pre">{r.verdict.detail}</p>{/if}
+          {#if r.correspondence}
+            {@const rc = coverageView(r.correspondence)}
+            <div class="report-coverage" data-coverage={rc.coverage} data-basis={rc.basis || "unspecified"} data-tone={rc.tone}>
+              <p class="small"><strong>{rc.headline}</strong> <span class="faint">(the reviewer's coverage, recorded with the verdict)</span></p>
+              {#each rc.lines as line}
+                <p class="small basis-line"><span class="faint">{line.label}:</span>
+                  {#each line.names || [] as n, i}{#if i}{", "}{/if}<button class="ref" onclick={() => showDecl(n)}><code>{n}</code></button>{/each}{#if line.names?.length && line.text}{". "}{/if}{#if line.text}<span class="basis-text pre">{line.text}</span>{/if}{#if line.note}{" "}<span class="faint">{line.note}</span>{/if}</p>
+              {/each}
+              {#if recordedBasisText(r.correspondence)}<p class="faint small">{recordedBasisText(r.correspondence)}</p>{/if}
+            </div>
+          {/if}
           <p class="small pre">{r.comparison}</p>
           <details>
             <summary class="faint small">The reading, locked {r.locked_at} before the Lean was shown</summary>
@@ -375,16 +405,17 @@
           <p class="small">2. Click its variable in the Lean statement below, or click inside an expression to select it (again to widen it).
             <label class="small"><input type="checkbox" bind:checked={pickType} /> the symbol is that variable's type</label></p>
           {#if pickSym && pickVar}
-            {@const b = pickVar.var != null ? claim.clauses.find((c) => c.spec === pickVar.spec)?.statement?.binders?.[pickVar.var] : null}
-            <p class="small">Link <code>{pickSym}</code> to {#if pickVar.at}the selected sub-expression{:else}{pickType ? "the type of" : "the variable"} <code>{b?.name}</code>{/if} of <code>{pickVar.spec}</code>, as
+            <!-- A variable is sent by its number: two variables can have the same name. -->
+            <p class="small">Link <code>{pickSym}</code> to {#if pickVar.at}the selected sub-expression{:else}{pickType ? "the type of" : "the variable"} <code>{pickVar.name}</code>{/if} of <code>{pickVar.spec}</code>, as
               <input class="who" bind:value={author} placeholder="your name" /></p>
             <button class="act" disabled={!authorId} onclick={() => saveLinkOfSymbol(pickVar.at
               ? { action: "add", claim: claim.id, tex: pickSym, decl: pickVar.spec, at: pickVar.at, by: authorId }
-              : { action: "add", claim: claim.id, tex: pickSym, decl: pickVar.spec, [pickType ? "type_of" : "var"]: b?.name, by: authorId })}>Save link{authorId ? " as " + authorId : ""}</button>
+              : { action: "add", claim: claim.id, tex: pickSym, decl: pickVar.spec, [pickType ? "type_of" : "var"]: String(pickVar.var), by: authorId })}>Save link{authorId ? " as " + authorId : ""}</button>
           {/if}
           {#each (claim.symbols || []) as l}
-            <p class="small"><code>{l.symbol.tex}</code> → {l.lean.at != null ? "sub-expression " + l.lean.at : l.lean.term != null ? "sub-expression " + l.lean.in + "#" + l.lean.term : l.lean.var != null ? "variable " + l.lean.var : "type of binder " + l.lean.binder} of <code>{l.lean.decl}</code>, by {l.by}{l.stale ? " (stale)" : ""}
-              <button class="act" onclick={() => saveLinkOfSymbol({ action: "remove", claim: claim.id, tex: l.symbol.tex })}>Remove</button></p>
+            <p class="small" data-link={l.symbol.tex}><code>{l.symbol.tex}</code> → {l.lean.at != null ? "sub-expression " + l.lean.at : l.lean.term != null ? "sub-expression " + l.lean.in + "#" + l.lean.term : l.lean.var != null ? "variable " + l.lean.var : "type of binder " + l.lean.binder} of <code>{l.lean.decl}</code>, by {l.by}{l.stale ? " (stale)" : ""}
+              <button class="act" onclick={() => saveLinkOfSymbol({ action: "remove", claim: claim.id, tex: l.symbol.tex })}>Remove</button>
+              {#if l.stale}<span class="stale-why">Not shown: {staleWhy(l)}. Link it again{l.stale_because?.includes("statement") || l.stale_because?.includes("ids") ? " after checking the Lean statement" : ""}, or remove it.</span>{/if}</p>
           {/each}
           {#if linkErr}<p class="bad small">{linkErr}</p>{/if}
         </details>
@@ -470,7 +501,7 @@
               {#if markFor(k)}<p class="small marknote">Marked: the operation this finding is about{marking.what ? ", in " + marking.what : ""}. <button class="act" onclick={() => (marking = null)}>Clear</button></p>{/if}
               <Statement st={cl.statement} spec={cl.spec} onref={showDecl} compact ext={extFor(cl.spec)} mark={markFor(k)}
                 selId={selFor(cl.spec)} onselect={(id) => select(cl.spec, id)}
-                onpinned={(v) => { if (linking) pickVar = v == null ? (pickVar?.spec === cl.spec && pickVar.var != null ? null : pickVar) : { spec: cl.spec, var: v }; }}
+                onpinned={(v, name) => { if (linking) pickVar = v == null ? (pickVar?.spec === cl.spec && pickVar.var != null ? null : pickVar) : { spec: cl.spec, var: v, name }; }}
                 onactive={(v) => (leanActive = v == null ? (leanActive?.spec === cl.spec ? null : leanActive) : { spec: cl.spec, var: v })} />
             {:else if cl.defs?.length}
               {#each cl.defs as d (d)}
@@ -656,6 +687,8 @@
   .coverage[data-tone="warning"] { border-left-color: var(--tier-warning); }
   .coverage[data-tone="full"] { border-left-color: var(--st-proved); }
   .coverage[data-tone="reading"], .coverage[data-tone="open"] { border-left-color: var(--accent); }
+  .report-coverage { margin: 4px 0; }
+  .report-coverage p { margin: 2px 0; }
   .basis-line .ref { font: inherit; padding: 0; border: 0; background: none; color: var(--accent); cursor: pointer; }
   .basis-line .ref:hover code { text-decoration: underline; }
   .basis-text { white-space: pre-line; }
@@ -692,6 +725,7 @@
   .chip.on { border-color: var(--accent); background: var(--accent-soft); }
   .chip :global(.tex) { border: 0; padding: 0; margin: 0; background: none; font-size: 15px; }
   .who { font: inherit; font-size: 13px; padding: 1px 6px; border: 1px solid var(--border); border-radius: 6px; width: 12em; }
+  .stale-why { display: block; color: var(--muted); }
   .details h2 { margin-bottom: 4px; }
   .cname { font-weight: 600; margin: 0 0 8px; }
   .changes { border-left: 3px solid var(--st-open, #b7791f); background: var(--surface-2, transparent); padding: 6px 10px; margin: 0 0 10px; border-radius: 0 6px 6px 0; }

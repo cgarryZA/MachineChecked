@@ -66,18 +66,39 @@ REF = re.compile(r"(?<![\w.])(Theorem|Thm|Lemma|Lem|Proposition|Prop|Corollary|C
                  r"Subsection|Section|Sec|§)(\.?[ \t~]*)(\d+(?:\.\d+)*)(?![\w]|\.\d)", re.I)
 NAME_REF = re.compile(r"(?:^|_)(theorem|thm|lemma|lem|proposition|prop|corollary|cor|"
                       r"definition|defn|def|section|sec)_?(\d+(?:_\d+)*)(?=_|$)")
-# Just after a number: a citation (`of [AB]`, `in Hardy and Wright`, `of ref. [3]`, `[AB]`).
-# Group 1 is the capitalised word it starts with, which may instead name a part of this paper or
-# of its formalisation (`in Section 7`, `_OWN_PARTS`). A lowercase reference word cites a work
-# only with its label (`ref. [3]`, `refs. 3, 4`, `reference \cite{AB}`): `in refined form` and
-# `in reference to Lemma 2` cite none.
-_ELSEWHERE_AFTER = re.compile(
-    r"\s*(?:,\s*)?(?:of|in|from)\s+(?:\[|\\cite|(?:the\s+)?([A-Z][\w\-–]*)|arXiv"
-    r"|(?:refs?|references?)\b\.?[\s~]*(?:\[|\\cite|\d))|\s*\[")
+# Just after a number, a bracket or `\cite` (and `\citet`, `\citep`, …) cites another work
+# (`Lemma 9 [AB]`, `Lemma 9~\cite{AB}`); other citations follow "of", "in" or "from"
+# (`_AFTER_WORD`).
+_BRACKET_AFTER = re.compile(r"[\s~]*(?:\[|\\cite)")
+_AFTER_WORD = re.compile(r"\s*(?:,\s*)?(?:of|in|from)[\s~]+")
+# What, after that word, cites a work by itself: a bracket, `\cite`, an arXiv identifier, a
+# reference word with its label (`ref. [3]`, `Refs. 3, 4`, `reference \cite{AB}`; `in refined
+# form` and `in reference to Lemma 2` cite none), or an emphasised or quoted title (`of *An
+# Introduction*`, `of \emph{Elements}`).
+_TITLE = r"[*_“\"]|\\(?:emph|textit)\s*\{"
+_CITATION = re.compile(r"\[|\\cite|arXiv|[Rr]ef(?:s|erences?)?\b\.?[\s~]*(?:\[|\\cite|\d)|"
+                       + _TITLE)
+# After that word, a capitalised word (group 1), with "the" before it or not: a part of this
+# paper or of its formalisation (`in Section 7`, `_OWN_PARTS`), this paper or another one (`of
+# the Paper`, `of Paper B`), the first of a work's authors (`in Hardy and Wright`), or the start
+# of a mathematical term (`in Hilbert spaces`).
+_CAPITALISED = re.compile(r"(?:the\s+)?([A-Z][\w\-–]*)")
+# Another author's name after one (`Hardy and Wright`, `Hardy, Littlewood and Pólya`,
+# `Revuz & Yor`), as group 1.
+_MORE_NAMES = re.compile(r"\s*(?:,\s*(?:and\s+)?|and\s+|&\s*)([A-Z][\w\-–]*)")
+# What follows authors' names in a citation: `et al.`, a year (`(1979)`, `, 1979`), a bracket
+# or `\cite`, a title after a comma, a colon or the possessive (`Hardy, *An Introduction*`,
+# `Serre's *A Course in Arithmetic*`), or the possessive of a work (`Serre's book`).
+_AUTHORS_THEN = re.compile(
+    r"\s*,?\s*(?:et\s+al\b|\(?(?:1[5-9]|20)\d\d[a-z]?\b|\[|\\cite)"
+    rf"|(?:['’]s)?\s*[,:]?\s*(?:{_TITLE})"
+    r"|['’]s\s+(?:book|monograph|notes|lectures|paper|article|survey|thesis|treatise|text"
+    r"|textbook)\b")
 # The label or labels of a part after its word (`Section 7.2`, `Appendix A`, `Part II`,
-# `Lean 4`, `Sections 4 and 5`).
+# `Lean 4`, `Sections 4 and 5`, `Eq. (4)`).
 _LABEL = r"(?:[IVXLCDM]+|[A-Z]|\d+)(?:\.\d+)*\b"
-_PART_LABEL = re.compile(rf"\.?[ \t~]*(?:{_LABEL}(?:\s*(?:,|and|or|–|--?)\s*{_LABEL})*)?")
+_ONE_LABEL = rf"(?:{_LABEL}|\(\s*{_LABEL}\s*\))"
+_PART_LABEL = re.compile(rf"\.?[ \t~]*(?:{_ONE_LABEL}(?:\s*(?:,|and|or|–|--?)\s*{_ONE_LABEL})*)?")
 # Just before a number: an open citation bracket (`[AB, Lemma 9`), `et al.`, or the possessive
 # of a bracketed citation or of `et al.` (`[AB]'s Lemma 9`, `Smith et al.'s Theorem 3`).
 _ELSEWHERE_BEFORE = re.compile(r"\[[^\]]*$|\bet al\.?\s*,?\s*$"
@@ -86,21 +107,28 @@ _ELSEWHERE_BEFORE = re.compile(r"\[[^\]]*$|\bet al\.?\s*,?\s*$"
 # in (`[U, Lemma 2.1]`, or `[A, Lemma 3; U, Lemma 2.1]` for the second) or its possessive
 # (`[U]'s Lemma 2.1`).
 _KEY_BEFORE = re.compile(r"\[(?:[^\]]*;)?\s*([^\[\],;]+?)\s*(?:,[^\];]*|\]['’]s[\s~*_]*)$")
+# A `\cite` command (`\cite`, `\citet`, `\citep`, …) with its notes and its keys (group 1):
+# `\cite{U}`, `\cite[Lemma 2.1]{U}`, `\cite[see][Lemma 2.1]{U}`.
+_CITE = re.compile(r"\\cite[a-zA-Z]*\*?(?:\s*\[[^\]]*\])*\s*\{([^}]*)\}")
 # An author's possessive just before the number (`Gauss's Lemma 4.22`, `Revuz–Yor's`,
 # `Gauss' Lemma`): a capitalised word of at least two letters, not one naming this paper, a
 # part of it or its formalisation (`Lean's Theorem 2.1`).
 _POSSESSIVE = re.compile(r"(?<![\w'’.\-–])([^\W\d_][\w\-–]+)(?:['’]s|(?<=s)['’])[\s~*_]*$")
 # Words naming a part of this paper or of its formalisation, its statements among them: after a
 # number they name no other work (`Lemma 7.7 in Section 7`, `Theorem 9.9 in Lean`, `Theorem 2.1
-# in Lemma 3.2`).
+# in Lemma 3.2`, `Theorem 9.9 in Figure 2`, `in Proof of Lemma 3`).
 _OWN_PARTS = set(KINDS) | {"sections", "chapter", "chapters", "ch", "chap", "appendix",
                            "appendices", "app", "supplement", "part", "parts", "step", "lean",
-                           "mathlib"}
-# Those words and the words naming the paper or its authors: a possessive of any of them is no
-# author's (`the paper's Lemma 2.1`, `Lean's Theorem 2.1`). After a number, a capitalised word
-# of the second sort may name another work (`Theorem 2.1 of Paper B`).
-_OWN_WORDS = _OWN_PARTS | {"paper", "article", "manuscript", "note", "preprint", "thesis",
-                           "author", "authors"}
+                           "mathlib", "figure", "figures", "fig", "figs", "table", "tables", "tab",
+                           "equation", "equations", "eq", "eqs", "proof", "proofs", "case",
+                           "cases", "footnote"}
+# Words naming a paper or its authors. After a number, one with a label names another paper
+# (`Theorem 2.1 of Paper B`), one without names this one (`of the Paper`).
+_PAPER_WORDS = {"paper", "article", "manuscript", "note", "preprint", "thesis", "author",
+                "authors"}
+# A possessive of any of these words is no author's (`the paper's Lemma 2.1`, `Lean's Theorem
+# 2.1`).
+_OWN_WORDS = _OWN_PARTS | _PAPER_WORDS
 # A chapter after a comma just before the number, as a citation of a book gives it
 # (`Hardy–Wright, *An Introduction*, Ch. IV, Prop. 4.7`); a chapter in prose (`In Chapter 4,
 # Lemma 4.2`) is not one.
@@ -170,15 +198,47 @@ def _elsewhere(text: str, start: int, end: int) -> str | None:
 
 
 def _cited_after(after: str) -> bool:
-    """Whether the text just after a number cites another work. A part of this paper or of its
-    formalisation (`in Section 7`, `from Appendix A`, `in Lean`) does not, unless a citation
-    follows it (`in Section 4 of [AB]`)."""
-    m = _ELSEWHERE_AFTER.match(after)
-    while m and m.group(1) and m.group(1).lower() in _OWN_PARTS:
+    """Whether the text just after a number cites another work: a bracket or `\\cite`, or,
+    after "of", "in" or "from", a citation, a title, another paper (`of Paper B`) or a work's
+    authors (`_by_authors`). A part of this paper or of its formalisation (`in Section 7`, `in
+    Figure 2`, `in Lean`), or any part given by its label (`in Volume 2`), does not, unless a
+    citation follows it (`in Section 4 of [AB]`, `in Volume 2 of [B]`); nor does this paper
+    (`of the Paper`) or a mathematical term (`in Hilbert spaces`)."""
+    while not _BRACKET_AFTER.match(after):
+        m = _AFTER_WORD.match(after)
+        if not m:
+            return False
         after = after[m.end():]
+        if _CITATION.match(after):
+            return True
+        w = _CAPITALISED.match(after)
+        if not w:
+            return False
+        word, after = w.group(1), after[w.end():]
+        if word.lower() in _PAPER_WORDS:
+            return re.match(rf"[ \t~]+{_LABEL}", after) is not None
+        if word.lower() not in _OWN_PARTS:
+            if _by_authors(word, after):
+                return True
+            if not re.match(rf"\.?[ \t~]+{_ONE_LABEL}", after):
+                return False
         after = after[_PART_LABEL.match(after).end():]
-        m = _ELSEWHERE_AFTER.match(after)
-    return bool(m)
+    return True
+
+
+def _by_authors(first: str, after: str) -> bool:
+    """Whether a capitalised word after "of", "in" or "from", with the text `after` it, names a
+    work by its authors: names followed by `et al.`, a year, a citation or a title (`Hardy
+    (1940)`, `Serre's book`), or several names that no lowercase word follows (`Hardy and
+    Wright`, `Hardy–Wright`). One name alone (`in Rudin`) is not enough, and a lowercase word
+    after the names makes them a mathematical term (`in Hilbert spaces`, `in Hilbert and
+    Banach spaces`, `in Navier–Stokes equations`)."""
+    several = re.search(r"[\-–][A-Z]", first) is not None
+    while (m := _MORE_NAMES.match(after)) and m.group(1).lower() not in _OWN_WORDS:
+        several, after = True, after[m.end():]
+    if _AUTHORS_THEN.match(after):
+        return True
+    return several and not re.match(r"[\s~]+[a-z]", after)
 
 
 def _authors(before: str) -> bool:
@@ -575,19 +635,33 @@ def _depth(name: str, places: set[str]) -> int:
 
 def _named_paper(o: dict, papers: list[tuple[str, str]]) -> str | None:
     """The paper a reference to another work names, read from the reference's own place in its
-    context: the key of the bracketed citation just before its number (`[U, Lemma 2.1]`,
-    `[U]'s Lemma 2.1`) when there is one; else the one paper named after it and before the next
-    reference (`Lemma 2.1 of [U]`, `of [U, Section 3]`, or the paper's title), if exactly one
-    is named."""
+    context: the key of the `\\cite` whose note holds it (`\\cite[Lemma 2.1]{U}`) or of the
+    bracketed citation just before its number (`[U, Lemma 2.1]`, `[U]'s Lemma 2.1`) when there
+    is one; else the one paper named after it and before the next reference outside a `\\cite`
+    (`Lemma 2.1 of [U]`, `of \\cite{U}`, `of [U, Section 3]`, `of \\cite[Section 3]{U}`, or the
+    paper's title), if exactly one is named. A `\\cite` names a paper when the paper is its only
+    key (`\\cite{A,U}` names neither)."""
     ctx, at = o.get("context") or "", o["at"]
+    ids = {pid for pid, _ in papers}
+
+    def keyed(keys: str) -> str | None:
+        k = [x.strip() for x in keys.split(",")]
+        return k[0] if len(k) == 1 and k[0] in ids else None
+
+    cites = [(m.start(), m.end(), keyed(m.group(1))) for m in _CITE.finditer(ctx)]
+    held = next((c for c in cites if c[0] < at < c[1]), None)
+    if held:
+        return held[2]
     key = _KEY_BEFORE.search(ctx[:at])
     if key:
         return next((pid for pid, _ in papers if pid == key.group(1)), None)
     end = at + len(re.sub(r"\s+", " ", o["text"]))
-    nxt = REF.search(ctx, end)
+    nxt = next((r for r in REF.finditer(ctx, end)
+                if not any(s < r.start() < e for s, e, _ in cites)), None)
     after = ctx[end:nxt.start() if nxt else len(ctx)][:80]
     hits = [pid for pid, title in papers
             if re.search(r"\[" + re.escape(pid) + r"\s*[\],]", after)
+            or any(end <= s < end + len(after) and named == pid for s, _, named in cites)
             or (title and re.sub(r"\s+", " ", title).lower() in after.lower())]
     return hits[0] if len(hits) == 1 else None
 
@@ -595,12 +669,16 @@ def _named_paper(o: dict, papers: list[tuple[str, str]]) -> str | None:
 def attribute(o: dict, own: dict[str, dict], papers: list[tuple[str, str]]) \
         -> tuple[str | None, str]:
     """The paper of the configuration a reference cites, or None with the reason: the paper
-    its citation names (`Theorem 2.1 of [U]`, `[U, Theorem 2.1]`); else the paper whose claims
-    name its declaration; else the paper owning the longest namespace or module that contains
-    its declaration or module, when one paper owns it."""
+    its citation names (`Theorem 2.1 of [U]`, `[U, Theorem 2.1]`) or whose title follows it
+    (`Theorem 2.1 of Odd squares`); else the paper whose claims name its declaration; else the
+    paper owning the longest namespace or module that contains its declaration or module, when
+    one paper owns it."""
     if o.get("status") == "other-source":
         pid = _named_paper(o, papers)
         return (pid, "") if pid else (None, "")
+    pid = _titled(o, papers)
+    if pid:
+        return pid, ""
     src = o["source"]
     decl = src.get("declaration")
     if decl:
@@ -619,6 +697,21 @@ def attribute(o: dict, own: dict[str, dict], papers: list[tuple[str, str]]) \
     if len(best) > 1:
         return None, f"its namespace or module holds claims of papers {' and '.join(best)}"
     return best[0], ""
+
+
+def _titled(o: dict, papers: list[tuple[str, str]]) -> str | None:
+    """The paper whose title follows "of", "in" or "from" just after a reference's number
+    (`Lemma 2.1 of Odd squares`, `in the Odd squares`), when exactly one paper's does. A title
+    is no citation (`_cited_after`), but it names one of the configuration's papers."""
+    ctx = o.get("context") or ""
+    m = _AFTER_WORD.match(ctx, o["at"] + len(re.sub(r"\s+", " ", o["text"])))
+    if not m:
+        return None
+    rest = ctx[m.end():].lower()
+    starts = (rest, re.sub(r"^the\s+", "", rest))
+    hits = [pid for pid, title in papers
+            if title and any(s.startswith(re.sub(r"\s+", " ", title).lower()) for s in starts)]
+    return hits[0] if len(hits) == 1 else None
 
 
 def combine(per: dict[str, dict], invs: dict[str, dict], refs: list[dict]) -> dict:
