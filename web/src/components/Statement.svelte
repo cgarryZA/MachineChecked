@@ -4,21 +4,26 @@
   import { gloss } from "../lib/gloss.js";
   import { carriedOf } from "../lib/carried.js";
   import { expansionFor, expansionsOf } from "../lib/expand.js";
+  import { spineOf, conclusionOf, nodesOf, quantifies } from "../lib/tree.js";
 
-  // A locked proposition as its quantifier prefix and its conclusion.
+  // A locked proposition as one tree (`tree`, from the probe), shown as the binders that open it,
+  // in order, and its conclusion; a hypothesis that quantifies shows its own structure under it.
   // `ext` highlights from outside (a linked symbol of the paper): a variable ({var}) or a
   // binder's type ({type}); `onactive` hears which variable is highlighted here.
   // `onpinned` hears which variable is held (clicked), and `onterm` which sub-term is selected
   // ({where, k}: `b:<binder>` for a binder's type, `c` for the conclusion, `l:<n>` for the n-th
-  // part of a conclusion split by its logic), for choosing one. `ext` may also be {term}, or
-  // {at}: a sub-term by its identity in the proposition. `selId` is the sub-term selected in
+  // part of a conclusion split by its logic), for choosing one. `ext` may also be {at}: a
+  // sub-term, or one occurrence of a variable, by its identity. `selId` is the sub-term selected in
   // another view of the same statement (the exact Lean), by that identity; `onselect` hears the
   // identity of the one selected here. `mark` lists positions of applications to mark (the
   // occurrences of a warning).
   let { st, spec = null, onref, compact = false, ext = null, onactive = null, onpinned = null,
         onterm = null, selId = null, onselect = null, mark = null } = $props();
 
-  const binders = $derived(st.binders || []);
+  // The binders that open the statement, each with what the tree gives it (its properties and,
+  // for a hypothesis, its own tree), and the shape of the conclusion under them.
+  const binders = $derived(spineOf(st));
+  const shape = $derived(conclusionOf(st));
   const refs = $derived([...(st.closure || []), ...(st.direct || [])].sort((a, b) => b.length - a.length));
   const ROLE = { forall: "for all", exists: "there is", hypothesis: "assume", instance: "assume" };
   // An instance that supplies data (`[Inhabited E]`: a chosen element) is given, not assumed.
@@ -45,16 +50,15 @@
   // equivalence lists its parts; a chain of the same connective is one list.
   const flat = (node, op) => (node.op === op ? node.args.flatMap((a) => flat(a, op)) : [node]);
   const OP = { and: "all of the following", or: "at least one of the following", iff: "the following are equivalent" };
-  // The variables of the statement by number: the prefix's binders, then each "there is" inside
-  // the conclusion (numbered by the probe after the prefix, each witness its own number).
+  // The variables of the statement by number: the binders that open it, then each variable
+  // bound inside the conclusion and inside a hypothesis (numbered by the probe after them, each
+  // its own number).
   const vars = $derived.by(() => {
     const out = [...binders];
-    const walk = (n) => {
-      if (!n) return;
-      if (n.op === "exists" || n.op === "forall") out[n.var] = { role: n.op, name: n.name, type: n.type, binder: "explicit", inner: true };
-      (n.args || []).forEach(walk);
-    };
-    walk(st.conclusion?.logic);
+    for (const n of nodesOf(st)) {
+      if ((n.op === "exists" || n.op === "forall") && n.var >= binders.length)
+        out[n.var] = { role: n.op, name: n.name, type: n.type, binder: n.binder || "explicit", scope: n.scope, within: n.within || [], inner: true };
+    }
     return out;
   });
 
@@ -63,7 +67,7 @@
   let pinned = $state(null);
   const active = $derived(hover ?? pinned ?? ext?.var ?? null);
   $effect(() => { onactive?.(hover ?? pinned); });
-  $effect(() => { onpinned?.(pinned); });
+  $effect(() => { onpinned?.(pinned, pinned != null ? vars[pinned]?.name ?? null : null); });
 
   // A selected sub-term, and where it is.
   let termSel = $state(null);
@@ -73,7 +77,7 @@
   $effect(() => { if (selId != null && termSel && idOf(termSel) !== selId) termSel = null; });
   const outerId = $derived(termSel ? null : selId ?? ext?.at ?? null);
   const termAt = (where) => where == null ? null
-    : termSel?.where === where ? termSel.k : ext?.term?.where === where ? ext.term.k : null;
+    : termSel?.where === where ? termSel.k : null;
   // Only a choice made here is reported: dropping this view's selection for one made in another
   // view must not clear that one.
   function setTerm(where, k) {
@@ -82,11 +86,17 @@
     if (k != null) pinned = null;
     onselect?.(idOf(termSel));
   }
-  // The parts of a conclusion split by its logic, numbered in reading order.
-  const leafIds = $derived.by(() => {
+  // The parts of the conclusion, numbered in reading order (`l:<n>`), and those of the
+  // hypotheses' own trees (`h:<n>`).
+  const leafKeys = $derived.by(() => {
     const m = new Map();
-    const walk = (n) => { if (!n) return; if (n.leaf) m.set(n, m.size); else (n.args || []).forEach(walk); };
-    walk(st.conclusion?.logic);
+    const walk = (n, tag) => {
+      if (!n) return;
+      if (n.leaf) m.set(n, tag + [...m.values()].filter((k) => k.startsWith(tag)).length);
+      else (n.args || []).forEach((a) => walk(a, tag));
+    };
+    walk(shape, "l:");
+    binders.forEach((b) => walk(b.logic, "h:"));
     return m;
   });
   function ppAt(where) {
@@ -94,7 +104,7 @@
     if (where === "c") return st.conclusion;
     if (where.startsWith("b:")) return binders[+where.slice(2)]?.type;
     if (where.startsWith("x:")) return vars[+where.slice(2)]?.type;
-    if (where.startsWith("l:")) return [...leafIds].find(([, i]) => i === +where.slice(2))?.[0]?.leaf;
+    if (where.startsWith("l:") || where.startsWith("h:")) return [...leafKeys].find(([, k]) => k === where)?.[0]?.leaf;
     if (where.startsWith("p:")) return carriedPP[+where.slice(2)] || null;
     return null;
   }
@@ -144,6 +154,29 @@
   const FOLD = 8;
   const howOf = (b) => b.role === "exists" ? "produced"
     : b.role === "hypothesis" || (b.role === "instance" && b.supplies === "proposition") ? "states" : "given";
+  // How the properties of a quantified object stand, from where the probe places it (`scope`):
+  // given or produced; inside a hypothesis of the statement; or local to the negation,
+  // alternative, equivalence or premise that contains it. Older data says only whether the
+  // object is local (`local`).
+  const basisOf = (n, local) => !n.scope ? (local ? "local" : n.op === "exists" ? "produced" : "given")
+    : n.scope === "given" || n.scope === "produced" ? n.scope
+    : n.scope === "assumed" && n.within?.[0] === "assume" ? "inside" : "local";
+  // What a variable bound inside the statement is, from where it stands.
+  const STANDS = {
+    produced: "Chosen by the statement (there is), for the part it belongs to",
+    given: "Any value (for every), in the part it belongs to",
+    denied: "Inside a negation: the statement says there is no such value",
+    alternative: "Inside one alternative of an “or”: chosen only in that case",
+    equivalent: "Inside one side of an equivalence",
+  };
+  function standsOf(b) {
+    if (b.scope === "assumed") {
+      const where = b.within?.[0] === "assume" ? "Inside an assumption" : "Inside the premise of an “if”";
+      return where + (b.role === "exists" ? ": not chosen by the statement" : ": any value");
+    }
+    if (b.scope === "denied" && b.role !== "exists") return "Inside a negation";
+    return STANDS[b.scope];
+  }
   const SCOPE = { forall: "for every", exists: "there is", if: "if", then: "then", and: "and", or: "or", iff: "iff", not: "not" };
 </script>
 
@@ -170,7 +203,14 @@
   {/if}
 {/snippet}
 
-{#snippet inner(b)}
+{#snippet inside(b)}
+  {#if b.logic && quantifies(b.logic)}
+    <div class="inner within" data-within={b.id}>
+      <p class="small faint">Inside this assumption:</p>
+      <div class="body">{@render logic(b.logic, 1, true)}</div>
+    </div>
+  {/if}
+  {#if b.logic_error}<p class="small bad">The structure of this assumption could not be read: {b.logic_error}</p>{/if}
   {#each b.objects || [] as o (o.id)}
     <div class="inner" data-inner={o.id}>
       <p class="small"><span class="faint">inside this assumption{#if o.scope.length}{" "}({o.scope.map((x) => SCOPE[x] || x).join(" › ")}){/if}:</span> {o.op === "exists" ? "there is" : "for every"} <code>{o.name}</code> : {@render lean(o.type)}</p>
@@ -188,7 +228,7 @@
 
 {#snippet logic(node, depth, local = false)}
   {#if node.leaf}
-    {@render lean(node.leaf, "l:" + leafIds.get(node))}
+    {@render lean(node.leaf, leafKeys.get(node))}
   {:else if node.op === "not"}
     <span class="op">it is not the case that</span>
     <div class="parts witness">{@render logic(node.args[0], depth + 1, true)}</div>
@@ -197,7 +237,7 @@
     <div class="line"><span class="role">then</span><div class="body">{@render logic(node.args[1], depth + 1, local)}</div></div>
   {:else if node.op === "exists" || node.op === "forall"}
     <div class="line"><span class="role">{node.op === "exists" ? "there is" : "for every"}</span>{@render name(node.var)}<span class="colon"> : </span><span class="ty" class:hl={ext?.type === node.var}>{@render lean(node.type, "x:" + node.var)}</span><span class="op">{node.op === "exists" ? "such that" : ","}</span></div>
-    {@render carried(node, local ? "local" : node.op === "exists" ? "produced" : "given")}
+    {@render carried(node, basisOf(node, local))}
     <div class="parts witness">{@render logic(node.args[0], depth + 1, local)}</div>
   {:else}
     <span class="op">{OP[node.op] || node.op}</span>
@@ -227,12 +267,12 @@
             {@render carried(b, howOf(b))}
             {#each g.members as m}
               <div class="line sub">{@render condition(m, "b:" + m)}</div>
-              <div class="subc">{@render carried(binders[m], howOf(binders[m]))}{@render inner(binders[m])}</div>
+              <div class="subc">{@render carried(binders[m], howOf(binders[m]))}{@render inside(binders[m])}</div>
             {/each}
           </li>
         {:else}
           {@const m = g.members[0]}
-          <li class={"b " + binders[m].role}><div class="line">{@render condition(m, "b:" + m)}</div>{@render carried(binders[m], howOf(binders[m]))}{@render inner(binders[m])}</li>
+          <li class={"b " + binders[m].role}><div class="line">{@render condition(m, "b:" + m)}</div>{@render carried(binders[m], howOf(binders[m]))}{@render inside(binders[m])}</li>
         {/if}
       {/each}
     </ol>
@@ -241,7 +281,7 @@
     <div class="concl">
       {#if binders.length}<span class="role">then</span>{/if}
       <div class="body">
-        {#if st.conclusion.logic}{@render logic(st.conclusion.logic, 0)}{:else}{@render lean(st.conclusion, "c")}{/if}
+        {#if shape}{@render logic(shape, 0)}{:else}{@render lean(st.conclusion, "c")}{/if}
       </div>
     </div>
   {/if}
@@ -250,7 +290,7 @@
     <div class="inspect" aria-live="polite">
       <p><span class="v">{b.name}</span><span class="colon"> : </span>{@render lean(b.type)}
         <button class="x" aria-label="Release" onclick={() => (pinned = null)}>×</button></p>
-      <p class="small faint">{b.inner && b.role === "exists" ? "Chosen by the statement (there is), for the part it belongs to" : b.inner ? "Any value (for every), in the part it belongs to" : b.role === "exists" ? "Chosen by the statement (there is)" : b.role === "forall" ? "Any value (for all)" : ROLE[b.role]}{#if b.binder === "implicit" || b.binder === "strict-implicit"}; written implicitly{/if}</p>
+      <p class="small faint">{b.inner && b.scope ? standsOf(b) : b.inner && b.role === "exists" ? "Chosen by the statement (there is), for the part it belongs to" : b.inner ? "Any value (for every), in the part it belongs to" : b.role === "exists" ? "Chosen by the statement (there is)" : b.role === "forall" ? "Any value (for all)" : ROLE[b.role]}{#if b.binder === "implicit" || b.binder === "strict-implicit"}; written implicitly{/if}</p>
       {#each groupOf(pinned)?.members || [] as m}
         <p class="small">{@render condition(m)}</p>
       {/each}
@@ -276,7 +316,7 @@
       <p class="small faint">A plain-English note on this name; the Lean definition is what the statement uses.</p>
     </div>
   {/if}
-  {#if !compact && vars.some((b) => b?.role === "exists")}
+  {#if !compact && vars.some((b) => b?.role === "exists" && b.scope !== "assumed")}
     <p class="hint faint">
       The order of the rows is the order of the quantifiers: a “there is” above a “for all”
       chooses one value for every case below it.
