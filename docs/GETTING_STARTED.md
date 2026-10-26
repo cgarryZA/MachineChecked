@@ -173,14 +173,18 @@ compare it with the paper read here:
 - the reference is to another work, or in a namespace the project maps to another paper.
 
 A reference is to another work when a citation follows its number (`Theorem 4.1 of [Gauss]`,
-`Theorem 3 in Hardy and Wright`, `Lemma 9 of ref. [3]`, `Lemma 9 [AB]`) or comes just before
-it: an open citation bracket (`[AB, Lemma 9]`), `et al.`, an author's possessive
-(`Gauss's Lemma 4.22`, `[AB]'s Lemma 9`, `Smith et al.'s Theorem 3`), or a chapter after a
-comma, as a book's citation gives it (`Hardy–Wright, *An Introduction*, Ch. IV, Prop. 4.7`).
-A possessive of the paper, a part of it or the Lean (`the paper's Lemma 2.1`,
+`Lemma 9 [AB]`, `Lemma 9~\cite{AB}`, `Lemma 9 of ref. [3]`, `of *An Introduction*`), with a
+work's authors (`Theorem 3 in Hardy and Wright`, `of Gauss (1801)`, `in Smith et al.`,
+`in Serre's book`, `of Serre, *A Course in Arithmetic*`) or another paper (`of Paper B`), or
+when a citation comes just before it: an open citation bracket (`[AB, Lemma 9]`), `et al.`, an
+author's possessive (`Gauss's Lemma 4.22`, `[AB]'s Lemma 9`, `Smith et al.'s Theorem 3`), or a
+chapter after a comma, as a book's citation gives it (`Hardy–Wright, *An Introduction*, Ch. IV,
+Prop. 4.7`). A possessive of the paper, a part of it or the Lean (`the paper's Lemma 2.1`,
 `Lean's Theorem 2.1`), a part of the paper or the Lean after the number
-(`Lemma 7.7 in Section 7`, `from Appendix A`, `in Lean`), an ordinary word after it
-(`in refined form`, `in reference to Lemma 2`), a possessive earlier in the sentence
+(`Lemma 7.7 in Section 7`, `from Appendix A`, `in Figure 2`, `in Eq. (4)`, `in Proof of
+Lemma 3`, `in Lean`), the paper itself (`of the Paper`), a mathematical term or an ordinary
+word after it (`in Hilbert spaces`, `in refined form`, `in reference to Lemma 2`), one name
+alone with no year, title or citation (`in Rudin`), a possessive earlier in the sentence
 (`By Gauss's lemma and Lemma 2.1`) and a chapter in prose (`In Chapter 4, Lemma 4.2`) leave
 the reference checked against the paper. A citation after the part names another work
 (`Lemma 4.1 in Section 4 of [AB]`).
