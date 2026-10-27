@@ -370,7 +370,8 @@ as the engine computed it from the readings, reports and published findings:
 - **Review next** opens the review queue in its order.
 
 `check` and `build` print the same summary of the audit's readings. For the readings above, with
-a notation record and a statement left unlinked:
+a statement left unlinked, a notation record and a proof equation read as stating part of its
+step:
 
 ```
 semantic summary of paper P (the audit's readings):
@@ -382,6 +383,10 @@ semantic summary of paper P (the audit's readings):
   1 notation record, 1 linked to 1 declaration
     correspondence: not assessed (1)
     reviews: not reviewed (1)
+  1 proof step, 1 linked to 1 declaration
+    correspondence: part of the claim (1)
+    basis: in one Lean statement (1)
+    reviews: printed step not reviewed (1)
 ```
 
 `check --json` gives the whole summary as `semantic`, and each claim's readings as its own

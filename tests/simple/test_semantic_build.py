@@ -119,6 +119,21 @@ def test_check_json_build_and_site_agree_on_one_summary(cover, tmp_path):
     assert "  5 statements, 4 linked to 3 declarations" in text
     assert "    correspondence: every clause (3); unresolved (1); not assessed (1)" in text
     assert "%" not in text
+    # As docs/GETTING_STARTED.md shows it.
+    assert """semantic summary of paper P (the audit's readings):
+  5 statements, 4 linked to 3 declarations
+    correspondence: every clause (3); unresolved (1); not assessed (1)
+    basis: in one Lean statement (1); by a reviewer's composition (1); through a checked bridge (1); basis not recorded (1)
+    reviews: not reviewed (5)
+    findings: open questions (1)
+  1 notation record, 1 linked to 1 declaration
+    correspondence: not assessed (1)
+    reviews: not reviewed (1)
+  1 proof step, 1 linked to 1 declaration
+    correspondence: part of the claim (1)
+    basis: in one Lean statement (1)
+    reviews: printed step not reviewed (1)
+""" in text
 
     # The site `build --site` writes carries the same summary, and each claim row its facts.
     site = tmp_path / "public"
