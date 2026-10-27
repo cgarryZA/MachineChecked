@@ -118,7 +118,8 @@ violations and obligations by subject; `findings` holds only their totals. A vio
   claim and names every review the later build no longer counts, with the dependency that
   changed; `--workspace ID` adds the workspace's records that are not current, of every
   kind: evidence, findings, questions, counterexamples, compositions, requirements, fragments
-  and alignments.
+  and alignments. `--map` matches each claim of the earlier paper revision to the later one by
+  its passage, with each release's own status; a shared number or id is only a proposal.
 - **A shareable report**: `machinechecked build` writes `.machinechecked/MachineChecked.html`
   (one file, opens from disk; Git ignores it there, and `--out` puts it elsewhere). `machinechecked build --site public/ --author "Name" --issues owner/repo` writes a
   directory to publish (for example on GitHub Pages) with `audit.json` describing it. Both

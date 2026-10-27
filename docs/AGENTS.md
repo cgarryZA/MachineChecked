@@ -358,6 +358,17 @@ adds `workspace.records`: the saved investigation's evidence, findings, question
 counterexamples and compositions that are not current, each with its `state` and `changes`
 (`workspace show --json` gives the currency of its requirements and passages).
 
+`machinechecked changes --map --json` prints the version map instead (`prooflens/version-map@1`,
+[DATA_MODEL.md](DATA_MODEL.md#version-map-prooflensversion-map1-derived)): each claim of the
+earlier paper revision matched to the later one by its passage, whatever the two inventories
+call it, with `class` (`unchanged`, `moved`, `context-changed`, `changed`, `removed`,
+`ambiguous`, `unknown`, `new`), `by` (how it was matched), both sides' places, numbers and
+recorded statuses (`from.recorded`, `to.recorded`), the `change` and the changed `context`.
+`ambiguous` entries list `candidates`; a candidate by `number`, `id` or `line-diff` is a
+proposal, never a match: report it as one and leave the choice to the maintainer
+(`--match EARLIER=LATER`). `references` gives the later build's disagreeing paper numbers with
+the counterpart the map names (`current`).
+
 ### Reviewing from the terminal
 
 `machinechecked review next|read|lock|show|decide|author|submit|status|export` takes a unit of

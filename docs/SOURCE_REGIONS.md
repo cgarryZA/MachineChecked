@@ -484,3 +484,69 @@ where the paper prints it, in the new revision; `--write` gives it the new place
 `--write` adds the original revision to it, so it selects nothing at the new revision until it
 is chosen again (`stale` in a later plan). The display overlay is written atomically with the
 inventory, and only for the selected paper's claims.
+
+## Comparing two revisions: the version map
+
+Once a release of each revision is built, the version map matches each claim of the earlier
+revision to the later one:
+
+```sh
+machinechecked changes --map                              # the latest release and the one before
+machinechecked changes --map --from-source git:OLD --json # a vendored manuscript at commit OLD
+machinechecked changes --map --match P:old-id=P:new-id    # the maintainer's match of one claim
+```
+
+It reads each release's inventory and the manuscript of each release's revision: the folder or
+`git:REV` given with `--from-source` and `--to-source`, else a Git or arXiv source at the
+revision the release recorded, else the configured folder. A manuscript that does not hold the
+text its release recorded for every claim (each region's digest, each environment's anchor) is
+refused, with the option to pass. A paper read from its PDF has no manuscript to compare.
+
+Each earlier claim's passage, as the earlier revision prints it, is looked for in the later
+revision by the repin planner above (its exact text where the paper prints it, else its label),
+and the claim is paired with the later inventory's claim pinned at that place (or, failing that,
+the one claim pinned across it). The pin itself is not needed: a claim whose pin is of other
+text is compared by what its revision prints, and each side says whether its pin matches
+(`pin`: `matches`, `differs` or `none`).
+
+| Class | Meaning |
+|---|---|
+| `unchanged` | the same text at the same place, under the same number |
+| `moved` | the same text at another place or under another number (`renumbered`) |
+| `context-changed` | the same text, and something it is read with changed (below) |
+| `changed` | its label leads to a passage with other text, or the later inventory pins other bounds around its text; `change` gives the first changed line and the diff |
+| `removed` | neither its text nor its label is in the later revision, or the later inventory has no claim where they are, and nothing proposes another claim |
+| `ambiguous` | its text or label occurs more than once, two earlier claims lead to one later claim, or only a proposal names a later claim: its printed number, its claim id or, for a span, the line diff of its file (`candidates`, each with what proposes it) |
+| `unknown` | its passage cannot be read in the earlier revision |
+| `new` | a later claim no earlier claim is matched to (`candidate_for` names the claims it is a candidate for) |
+
+A renumbering proposes a match and never makes one: two claims that share only a number or an
+id stay `ambiguous` until the maintainer names the match with `--match EARLIER=LATER`. The map
+records it as the maintainer's (`by` starts with `maintainer`, and `resolved` keeps the class and
+candidates it had), and compares the two texts as for any match. A claim already matched by its
+text or label cannot be matched again.
+
+A passage's own lines can stay the same while what it is read with changes. A match is
+`context-changed` when one of these changed between the revisions (`context`, each with the
+change and both versions):
+
+- a further passage or a pinned macro definition of its pin (the repin plan's `parts`);
+- the definition of a macro the passage uses (`macro`, with the diff of the definitions);
+- the prose that opens its section, before the section's first environment: a standing
+  assumption, as `workspace suggest` reads it (`standing assumption`);
+- a claim the passage refers to (`\ref`, `\eqref`) or a definition claim whose definitions the
+  claim's Lean relies on in either build (`definition` or `reference`, with `via`), when that
+  claim is not itself shown unchanged. This goes one level deep: what relies on a
+  context-changed claim is not reopened through it.
+
+`surroundings_changed` says that the lines beside a passage changed, as the repin plan's
+`context_changed` does; it does not change the class.
+
+Each side keeps what its own revision and release recorded: its place and bounds, the digest of
+its text, its printed number (the compiled paper's, from the environment that carries its label,
+else the inventory's) and `recorded`, the status and the reviews its build counted. The map
+changes no status and carries no review over. Its `numbers` give, for each earlier number, the
+later claims' numbers, which the paper-number check reads: in the later release's references to
+the paper's numbers that disagree with it, each gets the counterpart the map names
+(`references`), several when the map's claim is ambiguous, a proposal marked as one, or none
+for a removed claim ([Paper numbers in the Lean](GETTING_STARTED.md#paper-numbers-in-the-lean)).
