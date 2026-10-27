@@ -445,6 +445,13 @@ in short. The reader's Overview and machinechecked.org show its counts as they a
 verdict, score or percentage, no count is added to another, and it is never an input to a
 status.
 
+A site loading a published audit (`load_published_audit`) checks the summary and the claim rows'
+facts apart from the rest of the index, which is validated as strictly as before. The loaded
+record carries them as `semantic_summary`: `{state: "loaded", summary}`, or, for a summary in a
+format this version does not read or one that is not valid, `{state: "set-aside", reason, detail,
+format}` (`reason` is `unsupported` or `invalid`), and the claim rows then carry no facts. Either
+way the audit's statuses and claims load as they would without a summary.
+
 **Units.** Every count names its unit: `statements` (a claim whose unit is `statement`, other
 than notation), `notation` (a statement whose kind is `notation`) and `proof_steps` (a proof
 equation or passage). A claim's declarations are those that state it: its links (zero
