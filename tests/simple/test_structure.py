@@ -272,6 +272,63 @@ def test_each_binder_stands_in_its_scope(tmp_path, toolchain):
 @needs_lean
 @needs_tex
 @pytest.mark.parametrize("toolchain", [None, "leanprover/lean4:v4.24.0"])
+def test_every_printed_sub_term_has_an_identity_of_its_own(tmp_path, toolchain):
+    """Each identity a printed expression gives names one sub-term (#457): a binder's name has
+    its binder's identity followed by `.name`, not an identity another sub-term has, and an
+    application printed with notation (`∃ x, p`, `x = y`) is the application, not its head."""
+    root = build_copy(tmp_path, toolchain)
+    view = build_view(root, root / "paper/main.tex", root / ".machinechecked", log=lambda m: None)
+    rec = {l["name"]: l["record"] for c in view["body"]["claims"] for l in c["links"]}
+
+    def ids(pp):
+        """Each identity of a printed expression with the texts it is given there."""
+        out = {}
+        for t in pp.get("terms") or []:
+            out.setdefault(t["id"], []).append(
+                "".join(s["t"] for s in pp["segments"][t["from"]:t["to"]]))
+        for s in pp.get("segments") or []:
+            if "at" in s:
+                out.setdefault(s["at"], []).append(s["t"])
+        return out
+
+    assumed = rec["Shape.assumed"]
+    for pp in symbols.printed(assumed):
+        if not pp or "segments" not in pp:
+            continue
+        for i, texts in ids(pp).items():
+            assert len(texts) == 1, (i, texts)
+            assert bare(symbols.term_by_id(assumed, i)) == bare(texts[0]), (i, texts)
+    # The hypothesis `∀ d, Admissible d → ∃ s : Solution d, Good s`: each binder's name has its
+    # binder's identity (the `∃`'s is the `fun` it binds with), and the printed `∃` is the
+    # application of `Exists`.
+    h = assumed["binders"][0]["type"]
+    names = [(s["t"], s["at"], s["binder"]) for s in h["segments"] if "binder" in s]
+    [every] = [n for n in nodes(assumed["tree"]) if n.get("op") == "forall" and
+               n.get("name") == "d"]
+    [inner] = [n for n in nodes(every) if n.get("op") == "exists"]
+    assert names == [("d", every["id"] + ".name", every["id"]),
+                     ("s", inner["id"] + ".name", inner["id"])]
+    ex = next(t for t in h["terms"] if "".join(
+        s["t"] for s in h["segments"][t["from"]:t["to"]]).startswith("∃"))
+    assert ex["id"] + "/1" == inner["id"], "the application of Exists, whose `fun` binds s"
+    assert bare(symbols.term_by_id(assumed, "/0/0")) == "Nat", "the type of d, and only it"
+
+    # In every statement, every identity of a printed expression names one sub-term, and a
+    # binder's name is never an occurrence or a sub-term.
+    for name, r in rec.items():
+        for pp in symbols.printed(r):
+            if not pp or "segments" not in pp:
+                continue
+            for i, texts in ids(pp).items():
+                assert len(texts) == 1, (name, i, texts)
+            names = {s["at"] for s in pp["segments"] if "binder" in s}
+            assert all(n.endswith(".name") for n in names), (name, names)
+            assert not names & {t["id"] for t in pp.get("terms") or []}, (name, names)
+
+
+@needs_lean
+@needs_tex
+@pytest.mark.parametrize("toolchain", [None, "leanprover/lean4:v4.24.0"])
 def test_definitions_are_exported_as_written(tmp_path, toolchain):
     """A linked definition carries what it says (#97): its parameters in their order, with how
     each is written, and its body with the witness's type; a definition by recursion carries

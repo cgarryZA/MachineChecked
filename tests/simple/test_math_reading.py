@@ -201,7 +201,7 @@ def test_statements_read_as_mathematics(tmp_path, toolchain):
         for r in rows_of(s["readable"]["rows"]):
             if r.get("at"):
                 assert r["at"] in pp, (name, r)
-                assert symbols.term_by_id(s, r["at"]) is not None, (name, r)
+                assert symbols.term_by_id(s, r["at"]) == pp[r["at"]]["text"], (name, r)
         for x in pp.values():
             assert "math" in x, (name, x["text"])
             occ = {g["at"]: g for g in x["segments"] if "at" in g}

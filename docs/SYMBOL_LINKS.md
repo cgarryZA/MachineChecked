@@ -58,7 +58,9 @@ table of `machinechecked.toml` names another):
   its identity: its position in the whole proposition (Lean's `SubExpr.Pos`, written like
   `/1/0/1`), which the probe records for every selectable sub-term (`terms[].id`) and for every
   occurrence of a variable (`segments[].at`), so one occurrence is named apart from the variable,
-  whose number all its occurrences share. It depends only on the proposition, so no change in how
+  whose number all its occurrences share; a binder's printed name has its binder's identity
+  followed by `.name`, and an application printed with notation (`x = y`, `∃ x, p`) the
+  application's. Each identity names one sub-term. It depends only on the proposition, so no change in how
   the statement is printed or split for display moves it, and the same expression has the same
   identity in the readable statement and in the exact Lean, which is how a selection in one is
   shown in the other. A property an object's type carries has the identities of its statement

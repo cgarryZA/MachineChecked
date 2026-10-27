@@ -8,6 +8,7 @@
   import Definition from "./Definition.svelte";
   import ExactLean from "./ExactLean.svelte";
   import Inspection from "./Inspection.svelte";
+  import RowFindings from "./RowFindings.svelte";
   import { loadDecl, loadWork } from "../lib/data.js";
   import { withQuery } from "../lib/route.svelte.js";
   import { sourceUrl, sourceLabel, sourceTitle } from "../lib/issue.js";
@@ -16,6 +17,7 @@
   import { trail, anchor, openInspection, backTo, opener, pinsIn, pinOf, togglePin, tokenOf, itemOf,
            workspace } from "../lib/inspect.svelte.js";
   import { carriedOf } from "../lib/carried.js";
+  import { findingSets, placeFindings, reviewFields } from "../lib/findings.js";
 
   // One claim's comparison, Paper | Lean, shared by the reader, the claim page and the review
   // page. It draws the content its controller allows (`inputs`, from `comparison.comparisonInputs`)
@@ -178,6 +180,13 @@
     }
     return out;
   });
+  // Findings, where allowed: each at the rows an alignment of its own reading names, else on the
+  // whole claim (lib/findings.js); and the correspondence fields of the author's reviews, at the
+  // proposition each read.
+  const own = $derived(workspace.view?.claims?.[main?.id]
+    ? { ...workspace.view.claims[main.id], workspace: workspace.id, reviewer: workspace.view.reviewer } : null);
+  const placed = $derived(placeFindings(findingSets(published, own, { blind, who: whoOf }), statements));
+  const fields = $derived(blind ? new Map() : reviewFields(clauses));
   const where = (f) => f.missing ? "a passage no longer kept"
     : f.passage ? (f.passage.claim === main?.id ? "this claim's passage" : `the passage of ${f.passage.claim}`)
     : f.region?.file ? `${f.region.file}:${f.region.start_line}${f.region.end_line && f.region.end_line !== f.region.start_line ? "–" + f.region.end_line : ""}`
@@ -312,7 +321,9 @@
   {/if}
 {/snippet}
 
-{#snippet afterRow(key, spec)}{@render slot(spec + "::" + key)}{/snippet}
+{#snippet findingsAt(key)}<RowFindings entries={placed.at.get(key) || []} notes={fields.get(key) || []} {statements} claimId={main?.id} paired={source?.id ?? null} at={key} />{/snippet}
+
+{#snippet afterRow(key, spec)}{@render findingsAt(spec + "::" + key)}{@render slot(spec + "::" + key)}{/snippet}
 
 <!-- A paired row's paper cell: the passages aligned with it, each with its requirement, its
      relation and its author. An alignment drawn at an earlier row is named, not repeated. -->
@@ -356,6 +367,7 @@
 <!-- A statement: its rows, then its complete exact Lean. -->
 {#snippet statementOf(spec, st, k)}
   {@render wholeRow(spec)}
+  {@render findingsAt(spec + "::top")}
   <Statement {st} {spec} compact exact readable={st.readable?.rows ? readableRow : null} paper={paired ? paperCell : null} after={afterRow}
     onref={(n, row) => open(n, spec + "::" + row)}
     onproperty={(p, o, how, row) => open(tokenOf({ kind: "property", spec, id: p.type?.id }), spec + "::" + row)}
@@ -388,6 +400,7 @@
         <div class="readable" data-slot="readable"><Definition {d} {name} {key} onref={(n) => open(n, name + "::top")} onname={(n) => open(n, name + "::top")} selId={selFor(name) ?? extFor(name)?.at ?? null} onselect={(id) => select(name, id)} /></div>
         <div class="exact-pane"><Definition {d} {name} {key} view="exact" onref={(n) => open(n, name + "::top")} selId={selFor(name)} onselect={(id) => select(name, id)} /></div>
       </div>
+      {@render findingsAt(name + "::top")}
       {@render slot(name + "::top")}
     </div>
   </div>
@@ -513,6 +526,7 @@
       {#if source}<span class="faint">Each passage is beside the Lean it was aligned with, as recorded{source.from === "published" ? " and published with the audit" : ""}; Lean has not checked these associations.</span>{/if}
     </p>
   {/if}
+  {#if placed.claim.length}<RowFindings entries={placed.claim} {statements} claimId={main?.id} claim />{/if}
   {#if !paired}
     <div class="grid" class:single={!passages.length || (!formal && !defsOnly.length)}>
       {#if passages.length}

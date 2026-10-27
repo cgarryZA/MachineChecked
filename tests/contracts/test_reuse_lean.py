@@ -291,3 +291,31 @@ def test_reuse_requires_the_engine_that_read_the_records(toy, monkeypatch):
                        r"version of MachineChecked that read them \(an earlier version stored "
                        r"them\)"):
         reuse_without_tex()
+
+
+def test_the_work_directory_is_not_a_lean_input(tmp_path):
+    """A probe stopped mid-run leaves its Probe.lean in the work directory; that file is no Lean
+    input of the project, so it leaves the Lean-inputs digest, and with it `--reuse-lean`, alone.
+    The work directory is left out under any of its names, and when configured elsewhere."""
+    import types
+    root = tmp_path / "lean"
+    (root / "Syn").mkdir(parents=True)
+    (root / "lakefile.toml").write_text('name = "syn"\n[[lean_lib]]\nname = "Syn"\n')
+    (root / "Syn" / "Main.lean").write_text("theorem t : True := trivial\n")
+    work = root / "audit-work"
+    cfg = types.SimpleNamespace(lean_root=root, out_dir=work)
+    before = pipeline.lean_inputs_digest(cfg)
+    for folder in (".machinechecked", ".prooflens", "audit-work"):
+        left = root / folder / "build" / "prooflens-probe-x" / "Probe.lean"
+        left.parent.mkdir(parents=True)
+        left.write_text("theorem probe : True := trivial\n")
+        assert pipeline.lean_inputs_digest(cfg) == before, folder
+    (root / "Syn" / "Extra.lean").write_text("theorem u : True := trivial\n")
+    assert pipeline.lean_inputs_digest(cfg) != before, "a real Lean input still counts"
+    # A work directory that is the project itself does not leave the project out: there the
+    # files under audit-work count again, as any other folder's would.
+    same = types.SimpleNamespace(lean_root=root, out_dir=root)
+    assert pipeline.lean_inputs_digest(same) != pipeline.lean_inputs_digest(cfg)
+    empty = types.SimpleNamespace(lean_root=tmp_path / "none", out_dir=None)
+    (tmp_path / "none").mkdir()
+    assert pipeline.lean_inputs_digest(same) != pipeline.lean_inputs_digest(empty)

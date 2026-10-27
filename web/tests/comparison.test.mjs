@@ -104,7 +104,7 @@ assert.equal(rowOfTarget(st, { decl: "x", var: 0 }), "b:0");
 assert.equal(rowOfTarget(st, { decl: "x", var: "b" }), "b:0", "b is in the row it shares with a");
 assert.equal(rowOfTarget(st, { decl: "x", binder: 3 }), "b:3");
 assert.equal(rowOfTarget(st, { decl: "x", conclusion: true }), "c");
-assert.equal(rowOfTarget(st, { decl: "x", at: "/1/1/1/1/1/0/0/0/0/0/0" }), "c", "a + b is in the conclusion");
+assert.equal(rowOfTarget(st, { decl: "x", at: "/1/1/1/1/1" }), "c", "a + b is in the conclusion");
 assert.equal(rowOfTarget(st, { decl: "x", at: "/1/1/0" }), "b:2", "the first hypothesis");
 assert.equal(rowOfTarget(st, { decl: "x" }), null);
 assert.equal(rowOfTarget(st, { decl: "x", at: "/no/such" }), null);
@@ -115,7 +115,7 @@ assert.equal(rowOfId(produced, sId + "#start:/"), rowOfTarget(produced, { decl: 
 
 // A row's exact Lean is the exact statement's own sub-term.
 assert.equal(exactPart(st, "/1/1/1/1").text, "Toy.IsEven (a + b)");
-assert.deepEqual(exactPart(st, "/1/1/1/1").terms.map((t) => t.id), ["/1/1/1/1", "/1/1/1/1/1/0/0/0/0/0/0"]);
+assert.deepEqual(exactPart(st, "/1/1/1/1").terms.map((t) => t.id), ["/1/1/1/1", "/1/1/1/1/1"]);
 assert.equal(exactPart(st, "/missing"), null);
 
 // How a carried property stands, as the statement view words it: given, produced, inside an
