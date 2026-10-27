@@ -1082,7 +1082,8 @@ def cmd_inspect(a):
     if a.used_by:
         from .uses import text, uses
         out = uses(root, a.name, a.module, log=log, refresh=a.refresh)
-        print(json.dumps(out, indent=1, ensure_ascii=False) if a.json else text(out))
+        print(json.dumps(out, indent=1, ensure_ascii=False) if a.json
+              else text(out, module=a.module))
         if not out["ok"]:
             sys.exit(1)
         return

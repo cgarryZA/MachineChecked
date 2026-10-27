@@ -167,6 +167,7 @@ def test_a_proof_use_gives_its_path_and_the_application_at_its_end(site, lean):
         "Syn.Spec.main": "none", "Syn.Acc.main": "proof"}
     t = im.text(doc)
     assert "Syn.main -proof-> Syn.step -proof-> Syn.used" in t
+    assert "      application app:Syn.step:0 in Syn.step\n" in t
     assert "premise h : Syn.Jet 4 n  (proved in the caller: by Syn.jet_four)" in t
     assert "Claims whose Lean does not use it: Definition 4" in t
 
@@ -188,6 +189,30 @@ def test_an_unused_declaration_is_formalized_separately_and_an_incomplete_trace_
     t = im.text(doc)
     assert "formalized separately: not used by this main result" in t
     assert "references not recorded: Syn.Gone" in t
+
+
+def test_applications_alike_in_one_declaration_are_shown_once_with_their_ids(site, lean):
+    """#402: a declaration applied several times in one proof, with the same premises and
+    result each time, is one entry of the terminal text, with the number of applications and
+    their ids; the JSON keeps every application."""
+    def at(i, result="Syn.Jet 5 n", caller="Syn.step", via=None):
+        return {**APPLICATION, "id": f"app:{via or caller}:{i}", "caller": caller,
+                **({"via": via} if via else {}), "result": {"text": result}}
+    apps = [at(0), at(1), at(2), at(3, "Syn.Jet 6 n"),
+            at(0, via="Syn.step._proof_1"), at(1, via="Syn.step._proof_1")]
+    lean["doc"] = uses_doc("Syn.used", applications=apps)
+    doc = ask(site, lean, "Syn.used")
+    assert doc["applications"] == apps
+    assert by_name(doc)["Syn.main"]["applications"] == [a["id"] for a in apps]
+    t = im.text(doc)
+    assert ("      3 applications in Syn.step, with the same premises and result: "
+            "app:Syn.step:0 to app:Syn.step:2\n"
+            "        premise h : Syn.Jet 4 n  (proved in the caller: by Syn.jet_four)\n"
+            "        gives Syn.Jet 5 n\n"
+            "      application app:Syn.step:3 in Syn.step\n") in t
+    assert ("      2 applications in Syn.step (in Syn.step._proof_1), with the same premises and "
+            "result: app:Syn.step._proof_1:0, app:Syn.step._proof_1:1\n") in t
+    assert t.count("gives Syn.Jet 5 n") == 2 and t.count("gives Syn.Jet 6 n") == 1
 
 
 def test_statement_and_proof_uses_are_kept_apart(site, lean):

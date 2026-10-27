@@ -306,23 +306,21 @@ def _linked(number):
     return check
 
 
+def cited(out: str) -> dict:
+    """The reference the terminal text of `uses` or `proof-facts` offers to cite."""
+    (line,) = re.findall(r"^  cite as evidence: (\{.*\})(?: \(or another .*\))?$", out, re.M)
+    return json.loads(line)
+
+
 def _uses(sh, r):
-    (d,) = sh.json("uses.json")["results"]
-    (a,) = d["applications"]
-    assert a["id"] == "app:Toy.Acceptance.thm_bound:0"
-    (p,) = a["params"]
-    assert (p["binder"], p["supplied"]) == ("n", "the variable n introduced in the proof")
-    assert a["result"]["text"] == "2 * Toy.triangle n = n * (n + 1)"
-    sh.app = a["id"]
+    assert re.findall(r"^  application (app:\S+) in ", r.out, re.M) == [
+        "app:Toy.Acceptance.thm_bound:0"], r.out
+    sh.app = cited(r.out)
 
 
 def _facts(sh, r):
-    f = sh.json("facts.json")["results"][0]
-    assert (f["id"], f["name"], f["type"]["text"]) == ("f2", "hn", "n ≤ n * n")
-    assert (f["source"]["file"], f["source"]["line"]) == ("Toy/Acceptance.lean", 44)
-    assert any(c.startswith("in the case n : Nat") for c in f["cases"])
-    assert f["basis"] == "established inside this proof under this context"
-    sh.fact_at = f["ref"]["at"]
+    assert re.findall(r"^  (f\d+) ", r.out, re.M)[0] == "f2", r.out
+    sh.fact = cited(r.out)
 
 
 def _main_saved(sh, r):
@@ -336,9 +334,11 @@ def _impact_saved(sh, r):
 
 
 def _evidence_cites_what_step_4_gave(sh):
-    """The application and the fact step 5 cites are those step 4's answers name."""
+    """Step 5 cites the application and the fact as step 4's answers print them."""
     text = find("AGENTS.md", '"op_id": "t25-evidence"').text
-    assert f'"id": "{sh.app}"' in text and f'"at": "{sh.fact_at}"' in text
+    ops = json.loads(text.split("\n", 1)[1].rsplit("\n", 1)[0])["ops"]
+    refs = {op["record"].get("id"): op["record"].get("ref") for op in ops}
+    assert (refs["e-gauss"], refs["e-square"]) == (sh.app, sh.fact)
 
 
 def _step(sh, r):
@@ -542,13 +542,23 @@ TOY_STEPS = [
         check=_linked("Theorem 2.5")),
     Run("machinechecked build"),
     # 4. Follow the objects through the proof.
-    Run("machinechecked compare --query uses Toy.Acceptance.thm_triangle --json > uses.json",
+    Run("machinechecked compare --query uses Toy.Acceptance.thm_triangle",
+        shows=("app:Toy.Acceptance.thm_bound:0",
+               "parameter n : Nat := n (the variable n introduced in the proof)",
+               "2 * Toy.triangle n = n * (n + 1)",
+               '{"app": {"callee": "Toy.Acceptance.thm_triangle", '
+               '"id": "app:Toy.Acceptance.thm_bound:0"}}'),
         check=_uses),
-    Run('machinechecked compare --query proof-facts Toy.Acceptance.thm_bound --match "n ≤ n * n" '
-        '--json > facts.json', check=_facts),
+    Run('machinechecked compare --query proof-facts Toy.Acceptance.thm_bound --match "n ≤ n * n"',
+        shows=("hn : n ≤ n * n", "Toy/Acceptance.lean:44, at /1/1/2",
+               "established inside this proof under its context",
+               '{"fact": {"decl": "Toy.Acceptance.thm_bound", "at": "/1/1/2"}}'),
+        check=_facts),
     Run('machinechecked workspace main "Theorem 2.5"', check=_main_saved),
     Run("machinechecked compare --query impact Toy.triangle",
-        shows=("used by its proof, directly; also in its statement", "Toy.PaperSpec.thm_bound"),
+        shows=("used by its proof, directly; also in its statement", "Toy.PaperSpec.thm_bound",
+               "8 applications in Toy.Acceptance.thm_bound, with the same result: "
+               "app:Toy.Acceptance.thm_bound:0 to app:Toy.Acceptance.thm_bound:7"),
         check=_impact_saved),
     # 5. Assemble the evidence.
     Do(_evidence_cites_what_step_4_gave),

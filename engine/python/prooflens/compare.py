@@ -1020,7 +1020,9 @@ def dependencies_lines(doc: dict) -> list[str]:
 
 def proof_facts_text(q: dict) -> str:
     """A `proof-facts` answer for the terminal: the exported statement, then each fact with
-    what it needs, the cases it lies in and where the source states it."""
+    what it needs, the cases it lies in, where the source states it and its position in the
+    proof (`at`), which workspace evidence cites (`{"fact": {decl, at}}`, with the module when
+    the query named one)."""
     sub = q.get("subject") or {}
     d = sub.get("declaration") or {}
     line = (d.get("range") or {}).get("line")
@@ -1037,6 +1039,9 @@ def proof_facts_text(q: dict) -> str:
         where = f"{src.get('file')}:{src.get('line')}" if src.get("line") else ""
         if src.get("located") == "the declaration only":
             where += " (the declaration; this fact's line is not known)"
+        at = (f.get("ref") or {}).get("at")
+        if at:
+            where += (", " if where else "") + f"at {at}"
         label = f.get("name") if f["kind"] != "application" else f.get("head")
         out.append(f"  {f['id']:4} {f['what']}: " + (f"{label} : " if label else "")
                    + _text(f.get("type")) + (f"   [{where}]" if where else ""))
@@ -1054,6 +1059,15 @@ def proof_facts_text(q: dict) -> str:
             out.append("         used by " + ", ".join(f["used_by"]))
         if f.get("match"):
             out.append("         shares " + " ".join(f["match"]["shared"]))
+    cited = [f["ref"] for f in q["results"] if (f.get("ref") or {}).get("at")]
+    if cited:
+        from .uses import cite_text
+        named = ":" in (q.get("target") or "")
+        module = cited[0].get("module") if named else None
+        ref = {"decl": cited[0]["decl"], **({"module": module} if module else {}),
+               "at": cited[0]["at"]}
+        out.append("  cite as evidence: " + cite_text({"fact": ref})
+                   + (" (or another fact's at)" if len(cited) > 1 else ""))
     for o in sub.get("source_only") or []:
         out.append(f"  source only, line {o['source']['line']}: {o['text']}  ({o['note']})")
     proof = sub.get("proof") or {}
