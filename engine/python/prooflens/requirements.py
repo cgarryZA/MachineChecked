@@ -508,16 +508,20 @@ def fragment_currency(r: dict, snap) -> dict:
     return {"state": "current", "changes": []}
 
 
-def alignment_currency(r: dict, snap) -> dict:
+def alignment_currency(r: dict, snap, root=None) -> dict:
     if snap is None:
         return {"state": "unchecked", "changes": []}
-    from .dependencies import closure_currency
+    from .dependencies import absent_reason, closure_currency, unrecorded_reason
     digests = snap.digests()
     changes, unchecked, reasons = [], False, []
     for t in r.get("lean") or []:
         was, now = t.get("digest") or t.get("fingerprint"), digests.get(t["decl"])
         if not was or now is None:
+            # Why the build cannot tell, with what would let it (the Lean project at `root`
+            # names the module's state).
             unchecked = True
+            reasons.append(absent_reason(t, snap, root) if now is None
+                           else unrecorded_reason(t))
         elif was != now:
             changes.append({"decl": t["decl"], "was": was, "now": now})
         else:
@@ -536,16 +540,17 @@ def alignment_currency(r: dict, snap) -> dict:
     return {"state": "current", "changes": []}
 
 
-def currency(ws: dict, snap) -> dict[str, dict]:
+def currency(ws: dict, snap, root=None) -> dict[str, dict]:
     """The currency of every fragment, alignment and requirement: a requirement is stale when
-    one of its fragments (not removed) or alignments is."""
+    one of its fragments (not removed) or alignments is. `root`, the Lean project, says why an
+    alignment's declaration is not known to the build."""
     out = {}
     for r in ws["records"].values():
         if r.get("kind") == "fragment":
             out[r["id"]] = (fragment_currency(r, snap) if r.get("state") != "removed"
                             else {"state": "removed", "changes": []})
         elif r.get("kind") == "alignment":
-            out[r["id"]] = alignment_currency(r, snap)
+            out[r["id"]] = alignment_currency(r, snap, root)
     for r in ws["records"].values():
         if r.get("kind") == "alignment" and r.get("fragments"):
             out[r["id"]] = _with_passages(out[r["id"]], r, ws, out)

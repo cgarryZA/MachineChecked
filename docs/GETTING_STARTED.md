@@ -114,9 +114,11 @@ Lean performs the substitution and checks it. Applications inside an expansion e
 statement, proof or definition body); a user opens like any declaration, so a specialised lemma
 leads to the general result that applies it. In the reader `view` serves, **Show each
 application** asks Lean for every application: the argument supplied for each binder, whether
-the caller assumes each premise or proves it (and with what), and the conclusion obtained. From
-a terminal: `machinechecked inspect NAME --used-by`, or `machinechecked compare --query uses
-NAME --json`.
+the caller assumes each premise or proves it (and with what), the conclusion obtained, and the
+object each premise and the conclusion are about; *Show its context* lists every local in scope
+at one application. From a terminal: `machinechecked inspect NAME --used-by`, or
+`machinechecked compare --query uses NAME --json`; `--in CALLER` (or an application's id)
+reads one declaration's applications with their contexts.
 
 **How the main results use a declaration.** `machinechecked compare --query impact NAME` traces
 NAME from each main result of the paper. The main results are the declarations linked to the
