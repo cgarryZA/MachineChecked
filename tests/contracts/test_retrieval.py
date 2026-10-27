@@ -304,13 +304,14 @@ def test_declarations_lean_generates_are_left_out():
         decl("Gen.T", "Type", kind="inductive"),
         decl("Gen.T.casesOn", "{motive : Gen.T → Sort u} → (t : Gen.T) → motive t", kind="def"),
         decl("Gen.T.mk.injEq", "∀ (a b : ℕ), (Gen.T.mk a = Gen.T.mk b) = (a = b)"),
+        decl("Gen.T.toCtorIdx", "Gen.T → ℕ", kind="def"),
         decl("Gen.«term_⊕_»", "TrailingParserDescr", kind="def"),
         # Not an inductive type's: kept.
         decl("Gen.other.casesOn", "∀ (n : ℕ), n = n"),
     ]
     names = {d["name"] for d in Retrieval.build(index).docs}
     assert {"Gen.T", "Gen.other.casesOn"} <= names
-    assert not names & {"Gen.T.casesOn", "Gen.T.mk.injEq", "Gen.«term_⊕_»"}
+    assert not names & {"Gen.T.casesOn", "Gen.T.mk.injEq", "Gen.T.toCtorIdx", "Gen.«term_⊕_»"}
 
 
 def test_a_search_from_a_declaration_among_forty_thousand(capsys):

@@ -467,11 +467,13 @@ def _short(name: str) -> str:
     return name.rsplit(".", 1)[-1]
 
 
-# What Lean generates for an inductive type `T` (its recursors, `noConfusion`, its constructors'
-# injectivity and size lemmas: `T.casesOn`, `T.mk.injEq`), and the parser a notation declares:
-# declarations nobody states, left out of the index.
+# What Lean generates for an inductive type `T` (its recursors, `noConfusion`, its constructor
+# index, its constructors' eliminators and injectivity and size lemmas: `T.casesOn`,
+# `T.ctorIdx`, `T.mk.injEq`), and the parser a notation declares: declarations nobody states,
+# left out of the index.
 FOR_INDUCTIVE = {"rec", "recOn", "casesOn", "below", "brecOn", "binductionOn", "ibelow",
-                 "noConfusion", "noConfusionType", "ctorIdx", "ctorElim", "ctorElimType"}
+                 "noConfusion", "noConfusionType", "ctorIdx", "toCtorIdx", "ctorElim",
+                 "ctorElimType"}
 FOR_CONSTRUCTOR = {"inj", "injEq", "noConfusion", "sizeOf_spec", "elim"}
 PARSERS = {"ParserDescr", "TrailingParserDescr", "Lean.ParserDescr", "Lean.TrailingParserDescr"}
 
