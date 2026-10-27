@@ -42,8 +42,9 @@ used instead:
 
 `lean` lists the declarations that state the step as printed, with `coverage` (`full`, `partial`,
 `changed`, `related`, `unresolved`; a stored `composed` reads as `full`) and `basis` (`direct`,
-`reviewed_composition`, `checked_bridge`). `route.lean` lists declarations that reach the parent
-by another argument. The probe checks both (as `link` records, `lean.links` in the evidence).
+`reviewed_composition`, `checked_bridge`). A step with no `lean` keeps only an `unresolved`
+coverage, whose open question may be whether any Lean states the step, and no basis.
+`route.lean` lists declarations that reach the parent by another argument. The probe checks both (as `link` records, `lean.links` in the evidence).
 None of these fields is an input to a status: a step's status is its scope decision's, and its
 review is its own (below).
 
@@ -455,7 +456,7 @@ summary counts, each counted apart and never combined, and `selected` is the one
 
 | Set | Its readings |
 |---|---|
-| `audit` | the audit's own: the coverage the links file records with a claim's links (an unlinked claim keeps an `unresolved` reading), or the inventory with a proof step's; `by` lists their authors |
+| `audit` | the audit's own: the coverage the links file records with a claim's links (an unlinked claim keeps an `unresolved` reading), or the inventory with a proof step's (an unlinked step likewise); `by` lists their authors |
 | `review:<reviewer id>` | one reviewer's latest report of each statement, with the coverage it records with its verdict (zero configuration); `reviewer` as the report records it |
 | `workspace:<id>` | one published workspace's latest submitted finding in force that records a coverage of the whole statement; `mode` and `reviewer` as the workspace records them |
 
