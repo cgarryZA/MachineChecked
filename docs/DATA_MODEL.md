@@ -249,6 +249,54 @@ The export keeps a passage's places and text only when its paper publishes its s
 Lean `text` only when every paper publishes its Lean, and a marker's `file` and `line` only
 with the reviews.
 
+## Version map (`prooflens/version-map@1`), derived
+
+`machinechecked changes --map --json` (`engine/python/prooflens/version_map.py`). It matches the
+claims of one paper between two releases' revisions by their passages
+([SOURCE_REGIONS.md](SOURCE_REGIONS.md#comparing-two-revisions-the-version-map)) and is derived
+from the two releases' evidence and the two manuscripts alone; no status, fingerprint or gate
+reads it, and the export does not carry it.
+
+| Field | Content |
+|---|---|
+| `paper` | the paper's id |
+| `from`, `to` | each release: `release`, `evidence`, `revision`, `paper_version` (the audit's version identifier, as `audit.json` gives it), `manuscript` (where its text was read) and `checked` (how many of its claims' recorded digests the manuscript was checked against) |
+| `counts` | how many entries of each class |
+| `claims[]` | one entry per earlier claim, then one `new` entry per later claim no earlier claim is matched to |
+| `numbers[]` | per earlier claim with a number: `old`, `new` (the later numbers: one for a match, each candidate's for an ambiguous claim, none for a removed one) and `match` (`class`, `by`, `from`, `to`) |
+| `references` | the later release's references to paper numbers that disagree with its paper, each with `current` from the map (below); null when that build has no paper-number check |
+| `new_passages` | labels the later revision has and the earlier has not, with their places |
+
+An entry of `claims` has `class` (`unchanged`, `moved`, `context-changed`, `changed`,
+`removed`, `ambiguous`, `unknown`, `new`), `reason`, and `from` and `to`, each side's own record
+of the claim, or null: `claim`, `number` (as that build's compiled paper prints it, else the
+inventory's), `kind`, `label`, `scope`, `location`, `bounds` (`file`, `start_line`, `end_line`,
+and `start_column`, `end_column` for a region), `sha256` (its own passage as printed),
+`pin_sha256` (the digest of all the passages its pin lists, when there are several), `pin`
+(`matches`, `differs`, `none`: the inventory's pin against that text), or `error` when the
+passage cannot be read; and `recorded`, what that release's build recorded: `status`,
+`status_code`, `source_matches_pin` and `reviews` (each `{target, name, clause, state, by,
+kind}`). The two sides are never combined.
+
+`by` lists how the match was found: `text`, `label`, `overlap` (the later claim is pinned
+across the place found), `maintainer` (`--match`), and the proposals `line-diff`, `number` and
+`id`. A match also has `renumbered` and `moved` when they hold, `change` (`where`, `diff`) for
+a changed passage, `context` for what it is read with that changed (each `{what, change, from,
+to}`, with `what` one of `passage`, `macro definition`, `macro`, `standing assumption`,
+`definition`, `reference`; a macro or standing assumption has its `diff`, a claim relied on
+its `claim`, `number`, `via` and the Lean `names`), `surroundings_changed`, and `resolved`
+(`by`, `was`, `reason`, `candidates`) for the maintainer's. An unmatched entry has
+`candidates` (each `{claim, by}`), `printed_at` (where its text or label occurs in the later
+revision) and the repin plan's `proposed` bounds for a span; a `new` entry has
+`candidate_for`.
+
+The paper-number check reads `numbers` as a version map (`numbering.resolve`, with
+`numbering_map` giving its `source`: the schema, paper and both releases). A reference to an
+earlier number that disagrees with the later paper (`absent`, `other-kind`, or a possibly stale
+lead) gets `current`: `reference` and `claims` for one counterpart (with `proposed` when its
+claim is ambiguous), `ambiguous` for several, or `none` for a removed claim, with `source` and
+`matches` (the map's entries for the number). Its status stays its own.
+
 ## Manifest (`manifest-index.schema.json`, `manifest-claim.schema.json`), derived
 
 The current format is `prooflens/manifest@1`; older display data must be rebuilt.
