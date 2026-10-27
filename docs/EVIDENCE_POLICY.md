@@ -147,7 +147,10 @@ Each clause reports a result for every evidence dimension.
   another declaration or claim. `changes --map` matches the claims of two paper revisions by
   their passages: the same text shows the same passage, a label locates a changed one, and a
   shared number or id only proposes a match until the maintainer names it. A match carries no
-  status or review from one side to the other.
+  status or review from one side to the other. With `--workspace`, the map says which of an
+  auditor's findings a revision reopens: a finding stays as it was recorded, and one the map
+  cannot follow is not known to be current. Findings and maps are workspace records; no status
+  reads them.
 - **Suggestions and paper numbers:** a suggestion, a content search result or a check of the
   Lean's references to the paper's numbers names a candidate to inspect and why. It
   establishes nothing about correspondence and never makes a link: a claim with suggestions
