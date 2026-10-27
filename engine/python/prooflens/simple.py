@@ -229,19 +229,19 @@ def suggest(claim: dict, index: list[dict], limit: int = 3,
     for a declaration of the claim's own sort (theorems for a theorem, definitions for a
     definition) above one of the other sort; a theorem whose statement is such a cited
     definition above both; a module docstring citing it suggests the module's last declaration
-    of the claim's sort. A citation that is a possibly stale lead (`numbering.reliability`)
-    counts less and says so. The name signal is resemblance to the claim's label, or title words
+    of the claim's sort. The citation rests on the docstring's references with the claim's
+    number (`numbering.citation`, whose ids its reason lists): one naming another work, a
+    section or another statement of the paper is no lead, and a possibly stale lead counts
+    less and says so. The name signal is resemblance to the claim's label, or title words
     shared with a name, one of them rare among the project's names. A declaration is suggested
     when its content score reaches `CONTENT_MIN` or another signal names it. A candidate from a
     namespace only another paper of the project uses is ranked low and says so. Ties are broken
     by name, never by index order."""
-    from .numbering import claim_ref, printed, reliability
+    from .numbering import citation
     from .retrieval import paper_quantifiers
     ctx = ctx or SuggestContext(index)
     out: dict[str, dict] = {}
     names = {d["name"]: d for d in index}
-    ref = claim_ref(claim)
-    ref = printed(*ref) if ref else None
 
     def entry(name):
         d = names.get(name)
@@ -259,11 +259,17 @@ def suggest(claim: dict, index: list[dict], limit: int = 3,
         e[signal] = value
         e["reasons"][signal] = {"signal": signal, "text": why, **(extra or {})}
 
-    def cite(name, value, why):
-        factor, stale = reliability(ctx.numbering, name, ref) if ref else (1.0, None)
+    def cite(name, value, why, source=None, module=None):
+        """Count the citation of the claim's number in the docstring of `source` (by default
+        `name`), or of `module`, for `name`; False when it is no lead to the claim."""
+        basis = citation(ctx.numbering, claim, None if module else source or name, module)
+        if basis is None:
+            return False
+        factor, stale, ids = basis
         add(name, "number", value * factor, why + (f" ({stale})" if stale else ""),
             {"reference": claim["number"], "basis": "a possibly stale lead" if stale
-             else "a lead"})
+             else "a lead", **({"references": ids} if ids else {})})
+        return True
 
     wants_def = claim["kind"] in DEFINITION_ENVS
 
@@ -271,7 +277,8 @@ def suggest(claim: dict, index: list[dict], limit: int = 3,
         return d["kind"] != "theorem" if wants_def else d["kind"] == "theorem"
 
     number = claim["number"]
-    num_re = re.compile(r"\b" + re.escape(number) + r"\b", re.I)
+    # The claim's number as written, not the start of a longer one (`Theorem 2.1.3`).
+    num_re = re.compile(r"\b" + re.escape(number) + r"\b(?!\.\d)", re.I)
     label = set(_tokens(claim.get("label") or "")) - ENV_WORDS
     words = _tokens(claim.get("title") or "")
     cited_defs = set()
@@ -280,10 +287,9 @@ def suggest(claim: dict, index: list[dict], limit: int = 3,
         if doc and num_re.search(doc):
             if sort_ok(d):
                 cite(d["name"], 0.9, f"its docstring cites {number}")
-            else:
-                cite(d["name"], 0.6, f"its docstring cites {number}")
-                if d["kind"] != "theorem":
-                    cited_defs.add(d["name"])
+            elif cite(d["name"], 0.6, f"its docstring cites {number}") \
+                    and d["kind"] != "theorem":
+                cited_defs.add(d["name"])
         if not sort_ok(d):
             continue
         short = d["name"].rsplit(".", 1)[-1]
@@ -297,18 +303,20 @@ def suggest(claim: dict, index: list[dict], limit: int = 3,
             add(d["name"], "lexical", 0.45, "its name shares words with the title")
     # A theorem whose statement is a cited definition proves what that definition states.
     if cited_defs and not wants_def:
+        defs = sorted(cited_defs)
         for d in index:
             ty = (d.get("type") or "").strip()
-            if d["kind"] == "theorem" and ty and any(c == ty or c.endswith("." + ty)
-                                                     for c in cited_defs):
-                cite(d["name"], 0.95, f"it proves {ty}, whose docstring cites {number}")
+            src = next((c for c in defs if c == ty or c.endswith("." + ty)),
+                       None) if d["kind"] == "theorem" and ty else None
+            if src:
+                cite(d["name"], 0.95, f"it proves {ty}, whose docstring cites {number}", src)
     for m, doc in ctx.module_docs.items():
         if num_re.search(doc):
             mine = [d for d in index if d.get("module") == m and sort_ok(d)]
             if mine:
                 last = max(mine, key=lambda d: ((d.get("range") or {}).get("line") or 0, d["name"]))
                 cite(last["name"], 0.3, f"its module's docstring cites {number} (the module's "
-                     f"last {last['kind']})")
+                     f"last {last['kind']})", module=m)
     # The claim's content, over every declaration of its sort.
     text = claim_text(claim)
     if text.strip():
@@ -2098,7 +2106,8 @@ def paper_numbering(root: Path, index: list[dict], claims: list[dict], tex: dict
         complete, reason = False, "the paper's statements could not be read in this build"
     inv = nb.inventory(claims, complete, reason,
                        nb.sections_from_aux(aux) if aux is not None else None)
-    blocks = nb.module_doc_blocks(root, {d.get("module") for d in index if d.get("module")})
+    modules = {d.get("module") for d in index if d.get("module")}
+    blocks = nb.module_doc_blocks(root, modules) + nb.comment_blocks(root, modules, index)
     return nb.analyse(index, claims, inv, blocks, foreign, retrieval, claim_text)
 
 

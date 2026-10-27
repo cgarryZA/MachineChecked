@@ -50,12 +50,16 @@ references to the paper's numbers that disagree with the paper read here
 each reference has its own `id`, a second copy of the same text in one place included);
 they do not change the exit code. `numbering` holds every such reference
 (`numbering.references`: `reference`, its exact `text` and `context`, its `source` with
-declaration, module, file, line and `where` it is, and `status`: `exact`, `other-kind`,
-`absent`, `unchecked` or `other-source`; `stale_lead` and `content.closer` when an exact
-reference's declaration reads closer to another statement) and the project-level `pattern`
-(counts by status, `drift`, and whether the paper's numbering is complete). Each suggestion
-has `reasons`: `signal` (`content`, `uses`, `number`, `lexical`, `structure`) and `text`; a
-`number` reason has `basis` "a lead" or "a possibly stale lead".
+declaration, module, file, line and `where` it is (`docstring`, `name`, `module docstring` or
+`comment`; a comment's declaration is null when it is on none), its `role` (`statement` or
+`cited`), and `status`: `exact`, `other-kind`, `absent`, `unchecked` or `other-source`;
+`stale_lead` and `content.closer` when an exact reference's declaration reads closer to
+another statement) and the project-level `pattern` (counts by status, `places`: the
+declarations and modules holding disagreeing references, `drift`, `examples` (reference ids),
+and whether the paper's numbering is complete). Each suggestion has `reasons`: `signal`
+(`content`, `uses`, `number`, `lexical`, `structure`) and `text`; a `number` reason has
+`basis` "a lead" or "a possibly stale lead", and `references`: the ids of the references in
+`numbering` it rests on.
 
 In a project with a `machinechecked.toml` (the full assessment), the document also has
 `findings` (totals per tier, dismissed warnings left out) and `finding_details`: each finding
@@ -149,8 +153,10 @@ prints one JSON document (`machinechecked/compare@1`) for one claim, read from t
   negation, an alternative or an equivalence), and Lean's checks (axioms, sorry, errors). `lean.candidates` are suggestions
   nobody has confirmed, with their reasons. `lean.definitions` are the definitions the
   statements use, with their type and value; `generated_for` marks the equations Lean generated
-  for one of them. `lean.references` are the references to the paper's numbers that concern
-  the claim, and `lean.numbering` their project-level pattern (as in `check --json`).
+  for one of them, and the tactic script of a tactic default (`(h : 0 < n := by omega)`) with
+  the declaration whose type has the default. `lean.references` are the references to the
+  paper's numbers that concern the claim, and `lean.numbering` their project-level pattern (as
+  in `check --json`).
 - `interpretations` (stage `informed`, the default): the correspondence note, review reports,
   author's review markers, symbol links, the status and the assessment's findings.
 - `retrieval`: what is `included`, what the stage `withheld`, what is `unavailable` because it
