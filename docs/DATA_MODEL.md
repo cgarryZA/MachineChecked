@@ -382,6 +382,15 @@ first audit that maps it (whose record of the claim is in `by_project`), labelle
 choosing one project shows only its evidence, and a claim its audit does not map is marked. A
 claim's statuses from different projects are never combined.
 
+When the site cannot show the PDF an audit read (the audit names no version, or a manuscript's
+audit carries no PDF), it joins the statements found in the page's PDF to the audit's entries by
+printed number and records each such join on the claim's audit record (`by_project[repo].audit`)
+as `matched`: `by` (`number`), `number` (the printed number), `revision` (the revision the audit
+read) and `version` (the label of the version the audit pins, when it has one). The reader says
+so beside the audit's status ("Matched by its printed number to the audit's entry for Latest
+manuscript (commit abc1234): the audit read another PDF of the paper than the one shown here").
+The status is the audit's, unchanged.
+
 **Versions of a paper.** A paper with several versions (published `vN`, an unpublished
 manuscript at a commit) has one page per version, each written by `write_paper_site` with its own
 PDF, claims and audits, and with `versions` (every version) and `version` (this page's `id`).

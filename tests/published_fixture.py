@@ -206,6 +206,25 @@ def failed(path, reader=None):
     return write_paper_site(path, paper, claims, [595.28, 841.89], None, reader, audits)
 
 
+MANUSCRIPT = 'Latest manuscript (commit 956fe0b)'
+
+
+def matched(path, reader=None):
+    """A paper page that cannot show the PDF the audit read, as machinechecked.org writes it: the
+    statement found in the page's PDF (Theorem 1) is joined to the audit's entry by printed number,
+    and its audit record says so (`matched`: the printed number, the revision the audit read and
+    the label of the version it pins). The audit's own entry (Paragraph 2) is joined to no
+    statement and has no such record."""
+    audit = snapshot()
+    claims = [{'key': 'theorem-1', 'number': 'Theorem 1', 'kind': 'theorem', 'links': [],
+               'anchor': {'begin': [1, 0, 220], 'end': [1, 0, 260]}}]
+    apply_audits(claims, {REPO: audit}, 'f' * 64)
+    claims[0]['audit'][REPO]['matched'] = {'by': 'number', 'number': 'Theorem 1',
+                                           'revision': audit['paper']['revision'],
+                                           'version': MANUSCRIPT}
+    return write_paper_site(path, PAPER, claims, [595.28, 841.89], None, reader, {REPO: audit})
+
+
 if __name__ == '__main__':
     import sys
     build(Path(sys.argv[1]), Path(sys.argv[2]), work=True)
@@ -214,3 +233,4 @@ if __name__ == '__main__':
     combined(root / 'combined', Path(sys.argv[2]), {REPO: 10, BETA: 3})
     combined(root / 'combined-beta', Path(sys.argv[2]), {REPO: 2, BETA: 50})
     combined(root / 'combined-unranked', Path(sys.argv[2]), None)
+    matched(root / 'matched', Path(sys.argv[2]))
