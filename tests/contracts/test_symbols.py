@@ -233,7 +233,7 @@ def test_a_definitions_symbol_is_linked_apart_for_each_object_it_stands_for(toy,
     ]:
         with pytest.raises(SymbolError, match=why):
             add(cfg, "T:def:even", "n", "Toy.IsEven", WHO, **kw)
-    with pytest.raises(SymbolError, match="not a statement or a definition of"):
+    with pytest.raises(SymbolError, match="not a statement of T:def:even, nor one of its definitions"):
         add(cfg, "T:def:even", "n", SPEC, WHO, var="a")
     # The same object's link is replaced, not doubled.
     add(cfg, "T:def:even", "n", "Toy.IsEven", WHO, at=even, occurrence=[1, 2],

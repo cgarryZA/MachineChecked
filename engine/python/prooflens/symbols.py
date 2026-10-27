@@ -483,7 +483,7 @@ def add(cfg: Config, claim: str, symbol: str, decl: str, by: str, var: str | Non
         raise SymbolError(f"no claim {claim}")
     specs, defs = claim_decls(chunk)
     if decl not in specs | defs:
-        raise SymbolError(f"{decl} is not a statement or a definition of {claim}")
+        raise SymbolError(f"{decl} is not a statement of {claim}, nor one of its definitions")
     # The link is made on the passage the reader typesets, when it typesets one, and is pinned
     # to its rendering context too; otherwise on the statement's source text.
     excerpt = chunk.get("excerpt") or {}

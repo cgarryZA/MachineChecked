@@ -551,11 +551,15 @@ def currency(ws: dict, snap) -> dict[str, dict]:
         for u in ws["records"].values():
             if u.get("claim") != r["claim"]:
                 continue
-            if (u.get("kind") == "fragment" and u.get("requirement") == r["local_id"]) or \
-                    (u.get("kind") == "alignment" and r["local_id"] in (u.get("requirements")
-                                                                        or [])):
-                changes += [c for c in out.get(u["id"], {}).get("changes", [])
-                            if c not in changes]
+            if u.get("kind") == "fragment" and u.get("requirement") == r["local_id"]:
+                changes += out.get(u["id"], {}).get("changes", [])
+            elif u.get("kind") == "alignment" and r["local_id"] in (u.get("requirements") or []):
+                # A passage of this requirement the alignment names is counted once, as the
+                # passage's own change.
+                own = [c for f in u.get("fragments") or []
+                       if (ws["records"].get(f) or {}).get("requirement") == r["local_id"]
+                       for c in out.get(f, {}).get("changes", [])]
+                changes += [c for c in out.get(u["id"], {}).get("changes", []) if c not in own]
         out[r["id"]] = {"state": "stale" if changes else "current", "changes": changes}
     return out
 
