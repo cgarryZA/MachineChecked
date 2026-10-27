@@ -2321,9 +2321,10 @@ def _link_view(l: dict, root: Path | None = None) -> dict:
             "range": (rec.get("decl") or {}).get("range"),
             "module": (rec.get("decl") or {}).get("module"),
             "doc": (rec.get("decl") or {}).get("doc"),
-            # A linked definition: what it says (its body or equations, and its source).
-            "definition": _definition(rec["decl"]) if "defined_by" in (rec.get("decl") or {})
-            else None}
+            # A linked definition: what it says (its body or equations, and its source); a
+            # linked structure: its fields.
+            "definition": _definition(rec["decl"])
+            if {"defined_by", "structure"} & set(rec.get("decl") or {}) else None}
 
 
 def _definition(decl: dict) -> dict:

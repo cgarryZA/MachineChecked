@@ -86,7 +86,10 @@ part of what is given, for a witness they are established with it, and for an ob
 assumption, a negation or one alternative they stay inside it. An assumption that is a class of
 propositions shows what its fields state. **Exact Lean** lists each carried property as the Lean
 term that gives it (`s.start : s.path 0 = d`) with its field's declaration; many fields are
-folded under a summary.
+folded under a summary. A linked structure lists its fields, those inherited under each parent
+and those it adds apart, so a structure that extends another shows exactly what it adds; a
+definition whose value is a structure lists the properties that value carries, established by
+the definition.
 
 Click a variable to see its type and conditions. Click an expression to select it; further clicks
 widen the selection. Dotted names open short mathematical notes. A Lean declaration name opens

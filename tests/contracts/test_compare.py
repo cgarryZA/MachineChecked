@@ -132,8 +132,10 @@ def test_a_packet_holds_the_whole_passage_and_the_whole_statement(site):
     assert gen["generated_for"] == "Syn.Jet" and gen["value"] == "fun m n => m ≤ n"
     assert pk["snapshot"]["release"] == "v-synthetic" and pk["snapshot"]["project"]["commit"]
     # What the build does not extract is named with its owner, not implied absent.
-    assert {u["owner"] for u in pk["retrieval"]["unavailable"]} >= {"#98"}
-    assert "#97" not in {u["owner"] for u in pk["retrieval"]["unavailable"]}
+    assert {u["owner"] for u in pk["retrieval"]["unavailable"]} >= {"#69"}
+    assert not {"#97", "#98"} & {u["owner"] for u in pk["retrieval"]["unavailable"]}
+    # Each statement lists its objects, with what it says about each (#98).
+    assert [o["name"] for o in d["statement"]["objects"]] == ["n"]
     assert [q["query"] for q in pk["retrieval"]["on_request"]] == ["uses", "impact"]
 
 

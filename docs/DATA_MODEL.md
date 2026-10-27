@@ -174,16 +174,41 @@ objects inside a hypothesis as `objects`; the reader and `symbols.tree` rebuild 
 An object of a statement whose type is a subtype, structure or class with a field that is a
 proposition (a binder of the tree that binds an object) has `properties` on its node: every field
 of its type, inherited ones included and each once, projected from
-the object, as `{field, kind, structure, declared_in, inherited, projection, module, range, term,
-type}`. `kind` is `data` or `proposition`; `type` is the field's type at the object (for a
-proposition, what it states), with identities prefixed by the object's identity and the field
-(`<id>#<field>:`). At most 32 are listed (`properties_omitted` counts the rest); a failed
-extraction is `properties_error`. A hypothesis whose type is a structure of propositions (a
-class such as `[IsProbability Ω]`; not a conjunction or an equivalence) has the same
-`properties`: what its fields state. The reader shows a given object's properties as included in
+the object, as `{field, kind, basis, structure, declared_in, inherited, via, projection, module,
+range, term, depends, type}`. `kind` is `data` or `proposition`; `type` is the field's type at the
+object (for a proposition, what it states), with identities prefixed by the object's identity
+and the field (`<id>#<field>:`). `declared_in` is the structure whose declaration states the
+field (followed through a parent whose fields are copied because they overlap an earlier
+parent's), `via` the parent projections from the object's structure to it, and `depends` the
+numbers of the statement's variables its statement mentions. `basis` says why it holds of the
+object: `type` (included in the object's type). At most 32 are listed (`properties_omitted`
+counts the rest); a failed extraction is `properties_error`. A hypothesis whose type is a
+structure of propositions (a class such as `[IsProbability Ω]`; not a conjunction or an
+equivalence) has the same `properties`, with basis `premise`: what its fields state. The reader shows a given object's properties as included in
 its type, a witness's as established with it, an object's inside a hypothesis as inside that
 hypothesis, and any other object's (one `denied`, `alternative` or `equivalent`, or under a
 premise) as local to the clause that contains it.
+
+A declaration record of a structure (a class included) has `structure`: `{class, params,
+parents, fields, fields_omitted}`, its parameters (as a definition's `params`, identities
+prefixed `type:`), its parents (`{structure, projection, subobject}`, in the order of its
+`extends`) and every field, inherited ones once, in the form of `properties` above, stated of an
+object `self` of the structure at its parameters (identities prefixed `self#<field>:`; the
+parameters are the variables `0`, `1`, … and `self` the last). The fields `declared_in` the
+structure itself are those it adds to its parents (`compare` groups them as `declares` and
+`inherits`). A definition of data whose value is an object of such a structure (a construction)
+has `result_properties`: the fields of its value at its parameters (identities prefixed
+`result#<field>:`), with basis `definition`, since its value proves them. A failure is
+`structure_error` or `result_properties_error`. Display only.
+
+`compare` lists, for each statement, its objects (`statement.objects`, `objects.objects`): each
+variable it binds to data, with its position (`given`, `produced`, `assumed` inside an
+assumption, `premise` inside the premise of an implication, `denied`, `alternative`,
+`equivalent`) and what the statement says about it, each part with its basis: `type` and
+`premise` as above, `premise` also for a hypothesis or a premise that mentions it,
+`conclusion` for a part of the conclusion (or of its clause) that mentions it, `definition` for a
+definition applied to it (by its expansion), and `theorem` for a result a workspace's evidence
+cites for that object (`object: {decl, var, id, name, type}`, pinned to the binder's identity).
 
 A declaration record of a definition of data or of a predicate (not a proposition, an instance or
 a generated helper) also says what the definition says. `defined_by` is `body` or `equations`.

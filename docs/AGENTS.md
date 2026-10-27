@@ -156,11 +156,24 @@ prints one JSON document (`machinechecked/compare@1`) for one claim, read from t
   statement: `statement.text` exactly as Lean prints it, `binders` and `conclusion` with their
   expression ids, `tree` (the whole statement as one tree, where each variable's `scope` says
   whether the statement establishes it, it is given, or it stands inside an assumption, a
-  negation, an alternative or an equivalence), and Lean's checks (axioms, sorry, errors). `lean.candidates` are suggestions
+  negation, an alternative or an equivalence), and Lean's checks (axioms, sorry, errors).
+  `statement.objects` lists each object the statement binds, by number, with its `position`
+  (`given`, `produced`, `assumed`, `premise`, `denied`, `alternative`, `equivalent`), a
+  `reading` of what that position means for it, and what the statement says about it in
+  `properties`, each with its `basis`: `type` (a field its type carries: a subtype's predicate,
+  a structure's or class's proof field, inherited ones once, with the `field`, the structure
+  that declares it, the parent projections it comes through, `via`, and its exact `statement`
+  and `id`), `premise` (a hypothesis or premise that mentions it, with what a structure of
+  propositions `states`), `conclusion`, `definition` (a definition applied to it, by its
+  expansion's key) and `theorem` (a result cited for this object in the workspace, informed
+  stage only). `data` lists its type's data fields and `instances` the instances that supply
+  structure on it. `lean.candidates` are suggestions
   nobody has confirmed, with their reasons. `lean.definitions` are the definitions the
   statements use, with their type and value and what each says (`defined_by`: its `params`,
   `body` and `result`, or every one of its `equations`, each with its theorem's name and exact
-  statement); `expansion: generic` marks them as the definitions as declared. `generated_for`
+  statement); a structure has its fields (`structure`: `declares`, what it adds, and
+  `inherits`, by parent) and a definition whose value is a structure what that value carries
+  (`result_properties`, basis `definition`); `expansion: generic` marks them as the definitions as declared. `generated_for`
   marks the equations Lean generated for one of them, and the tactic script of a tactic default
   (`(h : 0 < n := by omega)`) with the declaration whose type has the default.
   `lean.expansions` are the definitions at the arguments of each application in a linked
@@ -470,7 +483,11 @@ association with Lean (`alignment`) are records of the same workspace; `show --j
 claim's `reading`, `workspace suggest --claim C --requirement r1 [--apply]` proposes nearby
 passages, and `compare C --workspace ID --json` carries the reading in
 `interpretations.requirements` (and that workspace's compositions in
-`interpretations.compositions`). An argument that combines several results is a `composition`
+`interpretations.compositions`). Evidence that derives a property of one object of the claim's
+Lean names it, `"object": {"decl": NAME, "var": N}` (its number in `statement.objects`, or its
+name when only one object has it); the record pins the object's binder, and the informed
+packet lists a supporting result with that object only (basis `theorem`, and in
+`interpretations.derivations`), never with another object of the same name or type. An argument that combines several results is a `composition`
 record ([Reviewing](REVIEWING.md#saved-investigations)); a step can cite an application from
 `compare --query uses` as `"ref": {"app": {"callee": NAME, "id": APP_ID}}`. Differences from the
 Lean are findings with a `difference` on the affected requirement; a counterexample
