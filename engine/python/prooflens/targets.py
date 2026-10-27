@@ -299,6 +299,29 @@ class Snapshot:
         self._statements = out
         return out
 
+    def part(self, key: str) -> dict | None:
+        """A part the site stores on its own under its key (`data/expansions/<key>.json`,
+        `manifest.split_expansions`): a definition expanded at an application, or a page of a
+        declaration's equations; None when the build has no such part."""
+        if not re.fullmatch(r"[0-9a-f]{24}", str(key or "")):
+            return None
+        p = self.data / "expansions" / f"{key}.json"
+        try:
+            return json.loads(p.read_text(encoding="utf-8")) if p.exists() else None
+        except (OSError, ValueError):
+            return None
+
+    def declaration(self, key: str) -> dict | None:
+        """The record of the shared declaration store under `key` (a claim's `decls` gives each
+        of its declarations' keys); None when the build has no such record."""
+        if not re.fullmatch(r"[0-9a-f]{24}", str(key or "")):
+            return None
+        p = self.data / "decls" / f"{key}.json"
+        try:
+            return json.loads(p.read_text(encoding="utf-8")) if p.exists() else None
+        except (OSError, ValueError):
+            return None
+
     def _store_by_name(self) -> dict[str, dict]:
         if self._store is None:
             out: dict[str, dict] = {}

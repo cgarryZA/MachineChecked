@@ -23,6 +23,7 @@
   import ProofFacts from "./ProofFacts.svelte";
   import PublishedWork from "./PublishedWork.svelte";
   import { VERDICTS } from "../lib/review.js";
+  import { occurrenceCount } from "../lib/symbolmarks.js";
   import { tick, setContext } from "svelte";
 
   // One claim as Paper and Lean: a heading, the status the engine computed, the printed
@@ -165,6 +166,16 @@
   let pickSym = $state(null);
   let pickVar = $state(null);
   let pickType = $state(false);
+  // A symbol printed several times may stand for several objects of the paper: a link may take
+  // only some occurrences (numbered from 1 in reading order), which are then one object, named.
+  let pickOcc = $state([]);
+  let pickObj = $state("");
+  const occCount = $derived(pickSym && claim?.excerpt?.ready ? occurrenceCount(claim.excerpt, pickSym) : 0);
+  $effect(() => { pickSym; pickOcc = []; });
+  const symbolText = (s) => s.tex + (s.object ? ` (${s.object})` : "") +
+    (Array.isArray(s.occurrence) ? ` at occurrence ${s.occurrence.join(", ")} of ${s.of}` : "");
+  const paperSide = () => ({ ...(pickOcc.length ? { occurrences: [...pickOcc].sort((a, b) => a - b) } : {}),
+    ...(pickObj.trim() ? { object: pickObj.trim() } : {}) });
   let linkErr = $state(null);
   let author = $state((() => { try { return localStorage.getItem("machinechecked-symbol-author") || ""; } catch { return ""; } })());
   const authorId = $derived(/^(human|llm):\S+$/.test(author.trim()) ? author.trim() : (author.trim() ? "human:" + author.trim().replace(/\s+/g, "-") : ""));
@@ -397,9 +408,9 @@
     <section class="paper">
       <h2>Paper{claim.audit?.paper ? " · audited revision" : ""}</h2>
       {#if claim.audit?.paper}<p class="small faint">Revision <code>{claim.audit.paper.revision.slice(0, 12)}</code> · <a href={claim.audit.link}>Open audit</a></p>{/if}
-      <PaperStatement {claim} {paper} symbols={links.map((l) => ({ tex: l.symbol.tex, id: l.id }))} active={litSymbols} {onsym} />
+      <PaperStatement {claim} {paper} symbols={links.map((l) => ({ tex: l.symbol.tex, id: l.id, occurrence: l.symbol.occurrence }))} active={litSymbols} {onsym} />
       {#if claim.step}<ProofStep {claim} {index} part="finding" />{/if}
-      {#if editable && !simple && claim.statement_tex && claim.clauses.some((c) => c.statement)}
+      {#if editable && !simple && claim.statement_tex && claim.clauses.some((c) => c.statement || c.defs?.length)}
         <details class="mklink" bind:open={linking}>
           <summary>Link a symbol to the Lean</summary>
           <p class="small">1. Choose a symbol of the statement:</p>
@@ -410,17 +421,24 @@
           </div>
           <p class="small">2. Click its variable in the Lean statement below, or click inside an expression to select it (again to widen it).
             <label class="small"><input type="checkbox" bind:checked={pickType} /> the symbol is that variable's type</label></p>
+          {#if pickSym && occCount > 1}
+            <p class="small occ">It occurs {occCount} times; link only occurrences
+              {#each Array.from({ length: occCount }, (_, i) => i + 1) as k}<label><input type="checkbox" data-occ={k} checked={pickOcc.includes(k)} onchange={(e) => (pickOcc = e.currentTarget.checked ? [...pickOcc, k] : pickOcc.filter((x) => x !== k))} /> {k}</label>{/each}
+              <span class="faint">(none ticked: every occurrence)</span></p>
+            <p class="small"><input class="obj" bind:value={pickObj} placeholder="which object of the paper" aria-label="The object of the paper" />
+              <span class="faint">{pickOcc.length ? "the occurrences chosen are this one object; others printed the same are linked apart" : "optional"}</span></p>
+          {/if}
           {#if pickSym && pickVar}
             <!-- A variable is sent by its number: two variables can have the same name. -->
             <p class="small">Link <code>{pickSym}</code> to {#if pickVar.at}the selected sub-expression{:else}{pickType ? "the type of" : "the variable"} <code>{pickVar.name}</code>{/if} of <code>{pickVar.spec}</code>, as
               <input class="who" bind:value={author} placeholder="your name" /></p>
-            <button class="act" disabled={!authorId} onclick={() => saveLinkOfSymbol(pickVar.at
-              ? { action: "add", claim: claim.id, tex: pickSym, decl: pickVar.spec, at: pickVar.at, by: authorId }
-              : { action: "add", claim: claim.id, tex: pickSym, decl: pickVar.spec, [pickType ? "type_of" : "var"]: String(pickVar.var), by: authorId })}>Save link{authorId ? " as " + authorId : ""}</button>
+            <button class="act" disabled={!authorId || (pickOcc.length && !pickObj.trim())} onclick={() => saveLinkOfSymbol(pickVar.at
+              ? { action: "add", claim: claim.id, tex: pickSym, decl: pickVar.spec, at: pickVar.at, by: authorId, ...paperSide() }
+              : { action: "add", claim: claim.id, tex: pickSym, decl: pickVar.spec, [pickType ? "type_of" : "var"]: String(pickVar.var), by: authorId, ...paperSide() })}>Save link{authorId ? " as " + authorId : ""}</button>
           {/if}
           {#each (claim.symbols || []) as l}
-            <p class="small" data-link={l.symbol.tex}><code>{l.symbol.tex}</code> → {l.lean.at != null ? "sub-expression " + l.lean.at : l.lean.term != null ? "sub-expression " + l.lean.in + "#" + l.lean.term : l.lean.var != null ? "variable " + l.lean.var : "type of binder " + l.lean.binder} of <code>{l.lean.decl}</code>, by {l.by}{l.stale ? " (stale)" : ""}
-              <button class="act" onclick={() => saveLinkOfSymbol({ action: "remove", claim: claim.id, tex: l.symbol.tex })}>Remove</button>
+            <p class="small" data-link={l.symbol.tex} data-object={l.symbol.object}><code>{symbolText(l.symbol)}</code> → {l.lean.at != null ? "sub-expression " + l.lean.at : l.lean.term != null ? "sub-expression " + l.lean.in + "#" + l.lean.term : l.lean.var != null ? "variable " + l.lean.var : "type of binder " + l.lean.binder} of <code>{l.lean.decl}</code>, by {l.by}{l.stale ? " (stale)" : ""}
+              <button class="act" onclick={() => saveLinkOfSymbol({ action: "remove", claim: claim.id, tex: l.symbol.tex, ...(l.symbol.object ? { object: l.symbol.object } : {}) })}>Remove</button>
               {#if l.stale}<span class="stale-why">Not shown: {staleWhy(l)}. Link it again{l.stale_because?.includes("statement") || l.stale_because?.includes("ids") ? " after checking the Lean statement" : ""}, or remove it.</span>{/if}</p>
           {/each}
           {#if linkErr}<p class="bad small">{linkErr}</p>{/if}
@@ -428,7 +446,7 @@
       {/if}
       {#if links.length && claim.statement_tex}
         {@const shown = links.find((l) => l.id === symActive)}
-        <p class="faint small linkby">{#if shown}Symbol correspondence by {shown.by}.{:else}Select an underlined symbol to see its Lean correspondence and author.{/if}</p>
+        <p class="faint small linkby">{#if shown}Symbol correspondence by {shown.by}{shown.symbol.object ? ` for ${shown.symbol.object}` : ""}.{:else}Select an underlined symbol to see its Lean correspondence and author.{/if}</p>
       {/if}
     </section>
 
@@ -511,7 +529,7 @@
                 onactive={(v) => (leanActive = v == null ? (leanActive?.spec === cl.spec ? null : leanActive) : { spec: cl.spec, var: v })} />
             {:else if cl.defs?.length}
               {#each cl.defs as d (d)}
-                <Definition name={d} key={claim.decls?.[d]} onref={showDecl} onname={showDecl} selId={selFor(d)} onselect={(id) => select(d, id)} />
+                <Definition name={d} key={claim.decls?.[d]} onref={showDecl} onname={showDecl} selId={selFor(d) ?? extFor(d)?.at ?? null} onselect={(id) => select(d, id)} />
               {/each}
             {/if}
           </div>
@@ -535,7 +553,7 @@
       {/if}
     </section>
     </div>
-    {#if editable}<Investigation {index} {claim} />{/if}
+    {#if editable}<Investigation {index} {claim} selection={selAt} />{/if}
     {#if claim.work}<PublishedWork {claim} />{/if}
     </div>
   </article>
@@ -732,6 +750,8 @@
   .chip.on { border-color: var(--accent); background: var(--accent-soft); }
   .chip :global(.tex) { border: 0; padding: 0; margin: 0; background: none; font-size: 15px; }
   .who { font: inherit; font-size: 13px; padding: 1px 6px; border: 1px solid var(--border); border-radius: 6px; width: 12em; }
+  .obj { font: inherit; font-size: 13px; padding: 1px 6px; border: 1px solid var(--border); border-radius: 6px; width: 16em; max-width: 100%; }
+  .occ label { margin-right: 8px; }
   .stale-why { display: block; color: var(--muted); }
   .details h2 { margin-bottom: 4px; }
   .cname { font-weight: 600; margin: 0 0 8px; }

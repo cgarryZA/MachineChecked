@@ -9,7 +9,9 @@
   // questions, findings and evidence, saved by the engine in the project's working directory, and
   // continued with `machinechecked workspace` in a terminal. A claim page shows the Lean, so a
   // workspace opened here is an informed investigation; an independent review uses the review page.
-  let { index, claim } = $props();
+  // `selection` is the expression selected in the claim's Lean ({spec, id}), which an alignment
+  // can name.
+  let { index, claim, selection = null } = $props();
 
   // The readings a finding can record: the links file's coverage and, for full coverage, how it
   // is supported (a checked bridge is recorded with `machinechecked workspace update`), each in the
@@ -197,6 +199,38 @@
     const r = f.region || {};
     return `${r.file}:${r.start_line}${r.end_line && r.end_line !== r.start_line ? "–" + r.end_line : ""}`;
   }
+  // Aligning requirements, or particular passages of them, with the Lean: each target is the
+  // expression selected in the Lean above or a whole declaration of the claim, and the
+  // engine checks it against the build and pins what it says.
+  const RELATIONS = ["corresponds", "additional assumption", "changed", "alternative representation"];
+  let alReqs = $state([]);
+  let alFrags = $state([]);
+  let alTargets = $state([]);
+  let alRel = $state("corresponds");
+  let alNote = $state("");
+  let alDecl = $state("");
+  const leanNames = $derived([...new Set([...(claim.links || []).map((l) => l.name),
+    ...(claim.clauses || []).flatMap((c) => (c.spec ? [c.spec] : c.defs || []))])].filter(Boolean));
+  const passages = $derived(Object.fromEntries((reading.requirements || [])
+    .flatMap((r) => Object.values(r.fragments || {}).flat()).map((f) => [f.id, f])));
+  const namedPassages = (lids) => (reading.requirements || []).filter((r) => lids.includes(r.local_id))
+    .flatMap((r) => [...r.fragments.governing, ...r.fragments.later_uses]);
+  const onPassages = (a) => (a.fragments || []).map((f) => (passages[f] ? where(passages[f]) : `${f} (no longer kept)`)).join("; ");
+  function addTarget(t) {
+    if (!alTargets.some((x) => x.decl === t.decl && x.at === t.at)) alTargets = [...alTargets, t];
+  }
+  function pickReq(lid, on) {
+    alReqs = on ? [...alReqs, lid] : alReqs.filter((x) => x !== lid);
+    alFrags = alFrags.filter((f) => alReqs.includes(passages[f]?.requirement));
+  }
+  async function addAlignment() {
+    const ops = [{ op: "put", record: { id: newId("a"), kind: "alignment", claim: claim.id,
+      requirements: alReqs, ...(alFrags.length ? { fragments: alFrags } : {}), relation: alRel,
+      lean: alTargets, ...(alNote.trim() ? { note: alNote } : {}) } }];
+    if (await run(ops)) { alReqs = []; alFrags = []; alTargets = []; alNote = ""; alRel = "corresponds"; }
+  }
+  const removeAlignment = (a) => run([{ op: "delete", id: a.id, base_rev: a.rev }]);
+
   function targetText(t) {
     const part = t.conclusion ? "the conclusion" : "var" in t ? "variable" : "binder" in t ? "hypothesis or type" : "at" in t ? "sub-term" : null;
     return t.decl + (part ? ` (${part}${t.target ? ": " + t.target : ""})` : "");
@@ -305,7 +339,8 @@
               {/if}
               {#each r.alignments as aid}
                 {@const a = alignments[aid]}
-                {#if a}<p class="small lean" data-alignment={a.id}><span class="faint">Lean:</span> {a.lean.map(targetText).join("; ")} <span class="faint">· {a.relation} · recorded by {a.created_by}</span>{#if a.currency?.state === "stale"}<span class="stale"> · the Lean changed since</span>{:else if a.currency?.state === "unchecked" && a.currency.reason}<span class="faint" data-unknown={a.id}> · not known to be current: {a.currency.reason}</span>{/if}</p>{/if}
+                {#if a}<p class="small lean" data-alignment={a.id}>{#if a.fragments?.length}<span class="faint">On {onPassages(a)}:</span>{" "}{/if}<span class="faint">Lean:</span> {a.lean.map(targetText).join("; ")} <span class="faint">· {a.relation} · recorded by {a.created_by}</span>{#if a.note}{" "}<span class="text">{a.note}</span>{/if}{#if a.currency?.state === "stale"}<span class="stale">{" · " + ((a.currency.changes || []).some((c) => c.fragment) ? "a passage it names no longer governs the reading" : "the Lean changed since")}</span>{:else if a.currency?.state === "unchecked" && a.currency.reason}<span class="faint" data-unknown={a.id}> · not known to be current: {a.currency.reason}</span>{/if}
+                  · <button class="link" disabled={busy} onclick={() => removeAlignment(a)}>Remove</button></p>{/if}
               {/each}
               {#each r.questions as q}<p class="small question">Question: {q}</p>{/each}
               {#each estimatesFor(r.local_id) as e (e.requirement)}
@@ -347,7 +382,8 @@
             <p class="small hint" data-binder={h.binder}>{h.text} <span class="faint">(computed hint: inspect it)</span></p>
           {/each}
           {#each reading.alignments.filter((a) => !a.requirements.length) as a (a.id)}
-            <p class="small lean" data-alignment={a.id}><span class="faint">Lean only ({a.relation}):</span> {a.lean.map(targetText).join("; ")} <span class="faint">· recorded by {a.created_by}</span>{#if a.note} <span class="text">{a.note}</span>{/if}</p>
+            <p class="small lean" data-alignment={a.id}><span class="faint">Lean only ({a.relation}):</span> {a.lean.map(targetText).join("; ")} <span class="faint">· recorded by {a.created_by}</span>{#if a.note} <span class="text">{a.note}</span>{/if}
+              · <button class="link" disabled={busy} onclick={() => removeAlignment(a)}>Remove</button></p>
           {/each}
         </div>
       {/if}
@@ -381,6 +417,24 @@
         <button class="act" disabled={busy || !rqId.trim() || !rqText.trim()} onclick={addRequirement}>Save requirement</button>
         <p class="faint small">Other passages (the sentence that sets a quantifier's domain, a standing assumption) are attached with “Suggest nearby context” or <code>machinechecked workspace update</code>.</p>
       </details>
+      {#if reading.requirements.length}
+        <details class="add align">
+          <summary>Align with the Lean</summary>
+          <p class="small">Requirements: {#each reading.requirements as r (r.id)}<label><input type="checkbox" data-al-req={r.local_id} checked={alReqs.includes(r.local_id)} onchange={(e) => pickReq(r.local_id, e.currentTarget.checked)} /> {r.local_id}</label>{/each}</p>
+          {#if namedPassages(alReqs).length}
+            <p class="small">Only these passages: {#each namedPassages(alReqs) as f (f.id)}<label><input type="checkbox" data-al-frag={f.id} checked={alFrags.includes(f.id)} onchange={(e) => (alFrags = e.currentTarget.checked ? [...alFrags, f.id] : alFrags.filter((x) => x !== f.id))} /> {where(f)} ({ROLE[f.role]})</label>{/each}
+              <span class="faint">(none ticked: the whole requirement)</span></p>
+          {/if}
+          <p class="small">Lean: {#if selection}<button class="act" disabled={busy} onclick={() => addTarget({ decl: selection.spec, at: selection.id })}>Add the expression selected in {selection.spec}</button>{:else}<span class="faint">select an expression in the Lean above, or add</span>{/if}
+            <select bind:value={alDecl} aria-label="A whole declaration"><option value="">a whole declaration…</option>{#each leanNames as n}<option value={n}>{n}</option>{/each}</select>
+            <button class="act" disabled={busy || !alDecl} onclick={() => { addTarget({ decl: alDecl }); alDecl = ""; }}>Add</button></p>
+          {#each alTargets as t, i (t.decl + (t.at || ""))}<p class="small target" data-al-target={t.at || t.decl}><code>{t.decl}</code>{t.at ? ` (sub-term ${t.at})` : ""} <button class="link" onclick={() => (alTargets = alTargets.filter((_, j) => j !== i))}>Remove</button></p>{/each}
+          <p class="small"><label>Relation <select bind:value={alRel} aria-label="Relation">{#each RELATIONS as r}<option value={r}>{r}</option>{/each}</select></label></p>
+          <textarea bind:value={alNote} rows="2" placeholder="What the correspondence rests on (optional)" aria-label="Alignment note"></textarea>
+          <button class="act" disabled={busy || !alTargets.length || (!alReqs.length && alRel !== "additional assumption")} onclick={addAlignment}>Save alignment</button>
+          <p class="faint small">An alignment records your reading of the correspondence. Lean has not checked it.</p>
+        </details>
+      {/if}
       <details class="add">
         <summary>Ask a question</summary>
         <textarea bind:value={question} rows="2" placeholder="The next question about this claim" aria-label="Question"></textarea>

@@ -4,14 +4,16 @@
 
   // A passage of the paper typeset from its pinned LaTeX source (lib/excerpt.js). `onstatus`
   // is told whether the whole passage was typeset; nothing is shown otherwise. Linked symbols
-  // (`symbols`, [{tex, id}]) are marked in its mathematics. The body of a theorem in amsthm's
+  // (`symbols`, [{tex, id, occurrence}]) are marked in its mathematics: every occurrence, or
+  // those a link numbers, counted through the passage. The body of a theorem in amsthm's
   // `plain` style is italic, as printed.
   let { excerpt, symbols = [], active = [], onsym = null, onstatus = null } = $props();
   let el;
 
   $effect(() => {
     if (!el) return;
-    const r = renderExcerpt(excerpt, document, (src) => markMath(src, symbols));
+    const seen = new Map();
+    const r = renderExcerpt(excerpt, document, (src) => markMath(src, symbols, seen));
     el.replaceChildren(...(r.ok ? [r.node] : []));
     onstatus?.(r.ok);
     if (r.ok) bindSymbols(el, symbols, onsym);
