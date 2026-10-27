@@ -14,6 +14,8 @@ pytest -q --shard 2/4                    # the second of CI's four shards of the
 
 The web build is committed under `engine/python/prooflens/web/`. When editing `web/src/`, rebuild the bundle and keep its output in the same commit. CI checks that the shipped assets match the sources.
 
+The browser tests read the data the engine writes for the synthetic project `tests/fixtures/structure` from a committed copy, `web/tests/fixtures/structure/data`. `python3 web/tests/fixtures/make_structure.py` makes it again (it needs elan and TeX Live); run it after changing the fixture or what the engine writes for it, and commit the result. `tests/simple/test_structure.py` fails while the copy differs from what the script makes, apart from the time of the build.
+
 CI runs the suite in four shards on parallel runners, and its `test` check passes when every shard does. `tests/shards.py` deals out whole test files, longest first, by their times in `tests/durations.json`; each collected test is in exactly one shard, and a file the times do not list counts at the mean time per test. When the shards' times drift apart, download the times of one or more CI runs (`gh run download RUN_ID -p 'test-times-*' -D run-a`) and run `python tests/shards.py run-*/test-times-*/test-times.json` to rewrite `tests/durations.json`. Runners differ in speed by a third or more, so a shard's time varies with its runner; two runs let the script fit each file's time on a runner of average speed.
 
 To exercise the zero-configuration flow, use `examples/plain-paper/`. For the locked-specification flow, use `examples/toy-paper/`. These are synthetic; public tests and examples must never include private manuscript or Lean content.

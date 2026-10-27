@@ -3,6 +3,7 @@ tests/fixtures/structure: the whole proposition as one tree, from which the bind
 and its conclusion are read; each occurrence of a statement's variable names the binder that
 introduced it. Display only: the binders, their roles and the fingerprints are what they were."""
 
+import importlib.util
 import shutil
 import subprocess
 
@@ -588,3 +589,29 @@ def test_definitions_expand_at_their_arguments(tmp_path, toolchain):
     hyp = idx["binders"][-1]
     assert hyp["type"]["text"] == "t.ctorIdx = 69" and "expansions" not in hyp["type"]
     assert [x["name"] for x in expansions(idx["conclusion"]).values()] == ["Shape.Digit.val"]
+
+
+def make_structure():
+    """`web/tests/fixtures/make_structure.py`, which makes the reader's copy of this fixture's
+    data."""
+    spec = importlib.util.spec_from_file_location(
+        "make_structure", ROOT / "web" / "tests" / "fixtures" / "make_structure.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+@needs_lean
+@needs_tex
+def test_the_readers_copy_of_the_data_is_current(tmp_path):
+    """The reader's browser tests read this fixture's site data from a committed copy
+    (`web/tests/fixtures/structure/data`). It is the data `make_structure.py` makes from the
+    fixture now, apart from the time of the build (#427): a change to the fixture, or to what the
+    engine writes for it, fails here until the copy is made again."""
+    make = make_structure()
+    work = make.copy_fixture(tmp_path / "structure")
+    subprocess.run(["lake", "build"], cwd=work, check=True, capture_output=True, timeout=900)
+    made = tmp_path / "data"
+    make.write_data(work, made)
+    assert make.differences(made, make.OUT) == [], \
+        "run `python3 web/tests/fixtures/make_structure.py` and commit web/tests/fixtures/structure"
