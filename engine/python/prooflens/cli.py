@@ -1601,7 +1601,9 @@ def main(argv=None):
                     "proof-facts NAME (the facts inside its proof), uses NAME (where it is "
                     "applied, with the source of each premise), composition CLAIM (the "
                     "auditors' compositions for it, with --workspace for one workspace), impact "
-                    "NAME (how each main result uses it, and which claims' Lean uses it)")
+                    "NAME (how each main result uses it, and which claims' Lean uses it), "
+                    "expansion KEY (a definition at the arguments of one application, by the "
+                    "key a statement gives it)")
     co.add_argument("--match", metavar="TEXT",
                     help="with proof-facts: rank the facts by the symbols they share with TEXT")
     co.add_argument("--main", action="append", metavar="NAME",

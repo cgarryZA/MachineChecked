@@ -1362,6 +1362,37 @@ await check("in the local reader a symbol is linked by choosing it and clicking 
     if (width === 1300) await pg.screenshot({ path: process.env.SHOT_DIR ? path.join(process.env.SHOT_DIR, "expansion.png") : path.join(os.tmpdir(), "mc-expansion.png") });
   });
 
+  await check("a definition with more equations than its record lists loads the others when asked", width, async (pg) => {
+    const fetched = [];
+    pg.on("request", (r) => { if (r.url().includes("/data/expansions/")) fetched.push(r.url()); });
+    await pg.goto(origin + `/structure/#/r/${SHAPE.release}/read/P/${encodeURIComponent("P:def:digit")}`);
+    const view = pg.locator("aside .view");
+    const val = view.locator(".lean .defn.readable[data-decl='Shape.Digit.val']");
+    await val.locator(".eq").first().waitFor();
+    // A definition by equations shows its type, then the first 64 of its seventy equations.
+    assert.match(await val.locator(".head").textContent(), /Shape\.Digit\.val\s*:\s*Shape\.Digit → Nat/);
+    assert.equal(await val.locator(".eq").count(), 64);
+    assert.equal(fetched.length, 0, "the further equations are fetched only when asked for");
+    assert.match(await val.locator("button.more").textContent(), /Show the 6 further equations/);
+    await val.locator("button.more").click();
+    await val.locator(".eq[data-eq='Shape.Digit.val.eq_70']").waitFor();
+    assert.equal(await val.locator(".eq").count(), 70);
+    assert.equal(fetched.length, 1, "one page holds the six");
+    assert.equal(await val.locator("button.more").count(), 0);
+    const exact = view.locator(".exact-pane .defn.exact[data-decl='Shape.Digit.val']");
+    assert.equal(await exact.locator(".thm").count(), 64);
+    await exact.locator("button.more").click();
+    await exact.locator(".thm[data-eq='Shape.Digit.val.eq_70']").waitFor();
+    assert.equal(await exact.locator(".thm").count(), 70);
+    // At the last digit the seventieth equation applies; the 69 others are named, folded.
+    await pg.goto(origin + `/structure/#/r/${SHAPE.release}/read/P/${encodeURIComponent("P:thm:digit")}`);
+    const st = pg.locator("aside .view :not(.suggestion) > .stmt").first();
+    await st.locator("button.xb").click();
+    const xp = st.locator(".inspect .xp");
+    assert.match(await xp.locator(".eq").textContent(), /Shape\.Digit\.val\.eq_70/);
+    assert.match(await xp.locator("details.na summary").textContent(), /^Not applying here: Shape\.Digit\.val\.eq_1, .* and 57 more$/);
+  });
+
   await check("a statement keeps its order, with each object's own conditions beside it", width, async (pg) => {
     await pg.goto(origin + `/structure/#/r/${SHAPE.release}/read/P/${encodeURIComponent("P:thm:layout")}`);
     const st = pg.locator("aside .view :not(.suggestion) > .stmt");
