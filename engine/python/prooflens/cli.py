@@ -991,6 +991,10 @@ def cmd_changes(a):
         sys.exit("`changes` compares releases of the full assessment: run it beside "
                  "machinechecked.toml (or pass -c)")
     cfg = cfgmod.load(_config_arg(a))
+    if a.map:
+        return _changes_map(a, cfg)
+    if a.paper or a.match:
+        sys.exit("--paper and --match belong to the version map: add --map")
     try:
         doc = chg.between(cfg.out_dir, a.from_release, a.to_release)
     except chg.ChangesError as e:
@@ -1020,6 +1024,30 @@ def cmd_changes(a):
     if a.json:
         return _print_json(doc)
     print(chg.text(doc, a.all))
+
+
+def _changes_map(a, cfg):
+    """`machinechecked changes --map`: the version map of a paper between two releases
+    (`version_map.py`): each claim of the earlier revision matched to the later one by its
+    passage, with both sides' facts. It reads stored evidence and the manuscripts, and changes
+    nothing."""
+    from . import version_map as vm
+    if a.workspace:
+        sys.exit("--map and --workspace are separate comparisons: give one of them")
+    resolve = []
+    for m in a.match:
+        old, sep, new = m.partition("=")
+        if not (sep and old and new):
+            sys.exit(f"--match {m}: give it as EARLIER=LATER, an earlier and a later claim id")
+        resolve.append((old, new))
+    try:
+        doc = vm.between(cfg, a.paper, a.from_release, a.to_release, a.from_source,
+                         a.to_source, resolve)
+    except (ValueError, RuntimeError, OSError) as e:
+        sys.exit(f"changes --map: {e}")
+    if a.json:
+        return _print_json(doc)
+    print(vm.text(doc, a.all))
 
 
 def cmd_bundle(a):
@@ -1520,11 +1548,24 @@ def main(argv=None):
     ch.add_argument("--to", dest="to_release", metavar="RELEASE",
                     help="the later release (default: the latest)")
     ch.add_argument("--from-source", metavar="DIR",
-                    help="the manuscript folder of the earlier revision, to show changed text")
+                    help="the manuscript folder of the earlier revision, to show changed text "
+                    "(with --map, also git:REV: the configured folder as committed at REV)")
     ch.add_argument("--to-source", metavar="DIR",
-                    help="the manuscript folder of the later revision, to show changed text")
+                    help="the manuscript folder of the later revision, to show changed text "
+                    "(with --map, also git:REV)")
     ch.add_argument("--workspace", metavar="ID",
                     help="also list this workspace's records that are no longer current")
+    ch.add_argument("--map", action="store_true",
+                    help="the version map: match each claim of the earlier paper revision to "
+                    "the later one by its passage (unchanged, moved, changed, context-changed, "
+                    "removed, new or ambiguous), with each release's own status and reviews; "
+                    "the manuscripts are read from --from-source and --to-source, else at each "
+                    "release's revision")
+    ch.add_argument("--paper", metavar="ID", help="with --map: the paper (needed when the "
+                    "configuration has several)")
+    ch.add_argument("--match", action="append", default=[], metavar="EARLIER=LATER",
+                    help="with --map: the maintainer's match of an earlier claim that no passage "
+                    "or label matched to a later claim nothing else is matched to; repeatable")
     ch.add_argument("--all", action="store_true", help="list unchanged claims too")
     ch.add_argument("--json", action="store_true")
     ch.set_defaults(func=cmd_changes)

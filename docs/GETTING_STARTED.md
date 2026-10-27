@@ -210,7 +210,11 @@ disagreement with its file and line.
 When several references disagree with the paper, making a good share of those checked and
 lying in more than one declaration or module, the reader's notes say that the Lean appears to
 follow another version of the paper, with counts and a few examples. One stray reference, or
-one docstring listing several, is reported by itself.
+one docstring listing several, is reported by itself. In a full assessment, `machinechecked
+changes --map` matches the claims of two releases' revisions of the paper and gives each
+disagreeing reference the later number the map names for it: one, several when the match is
+ambiguous, a proposal marked as one, or none for a removed claim
+([the version map](SOURCE_REGIONS.md#comparing-two-revisions-the-version-map)).
 
 A suggestion's cited number rests on the docstring's reference to it. A number of another work
 (`Theorem 2.1 of [Gauss]`), a section, or the start of a longer number (`Theorem 2.1.3`) is

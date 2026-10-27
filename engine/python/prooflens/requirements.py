@@ -669,6 +669,28 @@ def _prose(line: str) -> bool:
         r"\\(begin|end|section|subsection|label|maketitle|documentclass|usepackage)\b", s)
 
 
+def section_opening(lines: list[str], first: int) -> tuple[int, int, str] | None:
+    """The prose that opens the section enclosing line `first` (1-based) of `lines`, as
+    `(first line, last line, the section's title)`, or None when no prose opens it before
+    `first`. Only prose before the section's first environment opens it."""
+    sec = next((k for k in range(first - 1, 0, -1) if SECTION.match(lines[k - 1])), None)
+    if sec is None:
+        return None
+    title = SECTION.match(lines[sec - 1]).group(3).strip()
+    a = sec + 1
+    while a < first and not lines[a - 1].strip() or (a < first and
+                                                     lines[a - 1].lstrip().startswith("%")):
+        a += 1
+    if not (a < first and _prose(lines[a - 1])):
+        return None
+    b = a
+    while b + 1 < first and not re.match(r"\s*\\(begin|section|subsection)\b", lines[b]):
+        b += 1
+    while b > a and not _prose(lines[b - 1]):
+        b -= 1
+    return a, b, title
+
+
 def suggest(snap, claim: str) -> list[dict]:
     """Passages near a claim that may govern its reading, each as a proposed fragment: the
     sentence just before its passage and the one just after (when they read as a quantifier
@@ -732,23 +754,11 @@ def suggest(snap, claim: str) -> list[dict]:
             role = "constant dependence" if DEPENDENCE.search(text) else "context"
             add("sentence after the passage", role, j, b, "inferred")
     # The prose that opens the enclosing section.
-    sec = next((k for k in range(first - 1, 0, -1) if SECTION.match(lines[k - 1])), None)
-    if sec is not None:
-        title = SECTION.match(lines[sec - 1]).group(3).strip()
-        a = sec + 1
-        while a < first and not lines[a - 1].strip() or (a < first and
-                                                         lines[a - 1].lstrip().startswith("%")):
-            a += 1
-        # Only prose before the section's first environment opens it.
-        if a < first and _prose(lines[a - 1]):
-            b = a
-            while b + 1 < first and not re.match(r"\s*\\(begin|section|subsection)\b",
-                                                 lines[b]):
-                b += 1
-            while b > a and not _prose(lines[b - 1]):
-                b -= 1
-            add("opening of the section", "standing assumption", a, b, "inferred",
-                f"the section “{title}”")
+    opening = section_opening(lines, first)
+    if opening is not None:
+        a, b, title = opening
+        add("opening of the section", "standing assumption", a, b, "inferred",
+            f"the section “{title}”")
     # The claims the passage cites.
     labels = {}
     for c in snap.claims:
