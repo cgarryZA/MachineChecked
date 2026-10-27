@@ -186,6 +186,70 @@ def test_unknown_values_and_an_unspecified_basis():
     assert c["refs"] == ["A.c"]
 
 
+def test_an_unlinked_reading_has_no_basis(tmp_path, capsys):
+    """A claim with no declaration linked keeps only an unresolved reading (#391), and that
+    reading has no basis, whatever basis the links file records (#420): no references,
+    argument, next step or bridge. The terminal, the semantic summary and the site show none,
+    and no status moves."""
+    from prooflens import cli, semantic
+    from prooflens.manifest import claim_file
+    from prooflens.simple import bridge_evidence, reading_text
+    from prooflens.status import fields
+    claim = {"key": "thm:x", "source_sha256": "0" * 64}
+    decide = "The paper's standing conventions."
+    open_q = {"lean": [], "coverage": "unresolved", "question": QUESTION,
+              "would_decide": decide, "by": "A. Auditor"}
+    recorded = [{"basis": "direct", "refs": ["A.b"]},
+                {"basis": "reviewed_composition", "argument": ARGUMENT},
+                {"basis": "checked_bridge", "bridge": {"theorem": "A.b", "target": "A.Spec.b"}}]
+    for basis in recorded:
+        entry = {**open_q, **basis}
+        # As `build_view` reads it: Lean checks no bridge whose theorem is not linked.
+        c = correspondence(claim, entry, bridge_evidence(claim, entry, None, None, {}))
+        assert (c["coverage"], c["basis"], c["refs"], c["argument"], c["next_step"],
+                c["bridge"]) == ("unresolved", None, [], None, None, None), basis
+        assert (c["question"], c["would_decide"], c["by"]) == (QUESTION, decide, "A. Auditor")
+        assert reading_text(c) == f"Unresolved\nOpen question: {QUESTION}\nWould decide it: {decide}"
+        # Linked, the same reading keeps its basis.
+        assert correspondence(claim, {**entry, "lean": ["A.b"]})["basis"] == basis["basis"]
+
+    def row(key, number, links, cor):
+        return {"id": f"P:{key}", "key": key, "paper": "P", "number": number, "title": "",
+                "kind": "theorem", "scope": "formal", "location": "main.tex", "source_sha256": "s",
+                **fields("link.checked" if links else "link.none"),
+                "links": [{"name": n, **fields("link.checked"), "source": "confirmed"}
+                          for n in links],
+                "suggestions": [], "correspondence": cor, "reviews": [], "references": []}
+
+    composed = {**open_q, **recorded[1]}
+    body = {"mode": "simple", "paper": "paper/main.tex", "title": "A synthetic paper",
+            "notes": [], "project": {"name": "synthetic", "libs": [], "built": 0, "unbuilt": 0},
+            "commit": None, "author": "A. Auditor", "issues": None, "site_url": None,
+            "formalization": None, "pdf_sha256": None, "tex": {"mode": "latex", "anchors": []},
+            "decls": {}, "index": [], "module_docs": [], "numbering": None,
+            "claims": [row("thm:x", "Theorem 1", [], correspondence(claim, composed)),
+                       row("thm:y", "Theorem 2", ["A.b"],
+                           correspondence(claim, {**composed, "lean": ["A.b"]}))]}
+    before = {c["id"]: c["status_code"] for c in body["claims"]}
+    index = write_view_site({"body": body, "pdf": None}, tmp_path / "site", None)
+    summary, facts = semantic.of_view(body)
+    assert index["semantic"] == summary
+    # The unlinked claim counts as unresolved with its basis not recorded; only the linked one
+    # counts as a composition.
+    assert {k: v for k, v in summary["papers"]["P"]["basis"]["audit"]["statements"].items()
+            if v} == {"reviewed_composition": 1, "unspecified": 1}
+    assert [(r["count"], r["basis"]) for r in facts["P:thm:x"]["readings"]] == [
+        ("unresolved", None)]
+    assert facts["P:thm:x"]["declarations"] == 0
+    shown = json.loads((tmp_path / "site/data/claims" / claim_file("P:thm:x")).read_text())
+    assert shown["links"] == [] and shown["correspondence"]["basis"] is None
+    assert {c["id"]: c["status_code"] for c in index["claims"]} == before
+    # The terminal names the linked composition only.
+    cli._print_simple(body, summary)
+    out = capsys.readouterr().out
+    assert "composition Theorem 2:" in out and "composition Theorem 1" not in out
+
+
 @needs_lean
 @needs_tex
 def test_a_review_records_its_coverage_with_the_verdict(cover, tmp_path, monkeypatch, capsys):

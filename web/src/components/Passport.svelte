@@ -80,6 +80,9 @@
   // The claim in the other versions of the paper, from the site's claim map.
   const counterparts = $derived(counterpartViews(index, meta, project.combined ? null : project.repo));
   const simple = $derived(claim?.mode === "simple");
+  // A paper page that cannot show the PDF an audit read joins its statements to the audit's
+  // entries by printed number, and records it on the claim's audit record (`matched`).
+  const matched = $derived(claim?.audit?.matched?.by === "number" ? claim.audit.matched : null);
 
   // The element that scrolls the panel: the side panel in the reader, the page on a claim page.
   function scroller() {
@@ -346,6 +349,9 @@
         <p class="small evidence-from" class:filled={claim.filled} data-source={claim.filled ? "filled" : "default"}>
           {#if claim.filled}<strong>From another audit.</strong>{" The default audit does not map this claim; this is the evidence of the audit of "}{:else}{"From the audit of "}{/if}<code>{claim.evidence_from}</code>{source.author ? " by " + source.author : ""}{#if source.commit}{" at commit "}<code>{source.commit.slice(0, 12)}</code>{/if}.
         </p>
+      {/if}
+      {#if matched}
+        <p class="small matched" data-matched="number">Matched by its printed number to the audit's entry{#if matched.version}{" for " + matched.version}{:else if matched.revision}{" for revision "}<code>{matched.revision.slice(0, 12)}</code>{/if}: the audit read another PDF of the paper than the one shown here.</p>
       {/if}
       {#each counterparts as cp}
         <p class="small counterpart" data-change={cp.change} data-version={cp.version}>{cp.before}{#each cp.claims as c, i}{#if i}{i === cp.claims.length - 1 ? " and " : ", "}{/if}<a href={c.href}>{c.number}</a>{/each}{cp.after}.</p>
@@ -716,6 +722,7 @@
   .evidence-from { margin: 6px 0 0; color: var(--muted); overflow-wrap: anywhere; }
   .evidence-from.filled, .evidence-from.missing { color: var(--text); border-left: 3px solid var(--accent); padding-left: 8px; }
   .counterpart { margin: 6px 0 0; color: var(--muted); overflow-wrap: anywhere; }
+  .matched { margin: 6px 0 0; color: var(--muted); overflow-wrap: anywhere; }
   .linkby { margin: 4px 0 0; }
   .recorded { margin: 0 0 8px; }
   .mklink { margin-top: 8px; border: 1px dashed var(--border); border-radius: 8px; padding: 6px 10px; }

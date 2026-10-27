@@ -321,7 +321,8 @@ bridge, question, would_decide, confidence, note, by}`, where `source` is `confi
 auditor's, from `machinechecked.links.json`) or `formalization.yaml` (the project's row notes).
 `coverage` is `full`, `partial`, `changed`, `related`, `unresolved` or `null`; `basis`, how the
 coverage is supported, is `direct`, `reviewed_composition`, `checked_bridge` or `null`
-(unspecified), with `refs` the linked declarations it rests on. A reviewed composition has the
+(unspecified), with `refs` the linked declarations it rests on; a claim with no declaration
+linked keeps only an `unresolved` reading, with no basis. A reviewed composition has the
 auditor's `argument` and the `next_step`, stating the combination as one Lean result (a stored
 `composed` coverage reads as `full` with this basis); a checked bridge has `bridge`, `{theorem,
 target, state, reasons, pinned, current}`, where `state` is `checked`, `stale` or `unchecked` and
@@ -380,6 +381,15 @@ status is each claim's top-level `status`. With several, the reader shows each c
 first audit that maps it (whose record of the claim is in `by_project`), labelled with that audit;
 choosing one project shows only its evidence, and a claim its audit does not map is marked. A
 claim's statuses from different projects are never combined.
+
+When the site cannot show the PDF an audit read (the audit names no version, or a manuscript's
+audit carries no PDF), it joins the statements found in the page's PDF to the audit's entries by
+printed number and records each such join on the claim's audit record (`by_project[repo].audit`)
+as `matched`: `by` (`number`), `number` (the printed number), `revision` (the revision the audit
+read) and `version` (the label of the version the audit pins, when it has one). The reader says
+so beside the audit's status ("Matched by its printed number to the audit's entry for Latest
+manuscript (commit abc1234): the audit read another PDF of the paper than the one shown here").
+The status is the audit's, unchanged.
 
 **Versions of a paper.** A paper with several versions (published `vN`, an unpublished
 manuscript at a commit) has one page per version, each written by `write_paper_site` with its own
