@@ -633,7 +633,7 @@ machinechecked compare --query composition "Theorem 2.5"
 
 The application and the fact are cited as `uses` and `proof-facts` print them; the fact's `at` is
 its position in the proof term, and the workspace keeps the fact's hashes and type with it. The composition reads `every clause, through
-a bridge Lean checks`.
+a checked bridge`.
 
 **6. Compare the estimate and the printed proof.** The Lean writes `C * (n * n)` for `C n²`, a
 difference of notation only. The proof's Equation (3), "for every natural number $k \ge 0$, $n

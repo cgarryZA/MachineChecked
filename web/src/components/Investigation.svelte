@@ -2,7 +2,7 @@
   import { listWorkspaces, openWorkspace, showWorkspace, updateWorkspace, suggestContext, newId,
     rememberedWorkspace, rememberWorkspace, humanId } from "../lib/workspace.js";
   import { href } from "../lib/route.svelte.js";
-  import { compositionView, findingCoverageView, recordedBasisText } from "../lib/coverage.js";
+  import { compositionView, findingCoverageView, recordedBasisText, readingWords } from "../lib/coverage.js";
   import Composition from "./Composition.svelte";
 
   // The auditor's saved investigation of this claim, under `machinechecked view`: its open
@@ -12,16 +12,17 @@
   let { index, claim } = $props();
 
   // The readings a finding can record: the links file's coverage and, for full coverage, how it
-  // is supported (a checked bridge is recorded with `machinechecked workspace update`).
-  const CHOICES = {
-    direct: { label: "Every clause, in one Lean statement", coverage: "full", basis: "direct" },
-    composition: { label: "Every clause, by my composition", coverage: "full", basis: "reviewed_composition" },
-    full: { label: "Every clause", coverage: "full" },
-    partial: { label: "Part of the claim", coverage: "partial" },
-    changed: { label: "Stated differently", coverage: "changed" },
-    related: { label: "A related result", coverage: "related" },
-    unresolved: { label: "Unresolved", coverage: "unresolved" },
-  };
+  // is supported (a checked bridge is recorded with `machinechecked workspace update`), each in the
+  // engine's words for it.
+  const CHOICES = Object.fromEntries(Object.entries({
+    direct: { coverage: "full", basis: "direct" },
+    composition: { coverage: "full", basis: "reviewed_composition" },
+    full: { coverage: "full" },
+    partial: { coverage: "partial" },
+    changed: { coverage: "changed" },
+    related: { coverage: "related" },
+    unresolved: { coverage: "unresolved" },
+  }).map(([k, c]) => [k, { ...c, label: readingWords(c.coverage, c.basis) }]));
 
   let available = $state(true);
   let mine = $state([]);

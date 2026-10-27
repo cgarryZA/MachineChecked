@@ -1612,7 +1612,7 @@ await check("in the local reader a symbol is linked by choosing it and clicking 
     };
     const comp = await reading("P:thm:layout");
     assert.equal(comp.basis, "reviewed_composition");
-    assert.match(comp.text, /^Every clause, by the auditor's composition/);
+    assert.match(comp.text, /^Every clause, by an argument combining Lean results/);
     assert.match(comp.text, /The auditor's argument: Apply Shape\.layout twice, once for each bound\. Lean has not checked this combination\.\s*Next step: State the combination as one Lean result\./);
     assert.match(comp.text, /The auditor's reading, by A\. Auditor/);
     assert.notEqual(comp.tone, "full", "a composition is not drawn as a Lean result");
@@ -1642,7 +1642,7 @@ await check("in the local reader a symbol is linked by choosing it and clicking 
     };
     const bridge = await report("P:thm:layout");
     assert.equal(bridge.basis, "reviewed_composition");
-    assert.match(bridge.text, /^Every clause, by the auditor's composition \(the reviewer's coverage, recorded with the verdict\)/);
+    assert.match(bridge.text, /^Every clause, by an argument combining Lean results \(the reviewer's coverage, recorded with the verdict\)/);
     assert.match(bridge.text, /Lean has not checked this combination\.\s*Next step: State the combination as one Lean result\./);
     assert.match(bridge.text, /Recorded as a checked bridge \(Shape\.layout for Shape\.Spec\.layout\); no bridge Lean checks now: the target is not the version the reviewer read\./);
     assert.doesNotMatch(bridge.text, /through a checked bridge/);
@@ -2011,7 +2011,7 @@ await check("a direct audit shows its published readings beside an unchanged sta
   // Each finding resting on a composition shows it: the auditor's argument with its open
   // obligation and the next step, or a checked bridge; neither reads as a direct result.
   const findings = work.locator("[data-kind='finding']");
-  assert.match(await findings.nth(0).locator("strong").first().textContent(), /^States part of the claim, by the auditor's composition$/);
+  assert.match(await findings.nth(0).locator("strong").first().textContent(), /^Part of the claim, by an argument combining Lean results$/);
   const c1 = work.locator("[data-composition='c-1']");
   const t1 = (await c1.textContent()).replace(/\s+/g, " ");
   assert.match(t1, /s1 SYNTHETIC-STEP: some n is even · from Toy\.IsEven/);
@@ -2025,11 +2025,11 @@ await check("a direct audit shows its published readings beside an unchanged sta
   assert.doesNotMatch(t2, /Next step/);
   // A finding recorded as a checked bridge of its own, which Lean does not check, reads as the
   // auditor's composition and says what it was recorded as.
-  assert.match(await findings.nth(2).locator("strong").first().textContent(), /^Every clause, by the auditor's composition$/);
+  assert.match(await findings.nth(2).locator("strong").first().textContent(), /^Every clause, by an argument combining Lean results$/);
   assert.equal(await findings.nth(2).locator("[data-line='recorded']").textContent(),
                "Recorded as a checked bridge (Toy.no_such_bridge for Toy.Spec.synthetic); no bridge Lean checks now: Lean finds no such theorem.");
   assert.doesNotMatch(await findings.nth(2).textContent(), /through a checked bridge/);
-  assert.doesNotMatch(await work.textContent(), /States every clause/);
+  assert.doesNotMatch(await work.textContent(), /in one Lean statement/);
 });
 
 for (const width of [1440, 1000, 390, 320]) {
@@ -2253,12 +2253,12 @@ await check("review opens the selected claim, keeps protocol order and exports a
   const coverage = pg.getByRole("combobox", { name: "Coverage of the claim", exact: true });
   assert.deepEqual(await coverage.locator("option").allTextContents(), ["Not recorded", "Every clause", "Part of the claim"]);
   await coverage.selectOption({ label: "Every clause" });
-  await pg.getByRole("combobox", { name: "How it is supported", exact: true }).selectOption({ label: "By my composition of these results" });
+  await pg.getByRole("combobox", { name: "How it is supported", exact: true }).selectOption({ label: "By an argument combining Lean results" });
   await pg.getByRole("textbox", { name: "Your argument: how these results together give the claim" }).fill("The sum of two even numbers is even, applied once.");
   assert.equal(await pg.locator(".review .author").count(), 0);
   await pg.getByRole("button", { name: "Record verdict and show the author's review" }).click();
   await pg.locator(".review .author").waitFor();
-  assert.match(await pg.locator(".review .unit").textContent(), /Your coverage: Every clause, by my composition of these results/);
+  assert.match(await pg.locator(".review .unit").textContent(), /Your coverage: Every clause, by an argument combining Lean results/);
   await pg.getByRole("button", { name: "Save report", exact: true }).click();
   await pg.getByRole("button", { name: "Export reports (1 new)", exact: true }).waitFor();
   const report = await pg.evaluate(() => JSON.parse(localStorage.getItem("prooflens-review:toy-paper")).reports[0]);
@@ -2455,7 +2455,7 @@ for (const width of [1300, 390]) {
     // The engine's counts, each claim once: the same coverage with different bases, and an
     // unresolved question; nothing is added into a total.
     assert.deepEqual(await buttons("coverage"), ["Any", "Every clause (2 statements)", "Unresolved (1 statement)", `Not assessed (${SHAPE.claims.length - 3} statements)`]);
-    assert.deepEqual(await buttons("basis"), ["Any", "By a reviewer's composition (1 statement)", "Through a checked bridge (1 statement)", "Basis not recorded (1 statement)"]);
+    assert.deepEqual(await buttons("basis"), ["Any", "By an argument combining Lean results (1 statement)", "Through a checked bridge (1 statement)", "Basis not recorded (1 statement)"]);
     assert.deepEqual(await buttons("findings"), ["Any", "Open questions (1 statement)"]);
     assert.match(await pg.locator(".coverage .inventory").textContent(), new RegExp(`^${SHAPE.claims.length} statements, ${SHAPE.claims.length} linked to \\d+ declarations$`));
     assert.doesNotMatch(await pg.locator(".coverage").textContent(), /%/);
@@ -2477,7 +2477,7 @@ for (const width of [1300, 390]) {
     assert.deepEqual(await buttons("coverage"), ["Any", "Every clause (1 statement)", "Unresolved (1 statement)", `Not assessed (${SHAPE.claims.length - 2} statements)`]);
     await pg.getByRole("button", { name: "Every clause (1 statement)", exact: true }).click();
     assert.equal(await pg.locator(".coverage .claims li").count(), 1);
-    assert.match(await pg.locator(".coverage .claims li").textContent(), /By a reviewer's composition \(recorded as through a checked bridge\)/);
+    assert.match(await pg.locator(".coverage .claims li").textContent(), /By an argument combining Lean results \(recorded as through a checked bridge\)/);
     assert.match(await pg.locator(".coverage .claims li").textContent(), /Current, informed/);
     assert.equal(await pg.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, "no horizontal scroll");
   });
@@ -2498,7 +2498,7 @@ await check("the overview keeps units apart and shows a workspace's readings as 
   await readings.selectOption({ label: "Workspace readings by llm:synthetic-model (independent)" });
   await pg.getByRole("button", { name: "Every clause (1 statement)", exact: true }).click();
   assert.equal(await pg.locator(".coverage .claims li").count(), 1);
-  assert.match(await pg.locator(".coverage .claims li").textContent(), /Definition 1\.1.*Every clause.*By a reviewer's composition \(recorded as through a checked bridge\)/s);
+  assert.match(await pg.locator(".coverage .claims li").textContent(), /Definition 1\.1.*Every clause.*By an argument combining Lean results \(recorded as through a checked bridge\)/s);
 });
 
 await check("a proof step with no Lean link is reviewed as printed and reported as a step", 390, async (pg) => {
@@ -2658,7 +2658,7 @@ print(json.dumps(wsp.read(p)))`);
         const comp = inv.locator("[data-kind=finding]", { hasText: "Apply it to each summand." });
         await comp.waitFor();
         assert.match((await comp.textContent()).replace(/\s+/g, " "),
-          /^Every clause, by the auditor's composition.*Lean has not checked this combination\..*Next step: State the combination as one Lean result\./);
+          /^Every clause, by an argument combining Lean results.*Lean has not checked this combination\..*Next step: State the combination as one Lean result\./);
       } finally { await pg2.close(); }
     });
 
@@ -2733,9 +2733,9 @@ print("null")`);
       const comp = inv.locator("[data-composition='c-tri']");
       await comp.waitFor();
       assert.match((await comp.textContent()).replace(/\s+/g, " "),
-        /^Every clause, by the auditor's composition · composition c-tri · human:Test-Auditor s1 the closed form for every n · from Toy\.Acceptance\.thm_triangle · establishes r1 Lean has not checked this combination\. Next step: State the combination as one Lean result\.$/);
+        /^Every clause, by an argument combining Lean results · composition c-tri · human:Test-Auditor s1 the closed form for every n · from Toy\.Acceptance\.thm_triangle · establishes r1 Lean has not checked this combination\. Next step: State the combination as one Lean result\.$/);
       const f = inv.locator("[data-kind=finding]", { hasText: "By the composition." });
-      assert.match((await f.textContent()).replace(/\s+/g, " "), /^Every clause, by the auditor's composition.*Rests on composition c-tri\./);
+      assert.match((await f.textContent()).replace(/\s+/g, " "), /^Every clause, by an argument combining Lean results.*Rests on composition c-tri\./);
     });
 
 
@@ -2791,7 +2791,7 @@ print("null")`);
       assert.match(await inv.locator("[data-kind=finding]", { hasText: "k = 0, n = 1." }).textContent(), /The printed step: false as printed/);
       // A finding recorded as a checked bridge with no bridge reads as the auditor's composition.
       const fixed = inv.locator("[data-kind=finding]", { hasText: "holds for k ≥ 1" });
-      assert.match(await fixed.locator("strong").first().textContent(), /^Every clause, by the auditor's composition$/);
+      assert.match(await fixed.locator("strong").first().textContent(), /^Every clause, by an argument combining Lean results$/);
       assert.equal(await fixed.locator("[data-line='recorded']").textContent(),
                    "Recorded as a checked bridge; no bridge Lean checks now: no bridge is recorded.");
     });

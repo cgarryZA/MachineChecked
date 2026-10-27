@@ -510,11 +510,10 @@ def view(rec: dict, ws: dict, cur: dict, bridge: dict | None) -> dict:
 
 def lines(c: dict) -> list[str]:
     """A composition for the terminal."""
-    from .simple import COVERAGE_WORDS
-    head = COVERAGE_WORDS.get(c.get("coverage") or "", "no coverage recorded")
-    how = "through a bridge Lean checks" if c["basis"] == BASIS_BRIDGE else \
-        "by the auditor's composition"
-    out = [f"  composition {c['id']}: {head}, {how}"
+    from .semantic import basis_words, in_text, reading_words
+    # Its basis is a checked bridge only while Lean checks the bridge (`view`).
+    head = in_text(reading_words(c.get("coverage"))) or "no coverage recorded"
+    out = [f"  composition {c['id']}: {head}, {in_text(basis_words(c['basis']))}"
            + ("  [stale]" if c["currency"]["state"] == "stale" else "")]
     if c.get("statement"):
         out.append(f"    combined statement: {c['statement']}")
