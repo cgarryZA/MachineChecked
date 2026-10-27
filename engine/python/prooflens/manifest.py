@@ -100,14 +100,15 @@ def symbol_links(display: dict | None, cid: str, tex: str | None, lean: dict,
     the one it was made on. A link made on a typeset excerpt (`pins.excerpt`) is also stale when
     that excerpt, or the macros and references it is typeset with, changed or can no longer be
     typeset. Display only (docs/SYMBOL_LINKS.md)."""
-    from .symbols import stale_reasons
+    from .symbols import spec_of, stale_reasons
     ready = excerpt if excerpt and excerpt.get("ready") else None
     out = []
     for ln in (display or {}).get("symbols", []):
         if ln.get("claim") != cid:
             continue
         target = ln.get("lean") or {}
-        spec = (lean.get("specs") or {}).get(target.get("decl")) or {}
+        # A claim's proposition, or the definition of a claim that only defines.
+        spec = spec_of(lean, target.get("decl"))
         pins = ln.get("pins") or {}
         if "excerpt" in pins:
             moved = (ready is None or pins["excerpt"] != ready.get("fingerprint")

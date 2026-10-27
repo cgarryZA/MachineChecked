@@ -752,12 +752,19 @@ optional `clause` and `note`, `rev`, `created_at`/`created_by`, `updated_at`/`up
   `state_by`/`state_at` record who set it. A `later use` is shown as a use and does not enter
   the requirement's reading.
 - **`alignment`**: `requirements` (local ids; none only for an `additional assumption` of the
-  Lean), `lean` (targets: `{decl}`, or a part of its statement as the build prints it: `var`,
-  `binder` (a variable's type or a hypothesis), `at` (a sub-term's identity) or `conclusion`;
-  each with `build`, `fingerprint`, `digest`, the `closure` of its declaration's statement (as
-  for evidence) and the `target` text) and `relation`
-  (`corresponds`, `additional assumption`, `changed`, `alternative representation`). A
-  requirement may have several alignments and a target may serve several requirements.
+  Lean), optional `fragments` (the ids of particular passages of them, accepted and of the same
+  claim, when the alignment concerns those passages rather than the whole requirement; their
+  requirements are added to `requirements`), `lean` (targets: `{decl}`, or a part of its
+  statement as the build prints it: `var`, `binder` (a variable's type or a hypothesis), `at` (a
+  sub-term's identity, inside a definition expanded at its arguments and an equation on a later
+  page included) or `conclusion`; for a claim that only defines, a part of one of its
+  definitions: a parameter (`var`) or a sub-term of its body or equations (`at`); each with
+  `build`, `fingerprint`, `digest`, the `closure` of its declaration's statement (as for
+  evidence) and the `target` text) and `relation` (`corresponds`, `additional assumption`,
+  `changed`, `alternative representation`). A requirement may have several alignments and a
+  target may serve several requirements; one passage may align with several targets and several
+  passages with one. A passage an alignment names is not deleted while it does (it is marked
+  removed instead).
 - **`composition`**: an argument that several results together cover the claim
   (`composition.py`). `steps`, in order, each `{id, establishes, requirements, uses, after,
   substitutions, inference, note}`: what it establishes, the requirements it establishes (with
@@ -814,10 +821,15 @@ the definition and the declaration that uses it), is `stale`, and so is every qu
 cites it; the others stay `current` (`unchecked` when the build shows no fingerprint, or no
 version of a definition it uses, or when its definitions were not recorded: re-pin it). A quoted
 passage is stale once its claim's passage pin changes, and unchecked when it records none. A
+claim's passage has also changed when the build's source check finds that the paper no longer
+prints the text the inventory pins (`source_matches` false: the text changed and the inventory
+was not pinned again): whatever read that passage (a quoted passage, a fragment, a question, a
+composition, a finding, a bridge) is then `stale`, saying so, although the pin is the same. A
 fragment whose region of the source now reads differently (the lines that changed are listed),
 or whose claim's passage changed, is `stale`, and so is an alignment whose declaration, or a
-definition its statement uses, changed, and every requirement they belong to, and every question
-that names that requirement. A finding's currency is that of its dependencies (below). The saved
+definition its statement uses, changed, or one of whose named passages changed or no longer
+governs the reading (removed, or not published: `{fragment, was, now}`), and every requirement
+they belong to, and every question that names that requirement. A finding's currency is that of its dependencies (below). The saved
 records are not re-pinned silently: a `put` with `repin: true` re-pins a record to the current
 build.
 

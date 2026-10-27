@@ -714,6 +714,13 @@ def _record_op(ws, op, snap, root, by, at, changed):
             if users:
                 raise WorkspaceError(f"{rid} ({cur['local_id']}) is used by {', '.join(users)}; "
                                      "remove them first")
+        if cur["kind"] == "fragment":
+            from .requirements import fragment_users
+            users = fragment_users(ws, rid)
+            if users:
+                raise WorkspaceError(f"{rid} is a passage of alignment(s) {', '.join(users)}; "
+                                     "remove it from them first, or mark it removed (`state`: "
+                                     "removed, with `why_removed`), which keeps it")
         del ws["records"][rid]
         changed.append(rid)
         return None
@@ -1100,6 +1107,9 @@ def currency(ws: dict, snap, root: Path | None = None, check_facts: bool = False
                 changes.append({"claim": r["claim"], "was": pin, "now": None})
             elif pin and ch.get("source_sha256") != pin:
                 changes.append({"claim": r["claim"], "was": pin, "now": ch.get("source_sha256")})
+            elif pin and dp.unprinted(ch, r["claim"]):
+                changes.append({"claim": r["claim"], "was": pin, "now": ch.get("source_sha256"),
+                                "reason": dp.unprinted(ch, r["claim"])})
         out[r["id"]] = {"state": "stale" if changes else "current", "changes": changes}
     return out
 

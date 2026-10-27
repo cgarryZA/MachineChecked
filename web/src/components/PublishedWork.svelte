@@ -56,6 +56,13 @@
   const governing = (rd, lid) => rd.fragments.filter((f) => f.requirement === lid && f.role !== "later use");
   const uses = (rd, lid) => rd.fragments.filter((f) => f.requirement === lid && f.role === "later use");
   const aligned = (rd, lid) => rd.alignments.filter((a) => (a.requirements || []).includes(lid));
+  // The passages an alignment names, when it names some: a passage the audit no longer publishes
+  // (it was removed since) is named as such.
+  const onPassages = (rd, a) => (a.fragments || []).map((id) => {
+    const f = rd.fragments.find((x) => x.id === id);
+    return f ? where(f) : "a passage no longer kept";
+  }).join("; ");
+  const staleWhy = (a) => ((a.currency?.changes || []).some((c) => c.fragment) ? "a passage it names no longer governs the reading" : "the Lean " + STALE);
   const cited = (rd, f) => (f.evidence || []).map((id) => rd.evidence.find((e) => e.id === id)).filter(Boolean);
   const view = (rd, f) => {
     // A finding that rests on a composition reads as that composition, shown below it.
@@ -126,7 +133,7 @@
                 </div>
               {/each}
               {#each aligned(rd, r.local_id) as a (a.id)}
-                <p class="small lean" data-alignment={a.id}><span class="faint">Lean:</span> {a.lean.map(targetText).join("; ")} <span class="faint">· {a.relation} · recorded by {a.created_by}</span>{#if a.note} <span class="text">{a.note}</span>{/if}{#if stale(a)}<span class="stale"> · the Lean {STALE}</span>{/if}</p>
+                <p class="small lean" data-alignment={a.id}>{#if a.fragments?.length}<span class="faint">On {onPassages(rd, a)}:</span>{" "}{/if}<span class="faint">Lean:</span> {a.lean.map(targetText).join("; ")} <span class="faint">· {a.relation} · recorded by {a.created_by}</span>{#if a.note} <span class="text">{a.note}</span>{/if}{#if stale(a)}<span class="stale">{" · " + staleWhy(a)}</span>{/if}</p>
               {/each}
             </div>
           {/each}

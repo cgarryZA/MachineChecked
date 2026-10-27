@@ -103,15 +103,15 @@ jobs:
           for t in leanprover/lean4:v4.24.0 $(cat examples/*/lean-toolchain tests/fixtures/*/lean-toolchain | sort -u); do
             for i in 1 2 3 4; do "$HOME/.elan/bin/elan" toolchain install "$t" && break; [ $i = 4 ] && exit 1; sleep $((i * 10)); done
           done
+      # The committed reader is main's last build; the tests use the one these sources make.
+      - name: Build the reader from its sources
+        run: cd web && npm ci && npm run build
       - name: Install ProofLens
         run: pip install -e '.[test]'
       - name: Build the plain example (zero-configuration tests use it)
         run: cd examples/plain-paper && lake build
       - name: Build the toy paper (the tests copy its build)
         run: cd examples/toy-paper && prooflens build --fail-on-violation
-      - name: The reader's npm packages (Playwright, for the preview)
-        if: matrix.shard == 1
-        run: cd web && npm ci
       - name: The preview browser (Playwright's Chromium, from caches when it can)
         if: matrix.shard == 1
         uses: ./.github/actions/browser
@@ -167,7 +167,10 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
+      # Two commits deep, so a pull request's merge commit can be compared with its base.
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
@@ -177,11 +180,19 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
       - run: pip install -e .
-      - name: The committed reader is the build of its sources
+      # The reader-bundle job commits the built reader on main; a pull request leaves it alone, so
+      # two pull requests that change web/src do not conflict on it. The merge commit's first
+      # parent is the base the pull request merges into.
+      - name: A pull request leaves the built reader to CI
+        if: github.event_name == 'pull_request'
         run: |
-          cd web && npm ci && npm run build && cd ..
-          git status --porcelain -- engine/python/prooflens/web
-          test -z "$(git status --porcelain -- engine/python/prooflens/web)"
+          if ! git diff --quiet HEAD^1 HEAD -- engine/python/prooflens/web; then
+            git diff --stat HEAD^1 HEAD -- engine/python/prooflens/web
+            echo "::error::This pull request changes engine/python/prooflens/web, which CI builds and commits on main. Restore it: git checkout origin/main -- engine/python/prooflens/web && git clean -fdq engine/python/prooflens/web, then commit."
+            exit 1
+          fi
+      - name: Build the reader from its sources
+        run: cd web && npm ci && npm run build
       - name: The browser (Playwright's Chromium, from caches when it can)
         uses: ./.github/actions/browser
       - name: The reader in a browser (web/tests)
@@ -193,6 +204,51 @@ jobs:
           name: reader-screenshots
           path: ${{ runner.temp }}/reader-shots
           retention-days: 7
+
+  # After each push to main, the built reader is made to match web/src: the job builds it from the
+  # latest main and commits it when it differs. Runs are serialized, so each builds on the previous
+  # one's commit; a push that loses a race with another merge starts again from the new main. Its
+  # commit, pushed with the workflow's token, starts no other workflow.
+  reader-bundle:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    concurrency:
+      group: reader-bundle
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Commit the built reader when it differs from its sources
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          for attempt in 1 2 3; do
+            git fetch -q origin main && git reset -q --hard origin/main
+            (cd web && npm ci --no-audit --no-fund && npm run build)
+            git add -A engine/python/prooflens/web
+            if git diff --cached --quiet; then
+              echo "The committed reader matches its sources at $(git rev-parse --short HEAD)."
+              exit 0
+            fi
+            git commit -q -m "The built reader matches its sources" \
+              -m "Built by CI from web/src at $(git rev-parse --short HEAD^)."
+            if git push -q origin HEAD:main; then
+              echo "Committed the built reader as $(git rev-parse --short HEAD)."
+              exit 0
+            fi
+            echo "main moved during attempt $attempt; building again from the new main"
+            sleep 5
+          done
+          exit 1
 
   # The reusable audit workflow (audit.yml), run as a researcher's repository would run it, on the
   # plain example with this checkout's MachineChecked.
