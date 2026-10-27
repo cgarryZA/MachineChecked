@@ -196,8 +196,9 @@ def work_readings(work: dict | None) -> tuple[dict[str, dict], dict[str, dict]]:
                                    question=_text(f.get("question")))
         elif found:
             out[sid] = {"set": sid, "coverage": None, "basis": None, "currency": None,
-                        "count": "clauses_only", "clauses": len(found), "by": by,
-                        "provenance": sets[sid]["mode"]}
+                        "count": "clauses_only", "clauses": len(found),
+                        **{k: v for k, v in (("by", by), ("provenance", sets[sid]["mode"]))
+                           if v is not None}}
     return out, sets
 
 

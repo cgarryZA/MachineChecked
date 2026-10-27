@@ -39,7 +39,7 @@ def mc(root, *args):
                           capture_output=True, text=True, timeout=1800)
 
 
-def write_links(root, pins=None):
+def write_links(root, pins=None, readings=True):
     entries = {
         # The same declaration twice: one link.
         "thm:two": {"lean": ["Cover.even_add", "Cover.even_add"], "coverage": "full",
@@ -55,6 +55,9 @@ def write_links(root, pins=None):
         "not:even": {"lean": ["Cover.Even"]},
         "eq:sum": {"lean": ["Cover.even_add"], "coverage": "partial", "basis": "direct",
                    "by": "A. Auditor"}}
+    if not readings:
+        # The same links with no reading.
+        entries = {k: {"lean": e["lean"]} for k, e in entries.items()}
     (root / "machinechecked.links.json").write_text(json.dumps(
         {"version": 1, "author": "A. Auditor", "papers": {PAPER: entries}}))
 
@@ -74,7 +77,7 @@ def cover(tmp_path):
 @needs_lean
 @needs_tex
 def test_check_json_build_and_site_agree_on_one_summary(cover, tmp_path):
-    (cover / "machinechecked.links.json").write_text(json.dumps({"version": 1, "papers": {}}))
+    write_links(cover, readings=False)
     plain = json.loads(mc(cover, "check", "--json").stdout)
     write_links(cover)
     first = json.loads(mc(cover, "check", "--json").stdout)

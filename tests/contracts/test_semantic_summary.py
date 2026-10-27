@@ -228,6 +228,24 @@ def test_formal_counts_are_kept_apart_and_no_status_changes():
              "manifest-index")
 
 
+def test_a_workspace_that_records_no_mode_or_reviewer_is_still_described():
+    index, chunks, works = records()
+    for w in works.values():
+        for rd in w["readings"]:
+            rd.pop("mode"), rd.pop("reviewer")
+    s = semantic.apply(index, chunks, works)
+    assert s["sets"][-1] == {"id": "workspace:ws-111111111111", "kind": "workspace",
+                             "workspace": "ws-111111111111", "mode": None, "reviewer": {}}
+    a = index["claims"][0]["semantic"]["readings"][-1]
+    assert a == {"set": "workspace:ws-111111111111", "coverage": None, "basis": None,
+                 "currency": None, "count": "clauses_only", "clauses": 1}
+    validate({"schema": "prooflens/manifest@1", "release": "v-synthetic", "evidence": "e" * 64,
+              "papers": [{"id": "P", "mode": "latex", "pdf": None}], "summary": {},
+              "classes": {}, "findings": {},
+              "claims": [{**r, "counts": {}} for r in index["claims"]], "semantic": s},
+             "manifest-index")
+
+
 def test_a_reading_alone_changes_the_digest():
     index, chunks, works = records()
     first, _ = semantic.summarise(index, chunks, works)
