@@ -123,9 +123,9 @@ def parse(attrs: str, step: str | None = None, step_hash: str | None = None
         else:
             found.pop(step)
         return found
-    # `source=none`: the marker records that it read none of the passages (`retire.py` writes
-    # it when it removes a marker's last reading), so the history rule of a marker written
-    # before digests were recorded does not apply to it.
+    # `source=none`: the marker records that it read none of the passages (an earlier
+    # `retire.py` wrote it when it removed a marker's last reading), so the history rule of a
+    # marker written before digests were recorded does not apply to it.
     return found if found or NONE.search(attrs or "") else None
 
 
