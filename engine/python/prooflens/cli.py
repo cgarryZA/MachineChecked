@@ -1193,9 +1193,11 @@ def cmd_inspect(a):
     if root is None:
         sys.exit("no Lean project here: run machinechecked inside a directory with a lakefile")
     log = (lambda m: print(m, file=sys.stderr))
+    if a.within and not a.used_by:
+        sys.exit("--in goes with --used-by: the applications of NAME inside one declaration")
     if a.used_by:
         from .uses import text, uses
-        out = uses(root, a.name, a.module, log=log, refresh=a.refresh)
+        out = uses(root, a.name, a.module, log=log, refresh=a.refresh, within=a.within)
         print(json.dumps(out, indent=1, ensure_ascii=False) if a.json
               else text(out, module=a.module))
         if not out["ok"]:
@@ -1306,7 +1308,7 @@ def cmd_compare(a):
             out = cmp.query(site, op, target, a.limit, a.after, root,
                             log=lambda m: print(m, file=sys.stderr), match=a.match,
                             workspace=a.workspace, main=a.main,
-                            every_library=a.all_libraries)
+                            every_library=a.all_libraries, within=a.within)
             if a.json:
                 return _print_json(out)
             if not out["available"]:
@@ -1720,6 +1722,10 @@ def main(argv=None):
     ins.add_argument("--used-by", action="store_true",
                      help="where it is used instead: the declarations that use it, each "
                           "application's arguments and the source of each premise")
+    ins.add_argument("--in", dest="within", metavar="CALLER",
+                     help="with --used-by: only the applications inside this declaration, or "
+                          "the one application with this id (app:CALLER:N), each with every "
+                          "local of its context")
     ins.add_argument("--json", action="store_true",
                      help="print one JSON document (for scripts and agents)")
     ins.add_argument("--project", help="the Lean project (default: the one here)")
@@ -1742,6 +1748,10 @@ def main(argv=None):
                     "NAME (how each main result uses it, and which claims' Lean uses it), "
                     "expansion KEY (a definition at the arguments of one application, by the "
                     "key a statement gives it)")
+    co.add_argument("--in", dest="within", metavar="CALLER",
+                    help="with uses: only the applications inside this declaration, or the one "
+                    "application with this id (app:CALLER:N), each with every local of its "
+                    "context")
     co.add_argument("--match", metavar="TEXT",
                     help="with proof-facts: rank the facts by the symbols they share with TEXT")
     co.add_argument("--main", action="append", metavar="NAME",
