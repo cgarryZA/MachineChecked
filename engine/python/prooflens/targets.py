@@ -35,6 +35,35 @@ def _generated(rest: str) -> bool:
                for c in rest.split("."))
 
 
+def script_owners(records) -> dict[str, str]:
+    """The declaration each tactic-default script among the declaration records `records`
+    belongs to. A binder or a structure field with a tactic default (`(h : 0 < n := by omega)`)
+    makes Lean store the tactic as a declaration of its own, which the probe marks `auto_param`,
+    and the type of the declaration that has the default names it (`autoParam (0 < n) …`): a
+    definition's or a theorem's, or a structure's constructor's. Its name does not always say
+    whose it is: a binder's script is `f._auto_1` on Lean 4.32 and `_auto._@.M._hyg.N` on Lean
+    4.24. So the owner is the declaration whose printed type refers to the script (the first by
+    name, of several). A script no printed type refers to has no owner here."""
+    scripts, typed = set(), []
+    for r in records:
+        n = r.get("name")
+        if not n:
+            continue
+        if r.get("auto_param") is True:
+            scripts.add(n)
+            continue
+        sig = r.get("signature")
+        refs = {s["ref"] for s in (sig.get("segments") if isinstance(sig, dict) else None) or []
+                if isinstance(s, dict) and isinstance(s.get("ref"), str)}
+        if refs:
+            typed.append((n, refs))
+    out: dict[str, str] = {}
+    for n, refs in sorted(typed, key=lambda x: x[0]):
+        for s in refs & scripts:
+            out.setdefault(s, n)
+    return out
+
+
 def _norm(s: str) -> str:
     return re.sub(r"\s+", " ", str(s or "")).strip().lower()
 
@@ -54,6 +83,7 @@ class Snapshot:
         self._chunks: dict[str, dict | None] = {}
         self._fps: dict[str, str] | None = None
         self._digests: dict[str, str] | None = None
+        self._scripts: dict[str, str] | None = None
 
     # -- identity --------------------------------------------------------------------------
 
@@ -180,18 +210,35 @@ class Snapshot:
                 out.append(rec)
         return out
 
+    def script_owners(self) -> dict[str, str]:
+        """The owner of each tactic-default script of the shared declaration store
+        (`script_owners`)."""
+        if self._scripts is None:
+            def records():
+                for p in sorted((self.data / "decls").glob("*.json")):
+                    try:
+                        yield json.loads(p.read_text(encoding="utf-8"))
+                    except (OSError, ValueError):
+                        continue
+            self._scripts = script_owners(records())
+        return self._scripts
+
     def digests(self) -> dict[str, str]:
         """A digest per declaration of its fingerprint and those of the constants Lean generated
         for it (`N._f`, `N.match_1`, `N.eq_1`, …), which hold what a definition by recursion or
         by cases says: a change to its equations changes the digest even when the
-        declaration's own fingerprint does not."""
+        declaration's own fingerprint does not. The tactic script of a tactic default in its
+        type is one of them whatever its name, by the records (`script_owners`)."""
         if self._digests is not None:
             return self._digests
         own = {**self.store_fingerprints(), **self.fingerprints()}
+        scripts = self.script_owners()
         names = sorted(own)
         out = {}
         for n in names:
-            parts = [own[m] for m in names if m.startswith(n + ".") and _generated(m[len(n) + 1:])]
+            parts = [own[m] for m in names
+                     if (m.startswith(n + ".") and _generated(m[len(n) + 1:]))
+                     or scripts.get(m) == n]
             out[n] = own[n] if not parts else "ws-digest:" + hashlib.sha256(
                 "\n".join([own[n], *parts]).encode()).hexdigest()
         self._digests = out

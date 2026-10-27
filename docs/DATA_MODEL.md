@@ -239,9 +239,9 @@ derived from them alone; no status, fingerprint or gate reads it.
 | `paper_changed`, `lean_changed` | per paper, and for the Lean project, whether the two releases differ |
 | `claims[]` | per claim of either release: `claim`, `paper`, `number`, `kind`, `scope`, `status` (`from`, `to`: each `{status, status_code}` as its build computed it, or null), `paper_change`, `lean_changed`, `lean`, `evidence`, `due` |
 | `paper_change` | `class`, `reason`, `context` (the further passages or notation definitions that changed: `what`, `change`, `from`, `to`), `repinned` (when the inventory's pin changed: `from`, `to`, `passage`, `context`), `proposed` or `candidates`, `pin`, and the passage of each build (`from`, `to`: `location`, `bounds`, `sha256`, `passage`, `parts`, `notation`, `pin`, `matches_pin`; `from` is `"same"` for an unchanged passage) |
-| `lean[]` | per clause: `clause`, `in` (`both`, `earlier`, `later`), `proposition`, `definitions` (those that changed), `definitions_unchanged`, `proofs` (with `role` and `check`); each `{name, change, from, to}` with each build's `fingerprint`, `legacy_hash`, `source_sha256` and `text` |
+| `lean[]` | per clause: `clause`, `in` (`both`, `earlier`, `later`), `proposition`, `definitions` (those that changed; the tactic scripts of tactic defaults are left out), `definitions_unchanged`, `proofs` (with `role` and `check`); each `{name, change, from, to}` with each build's `fingerprint`, `legacy_hash`, `source_sha256` and `text` |
 | `evidence[]` | per review: `target` (`spec`, `def`, `step`), `name`, `clause`, `from` and `to` (`state`, `marker`: `by`, `kind`, `file`, `line`, `hash`, `source`; `"same"` for a kept marker), `outcome`, and `because`, `question`, `caveat`, `kept_through` |
-| `declarations[]` | every project declaration whose statement or proof changed, or that one release has alone: `name`, `change`, `from`, `to`, `claims` |
+| `declarations[]` | every project declaration whose statement or proof changed, or that one release has alone, other than the tactic scripts of tactic defaults: `name`, `change`, `from`, `to`, `claims` |
 | `counts` | per paper class, per evidence outcome and per declaration change, and `status_changed` |
 | `workspace` | with `--workspace`: the workspace's records that are not current, of every kind, the claim's requirements, fragments and alignments included (`id`, `kind`, `claim`, `state`, `changes`, `pinned_release`; `submitted` for a submitted finding, `proposed` for a proposed fragment) |
 
@@ -578,9 +578,10 @@ changes no status.
 
 **Currency.** Evidence on a declaration is pinned to its `fingerprint` and to a `digest` of that
 fingerprint with those of the constants Lean generated for it (`N._f`, `N.match_1`, `N.eq_1`), which
-carry a definition's equations. Against a later build, evidence whose digest changed is `stale`,
-and so is every finding or question that cites it, and every finding whose claim's printed text
-changed; the others stay `current` (`unchecked` when the build shows no fingerprint). A fragment
+carry a definition's equations, and of the tactic script of each tactic default its type has.
+Against a later build, evidence whose digest changed is `stale`, and so is every finding or
+question that cites it, and every finding whose claim's printed text changed; the others stay
+`current` (`unchecked` when the build shows no fingerprint). A fragment
 whose region of the source now reads differently (the lines that changed are listed), or whose
 claim's passage changed, is `stale`, and so is an alignment whose declaration changed, and every
 requirement they belong to, and every finding or question that names that requirement. The saved

@@ -2,7 +2,7 @@
 
 The first tests compare synthetic evidence records and run no Lean; the last ones build the toy
 paper twice or more, changing a definition, a proof, the context of a display, or an unrelated
-sentence between builds."""
+sentence between builds, and a project with tactic defaults twice, changing only the tactics."""
 
 import copy
 import json
@@ -297,6 +297,79 @@ def test_a_review_a_later_marker_shadows_is_reopened_by_the_record_not_the_lean(
     assert "later.md" not in json.dumps(chg.public(doc, {"P": closed}, False, False))
 
 
+# The tactic defaults of #372, each with the declaration whose source has it: a structure
+# field's (`pos : 0 < val := by decide`), whose script the constructor's type names, and a
+# binder's, as Lean 4.32 names its script (inside the definition's namespace) and as Lean 4.24
+# does (outside it).
+DEFAULTS = {"Ex.Rate.pos._autoParam": "Ex.Rate", "Ex.half._auto_1": "Ex.half",
+            "_auto._@.Ex.Defs.12._hygCtx._hyg.3": "Ex.third"}
+
+
+def tactic_pair(auto_param=True):
+    """The same claim in two builds, whose proposition's closure holds a structure, its
+    constructor, two definitions and the scripts of their tactic defaults. Between them only
+    the tactics change: each script's value, and the authored source of the declaration that
+    has the default; no statement. The probe says which declarations are scripts
+    (`auto_param`; left out for `None`, as in a record of an earlier probe)."""
+    owners = sorted(set(DEFAULTS.values())) + ["Ex.Rate.mk"]
+    c = claim("P:main", H["a"], clauses=[{"name": "statement", "spec": SPEC}],
+              number="Theorem 1")
+    spec_m = marker(SPEC, "fp:spec", "P:main", H["a"])
+    specs = {SPEC: {"fingerprint": "fp:spec", "closure": sorted(owners + list(DEFAULTS)),
+                    "exact": {"text": "∀ r : Ex.Rate, Ex.half r.val ≤ Ex.third r.val"}}}
+    marks = {n: marker(n, f"fp:{n}", "P:main", H["a"], line=9, target="def") for n in owners}
+    cl = {"name": "statement", "spec": SPEC,
+          "spec_review": review("reviewed", spec_m, readers={"P:main": H["a"]}),
+          "def_reviews": {n: review("reviewed", marks[n]) for n in owners}}
+
+    def build(eid, tactic):
+        decls = [decl(SPEC, "fp:spec", "∀ r, …")]
+        decls += [decl(n, f"fp:{n}", "…", "ctor" if n.endswith(".mk") else "def",
+                       source=f"src:{n}" if n.endswith(".mk") else f"src:{n}:{tactic}")
+                  for n in owners]
+        decls += [{**decl(s, f"fp:{s}:{tactic}", f"Lean.Syntax.node `{tactic}"),
+                   **({} if auto_param is None else {"auto_param": auto_param})}
+                  for s in DEFAULTS]
+        return record(eid, [c], [assessed("P:main", "formal.accepted", [cl])], decls, specs,
+                      {"P:main": region(H["a"])}, lean_inputs=f"l-{tactic}")
+    return build("e1", "decide"), build("e2", "omega")
+
+
+def test_an_edit_of_only_a_tactic_default_is_a_change_of_its_declarations_proof():
+    """#372: a tactic default's script gives only a proof of what its field or binder states,
+    and needs no review. An edit of the tactic shows as a change of only the proof of the
+    structure or definition whose source has the default, as the reader knows it, and not as
+    a changed definition under the script's generated name."""
+    old, new = tactic_pair()
+    doc = chg.compare(old, "r-1", new, "r-2")
+    c, = doc["claims"]
+    lean, = c["lean"]
+    assert {d["name"]: d["change"] for d in lean["definitions"]} == {
+        "Ex.Rate": "proof", "Ex.half": "proof", "Ex.third": "proof"}
+    assert lean["definitions_unchanged"] == 1
+    assert {d["name"]: d["change"] for d in doc["declarations"]} == {
+        "Ex.Rate": "proof", "Ex.half": "proof", "Ex.third": "proof"}
+    assert doc["counts"]["declarations"] == {"proof": 3}
+    # Nothing is due: every review stands, the comparison changes no status.
+    assert not c["due"] and {e["outcome"] for e in c["evidence"]} == {"kept"}
+    assert c["status"]["from"] == c["status"]["to"]
+    out = chg.text(doc)
+    assert "Lean (statement): Ex.half: only its proof changed" in out
+    assert not [s for s in DEFAULTS if s in out] and "Lean.Syntax" not in out
+
+
+def test_a_script_without_the_probes_answer_is_compared_as_a_definition():
+    old, new = tactic_pair(auto_param=None)
+    doc = chg.compare(old, "r-1", new, "r-2")
+    changed = {d["name"]: d["change"] for d in doc["claims"][0]["lean"][0]["definitions"]}
+    assert {s: changed.get(s) for s in DEFAULTS} == {s: "statement" for s in DEFAULTS}
+    # One build's answer counts for both.
+    _, marked = tactic_pair()
+    doc = chg.compare(old, "r-1", marked, "r-2")
+    assert not {d["name"] for d in doc["claims"][0]["lean"][0]["definitions"]} & set(DEFAULTS)
+    assert not {d["name"] for d in doc["declarations"]} & set(DEFAULTS)
+
+
 # -- the toy paper, built again after each change -------------------------------------------------
 
 def changes_json(root, capsys, *args):
@@ -541,3 +614,51 @@ def test_toy_changes_lists_every_workspace_record_show_marks_stale(toy, capsys):
     # records that rest on the definition.
     assert out.count(f"because: the paper's text at toy.tex:{proof} changed") == 3
     assert out.count("because: Toy.IsEven changed") == 4
+
+
+@needs_lean
+@pytest.mark.parametrize("toolchain", ["leanprover/lean4:v4.32.0", "leanprover/lean4:v4.24.0"])
+def test_a_tactic_edit_changes_only_the_proofs_of_the_declarations_with_the_defaults(
+        tmp_path, toolchain):
+    """#372, as Lean elaborates it: editing only the tactics of a structure field's default and
+    a binder's changes the scripts' values and the authored source of the structure and of the
+    definition, and no statement. The comparison lists the structure and the definition as
+    changed in their proofs only, and neither script, whatever its name (a binder's script is
+    named outside its definition on Lean 4.24)."""
+    import subprocess
+    from prooflens import probe
+    from test_witness_defs import AUTO, AUTO_CLAIM
+    if subprocess.run(["elan", "toolchain", "list"], capture_output=True,
+                      text=True).stdout.find(toolchain) < 0:
+        pytest.skip(f"{toolchain} is not installed")
+    root = tmp_path / "auto"
+    for path, text in AUTO.items():
+        (root / path).parent.mkdir(parents=True, exist_ok=True)
+        (root / path).write_text(text)
+    (root / "lean-toolchain").write_text(toolchain + "\n")
+    query = {"scope_roots": ["Auto"], "spec_prefix": "Auto.Spec",
+             "accept_prefix": "Auto.Acceptance",
+             "allowed_axioms": ["propext", "Classical.choice", "Quot.sound"],
+             "requests": probe.requests_from_inventory({"claims": [AUTO_CLAIM]})}
+    c = claim("P:half", H["a"], clauses=AUTO_CLAIM["clauses"])
+
+    def release(eid):
+        subprocess.run(["lake", "build"], cwd=root, check=True, capture_output=True,
+                       timeout=900)
+        lean = probe.attach_sources(root, probe.lean_session(root, ["Auto"], query,
+                                                             probe.parse_records))
+        cl = {"name": "main", "spec": "Auto.Spec.half_le", "def_reviews": {}}
+        return record(eid, [c], [assessed("P:half", "formal.review-pending", [cl])],
+                      list(lean["decls"].values()), lean["specs"], {"P:half": region(H["a"])})
+    old = release("e1")
+    edit(root / "Auto/Defs.lean", "lt : val < 10 := by decide", "lt : val < 10 := by omega")
+    edit(root / "Auto/Defs.lean", "(_h : 0 < n := by omega)", "(_h : 0 < n := by simp)")
+    new = release("e2")
+    doc = chg.compare(old, "r-1", new, "r-2")
+    lean, = doc["claims"][0]["lean"]
+    assert lean["proposition"]["change"] == "unchanged"
+    assert {d["name"]: d["change"] for d in lean["definitions"]} == {
+        "Auto.Small": "proof", "Auto.half": "proof"}
+    assert {d["name"]: d["change"] for d in doc["declarations"]} == {
+        "Auto.Small": "proof", "Auto.half": "proof"}
+    assert "_auto" not in chg.text(doc)

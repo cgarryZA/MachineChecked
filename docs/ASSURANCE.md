@@ -181,7 +181,9 @@ For each claim it shows:
 - **the Lean**: for each clause, whether its proposition, each project definition its meaning
   depends on, and each of its proofs changed, with both statements as Lean prints them. A
   definition can change while its name and type stay the same; a proof can change while its
-  statement stays the same.
+  statement stays the same. The tactic script Lean stores for a tactic default
+  (`pos : 0 < val := by decide`) is not listed: it gives only a proof, so an edit of the tactic
+  shows as a change of only the proof of the structure or definition whose source has it.
 - **both statuses**, each as its own build computed it.
 - **the evidence**: every review the earlier build counted, and what became of it in the later
   build: *still current*, *due for review* (with the change it depends on and the question a new

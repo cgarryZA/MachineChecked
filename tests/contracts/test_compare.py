@@ -351,6 +351,72 @@ def test_an_unknown_claim_is_refused_with_candidates(site):
     assert e.value.kind == "unknown-claim" and e.value.candidates
 
 
+# The tactic scripts of tactic defaults (#371), each with the declaration whose type has the
+# default: a binder's as Lean 4.32 names it (inside the definition's namespace) and as Lean 4.24
+# does (outside it), and a structure field's, whose default is the constructor's binder.
+SCRIPTS = {"Syn.half._auto_1": "Syn.half", "_auto._@.Syn.Defs.12._hygCtx._hyg.3": "Syn.third",
+           "Syn.Pos.pos._autoParam": "Syn.Pos.mk"}
+
+
+def script_site(tmp: Path, auto_param=True, script_fp="fp-script") -> Path:
+    """A site whose store holds the declarations of SCRIPTS and their scripts. The probe marks
+    each script (`auto_param`; left out for `None`, as in a record of an earlier probe), and the
+    owner's printed type names it."""
+    data = tmp / "site" / "data"
+    (data / "decls").mkdir(parents=True)
+    recs = []
+    for s, owner in SCRIPTS.items():
+        recs.append({"name": owner, "kind": "ctor" if owner.endswith(".mk") else "def",
+                     "module": "Syn.Defs", "uses": [], "fingerprint": f"fp-{owner}",
+                     "auto_param": False,
+                     "signature": seg(f"(n : Nat) → autoParam (0 < n) {s} → Nat",
+                                      ["Nat", "autoParam", "LT.lt", s])})
+        recs.append({"name": s, "kind": "def", "module": "Syn.Defs", "uses": [],
+                     "fingerprint": f"{script_fp}:{s}", "signature": seg("Lean.Syntax"),
+                     "value": seg("Lean.Syntax.node Lean.SourceInfo.none `byTactic"),
+                     **({} if auto_param is None else {"auto_param": auto_param})})
+    for rec in recs:
+        key = hashlib.sha256(rec["name"].encode()).hexdigest()[:24]
+        (data / "decls" / f"{key}.json").write_text(json.dumps(rec))
+    (data / "index.json").write_text(json.dumps(
+        {"schema": "prooflens/manifest@1", "mode": "simple", "release": "v-scripts",
+         "evidence": "e" * 64, "project": {"name": "syn"}, "papers": [], "claims": []}))
+    return data
+
+
+def test_a_tactic_script_is_shown_with_the_declaration_whose_type_has_the_default(tmp_path):
+    """#371: on Lean 4.24 a binder's script is named outside its definition's namespace, so
+    its name does not tie it to the definition; the probe's records do, on either version."""
+    from prooflens.targets import Snapshot, script_owners
+    site = cmp.Site(script_site(tmp_path))
+    assert script_owners(site.store().values()) == SCRIPTS
+    for s, owner in SCRIPTS.items():
+        d = cmp.query(site, "definition", owner)["results"]
+        assert [r["name"] for r in d] == [owner, s]
+        assert d[1]["generated_for"] == owner
+        unit = {"id": f"def:{owner}", "kind": "def", "name": owner, "claims": []}
+        pk = cmp.unit_packet(site, unit, "compare")
+        assert {r["name"]: r["generated_for"] for r in pk["lean"]["definitions"]}[s] == owner
+        # The text shows the declaration under review, and not its script as a definition.
+        assert "Lean.Syntax.node" not in cmp.packet_text(pk)
+    # An edit of a tactic changes its owner's digest, as an edit of an equation does.
+    digests = Snapshot(site.data).digests()
+    edited = Snapshot(script_site(tmp_path / "edited", script_fp="fp-edited")).digests()
+    for owner in SCRIPTS.values():
+        assert digests[owner].startswith("ws-digest:") and edited[owner] != digests[owner]
+
+
+def test_a_record_without_the_probes_answer_is_tied_by_its_name_only(tmp_path):
+    from prooflens.targets import Snapshot
+    site = cmp.Site(script_site(tmp_path, auto_param=None))
+    assert site.script_owners() == {}
+    assert [r["name"] for r in cmp.query(site, "definition", "Syn.half")["results"]] == [
+        "Syn.half", "Syn.half._auto_1"]
+    assert [r["name"] for r in cmp.query(site, "definition", "Syn.third")["results"]] == [
+        "Syn.third"]
+    assert Snapshot(site.data).digests()["Syn.third"] == "fp-Syn.third"
+
+
 # -- the examples ------------------------------------------------------------------------------
 
 def run_json(capsys, *args):

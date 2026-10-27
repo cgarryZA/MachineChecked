@@ -8,7 +8,9 @@ reports, claim by claim:
   or new, from the digests each build recorded; a removed claim whose text another claim now has
   is offered as a match, never applied;
 - the Lean: for each clause, whether its proposition, each project definition in its closure and
-  each of its proofs changed, with the statement text of both builds;
+  each of its proofs changed, with the statement text of both builds; the tactic script Lean
+  stores for a tactic default is not listed (it gives only a proof, and an edit of the tactic
+  shows as a change of the proof of the declaration whose source has the default);
 - the evidence: for each review the assessment counted in the earlier build, whether the later
   build still counts it, and if not, the exact dependency that changed and the question a new
   reading must answer;
@@ -138,7 +140,8 @@ class Version:
 
     def closure(self, cl: dict) -> list[str]:
         """The project definitions a clause's meaning depends on: its proposition's closure, or
-        a definition claim's definitions and their closures."""
+        a definition claim's definitions and their closures, without the tactic scripts of
+        tactic defaults (`auto_param`), which the assessment asks no review of either."""
         specs, defs = self.lean.get("specs") or {}, self.lean.get("defs") or {}
         if cl.get("spec"):
             names = (specs.get(cl["spec"]) or {}).get("closure") or []
@@ -146,7 +149,16 @@ class Version:
             names = list(cl.get("defs") or [])
             for d in cl.get("defs") or []:
                 names += (defs.get(d) or {}).get("closure") or []
-        return [n for n in dict.fromkeys(names) if n not in specs]
+        return [n for n in dict.fromkeys(names) if n not in specs and not self.auto_param(n)]
+
+    def auto_param(self, name: str) -> bool:
+        """Whether this build's probe says the declaration `name` is the tactic script Lean
+        stores for a tactic default (`pos : 0 < val := by decide`). Running it gives a proof of
+        what the field or binder states, so an edit of the tactic changes no statement: it is a
+        change of the authored source of the declaration that has the default (its structure,
+        definition or theorem), which the comparison reports there. A record without the
+        probe's answer is a definition like any other, as in `assess.py`."""
+        return ((self.lean.get("decls") or {}).get(name) or {}).get("auto_param") is True
 
 
 def statement_text(name: str, spec: dict | None, rec: dict | None) -> str | None:
@@ -433,7 +445,10 @@ def clause_changes(cid: str, old: Version, new: Version, paper: dict[str, dict]
                                       "to": new.decl(spec_b)}
         defs_a = old.closure(x) if x else []
         defs_b = new.closure(y) if y else []
-        defs = [_decl_entry(d, old, new) for d in dict.fromkeys(defs_a + defs_b)]
+        # A record of an earlier probe does not say whether it is a tactic script: the other
+        # build's answer counts for both.
+        defs = [_decl_entry(d, old, new) for d in dict.fromkeys(defs_a + defs_b)
+                if not (old.auto_param(d) or new.auto_param(d))]
         row["definitions"] = [d for d in defs if d["change"] != "unchanged"]
         row["definitions_unchanged"] = sum(d["change"] == "unchanged" for d in defs)
         proofs = []
@@ -612,8 +627,10 @@ def compare(old_record: dict, old_release: str, new_record: dict, new_release: s
 
 def _declaration_changes(old: Version, new: Version) -> list[dict]:
     """Every project declaration whose statement or proof changed, or that one build has and
-    the other has not, with the claims that depend on it in either build."""
-    names = set((old.lean.get("decls") or {})) | set((new.lean.get("decls") or {}))
+    the other has not, with the claims that depend on it in either build. The tactic scripts
+    of tactic defaults are left out (`Version.auto_param`)."""
+    names = {n for n in set((old.lean.get("decls") or {})) | set((new.lean.get("decls") or {}))
+             if not (old.auto_param(n) or new.auto_param(n))}
     users: dict[str, set[str]] = {}
     for v in (new, old):
         for cid, a in v.assessed.items():
