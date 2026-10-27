@@ -6,7 +6,7 @@ name: Paper A
 # of its records, the assessment and the status words, the site data, the LaTeX anchors and source
 # regions, and the review parsers.
 #
-# A full run probes Paper A (about 45 minutes). Its Lean results are then kept in the Actions
+# A full run probes Paper A (about 25 minutes). Its Lean results are then kept in the Actions
 # cache, keyed on what `build --reuse-lean` requires of them (the probe, the Lean inputs, the probe
 # settings, the requests and the engine's version), so a change that leaves those alone reuses
 # them and takes minutes. A pull request's run keeps them for that pull request's later runs; a
@@ -68,9 +68,9 @@ jobs:
   statuses:
     name: Paper A statuses
     runs-on: ubuntu-24.04
-    # A run that probes in full takes about 75 minutes, one that reuses the stored Lean results
-    # about 15.
-    timeout-minutes: 150
+    # A run that probes in full takes about 35 minutes (the probe about 25), one that reuses the
+    # stored Lean results about 8.
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v7
       - name: Check out Paper A at the pinned commit
@@ -88,12 +88,15 @@ jobs:
       - name: Install this checkout's engine
         run: pip install -e .
 
-      # Mathlib's build (about 7 GB), Paper A's (about 2 GB), TeX Live and the stored results do
-      # not fit in the runner's free space otherwise.
-      - name: Free disk space
+      # Mathlib's build (about 7 GB), Paper A's (about 2 GB), TeX Live and the stored results need
+      # about 15 GB. A runner with less than 30 GB free first removes toolchains this job does not
+      # use (about 25 GB; it takes two minutes).
+      - name: Free disk space if needed
         run: |
-          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
-            /opt/hostedtoolcache/CodeQL /usr/local/share/boost /usr/local/lib/node_modules
+          if [ "$(df --output=avail -B1G / | tail -1 | tr -d ' ')" -lt 30 ]; then
+            sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+              /opt/hostedtoolcache/CodeQL /usr/local/share/boost /usr/local/lib/node_modules
+          fi
           df -h /
 
       # The packages a run installs are kept for a week (TeX Live is several hundred MB, and
@@ -251,6 +254,8 @@ jobs:
         working-directory: ${{ env.PAPER_A_DIR }}
         env:
           RESTORED: ${{ steps.results.outputs.cache-hit }}
+          # The engine's progress lines reach the log as they are written.
+          PYTHONUNBUFFERED: "1"
         run: |
           site="$RUNNER_TEMP/paper-a-site"
           mode=full
