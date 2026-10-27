@@ -42,8 +42,9 @@ used instead:
 
 `lean` lists the declarations that state the step as printed, with `coverage` (`full`, `partial`,
 `changed`, `related`, `unresolved`; a stored `composed` reads as `full`) and `basis` (`direct`,
-`reviewed_composition`, `checked_bridge`). `route.lean` lists declarations that reach the parent
-by another argument. The probe checks both (as `link` records, `lean.links` in the evidence).
+`reviewed_composition`, `checked_bridge`). A step with no `lean` keeps only an `unresolved`
+coverage, whose open question may be whether any Lean states the step, and no basis.
+`route.lean` lists declarations that reach the parent by another argument. The probe checks both (as `link` records, `lean.links` in the evidence).
 None of these fields is an input to a status: a step's status is its scope decision's, and its
 review is its own (below).
 
@@ -173,16 +174,41 @@ objects inside a hypothesis as `objects`; the reader and `symbols.tree` rebuild 
 An object of a statement whose type is a subtype, structure or class with a field that is a
 proposition (a binder of the tree that binds an object) has `properties` on its node: every field
 of its type, inherited ones included and each once, projected from
-the object, as `{field, kind, structure, declared_in, inherited, projection, module, range, term,
-type}`. `kind` is `data` or `proposition`; `type` is the field's type at the object (for a
-proposition, what it states), with identities prefixed by the object's identity and the field
-(`<id>#<field>:`). At most 32 are listed (`properties_omitted` counts the rest); a failed
-extraction is `properties_error`. A hypothesis whose type is a structure of propositions (a
-class such as `[IsProbability Ω]`; not a conjunction or an equivalence) has the same
-`properties`: what its fields state. The reader shows a given object's properties as included in
+the object, as `{field, kind, basis, structure, declared_in, inherited, via, projection, module,
+range, term, depends, type}`. `kind` is `data` or `proposition`; `type` is the field's type at the
+object (for a proposition, what it states), with identities prefixed by the object's identity
+and the field (`<id>#<field>:`). `declared_in` is the structure whose declaration states the
+field (followed through a parent whose fields are copied because they overlap an earlier
+parent's), `via` the parent projections from the object's structure to it, and `depends` the
+numbers of the statement's variables its statement mentions. `basis` says why it holds of the
+object: `type` (included in the object's type). At most 32 are listed (`properties_omitted`
+counts the rest); a failed extraction is `properties_error`. A hypothesis whose type is a
+structure of propositions (a class such as `[IsProbability Ω]`; not a conjunction or an
+equivalence) has the same `properties`, with basis `premise`: what its fields state. The reader shows a given object's properties as included in
 its type, a witness's as established with it, an object's inside a hypothesis as inside that
 hypothesis, and any other object's (one `denied`, `alternative` or `equivalent`, or under a
 premise) as local to the clause that contains it.
+
+A declaration record of a structure (a class included) has `structure`: `{class, params,
+parents, fields, fields_omitted}`, its parameters (as a definition's `params`, identities
+prefixed `type:`), its parents (`{structure, projection, subobject}`, in the order of its
+`extends`) and every field, inherited ones once, in the form of `properties` above, stated of an
+object `self` of the structure at its parameters (identities prefixed `self#<field>:`; the
+parameters are the variables `0`, `1`, … and `self` the last). The fields `declared_in` the
+structure itself are those it adds to its parents (`compare` groups them as `declares` and
+`inherits`). A definition of data whose value is an object of such a structure (a construction)
+has `result_properties`: the fields of its value at its parameters (identities prefixed
+`result#<field>:`), with basis `definition`, since its value proves them. A failure is
+`structure_error` or `result_properties_error`. Display only.
+
+`compare` lists, for each statement, its objects (`statement.objects`, `objects.objects`): each
+variable it binds to data, with its position (`given`, `produced`, `assumed` inside an
+assumption, `premise` inside the premise of an implication, `denied`, `alternative`,
+`equivalent`) and what the statement says about it, each part with its basis: `type` and
+`premise` as above, `premise` also for a hypothesis or a premise that mentions it,
+`conclusion` for a part of the conclusion (or of its clause) that mentions it, `definition` for a
+definition applied to it (by its expansion), and `theorem` for a result a workspace's evidence
+cites for that object (`object: {decl, var, id, name, type}`, pinned to the binder's identity).
 
 A declaration record of a definition of data or of a predicate (not a proposition, an instance or
 a generated helper) also says what the definition says. `defined_by` is `body` or `equations`.
@@ -191,8 +217,12 @@ proposition}`), `body` (the term under them, with the sub-term identities it has
 `result` (its type, identities prefixed `type:`). `equations` lists the equation theorems Lean
 derives (`Lean.Meta.getEqnsFor?`), each `{name, statement, params, equation}`: the theorem's exact
 statement, and its variables and the equation under them; their identities are prefixed by the
-theorem's name. At most 64 are listed; `equations_omitted` counts the rest and `equation_names`
-names all of them. A failed extraction is recorded in `definition_error` and stops nothing else.
+theorem's name. At most 1024 are read from Lean; `equations_omitted` counts the rest and
+`equation_names` names all of them. In the reader's data and the export, a record lists the first
+64; the others are in pages of 64 stored on their own (`data/expansions/<key>.json`,
+`{definition, equations}`), to which `equations_more` refers in order as `{name, key}`, `name`
+the theorem of the page's first equation; the reader fetches them when asked. A failed
+extraction is recorded in `definition_error` and stops nothing else.
 `lean_source` is the declaration's authored source, `{file, line, end_line, text, sha256}`, read
 from the checkout the probe ran on (none for a declaration of a dependency). The export carries
 these fields only when every paper publishes its Lean.
@@ -208,7 +238,8 @@ does not supply and `body` is the definition's body with the arguments substitut
 type. With `equations`, `equations` lists each equation theorem whose left side matches the
 application, specialised to it, `{name, statement, params, equation}`, with the variables and
 case conditions that remain as `params` and the statement checked to follow from the theorem;
-`equations_not_applying` names the others and `equations_omitted` counts those not compared.
+`equations_not_applying` names the others and `equations_omitted` counts those not compared
+(every equation read from Lean is compared).
 An expansion's own applications expand once more; a failure is `error` on that expansion only.
 Only what is printed is searched (explicit arguments, not implicit or instance ones), up to
 4000 nodes of a term; at most 16 applications of one term are expanded and `expansions_omitted`
@@ -217,8 +248,10 @@ Expansions are display only and are exported with the statement, so only with th
 In the reader's data, each expansion is a file of its own, `data/expansions/<key>.json`, where
 `key` is the first 24 hex digits of the SHA-256 of its canonical JSON; a statement, declaration
 or expansion refers to it as `{at, id, name, key}`, and the reader fetches it when it is opened.
-An expansion that recurs is written once. A published audit's loader fetches every expansion
-its claims and declarations refer to and checks each against its key.
+The stored expansion also has `fingerprint`, the fingerprint of the definition it expands, so a
+changed definition gives its expansions other keys even where they print the same. An
+expansion that recurs is written once. A published audit's loader fetches every expansion and
+page of equations its claims and declarations refer to and checks each against its key.
 
 ## Changes between releases (`prooflens/changes@1`), derived
 
@@ -236,11 +269,111 @@ derived from them alone; no status, fingerprint or gate reads it.
 | `evidence[]` | per review: `target` (`spec`, `def`, `step`), `name`, `clause`, `from` and `to` (`state`, `marker`: `by`, `kind`, `file`, `line`, `hash`, `source`; `"same"` for a kept marker), `outcome`, and `because`, `question`, `caveat`, `kept_through` |
 | `declarations[]` | every project declaration whose statement or proof changed, or that one release has alone, other than the tactic scripts of tactic defaults: `name`, `change`, `from`, `to`, `claims` |
 | `counts` | per paper class, per evidence outcome and per declaration change, and `status_changed` |
-| `workspace` | with `--workspace`: the workspace's records that are not current, of every kind, the claim's requirements, fragments and alignments included (`id`, `kind`, `claim`, `state`, `changes`, `pinned_release`; `submitted` for a submitted finding, `proposed` for a proposed fragment) |
+| `workspace` | with `--workspace`: the workspace's records that are not current, of every kind, the claim's requirements, fragments and alignments included (`id`, `kind`, `claim`, `state`, `changes`, `pinned_release`; `unknown` for a finding not known to be current; `submitted` for a submitted finding, `proposed` for a proposed fragment) |
 
 The export keeps a passage's places and text only when its paper publishes its source text, the
 Lean `text` only when every paper publishes its Lean, and a marker's `file` and `line` only
 with the reviews.
+
+## Version map (`prooflens/version-map@1`), derived
+
+`machinechecked changes --map --json` (`engine/python/prooflens/version_map.py`). It matches the
+claims of one paper between two releases' revisions by their passages
+([SOURCE_REGIONS.md](SOURCE_REGIONS.md#comparing-two-revisions-the-version-map)) and is derived
+from the two releases' evidence and the two manuscripts alone; no status, fingerprint or gate
+reads it, and the export does not carry it. A workspace may keep it (`changes --map --workspace
+ID --save`, below).
+
+| Field | Content |
+|---|---|
+| `paper` | the paper's id |
+| `from`, `to` | each release: `release`, `evidence`, `revision`, `paper_version` (the audit's version identifier, as `audit.json` gives it), `manuscript` (where its text was read) and `checked` (how many of its claims' recorded digests the manuscript was checked against) |
+| `counts` | how many entries of each class |
+| `claims[]` | one entry per earlier claim, then one `new` entry per later claim no earlier claim is matched to |
+| `numbers[]` | per earlier claim with a number: `old`, `new` (the later numbers: one for a match, each candidate's for an ambiguous claim, none for a removed one) and `match` (`class`, `by`, `from`, `to`) |
+| `references` | the later release's references to paper numbers that disagree with its paper, each with `current` from the map (below); null when that build has no paper-number check |
+| `new_passages` | labels the later revision has and the earlier has not, with their places |
+| `passages` | with `--workspace`: each region of the paper the workspace attaches to a requirement (below) |
+
+An entry of `claims` has `class` (`unchanged`, `moved`, `context-changed`, `changed`,
+`removed`, `ambiguous`, `unknown`, `new`), `reason`, and `from` and `to`, each side's own record
+of the claim, or null: `claim`, `number` (as that build's compiled paper prints it, else the
+inventory's), `kind`, `label`, `scope`, `location`, `bounds` (`file`, `start_line`, `end_line`,
+and `start_column`, `end_column` for a region), `sha256` (its own passage as printed),
+`pin_sha256` (the digest of all the passages its pin lists, when there are several), `pin`
+(`matches`, `differs`, `none`: the inventory's pin against that text), or `error` when the
+passage cannot be read; and `recorded`, what that release's build recorded: `status`,
+`status_code`, `source_matches_pin` and `reviews` (each `{target, name, clause, state, by,
+kind}`). The two sides are never combined.
+
+`by` lists how the match was found: `text`, `label`, `overlap` (the later claim is pinned
+across the place found), `maintainer` (`--match`), and the proposals `line-diff`, `number` and
+`id`. A match also has `renumbered` and `moved` when they hold, `change` (`where`, `diff`) for
+a changed passage, `context` for what it is read with that changed (each `{what, change, from,
+to}`, with `what` one of `passage`, `macro definition`, `macro`, `standing assumption`,
+`definition`, `reference`; a macro or standing assumption has its `diff`, a claim relied on
+its `claim`, `number`, `via` and the Lean `names`), `surroundings_changed`, and `resolved`
+(`by`, `was`, `reason`, `candidates`) for the maintainer's. An unmatched entry has
+`candidates` (each `{claim, by}`), `printed_at` (where its text or label occurs in the later
+revision) and the repin plan's `proposed` bounds for a span; a `new` entry has
+`candidate_for`.
+
+The paper-number check reads `numbers` as a version map (`numbering.resolve`, with
+`numbering_map` giving its `source`: the schema, paper and both releases). A reference to an
+earlier number that disagrees with the later paper (`absent`, `other-kind`, or a possibly stale
+lead) gets `current`: `reference` and `claims` for one counterpart (with `proposed` when its
+claim is ambiguous), `ambiguous` for several, or `none` for a removed claim, with `source` and
+`matches` (the map's entries for the number). Its status stays its own.
+
+An entry of `passages` follows one region a workspace attached (a fragment's `region`, or one a
+finding rests on as it was submitted): `region` (`paper`, `file`, `start_line`, `end_line`,
+columns, `sha256`), `class` and `reason`. The repin planner looks for its text in the later
+revision, as for a claim: `unchanged` or `moved` (with `to`: `location`, `bounds`),
+`context-changed` when a macro it uses is defined otherwise (`context`), `changed` when no
+passage has its text and the line diff of its file maps it to other text (`to` with `proposed`,
+and `change`: `where`, `diff`), `removed` when it maps it to nothing, `ambiguous` when its text
+occurs more than once (`candidates`); `later` when the earlier revision does not print its text
+and the later one does at its place (it was attached at the later revision), else `unknown`.
+
+## Findings across a revision (`prooflens/reopened@1`), derived
+
+`machinechecked changes --map --workspace ID --json` gives it as `workspace`; `workspace show
+--json` gives one per version map the workspace keeps to the build's release, under
+`revisions.maps` (`engine/python/prooflens/reopen.py`). It judges the workspace's findings in
+force through the map. No status, fingerprint or gate reads it.
+
+| Field | Content |
+|---|---|
+| `workspace`, `paper`, `from`, `to` | the workspace, and the map's paper and revisions |
+| `build_checked` | whether the build of the later release was there to check the Lean side |
+| `counts` | how many findings are `reopened`, `unchecked`, `current` |
+| `findings[]` | each finding of the workspace that rests on a passage of this paper |
+| `evidence[]`, `passages[]` | each evidence record quoting the paper, and each passage attached to a requirement (not removed), judged as a finding's part is |
+| `map` | under `revisions`: the kept map's `paper`, `from`, `to`, `kept_at`, `kept_by` |
+
+A finding has `id`, `claim`, `finding` (what it records: `coverage`, `basis` as `workspace show`
+gives it, `requirement`, `note` and the like), `kinds`, `earlier` and `later` (the claim's
+`claim`, `number`, `location` on each side, from the map), `class` (the map's), `state`, `paper`
+and, when the later build was checked, `build`. Each entry of `paper` is one paper part it rests
+on: `dependency` (the item of its `dependencies`), `text` (in words), `earlier`, `later`, `class`
+and `state`:
+
+- `current`, with `note`: the map finds the same text (moved and renumbered or not), or the part
+  was read at the later revision; or the context changed only in what the finding does not rest
+  on;
+- `reopened`, with `change` (`class`, `reason`, and `diff`, `where`, `context` as the map gives
+  them; a claim relied on carries its own change as `claim_change`, and `through` names the cited
+  declarations whose statements use its definitions) and `question`;
+- `unchecked`, with `why` (and `candidates` for an ambiguous claim): the map cannot follow it,
+  the part read another text than the earlier revision prints, or it records no version.
+
+A definition claim the claim's Lean relies on (`via: ["lean"]`) concerns only a finding that
+cites a declaration whose statement uses one of its definitions, and is unknown when the
+finding cites one whose definitions were not recorded. `build` is `dependencies.check` against
+the later build for the parts the map does not judge: `state`, `changes` (each with `words`,
+`question`, and `statement`, `{from, to}`, when both releases are stored) and `unknown`. The
+finding's `state` is `reopened` when a part is reopened or the build part is `stale`, else
+`unchecked` when one is, else `current`.
 
 ## Manifest (`manifest-index.schema.json`, `manifest-claim.schema.json`), derived
 
@@ -265,7 +398,8 @@ bridge, question, would_decide, confidence, note, by}`, where `source` is `confi
 auditor's, from `machinechecked.links.json`) or `formalization.yaml` (the project's row notes).
 `coverage` is `full`, `partial`, `changed`, `related`, `unresolved` or `null`; `basis`, how the
 coverage is supported, is `direct`, `reviewed_composition`, `checked_bridge` or `null`
-(unspecified), with `refs` the linked declarations it rests on. A reviewed composition has the
+(unspecified), with `refs` the linked declarations it rests on; a claim with no declaration
+linked keeps only an `unresolved` reading, with no basis. A reviewed composition has the
 auditor's `argument` and the `next_step`, stating the combination as one Lean result (a stored
 `composed` coverage reads as `full` with this basis); a checked bridge has `bridge`, `{theorem,
 target, state, reasons, pinned, current}`, where `state` is `checked`, `stale` or `unchecked` and
@@ -307,6 +441,15 @@ give it (`by_project`). Without an audit nothing has run Lean, so a linked state
 "linked: Lean not checked here (no audit published)" (class `declared`). No statement text is
 written.
 
+The site may give each audit of the registry entry its semantic summary (`semantic` on the
+audit, as machinechecked.org reads and checks it from that audit's own index): `state`
+(`loaded`, or why it is not shown, with `detail`), `url`, `schema`, `digest`, and, loaded, the
+`release` and `commit` it names, the sets of readings (`sets`, `selected`) and the counts of the
+audited paper (`paper`: the blocks a paper has in the [semantic summary](#semantic-summary-prooflenssemantic-summary1-derived)).
+The paper panel shows it under that audit's line, each count linked to that audit's Overview
+filtered to it (`/read/?audit=…#/r/<release>/overview?set=…&unit=…&coverage=…`), and says why
+when it is not shown. It shows no count the summary does not give, and never another audit's.
+
 `audit_order` lists the page's loaded audits that pin the same version as the first, in the order
 the reader draws on them, and `audit_order_by` says what orders them: `stars` (the site's GitHub
 star count for every one, given to `write_paper_site` as `stars` and kept in `stars`; most first,
@@ -315,6 +458,15 @@ status is each claim's top-level `status`. With several, the reader shows each c
 first audit that maps it (whose record of the claim is in `by_project`), labelled with that audit;
 choosing one project shows only its evidence, and a claim its audit does not map is marked. A
 claim's statuses from different projects are never combined.
+
+When the site cannot show the PDF an audit read (the audit names no version, or a manuscript's
+audit carries no PDF), it joins the statements found in the page's PDF to the audit's entries by
+printed number and records each such join on the claim's audit record (`by_project[repo].audit`)
+as `matched`: `by` (`number`), `number` (the printed number), `revision` (the revision the audit
+read) and `version` (the label of the version the audit pins, when it has one). The reader says
+so beside the audit's status ("Matched by its printed number to the audit's entry for Latest
+manuscript (commit abc1234): the audit read another PDF of the paper than the one shown here").
+The status is the audit's, unchanged.
 
 **Versions of a paper.** A paper with several versions (published `vN`, an unpublished
 manuscript at a commit) has one page per version, each written by `write_paper_site` with its own
@@ -388,6 +540,13 @@ in short. The reader's Overview and machinechecked.org show its counts as they a
 verdict, score or percentage, no count is added to another, and it is never an input to a
 status.
 
+A site loading a published audit (`load_published_audit`) checks the summary and the claim rows'
+facts apart from the rest of the index, which is validated as strictly as before. The loaded
+record carries them as `semantic_summary`: `{state: "loaded", summary}`, or, for a summary in a
+format this version does not read or one that is not valid, `{state: "set-aside", reason, detail,
+format}` (`reason` is `unsupported` or `invalid`), and the claim rows then carry no facts. Either
+way the audit's statuses and claims load as they would without a summary.
+
 **Units.** Every count names its unit: `statements` (a claim whose unit is `statement`, other
 than notation), `notation` (a statement whose kind is `notation`) and `proof_steps` (a proof
 equation or passage). A claim's declarations are those that state it: its links (zero
@@ -400,7 +559,7 @@ summary counts, each counted apart and never combined, and `selected` is the one
 
 | Set | Its readings |
 |---|---|
-| `audit` | the audit's own: the coverage the links file records with a claim's links (an unlinked claim keeps an `unresolved` reading), or the inventory with a proof step's; `by` lists their authors |
+| `audit` | the audit's own: the coverage the links file records with a claim's links (an unlinked claim keeps an `unresolved` reading), or the inventory with a proof step's (an unlinked step likewise); `by` lists their authors |
 | `review:<reviewer id>` | one reviewer's latest report of each statement, with the coverage it records with its verdict (zero configuration); `reviewer` as the report records it |
 | `workspace:<id>` | one published workspace's latest submitted finding in force that records a coverage of the whole statement; `mode` and `reviewer` as the workspace records them |
 
@@ -496,6 +655,7 @@ path. A workspace records evidence and readings and is never an input to a statu
 | `resume` | where to continue: `claim`, `clause`, `question`, `pinned` references, `at`, `by`; kept apart from the evidence |
 | `main_results` | the paper's main results as the auditor chose them (`workspace main`), which `compare --query impact` traces from: `selected` (each `{claim}`, standing for the claim's linked Lean, or `{decl, module, build}`, a project declaration), `by`, `at`, and `pins` (`release`, project `commit` and `repository` of the build they were checked against); absent until chosen |
 | `review` | the review protocol's `drafts` (locked reading, verdict, author-review step) and submitted `reports` (`prooflens/review-report@1`) |
+| `version_maps` | the version maps the auditor keeps (`changes --map --workspace ID --save`): each the map without `references`, with `kept_at` and `kept_by`; one per paper and pair of releases; absent until one is kept |
 | `conflicts` | refused edits, each with the saved record (`current`) and the proposal (`proposed`) |
 | `provenance` | upgrades, mode changes, imports and replaced main results (`was`), with time and person |
 | `ops` | acknowledgements of requests by their `op_id`, so a repeated request changes nothing (not exported) |
@@ -507,8 +667,14 @@ optional `clause` and `note`, `rev`, `created_at`/`created_by`, `updated_at`/`up
 - **`evidence`**: `ref` is one of `{decl, module, build, fingerprint, digest}` (a declaration of
   the selected build; `build` is `built`, `unbuilt`, `not loaded` or `external`; a `module` given
   is the only one searched, and a declaration it does not declare is refused with the modules
-  that do, as is an alignment's target), `{source:
-  {file, line}}`, `{paper: {claim, quote}}`, `{app: {...}}`: an application of a declaration, as
+  that do, as is an alignment's target), with `closure` (each project definition its statement
+  uses, for a definition its value's too, with its digest as below, or null when the build shows
+  none; from its statement record, else by following what the build's declaration records use,
+  with `closure_complete: false` when a record is missing) and `expansions` (the applications of
+  definitions it prints, as the build expanded them: `{at, name, key}`, `key` naming the stored
+  expansion, `data/expansions/<key>.json`), `{source:
+  {file, line}}`, `{paper: {claim, quote, sha256}}` (`sha256` the claim's passage pin when it was
+  quoted), `{app: {...}}`: an application of a declaration, as
   `compare --query uses` gives it (`callee`, `module`, `id`, `caller`, `via`, the `arguments`
   and `premises` with how each is supplied, the `result`, and `app_hash`, a digest of them; it is
   `stale` once the caller elaborates it differently, `unchecked` until the uses are read again
@@ -549,7 +715,8 @@ optional `clause` and `note`, `rev`, `created_at`/`created_by`, `updated_at`/`up
   printed`, `cannot determine`) and the `counterexamples` it rests on (pinned by digest); such a
   finding is submitted without a coverage. `state` is `draft`
   or `submitted` (`submitted_at`). A submitted finding is never edited or deleted: a later
-  finding names it in `supersedes`, with its `reason`, and both are kept.
+  finding names it in `supersedes`, with its `reason`, and both are kept. A finding records what
+  it rests on when it is submitted (`dependencies`, below).
 - **`question`**: `text`, `state` (`open`, `answered`, `withdrawn`), optional `answer` and
   `evidence`.
 - **`requirement`**: one thing the claim demands, as the auditor reads it. `local_id` (unique
@@ -587,7 +754,8 @@ optional `clause` and `note`, `rev`, `created_at`/`created_by`, `updated_at`/`up
 - **`alignment`**: `requirements` (local ids; none only for an `additional assumption` of the
   Lean), `lean` (targets: `{decl}`, or a part of its statement as the build prints it: `var`,
   `binder` (a variable's type or a hypothesis), `at` (a sub-term's identity) or `conclusion`;
-  each with `build`, `fingerprint`, `digest` and the `target` text) and `relation`
+  each with `build`, `fingerprint`, `digest`, the `closure` of its declaration's statement (as
+  for evidence) and the `target` text) and `relation`
   (`corresponds`, `additional assumption`, `changed`, `alternative representation`). A
   requirement may have several alignments and a target may serve several requirements.
 - **`composition`**: an argument that several results together cover the claim
@@ -620,10 +788,11 @@ optional `clause` and `note`, `rev`, `created_at`/`created_by`, `updated_at`/`up
 An update is a list of operations applied together or not at all: `put` (create, or replace a
 record's content, given `base_rev`, the revision it was read at), `delete` (a draft or an unused
 record), `submit` (a draft finding), `supersede` (a submitted finding, with `reason` and the new
-`record`), `resume`, `mode`, `exposure` and `main-results`. An edit made from an older revision of
-a record is a conflict: nothing is applied, and the answer (and `conflicts`) holds both versions;
-edits of different records are both kept. Writes replace the file atomically under a lock file
-beside it.
+`record`), `resume`, `mode`, `exposure`, `main-results` and `version-map` (`{"op":
+"version-map", "map": {...}}` keeps a version map, replacing one of the same paper and
+releases). An edit made from an older revision of a record is a conflict: nothing is applied,
+and the answer (and `conflicts`) holds both versions; edits of different records are both kept.
+Writes replace the file atomically under a lock file beside it.
 
 `{"op": "main-results", "main": [...]}` replaces the main results: each entry a claim (its id,
 key or number) or a declaration (`NAME`, `MODULE:NAME` when several modules declare it, or
@@ -638,15 +807,61 @@ changes no status.
 
 **Currency.** Evidence on a declaration is pinned to its `fingerprint` and to a `digest` of that
 fingerprint with those of the constants Lean generated for it (`N._f`, `N.match_1`, `N.eq_1`), which
-carry a definition's equations, and of the tactic script of each tactic default its type has.
-Against a later build, evidence whose digest changed is `stale`, and so is every finding or
-question that cites it, and every finding whose claim's printed text changed; the others stay
-`current` (`unchecked` when the build shows no fingerprint). A fragment
-whose region of the source now reads differently (the lines that changed are listed), or whose
-claim's passage changed, is `stale`, and so is an alignment whose declaration changed, and every
-requirement they belong to, and every finding or question that names that requirement. The saved
+carry a definition's equations, and of the tactic script of each tactic default its type has,
+and to the digest of each definition its statement uses (`closure`). Against a later build,
+evidence whose digest changed, or one of whose definitions' digests changed (the change names
+the definition and the declaration that uses it), is `stale`, and so is every question that
+cites it; the others stay `current` (`unchecked` when the build shows no fingerprint, or no
+version of a definition it uses, or when its definitions were not recorded: re-pin it). A quoted
+passage is stale once its claim's passage pin changes, and unchecked when it records none. A
+claim's passage has also changed when the build's source check finds that the paper no longer
+prints the text the inventory pins (`source_matches` false: the text changed and the inventory
+was not pinned again): whatever read that passage (a quoted passage, a fragment, a question, a
+composition, a finding, a bridge) is then `stale`, saying so, although the pin is the same. A
+fragment whose region of the source now reads differently (the lines that changed are listed),
+or whose claim's passage changed, is `stale`, and so is an alignment whose declaration, or a
+definition its statement uses, changed, and every requirement they belong to, and every question
+that names that requirement. A finding's currency is that of its dependencies (below). The saved
 records are not re-pinned silently: a `put` with `repin: true` re-pins a record to the current
 build.
+
+**Dependencies of a finding.** `engine/python/prooflens/dependencies.py`. A finding rests on the
+parts below, each an item with `dependency` (its kind), `record` (the record it comes from, when
+it is one), `via` (the composition or counterexample it is cited through) and its content
+identity:
+
+| `dependency` | Part | Identity |
+|---|---|---|
+| `passage` | the claim's printed passage | `claim`, `sha256` (the finding's pin) |
+| `reading` | a requirement it rests on: the one it names, or its counterexamples concern, with those it sits inside, and each that a step of its composition establishes, with those inside it | `requirement`, `sha256` (`reading_sha256`) |
+| `context` | a passage governing one of those requirements (accepted, not a later use) | `requirement`, `role`, `origin`, and `region` (its location, `sha256`, `line_sha256`) or `passage` (`claim`, `sha256`) |
+| `object` | an alignment of one of those requirements | `requirements`, `relation`, `lean` (each target's place, `target` text, `fingerprint`, `digest`, `closure`) |
+| `declaration`, `application`, `fact`, `certificate`, `paper`, `source` | evidence it cites, or that its composition or counterexamples cite | `role` and `ref`: the reference's identifying fields and pins (a declaration's `closure` and `expansions` included) |
+| `composition` | the composition it rests on | `sha256`: a digest of its statement, steps (their evidence, requirements, substitutions and inferences), identifications, obligations, coverage and bridge pins |
+| `bridge` | for a finding recorded as a checked bridge: its composition's bridge, or its own | `theorem`, `target`, and for a composition's, `target_fingerprint` and `source_sha256` |
+| `counterexample` | a counterexample it cites | `sha256` (the finding's pin of it) |
+
+`dependencies` is `{kinds, items, unknown, at}`: `kinds` the evidence kinds it uses
+(`statement comparison`: a declaration's statement or a certificate; `object correspondence`:
+alignments or a composition's identifications; `composition`; `proof route`: applications or
+facts inside a proof; `checked bridge`), and `unknown` the parts that cannot be identified, each
+with `why` (a finding recorded without a build, whose passage version is not known; a finding's
+own bridge, which records no version of its target or of the passage; a record it names that the
+workspace lacks). A finding on the whole claim names no requirement: it rests on one only through
+its composition. A submitted finding records `dependencies` when it is submitted (a superseding
+one when it is recorded) and keeps them; `workspace show` gives a draft's as its records give
+them now. Against a build, each item is checked as its record would be (the passage against the
+claim's pin, a context passage and an alignment as above, evidence as above, a bridge as
+`bridge_check`, a counterexample against its pin and its own currency). The finding is `stale`
+when an item changed, or, for a submitted finding, when a record it rests on is not the version
+it recorded (edited, re-pinned, removed: the change names the record), so re-pinning evidence
+brings a draft up to date and leaves a submitted finding stale until it is superseded. Otherwise
+it is `unchecked` when an item is unknown or cannot be checked now (`currency.unknown`, each
+`{dependency, record, why}`), including a finding submitted before findings recorded their
+dependencies; else `current`. Dependencies are workspace records: the export of a workspace
+carries them, a published audit does not, and no status reads them. Across a revision of the
+paper, a version map judges the paper parts by their text instead
+([Findings across a revision](#findings-across-a-revision-prooflensreopened1-derived)).
 
 **The reading.** `workspace show --json` gives each claim's `reading`: its requirements in
 reading order (with `depth`, `children`, their fragments grouped as `governing`, `later_uses`,
@@ -677,10 +892,13 @@ later than the lock. So `review promote` refuses the report unless the maintaine
 `--allow-revealed`.
 
 **Export and import.** `workspace export` writes the whole workspace (less `ops`) as one file;
-`workspace import` keeps its id, authors, pins, mode and exposure. Into a workspace already
-present, it adds the records that are missing (and the main results, when it has none) and keeps
-a record, or main results, both hold in different versions as it is, listing the other under
-`conflicts`. References the current build cannot resolve, main results included, are reported as
+`workspace import` keeps its id, authors, pins, mode and exposure, and each submitted finding's
+dependencies as recorded. Into a workspace already
+present, it adds the records that are missing (and the main results, when it has none, and the
+version maps it lacks) and keeps a record, main results or a version map both hold in different
+versions as it is, listing the other under `conflicts`; a version map of another form is left
+out and reported. A kept map judges the findings without the manuscripts, so the findings it
+reopens travel with the workspace. References the current build cannot resolve, main results included, are reported as
 `problems`. A published audit carries the accepted records and the main results of every
 workspace in the working directory, below; the workspace itself stays local.
 

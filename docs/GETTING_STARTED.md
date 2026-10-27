@@ -86,7 +86,10 @@ part of what is given, for a witness they are established with it, and for an ob
 assumption, a negation or one alternative they stay inside it. An assumption that is a class of
 propositions shows what its fields state. **Exact Lean** lists each carried property as the Lean
 term that gives it (`s.start : s.path 0 = d`) with its field's declaration; many fields are
-folded under a summary.
+folded under a summary. A linked structure lists its fields, those inherited under each parent
+and those it adds apart, so a structure that extends another shows exactly what it adds; a
+definition whose value is a structure lists the properties that value carries, established by
+the definition.
 
 Click a variable to see its type and conditions. Click an expression to select it; further clicks
 widen the selection. Dotted names open short mathematical notes. A Lean declaration name opens
@@ -94,10 +97,12 @@ its complete definition; **Back** and browser Back restore the claim view and re
 Definition links can be copied or opened in another tab.
 
 A definition shows what it says: its parameters, in their order and as they are written, and its
-body; a definition by pattern matching or recursion shows the equations Lean derives for it
-(its equation theorems), each under its own variables. **Exact Lean** shows the authored source
-of the definition, the exact statement of each equation theorem and the elaborated value; the
-compiled form of a recursive definition is folded under **Compiled value**.
+body with its type; a definition by pattern matching or recursion shows its type and the
+equations Lean derives for it (its equation theorems), each under its own variables. **Exact
+Lean** shows the authored source of the definition, the exact statement of each equation theorem
+with its name and the elaborated value; the compiled form of a recursive definition is folded
+under **Compiled value**. A definition with more than 64 equations shows the first 64, and
+**Show the further equations** loads the others.
 
 A definition applied in a statement expands where it stands: after the expression, **expand**
 lists its applications of the project's definitions. Choosing one shows the arguments, by the
@@ -212,7 +217,11 @@ disagreement with its file and line.
 When several references disagree with the paper, making a good share of those checked and
 lying in more than one declaration or module, the reader's notes say that the Lean appears to
 follow another version of the paper, with counts and a few examples. One stray reference, or
-one docstring listing several, is reported by itself.
+one docstring listing several, is reported by itself. In a full assessment, `machinechecked
+changes --map` matches the claims of two releases' revisions of the paper and gives each
+disagreeing reference the later number the map names for it: one, several when the match is
+ambiguous, a proposal marked as one, or none for a removed claim
+([the version map](SOURCE_REGIONS.md#comparing-two-revisions-the-version-map)).
 
 A suggestion's cited number rests on the docstring's reference to it. A number of another work
 (`Theorem 2.1 of [Gauss]`), a section, or the start of a longer number (`Theorem 2.1.3`) is
@@ -280,10 +289,11 @@ full coverage:
                          "target_fingerprint": "…", "source_sha256": "…"}}
 ```
 
-- `direct`: the linked declarations state the claim. The reader shows **States every clause**.
+- `direct`: the linked declarations state the claim. The reader shows **Every clause, in one Lean
+  statement**.
 - `reviewed_composition`: the claim follows by combining the linked declarations through the
-  auditor's `argument`. The reader shows **Every clause, by the auditor's composition**, with the
-  argument, its author, and that Lean has not checked the combination. Beside it the reader and
+  auditor's `argument`. The reader shows **Every clause, by an argument combining Lean results**,
+  with the argument, its author, and that Lean has not checked the combination. Beside it the reader and
   `check` give the next step: state the combination as one Lean result. A composition never reads
   as a direct result. A stored `"coverage": "composed"` reads as `full` with this basis, its note
   as the argument.
@@ -306,7 +316,9 @@ An `unresolved` reading records the question and what would decide it:
                "would_decide": "The paper's standing conventions."}
 ```
 
-The reader shows **Unresolved** with the open question and what would decide it.
+The reader shows **Unresolved** with the open question and what would decide it. A claim with
+no declaration linked keeps only an `unresolved` reading, whose question may be whether any Lean
+states the claim; with nothing linked, the reading has no basis.
 
 ## Link a proof step
 
@@ -395,7 +407,7 @@ step:
 semantic summary of paper P (the audit's readings):
   5 statements, 4 linked to 3 declarations
     correspondence: every clause (3); unresolved (1); not assessed (1)
-    basis: in one Lean statement (1); by a reviewer's composition (1); through a checked bridge (1); basis not recorded (1)
+    basis: in one Lean statement (1); by an argument combining Lean results (1); through a checked bridge (1); basis not recorded (1)
     reviews: not reviewed (5)
     findings: open questions (1)
   1 notation record, 1 linked to 1 declaration

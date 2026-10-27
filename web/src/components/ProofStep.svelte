@@ -6,6 +6,7 @@
   import { evidenceView } from "../lib/presentation.js";
   import { href, withQuery } from "../lib/route.svelte.js";
   import { STEP_VERDICTS } from "../lib/review.js";
+  import { readingWords } from "../lib/coverage.js";
 
   // A proof step (an equation or passage of a printed proof) as a target of its own. `part`
   // chooses what is drawn: its own review beside the printed step ("finding"), the Lean that
@@ -17,10 +18,10 @@
   const st = $derived(claim.step);
   const rv = $derived(st?.review || { state: "unreviewed", reports: [] });
   const UNIT = { "proof-equation": "Equation in a proof", "proof-passage": "Passage of a proof" };
-  const COVERAGE = { full: "States the step as printed", partial: "States part of the step",
-    changed: "States it differently", related: "A related result, not this step", unresolved: "Unresolved" };
-  const BASIS = { reviewed_composition: "by the auditor's composition (Lean has not checked the combination)",
-    checked_bridge: "by a Lean-checked combined statement" };
+  // The step's reading in the engine's words; a bridge reads as checked only while Lean checks it
+  // (a full assessment checks none for a step).
+  const corWords = $derived(st?.correspondence ? readingWords(st.correspondence.coverage, st.correspondence.basis,
+    st.correspondence.bridge?.state || "unchecked") : null);
   const LABEL = Object.fromEntries(Object.values(STEP_VERDICTS).flat().map((v) => [v.value, v.label]));
   function who(r) {
     const x = r.reviewer || {};
@@ -61,7 +62,7 @@
   <h3 class="sub">Lean that establishes this step</h3>
   {#if st.correspondence?.coverage || st.correspondence?.note}
     {@const cor = st.correspondence}
-    <p class="small cov" data-coverage={cor.coverage || "note"}>{#if cor.coverage}<strong>{COVERAGE[cor.coverage]}</strong>{#if BASIS[cor.basis]}{" " + BASIS[cor.basis]}{/if}{#if cor.note}{". "}{/if}{/if}{cor.note}{#if cor.by}<span class="faint">{" — " + cor.by}</span>{/if}</p>
+    <p class="small cov" data-coverage={cor.coverage || "note"}>{#if corWords}<strong>{corWords}</strong>{#if cor.basis === "reviewed_composition"}{" (Lean has not checked the combination)"}{/if}{#if cor.note}{". "}{/if}{/if}{cor.note}{#if cor.by}<span class="faint">{" — " + cor.by}</span>{/if}</p>
   {/if}
   {#each st.links as l (l.name)}
     <div class="block">

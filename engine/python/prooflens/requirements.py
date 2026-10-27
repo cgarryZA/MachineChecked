@@ -290,7 +290,7 @@ def _target(t, snap, root, claim: str, olds: list[dict], repin: bool) -> dict:
     if not isinstance(t, dict) or not isinstance(t.get("decl"), str) or not t["decl"].strip():
         raise _err("a Lean target names its declaration (`decl`)")
     extra = set(t) - {"decl", "module", "external", "build", "fingerprint", "digest", "target",
-                      *SUBTARGETS}
+                      "closure", "closure_complete", *SUBTARGETS}
     if extra:
         raise _err(f"a Lean target has no field {', '.join(sorted(extra))}")
     out = {"decl": t["decl"].strip()}
@@ -341,6 +341,8 @@ def _target(t, snap, root, claim: str, olds: list[dict], repin: bool) -> dict:
         for k in ("module", "build", "fingerprint", "digest", "target"):
             if t.get(k) is not None:
                 out.setdefault(k, t[k])
+        from .dependencies import kept_statement_pins
+        out.update({k: v for k, v in kept_statement_pins(t).items() if k != "expansions"})
         return out
     fps = {**snap.store_fingerprints(), **snap.fingerprints()}
     if st is not None or out["decl"] in fps:
@@ -357,6 +359,9 @@ def _target(t, snap, root, claim: str, olds: list[dict], repin: bool) -> dict:
         out.update(module=r["module"], build=r["build"])
     out["fingerprint"] = fps.get(out["decl"])
     out["digest"] = snap.digests().get(out["decl"])
+    # The object a target names means what the definitions its statement uses say.
+    from .dependencies import statement_pins
+    out.update({k: v for k, v in statement_pins(snap, out["decl"]).items() if k != "expansions"})
     return out
 
 
@@ -429,6 +434,11 @@ def fragment_currency(r: dict, snap) -> dict:
         if now != p["sha256"]:
             return {"state": "stale", "changes": [{"passage": p["claim"], "was": p["sha256"],
                                                    "now": now}]}
+        from .dependencies import unprinted
+        why = unprinted(ch, p["claim"])
+        if why:
+            return {"state": "stale", "changes": [{"passage": p["claim"], "was": p["sha256"],
+                                                   "now": now, "reason": why}]}
         return {"state": "current", "changes": []}
     reg = r.get("region") or {}
     src = sources_dir(snap, reg.get("paper"))
@@ -453,17 +463,29 @@ def fragment_currency(r: dict, snap) -> dict:
 def alignment_currency(r: dict, snap) -> dict:
     if snap is None:
         return {"state": "unchecked", "changes": []}
+    from .dependencies import closure_currency
     digests = snap.digests()
-    changes, unchecked = [], False
+    changes, unchecked, reasons = [], False, []
     for t in r.get("lean") or []:
         was, now = t.get("digest") or t.get("fingerprint"), digests.get(t["decl"])
         if not was or now is None:
             unchecked = True
         elif was != now:
             changes.append({"decl": t["decl"], "was": was, "now": now})
+        else:
+            # The declaration is unchanged; the definitions its statement uses may not be.
+            c = closure_currency(t, snap, t["decl"])
+            changes += c["changes"]
+            if c["state"] == "unchecked":
+                unchecked = True
+                reasons.append(c.get("reason"))
     if changes:
         return {"state": "stale", "changes": changes}
-    return {"state": "unchecked" if unchecked else "current", "changes": []}
+    if unchecked:
+        return {"state": "unchecked", "changes": [],
+                **({"reason": "; ".join(dict.fromkeys(x for x in reasons if x))}
+                   if any(reasons) else {})}
+    return {"state": "current", "changes": []}
 
 
 def currency(ws: dict, snap) -> dict[str, dict]:
@@ -669,6 +691,28 @@ def _prose(line: str) -> bool:
         r"\\(begin|end|section|subsection|label|maketitle|documentclass|usepackage)\b", s)
 
 
+def section_opening(lines: list[str], first: int) -> tuple[int, int, str] | None:
+    """The prose that opens the section enclosing line `first` (1-based) of `lines`, as
+    `(first line, last line, the section's title)`, or None when no prose opens it before
+    `first`. Only prose before the section's first environment opens it."""
+    sec = next((k for k in range(first - 1, 0, -1) if SECTION.match(lines[k - 1])), None)
+    if sec is None:
+        return None
+    title = SECTION.match(lines[sec - 1]).group(3).strip()
+    a = sec + 1
+    while a < first and not lines[a - 1].strip() or (a < first and
+                                                     lines[a - 1].lstrip().startswith("%")):
+        a += 1
+    if not (a < first and _prose(lines[a - 1])):
+        return None
+    b = a
+    while b + 1 < first and not re.match(r"\s*\\(begin|section|subsection)\b", lines[b]):
+        b += 1
+    while b > a and not _prose(lines[b - 1]):
+        b -= 1
+    return a, b, title
+
+
 def suggest(snap, claim: str) -> list[dict]:
     """Passages near a claim that may govern its reading, each as a proposed fragment: the
     sentence just before its passage and the one just after (when they read as a quantifier
@@ -732,23 +776,11 @@ def suggest(snap, claim: str) -> list[dict]:
             role = "constant dependence" if DEPENDENCE.search(text) else "context"
             add("sentence after the passage", role, j, b, "inferred")
     # The prose that opens the enclosing section.
-    sec = next((k for k in range(first - 1, 0, -1) if SECTION.match(lines[k - 1])), None)
-    if sec is not None:
-        title = SECTION.match(lines[sec - 1]).group(3).strip()
-        a = sec + 1
-        while a < first and not lines[a - 1].strip() or (a < first and
-                                                         lines[a - 1].lstrip().startswith("%")):
-            a += 1
-        # Only prose before the section's first environment opens it.
-        if a < first and _prose(lines[a - 1]):
-            b = a
-            while b + 1 < first and not re.match(r"\s*\\(begin|section|subsection)\b",
-                                                 lines[b]):
-                b += 1
-            while b > a and not _prose(lines[b - 1]):
-                b -= 1
-            add("opening of the section", "standing assumption", a, b, "inferred",
-                f"the section “{title}”")
+    opening = section_opening(lines, first)
+    if opening is not None:
+        a, b, title = opening
+        add("opening of the section", "standing assumption", a, b, "inferred",
+            f"the section “{title}”")
     # The claims the passage cites.
     labels = {}
     for c in snap.claims:

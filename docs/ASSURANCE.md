@@ -166,6 +166,7 @@ the paper or the Lean changes, compare the new release with the one before it:
 machinechecked changes                       # the latest release against the one before it
 machinechecked changes --from R1 --to R2     # any two releases
 machinechecked changes --json                # the same, as one document (prooflens/changes@1)
+machinechecked changes --map                 # each claim of the earlier revision in the later
 ```
 
 For each claim it shows:
@@ -200,18 +201,39 @@ quantifier). The text of a changed further passage is shown from the builds' own
 a claim's own changed passage too (a folder's text is shown only when it is the text the build
 recorded).
 
+`--map` gives the **version map** instead: each claim of the earlier paper revision matched to
+the later one by its passage, whatever the two inventories call it, as `unchanged`, `moved`
+(also renumbered), `context-changed` (its lines are the same and a macro definition, the prose
+opening its section, a further passage of its pin or a claim it relies on changed), `changed`,
+`removed`, `new` or `ambiguous`, with both places, the exact change and each release's own
+status and reviews. A shared number or id only proposes a match; `--match EARLIER=LATER`
+records the maintainer's. The later release's references to paper numbers that disagree with
+its paper get the counterpart the map names. The map changes no status
+([Comparing two revisions](SOURCE_REGIONS.md#comparing-two-revisions-the-version-map)).
+
 `--workspace ID` adds the records of a saved investigation that are no longer current against
 the later release ([Saved investigations](REVIEWING.md#saved-investigations)), of every kind
 (the claim's requirements, the passages that govern them and their alignments included), each
 with the change that made it stale; an unchecked record is listed too, since it is not known
 to be current. The terminal output lists them after the claims.
 
+With `--map`, `--workspace ID` judges the workspace's findings through the version map instead.
+Each paper part a finding rests on (its claim's passage, a passage it quotes, a passage attached
+to one of its requirements, the passage a bridge was checked against) is current when the map
+finds the same text, moved or renumbered or not; it is reopened when that text changed or was
+removed, or when what the passage is read with changed and the finding rests on it; and it is
+`unchecked` when the map leaves the claim ambiguous or cannot follow it. Each reopened finding
+names the change, with its diff, the part it rests on and a question. Its Lean side is checked
+against the later release's site, when it is built, and listed apart. `--save` keeps the map in
+the workspace, for the reader's **Details** page, `workspace show` and the workspace's export.
+Nothing here changes a status.
+
 The reader shows the same comparison on its **Details** page, and `export` publishes it with
 what each paper's `publish` settings allow (its passages' places and text only with its source
 text, the Lean statements only with its Lean). The comparison changes no status and writes
-nothing: a reopened review needs a new reading at the new revision, and the earlier reading
-stays in the review files as it was. The review queue offers the reopened reviews first, with
-their questions ([Review order](REVIEWING.md#review-order)).
+nothing but the map `--save` keeps: a reopened review needs a new reading at the new revision,
+and the earlier reading stays in the review files as it was. The review queue offers the
+reopened reviews first, with their questions ([Review order](REVIEWING.md#review-order)).
 
 ## What the evidence says
 

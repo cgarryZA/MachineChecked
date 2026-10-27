@@ -665,6 +665,7 @@ def workspace_due(view: dict, wid: str) -> dict:
         rows.append({"id": r["id"], "kind": r["kind"], "claim": cid,
                      "state": cur.get("state"), "changes": cur.get("changes") or [],
                      "pinned_release": (r.get("pins") or {}).get("release"),
+                     **({"unknown": cur["unknown"]} if cur.get("unknown") else {}),
                      **({"submitted": True} if r.get("state") == "submitted" else {}),
                      **({"proposed": True} if r.get("state") == "proposed" else {})})
 
@@ -729,6 +730,14 @@ def previous_release(out_dir, release: str) -> str | None:
 def between(out_dir, old_release: str | None = None, new_release: str | None = None) -> dict:
     """The comparison of two named releases of `out_dir`: by default the latest
     (`evidence.latest`) and the one before it."""
+    old_release, old, new_release, new = records(out_dir, old_release, new_release)
+    return compare(old, old_release, new, new_release)
+
+
+def records(out_dir, old_release: str | None = None, new_release: str | None = None
+            ) -> tuple[str, dict, str, dict]:
+    """Two named releases of `out_dir` and their evidence records, `(earlier name, record,
+    later name, record)`: by default the latest (`evidence.latest`) and the one before it."""
     from . import evidence as ev
     from .util import read_json
     rels = ev.releases(out_dir)
@@ -746,7 +755,7 @@ def between(out_dir, old_release: str | None = None, new_release: str | None = N
             raise ChangesError(f"no release {name}: the releases are "
                                + ", ".join(read_json(p)["release"] for p in rels))
         recs[name] = ev.load(out_dir, read_json(path)["evidence"])
-    return compare(recs[old_release], old_release, recs[new_release], new_release)
+    return old_release, recs[old_release], new_release, recs[new_release]
 
 
 class ChangesError(RuntimeError):
@@ -946,6 +955,8 @@ def workspace_lines(due: dict) -> list[str]:
                    + (", proposed" if r.get("proposed") else ""))
         for words in dict.fromkeys(_record_change_words(ch) for ch in r.get("changes") or []):
             out.append("    because: " + words)
+        for words in dict.fromkeys(u.get("why") or "" for u in r.get("unknown") or []):
+            out.append("    not known: " + words)
     if rows:
         out.append("  " + due["note"])
     return out

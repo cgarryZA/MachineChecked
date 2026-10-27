@@ -1,8 +1,9 @@
 <script>
   import LeanText from "./LeanText.svelte";
   import Expansion from "./Expansion.svelte";
-  import { loadDecl } from "../lib/data.js";
+  import { loadDecl, loadExpansion } from "../lib/data.js";
   import { expansionsOf } from "../lib/expand.js";
+  import { structureOf, carriedByValue } from "../lib/structure.js";
 
   // What a Lean definition says, from its declaration record (`d`, or loaded by `key`).
   // `view = "readable"`: its parameters and the body under them, or the equations Lean derives
@@ -10,6 +11,8 @@
   // statement of each equation theorem, and the elaborated value. The two views share sub-term
   // identities (`selId`, reported by `onselect`): a body's sub-terms are those of the value, and
   // an equation's are those of its theorem. `onname` makes the name a link (to inspect it).
+  // A record lists a definition's first 64 equations; the others are in pages of their own
+  // (`equations_more`), fetched when the reader asks for them.
   let { d = null, name = null, key = null, view = "readable", onref = null, onname = null,
         selId = null, onselect = null, heading = true } = $props();
 
@@ -21,7 +24,25 @@
   const rec = $derived(d || loaded);
   const label = $derived(rec?.name || name);
   const refs = $derived(rec?.uses || []);
-  const equations = $derived(rec?.equations || []);
+  let more = $state([]), moreError = $state(null), moreLoading = $state(false);
+  $effect(() => {
+    rec;
+    more = [];
+    moreError = null;
+    moreLoading = false;
+  });
+  const pages = $derived(rec?.equations_more || []);
+  const further = $derived(Math.max(0, (rec?.equation_names?.length || 0) - (rec?.equations_omitted || 0) - (rec?.equations?.length || 0)));
+  const equations = $derived([...(rec?.equations || []), ...more]);
+  function loadMore() {
+    const r = rec;
+    moreLoading = true;
+    moreError = null;
+    Promise.all(pages.map((p) => loadExpansion(p.key)))
+      .then((ps) => { if (rec === r) more = ps.flatMap((p) => p.equations || []); })
+      .catch((e) => { if (rec === r) moreError = String(e?.message || e); })
+      .finally(() => { if (rec === r) moreLoading = false; });
+  }
   const byEquations = $derived(rec?.defined_by === "equations");
   const BIND = { explicit: ["(", ")"], implicit: ["{", "}"], "strict-implicit": ["⦃", "⦄"], instance: ["[", "]"] };
   const term = (pp) => (pp?.terms || []);
@@ -29,9 +50,51 @@
   const src = $derived(rec?.lean_source);
   // A definition its body applies, expanded at those arguments.
   let opened = $state(null);
+  // A structure's fields, by where each comes from: inherited from a parent, or declared here
+  // (what it adds to its parents). A construction's value: the propositions it carries, which
+  // the definition establishes.
+  const made = $derived(structureOf(rec));
+  const carries = $derived(carriedByValue(rec));
+  const short = (n) => (n || "").split(".").pop();
 </script>
 
 {#snippet lean(pp)}<LeanText {pp} {onref} {refs} {selId} onterm={onselect ? sel(pp) : null} />{/snippet}
+
+{#snippet showMore(what)}
+  {#if pages.length && !more.length}
+    <p class="small"><button class="more" disabled={moreLoading} onclick={loadMore}>{moreLoading ? "Loading…" : `Show the ${further} further ${what}${further === 1 ? "" : "s"}`}</button>{#if moreError}{" "}<span class="bad">They could not be loaded ({moreError}).</span>{/if}</p>
+  {/if}
+{/snippet}
+
+{#snippet field(f)}
+  <li class={"field " + f.kind} data-field={f.field}><span class="fname">{f.field}</span>{" : "}{@render lean(f.type)}{#if f.kind === "data"}{" "}<span class="kind">data</span>{/if}</li>
+{/snippet}
+
+{#snippet madeOf()}
+  {#if made}
+    <div class="made" data-structure={label}>
+      {#each made.inherits as g (g.parent)}
+        <p class="lbl">inherited from <span class="nocase"><code>{short(g.parent)}</code></span></p>
+        <ul class="fields">{#each g.fields as f (f.field)}{@render field(f)}{/each}</ul>
+      {/each}
+      {#if made.declares.length}
+        <p class="lbl">{made.inherits.length ? "added here" : made.class ? "fields of the class" : "fields"}</p>
+        <ul class={made.inherits.length ? "fields added" : "fields"}>{#each made.declares as f (f.field)}{@render field(f)}{/each}</ul>
+      {/if}
+      {#if made.fields_omitted}<p class="small faint">{made.fields_omitted} further field{made.fields_omitted === 1 ? " is" : "s are"} not listed.</p>{/if}
+      <p class="small faint">Each field is shown for an object <code>self</code> of the structure; a proposition among them holds of every object of it.</p>
+    </div>
+  {/if}
+  {#if rec?.structure_error}<p class="small bad">The fields of this structure could not be read: {rec.structure_error}</p>{/if}
+  {#if carries.length}
+    <div class="made value" data-carries={label}>
+      <p class="lbl">its value carries</p>
+      <p class="small faint">Established by this definition: its value proves each of them.</p>
+      <ul class="fields">{#each carries as p (p.field)}<li class="field proposition" data-field={p.field}><span class="fname">{p.field}</span>{" : "}{@render lean(p.type)}</li>{/each}</ul>
+    </div>
+  {/if}
+  {#if rec?.result_properties_error}<p class="small bad">What its value carries could not be read: {rec.result_properties_error}</p>{/if}
+{/snippet}
 
 {#snippet params(ps)}
   {#each ps as p}{@const br = BIND[p.binder] || BIND.explicit}{" "}<span class="param">{br[0]}{#if p.binder !== "instance"}<span class="pn">{p.name}</span>{" : "}{/if}{@render lean(p.type)}{br[1]}</span>{/each}
@@ -39,7 +102,7 @@
 
 <div class={"defn " + view} data-decl={label}>
   {#if view === "readable"}
-    <p class="head">{#if onname}<button class="ref" onclick={() => onname(label)}>{label}</button>{:else}<code>{label}</code>{/if}{#if rec && !byEquations && rec.params}{@render params(rec.params)}{#if rec.result}{" "}<span class="colon">:</span>{" "}<LeanText pp={rec.result} {onref} {refs} />{/if}{/if}</p>
+    <p class="head">{#if onname}<button class="ref" onclick={() => onname(label)}>{label}</button>{:else}<code>{label}</code>{/if}{#if rec && !byEquations && rec.params}{@render params(rec.params)}{#if rec.result}{" "}<span class="colon">:</span>{" "}<LeanText pp={rec.result} {onref} {refs} />{/if}{:else if rec && byEquations && rec.signature}{" "}<span class="colon">:</span>{" "}<LeanText pp={rec.signature} {onref} {refs} />{:else if rec?.structure?.params?.length}{@render params(rec.structure.params)}{/if}</p>
   {:else if heading}
     <p class="head"><code>{label}</code></p>
   {/if}
@@ -61,6 +124,7 @@
           </li>
         {/each}
       </ul>
+      {@render showMore("equation")}
       {#if rec.equations_omitted}<p class="small">{rec.equations_omitted} further equation{rec.equations_omitted === 1 ? " is" : "s are"} not included in this audit; the Lean source has them all.</p>{/if}
     {:else if rec.body}
       <div class="line"><span class="role">:=</span><span class="body">{@render lean(rec.body)}{#if expansionsOf(rec.body).length}{" "}<span class="xs">expand{#each expansionsOf(rec.body) as o}{" "}<button class="xb" class:on={opened?.x === o.x} aria-label={"Expand " + o.text + " at its arguments"} onclick={() => (opened = opened?.x === o.x ? null : o)}>{o.label}</button>{/each}</span>{/if}</span></div>
@@ -70,6 +134,7 @@
     {:else if rec.signature}
       <div class="line"><span class="role">:</span><span class="body">{@render lean(rec.signature)}</span></div>
     {/if}
+    {@render madeOf()}
   {:else}
     {#if src}
       <p class="lbl">Lean source · <span class="nocase">{src.file}:{src.line}{src.end_line > src.line ? "–" + src.end_line : ""}</span></p>
@@ -82,11 +147,24 @@
       {#each equations as e (e.name)}
         <div class="thm" data-eq={e.name}><code class="tn">{e.name}</code><pre>{@render lean(e.statement)}</pre></div>
       {/each}
+      {@render showMore("equation theorem")}
       {#if rec.equations_omitted}<p class="small">{rec.equations_omitted} further equation theorem{rec.equations_omitted === 1 ? " is" : "s are"} not included in this audit.</p>{/if}
     {/if}
     {#if rec.signature}
       <p class="lbl">type</p>
       <pre><LeanText pp={rec.signature} {onref} {refs} /></pre>
+    {/if}
+    {#if made}
+      <p class="lbl">fields, each the projection of an object <span class="nocase"><code>self</code></span></p>
+      {#each made.fields || [] as f (f.field)}
+        <div class="thm" data-field={f.field}><code class="tn">{f.projection || f.field}</code><pre>{@render lean(f.type)}</pre></div>
+      {/each}
+    {/if}
+    {#if carries.length}
+      <p class="lbl">its value carries</p>
+      {#each carries as p (p.field)}
+        <div class="thm" data-field={p.field}><code class="tn">{p.term}</code><pre>{@render lean(p.type)}</pre></div>
+      {/each}
     {/if}
     {#if rec.value}
       {#if byEquations}
@@ -124,6 +202,7 @@
   .tn { font-size: 12px; color: var(--muted); }
   .compiled { margin-top: 10px; }
   .compiled > summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+  .more { border: 1px solid var(--border); border-radius: 6px; background: none; color: var(--accent); cursor: pointer; font-size: 13px; padding: 2px 8px; }
   .ref { border: 0; background: none; padding: 0; color: var(--accent); cursor: pointer; font-family: var(--mono); font-size: 0.95em; text-align: left; overflow-wrap: anywhere; }
   .small { font-size: 13px; }
   .xs { font-size: 12px; color: var(--faint); white-space: normal; }
@@ -132,4 +211,10 @@
   .faint { color: var(--faint); }
   .bad, .err { color: var(--st-malformed); font-size: 13px; }
   .defn :global(.lean button), .defn :global(.lean a) { min-height: 0; }
+  .made { margin-top: 6px; }
+  .fields { list-style: none; margin: 0; padding: 0; }
+  .field { margin: 3px 0; display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap; }
+  .fname { font-family: var(--mono); font-weight: 600; }
+  .kind { font-size: 12px; color: var(--faint); }
+  .added { padding-left: 10px; border-left: 2px solid var(--border); }
 </style>

@@ -2,7 +2,7 @@
   import { listWorkspaces, openWorkspace, showWorkspace, updateWorkspace, suggestContext, newId,
     rememberedWorkspace, rememberWorkspace, humanId } from "../lib/workspace.js";
   import { href } from "../lib/route.svelte.js";
-  import { compositionView, findingCoverageView, recordedBasisText } from "../lib/coverage.js";
+  import { compositionView, findingCoverageView, recordedBasisText, readingWords } from "../lib/coverage.js";
   import Composition from "./Composition.svelte";
 
   // The auditor's saved investigation of this claim, under `machinechecked view`: its open
@@ -12,16 +12,17 @@
   let { index, claim } = $props();
 
   // The readings a finding can record: the links file's coverage and, for full coverage, how it
-  // is supported (a checked bridge is recorded with `machinechecked workspace update`).
-  const CHOICES = {
-    direct: { label: "Every clause, in one Lean statement", coverage: "full", basis: "direct" },
-    composition: { label: "Every clause, by my composition", coverage: "full", basis: "reviewed_composition" },
-    full: { label: "Every clause", coverage: "full" },
-    partial: { label: "Part of the claim", coverage: "partial" },
-    changed: { label: "Stated differently", coverage: "changed" },
-    related: { label: "A related result", coverage: "related" },
-    unresolved: { label: "Unresolved", coverage: "unresolved" },
-  };
+  // is supported (a checked bridge is recorded with `machinechecked workspace update`), each in the
+  // engine's words for it.
+  const CHOICES = Object.fromEntries(Object.entries({
+    direct: { coverage: "full", basis: "direct" },
+    composition: { coverage: "full", basis: "reviewed_composition" },
+    full: { coverage: "full" },
+    partial: { coverage: "partial" },
+    changed: { coverage: "changed" },
+    related: { coverage: "related" },
+    unresolved: { coverage: "unresolved" },
+  }).map(([k, c]) => [k, { ...c, label: readingWords(c.coverage, c.basis) }]));
 
   let available = $state(true);
   let mine = $state([]);
@@ -240,7 +241,7 @@
         <div class="item" data-kind="finding" data-state={f.state} class:old={!f.in_force}>
           <p class="small"><strong>{findingHead(f, cv)}</strong>
             <span class="faint">· {f.in_force ? (f.state === "submitted" ? "submitted" : "draft") : "superseded"} · {f.created_by}{f.requirement ? ` · on ${f.requirement}` : ""}</span>
-            {#if f.currency?.state === "stale"}<span class="stale"> · evidence changed since</span>{/if}</p>
+            {#if f.currency?.state === "stale"}<span class="stale" title={(f.currency.changes || []).map((c) => c.reason).filter(Boolean).join("; ")}> · evidence changed since</span>{:else if f.currency?.state === "unchecked"}<span class="faint" data-currency="unchecked" title={(f.currency.unknown || []).map((u) => u.why).join("; ")}> · not known to be current</span>{/if}</p>
           {#each cv?.lines || [] as line}<p class="small" data-line={line.label}><span class="faint">{line.label}:</span> {line.names?.join(", ") || ""}{line.names?.length && line.text ? ". " : ""}<span class="text">{line.text || ""}</span>{#if line.note} <span class="faint">{line.note}</span>{/if}</p>{/each}
           {#if f.composition}<p class="small faint">Rests on composition {f.composition}{f.recorded_basis ? `; recorded as ${f.recorded_basis === "checked_bridge" ? "a checked bridge" : f.recorded_basis}, its bridge is not checked now` : ""}.</p>
           {:else if recordedBasisText(f)}<p class="small faint" data-line="recorded">{recordedBasisText(f)}</p>{/if}

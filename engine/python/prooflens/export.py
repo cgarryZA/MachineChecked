@@ -33,7 +33,8 @@ def _pick(d: dict | None, keys: list[str]) -> dict | None:
 DECL_KEYS_LEAN = ["name", "kind", "module", "range", "doc", "signature", "value", "uses",
                   "fingerprint", "legacy_hash", "defined_by", "params", "body", "equations",
                   "equation_names", "equations_omitted", "definition_error", "result",
-                  "lean_source"]
+                  "lean_source", "structure", "structure_error", "result_properties",
+                  "result_properties_omitted", "result_properties_error"]
 DECL_KEYS_MIN = ["name", "kind", "module", "fingerprint", "legacy_hash"]
 
 
@@ -370,14 +371,17 @@ def export(cfg: Config, out: Path, release: str | None = None,
                                 "file"]) for c in index["claims"]]
     pidx["units"] = index.get("units") or {}
     write_json(data / "index.json", pidx, indent=None)
-    # Definitions expanded at their applications are written on their own, and only those that
-    # a published statement or declaration refers to (`mf.split_expansions`).
+    # Definitions expanded at their applications, and a declaration's equations after its first
+    # 64, are written on their own, and only those that a published statement or declaration
+    # refers to (`mf.split_expansions`).
     expansions: dict[str, dict] = {}
+    pins = mf.fingerprints(store)
     for name, chunk in chunks.items():
         pc = public_claim(chunk, pubs[chunk["paper"]])
         if (ref_chunks.get(name) or {}).get("references"):
             pc["references"] = ref_chunks[name]["references"]
-        write_json(data / "claims" / name, mf.split_expansions(pc, expansions), indent=None)
+        write_json(data / "claims" / name, mf.split_expansions(pc, expansions, pins),
+                   indent=None)
     # Declarations are shared between papers: their Lean text and review texts are exported only
     # when every paper allows it. A redacted record is a different record, so it gets its own key.
     shown = [p for p in cfg.papers if paper is None or p.id == paper]
@@ -387,7 +391,7 @@ def export(cfg: Config, out: Path, release: str | None = None,
     for key, d in store.items():
         q = _pick(d, DECL_KEYS_LEAN if lean_ok else DECL_KEYS_MIN)
         q["review"] = _reviews(d.get("review"), rev_ok)
-        q = mf.split_expansions(q, expansions)
+        q = mf.split_expansions(q, expansions, pins)
         new = mf.record_key(q)
         rekey[key] = new
         write_json(data / "decls" / f"{new}.json", q, indent=None)

@@ -156,13 +156,34 @@ prints one JSON document (`machinechecked/compare@1`) for one claim, read from t
   statement: `statement.text` exactly as Lean prints it, `binders` and `conclusion` with their
   expression ids, `tree` (the whole statement as one tree, where each variable's `scope` says
   whether the statement establishes it, it is given, or it stands inside an assumption, a
-  negation, an alternative or an equivalence), and Lean's checks (axioms, sorry, errors). `lean.candidates` are suggestions
+  negation, an alternative or an equivalence), and Lean's checks (axioms, sorry, errors).
+  `statement.objects` lists each object the statement binds, by number, with its `position`
+  (`given`, `produced`, `assumed`, `premise`, `denied`, `alternative`, `equivalent`), a
+  `reading` of what that position means for it, and what the statement says about it in
+  `properties`, each with its `basis`: `type` (a field its type carries: a subtype's predicate,
+  a structure's or class's proof field, inherited ones once, with the `field`, the structure
+  that declares it, the parent projections it comes through, `via`, and its exact `statement`
+  and `id`), `premise` (a hypothesis or premise that mentions it, with what a structure of
+  propositions `states`), `conclusion`, `definition` (a definition applied to it, by its
+  expansion's key) and `theorem` (a result cited for this object in the workspace, informed
+  stage only). `data` lists its type's data fields and `instances` the instances that supply
+  structure on it. `lean.candidates` are suggestions
   nobody has confirmed, with their reasons. `lean.definitions` are the definitions the
-  statements use, with their type and value; `generated_for` marks the equations Lean generated
-  for one of them, and the tactic script of a tactic default (`(h : 0 < n := by omega)`) with
-  the declaration whose type has the default. `lean.references` are the references to the
-  paper's numbers that concern the claim, and `lean.numbering` their project-level pattern (as
-  in `check --json`).
+  statements use, with their type and value and what each says (`defined_by`: its `params`,
+  `body` and `result`, or every one of its `equations`, each with its theorem's name and exact
+  statement); a structure has its fields (`structure`: `declares`, what it adds, and
+  `inherits`, by parent) and a definition whose value is a structure what that value carries
+  (`result_properties`, basis `definition`); `expansion: generic` marks them as the definitions as declared. `generated_for`
+  marks the equations Lean generated for one of them, and the tactic script of a tactic default
+  (`(h : 0 < n := by omega)`) with the declaration whose type has the default.
+  `lean.expansions` are the definitions at the arguments of each application in a linked
+  statement or a definition's body, the records the reader shows under the keys the statement
+  gives them (`expansions[].key`): the arguments by parameter, then the body with them
+  substituted or each equation that applies, as Lean substituted and checked them, with the
+  definition's `fingerprint`. An expansion's own applications are references; `--query
+  expansion KEY` gives one by its key. `lean.references` are the references to the paper's
+  numbers that concern the claim, and `lean.numbering` their project-level pattern (as in
+  `check --json`).
 - `interpretations` (stage `informed`, the default): the correspondence note, review reports,
   author's review markers, symbol links, the status and the assessment's findings.
 - `retrieval`: what is `included`, what the stage `withheld`, what is `unavailable` because it
@@ -358,6 +379,28 @@ adds `workspace.records`: the saved investigation's evidence, findings, question
 counterexamples and compositions that are not current, each with its `state` and `changes`
 (`workspace show --json` gives the currency of its requirements and passages).
 
+`machinechecked changes --map --json` prints the version map instead (`prooflens/version-map@1`,
+[DATA_MODEL.md](DATA_MODEL.md#version-map-prooflensversion-map1-derived)): each claim of the
+earlier paper revision matched to the later one by its passage, whatever the two inventories
+call it, with `class` (`unchanged`, `moved`, `context-changed`, `changed`, `removed`,
+`ambiguous`, `unknown`, `new`), `by` (how it was matched), both sides' places, numbers and
+recorded statuses (`from.recorded`, `to.recorded`), the `change` and the changed `context`.
+`ambiguous` entries list `candidates`; a candidate by `number`, `id` or `line-diff` is a
+proposal, never a match: report it as one and leave the choice to the maintainer
+(`--match EARLIER=LATER`). `references` gives the later build's disagreeing paper numbers with
+the counterpart the map names (`current`).
+
+With `--map --workspace ID`, `workspace` is the workspace's findings judged through the map
+(`prooflens/reopened@1`,
+[DATA_MODEL.md](DATA_MODEL.md#findings-across-a-revision-prooflensreopened1-derived)): each
+finding's `state` (`reopened`, `unchecked`, `current`), and per paper part it rests on (`paper`)
+the `change` with its `diff`, the `dependency` and the `question`; `build` is its Lean side
+against the later release's site, kept apart. Report a reopened finding with its question and
+the part it names; an `unchecked` one is not known to be current, never current; a finding is
+never moved to another claim. `--save` keeps the map in the workspace, and `workspace show
+--json` then gives the same under `revisions` against a build of the later release, without
+the manuscripts.
+
 ### Reviewing from the terminal
 
 `machinechecked review next|read|lock|show|decide|author|submit|status|export` takes a unit of
@@ -450,7 +493,12 @@ versions. Repeat a request with its `op_id` after a lost answer: it changes noth
 with several workspaces in the project (the review protocol's independent one and an informed
 one, say) names one with `--id`; `workspace list` gives their ids. `show --json` gives every
 record with its `currency` (`current`, `stale` with the `changes`, or `unchecked`) and the
-`resume` point. To cite a fact inside a proof, put its `ref` from `compare --query proof-facts`
+`resume` point. Each finding has its `dependencies`: the parts it rests on, each with its
+version (the passage, the requirements and passages of its reading, alignments, cited
+declarations with the definitions their statements use, applications, facts, the composition,
+the bridge), and `kinds`, the evidence kinds it uses. A submitted finding records them when it is
+submitted; it reads `stale` when one changed, naming it, and `unchecked` when one is not known
+(`currency.unknown`, each with `why`), never `current`. To cite a fact inside a proof, put its `ref` from `compare --query proof-facts`
 as `"ref": {"fact": REF}`; a finding resting on it takes basis `reviewed_composition` (it is not
 `direct` coverage), and `show` marks it `stale` once that proof changes. Requirements of a claim
 (`requirement`), the passages that govern each one
@@ -459,7 +507,11 @@ association with Lean (`alignment`) are records of the same workspace; `show --j
 claim's `reading`, `workspace suggest --claim C --requirement r1 [--apply]` proposes nearby
 passages, and `compare C --workspace ID --json` carries the reading in
 `interpretations.requirements` (and that workspace's compositions in
-`interpretations.compositions`). An argument that combines several results is a `composition`
+`interpretations.compositions`). Evidence that derives a property of one object of the claim's
+Lean names it, `"object": {"decl": NAME, "var": N}` (its number in `statement.objects`, or its
+name when only one object has it); the record pins the object's binder, and the informed
+packet lists a supporting result with that object only (basis `theorem`, and in
+`interpretations.derivations`), never with another object of the same name or type. An argument that combines several results is a `composition`
 record ([Reviewing](REVIEWING.md#saved-investigations)); a step can cite an application from
 `compare --query uses` as `"ref": {"app": {"callee": NAME, "id": APP_ID}}`. Differences from the
 Lean are findings with a `difference` on the affected requirement; a counterexample
@@ -617,7 +669,7 @@ machinechecked compare --query composition "Theorem 2.5"
 
 The application and the fact are cited as `uses` and `proof-facts` print them; the fact's `at` is
 its position in the proof term, and the workspace keeps the fact's hashes and type with it. The composition reads `every clause, through
-a bridge Lean checks`.
+a checked bridge`.
 
 **6. Compare the estimate and the printed proof.** The Lean writes `C * (n * n)` for `C n²`, a
 difference of notation only. The proof's Equation (3), "for every natural number $k \ge 0$, $n
@@ -725,7 +777,10 @@ checks again with its bridge, and supersede the finding:
             "note": "The argument gives C = 1 for every n, positive or not."}}
 ```
 
-Both findings remain, and `show` lists `f-bound-2` as current. In a full assessment,
+Both findings remain, and `show` lists `f-bound-2` as current. `f-power`, submitted against the
+earlier reading, stays `stale`: a submitted finding keeps the versions it was submitted with, and
+its `changes` name the requirements and passages re-pinned since. Supersede it the same way once
+you have read its difference against the new text. In a full assessment,
 `machinechecked changes --workspace ID` lists the stale evidence, findings, questions,
 counterexamples and compositions beside the reviews the new release reopened.
 

@@ -114,11 +114,16 @@ violations and obligations by subject; `findings` holds only their totals. A vio
   in a workspace.
 - **What changed since the last build?** After a rebuild, `machinechecked workspace show
   --json` marks the saved records whose paper text, statement, proof or certificate changed
-  `stale`. In a full assessment, `machinechecked changes --json` compares two releases claim by
+  `stale`, and the findings resting on them, each finding naming the part that changed (a
+  definition its cited statement uses included). In a full assessment, `machinechecked changes --json` compares two releases claim by
   claim and names every review the later build no longer counts, with the dependency that
   changed; `--workspace ID` adds the workspace's records that are not current, of every
   kind: evidence, findings, questions, counterexamples, compositions, requirements, fragments
-  and alignments.
+  and alignments. `--map` matches each claim of the earlier paper revision to the later one by
+  its passage, with each release's own status; a shared number or id is only a proposal. With
+  `--map --workspace ID`, each finding is reopened exactly when a passage it rests on changed
+  (a moved or renumbered passage keeps it current), naming the change and the part, with a
+  question; an ambiguous match is not known to be current.
 - **A shareable report**: `machinechecked build` writes `.machinechecked/MachineChecked.html`
   (one file, opens from disk; Git ignores it there, and `--out` puts it elsewhere). `machinechecked build --site public/ --author "Name" --issues owner/repo` writes a
   directory to publish (for example on GitHub Pages) with `audit.json` describing it. Both
@@ -180,7 +185,10 @@ carries every step out on the toy example.
    to you, and changes no status. Save what remains open as a `question` and set the `resume`
    point. Submit the findings that are final; `build --site DIR` publishes them with the audit.
 8. **Resume.** `workspace export` and `workspace import` hand a workspace on; `workspace show
-   --json` gives its `resume` point and each record's `currency` against the current build.
+   --json` gives its `resume` point and each record's `currency` against the current build. A
+   submitted finding records the parts it rests on with their versions (`dependencies`): it
+   reads `stale` naming the part that changed, or `unchecked` with `currency.unknown` when a
+   part is not known, never `current`; re-pinning a record does not refresh it, superseding does.
 
 Each answer says what it covers. `retrieval.unavailable` in a `compare` packet lists what is not
 extracted yet, with the issue that owns it; a query answers `available: false` with its

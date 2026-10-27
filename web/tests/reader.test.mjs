@@ -218,6 +218,21 @@ if (states.status !== 0) throw new Error(states.stderr);
 const publication = spawnSync(process.env.PYTHON || "python3", [path.join(here, "../../tests/published_fixture.py"), path.join(root, "published"), reader], { encoding: "utf8" });
 if (publication.status !== 0) throw new Error(publication.stderr);
 const PUB = JSON.parse(fs.readFileSync(path.join(root, "published/data/index.json")));
+// A paper page that joined a statement of its PDF to the audit's entry by printed number, as
+// machinechecked.org writes it when it cannot show the PDF the audit read (`matched`); and the
+// same page with a match that names the revision the audit read and no version.
+const MATCHED = JSON.parse(fs.readFileSync(path.join(root, "matched/data/index.json")));
+fs.cpSync(path.join(root, "matched"), path.join(root, "matched-revision"), { recursive: true });
+{
+  const dir = path.join(root, "matched-revision", "data");
+  const unlabelled = (c) => { delete c.by_project["synthetic/alpha"].audit.matched.version; return c; };
+  const idx = structuredClone(MATCHED);
+  const row = idx.claims.find((c) => c.by_project?.["synthetic/alpha"]?.audit?.matched);
+  unlabelled(row);
+  fs.writeFileSync(path.join(dir, "index.json"), JSON.stringify(idx));
+  const f = path.join(dir, "claims", row.file);
+  fs.writeFileSync(f, JSON.stringify(unlabelled(JSON.parse(fs.readFileSync(f, "utf8")))));
+}
 
 // A synthetic review queue with a reviewed target after an unrelated pending unit.
 fs.cpSync(path.join(root, "toy"), path.join(root, "review"), { recursive: true });
@@ -327,6 +342,30 @@ const summarised = spawnSync(process.env.PYTHON || "python3", ["-c",
   ...["toysem", "basissem", "toyworksem"].map((d) => path.join(root, d))], { encoding: "utf8" });
 if (summarised.status !== 0) throw new Error("the engine could not summarise:\n" + summarised.stderr);
 const SEM = Object.fromEntries(["toysem", "basissem", "toyworksem"].map((d) => [d, JSON.parse(fs.readFileSync(path.join(root, d, "data/index.json"), "utf8"))]));
+
+// #414: the page with two audits of one version (`combined`), as machinechecked.org writes it with
+// each listed audit's semantic summary on its registry entry (its scripts/summary.py record: the
+// counts of the audited paper, the sets of readings, and the pins it was checked against). The
+// first repository's audit carries the counts of the readings and reports above (`basissem`); a
+// further audit of it has a summary the site could not show; the second repository's audit
+// exports none.
+fs.cpSync(path.join(root, "combined"), path.join(root, "summaries"), { recursive: true });
+const SUMMARY = SEM.basissem.semantic, SUMMARY_PAPER = Object.keys(SUMMARY.papers)[0];
+const UNSUPPORTED = "MachineChecked 0.1.21, which builds this site, does not read prooflens/semantic-summary@1.";
+{
+  const file = path.join(root, "summaries", "data", "index.json");
+  const idx = JSON.parse(fs.readFileSync(file, "utf8"));
+  const alpha = idx.paper.formalisations[0], loaded = idx.audits[alpha.repository];
+  const { revision, paper_version, ...counts } = SUMMARY.papers[SUMMARY_PAPER];
+  alpha.audits[0].semantic = { url: alpha.audits[0].url + "data/index.json", schema: SUMMARY.schema,
+    digest: SUMMARY.digest, state: "loaded", release: loaded.release, commit: loaded.commit,
+    author: SUMMARY.audit.author, paper_key: SUMMARY_PAPER, revision, paper_version,
+    selected: SUMMARY.selected, sets: SUMMARY.sets, paper: counts };
+  alpha.audits.push({ url: "https://audit.example/other/", author: "C. Author",
+    semantic: { url: "https://audit.example/other/data/index.json", schema: SUMMARY.schema,
+                digest: "0".repeat(64), state: "unsupported", detail: UNSUPPORTED } });
+  fs.writeFileSync(file, JSON.stringify(idx));
+}
 
 // The toy audit with the comparison to an earlier release (`changes.py`, prooflens/changes@1):
 // a definition whose statement changed reopens the review that read it, a context change beside
@@ -922,6 +961,71 @@ for (const width of [1300, 390]) {
   });
 }
 
+// #414: each listed audit's semantic summary is under that audit's own line of the panel: per unit,
+// the correspondence and evidence basis of its selected readings, its reviews and findings, each
+// count in the summary's words and linked to that audit's filtered Overview; another set of
+// readings is linked apart. An audit without a summary shows what it showed before, and one the
+// site could not show says why.
+const VOCAB = JSON.parse(fs.readFileSync(path.resolve(here, "../../engine/python/prooflens/data/semantic.json"), "utf8"));
+for (const width of [1300, 390]) {
+  await check("each listed audit shows its own semantic summary, each count linked to its Overview", width, async (pg) => {
+    await pg.goto(origin + "/summaries/");
+    await showPanel(pg, width);
+    const alpha = pg.locator(`.info .card[data-repository="${CA}"]`), beta = pg.locator(`.info .card[data-repository="${CB}"]`);
+    await alpha.locator(".semantic").waitFor();
+    assert.equal(await pg.locator(".info .semantic").count(), 1, "one summary, on its own audit's line");
+    const sum = alpha.locator(".semantic");
+    assert.equal(await sum.getAttribute("data-audit"), "https://audit.example/");
+    assert.equal(await sum.getAttribute("data-digest"), SUMMARY.digest);
+    assert.match(await sum.locator("p").first().textContent(), /Correspondence and evidence basis: the audit's readings, by A\. Auditor\./);
+    const block = SUMMARY.papers[SUMMARY_PAPER], set = SUMMARY.selected;
+    const units = ["statements", "notation", "proof_steps"].filter((u) => block.inventory[u].records > 0);
+    assert.deepEqual(await sum.locator(".unit").evaluateAll((els) => els.map((e) => e.dataset.unit)), units);
+    const overview = (q) => "/read/?audit=" + encodeURIComponent("https://audit.example/") + "#/r/r-synthetic/overview?" + new URLSearchParams(q);
+    for (const u of units) {
+      const row = sum.locator(`.unit[data-unit="${u}"]`);
+      assert.match(await row.locator(".head").textContent(), new RegExp(`^${block.inventory[u].records} `));
+      for (const [dim, param, table, vocab] of [["coverage", "coverage", block.coverage[set][u], VOCAB.coverage],
+                                                ["basis", "basis", block.basis[set][u], VOCAB.basis],
+                                                ["review", "review", block.review[u], u === "proof_steps" ? VOCAB.step_review : VOCAB.review],
+                                                ["findings", "finding", block.findings[u], VOCAB.findings]]) {
+        const want = Object.keys(vocab).filter((k) => table[k] > 0)
+          .map((k) => [k, `${vocab[k].label} (${table[k]})`, overview({ set, unit: u, [param]: k })]);
+        const got = await row.locator(`[data-dimension="${dim}"] a`).evaluateAll((as) => as.map((a) => [a.dataset.key, a.textContent, a.getAttribute("href")]));
+        assert.deepEqual(got, want, `${u} ${dim}`);
+      }
+    }
+    // An open question is shown, distinct from what is not assessed.
+    const statements = sum.locator('.unit[data-unit="statements"]');
+    assert.equal(await statements.locator('[data-dimension="coverage"] a[data-key="unresolved"]').textContent(), `Unresolved (${block.coverage[set].statements.unresolved})`);
+    assert.ok(await statements.locator('[data-dimension="coverage"] a[data-key="not_assessed"]').count());
+    // The other set of readings is linked, counted apart.
+    const others = SUMMARY.sets.filter((s) => s.id !== set);
+    assert.deepEqual(await sum.locator(".others a").evaluateAll((as) => as.map((a) => [a.textContent, a.getAttribute("href")])),
+      others.map((s) => [`Reviews by ${s.reviewer.name}`, overview({ set: s.id, unit: "statements" })]));
+    assert.match(await sum.locator("details").textContent(), new RegExp(`release r-synthetic, project commit aaaaaaaaaaaa.*digest ${SUMMARY.digest.slice(0, 12)}`, "s"));
+    // A count's link opens that audit's Overview on the claims it counts.
+    const href = await statements.locator('[data-dimension="coverage"] a[data-key="unresolved"]').getAttribute("href");
+    await pg.goto(origin + `/basissem/#/r/${SEM.basissem.release}/overview?` + href.split("?").pop());
+    await pg.locator(".coverage .claims li").first().waitFor();
+    assert.equal(await pg.locator(".coverage .claims li").count(), block.coverage[set].statements.unresolved);
+    await pg.goto(origin + "/summaries/");
+    await showPanel(pg, width);
+    await alpha.locator(".semantic").waitFor();
+    // An audit the site could not show a summary for says why, with no count; an audit without a
+    // summary shows what it showed before.
+    const other = alpha.locator('.semantic-state[data-audit="https://audit.example/other/"]');
+    assert.equal(await other.getAttribute("data-state"), "unsupported");
+    assert.equal((await other.textContent()).trim(), `Semantic summary unsupported: ${UNSUPPORTED}`);
+    assert.equal(await beta.locator(".semantic, .semantic-state").count(), 0);
+    assert.doesNotMatch(await beta.textContent(), /Semantic summary|\(\d+\)/);
+    assert.match(await beta.locator(".audit.here").textContent(), /by B\. Author · commit cccccccccccc/);
+    if (process.env.SHOTS) await pg.screenshot({ path: path.join(process.env.SHOTS, `summaries-${width}.png`), fullPage: true });
+    const [scroll, client] = await pg.evaluate(() => [document.documentElement.scrollWidth, document.documentElement.clientWidth]);
+    assert.ok(scroll <= client, `the page scrolls sideways (${scroll} > ${client})`);
+  });
+}
+
 // The claim inspector on the toy audit: opening a definition replaces the panel's contents and
 // leaves the paper where it was; Back brings the claim back as it was left.
 const toyClaim = async (pg, id) => {
@@ -1364,6 +1468,43 @@ await check("in the local reader a symbol is linked by choosing it and clicking 
     assert.ok(await exactField.locator(".in").count() > 0, "the exact view selects the same sub-term");
   });
 
+  await check("a structure shows the fields it adds to its parent, and a construction what its value carries", width, async (pg) => {
+    const open = async (id) => {
+      await pg.goto(origin + `/structure/#/r/${SHAPE.release}/read/P/${encodeURIComponent(id)}`);
+      await pg.locator("aside .view section.lean .defn").first().waitFor();
+      return pg.locator("aside .view section.lean");
+    };
+    // The concrete structure extends the abstract one: its inherited fields are listed under
+    // the parent, and what it adds apart, each stated of an object `self`.
+    let lean = await open("P:def:profile");
+    const con = lean.locator(".defn.readable[data-decl='Shape.Concrete'] .made");
+    await con.waitFor();
+    const names = (loc) => loc.evaluateAll((ls) => ls.map((l) => l.dataset.field));
+    assert.match(await con.locator(".lbl").first().textContent(), /inherited from\s*Profile/i);
+    assert.deepEqual(await names(con.locator(".fields:not(.added) .field")), ["f", "C", "bound"]);
+    assert.deepEqual(await names(con.locator(".fields.added .field")), ["N", "support", "p", "periodic"]);
+    assert.match(await con.locator(".field[data-field='support']").textContent(), /support\s*:\s*∀ \(n : Nat\), self\.N ≤ n → self\.f n = 0/);
+    assert.match(await con.locator(".field[data-field='N']").textContent(), /data/);
+    const prof = lean.locator(".defn.readable[data-decl='Shape.Profile'] .made");
+    assert.deepEqual(await names(prof.locator(".field")), ["f", "C", "bound"]);
+    assert.equal(await prof.locator(".fields.added").count(), 0, "a structure without a parent adds to none");
+    const exact = pg.locator("aside .view .exact-pane .defn.exact[data-decl='Shape.Concrete']");
+    assert.match(await exact.locator(".thm[data-field='support']").textContent(), /Shape\.Concrete\.support.*self\.N ≤ n/s);
+    // A construction's value carries the fields its definition establishes; a helper that
+    // accepts the structure has them in its input's type, apart from its hypothesis.
+    lean = await open("P:thm:build");
+    const val = lean.locator(".defn.readable[data-decl='Shape.build'] .made.value");
+    await val.waitFor();
+    assert.match(await val.textContent(), /Established by this definition/);
+    assert.match(await val.locator(".field[data-field='support']").textContent(), /\(Shape\.build N\)\.N ≤ n → \(Shape\.build N\)\.f n = 0/);
+    assert.equal(await val.locator(".field[data-field='N']").count(), 0, "data is not a property");
+    await pg.goto(origin + `/structure/#/r/${SHAPE.release}/read/P/${encodeURIComponent("P:thm:vanishes")}`);
+    const st = pg.locator("aside .view :not(.suggestion) > .stmt");
+    await st.waitFor();
+    assert.match(await st.locator(".carried.given .prop[data-field='support']").textContent(), /c\.N ≤ n → c\.f n = 0.*field support of Concrete/s);
+    assert.match(await st.locator(".ribbon > li.hypothesis").textContent(), /assume\s*\(h\)\s*c\.N ≤ n/);
+  });
+
   await check("a definition expands at the arguments of each application, beside the statement", width, async (pg) => {
     // An expansion is fetched from its own file when it is opened, not with the claim.
     const fetched = [];
@@ -1423,6 +1564,37 @@ await check("in the local reader a symbol is linked by choosing it and clicking 
     if (width === 1300) await pg.screenshot({ path: process.env.SHOT_DIR ? path.join(process.env.SHOT_DIR, "expansion.png") : path.join(os.tmpdir(), "mc-expansion.png") });
   });
 
+  await check("a definition with more equations than its record lists loads the others when asked", width, async (pg) => {
+    const fetched = [];
+    pg.on("request", (r) => { if (r.url().includes("/data/expansions/")) fetched.push(r.url()); });
+    await pg.goto(origin + `/structure/#/r/${SHAPE.release}/read/P/${encodeURIComponent("P:def:digit")}`);
+    const view = pg.locator("aside .view");
+    const val = view.locator(".lean .defn.readable[data-decl='Shape.Digit.val']");
+    await val.locator(".eq").first().waitFor();
+    // A definition by equations shows its type, then the first 64 of its seventy equations.
+    assert.match(await val.locator(".head").textContent(), /Shape\.Digit\.val\s*:\s*Shape\.Digit → Nat/);
+    assert.equal(await val.locator(".eq").count(), 64);
+    assert.equal(fetched.length, 0, "the further equations are fetched only when asked for");
+    assert.match(await val.locator("button.more").textContent(), /Show the 6 further equations/);
+    await val.locator("button.more").click();
+    await val.locator(".eq[data-eq='Shape.Digit.val.eq_70']").waitFor();
+    assert.equal(await val.locator(".eq").count(), 70);
+    assert.equal(fetched.length, 1, "one page holds the six");
+    assert.equal(await val.locator("button.more").count(), 0);
+    const exact = view.locator(".exact-pane .defn.exact[data-decl='Shape.Digit.val']");
+    assert.equal(await exact.locator(".thm").count(), 64);
+    await exact.locator("button.more").click();
+    await exact.locator(".thm[data-eq='Shape.Digit.val.eq_70']").waitFor();
+    assert.equal(await exact.locator(".thm").count(), 70);
+    // At the last digit the seventieth equation applies; the 69 others are named, folded.
+    await pg.goto(origin + `/structure/#/r/${SHAPE.release}/read/P/${encodeURIComponent("P:thm:digit")}`);
+    const st = pg.locator("aside .view :not(.suggestion) > .stmt").first();
+    await st.locator("button.xb").click();
+    const xp = st.locator(".inspect .xp");
+    assert.match(await xp.locator(".eq").textContent(), /Shape\.Digit\.val\.eq_70/);
+    assert.match(await xp.locator("details.na summary").textContent(), /^Not applying here: Shape\.Digit\.val\.eq_1, .* and 57 more$/);
+  });
+
   await check("a statement keeps its order, with each object's own conditions beside it", width, async (pg) => {
     await pg.goto(origin + `/structure/#/r/${SHAPE.release}/read/P/${encodeURIComponent("P:thm:layout")}`);
     const st = pg.locator("aside .view :not(.suggestion) > .stmt");
@@ -1448,7 +1620,7 @@ await check("in the local reader a symbol is linked by choosing it and clicking 
     };
     const comp = await reading("P:thm:layout");
     assert.equal(comp.basis, "reviewed_composition");
-    assert.match(comp.text, /^Every clause, by the auditor's composition/);
+    assert.match(comp.text, /^Every clause, by an argument combining Lean results/);
     assert.match(comp.text, /The auditor's argument: Apply Shape\.layout twice, once for each bound\. Lean has not checked this combination\.\s*Next step: State the combination as one Lean result\./);
     assert.match(comp.text, /The auditor's reading, by A\. Auditor/);
     assert.notEqual(comp.tone, "full", "a composition is not drawn as a Lean result");
@@ -1478,7 +1650,7 @@ await check("in the local reader a symbol is linked by choosing it and clicking 
     };
     const bridge = await report("P:thm:layout");
     assert.equal(bridge.basis, "reviewed_composition");
-    assert.match(bridge.text, /^Every clause, by the auditor's composition \(the reviewer's coverage, recorded with the verdict\)/);
+    assert.match(bridge.text, /^Every clause, by an argument combining Lean results \(the reviewer's coverage, recorded with the verdict\)/);
     assert.match(bridge.text, /Lean has not checked this combination\.\s*Next step: State the combination as one Lean result\./);
     assert.match(bridge.text, /Recorded as a checked bridge \(Shape\.layout for Shape\.Spec\.layout\); no bridge Lean checks now: the target is not the version the reviewer read\./);
     assert.doesNotMatch(bridge.text, /through a checked bridge/);
@@ -1745,6 +1917,41 @@ for (const width of [1300, 390]) {
   });
 }
 
+// A claim joined to an audit's entry by printed number, on a page that cannot show the PDF the
+// audit read, says so beside the audit's status (#408). The audit's own entry, and a claim whose
+// record has no `matched`, look as before; the status is the engine's in every case.
+for (const width of [1300, 390]) {
+  await check("a claim matched by printed number to an audit of another PDF says so", width, async (pg) => {
+    const status = pg.locator("aside .view .chipbtn [data-status]");
+    const note = pg.locator("aside .view .matched");
+    const after = ": the audit read another PDF of the paper than the one shown here.";
+    await pg.goto(origin + "/matched/#/r/paper/read/P/P%3Atheorem-1");
+    await status.waitFor();
+    assert.equal(await status.getAttribute("data-status"), "formal.author-reviewed");
+    assert.equal(await note.getAttribute("data-matched"), "number");
+    assert.equal((await note.textContent()).trim(),
+      "Matched by its printed number to the audit's entry for Latest manuscript (commit 956fe0b)" + after);
+    assert.ok(await pg.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
+    if (process.env.SHOTS) await pg.screenshot({ path: path.join(process.env.SHOTS, `matched-${width}.png`) });
+    // The audit's own entry is joined to no statement of this PDF.
+    const own = MATCHED.claims.find((c) => c.projects);
+    await open(pg, own.id);
+    await pg.waitForFunction(() => document.querySelector("aside .view .chipbtn [data-status]")?.dataset.status === "formal.refuted.corrected");
+    assert.equal(await note.count(), 0);
+    // Without the version's label, the note names the revision the audit read.
+    await pg.goto(origin + "/matched-revision/#/r/paper/read/P/P%3Atheorem-1");
+    await note.waitFor();
+    assert.equal(await status.getAttribute("data-status"), "formal.author-reviewed");
+    assert.equal((await note.textContent()).trim(),
+      "Matched by its printed number to the audit's entry for revision dddddddddddd" + after);
+    // A record without `matched` has no note.
+    await pg.goto(origin + "/published/#/r/paper/read/P/P%3Atheorem-1");
+    await status.waitFor();
+    assert.equal(await status.getAttribute("data-status"), "formal.author-reviewed");
+    assert.equal(await note.count(), 0);
+  });
+}
+
 for (const width of [1300, 390]) {
   await check("the changes since the earlier release name what changed and what is due for review", width, async (pg) => {
     await pg.goto(origin + "/toy/" + `#/r/${TOY.release}/changes`);
@@ -1812,7 +2019,7 @@ await check("a direct audit shows its published readings beside an unchanged sta
   // Each finding resting on a composition shows it: the auditor's argument with its open
   // obligation and the next step, or a checked bridge; neither reads as a direct result.
   const findings = work.locator("[data-kind='finding']");
-  assert.match(await findings.nth(0).locator("strong").first().textContent(), /^States part of the claim, by the auditor's composition$/);
+  assert.match(await findings.nth(0).locator("strong").first().textContent(), /^Part of the claim, by an argument combining Lean results$/);
   const c1 = work.locator("[data-composition='c-1']");
   const t1 = (await c1.textContent()).replace(/\s+/g, " ");
   assert.match(t1, /s1 SYNTHETIC-STEP: some n is even · from Toy\.IsEven/);
@@ -1826,11 +2033,11 @@ await check("a direct audit shows its published readings beside an unchanged sta
   assert.doesNotMatch(t2, /Next step/);
   // A finding recorded as a checked bridge of its own, which Lean does not check, reads as the
   // auditor's composition and says what it was recorded as.
-  assert.match(await findings.nth(2).locator("strong").first().textContent(), /^Every clause, by the auditor's composition$/);
+  assert.match(await findings.nth(2).locator("strong").first().textContent(), /^Every clause, by an argument combining Lean results$/);
   assert.equal(await findings.nth(2).locator("[data-line='recorded']").textContent(),
                "Recorded as a checked bridge (Toy.no_such_bridge for Toy.Spec.synthetic); no bridge Lean checks now: Lean finds no such theorem.");
   assert.doesNotMatch(await findings.nth(2).textContent(), /through a checked bridge/);
-  assert.doesNotMatch(await work.textContent(), /States every clause/);
+  assert.doesNotMatch(await work.textContent(), /in one Lean statement/);
 });
 
 for (const width of [1440, 1000, 390, 320]) {
@@ -2054,12 +2261,12 @@ await check("review opens the selected claim, keeps protocol order and exports a
   const coverage = pg.getByRole("combobox", { name: "Coverage of the claim", exact: true });
   assert.deepEqual(await coverage.locator("option").allTextContents(), ["Not recorded", "Every clause", "Part of the claim"]);
   await coverage.selectOption({ label: "Every clause" });
-  await pg.getByRole("combobox", { name: "How it is supported", exact: true }).selectOption({ label: "By my composition of these results" });
+  await pg.getByRole("combobox", { name: "How it is supported", exact: true }).selectOption({ label: "By an argument combining Lean results" });
   await pg.getByRole("textbox", { name: "Your argument: how these results together give the claim" }).fill("The sum of two even numbers is even, applied once.");
   assert.equal(await pg.locator(".review .author").count(), 0);
   await pg.getByRole("button", { name: "Record verdict and show the author's review" }).click();
   await pg.locator(".review .author").waitFor();
-  assert.match(await pg.locator(".review .unit").textContent(), /Your coverage: Every clause, by my composition of these results/);
+  assert.match(await pg.locator(".review .unit").textContent(), /Your coverage: Every clause, by an argument combining Lean results/);
   await pg.getByRole("button", { name: "Save report", exact: true }).click();
   await pg.getByRole("button", { name: "Export reports (1 new)", exact: true }).waitFor();
   const report = await pg.evaluate(() => JSON.parse(localStorage.getItem("prooflens-review:toy-paper")).reports[0]);
@@ -2256,7 +2463,7 @@ for (const width of [1300, 390]) {
     // The engine's counts, each claim once: the same coverage with different bases, and an
     // unresolved question; nothing is added into a total.
     assert.deepEqual(await buttons("coverage"), ["Any", "Every clause (2 statements)", "Unresolved (1 statement)", `Not assessed (${SHAPE.claims.length - 3} statements)`]);
-    assert.deepEqual(await buttons("basis"), ["Any", "By a reviewer's composition (1 statement)", "Through a checked bridge (1 statement)", "Basis not recorded (1 statement)"]);
+    assert.deepEqual(await buttons("basis"), ["Any", "By an argument combining Lean results (1 statement)", "Through a checked bridge (1 statement)", "Basis not recorded (1 statement)"]);
     assert.deepEqual(await buttons("findings"), ["Any", "Open questions (1 statement)"]);
     assert.match(await pg.locator(".coverage .inventory").textContent(), new RegExp(`^${SHAPE.claims.length} statements, ${SHAPE.claims.length} linked to \\d+ declarations$`));
     assert.doesNotMatch(await pg.locator(".coverage").textContent(), /%/);
@@ -2278,7 +2485,7 @@ for (const width of [1300, 390]) {
     assert.deepEqual(await buttons("coverage"), ["Any", "Every clause (1 statement)", "Unresolved (1 statement)", `Not assessed (${SHAPE.claims.length - 2} statements)`]);
     await pg.getByRole("button", { name: "Every clause (1 statement)", exact: true }).click();
     assert.equal(await pg.locator(".coverage .claims li").count(), 1);
-    assert.match(await pg.locator(".coverage .claims li").textContent(), /By a reviewer's composition \(recorded as through a checked bridge\)/);
+    assert.match(await pg.locator(".coverage .claims li").textContent(), /By an argument combining Lean results \(recorded as through a checked bridge\)/);
     assert.match(await pg.locator(".coverage .claims li").textContent(), /Current, informed/);
     assert.equal(await pg.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, "no horizontal scroll");
   });
@@ -2299,7 +2506,7 @@ await check("the overview keeps units apart and shows a workspace's readings as 
   await readings.selectOption({ label: "Workspace readings by llm:synthetic-model (independent)" });
   await pg.getByRole("button", { name: "Every clause (1 statement)", exact: true }).click();
   assert.equal(await pg.locator(".coverage .claims li").count(), 1);
-  assert.match(await pg.locator(".coverage .claims li").textContent(), /Definition 1\.1.*Every clause.*By a reviewer's composition \(recorded as through a checked bridge\)/s);
+  assert.match(await pg.locator(".coverage .claims li").textContent(), /Definition 1\.1.*Every clause.*By an argument combining Lean results \(recorded as through a checked bridge\)/s);
 });
 
 await check("a proof step with no Lean link is reviewed as printed and reported as a step", 390, async (pg) => {
@@ -2484,7 +2691,7 @@ print(json.dumps(wsp.read(p)))`);
         const comp = inv.locator("[data-kind=finding]", { hasText: "Apply it to each summand." });
         await comp.waitFor();
         assert.match((await comp.textContent()).replace(/\s+/g, " "),
-          /^Every clause, by the auditor's composition.*Lean has not checked this combination\..*Next step: State the combination as one Lean result\./);
+          /^Every clause, by an argument combining Lean results.*Lean has not checked this combination\..*Next step: State the combination as one Lean result\./);
       } finally { await pg2.close(); }
     });
 
@@ -2559,9 +2766,9 @@ print("null")`);
       const comp = inv.locator("[data-composition='c-tri']");
       await comp.waitFor();
       assert.match((await comp.textContent()).replace(/\s+/g, " "),
-        /^Every clause, by the auditor's composition · composition c-tri · human:Test-Auditor s1 the closed form for every n · from Toy\.Acceptance\.thm_triangle · establishes r1 Lean has not checked this combination\. Next step: State the combination as one Lean result\.$/);
+        /^Every clause, by an argument combining Lean results · composition c-tri · human:Test-Auditor s1 the closed form for every n · from Toy\.Acceptance\.thm_triangle · establishes r1 Lean has not checked this combination\. Next step: State the combination as one Lean result\.$/);
       const f = inv.locator("[data-kind=finding]", { hasText: "By the composition." });
-      assert.match((await f.textContent()).replace(/\s+/g, " "), /^Every clause, by the auditor's composition.*Rests on composition c-tri\./);
+      assert.match((await f.textContent()).replace(/\s+/g, " "), /^Every clause, by an argument combining Lean results.*Rests on composition c-tri\./);
     });
 
 
@@ -2617,7 +2824,7 @@ print("null")`);
       assert.match(await inv.locator("[data-kind=finding]", { hasText: "k = 0, n = 1." }).textContent(), /The printed step: false as printed/);
       // A finding recorded as a checked bridge with no bridge reads as the auditor's composition.
       const fixed = inv.locator("[data-kind=finding]", { hasText: "holds for k ≥ 1" });
-      assert.match(await fixed.locator("strong").first().textContent(), /^Every clause, by the auditor's composition$/);
+      assert.match(await fixed.locator("strong").first().textContent(), /^Every clause, by an argument combining Lean results$/);
       assert.equal(await fixed.locator("[data-line='recorded']").textContent(),
                    "Recorded as a checked bridge; no bridge Lean checks now: no bridge is recorded.");
     });
@@ -2704,6 +2911,109 @@ print(json.dumps(order_route(work, data)({"order": ["informed"]})))`);
       await pg.locator(".review [role=status]", { hasText: "draws on the workspaces' records" }).waitFor();
       assert.equal(await order.inputValue(), "informed");
       assert.equal((await saved()).exposure.length, 1);
+    });
+  } finally { py.kill(); }
+}
+
+// The findings a revision of the paper reopens (#120), under the engine's own local server: a
+// workspace made by the engine against the toy build, with the version map it keeps from an
+// earlier release to this one (a synthetic map of the toy's claims: one moved and renumbered,
+// one changed, one ambiguous), and a declaration changed in this build since.
+{
+  fs.cpSync(path.join(root, "toy"), path.join(root, "toyrev"), { recursive: true });
+  const work = path.join(root, "toyrev-work");
+  const made = spawnSync(process.env.PYTHON || "python3", ["-c", String.raw`
+import json, sys
+from pathlib import Path
+from prooflens import review_cli as rc
+from prooflens import workspace as wsp
+from prooflens.targets import Snapshot
+work, data, release = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
+s = Snapshot(data)
+p = wsp.open_for(work, rc.parse_reviewer("human:Test-Auditor"), "informed", sources=s.sources())
+put = lambda r: {"op": "put", "record": r}
+wsp.update(p, [
+  put({"id": "e-even", "kind": "evidence", "claim": "T:thm:even-add", "role": "supports", "ref": {"decl": "Toy.PaperSpec.thm_even_add"}}),
+  put({"id": "f-moved", "kind": "finding", "claim": "T:thm:even-add", "coverage": "full", "basis": "direct", "evidence": ["e-even"], "note": "SYNTHETIC: the Lean states it."}),
+  put({"id": "f-quiet", "kind": "finding", "claim": "T:thm:even-add", "coverage": "partial", "note": "SYNTHETIC: a note on the moved theorem."}),
+  put({"id": "f-bound", "kind": "finding", "claim": "T:thm:bound", "coverage": "full", "note": "SYNTHETIC: the bound with its constant."}),
+  put({"id": "f-pred", "kind": "finding", "claim": "T:prop:pred", "coverage": "partial", "note": "SYNTHETIC: the predecessor."})], s)
+wsp.update(p, [{"op": "submit", "id": i, "base_rev": 1} for i in ("f-moved", "f-quiet", "f-bound", "f-pred")], s)
+def side(cid, number, line, sha=None):
+    return {"claim": cid, "number": number, "location": f"toy.tex:{line}", "sha256": sha or s.chunk(cid)["source_sha256"]}
+doc = {"schema": "prooflens/version-map@1", "paper": "T", "from": {"release": "r-earlier"}, "to": {"release": release},
+  "claims": [
+    {"class": "moved", "reason": "the same text at another place, now Theorem 2.2", "by": ["text"], "renumbered": True, "moved": True,
+     "from": side("T:thm:even-add", "Theorem 2.1", 40), "to": side("T:thm:even-add", "Theorem 2.2", 44)},
+    {"class": "changed", "reason": "its label leads to a passage with other text", "by": ["label"],
+     "from": side("T:thm:bound", "Theorem 2.5", 70), "to": side("T:thm:bound", "Theorem 2.6", 74, "f" * 64),
+     "change": {"diff": ["--- toy.tex:70 at r1", "+++ toy.tex:74 at r2", "@@ -1 +1 @@", "-such that $T_n \\le C n^2$", "+such that $T_n \\le C n^2 + 1$ <img src=x onerror=alert(1)>"]}},
+    {"class": "ambiguous", "reason": "label prop:pred occurs 2 times", "by": [], "from": side("T:prop:pred", "Proposition 2.3", 50), "to": None,
+     "candidates": [{"claim": "T:prop:pred", "by": ["label"]}, {"claim": "T:rem:pred", "by": ["label"]}]}],
+  "passages": []}
+wsp.update(p, [{"op": "version-map", "map": doc}], s)
+# A declaration the moved theorem's finding cites changes in this build.
+for f in (data / "claims").glob("*.json"):
+    t = f.read_text()
+    fp = s.fingerprints()["Toy.PaperSpec.thm_even_add"]
+    if fp in t:
+        f.write_text(t.replace(fp, "pl-fp-v1:synthetic-later"))
+print(json.dumps({"id": wsp.read(p)["id"]}))`, work, path.join(root, "toyrev", "data"), TOY.release], { encoding: "utf8" });
+  if (made.status !== 0) throw new Error("the engine could not make the workspace:\n" + made.stderr);
+  const wsId = JSON.parse(made.stdout).id;
+  const { spawn } = await import("node:child_process");
+  const py = spawn(process.env.PYTHON || "python3", [path.join(here, "fixtures", "workspace_server.py"), path.join(root, "toyrev"), work]);
+  const port = await new Promise((ok, fail) => {
+    py.stdout.once("data", (d) => ok(String(d).trim()));
+    py.once("exit", (c) => fail(new Error("the workspace server stopped: " + c)));
+  });
+  try {
+    for (const width of [390, 1300]) {
+      await check("the changes view shows the findings a revision of the paper reopens", width, async (pg) => {
+        await pg.goto(`http://127.0.0.1:${port}/#/r/${TOY.release}/changes`);
+        const section = pg.locator("[data-revision]");
+        await section.waitFor();
+        assert.match(await section.locator(".where").textContent(), new RegExp(`Workspace ${wsId}, paper T: release r-earlier → ${TOY.release}; version map kept by human:Test-Auditor`));
+        // The changed theorem first: the earlier finding, the change with both texts, the
+        // dependency and the question; the diff is text.
+        const bound = section.locator("article[data-claim='T:thm:bound']");
+        assert.match(await bound.locator("h3").textContent(), /Theorem 2\.5 → Theorem 2\.6\s*Passage changed/);
+        assert.equal(await bound.locator("h3 a").getAttribute("href"), `#/r/${TOY.release}/claim/T%3Athm%3Abound`);
+        const fb = bound.locator("[data-finding='f-bound']");
+        assert.equal(await fb.getAttribute("data-state"), "reopened");
+        assert.match(await fb.locator("p").first().textContent(), /^Due for review: finding f-bound by human:Test-Auditor: Every clause$/);
+        assert.equal(await fb.locator(".earlier").textContent(), "SYNTHETIC: the bound with its constant.");
+        assert.match(await fb.locator(".dep p").first().textContent(), /^Changed: the passage of T:thm:bound \(toy\.tex:70 → toy\.tex:74\): its label leads to a passage with other text\.$/);
+        assert.deepEqual(await fb.locator(".diff .del").allTextContents(), ["-such that $T_n \\le C n^2$"]);
+        assert.deepEqual(await fb.locator(".diff .add").allTextContents(), ["+such that $T_n \\le C n^2 + 1$ <img src=x onerror=alert(1)>"]);
+        assert.equal(await fb.locator(".diff img").count(), 0);
+        assert.equal(await fb.locator(".question").textContent(), "Does finding f-bound still hold for the changed text of Theorem 2.6 (T:thm:bound)?");
+        // The ambiguous claim: not known to be current, with the candidates.
+        const pred = section.locator("[data-finding='f-pred']");
+        assert.equal(await pred.getAttribute("data-state"), "unchecked");
+        assert.match(await pred.locator(".dep p").textContent(), /^Not known: the passage of T:prop:pred \(toy\.tex:50\): the version map cannot tell which later claim Proposition 2\.3 \(T:prop:pred\) is: .*candidates: T:prop:pred, T:rem:pred.*--match\.$/);
+        // The moved theorem: its passage keeps both findings current; the declaration one cites
+        // changed in this build, which reopens that one only.
+        const moved = section.locator("article[data-claim='T:thm:even-add']");
+        assert.match(await moved.locator("h3").textContent(), /Theorem 2\.1 → Theorem 2\.2\s*Moved/);
+        const fm = moved.locator("[data-finding='f-moved']");
+        assert.equal(await fm.getAttribute("data-state"), "reopened");
+        assert.match(await fm.locator(".kept").textContent(), /^Still current: the passage of T:thm:even-add: the same text at another place, now Theorem 2\.2\.$/);
+        assert.equal(await fm.locator("[data-dep=build] p").first().textContent(), "Changed in this build: Toy.PaperSpec.thm_even_add changed.");
+        const fq = moved.locator("[data-finding='f-quiet']");
+        assert.equal(await fq.getAttribute("data-state"), "current");
+        assert.match(await fq.textContent(), /Still current: finding f-quiet by human:Test-Auditor: Part of the claim[\s\S]*Still current: the passage of T:thm:even-add/);
+        // Those with something to review come first.
+        assert.deepEqual(await section.locator("article.claim").evaluateAll((xs) => xs.map((x) => x.dataset.claim)),
+                         ["T:thm:bound", "T:thm:even-add", "T:prop:pred"]);
+        assert.ok(await pg.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), "no horizontal scroll");
+        if (process.env.SHOTS) await pg.screenshot({ path: path.join(process.env.SHOTS, `revision-${width}.png`), fullPage: true });
+      });
+    }
+    await check("a static copy of the site shows no workspace across the revision", 1300, async (pg) => {
+      await pg.goto(origin + "/toychanges/" + `#/r/${TOY.release}/changes`);
+      await pg.locator("[data-changes]").waitFor();
+      assert.equal(await pg.locator("[data-revision]").count(), 0);
     });
   } finally { py.kill(); }
 }

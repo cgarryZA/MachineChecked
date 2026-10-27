@@ -361,21 +361,50 @@ def record_key(record: dict) -> str:
 
 EXPANSION_REF = ("at", "id", "name", "key")
 
+# A declaration's record lists at most this many of its equations; the others are stored in
+# pages of as many (`split_expansions`).
+EQUATIONS_INLINE = 64
+
 
 def is_expansion_ref(x) -> bool:
-    """Whether `x` is a reference to an expansion stored on its own (`split_expansions`)."""
+    """Whether `x` is a reference to a part stored on its own (`split_expansions`): an
+    expansion, or a page of a declaration's equations."""
     return isinstance(x, dict) and "key" in x and set(x) <= set(EXPANSION_REF)
 
 
-def split_expansions(obj, out: dict[str, dict]):
-    """`obj` with each definition expanded at an application (an entry of a printed term's
-    `expansions`) replaced by a reference `{at, id, name, key}`, and the expansion itself put in
-    `out` under `key` (`record_key` of the expansion, its own nested expansions replaced in turn).
-    The reader fetches an expansion when it is opened, so a claim file carries only the
-    references, and an expansion that recurs in several statements is stored once. Display
-    only: no status reads an expansion."""
+def fingerprints(store: dict[str, dict]) -> dict[str, str]:
+    """The fingerprint of each declaration of `store` by name, for `split_expansions`; a name
+    the store gives two fingerprints (two projects' declarations on one paper page) has none."""
+    seen: dict[str, set] = {}
+    for r in store.values():
+        if isinstance(r, dict) and r.get("name") and r.get("fingerprint"):
+            seen.setdefault(r["name"], set()).add(r["fingerprint"])
+    return {n: next(iter(fs)) for n, fs in seen.items() if len(fs) == 1}
+
+
+def _stored(part: dict, out: dict[str, dict]) -> str:
+    key = record_key(part)
+    out[key] = part
+    return key
+
+
+def split_expansions(obj, out: dict[str, dict], pins: dict[str, str] | None = None):
+    """`obj` with what the reader fetches only when it is opened put in `out` under its key
+    (`record_key`) and replaced by a reference to it:
+
+    - each definition expanded at an application (an entry of a printed term's `expansions`),
+      by `{at, id, name, key}`, its own nested expansions replaced in turn. With `pins` (the
+      declarations' fingerprints by name, `fingerprints`), an expansion records the fingerprint
+      of the definition it expands (`fingerprint`), so that its key changes whenever the
+      definition does, not only when what it prints does;
+    - a declaration's equations after the first `EQUATIONS_INLINE` (`equations`, listed with
+      `equation_names`), in pages of as many, `{definition, equations}`, by `equations_more`:
+      `{name, key}` for each page, in order, `name` the theorem of its first equation.
+
+    A claim file thus carries only the references, and a part that recurs in several statements
+    is stored once. Display only: no status reads an expansion or an equation."""
     if isinstance(obj, list):
-        return [split_expansions(v, out) for v in obj]
+        return [split_expansions(v, out, pins) for v in obj]
     if not isinstance(obj, dict):
         return obj
     res = {}
@@ -386,19 +415,29 @@ def split_expansions(obj, out: dict[str, dict]):
                 if is_expansion_ref(x) or not isinstance(x, dict):
                     refs.append(x)
                     continue
-                full = split_expansions(x, out)
-                key = record_key(full)
-                out[key] = full
+                full = split_expansions(x, out, pins)
+                if pins and "fingerprint" not in full and pins.get(full.get("name")):
+                    full["fingerprint"] = pins[full["name"]]
                 refs.append({"at": full.get("at"), "id": full.get("id"),
-                             "name": full.get("name"), "key": key})
+                             "name": full.get("name"), "key": _stored(full, out)})
             res[k] = refs
         else:
-            res[k] = split_expansions(v, out)
+            res[k] = split_expansions(v, out, pins)
+    eqs = res.get("equations")
+    if "equation_names" in res and isinstance(eqs, list) and len(eqs) > EQUATIONS_INLINE:
+        n = EQUATIONS_INLINE
+        pages = [eqs[i:i + n] for i in range(n, len(eqs), n)]
+        res["equations"] = eqs[:n]
+        res["equations_more"] = list(res.get("equations_more") or []) + [
+            {"name": p[0].get("name"), "key": _stored({"definition": res.get("name"),
+                                                       "equations": p}, out)}
+            for p in pages]
     return res
 
 
 def expansion_keys(obj) -> set[str]:
-    """The keys of the expansions `obj` refers to (not those the expansions refer to)."""
+    """The keys of the parts stored on their own that `obj` refers to (expansions and pages of
+    equations), not those they refer to."""
     found: set[str] = set()
     stack = [obj]
     while stack:

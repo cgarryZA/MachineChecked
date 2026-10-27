@@ -634,29 +634,53 @@ def _content_check(refs, claims, claim_by_id, retrieval, claim_text):
 
 
 def _apply_map(refs, version_map, st):
+    """Give each reference that disagrees with the paper the counterpart the map names for its
+    number: `reference` for one, `ambiguous` for several, or `none` when the map's only entries
+    for it name no counterpart (a claim the later version does not have). An entry's `match`
+    (the map's class and basis, `version_map.numbers`) is kept as `matches`."""
     targets: dict[str, list[str]] = {}
+    matches: dict[str, list[dict]] = {}
     for e in version_map.get("entries") or []:
         old = _norm_ref(str(e.get("old") or ""))
         new = e.get("new")
         new = [new] if isinstance(new, str) else list(new or [])
         if old:
+            targets.setdefault(old, [])
+            if e.get("match"):
+                matches.setdefault(old, []).append(e["match"])
             for n in new:
                 nn = _norm_ref(str(n))
-                if nn and nn not in targets.setdefault(old, []):
+                if nn and nn not in targets[old]:
                     targets[old].append(nn)
     src = version_map.get("source")
     for o in refs:
         if o["status"] not in ("absent", "other-kind") and not o.get("stale_lead"):
             continue
-        new = targets.get(o["reference"])
-        if not new:
+        if o["reference"] not in targets:
             continue
+        new = targets[o["reference"]]
+        why = {"matches": matches[o["reference"]]} if o["reference"] in matches else {}
         if len(new) == 1:
             k, n = new[0].rsplit(" ", 1)
             ids = st.get((canonical(k), n), [])
-            o["current"] = {"reference": new[0], "claims": ids, "source": src}
-        else:
-            o["current"] = {"ambiguous": new, "source": src}
+            o["current"] = {"reference": new[0], "claims": ids, "source": src, **why}
+            # A counterpart the map only proposes (its claim is ambiguous) is said to be one.
+            if why and all(m.get("class") == "ambiguous" for m in why["matches"]):
+                o["current"]["proposed"] = True
+        elif new:
+            o["current"] = {"ambiguous": new, "source": src, **why}
+        elif why:
+            o["current"] = {"none": True, "source": src, **why}
+
+
+def resolve(refs: list[dict], version_map: dict, statements: dict) -> list[dict]:
+    """The references with the counterpart a version map names for each one that disagrees
+    with the paper (`_apply_map`), and their messages again. `statements` is the paper's
+    numbering (`inventory(...)["statements"]`). The references keep their statuses."""
+    _apply_map(refs, version_map, statements)
+    for o in refs:
+        o["message"] = message(o)
+    return refs
 
 
 def suspect(o: dict) -> bool:
@@ -719,8 +743,12 @@ def message(o: dict) -> str:
     out = f"{where(o)} cites {o['reference']}{of}: {o['detail']}"
     cur = o.get("current")
     if cur:
-        out += (f"; the version map gives {cur['reference']}" if cur.get("reference")
-                else f"; the version map gives several: {', '.join(cur['ambiguous'])}")
+        out += (f"; the version map proposes {cur['reference']}, a match not resolved"
+                if cur.get("proposed")
+                else f"; the version map gives {cur['reference']}" if cur.get("reference")
+                else f"; the version map gives several: {', '.join(cur['ambiguous'])}"
+                if cur.get("ambiguous")
+                else "; the version map finds no counterpart of it in this version")
     return out
 
 

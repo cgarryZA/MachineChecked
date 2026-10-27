@@ -233,11 +233,15 @@ def _print_simple(body, summary: dict | None = None):
         print(f"  {k:4d}  {s}")
     for line in text(summary):
         print(line)
+    from .semantic import in_text, reading_words
     for c in body.get("claims", []):
         cor = c.get("correspondence") or {}
         if cor.get("basis") == "reviewed_composition":
-            print(f"composition {c.get('number') or c['id']}: every clause by the auditor's "
-                  f"composition, which Lean has not checked. Next step: {cor['next_step']}")
+            # The reading's own coverage and basis: a composition may cover part of the claim,
+            # or state it differently.
+            words = reading_words(cor.get("coverage"), cor["basis"]) or "no coverage recorded"
+            print(f"composition {c.get('number') or c['id']}: {in_text(words)}, which Lean has "
+                  f"not checked. Next step: {cor['next_step']}")
 
 
 # -- everyday commands ------------------------------------------------------------------------
@@ -453,6 +457,9 @@ def _print_workspace(v: dict) -> None:
                 from .simple import COMPOSITION_NEXT_STEP
                 print("           Lean has not checked this combination. Next step: "
                       + COMPOSITION_NEXT_STEP)
+            if f.get("dependencies") is not None:
+                from .dependencies import lines as dependency_lines
+                print("\n".join(dependency_lines(f["dependencies"], f["currency"])))
         for q in c["questions"]:
             print(f"  question {q['id']}  {q['state']}: {q['text']}")
         for comp in c.get("compositions") or []:
@@ -464,6 +471,15 @@ def _print_workspace(v: dict) -> None:
             print("  requirements:")
             for line in reading_lines(rd):
                 print("  " + line)
+    rev = v.get("revisions") or {}
+    if rev:
+        from .reopen import lines as reopened_lines
+        for doc in rev.get("maps") or []:
+            print("\n".join(reopened_lines(doc)))
+        for m in rev.get("other") or []:
+            print(f"  a version map of paper {m['paper']} from release "
+                  f"{m['from'].get('release')} to release {m['to'].get('release')} is kept; it "
+                  f"judges the findings against a build of release {m['to'].get('release')}")
 
 
 def _workspace_main(a, snap, root, p: Path) -> None:
@@ -566,7 +582,12 @@ def cmd_workspace(a):
                 if snap is None:
                     sys.exit("no build to resolve the claim against: run view or build first")
                 claim = snap.resolve_claim(a.claim)
-            v = wsp.view(wsp.read(p), snap, claim, root, check_facts=a.action == "show")
+            ws = wsp.read(p)
+            v = wsp.view(ws, snap, claim, root, check_facts=a.action == "show")
+            if a.action == "show" and ws.get("version_maps"):
+                # The findings each version map it keeps reopens, for the maps to this build.
+                from .reopen import for_site
+                v["revisions"] = for_site(ws, snap, root, work, True, v)
             if a.json:
                 return _print_json({**v, "path": str(p)})
             _print_workspace(v)
@@ -991,6 +1012,10 @@ def cmd_changes(a):
         sys.exit("`changes` compares releases of the full assessment: run it beside "
                  "machinechecked.toml (or pass -c)")
     cfg = cfgmod.load(_config_arg(a))
+    if a.map:
+        return _changes_map(a, cfg)
+    if a.paper or a.match or a.save:
+        sys.exit("--paper, --match and --save belong to the version map: add --map")
     try:
         doc = chg.between(cfg.out_dir, a.from_release, a.to_release)
     except chg.ChangesError as e:
@@ -1020,6 +1045,72 @@ def cmd_changes(a):
     if a.json:
         return _print_json(doc)
     print(chg.text(doc, a.all))
+
+
+def _changes_map(a, cfg):
+    """`machinechecked changes --map`: the version map of a paper between two releases
+    (`version_map.py`): each claim of the earlier revision matched to the later one by its
+    passage, with both sides' facts; with `--workspace`, the workspace's findings it reopens
+    (`reopen.py`). It reads stored evidence and the manuscripts, and changes nothing but, with
+    `--save`, the version maps the workspace keeps."""
+    from . import version_map as vm
+    resolve = []
+    for m in a.match:
+        old, sep, new = m.partition("=")
+        if not (sep and old and new):
+            sys.exit(f"--match {m}: give it as EARLIER=LATER, an earlier and a later claim id")
+        resolve.append((old, new))
+    ws = path = None
+    if a.workspace:
+        from . import workspace as wsp
+        try:
+            path = wsp.find(cfg.out_dir, a.workspace)
+            ws = wsp.read(path)
+        except wsp.WorkspaceError as e:
+            sys.exit(str(e))
+    elif a.save:
+        sys.exit("--save keeps the version map in a workspace: add --workspace ID")
+    from . import reopen as ro
+    try:
+        paper = vm._paper(cfg, a.paper)
+        doc = vm.between(cfg, paper.id, a.from_release, a.to_release, a.from_source,
+                         a.to_source, resolve, ro.regions_of(ws, paper.id) if ws else ())
+    except (ValueError, RuntimeError, OSError) as e:
+        sys.exit(f"changes --map: {e}")
+    if ws is not None:
+        _map_workspace(cfg, doc, ws, path, a.save)
+    if a.json:
+        return _print_json(doc)
+    print(vm.text(doc, a.all))
+    if ws is not None:
+        print()
+        print("\n".join(ro.lines(doc["workspace"])))
+        if a.save:
+            print(f"  kept the version map in workspace {ws['id']}: the reader's Details page, "
+                  "`workspace show` and its export judge its findings with it")
+
+
+def _map_workspace(cfg, doc: dict, ws: dict, path: Path, save: bool) -> None:
+    """`changes --map --workspace ID`: the workspace's findings judged across the version map
+    `doc` (`reopen.py`), their Lean side against the later release's site when it is built, as
+    `doc['workspace']`; with `save`, the map kept in the workspace."""
+    from . import reopen as ro
+    from . import workspace as wsp
+    from .targets import Snapshot, TargetError
+    try:
+        snap = Snapshot(cfg.out_dir / "site" / "data")
+    except TargetError:
+        snap = None
+    if snap is not None and snap.index.get("release") != doc["to"].get("release"):
+        snap = None
+    view = wsp.view(ws, snap, None, cfg.lean_root) if snap is not None else None
+    doc["workspace"] = ro.reopen(doc, ws, snap, cfg.lean_root, ro.lean_texts(cfg.out_dir, doc),
+                                 view=view)
+    if save:
+        try:
+            wsp.update(path, [{"op": "version-map", "map": doc}], snap, cfg.lean_root)
+        except wsp.WorkspaceError as e:
+            sys.exit(f"changes --map --save: {e}")
 
 
 def cmd_bundle(a):
@@ -1262,11 +1353,13 @@ def cmd_compare(a):
             except wsp.WorkspaceError as e:
                 raise cmp.CompareError(str(e), "unknown-workspace") from None
             v = wsp.view(ws, Snapshot(work / "site" / "data"), cid, root)
+            from .objects import derivations
             reading = {"workspace": ws["id"], "reviewer": v["reviewer"], "mode": v["mode"],
                        **((v["claims"].get(cid) or {}).get("reading")
                           or {"requirements": [], "witnesses": [], "alignments": [],
                               "questions": []}),
-                       "compositions": (v["claims"].get(cid) or {}).get("compositions") or []}
+                       "compositions": (v["claims"].get(cid) or {}).get("compositions") or [],
+                       "derivations": derivations((v["claims"].get(cid) or {}).get("evidence"))}
         out = cmp.claim_packet(site, a.claim, a.stage, a.limit, a.after, reading)
     except cmp.CompareError as e:
         if e.kind in ("no-build", "no-project") and not a.json:
@@ -1522,11 +1615,29 @@ def main(argv=None):
     ch.add_argument("--to", dest="to_release", metavar="RELEASE",
                     help="the later release (default: the latest)")
     ch.add_argument("--from-source", metavar="DIR",
-                    help="the manuscript folder of the earlier revision, to show changed text")
+                    help="the manuscript folder of the earlier revision, to show changed text "
+                    "(with --map, also git:REV: the configured folder as committed at REV)")
     ch.add_argument("--to-source", metavar="DIR",
-                    help="the manuscript folder of the later revision, to show changed text")
+                    help="the manuscript folder of the later revision, to show changed text "
+                    "(with --map, also git:REV)")
     ch.add_argument("--workspace", metavar="ID",
-                    help="also list this workspace's records that are no longer current")
+                    help="also list this workspace's records that are no longer current (with "
+                    "--map: its findings each paper change reopens, with the change and what "
+                    "they rest on)")
+    ch.add_argument("--save", action="store_true",
+                    help="with --map and --workspace: keep the version map in the workspace, for "
+                    "the reader, `workspace show` and its export")
+    ch.add_argument("--map", action="store_true",
+                    help="the version map: match each claim of the earlier paper revision to "
+                    "the later one by its passage (unchanged, moved, changed, context-changed, "
+                    "removed, new or ambiguous), with each release's own status and reviews; "
+                    "the manuscripts are read from --from-source and --to-source, else at each "
+                    "release's revision")
+    ch.add_argument("--paper", metavar="ID", help="with --map: the paper (needed when the "
+                    "configuration has several)")
+    ch.add_argument("--match", action="append", default=[], metavar="EARLIER=LATER",
+                    help="with --map: the maintainer's match of an earlier claim that no passage "
+                    "or label matched to a later claim nothing else is matched to; repeatable")
     ch.add_argument("--all", action="store_true", help="list unchanged claims too")
     ch.add_argument("--json", action="store_true")
     ch.set_defaults(func=cmd_changes)
@@ -1625,7 +1736,9 @@ def main(argv=None):
                     "proof-facts NAME (the facts inside its proof), uses NAME (where it is "
                     "applied, with the source of each premise), composition CLAIM (the "
                     "auditors' compositions for it, with --workspace for one workspace), impact "
-                    "NAME (how each main result uses it, and which claims' Lean uses it)")
+                    "NAME (how each main result uses it, and which claims' Lean uses it), "
+                    "expansion KEY (a definition at the arguments of one application, by the "
+                    "key a statement gives it)")
     co.add_argument("--match", metavar="TEXT",
                     help="with proof-facts: rank the facts by the symbols they share with TEXT")
     co.add_argument("--main", action="append", metavar="NAME",

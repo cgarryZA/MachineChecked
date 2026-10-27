@@ -481,7 +481,9 @@ def correspondence(claim: dict, entry: dict, bridge: dict | None = None) -> dict
     some), the auditor's argument for a reviewed composition, and the bridge's evidence
     (`bridge`, from `bridge_evidence`) for a checked bridge. An unresolved reading keeps its open
     question and what would decide it. A value outside the supported ones is dropped, never
-    guessed, and a basis not given stays unspecified (`None`). A stored `composed` coverage reads
+    guessed, and a basis not given stays unspecified (`None`). A basis says how the linked
+    declarations support the coverage, so a reading with none linked has no basis, and none of
+    the references, argument or bridge that go with one. A stored `composed` coverage reads
     as `full` with basis `reviewed_composition`, its note as the argument when none is given. A
     reviewed composition carries `next_step`, stating the combination as one Lean result."""
     if "lean" in entry:
@@ -499,6 +501,8 @@ def correspondence(claim: dict, entry: dict, bridge: dict | None = None) -> dict
         if not (note or cov):
             return None
         linked = entry["lean"] if isinstance(entry["lean"], list) else []
+        if not linked:
+            basis = None
         refs = entry.get("refs")
         refs = [n for n in refs if n in linked] if isinstance(refs, list) else list(linked)
         if basis == "checked_bridge":
@@ -680,31 +684,25 @@ def route_link_names(claim: dict, entry: dict) -> list[str]:
     return list(claim.get("declared_route") or [])
 
 
-COVERAGE_WORDS = {"full": "every clause", "partial": "part of the claim",
-                  "changed": "stated differently", "related": "a related result, not this claim",
-                  "unresolved": "unresolved"}
-BASIS_WORDS = {"direct": "in one Lean statement", "reviewed_composition":
-               "by the auditor's composition", "checked_bridge": "through a bridge"}
-
-
 def reading_text(cor: dict | None) -> str:
-    """A correspondence reading (`correspondence`) for the terminal: its coverage and basis,
-    note, the composition's argument with what Lean has not checked and the next step, a
-    bridge's state, and an unresolved reading's question. Empty when nothing is recorded."""
+    """A correspondence reading (`correspondence`) for the terminal: its coverage and basis (in
+    the words of `semantic.reading_words`), note, the composition's argument with what Lean has
+    not checked and the next step, a bridge's state, and an unresolved reading's question. Empty
+    when nothing is recorded."""
+    from .semantic import reading_words
     cor = cor or {}
     if not (cor.get("note") or cor.get("coverage")):
         return ""
-    head = COVERAGE_WORDS.get(cor.get("coverage"), "")
-    if head and cor.get("basis") in BASIS_WORDS:
-        head += ", " + BASIS_WORDS[cor["basis"]]
-    lines = [head.capitalize()] if head else []
+    b = cor.get("bridge") or {}
+    # A bridge reads as checked only while Lean checks it.
+    head = reading_words(cor.get("coverage"), cor.get("basis"), b.get("state") or "unchecked")
+    lines = [head] if head else []
     if cor.get("note"):
         lines.append(cor["note"])
     if cor.get("basis") == "reviewed_composition":
         lines.append("The auditor's argument: " + (cor.get("argument") or "not written."))
         lines.append("Lean has not checked this combination. Next step: "
                      + (cor.get("next_step") or COMPOSITION_NEXT_STEP))
-    b = cor.get("bridge") or {}
     if cor.get("basis") == "checked_bridge" and b:
         lines.append(f"Bridge {b.get('theorem')} to target {b.get('target')}: "
                      + {"checked": "Lean checks it", "stale": "out of date: "
@@ -2323,9 +2321,10 @@ def _link_view(l: dict, root: Path | None = None) -> dict:
             "range": (rec.get("decl") or {}).get("range"),
             "module": (rec.get("decl") or {}).get("module"),
             "doc": (rec.get("decl") or {}).get("doc"),
-            # A linked definition: what it says (its body or equations, and its source).
-            "definition": _definition(rec["decl"]) if "defined_by" in (rec.get("decl") or {})
-            else None}
+            # A linked definition: what it says (its body or equations, and its source); a
+            # linked structure: its fields.
+            "definition": _definition(rec["decl"])
+            if {"defined_by", "structure"} & set(rec.get("decl") or {}) else None}
 
 
 def _definition(decl: dict) -> dict:

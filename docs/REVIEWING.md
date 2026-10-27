@@ -222,8 +222,8 @@ which objects of different steps are the same, and what remains open:
 
 Full coverage is recorded only when every requirement of the claim is established by a step and
 no obligation is open; two separate existence results leave a `compatible witnesses` obligation
-open until a step or evidence discharges it. The reader shows **Every clause, by the auditor's
-composition**, the steps, and the next step: state the combination as one Lean result. When you
+open until a step or evidence discharges it. The reader shows **Every clause, by an argument combining
+Lean results**, the steps, and the next step: state the combination as one Lean result. When you
 have done that, attach it as the composition's `bridge`, `{"theorem": NAME, "target": SPEC}`, with
 `SPEC` a proposition stated as a definition that you have read against the paper. Lean checks it
 when it is saved, and refuses a theorem whose type is not exactly the target. The composition then
@@ -321,16 +321,45 @@ them, or the certificate, makes it `stale`, and so the finding that cites it
 (`"counterexamples": [ID]`). A refuted printed step is a finding on the step, with `"verdict":
 "false as printed"`; its enclosing result keeps its own evidence and status.
 
-When a declaration that evidence cites changes (its statement, or a definition's equations), or a
-claim's printed text changes, `show` marks that evidence and the findings that cite it as
-`stale`; the others stay current. In a full assessment, `machinechecked changes --workspace ID`
+When a declaration that evidence cites changes (its statement, a definition's equations, or a
+definition its statement uses), `show` marks that evidence `stale`; a quoted passage of the paper
+is stale once the claim's passage changes. A finding is checked through what it rests on: the
+claim's passage; the requirement it names, with those it sits inside, the passages that govern
+them and their alignments; the evidence it cites, and that its composition and counterexamples
+cite; its composition; and, for a checked bridge, the bridge. A submitted finding records these
+parts with the version of each when you submit it (`dependencies`, with the kinds of evidence it
+uses: statement comparison, object correspondence, composition, proof route, checked bridge);
+`show --json` gives them, a draft's as its records give them now. A finding is `stale` when one
+of its parts changed, and only then: an edit to a theorem's proof leaves a statement comparison
+of that theorem current and reopens a finding that cites a fact or an application inside that
+proof, and a finding on the whole claim is reopened by a changed passage of context only through
+its own evidence or composition. It is `unchecked`, never
+current, when a part cannot be identified or checked: evidence recorded without the definitions
+its statement uses, a source line, a finding's own bridge, Lean that has not looked. Re-pin a
+record with `"repin": true` once you have checked it again: a draft that cites it follows it,
+while a submitted finding keeps the versions it was submitted with and reads `stale`, naming the
+record, until you supersede it. In a full assessment, `machinechecked changes --workspace ID`
 lists them beside the review markers the new release reopened, each with what changed
-([What changed since the last release](ASSURANCE.md#what-changed-since-the-last-release)). A cited fact inside a proof is `stale` once that proof
+([What changed since the last release](ASSURANCE.md#what-changed-since-the-last-release)).
+
+When the paper itself is revised, `machinechecked changes --map --workspace ID` judges each
+finding through the version map, which follows every passage by its text. A passage that only
+moved or was renumbered leaves a statement comparison current. A changed or removed passage
+reopens exactly the findings that read it, and so does a change of what a passage is read with:
+the definition of a macro it uses, the prose opening its section, a claim it refers to, or a
+passage you attached to a requirement. A definition claim that the claim's Lean relies on
+reopens only a finding that cites a declaration whose statement uses that definition. Each
+reopened finding names the change (with the diff), the part it rests on and a question to
+answer; a claim the map leaves ambiguous reads `unchecked` until the maintainer resolves it with
+`--match`. The Lean side is checked against the later release's site and listed apart. With
+`--save` the workspace keeps the map: the reader's Details page then lists the findings by
+claim (affected ones first, unaffected ones as still current), and `workspace show` and the
+workspace's export and import carry it. Nothing is moved to another claim: supersede a reopened
+finding once you have read the new text. A cited fact inside a proof is `stale` once that proof
 changes, even when the theorem's statement does not; it, a cited application and a certificate
 read `unchecked` while Lean cannot look at them (their module is not built, a request failed). A
 published audit shows them as `show` does, checked against the Lean its release was built from,
-and as `unchecked` once that Lean has changed. Re-pin a record with `"repin": true` once you have checked it
-again. Changing to independent mode, or importing, keeps what the workspace records you had seen,
+and as `unchecked` once that Lean has changed. Changing to independent mode, or importing, keeps what the workspace records you had seen,
 so an informed investigation never becomes a blind review. A report made with `machinechecked
 review` lists the exposure of every workspace in the working directory that you (the reviewer
 `--as` names) opened, imported or recorded work in, and the units whose Lean or author's review
@@ -377,7 +406,7 @@ the verdict:
 | Verdict | Coverage |
 |---|---|
 | *Matches* | `full` (every clause) or `partial` (part of the claim) |
-| *Problem* | `partial`, `changed` (states it differently) or `related` (a related result) |
+| *Problem* | `partial`, `changed` (stated differently) or `related` (a related result, not this claim) |
 | *Cannot determine* | `unresolved`: the verdict's detail is the open question |
 
 The basis is `direct` (one Lean statement), `reviewed_composition` (your argument combining the

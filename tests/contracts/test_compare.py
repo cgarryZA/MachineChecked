@@ -132,7 +132,10 @@ def test_a_packet_holds_the_whole_passage_and_the_whole_statement(site):
     assert gen["generated_for"] == "Syn.Jet" and gen["value"] == "fun m n => m ≤ n"
     assert pk["snapshot"]["release"] == "v-synthetic" and pk["snapshot"]["project"]["commit"]
     # What the build does not extract is named with its owner, not implied absent.
-    assert {u["owner"] for u in pk["retrieval"]["unavailable"]} >= {"#97", "#98"}
+    assert {u["owner"] for u in pk["retrieval"]["unavailable"]} >= {"#69"}
+    assert not {"#97", "#98"} & {u["owner"] for u in pk["retrieval"]["unavailable"]}
+    # Each statement lists its objects, with what it says about each (#98).
+    assert [o["name"] for o in d["statement"]["objects"]] == ["n"]
     assert [q["query"] for q in pk["retrieval"]["on_request"]] == ["uses", "impact"]
 
 
@@ -234,7 +237,7 @@ def test_the_review_session_follows_the_stages(site, tmp_path):
     s.decide(uid, "faithful", "Same statement.")
     author = s.author(uid)
     assert NOTE in author and MARKER in author and ARGUMENT in author
-    assert "Every clause, by the auditor's composition" in author
+    assert "Every clause, by an argument combining Lean results" in author
     assert "Lean has not checked this combination. Next step: State the combination as one " \
         "Lean result." in author
 
@@ -258,6 +261,90 @@ def test_queries_answer_with_provenance_and_change_nothing(site):
         cmp.query(site, "definition", "Syn.Nothing")
     after = {p: p.read_bytes() for p in site.data.rglob("*") if p.is_file()}
     assert before == after
+
+
+def eq(i):
+    return {"name": f"Syn.code.eq_{i}", "statement": seg(f"Syn.code {i} = {i}"), "params": [],
+            "equation": seg(f"Syn.code {i} = {i}")}
+
+
+def test_a_packet_gives_what_definitions_say_at_their_arguments(tmp_path):
+    """A packet's definition says what it says (#97): its body, or every equation Lean derives
+    for it, those stored in pages of their own included; each application of a definition in a
+    linked statement or a definition's body comes with the definition at its arguments
+    (`lean.expansions`), the same record under the same key as the reader fetches, pinned to
+    the definition's fingerprint; `--query expansion KEY` gives any expansion by its key."""
+    from prooflens import manifest as mf
+    data = write_site(tmp_path)
+    jet_at = {"at": "/1", "id": "/1=", "name": "Syn.Jet", "checked": True,
+              "args": [{"name": "m", "binder": "explicit", "value": seg("2")},
+                       {"name": "n", "binder": "explicit", "value": seg("n")}],
+              "defined_by": "body", "params": [], "body": seg("Syn.Jet._f 2 n")}
+    nested = {**jet_at, "at": "/2", "id": "/2=", "body": {**seg("Syn.Jet 2 n"),
+                                                        "expansions": [jet_at]}}
+    code = {"name": "Syn.code", "kind": "def", "module": "Syn.Defs", "signature": seg("Nat → Nat"),
+            "value": seg("fun n => Syn.code.match_1 n"), "uses": [], "fingerprint": "fp-code",
+            "defined_by": "equations", "equations": [eq(i) for i in range(1, 71)],
+            "equation_names": [f"Syn.code.eq_{i}" for i in range(1, 71)], "equations_omitted": 0}
+    # The equations after the first 64 are stored in pages, and each expansion is pinned to
+    # the definition it expands; splitting again changes nothing.
+    parts, pins = {}, {"Syn.Jet": "fp-jet", "Syn.code": "fp-code"}
+    split = mf.split_expansions(code, parts, pins)
+    assert [e["name"] for e in split["equations"]] == [f"Syn.code.eq_{i}" for i in range(1, 65)]
+    [page] = split["equations_more"]
+    assert page["name"] == "Syn.code.eq_65" and mf.is_expansion_ref(page)
+    assert parts[page["key"]] == {"definition": "Syn.code", "equations": [eq(i) for i in
+                                                                          range(65, 71)]}
+    assert mf.split_expansions(split, parts, pins) == split
+    stmt = mf.split_expansions({"conclusion": {**seg("Syn.Jet 2 n ∧ Syn.Jet 2 n"),
+                                               "expansions": [jet_at, nested]}}, parts, pins)
+    refs = stmt["conclusion"]["expansions"]
+    assert [r["at"] for r in refs] == ["/1", "/2"] and all(mf.is_expansion_ref(r) for r in refs)
+    assert parts[refs[0]["key"]] == {**jet_at, "fingerprint": "fp-jet"}
+    assert mf.expansion_keys(parts[refs[1]["key"]]) == {refs[0]["key"]}
+    # An expansion already stored stays as it is; one of a changed definition has another key,
+    # though it prints the same.
+    assert mf.split_expansions(stmt, {}, {"Syn.Jet": "fp-jet-2"}) == stmt
+    again = mf.split_expansions({"expansions": [jet_at]}, {}, {"Syn.Jet": "fp-jet-2"})
+    assert again["expansions"][0]["key"] != refs[0]["key"]
+    (data / "expansions").mkdir()
+    for k, x in parts.items():
+        (data / "expansions" / f"{k}.json").write_text(json.dumps(x))
+    (data / "decls" / f"{'c' * 24}.json").write_text(json.dumps(split))
+    for f in (data / "claims").glob("*.json"):
+        ch = json.loads(f.read_text())
+        ch["links"][0]["statement"]["conclusion"] = stmt["conclusion"]
+        ch["decls"]["Syn.code"] = "c" * 24
+        f.write_text(json.dumps(ch))
+    site = cmp.Site(data)
+    pk = cmp.claim_packet(site, "thm:t0", "compare")
+    # The expansions the statement refers to, in order, as the reader fetches them; the one
+    # inside the second stays a reference that the query resolves.
+    assert [x["key"] for x in pk["lean"]["expansions"]] == [r["key"] for r in refs]
+    assert pk["lean"]["expansions"][0] == {"key": refs[0]["key"], **jet_at,
+                                           "fingerprint": "fp-jet"}
+    inner = pk["lean"]["expansions"][1]["body"]["expansions"]
+    assert inner == [refs[0]]
+    q = cmp.query(site, "expansion", inner[0]["key"])
+    assert q["results"] == [pk["lean"]["expansions"][0]] and q["available"]
+    with pytest.raises(cmp.CompareError) as e:
+        cmp.query(site, "expansion", "0" * 24)
+    assert e.value.kind == "unknown-expansion"
+    # Every equation of the definition, the pages' included, in order.
+    d = next(x for x in pk["lean"]["definitions"] if x["name"] == "Syn.code")
+    assert d["defined_by"] == "equations" and d["expansion"] == "generic"
+    assert [e["name"] for e in d["equations"]] == [f"Syn.code.eq_{i}" for i in range(1, 71)]
+    assert "equations_more" not in d
+    q = cmp.query(site, "definition", "Syn.code")
+    assert len(q["results"][0]["equations"]) == 70
+    text = cmp.packet_text(pk)
+    assert "Syn.Jet at the application /1" in text and "arguments: m := 2, n := n" in text
+    assert "is: Syn.Jet._f 2 n" in text and "equation Syn.code.eq_70: Syn.code 70 = 70" in text
+    # A page the build no longer holds is said to be missing, not left out silently.
+    (data / "expansions" / f"{page['key']}.json").unlink()
+    d = cmp.query(cmp.Site(data), "definition", "Syn.code")["results"][0]
+    assert len(d["equations"]) == 64 and d["equations_unavailable"] == [
+        {**page, "available": False}]
 
 
 def test_an_unknown_claim_is_refused_with_candidates(site):
@@ -353,6 +440,16 @@ def test_the_toy_packet_matches_the_reader_records(toy, monkeypatch, capsys):
     assert d["name"] == cl["spec"] and d["clause"] == cl["name"] and d["statement"]["text"] == cl["statement"]["exact"]["text"]
     tri = next(x for x in pk["lean"]["definitions"] if x["name"] == "Toy.triangle")
     assert tri["value"] and tri["signature"] == "Nat → Nat"
+    assert tri["defined_by"] == "equations"
+    assert [e["name"] for e in tri["equations"]] == ["Toy.triangle.eq_1", "Toy.triangle.eq_2"]
+    # The packet gives the expansions the reader fetches for the statement, under the same keys,
+    # each pinned to the definition it expands (#97).
+    from prooflens import manifest as mf
+    wanted = mf.expansion_keys(cl["statement"])
+    xs = {x["key"]: x for x in pk["lean"]["expansions"]}
+    assert wanted and wanted <= set(xs)
+    assert {(xs[k]["name"], xs[k]["fingerprint"]) for k in wanted} == \
+        {("Toy.triangle", tri["fingerprint"])}
     assert "interpretations" in pk
     q = run_json(capsys, "compare", "--query", "definition", "Toy.triangle", "--json")
     assert {"Toy.triangle", "Toy.triangle._f"} <= {r["name"] for r in q["results"]}
