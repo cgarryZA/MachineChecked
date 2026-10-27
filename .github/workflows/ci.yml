@@ -250,9 +250,40 @@ jobs:
           done
           exit 1
 
+  # Whether a pull request needs the audit-workflow checks below: it does when it changes what they
+  # exercise (the workflows, the packaging, the export and published-site code, the plain example).
+  # A push to main always runs them, so main is fully checked and the Demo audit waits for them.
+  # Leaving them out of other pull requests lets more pull requests' runs go at once.
+  changes:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      audit: ${{ steps.diff.outputs.audit }}
+    steps:
+      # Two commits deep, so a pull request's merge commit can be compared with its base.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+      - id: diff
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT" != pull_request ]; then
+            echo "audit=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          AUDIT='^(\.github/workflows/(audit|ci)\.yml|pyproject\.toml|engine/python/prooflens/(export|published|bundle|paper)\.py|examples/plain-paper/)'
+          if git diff --name-only HEAD^1 HEAD | grep -E -q "$AUDIT"; then
+            echo "audit=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "This pull request changes nothing the audit-workflow checks exercise; they run on main."
+            echo "audit=false" >> "$GITHUB_OUTPUT"
+          fi
+
   # The reusable audit workflow (audit.yml), run as a researcher's repository would run it, on the
   # plain example with this checkout's MachineChecked.
   audit-workflow:
+    needs: changes
+    if: needs.changes.outputs.audit == 'true'
     uses: ./.github/workflows/audit.yml
     with:
       project-dir: examples/plain-paper
@@ -263,6 +294,8 @@ jobs:
   # The same workflow building a second audit into a subpath from a given ref, as a repository
   # publishing one audit per paper version does; the two artifacts merge into one site.
   audit-workflow-subpath:
+    needs: changes
+    if: needs.changes.outputs.audit == 'true'
     uses: ./.github/workflows/audit.yml
     with:
       project-dir: examples/plain-paper

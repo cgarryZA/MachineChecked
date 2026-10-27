@@ -1,0 +1,322 @@
+name: Paper A
+
+# The status regression on a real formalisation. The public Paper A (PAPER_A_REPO below), built
+# with this checkout's engine, must give every claim the status Paper A's own acceptance checker
+# gives it. The check runs on the changes that can move a status: the Lean probe and the reading
+# of its records, the assessment and the status words, the site data, the LaTeX anchors and source
+# regions, and the review parsers.
+#
+# A full run probes Paper A (about 25 minutes). Its Lean results are then kept in the Actions
+# cache, keyed on what `build --reuse-lean` requires of them (the probe, the Lean inputs, the probe
+# settings, the requests and the engine's version), so a change that leaves those alone reuses
+# them and takes minutes. A pull request's run keeps them for that pull request's later runs; a
+# push to main keeps them for every pull request.
+#
+# Paper A is pinned at PAPER_A_COMMIT. To bump it, set it to a commit of Paper A's main whose CI
+# passed (its acceptance checker's statuses are then that commit's), as docs/DEVELOPMENT.md says.
+on:
+  pull_request:
+    paths:
+      - engine/python/prooflens/data/ProofLensProbe.lean
+      - engine/python/prooflens/probe.py
+      - engine/python/prooflens/assess.py
+      - engine/python/prooflens/status.py
+      - engine/python/prooflens/manifest.py
+      - engine/python/prooflens/tex.py
+      - engine/python/prooflens/data/prooflens.sty
+      - engine/python/prooflens/source_regions.py
+      - engine/python/prooflens/reviews.py
+      - engine/python/prooflens/review_sources.py
+      - engine/python/prooflens/review_citations.py
+      - engine/python/prooflens/steps.py
+      - .github/workflows/paper-a.yml
+  push:
+    branches: [main]
+    paths:
+      - engine/python/prooflens/data/ProofLensProbe.lean
+      - engine/python/prooflens/probe.py
+      - engine/python/prooflens/assess.py
+      - engine/python/prooflens/status.py
+      - engine/python/prooflens/manifest.py
+      - engine/python/prooflens/tex.py
+      - engine/python/prooflens/data/prooflens.sty
+      - engine/python/prooflens/source_regions.py
+      - engine/python/prooflens/reviews.py
+      - engine/python/prooflens/review_sources.py
+      - engine/python/prooflens/review_citations.py
+      - engine/python/prooflens/steps.py
+      - .github/workflows/paper-a.yml
+  workflow_dispatch:
+
+# As in ci.yml: a pull request's newer push cancels its older run; each push to main runs in full.
+concurrency:
+  group: paper-a-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  PAPER_A_REPO: cgarryZA/mvfbsdej-well-posedness-lean
+  # The commit of Paper A audited. Bump it to a commit of Paper A's main whose CI passed.
+  PAPER_A_COMMIT: e40de036d5ccaa668658298b392f16cebd84a238
+  # Paper A is checked out in a folder of its repository's name: the archives of its build-cache
+  # release are named after it.
+  PAPER_A_DIR: mvfbsdej-well-posedness-lean
+
+jobs:
+  statuses:
+    name: Paper A statuses
+    runs-on: ubuntu-24.04
+    # A run that probes in full takes about 35 minutes (the probe about 25), one that reuses the
+    # stored Lean results about 8.
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+      - name: Check out Paper A at the pinned commit
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ env.PAPER_A_REPO }}
+          ref: ${{ env.PAPER_A_COMMIT }}
+          path: ${{ env.PAPER_A_DIR }}
+          # The history, so that a saved build of an earlier commit can be restored.
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install this checkout's engine
+        run: pip install -e .
+
+      # Mathlib's build (about 7 GB), Paper A's (about 2 GB), TeX Live and the stored results need
+      # about 15 GB. A runner with less than 30 GB free first removes toolchains this job does not
+      # use (about 25 GB; it takes two minutes).
+      - name: Free disk space if needed
+        run: |
+          if [ "$(df --output=avail -B1G / | tail -1 | tr -d ' ')" -lt 30 ]; then
+            sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+              /opt/hostedtoolcache/CodeQL /usr/local/share/boost /usr/local/lib/node_modules
+          fi
+          df -h /
+
+      # The packages a run installs are kept for a week (TeX Live is several hundred MB, and
+      # Ubuntu's mirror is often slow), so most runs download only what changed.
+      - name: This week
+        id: week
+        run: echo "week=$(date -u +%G-%V)" >> "$GITHUB_OUTPUT"
+      - name: Saved packages
+        uses: actions/cache@v6
+        with:
+          path: ~/apt-archives
+          key: apt-paper-a-${{ runner.os }}-${{ steps.week.outputs.week }}
+          restore-keys: apt-paper-a-${{ runner.os }}-
+      - name: Install TeX Live, poppler, zstd and elan
+        timeout-minutes: 30
+        run: |
+          # A download stops when it stops making progress, not after a fixed time, so a slow
+          # mirror costs time rather than the job. apt gives up on a server that sends nothing for
+          # 30 seconds and tries again from where it stopped, then the next mirror; `fetch` also
+          # stops a command that has downloaded nothing for 5 minutes (a connection can hang
+          # without apt noticing) and runs it again, three times in all. The downloads share 25
+          # of the step's 30 minutes. apt logs each package as it starts, with its size.
+          deadline=$(( $(date +%s) + 25 * 60 ))
+          fetch() {
+            for i in 1 2 3; do
+              left=$(( deadline - $(date +%s) ))
+              [ "$left" -gt 0 ] || { echo "no time left for downloads: $*" >&2; return 1; }
+              timeout "$left" "$@" & pid=$!
+              # Progress is growth of the files the downloads write: apt's, and elan's in the
+              # temporary directory.
+              idle=0; size=
+              while kill -0 "$pid" 2>/dev/null; do
+                now=$(sudo du -sb /var/lib/apt/lists /var/cache/apt/archives "${TMPDIR:-/tmp}" 2>/dev/null) || true
+                if [ "$now" = "$size" ]; then idle=$((idle + 1)); else size=$now; idle=0; fi
+                if [ "$idle" = 300 ]; then echo "nothing downloaded for 5 minutes: $*" >&2; kill "$pid"; fi
+                sleep 1
+              done
+              wait "$pid" && return 0
+              echo "attempt $i failed: $*" >&2; sleep 10
+            done
+            return 1
+          }
+          NET="-o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o Acquire::Retries=3"
+          # Paper A's audit workflow installs these to compile its manuscript.
+          PKGS="latexmk texlive-latex-recommended texlive-latex-extra texlive-science texlive-fonts-recommended lmodern poppler-utils zstd"
+          mkdir -p ~/apt-archives
+          sudo cp -n ~/apt-archives/*.deb /var/cache/apt/archives/ 2>/dev/null || true
+          fetch sudo apt-get -q $NET update
+          fetch sudo apt-get -q $NET install -y --no-install-recommends --download-only $PKGS
+          # The saved packages are then exactly those this install uses: the files apt would
+          # download into an empty archive.
+          rm -f ~/apt-archives/*.deb
+          apt-get -qq install --no-install-recommends --print-uris -o Dir::Cache::Archives=/nonexistent/ $PKGS |
+            sed -n "s/^'[^']*' \([^ ]*\) .*/\1/p" | (cd /var/cache/apt/archives && xargs -r cp -t ~/apt-archives/)
+          echo "packages kept for the cache: $(ls ~/apt-archives | wc -l), $(du -sh ~/apt-archives | cut -f1)"
+          # The packages install from what was downloaded.
+          sudo apt-get install -y -qq --no-install-recommends $PKGS
+          fetch sh -c 'curl -sSfL --connect-timeout 30 --max-time 120 --retry 4 https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain none'
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      - name: Install Paper A's Lean toolchain (a failed download is retried)
+        timeout-minutes: 20
+        working-directory: ${{ env.PAPER_A_DIR }}
+        run: |
+          for i in 1 2 3 4; do elan toolchain install "$(cat lean-toolchain)" && exit 0; sleep $((i * 10)); done
+          exit 1
+      - name: Mathlib's prebuilt files
+        timeout-minutes: 30
+        working-directory: ${{ env.PAPER_A_DIR }}
+        run: |
+          for i in 1 2 3; do lake exe cache get && exit 0; sleep $((i * 20)); done
+          exit 1
+
+      # The build output Mathlib's cache does not supply (`prooflens.cache`, as `machinechecked
+      # cache save` archives it): Paper A's own and that of its other dependencies. What the
+      # stored Lean results must match to be reused (`pipeline.reusable_lean`), as one digest.
+      - name: What the caches are keyed on
+        id: keys
+        working-directory: ${{ env.PAPER_A_DIR }}
+        run: |
+          python - >> "$GITHUB_OUTPUT" <<'PY'
+          import hashlib, os
+          from pathlib import Path
+          from prooflens import cache
+          from prooflens.config import load
+          from prooflens.pipeline import (lean_inputs_digest, probe_digest, probe_settings_digest,
+                                          records_engine)
+          from prooflens.probe import requests_from_inventory
+          from prooflens.util import canonical_json, read_json
+
+          here = Path(".").resolve()
+          supplied = cache.cache_supplied(here)
+          dirs = [".lake/build"] + [f".lake/packages/{p.name}/.lake/build"
+                                    for p in sorted((here / ".lake" / "packages").iterdir())
+                                    if p.name not in supplied]
+          print("build-paths<<EOF")
+          print("\n".join(f"{os.environ['PAPER_A_DIR']}/{d}" for d in dirs))
+          print("EOF")
+
+          cfg = load(here / "machinechecked.toml")
+          probe = probe_digest()
+          reuse = canonical_json([lean_inputs_digest(cfg), probe, probe_settings_digest(cfg),
+                                  records_engine(), requests_from_inventory(read_json(cfg.inventory))])
+          toolchain = (here / "lean-toolchain").read_text().strip().rpartition(":")[2]
+          commit = os.environ["PAPER_A_COMMIT"]
+          print(f"build=paper-a-lake-{commit}-{toolchain}")
+          print(f"results=paper-a-lean-results-{commit[:12]}-{toolchain}-probe-{probe[:12]}-"
+                f"{hashlib.sha256(reuse.encode()).hexdigest()[:16]}")
+          PY
+          cat "$GITHUB_OUTPUT"
+
+      # Paper A's build: from this cache, else from Paper A's own build-cache release (the nearest
+      # saved build of an ancestor commit, then rebuilt where it differs), else from source.
+      - name: Restore Paper A's build
+        id: lake-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ steps.keys.outputs.build-paths }}
+          key: ${{ steps.keys.outputs.build }}
+      - name: Restore Paper A's build from its build-cache release
+        if: steps.lake-cache.outputs.cache-hit != 'true'
+        working-directory: ${{ env.PAPER_A_DIR }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          machinechecked cache restore "$PAPER_A_REPO" --build \
+            || echo "no saved build of Paper A to restore; Lake builds it from source"
+      - name: Build Paper A's Lean
+        working-directory: ${{ env.PAPER_A_DIR }}
+        run: lake build
+      - name: Save Paper A's build
+        if: steps.lake-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ steps.keys.outputs.build-paths }}
+          key: ${{ steps.keys.outputs.build }}
+
+      # The stored Lean results: the releases and evidence records of a full build, the content
+      # index and the facts store.
+      - name: Restore the stored Lean results
+        id: results
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ${{ env.PAPER_A_DIR }}/.machinechecked/releases
+            ${{ env.PAPER_A_DIR }}/.machinechecked/evidence
+            ${{ env.PAPER_A_DIR }}/.machinechecked/content
+            ${{ env.PAPER_A_DIR }}/.machinechecked/build/facts
+            ${{ env.PAPER_A_DIR }}/.machinechecked/release-log.jsonl
+          key: ${{ steps.keys.outputs.results }}
+
+      # With stored results, `build --reuse-lean` starts no Lean session. A refusal (the results do
+      # not cover this build) falls back to a full build; any other failure fails the job.
+      - name: Build Paper A's audit with this engine
+        id: audit
+        working-directory: ${{ env.PAPER_A_DIR }}
+        env:
+          RESTORED: ${{ steps.results.outputs.cache-hit }}
+          # The engine's progress lines reach the log as they are written.
+          PYTHONUNBUFFERED: "1"
+        run: |
+          site="$RUNNER_TEMP/paper-a-site"
+          mode=full
+          start=$SECONDS
+          if [ "$RESTORED" = true ]; then
+            set +e
+            machinechecked build --reuse-lean --site "$site" 2>&1 | tee "$RUNNER_TEMP/reuse.log"
+            status=${PIPESTATUS[0]}
+            set -e
+            if [ "$status" = 0 ]; then
+              mode=reused
+            elif grep -q 'without `--reuse-lean`' "$RUNNER_TEMP/reuse.log"; then
+              echo "::warning title=Paper A::the stored Lean results were refused; probing in full"
+              rm -rf "$site"
+            else
+              exit "$status"
+            fi
+          fi
+          if [ "$mode" = full ]; then
+            machinechecked build --site "$site"
+          fi
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+          echo "minutes=$(( (SECONDS - start + 59) / 60 ))" >> "$GITHUB_OUTPUT"
+      - name: Save the stored Lean results
+        if: steps.audit.outputs.mode == 'full' && steps.results.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            ${{ env.PAPER_A_DIR }}/.machinechecked/releases
+            ${{ env.PAPER_A_DIR }}/.machinechecked/evidence
+            ${{ env.PAPER_A_DIR }}/.machinechecked/content
+            ${{ env.PAPER_A_DIR }}/.machinechecked/build/facts
+            ${{ env.PAPER_A_DIR }}/.machinechecked/release-log.jsonl
+          key: ${{ steps.keys.outputs.results }}
+
+      - name: Compare every claim's status with Paper A's acceptance checker
+        working-directory: ${{ env.PAPER_A_DIR }}
+        env:
+          MODE: ${{ steps.audit.outputs.mode }}
+          MINUTES: ${{ steps.audit.outputs.minutes }}
+        run: |
+          python - "$RUNNER_TEMP/paper-a-site/data/index.json" <<'PY'
+          import json, os, sys
+          mine = {c["id"]: c["status"] for c in json.load(open(sys.argv[1]))["claims"]}
+          acc = {c["id"]: c["status"] for c in json.load(open("acceptance/status.json"))["claims"]}
+          diff = [(k, acc.get(k), mine.get(k)) for k in sorted(set(acc) | set(mine))
+                  if acc.get(k) != mine.get(k)]
+          line = f"Paper A: {len(acc)} claims, {len(diff)} differences"
+          how = {"reused": "the stored Lean results reused", "full": "the Lean probed in full"}
+          built = (f"Built at {os.environ['PAPER_A_REPO']}@{os.environ['PAPER_A_COMMIT'][:12]} "
+                   f"with this engine, {how[os.environ['MODE']]} ({os.environ['MINUTES']} min).")
+          print(line)
+          print(built)
+          for k, a, m in diff:
+              print(f"::error title=Paper A status::{k}: acceptance checker {a or '(absent)'}, "
+                    f"this engine {m or '(absent)'}")
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
+              f.write(f"### {line}\n\n{built}\n\n")
+              if diff:
+                  f.write("| Claim | Acceptance checker | This engine |\n|---|---|---|\n")
+                  for k, a, m in diff:
+                      f.write(f"| `{k}` | {a or '(absent)'} | {m or '(absent)'} |\n")
+          sys.exit(1 if diff else 0)
+          PY
