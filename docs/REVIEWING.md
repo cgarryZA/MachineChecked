@@ -76,7 +76,9 @@ come in this order:
    definition. `review next` also prints the question a new reading answers.
 2. **Changed since the last release**: a unit with no review to reopen whose Lean statement, a
    definition that statement uses, its definition, or a passage it is read against changed. A
-   change of a proof alone moves nothing: a review of a statement does not read its proof.
+   change of a proof alone moves nothing: a review of a statement does not read its proof. Nor
+   does an edit of a definition that leaves its statement and value as they were (a proof
+   inside it, or the tactic of a tactic default).
 3. The other units, in the queue's own order: less effort first, preferring units that many
    claims depend on.
 

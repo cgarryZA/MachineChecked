@@ -770,6 +770,48 @@ for (const width of [1300, 390]) {
   });
 }
 
+// #398: an audit the site says did not load is shown with its reason, never as the page's audit;
+// a loaded audit beside it stays the action; a page written before the site gave each audit its
+// state shows its listing's reason and audit as it did.
+for (const width of [1300, 390]) {
+  await check("an audit that did not load is shown with its reason, not as the page's audit", width, async (pg) => {
+    const card = (repo) => pg.locator(`.info .card[data-repository="${repo}"]`);
+    const texts = async (loc) => (await loc.allTextContents()).map((t) => t.replace(/\s+/g, " ").trim());
+    const open = async (repo) => {
+      await pg.goto(origin + `/failed/?project=${encodeURIComponent(repo)}`);
+      await showPanel(pg, width);
+      await card(repo).waitFor();
+    };
+    await open("synthetic/alpha");
+    assert.deepEqual(await texts(card("synthetic/alpha").locator(".audit.here .btn")), ["Open the audit"]);
+    assert.match(await card("synthetic/alpha").locator(".audit.here").textContent(), /by A\. Author · commit aaaaaaaaaaaa/);
+    const lost = card("synthetic/alpha").locator(".audit.failed");
+    assert.deepEqual(await texts(lost), ["Audit unavailable: HTTP Error 404: Not Found Open the audit by A. Author"]);
+    assert.equal(await lost.getAttribute("data-state"), "unavailable");
+    assert.equal(await lost.locator(".btn").count(), 0, "a failed audit is not the page's action");
+    assert.equal(decodeURIComponent(await lost.locator("a").getAttribute("href")), "/read/?audit=https://audit.example/latest/");
+    assert.equal(await card("synthetic/alpha").locator(".audit").count(), 2);
+
+    await open("synthetic/beta");
+    const beta = card("synthetic/beta");
+    assert.equal(await beta.locator(".btn").count(), 0);
+    assert.deepEqual(await texts(beta.locator(".audit.failed")),
+      ["Audit incompatible: Audit pins another version of the paper than the listing names Open the audit by B. Author"]);
+    const text = await beta.textContent();
+    assert.equal(text.split("Audit incompatible").length, 2, "the reason is given once");
+    assert.doesNotMatch(text, /No claim-level audit|No audit of this version/);
+
+    // Data without a state for each audit: as before.
+    await open("synthetic/gamma");
+    const gamma = card("synthetic/gamma");
+    assert.equal(await gamma.locator(".audit.failed").count(), 0);
+    assert.match(await gamma.textContent(), /Audit unavailable: HTTP Error 404: Not Found/);
+    assert.deepEqual(await texts(gamma.locator(".audit.here .btn")), ["Open the audit"]);
+    const [scroll, client] = await pg.evaluate(() => [document.documentElement.scrollWidth, document.documentElement.clientWidth]);
+    assert.ok(scroll <= client, `the page scrolls sideways (${scroll} > ${client})`);
+  });
+}
+
 // #212: a page with two audits of one version opens on the most-starred one; a claim it does not
 // map shows the next audit's evidence, labelled with that audit; choosing one audit shows only its
 // evidence and flags the claims it does not map. Statuses are each one audit's, never combined.

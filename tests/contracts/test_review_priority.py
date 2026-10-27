@@ -187,6 +187,43 @@ def test_a_reopened_review_comes_first_then_a_changed_passage_with_its_reason():
     assert rq.prioritise(queue(assurance_units()), changes=doc) == out
 
 
+def definition_edit(fingerprint: str, source: str) -> dict:
+    """Theorem 1's proposition uses a definition, and no review of either is current. In the
+    later build the definition has `fingerprint` (its statement and value, proofs erased) and
+    the digest `source` of its authored source; in the earlier one `fp:def-1` and `src-1`."""
+    specs = {MAIN: {"fingerprint": "fp:main", "closure": [DEF], "exact": {"text": "∀ m, B m"}}}
+
+    def build(eid, fp, src, inputs):
+        assessed = [{"id": "P:main", "status": "s", "status_code": "formal.review-pending",
+                     "clauses": [{"name": "statement", "spec": MAIN,
+                                  "spec_review": rv("pending"),
+                                  "def_reviews": {DEF: rv("pending")}}]}]
+        return record(eid, [claim("P:main", "Theorem 1", H["a"], 1, MAIN)], assessed,
+                      [decl(MAIN, "fp:main", "x"),
+                       {**decl(DEF, fp, "fun m => m + 5"), "lean_source": {"sha256": src}}],
+                      specs, {"P:main": region(H["a"], 1)}, inputs)
+    return chg.compare(build("e1", "fp:def-1", "src-1", "l1"), "r-1",
+                       build("e2", fingerprint, source, "l2"), "r-2")
+
+
+def test_a_definition_whose_source_alone_changed_gives_no_signal():
+    """#397: an edit of a definition's authored source that leaves its statement and value as
+    they were (a proof inside it, the tactic of a tactic default) changes nothing a review of
+    the statement that uses it, or of the definition, reads. A changed value does."""
+    units = [unit("spec:" + MAIN, [("P:main", "Theorem 1")]),
+             unit("def:" + DEF, [("P:main", None)], source_sha256={"P:main": H["a"]})]
+    source = definition_edit("fp:def-1", "src-2")
+    assert [d["change"] for d in source["claims"][0]["lean"][0]["definitions"]] == ["proof"]
+    assert rq.change_signals(units, source) == {}
+    value = definition_edit("fp:def-2", "src-2")
+    assert [d["change"] for d in value["claims"][0]["lean"][0]["definitions"]] == ["statement"]
+    got = rq.change_signals(units, value)
+    assert [s["text"] for s in got["spec:" + MAIN]] == [
+        "changed since the last release: a definition its Lean statement uses"]
+    assert [s["text"] for s in got["def:" + DEF]] == [
+        "changed since the last release: this definition's Lean"]
+
+
 def test_ties_keep_the_queue_order():
     """Two units with the same signal keep their order, whichever order they come in."""
     doc = {"from": {"release": "r-1"}, "to": {"release": "r-2"}, "declarations": [],
