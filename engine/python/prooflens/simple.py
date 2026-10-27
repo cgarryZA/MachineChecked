@@ -2236,7 +2236,8 @@ def write_view_site(view: dict, site: Path, web_dist: Path | None,
     from .review_queue import prioritise, simple_queue
     write_preview(site, index, chunks, store, {"P": view["pdf"]} if view["pdf"] else {},
                   web_dist, prioritise(simple_queue(index, chunks), uses=view.get("uses"),
-                                       unbuilt=body["project"]["unbuilt"]))
+                                       unbuilt=body["project"]["unbuilt"],
+                                       claims=index["claims"]))
     index["review_queue"] = "data/review-queue.json"
     from . import audit
     key = body.get("paper") or ""

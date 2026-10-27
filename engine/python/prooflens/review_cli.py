@@ -18,7 +18,9 @@ claim).
 
 `next` and `status` give the open units in the queue's order (`review_queue.prioritise`), in the
 paper's, or in an order that also uses what the auditors' workspaces record as open; that last
-order rests on prior interpretations, so asking for it is recorded as exposure.
+order rests on prior interpretations, so asking for it is recorded as exposure. The reader's
+review page asks the local server for that order (`order_route`) and records the exposure in
+the reviewer's browser.
 """
 
 from __future__ import annotations
@@ -248,11 +250,10 @@ class Session:
             return rq.arrange(units, {}, "document", self.index.get("claims") or [])
         if order != "informed":
             raise ReviewError(f"order {order!r} is not one of: {', '.join(rq.ORDERS)}")
-        spaces = [ws for _, ws in wsp.list_all(self.work_dir)]
-        signals, drawn = rq.workspace_signals(units, spaces, self.site)
+        units, drawn = informed_order(units, self.work_dir, self.site)
         if drawn:
             self.expose(drawn, ORDER_EXPOSURE)
-        return rq.arrange(units, signals)
+        return units
 
     def expose(self, claims: list[str], how: str) -> None:
         """Record in this reviewer's workspace that they have seen prior interpretations of
@@ -475,6 +476,42 @@ class Session:
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(body, indent=2, ensure_ascii=False), encoding="utf-8")
         return out
+
+
+def informed_order(units: list[dict], work_dir: Path, site) -> tuple[list[dict], list[str]]:
+    """`units` (open units, in the queue's order) in the informed order: the queue's, with what
+    every workspace of `work_dir` records as open (`review_queue.workspace_signals`), and the
+    claims whose records it drew on. Reading them is seeing prior interpretations of those
+    claims; the caller records that."""
+    spaces = [ws for _, ws in wsp.list_all(work_dir)]
+    signals, drawn = rq.workspace_signals(units, spaces, site)
+    return rq.arrange(units, signals), drawn
+
+
+def order_route(work_dir: Path, data_dir: Path):
+    """`GET /api/review-order?order=informed` of `machinechecked view`'s local server: the open
+    units of the last build's queue in the informed order, each with its reason and priority
+    record, and the claims it drew on (`drawn`), for the reader's review page. The page keeps
+    its reviewer's work in the browser, so it records there, before it shows the order, that the
+    reviewer has seen prior interpretations of those claims; this route writes nothing. The
+    priority and document orders are in the queue the build wrote."""
+    def get(q: dict) -> dict:
+        order = (q.get("order") or ["informed"])[0]
+        if order != "informed":
+            raise ReviewError(f"order {order!r}: this route gives the informed order; the "
+                              "priority and document orders are in data/review-queue.json")
+        path = data_dir / "review-queue.json"
+        if not path.exists():
+            raise ReviewError("no review queue: run `machinechecked view` or `machinechecked "
+                              "build` first")
+        queue = json.loads(path.read_text(encoding="utf-8"))
+        units, drawn = informed_order([u for u in queue["units"] if u["state"] != "reviewed"],
+                                      work_dir, cmp.Site(data_dir))
+        return {"schema": "machinechecked/review-order@1", "release": queue.get("release"),
+                "order": "informed", "drawn": drawn,
+                "exposure": {"what": ["prior interpretations"], "how": ORDER_EXPOSURE},
+                "units": [{k: u.get(k) for k in ("id", "reason", "priority")} for u in units]}
+    return get
 
 
 # The kind of issue each verdict's draft is: a note explaining an accepted difference, a
