@@ -474,6 +474,21 @@ def _content(kind: str, rec: dict, ws: dict, snap, root, cur: dict | None = None
     if kind == "evidence":
         out["ref"] = _ref(rec.get("ref"), snap, root)
         out["role"] = _choice(rec.get("role") or "candidate", ROLES, "the role", False)
+        if rec.get("object") is not None:
+            # The object of the claim's Lean the cited result derives a property of; it keeps
+            # the binder it was recorded at until it is re-pinned.
+            from .objects import ObjectError, object_ref
+            was = (cur or {}).get("object") or {}
+            o = rec["object"]
+            if not repin and isinstance(o, dict) and was and o.get("decl") == was["decl"] and \
+                    o.get("var") in (was["var"], was.get("name")):
+                out["object"] = was
+            else:
+                try:
+                    out["object"] = object_ref(o, None if snap is None else
+                                               rq._statements(snap, out["claim"]))
+                except ObjectError as e:
+                    raise WorkspaceError(str(e)) from None
         out.pop("evidence", None)
         if out["role"] == "rejected" and rec.get("reason"):
             out["why_rejected"] = _text(rec["reason"], "the reason")

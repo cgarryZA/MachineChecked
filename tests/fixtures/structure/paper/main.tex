@@ -68,6 +68,27 @@ Two solutions $s$ and $t$ for the same datum start at the same point.
 If $a \le b$ and $b \le a$, then $a = b$.
 \end{theorem}
 
+\begin{definition}\label{def:profile}\lean{Shape.Profile}\lean{Shape.Concrete}
+A profile is a function $f$ with $f(n) \le C$ for every $n$. A concrete profile is a profile that
+vanishes from $N$ on and has period $p$ below $N$.
+\end{definition}
+
+\begin{theorem}\label{thm:build}\lean{Shape.build}\lean{Shape.build_rec}
+The zero profile below $N$ is a concrete profile, and $f(n + 1) = f(n)$ for it.
+\end{theorem}
+
+\begin{theorem}\label{thm:vanishes}\lean{Shape.vanishes}
+A concrete profile vanishes from $N$ on.
+\end{theorem}
+
+\begin{theorem}\label{thm:scaled}\lean{Shape.scaled}
+A scaled family for $d$ and $w$ that starts at $d$ starts at $d$.
+\end{theorem}
+
+\begin{theorem}\label{thm:both-pos}\lean{Shape.both_pos}
+An object with both extents has a positive first coordinate.
+\end{theorem}
+
 \begin{theorem}\label{thm:jet}\lean{Shape.jet_lower}
 If the first $n + 5$ differences of $f$ are bounded by $C$ on $S$, so are the first $n + 4$.
 \end{theorem}

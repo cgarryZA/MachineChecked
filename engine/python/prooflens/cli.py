@@ -1296,11 +1296,13 @@ def cmd_compare(a):
             except wsp.WorkspaceError as e:
                 raise cmp.CompareError(str(e), "unknown-workspace") from None
             v = wsp.view(ws, Snapshot(work / "site" / "data"), cid, root)
+            from .objects import derivations
             reading = {"workspace": ws["id"], "reviewer": v["reviewer"], "mode": v["mode"],
                        **((v["claims"].get(cid) or {}).get("reading")
                           or {"requirements": [], "witnesses": [], "alignments": [],
                               "questions": []}),
-                       "compositions": (v["claims"].get(cid) or {}).get("compositions") or []}
+                       "compositions": (v["claims"].get(cid) or {}).get("compositions") or [],
+                       "derivations": derivations((v["claims"].get(cid) or {}).get("evidence"))}
         out = cmp.claim_packet(site, a.claim, a.stage, a.limit, a.after, reading)
     except cmp.CompareError as e:
         if e.kind in ("no-build", "no-project") and not a.json:
