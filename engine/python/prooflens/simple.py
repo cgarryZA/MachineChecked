@@ -481,7 +481,9 @@ def correspondence(claim: dict, entry: dict, bridge: dict | None = None) -> dict
     some), the auditor's argument for a reviewed composition, and the bridge's evidence
     (`bridge`, from `bridge_evidence`) for a checked bridge. An unresolved reading keeps its open
     question and what would decide it. A value outside the supported ones is dropped, never
-    guessed, and a basis not given stays unspecified (`None`). A stored `composed` coverage reads
+    guessed, and a basis not given stays unspecified (`None`). A basis says how the linked
+    declarations support the coverage, so a reading with none linked has no basis, and none of
+    the references, argument or bridge that go with one. A stored `composed` coverage reads
     as `full` with basis `reviewed_composition`, its note as the argument when none is given. A
     reviewed composition carries `next_step`, stating the combination as one Lean result."""
     if "lean" in entry:
@@ -499,6 +501,8 @@ def correspondence(claim: dict, entry: dict, bridge: dict | None = None) -> dict
         if not (note or cov):
             return None
         linked = entry["lean"] if isinstance(entry["lean"], list) else []
+        if not linked:
+            basis = None
         refs = entry.get("refs")
         refs = [n for n in refs if n in linked] if isinstance(refs, list) else list(linked)
         if basis == "checked_bridge":

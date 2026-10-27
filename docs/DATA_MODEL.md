@@ -346,7 +346,8 @@ bridge, question, would_decide, confidence, note, by}`, where `source` is `confi
 auditor's, from `machinechecked.links.json`) or `formalization.yaml` (the project's row notes).
 `coverage` is `full`, `partial`, `changed`, `related`, `unresolved` or `null`; `basis`, how the
 coverage is supported, is `direct`, `reviewed_composition`, `checked_bridge` or `null`
-(unspecified), with `refs` the linked declarations it rests on. A reviewed composition has the
+(unspecified), with `refs` the linked declarations it rests on; a claim with no declaration
+linked keeps only an `unresolved` reading, with no basis. A reviewed composition has the
 auditor's `argument` and the `next_step`, stating the combination as one Lean result (a stored
 `composed` coverage reads as `full` with this basis); a checked bridge has `bridge`, `{theorem,
 target, state, reasons, pinned, current}`, where `state` is `checked`, `stale` or `unchecked` and

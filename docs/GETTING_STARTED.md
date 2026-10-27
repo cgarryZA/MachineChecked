@@ -313,7 +313,9 @@ An `unresolved` reading records the question and what would decide it:
                "would_decide": "The paper's standing conventions."}
 ```
 
-The reader shows **Unresolved** with the open question and what would decide it.
+The reader shows **Unresolved** with the open question and what would decide it. A claim with
+no declaration linked keeps only an `unresolved` reading, whose question may be whether any Lean
+states the claim; with nothing linked, the reading has no basis.
 
 ## Link a proof step
 
