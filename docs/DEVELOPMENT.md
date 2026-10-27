@@ -12,7 +12,7 @@ pytest -q --shard 2/4                    # the second of CI's four shards of the
 (cd web && node tests/reader.test.mjs)   # the built reader in a browser, laptop and phone widths (needs the engine installed)
 ```
 
-The web build is committed under `engine/python/prooflens/web/`. When editing `web/src/`, rebuild the bundle and keep its output in the same commit. CI checks that the shipped assets match the sources.
+The built reader is committed under `engine/python/prooflens/web/` by CI: after each push to main, the `reader-bundle` job builds it from `web/src/` and commits it when it differs, so main and every release carry a reader that matches its sources. Pull requests leave it as main has it (CI fails one that changes it), so two pull requests that both change `web/src/` never conflict on the build. Every CI job that uses the reader builds it from the pull request's sources first, and the release workflow builds it before the package. To test a change to `web/src/` locally, rebuild it as above, then restore it before committing: `git checkout HEAD -- engine/python/prooflens/web && git clean -fdq engine/python/prooflens/web`.
 
 CI runs the suite in four shards on parallel runners, and its `test` check passes when every shard does. `tests/shards.py` deals out whole test files, longest first, by their times in `tests/durations.json`; each collected test is in exactly one shard, and a file the times do not list counts at the mean time per test. When the shards' times drift apart, download the times of one or more CI runs (`gh run download RUN_ID -p 'test-times-*' -D run-a`) and run `python tests/shards.py run-*/test-times-*/test-times.json` to rewrite `tests/durations.json`. Runners differ in speed by a third or more, so a shard's time varies with its runner; two runs let the script fit each file's time on a runner of average speed.
 
@@ -112,7 +112,12 @@ constants the statement mentions (`uses`) and the value uses (`value_uses`). A t
 words (split at underscores and capitals, lower case, lightly stemmed), symbols (`\le`, `≤` and
 `<=` are one term; `≥` is folded into `≤`), numerals and dotted constants. A declaration's
 score is the share of the query's rarity-weighted terms it carries; the users of the ten best
-matches join the results through them. The zero-configuration view writes the index to
+matches join the results through them. The declarations Lean generates for an inductive type
+(`casesOn`, `noConfusion`, `mk.injEq`, …) and notation parsers are left out (`generated`).
+`lean_shape` reads a printed statement's variables, hypotheses and conclusion; a search from a
+theorem (`search_like`) lifts a theorem with the same conclusion, up to the names of its
+variables (`normal_parts`, with and without their types), half way to 1, and compares each
+result's parts with the theorem's (`structure_reasons`). The zero-configuration view writes the index to
 `data/retrieval.json` with its word tables, and so does the full assessment (`content.py`: the
 index of every built module from the facts store, with `LeanFacts.index`, and the paper-number
 check of a one-paper configuration, kept in `<work>/content/<evidence id>.json` beside the

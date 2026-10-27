@@ -159,7 +159,9 @@ You can:
 - **Link** a suggested declaration;
 - choose **Not this** to reject the suggestion;
 - search the project's declarations by statement, symbols or name, or with **Search with this
-  claim**, and link another. Open a result to read its complete statement.
+  claim**, and link another. Open a result to read its complete statement. **Similar** finds
+  the declarations like a result; for a theorem, each says how its hypotheses and conclusion
+  differ from the result's.
 
 The search box at the top of the reader finds declarations by their statements too.
 
