@@ -42,8 +42,9 @@ used instead:
 
 `lean` lists the declarations that state the step as printed, with `coverage` (`full`, `partial`,
 `changed`, `related`, `unresolved`; a stored `composed` reads as `full`) and `basis` (`direct`,
-`reviewed_composition`, `checked_bridge`). `route.lean` lists declarations that reach the parent
-by another argument. The probe checks both (as `link` records, `lean.links` in the evidence).
+`reviewed_composition`, `checked_bridge`). A step with no `lean` keeps only an `unresolved`
+coverage, whose open question may be whether any Lean states the step, and no basis.
+`route.lean` lists declarations that reach the parent by another argument. The probe checks both (as `link` records, `lean.links` in the evidence).
 None of these fields is an input to a status: a step's status is its scope decision's, and its
 review is its own (below).
 
@@ -362,6 +363,15 @@ give it (`by_project`). Without an audit nothing has run Lean, so a linked state
 "linked: Lean not checked here (no audit published)" (class `declared`). No statement text is
 written.
 
+The site may give each audit of the registry entry its semantic summary (`semantic` on the
+audit, as machinechecked.org reads and checks it from that audit's own index): `state`
+(`loaded`, or why it is not shown, with `detail`), `url`, `schema`, `digest`, and, loaded, the
+`release` and `commit` it names, the sets of readings (`sets`, `selected`) and the counts of the
+audited paper (`paper`: the blocks a paper has in the [semantic summary](#semantic-summary-prooflenssemantic-summary1-derived)).
+The paper panel shows it under that audit's line, each count linked to that audit's Overview
+filtered to it (`/read/?audit=…#/r/<release>/overview?set=…&unit=…&coverage=…`), and says why
+when it is not shown. It shows no count the summary does not give, and never another audit's.
+
 `audit_order` lists the page's loaded audits that pin the same version as the first, in the order
 the reader draws on them, and `audit_order_by` says what orders them: `stars` (the site's GitHub
 star count for every one, given to `write_paper_site` as `stars` and kept in `stars`; most first,
@@ -443,6 +453,13 @@ in short. The reader's Overview and machinechecked.org show its counts as they a
 verdict, score or percentage, no count is added to another, and it is never an input to a
 status.
 
+A site loading a published audit (`load_published_audit`) checks the summary and the claim rows'
+facts apart from the rest of the index, which is validated as strictly as before. The loaded
+record carries them as `semantic_summary`: `{state: "loaded", summary}`, or, for a summary in a
+format this version does not read or one that is not valid, `{state: "set-aside", reason, detail,
+format}` (`reason` is `unsupported` or `invalid`), and the claim rows then carry no facts. Either
+way the audit's statuses and claims load as they would without a summary.
+
 **Units.** Every count names its unit: `statements` (a claim whose unit is `statement`, other
 than notation), `notation` (a statement whose kind is `notation`) and `proof_steps` (a proof
 equation or passage). A claim's declarations are those that state it: its links (zero
@@ -455,7 +472,7 @@ summary counts, each counted apart and never combined, and `selected` is the one
 
 | Set | Its readings |
 |---|---|
-| `audit` | the audit's own: the coverage the links file records with a claim's links (an unlinked claim keeps an `unresolved` reading), or the inventory with a proof step's; `by` lists their authors |
+| `audit` | the audit's own: the coverage the links file records with a claim's links (an unlinked claim keeps an `unresolved` reading), or the inventory with a proof step's (an unlinked step likewise); `by` lists their authors |
 | `review:<reviewer id>` | one reviewer's latest report of each statement, with the coverage it records with its verdict (zero configuration); `reviewer` as the report records it |
 | `workspace:<id>` | one published workspace's latest submitted finding in force that records a coverage of the whole statement; `mode` and `reviewer` as the workspace records them |
 

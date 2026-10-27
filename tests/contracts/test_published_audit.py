@@ -176,3 +176,66 @@ def test_a_version_entry_carries_its_audits_commits():
                         {'url': BASE + 'x/', 'author': 'B', 'commit': 'not a commit'}]}
     out = page_versions([entry], entry['id'])[0]['audits']
     assert out[0]['commit'] == 'a' * 40 and 'commit' not in out[1]
+
+
+def with_summary(d):
+    """`d` with the semantic summary MachineChecked computes from its records (`semantic.py`):
+    the index's `semantic` and each claim row's facts."""
+    from prooflens import semantic
+    idx = d['data/index.json']
+    semantic.apply(idx, {r['file']: d['data/claims/' + r['file']] for r in idx['claims']},
+                   author='A. Author')
+    return d
+
+
+def evidence(audit):
+    """What an audit's claims say, without their semantic facts."""
+    return [({k: v for k, v in c.items() if k != 'semantic'}, c['record']) for c in audit['claims']]
+
+
+def test_a_valid_semantic_summary_loads_with_the_audit():
+    d = with_summary(files())
+    a = snapshot(d)
+    assert a['semantic_summary'] == {'state': 'loaded', 'summary': d['data/index.json']['semantic']}
+    assert [c['semantic'] for c in a['claims']] == \
+        [r['semantic'] for r in d['data/index.json']['claims']]
+    assert evidence(a) == evidence(snapshot())
+    assert 'semantic_summary' not in snapshot()
+
+
+@pytest.mark.parametrize('change, reason, where', [
+    pytest.param(lambda idx: idx.update(semantic='x'), 'invalid', 'not an object', id='not-an-object'),
+    pytest.param(lambda idx: idx['semantic'].update(schema='prooflens/semantic-summary@2',
+                                                    papers='counted another way'),
+                 'unsupported', 'semantic-summary@2', id='newer-format'),
+    pytest.param(lambda idx: idx['semantic']['papers']['T']['coverage']['audit'].pop('statements'),
+                 'invalid', 'semantic/papers/T/coverage/audit', id='counts-missing'),
+    pytest.param(lambda idx: idx['claims'][0]['semantic'].update(unit='paragraphs'),
+                 'invalid', 'claims/0/semantic/unit', id='claim-facts'),
+    pytest.param(lambda idx: idx.pop('semantic'), 'invalid', 'no summary', id='facts-alone'),
+])
+def test_a_summary_this_version_cannot_read_is_set_aside_and_the_audit_loads(change, reason,
+                                                                               where):
+    """#415: an invalid summary, or one in a newer format, is set aside with why; the audit's
+    statuses and claims load as they do without a summary."""
+    d = with_summary(files())
+    change(d['data/index.json'])
+    a = snapshot(d)
+    assert a['state'] == 'loaded'
+    s = a['semantic_summary']
+    assert s['state'] == 'set-aside' and s['reason'] == reason and where in s['detail']
+    assert 'summary' not in s
+    assert all('semantic' not in c for c in a['claims'])
+    assert evidence(a) == evidence(snapshot())
+
+
+def test_the_rest_of_the_index_is_still_validated_beside_a_summary():
+    d = with_summary(files())
+    d['data/index.json']['claims'][0]['counts'] = 'not counts'
+    with pytest.raises(AuditError, match='manifest-index data at claims/0/counts'):
+        snapshot(d)
+    d = with_summary(files())
+    d['data/index.json']['semantic'] = 'x'
+    d['data/index.json']['claims'][0]['counts'] = 'not counts'
+    with pytest.raises(AuditError, match='manifest-index'):
+        snapshot(d)
