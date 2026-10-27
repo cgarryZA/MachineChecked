@@ -379,6 +379,24 @@ def test_the_lean_side_is_checked_against_the_later_build_and_kept_apart(setting
     assert ro.reopen(setting["map"], wsp.read(setting["path"]), other)["build_checked"] is False
 
 
+def test_a_new_reading_supersedes_the_reopened_finding_which_is_kept(setting):
+    p, work = setting["path"], setting["work"]
+    later = site(work, "r-2", setting["new"], setting["b"])
+    wsp.update(p, [{"op": "supersede", "id": "f-edit", "base_rev": 2,
+                    "reason": "the constant is now 3",
+                    "record": {"id": "f-edit-2", "coverage": "full", "note": "The constant is 3."}}],
+               later)
+    f = by_id(ro.reopen(setting["map"], wsp.read(p), later))
+    # The finding recorded at the later revision is current; the earlier one stays recorded as
+    # it was, superseded, and is not judged again.
+    assert "f-edit" not in f
+    (o,) = f["f-edit-2"]["paper"]
+    assert o["state"] == "current"
+    assert o["note"] == "it read Theorem 2.3 (T:thm:edit) as the later revision prints it"
+    old = wsp.read(p)["records"]["f-edit"]
+    assert old["state"] == "submitted" and old["note"] == "The constant is 2."
+
+
 def test_the_map_travels_with_the_workspace(setting, tmp_path):
     p, work = setting["path"], setting["work"]
     snap = Snapshot(work / "site" / "data")

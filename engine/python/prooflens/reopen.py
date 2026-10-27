@@ -180,8 +180,16 @@ def _passage(m: _Map, cid: str | None, sha: str | None, lean: dict | None = None
                                                       "read was not recorded"}
     if sha != _digest(row["from"]):
         if row.get("to") and sha == _digest(row["to"]):
-            return {**here, "state": "current", "note": f"it read {label} as the later revision "
-                                                         "prints it"}
+            return {**here, "state": "current",
+                    "note": f"it read {_label(row['to'], row['to']['claim'])} as the later "
+                            "revision prints it"}
+        later = m.later.get(cid)
+        if later is not None and sha == _digest(later["to"]):
+            # The later inventory's claim of that id, which the map matched to no earlier
+            # claim or another: read at the later revision.
+            return {"state": "current", "note": f"it read {_label(later['to'], cid)} as the "
+                                                "later revision prints it",
+                    "later": _place(later["to"])}
         return {**here, "state": "unchecked",
                 "why": f"it read another text of {label} than the earlier revision prints"
                        + (" (the earlier inventory pins other text)"
