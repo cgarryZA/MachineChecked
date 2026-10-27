@@ -377,7 +377,9 @@ def resolve_declaration(name: str, snap: Snapshot, root: Path | None, module: st
     (the build indexed it), `unbuilt` (its module's source declares it and the module is not
     built), `not loaded` (its module is built but could not be loaded) or `external` (not a
     project declaration; accepted only with `external`, and checked by Lean at the next
-    build). A name the project does not declare is refused, with the nearest names. With
+    build). A name the project does not declare is refused, with the nearest names. A full
+    assessment keeps no Lean index, so a declaration of a built module that its build records
+    no version of is refused with what would let a build record one (`_unrecorded`). With
     `module`, only that module is searched (`_in_module`)."""
     from .simple import declaring_modules
     name = str(name or "").strip()
@@ -404,14 +406,66 @@ def resolve_declaration(name: str, snap: Snapshot, root: Path | None, module: st
             return {"name": name, "module": m, "build": "unbuilt"}
         for m in declaring_modules(root, list(failed), name):
             return {"name": name, "module": m, "build": "not loaded"}
-        if not index and built:
-            # No index of a built project: this build did not run Lean.
+        if not index and built and _full_assessment(snap):
+            _unrecorded(name, snap, declaring_modules(root, built, name))
+            if not external:
+                raise TargetError(
+                    f"this build records no version of {name}, and no module of the project "
+                    "declares it as far as its source shows (pass --external for one from a "
+                    "dependency)", [{"name": n} for n in _near(_known(snap, root, built), name)])
+        elif not index and built:
+            # No index of a built project: this view did not run Lean.
             raise TargetError(f"{name}: this build has no Lean index; run `machinechecked view` "
                               "after `lake build`", kind="no-build")
     if external:
         return {"name": name, "module": None, "build": "external"}
     raise TargetError(f"{name} is not a declaration of the project (pass --external for one "
                       "from a dependency)", [{"name": n} for n in _near(index, name)])
+
+
+def _full_assessment(snap: Snapshot) -> bool:
+    """Whether `snap` is a full assessment's build (a project with a configuration), not a
+    zero-configuration view."""
+    return snap.index.get("mode") != "simple"
+
+
+def _unrecorded(name: str, snap: Snapshot, declares: list[str]) -> None:
+    """Refuse `name` in a full assessment's build that has no record of it: the build ran no
+    Lean, or it ran Lean and the built modules `declares` declare `name` (as far as their source
+    shows) but the probe recorded only what the inventory uses. Returns when Lean ran and no
+    module declares it. The reasons are those `dependencies.absent_reason` gives evidence already
+    recorded, with the steps that would let a build record it."""
+    from .dependencies import _listed_modules
+    if not snap.index.get("lean"):
+        raise TargetError(f"this build ran no Lean, so it records no version of {name}: build "
+                          "again with Lean", kind="no-build")
+    if not declares:
+        return
+    msg = (f"this build records no version of {name}: a full assessment records the "
+           "declarations its inventory's clauses name and those their statements use, and "
+           f"{name} is not among them")
+    listed = _listed_modules(snap)
+    unlisted = [m for m in declares if listed is not None and m not in listed]
+    if unlisted:
+        msg += (f"; its module {unlisted[0]} is not listed in `modules` of the configuration "
+                "either")
+    msg += (". To cite it, name it in a clause or a proof step of the inventory"
+            + (f", list {unlisted[0]} in `modules`," if unlisted else "") + " and build again")
+    raise TargetError(msg, [{"name": name, "module": m} for m in declares], kind="unrecorded")
+
+
+def _known(snap: Snapshot, root: Path, built: list[str]) -> list[dict]:
+    """The declarations a full assessment's build can name without an index: those its shared
+    store records, and those the sources of the built modules `built` declare."""
+    from .simple import declared_names
+    names = set(snap.store_fingerprints())
+    for m in built:
+        try:
+            names |= declared_names((root / (m.replace(".", "/") + ".lean"))
+                                    .read_text(encoding="utf-8", errors="replace"))
+        except OSError:
+            continue
+    return [{"name": n} for n in sorted(names)]
 
 
 def _stored_modules(snap: Snapshot, name: str) -> list[str]:
@@ -444,14 +498,15 @@ def _in_module(name: str, module: str, snap: Snapshot, root: Path | None, index:
     the shared store) has it there, `unbuilt` when the module is not built and its source
     declares it, `not loaded` when the module could not be loaded and its source declares it.
     Anything else is refused, naming the modules that do declare it; a name the project declares
-    nowhere is `external` only with `external`."""
+    nowhere is `external` only with `external`. A full assessment's build without a record of it
+    is read as `resolve_declaration` reads it (`_unrecorded`)."""
     from .simple import declaring_modules
     if module in indexed:
         return {"name": name, "module": module, "build": "built"}
     stored = [] if index else _stored_modules(snap, name)
     if module in stored:
         return {"name": name, "module": module, "build": "built"}
-    elsewhere, cannot_tell = set(indexed) | set(stored), False
+    elsewhere, cannot_tell, scanned = set(indexed) | set(stored), False, None
     if root is not None:
         built, unbuilt, failed = _project_modules(snap, root)
         if module in unbuilt and declaring_modules(root, [module], name):
@@ -460,7 +515,14 @@ def _in_module(name: str, module: str, snap: Snapshot, root: Path | None, index:
             return {"name": name, "module": module, "build": "not loaded"}
         elsewhere |= set(declaring_modules(root, unbuilt, name))
         elsewhere |= set(declaring_modules(root, list(failed), name))
-        cannot_tell = not index and bool(built)
+        if not index and built and _full_assessment(snap):
+            # Without an index, the sources of the built modules show where it is declared.
+            _unrecorded(name, snap, declaring_modules(root, [module], name)
+                        if module in built else [])
+            elsewhere |= set(declaring_modules(root, built, name))
+            scanned = _known(snap, root, built)
+        else:
+            cannot_tell = not index and bool(built)
     elsewhere.discard(module)
     if elsewhere:
         where = sorted(elsewhere)
@@ -471,6 +533,10 @@ def _in_module(name: str, module: str, snap: Snapshot, root: Path | None, index:
     if cannot_tell:
         raise TargetError(f"{name}: this build has no Lean index to find it in {module}; run "
                           "`machinechecked view` after `lake build`", kind="no-build")
+    if scanned is not None:
+        raise TargetError(f"{name} is not declared in {module}, nor elsewhere in the project as "
+                          "far as its source shows (pass --external for one from a dependency)",
+                          [{"name": n} for n in _near(scanned, name)])
     raise TargetError(f"{name} is not declared in {module}, nor elsewhere in the project (pass "
                       "--external for one from a dependency)",
                       [{"name": n} for n in _near(index, name)])
