@@ -290,7 +290,7 @@ def _target(t, snap, root, claim: str, olds: list[dict], repin: bool) -> dict:
     if not isinstance(t, dict) or not isinstance(t.get("decl"), str) or not t["decl"].strip():
         raise _err("a Lean target names its declaration (`decl`)")
     extra = set(t) - {"decl", "module", "external", "build", "fingerprint", "digest", "target",
-                      *SUBTARGETS}
+                      "closure", "closure_complete", *SUBTARGETS}
     if extra:
         raise _err(f"a Lean target has no field {', '.join(sorted(extra))}")
     out = {"decl": t["decl"].strip()}
@@ -341,6 +341,8 @@ def _target(t, snap, root, claim: str, olds: list[dict], repin: bool) -> dict:
         for k in ("module", "build", "fingerprint", "digest", "target"):
             if t.get(k) is not None:
                 out.setdefault(k, t[k])
+        from .dependencies import kept_statement_pins
+        out.update({k: v for k, v in kept_statement_pins(t).items() if k != "expansions"})
         return out
     fps = {**snap.store_fingerprints(), **snap.fingerprints()}
     if st is not None or out["decl"] in fps:
@@ -357,6 +359,9 @@ def _target(t, snap, root, claim: str, olds: list[dict], repin: bool) -> dict:
         out.update(module=r["module"], build=r["build"])
     out["fingerprint"] = fps.get(out["decl"])
     out["digest"] = snap.digests().get(out["decl"])
+    # The object a target names means what the definitions its statement uses say.
+    from .dependencies import statement_pins
+    out.update({k: v for k, v in statement_pins(snap, out["decl"]).items() if k != "expansions"})
     return out
 
 
@@ -453,17 +458,29 @@ def fragment_currency(r: dict, snap) -> dict:
 def alignment_currency(r: dict, snap) -> dict:
     if snap is None:
         return {"state": "unchecked", "changes": []}
+    from .dependencies import closure_currency
     digests = snap.digests()
-    changes, unchecked = [], False
+    changes, unchecked, reasons = [], False, []
     for t in r.get("lean") or []:
         was, now = t.get("digest") or t.get("fingerprint"), digests.get(t["decl"])
         if not was or now is None:
             unchecked = True
         elif was != now:
             changes.append({"decl": t["decl"], "was": was, "now": now})
+        else:
+            # The declaration is unchanged; the definitions its statement uses may not be.
+            c = closure_currency(t, snap, t["decl"])
+            changes += c["changes"]
+            if c["state"] == "unchecked":
+                unchecked = True
+                reasons.append(c.get("reason"))
     if changes:
         return {"state": "stale", "changes": changes}
-    return {"state": "unchecked" if unchecked else "current", "changes": []}
+    if unchecked:
+        return {"state": "unchecked", "changes": [],
+                **({"reason": "; ".join(dict.fromkeys(x for x in reasons if x))}
+                   if any(reasons) else {})}
+    return {"state": "current", "changes": []}
 
 
 def currency(ws: dict, snap) -> dict[str, dict]:

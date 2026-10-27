@@ -233,11 +233,16 @@ def _print_simple(body, summary: dict | None = None):
         print(f"  {k:4d}  {s}")
     for line in text(summary):
         print(line)
+    from .simple import BASIS_WORDS, COVERAGE_WORDS
     for c in body.get("claims", []):
         cor = c.get("correspondence") or {}
         if cor.get("basis") == "reviewed_composition":
-            print(f"composition {c.get('number') or c['id']}: every clause by the auditor's "
-                  f"composition, which Lean has not checked. Next step: {cor['next_step']}")
+            # The reading's own coverage, in the terminal's words for it (`reading_text`): a
+            # composition may cover part of the claim, or state it differently.
+            head = COVERAGE_WORDS.get(cor.get("coverage"), "no coverage recorded")
+            print(f"composition {c.get('number') or c['id']}: {head}, "
+                  f"{BASIS_WORDS['reviewed_composition']}, which Lean has not checked. "
+                  f"Next step: {cor['next_step']}")
 
 
 # -- everyday commands ------------------------------------------------------------------------
@@ -453,6 +458,9 @@ def _print_workspace(v: dict) -> None:
                 from .simple import COMPOSITION_NEXT_STEP
                 print("           Lean has not checked this combination. Next step: "
                       + COMPOSITION_NEXT_STEP)
+            if f.get("dependencies") is not None:
+                from .dependencies import lines as dependency_lines
+                print("\n".join(dependency_lines(f["dependencies"], f["currency"])))
         for q in c["questions"]:
             print(f"  question {q['id']}  {q['state']}: {q['text']}")
         for comp in c.get("compositions") or []:

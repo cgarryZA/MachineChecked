@@ -471,6 +471,12 @@ def _repin(sh):
     assert findings["f-bound-2"]["supersedes"] == "f-bound"
     assert findings["f-bound-2"]["currency"]["state"] == "current"
     assert findings["f-bound-2"]["in_force"] and not findings["f-bound"]["in_force"]
+    # f-power keeps the reading it was submitted with: the records re-pinned since are named.
+    power = findings["f-power"]["currency"]
+    assert power["state"] == "stale"
+    assert {"c", "c.1", "c.1.1"} <= {ws[c["record"]]["local_id"] for c in power["changes"]
+                                     if ws.get(c.get("record") or "", {}).get("kind")
+                                     == "requirement"}
     assert {r["currency"]["state"] for r in d["claims"]["P:thm:bound"]["reading"]
             ["requirements"]} == {"current"}
 

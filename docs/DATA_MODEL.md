@@ -249,7 +249,7 @@ derived from them alone; no status, fingerprint or gate reads it.
 | `evidence[]` | per review: `target` (`spec`, `def`, `step`), `name`, `clause`, `from` and `to` (`state`, `marker`: `by`, `kind`, `file`, `line`, `hash`, `source`; `"same"` for a kept marker), `outcome`, and `because`, `question`, `caveat`, `kept_through` |
 | `declarations[]` | every project declaration whose statement or proof changed, or that one release has alone, other than the tactic scripts of tactic defaults: `name`, `change`, `from`, `to`, `claims` |
 | `counts` | per paper class, per evidence outcome and per declaration change, and `status_changed` |
-| `workspace` | with `--workspace`: the workspace's records that are not current, of every kind, the claim's requirements, fragments and alignments included (`id`, `kind`, `claim`, `state`, `changes`, `pinned_release`; `submitted` for a submitted finding, `proposed` for a proposed fragment) |
+| `workspace` | with `--workspace`: the workspace's records that are not current, of every kind, the claim's requirements, fragments and alignments included (`id`, `kind`, `claim`, `state`, `changes`, `pinned_release`; `unknown` for a finding not known to be current; `submitted` for a submitted finding, `proposed` for a proposed fragment) |
 
 The export keeps a passage's places and text only when its paper publishes its source text, the
 Lean `text` only when every paper publishes its Lean, and a marker's `file` and `line` only
@@ -594,8 +594,14 @@ optional `clause` and `note`, `rev`, `created_at`/`created_by`, `updated_at`/`up
 - **`evidence`**: `ref` is one of `{decl, module, build, fingerprint, digest}` (a declaration of
   the selected build; `build` is `built`, `unbuilt`, `not loaded` or `external`; a `module` given
   is the only one searched, and a declaration it does not declare is refused with the modules
-  that do, as is an alignment's target), `{source:
-  {file, line}}`, `{paper: {claim, quote}}`, `{app: {...}}`: an application of a declaration, as
+  that do, as is an alignment's target), with `closure` (each project definition its statement
+  uses, for a definition its value's too, with its digest as below, or null when the build shows
+  none; from its statement record, else by following what the build's declaration records use,
+  with `closure_complete: false` when a record is missing) and `expansions` (the applications of
+  definitions it prints, as the build expanded them: `{at, name, key}`, `key` naming the stored
+  expansion, `data/expansions/<key>.json`), `{source:
+  {file, line}}`, `{paper: {claim, quote, sha256}}` (`sha256` the claim's passage pin when it was
+  quoted), `{app: {...}}`: an application of a declaration, as
   `compare --query uses` gives it (`callee`, `module`, `id`, `caller`, `via`, the `arguments`
   and `premises` with how each is supplied, the `result`, and `app_hash`, a digest of them; it is
   `stale` once the caller elaborates it differently, `unchecked` until the uses are read again
@@ -636,7 +642,8 @@ optional `clause` and `note`, `rev`, `created_at`/`created_by`, `updated_at`/`up
   printed`, `cannot determine`) and the `counterexamples` it rests on (pinned by digest); such a
   finding is submitted without a coverage. `state` is `draft`
   or `submitted` (`submitted_at`). A submitted finding is never edited or deleted: a later
-  finding names it in `supersedes`, with its `reason`, and both are kept.
+  finding names it in `supersedes`, with its `reason`, and both are kept. A finding records what
+  it rests on when it is submitted (`dependencies`, below).
 - **`question`**: `text`, `state` (`open`, `answered`, `withdrawn`), optional `answer` and
   `evidence`.
 - **`requirement`**: one thing the claim demands, as the auditor reads it. `local_id` (unique
@@ -674,7 +681,8 @@ optional `clause` and `note`, `rev`, `created_at`/`created_by`, `updated_at`/`up
 - **`alignment`**: `requirements` (local ids; none only for an `additional assumption` of the
   Lean), `lean` (targets: `{decl}`, or a part of its statement as the build prints it: `var`,
   `binder` (a variable's type or a hypothesis), `at` (a sub-term's identity) or `conclusion`;
-  each with `build`, `fingerprint`, `digest` and the `target` text) and `relation`
+  each with `build`, `fingerprint`, `digest`, the `closure` of its declaration's statement (as
+  for evidence) and the `target` text) and `relation`
   (`corresponds`, `additional assumption`, `changed`, `alternative representation`). A
   requirement may have several alignments and a target may serve several requirements.
 - **`composition`**: an argument that several results together cover the claim
@@ -725,15 +733,55 @@ changes no status.
 
 **Currency.** Evidence on a declaration is pinned to its `fingerprint` and to a `digest` of that
 fingerprint with those of the constants Lean generated for it (`N._f`, `N.match_1`, `N.eq_1`), which
-carry a definition's equations, and of the tactic script of each tactic default its type has.
-Against a later build, evidence whose digest changed is `stale`, and so is every finding or
-question that cites it, and every finding whose claim's printed text changed; the others stay
-`current` (`unchecked` when the build shows no fingerprint). A fragment
-whose region of the source now reads differently (the lines that changed are listed), or whose
-claim's passage changed, is `stale`, and so is an alignment whose declaration changed, and every
-requirement they belong to, and every finding or question that names that requirement. The saved
+carry a definition's equations, and of the tactic script of each tactic default its type has,
+and to the digest of each definition its statement uses (`closure`). Against a later build,
+evidence whose digest changed, or one of whose definitions' digests changed (the change names
+the definition and the declaration that uses it), is `stale`, and so is every question that
+cites it; the others stay `current` (`unchecked` when the build shows no fingerprint, or no
+version of a definition it uses, or when its definitions were not recorded: re-pin it). A quoted
+passage is stale once its claim's passage pin changes, and unchecked when it records none. A
+fragment whose region of the source now reads differently (the lines that changed are listed),
+or whose claim's passage changed, is `stale`, and so is an alignment whose declaration, or a
+definition its statement uses, changed, and every requirement they belong to, and every question
+that names that requirement. A finding's currency is that of its dependencies (below). The saved
 records are not re-pinned silently: a `put` with `repin: true` re-pins a record to the current
 build.
+
+**Dependencies of a finding.** `engine/python/prooflens/dependencies.py`. A finding rests on the
+parts below, each an item with `dependency` (its kind), `record` (the record it comes from, when
+it is one), `via` (the composition or counterexample it is cited through) and its content
+identity:
+
+| `dependency` | Part | Identity |
+|---|---|---|
+| `passage` | the claim's printed passage | `claim`, `sha256` (the finding's pin) |
+| `reading` | a requirement it rests on: the one it names, or its counterexamples concern, with those it sits inside, and each that a step of its composition establishes, with those inside it | `requirement`, `sha256` (`reading_sha256`) |
+| `context` | a passage governing one of those requirements (accepted, not a later use) | `requirement`, `role`, `origin`, and `region` (its location, `sha256`, `line_sha256`) or `passage` (`claim`, `sha256`) |
+| `object` | an alignment of one of those requirements | `requirements`, `relation`, `lean` (each target's place, `target` text, `fingerprint`, `digest`, `closure`) |
+| `declaration`, `application`, `fact`, `certificate`, `paper`, `source` | evidence it cites, or that its composition or counterexamples cite | `role` and `ref`: the reference's identifying fields and pins (a declaration's `closure` and `expansions` included) |
+| `composition` | the composition it rests on | `sha256`: a digest of its statement, steps (their evidence, requirements, substitutions and inferences), identifications, obligations, coverage and bridge pins |
+| `bridge` | for a finding recorded as a checked bridge: its composition's bridge, or its own | `theorem`, `target`, and for a composition's, `target_fingerprint` and `source_sha256` |
+| `counterexample` | a counterexample it cites | `sha256` (the finding's pin of it) |
+
+`dependencies` is `{kinds, items, unknown, at}`: `kinds` the evidence kinds it uses
+(`statement comparison`: a declaration's statement or a certificate; `object correspondence`:
+alignments or a composition's identifications; `composition`; `proof route`: applications or
+facts inside a proof; `checked bridge`), and `unknown` the parts that cannot be identified, each
+with `why` (a finding recorded without a build, whose passage version is not known; a finding's
+own bridge, which records no version of its target or of the passage; a record it names that the
+workspace lacks). A finding on the whole claim names no requirement: it rests on one only through
+its composition. A submitted finding records `dependencies` when it is submitted (a superseding
+one when it is recorded) and keeps them; `workspace show` gives a draft's as its records give
+them now. Against a build, each item is checked as its record would be (the passage against the
+claim's pin, a context passage and an alignment as above, evidence as above, a bridge as
+`bridge_check`, a counterexample against its pin and its own currency). The finding is `stale`
+when an item changed, or, for a submitted finding, when a record it rests on is not the version
+it recorded (edited, re-pinned, removed: the change names the record), so re-pinning evidence
+brings a draft up to date and leaves a submitted finding stale until it is superseded. Otherwise
+it is `unchecked` when an item is unknown or cannot be checked now (`currency.unknown`, each
+`{dependency, record, why}`), including a finding submitted before findings recorded their
+dependencies; else `current`. Dependencies are workspace records: the export of a workspace
+carries them, a published audit does not, and no status reads them.
 
 **The reading.** `workspace show --json` gives each claim's `reading`: its requirements in
 reading order (with `depth`, `children`, their fragments grouped as `governing`, `later_uses`,
@@ -764,7 +812,8 @@ later than the lock. So `review promote` refuses the report unless the maintaine
 `--allow-revealed`.
 
 **Export and import.** `workspace export` writes the whole workspace (less `ops`) as one file;
-`workspace import` keeps its id, authors, pins, mode and exposure. Into a workspace already
+`workspace import` keeps its id, authors, pins, mode and exposure, and each submitted finding's
+dependencies as recorded. Into a workspace already
 present, it adds the records that are missing (and the main results, when it has none) and keeps
 a record, or main results, both hold in different versions as it is, listing the other under
 `conflicts`. References the current build cannot resolve, main results included, are reported as
