@@ -581,3 +581,10 @@ def test_definitions_expand_at_their_arguments(tmp_path, toolchain):
     [eq] = val["equations"]
     assert eq["name"] == "Shape.Digit.val.eq_70" and eq["params"] == []
     assert len(val["equations_not_applying"]) == 69
+
+    # A definition Lean generates is not expanded (#412): the constructor index `ctorIdx` of a
+    # hypothesis has no expansion, and the project's `Digit.val` beside it has one.
+    idx = rec["Shape.last_index"]
+    hyp = idx["binders"][-1]
+    assert hyp["type"]["text"] == "t.ctorIdx = 69" and "expansions" not in hyp["type"]
+    assert [x["name"] for x in expansions(idx["conclusion"]).values()] == ["Shape.Digit.val"]

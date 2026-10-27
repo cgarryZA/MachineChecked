@@ -218,6 +218,21 @@ if (states.status !== 0) throw new Error(states.stderr);
 const publication = spawnSync(process.env.PYTHON || "python3", [path.join(here, "../../tests/published_fixture.py"), path.join(root, "published"), reader], { encoding: "utf8" });
 if (publication.status !== 0) throw new Error(publication.stderr);
 const PUB = JSON.parse(fs.readFileSync(path.join(root, "published/data/index.json")));
+// A paper page that joined a statement of its PDF to the audit's entry by printed number, as
+// machinechecked.org writes it when it cannot show the PDF the audit read (`matched`); and the
+// same page with a match that names the revision the audit read and no version.
+const MATCHED = JSON.parse(fs.readFileSync(path.join(root, "matched/data/index.json")));
+fs.cpSync(path.join(root, "matched"), path.join(root, "matched-revision"), { recursive: true });
+{
+  const dir = path.join(root, "matched-revision", "data");
+  const unlabelled = (c) => { delete c.by_project["synthetic/alpha"].audit.matched.version; return c; };
+  const idx = structuredClone(MATCHED);
+  const row = idx.claims.find((c) => c.by_project?.["synthetic/alpha"]?.audit?.matched);
+  unlabelled(row);
+  fs.writeFileSync(path.join(dir, "index.json"), JSON.stringify(idx));
+  const f = path.join(dir, "claims", row.file);
+  fs.writeFileSync(f, JSON.stringify(unlabelled(JSON.parse(fs.readFileSync(f, "utf8")))));
+}
 
 // A synthetic review queue with a reviewed target after an unrelated pending unit.
 fs.cpSync(path.join(root, "toy"), path.join(root, "review"), { recursive: true });
@@ -1890,6 +1905,41 @@ for (const width of [1300, 390]) {
     await pg.waitForFunction(() => document.querySelector(".view .chipbtn [data-status]")?.dataset.status === "formal.refuted.corrected");
     assert.equal(await pg.locator("aside .lean .block").count(), 2);
     if (process.env.SHOTS) await pg.screenshot({ path: path.join(process.env.SHOTS, `published-${width}.png`) });
+  });
+}
+
+// A claim joined to an audit's entry by printed number, on a page that cannot show the PDF the
+// audit read, says so beside the audit's status (#408). The audit's own entry, and a claim whose
+// record has no `matched`, look as before; the status is the engine's in every case.
+for (const width of [1300, 390]) {
+  await check("a claim matched by printed number to an audit of another PDF says so", width, async (pg) => {
+    const status = pg.locator("aside .view .chipbtn [data-status]");
+    const note = pg.locator("aside .view .matched");
+    const after = ": the audit read another PDF of the paper than the one shown here.";
+    await pg.goto(origin + "/matched/#/r/paper/read/P/P%3Atheorem-1");
+    await status.waitFor();
+    assert.equal(await status.getAttribute("data-status"), "formal.author-reviewed");
+    assert.equal(await note.getAttribute("data-matched"), "number");
+    assert.equal((await note.textContent()).trim(),
+      "Matched by its printed number to the audit's entry for Latest manuscript (commit 956fe0b)" + after);
+    assert.ok(await pg.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
+    if (process.env.SHOTS) await pg.screenshot({ path: path.join(process.env.SHOTS, `matched-${width}.png`) });
+    // The audit's own entry is joined to no statement of this PDF.
+    const own = MATCHED.claims.find((c) => c.projects);
+    await open(pg, own.id);
+    await pg.waitForFunction(() => document.querySelector("aside .view .chipbtn [data-status]")?.dataset.status === "formal.refuted.corrected");
+    assert.equal(await note.count(), 0);
+    // Without the version's label, the note names the revision the audit read.
+    await pg.goto(origin + "/matched-revision/#/r/paper/read/P/P%3Atheorem-1");
+    await note.waitFor();
+    assert.equal(await status.getAttribute("data-status"), "formal.author-reviewed");
+    assert.equal((await note.textContent()).trim(),
+      "Matched by its printed number to the audit's entry for revision dddddddddddd" + after);
+    // A record without `matched` has no note.
+    await pg.goto(origin + "/published/#/r/paper/read/P/P%3Atheorem-1");
+    await status.waitFor();
+    assert.equal(await status.getAttribute("data-status"), "formal.author-reviewed");
+    assert.equal(await note.count(), 0);
   });
 }
 
