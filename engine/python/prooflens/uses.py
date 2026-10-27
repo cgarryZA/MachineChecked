@@ -566,8 +566,17 @@ def route(root: Path, data_dir: Path, lake: str = "lake"):
 
 # -- text --------------------------------------------------------------------------------------
 
-def text(out: dict, claims: dict[str, list[str]] | None = None) -> str:
-    """A uses document for the terminal."""
+def cite_text(ref: dict) -> str:
+    """An evidence reference as a workspace record takes it (`"ref"`), for the terminal."""
+    import json
+    return json.dumps(ref, ensure_ascii=False)
+
+
+def text(out: dict, claims: dict[str, list[str]] | None = None,
+         module: str | None = None) -> str:
+    """A uses document for the terminal. Each application is named by its id, which workspace
+    evidence cites (`{"app": {callee, id}}`, with the `module` the declaration was asked for in,
+    when one was)."""
     if not out.get("ok"):
         where = ", ".join(out.get("modules") or [])
         return (f"{out['name']}: {out['status']}" + (f" ({where})" if where else "")
@@ -597,7 +606,7 @@ def text(out: dict, claims: dict[str, list[str]] | None = None) -> str:
         lines.append("  imported without use by: " + ", ".join(out["imports_without_use"]))
     for a in out["applications"]:
         where = a["location"]
-        lines.append(f"\n  application in {a['caller']}"
+        lines.append(f"\n  application {a['id']} in {a['caller']}"
                      + (f" (in {a['via']})" if a.get("via") else "")
                      + f", at {where['path']}")
         if not a.get("available"):
@@ -615,6 +624,11 @@ def text(out: dict, claims: dict[str, list[str]] | None = None) -> str:
         for o in a.get("unsupplied") or []:
             lines.append(f"    left open: {o['binder']} ({o['role']})")
         lines.append(f"    gives     {_text(a.get('result'))}")
+    cited = [a for a in out["applications"] if a.get("available")]
+    if cited:
+        ref = {"callee": d["name"], **({"module": module} if module else {}), "id": cited[0]["id"]}
+        lines.append("\n  cite as evidence: " + cite_text({"app": ref})
+                     + (" (or another application's id)" if len(cited) > 1 else ""))
     if out.get("applications_note"):
         lines.append("  " + out["applications_note"])
     lines.append(f"  {out['note']}")

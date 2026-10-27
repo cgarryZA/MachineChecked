@@ -189,7 +189,8 @@ changes no status.
 theorem has **Facts inside the proof**: *Read the proof* asks Lean for the propositions its proof
 establishes along the way, each with the hypotheses it needs and the case of the proof it lies in,
 and each theorem the proof applies with the local that supplies each of its hypotheses (`compare
---query proof-facts NAME` gives the same in a terminal). *Cite in the investigation* saves a fact
+--query proof-facts NAME` gives the same in a terminal, with the reference that cites each fact,
+as `compare --query uses` gives one for each application). *Cite in the investigation* saves a fact
 as evidence; it keeps its basis, established inside that proof under that context, so a finding
 resting on it records the coverage as your composition, not as direct coverage. A `have` the
 source states but the compiled proof does not keep is shown as source text only.
