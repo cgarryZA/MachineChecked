@@ -705,7 +705,8 @@ def _mentions(site: Site, name: str) -> list[dict]:
         ty = d.get("type") or ""
         if pat.search(ty) or spat.search(ty):
             found[n] = {"id": f"decl:{n}", "name": n, "module": d.get("module"),
-                        "statement": ty, "complete": len(ty) < 300, "claims": [],
+                        "statement": ty, "complete": d.get("type_complete", len(ty) < 300),
+                        "claims": [],
                         "note": "a preview of the type, from the build's index of the project"}
     return sorted(found.values(), key=lambda r: r["name"])
 
@@ -717,7 +718,8 @@ QUERIES = {
     "search": "the project's declarations whose complete statements best match a claim's printed "
               "statement, a Lean expression or words, with the reasons for each",
     "dependencies": "what a declaration's statement and proof use (runs `inspect`)",
-    "uses": "where a declaration is applied, and the source of each premise",
+    "uses": "where a declaration is applied, and the source of each premise (with --in, inside "
+            "one declaration or one application, with the context of each)",
     "proof-facts": "the typed facts inside a declaration's proof, each with its assumptions and "
                    "cases (Lean reads the proof once; the answer is cached)",
     "composition": "the auditors' compositions for a claim: the steps, the results each rests "
@@ -765,7 +767,7 @@ def mark_claims(doc: dict, claims: dict[str, list[str]]) -> dict:
 def query(site: Site, op: str, target: str, limit: int | None = None, after: str | None = None,
           root: Path | None = None, log=None, match: str | None = None,
           workspace: str | None = None, main: list[str] | None = None,
-          every_library: bool = False) -> dict:
+          every_library: bool = False, within: str | None = None) -> dict:
     """One targeted query: `{op, context, target, results, provenance, retrieval}`. An
     operation the engine does not extract yet answers `available: false` with its owner.
     `search` with `every_library` searches every library of the project, also those the
@@ -777,9 +779,13 @@ def query(site: Site, op: str, target: str, limit: int | None = None, after: str
     which an independent review reads only after its verdict. `impact` traces the target from
     the main results named in `main` (declarations or claims), else from those saved in a
     workspace of the working directory (in `workspace`, when named), else from the declarations
-    linked to the paper's theorems (`impact.py`)."""
+    linked to the paper's theorems (`impact.py`). `uses` with `within` (`--in`) answers for
+    one declaration, or one application by its id, with every local of each application's
+    context."""
     if op not in QUERIES:
         raise CompareError(f"no query {op!r}; the queries are: {', '.join(QUERIES)}", "bad-query")
+    if within and op != "uses":
+        raise CompareError("--in goes with the query uses", "bad-query")
     out = {"schema": QUERY_SCHEMA, "op": op, "target": target, "limit": limit, "after": after,
            "context": site.snapshot()}
     if op in NOT_YET:
@@ -809,7 +815,8 @@ def query(site: Site, op: str, target: str, limit: int | None = None, after: str
         if root is None:
             raise CompareError("`uses` needs the Lean project", "no-project")
         from .uses import uses
-        results = [mark_claims(uses(root, target, None, log=log), linked_claims(site))]
+        results = [mark_claims(uses(root, target, None, log=log, within=within),
+                               linked_claims(site))]
         prov = "Lean (the elaborated terms of the project), cached until a Lean input changes"
     elif op == "impact":
         results = [_impact(site, root, target, main, log, workspace)]
@@ -866,11 +873,13 @@ def search(site: Site, target: str, limit: int | None = None, after: str | None 
            every_library: Path | None = None, log=None) -> dict:
     """The content search (`retrieval.Retrieval.search`) the reader and the suggestions use. A
     target naming a claim searches with its printed statement, over declarations of its sort;
-    any other target is the query itself. Nothing recorded by people (links, rejections, notes)
-    enters the search or its results. It searches the build's content index; with
-    `every_library` (the Lean project), the index of every built module instead, from the
-    facts store, extracting what it does not hold (a paper's build leaves out the libraries
-    formalization.yaml maps only to other papers)."""
+    a target naming a declaration of the index searches for declarations like it
+    (`Retrieval.search_like`), and from a theorem says how each result's hypotheses and
+    conclusion compare with its; any other target is the query itself. Nothing recorded by
+    people (links, rejections, notes) enters the search or its results. It searches the
+    build's content index; with `every_library` (the Lean project), the index of every built
+    module instead, from the facts store, extracting what it does not hold (a paper's build
+    leaves out the libraries formalization.yaml maps only to other papers)."""
     from .retrieval import paper_quantifiers
     if every_library is not None:
         ret, scope = _every_library(every_library, log)
@@ -884,8 +893,15 @@ def search(site: Site, target: str, limit: int | None = None, after: str | None 
         cid = site.resolve_claim(target)
     except CompareError:
         cid = None
-    kinds, order, subject = None, None, {"text": target}
-    if cid:
+    kinds, order, subject, like = None, None, {"text": target}, None
+    if cid is None and target in ret.by_name:
+        like = target
+        d = ret.docs[ret.by_name[target]]
+        theorem = d.get("kind") == "theorem"
+        subject = {"declaration": target, "module": d.get("module"), "statement": d.get("type"),
+                   "complete": True, "kinds": "theorems" if theorem else "definitions",
+                   **({"note": LIKE_NOTE} if theorem else {})}
+    elif cid:
         ch = site.chunk(cid) or {}
         text = " ".join(x for x in (ch.get("title"), ch.get("statement_tex")
                                     or (ch.get("anchor") or {}).get("statement")) if x)
@@ -897,7 +913,8 @@ def search(site: Site, target: str, limit: int | None = None, after: str | None 
     else:
         text = target
     try:
-        res = ret.search(text, kinds=kinds, limit=limit or 20, after=after, paper_order=order)
+        res = ret.search_like(like, limit=limit or 20, after=after) if like else \
+            ret.search(text, kinds=kinds, limit=limit or 20, after=after, paper_order=order)
     except ValueError as e:
         raise CompareError(str(e), "bad-cursor") from None
     for r in res["results"]:
@@ -909,6 +926,11 @@ def search(site: Site, target: str, limit: int | None = None, after: str | None 
     return {"available": True, "subject": subject, "results": res["results"],
             "query": res["query"], "scope": {"declarations": len(ret), **scope},
             "provenance": prov, "retrieval": res["page"]}
+
+
+LIKE_NOTE = ("each result's hypotheses and conclusion are compared with the declaration's as "
+             "Lean prints them, up to the names of their variables; whether one statement "
+             "implies the other is a question for review")
 
 
 def _build_scope(site: Site) -> dict:
@@ -1034,10 +1056,14 @@ def search_text(out: dict) -> str:
     """A content search for the terminal: each result with its reasons and complete statement."""
     sub = out.get("subject") or {}
     head = (f"Declarations ({sub.get('kinds')}) matching {sub['claim']}" if sub.get("claim")
-            else f"Declarations matching {sub.get('text')!r}")
+            else f"Declarations ({sub.get('kinds')}) like {sub['declaration']}"
+            if sub.get("declaration") else f"Declarations matching {sub.get('text')!r}")
     lines = [f"{head}, among {out['scope']['declarations']} declarations of the project:"]
-    if out["scope"].get("note"):
-        lines.append(f"({out['scope']['note']})")
+    if sub.get("declaration"):
+        lines.append(f"  {sub['statement']}")
+    for note in (sub.get("note"), out["scope"].get("note")):
+        if note:
+            lines.append(f"({note})")
     for r in out["results"]:
         lines.append(f"\n{r['name']}  ({r.get('kind')}, {r.get('module')})")
         for x in r["reasons"]:

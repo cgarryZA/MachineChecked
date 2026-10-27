@@ -1,13 +1,14 @@
 <script>
   import { loadLeanIndex, loadRetrieval } from "../lib/data.js";
-  import { claimQuery } from "../lib/retrieval.js";
+  import { claimQuery, scopeText } from "../lib/retrieval.js";
 
   // Search the project's declarations by their complete statements and pick one to link. The
   // search is the engine's (lib/retrieval.js): the same ranking and reasons as the suggestions
-  // and `machinechecked compare --query search`. A result is a candidate, not a link.
+  // and `machinechecked compare --query search`, by text, by this claim's statement or from a
+  // result (**Similar**). A result is a candidate, not a link.
   let { index, onpick, disabled = false, claim = null } = $props();
   let q = $state("");
-  let fromClaim = $state(false);
+  let fromClaim = $state(false), like = $state(null);
   let ret = $state(null), decls = $state(null), loading = $state(false);
 
   function load() {
@@ -21,6 +22,10 @@
   const linked = $derived((claim?.links || []).map((l) => l.name));
   const found = $derived.by(() => {
     if (ret) {
+      if (like && ret.byName.has(like)) {
+        const ref = ret.docs[ret.byName.get(like)], theorem = ref.kind === "theorem";
+        return { scope: `${theorem ? "theorems" : "definitions"} like ${like}`, like, compared: theorem, statement: ref.type, ...ret.searchLike(like, { limit: 12 }) };
+      }
       if (fromClaim && claim) {
         const cq = claimQuery(ret, claim);
         return { scope: `${cq.sort} matching this claim's printed statement`, ...ret.search(cq.text, { kinds: cq.kinds, paperOrder: cq.paperOrder, limit: 12, exclude: linked }) };
@@ -39,15 +44,19 @@
 <div class="picker">
   <div class="bar">
     <input type="search" placeholder="Search the Lean by statement, symbols or name…" bind:value={q}
-      oninput={() => (fromClaim = false)} onfocus={load} {disabled} aria-label="Search the project's declarations" />
+      oninput={() => { fromClaim = false; like = null; }} onfocus={load} {disabled} aria-label="Search the project's declarations" />
     {#if claim}
-      <button class="btn ghost" {disabled} onclick={() => { load(); fromClaim = true; q = ""; }}>Search with this claim</button>
+      <button class="btn ghost" {disabled} onclick={() => { load(); fromClaim = true; like = null; q = ""; }}>Search with this claim</button>
     {/if}
   </div>
   {#if found}
     <p class="faint small" role="status">
-      {found.page.total} {found.scope}{#if ret}, among {ret.size} declarations of the project, linked or not{/if}.
+      {found.page.total} {found.scope}{#if ret}, {scopeText(index, ret.size)}{/if}.
+      {#if found.compared}Each is compared with {found.like} as Lean prints them; whether one implies the other is for review.{/if}
     </p>
+    {#if found.like}
+      <details class="ref"><summary class="ty"><code>{found.like}</code> {found.statement}</summary><pre>{found.statement}</pre></details>
+    {/if}
     {#if found.results.length}
       <ul>
         {#each found.results as d (d.name)}
@@ -61,7 +70,11 @@
                 {#if !d.complete}<p class="faint small">Only the beginning of this statement is in this build.</p>{/if}
               </details>
             </div>
-            <button class="btn" {disabled} onclick={() => onpick(d.name)}>Link</button>
+            <div class="acts">
+              {#if ret}<button class="btn ghost" onclick={() => { like = d.name; fromClaim = false; q = ""; }} aria-label={`Similar to ${d.name}`}>Similar</button>{/if}
+              {#if linked.includes(d.name)}<span class="faint small">Linked</span>
+              {:else}<button class="btn" {disabled} onclick={() => onpick(d.name)}>Link</button>{/if}
+            </div>
           </li>
         {/each}
       </ul>
@@ -84,6 +97,7 @@
   .why { color: var(--muted); }
   summary.ty { font-family: var(--mono); font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
   pre { font-family: var(--mono); font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; margin: 4px 0; }
+  .acts { flex: none; display: flex; gap: 6px; align-items: center; }
   .btn { flex: none; border: 1px solid var(--accent); background: var(--accent); color: var(--on-accent); border-radius: 6px; padding: 3px 10px; cursor: pointer; font-size: 13px; }
   .btn.ghost { background: none; color: var(--accent); }
   .small { font-size: 13px; }

@@ -1,7 +1,9 @@
 """Content retrieval (#126) on the synthetic corpus of tests/fixtures/retrieval: complete
 statements, the reasons given for each result, users of a close match, the order of
-quantifiers, the reader's identical search, the latency on 40,000 declarations, and the same
-search through suggestions and `compare --query search`. No Lean session is involved."""
+quantifiers, searches from a declaration (the hypotheses, conclusion and variables of each
+result compared with its), the reader's identical search, the latency on 40,000 declarations,
+and the same search through suggestions and `compare --query search`. No Lean session is
+involved."""
 
 import json
 import random
@@ -187,3 +189,158 @@ def test_compare_without_a_content_index_says_so(tmp_path):
     site = cmp.Site(write_site(tmp_path))
     out = cmp.query(site, "search", "anything")
     assert out["available"] is False and "content index" in out["reason"]
+
+
+# -- searches from a declaration -------------------------------------------------------------------
+
+def reasons(r, signal=None):
+    return [x for x in r["reasons"] if signal is None or x["signal"] == signal]
+
+
+def test_a_search_from_a_helper_reaches_its_generic_wrapper():
+    ret = Retrieval.build(DECLS)
+    res = ret.search_like("Fn.deriv_inv_bound_aux", limit=3)["results"]
+    top = res[0]
+    assert top["name"] == "Fn.main_estimate"
+    assert "Fn.deriv_inv_bound_aux" not in [r["name"] for r in res]
+    texts = [x["text"] for x in top["reasons"]]
+    assert "its proof uses Fn.deriv_inv_bound_aux, the declaration searched from" in texts
+    assert "the same hypotheses as Fn.deriv_inv_bound_aux" in texts
+    assert "a different conclusion from Fn.deriv_inv_bound_aux's" in texts
+    assert "it also binds variables of type ℕ, which Fn.deriv_inv_bound_aux does not" in texts
+
+
+def test_alternatives_with_fewer_hypotheses_or_another_domain_come_first():
+    ret = Retrieval.build(DECLS)
+    res = ret.search_like("Ineq.triangle_abs_of_nonneg", limit=5)["results"]
+    assert [r["name"] for r in res[:2]] == ["Ineq.triangle_abs", "Ineq.triangle_abs_int"]
+    for r in res[:2]:
+        # The same conclusion lifts a result half way to 1; its content score is kept apart.
+        assert r["score"] == round((1 + r["content"]) / 2, 6) or r["score"] > r["content"]
+        fewer = next(x for x in reasons(r, "structure") if x["aspect"] == "fewer hypotheses")
+        assert fewer["hypotheses"] == ["0 ≤ a", "0 ≤ b"]
+        assert fewer["text"] == ("it does not assume 0 ≤ a and 0 ≤ b, which "
+                                 "Ineq.triangle_abs_of_nonneg assumes")
+        assert any(x["text"] == "the same conclusion as Ineq.triangle_abs_of_nonneg"
+                   for x in reasons(r, "structure"))
+    # Variables named differently are matched; their types are compared.
+    dom = next(x for x in reasons(res[1], "structure") if x["aspect"] == "variables")
+    assert dom["here"] == ["ℤ", "ℤ"] and dom["there"] == ["ℝ", "ℝ"]
+    assert dom["text"] == "it binds variables of type ℤ where Ineq.triangle_abs_of_nonneg binds ℝ"
+    # From the general statement, the special one says what it also assumes.
+    back = ret.search_like("Ineq.triangle_abs", limit=3)["results"][0]
+    assert back["name"] == "Ineq.triangle_abs_of_nonneg"
+    assert any(x["text"] == "it also assumes 0 ≤ a and 0 ≤ b, which Ineq.triangle_abs does not"
+               for x in reasons(back, "structure"))
+    # A result is a candidate: nothing is linked or decided.
+    assert all("status" not in r and "link" not in r for r in res)
+
+
+def test_a_restatement_with_renamed_variables_and_reordered_hypotheses_is_recognised():
+    ret = Retrieval.build(DECLS)
+    top = ret.search_like("Ineq.amgm_two", limit=3)["results"][0]
+    assert top["name"] == "Ineq.amgm_two'"
+    assert [x["aspect"] for x in reasons(top, "structure")] == ["same"]
+    assert reasons(top, "structure")[0]["text"] == \
+        "the same hypotheses and conclusion as Ineq.amgm_two, as printed"
+
+
+def test_reversed_quantifiers_are_kept_in_a_search_from_a_declaration():
+    ret = Retrieval.build(DECLS)
+    for name, other, searched, lean in (
+            ("Unif.exists_const_forall", "Unif.forall_exists_const", "∃∀", "∀∃"),
+            ("Unif.forall_exists_const", "Unif.exists_const_forall", "∀∃", "∃∀")):
+        r = ret.search_like(name, limit=2)["results"][0]
+        assert r["name"] == other
+        q = next(x for x in reasons(r, "structure") if x.get("aspect") == "quantifiers")
+        assert (q["searched"], q["lean"]) == (searched, lean)
+        assert q["text"].startswith(f"the quantifiers come in a different order ({name}: ")
+
+
+def test_a_definition_searches_definitions_without_comparing_hypotheses():
+    ret = Retrieval.build(DECLS)
+    res = ret.search_like("Num.IsPerfect")["results"]
+    assert res and all(r["kind"] != "theorem" for r in res)
+    assert not any(reasons(r, "structure") for r in res)
+    with pytest.raises(KeyError):
+        ret.search_like("No.such")
+
+
+def test_the_parts_of_a_printed_statement():
+    from prooflens.retrieval import lean_shape
+    sh = lean_shape("∀ ε > 0, ∃ δ > 0, ∀ (x : ℝ), |x| < δ → |f x| < ε")
+    assert sh == {"binders": [("ε", "")], "premises": ["ε > 0"],
+                  "conclusion": "∃ δ > 0, ∀ (x : ℝ), |x| < δ → |f x| < ε"}
+    sh = lean_shape("∀ {α : Type u_1} [inst : LinearOrder α] (a b : α), a ≤ b → b ≤ a → a = b")
+    assert sh["binders"] == [("α", "Type u_1"), ("a", "α"), ("b", "α")]
+    assert sh["premises"] == ["LinearOrder α", "a ≤ b", "b ≤ a"] and sh["conclusion"] == "a = b"
+    # Line breaks as Lean prints a long statement, and a hypothesis in brackets.
+    sh = lean_shape("∀ (u : ℕ → ℝ),\n    Monotone u →\n      (u 0) ≤ 1 → ∃ L, L = 1")
+    assert sh["premises"] == ["Monotone u", "(u 0) ≤ 1"] and sh["conclusion"] == "∃ L, L = 1"
+    # Every hypothesis of a statement over 4000 characters, not only the first ones.
+    big = lean_shape(next(d for d in DECLS if d["name"] == "Long.big_a")["type"])
+    assert len(big["premises"]) == 701 and big["premises"][-1] == "Summable g"
+
+
+def test_a_reason_says_which_shared_terms_are_in_the_conclusion():
+    ret = Retrieval.build(DECLS)
+    res = {r["name"]: r for r in top(ret, CLAIMS[1][1])}
+    # The paper concludes convergence: Seq.aux7 concludes it, the converse assumes it.
+    assert reasons(res["Seq.aux7"], "content")[0]["conclusion"] == ["limit"]
+    other = reasons(res["Seq.bounded_of_tendsto"], "content")[0]
+    assert other["conclusion"] == [] and other["text"].endswith("; its conclusion has none of them")
+
+
+def test_absolute_values_are_a_term_and_lambdas_are_not_comparisons():
+    assert "§|" in terms("|a + b| ≤ |a| + |b|")
+    assert "§|" in terms("the absolute value") and "§|" in terms(r"$\lvert x \rvert$")
+    assert "§|" in terms("abs_add")
+    assert terms("fun y => y⁻¹") == ["§^"]
+
+
+def test_declarations_lean_generates_are_left_out():
+    from corpus import decl
+    index = DECLS + [
+        decl("Gen.T", "Type", kind="inductive"),
+        decl("Gen.T.casesOn", "{motive : Gen.T → Sort u} → (t : Gen.T) → motive t", kind="def"),
+        decl("Gen.T.mk.injEq", "∀ (a b : ℕ), (Gen.T.mk a = Gen.T.mk b) = (a = b)"),
+        decl("Gen.«term_⊕_»", "TrailingParserDescr", kind="def"),
+        # Not an inductive type's: kept.
+        decl("Gen.other.casesOn", "∀ (n : ℕ), n = n"),
+    ]
+    names = {d["name"] for d in Retrieval.build(index).docs}
+    assert {"Gen.T", "Gen.other.casesOn"} <= names
+    assert not names & {"Gen.T.casesOn", "Gen.T.mk.injEq", "Gen.«term_⊕_»"}
+
+
+def test_a_search_from_a_declaration_among_forty_thousand(capsys):
+    ret = Retrieval.build(large_index(40000))
+    t0 = time.perf_counter()
+    first = ret.search_like("Ineq.triangle_abs", limit=5)["results"]
+    t_first = time.perf_counter() - t0
+    t0 = time.perf_counter()
+    ret.search_like("Ineq.amgm_two", limit=5)
+    t_next = time.perf_counter() - t0
+    with capsys.disabled():
+        print(f"\nsearch from a declaration at {len(ret)} declarations: {t_first:.2f} s the first "
+              f"time (reading every statement's parts), {t_next:.2f} s after")
+    assert [r["name"] for r in first[:2]] == ["Ineq.triangle_abs_of_nonneg",
+                                              "Ineq.triangle_abs_int"]
+    assert t_first < 20 and t_next < 5
+
+
+def test_compare_searches_from_a_declaration(tmp_path):
+    from test_compare import write_site
+    data = write_site(tmp_path)
+    (data / "retrieval.json").write_text(json.dumps(Retrieval.build(DECLS).export()))
+    site = cmp.Site(data)
+    out = cmp.query(site, "search", "Ineq.triangle_abs_of_nonneg", limit=2)
+    sub = out["subject"]
+    assert sub["declaration"] == "Ineq.triangle_abs_of_nonneg" and sub["kinds"] == "theorems"
+    assert sub["statement"].startswith("∀ (a b : ℝ), 0 ≤ a") and sub["complete"]
+    assert "a question for review" in sub["note"]
+    assert [r["name"] for r in out["results"]] == ["Ineq.triangle_abs", "Ineq.triangle_abs_int"]
+    assert out["retrieval"]["next"] == "Ineq.triangle_abs_int"
+    text = cmp.search_text(out)
+    assert text.startswith("Declarations (theorems) like Ineq.triangle_abs_of_nonneg, among ")
+    assert "it does not assume 0 ≤ a and 0 ≤ b" in text

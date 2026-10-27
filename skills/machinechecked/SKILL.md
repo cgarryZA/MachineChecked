@@ -146,8 +146,9 @@ carries every step out on the toy example.
    proposes nearby passages; a proposal stays a guess until you accept it. A passage that uses
    the result later is a fragment with role `later use`, shown apart from the reading.
 2. **Search by content.** `compare --query search CLAIM` ranks the project's declarations by
-   what their statements say; `search 'EXPRESSION'` takes a formula or words (both read the
-   zero-configuration build's content index). A paper number in a docstring or comment is a
+   what their statements say; `search 'EXPRESSION'` takes a formula or words, and `search NAME`
+   finds the declarations like NAME, each with the hypotheses it does not assume or also
+   assumes and whether its conclusion is the same (all read the build's content index). A paper number in a docstring or comment is a
    lead: `check --json` lists in `numbering` each number that names another kind of statement
    (`other-kind`), none (`absent`), or a declaration that reads closer to another claim
    (`stale_lead`), and a suggestion's `number` reason names the references it rests on
@@ -161,8 +162,9 @@ carries every step out on the toy example.
    NAME --json` go further. Compare quantifier order, domains, hypotheses, definitions and the
    conclusion.
 4. **Follow the objects.** `--query uses NAME` gives each application of NAME with the argument
-   supplied to every binder and the origin of each premise (its `discharge`: `assumed` by the
-   caller, `proved` in it, or `local`). `--query proof-facts NAME` gives the facts a proof
+   supplied to every binder, the origin of each premise (its `discharge`: `assumed` by the
+   caller, `proved` in it, or `local`) and the object each premise and the conclusion are
+   about (`objects`); `--in APP_ID` reads one application with its whole context. `--query proof-facts NAME` gives the facts a proof
    establishes on the way, each under its assumptions and case. Each prints the reference
    evidence cites: an application's `id`, a fact's position `at`.
 5. **Assemble.** Cite declarations, applications (`{"app": {callee, id}}`) and proof facts

@@ -16,9 +16,10 @@ site, answers = Path(sys.argv[1]), json.loads(Path(sys.argv[2]).read_text(encodi
 
 def get(q):
     name = (q.get("name") or [""])[0]
-    if name not in answers:
-        raise ValueError(f"{name}: not in this fixture")
-    return answers[name]
+    key = name + (f" in {q['in'][0]}" if q.get("in") else "")
+    if key not in answers:
+        raise ValueError(f"{key}: not in this fixture")
+    return answers[key]
 
 
 httpd = make_server(site, 0, on_link=lambda req: {}, api=({"/api/uses": get}, {}))

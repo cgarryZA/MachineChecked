@@ -1,12 +1,13 @@
 <script>
   import Decl from "./Decl.svelte";
+  import Application from "./Application.svelte";
   import LeanText from "./LeanText.svelte";
   import PaperStatement from "./PaperStatement.svelte";
   import { loadClaim, loadSearch, shownClaim, projectClaims, canEdit, askUses } from "../lib/data.js";
   import { proofFacts } from "../lib/workspace.js";
   import { itemOf, facts, applications, workspace } from "../lib/inspect.svelte.js";
   import { propertyStanding } from "../lib/carried.js";
-  import { independent } from "../lib/comparison.js";
+  import { independent, usersSide } from "../lib/comparison.js";
 
   // One inspection beside a comparison row: a declaration, a property carried by an object's
   // type, a fact inside a proof, an application of a declaration, or a saved piece of evidence.
@@ -73,17 +74,14 @@
     const key = item.callee + "|" + item.id, it = item, asked = token;
     if (applications.has(key)) { app = applications.get(key); return; }
     if (!local) return;
-    askUses(it.callee).then((doc) => {
+    askUses(it.callee).then((got) => {
+      const doc = usersSide(got, mode);
       for (const a of doc.applications || []) applications.set(it.callee + "|" + a.id, a);
       if (token !== asked) return;
       app = applications.get(key) || null;
       if (!app) appError = "Lean no longer finds that application.";
     }).catch((e) => { if (token === asked) appError = String(e.message || e); });
   });
-  const DISCHARGE = {
-    assumed: "assumed by the caller", proved: "proved in the caller", local: "from a hypothesis introduced in the proof",
-    helper: "a parameter of a constant Lean generated", unknown: "not determined from the term",
-  };
 
   // A saved piece of evidence of the open investigation.
   const evidence = $derived(item.kind === "evidence" && workspace.id === item.ws
@@ -160,22 +158,8 @@
       {:else}<p class="small faint">Facts inside a proof are read from Lean under <code>machinechecked view</code>: <code>machinechecked compare --query proof-facts {item.decl}</code>.</p>{/if}
     {:else if item.kind === "application"}
       {#if app}
-        <div class="app" data-app={app.id}>
-          <p class="small">An application of <code>{item.callee}</code> in <code>{app.caller}</code>{#if app.via} <span class="faint">(in {app.via})</span>{/if}
-            <span class="faint">· {app.location?.path}{app.location?.range ? `, lines ${app.location.range.line}–${app.location.range.end_line}` : ""}</span></p>
-          {#if !app.available}
-            <p class="small bad">Not described: {(app.errors || []).join("; ")}</p>
-          {:else}
-            <ul class="params">
-              {#each app.params as p}
-                <li><code>{p.binder}</code> <span class="faint small">{p.role}</span> <LeanText pp={p.type} />
-                  {#if p.role === "premise"}<span class="small">{" · " + DISCHARGE[p.discharge] + ": " + p.supplied}</span>{:else if p.argument}<span class="small faint">{" := "}</span><LeanText pp={p.argument} />{/if}</li>
-              {/each}
-            </ul>
-            <p class="lbl">gives</p>
-            <LeanText pp={app.result} {onref} />
-          {/if}
-        </div>
+        <p class="small">An application of <code>{item.callee}</code>, as Lean described it.</p>
+        <Application a={app} callee={item.callee} {onref} {index} />
       {:else if appError}<p class="small bad">{appError}</p>
       {:else if local}<p class="small faint">Asking Lean for the application…</p>
       {:else}<p class="small faint">Applications are read from Lean under <code>machinechecked view</code>: <code>machinechecked compare --query uses {item.callee}</code>.</p>{/if}
@@ -226,9 +210,6 @@
   .bad { color: var(--st-malformed); }
   .link { font: inherit; background: none; border: 0; padding: 0; color: var(--accent); cursor: pointer; }
   .what { margin-right: 6px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--faint); }
-  .params { list-style: none; margin: 4px 0; padding: 0; font-size: 13px; }
-  .params li { border-top: 1px solid var(--border); padding: 4px 0; overflow-wrap: anywhere; }
-  .lbl { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--faint); margin: 8px 0 2px; }
   .inspection :global(.lean button), .inspection :global(.lean a) { min-height: 0; }
   /* The panel is the declaration's frame. */
   .inspection > :global(.decl.inspector) { border: 0; padding: 0; margin: 0; background: none; }

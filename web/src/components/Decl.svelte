@@ -6,6 +6,7 @@
   import LeanText from "./LeanText.svelte";
   import Definition from "./Definition.svelte";
   import Uses from "./Uses.svelte";
+  import { userName } from "../lib/names.js";
 
   // One Lean declaration of a closure, loaded from the shared store when it is opened. Inside a
   // comparison the record comes as its stage allows it (`comparison.declSide`): an independent
@@ -28,7 +29,7 @@
 </script>
 
 {#snippet head()}
-  <code>{name}</code>
+  <code title={userName(name) !== name ? name : null}>{userName(name)}</code>
   {#if d && inspector}
     <span class="faint">{d.kind}</span>
   {:else if d}

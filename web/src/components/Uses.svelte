@@ -2,15 +2,17 @@
   // Where a declaration is used. The build's reverse references list its users and how each one
   // refers to it (statement, proof, definition body). Served by `machinechecked view`, the reader
   // can ask Lean for each application: the argument supplied for each binder, where each
-  // premise's proof comes from and the conclusion obtained. That document is the one
-  // `machinechecked compare --query uses` prints.
+  // premise's proof comes from, the conclusion obtained and the objects each premise and the
+  // conclusion are about; and, for one application, every local of its context. Those documents
+  // are the ones `machinechecked compare --query uses` prints (with `--in`, for one).
   // Inside a comparison its data come as the stage allows them (`comparison.usersSide`): an
   // independent stage's do not name the claims a declaration is linked to. An application opens
   // as an inspection beside the comparison row, after the trail it was found in.
   import { getContext } from "svelte";
   import { askUses, canEdit, loadUsers, siteIndex } from "../lib/data.js";
   import { applications, openInspection, tokenOf } from "../lib/inspect.svelte.js";
-  import LeanText from "./LeanText.svelte";
+  import Application from "./Application.svelte";
+  import { userName } from "../lib/names.js";
 
   let { name, module = null, onref = null, index = siteIndex } = $props();
   const stage = getContext("comparison")?.users || ((e) => e);
@@ -32,18 +34,11 @@
     } catch (e) { askError = e.message; }
     asking = false;
   }
-  const DISCHARGE = {
-    assumed: "assumed by the caller",
-    proved: "proved in the caller",
-    local: "from a hypothesis introduced in the proof",
-    helper: "a parameter of a constant Lean generated",
-    unknown: "not determined from the term",
-  };
   const refsText = (u) => (u.refs || []).join(", ");
 </script>
 
 {#snippet user(u)}
-  {#if onref}<button class="r" onclick={() => onref(u.name)}>{u.name}</button>{:else}<code>{u.name}</code>{/if}
+  {#if onref}<button class="r" onclick={() => onref(u.name)}>{userName(u.name)}</button>{:else}<code>{userName(u.name)}</code>{/if}
   <span class="faint small">{refsText(u)}{u.module ? " · " + u.module : ""}{u.via?.length ? " · through " + u.via.join(", ") : ""}</span>
   {#if u.claims?.length}<span class="small linked">linked to {u.claims.join(", ")}</span>{/if}
 {/snippet}
@@ -61,35 +56,8 @@
       {/if}
       {#if doc.imports_without_use?.length}<p class="small faint">Imported without use by {doc.imports_without_use.join(", ")}.</p>{/if}
       {#each doc.applications as a (a.id)}
-        <div class="app">
-          <p class="ahead">In {#if onref}<button class="r" onclick={() => onref(a.caller)}>{a.caller}</button>{:else}<code>{a.caller}</code>{/if}
-            {#if a.via}<span class="faint small">(in {a.via})</span>{/if}
-            {#if a.caller_claims?.length}<span class="small linked">linked to {a.caller_claims.join(", ")}</span>{/if}
-            <span class="faint small" title={a.location.note}>at {a.location.path}{a.location.range ? `, lines ${a.location.range.line}–${a.location.range.end_line}` : ""}</span>
-            <button class="r inspect" onclick={() => openInspection(tokenOf({ kind: "application", callee: name, id: a.id }), "top", { nested: true })}>Inspect</button></p>
-          {#if !a.available}
-            <p class="small warn">Not described: {(a.errors || []).join("; ")}</p>
-          {:else}
-            <ul class="params">
-              {#each a.params as p}
-                <li class={"role-" + p.role}>
-                  <div class="sig"><code>{p.binder}</code> <span class="faint small">{p.role}{p.binder_info !== "explicit" ? ", " + p.binder_info : ""}</span> <span class="ty"><LeanText pp={p.type} /></span></div>
-                  <div class="src">
-                    {#if p.role === "premise"}
-                      <span class={"d d-" + p.discharge}>{DISCHARGE[p.discharge]}</span><span class="small faint">: {p.supplied}</span>
-                    {:else}
-                      {#if p.argument}<span class="small faint">:=&nbsp;</span><LeanText pp={p.argument} />{/if}
-                      <span class="small faint">({p.supplied})</span>
-                    {/if}
-                  </div>
-                </li>
-              {/each}
-            </ul>
-            {#each a.unsupplied as o}<p class="small faint">Left open: <code>{o.binder}</code> ({o.role}).</p>{/each}
-            <p class="lbl">gives</p>
-            <LeanText pp={a.result} />
-          {/if}
-        </div>
+        <Application {a} callee={name} {module} {onref} {index}
+          inspect={() => openInspection(tokenOf({ kind: "application", callee: name, id: a.id }), "top", { nested: true })} />
       {/each}
       {#if doc.applications_note}<p class="small faint">{doc.applications_note}</p>{/if}
       <p class="small faint">{doc.note}</p>
@@ -121,14 +89,6 @@
   .list { margin: 4px 0; padding-left: 18px; }
   .list li { margin: 2px 0; overflow-wrap: anywhere; }
   .r { border: 0; padding: 0; background: none; font: inherit; font-family: var(--mono); font-size: 13px; color: var(--accent); cursor: pointer; text-align: left; overflow-wrap: anywhere; }
-  .app { border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; margin: 8px 0; }
-  .ahead { margin: 0 0 6px; display: flex; gap: 8px; flex-wrap: wrap; align-items: baseline; }
-  .params { list-style: none; margin: 0; padding: 0; font-size: 13px; }
-  .params li { border-top: 1px solid var(--border); padding: 4px 0; overflow-wrap: anywhere; }
-  .src { padding-left: 14px; }
-  .d { font-size: 12px; }
-  .d-assumed { color: var(--st-open); }
-  .d-proved { color: var(--st-proved); }
   .linked { color: var(--accent); }
   .warn { color: var(--st-open); }
   .lbl { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--faint); margin: 8px 0 2px; }

@@ -3,6 +3,7 @@
   import Expansion from "./Expansion.svelte";
   import { expansionFor, expansionsOf } from "../lib/expand.js";
   import { loadExpansion } from "../lib/data.js";
+  import { userName } from "../lib/names.js";
 
   // A definition expanded at one application of it (`x`, one of a printed expression's
   // `expansions`): the arguments it is applied to, by the definition's parameters, then its body
@@ -48,7 +49,7 @@
 
 <div class="xp" data-expansion={given.id}>
   <p class="head">
-    <code class="nm">{given.name}</code><span class="lbl">at its arguments</span>
+    <code class="nm">{userName(given.name)}</code><span class="lbl">at its arguments</span>
     {#if onclose}<button class="x" aria-label="Close the expansion" onclick={onclose}>×</button>{/if}
   </p>
   {#if occ}<p class="occ"><code>{occ}</code></p>{/if}
@@ -74,15 +75,15 @@
             {#if vars(e).length}<span class="for">for{@render params(vars(e))}:</span>{/if}
             {#if conds(e).length}<span class="for">provided{@render params(conds(e))}:</span>{/if}
             <span class="body">{@render lean(e.equation)}</span>
-            <code class="tn">{e.name}</code>
+            <code class="tn">{userName(e.name)}</code>
           </li>
         {/each}
       </ul>
     {:else}
-      <p class="small">No equation of <code>{x.name}</code> applies to these arguments as written: each equation fixes a form of its arguments that they do not have.</p>
+      <p class="small">No equation of <code>{userName(x.name)}</code> applies to these arguments as written: each equation fixes a form of its arguments that they do not have.</p>
     {/if}
     {#if x.equations_not_applying?.length && x.equations.length}
-      {@const na = x.equations_not_applying}
+      {@const na = x.equations_not_applying.map(userName)}
       {#if na.length <= FEW}
         <p class="small faint">Not applying here: {na.join(", ")}.</p>
       {:else}

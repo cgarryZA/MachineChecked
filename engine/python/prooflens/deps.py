@@ -23,6 +23,34 @@ NOTE = ("Dependencies are the constants Lean's terms mention: what a statement i
         "a paper; that takes a reviewer.")
 VALUE_KIND = {"theorem": "proof", "def": "definition body", "opaque": "definition body",
               "inductive": "constructors", "ctor": "inductive type"}
+# The probe's dependency records keep the first this many characters of a statement and mark
+# the cut with " …" (`depsRecords`).
+STATEMENT_CHARS = 4000
+CUT_NOTE = (f"Lean's dependency record keeps the first {STATEMENT_CHARS} characters of this "
+            "statement; `machinechecked compare --query search NAME` or `--query definition "
+            "NAME` gives it complete")
+
+
+def statement_cut(text) -> bool:
+    """Whether a dependency record's statement is the probe's cut prefix rather than the whole
+    statement. A complete statement of that length ending as the cut does reads as cut."""
+    return isinstance(text, str) and len(text) == STATEMENT_CHARS + 2 and text.endswith(" …")
+
+
+def mark_cut(doc: dict) -> dict:
+    """An inspect document whose cut statements (`statement_cut`) say so: `statement_complete:
+    false` and, on the declaration, `statement_note`. The records marked are copies, so the
+    cached answer is unchanged."""
+    decl = doc.get("declaration")
+    if isinstance(decl, dict) and statement_cut(decl.get("statement")):
+        doc["declaration"] = {**decl, "statement_complete": False, "statement_note": CUT_NOTE}
+    closure = doc.get("closure")
+    members = (closure or {}).get("members") or []
+    if any(statement_cut(m.get("statement")) for m in members):
+        doc["closure"] = {**closure, "members": [
+            {**m, "statement_complete": False} if statement_cut(m.get("statement")) else m
+            for m in members]}
+    return doc
 
 
 def _tool_version() -> str:
@@ -174,7 +202,7 @@ def inspect(root: Path, name: str, module: str | None = None, lake: str = "lake"
     with st.lock(log):
         entry, _ = (None, None) if refresh else st.get("deps", key)
         if entry is not None:
-            return {**head, **entry["body"], "cache": {"hit": True, "key": _short(key)}}
+            return mark_cut({**head, **entry["body"], "cache": {"hit": True, "key": _short(key)}})
         work = root / work_dir_name(root) / "build"
         request = [{"kind": "deps", "name": name}, {"kind": "modules", "name": ""}]
         quiet = log or (lambda m: None)
@@ -211,7 +239,7 @@ def inspect(root: Path, name: str, module: str | None = None, lake: str = "lake"
         else:
             body = {"ok": True, "status": "found", **_assemble(name, nodes, summary)}
         st.put("deps", key, env, body=body)
-    return {**head, **body, "cache": {"hit": False, "key": _short(key)}}
+    return mark_cut({**head, **body, "cache": {"hit": False, "key": _short(key)}})
 
 
 def _short(key: str) -> str:

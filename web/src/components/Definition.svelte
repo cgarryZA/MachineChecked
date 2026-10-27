@@ -4,6 +4,7 @@
   import { loadDecl, loadExpansion } from "../lib/data.js";
   import { expansionsOf } from "../lib/expand.js";
   import { structureOf, carriedByValue } from "../lib/structure.js";
+  import { userName } from "../lib/names.js";
 
   // What a Lean definition says, from its declaration record (`d`, or loaded by `key`).
   // `view = "readable"`: its parameters and the body under them, or the equations Lean derives
@@ -102,9 +103,9 @@
 
 <div class={"defn " + view} data-decl={label}>
   {#if view === "readable"}
-    <p class="head">{#if onname}<button class="ref" onclick={() => onname(label)}>{label}</button>{:else}<code>{label}</code>{/if}{#if rec && !byEquations && rec.params}{@render params(rec.params)}{#if rec.result}{" "}<span class="colon">:</span>{" "}<LeanText pp={rec.result} {onref} {refs} />{/if}{:else if rec && byEquations && rec.signature}{" "}<span class="colon">:</span>{" "}<LeanText pp={rec.signature} {onref} {refs} />{:else if rec?.structure?.params?.length}{@render params(rec.structure.params)}{/if}</p>
+    <p class="head">{#if onname}<button class="ref" onclick={() => onname(label)}>{userName(label)}</button>{:else}<code>{userName(label)}</code>{/if}{#if rec && !byEquations && rec.params}{@render params(rec.params)}{#if rec.result}{" "}<span class="colon">:</span>{" "}<LeanText pp={rec.result} {onref} {refs} />{/if}{:else if rec && byEquations && rec.signature}{" "}<span class="colon">:</span>{" "}<LeanText pp={rec.signature} {onref} {refs} />{:else if rec?.structure?.params?.length}{@render params(rec.structure.params)}{/if}</p>
   {:else if heading}
-    <p class="head"><code>{label}</code></p>
+    <p class="head"><code>{userName(label)}</code></p>
   {/if}
   {#if error}
     <p class="err">{error}</p>
@@ -145,7 +146,7 @@
     {#if byEquations || (equations.length && !rec.body)}
       <p class="lbl">equation theorems Lean derives</p>
       {#each equations as e (e.name)}
-        <div class="thm" data-eq={e.name}><code class="tn">{e.name}</code><pre>{@render lean(e.statement)}</pre></div>
+        <div class="thm" data-eq={e.name}><code class="tn">{userName(e.name)}</code><pre>{@render lean(e.statement)}</pre></div>
       {/each}
       {@render showMore("equation theorem")}
       {#if rec.equations_omitted}<p class="small">{rec.equations_omitted} further equation theorem{rec.equations_omitted === 1 ? " is" : "s are"} not included in this audit.</p>{/if}

@@ -220,14 +220,22 @@ machinechecked workspace main "Theorem 2.5" --as llm:MODEL     # save the main r
 `search` ranks every declaration of the project's built modules, linked or not, by how much of
 the query its complete statement, docstring, name and used definitions carry. A claim as the
 target searches with its printed statement, over declarations of its sort, and says when a
-result orders `∀` and `∃` differently. Each result has its complete `statement`, its `score`
-and its `reasons`; a result reached through a close match it uses says so (`signal` `uses`,
-with `via`). It is the search the suggestions and the reader use, from the build's content
-index (`data/retrieval.json`), with no Lean session; `--limit` and `--after` page it. The
-zero-configuration build writes that index; on a full assessment's build `search` answers
-`available: false`. Nothing people recorded (links, rejections, notes) enters it. In zero
-configuration, `mentions` reads the complete statements of that index; with an older build it
-reads previews (`complete: false` on such a result: get its statement with `dependencies`).
+result orders `∀` and `∃` differently. A declaration as the target searches for declarations
+of its sort like it (`subject.declaration`): from a theorem, a theorem with the same
+conclusion comes first, and each result's `structure` reasons compare it with the theorem as
+Lean prints them, up to the names of their variables: the same or a different conclusion, the
+hypotheses it does not assume or also assumes (`hypotheses`, exactly as printed), variables of
+other types (`here`, `there`), and the order of `∀` and `∃`. Whether one statement implies the
+other remains a question for review. Each result has its complete `statement`, its `score` and
+its `reasons`; the `content` reason lists the shared terms, where they occur, and, for a
+theorem with hypotheses, those in its conclusion (`conclusion`); a result reached through a
+close match it uses says so (`signal` `uses`, with `via`). It is the search the suggestions and
+the reader use, from the build's content index (`data/retrieval.json`), with no Lean session;
+`--limit` and `--after` page it. Both the zero-configuration build and the full assessment
+write that index. Nothing people recorded (links, rejections, notes) enters it. `mentions`
+reads the complete statements of that index; with an older build it reads previews
+(`complete: false` on such a result: get its statement with `dependencies`). `dependencies`
+keeps the first 4000 characters of a statement; a longer one has `statement_complete: false`.
 
 `uses` (also `machinechecked inspect NAME --used-by`) answers with one document
 (`machinechecked/uses@1`) read from Lean's elaborated terms:
@@ -244,7 +252,12 @@ reads previews (`complete: false` on such a result: get its statement with `depe
   hypothesis, a hypothesis introduced in the proof, a theorem applied there, a constructor, a
   projection of a structure, an instance, or a term built in place) and `discharge` sums it up:
   `assumed` by the caller, `proved` in the caller, or `local`. `result` is the conclusion the
-  application obtains; `unsupplied` the binders it leaves open. Printed expressions mark each
+  application obtains; `unsupplied` the binders it leaves open. `objects` says which object
+  receives each property: every argument supplied for a parameter (not a type or an instance),
+  with the premises whose statement mentions that parameter (`basis` `premise`, with their
+  `discharge`) and the conclusion when it mentions it (`conclusion`). Which binders a statement
+  mentions is read from the declaration's type in Lean, never from printed names (`depends` on
+  each binder, `result_depends`). Printed expressions mark each
   variable by its index in `locals`, whose `id` is the position of its binder, so two variables
   printed alike in different scopes stay distinct. `location.path` is the application's
   position in the elaborated term; its line is the enclosing declaration's.
@@ -252,10 +265,16 @@ reads previews (`complete: false` on such a result: get its statement with `depe
   (`failed`, each with the first lines of what Lean reported, as `check` gives them), and
   `used`, `no use found in this scope`, or `not traced` when some modules were not searched.
 
-Without `--json`, `uses` names each application by its `id` and ends with the reference a
-workspace cites (`cite as evidence: {"app": {"callee": …, "id": …}}`). The first `uses` query
-after a change runs Lean once over the project; later queries reuse the answers until a Lean
-input changes.
+Without `--json`, `uses` names each application by its `id`, marks each premise and the
+conclusion with the objects they are about (`(about n)`), and ends with the reference a
+workspace cites (`cite as evidence: {"app": {"callee": …, "id": …}}`). `--in CALLER` reads one
+declaration (with the constants Lean generated for it), and `--in APP_ID` one application:
+up to 64 applications in it rather than 8, each with `context`, every local in scope with its
+`kind` (a parameter or hypothesis of the caller, a fact established earlier in the proof, a
+variable introduced there), not only those it mentions. Its scope is that declaration:
+`within` names it, and `no use found in this scope` means that it does not use NAME. An
+application found that way is cited like any other. The first `uses` query after a change runs
+Lean once over the project; later queries reuse the answers until a Lean input changes.
 
 `impact NAME` traces the same references and answers whether each main result uses NAME, with
 one result (`machinechecked/impact@1`):

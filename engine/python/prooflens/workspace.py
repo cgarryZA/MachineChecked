@@ -319,13 +319,12 @@ def _app_ref(a, root) -> dict:
     from . import uses as us
     from .simple import ViewError
     try:
-        doc = us.uses(Path(root), a["callee"], a.get("module"))
+        doc, found = us.locate(Path(root), a)
     except ViewError as e:
         raise WorkspaceError(str(e)) from None
     if not doc.get("ok"):
         raise WorkspaceError(f"{a['callee']}: {doc.get('status')}"
                              + (f": {doc['reason']}" if doc.get("reason") else ""))
-    found = us.find_application(doc, a)
     if found is None:
         raise WorkspaceError(f"no application {a['id']} of {a['callee']}: ask `compare --query "
                              f"uses {a['callee']}` again")
@@ -1074,7 +1073,7 @@ def currency(ws: dict, snap, root: Path | None = None, check_facts: bool = False
     the build cannot check is `unchecked`; nothing here changes a status."""
     from . import dependencies as dp
     from . import requirements as rq
-    out = rq.currency(ws, snap)
+    out = rq.currency(ws, snap, root)
     for r in ws["records"].values():
         if r.get("kind") == "evidence":
             out[r["id"]] = dp.evidence_currency(r.get("ref") or {}, snap, root, check_facts)
