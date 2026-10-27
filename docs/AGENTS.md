@@ -60,6 +60,12 @@ and whether the paper's numbering is complete). Each suggestion has `reasons`: `
 (`content`, `uses`, `number`, `lexical`, `structure`) and `text`; a `number` reason has
 `basis` "a lead" or "a possibly stale lead", and `references`: the ids of the references in
 `numbering` it rests on.
+In either mode, `semantic` is the audit's semantic summary (`prooflens/semantic-summary@1`):
+per paper and per unit (`statements`, `notation`, `proof_steps`), the inventory, the formal
+status counts, and per set of readings the coverage, basis and currency counts, with the
+reviews and the kinds of finding recorded; each claim's `semantic` holds its own readings and
+keys. Quote these counts as they are, each with its unit: they are never added into a total or a
+percentage ([data model](DATA_MODEL.md#semantic-summary-prooflenssemantic-summary1-derived)).
 
 In a project with a `machinechecked.toml` (the full assessment), the document also has
 `findings` (totals per tier, dismissed warnings left out) and `finding_details`: each finding

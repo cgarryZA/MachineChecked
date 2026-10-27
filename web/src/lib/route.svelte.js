@@ -3,15 +3,20 @@
 //
 //   #/                       the first paper
 //   #/read/<paper>[/<claim>] the paper with the passport of a claim beside it
-//   #/overview               every claim by status
+//   #/overview               every claim, with its correspondence, basis, review and status;
+//                            `?set=&unit=&coverage=&basis=&review=&finding=&status=` choose the
+//                            readings shown and filter the claims
 //   #/claim/<claim>          the passport alone
 //   #/changes                what changed between releases
 //   #/review                 the review queue
 
+export const OVERVIEW_FILTERS = ["set", "unit", "coverage", "basis", "review", "finding", "status"];
+
 function parse(hash) {
   const [path, query = ""] = hash.split("?");
   const params = new URLSearchParams(query);
-  const state = { inspection: params.getAll("inspect"), compare: params.get("compare") === "1", target: params.get("claim"), readerSeen: params.get("seen") === "lean" };
+  const state = { inspection: params.getAll("inspect"), compare: params.get("compare") === "1", target: params.get("claim"), readerSeen: params.get("seen") === "lean",
+    filters: Object.fromEntries(OVERVIEW_FILTERS.map((k) => [k, params.get(k)])) };
   let parts = path.replace(/^#\/?/, "").split("/").map((s) => { try { return decodeURIComponent(s); } catch { return s; } });
   let release = null;
   if (parts[0] === "r" && parts.length > 1) {
