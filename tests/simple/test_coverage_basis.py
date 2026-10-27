@@ -250,6 +250,29 @@ def test_an_unlinked_reading_has_no_basis(tmp_path, capsys):
     assert "composition Theorem 2:" in out and "composition Theorem 1" not in out
 
 
+@pytest.mark.parametrize("coverage, words", [
+    ("full", "every clause"), ("composed", "every clause"), ("partial", "part of the claim"),
+    ("changed", "stated differently"), ("related", "a related result, not this claim"),
+    ("unresolved", "unresolved")])
+def test_check_names_a_compositions_own_coverage(coverage, words, capsys):
+    """`check` names each reviewed composition with the coverage its reading records, in the
+    words of the terminal's reading (`reading_text`): "every clause" only for full coverage
+    (a stored `composed` is full coverage by the auditor's composition) (#423)."""
+    from prooflens import cli
+    from prooflens.simple import reading_text
+    from prooflens.status import fields
+    entry = {"lean": ["A.b", "A.c"], "coverage": coverage, "argument": ARGUMENT,
+             **({} if coverage == "composed" else {"basis": "reviewed_composition"})}
+    cor = correspondence({"key": "thm:x", "source_sha256": "0" * 64}, entry)
+    cli._print_simple({"claims": [{"id": "P:thm:x", "number": "Theorem 1",
+                                   **fields("link.checked"), "correspondence": cor}]})
+    lines = [l for l in capsys.readouterr().out.splitlines() if l.startswith("composition ")]
+    assert lines == [f"composition Theorem 1: {words}, by the auditor's composition, which Lean "
+                     "has not checked. Next step: State the combination as one Lean result."]
+    assert ("every clause" in lines[0]) == (coverage in ("full", "composed"))
+    assert reading_text(cor).startswith(f"{words}, by the auditor's composition".capitalize())
+
+
 @needs_lean
 @needs_tex
 def test_a_review_records_its_coverage_with_the_verdict(cover, tmp_path, monkeypatch, capsys):
