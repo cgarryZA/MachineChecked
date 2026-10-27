@@ -758,7 +758,14 @@ and to the digest of each definition its statement uses (`closure`). Against a l
 evidence whose digest changed, or one of whose definitions' digests changed (the change names
 the definition and the declaration that uses it), is `stale`, and so is every question that
 cites it; the others stay `current` (`unchecked` when the build shows no fingerprint, or no
-version of a definition it uses, or when its definitions were not recorded: re-pin it). A quoted
+version of a definition it uses, or when its definitions were not recorded: re-pin it). An
+unchecked declaration's `reason` says why the build shows no version of it and what would let a
+build check it: there is no build, the build ran no Lean (or the view has no Lean index), it is
+outside the project, its module is not built or could not be loaded, the project no longer
+declares it, or the build records no version of it (a full assessment records the declarations
+its inventory's clauses name and those their statements use, naming the module when
+`modules` does not list it; a view, those its claims link and use); or that it was cited
+without a version, to re-pin. An alignment's target gives the same reasons. A quoted
 passage is stale once its claim's passage pin changes, and unchecked when it records none. A
 fragment whose region of the source now reads differently (the lines that changed are listed),
 or whose claim's passage changed, is `stale`, and so is an alignment whose declaration, or a

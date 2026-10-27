@@ -431,6 +431,8 @@ def _print_workspace(v: dict) -> None:
             for ch in e["currency"].get("changes") or []:
                 if ch.get("reason"):
                     print(f"           {ch['reason']}")
+            if e["currency"].get("state") == "unchecked" and e["currency"].get("reason"):
+                print(f"           not known to be current: {e['currency']['reason']}")
         for f in c["findings"]:
             tag = f["state"] + ("" if f["in_force"] else ", superseded")
             print(f"  finding  {f['id']}  {tag}: coverage {f.get('coverage') or '-'}"

@@ -2881,6 +2881,50 @@ print(json.dumps(order_route(work, data)({"order": ["informed"]})))`);
   } finally { py.kill(); }
 }
 
+// Why a cited declaration is not known to be current (#434), under the engine's own local
+// server: evidence recorded on the toy build, then naming a declaration this build shows no
+// version of, and a draft finding citing it. The reader says why, beside each.
+{
+  fs.cpSync(path.join(root, "toy"), path.join(root, "toyunknown"), { recursive: true });
+  const work = path.join(root, "toyunknown-work");
+  const made = spawnSync(process.env.PYTHON || "python3", ["-c", String.raw`
+import json, sys
+from pathlib import Path
+from prooflens import review_cli as rc
+from prooflens import workspace as wsp
+from prooflens.targets import Snapshot
+work, data = Path(sys.argv[1]), Path(sys.argv[2])
+s = Snapshot(data)
+p = wsp.open_for(work, rc.parse_reviewer("human:Test-Auditor"), "informed", sources=s.sources())
+wsp.update(p, [{"op": "put", "record": {"id": "e-gone", "kind": "evidence", "claim": "T:def:even", "role": "supports", "ref": {"decl": "Toy.IsEven"}}},
+               {"op": "put", "record": {"id": "f-gone", "kind": "finding", "claim": "T:def:even", "coverage": "full", "evidence": ["e-gone"], "note": "SYNTHETIC: cites a declaration since renamed."}}], s)
+ws = json.loads(p.read_text())
+ws["records"]["e-gone"]["ref"]["decl"] = "Toy.IsEvenOld"
+p.write_text(json.dumps(ws))
+print(json.dumps({"id": ws["id"]}))`, work, path.join(root, "toyunknown", "data")], { encoding: "utf8" });
+  if (made.status !== 0) throw new Error("the engine could not make the workspace:\n" + made.stderr);
+  const { spawn } = await import("node:child_process");
+  const py = spawn(process.env.PYTHON || "python3", [path.join(here, "fixtures", "workspace_server.py"), path.join(root, "toyunknown"), work]);
+  const port = await new Promise((ok, fail) => {
+    py.stdout.once("data", (d) => ok(String(d).trim()));
+    py.once("exit", (c) => fail(new Error("the workspace server stopped: " + c)));
+  });
+  try {
+    await check("a record not known to be current says why", 1300, async (pg) => {
+      await pg.goto(`http://127.0.0.1:${port}/#/r/${TOY.release}/claim/${encodeURIComponent("T:def:even")}`);
+      const inv = pg.locator("section.investigation");
+      await inv.getByRole("button", { name: /^Continue ws-/ }).click();
+      const f = inv.locator("[data-kind=finding]");
+      await f.waitFor();
+      assert.equal(await f.locator("[data-currency=unchecked]").count(), 1);
+      assert.equal(await f.locator("[data-unknown='f-gone']").textContent(),
+        "Not known to be current: this build shows no version of Toy.IsEvenOld.");
+      assert.equal(await inv.locator("[data-unknown='e-gone']").textContent(),
+        "Toy.IsEvenOld is not known to be current: this build shows no version of Toy.IsEvenOld.");
+    });
+  } finally { py.kill(); }
+}
+
 await browser.close();
 server.close();
 fs.rmSync(root, { recursive: true, force: true });

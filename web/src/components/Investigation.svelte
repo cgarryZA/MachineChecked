@@ -72,6 +72,9 @@
   const estimatesFor = (lid) => (est.estimates || []).filter((e) => e.requirement === lid);
   const differencesFor = (lid) => [...(est.differences || []), ...(est.resolved || [])].filter((d) => d.requirement === lid);
   const changed = (x) => x?.currency?.state === "stale";
+  // Why a record is not known to be current, in the engine's words: each part it rests on that
+  // the build cannot check, once.
+  const unknownWhy = (cur) => [...new Set([...(cur?.unknown || []).map((u) => u.why), cur?.reason].filter(Boolean))].join("; ");
   function findingHead(f, cv) {
     if (cv?.headline) return cv.headline;
     if (f.verdict) return "The printed step: " + f.verdict;
@@ -241,7 +244,8 @@
         <div class="item" data-kind="finding" data-state={f.state} class:old={!f.in_force}>
           <p class="small"><strong>{findingHead(f, cv)}</strong>
             <span class="faint">· {f.in_force ? (f.state === "submitted" ? "submitted" : "draft") : "superseded"} · {f.created_by}{f.requirement ? ` · on ${f.requirement}` : ""}</span>
-            {#if f.currency?.state === "stale"}<span class="stale" title={(f.currency.changes || []).map((c) => c.reason).filter(Boolean).join("; ")}> · evidence changed since</span>{:else if f.currency?.state === "unchecked"}<span class="faint" data-currency="unchecked" title={(f.currency.unknown || []).map((u) => u.why).join("; ")}> · not known to be current</span>{/if}</p>
+            {#if f.currency?.state === "stale"}<span class="stale" title={(f.currency.changes || []).map((c) => c.reason).filter(Boolean).join("; ")}> · evidence changed since</span>{:else if f.currency?.state === "unchecked"}<span class="faint" data-currency="unchecked" title={unknownWhy(f.currency)}> · not known to be current</span>{/if}</p>
+          {#if f.currency?.state === "unchecked" && unknownWhy(f.currency)}<p class="small faint" data-unknown={f.id}>Not known to be current: {unknownWhy(f.currency)}.</p>{/if}
           {#each cv?.lines || [] as line}<p class="small" data-line={line.label}><span class="faint">{line.label}:</span> {line.names?.join(", ") || ""}{line.names?.length && line.text ? ". " : ""}<span class="text">{line.text || ""}</span>{#if line.note} <span class="faint">{line.note}</span>{/if}</p>{/each}
           {#if f.composition}<p class="small faint">Rests on composition {f.composition}{f.recorded_basis ? `; recorded as ${f.recorded_basis === "checked_bridge" ? "a checked bridge" : f.recorded_basis}, its bridge is not checked now` : ""}.</p>
           {:else if recordedBasisText(f)}<p class="small faint" data-line="recorded">{recordedBasisText(f)}</p>{/if}
@@ -301,7 +305,7 @@
               {/if}
               {#each r.alignments as aid}
                 {@const a = alignments[aid]}
-                {#if a}<p class="small lean" data-alignment={a.id}><span class="faint">Lean:</span> {a.lean.map(targetText).join("; ")} <span class="faint">· {a.relation} · recorded by {a.created_by}</span>{#if a.currency?.state === "stale"}<span class="stale"> · the Lean changed since</span>{/if}</p>{/if}
+                {#if a}<p class="small lean" data-alignment={a.id}><span class="faint">Lean:</span> {a.lean.map(targetText).join("; ")} <span class="faint">· {a.relation} · recorded by {a.created_by}</span>{#if a.currency?.state === "stale"}<span class="stale"> · the Lean changed since</span>{:else if a.currency?.state === "unchecked" && a.currency.reason}<span class="faint" data-unknown={a.id}> · not known to be current: {a.currency.reason}</span>{/if}</p>{/if}
               {/each}
               {#each r.questions as q}<p class="small question">Question: {q}</p>{/each}
               {#each estimatesFor(r.local_id) as e (e.requirement)}
@@ -349,7 +353,10 @@
       {/if}
 
       {#if here.evidence.length}
-        <p class="small faint">Evidence: {#each here.evidence as e, i (e.id)}{i ? ", " : ""}<code>{refText(e.ref)}</code> ({e.role}{e.ref?.fact ? ", " + e.ref.fact.basis : ""}{e.currency?.state === "stale" ? ", changed since" : ""}){/each}</p>
+        <p class="small faint">Evidence: {#each here.evidence as e, i (e.id)}{i ? ", " : ""}<code>{refText(e.ref)}</code> ({e.role}{e.ref?.fact ? ", " + e.ref.fact.basis : ""}{e.currency?.state === "stale" ? ", changed since" : e.currency?.state === "unchecked" ? ", not known to be current" : ""}){/each}</p>
+        {#each here.evidence.filter((e) => e.currency?.state === "unchecked" && e.currency.reason) as e (e.id)}
+          <p class="small faint" data-unknown={e.id}><code>{refText(e.ref)}</code> is not known to be current: {e.currency.reason}.</p>
+        {/each}
       {/if}
 
       <details class="add">
