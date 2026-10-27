@@ -45,26 +45,37 @@ table of `machinechecked.toml` names another):
   statement, and every occurrence there takes the link (`occurrence: "all"`), unless the link
   names occurrences by index. Two different ν (in two claims, or two scopes of one claim) are two
   links and are never merged.
-- **The Lean side** is a variable (`var`, the binder index the probe already exports), a
-  binder's type (`binder`, `path: "type"`), or any sub-term (`at`). A sub-term is named by its
-  identity: its position in the whole proposition (Lean's `SubExpr.Pos`, written like `/1/0/1`),
-  which the probe records for every selectable sub-term (`terms[].id`). It depends only on the
-  proposition, so no change in how the statement is printed or split for display moves it, and
-  the same sub-term has the same identity in the readable statement and in the exact Lean, which
-  is how a selection in one is shown in the other.
+- **The Lean side** is a variable (`var`, the variable's number the probe exports), a
+  binder's type (`binder`, `path: "type"`), or any expression (`at`). An expression is named by
+  its identity: its position in the whole proposition (Lean's `SubExpr.Pos`, written like
+  `/1/0/1`), which the probe records for every selectable sub-term (`terms[].id`) and for every
+  occurrence of a variable (`segments[].at`), so one occurrence is named apart from the variable,
+  whose number all its occurrences share. It depends only on the proposition, so no change in how
+  the statement is printed or split for display moves it, and the same expression has the same
+  identity in the readable statement and in the exact Lean, which is how a selection in one is
+  shown in the other. A property an object's type carries has the identities of its statement
+  at that object, prefixed by the object's identity and the field (`/1#start:/0`), so the same
+  field of two objects is two targets; an equation of a definition has its own, prefixed by the
+  equation theorem's name (`Foo.f.eq_2:/1`). The scheme is versioned (`IDS` in `symbols.py`,
+  now `subexpr-pos@1`).
 - **Pins**: the statement's fingerprint (it already covers the definitions the statement uses),
-  the hash of the claim's TeX source, and the text of the Lean object as it was shown (`target`).
-  When any differs, the link is stale. The last one matters because a sub-term or a part is
-  located by numbers that depend on how the statement is printed and split: a change in the
-  display can renumber them while the statement stays the same, and the link must then go stale
-  rather than point at another object. A link to a sub-term made without that pin is stale.
+  the hash of the claim's TeX source, the text of the Lean object as it was shown (`target`), the
+  scheme of identities (`ids`) and, for a variable or a binder's type, the identity of its binder
+  (`binder_id`). When any differs, the link is stale. The text matters because a variable's
+  number depends on how the statement is split: a change in the display can renumber it while
+  the statement stays the same, and the link must then go stale rather than point at another
+  object; the binder's identity tells apart two variables of the same name. A link to an
+  expression made without the text pin is stale, and so is a link recorded by place and number
+  in an earlier display (`term` and `in`), which names nothing now.
   A link made while the reader typesets the claim's passage from its source
   ([display excerpts](SOURCE_REGIONS.md#display-excerpts)) is made on that passage: `source`
   is the hash of its text and `excerpt` its fingerprint, which covers the macros and reference
   numbers it is typeset with. Such a link is stale when the excerpt's fingerprint changes or the
   passage is shown from the PDF.
-- A "there is" inside the conclusion is a variable too: the probe numbers it after the prefix's
-  binders, each witness its own number, so `--var` and `--type-of` accept it by name or number.
+- A variable bound inside the conclusion or inside a hypothesis (a "there is", a "for every") is
+  a variable too: the probe numbers it after the binders that open the statement, each its own
+  number (the statement's tree, [DATA_MODEL.md](DATA_MODEL.md)), so `--var` and `--type-of`
+  accept it by number, or by name (the first variable of that name).
 
 ## Display
 
@@ -74,7 +85,11 @@ table of `machinechecked.toml` names another):
   separate decision, if ever.
 - The same selection model as the Lean view: hovering a linked symbol highlights it and the Lean
   it is linked to, and the reverse; a click holds it, with "linked by NAME" beside it.
-- A stale link is not drawn; the audit details list it as stale.
+- A stale link is not drawn. The build records why (`stale_because`: `statement`, `source`,
+  `excerpt`, `missing`, `target`, `unpinned`, `positional`, `ids`), and the local reader lists
+  it with the reason and asks to link it again or remove it.
+- Choosing another claim, project or release clears the selected expression and the link being
+  made: a selection names an expression of one claim's statements in one build.
 - Changing the selected Lean project shows that project's links only; the paper keeps its place.
 
 ## Who makes links
@@ -84,7 +99,7 @@ The author or a reviewer, under their name, from the command line:
 ```sh
 machinechecked symbol add P:thm:sep '\nu' Foo.spec_sep --var ν --as human:Ada-Lovelace
 machinechecked symbol add P:thm:sep '\mathbb R^j' Foo.spec_sep --type-of f --as human:Ada-Lovelace
-machinechecked symbol add P:thm:sep 'f' Foo.spec_sep --term c#2 --as human:Ada-Lovelace   # a sub-term
+machinechecked symbol add P:thm:sep 'f' Foo.spec_sep --term c#2 --as human:Ada-Lovelace   # a sub-term, by place
 machinechecked symbol add P:thm:sep 'f' Foo.spec_sep --at /1/1/0 --as human:Ada-Lovelace  # by identity
 machinechecked symbol list
 machinechecked symbol remove P:thm:sep '\nu'
@@ -92,7 +107,8 @@ machinechecked symbol remove P:thm:sep '\nu'
 
 `add` checks the link against the last build (the symbol occurs in the claim's mathematics, the
 statement is the claim's, the binder exists) and pins it to that build; rebuild the site to show
-it.
+it. `--term WHERE#K` is read in the last build and recorded by the sub-term's identity; `--var`
+and `--type-of` take a variable's number, or a name (the first variable of that name).
 
 In the local reader of a full assessment (`machinechecked view`), the paper section of a claim
 offers **Link a symbol to the Lean**: choose one of the symbols found in the claim's mathematics,

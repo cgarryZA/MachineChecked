@@ -2305,6 +2305,7 @@ def _link_view(l: dict, root: Path | None = None) -> dict:
             "axioms": rec.get("axioms"), "sorry": rec.get("sorry"),
             "errors": rec.get("errors"),
             "statement": {"binders": rec.get("binders", []), "conclusion": rec.get("conclusion"),
+                          "tree": rec.get("tree"),
                           "exact": rec.get("exact") or (rec.get("decl") or {}).get("signature"),
                           "closure": rec.get("closure", []), "direct": []} if rec else None,
             "range": (rec.get("decl") or {}).get("range"),
