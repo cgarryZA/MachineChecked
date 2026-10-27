@@ -249,16 +249,24 @@ def lean_input_roots(cfg: Config) -> list[Path]:
     return roots
 
 
+# Folders under a Lean root that hold no Lean inputs: Lake's builds and packages, Git's, and the
+# engine's work directories, where a probe stopped mid-run can leave its Probe.lean.
+NOT_LEAN_INPUTS = {".lake", ".git", ".prooflens", ".machinechecked"}
+
+
 def lean_inputs_digest(cfg: Config) -> str:
     """SHA-256 over the content of every Lean input of the project and its path dependencies
-    (sources, lakefiles, manifest, toolchain), committed or not."""
+    (sources, lakefiles, manifest, toolchain), committed or not. The work directory is not an
+    input, whatever it is called (`out_dir`)."""
     import hashlib
     h = hashlib.sha256()
+    work = getattr(cfg, "out_dir", None)
     for root in lean_input_roots(cfg):
+        inside = work is not None and work != root and Path(work).is_relative_to(root)
         files = []
         for pat in LEAN_INPUTS:
-            files += [f for f in root.rglob(pat) if ".lake" not in f.parts and ".git" not in
-                      f.parts and ".prooflens" not in f.parts]
+            files += [f for f in root.rglob(pat) if not NOT_LEAN_INPUTS.intersection(f.parts)
+                      and not (inside and f.is_relative_to(work))]
         h.update(f"root {root.name}\n".encode())
         for f in sorted(set(files)):
             h.update(f"{f.relative_to(root)}\n".encode())
