@@ -34,6 +34,8 @@
     if (o.k >= 0) pick(pp)(sel?.pp === pp && sel.k === o.k ? null : o.k);
     else { sel = null; alone = alone === o.x ? null : o.x; }
   }
+  // Equations that do not apply are named in full up to this many, the rest on request.
+  const FEW = 12;
   const conds = (e) => e.params.filter((p) => p.proposition);
   const vars = (e) => e.params.filter((p) => !p.proposition);
 </script>
@@ -80,7 +82,12 @@
       <p class="small">No equation of <code>{x.name}</code> applies to these arguments as written: each equation fixes a form of its arguments that they do not have.</p>
     {/if}
     {#if x.equations_not_applying?.length && x.equations.length}
-      <p class="small faint">Not applying here: {x.equations_not_applying.join(", ")}.</p>
+      {@const na = x.equations_not_applying}
+      {#if na.length <= FEW}
+        <p class="small faint">Not applying here: {na.join(", ")}.</p>
+      {:else}
+        <details class="small faint na"><summary>Not applying here: {na.slice(0, FEW).join(", ")} and {na.length - FEW} more</summary>{na.slice(FEW).join(", ")}.</details>
+      {/if}
     {/if}
     {#if x.equations_omitted}<p class="small">{x.equations_omitted} further equation{x.equations_omitted === 1 ? " was" : "s were"} not compared with these arguments; the definition lists them all.</p>{/if}
   {:else}
@@ -118,6 +125,7 @@
   .body { min-width: 0; }
   .tn { font-size: 12px; color: var(--muted); }
   .small { font-size: 13px; margin: 4px 0; }
+  .na > summary { cursor: pointer; }
   .faint { color: var(--faint); }
   .bad { color: var(--st-malformed); }
   .xs { font-size: 12px; color: var(--faint); white-space: normal; }

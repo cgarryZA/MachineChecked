@@ -158,11 +158,19 @@ prints one JSON document (`machinechecked/compare@1`) for one claim, read from t
   whether the statement establishes it, it is given, or it stands inside an assumption, a
   negation, an alternative or an equivalence), and Lean's checks (axioms, sorry, errors). `lean.candidates` are suggestions
   nobody has confirmed, with their reasons. `lean.definitions` are the definitions the
-  statements use, with their type and value; `generated_for` marks the equations Lean generated
-  for one of them, and the tactic script of a tactic default (`(h : 0 < n := by omega)`) with
-  the declaration whose type has the default. `lean.references` are the references to the
-  paper's numbers that concern the claim, and `lean.numbering` their project-level pattern (as
-  in `check --json`).
+  statements use, with their type and value and what each says (`defined_by`: its `params`,
+  `body` and `result`, or every one of its `equations`, each with its theorem's name and exact
+  statement); `expansion: generic` marks them as the definitions as declared. `generated_for`
+  marks the equations Lean generated for one of them, and the tactic script of a tactic default
+  (`(h : 0 < n := by omega)`) with the declaration whose type has the default.
+  `lean.expansions` are the definitions at the arguments of each application in a linked
+  statement or a definition's body, the records the reader shows under the keys the statement
+  gives them (`expansions[].key`): the arguments by parameter, then the body with them
+  substituted or each equation that applies, as Lean substituted and checked them, with the
+  definition's `fingerprint`. An expansion's own applications are references; `--query
+  expansion KEY` gives one by its key. `lean.references` are the references to the paper's
+  numbers that concern the claim, and `lean.numbering` their project-level pattern (as in
+  `check --json`).
 - `interpretations` (stage `informed`, the default): the correspondence note, review reports,
   author's review markers, symbol links, the status and the assessment's findings.
 - `retrieval`: what is `included`, what the stage `withheld`, what is `unavailable` because it

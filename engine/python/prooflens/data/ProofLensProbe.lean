@@ -310,9 +310,10 @@ def userFacing (n : Name) : Bool :=
     s.startsWith "_" || s.startsWith "match_" || s.startsWith "proof_" || s == "eq_def"
       || s.startsWith "eq_" && (s.drop 3).all Char.isDigit)
 
-/-- At most this many equations of one definition are exported; the record says how many more
-there are. -/
-def maxEquations : Nat := 64
+/-- At most this many equations of one definition are exported, and compared with an application
+of it; the record says how many more there are. The engine lists the first 64 in the
+declaration's record and stores the others in pages of their own (`manifest.split_expansions`). -/
+def maxEquations : Nat := 1024
 
 /-! ## A definition at its actual arguments
 
