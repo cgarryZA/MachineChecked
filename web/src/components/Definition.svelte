@@ -1,7 +1,7 @@
 <script>
   import LeanText from "./LeanText.svelte";
   import Expansion from "./Expansion.svelte";
-  import { loadDecl } from "../lib/data.js";
+  import { loadDecl, loadExpansion } from "../lib/data.js";
   import { expansionsOf } from "../lib/expand.js";
 
   // What a Lean definition says, from its declaration record (`d`, or loaded by `key`).
@@ -10,6 +10,8 @@
   // statement of each equation theorem, and the elaborated value. The two views share sub-term
   // identities (`selId`, reported by `onselect`): a body's sub-terms are those of the value, and
   // an equation's are those of its theorem. `onname` makes the name a link (to inspect it).
+  // A record lists a definition's first 64 equations; the others are in pages of their own
+  // (`equations_more`), fetched when the reader asks for them.
   let { d = null, name = null, key = null, view = "readable", onref = null, onname = null,
         selId = null, onselect = null, heading = true } = $props();
 
@@ -21,7 +23,25 @@
   const rec = $derived(d || loaded);
   const label = $derived(rec?.name || name);
   const refs = $derived(rec?.uses || []);
-  const equations = $derived(rec?.equations || []);
+  let more = $state([]), moreError = $state(null), moreLoading = $state(false);
+  $effect(() => {
+    rec;
+    more = [];
+    moreError = null;
+    moreLoading = false;
+  });
+  const pages = $derived(rec?.equations_more || []);
+  const further = $derived(Math.max(0, (rec?.equation_names?.length || 0) - (rec?.equations_omitted || 0) - (rec?.equations?.length || 0)));
+  const equations = $derived([...(rec?.equations || []), ...more]);
+  function loadMore() {
+    const r = rec;
+    moreLoading = true;
+    moreError = null;
+    Promise.all(pages.map((p) => loadExpansion(p.key)))
+      .then((ps) => { if (rec === r) more = ps.flatMap((p) => p.equations || []); })
+      .catch((e) => { if (rec === r) moreError = String(e?.message || e); })
+      .finally(() => { if (rec === r) moreLoading = false; });
+  }
   const byEquations = $derived(rec?.defined_by === "equations");
   const BIND = { explicit: ["(", ")"], implicit: ["{", "}"], "strict-implicit": ["⦃", "⦄"], instance: ["[", "]"] };
   const term = (pp) => (pp?.terms || []);
@@ -33,13 +53,19 @@
 
 {#snippet lean(pp)}<LeanText {pp} {onref} {refs} {selId} onterm={onselect ? sel(pp) : null} />{/snippet}
 
+{#snippet showMore(what)}
+  {#if pages.length && !more.length}
+    <p class="small"><button class="more" disabled={moreLoading} onclick={loadMore}>{moreLoading ? "Loading…" : `Show the ${further} further ${what}${further === 1 ? "" : "s"}`}</button>{#if moreError}{" "}<span class="bad">They could not be loaded ({moreError}).</span>{/if}</p>
+  {/if}
+{/snippet}
+
 {#snippet params(ps)}
   {#each ps as p}{@const br = BIND[p.binder] || BIND.explicit}{" "}<span class="param">{br[0]}{#if p.binder !== "instance"}<span class="pn">{p.name}</span>{" : "}{/if}{@render lean(p.type)}{br[1]}</span>{/each}
 {/snippet}
 
 <div class={"defn " + view} data-decl={label}>
   {#if view === "readable"}
-    <p class="head">{#if onname}<button class="ref" onclick={() => onname(label)}>{label}</button>{:else}<code>{label}</code>{/if}{#if rec && !byEquations && rec.params}{@render params(rec.params)}{#if rec.result}{" "}<span class="colon">:</span>{" "}<LeanText pp={rec.result} {onref} {refs} />{/if}{/if}</p>
+    <p class="head">{#if onname}<button class="ref" onclick={() => onname(label)}>{label}</button>{:else}<code>{label}</code>{/if}{#if rec && !byEquations && rec.params}{@render params(rec.params)}{#if rec.result}{" "}<span class="colon">:</span>{" "}<LeanText pp={rec.result} {onref} {refs} />{/if}{:else if rec && byEquations && rec.signature}{" "}<span class="colon">:</span>{" "}<LeanText pp={rec.signature} {onref} {refs} />{/if}</p>
   {:else if heading}
     <p class="head"><code>{label}</code></p>
   {/if}
@@ -61,6 +87,7 @@
           </li>
         {/each}
       </ul>
+      {@render showMore("equation")}
       {#if rec.equations_omitted}<p class="small">{rec.equations_omitted} further equation{rec.equations_omitted === 1 ? " is" : "s are"} not included in this audit; the Lean source has them all.</p>{/if}
     {:else if rec.body}
       <div class="line"><span class="role">:=</span><span class="body">{@render lean(rec.body)}{#if expansionsOf(rec.body).length}{" "}<span class="xs">expand{#each expansionsOf(rec.body) as o}{" "}<button class="xb" class:on={opened?.x === o.x} aria-label={"Expand " + o.text + " at its arguments"} onclick={() => (opened = opened?.x === o.x ? null : o)}>{o.label}</button>{/each}</span>{/if}</span></div>
@@ -82,6 +109,7 @@
       {#each equations as e (e.name)}
         <div class="thm" data-eq={e.name}><code class="tn">{e.name}</code><pre>{@render lean(e.statement)}</pre></div>
       {/each}
+      {@render showMore("equation theorem")}
       {#if rec.equations_omitted}<p class="small">{rec.equations_omitted} further equation theorem{rec.equations_omitted === 1 ? " is" : "s are"} not included in this audit.</p>{/if}
     {/if}
     {#if rec.signature}
@@ -124,6 +152,7 @@
   .tn { font-size: 12px; color: var(--muted); }
   .compiled { margin-top: 10px; }
   .compiled > summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+  .more { border: 1px solid var(--border); border-radius: 6px; background: none; color: var(--accent); cursor: pointer; font-size: 13px; padding: 2px 8px; }
   .ref { border: 0; background: none; padding: 0; color: var(--accent); cursor: pointer; font-family: var(--mono); font-size: 0.95em; text-align: left; overflow-wrap: anywhere; }
   .small { font-size: 13px; }
   .xs { font-size: 12px; color: var(--faint); white-space: normal; }

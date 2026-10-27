@@ -192,8 +192,12 @@ proposition}`), `body` (the term under them, with the sub-term identities it has
 `result` (its type, identities prefixed `type:`). `equations` lists the equation theorems Lean
 derives (`Lean.Meta.getEqnsFor?`), each `{name, statement, params, equation}`: the theorem's exact
 statement, and its variables and the equation under them; their identities are prefixed by the
-theorem's name. At most 64 are listed; `equations_omitted` counts the rest and `equation_names`
-names all of them. A failed extraction is recorded in `definition_error` and stops nothing else.
+theorem's name. At most 1024 are read from Lean; `equations_omitted` counts the rest and
+`equation_names` names all of them. In the reader's data and the export, a record lists the first
+64; the others are in pages of 64 stored on their own (`data/expansions/<key>.json`,
+`{definition, equations}`), to which `equations_more` refers in order as `{name, key}`, `name`
+the theorem of the page's first equation; the reader fetches them when asked. A failed
+extraction is recorded in `definition_error` and stops nothing else.
 `lean_source` is the declaration's authored source, `{file, line, end_line, text, sha256}`, read
 from the checkout the probe ran on (none for a declaration of a dependency). The export carries
 these fields only when every paper publishes its Lean.
@@ -209,7 +213,8 @@ does not supply and `body` is the definition's body with the arguments substitut
 type. With `equations`, `equations` lists each equation theorem whose left side matches the
 application, specialised to it, `{name, statement, params, equation}`, with the variables and
 case conditions that remain as `params` and the statement checked to follow from the theorem;
-`equations_not_applying` names the others and `equations_omitted` counts those not compared.
+`equations_not_applying` names the others and `equations_omitted` counts those not compared
+(every equation read from Lean is compared).
 An expansion's own applications expand once more; a failure is `error` on that expansion only.
 Only what is printed is searched (explicit arguments, not implicit or instance ones), up to
 4000 nodes of a term; at most 16 applications of one term are expanded and `expansions_omitted`
@@ -218,8 +223,10 @@ Expansions are display only and are exported with the statement, so only with th
 In the reader's data, each expansion is a file of its own, `data/expansions/<key>.json`, where
 `key` is the first 24 hex digits of the SHA-256 of its canonical JSON; a statement, declaration
 or expansion refers to it as `{at, id, name, key}`, and the reader fetches it when it is opened.
-An expansion that recurs is written once. A published audit's loader fetches every expansion
-its claims and declarations refer to and checks each against its key.
+The stored expansion also has `fingerprint`, the fingerprint of the definition it expands, so a
+changed definition gives its expansions other keys even where they print the same. An
+expansion that recurs is written once. A published audit's loader fetches every expansion and
+page of equations its claims and declarations refer to and checks each against its key.
 
 ## Changes between releases (`prooflens/changes@1`), derived
 

@@ -94,10 +94,12 @@ its complete definition; **Back** and browser Back restore the claim view and re
 Definition links can be copied or opened in another tab.
 
 A definition shows what it says: its parameters, in their order and as they are written, and its
-body; a definition by pattern matching or recursion shows the equations Lean derives for it
-(its equation theorems), each under its own variables. **Exact Lean** shows the authored source
-of the definition, the exact statement of each equation theorem and the elaborated value; the
-compiled form of a recursive definition is folded under **Compiled value**.
+body with its type; a definition by pattern matching or recursion shows its type and the
+equations Lean derives for it (its equation theorems), each under its own variables. **Exact
+Lean** shows the authored source of the definition, the exact statement of each equation theorem
+with its name and the elaborated value; the compiled form of a recursive definition is folded
+under **Compiled value**. A definition with more than 64 equations shows the first 64, and
+**Show the further equations** loads the others.
 
 A definition applied in a statement expands where it stands: after the expression, **expand**
 lists its applications of the project's definitions. Choosing one shows the arguments, by the
