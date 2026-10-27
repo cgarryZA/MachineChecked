@@ -267,10 +267,11 @@ def test_check_names_a_compositions_own_coverage(coverage, words, capsys):
     cli._print_simple({"claims": [{"id": "P:thm:x", "number": "Theorem 1",
                                    **fields("link.checked"), "correspondence": cor}]})
     lines = [l for l in capsys.readouterr().out.splitlines() if l.startswith("composition ")]
-    assert lines == [f"composition Theorem 1: {words}, by the auditor's composition, which Lean "
-                     "has not checked. Next step: State the combination as one Lean result."]
+    how = "by an argument combining Lean results"
+    assert lines == [f"composition Theorem 1: {words}, {how}, which Lean has not checked. "
+                     "Next step: State the combination as one Lean result."]
     assert ("every clause" in lines[0]) == (coverage in ("full", "composed"))
-    assert reading_text(cor).startswith(f"{words}, by the auditor's composition".capitalize())
+    assert reading_text(cor).startswith(f"{words[0].upper()}{words[1:]}, {how}")
 
 
 @needs_lean

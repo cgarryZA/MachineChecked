@@ -5,6 +5,8 @@
 // their response to the author’s review. The maintainer evaluates the exported report.
 // The report records the steps and prior exposure observed in this browser.
 
+import { BASIS, COVERAGE, basisWords, coverageLabel, readingWords } from "./coverage.js";
+
 export const REPORT_SCHEMA = "prooflens/review-report@1";
 
 // The precise verdicts of the review protocol, under the three first choices.
@@ -160,20 +162,9 @@ export const COVERAGE_FOR = {
   problem: ["partial", "changed", "related"],
   cannot: ["unresolved"],
 };
-export const COVERAGE_CHOICES = [
-  { value: "full", label: "Every clause" },
-  { value: "partial", label: "Part of the claim" },
-  { value: "changed", label: "States it differently" },
-  { value: "related", label: "A related result, not this claim" },
-  { value: "unresolved", label: "Unresolved" },
-];
-export const BASIS_CHOICES = [
-  { value: "direct", label: "In one Lean statement" },
-  { value: "reviewed_composition", label: "By my composition of these results" },
-  { value: "checked_bridge", label: "Through a checked bridge" },
-];
-const COVERAGE = COVERAGE_CHOICES.map((c) => c.value);
-const BASIS = BASIS_CHOICES.map((b) => b.value);
+// Each choice in the engine's words for it (`coverage.js`).
+export const COVERAGE_CHOICES = COVERAGE.map((value) => ({ value, label: coverageLabel(value) }));
+export const BASIS_CHOICES = BASIS.map((value) => ({ value, label: basisWords(value) }));
 const ARGUMENT_CHARS = 8000;
 const NOTE_CHARS = 2000;
 
@@ -253,10 +244,7 @@ export function draftCoverage(draft) {
 
 // The recorded coverage in words, for the reviewer's own record of it.
 export function coverageWords(cor) {
-  const c = COVERAGE_CHOICES.find((x) => x.value === cor?.coverage);
-  if (!c) return null;
-  const b = BASIS_CHOICES.find((x) => x.value === cor.basis);
-  return c.label + (b ? ", " + b.label.toLowerCase() : "");
+  return readingWords(cor?.coverage, cor?.basis);
 }
 
 const EMPTY = () => ({ reviewer: null, drafts: {}, reports: [], skipped: [], exported: 0, exposure: [] });

@@ -564,7 +564,7 @@ TOY_STEPS = [
     Do(_evidence_cites_what_step_4_gave),
     Run('"op_id": "t25-evidence"'),
     Run('machinechecked compare --query composition "Theorem 2.5"',
-        shows=("every clause, through a bridge Lean checks",)),
+        shows=("every clause, through a checked bridge",)),
     # 6. Compare the estimate and the printed proof.
     Run('machinechecked compare "Equation (3)"'),
     Run('machinechecked link "Equation (3)" Toy.Acceptance.thm_bound --route --as llm:MODEL'),
