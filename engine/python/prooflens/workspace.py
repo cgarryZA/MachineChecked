@@ -1101,6 +1101,9 @@ def currency(ws: dict, snap, root: Path | None = None, check_facts: bool = False
                 changes.append({"claim": r["claim"], "was": pin, "now": None})
             elif pin and ch.get("source_sha256") != pin:
                 changes.append({"claim": r["claim"], "was": pin, "now": ch.get("source_sha256")})
+            elif pin and dp.unprinted(ch, r["claim"]):
+                changes.append({"claim": r["claim"], "was": pin, "now": ch.get("source_sha256"),
+                                "reason": dp.unprinted(ch, r["claim"])})
         out[r["id"]] = {"state": "stale" if changes else "current", "changes": changes}
     return out
 
