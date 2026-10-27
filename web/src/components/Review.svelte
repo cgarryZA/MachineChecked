@@ -1,4 +1,5 @@
 <script>
+  import { untrack } from "svelte";
   import { loadQueue, loadClaim, canEdit, askReviewOrder } from "../lib/data.js";
   import { href, route, go, withQuery } from "../lib/route.svelte.js";
   import { VERDICTS, GROUPS, CHECKLIST, MARKS, STEP_VERDICTS, STEP_GROUPS, loadWork, saveWork, now, reviewerId,
@@ -18,9 +19,18 @@
 
   let queue = $state(null);
   let error = $state(null);
-  loadQueue(index).then((q) => (queue = q)).catch((e) => (error = String(e)));
+  // The queue of the index the page is given, loaded again when it is given another; a reply
+  // for an earlier index is dropped.
+  $effect(() => {
+    let live = true;
+    queue = null; error = null;
+    loadQueue(index).then((q) => { if (live) queue = q; }).catch((e) => { if (live) error = String(e); });
+    return () => { live = false; };
+  });
 
-  const project = index.project?.name || "project";
+  // This browser's review workspace is the one of the project the page opens on. The site loads
+  // one index per page (App.svelte), so the project does not change while the page is open.
+  const project = untrack(() => index.project?.name) || "project";
   let work = $state(loadWork(project));
   let stored = $state(true);
   function persist() { stored = saveWork(project, $state.snapshot(work)); }
@@ -50,7 +60,7 @@
   // order comes from the local server of `machinechecked view`. Its records are prior
   // interpretations: choosing it asks first, and the exposure is recorded before the order is
   // shown, so that a reading of a claim it drew on is not taken as blind.
-  const local = canEdit(index);
+  const local = $derived(canEdit(index));
   const offered = (o) => o === "priority" || (o === "document" ? !!queue?.orders?.document : o === "informed" && local);
   const order = $derived(offered(work.order) ? work.order : "priority");
   let informed = $state(null);
