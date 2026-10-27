@@ -9,13 +9,16 @@
 //   #/claim/<claim>          the passport alone
 //   #/changes                what changed between releases
 //   #/review                 the review queue
+//
+// A claim's inspections are in the query of its route: `?inspect=<token>…&at=<row>`
+// (lib/inspect.svelte.js).
 
 export const OVERVIEW_FILTERS = ["set", "unit", "coverage", "basis", "review", "finding", "status"];
 
 function parse(hash) {
   const [path, query = ""] = hash.split("?");
   const params = new URLSearchParams(query);
-  const state = { inspection: params.getAll("inspect"), compare: params.get("compare") === "1", target: params.get("claim"), readerSeen: params.get("seen") === "lean",
+  const state = { inspection: params.getAll("inspect"), at: params.get("at"), compare: params.get("compare") === "1", target: params.get("claim"), readerSeen: params.get("seen") === "lean",
     filters: Object.fromEntries(OVERVIEW_FILTERS.map((k) => [k, params.get(k)])) };
   let parts = path.replace(/^#\/?/, "").split("/").map((s) => { try { return decodeURIComponent(s); } catch { return s; } });
   let release = null;
@@ -34,7 +37,12 @@ function parse(hash) {
 
 export const route = $state(parse(location.hash));
 
-window.addEventListener("hashchange", () => Object.assign(route, { paper: null, claim: null }, parse(location.hash)));
+// Only what changed is written, so that a view of the same claim (whose inspections the query
+// holds) is not drawn again from the start.
+window.addEventListener("hashchange", () => {
+  const next = { paper: null, claim: null, ...parse(location.hash) };
+  for (const [k, v] of Object.entries(next)) if (JSON.stringify(route[k]) !== JSON.stringify(v)) route[k] = v;
+});
 
 export function href(release, view, ...args) {
   const tail = args.filter((a) => a != null && a !== "").map(encodeURIComponent).join("/");

@@ -1,4 +1,5 @@
 <script>
+  import { getContext } from "svelte";
   import { evidenceView } from "../lib/presentation.js";
   import { loadDecl, siteIndex } from "../lib/data.js";
   import { moduleSourceUrl, sourceLabel, sourceTitle } from "../lib/issue.js";
@@ -6,11 +7,12 @@
   import Definition from "./Definition.svelte";
   import Uses from "./Uses.svelte";
 
-  // One Lean declaration of a closure, loaded from the shared store when it is opened.
-  // `hideReview` keeps the author's review (and the review state) out of sight, as the review
-  // queue does until the reviewer has recorded a verdict.
-  // The claim inspector opens the declaration and its complete value.
-  let { name, key, open = false, onref, hideReview = false, inspector = false, index = siteIndex } = $props();
+  // One Lean declaration of a closure, loaded from the shared store when it is opened. Inside a
+  // comparison the record comes as its stage allows it (`comparison.declSide`): an independent
+  // stage's has no review, so none is shown. The claim inspector opens the declaration and its
+  // complete value.
+  let { name, key, open = false, onref, inspector = false, index = siteIndex } = $props();
+  const load = getContext("comparison")?.decl || loadDecl;
   let expanded = $state(false);
   let d = $state(null);
   $effect(() => { if (open || inspector) expanded = true; });
@@ -20,7 +22,7 @@
   $effect(() => {
     if (expanded && !d && !error) {
       if (!key) error = "not part of this claim's closure in this release";
-      else loadDecl(key).then((x) => (d = x)).catch((e) => (error = `record ${key} missing: ${e.message}`));
+      else load(key).then((x) => (d = x)).catch((e) => (error = `record ${key} missing: ${e.message}`));
     }
   });
 </script>
@@ -31,7 +33,7 @@
     <span class="faint">{d.kind}</span>
   {:else if d}
     <span class="faint">{d.kind}{d.module ? " · " + d.module : ""}{d.range ? ":" + d.range.line : ""}</span>
-    {#if d.review && !hideReview}<span class={"rv rv-" + d.review.state} title={evidenceView("review", d.review).detail}>{evidenceView("review", d.review).word}</span>{/if}
+    {#if d.review}<span class={"rv rv-" + d.review.state} title={evidenceView("review", d.review).detail}>{evidenceView("review", d.review).word}</span>{/if}
   {/if}
 {/snippet}
 
@@ -64,10 +66,7 @@
       {#if index && moduleSourceUrl(index, d.module, d.range?.line)}
         <p class="small"><a href={moduleSourceUrl(index, d.module, d.range?.line)} target="_blank" rel="noopener" title={sourceTitle(index)}>{sourceLabel(index)}</a></p>
       {/if}
-      {#if d.doc}
-        {#if hideReview}<p class="lbl">author’s docstring</p>{/if}
-        <p class="doc">{d.doc}</p>
-      {/if}
+      {#if d.doc}<p class="doc">{d.doc}</p>{/if}
       {#if d.defined_by !== undefined || d.structure}
         <p class="lbl">what it says</p>
         <Definition {d} {onref} {selId} onselect={(id) => (selId = id)} />
@@ -84,8 +83,7 @@
         <p class="lbl">value</p>
         <LeanText pp={d.value} {onref} refs={d.uses} />
       {/if}
-      {#if hideReview}
-      {:else if d.review?.current?.length}
+      {#if d.review?.current?.length}
         {#each d.review.current as r}
           <p class="lbl">review · {r.by}{r.kind === "ai" ? " (AI)" : r.kind === "human" ? " (human)" : ""} · {r.provenance}</p>
           {#if r.text}<pre class="rtext">{r.text}</pre>{/if}
@@ -94,7 +92,7 @@
         <p class="lbl">no current review{d.review.stale?.length ? " (the last one is stale)" : ""}</p>
       {/if}
       {#if d.fingerprint}<p class="fp faint" title={d.legacy_hash ? "legacy " + d.legacy_hash : ""}>{d.fingerprint.slice(0, 24)}…</p>{/if}
-      {#if !hideReview}<Uses {name} module={d.module} {onref} {index} />{/if}
+      <Uses {name} module={d.module} {onref} {index} />
     {/if}
 {/snippet}
 

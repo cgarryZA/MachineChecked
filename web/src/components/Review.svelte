@@ -5,15 +5,15 @@
            needsDetail, buildReport, exportFile, ORDERS, ORDER_SEEN, orderedUnits, recordExposure, exposureOf,
            holdsBack, COVERAGE_FOR, COVERAGE_CHOICES, BASIS_CHOICES, reportCorrespondence, draftCoverage,
            coverageWords } from "../lib/review.js";
-  import ProofStep from "./ProofStep.svelte";
-  import StepContext from "./StepContext.svelte";
-  import PaperStatement from "./PaperStatement.svelte";
-  import Statement from "./Statement.svelte";
-  import Decl from "./Decl.svelte";
-  import TexInline from "./TexInline.svelte";
+  import Comparison from "./Comparison.svelte";
+  import { comparisonInputs, pinScope } from "../lib/comparison.js";
 
   // The review queue: one unit at a time, in three steps. Read the paper and write your own
   // reading; then see the Lean, compare and record a verdict; then read the author's review.
+  // Each step draws the reader's comparison (Comparison.svelte) from the inputs the protocol
+  // allows it (`comparison.comparisonInputs`): the paper only; then the paper with the unit's
+  // complete Lean as Lean extracted it, without any association, review or finding a person
+  // recorded; then, after the verdict, the records as the reader shows them.
   let { index } = $props();
 
   let queue = $state(null);
@@ -119,10 +119,17 @@
     Promise.all(u.claims.map((c) => loadClaim(index, c.id).catch(() => null)))
       .then((cs) => { if (current === u) claims = cs.filter(Boolean); });
   });
-  const clause = $derived(current?.kind === "spec"
-    ? claims.flatMap((c) => c.clauses || []).find((cl) => cl.spec === current.name) : null);
+  // What the card's comparison may show at this step: the unit's declarations (a statement's
+  // clause, a linked claim's declarations, a proof step's links, or a definition of its own).
+  const inputs = $derived.by(() => {
+    if (!current || !draft) return null;
+    const mode = draft.stage === "read" ? "read" : draft.stage === "compare" ? "compare" : "after";
+    if (current.kind === "def") return comparisonInputs(mode, [], { decls: mode === "read" ? [] : [{ name: current.name, key: current.key }] });
+    const only = current.kind === "spec" ? [current.name] : current.kind === "link" ? current.lean || null : null;
+    return comparisonInputs(mode, claims, { only });
+  });
+  const cardScope = $derived(current ? pinScope(index, "unit:" + current.id, null) : null);
   const host = $derived(claims[0]);
-  const paperOf = (c) => index.papers.find((p) => p.id === c.paper);
 
   // What this reviewer has already seen of unit `u`, in this browser: the units whose Lean
   // (step 2) or author's review (step 3) they reached, and that show u's Lean or u's review,
@@ -346,25 +353,16 @@
             {#each current.claims as c, i}{i ? ", " : ""}<a href={href(index.release, "read", c.id.split(":")[0], c.id)} target="_blank" rel="noopener">{c.id}</a>{/each}
           </p>
         {:else}
-          {#snippet printed(c)}
-            <h2>{c.number}{#if c.heading}<span class="ht">&nbsp;— <TexInline text={c.heading} /></span>{/if}</h2>
-            {#if !c.heading && c.title}<p class="desc"><TexInline text={c.title} /></p>{/if}
-            <PaperStatement claim={c} paper={paperOf(c)} evidence={false} />
-            {#if c.step}
-              <p class="small">A step of the proof of {c.step.parent?.number || c.step.parent?.id || "its result"}. Is it valid as printed? Judge the step on its own.</p>
-              {#if c.context_tex}<StepContext text={c.context_tex} cut={c.context_cut} open />{/if}
-            {/if}
-            <p class="small"><a href={href(index.release, "read", c.paper, c.id)} target="_blank" rel="noopener" title="Opens the paper and Lean reader">Open in the paper ↗</a></p>
-          {/snippet}
-          {#if claims[0]}{@render printed(claims[0])}{/if}
+          {#if claims[0]?.step}<p class="small">A step of the proof of {claims[0].step.parent?.number || claims[0].step.parent?.id || "its result"}. Is it valid as printed? Judge the step on its own.</p>{/if}
           {#if claims.length < current.claims.length}
             <p class="warn">{current.claims.length - claims.length} of this unit's {current.claims.length} claims could not be loaded from this build.</p>
           {/if}
-          {#if claims.length > 1}
-            <details class="also"><summary>Also stated in {claims.length - 1} other place(s)</summary>
-              {#each claims.slice(1) as c (c.id)}{@render printed(c)}{/each}
-            </details>
-          {/if}
+        {/if}
+        {#if inputs && (inputs.passages.length || inputs.formal || inputs.definitions.length)}
+          <Comparison {index} {inputs} scope={cardScope} headings />
+        {/if}
+        {#if current.kind !== "def"}
+          <p class="small">{#each claims as c, i (c.id)}{i ? " · " : ""}<a href={href(index.release, "read", c.paper, c.id)} target="_blank" rel="noopener" title="Opens the paper and Lean reader">Open {c.number || c.id} in the paper ↗</a>{/each}</p>
         {/if}
 
         <h3 id="reading-label">Your reading{draft.stage !== "read" ? " (locked " + draft.locked_at + ")" : ""}</h3>
@@ -384,28 +382,7 @@
           </div>
         {:else}
           <pre class="locked">{draft.reading}</pre>
-
-          <h3>In Lean{#if current.kind !== "step"} <code class="small">{current.name}</code>{/if}</h3>
-          {#if current.kind === "def"}
-            <Decl name={current.name} key={current.key} open hideReview />
-          {:else if current.kind === "spec" && clause?.statement}
-            <Statement st={clause.statement} spec={current.name} />
-            {#if clause.statement.closure?.length}
-              <details class="closure"><summary>Definitions it uses ({clause.statement.closure.length})</summary>
-                {#each clause.statement.closure as n}<Decl name={n} key={host?.decls?.[n]} hideReview />{/each}
-              </details>
-            {/if}
-            {#if current.witness}<p class="small">Witness: <code>{current.witness}</code></p>{/if}
-          {:else if current.kind === "step"}
-            {#if host}<ProofStep claim={host} {index} part="lean" />{:else}<p class="faint">Loading…</p>{/if}
-          {:else if current.kind === "link"}
-            {#each host?.links || [] as l}
-              <p class="small"><code>{l.name}</code></p>
-              {#if l.statement}<Statement st={l.statement} />{/if}
-            {/each}
-          {:else}
-            <p class="faint">Loading…</p>
-          {/if}
+          {#if current.kind !== "def" && !host}<p class="faint">Loading…</p>{/if}
 
           {#if draft.stage === "compare"}
             <h3 id="comparison-label">Comparison</h3>
@@ -507,7 +484,7 @@
 </main>
 
 <style>
-  .review { max-width: 920px; margin: 0 auto; padding: 16px 16px 80px; }
+  .review { max-width: 1320px; margin: 0 auto; padding: 16px 16px 80px; }
   .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px 20px; margin: 12px 0; }
   .setup h1 { margin-top: 0; }
   fieldset { border: 0; padding: 0; margin: 12px 0; display: flex; gap: 16px; }
@@ -526,8 +503,6 @@
   .steps li.on { background: var(--accent-soft); color: var(--text); }
   .why { font-size: 13px; margin: 4px 0 8px; }
   h2 { font-size: 15px; font-weight: 600; margin: 14px 0 6px; }
-  .ht { font-weight: 400; color: var(--muted); }
-  .desc { margin: -2px 0 8px; font-size: 14px; color: var(--muted); }
   h3 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin: 18px 0 6px; }
   .locked, .author, .issue pre { white-space: pre-wrap; font: 14px/1.5 var(--sans); background: var(--surface-2); padding: 8px 10px; border-radius: 6px; margin: 0; }
   .row { display: flex; gap: 8px; margin-top: 8px; }
@@ -543,8 +518,6 @@
   .cover select, .cover input { max-width: 100%; }
   .lbl { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--faint); margin: 8px 0 2px; }
   .small { font-size: 13px; }
-  .also summary { cursor: pointer; font-size: 13px; color: var(--accent); margin: 10px 0; }
-  .closure summary { cursor: pointer; font-size: 13px; color: var(--accent); margin: 8px 0; }
   .bad { color: var(--st-malformed); }
   @media (max-width: 640px) { .who { margin-left: 0; } }
   .checklist { list-style: none; padding: 0; margin: 6px 0; }

@@ -1,7 +1,7 @@
 // Browser tests of the built reader (engine/python/prooflens/web), in headless Chromium, at a
 // laptop and a phone width. Run after `npm run build`: `node tests/reader.test.mjs`.
-// Set CHROMIUM to a browser binary when Playwright's own is not installed, and SHOTS to a
-// directory to keep screenshots.
+// Set CHROMIUM to a browser binary when Playwright's own is not installed, SHOTS to a directory
+// to keep screenshots, and ONLY to a regular expression to run only the checks it matches.
 //
 // A paper page with two formalisations, written by the engine: the chosen project must drive
 // every claim view, and the two projects' links must never show together. Needs the engine
@@ -485,7 +485,10 @@ const browser = await chromium.launch({ executablePath: process.env.CHROMIUM || 
 let failures = 0;
 if (process.env.SHOTS) fs.mkdirSync(process.env.SHOTS, { recursive: true });
 
+// `ONLY` (a regular expression) runs only the checks whose name it matches.
+const ONLY = process.env.ONLY ? new RegExp(process.env.ONLY) : null;
 async function check(name, width, fn, height = 900) {
+  if (ONLY && !ONLY.test(name)) return;
   const pg = await browser.newPage({ viewport: { width, height } });
   pg.setDefaultTimeout(10000);
   const errors = [];
@@ -1023,8 +1026,8 @@ for (const width of [1300, 390]) {
   });
 }
 
-// The claim inspector on the toy audit: opening a definition replaces the panel's contents and
-// leaves the paper where it was; Back brings the claim back as it was left.
+// The claim's inspections on the toy audit: a definition opens beside the row it was opened from,
+// with the claim and the paper left where they were; Back closes it and returns to the reference.
 const toyClaim = async (pg, id) => {
   await pg.goto(origin + `/toy/#/r/${TOY.release}/read/T/${encodeURIComponent(id)}`);
   await pg.waitForSelector("aside h1");
@@ -1142,23 +1145,28 @@ await check("a theorem of the toy paper is typeset with its equation number", 13
 });
 
 for (const width of [1300, 390]) {
-  await check("opening a definition replaces the panel; Back restores the claim as it was", width, async (pg) => {
+  await check("a definition opens beside its row, the claim stays; Back returns to the reference as it was", width, async (pg) => {
     await toyClaim(pg, "T:def:even");
     const ref = pg.locator("aside .lean .ref", { hasText: "Toy.IsEven" });
     await ref.scrollIntoViewIfNeeded();
     const [panel, paper] = await scrollTops(pg);
     await ref.click();
-    await pg.waitForSelector("aside .crumbs");
-    await pg.waitForSelector("aside .decl.inspector");
-    assert.equal(await pg.locator("aside .view").isHidden(), true, "the claim view is replaced");
-    assert.match(await pg.locator("aside .crumbs").textContent(), /Back.*IsEven/s);
+    const insp = pg.locator("aside .inspection");
+    await insp.locator(".decl.inspector").waitFor();
+    assert.equal(await insp.evaluate((e) => e.closest("[data-row]")?.dataset.row), "Toy.IsEven::top", "under the definition's own row");
+    assert.ok(await pg.locator("aside .view h1").isVisible(), "the claim stays");
+    assert.ok(await pg.locator("aside .view .paper .excerpt").isVisible(), "the paper's passage stays");
+    assert.equal(await pg.locator("aside .defn.readable[data-decl='Toy.triangle']").isVisible(), true, "the other definition stays");
+    assert.match(await insp.locator(".crumbs").textContent(), /Back.*IsEven/s);
+    assert.equal(await insp.locator(".crumbs .back").evaluate((e) => e === document.activeElement), true, "focus moves to the inspection");
     assert.equal((await scrollTops(pg))[1], paper, "the paper keeps its position");
-    await pg.locator("aside .crumbs .back").click();
-    await pg.waitForSelector("aside .view h1");
+    await insp.locator(".crumbs .back").click();
+    await insp.waitFor({ state: "detached" });
     assert.equal(await pg.locator("aside .defn.exact:visible").count(), 2, "both exact definitions remain in the claim comparison");
     const [panel2, paper2] = await scrollTops(pg);
     assert.equal(panel2, panel, "the panel's scroll position comes back");
     assert.equal(paper2, paper, "the paper keeps its position");
+    assert.equal(await ref.evaluate((e) => e === document.activeElement), true, "focus returns to the reference");
   });
 
   await check("a definition claim shows each definition as it is written, beside the paper", width, async (pg) => {
@@ -1182,7 +1190,7 @@ for (const width of [1300, 390]) {
     assert.deepEqual(await exact.locator(".thm .tn").allTextContents(), ["Toy.triangle.eq_1", "Toy.triangle.eq_2"]);
     assert.equal(await exact.locator("details.compiled").getAttribute("open"), null, "the compiled value is a secondary view");
     assert.match(await exact.locator("details.compiled").textContent(), /Nat\.brecOn/);
-    assert.ok(!(await view.locator("section.lean").textContent()).includes("brecOn"), "no compiled recursion in the readable Lean");
+    assert.ok(!(await view.locator(".lean .defn.readable").allTextContents()).join(" ").includes("brecOn"), "no compiled recursion in the readable Lean");
     // A sub-term selected in the readable body is the same sub-term of the exact value.
     await even.locator(".body .p", { hasText: "2" }).first().click();
     const lit = view.locator(".exact-pane .defn.exact[data-decl='Toy.IsEven'] .in");
@@ -1198,7 +1206,8 @@ for (const width of [1300, 390]) {
     await toyClaim(pg, "T:thm:even-add");
     const view = pg.locator("aside .view");
     await view.locator(".lean .ribbon").waitFor();
-    assert.deepEqual(await view.locator("h2").allTextContents(), ["Paper", "Readable Lean", "Exact Lean"]);
+    assert.deepEqual(await view.locator(".cmp .grid > section > h2").allTextContents(), ["Paper", "Lean"]);
+    assert.equal(await view.locator(".lean .exact-pane .exact pre").count(), 1, "the complete exact statement follows the rows");
     assert.equal(await view.locator(".lean .ribbon li").count(), 4, "a short statement is shown in full");
     assert.equal(await view.locator(".chipbtn [data-status]").getAttribute("data-status"), "formal.accepted", "the engine status is preserved");
     const text = await view.textContent();
@@ -1291,7 +1300,7 @@ for (const width of [1300, 390]) {
     const insp = pg.locator("aside .decl.inspector");
     await insp.waitFor();
     await pg.locator("aside h2", { hasText: "Paper · Definition 1.1" }).waitFor();
-    const def = pg.locator("aside section.paper", { has: pg.locator("h2", { hasText: "Paper · Definition 1.1" }) });
+    const def = pg.locator("aside .inspection .paper-def", { has: pg.locator("h2", { hasText: "Paper · Definition 1.1" }) });
     await def.locator(".excerpt .katex").first().waitFor();
     assert.match(await def.locator(".excerpt").textContent(), /triangular number/, "the paper's definition, typeset from its source");
     const extra = insp.locator("details.extra");
@@ -2089,7 +2098,7 @@ for (const width of [1440, 1000, 390, 320]) {
   await check("comparison keeps all three representations and long assumptions visible", width, async (pg) => {
     await pg.goto(origin + `/long-statement/#/r/${TOY.release}/read/T/T%3Athm%3Aeven-add?compare=1`);
     await pg.locator("aside .exact pre").waitFor();
-    assert.deepEqual(await pg.locator(".comparison-grid > section > h2").allTextContents(), ["Paper", "Readable Lean", "Exact Lean"]);
+    assert.deepEqual(await pg.locator(".cmp .grid > section > h2").allTextContents(), ["Paper", "Lean"]);
     assert.equal(await pg.locator(".lean .ribbon > li").count(), 12);
     assert.match(await pg.locator(".exact pre").textContent(), /x11 : Nat/);
     assert.equal(await pg.locator(".paperpane").isHidden(), true);
@@ -2287,8 +2296,8 @@ await check("review opens the selected claim, keeps protocol order and exports a
   await pg.getByRole("link", { name: "Review it", exact: true }).click();
   await pg.getByRole("textbox", { name: "Your name" }).fill("Synthetic reviewer");
   await pg.getByRole("button", { name: "Start", exact: true }).click();
-  await pg.locator(".review .unit h2").waitFor();
-  assert.match(await pg.locator(".review .unit h2").textContent(), /Theorem 2.1/);
+  await pg.locator(".review .unit .pnum").waitFor();
+  assert.match(await pg.locator(".review .unit .pnum").textContent(), /Theorem 2.1/);
   await pg.locator(".review .unit .excerpt .katex").first().waitFor();
   assert.match(await pg.locator(".review .unit .excerpt").textContent(), /are even natural numbers/, "the statement as typeset from its source");
   assert.match(await pg.locator(".review .warn").textContent(), /prior exposure/);
@@ -2428,8 +2437,8 @@ for (const width of [1300, 390]) {
     assert.match(await finding.textContent(), /Theorem 2\.5/);
     assert.match(await view.locator("section.lean").textContent(), /No Lean declaration is linked as establishing this step/);
     assert.match(await view.locator("section.lean").textContent(), /Different formal route used instead.*Toy\.Acceptance\.thm_bound/s);
-    await view.locator(".paper .finding .context summary").click();
-    assert.match(await view.locator(".paper .finding .context").textContent(), /k = 1/);
+    await view.locator(".paper .context summary").click();
+    assert.match(await view.locator(".paper .context").textContent(), /k = 1/);
     // A linked step that no one has reviewed reads as not reviewed.
     await toyClaim(pg, "T:eq:bound-sum");
     assert.equal(await pg.locator("aside .view .paper .finding").getAttribute("data-review"), "unreviewed");
@@ -2452,14 +2461,14 @@ for (const width of [1300, 390]) {
 for (const width of [1300, 390]) {
   await check("a proof step's cut context says where it was cut, in the reader and the review", width, async (pg) => {
     await toyClaim(pg, "T:eq:bound-range");
-    const whole = pg.locator("aside .view .paper .finding .context");
+    const whole = pg.locator("aside .view .paper .context");
     assert.equal(await whole.getAttribute("data-cut"), "whole");
     assert.equal((await whole.locator("summary").textContent()).trim(), "Its context in the proof");
     assert.equal(await whole.locator(".cut, .cut-end").count(), 0);
 
     await pg.goto(origin + `/cut-step/#/r/${TOY.release}/read/T/${encodeURIComponent("T:eq:bound-range")}`);
     await pg.waitForSelector("aside h1");
-    const ctx = pg.locator("aside .view .paper .finding .context");
+    const ctx = pg.locator("aside .view .paper .context");
     assert.equal(await ctx.getAttribute("data-cut"), "cut");
     assert.equal((await ctx.locator("summary").textContent()).trim(), "Its context in the proof (cut)");
     await ctx.locator("summary").click();
@@ -2482,8 +2491,8 @@ for (const width of [1300, 390]) {
     // Evidence that does not record where it was cut says only how much is shown.
     await pg.goto(origin + `/cut-step-old/#/r/${TOY.release}/read/T/${encodeURIComponent("T:eq:bound-range")}`);
     await pg.waitForSelector("aside h1");
-    await pg.locator("aside .view .paper .finding .context summary").click();
-    assert.equal(await pg.locator("aside .view .paper .finding .context .cut").textContent(),
+    await pg.locator("aside .view .paper .context summary").click();
+    assert.equal(await pg.locator("aside .view .paper .context .cut").textContent(),
       "This shows only its first 20000 characters; the build does not record where it was cut. Read the rest in the paper.");
     assert.equal(await pg.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, "no horizontal scroll");
   });
@@ -2558,7 +2567,7 @@ await check("a proof step with no Lean link is reviewed as printed and reported 
   await pg.goto(origin + `/review-step/#/r/${TOY.release}/review?claim=T%3Aeq%3Abound-range`);
   await pg.getByRole("textbox", { name: "Your name" }).fill("Synthetic reviewer");
   await pg.getByRole("button", { name: "Start", exact: true }).click();
-  await pg.locator(".review .unit h2").waitFor();
+  await pg.locator(".review .unit .pnum").waitFor();
   assert.match(await pg.locator(".review .unit").textContent(), /Proof step.*A step of the proof of Theorem 2\.5/s);
   await pg.getByRole("textbox", { name: "Your reading", exact: true }).fill("For every k >= 0, with n fixed, the step says n <= k n^2.");
   await pg.getByRole("button", { name: "Lock my reading and show the Lean" }).click();
