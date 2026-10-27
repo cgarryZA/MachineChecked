@@ -96,6 +96,8 @@ Canonical paper pages import complete published records through `load_published_
 The importer checks the public paper identifier and version, project commit, audit release,
 claim chunks, declaration hashes and PDF bytes. It preserves reviews, evidence, source text,
 refutations, corrections and additional inventory entries. Failed imports retain a visible state.
+A semantic summary the importer cannot read (another format, or not valid) is set aside with its
+reason; the audit's statuses and claims import as they would without it.
 The original PDF remains the default; an explicit edition choice displays an audited revision
 and its own anchors. Coordinates transfer to the original PDF when their SHA-256 values match.
 
