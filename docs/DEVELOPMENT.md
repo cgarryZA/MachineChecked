@@ -112,7 +112,12 @@ constants the statement mentions (`uses`) and the value uses (`value_uses`). A t
 words (split at underscores and capitals, lower case, lightly stemmed), symbols (`\le`, `≤` and
 `<=` are one term; `≥` is folded into `≤`), numerals and dotted constants. A declaration's
 score is the share of the query's rarity-weighted terms it carries; the users of the ten best
-matches join the results through them. The zero-configuration view writes the index to
+matches join the results through them. The declarations Lean generates for an inductive type
+(`casesOn`, `noConfusion`, `mk.injEq`, …) and notation parsers are left out (`generated`).
+`lean_shape` reads a printed statement's variables, hypotheses and conclusion; a search from a
+theorem (`search_like`) lifts a theorem with the same conclusion, up to the names of its
+variables (`normal_parts`, with and without their types), half way to 1, and compares each
+result's parts with the theorem's (`structure_reasons`). The zero-configuration view writes the index to
 `data/retrieval.json` with its word tables, and so does the full assessment (`content.py`: the
 index of every built module from the facts store, with `LeanFacts.index`, and the paper-number
 check of a one-paper configuration, kept in `<work>/content/<evidence id>.json` beside the
