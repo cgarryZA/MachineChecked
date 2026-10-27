@@ -550,3 +550,9 @@ later claims' numbers, which the paper-number check reads: in the later release'
 the paper's numbers that disagree with it, each gets the counterpart the map names
 (`references`), several when the map's claim is ambiguous, a proposal marked as one, or none
 for a removed claim ([Paper numbers in the Lean](GETTING_STARTED.md#paper-numbers-in-the-lean)).
+
+With `--workspace ID`, the map also follows each region of the paper the workspace attaches to
+a requirement, by its text as above (`passages`), and judges the workspace's findings through
+what became of the passages they rest on: the same text keeps a finding current wherever it
+moved, and a changed passage, or a change of what it is read with, reopens the findings that
+rest on it ([Saved investigations](REVIEWING.md#saved-investigations)).

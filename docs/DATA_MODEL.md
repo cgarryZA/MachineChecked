@@ -281,7 +281,8 @@ with the reviews.
 claims of one paper between two releases' revisions by their passages
 ([SOURCE_REGIONS.md](SOURCE_REGIONS.md#comparing-two-revisions-the-version-map)) and is derived
 from the two releases' evidence and the two manuscripts alone; no status, fingerprint or gate
-reads it, and the export does not carry it.
+reads it, and the export does not carry it. A workspace may keep it (`changes --map --workspace
+ID --save`, below).
 
 | Field | Content |
 |---|---|
@@ -292,6 +293,7 @@ reads it, and the export does not carry it.
 | `numbers[]` | per earlier claim with a number: `old`, `new` (the later numbers: one for a match, each candidate's for an ambiguous claim, none for a removed one) and `match` (`class`, `by`, `from`, `to`) |
 | `references` | the later release's references to paper numbers that disagree with its paper, each with `current` from the map (below); null when that build has no paper-number check |
 | `new_passages` | labels the later revision has and the earlier has not, with their places |
+| `passages` | with `--workspace`: each region of the paper the workspace attaches to a requirement (below) |
 
 An entry of `claims` has `class` (`unchanged`, `moved`, `context-changed`, `changed`,
 `removed`, `ambiguous`, `unknown`, `new`), `reason`, and `from` and `to`, each side's own record
@@ -322,6 +324,56 @@ earlier number that disagrees with the later paper (`absent`, `other-kind`, or a
 lead) gets `current`: `reference` and `claims` for one counterpart (with `proposed` when its
 claim is ambiguous), `ambiguous` for several, or `none` for a removed claim, with `source` and
 `matches` (the map's entries for the number). Its status stays its own.
+
+An entry of `passages` follows one region a workspace attached (a fragment's `region`, or one a
+finding rests on as it was submitted): `region` (`paper`, `file`, `start_line`, `end_line`,
+columns, `sha256`), `class` and `reason`. The repin planner looks for its text in the later
+revision, as for a claim: `unchanged` or `moved` (with `to`: `location`, `bounds`),
+`context-changed` when a macro it uses is defined otherwise (`context`), `changed` when no
+passage has its text and the line diff of its file maps it to other text (`to` with `proposed`,
+and `change`: `where`, `diff`), `removed` when it maps it to nothing, `ambiguous` when its text
+occurs more than once (`candidates`); `later` when the earlier revision does not print its text
+and the later one does at its place (it was attached at the later revision), else `unknown`.
+
+## Findings across a revision (`prooflens/reopened@1`), derived
+
+`machinechecked changes --map --workspace ID --json` gives it as `workspace`; `workspace show
+--json` gives one per version map the workspace keeps to the build's release, under
+`revisions.maps` (`engine/python/prooflens/reopen.py`). It judges the workspace's findings in
+force through the map. No status, fingerprint or gate reads it.
+
+| Field | Content |
+|---|---|
+| `workspace`, `paper`, `from`, `to` | the workspace, and the map's paper and revisions |
+| `build_checked` | whether the build of the later release was there to check the Lean side |
+| `counts` | how many findings are `reopened`, `unchecked`, `current` |
+| `findings[]` | each finding of the workspace that rests on a passage of this paper |
+| `evidence[]`, `passages[]` | each evidence record quoting the paper, and each passage attached to a requirement (not removed), judged as a finding's part is |
+| `map` | under `revisions`: the kept map's `paper`, `from`, `to`, `kept_at`, `kept_by` |
+
+A finding has `id`, `claim`, `finding` (what it records: `coverage`, `basis` as `workspace show`
+gives it, `requirement`, `note` and the like), `kinds`, `earlier` and `later` (the claim's
+`claim`, `number`, `location` on each side, from the map), `class` (the map's), `state`, `paper`
+and, when the later build was checked, `build`. Each entry of `paper` is one paper part it rests
+on: `dependency` (the item of its `dependencies`), `text` (in words), `earlier`, `later`, `class`
+and `state`:
+
+- `current`, with `note`: the map finds the same text (moved and renumbered or not), or the part
+  was read at the later revision; or the context changed only in what the finding does not rest
+  on;
+- `reopened`, with `change` (`class`, `reason`, and `diff`, `where`, `context` as the map gives
+  them; a claim relied on carries its own change as `claim_change`, and `through` names the cited
+  declarations whose statements use its definitions) and `question`;
+- `unchecked`, with `why` (and `candidates` for an ambiguous claim): the map cannot follow it,
+  the part read another text than the earlier revision prints, or it records no version.
+
+A definition claim the claim's Lean relies on (`via: ["lean"]`) concerns only a finding that
+cites a declaration whose statement uses one of its definitions, and is unknown when the
+finding cites one whose definitions were not recorded. `build` is `dependencies.check` against
+the later build for the parts the map does not judge: `state`, `changes` (each with `words`,
+`question`, and `statement`, `{from, to}`, when both releases are stored) and `unknown`. The
+finding's `state` is `reopened` when a part is reopened or the build part is `stale`, else
+`unchecked` when one is, else `current`.
 
 ## Manifest (`manifest-index.schema.json`, `manifest-claim.schema.json`), derived
 
@@ -603,6 +655,7 @@ path. A workspace records evidence and readings and is never an input to a statu
 | `resume` | where to continue: `claim`, `clause`, `question`, `pinned` references, `at`, `by`; kept apart from the evidence |
 | `main_results` | the paper's main results as the auditor chose them (`workspace main`), which `compare --query impact` traces from: `selected` (each `{claim}`, standing for the claim's linked Lean, or `{decl, module, build}`, a project declaration), `by`, `at`, and `pins` (`release`, project `commit` and `repository` of the build they were checked against); absent until chosen |
 | `review` | the review protocol's `drafts` (locked reading, verdict, author-review step) and submitted `reports` (`prooflens/review-report@1`) |
+| `version_maps` | the version maps the auditor keeps (`changes --map --workspace ID --save`): each the map without `references`, with `kept_at` and `kept_by`; one per paper and pair of releases; absent until one is kept |
 | `conflicts` | refused edits, each with the saved record (`current`) and the proposal (`proposed`) |
 | `provenance` | upgrades, mode changes, imports and replaced main results (`was`), with time and person |
 | `ops` | acknowledgements of requests by their `op_id`, so a repeated request changes nothing (not exported) |
@@ -735,10 +788,11 @@ optional `clause` and `note`, `rev`, `created_at`/`created_by`, `updated_at`/`up
 An update is a list of operations applied together or not at all: `put` (create, or replace a
 record's content, given `base_rev`, the revision it was read at), `delete` (a draft or an unused
 record), `submit` (a draft finding), `supersede` (a submitted finding, with `reason` and the new
-`record`), `resume`, `mode`, `exposure` and `main-results`. An edit made from an older revision of
-a record is a conflict: nothing is applied, and the answer (and `conflicts`) holds both versions;
-edits of different records are both kept. Writes replace the file atomically under a lock file
-beside it.
+`record`), `resume`, `mode`, `exposure`, `main-results` and `version-map` (`{"op":
+"version-map", "map": {...}}` keeps a version map, replacing one of the same paper and
+releases). An edit made from an older revision of a record is a conflict: nothing is applied,
+and the answer (and `conflicts`) holds both versions; edits of different records are both kept.
+Writes replace the file atomically under a lock file beside it.
 
 `{"op": "main-results", "main": [...]}` replaces the main results: each entry a claim (its id,
 key or number) or a declaration (`NAME`, `MODULE:NAME` when several modules declare it, or
@@ -801,7 +855,9 @@ brings a draft up to date and leaves a submitted finding stale until it is super
 it is `unchecked` when an item is unknown or cannot be checked now (`currency.unknown`, each
 `{dependency, record, why}`), including a finding submitted before findings recorded their
 dependencies; else `current`. Dependencies are workspace records: the export of a workspace
-carries them, a published audit does not, and no status reads them.
+carries them, a published audit does not, and no status reads them. Across a revision of the
+paper, a version map judges the paper parts by their text instead
+([Findings across a revision](#findings-across-a-revision-prooflensreopened1-derived)).
 
 **The reading.** `workspace show --json` gives each claim's `reading`: its requirements in
 reading order (with `depth`, `children`, their fragments grouped as `governing`, `later_uses`,
@@ -834,9 +890,11 @@ later than the lock. So `review promote` refuses the report unless the maintaine
 **Export and import.** `workspace export` writes the whole workspace (less `ops`) as one file;
 `workspace import` keeps its id, authors, pins, mode and exposure, and each submitted finding's
 dependencies as recorded. Into a workspace already
-present, it adds the records that are missing (and the main results, when it has none) and keeps
-a record, or main results, both hold in different versions as it is, listing the other under
-`conflicts`. References the current build cannot resolve, main results included, are reported as
+present, it adds the records that are missing (and the main results, when it has none, and the
+version maps it lacks) and keeps a record, main results or a version map both hold in different
+versions as it is, listing the other under `conflicts`; a version map of another form is left
+out and reported. A kept map judges the findings without the manuscripts, so the findings it
+reopens travel with the workspace. References the current build cannot resolve, main results included, are reported as
 `problems`. A published audit carries the accepted records and the main results of every
 workspace in the working directory, below; the workspace itself stays local.
 

@@ -221,10 +221,12 @@ def _same_number(x: str | None, y: str | None) -> bool:
 
 # -- the comparison ------------------------------------------------------------------------------
 
-def compare(paper: str, old: Side, new: Side, resolve=()) -> dict:
+def compare(paper: str, old: Side, new: Side, resolve=(), regions=()) -> dict:
     """The version map of `paper` from revision `old` to revision `new`. `resolve` lists the
     maintainer's matches, `(earlier claim id, later claim id)`: each takes an earlier claim no
-    passage or label matched to a later claim nothing else is matched to."""
+    passage or label matched to a later claim nothing else is matched to. `regions` are further
+    passages of the paper to follow (the regions a workspace attached to requirements); the map
+    gives each one's place and change in `passages`."""
     sa, sb = _Snapshot(old.root), _Snapshot(new.root)
     ca = {c["id"]: c for c in old.claims if c["paper"] == paper}
     cb = {c["id"]: c for c in new.claims if c["paper"] == paper}
@@ -432,6 +434,8 @@ def compare(paper: str, old: Side, new: Side, resolve=()) -> dict:
            "note": ("Each side's facts are those its own revision and release recorded. A match "
                     "changes no status and carries no review over; a proposed match (by number, "
                     "id or line diff) is not a match until a maintainer resolves it.")}
+    if regions:
+        doc["passages"] = _passages(sa, sb, paper, regions, old.revision, new.revision)
     doc["numbers"] = numbers(doc)
     return doc
 
@@ -507,17 +511,7 @@ def _context(e: dict, p: dict, q: dict, sa: _Snapshot, sb: _Snapshot) -> list[di
     texts_b = [q["text"]] + ([r.text for part, r in q["pin"].parts if not part.get("macro")]
                              if q["kind"] == "region" else [])
     used = set().union(*(used_macros(t) for t in texts_a + texts_b)) - pinned
-    for name in sorted(used):
-        x, y = sa.macro(name), sb.macro(name)
-        if (x or {}).get("sha256") == (y or {}).get("sha256"):
-            continue
-        out.append({"what": "macro", "macro": name,
-                    "change": "changed" if x and y else "removed" if x else "added",
-                    "from": {k: x[k] for k in ("defined", "sha256")} if x else None,
-                    "to": {k: y[k] for k in ("defined", "sha256")} if y else None,
-                    "diff": _diff((x or {}).get("text", "").split("\n") if x else [],
-                                  (y or {}).get("text", "").split("\n") if y else [],
-                                  "earlier definition", "later definition")})
+    out += _macro_changes(used, sa, sb)
     oa, ob = _opening(sa, p), _opening(sb, q)
     if (oa or {}).get("text") != (ob or {}).get("text"):
         out.append({"what": "standing assumption",
@@ -528,6 +522,24 @@ def _context(e: dict, p: dict, q: dict, sa: _Snapshot, sb: _Snapshot) -> list[di
                     "diff": _diff(oa["lines"] if oa else [], ob["lines"] if ob else [],
                                   "earlier opening of the section",
                                   "later opening of the section")})
+    return out
+
+
+def _macro_changes(names, sa: _Snapshot, sb: _Snapshot) -> list[dict]:
+    """The macros of `names` whose definitions differ between the revisions, each with the diff
+    of its definitions."""
+    out = []
+    for name in sorted(names):
+        x, y = sa.macro(name), sb.macro(name)
+        if (x or {}).get("sha256") == (y or {}).get("sha256"):
+            continue
+        out.append({"what": "macro", "macro": name,
+                    "change": "changed" if x and y else "removed" if x else "added",
+                    "from": {k: x[k] for k in ("defined", "sha256")} if x else None,
+                    "to": {k: y[k] for k in ("defined", "sha256")} if y else None,
+                    "diff": _diff((x or {}).get("text", "").split("\n") if x else [],
+                                  (y or {}).get("text", "").split("\n") if y else [],
+                                  "earlier definition", "later definition")})
     return out
 
 
@@ -617,6 +629,124 @@ def _row(e: dict) -> dict:
     if plan.get("proposed") and e["cls"] in ("removed", "ambiguous"):
         out["proposed"] = {k: v for k, v in plan["proposed"].items() if k != "advice"}
     return out
+
+
+# -- passages a workspace attached ---------------------------------------------------------------
+
+# What identifies a region of the paper a workspace attached to a requirement (a fragment's
+# `region`, `requirements.fragment_content`): its place and the digest of its text.
+REGION_KEYS = ("paper", "file", "start_line", "end_line", "start_column", "end_column", "sha256")
+
+
+def region_key(reg: dict, paper: str | None = None) -> tuple:
+    """The identity of a region, `paper` standing for a region that names none."""
+    return tuple((reg.get(k) or paper) if k == "paper" else reg.get(k) for k in REGION_KEYS)
+
+
+def _read(root: Path, c: dict):
+    try:
+        return extract(root, c)
+    except (RegionError, OSError, UnicodeError):
+        return None
+
+
+def _passages(sa: _Snapshot, sb: _Snapshot, paper: str, regions, old_rev: str,
+              new_rev: str) -> list[dict]:
+    """Where each region of the paper (`regions`, in the earlier revision) is in the later one,
+    found by its exact text as the repinning planner finds a claim's passage: `unchanged` or
+    `moved`, or `context-changed` when a macro it uses is defined otherwise; `changed` when no
+    passage has its text and the line diff of its file maps it to other text (`change`, with
+    the diff), `removed` when it maps it to nothing; `ambiguous` when its text occurs more than
+    once. A region whose text the earlier revision does not print is `later` when the later
+    revision prints it there (it was attached at the later revision), else `unknown`."""
+    from .requirements import region_claim
+    rows, pseudo, seen = [], [], set()
+    for reg in regions:
+        if not isinstance(reg, dict) or (reg.get("paper") or paper) != paper or \
+                not reg.get("file") or not isinstance(reg.get("start_line"), int):
+            continue
+        key = region_key(reg, paper)
+        if key in seen:
+            continue
+        seen.add(key)
+        row = {"region": {k: v for k, v in zip(REGION_KEYS, key) if v is not None}}
+        rows.append(row)
+        where = f"{reg['file']}:{reg['start_line']}"
+        if not reg.get("sha256"):
+            row.update({"class": "unknown", "reason": "it was attached without a build, so the "
+                                                      "version of its text is not known"})
+            continue
+        c = region_claim(reg)
+        a = _read(sa.root, c)
+        if a is None or a.sha256 != reg["sha256"]:
+            b = _read(sb.root, c)
+            if b is not None and b.sha256 == reg["sha256"]:
+                row.update({"class": "later", "reason": f"the later revision prints its text at "
+                                                        f"{where}: it was attached there"})
+            else:
+                row.update({"class": "unknown", "reason": "the earlier revision does not print "
+                                                          f"the text it was attached with at "
+                                                          f"{where}"})
+            continue
+        pseudo.append((row, a, c))
+    if not pseudo:
+        return rows
+    from .source_regions import SCHEME
+    claims = [{"id": f"passage-{i}", "paper": paper, "location": c["location"],
+               "source_region": c["source_region"], "source_hash_scheme": SCHEME,
+               "source_sha256": a.sha256, "source_line_sha256": a.line_sha256, "clauses": []}
+              for i, (_, a, c) in enumerate(pseudo)]
+    try:
+        _, report = repin.repin_plan({"claims": claims}, paper, sa.root, sb.root, old_rev,
+                                     new_rev)
+    except RegionError as error:
+        for row, _, _ in pseudo:
+            row.update({"class": "unknown",
+                        "reason": f"the repinning planner could not compare it: {error}"})
+        return rows
+    plan = {e["claim"]: e for e in report["claims"]}
+    for i, (row, a, _) in enumerate(pseudo):
+        e = plan[f"passage-{i}"]
+        if e["class"] in ("unchanged", "moved"):
+            to = e["to_region"]
+            row.update({"class": e["class"], "to": {"location": e["to"], "bounds": to}})
+            b = _read(sb.root, {"location": e["to"],
+                                "source_region": {"end_line": to["end_line"],
+                                                  "start_column": to["start_column"],
+                                                  "end_column": to["end_column"]}})
+            ctx = _macro_changes(used_macros(a.text) | used_macros(b.text if b else ""), sa, sb)
+            if ctx:
+                row.update({"class": "context-changed", "context": ctx,
+                            "reason": "the same text; " + "; ".join(_context_words(x)
+                                                                    for x in ctx)})
+            else:
+                row["reason"] = "the same text" + (f", now at {e['to']}"
+                                                   if e["class"] == "moved" else "")
+        elif e["class"] == "ambiguous":
+            row.update({"class": "ambiguous", "reason": e.get("reason"),
+                        "candidates": e.get("candidates") or []})
+        elif e["class"] == "changed" and e.get("diff"):
+            # A label inside the region leads to a passage with other text.
+            row.update({"class": "changed", "reason": "its label leads to a passage with other "
+                                                      "text",
+                        "to": {"location": e["to"], "bounds": e["to_region"]},
+                        "change": {k: e[k] for k in ("where", "diff") if e.get(k)}})
+        elif e["class"] not in ("changed", "not-found", "removed"):
+            row.update({"class": "unknown", "reason": e.get("reason")
+                        or "the repinning planner could not follow it"})
+        else:
+            prop = e.get("proposed") or {}
+            if prop.get("diff") is not None:
+                row.update({"class": "changed", "reason": "no passage of the later revision has "
+                            "its text; the line diff of its file maps it to "
+                            f"{prop['location']}",
+                            "to": {"location": prop["location"], "proposed": True},
+                            "change": {k: prop[k] for k in ("where", "diff") if prop.get(k)}})
+            else:
+                row.update({"class": "removed",
+                            "reason": "no passage of the later revision has its text"
+                                      + (f": {prop['reason']}" if prop.get("reason") else "")})
+    return rows
 
 
 # -- the numbers ---------------------------------------------------------------------------------
@@ -752,13 +882,14 @@ def verify(v, paper: str, snap_root: Path) -> tuple[int, list[str]]:
 
 def between(cfg, paper_id: str | None = None, old_release: str | None = None,
             new_release: str | None = None, old_source: str | None = None,
-            new_source: str | None = None, resolve=()) -> dict:
+            new_source: str | None = None, resolve=(), regions=()) -> dict:
     """The version map of a paper between two releases of the full assessment (by default the
     latest and the one before it), from the manuscript of each release's revision: a folder or
     `git:REV` given for it, else its Git or arXiv source at the revision the release recorded,
     else the configured folder. A manuscript that does not hold the text its release recorded
     is refused. The later release's references to paper numbers that disagree with its paper
-    (`content.py`) are given with the counterpart the map names (`references`)."""
+    (`content.py`) are given with the counterpart the map names (`references`). `regions` are
+    further passages to follow (`compare`)."""
     import tempfile
     from . import changes as chg
     paper = _paper(cfg, paper_id)
@@ -786,7 +917,7 @@ def between(cfg, paper_id: str | None = None, old_release: str | None = None,
                               numbers=printed_numbers(claims, tex.get("anchors") or []),
                               facts=lambda cid, v=v: release_facts(v, cid),
                               uses=lean_uses(v, claims), identity=identity))
-        doc = compare(paper.id, sides[0], sides[1], resolve)
+        doc = compare(paper.id, sides[0], sides[1], resolve, regions)
     doc["references"] = later_references(cfg, vn, paper.id, doc)
     return doc
 
