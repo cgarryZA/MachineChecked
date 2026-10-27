@@ -328,6 +328,30 @@ const summarised = spawnSync(process.env.PYTHON || "python3", ["-c",
 if (summarised.status !== 0) throw new Error("the engine could not summarise:\n" + summarised.stderr);
 const SEM = Object.fromEntries(["toysem", "basissem", "toyworksem"].map((d) => [d, JSON.parse(fs.readFileSync(path.join(root, d, "data/index.json"), "utf8"))]));
 
+// #414: the page with two audits of one version (`combined`), as machinechecked.org writes it with
+// each listed audit's semantic summary on its registry entry (its scripts/summary.py record: the
+// counts of the audited paper, the sets of readings, and the pins it was checked against). The
+// first repository's audit carries the counts of the readings and reports above (`basissem`); a
+// further audit of it has a summary the site could not show; the second repository's audit
+// exports none.
+fs.cpSync(path.join(root, "combined"), path.join(root, "summaries"), { recursive: true });
+const SUMMARY = SEM.basissem.semantic, SUMMARY_PAPER = Object.keys(SUMMARY.papers)[0];
+const UNSUPPORTED = "MachineChecked 0.1.21, which builds this site, does not read prooflens/semantic-summary@1.";
+{
+  const file = path.join(root, "summaries", "data", "index.json");
+  const idx = JSON.parse(fs.readFileSync(file, "utf8"));
+  const alpha = idx.paper.formalisations[0], loaded = idx.audits[alpha.repository];
+  const { revision, paper_version, ...counts } = SUMMARY.papers[SUMMARY_PAPER];
+  alpha.audits[0].semantic = { url: alpha.audits[0].url + "data/index.json", schema: SUMMARY.schema,
+    digest: SUMMARY.digest, state: "loaded", release: loaded.release, commit: loaded.commit,
+    author: SUMMARY.audit.author, paper_key: SUMMARY_PAPER, revision, paper_version,
+    selected: SUMMARY.selected, sets: SUMMARY.sets, paper: counts };
+  alpha.audits.push({ url: "https://audit.example/other/", author: "C. Author",
+    semantic: { url: "https://audit.example/other/data/index.json", schema: SUMMARY.schema,
+                digest: "0".repeat(64), state: "unsupported", detail: UNSUPPORTED } });
+  fs.writeFileSync(file, JSON.stringify(idx));
+}
+
 // The toy audit with the comparison to an earlier release (`changes.py`, prooflens/changes@1):
 // a definition whose statement changed reopens the review that read it, a context change beside
 // an unchanged display is reported with its pin, and an unchanged claim is hidden by default.
@@ -910,6 +934,71 @@ for (const width of [1300, 390]) {
     assert.equal((await pg.locator(FORMAL + " option").first().textContent()).trim(), "All audits, listing order");
     assert.doesNotMatch(await pg.locator("[data-together]").textContent(), /most GitHub stars/);
     assert.equal(await statusOf(pg, "P:theorem-1"), "formal.author-reviewed");
+  });
+}
+
+// #414: each listed audit's semantic summary is under that audit's own line of the panel: per unit,
+// the correspondence and evidence basis of its selected readings, its reviews and findings, each
+// count in the summary's words and linked to that audit's filtered Overview; another set of
+// readings is linked apart. An audit without a summary shows what it showed before, and one the
+// site could not show says why.
+const VOCAB = JSON.parse(fs.readFileSync(path.resolve(here, "../../engine/python/prooflens/data/semantic.json"), "utf8"));
+for (const width of [1300, 390]) {
+  await check("each listed audit shows its own semantic summary, each count linked to its Overview", width, async (pg) => {
+    await pg.goto(origin + "/summaries/");
+    await showPanel(pg, width);
+    const alpha = pg.locator(`.info .card[data-repository="${CA}"]`), beta = pg.locator(`.info .card[data-repository="${CB}"]`);
+    await alpha.locator(".semantic").waitFor();
+    assert.equal(await pg.locator(".info .semantic").count(), 1, "one summary, on its own audit's line");
+    const sum = alpha.locator(".semantic");
+    assert.equal(await sum.getAttribute("data-audit"), "https://audit.example/");
+    assert.equal(await sum.getAttribute("data-digest"), SUMMARY.digest);
+    assert.match(await sum.locator("p").first().textContent(), /Correspondence and evidence basis: the audit's readings, by A\. Auditor\./);
+    const block = SUMMARY.papers[SUMMARY_PAPER], set = SUMMARY.selected;
+    const units = ["statements", "notation", "proof_steps"].filter((u) => block.inventory[u].records > 0);
+    assert.deepEqual(await sum.locator(".unit").evaluateAll((els) => els.map((e) => e.dataset.unit)), units);
+    const overview = (q) => "/read/?audit=" + encodeURIComponent("https://audit.example/") + "#/r/r-synthetic/overview?" + new URLSearchParams(q);
+    for (const u of units) {
+      const row = sum.locator(`.unit[data-unit="${u}"]`);
+      assert.match(await row.locator(".head").textContent(), new RegExp(`^${block.inventory[u].records} `));
+      for (const [dim, param, table, vocab] of [["coverage", "coverage", block.coverage[set][u], VOCAB.coverage],
+                                                ["basis", "basis", block.basis[set][u], VOCAB.basis],
+                                                ["review", "review", block.review[u], u === "proof_steps" ? VOCAB.step_review : VOCAB.review],
+                                                ["findings", "finding", block.findings[u], VOCAB.findings]]) {
+        const want = Object.keys(vocab).filter((k) => table[k] > 0)
+          .map((k) => [k, `${vocab[k].label} (${table[k]})`, overview({ set, unit: u, [param]: k })]);
+        const got = await row.locator(`[data-dimension="${dim}"] a`).evaluateAll((as) => as.map((a) => [a.dataset.key, a.textContent, a.getAttribute("href")]));
+        assert.deepEqual(got, want, `${u} ${dim}`);
+      }
+    }
+    // An open question is shown, distinct from what is not assessed.
+    const statements = sum.locator('.unit[data-unit="statements"]');
+    assert.equal(await statements.locator('[data-dimension="coverage"] a[data-key="unresolved"]').textContent(), `Unresolved (${block.coverage[set].statements.unresolved})`);
+    assert.ok(await statements.locator('[data-dimension="coverage"] a[data-key="not_assessed"]').count());
+    // The other set of readings is linked, counted apart.
+    const others = SUMMARY.sets.filter((s) => s.id !== set);
+    assert.deepEqual(await sum.locator(".others a").evaluateAll((as) => as.map((a) => [a.textContent, a.getAttribute("href")])),
+      others.map((s) => [`Reviews by ${s.reviewer.name}`, overview({ set: s.id, unit: "statements" })]));
+    assert.match(await sum.locator("details").textContent(), new RegExp(`release r-synthetic, project commit aaaaaaaaaaaa.*digest ${SUMMARY.digest.slice(0, 12)}`, "s"));
+    // A count's link opens that audit's Overview on the claims it counts.
+    const href = await statements.locator('[data-dimension="coverage"] a[data-key="unresolved"]').getAttribute("href");
+    await pg.goto(origin + `/basissem/#/r/${SEM.basissem.release}/overview?` + href.split("?").pop());
+    await pg.locator(".coverage .claims li").first().waitFor();
+    assert.equal(await pg.locator(".coverage .claims li").count(), block.coverage[set].statements.unresolved);
+    await pg.goto(origin + "/summaries/");
+    await showPanel(pg, width);
+    await alpha.locator(".semantic").waitFor();
+    // An audit the site could not show a summary for says why, with no count; an audit without a
+    // summary shows what it showed before.
+    const other = alpha.locator('.semantic-state[data-audit="https://audit.example/other/"]');
+    assert.equal(await other.getAttribute("data-state"), "unsupported");
+    assert.equal((await other.textContent()).trim(), `Semantic summary unsupported: ${UNSUPPORTED}`);
+    assert.equal(await beta.locator(".semantic, .semantic-state").count(), 0);
+    assert.doesNotMatch(await beta.textContent(), /Semantic summary|\(\d+\)/);
+    assert.match(await beta.locator(".audit.here").textContent(), /by B\. Author · commit cccccccccccc/);
+    if (process.env.SHOTS) await pg.screenshot({ path: path.join(process.env.SHOTS, `summaries-${width}.png`), fullPage: true });
+    const [scroll, client] = await pg.evaluate(() => [document.documentElement.scrollWidth, document.documentElement.clientWidth]);
+    assert.ok(scroll <= client, `the page scrolls sideways (${scroll} > ${client})`);
   });
 }
 

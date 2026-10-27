@@ -2,10 +2,12 @@
   // What is known about a paper's formalisations, beside the paper: the Lean repositories that
   // formalise it (one at a time, chosen at the top when there are several, or every audited one
   // when the audits are shown together), who says so, the project's description of its review,
-  // and its published audits, each with the version of the paper it pins and its commit.
+  // and its published audits, each with the version of the paper it pins and its commit, and the
+  // semantic summary the site gives that audit (`AuditSummary`).
   import { project } from "../lib/project.svelte.js";
   import { auditOf } from "../lib/data.js";
   import { pageVersions, versionHref, versionLabel } from "../lib/versions.js";
+  import AuditSummary from "./AuditSummary.svelte";
   let { paper, index = null } = $props();
 
   const https = (u) => typeof u === "string" && /^https:\/\/[^\s"'<>]+$/.test(u);
@@ -91,9 +93,11 @@
       {#each here as a}
         <p class="audit here"><a class="btn" href={"/read/?audit=" + encodeURIComponent(a.url)}>Open the audit{a.label ? " of " + a.label : ""}</a>
           <span class="small">by {a.author}{#if a.commit}{" · commit "}<code>{a.commit.slice(0, 12)}</code>{/if}</span></p>
+        <AuditSummary audit={a} />
       {/each}
       {#each unplaced as a}
         <p class="audit small"><a href={"/read/?audit=" + encodeURIComponent(a.url)}>Open the audit</a> by {a.author}</p>
+        <AuditSummary audit={a} />
       {/each}
       {#each failed as a}
         <p class="audit failed small" data-state={a.state}>{why(a)}<br>

@@ -96,6 +96,19 @@ export function countText(counts, unit) {
   return UNITS.filter((u) => counts[u]).map((u) => `${counts[u]} ${unitWord(u, counts[u])}`).join(", ");
 }
 
+// One unit of a paper's inventory in words ("5 statements, 4 linked to 3 declarations"), or ""
+// when the paper has none of that unit. Only counts the summary gives are said.
+export function unitInventoryText(paper, u) {
+  const inv = paper?.inventory, row = inv?.[u];
+  if (!Number.isInteger(row?.records) || row.records <= 0) return "";
+  const n = (v) => Number.isInteger(v) && v > 0;
+  const decls = n(row.declarations) ? ` to ${row.declarations} declaration${row.declarations === 1 ? "" : "s"}` : "";
+  const kinds = u === "proof_steps" ? [[inv.proof_equations, "equation"], [inv.proof_passages, "passage"]]
+    .filter(([k]) => n(k)).map(([k, w]) => `${k} ${w}${k === 1 ? "" : "s"}`).join(", ") : "";
+  const linked = Number.isInteger(row.linked) ? `, ${row.linked} linked${decls}` : "";
+  return `${row.records} ${unitWord(u, row.records)}${kinds ? ` (${kinds})` : ""}${linked}`;
+}
+
 // A paper's inventory in words: each unit, how many are linked, and to how many declarations.
 export function inventoryText(paper) {
   const inv = paper?.inventory;
