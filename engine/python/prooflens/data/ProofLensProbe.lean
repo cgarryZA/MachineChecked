@@ -684,8 +684,14 @@ def structureFields (n : Name) : MetaM (List (String × Json)) := do
 with a field that is a proposition (`def build (N : Nat) : Concrete`), the fields of its value at
 its parameters (`result_properties`, as `propertiesOf` gives them, positions prefixed
 `result#<field>:`), each with the basis `definition`: the definition's value proves it. The
-parameters are the variables `0`, `1`, …. A failure is recorded (`result_properties_error`). -/
+parameters are the variables `0`, `1`, …. A projection, a structure's parent projection among
+them, constructs nothing: its value's fields are its argument's. A failure is recorded
+(`result_properties_error`). -/
 def resultProperties (n : Name) (ci : ConstantInfo) : MetaM (List (String × Json)) := do
+  if ← isProjectionFn n then return []
+  let env ← getEnv
+  if isStructure env n.getPrefix &&
+      (getStructureParentInfo env n.getPrefix).any (·.projFn == n) then return []
   let act : MetaM (List (String × Json)) := withCurrHeartbeats do
     forallTelescope ci.type fun xs r => do
       if r.isSort || (← isProp r) then return []

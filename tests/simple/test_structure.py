@@ -483,6 +483,11 @@ def test_properties_carried_by_types(tmp_path, toolchain):
         ("definition", "(Shape.build N).support",
          "∀ (n : Nat), (Shape.build N).N ≤ n → (Shape.build N).f n = 0")
     assert ("N", 0) in var_refs(sup["type"])
+    # A projection constructs nothing: the parent projection's value carries its argument's
+    # fields, which it does not establish.
+    view = build_view(root, root / "paper/main.tex", root / ".machinechecked", log=lambda m: None)
+    proj = view["body"]["decls"]["Shape.Concrete.toProfile"]
+    assert "result_properties" not in proj and "result_properties_error" not in proj
     c, n = objects.objects(statement(root, "Shape.vanishes"), "Shape.vanishes")
     assert (c["name"], c["position"]) == ("c", "given")
     assert [(p["basis"], p.get("field")) for p in c["properties"]] == [
