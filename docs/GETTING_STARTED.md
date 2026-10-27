@@ -77,12 +77,12 @@ Build the Lean project to check its linked declarations.
 The reader opens on the paper. Select a numbered statement in the contents or its margin marker.
 The panel compares **Paper** with **Lean**. The Lean is shown in rows: each object with the
 conditions on it alone, each other condition, then the conclusion, in the statement's order; a
-definition has a row of its own. Each row reads as mathematics, with its exact Lean beside it
-when the panel is wide enough, and the complete exact statement follows the rows. **Expand
-comparison** gives the comparison the full workspace, the paper's passage staying beside the
-Lean while the Lean scrolls. On a phone the paper comes first, then the Lean, row by row. The
-claim page (**Open as a page**, in the ⋯ menu) and the review page use the same comparison. The
-exact statement comes directly from Lean; rebuilding an older audit adds it.
+definition has a row of its own. Each row is shown in readable form, with its exact Lean beside
+it when the panel is wide enough, and the complete exact statement follows the rows. **Expand
+comparison** gives the comparison the full workspace; a short passage of the paper then stays
+beside the Lean while the Lean scrolls. On a phone the paper comes first, then the Lean, row by
+row. The claim page (**Open as a page**, in the ⋯ menu) and the review page use the same
+comparison. The exact statement comes directly from Lean; rebuilding an older audit adds it.
 
 When an audit publishes an auditor's reading that aligns passages of the paper with the Lean,
 or your own investigation has one, **Rows** pairs each row with the passages aligned with it,
