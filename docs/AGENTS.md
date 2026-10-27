@@ -393,6 +393,17 @@ proposal, never a match: report it as one and leave the choice to the maintainer
 (`--match EARLIER=LATER`). `references` gives the later build's disagreeing paper numbers with
 the counterpart the map names (`current`).
 
+With `--map --workspace ID`, `workspace` is the workspace's findings judged through the map
+(`prooflens/reopened@1`,
+[DATA_MODEL.md](DATA_MODEL.md#findings-across-a-revision-prooflensreopened1-derived)): each
+finding's `state` (`reopened`, `unchecked`, `current`), and per paper part it rests on (`paper`)
+the `change` with its `diff`, the `dependency` and the `question`; `build` is its Lean side
+against the later release's site, kept apart. Report a reopened finding with its question and
+the part it names; an `unchecked` one is not known to be current, never current; a finding is
+never moved to another claim. `--save` keeps the map in the workspace, and `workspace show
+--json` then gives the same under `revisions` against a build of the later release, without
+the manuscripts.
+
 ### Reviewing from the terminal
 
 `machinechecked review next|read|lock|show|decide|author|submit|status|export` takes a unit of

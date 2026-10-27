@@ -136,7 +136,7 @@
   {:else if route.view === "coverage"}
     <Coverage {index} />
   {:else if route.view === "changes"}
-    <Changes {index} />
+    <Changes {index} {editable} />
   {:else if route.view === "review" && index.review_queue}
     <Review {index} />
   {:else}
