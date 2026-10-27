@@ -418,7 +418,7 @@ workspace has only those is counted as `clauses_only`, never as `full`.
 | `currency` | per set and unit, the claims with a reading: `current` (pinned to this build), `unchecked` (this build could not check it), `unpinned` (a links-file reading, which records no version of what it read), `stale` |
 | `review` | per unit, each claim once: for statements and notation `independent`, `author`, `informed`, `stale`, `unchecked`, `none` (no current review of everything it needs); for proof steps the step's review as printed |
 | `findings` | per unit, how many claims have a recorded finding of each kind: `open-question`, `quantitative-difference`, `input-restriction`, `representation`, `other-difference`, `printed-step`; a claim may have several kinds, so these are never added |
-| `digest` | the SHA-256 of the summary and every claim's facts: it changes whenever a reading, a review or a finding changes, also when the Lean and the statuses do not |
+| `digest` | the SHA-256 of the summary's counts and every claim's facts, without the audit's identity: two builds of the same records have the same digest, and it changes whenever a reading, a review or a finding changes, also when the Lean and the statuses do not |
 
 A checked bridge counts as `checked_bridge` only while Lean checks it and the target and passage
 are those the auditor read; a bridge Lean does not check counts as `reviewed_composition`, and the

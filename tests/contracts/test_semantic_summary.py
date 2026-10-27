@@ -252,6 +252,11 @@ def test_a_reading_alone_changes_the_digest():
     chunks["P:e.json"]["correspondence"]["question"] = "Another question."
     second, _ = semantic.summarise(index, chunks, works)
     assert first["papers"] == second["papers"] and first["digest"] != second["digest"]
+    # The same records in another build (another release and evidence record) have the same
+    # digest: it is of what is counted, not of the audit's identity.
+    other, _ = semantic.summarise({**index, "release": "v-other", "evidence": "f" * 64},
+                                  chunks, works)
+    assert other["digest"] == second["digest"] and other["audit"] != second["audit"]
 
 
 def test_a_full_assessment_reads_its_clauses():

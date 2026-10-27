@@ -374,7 +374,10 @@ def summarise(index: dict, chunks: dict[str, dict], works: dict[str, dict] | Non
            "selected": AUDIT,
            "sets": [{"id": AUDIT, "kind": "audit", "by": by}] + [sets[k] for k in order[1:]],
            "papers": papers}
-    out["digest"] = content_id({"summary": out, "claims": facts})
+    # The digest is of what the summary counts, not of the audit's identity: two builds of the
+    # same records have the same digest, and a change to a reading changes it.
+    out["digest"] = content_id({"summary": {k: v for k, v in out.items() if k != "audit"},
+                                "claims": facts})
     return out, facts
 
 
@@ -405,14 +408,15 @@ def of_view(body: dict, root: Path | None = None) -> tuple[dict, dict[str, dict]
             chunk["step"] = {"links": links, "correspondence": c.get("correspondence"),
                              "review": steps.review(c.get("step_reports", []),
                                                     c.get("source_sha256"))}
-        rows.append({"id": c["id"], "paper": c["paper"], "file": c["id"], "unit": unit,
-                     "kind": c.get("kind", ""), "status_code": c["status_code"]})
+        rows.append({"id": c["id"], "paper": c.get("paper", "P"), "file": c["id"],
+                     "unit": unit, "kind": c.get("kind", ""), "status_code": c["status_code"]})
         chunks[c["id"]] = chunk
     index = {"release": simple.view_release(body), "evidence": content_id(body),
              "project": {"commit": body.get("commit"),
-                         **simple.source_info(root, body["project"]["libs"])},
-             "papers": [{"id": c, "revision": body.get("commit"), **simple._paper_version(body)}
-                        for c in sorted({c["paper"] for c in body["claims"]})],
+                         **simple.source_info(root, (body.get("project") or {}).get("libs")
+                                              or [])},
+             "papers": [{"id": p, "revision": body.get("commit"), **simple._paper_version(body)}
+                        for p in sorted({r["paper"] for r in rows})],
              "claims": rows}
     return summarise(index, chunks, author=body.get("author"))
 
