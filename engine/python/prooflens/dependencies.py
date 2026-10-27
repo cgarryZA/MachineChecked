@@ -443,19 +443,22 @@ def _as_unknown(it: dict, cur: dict) -> dict:
 
 
 def check(f: dict, records: dict, snap, root=None, cur: dict | None = None,
-          check_facts: bool = False) -> dict:
+          check_facts: bool = False, skip=()) -> dict:
     """The currency of the finding `f` against the build `snap` (and the Lean project at
     `root`), through what it rests on (`of`): `stale` with the `changes` (each part that
     changed; for a submitted finding, each record it rests on that was edited or re-pinned
     since), else `unchecked` with what is not known (`unknown`, each with `why`), else
     `current`. `cur` holds the currency of the workspace's records (`workspace.currency`), for
-    the counterexamples it cites."""
+    the counterexamples it cites. The dependencies of the kinds in `skip` are left out (the
+    paper's, when a version map judges them: `reopen.py`); a bridge is then checked against the
+    Lean alone when `skip` holds the passage."""
     from . import composition as cp
     from . import requirements as rq
     from .estimates import counterexample_pin
     cur = cur or {}
     deps = of(f, records)
-    changes, unknown = [], list(deps.get("unknown") or [])
+    changes = []
+    unknown = [u for u in deps.get("unknown") or [] if u.get("dependency") not in skip]
     if f.get("state") == "submitted":
         if isinstance(f.get("dependencies"), dict):
             changes += drift(f["dependencies"], collect(f, records))
@@ -466,7 +469,7 @@ def check(f: dict, records: dict, snap, root=None, cur: dict | None = None,
                                    "be told apart: supersede it to record them"})
     for it in deps.get("items") or []:
         dep = it["dependency"]
-        if dep in (READING, COMPOSITION):
+        if dep in (READING, COMPOSITION) or dep in skip:
             continue  # what the auditor wrote: an edit is a drift, above
         if dep == PASSAGE:
             if snap is None:
@@ -486,7 +489,8 @@ def check(f: dict, records: dict, snap, root=None, cur: dict | None = None,
         elif dep == BRIDGE:
             if not it.get("target_fingerprint") and not it.get("source_sha256"):
                 continue  # a finding's own bridge: unknown when recorded
-            b = cp.bridge_currency(it, f["claim"], snap, root, check_facts)
+            b = cp.bridge_currency(it, f["claim"], None if PASSAGE in skip else snap, root,
+                                   check_facts)
             res = {"state": {"checked": "current"}.get(b.get("state"), b.get("state")),
                    "changes": [{"bridge": it.get("theorem"), "target": it.get("target"),
                                 "reason": f"the bridge {it.get('theorem')} for "

@@ -27,7 +27,9 @@ release and project commit they were checked against.
 A workspace records evidence and readings; it changes no status. A submitted finding is never
 edited: a later one supersedes it, with its reason, and both remain. It records what it rests on
 when it is submitted, with the version of each part (`dependencies.py`), so that a later build
-reopens exactly the findings whose parts changed. Exposure (what the auditor had seen) is only
+reopens exactly the findings whose parts changed. A workspace may keep version maps of the paper
+(`version_maps`), which say which findings a revision of the paper reopens (`reopen.py`), so
+that they travel with its export. Exposure (what the auditor had seen) is only
 ever added to, so neither resuming nor importing makes an investigation blind.
 """
 
@@ -193,6 +195,7 @@ def summary(ws: dict) -> dict:
             "open_questions": sum(1 for r in recs if r.get("kind") == "question"
                                   and r.get("state") == "open"),
             "reports": len((ws.get("review") or {}).get("reports", [])),
+            "version_maps": len(ws.get("version_maps") or []),
             "resume": ws.get("resume") or {}}
 
 
@@ -779,6 +782,18 @@ def _workspace_op(ws, op, snap, by, at, changed):
             ws["provenance"].append({"event": f"mode {ws['mode']} -> {mode}", "at": at, "by": by})
             ws["mode"] = mode
             changed.append("mode")
+    elif kind == "version-map":
+        # A version map the workspace keeps (`reopen.py`), replacing one of the same paper and
+        # revisions: the reader, `workspace show` and the export judge the findings with it.
+        from . import reopen as ro
+        try:
+            doc = ro.check_map(op.get("map"))
+        except ro.MapError as e:
+            raise WorkspaceError(str(e)) from None
+        doc.update(kept_at=at, kept_by=by)
+        maps = [m for m in ws.get("version_maps") or [] if ro.map_key(m) != ro.map_key(doc)]
+        ws["version_maps"] = maps + [doc]
+        changed.append("version_maps")
     elif kind == "exposure":
         what = op.get("what")
         what = [what] if isinstance(what, str) else what
@@ -959,7 +974,7 @@ def apply(ws: dict, ops: list[dict], snap=None, root: Path | None = None, by: st
     for op in ops:
         if not isinstance(op, dict):
             raise WorkspaceError("each operation is an object")
-        if op.get("op") in ("resume", "mode", "exposure"):
+        if op.get("op") in ("resume", "mode", "exposure", "version-map"):
             _workspace_op(work, op, snap, by, at, changed)
         elif op.get("op") == MAIN_OP:
             _main_results_op(work, op, snap, root, by, at, changed)
@@ -1121,9 +1136,11 @@ def view(ws: dict, snap=None, claim: str | None = None, root: Path | None = None
     for cid, c in claims.items():
         c["reading"] = rq.reading([r for r in ws["records"].values() if r["claim"] == cid], cur,
                                   snap, cid)
+    from .reopen import identity
     return {"schema": "prooflens/workspace-view@1", **summary(ws),
             "selection": ws.get("selection") or {}, "sources": ws.get("sources") or {},
             "main_results": main_results_view(ws, snap, root),
+            "kept_maps": [identity(m) for m in ws.get("version_maps") or []],
             "current_sources": snap.sources() if snap is not None else None,
             "exposure": ws.get("exposure") or [], "conflicts": ws.get("conflicts") or [],
             "claims": claims}
@@ -1147,6 +1164,7 @@ def auditors(ws: dict) -> set[str]:
             out |= {r.get(k) for k in ("created_by", "updated_by", "state_by")}
     for k in ("conflicts", "provenance"):
         out |= {e.get("by") for e in ws.get(k) or [] if isinstance(e, dict)}
+    out |= {m.get("kept_by") for m in ws.get("version_maps") or [] if isinstance(m, dict)}
     return {x for x in out if isinstance(x, str) and x}
 
 
@@ -1197,6 +1215,15 @@ def import_(work_dir: Path, data: dict, snap=None, by: str | None = None,
     if snap is not None:
         problems += [{"record": "main_results", "problem": p["problem"]}
                      for p in main_results_problems(ws_in.get("main_results"), snap)]
+    if "version_maps" in ws_in:
+        from .reopen import MapError, check_map
+        maps = []
+        for m in ws_in["version_maps"] if isinstance(ws_in["version_maps"], list) else [None]:
+            try:
+                maps.append(check_map(m))
+            except MapError as e:
+                problems.append({"record": "version_maps", "problem": f"{e}; it is left out"})
+        ws_in["version_maps"] = maps
     at = now()
     event = {"event": "imported", "at": at, "by": by, "from": source}
     try:
@@ -1206,7 +1233,11 @@ def import_(work_dir: Path, data: dict, snap=None, by: str | None = None,
         ws_in["provenance"].append(event)
         with _locked(path):
             _write(path, ws_in)
-        return {"workspace": ws_in["id"], "path": str(path), "added": sorted(ws_in["records"]),
+        from .reopen import identity
+        return {"workspace": ws_in["id"], "path": str(path),
+                "added": sorted(ws_in["records"]) + [
+                    "version map " + json.dumps(identity(m), ensure_ascii=False)
+                    for m in ws_in.get("version_maps") or []],
                 "conflicts": [], "problems": problems}
     added, conflicts = [], []
     with _locked(path):
@@ -1219,6 +1250,19 @@ def import_(work_dir: Path, data: dict, snap=None, by: str | None = None,
             elif mine != r:
                 c = {"id": rid, "base_rev": r.get("rev"), "current": mine, "proposed": r,
                      "at": at, "by": by, "how": "import"}
+                ws.setdefault("conflicts", []).append(c)
+                conflicts.append(c)
+        from .reopen import identity, map_key
+        kept = {map_key(m): m for m in ws.get("version_maps") or []}
+        for m in ws_in.get("version_maps") or []:
+            mine = kept.get(map_key(m))
+            if mine is None:
+                ws.setdefault("version_maps", []).append(m)
+                kept[map_key(m)] = m
+                added.append("version map " + json.dumps(identity(m), ensure_ascii=False))
+            elif mine != m:
+                c = {"id": "version_map", "current": identity(mine), "proposed": m, "at": at,
+                     "by": by, "how": "import"}
                 ws.setdefault("conflicts", []).append(c)
                 conflicts.append(c)
         theirs, mine = ws_in.get("main_results"), ws.get("main_results")
@@ -1252,7 +1296,8 @@ def import_(work_dir: Path, data: dict, snap=None, by: str | None = None,
 def api(work_dir: Path, data_dir: Path, root: Path | None = None) -> tuple[dict, dict]:
     """The routes `machinechecked view`'s local server answers for the reader: GET
     `/api/workspaces` (the list), `/api/workspace?id=&claim=` (one, as `view` gives it) and
-    `/api/workspace/export?id=`, and `/api/proof-facts?name=&match=` (the facts inside one
+    `/api/workspace/export?id=`, `/api/workspace/revision?id=` (the findings the version maps
+    it keeps reopen, `reopen.for_site`), and `/api/proof-facts?name=&match=` (the facts inside one
     proof, as `compare --query proof-facts` gives them); POST `/api/workspace` with `action`
     `open` (`reviewer`, `mode`, `id`), `update` (`id`, `ops`, `op_id`, `base` ignored), `import`
     (`data`) or `suggest` (`id`, `claim`, `requirement`: attach the passages
@@ -1320,10 +1365,18 @@ def api(work_dir: Path, data_dir: Path, root: Path | None = None) -> tuple[dict,
         except CompareError as e:
             raise WorkspaceError(str(e)) from None
 
+    def revision(q):
+        # The findings each version map the workspace keeps reopens, for the maps to this
+        # site's release (`reopen.for_site`).
+        from .reopen import for_site
+        ws, s = read(find(work_dir, (q.get("id") or [""])[0])), snap()
+        return for_site(ws, s, root, work_dir, view=view(ws, s, None, root))
+
     get = {"/api/workspaces": lambda q: {"workspaces": [summary(ws) for _, ws in
                                                         list_all(work_dir)]},
            "/api/proof-facts": facts,
            "/api/workspace": one,
+           "/api/workspace/revision": revision,
            "/api/workspace/export": lambda q: export(find(work_dir, (q.get("id") or [""])[0])),
            "/api/review-order": order_route(work_dir, data_dir)}
     return get, {"/api/workspace": post}
