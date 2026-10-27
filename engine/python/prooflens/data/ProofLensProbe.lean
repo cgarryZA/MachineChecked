@@ -2473,11 +2473,11 @@ def termOrigin (xs : Array Expr) (bs : Array Binder) (helper : Bool) (e : Expr) 
   return Json.mkObj [("kind", Json.str "term"), ("head", head)]
 
 /-- Whether a binder's type makes it a type or a family of types (`Type`, `α → Type`), read
-without unfolding. -/
+without unfolding; a proposition or a predicate (`Prop`, `α → Prop`) is not one. -/
 def isTypeFormer : Expr → Bool
   | .forallE _ _ b _ => isTypeFormer b
   | .mdata _ b => isTypeFormer b
-  | e => e.isSort
+  | e => e.isSort && !e.isProp
 
 /-- The binders among the first `n` of a type that `e`, under those `n` binders, mentions: the
 `j`-th is the loose bound variable `n - 1 - j`. -/

@@ -211,9 +211,9 @@ def _text(pp) -> str | None:
 
 def objects(params: list[dict], result_depends: list[int] | None) -> list[dict] | None:
     """The objects an application is about: each argument supplied for a parameter of the
-    declaration applied (a type, a family of types or an instance is not one), with the
-    properties it receives there. A premise whose statement mentions the parameter is one
-    (`basis` `premise`, with how the caller supplies it), and so is the conclusion when it
+    declaration applied (a type, a family of types or an instance is not one; a predicate is),
+    with the properties it receives there. A premise whose statement mentions the parameter is
+    one (`basis` `premise`, with how the caller supplies it), and so is the conclusion when it
     mentions the parameter (`conclusion`). Which binders a statement mentions is read from the
     declaration's type as Lean holds it (the probe's `depends`), never from printed names. None
     when Lean had to unfold that type to reach a premise or the conclusion."""
