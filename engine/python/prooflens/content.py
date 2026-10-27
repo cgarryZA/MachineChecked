@@ -153,7 +153,8 @@ def build(cfg, tex: dict, inv_claims: list[dict], auxes: dict, lake: str = "lake
         notes.append(f"{len(unbuilt)} module(s) of the project are not built and are not in "
                      "the content index")
     retrieval = Retrieval.build(full)
-    blocks = nb.module_doc_blocks(root, {d.get("module") for d in full if d.get("module")})
+    modules = {d.get("module") for d in full if d.get("module")}
+    blocks = nb.module_doc_blocks(root, modules) + nb.comment_blocks(root, modules, full)
     fy = fz.load(root)
     if len(cfg.papers) == 1:
         paper = cfg.papers[0]

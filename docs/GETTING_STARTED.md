@@ -161,8 +161,8 @@ The search box at the top of the reader finds declarations by their statements t
 ### Paper numbers in the Lean
 
 `view`, `build` and `check` read every reference to a numbered statement or section in the
-project's docstrings, declaration names and module docstrings (`Theorem 2.1`, `lemma_3_4`), and
-compare it with the paper read here:
+project's docstrings, declaration names, module docstrings and comments (`Theorem 2.1`,
+`lemma_3_4`, `-- by Lemma 2.2`), and compare it with the paper read here:
 
 - the paper has that statement;
 - the number belongs to another kind of statement (`Lemma 3.3` where the paper's 3.3 is a
@@ -199,10 +199,26 @@ A declaration's name and its docstring's opening citation (`/-- Theorem 3.1. …
 the declaration states. When that number exists but the declaration reads much closer to
 another statement, the reference is named as a possibly stale lead, with the closer statement.
 A later citation in the docstring (`under Assumption 2.2`) names what the statement relies on,
-and is checked only for the number and kind it cites. `check` prints each disagreement
-with its file and line. When several references disagree, the reader's notes say that the Lean
-appears to follow another version of the paper, and suggestions then rank content further
-above cited numbers. None of this links a declaration or changes a status. A full assessment
+and is checked only for the number and kind it cites. A comment (`--` or `/- … -/`) belongs to
+the declaration it lies in or that starts on the next line, and otherwise to its module. A
+comment just before a declaration that opens with a reference (`-- Lemma 2.5: …`) names what the
+declaration states; any other reference in a comment is a citation. In a comment, a kind
+written against its number (`lemma21`) is code, not a reference. When the paper prints one
+number twice, the reference is exact and says that it does not tell which. `check` prints each
+disagreement with its file and line.
+
+When several references disagree with the paper, making a good share of those checked and
+lying in more than one declaration or module, the reader's notes say that the Lean appears to
+follow another version of the paper, with counts and a few examples. One stray reference, or
+one docstring listing several, is reported by itself.
+
+A suggestion's cited number rests on the docstring's reference to it. A number of another work
+(`Theorem 2.1 of [Gauss]`), a section, or the start of a longer number (`Theorem 2.1.3`) is
+no lead to the claim. The number's reason lists the references it rests on and calls the
+number "a lead", or "a possibly stale lead" when its declaration reads closer to another
+statement or the Lean appears to follow another version. A possibly stale lead counts less,
+so statement content ranks further above it; the candidate it names can still be the right
+one. None of this links a declaration or changes a status. A full assessment
 (a project with a `machinechecked.toml`) checks the same references, each against the paper it
 belongs to when there are several ([ASSURANCE.md](ASSURANCE.md)).
 
