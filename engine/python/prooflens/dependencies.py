@@ -267,9 +267,22 @@ def _listed_modules(snap) -> list[str] | None:
     return None
 
 
+def unprinted(ch: dict | None, cid: str | None) -> str | None:
+    """Why the build's pin of a claim's passage is not the text the paper now prints, or None.
+    A build of the full assessment pins a passage by the inventory's digest of it and checks
+    that digest against the manuscript (`source_matches`): when the text changed and the
+    inventory was not pinned again, the pin stays the same and the check fails, so a record that
+    read the pinned text is not current although the pin did not change."""
+    if ch is not None and ch.get("source_matches") is False:
+        return (f"the paper now prints other text than the pin of {cid}: its passage changed, "
+                "and the inventory has not pinned it again")
+    return None
+
+
 def paper_currency(p: dict, snap) -> dict:
     """A passage of the paper cited as evidence: `stale` once the claim's printed passage is not
-    the one it was recorded against, `unchecked` when it was recorded without it."""
+    the one it was recorded against (its pin changed, or the paper no longer prints the pinned
+    text: `unprinted`), `unchecked` when it was recorded without it."""
     if snap is None or not p.get("sha256"):
         return {"state": "unchecked", "changes": [],
                 "reason": "no version of the passage was recorded with it"
@@ -279,6 +292,10 @@ def paper_currency(p: dict, snap) -> dict:
     if ch is None or now != p["sha256"]:
         return {"state": "stale", "changes": [{"passage": p.get("claim"), "was": p["sha256"],
                                                "now": now if ch is not None else None}]}
+    why = unprinted(ch, p.get("claim"))
+    if why:
+        return {"state": "stale", "changes": [{"passage": p.get("claim"), "was": p["sha256"],
+                                               "now": now, "reason": why}]}
     return {"state": "current", "changes": []}
 
 
@@ -544,19 +561,22 @@ def _as_unknown(it: dict, cur: dict) -> dict:
 
 
 def check(f: dict, records: dict, snap, root=None, cur: dict | None = None,
-          check_facts: bool = False) -> dict:
+          check_facts: bool = False, skip=()) -> dict:
     """The currency of the finding `f` against the build `snap` (and the Lean project at
     `root`), through what it rests on (`of`): `stale` with the `changes` (each part that
     changed; for a submitted finding, each record it rests on that was edited or re-pinned
     since), else `unchecked` with what is not known (`unknown`, each with `why`), else
     `current`. `cur` holds the currency of the workspace's records (`workspace.currency`), for
-    the counterexamples it cites."""
+    the counterexamples it cites. The dependencies of the kinds in `skip` are left out (the
+    paper's, when a version map judges them: `reopen.py`); a bridge is then checked against the
+    Lean alone when `skip` holds the passage."""
     from . import composition as cp
     from . import requirements as rq
     from .estimates import counterexample_pin
     cur = cur or {}
     deps = of(f, records)
-    changes, unknown = [], list(deps.get("unknown") or [])
+    changes = []
+    unknown = [u for u in deps.get("unknown") or [] if u.get("dependency") not in skip]
     if f.get("state") == "submitted":
         if isinstance(f.get("dependencies"), dict):
             changes += drift(f["dependencies"], collect(f, records))
@@ -567,7 +587,7 @@ def check(f: dict, records: dict, snap, root=None, cur: dict | None = None,
                                    "be told apart: supersede it to record them"})
     for it in deps.get("items") or []:
         dep = it["dependency"]
-        if dep in (READING, COMPOSITION):
+        if dep in (READING, COMPOSITION) or dep in skip:
             continue  # what the auditor wrote: an edit is a drift, above
         if dep == PASSAGE:
             if snap is None:
@@ -579,6 +599,9 @@ def check(f: dict, records: dict, snap, root=None, cur: dict | None = None,
             if ch is None or now != it.get("sha256"):
                 changes.append({"claim": it["claim"], "was": it.get("sha256"),
                                 "now": now if ch is not None else None})
+            elif unprinted(ch, it["claim"]):
+                changes.append({"claim": it["claim"], "was": it.get("sha256"), "now": now,
+                                "reason": unprinted(ch, it["claim"])})
             continue
         if dep == CONTEXT:
             res = rq.fragment_currency(it, snap)
@@ -587,7 +610,8 @@ def check(f: dict, records: dict, snap, root=None, cur: dict | None = None,
         elif dep == BRIDGE:
             if not it.get("target_fingerprint") and not it.get("source_sha256"):
                 continue  # a finding's own bridge: unknown when recorded
-            b = cp.bridge_currency(it, f["claim"], snap, root, check_facts)
+            b = cp.bridge_currency(it, f["claim"], None if PASSAGE in skip else snap, root,
+                                   check_facts)
             res = {"state": {"checked": "current"}.get(b.get("state"), b.get("state")),
                    "changes": [{"bridge": it.get("theorem"), "target": it.get("target"),
                                 "reason": f"the bridge {it.get('theorem')} for "

@@ -342,7 +342,22 @@ record with `"repin": true` once you have checked it again: a draft that cites i
 while a submitted finding keeps the versions it was submitted with and reads `stale`, naming the
 record, until you supersede it. In a full assessment, `machinechecked changes --workspace ID`
 lists them beside the review markers the new release reopened, each with what changed
-([What changed since the last release](ASSURANCE.md#what-changed-since-the-last-release)). A cited fact inside a proof is `stale` once that proof
+([What changed since the last release](ASSURANCE.md#what-changed-since-the-last-release)).
+
+When the paper itself is revised, `machinechecked changes --map --workspace ID` judges each
+finding through the version map, which follows every passage by its text. A passage that only
+moved or was renumbered leaves a statement comparison current. A changed or removed passage
+reopens exactly the findings that read it, and so does a change of what a passage is read with:
+the definition of a macro it uses, the prose opening its section, a claim it refers to, or a
+passage you attached to a requirement. A definition claim that the claim's Lean relies on
+reopens only a finding that cites a declaration whose statement uses that definition. Each
+reopened finding names the change (with the diff), the part it rests on and a question to
+answer; a claim the map leaves ambiguous reads `unchecked` until the maintainer resolves it with
+`--match`. The Lean side is checked against the later release's site and listed apart. With
+`--save` the workspace keeps the map: the reader's Details page then lists the findings by
+claim (affected ones first, unaffected ones as still current), and `workspace show` and the
+workspace's export and import carry it. Nothing is moved to another claim: supersede a reopened
+finding once you have read the new text. A cited fact inside a proof is `stale` once that proof
 changes, even when the theorem's statement does not; it, a cited application and a certificate
 read `unchecked` while Lean cannot look at them (their module is not built, a request failed). A
 published audit shows them as `show` does, checked against the Lean its release was built from,

@@ -5,8 +5,10 @@
   // new reading answers (`changes.py`). Every state shown is the one the engine recorded.
   import { auditInfo, AUDIT, loadChanges } from "../lib/data.js";
   import { href } from "../lib/route.svelte.js";
+  import { listWorkspaces, revisionOf, rememberedWorkspace } from "../lib/workspace.js";
+  import { findingCoverageView, recordedBasisText } from "../lib/coverage.js";
   import StatusChip from "./StatusChip.svelte";
-  let { index } = $props();
+  let { index, editable = false } = $props();
 
   let changes = $state(null);
   let error = $state(null);
@@ -14,6 +16,71 @@
   $effect(() => {
     loadChanges(index).then((d) => (changes = d)).catch((e) => (error = String(e)));
   });
+
+  // Under `machinechecked view`: the findings of a saved investigation that a revision of the
+  // paper reopens, through each version map the workspace keeps to this release
+  // (`reopen.py`). A static copy of the site has no workspace.
+  let spaces = $state([]);
+  let wsId = $state(null);
+  let reopened = $state(null);
+  let revisionError = $state(null);
+  $effect(() => {
+    if (!editable) return;
+    listWorkspaces().then((d) => {
+      spaces = (d.workspaces || []).filter((w) => w.version_maps);
+      const mine = rememberedWorkspace();
+      wsId = (spaces.find((w) => w.id === mine) || spaces[0])?.id || null;
+    }).catch(() => (spaces = []));
+  });
+  $effect(() => {
+    const id = wsId;
+    reopened = null;
+    revisionError = null;
+    if (id) revisionOf(id).then((d) => (reopened = d)).catch((e) => (revisionError = String(e.message || e)));
+  });
+
+  const STATE = { reopened: "Due for review", unchecked: "Not known to be current", current: "Still current" };
+  const RANK = { reopened: 0, unchecked: 1, current: 2 };
+  // The findings of one map by the claim they are about, those with something to review first.
+  function groups(m) {
+    const by = new Map();
+    for (const f of m.findings || []) {
+      if (!by.has(f.claim)) by.set(f.claim, { claim: f.claim, earlier: f.earlier, later: f.later, cls: f.class, findings: [] });
+      by.get(f.claim).findings.push(f);
+    }
+    const rank = (g) => Math.min(...g.findings.map((f) => RANK[f.state] ?? 2));
+    return [...by.values()].sort((a, b) => rank(a) - rank(b) || a.claim.localeCompare(b.claim));
+  }
+  function headline(f) {
+    const cv = findingCoverageView(f);
+    if (cv?.headline) return cv.headline;
+    if (f.verdict) return "The printed step: " + f.verdict;
+    if (f.difference?.feature) return `A ${f.difference.feature} difference`;
+    return "No coverage given";
+  }
+  // Each diff a change carries: of the passage itself, of a context it is read with, and of a
+  // claim it relies on.
+  function diffs(ch) {
+    if (!ch) return [];
+    const out = [];
+    if (ch.diff?.length) out.push(ch.diff);
+    for (const x of ch.context || []) {
+      if (x.diff?.length) out.push(x.diff);
+      if (x.claim_change?.diff?.length) out.push(x.claim_change.diff);
+    }
+    return out;
+  }
+  const lineClass = (ln) => (ln.startsWith("+++") || ln.startsWith("---") || ln.startsWith("@@")) ? "dh"
+    : ln.startsWith("+") ? "add" : ln.startsWith("-") ? "del" : "";
+  function places(o) {
+    const a = o.earlier?.location, b = o.later?.location;
+    if (a && b && a !== b) return `${a} → ${b}${o.later?.proposed ? " (from the line diff)" : ""}`;
+    return a || b || "";
+  }
+  function heading(g) {
+    const a = g.earlier?.number || g.claim, b = g.later?.number || g.later?.claim;
+    return b && b !== a ? `${a} → ${b}` : a;
+  }
 
   const PAPER = {
     changed: "Passage changed", "context-changed": "Context changed", removed: "Removed",
@@ -165,6 +232,71 @@
       {#if !shown.length}<p class="faint">No claim changed and no review was reopened.</p>{/if}
     </section>
   {/if}
+
+  {#if revisionError}
+    <p class="faint">The findings across the paper revision could not be loaded: {revisionError}</p>
+  {:else if reopened && (reopened.maps.length || reopened.other.length)}
+    <section class="revision" data-revision>
+      <h2>Findings across the paper revision</h2>
+      {#if spaces.length > 1}
+        <label class="all">Workspace
+          <select bind:value={wsId} aria-label="Workspace">
+            {#each spaces as w}<option value={w.id}>{w.id} ({w.reviewer})</option>{/each}
+          </select>
+        </label>
+      {/if}
+      {#each reopened.maps as m}
+        <div class="map" data-map={m.paper}>
+          <p class="where">Workspace <code>{m.workspace}</code>, paper {m.paper}: release <code>{m.from?.release || m.from?.revision}</code> → <code>{m.to?.release || m.to?.revision}</code>{#if m.map?.kept_by}; version map kept by {m.map.kept_by}{/if}</p>
+          <p class="counts">{#each Object.entries(m.counts) as [k, n]}<span class={"st s-" + k}>{n} {STATE[k].toLowerCase()}</span>{/each}</p>
+          {#if !m.build_checked}<p class="warn">The Lean these findings cite is not checked against this build.</p>{/if}
+          <p class="note">{m.note}</p>
+          {#each groups(m) as g (g.claim)}
+            <article class="claim" data-claim={g.claim}>
+              <h3>
+                {#if g.later && known.has(g.later.claim)}<a href={href(index.release, "claim", g.later.claim)}>{heading(g)}</a>{:else}{heading(g)}{/if}
+                {#if g.cls}<span class={"pc p-" + g.cls}>{PAPER[g.cls]}</span>{/if}
+              </h3>
+              {#each g.findings as f (f.id)}
+                <div class={"fd s-" + f.state} data-finding={f.id} data-state={f.state}>
+                  <p><strong>{STATE[f.state]}</strong>: finding <code>{f.id}</code>{#if f.finding.requirement}{" on " + f.finding.requirement}{/if}{#if f.finding.created_by}{" by " + f.finding.created_by}{/if}: {headline(f.finding)}</p>
+                  {#if f.finding.note}<p class="earlier">{f.finding.note}</p>{/if}
+                  {#if recordedBasisText(f.finding)}<p class="faint">{recordedBasisText(f.finding)}</p>{/if}
+                  {#each f.paper as o}
+                    {#if o.state === "current"}
+                      <p class="kept">Still current: {o.text}{o.note ? `: ${o.note}` : ""}.</p>
+                    {:else}
+                      <div class="dep" data-dep={o.state}>
+                        <p>{o.state === "unchecked" ? "Not known" : o.change?.class === "removed" ? "Removed" : "Changed"}: {o.text}{places(o) ? ` (${places(o)})` : ""}: {o.state === "unchecked" ? o.why : o.change?.reason}.</p>
+                        {#each diffs(o.change) as d}<pre class="diff">{#each d as ln}<span class={lineClass(ln)}>{ln}</span>{"\n"}{/each}</pre>{/each}
+                        {#if o.question}<p class="question">{o.question}</p>{/if}
+                      </div>
+                    {/if}
+                  {/each}
+                  {#each f.build?.changes || [] as ch}
+                    <div class="dep" data-dep="build">
+                      <p>Changed in this build: {ch.words}.</p>
+                      {#if ch.statement?.from}<div class="text"><span class="faint">Was</span><pre>{ch.statement.from}</pre></div>{/if}
+                      {#if ch.statement?.to}<div class="text"><span class="faint">Now</span><pre>{ch.statement.to}</pre></div>{/if}
+                      {#if ch.question}<p class="question">{ch.question}</p>{/if}
+                    </div>
+                  {/each}
+                  {#each f.build?.unknown || [] as u}<p class="faint">Not known in this build: {u.why}.</p>{/each}
+                </div>
+              {/each}
+            </article>
+          {/each}
+          {#if !m.findings.length}<p class="faint">No finding of this workspace rests on this paper.</p>{/if}
+          {#each [...(m.evidence || []), ...(m.passages || [])].filter((r) => r.state !== "current") as r (r.id)}
+            <p class="rec" data-record={r.id}>{STATE[r.state]}: {r.requirement ? `passage ${r.id} (${r.role} of ${r.requirement})` : `evidence ${r.id} quoting ${r.earlier?.claim || r.claim}`}{places(r) ? ` at ${places(r)}` : ""}: {r.state === "unchecked" ? r.why : r.change?.reason}.</p>
+          {/each}
+        </div>
+      {/each}
+      {#each reopened.other as o}
+        <p class="faint">The workspace also keeps a version map of paper {o.paper} to release {o.to?.release}; this site is of release {reopened.release}.</p>
+      {/each}
+    </section>
+  {/if}
 </main>
 
 <style>
@@ -189,4 +321,17 @@
   .warn { font-size: 13px; color: var(--muted); border-left: 3px solid var(--border); padding-left: 8px; }
   .all { font-size: 14px; color: var(--muted); display: flex; gap: 6px; align-items: center; }
   code { word-break: break-all; }
+  .where { color: var(--muted); }
+  .map + .map { margin-top: 24px; }
+  .fd { border-left: 3px solid var(--border); padding-left: 10px; margin: 8px 0; }
+  .fd.s-reopened { border-left-color: var(--tier-warning, #b7791f); }
+  .fd p, .rec { margin: 4px 0; font-size: 14px; }
+  .earlier { font-family: var(--serif); }
+  .kept { color: var(--muted); font-size: 13px; }
+  .dep { margin: 6px 0 6px 4px; }
+  .diff { white-space: pre-wrap; word-break: break-word; font-family: var(--mono); font-size: 13px; background: var(--surface-2); padding: 6px 8px; margin: 2px 0 8px; border-radius: 4px; }
+  .diff .add { color: var(--st-accepted); }
+  .diff .del { color: var(--st-refuted); }
+  .diff .dh { color: var(--faint); }
+  .st { font-size: 14px; }
 </style>

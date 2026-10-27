@@ -473,6 +473,15 @@ def _print_workspace(v: dict) -> None:
             print("  requirements:")
             for line in reading_lines(rd):
                 print("  " + line)
+    rev = v.get("revisions") or {}
+    if rev:
+        from .reopen import lines as reopened_lines
+        for doc in rev.get("maps") or []:
+            print("\n".join(reopened_lines(doc)))
+        for m in rev.get("other") or []:
+            print(f"  a version map of paper {m['paper']} from release "
+                  f"{m['from'].get('release')} to release {m['to'].get('release')} is kept; it "
+                  f"judges the findings against a build of release {m['to'].get('release')}")
 
 
 def _workspace_main(a, snap, root, p: Path) -> None:
@@ -575,7 +584,12 @@ def cmd_workspace(a):
                 if snap is None:
                     sys.exit("no build to resolve the claim against: run view or build first")
                 claim = snap.resolve_claim(a.claim)
-            v = wsp.view(wsp.read(p), snap, claim, root, check_facts=a.action == "show")
+            ws = wsp.read(p)
+            v = wsp.view(ws, snap, claim, root, check_facts=a.action == "show")
+            if a.action == "show" and ws.get("version_maps"):
+                # The findings each version map it keeps reopens, for the maps to this build.
+                from .reopen import for_site
+                v["revisions"] = for_site(ws, snap, root, work, True, v)
             if a.json:
                 return _print_json({**v, "path": str(p)})
             _print_workspace(v)
@@ -1002,8 +1016,8 @@ def cmd_changes(a):
     cfg = cfgmod.load(_config_arg(a))
     if a.map:
         return _changes_map(a, cfg)
-    if a.paper or a.match:
-        sys.exit("--paper and --match belong to the version map: add --map")
+    if a.paper or a.match or a.save:
+        sys.exit("--paper, --match and --save belong to the version map: add --map")
     try:
         doc = chg.between(cfg.out_dir, a.from_release, a.to_release)
     except chg.ChangesError as e:
@@ -1038,25 +1052,67 @@ def cmd_changes(a):
 def _changes_map(a, cfg):
     """`machinechecked changes --map`: the version map of a paper between two releases
     (`version_map.py`): each claim of the earlier revision matched to the later one by its
-    passage, with both sides' facts. It reads stored evidence and the manuscripts, and changes
-    nothing."""
+    passage, with both sides' facts; with `--workspace`, the workspace's findings it reopens
+    (`reopen.py`). It reads stored evidence and the manuscripts, and changes nothing but, with
+    `--save`, the version maps the workspace keeps."""
     from . import version_map as vm
-    if a.workspace:
-        sys.exit("--map and --workspace are separate comparisons: give one of them")
     resolve = []
     for m in a.match:
         old, sep, new = m.partition("=")
         if not (sep and old and new):
             sys.exit(f"--match {m}: give it as EARLIER=LATER, an earlier and a later claim id")
         resolve.append((old, new))
+    ws = path = None
+    if a.workspace:
+        from . import workspace as wsp
+        try:
+            path = wsp.find(cfg.out_dir, a.workspace)
+            ws = wsp.read(path)
+        except wsp.WorkspaceError as e:
+            sys.exit(str(e))
+    elif a.save:
+        sys.exit("--save keeps the version map in a workspace: add --workspace ID")
+    from . import reopen as ro
     try:
-        doc = vm.between(cfg, a.paper, a.from_release, a.to_release, a.from_source,
-                         a.to_source, resolve)
+        paper = vm._paper(cfg, a.paper)
+        doc = vm.between(cfg, paper.id, a.from_release, a.to_release, a.from_source,
+                         a.to_source, resolve, ro.regions_of(ws, paper.id) if ws else ())
     except (ValueError, RuntimeError, OSError) as e:
         sys.exit(f"changes --map: {e}")
+    if ws is not None:
+        _map_workspace(cfg, doc, ws, path, a.save)
     if a.json:
         return _print_json(doc)
     print(vm.text(doc, a.all))
+    if ws is not None:
+        print()
+        print("\n".join(ro.lines(doc["workspace"])))
+        if a.save:
+            print(f"  kept the version map in workspace {ws['id']}: the reader's Details page, "
+                  "`workspace show` and its export judge its findings with it")
+
+
+def _map_workspace(cfg, doc: dict, ws: dict, path: Path, save: bool) -> None:
+    """`changes --map --workspace ID`: the workspace's findings judged across the version map
+    `doc` (`reopen.py`), their Lean side against the later release's site when it is built, as
+    `doc['workspace']`; with `save`, the map kept in the workspace."""
+    from . import reopen as ro
+    from . import workspace as wsp
+    from .targets import Snapshot, TargetError
+    try:
+        snap = Snapshot(cfg.out_dir / "site" / "data")
+    except TargetError:
+        snap = None
+    if snap is not None and snap.index.get("release") != doc["to"].get("release"):
+        snap = None
+    view = wsp.view(ws, snap, None, cfg.lean_root) if snap is not None else None
+    doc["workspace"] = ro.reopen(doc, ws, snap, cfg.lean_root, ro.lean_texts(cfg.out_dir, doc),
+                                 view=view)
+    if save:
+        try:
+            wsp.update(path, [{"op": "version-map", "map": doc}], snap, cfg.lean_root)
+        except wsp.WorkspaceError as e:
+            sys.exit(f"changes --map --save: {e}")
 
 
 def cmd_bundle(a):
@@ -1565,7 +1621,12 @@ def main(argv=None):
                     help="the manuscript folder of the later revision, to show changed text "
                     "(with --map, also git:REV)")
     ch.add_argument("--workspace", metavar="ID",
-                    help="also list this workspace's records that are no longer current")
+                    help="also list this workspace's records that are no longer current (with "
+                    "--map: its findings each paper change reopens, with the change and what "
+                    "they rest on)")
+    ch.add_argument("--save", action="store_true",
+                    help="with --map and --workspace: keep the version map in the workspace, for "
+                    "the reader, `workspace show` and its export")
     ch.add_argument("--map", action="store_true",
                     help="the version map: match each claim of the earlier paper revision to "
                     "the later one by its passage (unchanged, moved, changed, context-changed, "
