@@ -4,6 +4,7 @@ marker none of whose readings still applies is retired whole, keeping them (#395
 retires whole the markers whose declaration no claim uses."""
 
 import json
+import subprocess
 
 from prooflens import config as cfgmod
 from prooflens import retire
@@ -178,4 +179,108 @@ def test_a_definition_no_claim_names_keeps_its_readings(tmp_path, capsys):
     assert [(m["name"], m["reason"]) for m in out["left"]] == [
         ("X.d", "no claim names X.d: its review reads no passage, so the readings it records "
                 "are inert")]
+    assert (root / "reviews" / "r.md").read_text() == before
+
+
+# -- markers an earlier version left as `source=none` (#405) ------------------------------------
+
+def git(root, *args):
+    subprocess.run(["git", "-c", "user.name=Test", "-c", "user.email=test@example.org",
+                    "-c", "commit.gpgsign=false", *args], cwd=root, check=True,
+                   capture_output=True)
+
+
+def committed(root, review, message):
+    (root / "reviews" / "r.md").write_text(review)
+    git(root, "add", "-A")
+    git(root, "commit", "-q", "-m", message)
+
+
+def markers_with(foo, gone, d, baz, never):
+    return ("## Foo\n\nRead.\n\n"
+            f"<!-- spec-review: X.foo 0123 by=r {foo} -->\n"
+            f"<!-- spec-review: X.gone 0123 by=r {gone} -->\n\n"
+            "## D\n\nThe paper's.\n\n"
+            f"<!-- def-review: X.d 0123 by=r {d} -->\n\n"
+            "## Baz\n\nRead too.\n\n"
+            f"<!-- spec-review: X.baz 0123 by=r {baz} -->\n"
+            f"<!-- spec-review: X.never 0123 by=r {never} -->\n")
+
+
+def test_a_marker_left_as_source_none_is_repaired_from_the_history(tmp_path, capsys):
+    """#405: an earlier `retire` replaced the last readings of some markers with `source=none`.
+    With `--markers`, each is listed; where the review file's history shows the readings it
+    had, `--write` makes of it what this version makes of a marker with them. Where it does
+    not, or where a reading it had applies again, the marker is left for the maintainer."""
+    root = project(tmp_path, [claim("X:old", A), claim("X:new", B, "X.foo"),
+                              claim("X:back", B, "X.baz"), claim("X:n", C, "X.never")],
+                   markers_with("", "", "", "", ""))
+    git(root, "init", "-q")
+    # The readings as they were made, then as an earlier `retire` left them.
+    committed(root, markers_with(f"source=X:old@{A}", f"source=X:old@{A}",
+                                 f"source=X:defs@{C}", f"source=X:back@{B}", "source=none"),
+              "the reviews")
+    committed(root, markers_with(*["source=none"] * 5), "retire the old readings")
+    # A later edit of a marker's line: its history is followed through it.
+    committed(root, markers_with("kind=human source=none", *["source=none"] * 4), "kinds")
+    before = (root / "reviews" / "r.md").read_text()
+    # Without --markers, nothing is said of them.
+    assert run(root) == 0
+    assert json.loads(capsys.readouterr().out) == {"applied": False, "readings": [],
+                                                   "markers": [], "left": []}
+    assert run(root, "--markers") == 0
+    out = json.loads(capsys.readouterr().out)
+    assert (root / "reviews" / "r.md").read_text() == before
+    first = subprocess.run(["git", "rev-parse", "HEAD~2"], cwd=root, capture_output=True,
+                           text=True).stdout.strip()
+    # Read beside a passage that no longer states it: retired whole with that reading; so is a
+    # proposition no clause states.
+    assert {m["name"]: (m["recovered"], m["commit"]) for m in out["markers"]} == {
+        "X.foo": ({"X:old": A}, first), "X.gone": ({"X:old": A}, first)}
+    # A definition no claim names keeps its review, which reads no passage, with its readings.
+    assert [(m["name"], m["recovered"]) for m in out["repairs"]] == [("X.d", {"X:defs": C})]
+    # Its reading of a passage that states it again, and a marker whose history records no
+    # reading, are the maintainer's to resolve.
+    left = {m["name"]: m["reason"] for m in out["left"]}
+    assert sorted(left) == ["X.baz", "X.never"]
+    assert "include X:back, which states X.baz now: decide by hand" in left["X.baz"]
+    assert left["X.never"].startswith("it records `source=none`, which other checkers reject, "
+                                      "and the history holds no version of its review file "
+                                      "before ")
+
+    assert run(root, "--markers", "--write") == 0
+    capsys.readouterr()
+    lines = (root / "reviews" / "r.md").read_text().split("\n")
+    assert lines[4:6] == [
+        f"<!-- retired spec-review: X.foo 0123 by=r kind=human source=X:old@{A} -->",
+        f"<!-- retired spec-review: X.gone 0123 by=r source=X:old@{A} -->"]
+    assert lines[11] == f"<!-- def-review: X.d 0123 by=r source=X:defs@{C} -->"
+    assert lines[17:19] == ["<!-- spec-review: X.baz 0123 by=r source=none -->",
+                            "<!-- spec-review: X.never 0123 by=r source=none -->"]
+    assert all(MARKER.fullmatch(ln) or RETIRED.fullmatch(ln) for ln in lines if "<!--" in ln)
+    # The file parses: the retired markers record nothing, the others keep their text.
+    reviews = parse_file(root / "reviews" / "r.md", [], root)
+    assert [(r.name, r.source, r.text) for r in reviews] == [
+        ("X.d", {"X:defs": C}, "The paper's."), ("X.baz", {}, "Read too."),
+        ("X.never", {}, "Read too.")]
+    # What is left stays listed; the repaired definition is listed as before #405, since no
+    # build shows whether a closure uses it.
+    assert run(root, "--markers") == 0
+    out = json.loads(capsys.readouterr().out)
+    assert (out["markers"], out["repairs"]) == ([], [])
+    left = {m["name"]: m["reason"] for m in out["left"]}
+    assert sorted(left) == ["X.baz", "X.d", "X.never"]
+    assert left["X.d"] == "no claim names it, and there is no build to show whether a closure " \
+        "uses it"
+
+
+def test_without_a_history_a_source_none_marker_is_left_for_the_maintainer(tmp_path, capsys):
+    root = project(tmp_path, [claim("X:new", B, "X.foo")],
+                   "## Foo\n\nRead.\n\n<!-- spec-review: X.foo 0123 by=r source=none -->\n")
+    before = (root / "reviews" / "r.md").read_text()
+    assert run(root, "--markers", "--write") == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["markers"] == [] and out["repairs"] == []
+    (m,) = out["left"]
+    assert m["name"] == "X.foo" and m["unrecovered"] == "the project is not in a Git repository"
     assert (root / "reviews" / "r.md").read_text() == before
