@@ -461,7 +461,12 @@ versions. Repeat a request with its `op_id` after a lost answer: it changes noth
 with several workspaces in the project (the review protocol's independent one and an informed
 one, say) names one with `--id`; `workspace list` gives their ids. `show --json` gives every
 record with its `currency` (`current`, `stale` with the `changes`, or `unchecked`) and the
-`resume` point. To cite a fact inside a proof, put its `ref` from `compare --query proof-facts`
+`resume` point. Each finding has its `dependencies`: the parts it rests on, each with its
+version (the passage, the requirements and passages of its reading, alignments, cited
+declarations with the definitions their statements use, applications, facts, the composition,
+the bridge), and `kinds`, the evidence kinds it uses. A submitted finding records them when it is
+submitted; it reads `stale` when one changed, naming it, and `unchecked` when one is not known
+(`currency.unknown`, each with `why`), never `current`. To cite a fact inside a proof, put its `ref` from `compare --query proof-facts`
 as `"ref": {"fact": REF}`; a finding resting on it takes basis `reviewed_composition` (it is not
 `direct` coverage), and `show` marks it `stale` once that proof changes. Requirements of a claim
 (`requirement`), the passages that govern each one
@@ -736,7 +741,10 @@ checks again with its bridge, and supersede the finding:
             "note": "The argument gives C = 1 for every n, positive or not."}}
 ```
 
-Both findings remain, and `show` lists `f-bound-2` as current. In a full assessment,
+Both findings remain, and `show` lists `f-bound-2` as current. `f-power`, submitted against the
+earlier reading, stays `stale`: a submitted finding keeps the versions it was submitted with, and
+its `changes` name the requirements and passages re-pinned since. Supersede it the same way once
+you have read its difference against the new text. In a full assessment,
 `machinechecked changes --workspace ID` lists the stale evidence, findings, questions,
 counterexamples and compositions beside the reviews the new release reopened.
 

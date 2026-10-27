@@ -85,7 +85,7 @@
           <div class="item" data-kind="finding" class:old={!f.in_force}>
             <p class="small"><strong>{findingHead(f, cv)}</strong>
               <span class="faint">· {f.in_force ? "submitted" : "superseded"} {day(f.submitted_at)} by {f.created_by}{f.requirement ? ` · on ${f.requirement}` : ""}</span>
-              {#if stale(f)}<span class="stale"> · its evidence {STALE}</span>{/if}</p>
+              {#if stale(f)}<span class="stale"> · its evidence {STALE}</span>{:else if f.currency?.state === "unchecked"}<span class="faint" data-currency="unchecked"> · not known to be current</span>{/if}</p>
             {#each cv?.lines || [] as line}<p class="small" data-line={line.label}><span class="faint">{line.label}:</span> {line.names?.join(", ") || ""}{line.names?.length && line.text ? ". " : ""}<span class="text">{line.text || ""}</span>{#if line.note} <span class="faint">{line.note}</span>{/if}</p>{/each}
             {#if f.difference}{@const d = f.difference}<p class="small diff" data-feature={d.feature}>{#if d.paper}paper <code>{d.paper}</code>{/if}{#if d.lean}{d.paper ? "; " : ""}Lean <code>{d.lean}</code>{/if}{#if d.transport}<span class="faint">{` · transport inspected: ${d.transport}`}</span>{/if}{#if d.resolution}<span class="faint">{` · resolved by ${d.resolution.by}${d.resolution.text ? ": " + d.resolution.text : ""}`}</span>{/if}{#if d.why}<span class="faint">{` · ${d.why}`}</span>{/if}</p>{/if}
             {#if !f.composition && recordedBasisText(f)}<p class="small faint" data-line="recorded">{recordedBasisText(f)}</p>{/if}
