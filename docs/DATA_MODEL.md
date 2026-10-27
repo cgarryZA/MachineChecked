@@ -801,6 +801,14 @@ releases). An edit made from an older revision of a record is a conflict: nothin
 and the answer (and `conflicts`) holds both versions; edits of different records are both kept.
 Writes replace the file atomically under a lock file beside it.
 
+A declaration an update names (evidence, an alignment's target, a main result) is checked against
+the build. A full assessment's build keeps no Lean index: it records the declarations its
+inventory's clauses and proof steps name and those their statements use. It refuses any other
+declaration of a built module with what would let a build record it: name the declaration in a
+clause or a proof step of the inventory, list its module in `modules` when the configuration does
+not, and build again. A full assessment built without Lean records none, so it accepts only a
+declaration of a module not built or not loaded.
+
 `{"op": "main-results", "main": [...]}` replaces the main results: each entry a claim (its id,
 key or number) or a declaration (`NAME`, `MODULE:NAME` when several modules declare it, or
 `{decl, module}`), read as a claim first. It needs a build: a claim must be in its release and a
