@@ -217,12 +217,23 @@ the later release ([Saved investigations](REVIEWING.md#saved-investigations)), o
 with the change that made it stale; an unchecked record is listed too, since it is not known
 to be current. The terminal output lists them after the claims.
 
+With `--map`, `--workspace ID` judges the workspace's findings through the version map instead.
+Each paper part a finding rests on (its claim's passage, a passage it quotes, a passage attached
+to one of its requirements, the passage a bridge was checked against) is current when the map
+finds the same text, moved or renumbered or not; it is reopened when that text changed or was
+removed, or when what the passage is read with changed and the finding rests on it; and it is
+`unchecked` when the map leaves the claim ambiguous or cannot follow it. Each reopened finding
+names the change, with its diff, the part it rests on and a question. Its Lean side is checked
+against the later release's site, when it is built, and listed apart. `--save` keeps the map in
+the workspace, for the reader's **Details** page, `workspace show` and the workspace's export.
+Nothing here changes a status.
+
 The reader shows the same comparison on its **Details** page, and `export` publishes it with
 what each paper's `publish` settings allow (its passages' places and text only with its source
 text, the Lean statements only with its Lean). The comparison changes no status and writes
-nothing: a reopened review needs a new reading at the new revision, and the earlier reading
-stays in the review files as it was. The review queue offers the reopened reviews first, with
-their questions ([Review order](REVIEWING.md#review-order)).
+nothing but the map `--save` keeps: a reopened review needs a new reading at the new revision,
+and the earlier reading stays in the review files as it was. The review queue offers the
+reopened reviews first, with their questions ([Review order](REVIEWING.md#review-order)).
 
 ## What the evidence says
 

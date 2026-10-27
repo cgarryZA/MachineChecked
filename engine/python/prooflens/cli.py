@@ -478,8 +478,9 @@ def _print_workspace(v: dict) -> None:
         for doc in rev.get("maps") or []:
             print("\n".join(reopened_lines(doc)))
         for m in rev.get("other") or []:
-            print(f"  a version map of paper {m['paper']} to release {m['to'].get('release')} is "
-                  "kept too; the current build is of another release")
+            print(f"  a version map of paper {m['paper']} from release "
+                  f"{m['from'].get('release')} to release {m['to'].get('release')} is kept; it "
+                  f"judges the findings against a build of release {m['to'].get('release')}")
 
 
 def _workspace_main(a, snap, root, p: Path) -> None:

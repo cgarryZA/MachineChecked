@@ -388,7 +388,7 @@ def _finding(m: _Map, f: dict, records: dict, snap, root, cur, check_facts, text
     return out
 
 
-def _record(m: _Map, r: dict, o: dict | None, **extra) -> dict | None:
+def _record(r: dict, o: dict | None, **extra) -> dict | None:
     if o is None:
         return None
     return {"id": r["id"], "claim": r.get("claim"), **extra, **o}
@@ -454,14 +454,14 @@ def reopen(doc: dict, ws: dict, snap=None, root=None, texts=None, check_facts: b
         if r.get("kind") == "evidence" and "paper" in (r.get("ref") or {}) and \
                 r.get("role") != "rejected":
             p = r["ref"]["paper"]
-            row = _record(m, r, _passage(m, p.get("claim"), p.get("sha256")),
+            row = _record(r, _passage(m, p.get("claim"), p.get("sha256")),
                           role=r.get("role"), quote=p.get("quote"))
             if row:
                 evidence.append(row)
         elif r.get("kind") == "fragment" and r.get("state") != "removed":
             o = _region(m, r["region"]) if r.get("region") else _passage(
                 m, (r.get("passage") or {}).get("claim"), (r.get("passage") or {}).get("sha256"))
-            row = _record(m, r, o, requirement=r.get("requirement"), role=r.get("role"),
+            row = _record(r, o, requirement=r.get("requirement"), role=r.get("role"),
                           state=r.get("state"))
             if row:
                 passages.append(row)
