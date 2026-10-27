@@ -14,7 +14,7 @@ Each review has three stages:
 
 **2. Compare with Lean.** The page shows the comparison the reader shows: the paper's passage beside the unit's Lean in rows, each row's exact Lean beside it when there is room, the complete exact statement, and its definitions; a definition, a property of an object or another reference opens below its row with the passage and the statement still on the page. Inspect the elaborated Lean proposition, relevant definitions, quantifier order and witnesses. This step is given the paper and the Lean as Lean gives them, and nothing a person recorded about the claim: no symbol link, alignment or pairing of rows, correspondence note, review (of the statement or of its definitions), finding, the route a proof step's author names, or the paper definition a declaration is linked to. They are left out of what the page loads and draws, not hidden on it, and after the verdict the page shows them. A short checklist names what to compare (the setting, each hypothesis, quantifiers and their order, the definitions relied on, the conclusion, constants, and any result or axiom taken as an assumption; for a definition, the object, its parameters and its conventions at edge cases); marking each item *matches*, *differs* or *unsure* is optional and is kept in the report. Record how it compares with the paper. The review protocol has eight precise verdicts, grouped in the interface under *Matches*, *Problem* and *Cannot determine*. With the verdict you may record the coverage and its basis ([below](#coverage-with-the-verdict)).
 
-**3. Read the author's review.** Only after recording your verdict does the queue show the existing author review, and the comparison what people recorded about the claim (its symbol links and published alignments). Record disagreements alongside your initial interpretation.
+**3. Read the author's review.** Only after recording your verdict does the queue show the existing author review, and the comparison what people recorded about the claim (its symbol links, published alignments, each finding at the rows it explains, and the `Correspondence:` field of a review of the proposition). Record disagreements alongside your initial interpretation.
 
 The report records the steps completed in this reader. The queue offers changed evidence first
 and says why each unit comes where it does; **Order** chooses the paper's order or the informed
@@ -143,7 +143,8 @@ workspace started there is an *informed investigation*: it records that you saw 
 earlier interpretations, and it has no blind reading. Independent review uses the review page or
 `machinechecked review`, with the locks above. A piece of saved evidence opens beside the claim
 from the section's **Evidence** list; the comparison's **Rows** can pair its rows with the
-alignments of your investigation; and its pins are kept in the workspace's resume state
+alignments of your investigation, and each finding of it, draft or submitted, is shown at the rows
+its requirement is aligned with; and its pins are kept in the workspace's resume state
 (`pinned`), each with the build it was made on, so resuming the investigation in another browser
 opens them again on that build.
 
@@ -389,7 +390,27 @@ longer has of them. Proposed and removed passages, draft findings, evidence
 no submitted finding cites, questions, exposure and the review protocol's drafts stay in the
 workspace. The paper's `publish` settings apply: a passage's text and lines appear only when the
 source text is published, and your notes and reasons only when reviews are. The reader shows the
-records read-only on the claim, under **Auditors' readings**; they change no status.
+records read-only on the claim, under **Auditors' readings**, and each finding in the comparison,
+at the rows it explains; they change no status.
+
+**Placing a finding at a clause.** The comparison shows a finding at a row of the Lean only
+through your own reading: give the finding its `requirement`, and align that requirement with the
+Lean it concerns (a variable, a binder, a sub-term, or the conclusion). One finding may concern
+several rows, and its explanation is written once. A finding on no requirement is a finding on the
+whole claim, and one whose alignment names Lean that has changed since stays there until you
+align the requirement again: the reader never moves a finding to an expression that merely looks
+the same. A difference of a proof step's equation belongs to that step's own claim, not to the
+theorem it is a step of.
+
+```json
+{"ops": [
+  {"op": "put", "record": {"kind": "requirement", "claim": "Proposition 2.3", "local_id": "pos",
+   "form": "assumption", "text": "n is positive"}},
+  {"op": "put", "record": {"kind": "alignment", "claim": "Proposition 2.3", "requirements": ["pos"],
+   "relation": "additional assumption", "lean": [{"decl": "Toy.PaperSpec.prop_pred_pos", "binder": 1}]}},
+  {"op": "put", "record": {"kind": "finding", "claim": "Proposition 2.3", "requirement": "pos",
+   "note": "The correction adds 0 < n; the printed claim has no such condition."}}]}
+```
 
 ## What a verdict means
 

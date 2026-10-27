@@ -765,7 +765,9 @@ ws-…`, under its own name. There, `machinechecked review next --order informed
 terminal](#reviewing-from-the-terminal)), and records that this reviewer has seen the
 workspace's interpretations. `../site/data/work/` holds the submitted findings, the composition
 and the reading; the reader shows them on the claim under **Auditors' readings**, attributed to
-`llm:MODEL`, informed investigation. Theorem 2.5 reads `linked: Lean proof checked`: a
+`llm:MODEL`, informed investigation, and in the comparison each finding that names a requirement
+under the rows its alignments name (`f-power` under the conclusion of `Toy.Acceptance.thm_bound`;
+`f-bound` on the whole claim). Theorem 2.5 reads `linked: Lean proof checked`: a
 finding changes no status. An independent review of the claim goes through `machinechecked
 review`, whose report lists this workspace's exposure in `reading.revealed_by`.
 

@@ -90,6 +90,22 @@ the requirement each states and who recorded it; a row no passage is aligned wit
 the printed passage stays whole above the rows. Lean has not checked these associations;
 **The Lean's own rows** puts the whole passage beside the Lean again.
 
+An auditor's finding is shown under the row of the Lean it explains when its reading records
+which: the finding names a requirement, and an alignment of the same reading names a variable,
+an assumption, a part of the conclusion or the conclusion of a declaration shown. The finding
+gives its coverage and basis in the same words as everywhere else, or the difference it records
+(the paper's expression and the Lean's), its note, the requirement and passages it concerns, each
+Lean target with its role (an object the statement is given or produces, an assumption, the
+conclusion) and the relation recorded, and its auditor; the date, the evidence and any
+composition are under **Details**. A finding that concerns several rows is written out at the
+first and named at the others, and findings of several auditors at one row stay apart. A finding
+on no requirement, on a requirement aligned with nothing, or aligned with Lean whose statement
+changed since it was recorded is listed under **Findings on the whole claim**, with the Lean it
+named; it is never moved to another expression. A review of a proposition with a
+`Correspondence:` field shows that field above the proposition's rows, as written, up to the next
+field (`Verdict:`, say) or section; the reviewer and the full review are in **Audit details**.
+Findings and notes change no status.
+
 An object whose type is a subtype, structure or class shows the properties its type carries,
 as they apply to it, with the field and structure each comes from: for a given object they are
 part of what is given, for a witness they are established with it, and for an object inside an
