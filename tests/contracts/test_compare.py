@@ -235,7 +235,7 @@ def test_the_review_session_follows_the_stages(site, tmp_path):
     s.decide(uid, "faithful", "Same statement.")
     author = s.author(uid)
     assert NOTE in author and MARKER in author and ARGUMENT in author
-    assert "Every clause, by the auditor's composition" in author
+    assert "Every clause, by an argument combining Lean results" in author
     assert "Lean has not checked this combination. Next step: State the combination as one " \
         "Lean result." in author
 

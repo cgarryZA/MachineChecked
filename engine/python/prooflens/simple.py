@@ -684,31 +684,25 @@ def route_link_names(claim: dict, entry: dict) -> list[str]:
     return list(claim.get("declared_route") or [])
 
 
-COVERAGE_WORDS = {"full": "every clause", "partial": "part of the claim",
-                  "changed": "stated differently", "related": "a related result, not this claim",
-                  "unresolved": "unresolved"}
-BASIS_WORDS = {"direct": "in one Lean statement", "reviewed_composition":
-               "by the auditor's composition", "checked_bridge": "through a bridge"}
-
-
 def reading_text(cor: dict | None) -> str:
-    """A correspondence reading (`correspondence`) for the terminal: its coverage and basis,
-    note, the composition's argument with what Lean has not checked and the next step, a
-    bridge's state, and an unresolved reading's question. Empty when nothing is recorded."""
+    """A correspondence reading (`correspondence`) for the terminal: its coverage and basis (in
+    the words of `semantic.reading_words`), note, the composition's argument with what Lean has
+    not checked and the next step, a bridge's state, and an unresolved reading's question. Empty
+    when nothing is recorded."""
+    from .semantic import reading_words
     cor = cor or {}
     if not (cor.get("note") or cor.get("coverage")):
         return ""
-    head = COVERAGE_WORDS.get(cor.get("coverage"), "")
-    if head and cor.get("basis") in BASIS_WORDS:
-        head += ", " + BASIS_WORDS[cor["basis"]]
-    lines = [head.capitalize()] if head else []
+    b = cor.get("bridge") or {}
+    # A bridge reads as checked only while Lean checks it.
+    head = reading_words(cor.get("coverage"), cor.get("basis"), b.get("state") or "unchecked")
+    lines = [head] if head else []
     if cor.get("note"):
         lines.append(cor["note"])
     if cor.get("basis") == "reviewed_composition":
         lines.append("The auditor's argument: " + (cor.get("argument") or "not written."))
         lines.append("Lean has not checked this combination. Next step: "
                      + (cor.get("next_step") or COMPOSITION_NEXT_STEP))
-    b = cor.get("bridge") or {}
     if cor.get("basis") == "checked_bridge" and b:
         lines.append(f"Bridge {b.get('theorem')} to target {b.get('target')}: "
                      + {"checked": "Lean checks it", "stale": "out of date: "

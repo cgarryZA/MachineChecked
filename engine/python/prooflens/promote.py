@@ -204,15 +204,14 @@ def coverage_refusals(r: dict) -> list[str]:
 def coverage_text(r: dict) -> str | None:
     """The reviewer's coverage in words, for the maintainer's plan and the archived text block;
     None when the report records none."""
-    from .simple import BASIS_WORDS, COVERAGE_WORDS
+    from .semantic import basis_words, in_text, reading_words
     cor = r.get("correspondence")
     if not isinstance(cor, dict) or not cor.get("coverage"):
         return None
     cov, basis = cor["coverage"], cor.get("basis")
-    out = COVERAGE_WORDS.get(cov, repr(cov)) if isinstance(cov, str) else repr(cov)
+    out = in_text(reading_words(cov)) or repr(cov)
     if basis:
-        out += ", " + (BASIS_WORDS.get(basis, repr(basis)) if isinstance(basis, str)
-                       else repr(basis))
+        out += ", " + (in_text(basis_words(basis)) or repr(basis))
     b = cor.get("bridge") if isinstance(cor.get("bridge"), dict) else {}
     if cor.get("basis") == "checked_bridge" and b:
         out += f" ({b.get('theorem')} for {b.get('target')}, as the reviewer records it)"
