@@ -8,7 +8,7 @@
   import { statusView, inScope, evidenceView } from "../lib/presentation.js";
   import { coverageView, recordedBasisText } from "../lib/coverage.js";
   import { comparisonInputs, pinScope } from "../lib/comparison.js";
-  import { openInspection, trail, DETAILS } from "../lib/inspect.svelte.js";
+  import { openInspection, DETAILS } from "../lib/inspect.svelte.js";
   import EvidenceSummary from "./EvidenceSummary.svelte";
   import StatusChip from "./StatusChip.svelte";
   import Statement from "./Statement.svelte";
@@ -527,7 +527,7 @@
     </header>
 
     <Comparison {index} {inputs} {scope} bind:selection={selAt} mark={(spec, k) => (claim.clauses?.length ? markFor(k) : null)}
-      onpinned={pinnedVar} {paperTools} {linkTools} {clauseTools} {leanFoot} {extra} stickyTop={full ? 56 : 0} />
+      onpinned={pinnedVar} {paperTools} {linkTools} {clauseTools} {leanFoot} {extra} />
     {#if editable}<Investigation {index} {claim} selection={selAt} {scope} />{/if}
     {#if claim.work}<PublishedWork {claim} />{/if}
     </div>

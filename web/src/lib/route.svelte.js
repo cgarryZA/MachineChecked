@@ -66,5 +66,3 @@ export function withQuery(url, values) {
   }
   return path + (params.size ? "?" + params : "");
 }
-
-export const inspectionHref = (names) => withQuery(location.hash, { inspect: names });

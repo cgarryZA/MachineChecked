@@ -169,7 +169,7 @@
             <ul class="params">
               {#each app.params as p}
                 <li><code>{p.binder}</code> <span class="faint small">{p.role}</span> <LeanText pp={p.type} />
-                  {#if p.role === "premise"}<span class="small"> · {DISCHARGE[p.discharge]}: {p.supplied}</span>{:else if p.argument}<span class="small faint"> := </span><LeanText pp={p.argument} />{/if}</li>
+                  {#if p.role === "premise"}<span class="small">{" · " + DISCHARGE[p.discharge] + ": " + p.supplied}</span>{:else if p.argument}<span class="small faint">{" := "}</span><LeanText pp={p.argument} />{/if}</li>
               {/each}
             </ul>
             <p class="lbl">gives</p>
@@ -230,4 +230,6 @@
   .params li { border-top: 1px solid var(--border); padding: 4px 0; overflow-wrap: anywhere; }
   .lbl { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--faint); margin: 8px 0 2px; }
   .inspection :global(.lean button), .inspection :global(.lean a) { min-height: 0; }
+  /* The panel is the declaration's frame. */
+  .inspection > :global(.decl.inspector) { border: 0; padding: 0; margin: 0; background: none; }
 </style>

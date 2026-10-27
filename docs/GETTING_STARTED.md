@@ -75,10 +75,20 @@ Build the Lean project to check its linked declarations.
 ## Select a claim
 
 The reader opens on the paper. Select a numbered statement in the contents or its margin marker.
-The panel shows **Paper**, **Readable Lean** and **Exact Lean**. **Expand comparison** gives
-these representations the full workspace, keeping every hypothesis visible. On a phone they
-follow one another in reading order. The exact statement comes directly from Lean; rebuilding
-an older audit adds it.
+The panel compares **Paper** with **Lean**. The Lean is shown in rows: each object with the
+conditions on it alone, each other condition, then the conclusion, in the statement's order; a
+definition has a row of its own. Each row reads as mathematics, with its exact Lean beside it
+when the panel is wide enough, and the complete exact statement follows the rows. **Expand
+comparison** gives the comparison the full workspace, the paper's passage staying beside the
+Lean while the Lean scrolls. On a phone the paper comes first, then the Lean, row by row. The
+claim page (**Open as a page**, in the ⋯ menu) and the review page use the same comparison. The
+exact statement comes directly from Lean; rebuilding an older audit adds it.
+
+When an audit publishes an auditor's reading that aligns passages of the paper with the Lean,
+or your own investigation has one, **Rows** pairs each row with the passages aligned with it,
+the requirement each states and who recorded it; a row no passage is aligned with says so, and
+the printed passage stays whole above the rows. Lean has not checked these associations;
+**The Lean's own rows** puts the whole passage beside the Lean again.
 
 An object whose type is a subtype, structure or class shows the properties its type carries,
 as they apply to it, with the field and structure each comes from: for a given object they are
@@ -92,9 +102,19 @@ definition whose value is a structure lists the properties that value carries, e
 the definition.
 
 Click a variable to see its type and conditions. Click an expression to select it; further clicks
-widen the selection. Dotted names open short mathematical notes. A Lean declaration name opens
-its complete definition; **Back** and browser Back restore the claim view and reading position.
-Definition links can be copied or opened in another tab.
+widen the selection, and the same expression is selected in the exact Lean. Dotted names open
+short mathematical notes.
+
+A Lean declaration name opens its complete definition just below the row it is in; the claim,
+the selected expression and the paper's passage stay on the page. A property carried by an
+object's type opens the same way from its field (**field start of Solution**), and says whether
+it is part of what the statement is given, established with an object the statement produces,
+or what an assumption states. A reference inside an inspection continues it, with the trail at
+its top; **Back**, Escape and browser Back return to where you were, the focus on the name you
+opened it from, and browser Forward opens it again. **Pin** keeps an inspection open while you
+open another reference; a pin belongs to its claim, project and build, so it is not shown on
+another object, another audit or another build. **Audit details** opens above the comparison in
+the same way. Definition links can be copied or opened in another tab.
 
 A definition shows what it says: its parameters, in their order and as they are written, and its
 body with its type; a definition by pattern matching or recursion shows its type and the

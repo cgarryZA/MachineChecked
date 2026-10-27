@@ -12,8 +12,8 @@
   import { sourceUrl, sourceLabel, sourceTitle } from "../lib/issue.js";
   import { clauseNote } from "../lib/presentation.js";
   import { declSide, usersSide, independent, statementRows, alignmentSource, alignedRows, targetText } from "../lib/comparison.js";
-  import { trail, anchor, openInspection, backTo, opener, pins, pinsIn, pinOf, togglePin, tokenOf, itemOf,
-           workspace, DETAILS } from "../lib/inspect.svelte.js";
+  import { trail, anchor, openInspection, backTo, opener, pinsIn, pinOf, togglePin, tokenOf, itemOf,
+           workspace } from "../lib/inspect.svelte.js";
   import { carriedOf } from "../lib/carried.js";
 
   // One claim's comparison, Paper | Lean, shared by the reader, the claim page and the review
@@ -35,7 +35,7 @@
   // and `leanFoot` hold its controls (making links, reading a proof's facts, suggestions).
   let { index, inputs, scope = null, headings = false, selection = $bindable(null), mark = null,
         onpinned = null, paperTools = null, linkTools = null, clauseTools = null, leanFoot = null,
-        extra = null, stickyTop = 0 } = $props();
+        extra = null } = $props();
 
   const mode = $derived(inputs.mode);
   const blind = $derived(independent(mode));
@@ -161,11 +161,21 @@
   const source = $derived(rowsFrom === "none" ? null : sources.find((s) => s.id === rowsFrom) || sources[0] || null);
   const paired = $derived(!!source);
   const aligned = $derived(alignedRows(source, statements));
-  const seenAt = $derived.by(() => {
-    // The first row an alignment is drawn at: its passages are printed there, and named after.
-    const m = new Map();
-    for (const [key, list] of aligned.at) for (const e of list) if (!m.has(e.alignment)) m.set(e.alignment, key);
-    return m;
+  // Each row's alignments as its paper cell draws them. An alignment's passages are printed at
+  // the first row it is drawn at, each passage once in a cell; later rows name them.
+  const cells = $derived.by(() => {
+    const first = new Map();
+    for (const [key, list] of aligned.at) for (const e of list) if (!first.has(e.alignment)) first.set(e.alignment, key);
+    const out = new Map();
+    for (const [key, list] of aligned.at) {
+      const printed = new Set();
+      out.set(key, list.map((e) => {
+        const here = first.get(e.alignment) === key;
+        const fresh = here ? e.alignment.passages.filter((f) => !printed.has(f.id) && printed.add(f.id)) : [];
+        return { ...e, first: here, fresh, repeated: here && fresh.length < e.alignment.passages.length };
+      }));
+    }
+    return out;
   });
   const where = (f) => f.missing ? "a passage no longer kept"
     : f.passage ? (f.passage.claim === main?.id ? "this claim's passage" : `the passage of ${f.passage.claim}`)
@@ -221,16 +231,34 @@
     return "saved evidence";
   }
 
-  // Opening and closing an inspection keeps the reader's place: the scroll position and the
-  // element they opened it from come back when they return.
+  // Opening and closing an inspection keeps the reader's place: an inspection opens in view with
+  // the row it concerns above it, and the scroll position and the element it was opened from come
+  // back when the reader returns.
   let root = $state();
-  const panels = {};
   function scroller() {
     for (let e = root?.parentElement; e; e = e.parentElement) {
       const o = getComputedStyle(e).overflowY;
-      if ((o === "auto" || o === "scroll") && e.scrollHeight > e.clientHeight) return e;
+      if (o === "auto" || o === "scroll") return e;
     }
     return document.scrollingElement;
+  }
+  // The part of the window the scroller shows.
+  function visible(s) {
+    if (s === document.scrollingElement) return { top: 0, bottom: window.innerHeight };
+    const r = s.getBoundingClientRect();
+    return { top: Math.max(r.top, 0), bottom: Math.min(r.bottom, window.innerHeight) };
+  }
+  function bringIntoView(p) {
+    const s = scroller(), v = visible(s), r = p.getBoundingClientRect();
+    if (r.top >= v.top && r.top <= v.bottom - 80) return;
+    // The row it was opened from at the top, the inspection under it; the inspection itself when
+    // the row is too tall for both.
+    const row = p.parentElement?.closest("[data-row]");
+    if (row) {
+      s.scrollTop += row.getBoundingClientRect().top - v.top - 8;
+      if (p.getBoundingClientRect().top <= v.bottom - 80) return;
+    }
+    s.scrollTop += p.getBoundingClientRect().top - v.top - 8;
   }
   let previous = [];
   const scrolls = [];
@@ -238,18 +266,19 @@
     const next = [...stack];
     if (!root) { previous = next; return; }
     const before = previous;
-    if (next.length > before.length || (next.length && next.join("\u0000") !== before.join("\u0000") && next.length === before.length)) scrolls[before.length] = scroller().scrollTop;
     previous = next;
-    if (next.join("\u0000") === before.join("\u0000")) return;
+    const same = next.length === before.length && next.every((t, i) => t === before[i]);
+    if (same) return;
+    if (next.length >= before.length) scrolls[before.length] = scroller().scrollTop;
     tick().then(() => {
       if (!root) return;
       if (next.length >= before.length && next.length) {
         const p = root.querySelector(".current-wrap .inspection");
-        p?.querySelector(".back")?.focus({ preventScroll: true });
-        p?.scrollIntoView({ block: "nearest" });
+        if (!p) return;
+        p.querySelector(".back")?.focus({ preventScroll: true });
+        bringIntoView(p);
       } else if (next.length < before.length) {
-        const s = scroller();
-        if (scrolls[next.length] != null) s.scrollTop = scrolls[next.length];
+        if (scrolls[next.length] != null) scroller().scrollTop = scrolls[next.length];
         if (next.length) root.querySelector(".current-wrap .inspection .back")?.focus({ preventScroll: true });
         else {
           const o = opener(0);
@@ -287,19 +316,20 @@
 <!-- A paired row's paper cell: the passages aligned with it, each with its requirement, its
      relation and its author. An alignment drawn at an earlier row is named, not repeated. -->
 {#snippet alignedCell(key)}
-  {#each aligned.at.get(key) || [] as e (e.alignment.id)}
+  {#each cells.get(key) || [] as e (e.alignment.id)}
     {@const a = e.alignment}
     <div class="aligned" data-alignment={a.id} class:stale={a.stale}>
-      {#if seenAt.get(a) === key}
-        {#each a.passages as f (f.id)}
+      {#if e.first}
+        {#each e.fresh as f (f.id)}
           {#if f.region?.text}<pre class="frag">{f.region.text}</pre>{:else}<p class="small faint">{where(f)}</p>{/if}
         {/each}
-        {#each a.requirements as r (r.local_id)}<p class="small req"><code>{r.local_id}</code>{#if r.form}{" "}<span class="form">{r.form}</span>{/if}{#if r.text}: <span class="text">{r.text}</span>{/if}{#if r.missing}<span class="faint"> (no longer kept)</span>{/if}</p>{/each}
+        {#if e.repeated}<p class="small faint">{e.fresh.length ? "And the" : "The"} passage{a.passages.length - e.fresh.length > 1 ? "s" : ""} above.</p>{/if}
+        {#each a.requirements as r (r.local_id)}<p class="small req"><code>{r.local_id}</code>{#if r.form}{" "}<span class="form">{r.form}</span>{/if}{#if r.text}: <span class="text">{r.text}</span>{/if}{#if r.missing}<span class="faint">{" (no longer kept)"}</span>{/if}</p>{/each}
         {#if !a.requirements.length}<p class="small faint">Lean only: no passage of the paper.</p>{/if}
       {:else}
         <p class="small faint">The passages aligned above ({a.requirements.map((r) => r.local_id).join(", ") || "Lean only"}), also here.</p>
       {/if}
-      <p class="small faint">{a.relation}{e.targets.length > 1 || e.targets.some((t) => t.target) ? " · " + e.targets.map(targetText).join("; ") : ""} · recorded by {a.by}{#if a.stale}<span class="warn"> · {a.stale ? "out of date since it was recorded" : ""}</span>{/if}</p>
+      <p class="small faint">{a.relation}{e.targets.length > 1 || e.targets.some((t) => t.target) ? " · " + e.targets.map(targetText).join("; ") : ""} · recorded by {a.by}{#if a.stale}<span class="warn">{" · changed since it was recorded"}</span>{/if}</p>
       {#if a.note}<p class="small text">{a.note}</p>{/if}
     </div>
   {:else}
@@ -482,7 +512,7 @@
   {#if !paired}
     <div class="grid" class:single={!passages.length || (!formal && !defsOnly.length)}>
       {#if passages.length}
-        <section class="paper" class:sticky style:top={sticky ? stickyTop + "px" : null} bind:offsetHeight={paperHeight}>
+        <section class="paper" class:sticky bind:offsetHeight={paperHeight}>
           {@render passagesOf()}
         </section>
       {/if}
@@ -512,7 +542,7 @@
   @container (min-width: 760px) {
     .grid:not(.single) { grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); gap: 0 28px; align-items: start; }
     .grid:not(.single) > .lean { padding-left: 24px; border-left: 1px solid var(--border); }
-    .paper.sticky { position: sticky; z-index: 1; background: var(--bg); }
+    .grid:not(.single) > .paper.sticky { position: sticky; top: 0; }
   }
   h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); font-weight: 600; margin: 0 0 8px; }
   .sub { font-size: 14px; font-weight: 600; margin: 14px 0 6px; }

@@ -12,9 +12,9 @@ Each review has three stages:
 
 **1. Read the paper.** Before the Lean statement is revealed, write an independent interpretation of the setting, hypotheses, quantifiers, conclusion and any ambiguity. The app records a snapshot when you move on.
 
-**2. Compare with Lean.** Inspect the elaborated Lean proposition, relevant definitions, quantifier order and witnesses. A short checklist names what to compare (the setting, each hypothesis, quantifiers and their order, the definitions relied on, the conclusion, constants, and any result or axiom taken as an assumption; for a definition, the object, its parameters and its conventions at edge cases); marking each item *matches*, *differs* or *unsure* is optional and is kept in the report. Record how it compares with the paper. The review protocol has eight precise verdicts, grouped in the interface under *Matches*, *Problem* and *Cannot determine*. With the verdict you may record the coverage and its basis ([below](#coverage-with-the-verdict)).
+**2. Compare with Lean.** The page shows the comparison the reader shows: the paper's passage beside the unit's Lean in rows, each row's exact Lean beside it when there is room, the complete exact statement, and its definitions; a definition, a property of an object or another reference opens below its row with the passage and the statement still on the page. Inspect the elaborated Lean proposition, relevant definitions, quantifier order and witnesses. This step is given the paper and the Lean as Lean gives them, and nothing a person recorded about the claim: no symbol link, alignment or pairing of rows, correspondence note, review (of the statement or of its definitions), finding, the route a proof step's author names, or the paper definition a declaration is linked to. They are left out of what the page loads and draws, not hidden on it, and after the verdict the page shows them. A short checklist names what to compare (the setting, each hypothesis, quantifiers and their order, the definitions relied on, the conclusion, constants, and any result or axiom taken as an assumption; for a definition, the object, its parameters and its conventions at edge cases); marking each item *matches*, *differs* or *unsure* is optional and is kept in the report. Record how it compares with the paper. The review protocol has eight precise verdicts, grouped in the interface under *Matches*, *Problem* and *Cannot determine*. With the verdict you may record the coverage and its basis ([below](#coverage-with-the-verdict)).
 
-**3. Read the author's review.** Only after recording your verdict does the queue show the existing author review. Record disagreements alongside your initial interpretation.
+**3. Read the author's review.** Only after recording your verdict does the queue show the existing author review, and the comparison what people recorded about the claim (its symbol links and published alignments). Record disagreements alongside your initial interpretation.
 
 The report records the steps completed in this reader. The queue offers changed evidence first
 and says why each unit comes where it does; **Order** chooses the paper's order or the informed
@@ -141,7 +141,11 @@ start one under your name, record a finding (its coverage and note, citing the l
 declarations), ask a question, submit a draft finding. A claim page shows the Lean, so a
 workspace started there is an *informed investigation*: it records that you saw the Lean and
 earlier interpretations, and it has no blind reading. Independent review uses the review page or
-`machinechecked review`, with the locks above.
+`machinechecked review`, with the locks above. A piece of saved evidence opens beside the claim
+from the section's **Evidence** list; the comparison's **Rows** can pair its rows with the
+alignments of your investigation; and its pins are kept in the workspace's resume state
+(`pinned`), each with the build it was made on, so resuming the investigation in another browser
+opens them again on that build.
 
 **From the command line.** The same records, with the same checks:
 
