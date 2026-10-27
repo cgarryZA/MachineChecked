@@ -1131,7 +1131,7 @@ class Assessor:
         if scope == "definition":
             if not clauses:
                 return "definition.unstated"
-            if not all(c["review"] in ("author-reviewed",) for c in clauses):
+            if not all(c["review"] in ("reviewed", "author-reviewed") for c in clauses):
                 return "definition.review-pending"
             return ("definition.author-reviewed"
                     if any(c["review"] == "author-reviewed" for c in clauses)
