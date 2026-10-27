@@ -166,9 +166,22 @@ def decl_currency(ref: dict, snap) -> dict:
     return closure_currency(ref, snap, ref["decl"])
 
 
+def unprinted(ch: dict | None, cid: str | None) -> str | None:
+    """Why the build's pin of a claim's passage is not the text the paper now prints, or None.
+    A build of the full assessment pins a passage by the inventory's digest of it and checks
+    that digest against the manuscript (`source_matches`): when the text changed and the
+    inventory was not pinned again, the pin stays the same and the check fails, so a record that
+    read the pinned text is not current although the pin did not change."""
+    if ch is not None and ch.get("source_matches") is False:
+        return (f"the paper now prints other text than the pin of {cid}: its passage changed, "
+                "and the inventory has not pinned it again")
+    return None
+
+
 def paper_currency(p: dict, snap) -> dict:
     """A passage of the paper cited as evidence: `stale` once the claim's printed passage is not
-    the one it was recorded against, `unchecked` when it was recorded without it."""
+    the one it was recorded against (its pin changed, or the paper no longer prints the pinned
+    text: `unprinted`), `unchecked` when it was recorded without it."""
     if snap is None or not p.get("sha256"):
         return {"state": "unchecked", "changes": [],
                 "reason": "no version of the passage was recorded with it"
@@ -178,6 +191,10 @@ def paper_currency(p: dict, snap) -> dict:
     if ch is None or now != p["sha256"]:
         return {"state": "stale", "changes": [{"passage": p.get("claim"), "was": p["sha256"],
                                                "now": now if ch is not None else None}]}
+    why = unprinted(ch, p.get("claim"))
+    if why:
+        return {"state": "stale", "changes": [{"passage": p.get("claim"), "was": p["sha256"],
+                                               "now": now, "reason": why}]}
     return {"state": "current", "changes": []}
 
 
@@ -478,6 +495,9 @@ def check(f: dict, records: dict, snap, root=None, cur: dict | None = None,
             if ch is None or now != it.get("sha256"):
                 changes.append({"claim": it["claim"], "was": it.get("sha256"),
                                 "now": now if ch is not None else None})
+            elif unprinted(ch, it["claim"]):
+                changes.append({"claim": it["claim"], "was": it.get("sha256"), "now": now,
+                                "reason": unprinted(ch, it["claim"])})
             continue
         if dep == CONTEXT:
             res = rq.fragment_currency(it, snap)
