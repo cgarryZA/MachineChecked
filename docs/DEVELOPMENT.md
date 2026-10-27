@@ -18,6 +18,8 @@ CI runs the suite in four shards on parallel runners, and its `test` check passe
 
 To exercise the zero-configuration flow, use `examples/plain-paper/`. For the locked-specification flow, use `examples/toy-paper/`. These are synthetic; public tests and examples must never include private manuscript or Lean content.
 
+The agent guides' commands are tested: `tests/simple/test_agent_guide.py` runs each command of the `sh` blocks of `docs/AGENTS.md` and `skills/machinechecked/SKILL.md`, and each one the worked investigation names, on copies of the examples, and checks its exit code and the output the guide quotes. A command added to either guide is run there or listed as illustrative, with the reason.
+
 ## Code map
 
 | Location | Responsibility |

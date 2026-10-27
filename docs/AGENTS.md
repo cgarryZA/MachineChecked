@@ -175,10 +175,10 @@ Targeted queries have one shape (`machinechecked/query@1`: `op`, `target`, `cont
 machinechecked compare --query definition Toy.triangle --json   # its type, value, equations
 machinechecked compare --query mentions Toy.triangle --json     # statements that use it
 machinechecked compare --query dependencies Toy.Acceptance.thm_bound --json   # runs inspect
-machinechecked compare --query search "Theorem 2" --json       # declarations stating a claim
+machinechecked compare --query search "Theorem 2.5" --json     # declarations stating a claim
 machinechecked compare --query search 'n ≤ C * n ^ 2' --json   # ... or an expression, or words
-machinechecked compare --query proof-facts Example.bound --json  # facts inside its proof
-machinechecked compare --query proof-facts Example.bound --match "C * h"   # ranked by symbols
+machinechecked compare --query proof-facts Toy.Acceptance.thm_bound --json   # facts inside its proof
+machinechecked compare --query proof-facts Toy.Acceptance.thm_bound --match "n * n"   # ranked by symbols
 machinechecked compare --query uses Toy.IsEven --json          # where it is used, and how
 machinechecked compare --query impact Toy.triangle --json      # which main results use it
 machinechecked workspace main "Theorem 2.5" --as llm:MODEL     # save the main results it traces
@@ -421,12 +421,14 @@ machinechecked workspace show --json
 
 `update` prints the acknowledgement (`changed`, `revisions`, `revision`) or `ok: false` with the
 `error` (exit 1); an edit of a record changed since its `base_rev` returns `conflicts` with both
-versions. Repeat a request with its `op_id` after a lost answer: it changes nothing. `show
---json` gives every record with its `currency` (`current`, `stale` with the `changes`, or
-`unchecked`) and the `resume` point. To cite a fact inside a proof, put its `ref` from
-`compare --query proof-facts` as `"ref": {"fact": REF}`; a finding resting on it takes basis
-`reviewed_composition` (it is not `direct` coverage), and `show` marks it `stale` once that proof
-changes. Requirements of a claim (`requirement`), the passages that govern each one
+versions. Repeat a request with its `op_id` after a lost answer: it changes nothing. A reviewer
+with several workspaces in the project (the review protocol's independent one and an informed
+one, say) names one with `--id`; `workspace list` gives their ids. `show --json` gives every
+record with its `currency` (`current`, `stale` with the `changes`, or `unchecked`) and the
+`resume` point. To cite a fact inside a proof, put its `ref` from `compare --query proof-facts`
+as `"ref": {"fact": REF}`; a finding resting on it takes basis `reviewed_composition` (it is not
+`direct` coverage), and `show` marks it `stale` once that proof changes. Requirements of a claim
+(`requirement`), the passages that govern each one
 (`fragment`: a region of the paper's source with its role, origin and scope) and their
 association with Lean (`alignment`) are records of the same workspace; `show --json` gives each
 claim's `reading`, `workspace suggest --claim C --requirement r1 [--apply]` proposes nearby
@@ -531,18 +533,23 @@ machinechecked build
 **4. Follow the objects through the proof.**
 
 ```sh
-machinechecked compare --query uses Toy.Acceptance.thm_triangle
-machinechecked compare --query proof-facts Toy.Acceptance.thm_bound --match "n ≤ n * n"
+machinechecked compare --query uses Toy.Acceptance.thm_triangle --json > uses.json
+machinechecked compare --query proof-facts Toy.Acceptance.thm_bound --match "n ≤ n * n" --json > facts.json
+machinechecked workspace main "Theorem 2.5"
 machinechecked compare --query impact Toy.triangle
 ```
 
-`uses` finds one application, `app:Toy.Acceptance.thm_bound:0`: `parameter n : Nat := n (the
-variable n introduced in the proof)`, giving `2 * Toy.triangle n = n * (n + 1)`. `proof-facts`
-ranks first `f2`, `hn : n ≤ n * n` at `Toy/Acceptance.lean:44`, in the case `n : Nat`;
-its basis is "established inside this proof under this context". `impact` traces from the main
-result now linked to Theorem 2.5: `Toy.Acceptance.thm_bound` is "used by its proof, directly;
+In `uses.json`, `applications` holds one application, `app:Toy.Acceptance.thm_bound:0`: its
+parameter `n` is supplied by "the variable n introduced in the proof", and its `result` is
+`2 * Toy.triangle n = n * (n + 1)`. `facts.json` ranks first `f2`, `hn : n ≤ n * n` (line 44 of
+`Toy/Acceptance.lean`), in the case `n : Nat`; its basis is "established inside this proof under
+this context", and its `ref` is what a workspace cites. Without `--json`, both print for reading.
+`workspace main` saves Theorem 2.5 as the paper's main result, under your name and with the
+build's release and project commit. `impact` traces from that selection ("Main results (saved in
+workspace ws-… by llm:MODEL …)"): `Toy.Acceptance.thm_bound` is "used by its proof, directly;
 also in its statement" (through `Toy.PaperSpec.thm_bound`), and Theorem 2.5 is the one claim
-whose Lean uses `Toy.triangle`.
+whose Lean uses `Toy.triangle`. Without a saved selection, `impact` traces the declarations
+linked to the paper's theorems, as a suggestion.
 
 **5. Assemble the evidence.** Cite the application and the fact, and combine them. The
 composition's bridge asks Lean to check that `Toy.Acceptance.thm_bound` proves
@@ -637,9 +644,9 @@ The first `compare` shows the step with the proof around it. In `step.json`,
 step. `show` reads the step as `for every n (n ≥ 0); for every k (k ≥ 0): n ≤ k n²` and the
 counterexample as `an admissible counterexample to this reading`, with the certificate's scope:
 it certifies `ToyAudit.bound_range_at_one` only, not the reading. Run before that fragment is
-recorded, `workspace suggest --claim "Equation (3)" --requirement n.k` proposes the same line 75,
-the sentence before the display, as the quantifier's domain; `--apply` saves it as a proposal,
-and a `put` of it with `"state": "accepted"` accepts it.
+recorded, `machinechecked workspace suggest --claim "Equation (3)" --requirement n.k` proposes
+the same line 75, the sentence before the display, as the quantifier's domain; `--apply` saves
+it as a proposal, and a `put` of it with `"state": "accepted"` accepts it.
 
 **7. Record what is open, and hand the work on.**
 
@@ -661,7 +668,10 @@ Another agent, in its own copy of the project, runs `machinechecked workspace im
 ../t25-work.json --as llm:OTHER` and `machinechecked workspace show --id ws-… --json`: `resume`
 names the claim and the open question, and each record's `currency` is `current` while the
 paper and the Lean are those it was recorded against. It continues with `workspace update --id
-ws-…`, under its own name. `../site/data/work/` holds the submitted findings, the composition
+ws-…`, under its own name. There, `machinechecked review next --order informed --json` gives
+`link:thm:bound` first, for its open question ([Reviewing from the
+terminal](#reviewing-from-the-terminal)), and records that this reviewer has seen the
+workspace's interpretations. `../site/data/work/` holds the submitted findings, the composition
 and the reading; the reader shows them on the claim under **Auditors' readings**, attributed to
 `llm:MODEL`, informed investigation. Theorem 2.5 reads `linked: Lean proof checked`: a
 finding changes no status. An independent review of the claim goes through `machinechecked

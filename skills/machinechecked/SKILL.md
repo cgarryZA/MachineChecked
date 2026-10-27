@@ -156,7 +156,8 @@ carries every step out on the toy example.
 4. **Follow the objects.** `--query uses NAME` gives each application of NAME with the argument
    supplied to every binder and the origin of each premise (its `discharge`: `assumed` by the
    caller, `proved` in it, or `local`). `--query proof-facts NAME` gives the facts a proof
-   establishes on the way, each under its assumptions and case.
+   establishes on the way, each under its assumptions and case. With `--json`, each
+   application has the `id` and each fact the `ref` that evidence cites.
 5. **Assemble.** Cite declarations, applications (`{"app": {callee, id}}`) and proof facts
    (`{"fact": REF}`) as evidence, and combine them in a `composition` with its substitutions,
    the objects different steps share, and its open obligations. A `bridge` attached to it is
