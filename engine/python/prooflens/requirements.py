@@ -568,8 +568,12 @@ def _with_passages(cur: dict, r: dict, ws: dict, out: dict) -> dict:
     for fid in r.get("fragments") or []:
         f = ws["records"].get(fid)
         if f is None or f.get("state") != "accepted":
-            changes.append({"fragment": fid, "was": "accepted",
-                            "now": (f or {}).get("state") or "missing"})
+            now = (f or {}).get("state") or "missing"
+            changes.append({"fragment": fid, "was": "accepted", "now": now,
+                            "reason": f"the passage {fid} it names "
+                                      + {"removed": "was removed",
+                                         "proposed": "is only suggested now"}.get(
+                                          now, "is no longer kept")})
         else:
             changes += [c for c in (out.get(fid) or {}).get("changes") or [] if c not in changes]
     if changes:

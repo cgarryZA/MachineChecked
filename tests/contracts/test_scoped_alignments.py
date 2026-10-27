@@ -386,7 +386,11 @@ def test_one_passage_aligns_with_several_targets_and_several_passages_with_one(w
     rd = reading(work, p, "P:eq:est")
     al = {a["id"]: a for a in rd["alignments"]}
     assert al["a-est"]["currency"] == {"state": "stale", "changes": [
-        {"fragment": "p-dep", "was": "accepted", "now": "removed"}]}
+        {"fragment": "p-dep", "was": "accepted", "now": "removed",
+         "reason": "the passage p-dep it names was removed"}]}
+    from prooflens import changes as chg
+    assert "    because: the passage p-dep it names was removed" in chg.workspace_lines(
+        chg.workspace_due(wsp.view(wsp.read(p), snap), "w"))
     assert al["a-eps"]["currency"]["state"] == "current"
     # A changed passage puts the alignment that names it out of date, and its requirement once.
     (work / "sources" / "P" / "paper.tex").write_text(
