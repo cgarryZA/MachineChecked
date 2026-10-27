@@ -130,4 +130,9 @@ def Digit.val : Digit → Nat
 /-- The last digit's value: the equation that applies is the seventieth. -/
 theorem last_digit : Digit.val .d69 = 69 := rfl
 
+/-- A digit with the last constructor index has the last value: a hypothesis on the `ctorIdx`
+Lean generates for `Digit`, beside the project's `Digit.val`. -/
+theorem last_index (t : Digit) (h : t.ctorIdx = 69) : t.val = 69 := by
+  cases t <;> first | rfl | exact absurd h (by decide)
+
 end Shape

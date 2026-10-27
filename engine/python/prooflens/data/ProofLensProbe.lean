@@ -337,12 +337,29 @@ def statementDepth : Nat := 2
 /-- At most this many nodes of one printed expression are visited looking for applications. -/
 def maxVisits : Nat := 4000
 
+/-- Whether `c` is a definition Lean generates for a declaration rather than one the project
+writes. Lean marks those it keeps out of the names it offers a user (`allowCompletion`): an
+inductive type's `recOn`, `casesOn`, `below`, `brecOn`, `noConfusion`, `noConfusionType`,
+`ctorIdx`, `toCtorIdx`, `ctorElim`, `ctorElimType` and constructor eliminators (`C.elim`),
+matchers and internal names. A definition under one of those (`brecOn.go`) is generated with it.
+Two that Lean generates without the mark are taken by their names, which only Lean can give
+them: an enumeration's `noConfusionType`, and a constructor's `noConfusion` on older versions of
+Lean (4.24). -/
+def generated (env : Environment) (c : Name) : Bool :=
+  let p := c.getPrefix
+  !allowCompletion env c || (env.contains p && !allowCompletion env p) ||
+    match c, env.find? p with
+    | .str _ "noConfusionType", some (.inductInfo _) | .str _ "noConfusion", some (.ctorInfo _) =>
+      true
+    | _, _ => false
+
 /-- Whether an application of `c` is expanded: a definition of the project's (`inside`) that a
-reader looks for, of data or of a predicate, and not an instance or a structure's projection. -/
+reader looks for and Lean did not generate, of data or of a predicate, and not an instance or a
+structure's projection. -/
 def expandable (inside : Name → Bool) (c : Name) : MetaM Bool := do
   let env ← getEnv
   let some (.defnInfo d) := env.find? c | return false
-  unless inside c && userFacing c do return false
+  unless inside c && userFacing c && !generated env c do return false
   if (← isInstance c) || (← isProjectionFn c) then return false
   return !(← isProp d.type)
 
