@@ -3,6 +3,7 @@
     rememberedWorkspace, rememberWorkspace, humanId } from "../lib/workspace.js";
   import { href } from "../lib/route.svelte.js";
   import { compositionView, findingCoverageView, recordedBasisText, readingWords } from "../lib/coverage.js";
+  import { workspace, pinsIn, setPins, openInspection, tokenOf } from "../lib/inspect.svelte.js";
   import Composition from "./Composition.svelte";
 
   // The auditor's saved investigation of this claim, under `machinechecked view`: its open
@@ -10,8 +11,10 @@
   // continued with `machinechecked workspace` in a terminal. A claim page shows the Lean, so a
   // workspace opened here is an informed investigation; an independent review uses the review page.
   // `selection` is the expression selected in the claim's Lean ({spec, id}), which an alignment
-  // can name.
-  let { index, claim, selection = null } = $props();
+  // can name. The open workspace is shared with the comparison above, whose rows can follow its
+  // alignments and where its saved evidence opens; the comparison's pins (`scope`, the claim's
+  // view) are kept in the workspace's resume state, and come back when it is resumed here.
+  let { index, claim, selection = null, scope = null } = $props();
 
   // The readings a finding can record: the links file's coverage and, for full coverage, how it
   // is supported (a checked bridge is recorded with `machinechecked workspace update`), each in the
@@ -90,11 +93,41 @@
       mine = (await listWorkspaces()).workspaces.filter((w) => w.mode === "informed");
       if (wsId && !mine.some((w) => w.id === wsId)) { wsId = null; rememberWorkspace(null); }
       view = wsId ? await showWorkspace(wsId) : null;
+      workspace.id = view ? wsId : null;
+      workspace.view = view;
+      restorePins();
     } catch (e) {
       if (e.status === 404) available = false;   // a server without workspaces
       else error = String(e.message || e);
     }
   }
+  $effect(() => () => { workspace.id = null; workspace.view = null; });
+
+  // Pins, in the workspace's resume state: each with the release and project it was made in, so
+  // that a resumed pin is shown only on the same build of the same project (and, through its
+  // identity, on the same object).
+  const savedPins = (r) => (r?.claim === claim.id && Array.isArray(r.pinned) ? r.pinned : [])
+    .filter((p) => p && typeof p === "object" && p.token && p.release === scope?.release && (p.repo ?? null) === scope?.repo);
+  const pinsHere = $derived(scope ? pinsIn(scope).map((p) => ({ token: p.token, at: p.at, ident: p.ident, label: p.label,
+    release: scope.release, repo: scope.repo })) : []);
+  let restored = null;
+  function restorePins() {
+    if (!view || !scope || restored === view.id + claim.id) return;
+    restored = view.id + claim.id;
+    const saved = savedPins(view.resume);
+    if (saved.length && !pinsIn(scope).length) setPins(scope, saved.map(({ release, repo, ...p }) => p));
+  }
+  // The resume state with this claim's pins: every resume edit sends them, since it replaces the
+  // state as a whole.
+  const resumeOp = (extra = {}) => ({ op: "resume", state: { claim: claim.id, ...extra, ...(pinsHere.length ? { pinned: pinsHere } : {}) } });
+  $effect(() => {
+    const now = JSON.stringify(pinsHere);
+    if (!view || busy || restored !== view.id + claim.id) return;
+    const had = JSON.stringify(savedPins(view.resume));
+    if (now === had || (!pinsHere.length && view.resume?.claim !== claim.id)) return;
+    const q = view.resume?.claim === claim.id && view.resume.question ? { question: view.resume.question } : {};
+    run([resumeOp(q)]);
+  });
 
   $effect(() => { claim.id; refresh(); });
   // A fact cited from a proof's facts is saved by that panel; show it here too.
@@ -151,7 +184,7 @@
   async function addQuestion() {
     const id = newId("q");
     if (await run([{ op: "put", record: { id, kind: "question", claim: claim.id, text: question } },
-      { op: "resume", state: { claim: claim.id, question: id } }])) question = "";
+      resumeOp({ question: id })])) question = "";
   }
 
   // A put replaces the record's content, so the question's other fields go with it.
@@ -160,7 +193,7 @@
     ...(q.clause ? { clause: q.clause } : {}), ...(q.note ? { note: q.note } : {}),
     ...(q.answer ? { answer: q.answer } : {}), ...(q.evidence ? { evidence: q.evidence } : {}) } }]);
   const submit = (f) => run([{ op: "submit", id: f.id, base_rev: f.rev }]);
-  const resumeHere = () => run([{ op: "resume", state: { claim: claim.id } }]);
+  const resumeHere = () => run([resumeOp()]);
 
   async function addRequirement() {
     const binds = binding ? rqBinds.split(",").map((b) => b.trim()).filter(Boolean) : [];
@@ -389,7 +422,7 @@
       {/if}
 
       {#if here.evidence.length}
-        <p class="small faint">Evidence: {#each here.evidence as e, i (e.id)}{i ? ", " : ""}<code>{refText(e.ref)}</code> ({e.role}{e.ref?.fact ? ", " + e.ref.fact.basis : ""}{e.currency?.state === "stale" ? ", changed since" : e.currency?.state === "unchecked" ? ", not known to be current" : ""}){/each}</p>
+        <p class="small faint evidence">Evidence: {#each here.evidence as e, i (e.id)}{i ? ", " : ""}<button class="link ev" data-evidence={e.id} title="Inspect it beside the claim" onclick={() => openInspection(tokenOf({ kind: "evidence", ws: wsId, id: e.id }), "top")}><code>{refText(e.ref)}</code></button> ({e.role}{e.ref?.fact ? ", " + e.ref.fact.basis : ""}{e.currency?.state === "stale" ? ", changed since" : e.currency?.state === "unchecked" ? ", not known to be current" : ""}){/each}</p>
         {#each here.evidence.filter((e) => e.currency?.state === "unchecked" && e.currency.reason) as e (e.id)}
           <p class="small faint" data-unknown={e.id}><code>{refText(e.ref)}</code> is not known to be current: {e.currency.reason}.</p>
         {/each}

@@ -3,6 +3,7 @@ tests/fixtures/structure: the whole proposition as one tree, from which the bind
 and its conclusion are read; each occurrence of a statement's variable names the binder that
 introduced it. Display only: the binders, their roles and the fingerprints are what they were."""
 
+import importlib.util
 import shutil
 import subprocess
 
@@ -10,7 +11,7 @@ import pytest
 
 from conftest import ROOT, needs_lean, needs_tex
 from prooflens import manifest as mf
-from prooflens import objects, symbols
+from prooflens import objects, simple, symbols
 from prooflens.simple import build_view
 
 SRC = ROOT / "tests" / "fixtures" / "structure"
@@ -517,13 +518,26 @@ def test_properties_carried_by_types(tmp_path, toolchain):
 @needs_lean
 @needs_tex
 @pytest.mark.parametrize("toolchain", [None, "leanprover/lean4:v4.24.0"])
-def test_definitions_expand_at_their_arguments(tmp_path, toolchain):
+def test_definitions_expand_at_their_arguments(tmp_path, toolchain, monkeypatch):
     """An application of a project definition inside a statement carries the definition at its
     actual arguments (#97), substituted and type-checked by Lean: the body at those arguments,
     with parameters not yet supplied kept and the definition's bound variables renamed apart, or
     the equations that apply, specialised, with their case conditions and theorem names. Two
-    applications with different arguments are different expansions."""
+    applications with different arguments are different expansions. What Lean generates is
+    neither expanded nor suggested."""
     root = build_copy(tmp_path, toolchain)
+    # Every candidate the suggestions for the definition of a digit's value weigh, not only the
+    # three shown, and the index they are drawn from.
+    considered = {}
+    suggest = simple.suggest
+
+    def every(claim, index, limit=3, ctx=None):
+        if claim["id"] == "P:def:digit":
+            considered["index"] = [d["name"] for d in index]
+            considered["offered"] = [s["name"] for s in suggest(claim, index, len(index), ctx)]
+        return suggest(claim, index, limit, ctx)
+
+    monkeypatch.setattr(simple, "suggest", every)
     view = build_view(root, root / "paper/main.tex", root / ".machinechecked", log=lambda m: None)
     rec = {l["name"]: l["record"] for c in view["body"]["claims"] for l in c["links"]}
 
@@ -589,6 +603,19 @@ def test_definitions_expand_at_their_arguments(tmp_path, toolchain):
     assert hyp["type"]["text"] == "t.ctorIdx = 69" and "expansions" not in hyp["type"]
     assert [x["name"] for x in expansions(idx["conclusion"]).values()] == ["Shape.Digit.val"]
 
+    # Nor is one suggested (#411). Under `Digit` the index holds the project's `Digit.val`, the
+    # definition's link, and what Lean generates: the recursors, the constructor index, each
+    # constructor's eliminator (`Digit.d69.elim`) and size lemma. None of those is offered for
+    # the definition, among all its candidates, and the content index that serves suggestions
+    # and the reader's search holds none of them.
+    digit = next(c for c in view["body"]["claims"] if c["id"] == "P:def:digit")
+    assert [l["name"] for l in digit["links"]] == ["Shape.Digit.val"]
+    made = {n for n in considered["index"] if n.startswith("Shape.Digit.")} - {"Shape.Digit.val"}
+    assert {"Shape.Digit.casesOn", "Shape.Digit.ctorIdx", "Shape.Digit.d69.elim"} <= made, made
+    assert considered["offered"] and not made & set(considered["offered"]), considered["offered"]
+    assert not made & {s["name"] for s in digit["suggestions"]}
+    assert not made & {d["name"] for d in view["retrieval"].docs}
+
     # A private definition is the project's own (#426). Lean stores it under a name of its own
     # (`_private.<module>.0.<name>`) and prints it with a mark (`✝`) outside its module. It is
     # expanded where a statement applies it, by its body or by its equations; its record says
@@ -610,3 +637,29 @@ def test_definitions_expand_at_their_arguments(tmp_path, toolchain):
     assert decls[hidden + "margin"]["defined_by"] == "body"
     assert decls[hidden + "half"]["defined_by"] == "equations"
     assert "defined_by" not in decls[hidden + "half.match_1"]
+
+
+def make_structure():
+    """`web/tests/fixtures/make_structure.py`, which makes the reader's copy of this fixture's
+    data."""
+    spec = importlib.util.spec_from_file_location(
+        "make_structure", ROOT / "web" / "tests" / "fixtures" / "make_structure.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+@needs_lean
+@needs_tex
+def test_the_readers_copy_of_the_data_is_current(tmp_path):
+    """The reader's browser tests read this fixture's site data from a committed copy
+    (`web/tests/fixtures/structure/data`). It is the data `make_structure.py` makes from the
+    fixture now, apart from the time of the build (#427): a change to the fixture, or to what the
+    engine writes for it, fails here until the copy is made again."""
+    make = make_structure()
+    work = make.copy_fixture(tmp_path / "structure")
+    subprocess.run(["lake", "build"], cwd=work, check=True, capture_output=True, timeout=900)
+    made = tmp_path / "data"
+    make.write_data(work, made)
+    assert make.differences(made, make.OUT) == [], \
+        "run `python3 web/tests/fixtures/make_structure.py` and commit web/tests/fixtures/structure"

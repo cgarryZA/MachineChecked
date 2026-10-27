@@ -6,6 +6,7 @@ checks the cited application and fact against the Lean project its release was b
 (#272). No status changes on the way."""
 
 import json
+import subprocess
 
 from conftest import build, edit, needs_lean, needs_tex
 
@@ -134,3 +135,48 @@ def test_lean_checked_records_in_a_full_assessment(toy, tmp_path, monkeypatch, c
     fact = published(tmp_path / "rebuilt")["e-fact"]
     assert fact["state"] == "stale"
     assert fact["changes"][0]["reason"].startswith("the proof changed")
+
+
+@needs_lean
+def test_a_declaration_no_clause_uses_is_refused_with_what_to_do(toy, tmp_path, monkeypatch,
+                                                                 capsys):
+    """The toy's audit library `ToyAudit` is built, and the configuration does not list it: its
+    theorems are declarations of the project that no clause uses, so the full assessment
+    records none of them. Citing one is refused with that reason and what would let a build
+    record it, not with the zero-configuration view's advice (#438)."""
+    subprocess.run(["lake", "build", "ToyAudit"], cwd=toy / "lean", check=True,
+                   capture_output=True, timeout=900)
+    build(toy, skip_tex=True)
+    monkeypatch.chdir(toy)
+    run_json(capsys, "workspace", "open", "--mode", "informed", "--as", WHO, "--json")
+
+    def update(*refs):
+        ops = tmp_path / "ops.json"
+        ops.write_text(json.dumps({"ops": [
+            put({"kind": "evidence", "claim": CLAIM, "role": "supports", "ref": r})
+            for r in refs]}), encoding="utf-8")
+        capsys.readouterr()
+        try:
+            cli.main(["workspace", "update", str(ops), "--as", WHO])
+        except SystemExit as e:
+            assert e.code == 1
+        return json.loads(capsys.readouterr().out)
+
+    name = "ToyAudit.bound_range_corrected_holds"
+    why = (f"this build records no version of {name}: a full assessment records the "
+           "declarations its inventory's clauses name and those their statements use, and "
+           f"{name} is not among them; its module ToyAudit is not listed in `modules` of the "
+           "configuration either. To cite it, name it in a clause or a proof step of the "
+           "inventory, list ToyAudit in `modules`, and build again")
+    for ref in ({"decl": name}, {"decl": name, "module": "ToyAudit"}):
+        assert update(ref) == {"ok": False, "error": why}
+    assert update({"decl": "Toy.Acceptance.thm_bund"}) == {"ok": False, "error": (
+        "this build records no version of Toy.Acceptance.thm_bund, and no module of the project "
+        "declares it as far as its source shows (pass --external for one from a dependency)")}
+    # What a clause names is recorded, and cited as the build has it.
+    ack = update({"decl": "Toy.Acceptance.thm_bound"})
+    assert ack["ok"] and len(ack["changed"]) == 1
+    shown = run_json(capsys, "workspace", "show", "--as", WHO, "--json")
+    ev, = shown["claims"][CLAIM]["evidence"]
+    assert (ev["ref"]["module"], ev["ref"]["build"], ev["currency"]["state"]) == \
+        ("Toy.Acceptance", "built", "current")
