@@ -2,10 +2,13 @@
 
 Every user-facing declaration of the project's built modules is indexed from its complete
 statement, its docstring, its name and the definitions its statement uses, whether or not it is
-linked to a claim. A query is a claim's printed statement, a Lean expression or a few words; a
-result says which terms it shares with the query and where they occur, which candidate it was
-reached from when it uses one (a wrapper of a helper, say), and whether the order of its
-quantifiers differs from the paper's.
+linked to a claim. A query is a claim's printed statement, a Lean expression, a few words or a
+declaration of the index (`search_like`: declarations like it); a result says which terms it
+shares with the query and where they occur (and, for a theorem with hypotheses, which of them
+are in its conclusion), which candidate it was reached from when it uses one (a wrapper of a
+helper, say), and whether the order of its quantifiers differs from the paper's. A result of a
+search from a theorem also says how its hypotheses and conclusion compare with that theorem's,
+as printed (`structure_reasons`).
 
 The scoring is deterministic and inexpensive: no model, no Lean session. The terms of a text
 are its words (split at underscores and capitals, lower case, with plurals and `-ed`/`-ing`
@@ -49,6 +52,7 @@ TEX_MACROS = {
     "cap": "∩", "circ": "∘", "iff": "↔", "Leftrightarrow": "↔", "leftrightarrow": "↔",
     "neg": "¬", "lnot": "¬", "partial": "∂", "nabla": "∇", "times": "×",
     "forall": "∀", "exists": "∃", "lVert": "‖", "rVert": "‖", "Vert": "‖", "mid": "∣",
+    "lvert": "|", "rvert": "|", "vert": "|",
     "lfloor": "⌊", "rfloor": "⌋", "lceil": "⌈", "rceil": "⌉",
     "varepsilon": "ε", "epsilon": "ε", "delta": "δ", "lambda": "λ", "mu": "μ", "nu": "ν",
     "sigma": "σ", "pi": "π", "alpha": "α", "beta": "β", "gamma": "γ", "theta": "θ",
@@ -63,7 +67,7 @@ TEX_MACROS = {
 BLACKBOARD = {"N": "ℕ", "R": "ℝ", "Z": "ℤ", "Q": "ℚ", "C": "ℂ"}
 # The symbols that are terms; others (=, +, →, brackets, ∀, ∃) occur in nearly everything.
 # `a ≥ b` is the same term as `b ≤ a`, the way Lean states it.
-SYMBOLS = set("≤<≠∑∏∫√∞∈∉⊆⊂∪∩∘↔¬∂∇×‖^∣⌊⌋⌈⌉ℕℝℤℚℂ"
+SYMBOLS = set("≤<≠∑∏∫√∞∈∉⊆⊂∪∩∘↔¬∂∇×‖|^∣⌊⌋⌈⌉ℕℝℤℚℂ"
               "αβγδεζηθικλμνξπρστυφχψωΓΔΘΛΞΠΣΦΨΩ")
 SYMBOL_ALIASES = {"≥": "≤", ">": "<", "⩽": "≤", "⩾": "≤", "≦": "≤", "≧": "≤", "ϵ": "ε", "ϑ": "θ", "ϕ": "φ",
                   "ϱ": "ρ", "∥": "‖", "⁻": "^"}
@@ -74,7 +78,7 @@ WORD_TERMS = {
     "integer": ["§ℤ"], "integers": ["§ℤ"], "rat": ["§ℚ"], "rational": ["§ℚ"],
     "complex": ["§ℂ"], "sq": ["square"], "pow": ["power"], "le": ["§≤"], "lt": ["§<"],
     "ge": ["§≤"], "gt": ["§<"], "ne": ["§≠"], "pos": ["positive"], "neg": ["negative"],
-    "nonneg": ["nonnegative"], "abs": ["absolute"], "deriv": ["derivative"],
+    "nonneg": ["nonnegative"], "abs": ["§|"], "absolute": ["§|"], "deriv": ["derivative"],
     "inv": ["inverse"], "sqrt": ["§√"], "norm": ["§‖"], "prod": ["product"],
     "card": ["cardinality"], "dist": ["distance"], "lim": ["limit"], "tendsto": ["limit"],
     "exp": ["exponential"], "log": ["logarithm"], "sup": ["supremum"], "inf": ["infimum"],
@@ -111,8 +115,9 @@ _TEX_DROP = re.compile(r"\\(?:label|ref|eqref|cref|Cref|autoref|cite|citep|citet
 _TEX_BB = re.compile(r"\\(?:mathbb|mathbf|bm)\s*\{?\s*([A-Za-z])\s*\}?")
 _TEX_CMD = re.compile(r"\\([A-Za-z]+)")
 _TEX_SPACE = re.compile(r"\\[,;:! ]")
+# `=>` (of `fun x => …`) is one token, and not a term.
 _TOKEN = re.compile(r"[A-Za-z_][A-Za-z0-9_'!?]*(?:\.[A-Za-z_][A-Za-z0-9_'!?]*)*|[0-9]+|"
-                    r"<->|<=|>=|!=|\\\||\S")
+                    r"<->|<=|>=|!=|=>|\\\||\S")
 _CAMEL = re.compile(r"([a-z0-9])([A-Z])|([A-Z]+)([A-Z][a-z])")
 
 
@@ -252,18 +257,201 @@ def lean_quantifiers(ty: str) -> str:
     return _collapse(seq)
 
 
-def quantifier_difference(paper: str, lean: str) -> str | None:
+def quantifier_difference(paper: str, lean: str, first: str = "the paper",
+                          second: str = "the Lean statement") -> str | None:
     """A plain sentence when the paper and a statement end with `∀` and `∃` in opposite orders
     (`∃ C, ∀ n` against `∀ n, ∃ C`). Only the last alternation is compared: a paper often
-    leaves the outer `for all` of its inputs unsaid."""
+    leaves the outer `for all` of its inputs unsaid. `first` and `second` name the two."""
     if len(paper) < 2 or len(lean) < 2:
         return None
     paper, lean = paper[-2:], lean[-2:]
     if paper == lean:
         return None
     words = lambda q: " then ".join("for all" if c == "∀" else "there is" for c in q)
-    return (f"the quantifiers come in a different order (the paper: {words(paper)}; the Lean "
-            f"statement: {words(lean)}), so what each choice may depend on differs")
+    return (f"the quantifiers come in a different order ({first}: {words(paper)}; {second}: "
+            f"{words(lean)}), so what each choice may depend on differs")
+
+
+# -- the shape of a statement ----------------------------------------------------------------------
+
+_BINDER_REL = re.compile(r" (?:∈|∉|⊆|⊂|⊇|⊃|≤|<|≥|>|≠) ")
+_SPACE = re.compile(r"[ \t\n\r\f\v]+")
+
+
+def _close(s: str, i: int) -> int:
+    """The index of the bracket closing the one at `i`, or -1."""
+    depth = 0
+    for k in range(i, len(s)):
+        if s[k] in _OPEN:
+            depth += 1
+        elif s[k] in _CLOSE:
+            depth -= 1
+            if depth == 0:
+                return k
+    return -1
+
+
+def _binder_group(text: str, binders: list, premises: list) -> None:
+    """The binders of `∀ GROUP,`: bracketed ones (`(a b : T)`, `{x : T}`), instance binders
+    (`[C]`, a hypothesis), bare names, or a binder predicate (`ε > 0`: a binder and a
+    hypothesis)."""
+    t = text.strip(" ")
+    if t and t[0] not in "({⦃[" and _BINDER_REL.search(f" {t} "):
+        binders.append((t.split(" ")[0], ""))
+        premises.append(t)
+        return
+    i = 0
+    while i < len(t):
+        if t[i] == " ":
+            i += 1
+            continue
+        if t[i] in "({⦃[":
+            j = _close(t, i)
+            if j < 0:
+                return
+            inner = t[i + 1:j].strip(" ")
+            k = _top_level(inner, " : ")
+            if t[i] == "[":
+                premises.append(inner[k + 3:].strip(" ") if k >= 0 else inner)
+            elif k >= 0:
+                for n in inner[:k].split(" "):
+                    if n:
+                        binders.append((n, inner[k + 3:].strip(" ")))
+            i = j + 1
+            continue
+        j = t.find(" ", i)
+        j = len(t) if j < 0 else j
+        binders.append((t[i:j], ""))
+        i = j
+
+
+def lean_shape(ty: str) -> dict:
+    """The parts of a Lean statement's printed text: the variables it binds before its
+    conclusion (each name with its type's text), its hypotheses, and its conclusion (from the
+    first `∃`, or the first part that is neither a binder nor a hypothesis). Whitespace is
+    collapsed; the texts are as Lean printed them."""
+    s = " ".join(x for x in _SPACE.split(ty or "") if x)
+    binders: list = []
+    premises: list = []
+    # Each step removes a binder group or a hypothesis from the front, so the loop ends.
+    while True:
+        s = s.strip(" ")
+        if s[:1] == "∀":
+            j = _top_level(s, ",")
+            if j < 0:
+                break
+            _binder_group(s[1:j], binders, premises)
+            s = s[j + 1:]
+            continue
+        if s[:1] == "∃":
+            break
+        j = _top_level(s, "→")
+        if j < 0:
+            break
+        head = s[:j].strip(" ")
+        if head and head[0] in "({⦃[" and _close(head, 0) == len(head) - 1 and \
+                (head[0] == "[" or _top_level(head[1:-1], " : ") >= 0):
+            _binder_group(head, binders, premises)
+        else:
+            premises.append(head)
+        s = s[j + 1:]
+    return {"binders": binders, "premises": premises, "conclusion": s.strip(" ")}
+
+
+_IDENT_AFTER = r"(?![\w'✝])"
+_IDENT_BEFORE = r"(?<![\w.'✝])"
+
+
+def normal_parts(shape: dict, typed: bool = True) -> tuple[list[str], str]:
+    """A shape's hypotheses and conclusion with each bound variable replaced by its place: its
+    place among the variables of its type when `typed` (so that statements binding the same
+    variables in another order compare alike), else its place among all the variables (so that
+    statements over different types compare alike). Two statements naming their variables
+    differently then compare alike."""
+    seen: dict[str, int] = {}
+    place: dict[str, str] = {}
+    for name, ty in shape["binders"]:
+        if name in place or name == "_":
+            continue
+        key = ty if typed else ""
+        seen[key] = seen.get(key, 0) + 1
+        place[name] = f"⟦{key}#{seen[key]}⟧"
+    if not place:
+        return list(shape["premises"]), shape["conclusion"]
+    alt = "|".join(re.escape(n) for n in sorted(place, key=lambda n: (-len(n), n)))
+    pat = re.compile(_IDENT_BEFORE + "(" + alt + ")" + _IDENT_AFTER)
+    sub = lambda t: pat.sub(lambda m: place[m.group(1)], t)
+    return [sub(p) for p in shape["premises"]], sub(shape["conclusion"])
+
+
+def compare_parts(ref: tuple, cand: tuple) -> tuple[bool, list[int], list[int]]:
+    """Whether two statements' normalised parts (`normal_parts`: one pair typed, one not) have
+    the same conclusion, and the places of the reference's hypotheses the candidate lacks and
+    of the candidate's the reference lacks, by whichever normalisation agrees more (the typed
+    one on a tie)."""
+    best = None
+    for (rp, rc), (cp, cc) in zip(ref, cand):
+        same = rc == cc and bool(cc)
+        missing = [k for k, p in enumerate(rp) if p not in cp]
+        extra = [k for k, p in enumerate(cp) if p not in rp]
+        agree = (same, len(rp) - len(missing))
+        if best is None or agree > best[0]:
+            best = (agree, same, missing, extra)
+    return best[1], best[2], best[3]
+
+
+def _listed(items: list[str], most: int = 3) -> str:
+    if not items:
+        return ""
+    shown = items[:most]
+    text = shown[0] if len(shown) == 1 else ", ".join(shown[:-1]) + " and " + shown[-1]
+    return text + (f" (and {len(items) - most} more)" if len(items) > most else "")
+
+
+def structure_reasons(ref: str, ref_shape: dict, shape: dict, ref_parts: tuple,
+                      parts: tuple) -> list[dict]:
+    """How a statement's parts compare with those of the declaration searched from (`ref`), as
+    printed, up to the names of their variables (`compare_parts`): the same conclusion or a
+    different one, the hypotheses only one of them has, and the types of variables only one of
+    them binds. Nothing is said when the two share neither their conclusion nor a hypothesis.
+    Whether one statement implies the other is left to review."""
+    same, lack, more = compare_parts(ref_parts, parts)
+    if not same and len(lack) == len(ref_shape["premises"]):
+        return []
+    missing = [ref_shape["premises"][k] for k in lack]
+    extra = [shape["premises"][k] for k in more]
+    rt = [t for _, t in ref_shape["binders"] if t]
+    ct = [t for _, t in shape["binders"] if t]
+    only_here = [t for k, t in enumerate(ct) if ct[:k + 1].count(t) > rt.count(t)]
+    only_ref = [t for k, t in enumerate(rt) if rt[:k + 1].count(t) > ct.count(t)]
+    if same and not missing and not extra and not only_here and not only_ref:
+        return [{"signal": "structure", "aspect": "same",
+                 "text": f"the same hypotheses and conclusion as {ref}, as printed"}]
+    out = [{"signal": "structure", "aspect": "conclusion",
+            "text": f"the same conclusion as {ref}" if same
+            else f"a different conclusion from {ref}'s"}]
+    if missing:
+        out.append({"signal": "structure", "aspect": "fewer hypotheses", "hypotheses": missing,
+                    "text": f"it does not assume {_listed(missing)}, which {ref} assumes"})
+    if extra:
+        out.append({"signal": "structure", "aspect": "more hypotheses", "hypotheses": extra,
+                    "text": f"it also assumes {_listed(extra)}, which {ref} does not"})
+    if not missing and not extra and shape["premises"]:
+        out.append({"signal": "structure", "aspect": "hypotheses",
+                    "text": f"the same hypotheses as {ref}"})
+    if only_here or only_ref:
+        here, there = _listed(_distinct(only_here)), _listed(_distinct(only_ref))
+        text = (f"it binds variables of type {here} where {ref} binds {there}"
+                if only_here and only_ref else
+                f"it also binds variables of type {here}, which {ref} does not" if only_here
+                else f"it does not bind variables of type {there}, which {ref} binds")
+        out.append({"signal": "structure", "aspect": "variables", "here": only_here,
+                    "there": only_ref, "text": text})
+    return out
+
+
+def _distinct(items: list[str]) -> list[str]:
+    return list(dict.fromkeys(items))
 
 
 # -- the index -------------------------------------------------------------------------------------
@@ -277,6 +465,26 @@ def strip_references(text: str) -> str:
 
 def _short(name: str) -> str:
     return name.rsplit(".", 1)[-1]
+
+
+# What Lean generates for an inductive type `T` (its recursors, `noConfusion`, its constructors'
+# injectivity and size lemmas: `T.casesOn`, `T.mk.injEq`), and the parser a notation declares:
+# declarations nobody states, left out of the index.
+FOR_INDUCTIVE = {"rec", "recOn", "casesOn", "below", "brecOn", "binductionOn", "ibelow",
+                 "noConfusion", "noConfusionType", "ctorIdx", "ctorElim", "ctorElimType"}
+FOR_CONSTRUCTOR = {"inj", "injEq", "noConfusion", "sizeOf_spec", "elim"}
+PARSERS = {"ParserDescr", "TrailingParserDescr", "Lean.ParserDescr", "Lean.TrailingParserDescr"}
+
+
+def generated(d: dict, inductives: set[str]) -> bool:
+    """Whether index record `d` is a declaration Lean generates (`FOR_INDUCTIVE`,
+    `FOR_CONSTRUCTOR`) for one of `inductives`, or a notation's parser."""
+    head, _, last = d["name"].rpartition(".")
+    if last in FOR_INDUCTIVE and head in inductives:
+        return True
+    if last in FOR_CONSTRUCTOR and head.rpartition(".")[0] in inductives:
+        return True
+    return d.get("kind") == "def" and (d.get("type") or "").strip() in PARSERS
 
 
 def _doc_terms(d: dict, by_name: dict) -> dict[str, list]:
@@ -328,17 +536,23 @@ class Retrieval:
             for u in sorted(set(d.get("uses") or [])):
                 self.used_by.setdefault(u, []).append((d["name"], "statement"))
         self._sig: dict[int, str] = {}
+        self._shapes: dict[int, dict] = {}
+        self._parts: dict[int, tuple] = {}
+        self._conclusions: list[dict[str, list[int]]] | None = None
 
     @classmethod
     def build(cls, index: list[dict]) -> "Retrieval":
-        """The index of probe `index` records (complete statements)."""
+        """The index of probe `index` records (complete statements), less the declarations
+        Lean generates (`generated`)."""
         by_name = {d["name"]: d for d in index}
+        inductives = {d["name"] for d in index if d.get("kind") == "inductive"}
         return cls([{"name": d["name"], "kind": d.get("kind"), "module": d.get("module"),
                      "line": (d.get("range") or {}).get("line"),
                      "type": d.get("type") or "", "doc": d.get("doc"),
                      "uses": list(d.get("uses") or []),
                      "value_uses": list(d.get("value_uses") or []),
-                     "t": _doc_terms(d, by_name)} for d in index])
+                     "t": _doc_terms(d, by_name)} for d in index
+                    if not generated(d, inductives)])
 
     def export(self) -> dict:
         """The index as the reader's search and `compare` read it."""
@@ -410,9 +624,61 @@ class Retrieval:
             self._sig[i] = lean_quantifiers(self.docs[i].get("type") or "")
         return self._sig[i]
 
+    def shape(self, i: int) -> dict:
+        if i not in self._shapes:
+            self._shapes[i] = lean_shape(self.docs[i].get("type") or "")
+        return self._shapes[i]
+
+    def parts(self, i: int) -> tuple:
+        """Doc `i`'s hypotheses and conclusion, normalised with and without its variables'
+        types (`normal_parts`)."""
+        if i not in self._parts:
+            sh = self.shape(i)
+            self._parts[i] = (normal_parts(sh, True), normal_parts(sh, False))
+        return self._parts[i]
+
+    def same_conclusion(self, i: int) -> list[int]:
+        """The theorems whose conclusion is doc `i`'s, as printed, up to the names of their
+        variables, in index order. The map of conclusions is made on first use."""
+        if self._conclusions is None:
+            self._conclusions = [{}, {}]
+            for j, d in enumerate(self.docs):
+                if d.get("kind") == "theorem":
+                    for m, (_, c) in zip(self._conclusions, self.parts(j)):
+                        if c:
+                            m.setdefault(c, []).append(j)
+        found = set()
+        for m, (_, c) in zip(self._conclusions, self.parts(i)):
+            found.update(m.get(c, ()) if c else ())
+        return sorted(found)
+
+    def like_terms(self, name: str) -> list[str]:
+        """What a search for declarations like `name` reads: the terms of its complete
+        statement and its docstring, each once, in the index's order."""
+        i = self.by_name.get(name)
+        if i is None:
+            raise KeyError(name)
+        return [t for t, e in self.docs[i]["t"].items() if "s" in e[1] or "d" in e[1]]
+
+    def search_like(self, name: str, limit: int | None = 20, after: str | None = None,
+                    exclude=()) -> dict:
+        """The declarations of `name`'s sort (theorems for a theorem, definitions otherwise)
+        whose statements best match its own, best first. From a theorem, a theorem with the
+        same conclusion (`same_conclusion`) scores half way from its content score to 1, and
+        each result says how its hypotheses and conclusion compare (`structure_reasons`); the
+        declarations whose proofs or statements use it join the results with that
+        relationship."""
+        i = self.by_name.get(name)
+        if i is None:
+            raise KeyError(name)
+        theorem = self.docs[i].get("kind") == "theorem"
+        return self.search(self.like_terms(name),
+                           kinds=(lambda k: k == "theorem") if theorem else (lambda k: k != "theorem"),
+                           limit=limit, after=after, exclude=[name, *exclude], like=name)
+
     def search(self, query: str | list[str], kinds=None, limit: int | None = 20,
                after: str | None = None, exclude=(), paper_order: str | None = None,
-               min_score: float = 0.0) -> dict:
+               min_score: float = 0.0, like: str | None = None) -> dict:
         """The declarations best matching `query`, best first, each with its reasons.
 
         `kinds`, a predicate on a declaration's kind, restricts the results; `exclude` names
@@ -420,7 +686,9 @@ class Retrieval:
         a theorem whose statement mentions one) join the results with that relationship, at
         `EXPAND_FACTOR` of the candidate's score when that is more than their own. Ties are
         broken by name. `paper_order` is the paper's quantifier order (`paper_quantifiers`):
-        a result whose order differs says so; its score is unchanged."""
+        a result whose order differs says so; its score is unchanged. `like` names the
+        declaration a search reads its query from (`search_like`), which each result is
+        compared with."""
         qc = self.query_counts(query)
         w, total = self._weights(qc)
         ok = (lambda i: kinds(self.docs[i].get("kind"))) if kinds else (lambda i: True)
@@ -432,11 +700,19 @@ class Retrieval:
                 e = self.docs[i]["t"][t][0]
                 acc[i] = acc.get(i, 0.0) + wt * e / (e + MATCH_K)
         hits: dict[int, dict] = {}
+        raw: dict[int, float] = {}
         if total > 0:
             for i, got in acc.items():
-                c = round(got / total, DIGITS)
+                raw[i] = got / total
+                c = round(raw[i], DIGITS)
                 if c > 0:
                     hits[i] = {"score": c, "content": c, "via": None}
+        ref = self.by_name.get(like) if like else None
+        if ref is not None and self.docs[ref].get("kind") == "theorem":
+            # Halfway to 1 from the unrounded content score, which is never a tie to round.
+            for i in self.same_conclusion(ref):
+                h = hits.setdefault(i, {"score": 0.0, "content": 0.0, "via": None})
+                h["score"] = round((1 + (raw.get(i, 0.0) if h["content"] else 0.0)) / 2, DIGITS)
         key = lambda i: (-hits[i]["score"], self.docs[i]["name"])
         top = sorted((i for i in hits if ok(i)), key=key)[:EXPAND_TOP]
         for i in top:
@@ -464,41 +740,70 @@ class Retrieval:
             begin = names.index(after) + 1
         part = order[begin:begin + limit] if limit else order[begin:]
         more = begin + len(part) < len(order)
-        return {"results": [self._result(i, hits[i], qc, paper_order) for i in part],
+        return {"results": [self._result(i, hits[i], qc, paper_order, like) for i in part],
                 "query": {"terms": [display_term(t) for t in qc]},
                 "page": {"total": len(order), "returned": len(part), "after": after,
                          "next": self.docs[part[-1]]["name"] if more and part else None,
                          "complete": not more and not begin}}
 
-    def _result(self, i: int, h: dict, qc: dict, paper_order: str | None) -> dict:
+    def _result(self, i: int, h: dict, qc: dict, paper_order: str | None,
+                like: str | None = None) -> dict:
         d = self.docs[i]
+        theorem = d.get("kind") == "theorem"
         reasons = []
         matched = self.score_doc(qc, i)[1] if h["content"] else []
         if matched:
-            reasons.append(content_reason(matched, h["content"]))
+            shape = self.shape(i) if theorem else None
+            conclusion = set(terms(shape["conclusion"])) if shape and shape["premises"] \
+                else None
+            reasons.append(content_reason(matched, h["content"], conclusion))
         if h["via"]:
             v = h["via"]
-            rel = {"value": "its proof uses" if d.get("kind") == "theorem" else "its body uses",
+            rel = {"value": "its proof uses" if theorem else "its body uses",
                    "statement": "its statement mentions"}[v["relation"]]
+            what = "the declaration searched from" if v["name"] == like else "a close match"
             reasons.append({"signal": "uses", "via": v["name"], "relation": v["relation"],
-                            "text": f"{rel} {v['name']}, a close match"})
+                            "text": f"{rel} {v['name']}, {what}"})
         if paper_order:
             diff = quantifier_difference(paper_order, self.signature(i))
             if diff:
                 reasons.append({"signal": "structure", "text": diff,
                                 "paper": paper_order, "lean": self.signature(i)})
+        j = self.by_name.get(like) if like else None
+        if j is not None and theorem and self.docs[j].get("kind") == "theorem":
+            diff = quantifier_difference(self.signature(j), self.signature(i), like,
+                                         "this statement")
+            if diff:
+                reasons.append({"signal": "structure", "aspect": "quantifiers", "text": diff,
+                                "searched": self.signature(j), "lean": self.signature(i)})
+            reasons += structure_reasons(like, self.shape(j), self.shape(i), self.parts(j),
+                                         self.parts(i))
         return {"name": d["name"], "kind": d.get("kind"), "module": d.get("module"),
                 "line": d.get("line"), "score": h["score"], "content": h["content"],
                 "reasons": reasons, "statement": d.get("type") or "", "complete": True,
                 "doc": d.get("doc")}
 
 
-def content_reason(matched: list, score: float) -> dict:
-    """The terms a declaration shares with the query (the five that weigh most), and where."""
+def content_reason(matched: list, score: float, conclusion: set | None = None) -> dict:
+    """The terms a declaration shares with the query (the five that weigh most), and where.
+    For a statement with hypotheses, `conclusion` (the terms of its conclusion) tells which of
+    those its statement has are in what it concludes rather than in what it assumes."""
     top = matched[:5]
     where = "".join(sorted({f for _, _, fs in top for f in fs}, key="sdnu".index))
     shared = ", ".join(display_term(t) for t, _, _ in top)
     places = [FIELD_WORDS[f] for f in where]
     place = places[0] if len(places) == 1 else ", ".join(places[:-1]) + " and " + places[-1]
-    return {"signal": "content", "score": score, "terms": [display_term(t) for t, _, _ in top],
-            "fields": list(where), "text": f"shares {shared} (in {place})"}
+    out = {"signal": "content", "score": score, "terms": [display_term(t) for t, _, _ in top],
+           "fields": list(where), "text": f"shares {shared} (in {place})"}
+    if conclusion is not None:
+        stated = [t for t, _, fs in top if "s" in fs]
+        inside = [t for t in stated if t in conclusion]
+        # A constant the index has by its full name may be printed shorter in the conclusion.
+        unsure = [t for t in stated if t.startswith("@") and t not in conclusion]
+        if inside:
+            out["conclusion"] = [display_term(t) for t in inside]
+            out["text"] += f"; its conclusion has {', '.join(out['conclusion'])}"
+        elif stated and not unsure:
+            out["conclusion"] = []
+            out["text"] += "; its conclusion has none of them"
+    return out

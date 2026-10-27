@@ -1222,6 +1222,8 @@ def _print_inspect(out: dict, dependencies: bool):
     line = (d.get("range") or {}).get("line")
     print(f"{d['name']}  ({d['kind']}, {d['file']}" + (f":{line}" if line else "") + ")")
     print(f"  statement: {d['statement']}")
+    if d.get("statement_note"):
+        print(f"  ({d['statement_note']})")
     print(f"  axioms: {', '.join(d['axioms']) or 'none'}" + ("  (uses sorry)" if d["sorry"] else ""))
     for label, key in (("statement uses", "statement_dependencies"),
                        (f"{out['value_kind']} uses", "proof_dependencies")):
@@ -1250,11 +1252,12 @@ def cmd_symbol(a):
     try:
         if a.action == "add":
             ln = sy.add(cfg, a.claim, a.tex, a.decl, a.reviewer, var=a.var, type_of=a.type_of,
-                        term=a.term, at=a.at)
-            print(f"linked {a.tex} in {a.claim} to {ln['lean']} (by {ln['by']}); "
-                  "rebuild the site to show it")
+                        term=a.term, at=a.at, occurrence=a.occurrence,
+                        paper_object=a.paper_object)
+            print(f"linked {sy.symbol_text(ln['symbol'])} in {a.claim} to {ln['lean']} "
+                  f"(by {ln['by']}); rebuild the site to show it")
         elif a.action == "remove":
-            print(f"removed {sy.remove(cfg, a.claim, a.tex)} link(s)")
+            print(f"removed {sy.remove(cfg, a.claim, a.tex, a.paper_object)} link(s)")
         else:
             print(sy.listing(cfg))
     except (sy.SymbolError, OSError) as e:
@@ -1764,7 +1767,13 @@ def main(argv=None):
         if name != "list":
             p_.add_argument("claim", help="the claim id, e.g. P:thm:main")
             p_.add_argument("tex", help="the symbol as the paper's TeX writes it, e.g. '\\nu'")
+            p_.add_argument("--object", dest="paper_object",
+                            help="the object of the paper the symbol's occurrences are (with "
+                                 "remove: only that object's link)")
         if name == "add":
+            p_.add_argument("--occurrence", type=int, action="append",
+                            help="link only this occurrence of the symbol, numbered from 1 in "
+                                 "reading order (repeat for several; needs --object)")
             p_.add_argument("decl", help="the claim's Lean statement")
             p_.add_argument("--var", help="the variable it is (a binder's name or index)")
             p_.add_argument("--type-of", dest="type_of", help="the binder whose type it is")
