@@ -1159,6 +1159,7 @@ class Assessor:
 
     @staticmethod
     def claim_status(claim: dict, clauses: list[dict]) -> str:
+        # The words of each status code are defined once, in status.py.
         return fields(Assessor.claim_code(claim, clauses))["status"]
 
     def blockers(self, claim: dict, clauses: list[dict]) -> list[str]:
