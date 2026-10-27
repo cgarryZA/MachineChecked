@@ -661,7 +661,7 @@ path. A workspace records evidence and readings and is never an input to a statu
 | `revision` | increases with each saved change |
 | `selection`, `sources` | the paper and project selected; the build it was made against (`release`, project `commit`/`repository`, each paper's `revision` and `pdf_sha256`) |
 | `records` | evidence, findings and questions, by record id (below) |
-| `resume` | where to continue: `claim`, `clause`, `question`, `pinned` references, `at`, `by`; kept apart from the evidence |
+| `resume` | where to continue: `claim`, `clause`, `question`, `pinned` references, `at`, `by`; kept apart from the evidence. The reader's pins are `{token, at, ident, label, release, repo}`: the inspection (a declaration's name, or `property:`, `fact:`, `application:`, `evidence:` with its identity), the comparison row it is beside, the identity of what it shows, and the release and project it was made on; the reader reopens a pin only on that release and project, for the same object |
 | `main_results` | the paper's main results as the auditor chose them (`workspace main`), which `compare --query impact` traces from: `selected` (each `{claim}`, standing for the claim's linked Lean, or `{decl, module, build}`, a project declaration), `by`, `at`, and `pins` (`release`, project `commit` and `repository` of the build they were checked against); absent until chosen |
 | `review` | the review protocol's `drafts` (locked reading, verdict, author-review step) and submitted `reports` (`prooflens/review-report@1`) |
 | `version_maps` | the version maps the auditor keeps (`changes --map --workspace ID --save`): each the map without `references`, with `kept_at` and `kept_by`; one per paper and pair of releases; absent until one is kept |
@@ -809,6 +809,14 @@ record), `submit` (a draft finding), `supersede` (a submitted finding, with `rea
 releases). An edit made from an older revision of a record is a conflict: nothing is applied,
 and the answer (and `conflicts`) holds both versions; edits of different records are both kept.
 Writes replace the file atomically under a lock file beside it.
+
+A declaration an update names (evidence, an alignment's target, a main result) is checked against
+the build. A full assessment's build keeps no Lean index: it records the declarations its
+inventory's clauses and proof steps name and those their statements use. It refuses any other
+declaration of a built module with what would let a build record it: name the declaration in a
+clause or a proof step of the inventory, list its module in `modules` when the configuration does
+not, and build again. A full assessment built without Lean records none, so it accepts only a
+declaration of a module not built or not loaded.
 
 `{"op": "main-results", "main": [...]}` replaces the main results: each entry a claim (its id,
 key or number) or a declaration (`NAME`, `MODULE:NAME` when several modules declare it, or

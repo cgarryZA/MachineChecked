@@ -1,13 +1,15 @@
 <script>
   import { proofFacts, rememberedWorkspace, updateWorkspace, newId } from "../lib/workspace.js";
+  import { facts, openInspection, tokenOf } from "../lib/inspect.svelte.js";
   import LeanText from "./LeanText.svelte";
 
   // The typed facts inside one declaration's proof, read from Lean on request under
   // `machinechecked view` (the same answer as `compare --query proof-facts`). Each fact is shown
   // with the assumptions it needs and the cases it lies in: it is established inside this proof
   // under that context, never an exported theorem. A fact can be cited as evidence in the open
-  // investigation; the citation keeps that basis.
-  let { name, claim, onref = null } = $props();
+  // investigation; the citation keeps that basis. A fact opens as an inspection beside the
+  // comparison row `at`.
+  let { name, claim, onref = null, at = "top" } = $props();
 
   let doc = $state(null);
   let error = $state(null);
@@ -17,7 +19,10 @@
 
   async function load() {
     busy = true; error = null;
-    try { doc = await proofFacts(name, match.trim()); }
+    try {
+      doc = await proofFacts(name, match.trim());
+      for (const f of doc.results || []) facts.set(name + "|" + f.id, f);
+    }
     catch (e) { error = String(e.message || e); }
     busy = false;
   }
@@ -60,6 +65,7 @@
         {#each f.cases || [] as c}<p class="small faint">{c}</p>{/each}
         {#each f.premises || [] as p}<p class="small"><span class="faint">needs</span> <code>{p.name} : {p.type.text}</code>, <span class="faint">supplied by</span> {locals[p.supplied_by]?.name ?? "a proof term"}</p>{/each}
         <p class="small faint basis">{f.basis}{f.used_by?.length ? " · used by " + f.used_by.join(", ") : ""}
+          · <button class="link" onclick={() => openInspection(tokenOf({ kind: "fact", decl: name, id: f.id }), at)}>Inspect</button>
           · {#if cited[f.id]}cited{:else}<button class="link" disabled={busy} onclick={() => cite(f)}>Cite in the investigation</button>{/if}</p>
       </div>
     {:else}
