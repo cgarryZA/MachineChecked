@@ -215,27 +215,169 @@ def constPrint (ci : ConstantInfo) : MetaM (String × String × Array Name) := d
 
 /-! ## Pretty-printing with navigation -/
 
+/-! ### The identities of printed sub-terms
+
+The delaborator tags each piece of the printed text with a position. Two kinds of tag need
+correcting before a position can name one sub-term (#457):
+
+* a binder's name (`x` in `∀ x, …`, `∃ (s : T), …`, `fun z => …`) is tagged at one of the extra
+  positions the delaborator keeps for what is not a sub-term, whose printed form looks like an
+  ordinary position (`/0`) and can be another sub-term's. The binder is found instead, from a
+  sub-term inside its scope, and the name gets the binder's identity followed by `.name`;
+* an application printed with notation (`x = y`, `a + b`, `∃ x, p`, `↑n`) is tagged with its
+  head's position (`Eq` at `…/0/0/0`), since the notation replaces the application's own tag.
+  It is tagged at the application instead: the outermost application on the way to its head
+  that has no tag of its own. -/
+
+/-- Whether a position is one of the delaborator's extra positions (`SubExpr.nextExtraPos`),
+which no sub-term has: its leading base-4 digit is 2 or 3, where every sub-term's is 1. -/
+def extraPos (p : SubExpr.Pos) : Bool := Id.run do
+  let mut n := p.asNat
+  while n ≥ 4 do n := n / 4
+  return n ≥ 2
+
+/-- Every tag of printed code, with its position and information, in printing order. -/
+partial def codeTags (t : Widget.CodeWithInfos) (acc : Array (SubExpr.Pos × Elab.Info) := #[]) :
+    Array (SubExpr.Pos × Elab.Info) :=
+  match t with
+  | .text _ => acc
+  | .append xs => xs.foldl (fun a x => codeTags x a) acc
+  | .tag info sub => codeTags sub (acc.push (info.subexprPos, info.info.val.info))
+
+/-- The positions of the binders (`∀`, `fun`, `let`) on the way from the root of `e` to its
+sub-term at `p`, outermost first, and for each step whether it went from an application to its
+function. -/
+def pathOf (e : Expr) (p : SubExpr.Pos) : Array SubExpr.Pos × Array Bool := Id.run do
+  let mut cur := e
+  let mut pos := SubExpr.Pos.root
+  let mut binders : Array SubExpr.Pos := #[]
+  let mut fns : Array Bool := #[]
+  for c in p.toArray do
+    cur := cur.consumeMData
+    let next : Option Expr := match cur, c with
+      | .app f _, 0 => some f
+      | .app _ a, 1 => some a
+      | .lam _ t _ _, 0 | .forallE _ t _ _, 0 | .letE _ t _ _ _, 0 => some t
+      | .lam _ _ b _, 1 | .forallE _ _ b _, 1 | .letE _ _ b _ _, 2 => some b
+      | .letE _ _ v _ _, 1 => some v
+      | .proj _ _ b, 0 => some b
+      | _, _ => none
+    let some n := next | break
+    match cur, c with
+    | .lam .., 1 | .forallE .., 1 | .letE .., 2 => binders := binders.push pos
+    | _, _ => pure ()
+    fns := fns.push (cur.isApp && c == 0)
+    cur := n
+    pos := pos.push c
+  return (binders, fns)
+
+/-- How the tags of one printed expression `e` are re-placed: the binder of each variable the
+delaborator introduced (`binderOf`, by its free variable, relative to `e`), and the positions
+that carry a tag (`tagged`). -/
+structure TagFix where
+  e : Expr
+  binderOf : Array (FVarId × SubExpr.Pos) := #[]
+  tagged : Std.HashSet Nat := {}
+
+/-- The tags of `code` (the printed `e`) re-placed as `TagFix` says. A variable's binder is read
+from a tag inside its scope: the variables the delaborator introduced there (those not in
+`base`, the context it printed in) are the binders on the way to that tag's position, in order. -/
+def tagFix (e : Expr) (code : Widget.CodeWithInfos) (base : LocalContext) : TagFix := Id.run do
+  let tags := codeTags code
+  let mut tagged : Std.HashSet Nat := {}
+  for (p, _) in tags do
+    unless extraPos p do tagged := tagged.insert p.asNat
+  let mut binderOf : Array (FVarId × SubExpr.Pos) := #[]
+  for (p, info) in tags do
+    let .ofTermInfo ti := info | continue
+    let .fvar x := ti.expr | continue
+    unless extraPos p && !base.contains x && !(binderOf.any (·.1 == x)) do continue
+    -- A tag inside the scope of `x`, at a position of a sub-term.
+    let inScope := tags.find? fun (q, i) => !extraPos q && match i with
+      | .ofTermInfo t => t.lctx.contains x
+      | _ => false
+    let some (q, .ofTermInfo t) := inScope | continue
+    let introduced := t.lctx.foldl (init := #[]) fun (acc : Array FVarId) d =>
+      if base.contains d.fvarId then acc else acc.push d.fvarId
+    let some k := introduced.findIdx? (· == x) | continue
+    let (binders, _) := pathOf e q
+    if h : k < binders.size then binderOf := binderOf.push (x, binders[k])
+  return { e, binderOf, tagged }
+
+/-- Whether printed code is more than the name of the constant `c` it is tagged with: notation
+for an application of `c` (it holds other tags, or other text). -/
+partial def notationOf (c : Name) (t : Widget.CodeWithInfos) : Bool :=
+  let rec text : Widget.CodeWithInfos → String
+    | .text s => s
+    | .append xs => xs.foldl (fun a x => a ++ text x) ""
+    | .tag _ sub => text sub
+  let rec tagged : Widget.CodeWithInfos → Bool
+    | .text _ => false
+    | .append xs => xs.any tagged
+    | .tag .. => true
+  -- The printed name, without surrounding spaces or a leading `@` (as `List Char`: `String.trim`
+  -- and `String.drop` differ between Lean versions).
+  let cs := ((text t).toList.dropWhile Char.isWhitespace).reverse.dropWhile Char.isWhitespace
+  let cs := match cs.reverse with | '@' :: r => r | r => r
+  let s := cs.foldl String.push ""
+  let full := c.toString
+  tagged t || !(s == full || full.endsWith ("." ++ s))
+
+/-- The position of the application whose notation is tagged at its head's position `p`: the
+outermost application on the way to the head, among those (and their partial applications)
+that have no tag of their own; none when there is none. -/
+def notationPos (fix : TagFix) (p : SubExpr.Pos) : Option SubExpr.Pos := Id.run do
+  let (_, fns) := pathOf fix.e p
+  let mut q := p
+  let mut best : Option SubExpr.Pos := none
+  let mut i := fns.size
+  while i > 0 && fns[i - 1]! do
+    q := q.tail
+    if !fix.tagged.contains q.asNat then best := some q
+    i := i - 1
+  return best
+
 /-- Flatten tagged code into segments; a segment carries the constant it names (`ref`) or, for an
 occurrence of a variable, the identity of that occurrence (`at`) and, when the variable is one of
 the statement's own (`vars`), its number (`var`), when the innermost subexpression around it is
 one. A variable thus has one number, shared by all its occurrences, and each occurrence an
-identity of its own. Each tagged subexpression is also recorded as the range of segments it
-covers (`terms`, in printing order, an outer one before those inside it), so that the reader can
-select a whole sub-term, with its position in the whole proposition (`root`, the position of the
-printed expression, extended by the tag's own `subexprPos`): the identity of a sub-term, which
-depends on the proposition only, not on how it is printed or split. An expression that is not
-part of the proposition (a defining equation) has a prefix (`pfx`, the equation theorem's name)
-before its positions. -/
-partial def segments (vars : Array FVarId) (root : SubExpr.Pos) (pfx : String)
-    (t : Widget.CodeWithInfos)
-    (ref : List (String × Json)) (acc : Array Json) (terms : Array (Nat × Nat × String)) :
+identity of its own; a binder's name has the identity of its binder followed by `.name`
+(`binder`, the binder's identity). Each tagged subexpression is also recorded as the range of
+segments it covers (`terms`, in printing order, an outer one before those inside it), so that
+the reader can select a whole sub-term, with its position in the whole proposition (`root`, the
+position of the printed expression, extended by the tag's own position, re-placed as `TagFix`
+says): the identity of a sub-term, which depends on the proposition only, not on how it is
+printed or split. An expression that is not part of the proposition (a defining equation) has a
+prefix (`pfx`, the equation theorem's name) before its positions. -/
+partial def segments (vars : Array FVarId) (root : SubExpr.Pos) (pfx : String) (fix : TagFix)
+    (t : Widget.CodeWithInfos) (ref : List (String × Json)) (acc : Array Json)
+    (terms : Array (Nat × Nat × String)) (parent : Option SubExpr.Pos := none) :
     Array Json × Array (Nat × Nat × String) :=
   match t with
   | Widget.TaggedText.text s => (acc.push (Json.mkObj (("t", Json.str s) :: ref)), terms)
   | Widget.TaggedText.append xs =>
-    xs.foldl (fun (a, ts) x => segments vars root pfx x ref a ts) (acc, terms)
+    xs.foldl (fun (a, ts) x => segments vars root pfx fix x ref a ts parent) (acc, terms)
   | Widget.TaggedText.tag info sub =>
-    let id := pfx ++ toString (root.append info.subexprPos)
+    let p := info.subexprPos
+    let ident := fun (q : SubExpr.Pos) => pfx ++ toString (root.append q)
+    if extraPos p then
+      -- Not a sub-term: a binder's name, or a field's name in a structure instance.
+      let r := match info.info.val.info with
+        | .ofTermInfo ti => match ti.expr with
+          | .fvar fv => match fix.binderOf.find? (·.1 == fv) with
+            | some (_, b) => [("at", Json.str (ident b ++ ".name")), ("binder", Json.str (ident b))]
+            | none => []
+          | _ => []
+        | _ => []
+      segments vars root pfx fix sub r acc terms parent
+    else
+    let q := match info.info.val.info with
+      | .ofTermInfo ti => match ti.expr with
+        | .const c _ =>
+          if parent != some p && notationOf c sub then (notationPos fix p).getD p else p
+        | _ => p
+      | _ => p
+    let id := ident q
     let r := match info.info.val.info with
       | .ofTermInfo ti => match ti.expr with
         | .const n _ => [("ref", Json.str n.toString)]
@@ -246,7 +388,7 @@ partial def segments (vars : Array FVarId) (root : SubExpr.Pos) (pfx : String)
       | _ => []
     let start := acc.size
     let slot := terms.size
-    let (acc', terms') := segments vars root pfx sub r acc (terms.push (start, start, id))
+    let (acc', terms') := segments vars root pfx fix sub r acc (terms.push (start, start, id)) (some p)
     (acc', terms'.set! slot (start, acc'.size, id))
 
 /-- The sub-terms worth selecting: those covering two segments or more, each range once (the
@@ -273,7 +415,7 @@ def ppFields (e : Expr) (vars : Array FVarId := #[]) (root : SubExpr.Pos := .roo
     let typed := fun (o : Options) => o.setBool `pp.funBinderTypes true
     let code ← withOptions (fun o => (typed o).setBool `pp.tagAppFns true) (Widget.ppExprTagged e)
     let text := toString (← withOptions typed (ppExpr e))
-    let (segs, terms) := segments vars root pfx code [] #[] #[]
+    let (segs, terms) := segments vars root pfx (tagFix e code (← getLCtx)) code [] #[] #[]
     return [("text", Json.str text), ("segments", Json.arr segs), ("terms", termsJson terms),
       ("id", Json.str (pfx ++ toString root))]
   catch _ =>
