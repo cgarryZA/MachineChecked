@@ -304,6 +304,134 @@ def test_module_docstrings_are_read_with_their_lines(tmp_path):
     assert lem["source"]["where"] == "module docstring"
 
 
+COMMENTED = """import X
+
+/-! Lemma 8.1 is read as a module docstring. -/
+
+-- Lemma 2.5: an earlier number, just before the declaration,
+-- continued on a second line with Section 4.
+/-- Theorem 3.1. -/
+theorem bound : True := by
+  -- by Lemma 2.3, and lemma21 is code
+  have s := "-- Lemma 9.9 is in a string"
+  have c := '"'
+  have h' := 1 -- Corollary 2.4, after code; Theorem 4.1 of [Gauss]
+  trivial
+
+/- A block /- with a nested Lemma 7.1 -/ and Lemma 7.2
+   on its second line, Proposition 2.3 -/
+
+/-- Lemma 6.6 is a docstring. -/
+def other := 1
+"""
+
+
+def test_comments_are_read_with_their_declarations(tmp_path):
+    # Ordinary comments, each with its line and the declaration it is on: the one whose source
+    # holds it, or that starts just after it; otherwise its module. Doc comments and module
+    # docstrings are read once, strings and character literals hold no comment, and a kind
+    # written against its number is code.
+    (tmp_path / "P").mkdir()
+    (tmp_path / "P" / "Main.lean").write_text(COMMENTED)
+    index = [{**decl("P.bound", "Theorem 3.1.", line=7), "range": {"line": 7, "end_line": 13}},
+             {**decl("P.other", "Lemma 6.6 is a docstring.", kind="def", line=18),
+              "range": {"line": 18, "end_line": 19}}]
+    blocks = nb.module_doc_blocks(tmp_path, ["P.Main"]) + \
+        nb.comment_blocks(tmp_path, ["P.Main"], index)
+    out = nb.analyse(index, CLAIMS, INV, blocks)
+    got = [(o["reference"], o["source"]["where"], o["source"]["declaration"],
+            o["source"]["line"], o["role"], o["status"]) for o in out["references"]]
+    assert got == [
+        ("Theorem 3.1", "docstring", "P.bound", 7, "statement", "exact"),
+        ("Lemma 6.6", "docstring", "P.other", 18, "statement", "absent"),
+        ("Lemma 8.1", "module docstring", None, 3, "cited", "absent"),
+        ("Lemma 2.5", "comment", "P.bound", 5, "statement", "absent"),
+        ("Section 4", "comment", "P.bound", 6, "cited", "absent"),
+        ("Lemma 2.3", "comment", "P.bound", 9, "cited", "other-kind"),
+        ("Corollary 2.4", "comment", "P.bound", 12, "cited", "absent"),
+        ("Theorem 4.1", "comment", "P.bound", 12, "cited", "other-source"),
+        ("Lemma 7.1", "comment", None, 15, "cited", "absent"),
+        ("Lemma 7.2", "comment", None, 15, "cited", "absent"),
+        ("Proposition 2.3", "comment", None, 16, "cited", "exact")]
+    by = {(o["reference"], o["source"]["where"]): o for o in out["references"]}
+    assert by[("Lemma 2.3", "comment")]["message"] == (
+        "a comment on P.bound (P/Main.lean:9) cites Lemma 2.3: the paper's 2.3 is "
+        "Proposition 2.3, not a lemma")
+    assert by[("Lemma 7.1", "comment")]["message"].startswith(
+        "a comment in module P.Main (P/Main.lean:15) cites Lemma 7.1")
+    assert len({o["id"] for o in out["references"]}) == len(out["references"])
+    # A namespace the project maps to another paper holds no reference to this one.
+    mapped = nb.analyse(index, CLAIMS, INV, blocks, foreign={"P"})
+    assert {o["status"] for o in mapped["references"]} == {"other-source"}
+
+
+def test_one_place_with_several_disagreements_is_not_a_pattern():
+    # Three stale numbers in one docstring are one place: no pattern until a second
+    # declaration or module disagrees too. The examples come from distinct places first.
+    index = [decl("P.a", "Lemma 6.6, Lemma 6.7 and Lemma 6.8."), decl("P.b", "Theorem 2.1."),
+             decl("P.c", "Theorem 3.1.")]
+    out = nb.analyse(index, CLAIMS, INV)
+    assert out["pattern"]["absent"] == 3 and out["pattern"]["places"] == 1
+    assert not out["pattern"]["drift"] and nb.drift_note(out["pattern"], out["references"]) is None
+    index.append(decl("P.d", "Lemma 6.9."))
+    out = nb.analyse(index, CLAIMS, INV)
+    assert out["pattern"]["drift"] and out["pattern"]["places"] == 2
+    ref = {o["id"]: o for o in out["references"]}
+    assert [ref[i]["source"]["declaration"] for i in out["pattern"]["examples"]] == \
+        ["P.a", "P.d", "P.a", "P.a"]
+    note = nb.drift_note(out["pattern"], out["references"])
+    assert "4 of the 6 references checked" in note and "in 2 declarations or modules" in note
+    assert "Lemma 6.6 in the docstring of P.a" in note and "Lemma 6.9 in the docstring of P.d" in note
+
+
+def test_a_number_the_paper_prints_twice_is_exact_and_says_so():
+    twice = CLAIMS + [{"id": "P:t21b", "kind": "theorem", "number": "Theorem 2.1",
+                       "scope": "formal", "statement": "x"}]
+    out = nb.analyse([decl("P.a", "Theorem 2.1.")], twice, nb.inventory(twice, True))
+    o = out["references"][0]
+    assert o["status"] == "exact" and o["paper"]["claims"] == ["P:t21", "P:t21b"]
+    assert "2 statements printed Theorem 2.1" in o["detail"] and not nb.suspect(o)
+
+
+def test_a_cited_number_rests_on_this_papers_reference(tmp_path):
+    # A suggestion's cited number is a lead only when the docstring's reference with that number
+    # names the claim: not another work's Theorem 2.1, nor the start of Theorem 2.1.3. The
+    # reason lists the references it rests on; a stale one, or any under a pattern, says so.
+    from prooflens.simple import SuggestContext, suggest
+    claim = {**CLAIMS[0], "label": "thm:odd", "title": ""}
+    (tmp_path / "P").mkdir()
+    (tmp_path / "P" / "Other.lean").write_text("/-! Theorem 2.1 of [Gauss]. -/\n")
+    (tmp_path / "P" / "Mine.lean").write_text("/-! The proof of Theorem 2.1. -/\n")
+    index = [decl("P.ok", "Theorem 2.1: odd squares are odd."),
+             decl("P.gauss", "This is Theorem 2.1 of [Gauss]."),
+             decl("P.longer", "Theorem 2.1.3 is a part of it."),
+             decl("P.both", "Theorem 2.1 of [Gauss] gives Theorem 2.1."),
+             decl("P.other_last", module="P.Other", line=5),
+             decl("P.mine_last", module="P.Mine", line=5)]
+    blocks = nb.module_doc_blocks(tmp_path, ["P.Other", "P.Mine"])
+    num = nb.analyse(index, CLAIMS, INV, blocks)
+    ctx = SuggestContext(index, tmp_path, numbering=num)
+    got = {s["name"]: next((r for r in s["reasons"] if r["signal"] == "number"), None)
+           for s in suggest(claim, index, limit=10, ctx=ctx)}
+    ids = {(o["source"]["declaration"] or o["source"]["module"], o["text"], o["status"]): o["id"]
+           for o in num["references"]}
+    assert set(got) == {"P.ok", "P.both", "P.mine_last"}
+    assert got["P.ok"]["basis"] == "a lead" and \
+        got["P.ok"]["references"] == [ids[("P.ok", "Theorem 2.1", "exact")]]
+    assert got["P.both"]["references"] == [ids[("P.both", "Theorem 2.1", "exact")]]
+    assert got["P.mine_last"]["references"] == [ids[("P.Mine", "Theorem 2.1", "exact")]]
+    # Without the project's references the citations count as before.
+    plain = {s["name"] for s in suggest(claim, index, limit=10, ctx=SuggestContext(index, tmp_path))}
+    assert {"P.gauss", "P.other_last"} <= plain
+    # Under a pattern of stale numbers, each cited number is a possibly stale lead.
+    drift = {**num, "pattern": {**num["pattern"], "drift": True}}
+    got = {s["name"]: next(r for r in s["reasons"] if r["signal"] == "number")
+           for s in suggest(claim, index, limit=10, ctx=SuggestContext(index, tmp_path,
+                                                                         numbering=drift))}
+    assert {r["basis"] for r in got.values()} == {"a possibly stale lead"}
+    assert all("another version of the paper" in r["text"] for r in got.values())
+
+
 LEMMA_41 = CLAIMS + [{"id": "P:l41", "kind": "lemma", "number": "Lemma 4.1", "scope": "formal",
                       "statement": "Every even square is even."},
                      {"id": "P:a22", "kind": "assumption", "number": "Assumption 2.2",

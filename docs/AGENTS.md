@@ -50,12 +50,16 @@ references to the paper's numbers that disagree with the paper read here
 each reference has its own `id`, a second copy of the same text in one place included);
 they do not change the exit code. `numbering` holds every such reference
 (`numbering.references`: `reference`, its exact `text` and `context`, its `source` with
-declaration, module, file, line and `where` it is, and `status`: `exact`, `other-kind`,
-`absent`, `unchecked` or `other-source`; `stale_lead` and `content.closer` when an exact
-reference's declaration reads closer to another statement) and the project-level `pattern`
-(counts by status, `drift`, and whether the paper's numbering is complete). Each suggestion
-has `reasons`: `signal` (`content`, `uses`, `number`, `lexical`, `structure`) and `text`; a
-`number` reason has `basis` "a lead" or "a possibly stale lead".
+declaration, module, file, line and `where` it is (`docstring`, `name`, `module docstring` or
+`comment`; a comment's declaration is null when it is on none), its `role` (`statement` or
+`cited`), and `status`: `exact`, `other-kind`, `absent`, `unchecked` or `other-source`;
+`stale_lead` and `content.closer` when an exact reference's declaration reads closer to
+another statement) and the project-level `pattern` (counts by status, `places`: the
+declarations and modules holding disagreeing references, `drift`, `examples` (reference ids),
+and whether the paper's numbering is complete). Each suggestion has `reasons`: `signal`
+(`content`, `uses`, `number`, `lexical`, `structure`) and `text`; a `number` reason has
+`basis` "a lead" or "a possibly stale lead", and `references`: the ids of the references in
+`numbering` it rests on.
 
 In a project with a `machinechecked.toml` (the full assessment), the document also has
 `findings` (totals per tier, dismissed warnings left out) and `finding_details`: each finding
