@@ -316,7 +316,7 @@ def test_the_terminal_summary_names_its_units(summary):
     assert "  8 statements, 7 linked to 7 declarations" in lines
     assert ("    correspondence: every clause (4); unresolved (1); out of date (1); "
             "not assessed (2)") in lines
-    assert ("    basis: in one Lean statement (1); by a reviewer's composition (2); "
+    assert ("    basis: in one Lean statement (1); by an argument combining Lean results (2); "
             "through a checked bridge (1); basis not recorded (1)") in lines
     assert "  1 notation record, 1 linked to 1 declaration" in lines
     assert "  2 proof steps, 1 linked to 1 declaration" in lines

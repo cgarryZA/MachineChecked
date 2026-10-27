@@ -8,7 +8,7 @@
     "full": {"label": "Every clause", "explanation": "The reading records that the linked Lean states every clause of the claim."},
     "partial": {"label": "Part of the claim", "explanation": "The reading records that the linked Lean states part of the claim."},
     "changed": {"label": "Stated differently", "explanation": "The reading records that the linked Lean states the claim differently."},
-    "related": {"label": "A related result", "explanation": "The reading records that the linked Lean is a related result, not this claim."},
+    "related": {"label": "A related result, not this claim", "explanation": "The reading records that the linked Lean is a related result, not this claim."},
     "unresolved": {"label": "Unresolved", "explanation": "The reading records an open question that decides the correspondence."},
     "not_recorded": {"label": "Reviewed, coverage not recorded", "explanation": "A review of the claim records no coverage."},
     "stale": {"label": "Out of date", "explanation": "The reading was made for another text of the claim or other Lean."},
@@ -17,9 +17,13 @@
   },
   "basis": {
     "direct": {"label": "In one Lean statement", "explanation": "A linked declaration states the claim."},
-    "reviewed_composition": {"label": "By a reviewer's composition", "explanation": "A reviewer's argument combines the linked results; Lean has not checked the combination."},
+    "reviewed_composition": {"label": "By an argument combining Lean results", "explanation": "An argument combines the linked results; Lean has not checked the combination."},
     "checked_bridge": {"label": "Through a checked bridge", "explanation": "Lean checks that a theorem's type is exactly a target proposition the reviewer read against the paper."},
     "unspecified": {"label": "Basis not recorded", "explanation": "The reading records its coverage without saying how it is supported."}
+  },
+  "bridge": {
+    "stale": {"label": "Through a checked bridge; the reading is out of date", "explanation": "Lean checks the bridge, and its target or the paper's passage is not the version the reading was made for."},
+    "unchecked": {"label": "Through a bridge Lean does not check", "explanation": "The reading records a bridge that Lean does not check in this build."}
   },
   "currency": {
     "current": {"label": "current", "explanation": "Pinned to the text and Lean of this build."},

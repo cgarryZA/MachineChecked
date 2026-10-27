@@ -10,7 +10,7 @@ import pytest
 
 from conftest import ROOT, needs_lean, needs_tex
 from prooflens import manifest as mf
-from prooflens import symbols
+from prooflens import objects, symbols
 from prooflens.simple import build_view
 
 SRC = ROOT / "tests" / "fixtures" / "structure"
@@ -433,6 +433,85 @@ def test_properties_carried_by_types(tmp_path, toolchain):
     assert props(neg["args"][0])[0] == ("start", "s.path 0 = 0")
     # Objects whose type carries no proposition get nothing: a number, a type, a datum.
     assert all("properties" not in x for x in spine(statement(root)))
+
+    # Each property says why it holds of its object (`basis`), which of the statement's
+    # variables its statement mentions (`depends`) and the parent projections it comes through
+    # (`via`).
+    s = next(x for x in spine(statement(root, "Shape.supplied")) if x["name"] == "s")
+    assert {p["basis"] for p in s["properties"]} == {"type"}
+    start = next(p for p in s["properties"] if p["field"] == "start")
+    assert (start["via"], start["depends"]) == (["Shape.Solution.toBase"], [0, 1])
+    prob = spine(statement(root, "Shape.probability"))[2]
+    assert [p["basis"] for p in prob["properties"]] == ["premise"]
+    # An inherited field with parameters and nested quantifiers is specialised to the object and
+    # keeps every variable it mentions.
+    s = spine(statement(root, "Shape.scaled"))[2]
+    scale = next(p for p in s["properties"] if p["field"] == "scale")
+    assert scale["type"]["text"] == \
+        "∀ (k : Nat), ∃ (m : Nat), ∀ (n : Nat), k ≤ n → s.g n ≤ m * w k + d"
+    assert (scale["declared_in"], scale["inherited"], scale["via"], scale["depends"]) == \
+        ("Shape.Scaled", True, ["Shape.ScaledStart.toScaled"], [0, 1, 2])
+    assert {("d", 0), ("w", 1), ("s", 2)} <= set(var_refs(scale["type"]))
+    # A field inherited along two paths is one field, from the structure that declares it; a
+    # parent whose fields are copied (it shares one with the first) is still their origin.
+    [b] = spine(statement(root, "Shape.both_pos"))
+    assert [p["field"] for p in b["properties"]] == ["x0", "pos", "l", "r", "r_le"]
+    by = {p["field"]: p for p in b["properties"]}
+    assert (by["pos"]["declared_in"], by["pos"]["via"]) == \
+        ("Shape.Anchor", ["Shape.Both.toLeft", "Shape.Left.toAnchor"])
+    assert (by["r_le"]["declared_in"], by["r_le"]["projection"]) == \
+        ("Shape.Right", "Shape.Right.r_le")
+
+    # A structure that extends the abstract one shows exactly the fields it adds, each stated
+    # of an object `self`; the abstract one has only its own.
+    con = statement(root, "Shape.Concrete")["decl"]
+    v = objects.structure_view(con)
+    assert v["declares"] == ["N", "support", "p", "periodic"]
+    assert v["inherits"] == [{"parent": "Shape.Profile", "fields": ["f", "C", "bound"]}]
+    fields = {f["field"]: f for f in v["fields"]}
+    assert (fields["support"]["kind"], fields["support"]["type"]["text"],
+            fields["support"]["type"]["id"]) == \
+        ("proposition", "∀ (n : Nat), self.N ≤ n → self.f n = 0", "self#support:/")
+    assert fields["N"]["kind"] == "data"
+    prof = objects.structure_view(statement(root, "Shape.Profile")["decl"])
+    assert (prof["declares"], prof["inherits"], prof["parents"]) == (["f", "C", "bound"], [], [])
+    # A construction's value carries those fields, established by the definition; a helper that
+    # accepts the structure has them as properties of its input, apart from its hypothesis.
+    build = statement(root, "Shape.build")["decl"]
+    sup = next(p for p in build["result_properties"] if p["field"] == "support")
+    assert (sup["basis"], sup["term"], sup["type"]["text"]) == \
+        ("definition", "(Shape.build N).support",
+         "∀ (n : Nat), (Shape.build N).N ≤ n → (Shape.build N).f n = 0")
+    assert ("N", 0) in var_refs(sup["type"])
+    # A projection constructs nothing: the parent projection's value carries its argument's
+    # fields, which it does not establish.
+    view = build_view(root, root / "paper/main.tex", root / ".machinechecked", log=lambda m: None)
+    proj = view["body"]["decls"]["Shape.Concrete.toProfile"]
+    assert "result_properties" not in proj and "result_properties_error" not in proj
+    c, n = objects.objects(statement(root, "Shape.vanishes"), "Shape.vanishes")
+    assert (c["name"], c["position"]) == ("c", "given")
+    assert [(p["basis"], p.get("field")) for p in c["properties"]] == [
+        ("type", "bound"), ("type", "support"), ("type", "periodic"), ("premise", None),
+        ("conclusion", None)]
+    assert c["properties"][3]["statement"] == "c.N ≤ n"
+
+    # The three statement forms keep their roles, by where the solution stands.
+    [_, s] = objects.objects(statement(root, "Shape.supplied"), "Shape.supplied")
+    assert (s["position"], [p["basis"] for p in s["properties"]]) == \
+        ("given", ["type", "type", "premise", "conclusion"])
+    objs = objects.objects(statement(root, "Shape.assumed"), "Shape.assumed")
+    assert [(o["name"], o["position"]) for o in objs] == \
+        [("s", "produced"), ("d", "assumed"), ("s", "assumed")]
+    assert [p["basis"] for p in objs[2]["properties"]] == ["type", "type", "premise"]
+    produced = objects.objects(statement(root, "Shape.produced"), "Shape.produced")
+    assert [(o["name"], o["position"]) for o in produced] == [("d", "given"), ("s", "produced")]
+    assert [(p["basis"], p.get("definition")) for p in produced[1]["properties"]
+            if p["basis"] != "type"] == [("conclusion", None), ("definition", "Shape.Good")]
+    # The measure space: structure supplied on Ω, and an additional assumption about it.
+    omega = objects.objects(statement(root, "Shape.probability"), "Shape.probability")[0]
+    assert [i["type"] for i in omega["instances"]] == ["Shape.MeasureData Ω"]
+    assert [(p["basis"], p["statement"]) for p in omega["properties"]][0] == \
+        ("premise", "Shape.IsProbability Ω")
 
 
 @needs_lean

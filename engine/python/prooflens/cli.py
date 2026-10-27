@@ -233,16 +233,15 @@ def _print_simple(body, summary: dict | None = None):
         print(f"  {k:4d}  {s}")
     for line in text(summary):
         print(line)
-    from .simple import BASIS_WORDS, COVERAGE_WORDS
+    from .semantic import in_text, reading_words
     for c in body.get("claims", []):
         cor = c.get("correspondence") or {}
         if cor.get("basis") == "reviewed_composition":
-            # The reading's own coverage, in the terminal's words for it (`reading_text`): a
-            # composition may cover part of the claim, or state it differently.
-            head = COVERAGE_WORDS.get(cor.get("coverage"), "no coverage recorded")
-            print(f"composition {c.get('number') or c['id']}: {head}, "
-                  f"{BASIS_WORDS['reviewed_composition']}, which Lean has not checked. "
-                  f"Next step: {cor['next_step']}")
+            # The reading's own coverage and basis: a composition may cover part of the claim,
+            # or state it differently.
+            words = reading_words(cor.get("coverage"), cor["basis"]) or "no coverage recorded"
+            print(f"composition {c.get('number') or c['id']}: {in_text(words)}, which Lean has "
+                  f"not checked. Next step: {cor['next_step']}")
 
 
 # -- everyday commands ------------------------------------------------------------------------
@@ -1298,11 +1297,13 @@ def cmd_compare(a):
             except wsp.WorkspaceError as e:
                 raise cmp.CompareError(str(e), "unknown-workspace") from None
             v = wsp.view(ws, Snapshot(work / "site" / "data"), cid, root)
+            from .objects import derivations
             reading = {"workspace": ws["id"], "reviewer": v["reviewer"], "mode": v["mode"],
                        **((v["claims"].get(cid) or {}).get("reading")
                           or {"requirements": [], "witnesses": [], "alignments": [],
                               "questions": []}),
-                       "compositions": (v["claims"].get(cid) or {}).get("compositions") or []}
+                       "compositions": (v["claims"].get(cid) or {}).get("compositions") or [],
+                       "derivations": derivations((v["claims"].get(cid) or {}).get("evidence"))}
         out = cmp.claim_packet(site, a.claim, a.stage, a.limit, a.after, reading)
     except cmp.CompareError as e:
         if e.kind in ("no-build", "no-project") and not a.json:

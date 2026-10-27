@@ -86,7 +86,10 @@ part of what is given, for a witness they are established with it, and for an ob
 assumption, a negation or one alternative they stay inside it. An assumption that is a class of
 propositions shows what its fields state. **Exact Lean** lists each carried property as the Lean
 term that gives it (`s.start : s.path 0 = d`) with its field's declaration; many fields are
-folded under a summary.
+folded under a summary. A linked structure lists its fields, those inherited under each parent
+and those it adds apart, so a structure that extends another shows exactly what it adds; a
+definition whose value is a structure lists the properties that value carries, established by
+the definition.
 
 Click a variable to see its type and conditions. Click an expression to select it; further clicks
 widen the selection. Dotted names open short mathematical notes. A Lean declaration name opens
@@ -286,10 +289,11 @@ full coverage:
                          "target_fingerprint": "…", "source_sha256": "…"}}
 ```
 
-- `direct`: the linked declarations state the claim. The reader shows **States every clause**.
+- `direct`: the linked declarations state the claim. The reader shows **Every clause, in one Lean
+  statement**.
 - `reviewed_composition`: the claim follows by combining the linked declarations through the
-  auditor's `argument`. The reader shows **Every clause, by the auditor's composition**, with the
-  argument, its author, and that Lean has not checked the combination. Beside it the reader and
+  auditor's `argument`. The reader shows **Every clause, by an argument combining Lean results**,
+  with the argument, its author, and that Lean has not checked the combination. Beside it the reader and
   `check` give the next step: state the combination as one Lean result. A composition never reads
   as a direct result. A stored `"coverage": "composed"` reads as `full` with this basis, its note
   as the argument.
@@ -403,7 +407,7 @@ step:
 semantic summary of paper P (the audit's readings):
   5 statements, 4 linked to 3 declarations
     correspondence: every clause (3); unresolved (1); not assessed (1)
-    basis: in one Lean statement (1); by a reviewer's composition (1); through a checked bridge (1); basis not recorded (1)
+    basis: in one Lean statement (1); by an argument combining Lean results (1); through a checked bridge (1); basis not recorded (1)
     reviews: not reviewed (5)
     findings: open questions (1)
   1 notation record, 1 linked to 1 declaration

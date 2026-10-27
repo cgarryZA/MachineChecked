@@ -3,6 +3,7 @@
 // Overview shows these values and filters by them; it computes no coverage, basis or review of
 // its own, and never adds the counts of different units.
 import vocabulary from "../../../engine/python/prooflens/data/semantic.json" with { type: "json" };
+import { inText } from "./coverage.js";
 
 export const UNITS = ["statements", "notation", "proof_steps"];
 export const DIMENSIONS = ["coverage", "basis", "review", "findings"];
@@ -127,7 +128,7 @@ export function inventoryText(paper) {
 export function coverageText(reading) {
   if (!reading) return words("coverage", "not_assessed").label;
   const head = words("coverage", reading.count).label;
-  if (reading.count === "stale" && RELATIONS.includes(reading.coverage)) return `${head} (recorded: ${words("coverage", reading.coverage).label.toLowerCase()})`;
+  if (reading.count === "stale" && RELATIONS.includes(reading.coverage)) return `${head} (recorded: ${inText(words("coverage", reading.coverage).label)})`;
   if (reading.count === "clauses_only" && Number.isInteger(reading.clauses)) return `${head} (${reading.clauses})`;
   return head;
 }
@@ -136,7 +137,7 @@ export function basisText(reading) {
   if (!reading || !RELATIONS.includes(reading.count)) return "";
   const head = words("basis", reading.basis || "unspecified").label;
   return reading.recorded_basis && reading.recorded_basis !== reading.basis
-    ? `${head} (recorded as ${words("basis", reading.recorded_basis).label.toLowerCase()})` : head;
+    ? `${head} (recorded as ${inText(words("basis", reading.recorded_basis).label)})` : head;
 }
 
 // The question an unresolved reading records, when it is short enough for a row.

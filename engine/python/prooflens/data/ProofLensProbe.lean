@@ -582,14 +582,64 @@ structure, the parent structure that declares it, the projection). Display only.
 are. -/
 def maxFields : Nat := 32
 
-/-- The fields carried by the type of the local `x` (`properties`), each with its statement
-specialised to `x`; nothing when the type is not a structure or has no field that is a
+/-- The structure that declares the field `f` of the structure `S`: `S` itself, a parent it
+embeds (`findField?`), or a parent whose fields it copies because they overlap an earlier
+parent's (a diamond), followed up to the structure whose declaration states the field. -/
+partial def fieldOrigin (env : Environment) (S f : Name) : Name :=
+  match findField? env S f with
+  | some D =>
+    if D != S then fieldOrigin env D f
+    else
+      let copied := (getStructureParentInfo env S).find? fun p =>
+        !p.subobject && (getStructureFieldsFlattened env p.structName false).contains f
+      match copied with
+      | some p => fieldOrigin env p.structName f
+      | none => S
+  | none => S
+
+/-- The field `f` of the structure `S`, projected from `x` (an object of `S`): its statement at
+`x` (`type`, positions prefixed by `pfx`), whether it is data or a proposition, where it comes
+from (the structure that declares it, the parent projections that lead there from `S`, `via`,
+and the field's projection, module and range), the variables among `vars` its statement
+mentions (`depends`, by number) and the reason it holds of `x` (`basis`). Returns whether the
+field is a proposition. -/
+def fieldJson (x : Expr) (S f : Name) (vars : Array FVarId) (pfx basis : String) :
+    MetaM (Json × Bool) := do
+  let env ← getEnv
+  let p ← mkProjection x f
+  let t ← instantiateMVars (← inferType p)
+  let prop ← isProp t
+  let decl := fieldOrigin env S f
+  let proj := getProjFnForField? env decl f
+  let via := (getPathToBaseStructure? env decl S).getD []
+  let mut deps : Array Nat := #[]
+  for i in [:vars.size] do
+    if t.containsFVar vars[i]! then deps := deps.push i
+  let j := Json.mkObj [("field", f.toString),
+    ("kind", if prop then "proposition" else "data"),
+    ("basis", Json.str basis),
+    ("structure", S.toString), ("declared_in", decl.toString),
+    ("inherited", toJson (decl != S)),
+    ("via", toJson (via.map toString)),
+    ("projection", match proj with | some q => Json.str q.toString | none => Json.null),
+    ("module", match proj with
+      | some q => Json.str (moduleOf env q).toString | none => Json.null),
+    ("range", ← match proj with | some q => rangeJson q | none => pure Json.null),
+    ("term", Json.str (toString (← ppExpr p))),
+    ("depends", toJson deps),
+    ("type", ← ppJson t vars .root s!"{pfx}{f}:")]
+  return (j, prop)
+
+/-- The fields carried by the type of `x` (`properties`), each with its statement specialised to
+`x` (`fieldJson`); nothing when the type is not a structure or has no field that is a
 proposition. An object of a type that is a proposition (`x` a proof) has properties only when
-`ofProp` is set, and a conjunction or an equivalence never has (`logic` shows its parts). The
-positions of a field's statement are prefixed by `pfx` and the field's name. A failure is
-recorded (`properties_error`) and stops nothing else. -/
-def propertiesOf (x : Expr) (vars : Array FVarId) (pfx : String) (ofProp : Bool := false) :
-    MetaM (List (String × Json)) := do
+`ofProp` is set, and a conjunction or an equivalence never has (`logic` shows its parts). Each
+property's `basis` is `type` (included in the type of the object), `premise` for the fields of
+an assumption (`ofProp`: what it states), or the `basis` given. The positions of a field's
+statement are prefixed by `pfx` and the field's name. A failure is recorded
+(`properties_error`) and stops nothing else. -/
+def propertiesOf (x : Expr) (vars : Array FVarId) (pfx : String) (ofProp : Bool := false)
+    (basis : Option String := none) : MetaM (List (String × Json)) := do
   let act : MetaM (List (String × Json)) := withCurrHeartbeats do
     let env ← getEnv
     let ty ← whnfR (← instantiateMVars (← inferType x))
@@ -598,30 +648,77 @@ def propertiesOf (x : Expr) (vars : Array FVarId) (pfx : String) (ofProp : Bool 
     if S == ``And || S == ``Iff then return []
     if (← isProp ty) != ofProp then return []
     let fields := getStructureFieldsFlattened env S (includeSubobjectFields := false)
+    let why := basis.getD (if ofProp then "premise" else "type")
     let mut out : Array Json := #[]
     let mut anyProp := false
     for f in fields.toList.take maxFields do
-      let p ← mkProjection x f
-      let t ← instantiateMVars (← inferType p)
-      let prop ← isProp t
+      let (j, prop) ← fieldJson x S f vars pfx why
       anyProp := anyProp || prop
-      let decl := (findField? env S f).getD S
-      let proj := getProjFnForField? env decl f
-      out := out.push (Json.mkObj [("field", f.toString),
-        ("kind", if prop then "proposition" else "data"),
-        ("structure", S.toString), ("declared_in", decl.toString),
-        ("inherited", toJson (decl != S)),
-        ("projection", match proj with | some q => Json.str q.toString | none => Json.null),
-        ("module", match proj with
-          | some q => Json.str (moduleOf env q).toString | none => Json.null),
-        ("range", ← match proj with | some q => rangeJson q | none => pure Json.null),
-        ("term", Json.str (toString (← ppExpr p))),
-        ("type", ← ppJson t vars .root s!"{pfx}{f}:")])
+      out := out.push j
     unless anyProp do return []
     return [("properties", Json.arr out),
       ("properties_omitted", toJson (fields.size - out.size))]
   tryCatchRuntimeEx act fun err => do
     return [("properties_error", Json.str s!"probe-error: {← err.toMessageData.toString}")]
+
+/-- What a structure (a class included) is made of (`structure`): its parameters, its parents
+(`extends`, each with its projection and whether it is embedded) and every field, inherited ones
+included and each once, with its statement at an object `self` of the structure at its
+parameters (`fieldJson`, positions prefixed `self#<field>:`; the parameters are the variables
+`0`, `1`, …, and `self` the last). A structure that extends another thus shows exactly the
+fields it adds: those it declares. A failure is recorded (`structure_error`). Display only. -/
+def structureFields (n : Name) : MetaM (List (String × Json)) := do
+  let env ← getEnv
+  unless isStructure env n do return []
+  let act : MetaM (List (String × Json)) := withCurrHeartbeats do
+    let ci ← getConstInfo n
+    forallTelescope ci.type fun xs _ => do
+      let mut params : Array Json := #[]
+      let mut pos := SubExpr.Pos.root
+      for i in [:xs.size] do
+        let d ← xs[i]!.fvarId!.getDecl
+        params := params.push (Json.mkObj [("name", Json.str (binderName d.userName)),
+          ("binder", Json.str (binderStr d.binderInfo)), ("id", Json.str ("type:" ++ toString pos)),
+          ("type", ← ppJson d.type ((xs.extract 0 i).map (·.fvarId!)) pos.pushBindingDomain "type:"),
+          ("proposition", toJson (← isProp d.type))])
+        pos := pos.pushBindingBody
+      let parents := (getStructureParentInfo env n).map fun p => Json.mkObj [
+        ("structure", Json.str p.structName.toString), ("projection", Json.str p.projFn.toString),
+        ("subobject", toJson p.subobject)]
+      let ty := mkAppN (mkConst n (ci.levelParams.map mkLevelParam)) xs
+      withLocalDeclD `self ty fun s => do
+        let vars := (xs.map (·.fvarId!)).push s.fvarId!
+        let fields := getStructureFieldsFlattened env n (includeSubobjectFields := false)
+        let mut out : Array Json := #[]
+        for f in fields.toList.take maxFields do
+          out := out.push (← fieldJson s n f vars "self#" "type").1
+        return [("structure", Json.mkObj [("class", toJson (isClass env n)),
+          ("params", Json.arr params), ("parents", Json.arr parents),
+          ("fields", Json.arr out), ("fields_omitted", toJson (fields.size - out.size))])]
+  tryCatchRuntimeEx act fun err => do
+    return [("structure_error", Json.str s!"probe-error: {← err.toMessageData.toString}")]
+
+/-- What a construction establishes: for a definition whose value is an object of a structure
+with a field that is a proposition (`def build (N : Nat) : Concrete`), the fields of its value at
+its parameters (`result_properties`, as `propertiesOf` gives them, positions prefixed
+`result#<field>:`), each with the basis `definition`: the definition's value proves it. The
+parameters are the variables `0`, `1`, …. A projection, a structure's parent projection among
+them, constructs nothing: its value's fields are its argument's. A failure is recorded
+(`result_properties_error`). -/
+def resultProperties (n : Name) (ci : ConstantInfo) : MetaM (List (String × Json)) := do
+  if ← isProjectionFn n then return []
+  let env ← getEnv
+  if isStructure env n.getPrefix &&
+      (getStructureParentInfo env n.getPrefix).any (·.projFn == n) then return []
+  let act : MetaM (List (String × Json)) := withCurrHeartbeats do
+    forallTelescope ci.type fun xs r => do
+      if r.isSort || (← isProp r) then return []
+      let c := mkAppN (mkConst n (ci.levelParams.map mkLevelParam)) xs
+      let fs ← propertiesOf c (xs.map (·.fvarId!)) "result#" (basis := some "definition")
+      return fs.map fun (k, v) => ("result_" ++ k, v)
+  tryCatchRuntimeEx act fun err => do
+    return [("result_properties_error",
+      Json.str s!"probe-error: {← err.toMessageData.toString}")]
 
 /-! ## The statement as one tree
 
@@ -902,6 +999,11 @@ def declRecord (inside : Name → Bool) (n : Name) (ci : ConstantInfo) : MetaM (
       if value != Json.null && userFacing n && !(← isInstance n) then definitionFields inside n ci.type d.value
       else pure []
     | _ => pure []
+  -- What a structure is made of, and what a construction's value carries.
+  let madeOf ← match ci with
+    | .inductInfo _ => if userFacing n then structureFields n else pure []
+    | .defnInfo _ => if defn.isEmpty then pure [] else resultProperties n ci
+    | _ => pure []
   let doc ← findDocString? env n
   let fields : List (String × Json) := [
     ("record", "decl"), ("name", n.toString), ("kind", kindOf ci),
@@ -911,7 +1013,7 @@ def declRecord (inside : Name → Bool) (n : Name) (ci : ConstantInfo) : MetaM (
     ("proposition", toJson prop), ("auto_param", toJson autoParam),
     ("uses", Json.arr ((used.filter fun u => inside u && !u.isInternal).map
       (Json.str ·.toString)))]
-  return (Json.mkObj (fields ++ defn), used)
+  return (Json.mkObj (fields ++ defn ++ madeOf), used)
 
 def emitClosure (h : IO.FS.Handle) (inside : Name → Bool) (root : Name) (used : Array Name)
     (seen : IO.Ref NameSet) : MetaM (Array String) := do

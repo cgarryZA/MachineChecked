@@ -132,8 +132,10 @@ def test_a_packet_holds_the_whole_passage_and_the_whole_statement(site):
     assert gen["generated_for"] == "Syn.Jet" and gen["value"] == "fun m n => m ≤ n"
     assert pk["snapshot"]["release"] == "v-synthetic" and pk["snapshot"]["project"]["commit"]
     # What the build does not extract is named with its owner, not implied absent.
-    assert {u["owner"] for u in pk["retrieval"]["unavailable"]} >= {"#98"}
-    assert "#97" not in {u["owner"] for u in pk["retrieval"]["unavailable"]}
+    assert {u["owner"] for u in pk["retrieval"]["unavailable"]} >= {"#69"}
+    assert not {"#97", "#98"} & {u["owner"] for u in pk["retrieval"]["unavailable"]}
+    # Each statement lists its objects, with what it says about each (#98).
+    assert [o["name"] for o in d["statement"]["objects"]] == ["n"]
     assert [q["query"] for q in pk["retrieval"]["on_request"]] == ["uses", "impact"]
 
 
@@ -235,7 +237,7 @@ def test_the_review_session_follows_the_stages(site, tmp_path):
     s.decide(uid, "faithful", "Same statement.")
     author = s.author(uid)
     assert NOTE in author and MARKER in author and ARGUMENT in author
-    assert "Every clause, by the auditor's composition" in author
+    assert "Every clause, by an argument combining Lean results" in author
     assert "Lean has not checked this combination. Next step: State the combination as one " \
         "Lean result." in author
 

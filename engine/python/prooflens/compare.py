@@ -42,7 +42,6 @@ CONTAINS = {"read": ["paper"], "compare": ["paper", "Lean"],
 # Content the packet's shape provides for but the engine does not extract yet, by owner issue.
 NOT_EXTRACTED = [
     {"what": "standing assumptions and definitions the passage refers to", "owner": "#69"},
-    {"what": "properties carried by the types of the objects", "owner": "#98"},
     {"what": "typed facts inside proofs", "owner": "#145",
      "request": "`compare --query proof-facts NAME` reads one proof on request"},
 ]
@@ -304,6 +303,18 @@ def _statement(st: dict | None) -> dict | None:
             "closure": list(st.get("closure") or []), "fingerprint": st.get("fingerprint")}
 
 
+def _with_objects(decls: list[dict], derivations=()) -> list[dict]:
+    """The declarations with the objects of each statement and what the statement says about
+    each, by where it stands (`objects.objects`), `derivations` (results cited for objects in a
+    workspace) included only with the object each names."""
+    from .objects import objects
+    for d in decls:
+        st = d.get("statement")
+        if isinstance(st, dict):
+            st["objects"] = objects(st, d.get("name"), derivations)
+    return decls
+
+
 def _link(l: dict, role: str) -> dict:
     out = {"id": f"decl:{l['name']}", "name": l["name"], "role": role,
            "kind": l.get("kind"), "module": l.get("module"), "path": l.get("path"),
@@ -352,6 +363,7 @@ def _definition(rec: dict, stage: str, site: Site | None = None) -> dict:
                    "each application a statement or body here makes, and `--query expansion KEY` "
                    "any expansion by its key"}
     out.update(_says(rec, site))
+    out.update(_made_of(rec))
     if stage == "informed" and rec.get("review") is not None:
         out["review"] = rec["review"]
     return out
@@ -381,6 +393,21 @@ def _says(rec: dict, site: Site | None = None) -> dict:
         out["equations"] = eqs
         if gone:
             out["equations_unavailable"] = gone
+    return out
+
+
+def _made_of(rec: dict) -> dict:
+    """What a structure is made of (`structure`, its fields grouped into those it declares and
+    those it inherits from each parent, `objects.structure_view`), and what a construction's
+    value carries (`result_properties`: the fields of its value, established by the
+    definition), from the declaration record, with any failure to read them."""
+    from .objects import structure_view
+    out = {k: rec[k] for k in ("structure_error", "result_properties",
+                               "result_properties_omitted", "result_properties_error")
+           if rec.get(k) is not None}
+    view = structure_view(rec)
+    if view is not None:
+        out["structure"] = view
     return out
 
 
@@ -527,7 +554,10 @@ def claim_packet(site: Site, claim: str, stage: str = "informed", limit: int | N
         decls = _step_decls(ch) if ch.get("step") else \
             [_link(l, "link") for l in ch.get("links") or []]
         decls += [_clause(cl) for cl in ch.get("clauses") or [] if cl.get("statement")]
-        cands = [_link(s, "candidate") for s in ch.get("suggestions") or []]
+        # Results an auditor cited for objects are prior interpretations: informed stage only.
+        derived = ((reading or {}).get("derivations") or []) if stage == "informed" else []
+        _with_objects(decls, derived)
+        cands = _with_objects([_link(s, "candidate") for s in ch.get("suggestions") or []])
         names = [n for d in decls for n in ((d.get("statement") or {}).get("closure") or [])]
         names += [n for n in (ch.get("decls") or {}) if n not in names]
         defs, page = _page(_definitions(site, [ch], names, stage), limit, after)
@@ -547,6 +577,7 @@ def claim_packet(site: Site, claim: str, stage: str = "informed", limit: int | N
         if reading is not None:
             reading = dict(reading)
             out["interpretations"]["compositions"] = reading.pop("compositions", [])
+            out["interpretations"]["derivations"] = reading.pop("derivations", [])
             out["interpretations"]["requirements"] = reading
         sections.append("interpretations")
     out["retrieval"] = _retrieval(stage, sections, page)
@@ -597,6 +628,7 @@ def unit_packet(site: Site, unit: dict, stage: str) -> dict:
                               "role": "definition under review"})
                 names = sorted(m for m in site.store() if site.generated(m, rec["name"]))
                 names += [n for n in rec.get("uses") or [] if n not in names]
+        _with_objects(decls)
         for d in decls:
             names += [n for n in (d.get("statement") or {}).get("closure") or []
                       if n not in names]
@@ -1041,7 +1073,8 @@ def statement_lines(d: dict) -> list[str]:
             out = [f"{name}  ({d.get('kind')})", f"  type : {d['signature']}"]
             if d.get("value"):
                 out.append(f"  value: {d['value']}")
-            return out + says_lines(d)
+            from .objects import structure_lines
+            return out + says_lines(d) + structure_lines(d)
         return [f"{name}: {d.get('unavailable') or 'no statement in this build'}"]
     lines = [name]
     for b in st["binders"]:
@@ -1051,6 +1084,9 @@ def statement_lines(d: dict) -> list[str]:
     lines.append(f"  {'then' if st['binders'] else '':9} {_text(st.get('conclusion'))}")
     if st.get("text"):
         lines.append(f"  exact: {st['text']}")
+    if st.get("objects"):
+        from .objects import object_lines
+        lines += object_lines(st["objects"])
     if d.get("witness"):
         lines.append(f"\nWitness: {d['witness']}")
     return lines
