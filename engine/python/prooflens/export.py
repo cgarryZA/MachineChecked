@@ -434,6 +434,10 @@ def export(cfg: Config, out: Path, release: str | None = None,
     except published_work.PublishError as e:
         shutil.rmtree(out)
         raise ExportError(str(e)) from None
+    # The semantic summary, computed from the records just published (`semantic.py`), so that
+    # nothing the export leaves out is counted.
+    from . import semantic
+    semantic.refresh(data, cfg.author)
     from . import audit
     arx = [p.source["arxiv"] for p in shown if p.source.get("arxiv")]
     write_json(out / audit.NAME, audit.descriptor(

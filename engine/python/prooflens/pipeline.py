@@ -219,7 +219,7 @@ def build(cfg: Config, release: str | None = None, skip_lean: bool = False,
     ev.record_release(cfg.out_dir, rel, eid)
     record = ev.load(cfg.out_dir, eid)
     index, chunks, store = mf.build(record, rel, display)
-    index.update(issues=cfg.issues, site_url=cfg.site_url)
+    index.update(issues=cfg.issues, site_url=cfg.site_url, author=cfg.author)
     index["project"].update(source_info(cfg))
     site = cfg.out_dir / "site"
     found = content_mod.load(cfg.out_dir, eid, record["body"])
@@ -477,7 +477,7 @@ def rebuild_site(cfg: Config, web_dist: Path | None = None, release: str | None 
     rel = read_json(cfg.out_dir / "releases" / f"{release}.json") if release else last
     record = ev.load(cfg.out_dir, rel["evidence"])
     index, chunks, store = mf.build(record, rel["release"], load_display(cfg))
-    index.update(issues=cfg.issues, site_url=cfg.site_url)
+    index.update(issues=cfg.issues, site_url=cfg.site_url, author=cfg.author)
     index["project"].update(source_info(cfg))
     site = cfg.out_dir / "site"
     found = content_mod.load(cfg.out_dir, rel["evidence"], record["body"])
@@ -520,7 +520,12 @@ def write_preview(site: Path, index: dict, chunks: dict, store: dict, pdfs: dict
     (`data/expansions/<key>.json`, `mf.split_expansions`), together with `expansions` already
     split off (those of published audits). `changes`, the comparison with
     the release before, is written as `data/changes.json`; `content`, the content index and
-    the paper-number check (`content.py`), as `data/retrieval.json` and `data/numbering.json`."""
+    the paper-number check (`content.py`), as `data/retrieval.json` and `data/numbering.json`.
+    An audit's index (not a paper page's) gets its semantic summary (`semantic.py`), computed from
+    these records."""
+    if index.get("mode") != "paper":
+        from . import semantic
+        semantic.apply(index, chunks, author=index.get("author"))
     index, chunks = content_mod.apply(index, chunks, content)
     expansions = dict(expansions or {})
     pins = mf.fingerprints(store)

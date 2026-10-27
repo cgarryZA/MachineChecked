@@ -318,6 +318,16 @@ fs.writeFileSync(path.join(root, "toywork/data/work", workRow.file), JSON.string
         evidence: ["e-1"], gaps: { requirements: 1, uncovered: [], open: [] }, complete: true, next_step: null,
         bridge: { theorem: "Toy.synthetic_bridge", target: "Toy.Spec.synthetic" }, bridge_check: { state: "checked", reasons: [] }, currency: cur }] }] }));
 
+// The engine's semantic summary (#129, `semantic.refresh`) of copies of the toy audit, of the
+// readings and reports above, and of the toy audit with its published workspace records, as a
+// published audit carries it.
+for (const [from, to] of [["toy", "toysem"], ["basis", "basissem"], ["toywork", "toyworksem"]]) fs.cpSync(path.join(root, from), path.join(root, to), { recursive: true });
+const summarised = spawnSync(process.env.PYTHON || "python3", ["-c",
+  "import sys\nfrom pathlib import Path\nfrom prooflens import semantic\nfor d in sys.argv[1:]: semantic.refresh(Path(d) / 'data', 'A. Author')",
+  ...["toysem", "basissem", "toyworksem"].map((d) => path.join(root, d))], { encoding: "utf8" });
+if (summarised.status !== 0) throw new Error("the engine could not summarise:\n" + summarised.stderr);
+const SEM = Object.fromEntries(["toysem", "basissem", "toyworksem"].map((d) => [d, JSON.parse(fs.readFileSync(path.join(root, d, "data/index.json"), "utf8"))]));
+
 // The toy audit with the comparison to an earlier release (`changes.py`, prooflens/changes@1):
 // a definition whose statement changed reopens the review that read it, a context change beside
 // an unchanged display is reported with its pin, and an unchanged claim is hidden by default.
@@ -2256,6 +2266,62 @@ await check("the overview counts statements and proof steps apart", 1300, async 
   assert.match(await pg.locator(".coverage .claims").textContent(), /Review of the printed step: false as printed/);
   await pg.getByRole("button", { name: /^Statements \(\d+\)$/ }).click();
   assert.equal(await pg.locator(".coverage .claims li").count(), TOY.claims.length - 2);
+});
+
+for (const width of [1300, 390]) {
+  await check("the overview shows the engine's semantic summary and filters by it", width, async (pg) => {
+    await pg.goto(origin + `/basissem/#/r/${SHAPE.release}/overview`);
+    const sem = pg.locator(".coverage .semantic");
+    await sem.waitFor();
+    assert.equal(await sem.getAttribute("data-digest"), SEM.basissem.semantic.digest);
+    const buttons = (dim) => pg.locator(`.semantic [data-dimension="${dim}"] button`).allTextContents();
+    // The engine's counts, each claim once: the same coverage with different bases, and an
+    // unresolved question; nothing is added into a total.
+    assert.deepEqual(await buttons("coverage"), ["Any", "Every clause (2 statements)", "Unresolved (1 statement)", `Not assessed (${SHAPE.claims.length - 3} statements)`]);
+    assert.deepEqual(await buttons("basis"), ["Any", "By a reviewer's composition (1 statement)", "Through a checked bridge (1 statement)", "Basis not recorded (1 statement)"]);
+    assert.deepEqual(await buttons("findings"), ["Any", "Open questions (1 statement)"]);
+    assert.match(await pg.locator(".coverage .inventory").textContent(), new RegExp(`^${SHAPE.claims.length} statements, ${SHAPE.claims.length} linked to \\d+ declarations$`));
+    assert.doesNotMatch(await pg.locator(".coverage").textContent(), /%/);
+    // A count applies its filter; the address names the subset, and opening it shows the same.
+    await pg.getByRole("button", { name: "Unresolved (1 statement)", exact: true }).click();
+    assert.equal(await pg.locator(".coverage .claims li").count(), 1);
+    assert.equal(await pg.locator(".coverage .claims li .question").textContent(), "Is the paper's set finite?");
+    assert.match(await pg.evaluate(() => location.hash), /\/overview\?coverage=unresolved$/);
+    await pg.reload();
+    await pg.locator(".coverage .claims li").first().waitFor();
+    assert.equal(await pg.locator(".coverage .claims li").count(), 1);
+    assert.equal(await pg.getByRole("button", { name: "Unresolved (1 statement)", exact: true }).getAttribute("aria-pressed"), "true");
+    // Another reviewer's readings are a set of their own, chosen explicitly.
+    const readings = pg.getByRole("combobox", { name: "Readings shown" });
+    assert.deepEqual(await readings.locator("option").allTextContents(), ["The audit's readings", "Reviews by B. Reviewer"]);
+    await readings.selectOption({ label: "Reviews by B. Reviewer" });
+    assert.match(await pg.evaluate(() => location.hash), /set=review%3Ahuman%3AB-Reviewer/);
+    await pg.getByRole("button", { name: "Any" }).first().click();
+    assert.deepEqual(await buttons("coverage"), ["Any", "Every clause (1 statement)", "Unresolved (1 statement)", `Not assessed (${SHAPE.claims.length - 2} statements)`]);
+    await pg.getByRole("button", { name: "Every clause (1 statement)", exact: true }).click();
+    assert.equal(await pg.locator(".coverage .claims li").count(), 1);
+    assert.match(await pg.locator(".coverage .claims li").textContent(), /By a reviewer's composition \(recorded as through a checked bridge\)/);
+    assert.match(await pg.locator(".coverage .claims li").textContent(), /Current, informed/);
+    assert.equal(await pg.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, "no horizontal scroll");
+  });
+}
+
+await check("the overview keeps units apart and shows a workspace's readings as their own set", 1300, async (pg) => {
+  await pg.goto(origin + `/toysem/#/r/${TOY.release}/overview?unit=proof_steps`);
+  await pg.locator(".coverage .semantic").waitFor();
+  assert.equal(await pg.getByRole("button", { name: /^Proof steps \(2\)$/ }).getAttribute("aria-pressed"), "true");
+  assert.deepEqual(await pg.locator('.semantic [data-dimension="coverage"] button').allTextContents(), ["Any", "Every clause (1)", "Not assessed (1)"]);
+  assert.match(await pg.locator(".coverage .inventory").textContent(), /^8 statements, 6 linked to 8 declarations · 2 proof steps \(2 equations\), 1 linked to 1 declaration$/);
+  // With every unit shown, each count names its unit.
+  await pg.getByRole("button", { name: /^Statements and proof steps/ }).click();
+  assert.deepEqual(await pg.locator('.semantic [data-dimension="review"] button').allTextContents(),
+    ["Any", "Current, independent (1 statement)", "Current, by an author (3 statements)", "Not reviewed (4 statements)", "False as printed (1 proof step)", "Printed step not reviewed (1 proof step)"]);
+  await pg.goto(origin + `/toyworksem/#/r/${TOY.release}/overview`);
+  const readings = pg.getByRole("combobox", { name: "Readings shown" });
+  await readings.selectOption({ label: "Workspace readings by llm:synthetic-model (independent)" });
+  await pg.getByRole("button", { name: "Every clause (1 statement)", exact: true }).click();
+  assert.equal(await pg.locator(".coverage .claims li").count(), 1);
+  assert.match(await pg.locator(".coverage .claims li").textContent(), /Definition 1\.1.*Every clause.*By a reviewer's composition \(recorded as through a checked bridge\)/s);
 });
 
 await check("a proof step with no Lean link is reviewed as printed and reported as a step", 390, async (pg) => {

@@ -215,8 +215,11 @@ def _simple_site(root: Path, paper: Path, web: str | None, reuse_lean: bool = Fa
     return site, index, view
 
 
-def _print_simple(body):
+def _print_simple(body, summary: dict | None = None):
+    """A view's notes and warnings, its status counts and its semantic summary (`summary`, as
+    `semantic.py` computes it)."""
     from .moddocs import stale_doc_message
+    from .semantic import text
     from .simple import view_summary
     for n in body.get("notes", []):
         print(f"note: {n}")
@@ -228,6 +231,8 @@ def _print_simple(body):
             print(f"warning: {nb.message(o)}")
     for s, k in sorted(view_summary(body).items()):
         print(f"  {k:4d}  {s}")
+    for line in text(summary):
+        print(line)
     for c in body.get("claims", []):
         cor = c.get("correspondence") or {}
         if cor.get("basis") == "reviewed_composition":
@@ -265,7 +270,7 @@ def cmd_view(a):
     _settings(a, root)
     print(f"MachineChecked: {paper.relative_to(root)} in {root.name}")
     site, index, view = _simple_site(root, paper, a.web)
-    _print_simple(view["body"])
+    _print_simple(view["body"], index.get("semantic"))
     key = view["body"]["paper"]
 
     def on_link(req):
@@ -626,7 +631,7 @@ def cmd_build_simple(a):
     _settings(a, root)
     site, index, view = _simple_site(root, paper, a.web, a.reuse_lean,
                                      getattr(a, "refresh", False))
-    _print_simple(view["body"])
+    _print_simple(view["body"], index.get("semantic"))
     if a.site:
         import shutil
         dest = _site_dest(a.site, root)
@@ -644,6 +649,9 @@ def cmd_build_simple(a):
         except published_work.PublishError as e:
             shutil.rmtree(dest)
             sys.exit(f"machinechecked: {e}")
+        # The semantic summary of what is published, the workspace readings included.
+        from . import semantic
+        semantic.refresh(dest / "data")
         print(f"wrote the reader to {dest}: publish this directory as it is "
               "(audit.json describes it)")
         return
@@ -668,7 +676,8 @@ def cmd_check(a):
         sys.exit(NO_MODULES)
     root, paper = _simple_target(a)
     view = _simple_view(root, paper)
-    _print_simple(view["body"])
+    from .semantic import of_view
+    _print_simple(view["body"], of_view(view["body"], root)[0])
     bad = [(c["number"], l) for c in view["body"]["claims"]
            for l in c["links"] if l["class"] != "proved"]
     for number, l in bad:
@@ -777,8 +786,12 @@ def _check_json(a):
                        **({"step_review": c["step_review"]} if "step_review" in c else {}),
                        **wit.get(c["id"], {})}
                       for c in idx["claims"]]
+            facts = {c["id"]: c.get("semantic") for c in idx["claims"]}
+            for c in claims:
+                c["semantic"] = facts.get(c["id"])
             out = {"mode": "full", "release": idx["release"],
                    "project": idx.get("project", {}).get("commit"),
+                   "semantic": idx.get("semantic"),
                    "findings": idx["findings"]["total"],
                    "finding_details": _finding_details(cfg, res["evidence"]),
                    "replay": _replay_guard(cfg, res["evidence"]),
@@ -820,9 +833,14 @@ def _check_json(a):
                        "unit": c.get("unit", "statement"), "parent": c.get("parent"),
                        **(_step_json(c) if c.get("unit") else {})}
                       for c in body["claims"]]
+            from .semantic import of_view
+            summary, facts = of_view(body, root)
+            for c in claims:
+                c["semantic"] = facts.get(c["id"])
             num = body.get("numbering") or {"references": [], "pattern": None}
             out = {"mode": "simple", "paper": body["paper"], "title": body["title"],
                    "release": view_release(body), "commit": body.get("commit"),
+                   "semantic": summary,
                    "modules": {"built": body["project"]["built"],
                                "not_built": body["project"]["unbuilt"]},
                    "notes": body["notes"],
@@ -875,6 +893,9 @@ def cmd_build(a):
             print(f"  {v:4d}  {k}")
     print("findings:", ", ".join(f"{v} {k}" for k, v in sorted(idx["findings"]["total"].items()))
           or "none")
+    from .semantic import text
+    for line in text(idx.get("semantic")):
+        print(line)
     # Violations and obligations, one per line: they are few, and they block acceptance.
     details = _finding_details(cfg, res["evidence"])
     for f in details:
