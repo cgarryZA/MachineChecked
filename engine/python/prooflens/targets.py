@@ -64,6 +64,27 @@ def script_owners(records) -> dict[str, str]:
     return out
 
 
+def _expansion_refs(obj) -> list[dict]:
+    """The expansions a printed statement or definition refers to (`{at, name, key}`, as the
+    site data stores them, `manifest.split_expansions`), each once, in the order found."""
+    out, seen, stack = [], set(), [obj]
+    while stack:
+        o = stack.pop(0)
+        if isinstance(o, list):
+            stack[:0] = o
+        elif isinstance(o, dict):
+            refs = o.get("expansions")
+            for x in refs if isinstance(refs, list) else []:
+                if isinstance(x, dict) and x.get("key"):
+                    ref = {k: x.get(k) for k in ("at", "name", "key")}
+                    k = (ref["at"], ref["name"], ref["key"])
+                    if k not in seen:
+                        seen.add(k)
+                        out.append(ref)
+            stack[:0] = [v for k, v in o.items() if k != "expansions"]
+    return out
+
+
 def _norm(s: str) -> str:
     return re.sub(r"\s+", " ", str(s or "")).strip().lower()
 
@@ -84,6 +105,8 @@ class Snapshot:
         self._fps: dict[str, str] | None = None
         self._digests: dict[str, str] | None = None
         self._scripts: dict[str, str] | None = None
+        self._statements: dict[str, dict] | None = None
+        self._store: dict[str, dict] | None = None
 
     # -- identity --------------------------------------------------------------------------
 
@@ -243,6 +266,75 @@ class Snapshot:
                 "\n".join([own[n], *parts]).encode()).hexdigest()
         self._digests = out
         return out
+
+    def statement_records(self) -> dict[str, dict]:
+        """The statement record the build shows for each declaration, by name, from the claims'
+        links, suggestions, proof steps' links and formal routes, and the clauses' propositions:
+        `closure` (the project constants its statement uses, with proofs erased, and for a
+        definition those of its value; absent when the record gives none) and `expansions`, the
+        applications of definitions it prints as the build expanded them (`{at, name, key}`, the
+        key naming the stored expansion, which changes with the definition)."""
+        if self._statements is not None:
+            return self._statements
+        out: dict[str, dict] = {}
+
+        def add(name, st, definition=None):
+            if not name or not isinstance(st, dict) or name in out:
+                return
+            rec = {"expansions": _expansion_refs([st, definition])}
+            if isinstance(st.get("closure"), list):
+                rec["closure"] = [n for n in st["closure"] if isinstance(n, str)]
+            out[name] = rec
+
+        for c in self.claims:
+            ch = self.chunk(c["id"]) or {}
+            step = ch.get("step") or {}
+            for l in ((ch.get("links") or []) + (ch.get("suggestions") or [])
+                      + (step.get("links") or []) + ((step.get("route") or {}).get("links")
+                                                     or [])):
+                if isinstance(l, dict):
+                    add(l.get("name"), l.get("statement"), l.get("definition"))
+            for cl in ch.get("clauses") or []:
+                add(cl.get("spec"), cl.get("statement"))
+        self._statements = out
+        return out
+
+    def _store_by_name(self) -> dict[str, dict]:
+        if self._store is None:
+            out: dict[str, dict] = {}
+            for p in sorted((self.data / "decls").glob("*.json")):
+                try:
+                    rec = json.loads(p.read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    continue
+                if rec.get("name"):
+                    out.setdefault(rec["name"], rec)
+            self._store = out
+        return self._store
+
+    def closure(self, name: str) -> tuple[list[str] | None, bool, str | None]:
+        """The project constants the statement of `name` uses (for a definition, its value's
+        too), as `(names, complete, source)`: from its statement record (`statement`), else by
+        following what each record of the shared declaration store uses (`declarations`), which
+        is incomplete when a constant used has no record there; `(None, False, None)` when the
+        build shows neither."""
+        st = self.statement_records().get(name)
+        if st is not None and "closure" in st:
+            return sorted(set(st["closure"]) - {name}), True, "statement"
+        store = self._store_by_name()
+        if "uses" not in store.get(name, {}):
+            return None, False, None
+        seen, todo, complete = set(), [name], True
+        while todo:
+            for u in store[todo.pop()].get("uses") or []:
+                if u == name or u in seen:
+                    continue
+                seen.add(u)
+                if "uses" in store.get(u, {}):
+                    todo.append(u)
+                else:
+                    complete = False
+        return sorted(seen), complete, "declarations"
 
     def lean_index(self) -> list[dict] | None:
         """The project's declarations as the build indexed them (zero configuration), or None

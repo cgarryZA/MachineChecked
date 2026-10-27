@@ -89,7 +89,8 @@ def test_workspace_show_names_each_kind_of_evidence(tmp_path, monkeypatch, capsy
     assert ("ToyAudit.bound_range_at_one_false, certificate for ToyAudit.bound_range_at_one  "
             "[current]") in line["e-cert"]
     assert "Toy/Acceptance.lean:41  [unchecked]" in line["e-source"]
-    assert "paper passage  [unchecked]" in line["e-paper"]
+    # A quoted passage is pinned to the version of the claim's passage it quotes.
+    assert "paper passage  [current]" in line["e-paper"]
     assert [e for e, ln in line.items() if "paper passage" in ln] == ["e-paper"]
     # What the certificate establishes, and the fact's basis, under their lines.
     assert ("Lean checks that the type of ToyAudit.bound_range_at_one_false is the negation of "
