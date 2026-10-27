@@ -463,6 +463,12 @@
                 "relation": {
                   "type": "string"
                 },
+                "fragments": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
                 "lean": {
                   "type": "array",
                   "items": {
