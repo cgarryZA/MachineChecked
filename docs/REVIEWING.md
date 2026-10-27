@@ -341,7 +341,9 @@ of that theorem current and reopens a finding that cites a fact or an applicatio
 proof, and a finding on the whole claim is reopened by a changed passage of context only through
 its own evidence or composition. It is `unchecked`, never
 current, when a part cannot be identified or checked: evidence recorded without the definitions
-its statement uses, a source line, a finding's own bridge, Lean that has not looked. Re-pin a
+its statement uses, a source line, a finding's own bridge, Lean that has not looked, a
+declaration the build shows no version of. `show` and the reader say why and what would let a
+build check it (for example that its module is not built, or that the build ran no Lean). Re-pin a
 record with `"repin": true` once you have checked it again: a draft that cites it follows it,
 while a submitted finding keeps the versions it was submitted with and reads `stale`, naming the
 record, until you supersede it. In a full assessment, `machinechecked changes --workspace ID`

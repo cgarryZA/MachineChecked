@@ -2,10 +2,12 @@
   // Where a declaration is used. The build's reverse references list its users and how each one
   // refers to it (statement, proof, definition body). Served by `machinechecked view`, the reader
   // can ask Lean for each application: the argument supplied for each binder, where each
-  // premise's proof comes from and the conclusion obtained. That document is the one
-  // `machinechecked compare --query uses` prints.
+  // premise's proof comes from, the conclusion obtained and the objects each premise and the
+  // conclusion are about; and, for one application, every local of its context. Those documents
+  // are the ones `machinechecked compare --query uses` prints (with `--in`, for one).
   import { askUses, canEdit, loadUsers, siteIndex } from "../lib/data.js";
   import LeanText from "./LeanText.svelte";
+  import { userName } from "../lib/names.js";
 
   let { name, module = null, onref = null, index = siteIndex } = $props();
   let open = $state(false);
@@ -31,10 +33,37 @@
     unknown: "not determined from the term",
   };
   const refsText = (u) => (u.refs || []).join(", ");
+  // The objects each premise (by its index) and the conclusion (`result`) are about.
+  function about(a) {
+    const out = {};
+    for (const o of a.objects || []) for (const p of o.properties) (out[p.basis === "premise" ? p.index : "result"] ||= []).push(o.binder);
+    return out;
+  }
+  // One application asked for again in its caller alone, which lists its whole context.
+  let reading = $state({});
+  async function inContext(a) {
+    reading = { ...reading, [a.id]: "asking" };
+    try {
+      const got = (await askUses(name, module, a.id)).applications?.[0];
+      if (!got) throw new Error(`Lean no longer describes ${a.id}.`);
+      doc = { ...doc, applications: doc.applications.map((x) => (x.id === a.id ? got : x)) };
+      reading = { ...reading, [a.id]: null };
+    } catch (e) { reading = { ...reading, [a.id]: e.message }; }
+  }
+  const LOCAL = {
+    "caller parameter": "a parameter of the caller",
+    "caller hypothesis": "a hypothesis of the caller",
+    "caller instance": "an instance the caller assumes",
+    "helper parameter": "a parameter of a constant Lean generated",
+    "local fact": "established earlier in the proof",
+    "local definition": "defined in the proof",
+    "local hypothesis": "a hypothesis introduced in the proof",
+    "local variable": "a variable introduced in the proof",
+  };
 </script>
 
 {#snippet user(u)}
-  {#if onref}<button class="r" onclick={() => onref(u.name)}>{u.name}</button>{:else}<code>{u.name}</code>{/if}
+  {#if onref}<button class="r" onclick={() => onref(u.name)}>{userName(u.name)}</button>{:else}<code>{userName(u.name)}</code>{/if}
   <span class="faint small">{refsText(u)}{u.module ? " · " + u.module : ""}{u.via?.length ? " · through " + u.via.join(", ") : ""}</span>
   {#if u.claims?.length}<span class="small linked">linked to {u.claims.join(", ")}</span>{/if}
 {/snippet}
@@ -52,6 +81,7 @@
       {/if}
       {#if doc.imports_without_use?.length}<p class="small faint">Imported without use by {doc.imports_without_use.join(", ")}.</p>{/if}
       {#each doc.applications as a (a.id)}
+        {@const ab = about(a)}
         <div class="app">
           <p class="ahead">In {#if onref}<button class="r" onclick={() => onref(a.caller)}>{a.caller}</button>{:else}<code>{a.caller}</code>{/if}
             {#if a.via}<span class="faint small">(in {a.via})</span>{/if}
@@ -60,10 +90,17 @@
           {#if !a.available}
             <p class="small warn">Not described: {(a.errors || []).join("; ")}</p>
           {:else}
+            {#if a.context}
+              <p class="lbl">context</p>
+              <ul class="params ctx">{#each a.context as c}<li><code>{c.name}</code> <span class="ty"><LeanText pp={c.type} /></span> <span class="faint small">{LOCAL[c.kind] || "in the context"}</span></li>{/each}</ul>
+            {:else if local}
+              <button class="btn ghost" onclick={() => inContext(a)} disabled={reading[a.id] === "asking"}>{reading[a.id] === "asking" ? "Asking Lean…" : "Show its context"}</button>
+              {#if reading[a.id] && reading[a.id] !== "asking"}<p class="small warn">{reading[a.id]}</p>{/if}
+            {/if}
             <ul class="params">
               {#each a.params as p}
                 <li class={"role-" + p.role}>
-                  <div class="sig"><code>{p.binder}</code> <span class="faint small">{p.role}{p.binder_info !== "explicit" ? ", " + p.binder_info : ""}</span> <span class="ty"><LeanText pp={p.type} /></span></div>
+                  <div class="sig"><code>{p.binder}</code> <span class="faint small">{p.role}{p.binder_info !== "explicit" ? ", " + p.binder_info : ""}</span> <span class="ty"><LeanText pp={p.type} /></span>{#if ab[p.index]} <span class="faint small about">about {ab[p.index].join(", ")}</span>{/if}</div>
                   <div class="src">
                     {#if p.role === "premise"}
                       <span class={"d d-" + p.discharge}>{DISCHARGE[p.discharge]}</span><span class="small faint">: {p.supplied}</span>
@@ -77,7 +114,7 @@
             </ul>
             {#each a.unsupplied as o}<p class="small faint">Left open: <code>{o.binder}</code> ({o.role}).</p>{/each}
             <p class="lbl">gives</p>
-            <LeanText pp={a.result} />
+            <LeanText pp={a.result} />{#if ab.result} <span class="faint small about">about {ab.result.join(", ")}</span>{/if}
           {/if}
         </div>
       {/each}
