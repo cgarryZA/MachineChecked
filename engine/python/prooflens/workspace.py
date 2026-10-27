@@ -1242,9 +1242,10 @@ def api(work_dir: Path, data_dir: Path, root: Path | None = None) -> tuple[dict,
     proof, as `compare --query proof-facts` gives them); POST `/api/workspace` with `action`
     `open` (`reviewer`, `mode`, `id`), `update` (`id`, `ops`, `op_id`, `base` ignored), `import`
     (`data`) or `suggest` (`id`, `claim`, `requirement`: attach the passages
-    `requirements.suggest` proposes, as proposals). They call the functions the command line
-    calls."""
-    from .review_cli import ReviewError, parse_reviewer
+    `requirements.suggest` proposes, as proposals); and GET `/api/review-order?order=informed`,
+    the review queue in the order that uses the workspaces' records (`review_cli.order_route`).
+    They call the functions the command line calls."""
+    from .review_cli import ReviewError, order_route, parse_reviewer
     from .targets import Snapshot, TargetError
 
     def snap():
@@ -1309,5 +1310,6 @@ def api(work_dir: Path, data_dir: Path, root: Path | None = None) -> tuple[dict,
                                                         list_all(work_dir)]},
            "/api/proof-facts": facts,
            "/api/workspace": one,
-           "/api/workspace/export": lambda q: export(find(work_dir, (q.get("id") or [""])[0]))}
+           "/api/workspace/export": lambda q: export(find(work_dir, (q.get("id") or [""])[0])),
+           "/api/review-order": order_route(work_dir, data_dir)}
     return get, {"/api/workspace": post}

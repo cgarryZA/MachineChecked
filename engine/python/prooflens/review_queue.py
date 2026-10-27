@@ -626,12 +626,14 @@ def arrange(units: list[dict], signals: dict[str, list[dict]], by: str = "priori
 
 
 def prioritise(queue: dict, changes: dict | None = None, uses: dict | None = None,
-               unbuilt: int = 0) -> dict:
+               unbuilt: int = 0, claims: list[dict] | None = None) -> dict:
     """The queue with its open units in investigation order (`arrange`), from the build's
     records: `changes`, the comparison with the previous release (`changes.compare`), and
     `uses`, the reverse references of the Lean (`uses.site_index`), with `unbuilt` the number of
     the project's modules not built, whose uses are not traced. Reviewed units stay last, as
-    they were. `order` says which records were read and why any was not."""
+    they were. `order` says which records were read and why any was not. With `claims` (the
+    paper's claims, in order), `orders` also holds the open units in the paper's order with
+    their reasons, as `review status --order document` gives them, for the reader."""
     signals: dict[str, list[dict]] = {}
     for got in (change_signals(queue["units"], changes) if changes else {},
                 proof_use_signals(queue["units"], uses) if uses else {}):
@@ -651,6 +653,11 @@ def prioritise(queue: dict, changes: dict | None = None, uses: dict | None = Non
         if uses else {"state": "not available", "why": "the full assessment extracts no "
                       "reverse references" if full else "this build extracted no reverse "
                       "references"}}
-    return {**queue, "units": units,
-            "order": {"by": "priority" if signals else "effort", "signals": record,
-                      "note": ORDER_NOTE}}
+    out = {**queue, "units": units,
+           "order": {"by": "priority" if signals else "effort", "signals": record,
+                     "note": ORDER_NOTE}}
+    if claims is not None:
+        opened = [u for u in units if u["state"] != "reviewed"]
+        out["orders"] = {"document": [{"id": u["id"], "reason": u["reason"]}
+                                      for u in arrange(opened, {}, "document", claims)]}
+    return out

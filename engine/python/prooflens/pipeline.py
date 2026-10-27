@@ -226,7 +226,7 @@ def build(cfg: Config, release: str | None = None, skip_lean: bool = False,
     changes = release_changes(cfg, rel)
     write_preview(site, index, chunks, store, pdfs, web_dist,
                   rq.prioritise(rq.assurance_queue(index, chunks, store, cfg.statement_authors),
-                                changes),
+                                changes, claims=index["claims"]),
                   changes=changes, content=found)
     for n in (found or {}).get("notes", []):
         log(f"note: {n}")
@@ -484,7 +484,7 @@ def rebuild_site(cfg: Config, web_dist: Path | None = None, release: str | None 
     changes = release_changes(cfg, rel["release"])
     write_preview(site, index, chunks, store, pdf_paths(cfg, record["body"]), web_dist,
                   rq.prioritise(rq.assurance_queue(index, chunks, store, cfg.statement_authors),
-                                changes),
+                                changes, claims=index["claims"]),
                   changes=changes, content=found)
     return {"release": rel["release"], "site": site, "index": index, "content": found}
 
