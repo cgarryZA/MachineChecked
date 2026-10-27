@@ -210,6 +210,68 @@ has `result_properties`: the fields of its value at its parameters (identities p
 `result#<field>:`), with basis `definition`, since its value proves them. A failure is
 `structure_error` or `result_properties_error`. Display only.
 
+A printed expression of a statement (a binder's type, a leaf of its tree, a property an
+object's type carries) and of what a definition says (its parameters' types, its body or
+equations, an expansion's arguments and body) also has `math`: the elaborated expression read as
+the mathematical notions it is made of (#70). Each node is `{k, id, …}`, `id` the identity of
+the sub-term it renders (the identities of `terms` and of variables' occurrences, `segments[].at`;
+a node for an argument Lean does not print, such as the type an operation is taken in, has one
+that no printed sub-term has, and a type Lean infers, such as the target of a coercion, has
+none). The kinds: the connectives `and`, `or`, `iff`, `not`, `implies` (`args`; `not` has
+`arg`), `true`, `false`; the binders `forall`, `exists`, `exists_unique`, `lambda`, `pi`,
+`subtype`, `set_of`, `sum`, `product`, `integral`, `lintegral`, `ae` (for almost every point,
+with its `measure`) and `eventually` (with its `filter`), each `{binder, name, binder_info, type,
+body}`, or `pred` when its predicate is not written as a `fun`; `rel` (`op`: `eq`, `ne`, `heq`,
+`le`, `lt`, `ge`, `gt`, `mem`, `subset`, `ssubset`, `dvd`, and `ae_eq` with its `measure` or
+`eventually_eq` with its `filter`; `args`, the related terms; `in`, the type it is taken in);
+`op` (`add`, `sub`, `mul`, `div`, `mod`, `pow`, `smul`, `neg`, `inv`, `abs`, `norm`, `inner`
+with its `field`, `max`, `min`, `sup`, `inf`, `union`, `inter`, `sdiff`, `compl`, `set_prod`,
+`succ`, `card`; `args`, `in`); `num` (`value`, `in`), `top`, `bot`, `univ`, `empty`, `str`;
+`var` (a variable of the statement: `var`, its number, and `name`), `bound` (one bound inside the
+expression: `binder`, its binder's identity), `local`; `apply` (a named function or predicate
+written as an application: `name`, its explicit `args` in order, `class`), `app` (a function
+that is a variable, or a field, applied: `fn`, `args`), `field` (`of`, `field`, `structure`,
+`projection`, and `via`, the parent projections the printed field looks through), `coe` (a
+coercion: `kind` `coe`, `fun` or `sort`, `fn`, `of`, and for `coe` the types it goes `from` and
+`to`), `rep` (a representative of an almost-everywhere class: `of`, the class), `map_apply`
+(a bundled map applied: `map`, `args`), `measure_of` (a measure of a set: `measure`, `set`);
+the types `type` (`name`: `nat`, `int`, `rat`, `real`, `complex`, `nnreal`, `ennreal`, `ereal`,
+`bool`, `prop`), `universe` (`level`), `sort`, `fun_type` (`args`: domain and codomain),
+`prod_type`, `fin` (`n`), `set_type`, `finset_type` (`of`), `euclidean` (`field`, `index`), `lp`
+(`codomain`, `exponent`, `measure`), `measure_type` (`space`), and the linear maps
+`isometry_equiv`, `isometry`, `continuous_linear_map`, `continuous_linear_equiv`, `linear_map`,
+`linear_equiv` (`field`, the scalars of `RingHom.id`, or `semilinear`; `domain`, `codomain`);
+the measure-theoretic `prod_measure` (`left`, `right`), `volume` (`space`), `ae_filter`,
+`sigma_algebra`, `measure_space` (`space`), `sigma_finite`, `finite_measure`,
+`probability_measure` (`measure`), `memlp` (`fn`, `exponent`, `measure`), `integrable`,
+`interval` (`kind`: `Icc`, `Ico`, …, `lo`, `hi`, `in`), `singleton`, `range`. A constant is
+recognised by its name, whatever library declares it. A constant with notation of its own that is
+not recognised, and anything else, is `lean`: the sub-term as exact Lean (`text`), as the reader
+shows it. At most 2000 nodes of one expression are read; a failure is a `lean` node with
+`error`. `math` is display only: no status, fingerprint or hash reads it.
+
+A clause's statement in the manifest, a link's statement in the zero-configuration view and a
+statement in a comparison packet also have `readable` (`prooflens/readable@1`, `readable.py`):
+the statement arranged to be read as mathematics. `rows` lists, in reading order, `objects`
+(objects introduced together by one `quantifier`, `forall` or `exists`, consecutive binders of
+the same kind and printed type in one row: `objects` `{var, name, id, binder, at}`, `at` the
+shared type's identity, `after` the objects they may depend on, `properties` and `data` of
+their types), `structure` (an instance that supplies data, `on` the objects it is about),
+`condition` (an assumption: a hypothesis, an instance that supplies a proposition, a premise;
+`about` the objects it mentions, `joint` when several; `rows` for its own shape, `states` for a
+class of propositions), `claim` (a part of the conclusion, `about`), and the connectives `and`,
+`or`, `iff`, `not`, `implies` with their `parts`, each a list of rows (a quantifier's scope runs
+to the end of the list it stands in). Each row has `role` (`input`, `assumption`, `output`), and
+a binder's row its `scope` and `within` from the tree. A row names its printed expression by
+identity (`at`), the identities the exact Lean and links use. Each property of an object has
+`origin`: `type` (included in the type of a given object, or of one inside an assumption or a
+clause), `established` (carried by the type of an object the statement produces, established by
+producing it), `assumed` (what an assumption states) or `proved` (a result a workspace cites for
+that object, `ref`; comparison packets only). A condition's origin is `assumed`, a claim's
+`established`, supplied structure's `supplied`. Each row lists the definitions applied in it
+(`definitions`, `{name, at, expansion}`), and `definitions` lists each once with its
+applications. `exact` is the identity of the exact statement. Display only.
+
 `compare` lists, for each statement, its objects (`statement.objects`, `objects.objects`): each
 variable it binds to data, with its position (`given`, `produced`, `assumed` inside an
 assumption, `premise` inside the premise of an implication, `denied`, `alternative`,

@@ -76,9 +76,13 @@ Build the Lean project to check its linked declarations.
 
 The reader opens on the paper. Select a numbered statement in the contents or its margin marker.
 The panel compares **Paper** with **Lean**. The Lean is shown in rows: each object with the
-conditions on it alone, each other condition, then the conclusion, in the statement's order; a
-definition has a row of its own. Each row is shown in readable form, with its exact Lean beside
-it when the panel is wide enough, and the complete exact statement follows the rows. **Expand
+conditions on it alone (objects introduced together, such as `a b : ℕ`, share a row), each other
+condition, then the conclusion, in the statement's order; a definition has a row of its own. Each
+row reads as mathematics: what each object is, whether it is given, produced by the statement or
+inside an assumption, where each property comes from (its type, an assumption, or producing the
+object), and what each definition says at its arguments. Notation the reader does not know stays
+exact Lean. Selecting a fragment selects the same sub-term in the exact Lean, which is beside the
+row when the panel is wide enough, and the complete exact statement follows the rows. **Expand
 comparison** gives the comparison the full workspace; a short passage of the paper then stays
 beside the Lean while the Lean scrolls. On a phone the paper comes first, then the Lean, row by
 row. The claim page (**Open as a page**, in the ⋯ menu) and the review page use the same
