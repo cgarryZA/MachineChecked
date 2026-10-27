@@ -85,14 +85,15 @@
         <p class="lbl">value</p>
         <LeanText pp={d.value} {onref} refs={d.uses} />
       {/if}
-      {#if hideReview}
-      {:else if d.review?.current?.length}
-        {#each d.review.current as r}
-          <p class="lbl">review · {r.by}{r.kind === "ai" ? " (AI)" : r.kind === "human" ? " (human)" : ""} · {r.provenance}</p>
-          {#if r.text}<pre class="rtext">{r.text}</pre>{/if}
-        {/each}
-      {:else if d.review}
-        <p class="lbl">no current review{d.review.stale?.length ? " (the last one is stale)" : ""}</p>
+      {#if !hideReview}
+        {#if d.review?.current?.length}
+          {#each d.review.current as r}
+            <p class="lbl">review · {r.by}{r.kind === "ai" ? " (AI)" : r.kind === "human" ? " (human)" : ""} · {r.provenance}</p>
+            {#if r.text}<pre class="rtext">{r.text}</pre>{/if}
+          {/each}
+        {:else if d.review}
+          <p class="lbl">no current review{d.review.stale?.length ? " (the last one is stale)" : ""}</p>
+        {/if}
       {/if}
       {#if d.fingerprint}<p class="fp faint" title={d.legacy_hash ? "legacy " + d.legacy_hash : ""}>{d.fingerprint.slice(0, 24)}…</p>{/if}
       {#if !hideReview}<Uses {name} module={d.module} {onref} {index} />{/if}
