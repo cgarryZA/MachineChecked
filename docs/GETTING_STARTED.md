@@ -465,7 +465,7 @@ A paper page that lists audits of several versions gives each version its own pa
 
 When the site relates the claims of two versions, a claim says what it became in the other version and links to it: "Theorem 3 in Latest manuscript (commit abc1234), statement changed", "Lemma 1 in arXiv v1, renumbered", or "Removed in Latest manuscript (commit abc1234)".
 
-In the panel beside the paper, each audit names the version it pins and its commit. **Open the audit** opens the audit of the version shown; audits of other versions link to their own version's page.
+In the panel beside the paper, each audit names the version it pins and its commit. **Open the audit** opens the audit of the version shown; audits of other versions link to their own version's page. An audit the site could not load says why ("Audit unavailable: …"), with a plain link to try it in the reader.
 
 ## Read a paper with several audits
 

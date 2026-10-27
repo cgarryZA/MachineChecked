@@ -355,7 +355,9 @@ def change_signals(units: list[dict], changes: dict) -> dict[str, list[dict]]:
     `reopened`, with its cause and the question a new reading answers. A unit with no review to
     reopen gives `changed` when its Lean statement, a definition that statement uses, its
     definition, or a passage it is read against changed. A proof that changed alone gives
-    nothing: a review of a statement does not read its proof."""
+    nothing: a review of a statement does not read its proof. Nor does a definition of which
+    only the authored source changed (an edit of a tactic or of a proof inside it), since its
+    statement and value are the same."""
     by_claim = {c["claim"]: c for c in changes.get("claims") or []}
     decls = {d["name"]: d.get("change") for d in changes.get("declarations") or []}
     numbers = _numbers(units, {c["claim"]: c["number"] for c in changes.get("claims") or []
@@ -383,7 +385,10 @@ def change_signals(units: list[dict], changes: dict) -> dict[str, list[dict]]:
                         continue
                     if prop.get("change") in ("statement", "renamed"):
                         what.append(("its Lean statement", cid))
-                    if row.get("definitions"):
+                    # A definition whose authored source alone changed (`proof`: the same
+                    # statement and value) changes nothing the statement says.
+                    if any(d.get("change") in ("statement", "new", "removed")
+                           for d in row.get("definitions") or []):
                         what.append(("a definition its Lean statement uses", cid))
             if kind == "def" and decls.get(u.get("name")) == "statement":
                 what.append(("this definition's Lean", ""))

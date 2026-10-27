@@ -70,9 +70,9 @@ definition claim that names the definition) and the digest of that passage as re
 last `@`, so an id may hold `@`; `build` refuses a claim id with white space or `-->`, which no
 marker can carry, and zero configuration percent-encodes them in the ids it makes. A marker
 without `source` is read as the [evidence policy](EVIDENCE_POLICY.md#a-review-is-a-reading-of-a-text)
-says; one with `source=none` read none of the passages. A marker written
-`<!-- retired spec-review: ... -->` (`inventory retire --markers`) records no review and still
-closes its review text. The section the
+says; one with `source=none` (which an earlier `inventory retire` wrote) read none of the
+passages. A marker written `<!-- retired spec-review: ... -->` (`inventory retire`) records no
+review and still closes its review text. The section the
 marker closes is the text of the review. The last marker of a declaration, reading the files in
 order (a directory's `.md` files by name), is its current record. When it is at another hash
 and an earlier marker would count, the review's state is `stale` with `why` `shadowed`, and
