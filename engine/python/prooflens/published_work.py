@@ -57,7 +57,7 @@ FIELDS = {
                     "independent_of", "depends_on", "corrects"),
     "fragment": ("requirement", "role", "origin", "scope", "state", "state_by", "state_at",
                  "suggestion"),
-    "alignment": ("requirements", "relation"),
+    "alignment": ("requirements", "relation", "fragments"),
     "finding": ("coverage", "basis", "confidence", "bridge", "requirement", "state",
                 "submitted_at", "supersedes", "composition", "verdict", "counterexamples"),
     "evidence": ("role",),

@@ -308,7 +308,13 @@ fs.writeFileSync(path.join(root, "toywork/data/work", workRow.file), JSON.string
     fragments: [{ id: "p1", kind: "fragment", claim: "T:def:even", requirement: "even", role: "statement", origin: "printed", state: "accepted",
                   state_by: "llm:synthetic-model", region: { paper: "T", file: "toy.tex", start_line: 12, end_line: 12, sha256: "x", text: "A synthetic printed sentence." }, currency: cur }],
     alignments: [{ id: "a1", kind: "alignment", claim: "T:def:even", requirements: ["even"], relation: "corresponds",
-                   lean: [{ decl: "Toy.IsEven" }], created_by: "llm:synthetic-model", currency: { state: "stale", changes: [{ decl: "Toy.IsEven", was: "a", now: "b" }] } }],
+                   lean: [{ decl: "Toy.IsEven" }], created_by: "llm:synthetic-model", currency: { state: "stale", changes: [{ decl: "Toy.IsEven", was: "a", now: "b" }] } },
+                 { id: "a2", kind: "alignment", claim: "T:def:even", requirements: ["even"], fragments: ["p1"], relation: "corresponds",
+                   lean: [{ decl: "Toy.IsEven", at: "/1/1/1/0/0/0", target: "n = 2 * k" }, { decl: "Toy.IsEven", var: 0, target: "n" }],
+                   created_by: "llm:synthetic-model", currency: cur },
+                 { id: "a3", kind: "alignment", claim: "T:def:even", requirements: ["even"], fragments: ["p-gone"], relation: "corresponds",
+                   lean: [{ decl: "Toy.IsEven" }], created_by: "llm:synthetic-model",
+                   currency: { state: "stale", changes: [{ fragment: "p-gone", was: "accepted", now: "missing" }] } }],
     findings: [
       { id: "f-c1", kind: "finding", claim: "T:def:even", coverage: "partial", basis: "reviewed_composition", composition: "c-1",
         state: "submitted", submitted_at: "2026-10-20T00:00:00Z", created_by: "llm:synthetic-model", evidence: [], in_force: true, currency: cur },
@@ -1369,6 +1375,51 @@ await check("in the local reader a symbol is linked by choosing it and clicking 
     assert.equal(await pg.locator("aside .mklink").count(), 0);
   });
 
+  await check("a link that takes some occurrences of a symbol marks only those", width, async (pg) => {
+    // Two objects printed with one symbol are linked apart, each naming its occurrences (#99).
+    await pg.route("**/toy/data/claims/*even-add*", async (route) => {
+      const response = await route.fetch();
+      const rec = await response.json();
+      const spec = "Toy.PaperSpec.thm_even_add";
+      rec.symbols = [
+        { symbol: { tex: "a", occurrence: [2], of: 2, object: "a in the sum" }, lean: { decl: spec, var: 0 }, by: "human:A-Referee", stale: false },
+        { symbol: { tex: "b", occurrence: "all" }, lean: { decl: spec, var: 1 }, by: "human:A-Referee", stale: false }];
+      route.fulfill({ response, json: rec });
+    });
+    await toyClaim(pg, "T:thm:even-add");
+    const tex = pg.locator("aside .view .paper .tex");
+    await tex.locator("[data-sym]").first().waitFor();
+    assert.deepEqual(await tex.locator("[data-sym]").allTextContents(), ["b", "a", "b"], "the a of the sum only");
+    await tex.locator("[data-sym]", { hasText: "a" }).hover();
+    assert.match(await pg.locator("aside .view .linkby").textContent(), /Symbol correspondence by human:A-Referee for a in the sum\./);
+  });
+
+  await check("in the local reader a definition's symbol is linked at the occurrences chosen", width, async (pg) => {
+    await pg.goto(origin + `/toyedit/#/r/${TOY.release}/read/T/${encodeURIComponent("T:def:even")}`);
+    await pg.waitForSelector("aside .view h1");
+    const mk = pg.locator("aside .mklink");
+    await mk.locator("summary").click();
+    await mk.locator(".chip[data-tex='n']").click();
+    assert.match(await mk.locator(".occ").textContent(), /It occurs 5 times/);
+    await mk.locator("[data-occ='1']").check();
+    await mk.locator("[data-occ='2']").check();
+    // A claim that only defines: a sub-term of the definition's body is the link's Lean side.
+    const even = pg.locator("aside .view .lean .defn.readable[data-decl='Toy.IsEven']");
+    await even.locator(".body .p", { hasText: "2" }).first().click();
+    await mk.locator("input.who").fill("Test Referee");
+    const save = mk.locator("button", { hasText: "Save link" });
+    assert.ok(await save.isDisabled(), "occurrences linked apart are one object, which the link names");
+    await mk.getByRole("textbox", { name: "The object of the paper" }).fill("n, the number defined");
+    const sent = posted.length, reloaded = pg.waitForEvent("load").then(() => true, () => false);
+    await save.click();
+    assert.ok(await until(() => posted.length > sent), "the link is posted");
+    assert.ok(await reloaded, "the page reloads after saving");
+    const at = posted.at(-1).at;
+    assert.ok(typeof at === "string" && at.startsWith("/"), "a sub-term, by its identity: " + at);
+    assert.deepEqual(posted.at(-1), { action: "add", claim: "T:def:even", tex: "n", decl: "Toy.IsEven", at,
+      by: "human:Test-Referee", occurrences: [1, 2], object: "n, the number defined" });
+  });
+
   await check("a link that no longer holds says why, and is not drawn", width, async (pg) => {
     await pg.route("**/toyedit/data/claims/*even-add*", async (route) => {
       const response = await route.fetch();
@@ -1970,6 +2021,9 @@ await check("a direct audit shows its published readings beside an unchanged sta
   assert.equal(await work.locator("pre.src").textContent(), "A synthetic printed sentence.");
   assert.match(await work.locator("[data-role='statement']").textContent(), /toy\.tex:12 · printed for this claim · accepted by llm:synthetic-model/);
   assert.match(await work.locator("[data-alignment='a1']").textContent(), /Toy\.IsEven.*the Lean changed since it was recorded/);
+  // An alignment that names its passage shows it; one whose passage is no longer kept says so.
+  assert.match((await work.locator("[data-alignment='a2']").textContent()).replace(/\s+/g, " "), /^On toy\.tex:12: Lean: Toy\.IsEven \(sub-term: n = 2 \* k\); Toy\.IsEven \(variable: n\) · corresponds · recorded by llm:synthetic-model$/);
+  assert.match((await work.locator("[data-alignment='a3']").textContent()).replace(/\s+/g, " "), /^On a passage no longer kept: Lean: Toy\.IsEven · corresponds · recorded by llm:synthetic-model · a passage it names no longer governs the reading$/);
   // Each finding resting on a composition shows it: the auditor's argument with its open
   // obligation and the next step, or a checked bridge; neither reads as a direct result.
   const findings = work.locator("[data-kind='finding']");
@@ -2700,6 +2754,43 @@ print("null")`);
       assert.match((await f.textContent()).replace(/\s+/g, " "), /^Every clause, by an argument combining Lean results.*Rests on composition c-tri\./);
     });
 
+
+    // An alignment made in the reader (#99): a requirement's passage, the expression selected in
+    // the Lean, and a whole declaration, saved together and removed again.
+    await check("an alignment is made in the reader from a passage and the selected expression", 1300, async (pg) => {
+      await pg.goto(`http://127.0.0.1:${port}/#/r/${TOY.release}/claim/${encodeURIComponent("T:thm:triangle")}`);
+      const inv = pg.locator("section.investigation");
+      await inv.getByRole("button", { name: /^Continue ws-/ }).click();
+      const form = inv.locator("details.align");
+      await form.locator("summary").click();
+      await form.locator("[data-al-req='r1']").check();
+      await form.locator("label", { hasText: "toy.tex:46" }).locator("input").check();
+      await pg.locator("section.lean .concl .p", { hasText: "+" }).first().click();
+      await form.getByRole("button", { name: "Add the expression selected in Toy.PaperSpec.thm_triangle" }).click();
+      await form.getByRole("combobox", { name: "A whole declaration" }).selectOption("Toy.PaperSpec.thm_triangle");
+      await form.getByRole("button", { name: "Add", exact: true }).click();
+      assert.equal(await form.locator(".target").count(), 2);
+      await form.getByRole("textbox", { name: "Alignment note" }).fill("The sum is the triangular number.");
+      await form.getByRole("button", { name: "Save alignment" }).click();
+      const req = inv.locator("[data-req=r1]");
+      const made = req.locator("[data-alignment]", { hasText: "On toy.tex:46" });
+      await made.waitFor();
+      assert.match((await made.textContent()).replace(/\s+/g, " "),
+        /^On toy\.tex:46: Lean: Toy\.PaperSpec\.thm_triangle \(sub-term: \(?n \+ 1\)?\); Toy\.PaperSpec\.thm_triangle · corresponds · recorded by human:Test-Auditor The sum is the triangular number\. · Remove$/);
+      const id = await made.getAttribute("data-alignment");
+      const saved = engine(String.raw`
+import json, sys
+from pathlib import Path
+from prooflens import workspace as wsp
+(p, ws), = wsp.list_all(Path(sys.argv[1]))
+print(json.dumps(ws["records"][sys.argv[2]]))`.replace("sys.argv[2]", JSON.stringify(id)));
+      assert.deepEqual(saved.requirements, ["r1"]);
+      assert.equal(saved.fragments.length, 1);
+      assert.ok(saved.lean[0].at && saved.lean[0].target.includes("+"), JSON.stringify(saved.lean));
+      await made.getByRole("button", { name: "Remove" }).click();
+      await req.locator("[data-alignment]", { hasText: "On toy.tex:46" }).waitFor({ state: "detached" });
+      assert.equal(await req.locator("[data-alignment]", { hasText: "On toy.tex:46" }).count(), 0);
+    });
 
     // A printed proof step refuted by a counterexample (#111): the step's reading with the
     // order of its quantifiers, the counterexample and what its certificate checks, the

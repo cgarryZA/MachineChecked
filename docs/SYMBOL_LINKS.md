@@ -43,10 +43,18 @@ table of `machinechecked.toml` names another):
 
 - **One link per object within its scope**: a symbol is matched by its TeX within one claim's
   statement, and every occurrence there takes the link (`occurrence: "all"`), unless the link
-  names occurrences by index. Two different ν (in two claims, or two scopes of one claim) are two
-  links and are never merged.
+  names occurrences by number. Two different ν (in two claims, or two scopes of one claim) are two
+  links and are never merged. Occurrences are numbered from 1 in reading order, in the pieces of
+  mathematics of the passage the link is made on (as the reader typesets them); a link that names
+  some (`occurrence: [1, 2]`, with `of`, how many there were) says they are one object of the
+  paper, which it names (`object`, the author's words: "n, the number defined"). Another object
+  printed with the same symbol (the index of `T_n`) is linked apart, naming its own occurrences;
+  two objects never share an occurrence, and a link of every occurrence leaves no room for
+  another. A shared glyph alone never shares a link.
 - **The Lean side** is a variable (`var`, the variable's number the probe exports), a
-  binder's type (`binder`, `path: "type"`), or any expression (`at`). An expression is named by
+  binder's type (`binder`, `path: "type"`), or any expression (`at`), of one of the claim's
+  propositions or, for a claim that only defines, of one of its definitions (its parameters are
+  its variables; its body and equations its expressions). An expression is named by
   its identity: its position in the whole proposition (Lean's `SubExpr.Pos`, written like
   `/1/0/1`), which the probe records for every selectable sub-term (`terms[].id`) and for every
   occurrence of a variable (`segments[].at`), so one occurrence is named apart from the variable,
@@ -56,7 +64,10 @@ table of `machinechecked.toml` names another):
   shown in the other. A property an object's type carries has the identities of its statement
   at that object, prefixed by the object's identity and the field (`/1#start:/0`), so the same
   field of two objects is two targets; an equation of a definition has its own, prefixed by the
-  equation theorem's name (`Foo.f.eq_2:/1`). The scheme is versioned (`IDS` in `symbols.py`,
+  equation theorem's name (`Foo.f.eq_2:/1`); an expression inside a definition expanded at the
+  arguments of one of its applications extends the application's identity (`/1/0=/1`, and
+  `/1/0=/1=/0` inside an expansion nested in it), and is found in the expansion the site stores
+  on its own, as is an equation on a later page of a definition's equations. The scheme is versioned (`IDS` in `symbols.py`,
   now `subexpr-pos@1`).
 - **Pins**: the statement's fingerprint (it already covers the definitions the statement uses),
   the hash of the claim's TeX source, the text of the Lean object as it was shown (`target`), the
@@ -98,11 +109,14 @@ The author or a reviewer, under their name, from the command line:
 
 ```sh
 machinechecked symbol add P:thm:sep '\nu' Foo.spec_sep --var ν --as human:Ada-Lovelace
+machinechecked symbol add P:def:even n Foo.IsEven --var n --occurrence 1 --occurrence 2 \
+  --object 'n, the number defined' --as human:Ada-Lovelace     # two occurrences, one object
 machinechecked symbol add P:thm:sep '\mathbb R^j' Foo.spec_sep --type-of f --as human:Ada-Lovelace
 machinechecked symbol add P:thm:sep 'f' Foo.spec_sep --term c#2 --as human:Ada-Lovelace   # a sub-term, by place
 machinechecked symbol add P:thm:sep 'f' Foo.spec_sep --at /1/1/0 --as human:Ada-Lovelace  # by identity
 machinechecked symbol list
 machinechecked symbol remove P:thm:sep '\nu'
+machinechecked symbol remove P:def:even n --object 'n, the number defined'   # that object's only
 ```
 
 `add` checks the link against the last build (the symbol occurs in the claim's mathematics, the
@@ -113,7 +127,9 @@ and `--type-of` take a variable's number, or a name (the first variable of that 
 In the local reader of a full assessment (`machinechecked view`), the paper section of a claim
 offers **Link a symbol to the Lean**: choose one of the symbols found in the claim's mathematics,
 click its variable in the Lean statement (or tick that the symbol is the variable's type, or click inside an expression to select a sub-term), give
-your name, and save. The link goes through the same checks as `symbol add`, is written to the same
+your name, and save. A symbol printed several times can be linked at the occurrences you tick,
+named as the object of the paper they are. A claim that only defines is linked into its
+definitions the same way. The link goes through the same checks as `symbol add`, is written to the same
 file, and the site is rewritten with it; existing links can be removed there. A published audit shows the
 links its author recorded (when it publishes both the source text and the Lean) and never edits
 them.

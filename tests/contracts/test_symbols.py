@@ -198,3 +198,55 @@ def test_a_link_names_one_object_by_its_identity_and_says_why_it_is_stale():
     assert why({"var": 2}, target="t", binder_id="/1") == ["target"], "another variable named t"
     assert why({"var": 1}, target="s", ids="older@0") == ["ids"]
     assert why({"var": 1}, target="s", statement="fp-other") == ["statement"]
+
+
+@needs_lean
+@needs_tex
+def test_a_definitions_symbol_is_linked_apart_for_each_object_it_stands_for(toy, monkeypatch):
+    """#99: Definition 1.1 only defines, so its symbols link into its definitions. Its `n` is
+    printed five times: twice for the number defined even, three times in the triangular
+    numbers. Each object's occurrences are linked apart and named; they never share one."""
+    from prooflens.symbols import remove
+
+    before, body, cfg = build(toy)
+    decls = body["lean"]["decls"]
+
+    def terms(name):
+        for pp in (decls[name].get("body"), *(q.get("statement") for q in
+                                              decls[name].get("equations") or [])):
+            for t in (pp or {}).get("terms") or []:
+                yield t["id"], "".join(s["t"] for s in pp["segments"][t["from"]:t["to"]])
+    even = next(i for i, text in terms("Toy.IsEven") if text == "n = 2 * k")
+    # The smallest sub-term of an equation of the triangular numbers that mentions n.
+    tri = min((x for x in terms("Toy.triangle") if "n" in x[1]), key=lambda x: len(x[1]))[0]
+    add(cfg, "T:def:even", "n", "Toy.IsEven", WHO, at=even, occurrence=[2, 1],
+        paper_object="n, the number defined")
+    monkeypatch.chdir(toy)
+    cli.main(["symbol", "add", "T:def:even", "n", "Toy.triangle", "--at", tri, "--occurrence",
+              "3", "--occurrence", "4", "--occurrence", "5", "--object", "n, the index of T",
+              "--as", WHO])
+    for kw, why in [
+        ({"var": "n", "occurrence": [5, 1], "paper_object": "another n"}, "linked already at"),
+        ({"var": "n"}, "linked already at"),                              # every occurrence
+        ({"var": "n", "occurrence": [6], "paper_object": "x"}, "occurs 5 time"),
+        ({"var": "n", "occurrence": [1]}, "name it"),
+    ]:
+        with pytest.raises(SymbolError, match=why):
+            add(cfg, "T:def:even", "n", "Toy.IsEven", WHO, **kw)
+    with pytest.raises(SymbolError, match="not a statement or a definition of"):
+        add(cfg, "T:def:even", "n", SPEC, WHO, var="a")
+    # The same object's link is replaced, not doubled.
+    add(cfg, "T:def:even", "n", "Toy.IsEven", WHO, at=even, occurrence=[1, 2],
+        paper_object="n, the number defined")
+    after, _, cfg = build(toy, reuse_lean=True)
+    assert {c["id"]: c["status"] for c in after["claims"]} == \
+        {c["id"]: c["status"] for c in before["claims"]}
+    links = chunk(cfg, "T:def:even")[1]["symbols"]
+    assert [(ln["symbol"], ln["lean"], ln["stale"]) for ln in links] == [
+        ({"tex": "n", "occurrence": [3, 4, 5], "of": 5, "object": "n, the index of T"},
+         {"decl": "Toy.triangle", "at": tri}, False),
+        ({"tex": "n", "occurrence": [1, 2], "of": 5, "object": "n, the number defined"},
+         {"decl": "Toy.IsEven", "at": even}, False)]
+    assert remove(cfg, "T:def:even", "n", "n, the index of T") == 1
+    assert [ln["symbol"]["object"] for ln in json.loads((toy / "symbols.json").read_text())["links"]] \
+        == ["n, the number defined"]

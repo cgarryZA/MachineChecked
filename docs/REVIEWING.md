@@ -260,9 +260,15 @@ it was attached with. A later use (a choice of ε < 1 further on) is shown as a 
 changes the reading of the quantifier it uses. `machinechecked workspace suggest --claim C
 --requirement r1.1` proposes nearby passages (add `--apply` to save them as proposals); accept
 one by putting it with `"state": "accepted"`, or remove it with `"state": "removed"` and
-`why_removed`, which keeps who removed it and why. In the reader, the Investigation section
-shows the requirements with their passages and alignments, and offers **Add a requirement**,
-**Suggest nearby context**, **Accept** and **Remove**. When a governing passage changes, its
+`why_removed`, which keeps who removed it and why. An alignment may name particular passages
+(`"fragments": [ids]`) rather than whole requirements: one passage can align with several parts
+of the Lean, and several passages (the display, its quantifier, the dependence of its constant)
+with one. Its targets may be parts of a definition a claim only defines, of a definition
+expanded at its arguments, or of any equation of a definition. In the reader, the Investigation
+section shows the requirements with their passages and alignments, and offers **Add a
+requirement**, **Suggest nearby context**, **Accept**, **Remove** and **Align with the Lean**:
+tick the requirements (and, if you like, only some of their passages), add the expression you
+selected in the Lean or a whole declaration, and save; an alignment can be removed there too. When a governing passage changes, its
 requirement goes stale even if the display itself did not change; in a full assessment,
 `machinechecked changes --workspace ID` lists the stale requirements, passages and alignments
 with the other records. `machinechecked compare CLAIM

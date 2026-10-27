@@ -10,9 +10,10 @@ a quantifier, the allowed dependence of a constant, a standing assumption, a def
 later use) and whether the paper prints it for this claim, the auditor infers the attachment,
 or it is a proposed correction. A fragment can be suggested by the engine from the passage's
 neighbourhood; it is a proposal until the auditor accepts it, and removing it keeps who removed
-it and why. An alignment associates one or more requirements with one or more Lean targets (a
-declaration, or a variable, binder or sub-term of its statement), many to many, with the
-relation recorded.
+it and why. An alignment associates one or more requirements, or particular passages of them,
+with one or more Lean targets (a declaration, or a variable, binder or sub-term of its
+statement, of a definition a claim only defines, of a definition expanded at its arguments, or
+of an equation of a definition), many to many, with the relation recorded.
 
 These records are readings. They are pinned to the source text and the declarations they were
 made against and go stale when either changes; they change no status, and a later use of a
@@ -269,7 +270,10 @@ def fragment_content(out: dict, rec: dict, ws: dict, snap, cur: dict | None,
 
 def _statements(snap, claim: str) -> dict[str, dict]:
     """The statements of the claim's declarations the build holds, by name; a linked
-    definition's with what it says (`definition`), whose sub-terms can be named too."""
+    definition's with what it says (`definition`), whose sub-terms can be named too. A claim
+    that only defines (a clause with definitions and no proposition) has its definitions, as the
+    declaration store records them (`symbols.definition_statement`)."""
+    from . import symbols
     ch = (snap.chunk(claim) or {}) if snap is not None else {}
     out = {}
     for l in (ch.get("links") or []) + (ch.get("suggestions") or []):
@@ -279,6 +283,12 @@ def _statements(snap, claim: str) -> dict[str, dict]:
     for cl in ch.get("clauses") or []:
         if cl.get("spec") and cl.get("statement"):
             out.setdefault(cl["spec"], cl["statement"])
+        elif not cl.get("spec"):
+            for d in cl.get("defs") or []:
+                read = getattr(snap, "declaration", None)
+                rec = read((ch.get("decls") or {}).get(d)) if read else None
+                if isinstance(rec, dict) and rec.get("name") == d:
+                    out.setdefault(d, symbols.definition_statement(rec))
     return out
 
 
@@ -311,7 +321,9 @@ def _target(t, snap, root, claim: str, olds: list[dict], repin: bool) -> dict:
         elif k == "at":
             out["at"] = _text(t["at"], "the sub-term's identity", True)
             if st is not None:
-                txt = symbols.term_by_id(st, out["at"])
+                # Inside an expansion or a further page of equations too, which the site stores
+                # on their own.
+                txt = symbols.term_by_id(st, out["at"], getattr(snap, "part", None))
                 if txt is None:
                     raise _err(f"{out['decl']} has no sub-term with the identity {out['at']!r}")
                 out["target"] = txt
@@ -365,6 +377,37 @@ def _target(t, snap, root, claim: str, olds: list[dict], repin: bool) -> dict:
     return out
 
 
+def alignment_fragments(ids, ws: dict, claim: str) -> list[dict]:
+    """The passages an alignment names (`fragments`: fragment records of the claim), so that
+    one passage can be aligned with several Lean targets and several passages with one. A
+    passage that is only suggested, or was removed, governs no reading and is refused."""
+    if ids in (None, [], ""):
+        return []
+    if isinstance(ids, str):
+        ids = [ids]
+    if not isinstance(ids, list) or not all(isinstance(i, str) for i in ids):
+        raise _err("`fragments` is a list of the ids of passages (fragment records)")
+    out = []
+    for fid in dict.fromkeys(ids):
+        f = ws["records"].get(fid)
+        if not f or f.get("kind") != "fragment":
+            raise _err(f"{fid} is not a passage (fragment record) of this workspace")
+        if f.get("claim") != claim:
+            raise _err(f"{fid} is a passage of {f.get('claim')}, not {claim}")
+        if f.get("state") == "proposed":
+            raise _err(f"{fid} is a suggested passage: accept it first")
+        if f.get("state") == "removed":
+            raise _err(f"{fid} was removed by {f.get('state_by')}: {f.get('why_removed')}")
+        out.append(f)
+    return out
+
+
+def fragment_users(ws: dict, fid: str) -> list[str]:
+    """The alignments that name the passage `fid`."""
+    return [r["id"] for r in ws["records"].values()
+            if r.get("kind") == "alignment" and fid in (r.get("fragments") or [])]
+
+
 def alignment_content(out: dict, rec: dict, ws: dict, snap, root, cur: dict | None,
                       repin: bool) -> dict:
     reqs = rec.get("requirements")
@@ -376,11 +419,16 @@ def alignment_content(out: dict, rec: dict, ws: dict, snap, root, cur: dict | No
         raise _err("`requirements` is a list of the requirements' local ids")
     out["relation"] = _choice(rec.get("relation") or "corresponds", RELATIONS, "the relation",
                               False)
+    frags = alignment_fragments(rec.get("fragments"), ws, out["claim"])
+    # The requirements a passage governs are what the alignment concerns.
+    reqs = [*reqs, *(f["requirement"] for f in frags)]
     if not reqs and out["relation"] != "additional assumption":
         raise _err("an alignment names the requirements it concerns; only an additional "
                    "assumption of the Lean has none")
     out["requirements"] = list(dict.fromkeys(known_requirement(ws, out["claim"], r)
                                              for r in reqs))
+    if frags:
+        out["fragments"] = [f["id"] for f in frags]
     lean = rec.get("lean")
     if isinstance(lean, dict):
         lean = [lean]
@@ -494,6 +542,9 @@ def currency(ws: dict, snap) -> dict[str, dict]:
         elif r.get("kind") == "alignment":
             out[r["id"]] = alignment_currency(r, snap)
     for r in ws["records"].values():
+        if r.get("kind") == "alignment" and r.get("fragments"):
+            out[r["id"]] = _with_passages(out[r["id"]], r, ws, out)
+    for r in ws["records"].values():
         if r.get("kind") != "requirement":
             continue
         changes = []
@@ -503,9 +554,27 @@ def currency(ws: dict, snap) -> dict[str, dict]:
             if (u.get("kind") == "fragment" and u.get("requirement") == r["local_id"]) or \
                     (u.get("kind") == "alignment" and r["local_id"] in (u.get("requirements")
                                                                         or [])):
-                changes += out.get(u["id"], {}).get("changes", [])
+                changes += [c for c in out.get(u["id"], {}).get("changes", [])
+                            if c not in changes]
         out[r["id"]] = {"state": "stale" if changes else "current", "changes": changes}
     return out
+
+
+def _with_passages(cur: dict, r: dict, ws: dict, out: dict) -> dict:
+    """An alignment's currency with that of the passages it names: stale when one of them
+    changed, or was removed or is no longer kept (a published audit keeps accepted passages
+    only)."""
+    changes = list(cur.get("changes") or [])
+    for fid in r.get("fragments") or []:
+        f = ws["records"].get(fid)
+        if f is None or f.get("state") != "accepted":
+            changes.append({"fragment": fid, "was": "accepted",
+                            "now": (f or {}).get("state") or "missing"})
+        else:
+            changes += [c for c in (out.get(fid) or {}).get("changes") or [] if c not in changes]
+    if changes:
+        return {"state": "stale", "changes": changes}
+    return cur
 
 
 def requirement_changes(ws: dict, claim: str, lid: str, cur: dict) -> list[dict]:
@@ -883,8 +952,13 @@ def lines(rd: dict) -> list[str]:
                    + (f"; chosen before {', '.join(w['before'])}" if w["before"] else "")
                    + (f"; independent of {', '.join(w['independent_of'])}"
                       if w["independent_of"] else ""))
+    passages = {f["id"]: f for r in rd["requirements"] for g in r["fragments"].values()
+                for f in g}
     for a in rd["alignments"]:
-        out.append(f"  {', '.join(a['requirements']) or '(no requirement)'} -> "
+        on = [where_text(passages[f]) if f in passages else f"{f} (not kept)"
+              for f in a.get("fragments") or []]
+        out.append(f"  {', '.join(a['requirements']) or '(no requirement)'}"
+                   + (f" on {'; '.join(on)}" if on else "") + " -> "
                    + "; ".join(target_text(t) for t in a["lean"])
                    + f"  ({a['relation']}, recorded by {a.get('created_by')})"
                    + ("  [stale]" if a["currency"]["state"] == "stale" else ""))
