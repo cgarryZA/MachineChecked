@@ -4,8 +4,13 @@ Lean is asked, in every library of the project, which declarations mention the d
 their statement and which use it in their value (a theorem's proof, a definition's body), and,
 inside each user's value, for every application of it: the actual argument supplied for each of
 its binders (implicit and instance arguments included), the premise each proof argument
-instantiates, where that proof comes from, and the conclusion the application obtains. The
+instantiates, where that proof comes from, the conclusion the application obtains, and the
+objects (the arguments of its parameters) each premise and the conclusion are about. The
 arguments are read from the elaborated terms; names and source text decide nothing.
+
+`--in` reads one declaration, or one application by its id: Lean searches that declaration and
+the constants it generated for it, describes more of its applications, and lists the whole local
+context of each.
 
 Where a premise comes from is what the term shows: one of the caller's own hypotheses (the
 caller assumes it), a hypothesis or fact introduced inside the proof, a theorem applied there,
@@ -15,7 +20,8 @@ condition of the paper takes a reviewer.
 
 The answer names the scope it searched. Modules that are not built or could not be loaded are
 listed, and while there are any the answer is incomplete: "no use found" then holds only for the
-modules searched. A name declared by two modules is ambiguous until its module is given.
+modules searched. A name declared by two modules is ambiguous until its module is given, and
+further callers are followed only through modules that import the declaration's.
 
 Answers are kept in the facts store (`facts.py`) and reused while no module of the project
 changes; a repeat query starts no Lean session. The reverse references of every declaration
@@ -203,10 +209,39 @@ def _text(pp) -> str | None:
     return pp.get("text") if isinstance(pp, dict) else None
 
 
+def objects(params: list[dict], result_depends: list[int] | None) -> list[dict] | None:
+    """The objects an application is about: each argument supplied for a parameter of the
+    declaration applied (a type, a family of types or an instance is not one), with the
+    properties it receives there. A premise whose statement mentions the parameter is one
+    (`basis` `premise`, with how the caller supplies it), and so is the conclusion when it
+    mentions the parameter (`conclusion`). Which binders a statement mentions is read from the
+    declaration's type as Lean holds it (the probe's `depends`), never from printed names. None
+    when Lean had to unfold that type to reach a premise or the conclusion."""
+    premises = [p for p in params if p.get("role") == "premise"]
+    if result_depends is None or any(p.get("depends") is None for p in premises):
+        return None
+    out = []
+    for p in params:
+        if p.get("role") != "parameter" or p.get("type_former"):
+            continue
+        i = p["index"]
+        props = [{"basis": "premise", "index": q["index"], "binder": q["binder"],
+                  "statement": _text(q.get("type")), "discharge": q["discharge"],
+                  "supplied": q["supplied"]}
+                 for q in premises if i in q["depends"]]
+        if i in result_depends:
+            props.append({"basis": "conclusion", "statement": None})
+        out.append({"index": i, "binder": p["binder"], "argument": _text(p.get("argument")),
+                    "supplied": p.get("supplied"), "properties": props})
+    return out
+
+
 def application(r: dict, caller_owner: str, ranges: dict) -> dict:
     """An application record as the CLI and the reader show it: the raw record (exact
-    printed expressions with their variable references) and, for each premise, how it is
-    supplied."""
+    printed expressions with their variable references), for each premise how it is supplied,
+    and the objects it is about with the properties each receives (`objects`). `context`, when
+    the application was asked for in its caller alone (`--in`), lists every local of the
+    context, not only those it mentions (`locals`)."""
     caller = r["caller"]
     loc = {"declaration": caller_owner, "path": r.get("path"),
            "range": ranges.get(caller), "precision": "declaration",
@@ -225,12 +260,22 @@ def application(r: dict, caller_owner: str, ranges: dict) -> dict:
         if p.get("role") == "premise":
             q["discharge"] = discharge(p.get("origin"))
         params.append(q)
+    obj = objects(params, r.get("result_depends"))
+    if obj is not None:
+        for o in obj:
+            for pr in o["properties"]:
+                if pr["basis"] == "conclusion":
+                    pr["statement"] = _text(r.get("result"))
     return {**out, "available": True, "params": params,
             "premises": [{"binder": p["binder"], "statement": _text(p.get("type")),
                           "discharge": p["discharge"], "supplied": p["supplied"]}
                          for p in params if p.get("role") == "premise"],
             "unsupplied": r.get("open") or [], "extra_args": r.get("extra_args", 0),
-            "result": r.get("result"), "locals": r.get("locals") or []}
+            "result": r.get("result"), "locals": r.get("locals") or [],
+            **({"objects": obj} if obj is not None else
+               {"objects_note": "not determined: Lean unfolds the declaration's type to reach "
+                                "its premises or its conclusion"}),
+            **({"context": r["context"]} if r.get("context") is not None else {})}
 
 
 def _further(idx: dict, group: str, name: str) -> list[dict]:
@@ -357,11 +402,83 @@ def _assemble(name: str, recs: list[dict], groups: list[str], built: list[str],
     }
 
 
+def selection(spec: str | None) -> tuple[str | None, str | None]:
+    """The declaration to look in, and the application, that `--in` names: a declaration, or an
+    application id `app:CALLER:N`, whose caller is the constant it names."""
+    if not spec:
+        return None, None
+    if spec.startswith("app:"):
+        caller, _, n = spec[4:].rpartition(":")
+        if not caller or not n.isdigit():
+            raise ViewError(f"{spec}: an application id is app:CALLER:N, as `compare --query "
+                            "uses` gives it")
+        return caller, spec
+    return spec, None
+
+
+def _importing(refs: list[dict], graph: dict[str, list[str]], module: str | None) -> list[dict]:
+    """The reference records of the modules that import `module`, directly or not, and of
+    `module` itself: those of one environment with the declaration. A library that does not
+    import it may declare the same names; its references are not paths to it."""
+    if not module or module not in graph:
+        return refs
+    importers: dict[str, set[str]] = {}
+    for m, imps in graph.items():
+        for i in imps:
+            importers.setdefault(i, set()).add(m)
+    reach, todo = {module}, [module]
+    while todo:
+        for m in importers.get(todo.pop(), ()):
+            if m not in reach:
+                reach.add(m)
+                todo.append(m)
+    return [r for r in refs if r.get("module") in reach]
+
+
+def _in_caller(body: dict, caller: str, cmod: str | None, recs: list[dict], groups: list[str],
+               failed: dict[str, str]) -> dict:
+    """The answer of `_assemble` narrowed to the declaration `caller` (and the constants Lean
+    generated for it): the scope is that declaration, so its completeness is whether Lean
+    searched it. `cmod` is its module when the source shows it."""
+    selected = {s for r in recs if r.get("record") == "uses" and r.get("probe_group") in groups
+                for s in r.get("selected") or []}
+    if caller not in selected:
+        if cmod in failed or (cmod is None and failed):
+            return {"ok": False, "status": "not checked", "modules": sorted(failed),
+                    "reason": f"{caller}, the declaration to look in: its module could not be "
+                              "loaded"}
+        if cmod is None:
+            return {"ok": False, "status": "not found", "modules": [],
+                    "reason": f"{caller}, the declaration to look in, is not declared in the "
+                              "modules searched"}
+        # Its module was loaded without the declaration's: it cannot use it.
+    # Lean searched the declaration and its generated constants only: every user is one of them.
+    users = body["users"]
+    return {**body, "complete": True,
+            "answer": "used" if users else "no use found in this scope",
+            "within": {"caller": caller, "module": (users[0]["module"] if users else cmod),
+                       "searched": caller in selected},
+            "further": [], "further_note": "not extracted when one declaration is searched",
+            "imports_without_use": []}
+
+
+def _one_application(body: dict, app: str) -> dict:
+    """An answer narrowed to the application `app`."""
+    if not body.get("ok"):
+        return body
+    apps = [a for a in body.get("applications") or [] if a["id"] == app]
+    return {**body, "applications": apps,
+            "within": {**body.get("within", {}), "application": app, "found": bool(apps)}}
+
+
 def uses(root: Path, name: str, module: str | None = None, lake: str = "lake", log=None,
-         refresh: bool = False, cached_only: bool = False) -> dict:
+         refresh: bool = False, cached_only: bool = False, within: str | None = None) -> dict:
     """Where `name` is used in the Lean project at `root`, and its applications there, as one
     JSON-ready document. `cached_only` answers from the facts store or with `status: "not
-    extracted"`."""
+    extracted"`. `within` (`--in`) narrows the answer to one declaration, or to one application
+    by its id: Lean searches that declaration and the constants it generated for it, describes
+    more of its applications (64 rather than 8), each with every local of its context
+    (`context`), and follows no further callers."""
     libs = lib_names(root)
     if not libs:
         raise ViewError("no Lean library found in the lakefile")
@@ -372,24 +489,34 @@ def uses(root: Path, name: str, module: str | None = None, lake: str = "lake", l
     target, answer = _resolve(root, name, module, built, unbuilt)
     if answer is not None:
         return {**head, "ok": False, **answer}
+    caller, app = selection(within)
+    cmod = None
+    if caller:
+        cmod, answer = _resolve(root, caller, None, built, unbuilt)
+        if answer is not None:
+            return {**head, "ok": False, **answer,
+                    "reason": f"{caller}, the declaration to look in: {answer['status']}"}
+    narrow = (lambda b: _one_application(b, app)) if app else (lambda b: b)
     from .deps import store
     # An answer is reused while every module of the project it searched, and the probe, are
     # unchanged (#130's facts store): a user can be anywhere, so an edit to any project module
     # reopens it, and an edit outside Lean does not.
     st = store(root, libs)
-    key = f"{name}\0{module or target or '*'}"
+    key = f"{name}\0{module or target or '*'}" + (f"\0in {caller}" if caller else "")
     if cached_only:
         entry, _ = st.get("uses", key)
         if entry is not None:
-            return {**head, **entry["body"], "cache": {"hit": True}}
+            return {**head, **narrow(entry["body"]), "cache": {"hit": True}}
         return {**head, "ok": False, "status": "not extracted",
                 "reason": "its uses have not been read since the Lean last changed"}
     with st.lock(log):
         entry, _ = (None, None) if refresh else st.get("uses", key)
         if entry is not None:
-            return {**head, **entry["body"], "cache": {"hit": True}}
-        refs = None if refresh else _stored_refs(st, built)
-        requests = [{"kind": "apps", "name": name}, {"kind": "modules", "name": ""}]
+            return {**head, **narrow(entry["body"]), "cache": {"hit": True}}
+        # One declaration's answer follows no further callers: it needs no references.
+        refs = [] if caller else None if refresh else _stored_refs(st, built)
+        requests = [{"kind": "apps", "name": name, **({"callers": [caller]} if caller else {})},
+                    {"kind": "modules", "name": ""}]
         if refs is None:
             requests.append({"kind": "refs", "name": ""})
         work = root / work_dir_name(root) / "build"
@@ -422,11 +549,19 @@ def uses(root: Path, name: str, module: str | None = None, lake: str = "lake", l
                     "modules": sorted(failed) if failed else ([target] if target else []),
                     **({"reason": "some built modules could not be loaded"} if failed else {})}
         else:
-            idx = refs_index([{**r, "probe_group": ""} for r in refs])
+            idx = None if caller else refs_index(
+                [{**r, "probe_group": ""} for r in _importing(refs, graph, mods[0])])
             body = _assemble(name, recs, groups, built, unbuilt, failed, idx, root)
+            if caller:
+                body = _in_caller(body, caller, cmod, recs, groups, failed)
         if not failed:
             st.put("uses", key, st.environment(built, graph), body=body)
-    return {**head, **body, "cache": {"hit": False}}
+    return {**head, **narrow(body), "cache": {"hit": False}}
+
+
+# What a parameter records of the declaration's own type rather than of the caller's term: a
+# digest leaves it out, so that it reads the same as before the probe recorded it.
+OF_THE_TYPE = ("depends", "type_former")
 
 
 def app_hash(app: dict) -> str:
@@ -434,6 +569,9 @@ def app_hash(app: dict) -> str:
     import hashlib
     import json
     body = {k: app.get(k) for k in ("callee", "caller", "via", "params", "result", "unsupplied")}
+    if body["params"]:
+        body["params"] = [{k: v for k, v in p.items() if k not in OF_THE_TYPE}
+                          for p in body["params"]]
     return hashlib.sha256(json.dumps(body, sort_keys=True, ensure_ascii=False)
                           .encode()).hexdigest()[:16]
 
@@ -461,6 +599,25 @@ def find_application(doc: dict, ref: dict) -> dict | None:
     return None
 
 
+def locate(root: Path, ref: dict, cached_only: bool = False) -> tuple[dict, dict | None]:
+    """The uses document that describes the application `ref` (`{callee, id, module?}`), and the
+    application: the answer for the whole project, else, when that answer does not describe
+    every application or is not stored, the answer for the declaration the id names (`--in`),
+    which describes more of the applications in it."""
+    doc = uses(root, ref["callee"], ref.get("module"), cached_only=cached_only)
+    found = find_application(doc, ref) if doc.get("ok") else None
+    if found is None and (doc.get("status") == "not extracted"
+                          or doc.get("ok") and not doc.get("applications_complete")):
+        caller, _ = selection(ref["id"]) if ref.get("id", "").startswith("app:") else (None, None)
+        if caller:
+            one = uses(root, ref["callee"], ref.get("module"), cached_only=cached_only,
+                       within=caller)
+            hit = find_application(one, ref) if one.get("ok") else None
+            if hit is not None:
+                return one, hit
+    return doc, found
+
+
 def app_currency(root: Path | None, ref: dict, check_now: bool = False) -> dict:
     """Whether a cited application still describes the caller's proof: `current` while it is
     elaborated the same way, `stale` when it changed or is gone, `unchecked` while its uses have
@@ -471,7 +628,7 @@ def app_currency(root: Path | None, ref: dict, check_now: bool = False) -> dict:
     if root is None:
         return {"state": "unchecked", "changes": [], "reason": "no Lean project to check against"}
     try:
-        doc = uses(root, ref["callee"], ref.get("module"), cached_only=not check_now)
+        doc, found = locate(root, ref, cached_only=not check_now)
     except ViewError as e:
         return {"state": "unchecked", "changes": [], "reason": str(e)}
     if doc.get("status") == "not extracted":
@@ -481,7 +638,6 @@ def app_currency(root: Path | None, ref: dict, check_now: bool = False) -> dict:
     if not doc.get("ok") and doc.get("status") in NOT_CHECKED:
         return {"state": "unchecked", "changes": [],
                 "reason": not_checked_reason(ref["callee"], doc)}
-    found = find_application(doc, ref) if doc.get("ok") else None
     if found is None and doc.get("ok"):
         callers = {u.get("name") for u in doc.get("users") or []}
         if any(a.get("id") == ref.get("id") for a in doc.get("applications") or []) or \
@@ -547,15 +703,16 @@ def _stored_refs(st, built: list[str]) -> list[dict] | None:
 # -- the reader ------------------------------------------------------------------------------
 
 def route(root: Path, data_dir: Path, lake: str = "lake"):
-    """`GET /api/uses?name=&module=` of `machinechecked view`'s local server: the document
-    `compare --query uses` gives, so that the reader and the command line show the same
-    records."""
+    """`GET /api/uses?name=&module=&in=` of `machinechecked view`'s local server: the document
+    `compare --query uses` gives (with `--in`), so that the reader and the command line show the
+    same records."""
     def get(q: dict) -> dict:
         from . import compare as cmp
         name = (q.get("name") or [""])[0]
         if not name:
             raise ViewError("name a declaration")
-        doc = uses(root, name, (q.get("module") or [None])[0] or None, lake)
+        doc = uses(root, name, (q.get("module") or [None])[0] or None, lake,
+                   within=(q.get("in") or [None])[0] or None)
         try:
             claims = cmp.linked_claims(cmp.Site(data_dir))
         except cmp.CompareError:
@@ -572,6 +729,31 @@ def cite_text(ref: dict) -> str:
     return json.dumps(ref, ensure_ascii=False)
 
 
+# A local of an application's context, by what it is (the probe's `kind`).
+LOCAL_WORDS = {"caller parameter": "a parameter of the caller",
+               "caller hypothesis": "a hypothesis of the caller",
+               "caller instance": "an instance the caller assumes",
+               "helper parameter": "a parameter of a constant Lean generated",
+               "local fact": "established earlier in the proof",
+               "local definition": "defined in the proof",
+               "local hypothesis": "a hypothesis introduced in the proof",
+               "local variable": "a variable introduced in the proof"}
+
+
+def _local_words(c: dict) -> str:
+    return LOCAL_WORDS.get(c.get("kind"), "in the context")
+
+
+def _about(a: dict) -> dict:
+    """For the terminal: the objects each premise (by index) and the conclusion (`result`) of an
+    application are about, as `  (about n)`."""
+    out: dict = {}
+    for o in a.get("objects") or []:
+        for pr in o["properties"]:
+            out.setdefault(pr.get("index", "result"), []).append(o["binder"])
+    return {k: f"  (about {', '.join(v)})" for k, v in out.items()}
+
+
 def text(out: dict, claims: dict[str, list[str]] | None = None,
          module: str | None = None) -> str:
     """A uses document for the terminal. Each application is named by its id, which workspace
@@ -585,12 +767,16 @@ def text(out: dict, claims: dict[str, list[str]] | None = None,
                    if out.get("status") == "ambiguous" else ""))
     d = out["declaration"]
     sc = out["scope"]
+    w = out.get("within")
     lines = [f"{d['name']}  ({d['kind']}, {d['module']})",
+             f"  searched {w['caller']} and the constants Lean generated for it" if w else
              f"  searched {sc['modules']} built module(s) of {', '.join(sc['libraries'])}"
              + (f"; not built: {', '.join(sc['unbuilt'][:5])}" if sc["unbuilt"] else "")
              + (f"; could not be loaded: {', '.join(list(sc['failed'])[:5])}"
                 if sc["failed"] else ""),
              f"  {out['answer']}"]
+    if w and w.get("application") and not w.get("found"):
+        lines.append(f"  no application {w['application']} of it is there")
     claims = claims or {}
     for u in out["users"]:
         tag = f"  [linked to {', '.join(claims[u['name']])}]" if u["name"] in claims else ""
@@ -612,25 +798,30 @@ def text(out: dict, claims: dict[str, list[str]] | None = None,
         if not a.get("available"):
             lines.append(f"    not described: {'; '.join(a.get('errors') or [])}")
             continue
+        about = _about(a)
+        for i, c in enumerate(a.get("context") or []):
+            lines.append(f"    {'context' if i == 0 else '':10}{c['name']} : {_text(c.get('type'))}"
+                         f"  ({_local_words(c)})")
         for p in a["params"]:
             arg = _text(p.get("argument"))
             ty = _text(p.get("type"))
             if p["role"] == "premise":
-                lines.append(f"    premise   {p['binder']} : {ty}\n"
+                lines.append(f"    premise   {p['binder']} : {ty}{about.get(p['index'], '')}\n"
                              f"              {DISCHARGE[p['discharge']]}: {p['supplied']}")
             else:
                 lines.append(f"    {p['role']:10}{p['binder']} : {ty} := {arg}"
                              + (f"  ({p['supplied']})" if p.get("supplied") else ""))
         for o in a.get("unsupplied") or []:
             lines.append(f"    left open: {o['binder']} ({o['role']})")
-        lines.append(f"    gives     {_text(a.get('result'))}")
+        lines.append(f"    gives     {_text(a.get('result'))}{about.get('result', '')}")
     cited = [a for a in out["applications"] if a.get("available")]
     if cited:
         ref = {"callee": d["name"], **({"module": module} if module else {}), "id": cited[0]["id"]}
         lines.append("\n  cite as evidence: " + cite_text({"app": ref})
                      + (" (or another application's id)" if len(cited) > 1 else ""))
     if out.get("applications_note"):
-        lines.append("  " + out["applications_note"])
+        lines.append("  " + out["applications_note"]
+                     + ("" if w else " `--in CALLER` describes those of one declaration."))
     lines.append(f"  {out['note']}")
     if out.get("cache", {}).get("hit"):
         lines.append("  (from the cache: no Lean input changed)")

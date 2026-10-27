@@ -2317,6 +2317,15 @@ await check("a declaration lists its users; a static copy names the command for 
         assert.match(await hp.locator(".d").textContent(), /proved in the caller/);
         assert.match(await hp.textContent(), /Uses\.good_double/);
         assert.match(await proves.textContent(), /gives\s*2 \* \(m \+ 1\) \/ 2 < 2 \* \(m \+ 1\)/);
+        // The premise and the conclusion name the object they are about: the number constructed.
+        assert.equal((await hp.locator(".about").textContent()).trim(), "about n");
+        // Asked for in its caller alone, the application lists every local of its context.
+        await proves.getByRole("button", { name: "Show its context" }).click();
+        const ctx = proves.locator("ul.ctx li");
+        await ctx.first().waitFor();
+        assert.equal(await ctx.count(), 1);
+        assert.match((await ctx.first().textContent()).replace(/\s+/g, " "), /m Nat a parameter of the caller/);
+        assert.equal(await proves.getByRole("button", { name: "Show its context" }).count(), 0);
         // The general wrapper the paper's theorem is linked to is marked as such.
         assert.match(await app("Uses.main_bound").locator(".ahead").textContent(), /linked to P:thm:main/);
         assert.equal(await pg.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, "no horizontal scroll");

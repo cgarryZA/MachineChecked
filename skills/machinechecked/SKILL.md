@@ -158,8 +158,9 @@ carries every step out on the toy example.
    NAME --json` go further. Compare quantifier order, domains, hypotheses, definitions and the
    conclusion.
 4. **Follow the objects.** `--query uses NAME` gives each application of NAME with the argument
-   supplied to every binder and the origin of each premise (its `discharge`: `assumed` by the
-   caller, `proved` in it, or `local`). `--query proof-facts NAME` gives the facts a proof
+   supplied to every binder, the origin of each premise (its `discharge`: `assumed` by the
+   caller, `proved` in it, or `local`) and the object each premise and the conclusion are
+   about (`objects`); `--in APP_ID` reads one application with its whole context. `--query proof-facts NAME` gives the facts a proof
    establishes on the way, each under its assumptions and case. Each prints the reference
    evidence cites: an application's `id`, a fact's position `at`.
 5. **Assemble.** Cite declarations, applications (`{"app": {callee, id}}`) and proof facts

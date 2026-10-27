@@ -276,9 +276,10 @@ export async function loadUsers(index, name, module) {
 }
 
 // Where a declaration is used, with each application's arguments and the source of each premise,
-// from `machinechecked view`'s local server: the document `compare --query uses` gives.
-export async function askUses(name, module) {
-  const q = `name=${encodeURIComponent(name)}${module ? `&module=${encodeURIComponent(module)}` : ""}`;
+// from `machinechecked view`'s local server: the document `compare --query uses` gives. `within`
+// (`--in`) is one declaration, or one application by its id, read with its whole context.
+export async function askUses(name, module, within = null) {
+  const q = `name=${encodeURIComponent(name)}${module ? `&module=${encodeURIComponent(module)}` : ""}${within ? `&in=${encodeURIComponent(within)}` : ""}`;
   const r = await fetch(`api/uses?${q}`, { cache: "no-store" });
   const out = await r.json().catch(() => ({ error: r.statusText }));
   if (!r.ok) throw new Error(out.error || r.statusText);
