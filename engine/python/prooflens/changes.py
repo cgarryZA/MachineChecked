@@ -729,6 +729,14 @@ def previous_release(out_dir, release: str) -> str | None:
 def between(out_dir, old_release: str | None = None, new_release: str | None = None) -> dict:
     """The comparison of two named releases of `out_dir`: by default the latest
     (`evidence.latest`) and the one before it."""
+    old_release, old, new_release, new = records(out_dir, old_release, new_release)
+    return compare(old, old_release, new, new_release)
+
+
+def records(out_dir, old_release: str | None = None, new_release: str | None = None
+            ) -> tuple[str, dict, str, dict]:
+    """Two named releases of `out_dir` and their evidence records, `(earlier name, record,
+    later name, record)`: by default the latest (`evidence.latest`) and the one before it."""
     from . import evidence as ev
     from .util import read_json
     rels = ev.releases(out_dir)
@@ -746,7 +754,7 @@ def between(out_dir, old_release: str | None = None, new_release: str | None = N
             raise ChangesError(f"no release {name}: the releases are "
                                + ", ".join(read_json(p)["release"] for p in rels))
         recs[name] = ev.load(out_dir, read_json(path)["evidence"])
-    return compare(recs[old_release], old_release, recs[new_release], new_release)
+    return old_release, recs[old_release], new_release, recs[new_release]
 
 
 class ChangesError(RuntimeError):

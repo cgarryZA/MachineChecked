@@ -144,7 +144,10 @@ Each clause reports a result for every evidence dimension.
   what changed in each claim's passage and Lean and which reviews the later build no longer
   counts, with the dependency that changed. It reports each build's own statuses and changes
   none; a change can only leave evidence due for review, and a review is never carried to
-  another declaration or claim.
+  another declaration or claim. `changes --map` matches the claims of two paper revisions by
+  their passages: the same text shows the same passage, a label locates a changed one, and a
+  shared number or id only proposes a match until the maintainer names it. A match carries no
+  status or review from one side to the other.
 - **Suggestions and paper numbers:** a suggestion, a content search result or a check of the
   Lean's references to the paper's numbers names a candidate to inspect and why. It
   establishes nothing about correspondence and never makes a link: a claim with suggestions

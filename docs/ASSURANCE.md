@@ -166,6 +166,7 @@ the paper or the Lean changes, compare the new release with the one before it:
 machinechecked changes                       # the latest release against the one before it
 machinechecked changes --from R1 --to R2     # any two releases
 machinechecked changes --json                # the same, as one document (prooflens/changes@1)
+machinechecked changes --map                 # each claim of the earlier revision in the later
 ```
 
 For each claim it shows:
@@ -199,6 +200,16 @@ quantifier). The text of a changed further passage is shown from the builds' own
 `--from-source DIR` and `--to-source DIR`, the manuscript folders of the two revisions, to show
 a claim's own changed passage too (a folder's text is shown only when it is the text the build
 recorded).
+
+`--map` gives the **version map** instead: each claim of the earlier paper revision matched to
+the later one by its passage, whatever the two inventories call it, as `unchanged`, `moved`
+(also renumbered), `context-changed` (its lines are the same and a macro definition, the prose
+opening its section, a further passage of its pin or a claim it relies on changed), `changed`,
+`removed`, `new` or `ambiguous`, with both places, the exact change and each release's own
+status and reviews. A shared number or id only proposes a match; `--match EARLIER=LATER`
+records the maintainer's. The later release's references to paper numbers that disagree with
+its paper get the counterpart the map names. The map changes no status
+([Comparing two revisions](SOURCE_REGIONS.md#comparing-two-revisions-the-version-map)).
 
 `--workspace ID` adds the records of a saved investigation that are no longer current against
 the later release ([Saved investigations](REVIEWING.md#saved-investigations)), of every kind
