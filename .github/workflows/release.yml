@@ -44,6 +44,16 @@ jobs:
           else
             echo "new=true" >> "$GITHUB_OUTPUT"
           fi
+      # The package carries the reader built from this commit's sources, whether or not the
+      # reader-bundle job (ci.yml) has committed it yet.
+      - if: steps.v.outputs.new == 'true'
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - if: steps.v.outputs.new == 'true'
+        run: cd web && npm ci && npm run build
       - if: steps.v.outputs.new == 'true'
         run: pip install build && python -m build
       - if: steps.v.outputs.new == 'true'

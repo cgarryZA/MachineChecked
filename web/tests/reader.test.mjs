@@ -450,6 +450,14 @@ function proofFactsApi(url, query, req, res) {
   res.writeHead(404); res.end();
 }
 
+// `/pfsearch/` is the same local reader with the synthetic content index of
+// tests/fixtures/retrieval (written by the engine), and a library its build leaves out: the
+// link picker's search, by text and from a result, and the scope it states.
+fs.cpSync(path.join(root, "prooffacts"), path.join(root, "pfsearch"), { recursive: true });
+const RET = JSON.parse(fs.readFileSync(path.resolve(here, "../../tests/fixtures/retrieval/cases.json"), "utf8"));
+fs.writeFileSync(path.join(root, "pfsearch", "data", "retrieval.json"), JSON.stringify(RET.index));
+fs.writeFileSync(path.join(root, "pfsearch", "data", "index.json"), JSON.stringify({ ...PF, editable: true, retrieval: "data/retrieval.json", index_scope: { left_out: ["Other"], modules: 2 } }));
+
 const types = { ".pdf": "application/pdf", ".html": "text/html", ".json": "application/json", ".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css", ".woff2": "font/woff2" };
 // `/toyedit/` is the toy reader as the local `view` serves it: its index says it may edit, and
 // symbol links it saves are captured here instead of written.
@@ -457,6 +465,7 @@ const posted = [];
 const server = http.createServer((req, res) => {
   let url = decodeURIComponent(req.url.split("?")[0]);
   if (url.startsWith("/pfedit/api/")) return proofFactsApi(url, req.url.split("?")[1] || "", req, res);
+  if (url.startsWith("/pfsearch/api/")) return proofFactsApi("/pfedit/" + url.slice("/pfsearch/".length), req.url.split("?")[1] || "", req, res);
   if (url === "/pfedit/data/index.json") {
     res.writeHead(200, { "content-type": "application/json" });
     return res.end(JSON.stringify({ ...PF, editable: true }));
@@ -2614,6 +2623,31 @@ await check("the facts inside a linked theorem's proof are read on request and c
   assert.deepEqual(rec.ref, { fact: expected });
   assert.equal(rec.role, "supports");
   assert.equal(rec.claim, "P:lem:sharp");
+});
+
+// The link picker searches every declaration of the content index the way the engine does, and
+// from a result finds the statements like it, each compared with it; nothing is linked.
+for (const width of [1300, 390]) await check("the link picker searches by content and from a result", width, async (pg) => {
+  await pg.goto(origin + `/pfsearch/#/r/${PF.release}/claim/${encodeURIComponent("P:thm:cases")}`);
+  const picker = pg.locator(".picker");
+  const sent = pfPosted.length;
+  await picker.getByRole("searchbox", { name: "Search the project's declarations" }).fill("absolute value of a sum");
+  const status = picker.getByRole("status");
+  await status.filter({ hasText: "declarations matching the search" }).waitFor();
+  const said = (await status.textContent()).replace(/\s+/g, " ");
+  assert.match(said, new RegExp(`among ${RET.index.docs.length} declarations of the libraries this paper's build indexes, linked or not; Other, which formalization.yaml maps only to other papers, is not searched here`));
+  const item = picker.locator("li").filter({ has: pg.locator("code", { hasText: /^Ineq\.triangle_abs_of_nonneg$/ }) });
+  await item.getByRole("button", { name: "Similar to Ineq.triangle_abs_of_nonneg" }).click();
+  await status.filter({ hasText: "theorems like Ineq.triangle_abs_of_nonneg" }).waitFor();
+  assert.match((await status.textContent()).replace(/\s+/g, " "), /Each is compared with Ineq\.triangle_abs_of_nonneg as Lean prints them; whether one implies the other is for review\./);
+  const expect = RET.like.find((c) => c.name === "Ineq.triangle_abs_of_nonneg").expect.results;
+  assert.deepEqual((await picker.locator("li code").allTextContents()).slice(0, expect.length), expect.map((r) => r.name), "the engine's order");
+  const first = (await picker.locator("li").first().textContent()).replace(/\s+/g, " ");
+  assert.match(first, /the same conclusion as Ineq\.triangle_abs_of_nonneg/);
+  assert.match(first, /it does not assume 0 ≤ a and 0 ≤ b, which Ineq\.triangle_abs_of_nonneg assumes/);
+  assert.match(await picker.locator("details.ref summary").textContent(), /∀ \(a b : ℝ\), 0 ≤ a → 0 ≤ b → \|a \+ b\| ≤ \|a\| \+ \|b\|/);
+  assert.equal(pfPosted.length, sent, "a search records nothing");
+  assert.ok(await pg.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), "no horizontal scroll");
 });
 
 await check("a fact established in one case shows that case", 390, async (pg) => {

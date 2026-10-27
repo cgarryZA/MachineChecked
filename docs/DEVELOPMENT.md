@@ -12,7 +12,7 @@ pytest -q --shard 2/4                    # the second of CI's four shards of the
 (cd web && node tests/reader.test.mjs)   # the built reader in a browser, laptop and phone widths (needs the engine installed)
 ```
 
-The web build is committed under `engine/python/prooflens/web/`. When editing `web/src/`, rebuild the bundle and keep its output in the same commit. CI checks that the shipped assets match the sources.
+The built reader is committed under `engine/python/prooflens/web/` by CI: after each push to main, the `reader-bundle` job builds it from `web/src/` and commits it when it differs, so main and every release carry a reader that matches its sources. Pull requests leave it as main has it (CI fails one that changes it), so two pull requests that both change `web/src/` never conflict on the build. Every CI job that uses the reader builds it from the pull request's sources first, and the release workflow builds it before the package. To test a change to `web/src/` locally, rebuild it as above, then restore it before committing: `git checkout HEAD -- engine/python/prooflens/web && git clean -fdq engine/python/prooflens/web`.
 
 The browser tests read the data the engine writes for the synthetic project `tests/fixtures/structure` from a committed copy, `web/tests/fixtures/structure/data`. `python3 web/tests/fixtures/make_structure.py` makes it again (it needs elan and TeX Live); run it after changing the fixture or what the engine writes for it, and commit the result. `tests/simple/test_structure.py` fails while the copy differs from what the script makes, apart from the time of the build.
 
@@ -114,7 +114,12 @@ constants the statement mentions (`uses`) and the value uses (`value_uses`). A t
 words (split at underscores and capitals, lower case, lightly stemmed), symbols (`\le`, `≤` and
 `<=` are one term; `≥` is folded into `≤`), numerals and dotted constants. A declaration's
 score is the share of the query's rarity-weighted terms it carries; the users of the ten best
-matches join the results through them. The zero-configuration view writes the index to
+matches join the results through them. The declarations Lean generates for an inductive type
+(`casesOn`, `noConfusion`, `mk.injEq`, …) and notation parsers are left out (`generated`).
+`lean_shape` reads a printed statement's variables, hypotheses and conclusion; a search from a
+theorem (`search_like`) lifts a theorem with the same conclusion, up to the names of its
+variables (`normal_parts`, with and without their types), half way to 1, and compares each
+result's parts with the theorem's (`structure_reasons`). The zero-configuration view writes the index to
 `data/retrieval.json` with its word tables, and so does the full assessment (`content.py`: the
 index of every built module from the facts store, with `LeanFacts.index`, and the paper-number
 check of a one-paper configuration, kept in `<work>/content/<evidence id>.json` beside the
