@@ -446,6 +446,39 @@ def refresh(data: Path, author: str | None = None) -> dict:
     return summary
 
 
+# -- the words for a reading -------------------------------------------------------------------
+#
+# A reading's coverage and basis have one set of words, `data/semantic.json`'s: the terminal, the
+# reader (`web/src/lib/coverage.js`) and this summary all take them from there.
+
+def label(dimension: str, key) -> str | None:
+    """The words for `key` of `dimension` (`coverage`, `basis`, `bridge`, ...), or None for a
+    value the vocabulary does not name."""
+    row = (VOCABULARY.get(dimension) or {}).get(key) if isinstance(key, str) else None
+    return row["label"] if row else None
+
+
+def in_text(words: str | None) -> str | None:
+    """Words as they read inside a sentence: the first letter in lower case."""
+    return words[0].lower() + words[1:] if words else words
+
+
+def basis_words(basis, bridge: str | None = None) -> str | None:
+    """The words for a basis. A checked bridge whose state (`bridge`) is `stale` or `unchecked`
+    reads as that state; with no state given, it reads as recorded."""
+    if basis == "checked_bridge" and bridge in ("stale", "unchecked"):
+        return label("bridge", bridge)
+    return label("basis", basis) if basis in BASIS_KEYS[:3] else None
+
+
+def reading_words(coverage, basis=None, bridge: str | None = None) -> str | None:
+    """A reading's coverage and basis in words: "Part of the claim, in one Lean statement". None
+    for a coverage the vocabulary does not name."""
+    head = label("coverage", coverage) if coverage in RELATIONS else None
+    how = basis_words(basis, bridge)
+    return f"{head}, {in_text(how)}" if head and how else head
+
+
 # -- words for the terminal ---------------------------------------------------------------------
 
 def _n(n: int, unit: str) -> str:
@@ -454,8 +487,7 @@ def _n(n: int, unit: str) -> str:
 
 
 def _counts(table: dict[str, int], words: dict) -> str:
-    return "; ".join(f"{words[k]['label'][0].lower() + words[k]['label'][1:]} ({n})"
-                     for k, n in table.items() if n)
+    return "; ".join(f"{in_text(words[k]['label'])} ({n})" for k, n in table.items() if n)
 
 
 def text(summary: dict | None) -> list[str]:

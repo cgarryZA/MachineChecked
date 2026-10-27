@@ -171,7 +171,7 @@ def test_a_report_without_coverage_promotes_as_before_and_unresolved_never_does(
     ok = {**odd, "correspondence": {"coverage": "full", "basis": "reviewed_composition",
                                     "argument": "Chain the two bounds."}}
     assert pr.coverage_refusals(ok) == []
-    assert pr.coverage_text(ok) == "every clause, by the auditor's composition"
+    assert pr.coverage_text(ok) == "every clause, by an argument combining Lean results"
     from prooflens.promote import report_text
     r = {**ok, "unit": {**unit, "claims": ["T:x"]}, "pins": {"fingerprint": "f"},
          "reviewer": {"id": "human:A", "kind": "human"}, "submitted_at": "t",
@@ -180,8 +180,8 @@ def test_a_report_without_coverage_promotes_as_before_and_unresolved_never_does(
          "verdict": {"value": "faithful", "detail": ""},
          "author_review": {"shown_at": "t", "disagreements": "none"}}
     text = report_text(r, {"legacy_hash": "0" * 32})
-    assert "Coverage (recorded with the verdict): every clause, by the auditor's composition" \
-        in text and "Argument: Chain the two bounds." in text
+    assert ("Coverage (recorded with the verdict): every clause, by an argument combining Lean "
+            "results") in text and "Argument: Chain the two bounds." in text
     assert "Coverage" not in report_text({k: v for k, v in r.items() if k != "correspondence"},
                                          {"legacy_hash": "0" * 32})
 

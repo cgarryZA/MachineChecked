@@ -222,8 +222,8 @@ which objects of different steps are the same, and what remains open:
 
 Full coverage is recorded only when every requirement of the claim is established by a step and
 no obligation is open; two separate existence results leave a `compatible witnesses` obligation
-open until a step or evidence discharges it. The reader shows **Every clause, by the auditor's
-composition**, the steps, and the next step: state the combination as one Lean result. When you
+open until a step or evidence discharges it. The reader shows **Every clause, by an argument combining
+Lean results**, the steps, and the next step: state the combination as one Lean result. When you
 have done that, attach it as the composition's `bridge`, `{"theorem": NAME, "target": SPEC}`, with
 `SPEC` a proposition stated as a definition that you have read against the paper. Lean checks it
 when it is saved, and refuses a theorem whose type is not exactly the target. The composition then
@@ -406,7 +406,7 @@ the verdict:
 | Verdict | Coverage |
 |---|---|
 | *Matches* | `full` (every clause) or `partial` (part of the claim) |
-| *Problem* | `partial`, `changed` (states it differently) or `related` (a related result) |
+| *Problem* | `partial`, `changed` (stated differently) or `related` (a related result, not this claim) |
 | *Cannot determine* | `unresolved`: the verdict's detail is the open question |
 
 The basis is `direct` (one Lean statement), `reviewed_composition` (your argument combining the
