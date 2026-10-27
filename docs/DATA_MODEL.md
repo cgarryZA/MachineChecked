@@ -189,6 +189,11 @@ its type, a witness's as established with it, an object's inside a hypothesis as
 hypothesis, and any other object's (one `denied`, `alternative` or `equivalent`, or under a
 premise) as local to the clause that contains it.
 
+A private declaration is the project's like any other. Records name it as Lean stores it
+(`_private.<module>.0.<name>`, in `name`, `uses`, `closure`, `ref` and expansions); the probe
+tells it from a generated helper by the name its author wrote (Lean's `privateToUserName`); and
+the reader shows that name. Lean prints it with a mark outside its module (`Shape.margin✝`).
+
 A declaration record of a structure (a class included) has `structure`: `{class, params,
 parents, fields, fields_omitted}`, its parameters (as a definition's `params`, identities
 prefixed `type:`), its parents (`{structure, projection, subobject}`, in the order of its

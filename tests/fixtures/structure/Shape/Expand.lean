@@ -135,4 +135,25 @@ Lean generates for `Digit`, beside the project's `Digit.val`. -/
 theorem last_index (t : Digit) (h : t.ctorIdx = 69) : t.val = 69 := by
   cases t <;> first | rfl | exact absurd h (by decide)
 
+/-- A margin this module keeps to itself: a private definition. -/
+private def margin (n : Nat) : Nat := n + 2
+
+/-- Half of a number, rounded down, by recursion: a private definition by equations. -/
+private def half : Nat → Nat
+  | 0 => 0
+  | 1 => 0
+  | n + 2 => half n + 1
+
+/-- A statement about the module's private definitions. -/
+theorem margin_half (k : Nat) : half (k + 2) < margin k + k := by
+  induction k using Nat.strongRecOn with
+  | _ k ih =>
+    match k, ih with
+    | 0, _ => decide
+    | 1, _ => decide
+    | k + 2, ih =>
+      have := ih k (by omega)
+      simp only [half, margin] at *
+      omega
+
 end Shape

@@ -6,6 +6,7 @@
   // `machinechecked compare --query uses` prints.
   import { askUses, canEdit, loadUsers, siteIndex } from "../lib/data.js";
   import LeanText from "./LeanText.svelte";
+  import { userName } from "../lib/names.js";
 
   let { name, module = null, onref = null, index = siteIndex } = $props();
   let open = $state(false);
@@ -34,7 +35,7 @@
 </script>
 
 {#snippet user(u)}
-  {#if onref}<button class="r" onclick={() => onref(u.name)}>{u.name}</button>{:else}<code>{u.name}</code>{/if}
+  {#if onref}<button class="r" onclick={() => onref(u.name)}>{userName(u.name)}</button>{:else}<code>{userName(u.name)}</code>{/if}
   <span class="faint small">{refsText(u)}{u.module ? " · " + u.module : ""}{u.via?.length ? " · through " + u.via.join(", ") : ""}</span>
   {#if u.claims?.length}<span class="small linked">linked to {u.claims.join(", ")}</span>{/if}
 {/snippet}
