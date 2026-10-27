@@ -45,6 +45,7 @@ The agent guides' commands are tested: `tests/simple/test_agent_guide.py` runs e
 | `web/src/` | Browser reader |
 | `.github/actions/browser/` | CI's Chromium: the browser of the pinned Playwright version and the system packages it needs, with bounded, retried downloads kept in caches |
 | `.github/workflows/pages.yml` | Publishes the toy audit CI built (its data only) for machinechecked.org's demo; the site itself is the `cgarryZA/machinechecked.org` repository |
+| `.github/workflows/paper-a.yml` | The status regression on the public Paper A (below) |
 
 ## How a full assessment flows
 
@@ -90,6 +91,23 @@ Each failure a full assessment must catch has a test, mostly in `tests/mutations
 | Shell escape or writes outside the build directory | refused | `test_shell_escape_is_off`, `test_tex_cannot_write_outside_its_build_directory` |
 
 Not yet covered: a manuscript and a displayed PDF from different commits (a provenance mismatch), and a quantifier reversal reported as a finding between two releases.
+
+## The Paper A regression
+
+CI's `Paper A statuses` check (`.github/workflows/paper-a.yml`) builds a real formalisation with the pull request's engine: the public Paper A, `cgarryZA/mvfbsdej-well-posedness-lean`, at the commit `PAPER_A_COMMIT` names. It compares every claim's status with the status Paper A's own acceptance checker gives it in `acceptance/status.json`, and fails on any difference. The log and the job summary list each differing claim with both statuses, under the line `Paper A: N claims, D differences`.
+
+The check runs on pull requests and pushes to main that change the probe (`data/ProofLensProbe.lean`, `probe.py`), `assess.py`, `status.py`, `manifest.py`, `tex.py`, `data/prooflens.sty`, `source_regions.py`, the review parsers (`reviews.py`, `review_sources.py`, `review_citations.py`, `steps.py`) or the workflow itself. It can also be run by hand (Actions, Paper A, Run workflow).
+
+- **Lean build.** Mathlib's build comes from `lake exe cache get`. Paper A's own build comes from the Actions cache, else from Paper A's `build-cache` release (`machinechecked cache restore`), else from source.
+- **Stored Lean results.** A full run probes Paper A (about 35 minutes in all on CI's runners, 25 of them the probe) and keeps its Lean results in the Actions cache: the releases, evidence records, content index and facts store of its `.machinechecked/`. Their key holds everything `build --reuse-lean` requires of stored results (`pipeline.reusable_lean`): the pinned commit, the toolchain, the probe's hash, Paper A's Lean inputs, the probe settings and requests, and the engine's version and fingerprint version. A run whose key matches builds with `--reuse-lean` (about 8 minutes in all). If the engine refuses the stored results, the run builds in full.
+- **Who reuses them.** A full run on main keeps its results for every pull request; a full run on a pull request keeps them for that pull request's later runs. A change to the probe, or a version bump in `pyproject.toml`, makes the next run a full one.
+
+To bump Paper A:
+
+1. Choose a commit of Paper A's `main` whose CI passed. Its acceptance check regenerates `acceptance/status.json` and fails if the result differs from the committed file, so that file is the checker's verdict at that commit.
+2. Set `PAPER_A_COMMIT` in `paper-a.yml` to it and open a pull request. Its first run builds and probes in full. The probe must compile on Paper A's toolchain (`tests/simple/test_structure.py` runs it on Lean 4.24 and 4.32).
+3. A reported difference is a claim on which this engine and Paper A's checker disagree at that commit. Fix the engine, or raise it on Paper A's repository, before the pull request merges.
+4. The merge's push to main stores the Lean results for the new commit.
 
 ## Design principles
 

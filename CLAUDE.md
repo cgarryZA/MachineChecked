@@ -106,10 +106,16 @@ emits a `probe-error` record for that request instead of failing the whole probe
 
 ## Regression against a real formalisation
 
-A downstream private project runs this engine on its papers and compares every status with its
-own acceptance checker (0 differences is the bar). Changes to `assess.py`, `manifest.py`,
-`tex.py`, the probe or the review parsers must keep it at 0; that check is run from the
-downstream project, and its results are reported without its content.
+CI's `Paper A statuses` check (`.github/workflows/paper-a.yml`) builds the public Paper A with
+the pull request's engine and compares every claim's status with Paper A's own acceptance
+checker; any difference fails it (0 differences is the bar). It runs on changes to the probe,
+`assess.py`, `status.py`, `manifest.py`, `tex.py`, `source_regions.py` or the review parsers, so
+green CI covers the regression. A change that leaves the probe alone reuses the stored Lean
+results and takes minutes. `docs/DEVELOPMENT.md` says how the check works and how to bump Paper A.
+
+A downstream private project also runs this engine on its papers and compares every status with
+its own acceptance checker. That check is run by hand from the downstream project from time to
+time, and its results are reported without its content.
 
 ## Style
 
