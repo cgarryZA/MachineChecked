@@ -515,9 +515,10 @@ def write_preview(site: Path, index: dict, chunks: dict, store: dict, pdfs: dict
                   web_dist: Path | None, queue: dict | None = None,
                   expansions: dict | None = None, changes: dict | None = None,
                   content: dict | None = None):
-    """Write the reader and its data to `site`. Definitions expanded at their applications are
-    written on their own (`data/expansions/<key>.json`, `mf.split_expansions`), together with
-    `expansions` already split off (those of published audits). `changes`, the comparison with
+    """Write the reader and its data to `site`. Definitions expanded at their applications, and
+    a declaration's equations after its first 64, are written on their own
+    (`data/expansions/<key>.json`, `mf.split_expansions`), together with `expansions` already
+    split off (those of published audits). `changes`, the comparison with
     the release before, is written as `data/changes.json`; `content`, the content index and
     the paper-number check (`content.py`), as `data/retrieval.json` and `data/numbering.json`.
     An audit's index (not a paper page's) gets its semantic summary (`semantic.py`), computed from
@@ -527,14 +528,15 @@ def write_preview(site: Path, index: dict, chunks: dict, store: dict, pdfs: dict
         semantic.apply(index, chunks, author=index.get("author"))
     index, chunks = content_mod.apply(index, chunks, content)
     expansions = dict(expansions or {})
+    pins = mf.fingerprints(store)
     # A declaration record without its expansions is a different record: it gets its own key.
     rekey, split_store = {}, {}
     for k, r in store.items():
-        q = mf.split_expansions(r, expansions)
+        q = mf.split_expansions(r, expansions, pins)
         rekey[k] = mf.record_key(q) if q != r else k
         split_store[rekey[k]] = q
     store = split_store
-    chunks = {n: {**mf.split_expansions(c, expansions),
+    chunks = {n: {**mf.split_expansions(c, expansions, pins),
                   **({"decls": {d: rekey.get(k, k) for d, k in c["decls"].items()}}
                      if isinstance(c.get("decls"), dict) else {})}
               for n, c in chunks.items()}

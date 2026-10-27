@@ -9,6 +9,7 @@ import subprocess
 import pytest
 
 from conftest import ROOT, needs_lean, needs_tex
+from prooflens import manifest as mf
 from prooflens import symbols
 from prooflens.simple import build_view
 
@@ -309,6 +310,19 @@ def test_definitions_are_exported_as_written(tmp_path, toolchain):
     assert "| n + 2 => fib n + fib (n + 1)" in f["lean_source"]["text"]
     assert "body" not in f, "the compiled recursion is only the value"
 
+    # More equations than a record lists: Lean derives all seventy; the record the reader loads
+    # keeps the first 64 and refers to a page of its own with the others, which it fetches.
+    v = statement(root, "Shape.Digit.val")["decl"]
+    names = [f"Shape.Digit.val.eq_{i}" for i in range(1, 71)]
+    assert v["defined_by"] == "equations" and v["equations_omitted"] == 0
+    assert [e["name"] for e in v["equations"]] == names == v["equation_names"]
+    parts = {}
+    kept = mf.split_expansions(v, parts)
+    assert [e["name"] for e in kept["equations"]] == names[:64]
+    [page] = kept["equations_more"]
+    assert page["name"] == names[64] and parts[page["key"]] == \
+        {"definition": "Shape.Digit.val", "equations": v["equations"][64:]}
+
 
 def props(o, kind="proposition"):
     return [(p["field"], p["type"]["text"]) for p in o.get("properties", []) if p["kind"] == kind]
@@ -481,3 +495,10 @@ def test_definitions_expand_at_their_arguments(tmp_path, toolchain):
         [(True, "k + 1 = 0 → False")]
     assert eq["equation"]["text"] == "Shape.pick (k + 1) 0 = 1"
     assert pick["equations_not_applying"] == ["Shape.pick.eq_1", "Shape.pick.eq_3"]
+    # Every equation is compared with the application, not only those a record lists: here the
+    # seventieth applies.
+    [val] = expansions(rec["Shape.last_digit"]["conclusion"]).values()
+    assert val["name"] == "Shape.Digit.val" and val["equations_omitted"] == 0
+    [eq] = val["equations"]
+    assert eq["name"] == "Shape.Digit.val.eq_70" and eq["params"] == []
+    assert len(val["equations_not_applying"]) == 69
