@@ -2085,6 +2085,10 @@ for (const width of [1300, 390]) {
     assert.match(await cx.textContent(), /Counterexample · a candidate counterexample: not yet shown admissible · by human:A-Auditor[\s\S]*Against: the synthetic bound holds[\s\S]*n = 0 reduces the reading to 1 ≤ 0, which fails/);
     assert.match(await cx.textContent(), /Certificate: Synthetic\.no_bound: Lean checks that its type is the negation of Synthetic\.Bound; it certifies that proposition only/);
     assert.equal(await work.locator("button, input, textarea, select").count(), 0, "nothing to edit");
+    // #74: its finding in force, on no requirement, is the whole claim's in the comparison; the
+    // superseded one is not drawn there.
+    assert.match(words(await pg.locator("aside .cmp .row-findings.claim [data-finding='f2']").textContent()), /^Every clause, in one Lean statement A synthetic direct reading\. Stated by: Synthetic\.bound By A Auditor, informed investigation/);
+    assert.equal(await pg.locator("aside .cmp [data-finding='f1']").count(), 0);
     assert.equal(await pg.locator(".edition select").inputValue(), "original");
     await pg.locator(".view .chipbtn").click();
     for (const [dim, state] of [["formal","proved"],["review","author-reviewed"],["source","fail"],["replay","not-run"]]) {
@@ -2102,6 +2106,7 @@ for (const width of [1300, 390]) {
     assert.equal(await pg.locator(".view .lean .statement").count(), 0);
     assert.doesNotMatch(await pg.locator("aside").textContent(), /Synthetic statement review/);
     assert.equal(await pg.locator("aside .published-work").count(), 0, "another project's readings are not shown");
+    assert.equal(await pg.locator("aside .cmp [data-finding]").count(), 0, "nor its findings");
     assert.equal(await pg.locator(".edition select").inputValue(), "original", "project choice keeps the paper");
     await pg.selectOption("select[aria-label='Formalisation shown']", "synthetic/alpha");
     // Close the panel so the PDF control is reachable on a phone.
