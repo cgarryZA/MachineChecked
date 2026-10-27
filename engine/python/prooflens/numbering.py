@@ -1,9 +1,9 @@
 """References to the paper's numbered statements in the Lean, checked against the paper (#127).
 
 A formalisation written against an earlier version of a paper keeps that version's numbers in
-its docstrings and names: `/-- Theorem 2.1: … -/`, `theorem lemma_3_4`. This module finds each
-such reference (with its exact text, its declaration or module, file and line) and compares it
-with the numbering of the paper at the revision the audit reads:
+its docstrings, names and comments: `/-- Theorem 2.1: … -/`, `theorem lemma_3_4`, `-- by Lemma
+2.2`. This module finds each such reference (with its exact text, its declaration or module,
+file and line) and compares it with the numbering of the paper at the revision the audit reads:
 
 - `exact`: the paper has a statement of that kind and number;
 - `other-kind`: the number exists, under another kind (the docstring says Lemma 2.3, the
@@ -28,9 +28,15 @@ closer to another statement of the paper (`retrieval.py`) keeps its status and i
 possibly stale lead, with the closer statement named; a reference of the second sort is checked
 only for the existence and kind of the statement it cites.
 
-When several references disagree with the paper, in number and in proportion, the
-project-level pattern says the Lean appears to follow another version of the paper; one stray
-reference is reported alone and never read as a version change. An explicit map between
+An ordinary comment (`--` or `/- … -/`) belongs to the declaration whose source it lies in,
+or that starts on the line after it ends, and otherwise to its module. A comment just before
+a declaration that opens with a reference names what the declaration states, as a docstring's
+opening citation does; any other reference in a comment names something cited.
+
+When several references disagree with the paper, in number, in proportion and in more than one
+declaration or module, the project-level pattern says the Lean appears to follow another
+version of the paper; one stray reference, or one place holding several, is reported alone and
+never read as a version change. An explicit map between
 two versions of the paper resolves a renumbered reference when it names one current statement,
 and keeps every candidate when it names several.
 
@@ -38,8 +44,10 @@ With several papers in one configuration, each reference is attributed to one pa
 (`attribute`) and checked against that paper's numbering; one that cannot be attributed is
 `unchecked`, with the reason (`combine` gathers the papers' references and patterns).
 
-This changes what suggestions say and how much a cited number counts; it never creates a link
-or changes a status.
+A suggestion's cited number rests on these references (`citation`): a docstring's number that
+names another work, a section or a statement of another kind is no lead to the claim, and one
+that is a possibly stale lead counts less and says so. This changes what suggestions say and
+how much a cited number counts; it never creates a link or changes a status.
 """
 
 from __future__ import annotations
@@ -137,6 +145,8 @@ _CHAPTER = re.compile(r",[\s~*_]*(?:Ch|Chap|Chapter)\b\.?[\s~]*(?:[IVXLCDM]+|\d+
 
 DRIFT_MIN = 3           # disagreeing references needed before a pattern is reported
 DRIFT_SHARE = 0.3       # ... and their share of the references checked
+DRIFT_PLACES = 2        # ... and the declarations or modules they are in
+STALE_FACTOR = 0.4      # how much a possibly stale lead counts in a suggestion
 CLOSER_MIN = 0.4        # an exact reference reads elsewhere when another statement is at
 CLOSER_MARGIN = 0.15    # least this similar to the declaration, and this much more than the cited
 RUN_MAX = 4             # run-together digits read in every split up to this many digits
@@ -189,11 +199,103 @@ def module_doc_blocks(root: Path | None, modules) -> list[dict]:
     return out
 
 
+def comment_blocks(root: Path | None, modules, index=()) -> list[dict]:
+    """The ordinary comments (`-- …`, `/- … -/`) of the project's modules, each with its file,
+    the line it begins on and the declaration it belongs to (`_owner`); consecutive lines that
+    hold only a `--` comment are one comment. Doc comments and module docstrings are read
+    elsewhere; a string or character literal holds no comment."""
+    out = []
+    if root is None:
+        return out
+    spans: dict[str, list[tuple[int, int, str]]] = {}
+    for d in index:
+        r = d.get("range") or {}
+        if d.get("module") and r.get("line"):
+            spans.setdefault(d["module"], []).append(
+                (r["line"], r.get("end_line") or r["line"], d["name"]))
+    for m in sorted(set(modules)):
+        rel = m.replace(".", "/") + ".lean"
+        try:
+            text = (root / rel).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        merged: list[dict] = []
+        pos, line = 0, 1
+        for kind, start, body, end in _comments(text):
+            line += text.count("\n", pos, start)
+            pos = start
+            last = line + text.count("\n", start, end)
+            alone = kind == "line" and not text[text.rfind("\n", 0, start) + 1:start].strip()
+            prev = merged[-1] if merged else None
+            if alone and prev and prev["alone"] and prev["end"] == line - 1:
+                prev["text"] += "\n" + text[body:end]
+                prev["end"] = line
+                continue
+            merged.append({"text": text[body:end], "line": line, "end": last, "alone": alone})
+        for c in merged:
+            decl, before = _owner(spans.get(m, []), c["line"], c["end"])
+            out.append({"module": m, "file": rel, "line": c["line"], "text": c["text"],
+                        "where": "comment", "declaration": decl, "before": before})
+    return out
+
+
+# A string, a character literal, a line comment or the start of a block comment.
+_LEX = re.compile(r"\"|'|--|/-")
+_STRING = re.compile(r"\"(?:\\.|[^\"\\])*\"", re.S)
+_CHAR = re.compile(r"'(?:\\(?:u\{[0-9a-fA-F]+\}|x[0-9a-fA-F]{2}|.)|[^\\'\n])'")
+_BLOCK = re.compile(r"/-|-/")
+
+
+def _comments(text: str):
+    """The comments of a Lean source other than doc comments (`/--`) and module docstrings
+    (`/-!`): `(kind, start, body start, body end)` for each `--` line comment and each
+    outermost `/- … -/` block comment, block comments nesting as Lean's do."""
+    i, n = 0, len(text)
+    while (m := _LEX.search(text, i)) is not None:
+        t, s = m.group(), m.start()
+        if t == '"':
+            e = _STRING.match(text, s)
+            i = e.end() if e else n
+        elif t == "'":
+            # A prime ends an identifier (`h'`); elsewhere it opens a character literal.
+            prev = text[s - 1] if s else ""
+            c = None if prev.isalnum() or prev in "_'!?" else _CHAR.match(text, s)
+            i = c.end() if c else s + 1
+        elif t == "--":
+            e = text.find("\n", s)
+            i = n if e < 0 else e
+            yield "line", s, s + 2, i
+        else:
+            depth, i = 0, n
+            for b in _BLOCK.finditer(text, s):
+                depth += 1 if b.group() == "/-" else -1
+                if depth == 0:
+                    i = b.end()
+                    break
+            if text[s + 2:s + 3] not in ("-", "!"):
+                yield "block", s, s + 2, max(s + 2, i - 2 if depth == 0 else n)
+
+
+def _owner(spans: list[tuple[int, int, str]], line: int, end: int) -> tuple[str | None, bool]:
+    """The declaration a comment on lines `line`–`end` belongs to: the innermost whose source
+    holds it, else the one starting on the next line (with True); None when neither is."""
+    inside = [s for s in spans if s[0] <= line and end <= s[1]]
+    if inside:
+        return min(inside, key=lambda s: (s[1] - s[0], s[2]))[2], False
+    after = [s for s in spans if s[0] == end + 1]
+    if after:
+        return min(after, key=lambda s: (s[1] - s[0], s[2]))[2], True
+    return None, False
+
+
+ANOTHER_WORK = "it refers to another work"
+
+
 def _elsewhere(text: str, start: int, end: int) -> str | None:
     before = text[max(0, start - 60):start]
     if _cited_after(text[end:end + 60]) or _ELSEWHERE_BEFORE.search(before) \
             or _CHAPTER.search(before) or _authors(before):
-        return "it refers to another work"
+        return ANOTHER_WORK
     return None
 
 
@@ -272,8 +374,9 @@ def _context(text: str, start: int, end: int) -> tuple[str, int]:
 
 def find_references(index: list[dict], blocks: list[dict], foreign=frozenset()) -> list[dict]:
     """Every reference to a numbered statement or section in the project's declaration
-    docstrings, declaration names and module docstrings, with its source, its context, where
-    its text starts in the context (`at`) and an id that no other reference has."""
+    docstrings, declaration names, module docstrings and comments (`blocks`: those of
+    `module_doc_blocks` and `comment_blocks`), with its source, its context, where its text
+    starts in the context (`at`) and an id that no other reference has."""
     out = []
     foreign = set(foreign)
     seen: dict[str, int] = {}
@@ -321,6 +424,9 @@ def find_references(index: list[dict], blocks: list[dict], foreign=frozenset()) 
                      "line": line, "where": "name"}, mapped, "statement", run=True)
             at += len(comp) + 1
     for b in blocks:
+        if b.get("where") == "comment":
+            _comment_references(b, foreign, obs)
+            continue
         mapped = ("its module is in a namespace the project maps to another paper"
                   if b["module"].split(".")[0] in foreign else None)
         for m in REF.finditer(b["text"]):
@@ -331,6 +437,29 @@ def find_references(index: list[dict], blocks: list[dict], foreign=frozenset()) 
                 mapped or _elsewhere(b["text"], m.start(), m.end()), "cited",
                 run=not m.group(2))
     return out
+
+
+def _comment_references(b: dict, foreign: set[str], obs) -> None:
+    """The references of one comment (`comment_blocks`), given to `obs`. A kind written
+    against its number (`lemma21`) is code, not a reference, in a comment."""
+    decl = b.get("declaration")
+    roots = {b["module"].split(".")[0]} | ({decl.split(".")[0]} if decl else set())
+    mapped = (f"its {'declaration' if decl else 'module'} is in a namespace the project maps "
+              "to another paper" if foreign & roots else None)
+    text = b["text"]
+    first = True
+    for m in REF.finditer(text):
+        if not m.group(2):
+            continue
+        # A comment just before a declaration that opens with a reference names what the
+        # declaration states, as a docstring's opening citation does.
+        opening = first and b.get("before") and _OPENING.fullmatch(text[:m.start()]) is not None
+        first = False
+        obs(m.group(1), m.group(3), m.group(0), _context(text, m.start(), m.end()),
+            {"declaration": decl, "module": b["module"], "file": b["file"],
+             "line": b["line"] + text.count("\n", 0, m.start()), "where": "comment"},
+            mapped or _elsewhere(text, m.start(), m.end()),
+            "statement" if opening else "cited")
 
 
 def inventory(claims: list[dict], complete: bool, reason: str = "",
@@ -391,7 +520,11 @@ def analyse(index: list[dict], claims: list[dict], inv: dict, blocks: list[dict]
             ids = st[(k, n)]
             o["status"] = "exact"
             o["paper"] = {"claims": ids, "reference": printed(k, n)}
-            o["detail"] = f"the paper has {printed(k, n)}"
+            # The paper may print one number twice (its numbering restarts in a part, say):
+            # the reference names one of them, and does not say which.
+            o["detail"] = (f"the paper has {printed(k, n)}" if len(ids) == 1 else
+                           f"the paper has {len(ids)} statements printed {printed(k, n)}, and "
+                           "the reference does not say which")
         elif n in by_number:
             others = [printed(kk, nn) for kk, nn in by_number[n]]
             o["status"] = "other-kind"
@@ -530,22 +663,39 @@ def suspect(o: dict) -> bool:
     return o.get("status") in ("absent", "other-kind") or bool(o.get("stale_lead"))
 
 
+def place(o: dict) -> tuple:
+    """The declaration a reference is in (its docstring, name or a comment on it), or else its
+    module (the module's docstring or a comment in it)."""
+    s = o["source"]
+    return ("declaration", s["declaration"]) if s.get("declaration") else ("module", s.get("module"))
+
+
 def pattern(refs: list[dict], inv: dict) -> dict:
     """Counts of the references by status, and whether they show a pattern of numbering drift:
     at least `DRIFT_MIN` references that disagree with the paper, making at least `DRIFT_SHARE`
-    of those checked."""
+    of those checked, in at least `DRIFT_PLACES` declarations or modules (`places`). The
+    examples are the first disagreeing reference of each place, then the others."""
     count = lambda f: sum(1 for o in refs if f(o))
     checked = [o for o in refs if o["status"] in ("exact", "other-kind", "absent")]
     bad = [o for o in refs if suspect(o)]
-    drift = len(bad) >= DRIFT_MIN and len(bad) >= DRIFT_SHARE * max(1, len(checked))
-    return {"references": len(refs), "checked": len(checked),
+    places = {place(o) for o in bad}
+    drift = len(bad) >= DRIFT_MIN and len(bad) >= DRIFT_SHARE * max(1, len(checked)) \
+        and len(places) >= DRIFT_PLACES
+    seen, firsts = set(), []
+    for o in bad:
+        if place(o) not in seen:
+            seen.add(place(o))
+            firsts.append(o)
+    shown = {id(o) for o in firsts}
+    examples = firsts + [o for o in bad if id(o) not in shown]
+    return {"references": len(refs), "checked": len(checked), "places": len(places),
             "exact": count(lambda o: o["status"] == "exact" and not o.get("stale_lead")),
             "reads_elsewhere": count(lambda o: o.get("stale_lead")),
             "other_kind": count(lambda o: o["status"] == "other-kind"),
             "absent": count(lambda o: o["status"] == "absent"),
             "unchecked": count(lambda o: o["status"] == "unchecked"),
             "other_source": count(lambda o: o["status"] == "other-source"),
-            "drift": drift, "examples": [o["id"] for o in bad[:5]],
+            "drift": drift, "examples": [o["id"] for o in examples[:5]],
             "inventory": {"complete": inv["complete"], "reason": inv["reason"],
                           "statements": len(inv["statements"]),
                           "sections": len(inv["sections"]) if inv.get("sections") is not None
@@ -557,7 +707,9 @@ def where(o: dict) -> str:
     loc = f"{s['file']}:{s['line']}" if s.get("file") and s.get("line") else (s.get("file") or "")
     what = {"docstring": f"the docstring of {s.get('declaration')}",
             "name": f"the name {s.get('declaration')}",
-            "module docstring": f"the docstring of module {s.get('module')}"}[s["where"]]
+            "module docstring": f"the docstring of module {s.get('module')}",
+            "comment": f"a comment on {s.get('declaration')}" if s.get("declaration")
+            else f"a comment in module {s.get('module')}"}[s["where"]]
     return f"{what} ({loc})" if loc else what
 
 
@@ -581,13 +733,16 @@ def drift_note(p: dict, refs: list[dict], suggestions: bool = True) -> str | Non
              f"{p['other_kind']} name another kind of statement" if p["other_kind"] else "",
              f"{p['reads_elsewhere']} read closer to another statement" if p["reads_elsewhere"]
              else ""]
-    bad = [o for o in refs if o["id"] in p["examples"]]
+    by_id = {o["id"]: o for o in refs}
+    bad = [by_id[i] for i in p["examples"] if i in by_id]
     ex = "; ".join(f"{o['reference']} in {where(o)}" for o in bad[:3])
+    places = f", in {p['places']} declarations or modules" if p.get("places") else ""
     return (f"the Lean's references to the paper appear to follow another version of it: "
             f"{p['absent'] + p['other_kind'] + p['reads_elsewhere']} of the {p['checked']} "
             f"references checked disagree with this version ({', '.join(x for x in parts if x)})"
-            f", for example {ex}."
-            + (" Suggestions rank statement content above these numbers." if suggestions else ""))
+            f"{places}, for example {ex}."
+            + (" Suggestions rank statement content above these numbers, and label each cited "
+               "number a possibly stale lead." if suggestions else ""))
 
 
 def reliability(numbering: dict | None, decl: str, reference: str) -> tuple[float, str | None]:
@@ -598,12 +753,47 @@ def reliability(numbering: dict | None, decl: str, reference: str) -> tuple[floa
     for o in numbering["references"]:
         if o["source"].get("declaration") == decl and o["reference"] == reference \
                 and o.get("stale_lead"):
-            return 0.4, (f"a possibly stale number: its statement reads closer to "
-                         f"{o['content']['closer']['number']}")
+            return STALE_FACTOR, (f"a possibly stale number: its statement reads closer to "
+                                  f"{o['content']['closer']['number']}")
     if numbering["pattern"]["drift"]:
-        return 0.4, ("a possibly stale number: the Lean's references appear to follow another "
-                     "version of the paper")
+        return STALE_FACTOR, ("a possibly stale number: the Lean's references appear to follow "
+                              "another version of the paper")
     return 1.0, None
+
+
+def citation(numbering: dict | None, claim: dict, declaration: str | None = None,
+             module: str | None = None) -> tuple[float, str | None, list[str]] | None:
+    """What a docstring citing `claim`'s number is worth as a lead to the claim in a
+    suggestion: the docstring of `declaration`, or else the module docstring of `module`.
+    Gives `(factor, why, ids)`: how much the citation counts (1, or `STALE_FACTOR` for a
+    possibly stale lead, `reliability`), why it counts less, and the ids of the references
+    with the claim's number it rests on. None when every such reference names something other
+    than the claim: another work, a section, or a statement of another kind that the paper
+    also numbers so. Without the project's references, or when the docstring has none with
+    the claim's number, the citation counts as `reliability` says."""
+    ref = claim_ref(claim)
+    shown = printed(*ref) if ref else claim.get("number") or ""
+    factor, why = reliability(numbering, declaration, shown)
+    if not numbering or ref is None:
+        return factor, why, []
+    where_ = "docstring" if declaration else "module docstring"
+    obs = [o for o in numbering["references"]
+           if o["source"]["where"] == where_
+           and (o["source"].get("declaration") == declaration if declaration
+                else o["source"].get("module") == module)
+           and ref[1] in (o["number"], *o.get("readings", ()))]
+    own = [o for o in obs if claim.get("id") in (o.get("paper") or {}).get("claims", ())]
+    # A namespace the project maps to another paper is ranked low by the suggestion itself.
+    mapped = [o for o in obs if o.get("status") == "other-source"
+              and o.get("detail") != ANOTHER_WORK]
+    if obs and not own and not mapped:
+        return None
+    kind = next((o for o in own if o["status"] == "other-kind"), None)
+    if kind is not None and factor == 1.0 and not any(o["status"] == "exact" for o in own):
+        factor, why = STALE_FACTOR, (f"a possibly stale number: the docstring names "
+                                     f"{kind['reference']}, and the paper's {ref[1]} is "
+                                     f"{shown}")
+    return factor, why, [o["id"] for o in own + mapped]
 
 
 # -- several papers -----------------------------------------------------------------------------

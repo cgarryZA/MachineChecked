@@ -123,11 +123,12 @@ must answer alike (`tests/contracts/test_retrieval.py` checks the file is curren
 `web/tests/retrieval.test.mjs` runs the reader's side): regenerate it after changing either.
 The same test measures retrieval on a synthetic index of 40,000 declarations.
 
-`numbering.py` finds references to numbered statements in docstrings, names and module
-docstrings and checks them against the paper's claims and, from the compilation's table of
-contents, its sections. `simple.suggest` combines content (weight 0.7), cited numbers (0.2,
-less for a possibly stale lead) and names (0.1). The fixture `tests/fixtures/renumbered` is a
-paper renumbered after its Lean was written.
+`numbering.py` finds references to numbered statements in docstrings, names, module
+docstrings and ordinary comments (`comment_blocks`, a small Lean comment lexer) and checks them
+against the paper's claims and, from the compilation's table of contents, its sections.
+`simple.suggest` combines content (weight 0.7), cited numbers (0.2, less for a possibly stale
+lead; `numbering.citation` decides which reference a cited number rests on) and names (0.1).
+The fixture `tests/fixtures/renumbered` is a paper renumbered after its Lean was written.
 
 `inspect NAME [--dependencies] [--json]` reports what a declaration's statement mentions and, separately, what its proof uses, through the whole project (the probe's `deps` request; every other record stays proof-erased). `inspect NAME --used-by` reports the other direction: the probe's `apps` request lists the declarations whose statement or value mentions NAME (`user` records) and describes each application of it in their values (`app` records: each binder with its actual argument, the instantiated premise, the origin of the proof supplied, and the type of the application). The search enters a value only along subterms that mention NAME, examines each shared subterm once (at most a million per user), describes at most 8 applications in each of at most 30 users, and prints a term above 600 nodes by its head only; `appscan` and `uses` records say what a bound left out. The `refs` request gives every declaration's references to the project's constants, from which `uses.py` derives further callers and the reader's `data/uses.json` (the zero-configuration build asks it in the indexing sessions and stores it per module with the index in the facts store; a `uses` answer is stored there too, reopened by an edit to any module of the project). `compare --query proof-facts NAME` walks one declaration's elaborated proof term (the probe's `proof-facts` request): `have`, `let` of a proposition, `show`, and applications of project theorems or of theorems to a local fact, each with its local context, the locals it needs, the case arguments of eliminators it lies under and its sub-expression position. The walk enters no generated `_proof_` lemma (it lists them), visits shared closed sub-terms once, and stops at 200,000 nodes or 200 facts (query fields `facts_nodes`, `facts_items`), saying so; each fact is printed with its own heartbeat budget, and a request that fails emits a `probe-error` for itself only. Statement fingerprints are unchanged: the request adds a record of its own. Full-assessment users can use `reassess` (new reviews without a Lean re-probe), `changes` (what changed between two releases, and the reviews it reopens, `changes.py`), `site` (regenerate the reader from stored evidence), `bundle` (single-file HTML), `export` (approved public data) and `review promote` (maintainer approval).
 
