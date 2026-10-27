@@ -50,7 +50,7 @@ for (const width of [1360, 390]) for (const scheme of ["light", "dark"]) {
   await page.locator(".exact pre").waitFor();
   await page.waitForLoadState("networkidle");
   await page.evaluate(() => document.fonts.ready);
-  const target = width < 500 ? page.locator(".comparison-grid") : page;
+  const target = width < 500 ? page.locator(".cmp") : page;
   await target.screenshot({ path: path.join(out, `preview-${width < 500 ? "mobile-" : ""}${scheme}.png`) });
   await page.close();
 }

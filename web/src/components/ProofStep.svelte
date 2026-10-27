@@ -1,19 +1,17 @@
 <script>
-  import Statement from "./Statement.svelte";
-  import StatusChip from "./StatusChip.svelte";
   import LinkPicker from "./LinkPicker.svelte";
-  import StepContext from "./StepContext.svelte";
   import { evidenceView } from "../lib/presentation.js";
   import { href, withQuery } from "../lib/route.svelte.js";
   import { STEP_VERDICTS } from "../lib/review.js";
   import { readingWords } from "../lib/coverage.js";
 
   // A proof step (an equation or passage of a printed proof) as a target of its own. `part`
-  // chooses what is drawn: its own review beside the printed step ("finding"), the Lean that
-  // establishes it and the formal route used instead ("lean"), or, on the enclosing result,
-  // the list of its steps ("list"). Nothing here is the parent's: a step that no review covers
-  // reads "not reviewed", whatever its parent's status.
-  let { claim, index, part, onref = null, editable = false, busy = false, onlink = null, onroute = null } = $props();
+  // chooses what is drawn: its own review beside the printed step ("finding"), what was recorded
+  // about the Lean that establishes it and the formal route used instead ("route"; the comparison
+  // draws the linked Lean itself), or, on the enclosing result, the list of its steps ("list").
+  // Nothing here is the parent's: a step that no review covers reads "not reviewed", whatever its
+  // parent's status.
+  let { claim, index, part, editable = false, busy = false, onlink = null, onroute = null } = $props();
 
   const st = $derived(claim.step);
   const rv = $derived(st?.review || { state: "unreviewed", reports: [] });
@@ -53,41 +51,20 @@
         {#if r.reading}<details><summary class="faint small">The reading, locked {r.locked_at}</summary><p class="small pre">{r.reading}</p></details>{/if}
       </details>
     {/each}
-    {#if claim.context_tex}
-      <StepContext text={claim.context_tex} cut={claim.context_cut} />
-    {/if}
     {#if reviewHref}<p class="small"><a href={reviewHref}>Review this step</a></p>{/if}
   </div>
-{:else if part === "lean" && st}
-  <h3 class="sub">Lean that establishes this step</h3>
+{:else if part === "route" && st}
   {#if st.correspondence?.coverage || st.correspondence?.note}
     {@const cor = st.correspondence}
     <p class="small cov" data-coverage={cor.coverage || "note"}>{#if corWords}<strong>{corWords}</strong>{#if cor.basis === "reviewed_composition"}{" (Lean has not checked the combination)"}{/if}{#if cor.note}{". "}{/if}{/if}{cor.note}{#if cor.by}<span class="faint">{" — " + cor.by}</span>{/if}</p>
   {/if}
-  {#each st.links as l (l.name)}
-    <div class="block">
-      <p class="decl"><code>{l.name}</code> <StatusChip record={l} small /></p>
-      {#if l.statement}<Statement st={l.statement} {onref} compact />{/if}
-      {#if editable}<button class="btn ghost" disabled={busy} onclick={() => onlink(st.links.filter((x) => x.name !== l.name).map((x) => x.name))}>Unlink</button>{/if}
-    </div>
-  {:else}
-    <p class="muted small">No Lean declaration is linked as establishing this step.</p>
-  {/each}
-  {#if editable}<LinkPicker {index} disabled={busy} onpick={(name) => onlink([...st.links.map((x) => x.name), name])} />{/if}
-  {#if st.route || editable}
-    <h3 class="sub">Different formal route used instead</h3>
-    {#if st.route?.note}<p class="small">{st.route.note}{#if st.route.by}<span class="faint">{" — " + st.route.by}</span>{/if}</p>{/if}
-    {#each st.route?.links || [] as l (l.name)}
-      <div class="block route">
-        <p class="decl"><code>{l.name}</code> <StatusChip record={l} small /></p>
-        {#if l.statement}<Statement st={l.statement} {onref} compact />{/if}
-        {#if editable}<button class="btn ghost" disabled={busy} onclick={() => onroute(st.route.links.filter((x) => x.name !== l.name).map((x) => x.name))}>Remove</button>{/if}
-      </div>
-    {:else}
+  {#if editable}
+    <LinkPicker {index} disabled={busy} onpick={(name) => onlink([...st.links.map((x) => x.name), name])} />
+    {#if !st.route?.links?.length}
+      <h3 class="sub">Different formal route used instead</h3>
       <p class="muted small">No formal route is recorded for this step.</p>
-    {/each}
-    {#if st.route?.links?.length}<p class="faint small">This Lean reaches {st.parent?.number || "the enclosing result"} by another argument; it does not state this step.</p>{/if}
-    {#if editable}<LinkPicker {index} disabled={busy} onpick={(name) => onroute([...(st.route?.links || []).map((x) => x.name), name])} />{/if}
+    {/if}
+    <LinkPicker {index} disabled={busy} onpick={(name) => onroute([...(st.route?.links || []).map((x) => x.name), name])} />
   {/if}
 {:else if part === "list" && claim.steps?.length}
   <section class="steps" aria-label="Proof steps">
@@ -115,14 +92,9 @@
   .report { margin-top: 6px; }
   .report summary { cursor: pointer; }
   .sub { font-size: 14px; font-weight: 600; margin: 14px 0 6px; }
-  .block { margin-bottom: 14px; }
-  .block.route { border-left: 3px dashed var(--border); padding-left: 10px; }
-  .decl { margin: 0 0 6px; overflow-wrap: anywhere; }
   .cov { border-left: 3px solid var(--border); padding-left: 10px; }
   .cov[data-coverage="full"] { border-left-color: var(--st-proved); }
   .steps ul { list-style: none; padding: 0; margin: 0; }
   .steps li { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; padding: 4px 0; border-bottom: 1px solid var(--border); }
-  .btn { border: 1px solid var(--accent); background: transparent; color: var(--accent); border-radius: 6px; padding: 4px 12px; cursor: pointer; font-size: 13px; margin-top: 8px; }
-  .btn:disabled { opacity: 0.5; cursor: default; }
   .small { font-size: 13px; }
 </style>
