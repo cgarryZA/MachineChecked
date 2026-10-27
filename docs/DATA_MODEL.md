@@ -363,6 +363,15 @@ give it (`by_project`). Without an audit nothing has run Lean, so a linked state
 "linked: Lean not checked here (no audit published)" (class `declared`). No statement text is
 written.
 
+The site may give each audit of the registry entry its semantic summary (`semantic` on the
+audit, as machinechecked.org reads and checks it from that audit's own index): `state`
+(`loaded`, or why it is not shown, with `detail`), `url`, `schema`, `digest`, and, loaded, the
+`release` and `commit` it names, the sets of readings (`sets`, `selected`) and the counts of the
+audited paper (`paper`: the blocks a paper has in the [semantic summary](#semantic-summary-prooflenssemantic-summary1-derived)).
+The paper panel shows it under that audit's line, each count linked to that audit's Overview
+filtered to it (`/read/?audit=…#/r/<release>/overview?set=…&unit=…&coverage=…`), and says why
+when it is not shown. It shows no count the summary does not give, and never another audit's.
+
 `audit_order` lists the page's loaded audits that pin the same version as the first, in the order
 the reader draws on them, and `audit_order_by` says what orders them: `stars` (the site's GitHub
 star count for every one, given to `write_paper_site` as `stars` and kept in `stars`; most first,
