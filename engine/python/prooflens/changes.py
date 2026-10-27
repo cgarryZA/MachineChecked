@@ -665,6 +665,7 @@ def workspace_due(view: dict, wid: str) -> dict:
         rows.append({"id": r["id"], "kind": r["kind"], "claim": cid,
                      "state": cur.get("state"), "changes": cur.get("changes") or [],
                      "pinned_release": (r.get("pins") or {}).get("release"),
+                     **({"unknown": cur["unknown"]} if cur.get("unknown") else {}),
                      **({"submitted": True} if r.get("state") == "submitted" else {}),
                      **({"proposed": True} if r.get("state") == "proposed" else {})})
 
@@ -954,6 +955,8 @@ def workspace_lines(due: dict) -> list[str]:
                    + (", proposed" if r.get("proposed") else ""))
         for words in dict.fromkeys(_record_change_words(ch) for ch in r.get("changes") or []):
             out.append("    because: " + words)
+        for words in dict.fromkeys(u.get("why") or "" for u in r.get("unknown") or []):
+            out.append("    not known: " + words)
     if rows:
         out.append("  " + due["note"])
     return out

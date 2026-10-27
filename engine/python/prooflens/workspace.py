@@ -25,8 +25,10 @@ claims and declarations `compare --query impact` traces from, with who chose the
 release and project commit they were checked against.
 
 A workspace records evidence and readings; it changes no status. A submitted finding is never
-edited: a later one supersedes it, with its reason, and both remain. Exposure (what the auditor
-had seen) is only ever added to, so neither resuming nor importing makes an investigation blind.
+edited: a later one supersedes it, with its reason, and both remain. It records what it rests on
+when it is submitted, with the version of each part (`dependencies.py`), so that a later build
+reopens exactly the findings whose parts changed. Exposure (what the auditor had seen) is only
+ever added to, so neither resuming nor importing makes an investigation blind.
 """
 
 from __future__ import annotations
@@ -54,7 +56,8 @@ OPS_KEPT = 500
 
 # Fields the service sets; a client's value for them is ignored.
 MANAGED = ("kind", "rev", "created_at", "created_by", "updated_at", "updated_by", "state",
-           "submitted_at", "supersedes", "reason", "pins", "state_by", "state_at")
+           "submitted_at", "supersedes", "reason", "pins", "state_by", "state_at",
+           "dependencies")
 
 
 class WorkspaceError(RuntimeError):
@@ -360,10 +363,16 @@ def _ref(ref, snap, root) -> dict:
             out["fingerprint"] = snap.fingerprints().get(out["decl"]) or \
                 snap.store_fingerprints().get(out["decl"])
             out["digest"] = snap.digests().get(out["decl"])
+            # The definitions its statement uses, and the expansions it prints, as the build
+            # has them: the statement means what they say.
+            from .dependencies import statement_pins
+            out.update(statement_pins(snap, out["decl"]))
         else:
             for k in ("build", "fingerprint", "digest"):
                 if ref.get(k):
                     out[k] = ref[k]
+            from .dependencies import kept_statement_pins
+            out.update(kept_statement_pins(ref))
         return out
     if kinds == ["source"]:
         s = ref["source"]
@@ -375,8 +384,13 @@ def _ref(ref, snap, root) -> dict:
     p = ref["paper"]
     if not isinstance(p, dict):
         raise WorkspaceError("a paper reference is {claim, quote}")
-    return {"paper": {"claim": _claim(p.get("claim"), snap),
-                      "quote": _text(p.get("quote"), "the quotation")}}
+    out = {"claim": _claim(p.get("claim"), snap), "quote": _text(p.get("quote"), "the quotation")}
+    # The version of the claim's passage quoted: the build's pin of it.
+    sha = (snap.chunk(out["claim"]) or {}).get("source_sha256") if snap is not None else \
+        p.get("sha256")
+    if isinstance(sha, str) and sha:
+        out["sha256"] = sha
+    return {"paper": out}
 
 
 def ref_text(ref: dict) -> str:
@@ -596,9 +610,20 @@ def _record_op(ws, op, snap, root, by, at, changed):
             raise WorkspaceError("a requirement stays with its claim")
         if cur["kind"] == "evidence" and not repin and content["ref"].get("decl") and \
                 content["ref"]["decl"] == (cur.get("ref") or {}).get("decl"):
-            # The evidence keeps the fingerprint it was recorded at until it is re-pinned.
+            # The evidence keeps the fingerprint it was recorded at, and the versions of the
+            # definitions its statement uses, until it is re-pinned.
             for k in ("fingerprint", "digest"):
                 content["ref"][k] = cur["ref"].get(k)
+            for k in ("closure", "closure_complete", "expansions"):
+                content["ref"].pop(k, None)
+                if k in cur["ref"]:
+                    content["ref"][k] = cur["ref"][k]
+        was_paper = (cur.get("ref") or {}).get("paper") or {}
+        if cur["kind"] == "evidence" and not repin and content["ref"].get("paper") and \
+                (content["ref"]["paper"]["claim"], content["ref"]["paper"]["quote"]) == \
+                (was_paper.get("claim"), was_paper.get("quote")):
+            # A quoted passage keeps the version it was quoted from until it is re-pinned.
+            content["ref"]["paper"] = dict(was_paper)
         cert = (cur.get("ref") or {}).get("certificate") or {}
         if cur["kind"] == "evidence" and not repin and content["ref"].get("certificate") and \
                 all(content["ref"]["certificate"].get(k) == cert.get(k)
@@ -685,8 +710,10 @@ def _record_op(ws, op, snap, root, by, at, changed):
         if cur.get("composition"):
             # The composition may have changed since the draft was written.
             _composition_basis(dict(cur), cur["composition"], cur.get("basis"), ws)
+        from .dependencies import recorded
+        # What it rests on, as it is submitted: kept with it from now on.
         cur.update(state="submitted", submitted_at=at, rev=cur["rev"] + 1, updated_at=at,
-                   updated_by=by)
+                   updated_by=by, dependencies=recorded(cur, ws["records"]))
         changed.append(rid)
         return None
     if kind == "supersede":
@@ -708,10 +735,13 @@ def _record_op(ws, op, snap, root, by, at, changed):
         nid = rec.get("id") or _new_id("f")
         if nid in ws["records"]:
             raise WorkspaceError(f"{nid} exists already")
-        ws["records"][nid] = {"id": nid, "kind": "finding", **content, "state": "submitted",
-                              "submitted_at": at, "supersedes": rid, "reason": reason, "rev": 1,
-                              "created_at": at, "created_by": by, "updated_at": at,
-                              "updated_by": by, "pins": _pins(content["claim"], snap)}
+        new_rec = {"id": nid, "kind": "finding", **content, "state": "submitted",
+                   "submitted_at": at, "supersedes": rid, "reason": reason, "rev": 1,
+                   "created_at": at, "created_by": by, "updated_at": at,
+                   "updated_by": by, "pins": _pins(content["claim"], snap)}
+        from .dependencies import recorded
+        new_rec["dependencies"] = recorded(new_rec, ws["records"])
+        ws["records"][nid] = new_rec
         changed.append(nid)
         return None
     raise WorkspaceError(f"unknown operation {kind!r}")
@@ -999,42 +1029,18 @@ def current_findings(ws: dict) -> list[dict]:
 def currency(ws: dict, snap, root: Path | None = None, check_facts: bool = False) \
         -> dict[str, dict]:
     """Whether each record's evidence is still what the current build shows. A declaration
-    whose fingerprint changed makes its evidence `stale`, and so every finding and question
-    that cites it; a finding is also stale when its claim's printed text changed. A fact inside
-    a proof is stale when that proof changed: it is read from the cache of `compare --query
-    proof-facts`, or asked of Lean when `check_facts` is set. A record the build cannot check is
-    `unchecked`; nothing here changes a status."""
+    whose fingerprint changed, or one of the definitions its statement uses, makes its evidence
+    `stale`, and so every question that cites it. A fact inside a proof is stale when that proof
+    changed: it is read from the cache of `compare --query proof-facts`, or asked of Lean when
+    `check_facts` is set. A finding's currency is that of what it rests on
+    (`dependencies.check`): stale when a part changed, unchecked when one is not known. A record
+    the build cannot check is `unchecked`; nothing here changes a status."""
+    from . import dependencies as dp
     from . import requirements as rq
-    digests = snap.digests() if snap is not None else {}
     out = rq.currency(ws, snap)
     for r in ws["records"].values():
-        if r.get("kind") != "evidence":
-            continue
-        ref = r.get("ref") or {}
-        if "certificate" in ref:
-            from .estimates import certificate_currency
-            out[r["id"]] = certificate_currency(Path(root) if root else None,
-                                                ref["certificate"], check_facts)
-            continue
-        if "fact" in ref:
-            from .proof_facts import currency as fact_currency
-            out[r["id"]] = fact_currency(Path(root) if root else None, ref["fact"], check_facts)
-            continue
-        if "app" in ref:
-            from .uses import app_currency
-            out[r["id"]] = app_currency(Path(root) if root else None, ref["app"], check_facts)
-            continue
-        if "decl" not in ref:
-            out[r["id"]] = {"state": "unchecked", "changes": []}
-            continue
-        was, now_d = ref.get("digest") or ref.get("fingerprint"), digests.get(ref["decl"])
-        if not was or now_d is None:
-            out[r["id"]] = {"state": "unchecked", "changes": []}
-        elif now_d != was:
-            out[r["id"]] = {"state": "stale", "changes": [
-                {"decl": ref["decl"], "was": was, "now": now_d}]}
-        else:
-            out[r["id"]] = {"state": "current", "changes": []}
+        if r.get("kind") == "evidence":
+            out[r["id"]] = dp.evidence_currency(r.get("ref") or {}, snap, root, check_facts)
     from . import composition as cp
     for r in ws["records"].values():
         if r.get("kind") == "composition":
@@ -1045,7 +1051,12 @@ def currency(ws: dict, snap, root: Path | None = None, check_facts: bool = False
             out[r["id"]] = est.counterexample_currency(
                 r, [x for x in ws["records"].values() if x.get("claim") == r["claim"]], out)
     for r in ws["records"].values():
-        if r.get("kind") not in ("finding", "question"):
+        if r.get("kind") == "finding":
+            # Through what it rests on (`dependencies.py`): a submitted finding through the
+            # versions it was submitted with.
+            out[r["id"]] = dp.check(r, ws["records"], snap, root, out, check_facts)
+            continue
+        if r.get("kind") != "question":
             continue
         changes = [ch for e in r.get("evidence") or [] for ch in out.get(e, {}).get("changes", [])]
         changes += est.finding_changes(r, ws["records"], out)
@@ -1094,6 +1105,9 @@ def view(ws: dict, snap=None, claim: str | None = None, root: Path | None = None
         item = {**r, "currency": cur.get(r["id"], {"state": "unchecked", "changes": []})}
         if r["kind"] == "finding":
             item["in_force"] = r["id"] in in_force
+            # What it rests on: as submitted, or, for a draft, as its records give it now.
+            from .dependencies import of as dependencies_of
+            item["dependencies"] = dependencies_of(r, ws["records"])
             chk = cp.finding_bridge(r, comps, snap, root, check_facts)
             if chk is not None and r.get("bridge") and not r.get("composition"):
                 item["bridge_check"] = chk

@@ -457,6 +457,9 @@ def _print_workspace(v: dict) -> None:
                 from .simple import COMPOSITION_NEXT_STEP
                 print("           Lean has not checked this combination. Next step: "
                       + COMPOSITION_NEXT_STEP)
+            if f.get("dependencies") is not None:
+                from .dependencies import lines as dependency_lines
+                print("\n".join(dependency_lines(f["dependencies"], f["currency"])))
         for q in c["questions"]:
             print(f"  question {q['id']}  {q['state']}: {q['text']}")
         for comp in c.get("compositions") or []:

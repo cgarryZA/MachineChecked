@@ -241,7 +241,7 @@
         <div class="item" data-kind="finding" data-state={f.state} class:old={!f.in_force}>
           <p class="small"><strong>{findingHead(f, cv)}</strong>
             <span class="faint">· {f.in_force ? (f.state === "submitted" ? "submitted" : "draft") : "superseded"} · {f.created_by}{f.requirement ? ` · on ${f.requirement}` : ""}</span>
-            {#if f.currency?.state === "stale"}<span class="stale"> · evidence changed since</span>{/if}</p>
+            {#if f.currency?.state === "stale"}<span class="stale" title={(f.currency.changes || []).map((c) => c.reason).filter(Boolean).join("; ")}> · evidence changed since</span>{:else if f.currency?.state === "unchecked"}<span class="faint" data-currency="unchecked" title={(f.currency.unknown || []).map((u) => u.why).join("; ")}> · not known to be current</span>{/if}</p>
           {#each cv?.lines || [] as line}<p class="small" data-line={line.label}><span class="faint">{line.label}:</span> {line.names?.join(", ") || ""}{line.names?.length && line.text ? ". " : ""}<span class="text">{line.text || ""}</span>{#if line.note} <span class="faint">{line.note}</span>{/if}</p>{/each}
           {#if f.composition}<p class="small faint">Rests on composition {f.composition}{f.recorded_basis ? `; recorded as ${f.recorded_basis === "checked_bridge" ? "a checked bridge" : f.recorded_basis}, its bridge is not checked now` : ""}.</p>
           {:else if recordedBasisText(f)}<p class="small faint" data-line="recorded">{recordedBasisText(f)}</p>{/if}
