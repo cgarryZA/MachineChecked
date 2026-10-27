@@ -148,7 +148,9 @@ prints one JSON document (`machinechecked/compare@1`) for one claim, read from t
   gives the file and line, and `reason` says it in words). Read those in the paper.
 - `lean.declarations`: every linked declaration (or locked statement) with its complete
   statement: `statement.text` exactly as Lean prints it, `binders` and `conclusion` with their
-  expression ids, and Lean's checks (axioms, sorry, errors). `lean.candidates` are suggestions
+  expression ids, `tree` (the whole statement as one tree, where each variable's `scope` says
+  whether the statement establishes it, it is given, or it stands inside an assumption, a
+  negation, an alternative or an equivalence), and Lean's checks (axioms, sorry, errors). `lean.candidates` are suggestions
   nobody has confirmed, with their reasons. `lean.definitions` are the definitions the
   statements use, with their type and value; `generated_for` marks the equations Lean generated
   for one of them. `lean.references` are the references to the paper's numbers that concern
