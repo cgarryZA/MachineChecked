@@ -1074,7 +1074,7 @@ def currency(ws: dict, snap, root: Path | None = None, check_facts: bool = False
     the build cannot check is `unchecked`; nothing here changes a status."""
     from . import dependencies as dp
     from . import requirements as rq
-    out = rq.currency(ws, snap)
+    out = rq.currency(ws, snap, root)
     for r in ws["records"].values():
         if r.get("kind") == "evidence":
             out[r["id"]] = dp.evidence_currency(r.get("ref") or {}, snap, root, check_facts)

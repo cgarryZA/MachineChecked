@@ -153,17 +153,118 @@ def closure_currency(pins: dict, snap, owner: str) -> dict:
 
 # -- the currency of an evidence reference ----------------------------------------------------
 
-def decl_currency(ref: dict, snap) -> dict:
+def decl_currency(ref: dict, snap, root=None) -> dict:
     """A declaration cited as evidence: `stale` when its digest (its fingerprint with those of
     the constants Lean generated for it) or the digest of a definition its statement uses
-    changed, `unchecked` when the build shows no version of it or of one of them."""
+    changed, `unchecked` when the build shows no version of it or of one of them, or none was
+    recorded with it, with the reason and what would let a build check it (`absent_reason`,
+    which looks at the Lean project at `root` when it is given)."""
     digests = snap.digests() if snap is not None else {}
     was, now = ref.get("digest") or ref.get("fingerprint"), digests.get(ref["decl"])
-    if not was or now is None:
-        return {"state": "unchecked", "changes": []}
+    if now is None:
+        return {"state": "unchecked", "changes": [], "reason": absent_reason(ref, snap, root)}
+    if not was:
+        return {"state": "unchecked", "changes": [], "reason": unrecorded_reason(ref)}
     if now != was:
         return {"state": "stale", "changes": [{"decl": ref["decl"], "was": was, "now": now}]}
     return closure_currency(ref, snap, ref["decl"])
+
+
+def unrecorded_reason(ref: dict) -> str:
+    """Why a reference to a declaration the build now shows records no version of it: it was
+    cited while the build could not read it, or without a build."""
+    name, module, build = ref["decl"], ref.get("module"), ref.get("build")
+    where = f"its module {module}" if module else "its module"
+    when = {"unbuilt": f"while {where} was not built",
+            "not loaded": f"while {where} could not be loaded",
+            "external": "as a declaration outside the project"}.get(build, "without a build that "
+                                                                   "showed it")
+    return (f"{name} was cited {when}, so no version of it was recorded: re-pin the evidence "
+            "(`\"repin\": true`) to record the version this build shows")
+
+
+def absent_reason(ref: dict, snap, root=None) -> str:
+    """Why the build `snap` shows no version of the declaration `ref` names, with the step that
+    would let a build show one: no build; a build that ran no Lean (a full assessment built
+    without Lean, or a view with no Lean index); a declaration outside the project; a module that
+    is not built or could not be loaded; a declaration the project no longer declares; and, in
+    a full assessment, one its inventory's clauses do not use (the build records only those),
+    naming its module when the configuration does not list it in `modules`. With the Lean
+    project at `root` the modules are read from it; without it, only from the build."""
+    from pathlib import Path
+    name, module = ref["decl"], ref.get("module")
+    if snap is None:
+        return "no build to check it against: run `machinechecked view` or `build`"
+    full = snap.index.get("mode") != "simple"
+    index = snap.lean_index() or []
+    if full and not snap.index.get("lean"):
+        return (f"this build ran no Lean, so it records no version of {name}: build again with "
+                "Lean")
+    if not full and not index:
+        return (f"this build has no Lean index, so it records no version of {name}: run `lake "
+                "build`, then `machinechecked view`")
+    if ref.get("build") == "external":
+        return (f"{name} is not a declaration of the project, and a build records versions only "
+                "of the project's declarations")
+    root = Path(root) if root else None
+    declares = []
+    if root is not None:
+        from .simple import declaring_modules
+        from .targets import _project_modules
+        # The project's modules, read once for this build however many references ask.
+        cache = snap.__dict__.setdefault("_project_modules", {})
+        if str(root) not in cache:
+            cache[str(root)] = _project_modules(snap, root)
+        built, unbuilt, failed = cache[str(root)]
+        for m in declaring_modules(root, unbuilt, name):
+            return f"its module {m} is not built: run `lake build {m}`, then build again"
+        for m in declaring_modules(root, list(failed), name):
+            why = (str(failed.get(m) or "").strip().splitlines() or [""])[0][:200]
+            return (f"its module {m} could not be loaded" + (f" ({why})" if why else "")
+                    + f": fix it, run `lake build {m}`, then build again")
+        declares = declaring_modules(root, built, name)
+    indexed = sorted({d.get("module") for d in index if d.get("name") == name} - {None})
+    if not declares and not indexed and not (snap.store_records(name) if full else []):
+        if root is None:
+            return f"this build shows no version of {name}"
+        from .targets import _near
+        near = _near(index, name)
+        return (f"the project does not declare {name} in this build"
+                + (f" (did you mean {', '.join(near)}?)" if near else "")
+                + ": if it was renamed, cite the new name")
+    if full:
+        out = (f"this build records no version of {name}: a full assessment records the "
+               "declarations its inventory's clauses name and those their statements use, and "
+               f"{name} is not among them")
+        listed = _listed_modules(snap)
+        unlisted = [m for m in declares or ([module] if module else [])
+                    if listed is not None and m not in listed]
+        if unlisted:
+            out += (f"; its module {unlisted[0]} is not listed in `modules` of the "
+                    "configuration either")
+        return out
+    if indexed:
+        return (f"{name} is in this build's index, but the build records a version only of the "
+                "declarations its claims link and those their statements use")
+    return (f"this build's Lean index does not hold {name}, which {declares[0]} declares: run "
+            "`lake build`, then `machinechecked view`")
+
+
+def _listed_modules(snap) -> list[str] | None:
+    """The modules the full assessment's configuration lists (`modules`), when the
+    configuration is the one beside the working directory of the build `snap`; None when it is
+    not found there."""
+    from . import config as cfgmod
+    work = snap.data.parent.parent
+    for name in cfgmod.CONFIG_NAMES:
+        p = work.parent / name
+        if p.is_file():
+            try:
+                cfg = cfgmod.load(p)
+            except (cfgmod.ConfigError, OSError, ValueError):
+                return None
+            return list(cfg.modules) if cfg.out_dir.resolve() == work.resolve() else None
+    return None
 
 
 def unprinted(ch: dict | None, cid: str | None) -> str | None:
@@ -212,7 +313,7 @@ def evidence_currency(ref: dict, snap, root, check_facts: bool = False) -> dict:
         from .uses import app_currency
         return app_currency(root, ref["app"], check_facts)
     if "decl" in ref:
-        return decl_currency(ref, snap)
+        return decl_currency(ref, snap, root)
     if "paper" in ref:
         return paper_currency(ref["paper"], snap)
     return {"state": "unchecked", "changes": [],
@@ -505,7 +606,7 @@ def check(f: dict, records: dict, snap, root=None, cur: dict | None = None,
         if dep == CONTEXT:
             res = rq.fragment_currency(it, snap)
         elif dep == OBJECT:
-            res = rq.alignment_currency(it, snap)
+            res = rq.alignment_currency(it, snap, root)
         elif dep == BRIDGE:
             if not it.get("target_fingerprint") and not it.get("source_sha256"):
                 continue  # a finding's own bridge: unknown when recorded
