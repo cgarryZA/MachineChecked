@@ -104,16 +104,26 @@ export function comparisonInputs(mode, claims, { only = null, decls = [] } = {})
 // The rows of a statement: each object that opens it with the conditions on it alone (`members`),
 // each other condition, then the conclusion. A condition that directly follows an object of a
 // "for all", or that object's other conditions, and mentions that object only, is that object's;
-// nothing moves, and nothing is grouped with a "there is". Row keys: `b:<i>` (binder i opens the
-// row) and `c` (the conclusion).
+// nothing moves, and nothing is grouped with a "there is". Objects the statement's readable rows
+// introduce together (`readable.py`: `∀ a b : ℕ`) share one row (`heads`, its objects in order;
+// `head` is the first), which takes no conditions. Row keys: `b:<i>` (binder i opens the row) and
+// `c` (the conclusion).
 const varsOf = (pp) => new Set((pp?.segments || []).filter((x) => x.var != null).map((x) => x.var));
 export function statementRows(st) {
   const binders = spineOf(st);
+  const together = new Map();
+  for (const r of st?.readable?.rows || []) {
+    const vs = r.k === "objects" ? r.objects.map((o) => o.var) : [];
+    if (vs.length > 1 && vs.every((v) => v < binders.length)) vs.forEach((v) => together.set(v, vs[0]));
+  }
   const out = [];
   binders.forEach((b, i) => {
+    const last = out.at(-1);
+    if (together.has(i) && together.get(i) !== i && last?.heads?.[0] === together.get(i)) { last.heads.push(i); return; }
+    if (together.has(i)) { out.push({ key: "b:" + i, head: i, heads: [i], members: [] }); return; }
     if (b.role === "forall" || b.role === "exists") { out.push({ key: "b:" + i, head: i, members: [] }); return; }
-    const last = out.at(-1), vs = varsOf(b.type);
-    if (last?.head != null && binders[last.head].role === "forall" && vs.size === 1 && vs.has(last.head)) last.members.push(i);
+    const vs = varsOf(b.type);
+    if (last?.head != null && !last.heads && binders[last.head].role === "forall" && vs.size === 1 && vs.has(last.head)) last.members.push(i);
     else out.push({ key: "b:" + i, head: null, members: [i] });
   });
   if (st?.conclusion) out.push({ key: "c", head: null, members: [], conclusion: true });
@@ -122,7 +132,7 @@ export function statementRows(st) {
 
 // The row of a statement that holds binder `i`.
 export function rowOfBinder(rows, i) {
-  return rows.find((r) => r.head === i || r.members.includes(i))?.key ?? null;
+  return rows.find((r) => r.head === i || r.heads?.includes(i) || r.members.includes(i))?.key ?? null;
 }
 
 // The exact Lean of one sub-term of the exact statement, by its identity: the segments it spans,
