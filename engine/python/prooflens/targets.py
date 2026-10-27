@@ -433,7 +433,9 @@ def _unrecorded(name: str, snap: Snapshot, declares: list[str]) -> None:
     """Refuse `name` in a full assessment's build that has no record of it: the build ran no
     Lean, or it ran Lean and the built modules `declares` declare `name` (as far as their source
     shows) but the probe recorded only what the inventory uses. Returns when Lean ran and no
-    module declares it."""
+    module declares it. The reasons are those `dependencies.absent_reason` gives evidence already
+    recorded, with the steps that would let a build record it."""
+    from .dependencies import _listed_modules
     if not snap.index.get("lean"):
         raise TargetError(f"this build ran no Lean, so it records no version of {name}: build "
                           "again with Lean", kind="no-build")
@@ -450,23 +452,6 @@ def _unrecorded(name: str, snap: Snapshot, declares: list[str]) -> None:
     msg += (". To cite it, name it in a clause or a proof step of the inventory"
             + (f", list {unlisted[0]} in `modules`," if unlisted else "") + " and build again")
     raise TargetError(msg, [{"name": name, "module": m} for m in declares], kind="unrecorded")
-
-
-def _listed_modules(snap: Snapshot) -> list[str] | None:
-    """The modules the full assessment's configuration lists (`modules`), when the
-    configuration is the one beside the working directory of the build `snap`; None when it is
-    not found there."""
-    from . import config as cfgmod
-    work = snap.data.parent.parent
-    for name in cfgmod.CONFIG_NAMES:
-        p = work.parent / name
-        if p.is_file():
-            try:
-                cfg = cfgmod.load(p)
-            except (cfgmod.ConfigError, OSError, ValueError):
-                return None
-            return list(cfg.modules) if cfg.out_dir.resolve() == work.resolve() else None
-    return None
 
 
 def _known(snap: Snapshot, root: Path, built: list[str]) -> list[dict]:
