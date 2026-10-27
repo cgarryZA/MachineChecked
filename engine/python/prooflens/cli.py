@@ -1109,6 +1109,8 @@ def _print_inspect(out: dict, dependencies: bool):
     line = (d.get("range") or {}).get("line")
     print(f"{d['name']}  ({d['kind']}, {d['file']}" + (f":{line}" if line else "") + ")")
     print(f"  statement: {d['statement']}")
+    if d.get("statement_note"):
+        print(f"  ({d['statement_note']})")
     print(f"  axioms: {', '.join(d['axioms']) or 'none'}" + ("  (uses sorry)" if d["sorry"] else ""))
     for label, key in (("statement uses", "statement_dependencies"),
                        (f"{out['value_kind']} uses", "proof_dependencies")):

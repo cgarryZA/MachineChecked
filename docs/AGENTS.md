@@ -193,14 +193,22 @@ machinechecked workspace main "Theorem 2.5" --as llm:MODEL     # save the main r
 `search` ranks every declaration of the project's built modules, linked or not, by how much of
 the query its complete statement, docstring, name and used definitions carry. A claim as the
 target searches with its printed statement, over declarations of its sort, and says when a
-result orders `∀` and `∃` differently. Each result has its complete `statement`, its `score`
-and its `reasons`; a result reached through a close match it uses says so (`signal` `uses`,
-with `via`). It is the search the suggestions and the reader use, from the build's content
-index (`data/retrieval.json`), with no Lean session; `--limit` and `--after` page it. The
-zero-configuration build writes that index; on a full assessment's build `search` answers
-`available: false`. Nothing people recorded (links, rejections, notes) enters it. In zero
-configuration, `mentions` reads the complete statements of that index; with an older build it
-reads previews (`complete: false` on such a result: get its statement with `dependencies`).
+result orders `∀` and `∃` differently. A declaration as the target searches for declarations
+of its sort like it (`subject.declaration`): from a theorem, a theorem with the same
+conclusion comes first, and each result's `structure` reasons compare it with the theorem as
+Lean prints them, up to the names of their variables: the same or a different conclusion, the
+hypotheses it does not assume or also assumes (`hypotheses`, exactly as printed), variables of
+other types (`here`, `there`), and the order of `∀` and `∃`. Whether one statement implies the
+other remains a question for review. Each result has its complete `statement`, its `score` and
+its `reasons`; the `content` reason lists the shared terms, where they occur, and, for a
+theorem with hypotheses, those in its conclusion (`conclusion`); a result reached through a
+close match it uses says so (`signal` `uses`, with `via`). It is the search the suggestions and
+the reader use, from the build's content index (`data/retrieval.json`), with no Lean session;
+`--limit` and `--after` page it. Both the zero-configuration build and the full assessment
+write that index. Nothing people recorded (links, rejections, notes) enters it. `mentions`
+reads the complete statements of that index; with an older build it reads previews
+(`complete: false` on such a result: get its statement with `dependencies`). `dependencies`
+keeps the first 4000 characters of a statement; a longer one has `statement_complete: false`.
 
 `uses` (also `machinechecked inspect NAME --used-by`) answers with one document
 (`machinechecked/uses@1`) read from Lean's elaborated terms:

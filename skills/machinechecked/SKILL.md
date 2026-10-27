@@ -141,8 +141,9 @@ carries every step out on the toy example.
    proposes nearby passages; a proposal stays a guess until you accept it. A passage that uses
    the result later is a fragment with role `later use`, shown apart from the reading.
 2. **Search by content.** `compare --query search CLAIM` ranks the project's declarations by
-   what their statements say; `search 'EXPRESSION'` takes a formula or words (both read the
-   zero-configuration build's content index). A paper number in a docstring or comment is a
+   what their statements say; `search 'EXPRESSION'` takes a formula or words, and `search NAME`
+   finds the declarations like NAME, each with the hypotheses it does not assume or also
+   assumes and whether its conclusion is the same (all read the build's content index). A paper number in a docstring or comment is a
    lead: `check --json` lists in `numbering` each number that names another kind of statement
    (`other-kind`), none (`absent`), or a declaration that reads closer to another claim
    (`stale_lead`), and a suggestion's `number` reason names the references it rests on

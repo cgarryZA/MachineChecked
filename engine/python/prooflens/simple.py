@@ -821,9 +821,9 @@ def save_settings(root: Path, issues: str | None = None, site_url: str | None = 
 
 # -- the Lean side ---------------------------------------------------------------------------
 
-# What an index preview keeps: the reader lists a declaration's statement only to this length,
-# and suggestions read a docstring only for the statement numbers it cites. The facts store
-# keeps the whole record.
+# What an index preview keeps: the reader lists a declaration's statement only to this length.
+# Suggestions, the content index and the paper-number checks read the complete records, which
+# the facts store keeps.
 INDEX_TYPE_CHARS, INDEX_DOC_CHARS = 300, 4000
 
 
@@ -1986,14 +1986,16 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
             note = nb.drift_note(numbering["pattern"], numbering["references"])
             if note:
                 notes.append(note)
-            ctx = SuggestContext(index, root, foreign, retrieval, numbering)
+            # Suggestions read the complete records too: a cited number can come after the
+            # preview's docstring ends.
+            ctx = SuggestContext(full, root, foreign, retrieval, numbering)
             for c in claims:
                 entry = links.get(c["key"], {})
                 if steps.is_step(c):
                     # A proof step is linked by someone who read it; nothing is suggested for it.
                     c["suggestions"] = []
                     continue
-                c["suggestions"] = [s for s in suggest(c, index, ctx=ctx)
+                c["suggestions"] = [s for s in suggest(c, full, ctx=ctx)
                                     if s["name"] not in entry.get("rejected", [])
                                     and s["name"] not in c["link_names"]]
                 # Every suggestion shown is checked by Lean, not only the first.

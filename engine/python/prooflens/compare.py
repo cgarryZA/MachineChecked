@@ -601,7 +601,8 @@ def _mentions(site: Site, name: str) -> list[dict]:
         ty = d.get("type") or ""
         if pat.search(ty) or spat.search(ty):
             found[n] = {"id": f"decl:{n}", "name": n, "module": d.get("module"),
-                        "statement": ty, "complete": len(ty) < 300, "claims": [],
+                        "statement": ty, "complete": d.get("type_complete", len(ty) < 300),
+                        "claims": [],
                         "note": "a preview of the type, from the build's index of the project"}
     return sorted(found.values(), key=lambda r: r["name"])
 
@@ -752,11 +753,13 @@ def search(site: Site, target: str, limit: int | None = None, after: str | None 
            every_library: Path | None = None, log=None) -> dict:
     """The content search (`retrieval.Retrieval.search`) the reader and the suggestions use. A
     target naming a claim searches with its printed statement, over declarations of its sort;
-    any other target is the query itself. Nothing recorded by people (links, rejections, notes)
-    enters the search or its results. It searches the build's content index; with
-    `every_library` (the Lean project), the index of every built module instead, from the
-    facts store, extracting what it does not hold (a paper's build leaves out the libraries
-    formalization.yaml maps only to other papers)."""
+    a target naming a declaration of the index searches for declarations like it
+    (`Retrieval.search_like`), and from a theorem says how each result's hypotheses and
+    conclusion compare with its; any other target is the query itself. Nothing recorded by
+    people (links, rejections, notes) enters the search or its results. It searches the
+    build's content index; with `every_library` (the Lean project), the index of every built
+    module instead, from the facts store, extracting what it does not hold (a paper's build
+    leaves out the libraries formalization.yaml maps only to other papers)."""
     from .retrieval import paper_quantifiers
     if every_library is not None:
         ret, scope = _every_library(every_library, log)
@@ -770,8 +773,15 @@ def search(site: Site, target: str, limit: int | None = None, after: str | None 
         cid = site.resolve_claim(target)
     except CompareError:
         cid = None
-    kinds, order, subject = None, None, {"text": target}
-    if cid:
+    kinds, order, subject, like = None, None, {"text": target}, None
+    if cid is None and target in ret.by_name:
+        like = target
+        d = ret.docs[ret.by_name[target]]
+        theorem = d.get("kind") == "theorem"
+        subject = {"declaration": target, "module": d.get("module"), "statement": d.get("type"),
+                   "complete": True, "kinds": "theorems" if theorem else "definitions",
+                   **({"note": LIKE_NOTE} if theorem else {})}
+    elif cid:
         ch = site.chunk(cid) or {}
         text = " ".join(x for x in (ch.get("title"), ch.get("statement_tex")
                                     or (ch.get("anchor") or {}).get("statement")) if x)
@@ -783,7 +793,8 @@ def search(site: Site, target: str, limit: int | None = None, after: str | None 
     else:
         text = target
     try:
-        res = ret.search(text, kinds=kinds, limit=limit or 20, after=after, paper_order=order)
+        res = ret.search_like(like, limit=limit or 20, after=after) if like else \
+            ret.search(text, kinds=kinds, limit=limit or 20, after=after, paper_order=order)
     except ValueError as e:
         raise CompareError(str(e), "bad-cursor") from None
     for r in res["results"]:
@@ -795,6 +806,11 @@ def search(site: Site, target: str, limit: int | None = None, after: str | None 
     return {"available": True, "subject": subject, "results": res["results"],
             "query": res["query"], "scope": {"declarations": len(ret), **scope},
             "provenance": prov, "retrieval": res["page"]}
+
+
+LIKE_NOTE = ("each result's hypotheses and conclusion are compared with the declaration's as "
+             "Lean prints them, up to the names of their variables; whether one statement "
+             "implies the other is a question for review")
 
 
 def _build_scope(site: Site) -> dict:
@@ -920,10 +936,14 @@ def search_text(out: dict) -> str:
     """A content search for the terminal: each result with its reasons and complete statement."""
     sub = out.get("subject") or {}
     head = (f"Declarations ({sub.get('kinds')}) matching {sub['claim']}" if sub.get("claim")
-            else f"Declarations matching {sub.get('text')!r}")
+            else f"Declarations ({sub.get('kinds')}) like {sub['declaration']}"
+            if sub.get("declaration") else f"Declarations matching {sub.get('text')!r}")
     lines = [f"{head}, among {out['scope']['declarations']} declarations of the project:"]
-    if out["scope"].get("note"):
-        lines.append(f"({out['scope']['note']})")
+    if sub.get("declaration"):
+        lines.append(f"  {sub['statement']}")
+    for note in (sub.get("note"), out["scope"].get("note")):
+        if note:
+            lines.append(f"({note})")
     for r in out["results"]:
         lines.append(f"\n{r['name']}  ({r.get('kind')}, {r.get('module')})")
         for x in r["reasons"]:
