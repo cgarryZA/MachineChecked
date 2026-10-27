@@ -158,3 +158,24 @@ def test_an_unbuilt_project_is_an_error_not_an_answer(tmp_path):
     (tmp_path / "P.lean").write_text("theorem P.x : True := trivial\n")
     with pytest.raises(ViewError, match="not built"):
         inspect(tmp_path, "P.x")
+
+
+def test_a_statement_the_dependency_record_cut_says_so():
+    # The probe's dependency records keep the first 4000 characters of a statement, and end a
+    # cut one with " …"; the answer must not pass that prefix off as the statement.
+    from prooflens.deps import STATEMENT_CHARS, mark_cut
+    cut = "∀ (x : ℕ), " + "x" * (STATEMENT_CHARS - 11) + " …"
+    assert len(cut) == STATEMENT_CHARS + 2
+    member = {"name": "Deps.long", "statement": cut}
+    doc = {"ok": True, "declaration": {"name": "Deps.main", "statement": cut},
+           "closure": {"declarations": 2, "members": [member, {"name": "Deps.short",
+                                                                "statement": "1 = 1"}]}}
+    out = mark_cut(dict(doc))
+    assert out["declaration"]["statement_complete"] is False
+    assert "complete" in out["declaration"]["statement_note"]
+    assert out["closure"]["members"][0]["statement_complete"] is False
+    assert "statement_complete" not in out["closure"]["members"][1]
+    # The cached answer is left as it was.
+    assert "statement_complete" not in doc["declaration"] and "statement_complete" not in member
+    whole = {"ok": True, "declaration": {"name": "Deps.main", "statement": "x" * STATEMENT_CHARS}}
+    assert "statement_complete" not in mark_cut(whole)["declaration"]
