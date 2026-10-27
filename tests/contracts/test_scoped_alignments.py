@@ -268,6 +268,38 @@ def test_a_sub_term_inside_an_expansion_or_a_later_page_of_equations_is_found(wo
                             "lean": [{"decl": "Ex.good", "at": "/1=/7"}]})], snap)
 
 
+def test_an_identity_that_names_other_text_in_a_later_build_makes_its_alignment_stale(work):
+    """A target named by identity keeps the text it was recorded with (#457): when a later build
+    of the same statement (the same fingerprint) gives that identity to other text, as when
+    identities are assigned otherwise, the alignment is stale and says why; it does not follow
+    the identity to the other expression."""
+    snap = Snapshot(work / "site" / "data")
+    p = opened(work)
+    wsp.update(p, [
+        put({"kind": "requirement", "claim": "Theorem 2.1", "local_id": "r1", "form": "condition",
+             "text": "the profile of n is good"}),
+        put({"id": "a-n", "kind": "alignment", "claim": "Theorem 2.1", "requirements": ["r1"],
+             "lean": [{"decl": "Ex.good", "at": "/1/1"}]}),
+    ], snap)
+    a = reading(work, p, "P:thm:good")["alignments"][0]
+    assert (a["lean"][0]["target"], a["currency"]["state"]) == ("n", "current")
+    path = work / "site" / "data" / "claims" / "thm_good.json"
+    ch = json.loads(path.read_text())
+    link = ch["links"][0]
+    link["statement"]["conclusion"]["segments"][2] = {"t": "m", "var": 0, "at": "/1/1"}
+    path.write_text(json.dumps(ch))
+    a = reading(work, p, "P:thm:good")["alignments"][0]
+    assert a["currency"]["state"] == "stale"
+    [c] = a["currency"]["changes"]
+    assert (c["at"], c["was"], c["now"]) == ("/1/1", "n", "m")
+    assert "/1/1" in c["reason"] and "'m'" in c["reason"]
+    # An identity this build gives to nothing: stale too.
+    link["statement"]["conclusion"]["segments"][2] = {"t": "n", "var": 0}
+    path.write_text(json.dumps(ch))
+    a = reading(work, p, "P:thm:good")["alignments"][0]
+    assert a["currency"]["state"] == "stale" and a["currency"]["changes"][0]["now"] is None
+
+
 def test_the_definitions_of_a_claim_that_only_defines_are_targets(work):
     """Definition 1.1's two sentences align separately with the two definitions, down to a
     sub-term of the first's body, a parameter, and an equation of the second."""

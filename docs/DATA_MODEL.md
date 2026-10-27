@@ -145,9 +145,13 @@ so copying or restoring `.machinechecked/` changes no command's release.
 A pretty-printed Lean term (a binder's type, a conclusion, a signature) is `{text, segments}`:
 each segment is a piece of the text, with `ref` when it names a constant and, when it is an
 occurrence of a variable, `at`, the identity of that occurrence (its position, as for a sub-term
-below), and `var` when the variable is one of the statement's own (its number, below). A term
-also lists its sub-terms as `terms`, ranges `{from, to}` of its segments (outer before inner; none
-for a very large term), so that a reader can select a whole sub-term.
+below), and `var` when the variable is one of the statement's own (its number, below). A
+binder's name (`x` in `∀ x, …` or `∃ (x : T), …`) has `binder`, its binder's identity, and `at`,
+that identity followed by `.name`: it names the name alone, apart from the binder and the
+variable's occurrences. A term also lists its sub-terms as `terms`, ranges `{from, to}` of its
+segments (outer before inner; none for a very large term), so that a reader can select a whole
+sub-term; an application printed with notation (`x = y`, `∃ x, p`, `↑n`) has the application's
+identity. Each identity names one sub-term of the printed expression.
 
 A statement record holds the whole proposition as one tree, `tree`. Its `binders` (the binders
 that open it, each `{role, name, id, type, binder, supplies}`, `role` one of `forall`,
@@ -848,7 +852,9 @@ composition, a finding, a bridge) is then `stale`, saying so, although the pin i
 fragment whose region of the source now reads differently (the lines that changed are listed),
 or whose claim's passage changed, is `stale`, and so is an alignment whose declaration, or a
 definition its statement uses, changed, or one of whose named passages changed or no longer
-governs the reading (removed, or not published: `{fragment, was, now}`), and every requirement
+governs the reading (removed, or not published: `{fragment, was, now}`), or one of whose targets
+names a sub-term by identity whose text in the build is not the text it was recorded with
+(`{decl, at, was, now, reason}`: the identity names another expression, or none), and every requirement
 they belong to, and every question that names that requirement. A finding's currency is that of its dependencies (below). The saved
 records are not re-pinned silently: a `put` with `repin: true` re-pins a record to the current
 build.

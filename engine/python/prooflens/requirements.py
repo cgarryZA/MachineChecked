@@ -508,6 +508,27 @@ def fragment_currency(r: dict, snap) -> dict:
     return {"state": "current", "changes": []}
 
 
+def _subterm_changes(t: dict, snap, claim) -> list[dict]:
+    """A change when the target names a sub-term by identity (`at`) whose text in this build is
+    not the text it was recorded with (`target`): the identity no longer names that expression
+    (a build that gives identities otherwise), and the alignment must not follow it to another
+    one."""
+    if not isinstance(t.get("at"), str) or not isinstance(t.get("target"), str) or not claim \
+            or not hasattr(snap, "chunk"):
+        return []
+    from . import symbols
+    st = _statements(snap, claim).get(t["decl"])
+    if st is None:
+        return []
+    now = symbols.term_by_id(st, t["at"], getattr(snap, "part", None))
+    if now == t["target"]:
+        return []
+    return [{"decl": t["decl"], "at": t["at"], "was": t["target"], "now": now,
+             "reason": f"{t['decl']}: the sub-term {t['at']} " +
+             (f"is now {now!r}, not {t['target']!r}" if now is not None else
+              f"({t['target']!r}) is not in this build")}]
+
+
 def alignment_currency(r: dict, snap, root=None) -> dict:
     if snap is None:
         return {"state": "unchecked", "changes": []}
@@ -531,6 +552,7 @@ def alignment_currency(r: dict, snap, root=None) -> dict:
             if c["state"] == "unchecked":
                 unchecked = True
                 reasons.append(c.get("reason"))
+            changes += _subterm_changes(t, snap, r.get("claim"))
     if changes:
         return {"state": "stale", "changes": changes}
     if unchecked:
