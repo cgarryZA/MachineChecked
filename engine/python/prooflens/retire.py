@@ -6,15 +6,17 @@ declaration (`review_sources.py`). When the inventory moves a clause to another 
 split in two, a passage moved to a new entry), the markers of the clause's proposition still
 record the old claim's passage. That entry is no reading of a passage that uses the declaration
 now, so it is retired: removed, never rewritten to the new claim, and nothing is added. A marker
-left with no reading records `source=none`, so that it is not read as a marker written before
-readings were recorded; the claims that now use the declaration read as unread until someone
-reads their passages.
+none of whose readings still applies is retired whole instead, with its readings as recorded
+(below): it records a reading of passages that no longer use its declaration, and the claims
+that now use it read as unread until someone reads their passages. A definition's marker is the
+exception: when no claim names the definition, its review reads no passage (a closure may still
+count it), so its readings are inert and the marker is left as it is.
 
 With `--markers`, the plan also lists the markers whose declaration no claim uses any more: a
 proposition no clause states, or a definition no claim names that is in no closure of the last
-build's Lean results. With `--write` those are retired
-whole: the marker stays in its file, with its review text, as `<!-- retired spec-review: ...
--->`, which records no review (`reviews.RETIRED`). Step markers are left alone.
+build's Lean results. With `--write` the markers to retire whole stay in their file, with their
+review text and attributes, as `<!-- retired spec-review: ... -->`, which records no review
+(`reviews.RETIRED`). Step markers are left alone.
 
 The plan is printed as JSON; files change only with `--write`.
 """
@@ -41,8 +43,9 @@ def _closure_names(lean: dict) -> set[str]:
 
 def plan(inventory: dict, reviews: list, lean: dict | None, markers: bool) -> dict:
     """The readings to retire (`readings`: per marker, the claims whose recorded passage no
-    longer uses its declaration) and, with `markers`, the markers to retire whole (`markers`),
-    with the markers left because the last build cannot show them unused (`left`)."""
+    longer uses its declaration, and the readings it keeps), the markers to retire whole
+    (`markers`: those none of whose readings still applies and, with `markers`, those whose
+    declaration no claim uses), and the markers left as they are, with why (`left`)."""
     names = {d for c in inventory.get("claims", []) for cl in c.get("clauses") or []
              for d in [cl.get("spec"), *(cl.get("defs") or [])] if d}
     used = _closure_names(lean) | names if lean is not None else None
@@ -60,24 +63,35 @@ def plan(inventory: dict, reviews: list, lean: dict | None, markers: bool) -> di
             if used is None:
                 left.append({**row, "reason": "no claim names it, and there is no build to show "
                                               "whether a closure uses it"})
-            elif r.name not in used:
+                continue
+            if r.name not in used:
                 whole.append({**row, "reason": f"no claim names {r.name} and no closure of the "
                                                "last build holds it"})
                 continue
         stale = sorted(cid for cid in (r.source or {}) if cid not in users)
-        if stale:
-            known = {c["id"] for c in inventory.get("claims", [])}
-            readings.append({**row, "retire": stale,
-                             "keep": sorted(set(r.source) - set(stale)),
-                             "reasons": {cid: (f"{cid} no longer "
-                                               + ("states" if r.target == "spec" else "names")
-                                               + f" {r.name}") if cid in known
-                                         else f"{cid} is not in the inventory" for cid in stale}})
+        if not stale:
+            continue
+        verb = "states" if r.target == "spec" else "names"
+        known = {c["id"] for c in inventory.get("claims", [])}
+        reasons = {cid: f"{cid} no longer {verb} {r.name}" if cid in known
+                   else f"{cid} is not in the inventory" for cid in stale}
+        keep = sorted(set(r.source) - set(stale))
+        if keep:
+            readings.append({**row, "retire": stale, "keep": keep, "reasons": reasons})
+        elif users or r.target == "spec":
+            # Every reading it records is of a passage that no longer uses its declaration:
+            # the marker records no reading that applies, and keeps the ones it made.
+            whole.append({**row, "reason": f"no passage it read still {verb} {r.name}",
+                          "reasons": reasons})
+        else:
+            left.append({**row, "reason": f"no claim names {r.name}: its review reads no "
+                                          "passage, so the readings it records are inert"})
     return {"readings": readings, "markers": whole, "left": left}
 
 
 def apply(root: Path, result: dict) -> None:
-    """Remove each retired reading from its marker, and mark each retired marker, in place."""
+    """Remove each retired reading from its marker, and mark each retired marker, in place. A
+    marker is never left without a reading: one with none left is retired whole (`plan`)."""
     by_file: dict[str, list[tuple[str, dict]]] = {}
     for row in result["readings"]:
         by_file.setdefault(row["file"], []).append(("reading", row))
@@ -107,8 +121,6 @@ def apply(root: Path, result: dict) -> None:
                     if n != 1:
                         raise RuntimeError(f"{rel}:{row['line']}: the reading of {cid} is not "
                                            "there; rerun without --write")
-                if not row["keep"]:
-                    text = re.sub(r"\s*-->\Z", " source=none -->", text)
             edits.append((m.start(), m.end(), text))
         for s0, e0, text in sorted(edits, reverse=True):
             txt = txt[:s0] + text + txt[e0:]

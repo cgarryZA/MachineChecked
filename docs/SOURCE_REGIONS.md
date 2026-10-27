@@ -246,9 +246,12 @@ machinechecked inventory retire --write
 
 The plan lists, per review marker, the claims whose recorded reading (`source=CLAIM@DIGEST`) no
 longer states or names the marker's declaration, and the readings the marker keeps. `--write`
-removes exactly those entries and adds none; a marker left with none records `source=none`. A
-reading is never moved to the new claim: the new claim's passage reads as unread until a
-reviewer reads it, and `review promote` records that reading.
+removes exactly those entries and adds none. A marker none of whose readings still applies is
+retired whole (`<!-- retired spec-review: ... -->`, with the readings it recorded), so the file
+records which passage was read; a definition's marker is left as it is when no claim names the
+definition, since its review reads no passage. A reading is never moved to the new claim: the
+new claim's passage reads as unread until a reviewer reads it, and `review promote` records
+that reading.
 
 With `--markers`, the plan also lists the markers whose declaration no claim uses any more: a
 proposition no clause states (a statement retired at a new revision of the paper, or a refuted
