@@ -482,6 +482,11 @@ def fragment_currency(r: dict, snap) -> dict:
         if now != p["sha256"]:
             return {"state": "stale", "changes": [{"passage": p["claim"], "was": p["sha256"],
                                                    "now": now}]}
+        from .dependencies import unprinted
+        why = unprinted(ch, p["claim"])
+        if why:
+            return {"state": "stale", "changes": [{"passage": p["claim"], "was": p["sha256"],
+                                                   "now": now, "reason": why}]}
         return {"state": "current", "changes": []}
     reg = r.get("region") or {}
     src = sources_dir(snap, reg.get("paper"))

@@ -427,7 +427,12 @@ def bridge_currency(b: dict, claim: str, snap, root, check_now: bool = False) ->
     """The bridge of a composition against the current Lean and paper (`evaluate`); `unchecked`
     without the Lean project, or while Lean has not checked it since the Lean last changed
     (`check_now` asks Lean)."""
-    passage = (snap.chunk(claim) or {}).get("source_sha256") if snap is not None else None
+    ch = snap.chunk(claim) if snap is not None else None
+    passage = (ch or {}).get("source_sha256")
+    from .dependencies import unprinted
+    if unprinted(ch, claim):
+        # The paper no longer prints the pinned text, so the passage read is not the current one.
+        passage = None
     if root is None:
         return {"theorem": b.get("theorem"), "target": b.get("target"), "state": "unchecked",
                 "reasons": ["no Lean project to check the bridge against"],
@@ -488,6 +493,12 @@ def currency(rec: dict, ws: dict, cur: dict, snap) -> dict:
             changes.append({"claim": rec["claim"], "was": pin, "now": None})
         elif pin and ch.get("source_sha256") != pin:
             changes.append({"claim": rec["claim"], "was": pin, "now": ch.get("source_sha256")})
+        else:
+            from .dependencies import unprinted
+            if pin and unprinted(ch, rec["claim"]):
+                changes.append({"claim": rec["claim"], "was": pin,
+                                "now": ch.get("source_sha256"),
+                                "reason": unprinted(ch, rec["claim"])})
     return {"state": "stale" if changes else "current", "changes": changes}
 
 
