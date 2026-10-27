@@ -473,6 +473,7 @@ class Session:
         body = {"schema": REPORTS_SCHEMA, "project": (self.index.get("project") or {}).get("name"),
                 "release": self.index["release"], "exported_at": now(),
                 "reports": self.work["reports"]}
+        out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(body, indent=2, ensure_ascii=False), encoding="utf-8")
         return out
 
