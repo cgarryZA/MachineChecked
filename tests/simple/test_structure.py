@@ -509,3 +509,25 @@ def test_definitions_expand_at_their_arguments(tmp_path, toolchain):
     hyp = idx["binders"][-1]
     assert hyp["type"]["text"] == "t.ctorIdx = 69" and "expansions" not in hyp["type"]
     assert [x["name"] for x in expansions(idx["conclusion"]).values()] == ["Shape.Digit.val"]
+
+    # A private definition is the project's own (#426). Lean stores it under a name of its own
+    # (`_private.<module>.0.<name>`) and prints it with a mark (`✝`) outside its module. It is
+    # expanded where a statement applies it, by its body or by its equations; its record says
+    # what it is; the declaration that uses it lists it; and the statement's closure, whose
+    # definitions the reviews cover, holds it. What Lean generates for it is not expanded.
+    hidden = "_private.Shape.Expand.0.Shape."
+    mh = rec["Shape.margin_half"]
+    assert mh["conclusion"]["text"] == "Shape.half✝ (k + 2) < Shape.margin✝ k + k"
+    xs = {x["name"]: x for x in mh["conclusion"]["expansions"]}
+    assert sorted(xs) == [hidden + "half", hidden + "margin"]
+    assert xs[hidden + "margin"]["defined_by"] == "body"
+    assert xs[hidden + "margin"]["body"]["text"] == "k + 2"
+    [eq] = xs[hidden + "half"]["equations"]
+    assert eq["name"] == hidden + "half.eq_3"
+    assert xs[hidden + "half"]["equations_not_applying"] == [hidden + "half.eq_1", hidden + "half.eq_2"]
+    assert sorted(mh["decl"]["uses"]) == [hidden + "half", hidden + "margin"]
+    assert {hidden + "half", hidden + "margin", hidden + "half.match_1"} <= set(mh["closure"])
+    decls = view["body"]["decls"]
+    assert decls[hidden + "margin"]["defined_by"] == "body"
+    assert decls[hidden + "half"]["defined_by"] == "equations"
+    assert "defined_by" not in decls[hidden + "half.match_1"]
