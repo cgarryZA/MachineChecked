@@ -165,6 +165,9 @@
               "audit.unavailable",
               "audit.incompatible"
             ]
+          },
+          "semantic": {
+            "$ref": "#/$defs/semanticClaim"
           }
         }
       }
@@ -299,6 +302,699 @@
               }
             }
           }
+        }
+      }
+    },
+    "semantic": {
+      "$ref": "#/$defs/semantic"
+    }
+  },
+  "$defs": {
+    "semanticCoverage": {
+      "type": "object",
+      "description": "Claims by the coverage key they are counted under; each claim once.",
+      "required": [
+        "full",
+        "partial",
+        "changed",
+        "related",
+        "unresolved",
+        "not_recorded",
+        "stale",
+        "clauses_only",
+        "not_assessed"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "full": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "partial": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "changed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "related": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unresolved": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "not_recorded": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "stale": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "clauses_only": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "not_assessed": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "semanticBasis": {
+      "type": "object",
+      "description": "Of the claims counted under a relation, how that relation is supported; each once.",
+      "required": [
+        "direct",
+        "reviewed_composition",
+        "checked_bridge",
+        "unspecified"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "direct": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reviewed_composition": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "checked_bridge": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unspecified": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "semanticCurrency": {
+      "type": "object",
+      "description": "Claims with a reading in the set, by whether the reading is pinned to this build.",
+      "required": [
+        "current",
+        "unchecked",
+        "unpinned",
+        "stale"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "current": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unchecked": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unpinned": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "stale": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "semanticReview": {
+      "type": "object",
+      "description": "Statements by their review, each once.",
+      "required": [
+        "independent",
+        "author",
+        "informed",
+        "stale",
+        "unchecked",
+        "none"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "independent": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "author": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "informed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "stale": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unchecked": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "none": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "semanticStepReview": {
+      "type": "object",
+      "description": "Proof steps by their review as printed, each once.",
+      "required": [
+        "holds",
+        "gap",
+        "false",
+        "undetermined",
+        "stale",
+        "unreviewed"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "holds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "gap": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "false": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "undetermined": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "stale": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unreviewed": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "semanticFindings": {
+      "type": "object",
+      "description": "Claims with at least one recorded finding of each kind; a claim may have several kinds, so these are never added.",
+      "required": [
+        "open-question",
+        "quantitative-difference",
+        "input-restriction",
+        "representation",
+        "other-difference",
+        "printed-step"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "open-question": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "quantitative-difference": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "input-restriction": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "representation": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "other-difference": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "printed-step": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "semanticInventory": {
+      "type": "object",
+      "required": [
+        "records",
+        "linked",
+        "links",
+        "declarations"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "records": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "linked": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "links": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "declarations": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "description": "Claims of the unit; those linked to a declaration; their (claim, declaration) links, each pair once; the distinct declarations linked."
+    },
+    "semanticFormal": {
+      "type": "object",
+      "description": "Claims by their formal status code, with its established meaning.",
+      "additionalProperties": {
+        "type": "integer",
+        "minimum": 0
+      }
+    },
+    "semanticReading": {
+      "type": "object",
+      "required": [
+        "set",
+        "count"
+      ],
+      "properties": {
+        "set": {
+          "type": "string"
+        },
+        "coverage": {
+          "enum": [
+            "full",
+            "partial",
+            "changed",
+            "related",
+            "unresolved",
+            null
+          ]
+        },
+        "basis": {
+          "enum": [
+            "direct",
+            "reviewed_composition",
+            "checked_bridge",
+            null
+          ]
+        },
+        "recorded_basis": {
+          "enum": [
+            "direct",
+            "reviewed_composition",
+            "checked_bridge"
+          ]
+        },
+        "currency": {
+          "enum": [
+            "current",
+            "unchecked",
+            "unpinned",
+            "stale",
+            null
+          ]
+        },
+        "count": {
+          "enum": [
+            "full",
+            "partial",
+            "changed",
+            "related",
+            "unresolved",
+            "not_recorded",
+            "stale",
+            "clauses_only"
+          ]
+        },
+        "clauses": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "by": {
+          "type": "string"
+        },
+        "provenance": {
+          "enum": [
+            "independent",
+            "informed"
+          ]
+        },
+        "verdict": {
+          "type": "string"
+        },
+        "question": {
+          "type": "string"
+        }
+      }
+    },
+    "semanticClaim": {
+      "type": "object",
+      "description": "What the semantic summary records of one claim: its unit, how many declarations state it, its readings (one per set it appears in), its review and the kinds of finding recorded.",
+      "required": [
+        "unit",
+        "declarations",
+        "readings",
+        "review",
+        "findings"
+      ],
+      "properties": {
+        "unit": {
+          "enum": [
+            "statements",
+            "notation",
+            "proof_steps"
+          ]
+        },
+        "declarations": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "readings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/semanticReading"
+          }
+        },
+        "review": {
+          "enum": [
+            "independent",
+            "author",
+            "informed",
+            "stale",
+            "unchecked",
+            "none",
+            "holds",
+            "gap",
+            "false",
+            "undetermined",
+            "unreviewed"
+          ]
+        },
+        "findings": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "open-question",
+              "quantitative-difference",
+              "input-restriction",
+              "representation",
+              "other-difference",
+              "printed-step"
+            ]
+          }
+        }
+      }
+    },
+    "semantic": {
+      "type": "object",
+      "description": "The semantic summary of the audit (prooflens/semantic-summary@1, semantic.py): computed from records only, never an input to a status.",
+      "required": [
+        "schema",
+        "audit",
+        "selected",
+        "sets",
+        "papers",
+        "digest"
+      ],
+      "properties": {
+        "schema": {
+          "const": "prooflens/semantic-summary@1"
+        },
+        "audit": {
+          "type": "object",
+          "required": [
+            "author",
+            "release",
+            "evidence",
+            "project"
+          ],
+          "properties": {
+            "author": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "release": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "evidence": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "project": {
+              "type": "object"
+            }
+          }
+        },
+        "selected": {
+          "type": "string"
+        },
+        "sets": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "kind"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "audit",
+                  "review",
+                  "workspace"
+                ]
+              },
+              "by": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "reviewer": {
+                "type": "object"
+              },
+              "workspace": {
+                "type": "string"
+              },
+              "mode": {
+                "enum": [
+                  "independent",
+                  "informed",
+                  null
+                ]
+              }
+            }
+          }
+        },
+        "papers": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "required": [
+              "inventory",
+              "formal",
+              "coverage",
+              "basis",
+              "currency",
+              "review",
+              "findings"
+            ],
+            "properties": {
+              "revision": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "paper_version": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "inventory": {
+                "type": "object",
+                "required": [
+                  "statements",
+                  "notation",
+                  "proof_steps",
+                  "proof_equations",
+                  "proof_passages"
+                ],
+                "properties": {
+                  "statements": {
+                    "$ref": "#/$defs/semanticInventory"
+                  },
+                  "notation": {
+                    "$ref": "#/$defs/semanticInventory"
+                  },
+                  "proof_steps": {
+                    "$ref": "#/$defs/semanticInventory"
+                  },
+                  "proof_equations": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "proof_passages": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                }
+              },
+              "formal": {
+                "type": "object",
+                "required": [
+                  "statements",
+                  "notation",
+                  "proof_steps"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "statements": {
+                    "$ref": "#/$defs/semanticFormal"
+                  },
+                  "notation": {
+                    "$ref": "#/$defs/semanticFormal"
+                  },
+                  "proof_steps": {
+                    "$ref": "#/$defs/semanticFormal"
+                  }
+                }
+              },
+              "coverage": {
+                "type": "object",
+                "description": "Per set of readings and unit.",
+                "additionalProperties": {
+                  "type": "object",
+                  "required": [
+                    "statements",
+                    "notation",
+                    "proof_steps"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "statements": {
+                      "$ref": "#/$defs/semanticCoverage"
+                    },
+                    "notation": {
+                      "$ref": "#/$defs/semanticCoverage"
+                    },
+                    "proof_steps": {
+                      "$ref": "#/$defs/semanticCoverage"
+                    }
+                  }
+                }
+              },
+              "basis": {
+                "type": "object",
+                "description": "Per set of readings and unit.",
+                "additionalProperties": {
+                  "type": "object",
+                  "required": [
+                    "statements",
+                    "notation",
+                    "proof_steps"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "statements": {
+                      "$ref": "#/$defs/semanticBasis"
+                    },
+                    "notation": {
+                      "$ref": "#/$defs/semanticBasis"
+                    },
+                    "proof_steps": {
+                      "$ref": "#/$defs/semanticBasis"
+                    }
+                  }
+                }
+              },
+              "currency": {
+                "type": "object",
+                "description": "Per set of readings and unit.",
+                "additionalProperties": {
+                  "type": "object",
+                  "required": [
+                    "statements",
+                    "notation",
+                    "proof_steps"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "statements": {
+                      "$ref": "#/$defs/semanticCurrency"
+                    },
+                    "notation": {
+                      "$ref": "#/$defs/semanticCurrency"
+                    },
+                    "proof_steps": {
+                      "$ref": "#/$defs/semanticCurrency"
+                    }
+                  }
+                }
+              },
+              "review": {
+                "type": "object",
+                "required": [
+                  "statements",
+                  "notation",
+                  "proof_steps"
+                ],
+                "properties": {
+                  "statements": {
+                    "$ref": "#/$defs/semanticReview"
+                  },
+                  "notation": {
+                    "$ref": "#/$defs/semanticReview"
+                  },
+                  "proof_steps": {
+                    "$ref": "#/$defs/semanticStepReview"
+                  }
+                }
+              },
+              "findings": {
+                "type": "object",
+                "required": [
+                  "statements",
+                  "notation",
+                  "proof_steps"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "statements": {
+                    "$ref": "#/$defs/semanticFindings"
+                  },
+                  "notation": {
+                    "$ref": "#/$defs/semanticFindings"
+                  },
+                  "proof_steps": {
+                    "$ref": "#/$defs/semanticFindings"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "digest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
         }
       }
     }

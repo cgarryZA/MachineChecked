@@ -189,7 +189,8 @@ changes no status.
 theorem has **Facts inside the proof**: *Read the proof* asks Lean for the propositions its proof
 establishes along the way, each with the hypotheses it needs and the case of the proof it lies in,
 and each theorem the proof applies with the local that supplies each of its hypotheses (`compare
---query proof-facts NAME` gives the same in a terminal). *Cite in the investigation* saves a fact
+--query proof-facts NAME` gives the same in a terminal, with the reference that cites each fact,
+as `compare --query uses` gives one for each application). *Cite in the investigation* saves a fact
 as evidence; it keeps its basis, established inside that proof under that context, so a finding
 resting on it records the coverage as your composition, not as direct coverage. A `have` the
 source states but the compiled proof does not keep is shown as source text only.
@@ -461,6 +462,14 @@ current, the claim's links record the same bridge, Lean checks it and its target
 the reviewer was shown; otherwise it reads as the reviewer's composition, saying what it was
 recorded as and why. Reports are shown as their reviewers wrote them and change no status;
 `check --json` lists them per claim, with their coverage.
+
+The Overview and the audit's [semantic summary](DATA_MODEL.md#semantic-summary-prooflenssemantic-summary1-derived)
+count each reviewer's latest report of each statement as a set of readings of its own (**Reviews
+by** the reviewer): its coverage, its basis, and whether it is current. A report that records no
+coverage counts as **Reviewed, coverage not recorded**; one made for another text or other Lean as
+**Out of date**. Two reviewers' readings are never combined. A report is counted as independent
+when it records that nothing of the Lean or the author's review had been shown to its reviewer
+before the reading was locked (`reading.revealed_by` is empty), and as informed otherwise.
 
 ## Maintainer acceptance
 

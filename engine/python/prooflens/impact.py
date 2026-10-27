@@ -449,16 +449,50 @@ def path_text(steps: list[dict]) -> str:
     return out
 
 
-def _application_lines(a: dict) -> list[str]:
+def _application_body(a: dict) -> list[str]:
+    """What an application of the target supplies and gives, as `_application_lines` prints
+    it below its heading."""
     from .uses import DISCHARGE
-    out = [f"      application in {a['caller']}" + (f" (in {a['via']})" if a.get("via") else "")]
     if not a.get("available"):
-        return out + [f"        not described: {'; '.join(a.get('errors') or [])}"]
-    for p in a.get("premises") or []:
-        out.append(f"        premise {p['binder']} : {p.get('statement')}  "
-                   f"({DISCHARGE.get(p['discharge'], p['discharge'])}: {p['supplied']})")
+        return [f"        not described: {'; '.join(a.get('errors') or [])}"]
+    out = [f"        premise {p['binder']} : {p.get('statement')}  "
+           f"({DISCHARGE.get(p['discharge'], p['discharge'])}: {p['supplied']})"
+           for p in a.get("premises") or []]
     res = a.get("result")
-    out.append(f"        gives {res.get('text') if isinstance(res, dict) else res}")
+    return out + [f"        gives {res.get('text') if isinstance(res, dict) else res}"]
+
+
+def _ids_text(ids: list[str]) -> str:
+    """Application ids for the terminal: `app:X:0 to app:X:7` for a run of consecutive ids of
+    one declaration, else each of them."""
+    heads = {i.rpartition(":")[0] for i in ids}
+    tails = [i.rpartition(":")[2] for i in ids]
+    if len(ids) > 2 and len(heads) == 1 and all(t.isdigit() for t in tails):
+        nums = [int(t) for t in tails]
+        if nums == list(range(nums[0], nums[0] + len(nums))):
+            return f"{ids[0]} to {ids[-1]}"
+    return ", ".join(ids)
+
+
+def _application_lines(apps: list[dict]) -> list[str]:
+    """The applications of the target at the end of a main result's path, each named by the id
+    `uses` gives and workspace evidence cites. Applications in one declaration with the same
+    premises and result are shown once, with their number and their ids (`uses` gives each
+    one's arguments)."""
+    groups: dict[tuple, list[dict]] = {}
+    for a in apps:
+        groups.setdefault((a["caller"], a.get("via"), tuple(_application_body(a))), []).append(a)
+    out = []
+    for (caller, via, body), same in groups.items():
+        where = f"in {caller}" + (f" (in {via})" if via else "")
+        if len(same) == 1:
+            out.append(f"      application {same[0]['id']} {where}")
+        else:
+            what = ("description" if not same[0].get("available") else
+                    "premises and result" if same[0].get("premises") else "result")
+            out.append(f"      {len(same)} applications {where}, with the same {what}: "
+                       + _ids_text([a["id"] for a in same]))
+        out += list(body)
     return out
 
 
@@ -492,8 +526,7 @@ def text(doc: dict) -> str:
         lines.append(f"    {m['answer']}")
         for how, p in (m.get("paths") or {}).items():
             lines.append(f"    {how}: {path_text(p['steps'])}")
-        for i in m.get("applications") or []:
-            lines += _application_lines(apps[i])
+        lines += _application_lines([apps[i] for i in m.get("applications") or []])
         if m.get("applications_note"):
             lines.append(f"      {m['applications_note']}")
     for c in sel.get("unlinked_claims") or []:

@@ -60,6 +60,12 @@ and whether the paper's numbering is complete). Each suggestion has `reasons`: `
 (`content`, `uses`, `number`, `lexical`, `structure`) and `text`; a `number` reason has
 `basis` "a lead" or "a possibly stale lead", and `references`: the ids of the references in
 `numbering` it rests on.
+In either mode, `semantic` is the audit's semantic summary (`prooflens/semantic-summary@1`):
+per paper and per unit (`statements`, `notation`, `proof_steps`), the inventory, the formal
+status counts, and per set of readings the coverage, basis and currency counts, with the
+reviews and the kinds of finding recorded; each claim's `semantic` holds its own readings and
+keys. Quote these counts as they are, each with its unit: they are never added into a total or a
+percentage ([data model](DATA_MODEL.md#semantic-summary-prooflenssemantic-summary1-derived)).
 
 In a project with a `machinechecked.toml` (the full assessment), the document also has
 `findings` (totals per tier, dismissed warnings left out) and `finding_details`: each finding
@@ -233,8 +239,10 @@ keeps the first 4000 characters of a statement; a longer one has `statement_comp
   (`failed`, each with the first lines of what Lean reported, as `check` gives them), and
   `used`, `no use found in this scope`, or `not traced` when some modules were not searched.
 
-The first `uses` query after a change runs Lean once over the project; later queries reuse the
-answers until a Lean input changes.
+Without `--json`, `uses` names each application by its `id` and ends with the reference a
+workspace cites (`cite as evidence: {"app": {"callee": …, "id": …}}`). The first `uses` query
+after a change runs Lean once over the project; later queries reuse the answers until a Lean
+input changes.
 
 `impact NAME` traces the same references and answers whether each main result uses NAME, with
 one result (`machinechecked/impact@1`):
@@ -264,7 +272,9 @@ one result (`machinechecked/impact@1`):
   `complete: false` when an answer is `not traced`.
 
 *Formalized separately* says only that this main result's Lean does not refer to NAME; *not
-traced* gives what is missing and never means unused. The answer changes no status.
+traced* gives what is missing and never means unused. The answer changes no status. Without
+`--json`, each application is named by its `id`; applications in one declaration with the same
+premises and result are shown once, with their number and ids.
 
 `proof-facts NAME` asks Lean, for that one declaration, for the propositions its proof establishes
 along the way: each `have` (and `let` of a proposition), each goal a `show` states, and each
@@ -272,7 +282,8 @@ application of a theorem of the project or of a theorem to a local fact. Each re
 `type`, the locals it needs (`assumptions`: the hypotheses and variables its type and its proof
 mention), the `cases` of the proof it lies in (a branch of a case split, a witness of an
 `obtain`), the `premises` of an applied theorem with the local that supplies each, `used_by`, its
-`source` line (`located` says how it was found) and its `ref`, the reference a workspace cites.
+`source` line (`located` says how it was found) and its `ref`, the reference a workspace cites
+(without `--json`, each fact's position `at` and a `cite as evidence` line).
 `subject` holds the exported statement (`basis: "exported theorem"`), the proof's hash and what
 was inspected, `source_only` (a `have` or `show` of the source with no typed counterpart, for
 instance inside a lemma Lean generated, listed under `proof.auxiliary` and asked about by its own
@@ -547,23 +558,27 @@ machinechecked build
 **4. Follow the objects through the proof.**
 
 ```sh
-machinechecked compare --query uses Toy.Acceptance.thm_triangle --json > uses.json
-machinechecked compare --query proof-facts Toy.Acceptance.thm_bound --match "n ≤ n * n" --json > facts.json
+machinechecked compare --query uses Toy.Acceptance.thm_triangle
+machinechecked compare --query proof-facts Toy.Acceptance.thm_bound --match "n ≤ n * n"
 machinechecked workspace main "Theorem 2.5"
 machinechecked compare --query impact Toy.triangle
 ```
 
-In `uses.json`, `applications` holds one application, `app:Toy.Acceptance.thm_bound:0`: its
-parameter `n` is supplied by "the variable n introduced in the proof", and its `result` is
-`2 * Toy.triangle n = n * (n + 1)`. `facts.json` ranks first `f2`, `hn : n ≤ n * n` (line 44 of
-`Toy/Acceptance.lean`), in the case `n : Nat`; its basis is "established inside this proof under
-this context", and its `ref` is what a workspace cites. Without `--json`, both print for reading.
+`uses` finds one application, `app:Toy.Acceptance.thm_bound:0`: `parameter n : Nat := n (the
+variable n introduced in the proof)`, giving `2 * Toy.triangle n = n * (n + 1)`. It prints the
+reference a workspace cites: `{"app": {"callee": "Toy.Acceptance.thm_triangle", "id":
+"app:Toy.Acceptance.thm_bound:0"}}`. `proof-facts` ranks first `f2`, `hn : n ≤ n * n` at
+`Toy/Acceptance.lean:44, at /1/1/2`, in the case `n : Nat`, each fact "established inside this
+proof under its context", and prints its reference: `{"fact": {"decl":
+"Toy.Acceptance.thm_bound", "at": "/1/1/2"}}`. `--json` gives both answers in full.
 `workspace main` saves Theorem 2.5 as the paper's main result, under your name and with the
 build's release and project commit. `impact` traces from that selection ("Main results (saved in
 workspace ws-… by llm:MODEL …)"): `Toy.Acceptance.thm_bound` is "used by its proof, directly;
-also in its statement" (through `Toy.PaperSpec.thm_bound`), and Theorem 2.5 is the one claim
-whose Lean uses `Toy.triangle`. Without a saved selection, `impact` traces the declarations
-linked to the paper's theorems, as a suggestion.
+also in its statement" (through `Toy.PaperSpec.thm_bound`), with `8 applications in
+Toy.Acceptance.thm_bound, with the same result: app:Toy.Acceptance.thm_bound:0 to
+app:Toy.Acceptance.thm_bound:7`, and Theorem 2.5 is the one claim whose Lean uses
+`Toy.triangle`. Without a saved selection, `impact` traces the declarations linked to the
+paper's theorems, as a suggestion.
 
 **5. Assemble the evidence.** Cite the application and the fact, and combine them. The
 composition's bridge asks Lean to check that `Toy.Acceptance.thm_bound` proves
@@ -600,8 +615,8 @@ JSON
 machinechecked compare --query composition "Theorem 2.5"
 ```
 
-The fact's `at` is its position in the proof term, as `proof-facts` gives it in `ref`; the
-workspace keeps the fact's hashes and type with it. The composition reads `every clause, through
+The application and the fact are cited as `uses` and `proof-facts` print them; the fact's `at` is
+its position in the proof term, and the workspace keeps the fact's hashes and type with it. The composition reads `every clause, through
 a bridge Lean checks`.
 
 **6. Compare the estimate and the printed proof.** The Lean writes `C * (n * n)` for `C n²`, a

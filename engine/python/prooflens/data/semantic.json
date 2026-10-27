@@ -1,0 +1,59 @@
+{
+  "units": {
+    "statements": {"one": "statement", "many": "statements"},
+    "notation": {"one": "notation record", "many": "notation records"},
+    "proof_steps": {"one": "proof step", "many": "proof steps"}
+  },
+  "coverage": {
+    "full": {"label": "Every clause", "explanation": "The reading records that the linked Lean states every clause of the claim."},
+    "partial": {"label": "Part of the claim", "explanation": "The reading records that the linked Lean states part of the claim."},
+    "changed": {"label": "Stated differently", "explanation": "The reading records that the linked Lean states the claim differently."},
+    "related": {"label": "A related result", "explanation": "The reading records that the linked Lean is a related result, not this claim."},
+    "unresolved": {"label": "Unresolved", "explanation": "The reading records an open question that decides the correspondence."},
+    "not_recorded": {"label": "Reviewed, coverage not recorded", "explanation": "A review of the claim records no coverage."},
+    "stale": {"label": "Out of date", "explanation": "The reading was made for another text of the claim or other Lean."},
+    "clauses_only": {"label": "Clauses only", "explanation": "Parts of the claim are assessed; no reading of the whole statement is recorded."},
+    "not_assessed": {"label": "Not assessed", "explanation": "No reading of the claim is recorded in this set."}
+  },
+  "basis": {
+    "direct": {"label": "In one Lean statement", "explanation": "A linked declaration states the claim."},
+    "reviewed_composition": {"label": "By a reviewer's composition", "explanation": "A reviewer's argument combines the linked results; Lean has not checked the combination."},
+    "checked_bridge": {"label": "Through a checked bridge", "explanation": "Lean checks that a theorem's type is exactly a target proposition the reviewer read against the paper."},
+    "unspecified": {"label": "Basis not recorded", "explanation": "The reading records its coverage without saying how it is supported."}
+  },
+  "currency": {
+    "current": {"label": "current", "explanation": "Pinned to the text and Lean of this build."},
+    "unchecked": {"label": "not checked", "explanation": "This build could not check whether the reading is current."},
+    "unpinned": {"label": "not pinned", "explanation": "The reading records no version of the text or Lean it read."},
+    "stale": {"label": "out of date", "explanation": "Pinned to another text of the claim or other Lean."}
+  },
+  "review": {
+    "independent": {"label": "Current, independent", "explanation": "A current review by a reviewer who did not write the statements and had not seen the Lean or the author's review before the reading."},
+    "author": {"label": "Current, by an author", "explanation": "Current reviews, at least one with author provenance."},
+    "informed": {"label": "Current, informed", "explanation": "A current review whose reviewer had seen the Lean or the author's review before the reading, or does not record it."},
+    "stale": {"label": "Out of date", "explanation": "No current review; a recorded review was made for another text or other Lean."},
+    "unchecked": {"label": "Not checked", "explanation": "Reviews are recorded, and this build could not check whether they are current."},
+    "none": {"label": "Not reviewed", "explanation": "No current review of everything the claim needs is recorded."}
+  },
+  "step_review": {
+    "holds": {"label": "Holds as printed"},
+    "gap": {"label": "Holds, with a gap"},
+    "false": {"label": "False as printed"},
+    "undetermined": {"label": "Undetermined"},
+    "stale": {"label": "Source changed"},
+    "unreviewed": {"label": "Printed step not reviewed"}
+  },
+  "findings": {
+    "open-question": {"label": "Open questions", "explanation": "An unresolved coverage, a review that cannot determine the correspondence, an undetermined proof step, or a difference not yet decided."},
+    "quantitative-difference": {"label": "Quantitative differences", "explanation": "A recorded difference in a constant's dependence, a derivative order, a norm, a power, a weight or an index offset."},
+    "input-restriction": {"label": "Input restrictions", "explanation": "A recorded difference in a domain, an additional assumption or a lost case."},
+    "representation": {"label": "Representation choices", "explanation": "A review faithful with representation choices, or a recorded representation difference or its resolution."},
+    "other-difference": {"label": "Other differences", "explanation": "Another recorded difference, or a review verdict that the Lean is broader, narrower, mismatched or vacuous."},
+    "printed-step": {"label": "Printed steps that fail or have a gap", "explanation": "A review of a printed proof step found it false as printed, or holding with a gap."}
+  },
+  "sets": {
+    "audit": {"label": "The audit's readings", "explanation": "The correspondence readings recorded with the links: the links file, or the inventory for a proof step."},
+    "review": {"label": "Reviews by", "explanation": "The coverage each of this reviewer's latest reports records with its verdict."},
+    "workspace": {"label": "Workspace readings by", "explanation": "The coverage this workspace's submitted findings in force record for the whole statement."}
+  }
+}

@@ -371,6 +371,45 @@ papers' libraries stay. When nothing changed, it gives the statuses that reusing
 
 For projects with a separate acceptance framework, further statuses and evidence are available. [Read the evidence policy](EVIDENCE_POLICY.md) before interpreting them.
 
+## See the whole audit at once
+
+The **Overview** lists every claim with its correspondence with the Lean, how that is
+supported (its evidence basis), the difference or open question recorded, its review, and its
+proof status. Its counts are the audit's [semantic summary](DATA_MODEL.md#semantic-summary-prooflenssemantic-summary1-derived),
+as the engine computed it from the readings, reports and published findings:
+
+- Each count names its unit: statements, notation records or proof steps. Each claim is counted
+  once in each dimension; counts of different units, and of different dimensions, are never
+  added.
+- Select a count to show those claims. The address keeps the selection, so a link opens the same
+  subset.
+- **Readings shown** chooses whose readings are counted: the audit's own (the links file), each
+  reviewer's reports, or each published workspace. They are never combined.
+- **Review next** opens the review queue in its order.
+
+`check` and `build` print the same summary of the audit's readings. For the readings above, with
+a statement left unlinked, a notation record and a proof equation read as stating part of its
+step:
+
+```
+semantic summary of paper P (the audit's readings):
+  5 statements, 4 linked to 3 declarations
+    correspondence: every clause (3); unresolved (1); not assessed (1)
+    basis: in one Lean statement (1); by a reviewer's composition (1); through a checked bridge (1); basis not recorded (1)
+    reviews: not reviewed (5)
+    findings: open questions (1)
+  1 notation record, 1 linked to 1 declaration
+    correspondence: not assessed (1)
+    reviews: not reviewed (1)
+  1 proof step, 1 linked to 1 declaration
+    correspondence: part of the claim (1)
+    basis: in one Lean statement (1)
+    reviews: printed step not reviewed (1)
+```
+
+`check --json` gives the whole summary as `semantic`, and each claim's readings as its own
+`semantic`. The summary changes no status.
+
 ## Share or publish
 
 ```sh
