@@ -1477,6 +1477,43 @@ await check("in the local reader a symbol is linked by choosing it and clicking 
     assert.ok(await exactField.locator(".in").count() > 0, "the exact view selects the same sub-term");
   });
 
+  await check("a structure shows the fields it adds to its parent, and a construction what its value carries", width, async (pg) => {
+    const open = async (id) => {
+      await pg.goto(origin + `/structure/#/r/${SHAPE.release}/read/P/${encodeURIComponent(id)}`);
+      await pg.locator("aside .view section.lean .defn").first().waitFor();
+      return pg.locator("aside .view section.lean");
+    };
+    // The concrete structure extends the abstract one: its inherited fields are listed under
+    // the parent, and what it adds apart, each stated of an object `self`.
+    let lean = await open("P:def:profile");
+    const con = lean.locator(".defn.readable[data-decl='Shape.Concrete'] .made");
+    await con.waitFor();
+    const names = (loc) => loc.evaluateAll((ls) => ls.map((l) => l.dataset.field));
+    assert.match(await con.locator(".lbl").first().textContent(), /inherited from\s*Profile/i);
+    assert.deepEqual(await names(con.locator(".fields:not(.added) .field")), ["f", "C", "bound"]);
+    assert.deepEqual(await names(con.locator(".fields.added .field")), ["N", "support", "p", "periodic"]);
+    assert.match(await con.locator(".field[data-field='support']").textContent(), /support\s*:\s*∀ \(n : Nat\), self\.N ≤ n → self\.f n = 0/);
+    assert.match(await con.locator(".field[data-field='N']").textContent(), /data/);
+    const prof = lean.locator(".defn.readable[data-decl='Shape.Profile'] .made");
+    assert.deepEqual(await names(prof.locator(".field")), ["f", "C", "bound"]);
+    assert.equal(await prof.locator(".fields.added").count(), 0, "a structure without a parent adds to none");
+    const exact = pg.locator("aside .view .exact-pane .defn.exact[data-decl='Shape.Concrete']");
+    assert.match(await exact.locator(".thm[data-field='support']").textContent(), /Shape\.Concrete\.support.*self\.N ≤ n/s);
+    // A construction's value carries the fields its definition establishes; a helper that
+    // accepts the structure has them in its input's type, apart from its hypothesis.
+    lean = await open("P:thm:build");
+    const val = lean.locator(".defn.readable[data-decl='Shape.build'] .made.value");
+    await val.waitFor();
+    assert.match(await val.textContent(), /Established by this definition/);
+    assert.match(await val.locator(".field[data-field='support']").textContent(), /\(Shape\.build N\)\.N ≤ n → \(Shape\.build N\)\.f n = 0/);
+    assert.equal(await val.locator(".field[data-field='N']").count(), 0, "data is not a property");
+    await pg.goto(origin + `/structure/#/r/${SHAPE.release}/read/P/${encodeURIComponent("P:thm:vanishes")}`);
+    const st = pg.locator("aside .view :not(.suggestion) > .stmt");
+    await st.waitFor();
+    assert.match(await st.locator(".carried.given .prop[data-field='support']").textContent(), /c\.N ≤ n → c\.f n = 0.*field support of Concrete/s);
+    assert.match(await st.locator(".ribbon > li.hypothesis").textContent(), /assume\s*\(h\)\s*c\.N ≤ n/);
+  });
+
   await check("a definition expands at the arguments of each application, beside the statement", width, async (pg) => {
     // An expansion is fetched from its own file when it is opened, not with the claim.
     const fetched = [];

@@ -42,7 +42,7 @@
       {#if inspector}<Uses {name} {onref} {index} />{/if}
     {:else if !d}
       <p class="faint">Loading…</p>
-    {:else if inspector && d.defined_by !== undefined}
+    {:else if inspector && (d.defined_by !== undefined || d.structure)}
       <Definition {d} {onref} {selId} onselect={(id) => (selId = id)} />
       <Definition {d} view="exact" heading={false} {onref} {selId} onselect={(id) => (selId = id)} />
       <details class="extra">
@@ -69,7 +69,7 @@
         {#if hideReview}<p class="lbl">author’s docstring</p>{/if}
         <p class="doc">{d.doc}</p>
       {/if}
-      {#if d.defined_by !== undefined}
+      {#if d.defined_by !== undefined || d.structure}
         <p class="lbl">what it says</p>
         <Definition {d} {onref} {selId} onselect={(id) => (selId = id)} />
         {#if d.lean_source}

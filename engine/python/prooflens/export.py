@@ -33,7 +33,8 @@ def _pick(d: dict | None, keys: list[str]) -> dict | None:
 DECL_KEYS_LEAN = ["name", "kind", "module", "range", "doc", "signature", "value", "uses",
                   "fingerprint", "legacy_hash", "defined_by", "params", "body", "equations",
                   "equation_names", "equations_omitted", "definition_error", "result",
-                  "lean_source"]
+                  "lean_source", "structure", "structure_error", "result_properties",
+                  "result_properties_omitted", "result_properties_error"]
 DECL_KEYS_MIN = ["name", "kind", "module", "fingerprint", "legacy_hash"]
 
 
