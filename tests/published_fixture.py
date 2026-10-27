@@ -173,10 +173,44 @@ def combined(path, reader=None, stars=None):
                             {REPO: a, BETA: b}, stars=stars)
 
 
+GAMMA, GAMMA_BASE = 'synthetic/gamma', 'https://audit-g.example/'
+LOST = 'HTTP Error 404: Not Found'
+REFUSED = 'Audit pins another version of the paper than the listing names'
+
+
+def failed(path, reader=None):
+    """A paper page with audits that did not load, as machinechecked.org writes it: it gives each
+    registered audit its `state` (and `detail`, why it did not load), and each listing the state
+    of the audit its page shows (`audit_state`). `REPO`'s first audit loaded and its second did
+    not; `BETA`'s only audit did not; `GAMMA`'s did not either, on a page written before the site
+    gave each audit its own state."""
+    a = snapshot()
+    paper = copy.deepcopy(PAPER)
+    alpha, beta = paper['formalisations']
+    alpha['audits'] = [
+        {'url': BASE, 'author': 'A. Author', 'state': 'loaded', 'release': a['release'],
+         'commit': a['commit']},
+        {'url': BASE + 'latest/', 'author': 'A. Author', 'state': 'unavailable', 'detail': LOST}]
+    alpha['audit_state'] = {'state': 'loaded', 'release': a['release'], 'commit': a['commit']}
+    beta['audits'] = [{'url': BETA_BASE, 'author': 'B. Author', 'state': 'incompatible',
+                       'detail': REFUSED}]
+    beta['audit_state'] = {'state': 'incompatible', 'detail': REFUSED}
+    paper['formalisations'].append({'repository': GAMMA, 'commit': 'e' * 40,
+                                    'audits': [{'url': GAMMA_BASE, 'author': 'G. Author'}],
+                                    'audit_state': {'state': 'unavailable', 'detail': LOST}})
+    audits = {REPO: a, BETA: {'state': 'incompatible', 'detail': REFUSED, 'url': BETA_BASE},
+              GAMMA: {'state': 'unavailable', 'detail': LOST, 'url': GAMMA_BASE}}
+    claims = [{'key': 'theorem-1', 'number': 'Theorem 1', 'kind': 'theorem', 'links': [],
+               'anchor': {'begin': [1, 0, 100], 'end': [1, 0, 140]}}]
+    apply_audits(claims, {REPO: a})
+    return write_paper_site(path, paper, claims, [595.28, 841.89], None, reader, audits)
+
+
 if __name__ == '__main__':
     import sys
     build(Path(sys.argv[1]), Path(sys.argv[2]), work=True)
     root = Path(sys.argv[1]).parent
+    failed(root / 'failed', Path(sys.argv[2]))
     combined(root / 'combined', Path(sys.argv[2]), {REPO: 10, BETA: 3})
     combined(root / 'combined-beta', Path(sys.argv[2]), {REPO: 2, BETA: 50})
     combined(root / 'combined-unranked', Path(sys.argv[2]), None)
