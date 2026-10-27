@@ -2972,6 +2972,109 @@ print(json.dumps(order_route(work, data)({"order": ["informed"]})))`);
   } finally { py.kill(); }
 }
 
+// The findings a revision of the paper reopens (#120), under the engine's own local server: a
+// workspace made by the engine against the toy build, with the version map it keeps from an
+// earlier release to this one (a synthetic map of the toy's claims: one moved and renumbered,
+// one changed, one ambiguous), and a declaration changed in this build since.
+{
+  fs.cpSync(path.join(root, "toy"), path.join(root, "toyrev"), { recursive: true });
+  const work = path.join(root, "toyrev-work");
+  const made = spawnSync(process.env.PYTHON || "python3", ["-c", String.raw`
+import json, sys
+from pathlib import Path
+from prooflens import review_cli as rc
+from prooflens import workspace as wsp
+from prooflens.targets import Snapshot
+work, data, release = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
+s = Snapshot(data)
+p = wsp.open_for(work, rc.parse_reviewer("human:Test-Auditor"), "informed", sources=s.sources())
+put = lambda r: {"op": "put", "record": r}
+wsp.update(p, [
+  put({"id": "e-even", "kind": "evidence", "claim": "T:thm:even-add", "role": "supports", "ref": {"decl": "Toy.PaperSpec.thm_even_add"}}),
+  put({"id": "f-moved", "kind": "finding", "claim": "T:thm:even-add", "coverage": "full", "basis": "direct", "evidence": ["e-even"], "note": "SYNTHETIC: the Lean states it."}),
+  put({"id": "f-quiet", "kind": "finding", "claim": "T:thm:even-add", "coverage": "partial", "note": "SYNTHETIC: a note on the moved theorem."}),
+  put({"id": "f-bound", "kind": "finding", "claim": "T:thm:bound", "coverage": "full", "note": "SYNTHETIC: the bound with its constant."}),
+  put({"id": "f-pred", "kind": "finding", "claim": "T:prop:pred", "coverage": "partial", "note": "SYNTHETIC: the predecessor."})], s)
+wsp.update(p, [{"op": "submit", "id": i, "base_rev": 1} for i in ("f-moved", "f-quiet", "f-bound", "f-pred")], s)
+def side(cid, number, line, sha=None):
+    return {"claim": cid, "number": number, "location": f"toy.tex:{line}", "sha256": sha or s.chunk(cid)["source_sha256"]}
+doc = {"schema": "prooflens/version-map@1", "paper": "T", "from": {"release": "r-earlier"}, "to": {"release": release},
+  "claims": [
+    {"class": "moved", "reason": "the same text at another place, now Theorem 2.2", "by": ["text"], "renumbered": True, "moved": True,
+     "from": side("T:thm:even-add", "Theorem 2.1", 40), "to": side("T:thm:even-add", "Theorem 2.2", 44)},
+    {"class": "changed", "reason": "its label leads to a passage with other text", "by": ["label"],
+     "from": side("T:thm:bound", "Theorem 2.5", 70), "to": side("T:thm:bound", "Theorem 2.6", 74, "f" * 64),
+     "change": {"diff": ["--- toy.tex:70 at r1", "+++ toy.tex:74 at r2", "@@ -1 +1 @@", "-such that $T_n \\le C n^2$", "+such that $T_n \\le C n^2 + 1$ <img src=x onerror=alert(1)>"]}},
+    {"class": "ambiguous", "reason": "label prop:pred occurs 2 times", "by": [], "from": side("T:prop:pred", "Proposition 2.3", 50), "to": None,
+     "candidates": [{"claim": "T:prop:pred", "by": ["label"]}, {"claim": "T:rem:pred", "by": ["label"]}]}],
+  "passages": []}
+wsp.update(p, [{"op": "version-map", "map": doc}], s)
+# A declaration the moved theorem's finding cites changes in this build.
+for f in (data / "claims").glob("*.json"):
+    t = f.read_text()
+    fp = s.fingerprints()["Toy.PaperSpec.thm_even_add"]
+    if fp in t:
+        f.write_text(t.replace(fp, "pl-fp-v1:synthetic-later"))
+print(json.dumps({"id": wsp.read(p)["id"]}))`, work, path.join(root, "toyrev", "data"), TOY.release], { encoding: "utf8" });
+  if (made.status !== 0) throw new Error("the engine could not make the workspace:\n" + made.stderr);
+  const wsId = JSON.parse(made.stdout).id;
+  const { spawn } = await import("node:child_process");
+  const py = spawn(process.env.PYTHON || "python3", [path.join(here, "fixtures", "workspace_server.py"), path.join(root, "toyrev"), work]);
+  const port = await new Promise((ok, fail) => {
+    py.stdout.once("data", (d) => ok(String(d).trim()));
+    py.once("exit", (c) => fail(new Error("the workspace server stopped: " + c)));
+  });
+  try {
+    for (const width of [390, 1300]) {
+      await check("the changes view shows the findings a revision of the paper reopens", width, async (pg) => {
+        await pg.goto(`http://127.0.0.1:${port}/#/r/${TOY.release}/changes`);
+        const section = pg.locator("[data-revision]");
+        await section.waitFor();
+        assert.match(await section.locator(".where").textContent(), new RegExp(`Workspace ${wsId}, paper T: release r-earlier → ${TOY.release}; version map kept by human:Test-Auditor`));
+        // The changed theorem first: the earlier finding, the change with both texts, the
+        // dependency and the question; the diff is text.
+        const bound = section.locator("article[data-claim='T:thm:bound']");
+        assert.match(await bound.locator("h3").textContent(), /Theorem 2\.5 → Theorem 2\.6\s*Passage changed/);
+        assert.equal(await bound.locator("h3 a").getAttribute("href"), `#/r/${TOY.release}/claim/T%3Athm%3Abound`);
+        const fb = bound.locator("[data-finding='f-bound']");
+        assert.equal(await fb.getAttribute("data-state"), "reopened");
+        assert.match(await fb.locator("p").first().textContent(), /^Due for review: finding f-bound by human:Test-Auditor: Every clause$/);
+        assert.equal(await fb.locator(".earlier").textContent(), "SYNTHETIC: the bound with its constant.");
+        assert.match(await fb.locator(".dep p").first().textContent(), /^Changed: the passage of T:thm:bound \(toy\.tex:70 → toy\.tex:74\): its label leads to a passage with other text\.$/);
+        assert.deepEqual(await fb.locator(".diff .del").allTextContents(), ["-such that $T_n \\le C n^2$"]);
+        assert.deepEqual(await fb.locator(".diff .add").allTextContents(), ["+such that $T_n \\le C n^2 + 1$ <img src=x onerror=alert(1)>"]);
+        assert.equal(await fb.locator(".diff img").count(), 0);
+        assert.equal(await fb.locator(".question").textContent(), "Does finding f-bound still hold for the changed text of Theorem 2.6 (T:thm:bound)?");
+        // The ambiguous claim: not known to be current, with the candidates.
+        const pred = section.locator("[data-finding='f-pred']");
+        assert.equal(await pred.getAttribute("data-state"), "unchecked");
+        assert.match(await pred.locator(".dep p").textContent(), /^Not known: the passage of T:prop:pred \(toy\.tex:50\): the version map cannot tell which later claim Proposition 2\.3 \(T:prop:pred\) is: .*candidates: T:prop:pred, T:rem:pred.*--match\.$/);
+        // The moved theorem: its passage keeps both findings current; the declaration one cites
+        // changed in this build, which reopens that one only.
+        const moved = section.locator("article[data-claim='T:thm:even-add']");
+        assert.match(await moved.locator("h3").textContent(), /Theorem 2\.1 → Theorem 2\.2\s*Moved/);
+        const fm = moved.locator("[data-finding='f-moved']");
+        assert.equal(await fm.getAttribute("data-state"), "reopened");
+        assert.match(await fm.locator(".kept").textContent(), /^Still current: the passage of T:thm:even-add: the same text at another place, now Theorem 2\.2\.$/);
+        assert.equal(await fm.locator("[data-dep=build] p").first().textContent(), "Changed in this build: Toy.PaperSpec.thm_even_add changed.");
+        const fq = moved.locator("[data-finding='f-quiet']");
+        assert.equal(await fq.getAttribute("data-state"), "current");
+        assert.match(await fq.textContent(), /Still current: finding f-quiet by human:Test-Auditor: Part of the claim[\s\S]*Still current: the passage of T:thm:even-add/);
+        // Those with something to review come first.
+        assert.deepEqual(await section.locator("article.claim").evaluateAll((xs) => xs.map((x) => x.dataset.claim)),
+                         ["T:thm:bound", "T:thm:even-add", "T:prop:pred"]);
+        assert.ok(await pg.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), "no horizontal scroll");
+        if (process.env.SHOTS) await pg.screenshot({ path: path.join(process.env.SHOTS, `revision-${width}.png`), fullPage: true });
+      });
+    }
+    await check("a static copy of the site shows no workspace across the revision", 1300, async (pg) => {
+      await pg.goto(origin + "/toychanges/" + `#/r/${TOY.release}/changes`);
+      await pg.locator("[data-changes]").waitFor();
+      assert.equal(await pg.locator("[data-revision]").count(), 0);
+    });
+  } finally { py.kill(); }
+}
+
 await browser.close();
 server.close();
 fs.rmSync(root, { recursive: true, force: true });
