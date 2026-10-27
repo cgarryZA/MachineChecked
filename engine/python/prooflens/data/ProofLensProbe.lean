@@ -315,6 +315,434 @@ of it; the record says how many more there are. The engine lists the first 64 in
 declaration's record and stores the others in pages of their own (`manifest.split_expansions`). -/
 def maxEquations : Nat := 1024
 
+/-! ## A printed expression read as mathematics
+
+For the readable statement (#70), each printed expression of a statement (a binder's type, a
+leaf of its tree, a property an object's type carries, an argument or body of a definition
+expanded at an application, a definition's parameters and body) also carries `math`: the
+elaborated expression as a tree of the notions it is made of. Each node stands at the identity of
+the sub-term it renders (`id`, as `terms` name sub-terms), so that what the reader shows as
+mathematics is the Lean expression it came from. A node says what Lean elaborated, never more:
+a connective or quantifier; a relation or operation with the type it is taken in (`in`); a
+number; a variable of the statement (`var`, by number) or one bound inside the expression
+(`bound`, by its binder's identity); an application of a named function or predicate (`apply`);
+a field of an object; a coercion with the types it goes between; a type (the number systems,
+function, product and sub-types, `Fin n`, sets, Euclidean spaces, `Lp` spaces, linear maps and
+isometries with their scalars, measures); and the measure-theoretic notions (almost everywhere,
+equality almost everywhere, product measures, volume, integrals, a representative of an a.e.
+class, σ-algebras, measure spaces, σ-finite, finite and probability measures). A constant with
+notation of its own that is not recognised here stays exact Lean (`lean`, with its text), and so
+does anything else not recognised. Names are matched by value, so the probe needs no import of
+the library that declares them. The reader writes the words; this says what is there. Display
+only. -/
+
+/-- At most this many nodes of one printed expression are read as mathematics; the rest of it
+stays exact Lean. -/
+def maxMathNodes : Nat := 2000
+
+/-- What the reading of one expression carries: the statement's variables (`vars`, numbered as
+in `segments`), the variables bound inside the expression with the identity of their binder,
+the prefix of its identities, whether its nodes are sub-terms of the expression (`anchored`; a
+type Lean infers, such as the target of a coercion, is not) and the nodes it may still read. -/
+structure MathCtx where
+  vars : Array FVarId
+  bound : Array (FVarId × String) := #[]
+  pfx : String
+  anchored : Bool := true
+  budget : IO.Ref Nat
+
+/-- A node of kind `k` at the identity `id`, with its fields. -/
+def MathCtx.node (c : MathCtx) (k id : String) (fs : List (String × Json)) : Json :=
+  Json.mkObj ([("k", Json.str k)] ++ (if c.anchored then [("id", Json.str id)] else []) ++ fs)
+
+/-- The types named by a word. -/
+def mathTypes : List (Name × String) :=
+  [(`Nat, "nat"), (`Int, "int"), (`Rat, "rat"), (`Real, "real"), (`Complex, "complex"),
+   (`NNReal, "nnreal"), (`ENNReal, "ennreal"), (`EReal, "ereal"), (`Bool, "bool")]
+
+/-- Relations, by the constant that states them: the type they are taken in is the first
+argument, the related terms are the explicit ones. -/
+def mathRelations : List (Name × String) :=
+  [(`Eq, "eq"), (`Ne, "ne"), (`HEq, "heq"), (`LE.le, "le"), (`LT.lt, "lt"), (`GE.ge, "ge"),
+   (`GT.gt, "gt"), (`HasSubset.Subset, "subset"), (`HasSSubset.SSubset, "ssubset"),
+   (`Dvd.dvd, "dvd")]
+
+/-- Operations, by their constant: the operands are the explicit arguments; the type they are
+taken in is the first argument, or the type of the value for a heterogeneous one
+(`HAdd.hAdd α β γ`). -/
+def mathOperations : List (Name × String) :=
+  [(`HAdd.hAdd, "add"), (`HSub.hSub, "sub"), (`HMul.hMul, "mul"), (`HDiv.hDiv, "div"),
+   (`HMod.hMod, "mod"), (`HPow.hPow, "pow"), (`HSMul.hSMul, "smul"), (`Neg.neg, "neg"),
+   (`Inv.inv, "inv"), (`abs, "abs"), (`Norm.norm, "norm"), (`Max.max, "max"),
+   (`Min.min, "min"), (`Sup.sup, "sup"), (`Inf.inf, "inf"), (`Union.union, "union"),
+   (`Inter.inter, "inter"), (`SDiff.sdiff, "sdiff"), (`HasCompl.compl, "compl"), (`Compl.compl, "compl"),
+   (`SProd.sprod, "set_prod"), (`Nat.succ, "succ"), (`Finset.card, "card")]
+
+/-- Types and predicates of measure theory, linear algebra and sets read by their explicit
+arguments, each with the names of those arguments in order. -/
+def mathShapes : List (Name × String × List String) :=
+  [(`EuclideanSpace, "euclidean", ["field", "index"]),
+   (`MeasureTheory.Lp, "lp", ["codomain", "exponent", "measure"]),
+   (`MeasureTheory.Measure, "measure_type", ["space"]),
+   (`MeasureTheory.Measure.prod, "prod_measure", ["left", "right"]),
+   (`MeasurableSpace, "sigma_algebra", ["space"]),
+   (`MeasureTheory.MeasureSpace, "measure_space", ["space"]),
+   (`MeasureTheory.SigmaFinite, "sigma_finite", ["measure"]),
+   (`MeasureTheory.IsFiniteMeasure, "finite_measure", ["measure"]),
+   (`MeasureTheory.IsProbabilityMeasure, "probability_measure", ["measure"]),
+   (`MeasureTheory.MemLp, "memlp", ["fn", "exponent", "measure"]),
+   (`MeasureTheory.Memℒp, "memlp", ["fn", "exponent", "measure"]),
+   (`MeasureTheory.Integrable, "integrable", ["fn", "measure"]),
+   (`Set.Icc, "interval", ["lo", "hi"]), (`Set.Ico, "interval", ["lo", "hi"]),
+   (`Set.Ioc, "interval", ["lo", "hi"]), (`Set.Ioo, "interval", ["lo", "hi"]),
+   (`Set.Ici, "interval", ["lo"]), (`Set.Ioi, "interval", ["lo"]),
+   (`Set.Iic, "interval", ["hi"]), (`Set.Iio, "interval", ["hi"]),
+   (`Singleton.singleton, "singleton", ["of"]), (`Finset.range, "range", ["n"]),
+   (`Fin, "fin", ["n"]), (`Set, "set_type", ["of"]), (`Finset, "finset_type", ["of"]),
+   (`Prod, "prod_type", ["left", "right"])]
+
+/-- Linear maps between two spaces, read by their semilinear map (`RingHom.id 𝕜` gives the scalars
+`𝕜`) and their two spaces: `E ≃ₗᵢ[𝕜] F` and the like. -/
+def mathMaps : List (Name × String) :=
+  [(`LinearIsometryEquiv, "isometry_equiv"), (`LinearIsometry, "isometry"),
+   (`ContinuousLinearMap, "continuous_linear_map"), (`ContinuousLinearEquiv, "continuous_linear_equiv"),
+   (`LinearMap, "linear_map"), (`LinearEquiv, "linear_equiv")]
+
+/-- Binders whose predicate is a function: the constant, the word, the index of the predicate
+among the explicit arguments, and the names of the other explicit arguments. -/
+def mathBinders : List (Name × String × Nat × List String) :=
+  [(`setOf, "set_of", 0, []), (`Finset.sum, "sum", 1, ["over"]),
+   (`Finset.prod, "product", 1, ["over"]), (`MeasureTheory.integral, "integral", 1, ["measure"]),
+   (`MeasureTheory.lintegral, "lintegral", 1, ["measure"])]
+
+/-- The filter of "almost everywhere" for a measure (`MeasureTheory.ae μ`), with the measure and
+its position. -/
+def aeMeasure? (f : Expr) (pos : SubExpr.Pos) : Option (Expr × SubExpr.Pos) :=
+  let f := f.consumeMData
+  let n := f.getAppNumArgs
+  match f.getAppFn with
+  | .const c _ =>
+    if (c == `MeasureTheory.ae || c == `MeasureTheory.Measure.ae) && n ≥ 1 then
+      some (f.getArg! (n - 1), pos.pushNaryArg n (n - 1))
+    else none
+  | _ => none
+
+/-- The indices of the explicit arguments of an application of `f` to `n` arguments: those it
+prints. Every argument when Lean cannot say. -/
+def explicitArgs (f : Expr) (n : Nat) : MetaM (Array Nat) := do
+  let flags ← try
+      let info ← getFunInfoNArgs f n
+      pure (info.paramInfo.map (·.binderInfo.isExplicit))
+    catch _ => pure #[]
+  return (List.range n).toArray.filter fun i => flags.getD i true
+
+/-- Whether the constant `n` has notation of its own: an unexpander or a delaborator for its
+applications. -/
+def hasNotation (env : Environment) (n : Name) : Bool :=
+  !(Lean.PrettyPrinter.Delaborator.appUnexpanderAttribute.getEntries env n).isEmpty ||
+    !(Lean.PrettyPrinter.Delaborator.delabAttribute.getEntries env (`app ++ n)).isEmpty
+
+/-- The position of the function of an application with `j` of its arguments removed. -/
+def headPos : Nat → SubExpr.Pos → SubExpr.Pos
+  | 0, p => p
+  | j + 1, p => headPos j p.pushAppFn
+
+/-- `s` with the parent projections around it removed (`s.toBase` is `s`), with its position and
+the projections removed, outermost first: the printed `s.path` names `s`. -/
+partial def peelParents (env : Environment) (s : Expr) (p : SubExpr.Pos) :
+    Expr × SubExpr.Pos × Array String :=
+  let s := s.consumeMData
+  match s.getAppFn with
+  | .const q _ =>
+    match env.getProjectionFnInfo? q with
+    | some info =>
+      let k := s.getAppNumArgs
+      if !info.fromClass && k == info.numParams + 1 &&
+          (getStructureParentInfo env q.getPrefix).any (·.projFn == q) then
+        let (s', p', via) := peelParents env (s.getArg! info.numParams) (p.pushNaryArg k info.numParams)
+        (s', p', #[q.toString] ++ via)
+      else (s, p, #[])
+    | none => (s, p, #[])
+  | _ => (s, p, #[])
+
+/-- A sub-term kept as exact Lean, with its text. -/
+def exactMath (c : MathCtx) (e : Expr) (id : String) : MetaM Json := do
+  let text ← try pure (toString (← ppExpr e)) catch _ => pure "(not printable)"
+  return c.node "lean" id [("text", Json.str (if text.length > 2000 then prefixOf text 2000 ++ " …" else text))]
+
+mutual
+
+/-- The mathematics of `e`, standing at `pos`. -/
+partial def mathOf (c : MathCtx) (e : Expr) (pos : SubExpr.Pos) : MetaM Json := do
+  let id := c.pfx ++ toString pos
+  let left ← c.budget.get
+  -- Past the budget, the rest of the expression is read from its exact Lean (`cut`).
+  if left == 0 then return c.node "lean" id [("cut", true)]
+  c.budget.set (left - 1)
+  match e with
+  | .mdata _ b => mathOf c b pos
+  | .fvar fv =>
+    let nm := Json.str (binderName (← fv.getUserName))
+    if let some i := c.vars.findIdx? (· == fv) then
+      return c.node "var" id [("var", toJson i), ("name", nm)]
+    if let some (_, b) := c.bound.find? (·.1 == fv) then
+      return c.node "bound" id [("binder", Json.str b), ("name", nm)]
+    return c.node "local" id [("name", nm)]
+  | .sort l =>
+    if l.isZero then return c.node "type" id [("name", "prop")]
+    -- `Type u` is `Sort (u + 1)`: a universe of types, at level `u`.
+    match l.dec with
+    | some u => return c.node "universe" id [("level", Json.str (toString u))]
+    | none => return c.node "sort" id [("level", Json.str (toString l))]
+  | .lit (.natVal n) => return c.node "num" id [("value", Json.str (toString n))]
+  | .lit (.strVal s) => return c.node "str" id [("value", Json.str s)]
+  | .const n _ => constMath c e n #[] pos id
+  | .app .. =>
+    let f := e.getAppFn
+    let args := e.getAppArgs
+    match f.consumeMData with
+    | .const n _ => constMath c e n args pos id
+    | .fvar _ | .proj .. =>
+      let fj ← mathOf c f (headPos args.size pos)
+      let mut out := #[]
+      for i in ← explicitArgs f args.size do
+        out := out.push (← mathOf c args[i]! (pos.pushNaryArg args.size i))
+      return c.node "app" id [("fn", fj), ("args", Json.arr out)]
+    | _ => exactMath c e id
+  | .forallE n t b bi =>
+    if ← isProp e then
+      if !b.hasLooseBVars && (← isProp t) then
+        return c.node "implies" id [("args", Json.arr #[← mathOf c t pos.pushBindingDomain,
+          ← mathOf c b pos.pushBindingBody])]
+      return ← binderMath c "forall" n t b bi pos id []
+    if !b.hasLooseBVars then
+      return c.node "fun_type" id [("args", Json.arr #[← mathOf c t pos.pushBindingDomain,
+        ← mathOf c b pos.pushBindingBody])]
+    binderMath c "pi" n t b bi pos id []
+  | .lam n t b bi => binderMath c "lambda" n t b bi pos id []
+  | .proj s i b =>
+    let env ← getEnv
+    let field := ((getStructureFields env s)[i]?).map (·.toString) |>.getD (toString (i + 1))
+    return c.node "field" id [("of", ← mathOf c b pos.pushProj), ("field", Json.str field),
+      ("structure", Json.str s.toString)]
+  | _ => exactMath c e id
+
+/-- A binder `n : t` over `b`, the binder at `pos` (a `∀`, or the `fun` of a "there is" or of a
+predicate), as the node of kind `k` at `id`, with `fs`. Its variable is bound for `b`. -/
+partial def binderMath (c : MathCtx) (k : String) (n : Name) (t b : Expr) (bi : BinderInfo)
+    (pos : SubExpr.Pos) (id : String) (fs : List (String × Json)) : MetaM Json := do
+  let bid := c.pfx ++ toString pos
+  let tj ← mathOf c t pos.pushBindingDomain
+  withLocalDecl n bi t fun x => do
+    let bj ← mathOf { c with bound := c.bound.push (x.fvarId!, bid) } (b.instantiate1 x)
+      pos.pushBindingBody
+    return c.node k id (fs ++ [("binder", Json.str bid), ("name", Json.str (binderName n)),
+      ("binder_info", Json.str (binderStr bi)), ("type", tj), ("body", bj)])
+
+/-- A predicate `p` (at `pos`) as the binder of a node of kind `k`: its variable, type and body
+when it is a `fun`, else the predicate itself (`pred`). -/
+partial def predMath (c : MathCtx) (k : String) (p : Expr) (pos : SubExpr.Pos) (id : String)
+    (fs : List (String × Json)) : MetaM Json := do
+  match p.consumeMData with
+  | .lam n t b bi => binderMath c k n t b bi pos id fs
+  | _ => return c.node k id (fs ++ [("pred", ← mathOf c p pos)])
+
+/-- The type of `x` read as mathematics, not anchored: it is not a sub-term of the expression. -/
+partial def typeMath (c : MathCtx) (x : Expr) : MetaM Json := do
+  try mathOf { c with anchored := false } (← instantiateMVars (← inferType x)) .root
+  catch _ => return Json.null
+
+/-- An application of the constant `n` to `args`. -/
+partial def constMath (c : MathCtx) (e : Expr) (n : Name) (args : Array Expr) (pos : SubExpr.Pos)
+    (id : String) : MetaM Json := do
+  let env ← getEnv
+  let k := args.size
+  let arg := fun (i : Nat) => mathOf c args[i]! (pos.pushNaryArg k i)
+  let expl ← explicitArgs e.getAppFn k
+  -- The type an operation or relation is taken in: its first argument, when that is not one it
+  -- prints (`Nat.succ n` has none).
+  let carrier : MetaM (List (String × Json)) := do
+    if k == 0 || expl.contains 0 then return []
+    return [("in", ← mathOf c args[0]! (pos.pushNaryArg k 0))]
+  -- The logic.
+  if k == 0 && n == ``True then return c.node "true" id []
+  if k == 0 && n == ``False then return c.node "false" id []
+  if k == 2 && (n == ``And || n == ``Or || n == ``Iff) then
+    let w := if n == ``And then "and" else if n == ``Or then "or" else "iff"
+    return c.node w id [("args", Json.arr #[← arg 0, ← arg 1])]
+  if k == 1 && n == ``Not then return c.node "not" id [("arg", ← arg 0)]
+  if k == 2 && (n == ``Exists || n == `ExistsUnique) then
+    if let .lam bn t b bi := args[1]!.consumeMData then
+      return ← binderMath c (if n == ``Exists then "exists" else "exists_unique") bn t b bi
+        (pos.pushNaryArg 2 1) id []
+  -- Relations, with the type they are taken in.
+  if let some (_, w) := mathRelations.find? (·.1 == n) then
+    if expl.size == 2 then
+      return c.node "rel" id ([("op", Json.str w), ("args", Json.arr #[← arg expl[0]!, ← arg expl[1]!])]
+        ++ (← carrier))
+  if n == `Membership.mem && k == 5 then
+    -- The element is the argument of the element type (the order of the two changed in Lean).
+    let elemFirst ← try isDefEq (← inferType args[3]!) args[0]! catch _ => pure false
+    let (a, s) := if elemFirst then (3, 4) else (4, 3)
+    return c.node "rel" id [("op", "mem"), ("args", Json.arr #[← arg a, ← arg s]),
+      ("in", ← arg 0)]
+  -- Almost everywhere, and other filters.
+  if n == `Filter.EventuallyEq && k == 5 then
+    match aeMeasure? args[2]! (pos.pushNaryArg 5 2) with
+    | some (μ, mp) =>
+      return c.node "rel" id [("op", "ae_eq"), ("args", Json.arr #[← arg 3, ← arg 4]),
+        ("measure", ← mathOf c μ mp)]
+    | none =>
+      return c.node "rel" id [("op", "eventually_eq"), ("args", Json.arr #[← arg 3, ← arg 4]),
+        ("filter", ← arg 2)]
+  if n == `Filter.Eventually && k == 3 then
+    let (w, by_) ← match aeMeasure? args[2]! (pos.pushNaryArg 3 2) with
+      | some (μ, mp) => do pure ("ae", ("measure", ← mathOf c μ mp))
+      | none => do pure ("eventually", ("filter", ← arg 2))
+    return ← predMath c w args[1]! (pos.pushNaryArg 3 1) id [by_]
+  if let some (μ, mp) := aeMeasure? e pos then
+    return c.node "ae_filter" id [("measure", ← mathOf c μ mp)]
+  -- Numbers.
+  if n == `OfNat.ofNat && k == 3 then
+    if let .lit (.natVal v) := args[1]!.consumeMData then
+      return c.node "num" id ([("value", Json.str (toString v))] ++ (← carrier))
+  if (n == `Zero.zero || n == `One.one) && k == 2 then
+    return c.node "num" id ([("value", Json.str (if n == `Zero.zero then "0" else "1"))] ++ (← carrier))
+  if (n == `Top.top || n == `Bot.bot) && k == 2 then
+    return c.node (if n == `Top.top then "top" else "bot") id (← carrier)
+  if n == `Set.univ && k == 1 then return c.node "univ" id (← carrier)
+  if n == `EmptyCollection.emptyCollection && k == 2 then return c.node "empty" id (← carrier)
+  -- Operations. A heterogeneous one (`HAdd.hAdd α β γ`) is taken in the type of its value.
+  if let some (_, w) := mathOperations.find? (·.1 == n) then
+    if !expl.isEmpty then
+      let mut ops := #[]
+      for i in expl do ops := ops.push (← arg i)
+      let car ← if k == 6 && (n.getPrefix.toString.startsWith "H") then do
+          pure [("in", ← arg 2)]
+        else carrier
+      return c.node "op" id ([("op", Json.str w), ("args", Json.arr ops)] ++ car)
+  if n == `Inner.inner && k ≥ 2 then
+    return c.node "op" id [("op", "inner"), ("args", Json.arr #[← arg (k - 2), ← arg (k - 1)]),
+      ("field", ← arg 0)]
+  -- Types.
+  if k == 0 then
+    if let some (_, w) := mathTypes.find? (·.1 == n) then return c.node "type" id [("name", Json.str w)]
+  if n == ``Subtype && k == 2 then
+    -- The elements of a set or of a set-like structure (`↥(Lp ℝ 2 μ)`, which Lean elaborates as
+    -- `{x // x ∈ Lp ℝ 2 μ}`): that structure, as a type.
+    if let .lam _ _ b _ := args[1]!.consumeMData then
+      let b := b.consumeMData
+      if b.isAppOfArity `Membership.mem 5 && !(b.getArg! 3).hasLooseBVars &&
+          (b.getArg! 4).consumeMData == .bvar 0 then
+        let sp := (pos.pushNaryArg 2 1).pushBindingBody.pushNaryArg 5 3
+        return c.node "coe" id [("kind", "sort"), ("of", ← mathOf c (b.getArg! 3) sp)]
+    return ← predMath c "subtype" args[1]! (pos.pushNaryArg 2 1) id []
+  if let some (_, w, names) := mathShapes.find? (·.1 == n) then
+    if expl.size == names.length then
+      let mut fs : List (String × Json) := []
+      for (nm, i) in names.zip expl.toList do fs := fs ++ [(nm, ← arg i)]
+      let extra : List (String × Json) := match w, n with
+        | "interval", .str _ s => [("kind", Json.str s)]
+        | _, _ => []
+      let car ← if w == "interval" || w == "singleton" then carrier else pure []
+      return c.node w id (extra ++ fs ++ car)
+  if let some (_, w) := mathMaps.find? (·.1 == n) then
+    if expl.size == 3 then
+      let σ := args[expl[0]!]!.consumeMData
+      let σp := pos.pushNaryArg k expl[0]!
+      let scalars ← if σ.isAppOf `RingHom.id && σ.getAppNumArgs ≥ 1 then do
+          pure [("field", ← mathOf c σ.getAppArgs[0]! (σp.pushNaryArg σ.getAppNumArgs 0))]
+        else do pure [("semilinear", ← mathOf c σ σp)]
+      return c.node w id (scalars ++ [("domain", ← arg expl[1]!), ("codomain", ← arg expl[2]!)])
+  if let some (_, w, at_, names) := mathBinders.find? (·.1 == n) then
+    if expl.size == names.length + 1 && at_ < expl.size then
+      let others := (expl.toList.eraseIdx at_)
+      let mut fs : List (String × Json) := []
+      for (nm, i) in names.zip others do fs := fs ++ [(nm, ← arg i)]
+      return ← predMath c w args[expl[at_]!]! (pos.pushNaryArg k expl[at_]!) id fs
+  -- Measures.
+  if n == `MeasureTheory.MeasureSpace.volume && k ≥ 1 then
+    return c.node "volume" id [("space", ← arg 0)]
+  -- A representative of an a.e. class: the class it represents, through the coercion from `Lp`.
+  if n == `MeasureTheory.AEEqFun.cast && !expl.isEmpty then
+    let i := expl[0]!
+    let x := args[i]!.consumeMData
+    let xp := pos.pushNaryArg k i
+    let (x, xp) := match x.getAppFn with
+      | .const q _ =>
+        if (q == `Subtype.val || q == `MeasureTheory.Lp.toAEEqFun) && x.getAppNumArgs ≥ 1 then
+          (x.getArg! (x.getAppNumArgs - 1), xp.pushNaryArg x.getAppNumArgs (x.getAppNumArgs - 1))
+        else (x, xp)
+      | _ => (x, xp)
+    let rest ← (List.range (k - i - 1)).mapM fun j => arg (i + 1 + j)
+    let rep := c.node "rep" (c.pfx ++ toString (headPos (k - i - 1) pos)) [("of", ← mathOf c x xp)]
+    if rest.isEmpty then return rep
+    return c.node "app" id [("fn", rep), ("args", Json.arr rest.toArray)]
+  -- A bundled map, or a measure, applied: `Φ x`, `μ s`.
+  if n == `DFunLike.coe && k ≥ 5 then
+    let f := args[4]!
+    let rest ← (List.range (k - 5)).mapM fun j => arg (5 + j)
+    let ty ← try whnfR (← instantiateMVars (← inferType f)) catch _ => pure f
+    let isMeasure := ty.isAppOf `MeasureTheory.Measure || ty.isAppOf `MeasureTheory.OuterMeasure
+    if isMeasure && rest.length == 1 then
+      return c.node "measure_of" id [("measure", ← arg 4), ("set", rest[0]!)]
+    if rest.isEmpty then return c.node "coe" id [("kind", "fun"), ("of", ← arg 4)]
+    return c.node "map_apply" id [("map", ← arg 4), ("args", Json.arr rest.toArray)]
+  -- Coercions, with the types they go between.
+  if let some info ← getCoeFnInfo? n then
+    if k ≥ info.numArgs && info.coercee < info.numArgs then
+      let x := args[info.coercee]!
+      let kind := match info.type with
+        | .coe => "coe" | .coeFun => "fun" | .coeSort => "sort"
+      let cid := c.pfx ++ toString (headPos (k - info.numArgs) pos)
+      let types : List (String × Json) ← if info.type matches .coe then do
+          pure [("from", ← typeMath c x), ("to", ← typeMath c (mkAppN e.getAppFn (args.extract 0 info.numArgs)))]
+        else pure []
+      let cj := c.node "coe" cid ([("kind", Json.str kind), ("fn", Json.str n.toString),
+        ("of", ← arg info.coercee)] ++ types)
+      if k == info.numArgs then return cj
+      let mut rest := #[]
+      for i in [info.numArgs:k] do rest := rest.push (← arg i)
+      return c.node "app" id [("fn", cj), ("args", Json.arr rest)]
+  -- A field of an object (not of a class): `s.path`, through the parents it inherits from.
+  if let some info := env.getProjectionFnInfo? n then
+    if !info.fromClass && k > info.numParams then
+      let (s, sp, via) := peelParents env args[info.numParams]! (pos.pushNaryArg k info.numParams)
+      let fid := c.pfx ++ toString (headPos (k - info.numParams - 1) pos)
+      let field := match n with | .str _ s => s | _ => n.toString
+      let fj := c.node "field" fid [("of", ← mathOf c s sp), ("field", Json.str field),
+        ("structure", Json.str n.getPrefix.toString), ("projection", Json.str n.toString),
+        ("via", toJson via)]
+      if k == info.numParams + 1 then return fj
+      let mut rest := #[]
+      for i in expl do
+        if i > info.numParams then rest := rest.push (← arg i)
+      return c.node "app" id [("fn", fj), ("args", Json.arr rest)]
+  -- A named function or predicate written as an application: its explicit arguments in order.
+  -- One with notation of its own that is not read above stays exact Lean.
+  if hasNotation env n then return ← exactMath c e id
+  let mut out := #[]
+  for i in expl do out := out.push (← arg i)
+  return c.node "apply" id [("name", Json.str n.toString), ("args", Json.arr out),
+    ("class", toJson (isClass env n))]
+
+end
+
+/-- The `math` of a printed expression `e`, at `root` (identities prefixed `pfx`), the statement's
+variables numbered by `vars`. A failure, including running out of heartbeats, is a node of exact
+Lean that records it. -/
+def mathField (e : Expr) (vars : Array FVarId) (root : SubExpr.Pos) (pfx : String) : MetaM Json := do
+  let budget ← IO.mkRef maxMathNodes
+  let c : MathCtx := { vars, pfx, budget }
+  tryCatchRuntimeEx (withCurrHeartbeats do mathOf c (← instantiateMVars e) root) fun err => do
+    return Json.mkObj [("k", "lean"), ("id", Json.str (pfx ++ toString root)),
+      ("error", Json.str s!"probe-error: {← err.toMessageData.toString}")]
+
+/-- A printed expression (`ppJson`) with its mathematics (`math`). -/
+def ppMathJson (e : Expr) (vars : Array FVarId := #[]) (root : SubExpr.Pos := .root)
+    (pfx : String := "") : MetaM Json :=
+  return Json.mkObj ((← ppFields e vars root pfx) ++ [("math", ← mathField e vars root pfx)])
+
 /-! ## A definition at its actual arguments
 
 An application of one of the project's definitions inside a printed expression (`JetBound f S
@@ -423,7 +851,7 @@ partial def paramsAndBody (e : Expr) (acc : Array Json := #[]) (vars : Array FVa
     MetaM (Array Json × Json) := do
   match e, lambdas with
   | .lam n t b bi, true | .forallE n t b bi, false =>
-    let tj ← ppJson t vars pos.pushBindingDomain pfx
+    let tj ← ppMathJson t vars pos.pushBindingDomain pfx
     withLocalDecl n bi t fun x => do
       let j := Json.mkObj [("name", binderName n), ("binder", binderStr bi),
         ("id", Json.str (pfx ++ toString pos)), ("type", tj),
@@ -438,7 +866,7 @@ equation (`eqn`), the application its left side states is the one being expanded
 arguments and the right side are. -/
 partial def ppExpanded (inside : Name → Bool) (depth : Nat) (e : Expr) (vars : Array FVarId)
     (root : SubExpr.Pos) (pfx : String := "") (eqn : Bool := false) : MetaM Json := do
-  let fields ← ppFields e vars root pfx
+  let fields := (← ppFields e vars root pfx) ++ [("math", ← mathField e vars root pfx)]
   if depth == 0 then return Json.mkObj fields
   let found ← IO.mkRef ((0, 0) : Nat × Nat)
   let out ← if eqn && e.isAppOfArity ``Eq 3 then do
@@ -514,7 +942,7 @@ partial def expansionAt (inside : Name → Bool) (depth : Nat) (vars : Array FVa
       let nm := if n.hasMacroScopes then "" else binderName n
       argsJ := argsJ.push (Json.mkObj [("name", Json.str nm),
         ("binder", Json.str (binderStr bi)),
-        ("value", ← ppJson args[i]! vars (pos.pushNaryArg args.size i) pfx)])
+        ("value", ← ppMathJson args[i]! vars (pos.pushNaryArg args.size i) pfx)])
     let eqs? ← getEqnsFor? c
     let byEqns := match eqs? with
       | some eqs => eqs.size > 1
@@ -555,7 +983,7 @@ partial def expansionAt (inside : Name → Bool) (depth : Nat) (vars : Array FVa
         let d ← x.fvarId!.getDecl
         params := params.push (Json.mkObj [("name", Json.str (binderName d.userName)),
           ("binder", Json.str (binderStr d.binderInfo)), ("id", Json.str (xp ++ toString p)),
-          ("type", ← ppJson d.type vars p.pushBindingDomain xp),
+          ("type", ← ppMathJson d.type vars p.pushBindingDomain xp),
           ("proposition", toJson (← isProp d.type))])
         p := p.pushBindingBody
       let bodyJ ← ppExpanded inside (depth - 1) b vars p xp
@@ -626,7 +1054,7 @@ def fieldJson (x : Expr) (S f : Name) (vars : Array FVarId) (pfx basis : String)
     ("range", ← match proj with | some q => rangeJson q | none => pure Json.null),
     ("term", Json.str (toString (← ppExpr p))),
     ("depends", toJson deps),
-    ("type", ← ppJson t vars .root s!"{pfx}{f}:")]
+    ("type", ← ppMathJson t vars .root s!"{pfx}{f}:")]
   return (j, prop)
 
 /-- The fields carried by the type of `x` (`properties`), each with its statement specialised to
