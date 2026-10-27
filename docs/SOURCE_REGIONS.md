@@ -261,6 +261,16 @@ build's Lean results. Without a build such a definition's markers are listed as 
 `<!-- retired spec-review: ... -->` (or `def-review`), which records no review, and the plan
 names the declaration, hash and reviewer of each.
 
+Earlier versions wrote a marker left with no reading as `source=none`, which other marker
+parsers reject. `--markers` lists each such marker. Where the Git history of its review file
+shows the readings it had (the version before the commit that wrote `source=none`, followed
+back through later edits of the line), the plan gives them (`recovered`, with the `commit` that
+records them) and `--write` makes of the marker what it makes of one with those readings: it is
+retired whole with them, or, for a definition no claim names, given them back (`repairs`).
+Where the history does not show them (no repository, a shallow clone, several candidate
+markers), or one of them reads a passage that uses the declaration again, the marker is listed
+as `left`, with why, for you to retire or review again: a reading is never guessed.
+
 ## Display excerpts
 
 The reader shows a claim's statement typeset from the paper's source when the **whole** passage

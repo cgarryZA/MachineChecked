@@ -100,7 +100,10 @@ passage of its own.
   is left as it is. The claims that now use the declaration read as unread until someone reads
   them ([moving a clause](SOURCE_REGIONS.md#moving-a-clause-to-another-claim)). A marker retired
   whole (`<!-- retired spec-review: ... -->`) records no review; it keeps its review text and its
-  attributes in the file.
+  attributes in the file. A marker an earlier version left as `source=none` gets the readings
+  the Git history shows it had (`--markers`), and is then treated the same way; when the history
+  does not show them, or one of them applies again, it is left for the maintainer, never
+  guessed.
 
 ## Gates
 
