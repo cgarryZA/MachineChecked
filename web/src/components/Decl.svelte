@@ -5,6 +5,7 @@
   import LeanText from "./LeanText.svelte";
   import Definition from "./Definition.svelte";
   import Uses from "./Uses.svelte";
+  import { userName } from "../lib/names.js";
 
   // One Lean declaration of a closure, loaded from the shared store when it is opened.
   // `hideReview` keeps the author's review (and the review state) out of sight, as the review
@@ -26,7 +27,7 @@
 </script>
 
 {#snippet head()}
-  <code>{name}</code>
+  <code title={userName(name) !== name ? name : null}>{userName(name)}</code>
   {#if d && inspector}
     <span class="faint">{d.kind}</span>
   {:else if d}

@@ -718,7 +718,8 @@ QUERIES = {
     "search": "the project's declarations whose complete statements best match a claim's printed "
               "statement, a Lean expression or words, with the reasons for each",
     "dependencies": "what a declaration's statement and proof use (runs `inspect`)",
-    "uses": "where a declaration is applied, and the source of each premise",
+    "uses": "where a declaration is applied, and the source of each premise (with --in, inside "
+            "one declaration or one application, with the context of each)",
     "proof-facts": "the typed facts inside a declaration's proof, each with its assumptions and "
                    "cases (Lean reads the proof once; the answer is cached)",
     "composition": "the auditors' compositions for a claim: the steps, the results each rests "
@@ -766,7 +767,7 @@ def mark_claims(doc: dict, claims: dict[str, list[str]]) -> dict:
 def query(site: Site, op: str, target: str, limit: int | None = None, after: str | None = None,
           root: Path | None = None, log=None, match: str | None = None,
           workspace: str | None = None, main: list[str] | None = None,
-          every_library: bool = False) -> dict:
+          every_library: bool = False, within: str | None = None) -> dict:
     """One targeted query: `{op, context, target, results, provenance, retrieval}`. An
     operation the engine does not extract yet answers `available: false` with its owner.
     `search` with `every_library` searches every library of the project, also those the
@@ -778,9 +779,13 @@ def query(site: Site, op: str, target: str, limit: int | None = None, after: str
     which an independent review reads only after its verdict. `impact` traces the target from
     the main results named in `main` (declarations or claims), else from those saved in a
     workspace of the working directory (in `workspace`, when named), else from the declarations
-    linked to the paper's theorems (`impact.py`)."""
+    linked to the paper's theorems (`impact.py`). `uses` with `within` (`--in`) answers for
+    one declaration, or one application by its id, with every local of each application's
+    context."""
     if op not in QUERIES:
         raise CompareError(f"no query {op!r}; the queries are: {', '.join(QUERIES)}", "bad-query")
+    if within and op != "uses":
+        raise CompareError("--in goes with the query uses", "bad-query")
     out = {"schema": QUERY_SCHEMA, "op": op, "target": target, "limit": limit, "after": after,
            "context": site.snapshot()}
     if op in NOT_YET:
@@ -810,7 +815,8 @@ def query(site: Site, op: str, target: str, limit: int | None = None, after: str
         if root is None:
             raise CompareError("`uses` needs the Lean project", "no-project")
         from .uses import uses
-        results = [mark_claims(uses(root, target, None, log=log), linked_claims(site))]
+        results = [mark_claims(uses(root, target, None, log=log, within=within),
+                               linked_claims(site))]
         prov = "Lean (the elaborated terms of the project), cached until a Lean input changes"
     elif op == "impact":
         results = [_impact(site, root, target, main, log, workspace)]
