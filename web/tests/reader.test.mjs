@@ -17,6 +17,7 @@ import "./review.test.mjs";
 import "./coverage.test.mjs";
 import "./retrieval.test.mjs";
 import "./comparison.test.mjs";
+import "./findings.test.mjs";
 import "./names.test.mjs";
 import { chromium } from "playwright";
 import http from "node:http";
@@ -27,6 +28,7 @@ import os from "node:os";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { GLOSS, gloss } from "../src/lib/gloss.js";
+import { readingWords } from "../src/lib/coverage.js";
 
 // Every plain-English note: a full Lean name, one short sentence or two, nothing about proofs.
 for (const [name, text] of Object.entries(GLOSS)) {
@@ -38,6 +40,8 @@ assert.equal(gloss("No.Such.Name"), null);
 assert.equal(gloss("toString"), null, "only the table's own entries");
 
 const here = path.dirname(fileURLToPath(import.meta.url));
+// Text as it reads, with its white space collapsed.
+const words = (s) => s.replace(/\s+/g, " ").trim();
 const reader = path.resolve(here, "../../engine/python/prooflens/web");
 const A = "alpha/project-a", B = "beta/project-b";
 
@@ -385,9 +389,72 @@ fs.cpSync(path.join(root, "toy"), path.join(root, "toycmp"), { recursive: true }
                      lean: [{ decl: spec, var: 0 }, { decl: spec, var: 1 }], created_by: "human:A-Auditor", currency: cur },
                    { id: "al-sum", kind: "alignment", claim: row.id, requirements: ["sum"], relation: "corresponds",
                      lean: [{ decl: spec, conclusion: true }], created_by: "human:A-Auditor", currency: cur }],
-      findings: [], evidence: [], compositions: [] }] }));
+      findings: [{ id: "f-sum", kind: "finding", claim: row.id, requirement: "sum", coverage: "full", basis: "direct", state: "submitted",
+                   submitted_at: "2026-10-20T00:00:00Z", created_by: "human:A-Auditor", evidence: [], in_force: true, currency: cur,
+                   note: "SYNTHETIC-FINDING: the conclusion is the paper's." }],
+      evidence: [], compositions: [] }] }));
 }
 queueFor(path.join(root, "toycmp", "data"));
+
+// #74: the toy audit with published readings whose findings concern particular clauses: the
+// corrected predecessor clause's added `0 < n`, by two auditors; the uniform bound's natural
+// output constant, three bases of one coverage at its conclusion, and a finding whose statement
+// changed since it was recorded; and the proof step Equation (3), assessed on its own.
+fs.cpSync(path.join(root, "toy"), path.join(root, "toyfind"), { recursive: true });
+{
+  fs.mkdirSync(path.join(root, "toyfind/data/work"), { recursive: true });
+  const reviewer = (name) => ({ id: "human:" + name.replace(/ /g, "-"), kind: "human", name, identity: "self-declared" });
+  const req = (cid, local_id, form, text) => ({ id: "q-" + local_id, kind: "requirement", claim: cid, local_id, form, text, depth: 0, currency: cur });
+  const align = (cid, id, requirement, lean, relation = "corresponds", currency = cur) =>
+    ({ id, kind: "alignment", claim: cid, requirements: [requirement], relation, lean, created_by: "human:A-Auditor", currency });
+  const finding = (cid, id, requirement, extra) => ({ id, kind: "finding", claim: cid, ...(requirement ? { requirement } : {}), state: "submitted",
+    submitted_at: "2026-10-20T00:00:00Z", created_by: "human:A-Auditor", evidence: [], in_force: true, currency: cur, ...extra });
+  const publish = (cid, readings) => {
+    const row = TOY.claims.find((c) => c.id === cid);
+    const file = path.join(root, "toyfind/data/claims", row.file);
+    fs.writeFileSync(file, JSON.stringify({ ...JSON.parse(fs.readFileSync(file)), work: "work/" + row.file }));
+    fs.writeFileSync(path.join(root, "toyfind/data/work", row.file), JSON.stringify({ schema: "prooflens/published-work@1", release: TOY.release, claim: cid,
+      readings: readings.map((r) => ({ mode: "informed", requirements: [], fragments: [], alignments: [], findings: [], evidence: [], compositions: [], counterexamples: [], ...r })) }));
+  };
+  const P = "T:prop:pred", corrected = "Toy.PaperSpec.prop_pred_pos";
+  publish(P, [
+    { workspace: "ws-a00000000001", reviewer: reviewer("A Auditor"),
+      requirements: [req(P, "pos", "assumption", "n is positive")],
+      fragments: [{ id: "p-pos", kind: "fragment", claim: P, requirement: "pos", role: "proposed correction", origin: "correction", state: "accepted",
+                    state_by: "human:A-Auditor", region: { paper: "T", file: "toy.tex", start_line: 50, end_line: 50, sha256: "x", text: "SYNTHETIC-CORRECTION: for every positive n" }, currency: cur }],
+      alignments: [align(P, "al-pos", "pos", [{ decl: corrected, binder: 1, target: "h1 : 0 < n" }], "additional assumption")],
+      findings: [finding(P, "f-pos", "pos", { difference: { feature: "additional assumption", paper: "every natural number n", lean: "0 < n", outcome: "difference",
+                                                            transport: "the printed clause, refuted at n = 0" },
+                                              note: "The correction adds 0 < n; the printed clause has none." }),
+                 finding(P, "f-whole", null, { coverage: "changed", basis: "direct", note: "The corrected clause states the claim for positive n." })] },
+    { workspace: "ws-b00000000002", reviewer: reviewer("B Auditor"),
+      requirements: [req(P, "pos2", "assumption", "the predecessor of a positive n")],
+      alignments: [align(P, "al-pos2", "pos2", [{ decl: corrected, binder: 1 }, { decl: corrected, conclusion: true }], "additional assumption")],
+      findings: [finding(P, "f-pos2", "pos2", { coverage: "changed", basis: "direct", created_by: "human:B-Auditor" })] }]);
+  const B = "T:thm:bound", bound = "Toy.PaperSpec.thm_bound";
+  const e1 = { id: "e1", kind: "evidence", claim: B, role: "supports", ref: { decl: "Toy.Acceptance.thm_bound" }, currency: cur };
+  const comp = (id, basis, check) => ({ id, kind: "composition", claim: B, coverage: "full", basis, created_by: "human:A-Auditor", evidence: ["e1"],
+    steps: [{ id: "s1", establishes: "T_n ≤ n² for every n", uses: ["e1"], requirements: ["bound"] }], gaps: { requirements: 1, uncovered: [], open: [] },
+    complete: true, next_step: basis === "reviewed_composition" ? "State the combination as one Lean result." : null, currency: cur,
+    ...(check ? { bridge: { theorem: "Toy.Acceptance.thm_bound", target: bound }, bridge_check: check } : {}) });
+  publish(B, [{ workspace: "ws-a00000000001", reviewer: reviewer("A Auditor"),
+    requirements: [req(B, "c", "there is", "a constant C, independent of n"), req(B, "bound", "conclusion", "T_n ≤ C n²"), req(B, "old", "condition", "an earlier reading")],
+    alignments: [align(B, "al-c", "c", [{ decl: bound, binder: 0, target: "C : Nat" }]),
+                 align(B, "al-bound", "bound", [{ decl: bound, conclusion: true, target: "Toy.triangle n ≤ C * (n * n)" }]),
+                 align(B, "al-old", "old", [{ decl: bound, binder: 1, target: "n : Nat" }], "corresponds",
+                       { state: "stale", changes: [{ decl: bound, was: "pl-fp-v1:earlier", now: "pl-fp-v1:now" }] })],
+    evidence: [e1], compositions: [comp("c-arg", "reviewed_composition"), comp("c-bridge", "checked_bridge", { state: "checked", reasons: [] })],
+    findings: [finding(B, "f-c", "c", { note: "C : Nat is the type of the constant the statement produces: an output, not a hypothesis." }),
+               finding(B, "f-direct", "bound", { coverage: "full", basis: "direct", evidence: ["e1"] }),
+               finding(B, "f-arg", "bound", { coverage: "full", basis: "reviewed_composition", composition: "c-arg", evidence: ["e1"] }),
+               finding(B, "f-bridge", "bound", { coverage: "full", basis: "checked_bridge", composition: "c-bridge", evidence: ["e1"] }),
+               finding(B, "f-old", "old", { note: "SYNTHETIC-OLD: made against an earlier statement.",
+                                            currency: { state: "stale", changes: [{ decl: bound, reason: "Toy.PaperSpec.thm_bound changed" }] } })] }]);
+  const S = "T:eq:bound-range";
+  publish(S, [{ workspace: "ws-a00000000001", reviewer: reviewer("A Auditor"),
+    requirements: [req(S, "n.k.1", "conclusion", "n ≤ k n²")],
+    findings: [finding(S, "f-step", "n.k.1", { verdict: "false as printed", note: "It fails at k = 0, n = 1; the Lean proof uses n ≤ n * n." })] }]);
+}
 
 // The engine's semantic summary (#129, `semantic.refresh`) of copies of the toy audit, of the
 // readings and reports above, and of the toy audit with its published workspace records, as a
@@ -1272,6 +1339,9 @@ for (const width of [1300, 390]) {
     const text = await view.textContent();
     for (const gone of ["not accepted", "Comparator", "a.referee", "pl-fp-v1", "Toy.Defs", "its meaning reviewed"])
       assert.ok(!text.includes(gone), `"${gone}" is not in the main view`);
+    // #74: the review's `Correspondence:` field above the proposition's rows, up to its verdict.
+    assert.equal(words(await view.locator(".lean [data-review-field='Toy.PaperSpec.thm_even_add']").textContent()),
+      "Correspondence · from a review of Toy.PaperSpec.thm_even_add, by a human reviewer both quantifiers, both hypotheses and the conclusion appear as printed. The witness `thm_even_add_hypotheses` meets the hypotheses at `a = 2`, `b = 4`, which are nonzero.");
     // A statement whose prefix chooses a value is shown in order.
     await toyClaim(pg, "T:thm:bound");
     const bound = pg.locator("aside .view .lean .block").first();
@@ -2381,6 +2451,9 @@ await check("independent Compare is given the complete mathematics and no prior 
   assert.match(await reader.locator(".stmt [data-row='b:2'] .pcell").textContent(), /Not aligned with the paper in this reading/);
   assert.equal(await reader.locator(".paper.whole .excerpt").count(), 1, "the printed passage once, whole");
   assert.ok(await reader.locator(".paper [data-sym]").count() > 0, "and the symbol links");
+  // #74: the reading's finding at the row its alignment names, and the author's correspondence field.
+  assert.match(await reader.locator(".stmt [data-row='c'] [data-finding='f-sum']").textContent(), /SYNTHETIC-FINDING: the conclusion is the paper's/);
+  assert.match(await reader.locator("[data-review-field='Toy.PaperSpec.thm_even_add']").textContent(), /both quantifiers/);
   // The Lean's own rows beside the whole passage, on request.
   await reader.getByRole("combobox", { name: "Rows" }).selectOption("none");
   await reader.locator(".grid > section.lean").waitFor();
@@ -2404,8 +2477,10 @@ await check("independent Compare is given the complete mathematics and no prior 
   await insp.locator("details.extra summary").click();
   await pg.waitForLoadState("networkidle");
   const html = await pg.evaluate(() => document.body.innerHTML);
-  for (const absent of ["A-Referee", "A-Auditor", "SYNTHETIC-NOTE", "SYNTHETIC-PASSAGE", "SYNTHETIC-REQUIREMENT", "a.referee", "Paper · Definition"])
+  for (const absent of ["A-Referee", "A-Auditor", "SYNTHETIC-NOTE", "SYNTHETIC-PASSAGE", "SYNTHETIC-REQUIREMENT", "a.referee", "Paper · Definition",
+                        "SYNTHETIC-FINDING", "both quantifiers", "Correspondence"])
     assert.ok(!html.includes(absent), `${absent} is not on the page`);
+  assert.equal(await cmp.locator(".row-findings, [data-finding], [data-review-field]").count(), 0, "no finding or author's note in Compare");
   assert.deepEqual(fetched.filter((p) => p.includes("/data/work/")), [], "nor fetched");
   await insp.locator(".back").click();
   // After the verdict, the later stage shows what people recorded, attributed.
@@ -2415,7 +2490,78 @@ await check("independent Compare is given the complete mathematics and no prior 
   await pg.getByRole("button", { name: "Record verdict and show the author's review" }).click();
   await cmp.locator(".paper [data-sym]").first().waitFor();
   await cmp.locator(".stmt [data-row='b:0'] .pcell .aligned").waitFor();
+  await cmp.locator(".stmt [data-row='c'] [data-finding='f-sum']").waitFor();
 });
+
+// #74: findings at the paper and Lean clauses they explain, each through an alignment of its own
+// reading, attributed; what no alignment places stays on the whole claim. A proof step's finding
+// is the step's, and moving to another claim takes each claim's findings with it.
+for (const width of [1300, 390]) {
+  await check("findings are shown at the clauses they explain", width, async (pg) => {
+    const go = (id) => pg.evaluate(([r, c]) => { location.hash = `#/r/${r}/read/T/${encodeURIComponent(c)}`; }, [TOY.release, id]);
+    await pg.goto(origin + `/toyfind/#/r/${TOY.release}/read/T/${encodeURIComponent("T:prop:pred")}`);
+    const cmp = pg.locator("aside .cmp");
+    const corrected = cmp.locator(".block[data-spec='Toy.PaperSpec.prop_pred_pos']");
+    const pos = corrected.locator(".stmt [data-row='b:0'] [data-finding='f-pos']");
+    await pos.waitFor();
+    // The added 0 < n at its clause only: the row of n and its condition, in the corrected clause.
+    assert.equal(await cmp.locator("[data-finding='f-pos']").count(), 1);
+    assert.equal(await cmp.locator(".block[data-spec='Toy.PaperSpec.prop_pred'] [data-finding]").count(), 0, "not at the printed clause");
+    assert.equal(await corrected.locator(".stmt [data-row='c'] [data-finding='f-pos']").count(), 0, "not at its conclusion");
+    const text = words(await pos.textContent());
+    assert.match(text, /^An additional assumption difference: a difference paper every natural number n; Lean 0 < n · transport inspected: the printed clause, refuted at n = 0/);
+    assert.match(text, /The correction adds 0 < n; the printed clause has none\./);
+    // Its passage is beside the row, the rows being paired with this reading: named, not printed again.
+    assert.match(text, /Paper: pos assumption: n is positive · toy\.tex:50 \(proposed correction\) Lean:/);
+    assert.match(await corrected.locator(".stmt [data-row='b:0'] .pcell").textContent(), /SYNTHETIC-CORRECTION: for every positive n/);
+    assert.match(text, /Lean: h1 : 0 < n in Toy\.PaperSpec\.prop_pred_pos, an assumption · an additional assumption of the Lean/);
+    assert.match(text, /By A Auditor, informed investigation/);
+    // A second auditor's finding at the same clause, attributed apart; named, not repeated, at the
+    // other row it concerns.
+    const changed = readingWords("changed", "direct");
+    assert.match(words(await corrected.locator(".stmt [data-row='b:0'] [data-finding='f-pos2']").textContent()), new RegExp("^" + changed + ".*By B Auditor, informed investigation"));
+    assert.equal(words(await corrected.locator(".stmt [data-row='c'] [data-finding-ref='f-pos2']").textContent()),
+      `Also concerns this row: “${changed}”, by B Auditor, explained at the row of n in prop_pred_pos.`);
+    // With the Lean's own rows, the finding prints its passage.
+    await cmp.getByRole("combobox", { name: "Rows" }).selectOption("none");
+    await cmp.locator(".grid > section.lean").waitFor();
+    assert.match(words(await pos.textContent()), /toy\.tex:50 \(proposed correction\) SYNTHETIC-CORRECTION: for every positive n Lean:/);
+    assert.equal(await cmp.locator("[data-finding='f-pos']").count(), 1, "still at its row");
+    // The finding on no requirement is the whole claim's.
+    assert.match(words(await cmp.locator(".row-findings.claim [data-finding='f-whole']").textContent()), new RegExp("^" + changed + " The corrected clause states the claim for positive n\\."));
+    assert.equal(await cmp.locator(".row-findings.claim [data-finding]").count(), 1);
+    if (width < 500) assert.ok(await pg.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), "no sideways scroll");
+    if (process.env.SHOTS) await pos.screenshot({ path: path.join(process.env.SHOTS, `finding-pred-${width}.png`) });
+
+    // The uniform bound: its natural constant in its output role; one coverage with three bases at
+    // the conclusion; a finding made against an earlier statement stays on the whole claim.
+    await go("T:thm:bound");
+    const c = cmp.locator(".block[data-spec='Toy.PaperSpec.thm_bound'] .stmt [data-row='b:0'] [data-finding='f-c']");
+    await c.waitFor();
+    assert.equal(await cmp.locator("[data-finding='f-pos'], [data-finding='f-whole']").count(), 0, "the other claim's findings went with it");
+    assert.equal(words(await c.locator(".head").textContent()), "C : Nat is the type of the constant the statement produces: an output, not a hypothesis.",
+      "a finding that records a note only is headed by it");
+    assert.match(words(await c.textContent()), /Lean: C : Nat in Toy\.PaperSpec\.thm_bound, the type of an object the statement produces · corresponds/);
+    const concl = cmp.locator(".block[data-spec='Toy.PaperSpec.thm_bound'] .stmt [data-row='c']");
+    assert.deepEqual((await concl.locator("[data-finding] .head").allTextContents()).map(words),
+      [readingWords("full", "direct"), readingWords("full", "reviewed_composition"), readingWords("full", "checked_bridge")]);
+    assert.match(words(await concl.locator("[data-finding='f-arg']").textContent()), /Lean has not checked this combination|Next step/);
+    const old = cmp.locator(".row-findings.claim [data-finding='f-old']");
+    assert.match(words(await old.textContent()), /Lean: n : Nat in Toy\.PaperSpec\.thm_bound · corresponds · its statement changed since this was recorded/);
+    assert.match(words(await old.textContent()), /what it rests on changed since it was recorded/);
+    assert.equal(await cmp.locator("[data-finding='f-step']").count(), 0, "the proof step's finding is not the theorem's");
+    if (process.env.SHOTS) await cmp.screenshot({ path: path.join(process.env.SHOTS, `finding-bound-${width}.png`) });
+
+    // Equation (3), a proof step of the bound, with its own finding.
+    await go("T:eq:bound-range");
+    const step = cmp.locator(".row-findings.claim [data-finding='f-step']");
+    await step.waitFor();
+    assert.match(words(await step.textContent()), /^The printed step: false as printed It fails at k = 0, n = 1/);
+    assert.equal(await cmp.locator("[data-finding='f-c'], [data-finding='f-direct']").count(), 0);
+    // The full record is still listed with the audit's readings.
+    assert.equal(await pg.locator("aside .published-work [data-kind='finding']").count(), 1);
+  });
+}
 
 // #77: on a desktop, a short desktop and a phone, the comparison keeps its complete content, its
 // sources, keyboard operation and the browser's history.
@@ -3178,6 +3324,23 @@ print("null")`);
         /^Every clause, by an argument combining Lean results · composition c-tri · human:Test-Auditor s1 the closed form for every n · from Toy\.Acceptance\.thm_triangle · establishes r1 Lean has not checked this combination\. Next step: State the combination as one Lean result\.$/);
       const f = inv.locator("[data-kind=finding]", { hasText: "By the composition." });
       assert.match((await f.textContent()).replace(/\s+/g, " "), /^Every clause, by an argument combining Lean results.*Rests on composition c-tri\./);
+
+      // #74: a finding on r1, saved through the engine, is shown in the comparison at the row its
+      // alignment names, as this investigation's; the finding on no requirement is the claim's.
+      engine(String.raw`
+import sys
+from pathlib import Path
+from prooflens import workspace as wsp
+from prooflens.targets import Snapshot
+(p, ws), = wsp.list_all(Path(sys.argv[1]))
+wsp.update(p, [{"op": "put", "record": {"id": "f-r1", "kind": "finding", "claim": "T:thm:triangle", "requirement": "r1", "note": "n ranges over every natural number, as printed."}}], Snapshot(Path(sys.argv[1]).parent / "toyws" / "data"))
+print("null")`);
+      await pg.reload();
+      const atRow = pg.locator(".cmp .block[data-spec='Toy.PaperSpec.thm_triangle'] .stmt [data-row='b:0'] [data-finding='f-r1']");
+      await atRow.waitFor();
+      assert.match(words(await atRow.textContent()),
+        /^n ranges over every natural number, as printed\. · draft Paper: r1 for every n: for every natural number n · .*Lean: n in Toy\.PaperSpec\.thm_triangle, an object the statement is given · corresponds Recorded in your investigation \(human:Test-Auditor\)/);
+      assert.match(words(await pg.locator(".cmp .row-findings.claim [data-finding='f-tri']").textContent()), /^Every clause, by an argument combining Lean results · draft By the composition\./);
     });
 
 
