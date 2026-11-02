@@ -5,7 +5,7 @@
   import { VERDICTS, GROUPS, CHECKLIST, MARKS, STEP_VERDICTS, STEP_GROUPS, loadWork, saveWork, now, reviewerId,
            needsDetail, buildReport, exportFile, ORDERS, ORDER_EXPOSURE, byOrder, orderedUnits, recordExposure,
            exposureOf, holdsBack, COVERAGE_FOR, COVERAGE_CHOICES, BASIS_CHOICES, reportCorrespondence,
-           draftCoverage, coverageWords, undoReport, READER_SEEN } from "../lib/review.js";
+           draftCoverage, coverageWords, undoReport, leanOf, READER_SEEN } from "../lib/review.js";
   import { chosenWorkspace } from "../lib/workfile.js";
   import Comparison from "./Comparison.svelte";
   import WorkspaceFile from "./WorkspaceFile.svelte";
@@ -343,6 +343,8 @@
       if (given.bridge) given.bridge = { ...given.bridge, target_fingerprint: targetPin(given.bridge) };
       draft.correspondence = reportCorrespondence(current, draft.verdict, given).correspondence;
     }
+    // The Lean the verdict is about: the report pins this version, as the engine's does.
+    draft.lean = leanOf(current);
     draft.decided_at = now(); draft.stage = "author"; draft.author_shown_at = now(); persist();
   }
   async function saveReport() {

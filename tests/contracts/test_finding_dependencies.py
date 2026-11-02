@@ -184,7 +184,9 @@ def test_a_submitted_finding_records_what_it_rests_on_with_each_version(work):
     ref = by[("declaration", "e-young")]["ref"]
     assert (ref["decl"], ref["fingerprint"]) == ("Ex.young", "fp:young-1")
     assert ref["closure"] == {"Ex.norm": "fp:norm-1", "Ex.Sol": "fp:sol-1"}
-    assert ref["expansions"] == [{"at": "/1/1", "name": "Ex.norm", "key": "k-norm-1"}]
+    # The expansion it prints carries the fingerprint of the definition it expands.
+    assert ref["expansions"] == [{"at": "/1/1", "name": "Ex.norm", "key": "k-norm-1",
+                                  "fingerprint": "fp:norm-1"}]
     assert by[("paper", "e-quote")]["ref"]["paper"]["sha256"] == "s-main-1"
     # Shown, the same; and current while nothing changed.
     v = wsp.view(wsp.read(p), snap_of(work))
@@ -486,3 +488,61 @@ def test_the_dependency_words_cover_each_kind():
         "the passage of P:x", "requirement r1", "a.tex:3-4 (quantifier domain of r1)",
         "Ex.f (variable 0: x) (corresponds)", "Ex.g applied in Ex.f", "composition c1",
         "bridge Ex.f for Ex.S", "counterexample x1"]
+
+
+# -- definitions expanded at their arguments (#462) -------------------------------------------
+
+def _young_finding(work):
+    p = opened(work)
+    wsp.update(p, READING + [put({"id": "f-bound", "kind": "finding", "claim": "P:eq:young",
+                                  "requirement": "r1.1.1", "coverage": "full",
+                                  "evidence": ["e-young"], "note": "n"}),
+                             submit("f-bound", 1)], snap_of(work))
+    return p
+
+
+def test_a_changed_expanded_definition_reopens_the_finding_naming_both_expansions(work):
+    """`Ex.young` prints `Ex.norm` expanded at its arguments. `Ex.norm` changes, and the build
+    expands it under another key: the evidence and the finding are stale, and the change names
+    the expansion as recorded and as the build prints it now."""
+    p = _young_finding(work)
+    make_build(work, fps={"Ex.norm": "fp:norm-2"}, norm_key="k-norm-2")
+    cur = wsp.currency(wsp.read(p), snap_of(work))
+    assert cur["e-young"]["state"] == cur["f-bound"]["state"] == "stale"
+    (ch,) = [c for c in cur["f-bound"]["changes"] if c.get("expansions")]
+    assert (ch["decl"], ch["used_by"]) == ("Ex.norm", "Ex.young")
+    assert ch["expansions"] == [{"at": "/1/1", "name": "Ex.norm", "was": "k-norm-1",
+                                 "now": "k-norm-2"}]
+    assert dp.change_text(ch) == ("Ex.norm, which the statement of Ex.young uses, changed; its "
+                                  "expansion at /1/1 was k-norm-1, now k-norm-2")
+
+
+def test_an_expansion_is_followed_by_its_definition_s_fingerprint_not_its_key(work):
+    """The stored expansion gets another key while the definition it expands is the same (the
+    expansion is stored in another form): nothing it rests on changed, and the finding stays
+    current."""
+    p = _young_finding(work)
+    make_build(work, norm_key="k-norm-9")
+    assert states(p, work) == {"f-bound": "current"}
+
+
+def test_an_expansion_s_fingerprint_reopens_evidence_whose_closure_was_not_recorded(work):
+    """Evidence written without a build records no definitions its statement uses, so it is
+    not known to be current; the fingerprint of an expansion it records still shows a change of
+    that definition, and a definition the build does not show leaves it unchecked."""
+    p = opened(work)
+    exp = {"at": "/1/1", "name": "Ex.norm", "key": "k-norm-1", "fingerprint": "fp:norm-1"}
+    wsp.update(p, [put({"id": "e-young", "kind": "evidence", "claim": "P:eq:young",
+                        "role": "supports",
+                        "ref": {"decl": "Ex.young", "fingerprint": "fp:young-1",
+                                "expansions": [exp]}})], None)
+    ref = rec(p, "e-young")["ref"]
+    assert ref["expansions"] == [exp] and "closure" not in ref
+    assert wsp.currency(wsp.read(p), snap_of(work))["e-young"]["state"] == "unchecked"
+    make_build(work, fps={"Ex.norm": "fp:norm-2"}, norm_key="k-norm-2")
+    cur = wsp.currency(wsp.read(p), snap_of(work))["e-young"]
+    assert cur["state"] == "stale"
+    (ch,) = cur["changes"]
+    assert ch["reason"] == "Ex.norm, which the statement of Ex.young expands at its arguments, changed"
+    assert (ch["was"], ch["now"]) == ("fp:norm-1", "fp:norm-2")
+    assert ch["expansions"][0]["now"] == "k-norm-2"

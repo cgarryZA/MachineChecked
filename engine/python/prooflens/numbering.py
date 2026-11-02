@@ -743,13 +743,28 @@ def message(o: dict) -> str:
     out = f"{where(o)} cites {o['reference']}{of}: {o['detail']}"
     cur = o.get("current")
     if cur:
-        out += (f"; the version map proposes {cur['reference']}, a match not resolved"
+        whose, many = map_words(cur.get("source"))
+        verb = lambda one: one if not many else {"proposes": "propose", "gives": "give",
+                                                 "finds": "find"}[one]
+        out += (f"; {whose} {verb('proposes')} {cur['reference']}, a match not resolved"
                 if cur.get("proposed")
-                else f"; the version map gives {cur['reference']}" if cur.get("reference")
-                else f"; the version map gives several: {', '.join(cur['ambiguous'])}"
+                else f"; {whose} {verb('gives')} {cur['reference']}" if cur.get("reference")
+                else f"; {whose} {verb('gives')} several: {', '.join(cur['ambiguous'])}"
                 if cur.get("ambiguous")
-                else "; the version map finds no counterpart of it in this version")
+                else f"; {whose} {verb('finds')} no counterpart of it in this version")
     return out
+
+
+def map_words(source: dict | None) -> tuple[str, bool]:
+    """How a message names the version map a counterpart comes from, and whether there are
+    several: a map an auditor keeps in a workspace is named with who kept it."""
+    kept = (source.get("kept") or []) if isinstance(source, dict) else []
+    if not kept:
+        return "the version map", False
+    who = list(dict.fromkeys(k["kept_by"] for k in kept if k.get("kept_by")))
+    head = "the version map" if len(kept) == 1 else "the version maps"
+    return head + (f" kept by {' and '.join(who)}" if who else " kept in a workspace"), \
+        len(kept) > 1
 
 
 def drift_note(p: dict, refs: list[dict], suggestions: bool = True) -> str | None:

@@ -606,6 +606,9 @@ later claims' numbers, which the paper-number check reads: in the later release'
 the paper's numbers that disagree with it, each gets the counterpart the map names
 (`references`), several when the map's claim is ambiguous, a proposal marked as one, or none
 for a removed claim ([Paper numbers in the Lean](GETTING_STARTED.md#paper-numbers-in-the-lean)).
+A map a workspace keeps does the same on every build of the later revision (its release, or its
+paper revision): `check`, the claim page and `compare` give the counterpart and name who kept the
+map. Kept maps that name different counterparts for one number give several.
 
 With `--workspace ID`, the map also follows each region of the paper the workspace attaches to
 a requirement, by its text as above (`passages`), and judges the workspace's findings through

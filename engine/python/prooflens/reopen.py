@@ -170,14 +170,14 @@ def _passage(m: _Map, cid: str | None, sha: str | None, lean: dict | None = None
             return {"state": "current", "note": f"it read {_label(later['to'], cid)} as the "
                                                 "later revision prints it",
                     "later": _place(later["to"])}
-        return {"state": "unchecked",
+        return {"state": "unchecked", "cause": "not in the map",
                 "why": f"the version map has no claim {cid} in the earlier revision"}
     here = {"earlier": _place(row["from"]), "later": _place(row.get("to")),
             "class": row["class"]}
     label = _label(row["from"], cid)
     if not sha:
-        return {**here, "state": "unchecked", "why": f"the version of the passage of {label} it "
-                                                      "read was not recorded"}
+        return {**here, "state": "unchecked", "cause": "not recorded",
+                "why": f"the version of the passage of {label} it read was not recorded"}
     if sha != _digest(row["from"]):
         if row.get("to") and sha == _digest(row["to"]):
             return {**here, "state": "current",
@@ -190,7 +190,7 @@ def _passage(m: _Map, cid: str | None, sha: str | None, lean: dict | None = None
             return {"state": "current", "note": f"it read {_label(later['to'], cid)} as the "
                                                 "later revision prints it",
                     "later": _place(later["to"])}
-        return {**here, "state": "unchecked",
+        return {**here, "state": "unchecked", "cause": "another text",
                 "why": f"it read another text of {label} than the earlier revision prints"
                        + (" (the earlier inventory pins other text)"
                           if row["from"].get("pin") == "differs" else "")}
@@ -209,7 +209,7 @@ def _passage(m: _Map, cid: str | None, sha: str | None, lean: dict | None = None
                         _context_words(x) for x in relied)), "context": relied}}
         doubt = [x for x in ctx if _relies(x, lean) == "unknown"]
         if doubt:
-            return {**here, "state": "unchecked", "why": (
+            return {**here, "state": "unchecked", "cause": "definitions not recorded", "why": (
                 f"{'; '.join(_context_words(x) for x in doubt)}; the definitions the statement "
                 f"of {', '.join(lean['unknown'])} uses were not recorded, so whether it relies "
                 "on that definition is not known")}
@@ -227,12 +227,13 @@ def _passage(m: _Map, cid: str | None, sha: str | None, lean: dict | None = None
         return {**here, "state": "reopened", "change": {"class": cls, "reason": row.get("reason")}}
     if cls == "ambiguous":
         cands = ", ".join(x["claim"] for x in row.get("candidates") or [])
-        return {**here, "state": "unchecked", "candidates": row.get("candidates") or [],
+        return {**here, "state": "unchecked", "cause": "ambiguous",
+                "candidates": row.get("candidates") or [],
                 "why": f"the version map cannot tell which later claim {label} is: "
                        f"{row.get('reason')}" + (f" (candidates: {cands})" if cands else "")
                        + "; the maintainer resolves it with --match"}
-    return {**here, "state": "unchecked", "why": row.get("reason") or "the version map cannot "
-                                                                     "follow it"}
+    return {**here, "state": "unchecked", "cause": "not followed",
+            "why": row.get("reason") or "the version map cannot follow it"}
 
 
 def _region(m: _Map, reg: dict | None) -> dict | None:
@@ -244,9 +245,9 @@ def _region(m: _Map, reg: dict | None) -> dict | None:
     p = m.passages.get(region_key(reg, m.paper))
     where = f"{reg.get('file')}:{reg.get('start_line')}"
     if p is None:
-        return {"state": "unchecked", "why": f"the version map was made without the passage at "
-                                             f"{where}: make it again with the workspace "
-                                             "(`changes --map --workspace ID`)"}
+        return {"state": "unchecked", "cause": "not followed",
+                "why": f"the version map was made without the passage at {where}: make it again "
+                       "with the workspace (`changes --map --workspace ID`)"}
     here = {"earlier": {"location": where}, "later": p.get("to"), "class": p["class"]}
     if p["class"] in ("unchanged", "moved", "later"):
         return {**here, "state": "current", "note": p.get("reason")}
@@ -255,8 +256,8 @@ def _region(m: _Map, reg: dict | None) -> dict | None:
                 "change": {"class": p["class"], "reason": p.get("reason"),
                            **{k: p[k] for k in ("context",) if p.get(k)},
                            **(p.get("change") or {})}}
-    return {**here, "state": "unchecked", "why": p.get("reason") or "the version map cannot "
-                                                                   "follow it"}
+    return {**here, "state": "unchecked", "cause": "not followed",
+            "why": p.get("reason") or "the version map cannot follow it"}
 
 
 # -- what each record rests on ---------------------------------------------------------------

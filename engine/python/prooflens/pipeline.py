@@ -222,7 +222,10 @@ def build(cfg: Config, release: str | None = None, skip_lean: bool = False,
     index.update(issues=cfg.issues, site_url=cfg.site_url, author=cfg.author)
     index["project"].update(source_info(cfg))
     site = cfg.out_dir / "site"
-    found = content_mod.load(cfg.out_dir, eid, record["body"])
+    # Paper numbers the Lean cites, with their counterparts through the version maps the
+    # auditors keep (display only; the stored content is unchanged).
+    found = content_mod.with_kept_maps(content_mod.load(cfg.out_dir, eid, record["body"]),
+                                       cfg.out_dir, index)
     unavailable = []
     changes = release_changes(cfg, rel, unavailable)
     if unavailable:
@@ -492,7 +495,8 @@ def rebuild_site(cfg: Config, web_dist: Path | None = None, release: str | None 
     index.update(issues=cfg.issues, site_url=cfg.site_url, author=cfg.author)
     index["project"].update(source_info(cfg))
     site = cfg.out_dir / "site"
-    found = content_mod.load(cfg.out_dir, rel["evidence"], record["body"])
+    found = content_mod.with_kept_maps(
+        content_mod.load(cfg.out_dir, rel["evidence"], record["body"]), cfg.out_dir, index)
     unavailable = []
     changes = release_changes(cfg, rel["release"], unavailable)
     if unavailable:

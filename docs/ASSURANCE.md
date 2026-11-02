@@ -251,8 +251,11 @@ removed, or when what the passage is read with changed and the finding rests on 
 `unchecked` when the map leaves the claim ambiguous or cannot follow it. Each reopened finding
 names the change, with its diff, the part it rests on and a question. Its Lean side is checked
 against the later release's site, when it is built, and listed apart. `--save` keeps the map in
-the workspace, for the reader's **Details** page, `workspace show` and the workspace's export.
-Nothing here changes a status.
+the workspace, for the reader's **Details** page, `workspace show` and the workspace's export;
+`check`, the claim page and `compare` then give each reference in the Lean to an earlier paper
+number its counterpart, and `export` publishes the map on the claims it concerns with the
+findings it reopens ([Saved investigations](REVIEWING.md#saved-investigations)). Nothing here
+changes a status.
 
 The reader shows the same comparison on its **Details** page, and `export` publishes it with
 what each paper's `publish` settings allow (its passages' places and text only with its source
