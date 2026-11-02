@@ -108,6 +108,9 @@ export const ORDERS = [
 // (`review_cli.ORDER_EXPOSURE`, which the command line records in the reviewer's workspace).
 export const ORDER_EXPOSURE = "interpretation-informed review order";
 export const ORDER_SEEN = `review page (${ORDER_EXPOSURE})`;
+// How the review page names a claim's Lean seen on the claim's page before its reading
+// (**Review it**), as the page records it under `machinechecked view` too.
+export const READER_SEEN = "the claim's page in the reader";
 // The signals the informed order adds from the workspaces (`review_queue.WORKSPACE_KINDS`).
 const WORKSPACE_SIGNALS = ["reopened finding", "out of date", "open question", "difference", "hint", "main result"];
 
@@ -137,27 +140,38 @@ export function questionsOf(u) {
   return out;
 }
 
-// Records in the reviewer's work that they have seen prior interpretations of `claims` (the
-// claims the informed order drew on), unless an entry already covers them all, as
+// Records in the reviewer's work that they have seen `what` of `claims` (by default the prior
+// interpretations the informed order drew on), unless an entry already covers them all, as
 // `Session.expose` does. Returns whether it recorded anything.
-export function recordExposure(work, claims, at) {
+export function recordExposure(work, claims, at, what = ["prior interpretations"], how = ORDER_EXPOSURE) {
   if (!claims?.length) return false;
-  const covered = (work.exposure || []).some((e) => (e.what || []).includes("prior interpretations")
+  const covered = (work.exposure || []).some((e) => what.every((w) => (e.what || []).includes(w))
     && (e.claims == null || claims.every((c) => e.claims.includes(c))));
   if (covered) return false;
-  work.exposure = [...(work.exposure || []),
-    { what: ["prior interpretations"], claims: [...claims].sort(), how: ORDER_EXPOSURE, at }];
+  work.exposure = [...(work.exposure || []), { what: [...what], claims: [...claims].sort(), how, at }];
   return true;
 }
 
 // What the recorded exposure says this reviewer had seen of unit `u`, in the form of
-// `reading.revealed_by`: prior interpretations of one of its claims count, as on the command
-// line, as its author's review.
+// `reading.revealed_by`, as `Session.revealed_by` reads a workspace's exposure: the Lean of one of
+// its claims as its Lean, and prior interpretations of one of them as its author's review. Each
+// entry is named by where it was seen: in the workspace this browser's work is (once it has been
+// exported or imported), else on this review page.
 export function exposureOf(work, u) {
   const ids = (u.claims || []).map((c) => c.id);
-  const seen = (work.exposure || []).some((e) => (e.what || []).includes("prior interpretations")
-    && (e.claims == null || e.claims.some((c) => ids.includes(c))));
-  return seen ? [{ unit: ORDER_SEEN, what: "author's review" }] : [];
+  const where = work.workspace?.id ? `workspace ${work.workspace.id}` : "review page";
+  const out = [];
+  for (const e of work.exposure || []) {
+    if (!(e.claims == null || e.claims.some((c) => ids.includes(c)))) continue;
+    for (const w of e.what || []) {
+      const what = w === "prior interpretations" ? "author's review" : w;
+      const unit = `${where} (${e.how ?? null})`;
+      if ((what === "Lean" || what === "author's review") && !out.some((o) => o.unit === unit && o.what === what)) {
+        out.push({ unit, what });
+      }
+    }
+  }
+  return out;
 }
 
 // Whether the card holds back the informed order's reason for unit `u`: the reviewer locked its

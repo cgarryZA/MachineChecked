@@ -276,16 +276,23 @@ async function reviewAnswer(r) {
 }
 
 export async function reviewWork(reviewer, sameFamily) {
-  const q = new URLSearchParams({ reviewer, same_family: sameFamily });
+  const q = new URLSearchParams({ reviewer, same_family: sameFamily, ...inWorkspace() });
   return reviewAnswer(await fetch(`api/review?${q}`, { cache: "no-store" }));
 }
 
 export async function reviewStep(reviewer, sameFamily, action, body = {}) {
   return reviewAnswer(await fetch("api/review", {
     method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ ...body, reviewer, same_family: sameFamily, action }),
+    body: JSON.stringify({ ...body, ...inWorkspace(), reviewer, same_family: sameFamily, action }),
   }));
 }
+
+// The workspace of the reviewer's that the review work is in, when the page chose one
+// (`--workspace` of `machinechecked review`); else the engine's default, their first. A request
+// names the one chosen when it is sent.
+let reviewIn = null;
+export function reviewInWorkspace(id) { reviewIn = id || null; }
+const inWorkspace = () => (reviewIn ? { workspace: reviewIn } : {});
 
 // The reverse references of a declaration (`data/uses.json`, written by the zero-configuration
 // build): for the module that declares it, the declarations that use it and how. Null when the
