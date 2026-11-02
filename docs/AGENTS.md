@@ -468,7 +468,7 @@ signal other than `proof use`, or null. `reason` puts them in words. `status --j
 `open` units in that order and `order`: the order asked (`by`) and the queue's own record
 (`queue`, with each signal's `state`, `read` or `not available` with `why`). On the toy example,
 with Theorem 2.5 linked and an open question another auditor recorded on it, `review next
---order informed --json` gives (release and mode left out):
+--order informed --json` gives (release, mode and workspace left out):
 
 ```json
 {"schema": "machinechecked/review-next@1", "order": "informed",
