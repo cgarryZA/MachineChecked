@@ -2,7 +2,7 @@
 // link names one snapshot of the evidence and never silently resolves to a later one.
 //
 //   #/                       the first paper
-//   #/read/<paper>[/<claim>] the paper with the passport of a claim beside it
+//   #/read/<paper>[/<claim>] the paper, or a claim's comparison in its place
 //   #/overview               every claim, with its correspondence, basis, review and status;
 //                            `?set=&unit=&coverage=&basis=&review=&finding=&status=` choose the
 //                            readings shown and filter the claims
@@ -11,14 +11,15 @@
 //   #/review                 the review queue
 //
 // A claim's inspections are in the query of its route: `?inspect=<token>…&at=<row>`
-// (lib/inspect.svelte.js).
+// (lib/inspect.svelte.js). A `?compare=1` in older links is ignored: a claim always opens
+// into its comparison.
 
 export const OVERVIEW_FILTERS = ["set", "unit", "coverage", "basis", "review", "finding", "status"];
 
 function parse(hash) {
   const [path, query = ""] = hash.split("?");
   const params = new URLSearchParams(query);
-  const state = { inspection: params.getAll("inspect"), at: params.get("at"), compare: params.get("compare") === "1", target: params.get("claim"), readerSeen: params.get("seen") === "lean",
+  const state = { inspection: params.getAll("inspect"), at: params.get("at"), target: params.get("claim"), readerSeen: params.get("seen") === "lean",
     filters: Object.fromEntries(OVERVIEW_FILTERS.map((k) => [k, params.get(k)])) };
   let parts = path.replace(/^#\/?/, "").split("/").map((s) => { try { return decodeURIComponent(s); } catch { return s; } });
   let release = null;

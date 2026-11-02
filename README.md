@@ -26,10 +26,11 @@ Requires Python 3.11+, your project's Lean toolchain, and TeX Live for LaTeX or 
 The web reader is included. For a persistent command, run `uv tool install machinechecked`;
 then use `machinechecked` directly.
 
-Select a claim from the contents or paper margin: its paper passage and its Lean are compared
-side by side, the Lean row by row with its exact Lean, and a definition opens beside the row that
-uses it. **Expand comparison** gives them the full width. Follow existing `\lean{...}` tags, confirm a
-suggestion, or choose a declaration. The reader saves your choices in `machinechecked.links.json`.
+The reader opens on the paper. Select a claim from the contents or the paper's margin to compare
+its paper passage with its Lean, side by side, the Lean row by row with its exact Lean; a
+definition opens beside the row that uses it. **Back to paper** returns to where you were reading.
+Follow existing `\lean{...}` tags, confirm a suggestion, or choose a declaration. The reader saves
+your choices in `machinechecked.links.json`.
 Projects with a `formalization.yaml` supply their paper sources and declared links automatically.
 
 ## Read the evidence

@@ -61,7 +61,8 @@
   function reveal() { if (kept) host?.querySelector(`[data-claim="${CSS.escape(kept)}"]`)?.scrollIntoView({ block: "center", behavior: "instant" }); }
   $effect(() => {
     pageWidth;
-    if (!selected || !doc || !host) return;
+    if (!selected) { shown = kept = null; return; }
+    if (!doc || !host) return;
     if (shown !== selected) { shown = selected; kept = selected; }
     tick().then(reveal);
   });
