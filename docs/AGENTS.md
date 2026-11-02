@@ -484,13 +484,20 @@ machinechecked link "Theorem 2" Plain.oddSum_eq_sq --coverage full --note-file n
 
 checks the claim and the declarations against the last build (no Lean runs) and prints one
 JSON document (`machinechecked/link@1`): the resolved `claim` (`id`, `key`, `number`), each
-declaration's `build` state (`built`, `unbuilt`, `not loaded`, `external`), the links-file entry
-`before` and `after`, and `written`. An unknown or ambiguous claim, or a name the project does not
-declare, exits 1 with `ok: false` and `error.candidates`, and writes nothing. `--dry-run` writes
-nothing.
+declaration's `build` state (`built`, `unbuilt`, `not loaded`, `external`, or `as shown` with its
+`status_code` for a link the claim already has that does not resolve to one declaration), the
+links-file entry `before` and `after`, and `written`. The record is written under the claim's
+own key, however the claim was named. An unknown or ambiguous claim, or a name the project does
+not declare, exits 1 with `ok: false` and `error.candidates`, and writes nothing; a name several
+modules declare is given as `MODULE:NAME`, and the module is recorded with the link. `--reject
+NAME` and `--clear` take the same checks, and `--dry-run` writes nothing. The reader's Link,
+Unlink and Not this buttons go through the same checks and write the same entries.
 
 Evidence, findings and open questions for a claim or a clause go into a workspace
-(`machinechecked workspace`, described in [Reviewing](REVIEWING.md#saved-investigations)):
+(`machinechecked workspace`, described in [Reviewing](REVIEWING.md#saved-investigations)). The
+first two records below are about the whole claim, as the link is; the last three are about one
+clause: the requirements "for every n" and its conclusion, and the alignment of the conclusion
+with two Lean targets, the conclusion of `Plain.oddSum_eq_sq` and the definition `Plain.oddSum`:
 
 ```sh
 machinechecked workspace open --mode informed --as llm:MODEL
@@ -500,13 +507,22 @@ machinechecked workspace update - --as llm:MODEL <<'JSON'
   "ref": {"decl": "Plain.oddSum_eq_sq"}, "role": "supports"}},
  {"op": "put", "record": {"id": "f-1", "kind": "finding", "claim": "Theorem 2",
   "coverage": "full", "evidence": ["e-1"],
-  "note": "The recursion states the paper's sum."}}]}
+  "note": "The recursion states the paper's sum."}},
+ {"op": "put", "record": {"id": "r-n", "kind": "requirement", "claim": "Theorem 2",
+  "local_id": "r1", "form": "for every", "binds": ["n"], "text": "for every n"}},
+ {"op": "put", "record": {"id": "r-sum", "kind": "requirement", "claim": "Theorem 2",
+  "local_id": "r1.1", "parent": "r1", "form": "conclusion",
+  "text": "the sum of the first n odd numbers is n²"}},
+ {"op": "put", "record": {"id": "a-sum", "kind": "alignment", "claim": "Theorem 2",
+  "requirements": ["r1.1"], "lean": [{"decl": "Plain.oddSum_eq_sq", "conclusion": true},
+                                     {"decl": "Plain.oddSum"}]}}]}
 JSON
 machinechecked workspace show --json
 ```
 
 `update` prints the acknowledgement (`changed`, `revisions`, `revision`) or `ok: false` with the
-`error` (exit 1); an edit of a record changed since its `base_rev` returns `conflicts` with both
+`error` (exit 1); with `--dry-run` it prints the records as they would be saved, each claim
+resolved to its id, and saves nothing. An edit of a record changed since its `base_rev` returns `conflicts` with both
 versions. Repeat a request with its `op_id` after a lost answer: it changes nothing. A reviewer
 with several workspaces in the project (the review protocol's independent one and an informed
 one, say) names one with `--id`; `workspace list` gives their ids. `show --json` gives every

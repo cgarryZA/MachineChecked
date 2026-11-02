@@ -754,6 +754,23 @@ def load_links(root: Path) -> dict:
     return data
 
 
+def unknown_link_keys(links: dict, keys: list[str], file: str = LINKS) -> str | None:
+    """A note naming the entries of a paper's links (`links`, by claim key) under keys none of
+    the paper's claims (`keys`) has, which are not shown, with the claim key that differs only
+    in case where there is one; None when every entry is a claim's."""
+    lower: dict[str, list[str]] = {}
+    for k in keys:
+        lower.setdefault(k.lower(), []).append(k)
+    unknown = sorted(k for k in links if k not in set(keys))
+    if not unknown:
+        return None
+    named = [k + (f" (the paper has {lower[k.lower()][0]})"
+                  if len(lower.get(k.lower(), [])) == 1 else "") for k in unknown[:5]]
+    return (f"{file} has links for {len(unknown)} claim key(s) this paper does not have, which "
+            f"are not shown: {', '.join(named)}" + (", …" if len(unknown) > 5 else "")
+            + "; `machinechecked link` records a claim's links by its id, key or number")
+
+
 def save_link(root: Path, paper: str, key: str, lean: list[str] | None, rejected: list[str]
               | None = None, by: str = "") -> dict:
     """Record (or with `lean=None`, remove) the link of claim `key` of `paper`."""
@@ -1916,6 +1933,17 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
                 c["declared_route"] = [n for st in route for n in st["lean"]]
                 c["declared_route_notes"] = [st["note"] for st in route if st.get("note")]
     links = load_links(root).get("papers", {}).get(paper_key, {})
+    for c in claims:
+        # A module the links file records for a linked declaration says which declaration of
+        # that name is meant, as formalization.yaml's `module` does (`authoring.plan`).
+        mods = (links.get(c["key"]) or {}).get("modules")
+        if isinstance(mods, dict):
+            c["declared_modules"] = {**c.get("declared_modules", {}), **{
+                n: m for n, m in mods.items() if isinstance(n, str) and isinstance(m, str) and m}}
+    stray = unknown_link_keys(links, [c["key"] for c in claims], links_file(root).name) \
+        if claims else None
+    if stray:
+        notes.append(stray)
     reports, review_notes = load_review_reports(root)
     notes += review_notes
     if not libs:

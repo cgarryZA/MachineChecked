@@ -374,25 +374,27 @@ class Snapshot:
 def resolve_declaration(name: str, snap: Snapshot, root: Path | None, module: str | None = None,
                         external: bool = False) -> dict:
     """What `name` is in the selected build: `{name, module, build}`, where `build` is `built`
-    (the build indexed it), `unbuilt` (its module's source declares it and the module is not
-    built), `not loaded` (its module is built but could not be loaded) or `external` (not a
-    project declaration; accepted only with `external`, and checked by Lean at the next
-    build). A name the project does not declare is refused, with the nearest names. A full
-    assessment keeps no Lean index, so a declaration of a built module that its build records
-    no version of is refused with what would let a build record one (`_unrecorded`). With
-    `module`, only that module is searched (`_in_module`)."""
+    (the build indexed it, or its module is built in a library this paper's index leaves out
+    and its source declares it: the next build indexes that module for it), `unbuilt` (its
+    module's source declares it and the module is not built), `not loaded` (its module is built
+    but could not be loaded) or `external` (not a project declaration; accepted only with
+    `external`, and checked by Lean at the next build). A name the project does not declare is
+    refused, with the nearest names; a name several modules declare is refused as ambiguous,
+    naming them. A full assessment keeps no Lean index, so a declaration of a built module that
+    its build records no version of is refused with what would let a build record one
+    (`_unrecorded`). With `module`, only that module is searched (`_in_module`)."""
     from .simple import declaring_modules
     name = str(name or "").strip()
     if not re.fullmatch(r"[^\s]+", name):
         raise TargetError(f"{name!r} is not a declaration name")
     index = snap.lean_index() or []
-    mods = sorted({d.get("module") for d in index if d.get("name") == name})
+    mods = sorted({d.get("module") for d in index if d.get("name") == name}
+                  | set(_outside_index(snap, root, name)), key=str)
     if module:
         return _in_module(name, module, snap, root, index, mods, external)
     if len(mods) > 1:
-        raise TargetError(f"{name} is declared in several modules: {', '.join(mods)}; the links "
-                          "file cannot yet record which one is meant", [{"name": name, "module": m}
-                                                                         for m in mods],
+        raise TargetError(f"{name} is declared in several modules: {', '.join(mods)}; name the "
+                          "one meant", [{"name": name, "module": m} for m in mods],
                           kind="ambiguous")
     if mods:
         return {"name": name, "module": mods[0], "build": "built"}
@@ -421,6 +423,20 @@ def resolve_declaration(name: str, snap: Snapshot, root: Path | None, module: st
         return {"name": name, "module": None, "build": "external"}
     raise TargetError(f"{name} is not a declaration of the project (pass --external for one "
                       "from a dependency)", [{"name": n} for n in _near(index, name)])
+
+
+def _outside_index(snap: Snapshot, root: Path | None, name: str) -> list[str]:
+    """The built modules whose source declares `name` in the libraries this paper's build left
+    out of its index, because formalization.yaml maps them only to other papers
+    (`simple.index_scope`): a link to it is checked there at the next build."""
+    left = (snap.index.get("index_scope") or {}).get("left_out") or []
+    if root is None or not left:
+        return []
+    from .probe import lib_names, library_of
+    from .simple import built_modules, declaring_modules
+    libs = lib_names(root)
+    built = built_modules(root, libs)[0] if libs else []
+    return declaring_modules(root, [m for m in built if library_of(m, libs) in left], name)
 
 
 def _full_assessment(snap: Snapshot) -> bool:
