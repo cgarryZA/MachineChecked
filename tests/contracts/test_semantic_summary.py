@@ -11,6 +11,7 @@ import json
 import pytest
 
 from prooflens import semantic
+from prooflens.targets import Snapshot
 from prooflens.schemas import validate
 from prooflens.status import fields
 
@@ -105,7 +106,8 @@ def records(claims=CLAIMS, work=WORK):
              "claims": rows}
     works = {cid: {"schema": "prooflens/published-work@1", "claim": cid, "readings": [
         {"workspace": "ws-111111111111", "mode": "independent",
-         "reviewer": {"id": "human:W", "kind": "human", "name": "W"}, "findings": fs}]}
+         "reviewer": {"id": "human:W", "kind": "human", "name": "W"},
+         "findings": copy.deepcopy(fs)}]}
         for cid, fs in work.items()}
     return index, chunks, works
 
@@ -353,3 +355,204 @@ def test_zero_configuration_check_computes_the_summary_of_its_site(tmp_path):
     assert {c["id"]: c["semantic"] for c in written["claims"]} == facts
     assert summary["audit"]["author"] == AUDITOR
     assert summary["papers"]["P"]["coverage"]["audit"]["statements"]["unresolved"] == 1
+
+
+# -- findings in force, by currency (#478) -------------------------------------------------------
+
+def manifest(index, s):
+    return {"schema": "prooflens/manifest@1", "release": "v-synthetic", "evidence": "e" * 64,
+            "papers": [{"id": "P", "mode": "latex", "pdf": None}], "summary": {}, "classes": {},
+            "findings": {}, "claims": [{**r, "counts": {}} for r in index["claims"]],
+            "semantic": s}
+
+
+def words(k):
+    w = semantic.VOCABULARY["finding_currency"][k]["label"]
+    return w[0].lower() + w[1:]
+
+
+def due_records():
+    """The published records above, with three more findings on P:f: one due for review (its
+    difference is still a finding of the published record), one not known to be current, and
+    one superseded, which is not in force."""
+    work = {**WORK, "P:f": WORK["P:f"] + [
+        finding("f4", state="stale", difference={"feature": "norm", "outcome": "difference"}),
+        finding("f5", state="unchecked"),
+        {**finding("f6", state="stale"), "in_force": False}]}
+    return records(work=work)
+
+
+def test_findings_in_force_are_counted_by_currency():
+    index, chunks, works = due_records()
+    s, facts = semantic.summarise(index, chunks, works, AUDITOR)
+    # Each finding in force once, whatever it is on (P:a's is on a clause), in its unit.
+    assert facts["P:a"]["finding_currency"] == {"current": 1, "due": 0, "unchecked": 0}
+    assert facts["P:f"]["finding_currency"] == {"current": 2, "due": 1, "unchecked": 1}
+    assert "finding_currency" not in facts["P:e"]
+    fc = s["papers"]["P"]["finding_currency"]
+    assert fc["statements"] == {"current": 3, "due": 1, "unchecked": 1}
+    assert fc["notation"] == fc["proof_steps"] == {"current": 0, "due": 0, "unchecked": 0}
+    # The kinds recorded are read from findings that are not out of date, as before.
+    assert facts["P:f"]["findings"] == ["input-restriction"]
+    # `check` and `build` print the counts in the vocabulary's words, counted in findings.
+    assert (f"    findings in force: 3 {words('current')}; 1 {words('due')}; "
+            f"1 {words('unchecked')}") in semantic.text(s)
+    assert words("due") == "due for review"
+    validate(manifest(index, s), "manifest-index")
+    # A finding that becomes due changes the digest.
+    works["P:f"]["readings"][0]["findings"][0]["currency"]["state"] = "stale"
+    again, _ = semantic.summarise(index, chunks, works, AUDITOR)
+    assert again["papers"]["P"]["finding_currency"]["statements"] == {
+        "current": 2, "due": 2, "unchecked": 1}
+    assert again["digest"] != s["digest"]
+
+
+def test_a_reader_that_does_not_know_the_counts_reads_the_summary():
+    """machinechecked.org reads the summary with the schema of the MachineChecked it pins
+    (`scripts/summary.py`): the counts are optional, so a schema without them reads it, and this
+    version reads a summary written without them."""
+    import jsonschema
+    from prooflens.schemas import schema
+    index, chunks, works = due_records()
+    s, facts = semantic.summarise(index, chunks, works, AUDITOR)
+    defs = copy.deepcopy(schema("manifest-index")["$defs"])
+    del defs["semanticFindingCurrency"]
+    del defs["semantic"]["properties"]["papers"]["additionalProperties"]["properties"][
+        "finding_currency"]
+    del defs["semanticClaim"]["properties"]["finding_currency"]
+    jsonschema.validate(s, {"$ref": "#/$defs/semantic", "$defs": defs})
+    for f in facts.values():
+        jsonschema.validate(f, {"$ref": "#/$defs/semanticClaim", "$defs": defs})
+    earlier = copy.deepcopy(s)
+    for p in earlier["papers"].values():
+        del p["finding_currency"]
+    jsonschema.validate(earlier, {"$ref": "#/$defs/semantic",
+                                  "$defs": schema("manifest-index")["$defs"]})
+    assert semantic.text(earlier) == [x for x in semantic.text(s) if "findings in force" not in x]
+
+
+def test_a_build_counts_its_workspaces_findings_through_a_revision(tmp_path):
+    """A build counts the submitted findings in force of the workspaces in its working
+    directory against its own data; drafts are not counted. After a synthetic revision that
+    changes Lemma 2.3's printed statement, its finding is due for review; a version map the
+    workspace keeps to that release judges the findings it follows, as the Changes view does."""
+    from test_workspace import EVIDENCE, FINDINGS, WHO, make_build, put
+    from prooflens import workspace as wsp
+    work = tmp_path / ".machinechecked"
+    snap = make_build(work)
+    p = wsp.open_for(work, WHO, "informed", sources=snap.sources())
+    wsp.update(p, EVIDENCE + FINDINGS + [put({"id": "f-draft", "kind": "finding",
+                                              "claim": "P:thm:main", "coverage": "partial",
+                                              "note": "A draft."})], snap)
+    assert semantic.workspace_findings(work, work / "site" / "data") == {}
+    wsp.update(p, [{"op": "submit", "id": i, "base_rev": 1} for i in ("f-bound", "f-main")],
+               snap)
+    data = work / "site" / "data"
+    assert semantic.workspace_findings(work, data) == {"P:lem:bound": ["current"],
+                                                       "P:thm:main": ["current"]}
+    make_build(work, sha_bound="s-bound-2", release="v-2")
+    assert semantic.workspace_findings(work, data) == {"P:lem:bound": ["due"],
+                                                       "P:thm:main": ["current"]}
+    # The map leaves Lemma 2.3 ambiguous: its finding is not known to be current. Theorem 1's
+    # passage is the same text.
+    side = lambda cid, number, sha: {"claim": cid, "number": number, "location": "p.tex:5",
+                                     "sha256": sha}
+    lem, main = ("P:lem:bound", "Lemma 2.3"), ("P:thm:main", "Theorem 1")
+    doc = {"schema": "prooflens/version-map@1", "paper": "P", "from": {"release": "v-1"},
+           "to": {"release": "v-2"}, "passages": [],
+           "claims": [{"class": "ambiguous", "reason": "label lem:bound occurs 2 times", "by": [],
+                       "from": side(*lem, "s-bound-1"), "to": None,
+                       "candidates": [{"claim": "P:lem:bound", "by": ["label"]},
+                                      {"claim": "P:rem-2.3", "by": ["label"]}]},
+                      {"class": "unchanged", "reason": "the same text", "by": ["text"],
+                       "from": side(*main, "s-main"), "to": side(*main, "s-main")}]}
+    wsp.update(p, [{"op": "version-map", "map": doc}], Snapshot(data))
+    assert semantic.workspace_findings(work, data) == {"P:lem:bound": ["unchecked"],
+                                                       "P:thm:main": ["current"]}
+    # The summary of that build counts them; nothing else of it changes.
+    rows = [{"id": c["id"], "paper": "P", "file": c["file"], "kind": c["kind"],
+             "unit": "statement", **fields("link.checked")} for c in Snapshot(data).claims]
+    chunks = {c["file"]: {"kind": c["kind"], "unit": "statement", "clauses": []}
+              for c in Snapshot(data).claims}
+    plain, _ = semantic.summarise({"claims": rows, "papers": []}, chunks)
+    counted, facts = semantic.summarise({"claims": rows, "papers": []}, chunks,
+                                        found=semantic.workspace_findings(work, data))
+    assert counted["papers"]["P"]["finding_currency"]["statements"] == {
+        "current": 1, "due": 0, "unchecked": 1}
+    assert facts["P:lem:bound"]["finding_currency"] == {"current": 0, "due": 0, "unchecked": 1}
+    assert {k: v for k, v in counted["papers"]["P"].items() if k != "finding_currency"} == \
+        {k: v for k, v in plain["papers"]["P"].items() if k != "finding_currency"}
+
+
+def test_check_and_the_site_count_the_same_findings_in_zero_configuration(tmp_path):
+    """`check` writes no site: it checks the working directory's findings against the data the
+    site would hold, so it gives the summary `view` and `build` write; a revision of the claim's
+    passage makes the finding due for review in both."""
+    from test_workspace import WHO, put
+    from prooflens import cli
+    from prooflens import workspace as wsp
+    from prooflens.simple import write_view_site
+
+    def body(sha):
+        return {"mode": "simple", "paper": "paper/main.tex", "title": "A synthetic paper",
+                "notes": [], "project": {"name": "synthetic", "libs": [], "built": 0,
+                                         "unbuilt": 0},
+                "commit": None, "author": AUDITOR, "issues": None, "site_url": None,
+                "formalization": None, "pdf_sha256": None,
+                "tex": {"mode": "latex", "anchors": []}, "decls": {}, "index": [],
+                "module_docs": [], "numbering": None,
+                "claims": [{"id": "P:thm:a", "key": "thm:a", "paper": "P", "number": "Theorem 1",
+                            "title": "", "kind": "theorem", "scope": "formal",
+                            "location": "main.tex", "source_sha256": sha,
+                            **fields("link.none"), "links": [], "suggestions": [],
+                            "correspondence": None, "reviews": [], "references": []}]}
+
+    root = tmp_path / "project"
+    root.mkdir()
+    work = root / ".machinechecked"
+    site = work / "site"
+    write_view_site({"body": body("s-1"), "pdf": None}, site, None, root)
+    snap = Snapshot(site / "data")
+    p = wsp.open_for(work, WHO, "informed", sources=snap.sources())
+    wsp.update(p, [put({"id": "f-a", "kind": "finding", "claim": "Theorem 1", "coverage": "full",
+                        "note": "A synthetic finding."}),
+                   {"op": "submit", "id": "f-a", "base_rev": 1}], snap)
+    for sha, state in (("s-1", "current"), ("s-2", "due")):
+        view = {"body": body(sha), "pdf": None}
+        index = write_view_site(view, site, None, root, work)
+        written = json.loads((site / "data" / "index.json").read_text())
+        summary, facts = cli._check_summary(view, root)
+        assert written["semantic"] == index["semantic"] == summary
+        assert {c["id"]: c["semantic"] for c in written["claims"]} == facts
+        assert facts["P:thm:a"]["finding_currency"] == {
+            **{k: 0 for k in semantic.FINDING_STATES}, state: 1}
+        assert summary["papers"]["P"]["finding_currency"]["statements"][state] == 1
+    # Without the working directory, the site counts none (a published audit counts what it
+    # publishes, `semantic.refresh`).
+    write_view_site({"body": body("s-2"), "pdf": None}, site, None, root)
+    assert "finding_currency" not in json.loads(
+        (site / "data" / "index.json").read_text())["claims"][0]["semantic"]
+
+
+
+def test_a_published_audit_counts_findings_as_its_published_maps_judge_them():
+    """A published reading carries what each version map its workspace keeps says of its
+    findings (`revisions`). A map to the audit's release judges the findings it follows, as the
+    Changes view does; a map to another release judges nothing here."""
+    index, chunks, works = records()
+    rd = works["P:f"]["readings"][0]
+
+    def revision(release, states):
+        return {"map": {"paper": "P", "from": {"release": "v-earlier"}, "to": {"release": release}},
+                "build_checked": True, "claims": [],
+                "findings": [{"id": fid, "claim": "P:f", "state": st} for fid, st in states]}
+
+    rd["revisions"] = [revision("v-other", [("f2", "reopened"), ("f3", "reopened")])]
+    s, facts = semantic.summarise(index, chunks, works)
+    assert facts["P:f"]["finding_currency"] == {"current": 2, "due": 0, "unchecked": 0}
+    rd["revisions"].append(revision("v-synthetic", [("f2", "reopened"), ("f3", "current")]))
+    rd["revisions"].append(revision("v-synthetic", [("f3", "unchecked")]))
+    s, facts = semantic.summarise(index, chunks, works)
+    assert facts["P:f"]["finding_currency"] == {"current": 0, "due": 1, "unchecked": 1}
+    assert s["papers"]["P"]["finding_currency"]["statements"] == {
+        "current": 1, "due": 1, "unchecked": 1}
