@@ -1,4 +1,5 @@
 <script>
+  import { untrack } from "svelte";
   import { inScope, statusView } from "../lib/presentation.js";
   import TexInline from "./TexInline.svelte";
   import { href, go } from "../lib/route.svelte.js";
@@ -28,7 +29,7 @@
   // Leaving the claim shows the paper where the reader left it: the pane keeps its scroll
   // position, and `place` restores it where a browser does not. A paper not yet shown (a claim
   // opened by its link) shows the place of the claim left, marked (`at`).
-  let place = null, seen = !claimId, before = claimId, at = $state(null);
+  let place = null, before = untrack(() => claimId), seen = !before, at = $state(null);
   function keepPlace() { if (pane?.clientHeight) place = [pane.scrollTop, pane.scrollLeft]; }
   $effect(() => {
     if (claimId) at = null;

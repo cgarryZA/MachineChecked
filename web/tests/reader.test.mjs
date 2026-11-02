@@ -865,7 +865,10 @@ for (const [width, height] of [[1440, 900], [2000, 1000], [390, 844]]) {
     const panes = { contents: ".reader-layout > nav.toc", claim: ".claim-view", paper: ".paperpane" };
     let scrolled = 0;
     for (const [name, sel] of Object.entries(panes)) {
-      if (name === "paper") await pg.getByRole("button", { name: "Back to paper", exact: true }).click();
+      if (name === "paper") {
+        await pg.getByRole("button", { name: "Back to paper", exact: true }).click();
+        await pg.locator(sel).waitFor();
+      }
       const pane = pg.locator(sel);
       if (!(await pane.count()) || !(await pane.isVisible())) continue;
       const box = await pane.boundingBox();
