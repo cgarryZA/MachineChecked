@@ -5,17 +5,12 @@ Everyday commands, run from anywhere inside a Lean project:
     machinechecked view [paper]    open the reader (the paper is found if not given)
     machinechecked build [paper]   write the reader as one HTML file to share
     machinechecked check [paper]   report what the Lean side establishes, for CI
+    machinechecked review next     the next claim to review, from the terminal
 
 A project with a `machinechecked.toml` (an acceptance layer: locked statements, reviews) gets
 the full assessment; any other project gets the zero-configuration view, whose only file in the
 repository is `machinechecked.links.json` (its working files, a downloaded paper among them, are
-in `.machinechecked/`, which Git ignores). The full assessment has further commands: reassess,
-site, bundle, export, serve, review promote, replay and validate; `evidence` lists and prunes
-its stored evidence; `cache` saves and restores the Lean build, and `inventory` pins the claims' source passages (each with --help). `compare` gives a claim's passage, Lean statements and
-definitions as JSON, and `review` takes the review protocol's steps in either kind of project.
-`link` records a claim's links from the terminal, and `workspace` keeps a saved investigation,
-as the reader does.
-`prooflens` is another name for the same command.
+in `.machinechecked/`, which Git ignores).
 """
 
 from __future__ import annotations
@@ -50,7 +45,54 @@ MISSING = {
 }
 
 
-# -- mode selection ---------------------------------------------------------------------------
+# -- the command list -------------------------------------------------------------------------
+
+# Every command, by group, with what it does. `--help` lists the everyday group, `help --all`
+# every group, and a command's own `--help` opens with its line. The reasons each command is kept
+# where it is are in docs/DEVELOPMENT.md ("The command list").
+EVERYDAY = "Everyday commands"
+FULL = "The full assessment (a project with a machinechecked.toml)"
+COMMANDS: list[tuple[str, str, str]] = [
+    (EVERYDAY, "view", "open the reader"),
+    (EVERYDAY, "build", "write the reader as one HTML file to share"),
+    (EVERYDAY, "check", "report what the Lean side establishes (exit 1 if a linked declaration is "
+                        "missing or unproved, 2 if the check could not run)"),
+    (EVERYDAY, "review", "review the claims one at a time from the terminal; `review promote` "
+                         "turns reports into review markers (maintainer)"),
+    ("Recording and investigating", "link",
+     "record, reject or clear a claim's links in the links file, as the reader does"),
+    ("Recording and investigating", "workspace",
+     "keep a saved investigation (readings, evidence, findings and questions), as the reader does"),
+    ("Recording and investigating", "compare",
+     "a claim's paper passage, Lean statements and definitions, from the last build (for scripts "
+     "and agents)"),
+    ("Recording and investigating", "inspect",
+     "what a Lean declaration depends on, proofs included, or where it is used"),
+    (FULL, "changes", "what changed between two releases and which evidence it reopens"),
+    (FULL, "inventory", "pin the claims' source passages, and retire stale readings"),
+    (FULL, "reassess", "assess the latest release again with the current reviews and dismissals, "
+                       "without Lean"),
+    (FULL, "site", "write the reader again from a stored release"),
+    (FULL, "bundle", "write the built reader as one HTML file"),
+    (FULL, "export", "write the audit's approved public files"),
+    (FULL, "serve", "serve the built reader on this machine"),
+    (FULL, "evidence", "list and prune the stored evidence"),
+    (FULL, "symbol", "link a symbol of the paper to a Lean object (an assertion under your name; "
+                     "display only)"),
+    (FULL, "replay", "run Comparator and record the replay for the assessment"),
+    ("The Lean build", "cache", "save and restore the Lean build as release assets"),
+    ("Development", "validate", "check a JSON file against one of the engine's schemas"),
+]
+
+
+def _summary(name: str) -> str:
+    return next(s for _, n, s in COMMANDS if n == name)
+
+
+# -- where a command works --------------------------------------------------------------------
+
+NO_PROJECT = "no Lean project here: run machinechecked inside a directory with a lakefile"
+
 
 def _found_config() -> Path | None:
     return next((Path(n) for n in cfgmod.CONFIG_NAMES if Path(n).exists()), None)
@@ -73,6 +115,47 @@ def _assurance_config(a) -> Path | None:
     return _found_config()
 
 
+def _load_full(a, refusal: str | None = None) -> cfgmod.Config:
+    """The full assessment's configuration, loaded, for a command that needs one: without it,
+    stop, saying `refusal` (the command's own reason) or that there is none here."""
+    if refusal and not _assurance_config(a):
+        sys.exit(refusal)
+    return cfgmod.load(_config_arg(a))
+
+
+def _lean_root(given: str | None = None) -> Path:
+    """The Lean project: `given` (--project), else the one the current directory is in."""
+    from .simple import find_lake_root
+    root = Path(given).resolve() if given else find_lake_root(Path.cwd().resolve())
+    if root is None:
+        sys.exit(NO_PROJECT)
+    return root
+
+
+def _built_work(a) -> tuple[Path, Path]:
+    """The working directory of the last build and the Lean project: the full assessment's
+    when a configuration selects it, else the zero-configuration view's in the project here.
+    Nothing is built: the commands that read a build use the one `view` or `build` wrote, in
+    `site/data` of the working directory."""
+    if _assurance_config(a):
+        cfg = _load_full(a)
+        return cfg.out_dir, cfg.lean_root
+    root = _lean_root()
+    return root / cfgmod.work_dir_name(root), root
+
+
+def _last_build(work: Path, required: bool = False):
+    """The last build's site data in the working directory `work` (`targets.Snapshot`), or None
+    when there is none; with `required`, stop instead, saying why."""
+    from .targets import Snapshot, TargetError
+    try:
+        return Snapshot(work / "site" / "data")
+    except TargetError as e:
+        if required:
+            sys.exit(str(e))
+        return None
+
+
 def _require(root: Path, paper_kind: str) -> None:
     """Check, before any work, that the programs this run needs are installed: poppler for a
     PDF, latexmk and synctex for LaTeX, and Lake when the project has built modules to inspect.
@@ -90,10 +173,10 @@ def _require(root: Path, paper_kind: str) -> None:
 
 
 def _simple_target(a):
-    from .simple import find_lake_root, find_papers
-    root = find_lake_root(Path.cwd().resolve())
-    if root is None:
-        sys.exit("no Lean project here: run machinechecked inside a directory with a lakefile")
+    """The Lean project here and the paper of a zero-configuration command: the one given, else
+    the one found in the project, else one its formalization.yaml names by URL."""
+    from .simple import find_papers
+    root = _lean_root()
     if a.paper and re.match(r"https?://", a.paper):
         from . import formalization as fz
         fy = fz.load(root) or {}
@@ -244,28 +327,70 @@ def _print_simple(body, summary: dict | None = None):
                   f"not checked. Next step: {cor['next_step']}")
 
 
-# -- everyday commands ------------------------------------------------------------------------
+# -- output -----------------------------------------------------------------------------------
+
+def _print_json(obj, ensure_ascii: bool = False) -> None:
+    print(json.dumps(obj, indent=1, ensure_ascii=ensure_ascii))
+
+
+def _text_arg(v: str | None) -> str:
+    if v is None:
+        return ""
+    return sys.stdin.read() if v == "-" else Path(v).read_text(encoding="utf-8")
+
+
+def _link_failure(error: dict) -> dict:
+    """`link --json` when nothing was recorded: the refusal, or why the command could not run."""
+    return {"schema": "machinechecked/link@1", "ok": False, "written": False, "error": error}
+
+
+def _not_run_json(a, error: dict) -> tuple[dict, bool] | None:
+    """What `check`, `inspect` and `link` print with --json when they could not run: a document
+    of their own schema with `ok` false and the error, so that a script never reads it as a
+    result; with whether it is written in ASCII, as each command's documents are."""
+    if not getattr(a, "json", False):
+        return None
+    if a.cmd == "check":
+        return {"schema": "machinechecked/check@1", "ok": False, "error": error,
+                "note": "Check unavailable; resolve the execution error and retry."}, True
+    if a.cmd == "inspect":
+        return {"schema": "machinechecked/inspect@1", "ok": False, "name": getattr(a, "name", None),
+                "error": error,
+                "note": "Inspection unavailable; resolve the execution error and retry."}, True
+    if a.cmd == "link":
+        return _link_failure(error), False
+    return None
+
+
+# -- view -------------------------------------------------------------------------------------
 
 def cmd_view(a):
     if _assurance_config(a):
-        from .pipeline import build
-        from .server import serve
-        _settings(a, None)
-        cfg = cfgmod.load(_assurance_config(a))
-        try:
-            res = build(cfg, web_dist=_web_dist(a.web), reuse_lean=True)
-        except RuntimeError:
-            res = build(cfg, web_dist=_web_dist(a.web))
+        return _view_full(a)
+    _view_simple(a)
 
-        def on_symbol(req):
-            from .symbols import from_reader
-            from_reader(cfg, req, _web_dist(a.web))
 
-        from .workspace import api
-        serve(res["site"], a.port, None, not a.no_browser, on_symbol=on_symbol,
-              api=_with_uses(api(cfg.out_dir, res["site"] / "data", cfg.lean_root), cfg.lean_root,
-                             res["site"] / "data"))
-        return
+def _view_full(a):
+    from .pipeline import build
+    from .server import serve
+    from .workspace import api
+    _settings(a, None)
+    cfg = _load_full(a)
+    try:
+        res = build(cfg, web_dist=_web_dist(a.web), reuse_lean=True)
+    except RuntimeError:
+        res = build(cfg, web_dist=_web_dist(a.web))
+
+    def on_symbol(req):
+        from .symbols import from_reader
+        from_reader(cfg, req, _web_dist(a.web))
+
+    serve(res["site"], a.port, None, not a.no_browser, on_symbol=on_symbol,
+          api=_with_uses(api(cfg.out_dir, res["site"] / "data", cfg.lean_root), cfg.lean_root,
+                         res["site"] / "data"))
+
+
+def _view_simple(a):
     from . import authoring
     from .server import serve
     from .targets import Snapshot
@@ -296,16 +421,11 @@ def _with_uses(api: tuple[dict, dict], root: Path, data: Path) -> tuple[dict, di
 
 # -- recording links and investigations -------------------------------------------------------
 
-def _print_json(obj) -> None:
-    print(json.dumps(obj, indent=1, ensure_ascii=False))
-
-
 def cmd_link(a):
     """`machinechecked link CLAIM [DECL ...]`: record, reject or clear a claim's links in the
     links file, checked against the last build (no Lean runs)."""
     from . import authoring
     from .simple import links_key, paper_title
-    from .targets import Snapshot, TargetError
     if _assurance_config(a):
         sys.exit("`link` records the links of the zero-configuration view; a full assessment "
                  "names its declarations in the inventory")
@@ -316,10 +436,7 @@ def cmd_link(a):
         sys.exit(f"{a.paper}: no such paper" + (f"; the project's papers: {', '.join(found)}"
                                                  if found else ""))
     root, paper = _simple_target(a)
-    try:
-        snap = Snapshot(root / cfgmod.work_dir_name(root) / "site" / "data")
-    except TargetError as e:
-        sys.exit(str(e))
+    snap = _last_build(root / cfgmod.work_dir_name(root), required=True)
     built_title = ((snap.index.get("papers") or [{}])[0]).get("title")
     if built_title != paper_title(paper):
         sys.exit(f"the last build is of another paper ({built_title}); run "
@@ -346,8 +463,7 @@ def cmd_link(a):
             authoring.write(root, change)
     except authoring.LinkError as e:
         if a.json:
-            _print_json({"schema": "machinechecked/link@1", "ok": False, "written": False,
-                         "error": e.to_json()})
+            _print_json(_link_failure(e.to_json()))
             raise SystemExit(1)
         lines = [f"machinechecked: {e}"] + [
             "  " + (f"{c['id']}  {c.get('number') or ''}".rstrip() if "id" in c
@@ -385,20 +501,6 @@ def cmd_link(a):
     if (change["after"] or {}).get("basis") == "reviewed_composition":
         print("a composition: Lean has not checked the combination. Next step: "
               + authoring.simple.COMPOSITION_NEXT_STEP)
-
-
-def _workspace_place(a):
-    """The working directory, the build's site data and the Lean project of a workspace
-    command."""
-    if _assurance_config(a):
-        cfg = cfgmod.load(_assurance_config(a))
-        return cfg.out_dir, cfg.out_dir / "site" / "data", cfg.lean_root
-    from .simple import find_lake_root
-    root = find_lake_root(Path.cwd().resolve())
-    if root is None:
-        sys.exit("no Lean project here: run machinechecked inside a directory with a lakefile")
-    work = root / cfgmod.work_dir_name(root)
-    return work, work / "site" / "data", root
 
 
 def _print_workspace(v: dict) -> None:
@@ -497,11 +599,116 @@ def _print_workspace(v: dict) -> None:
                   f"judges the findings against a build of release {m['to'].get('release')}")
 
 
-def _workspace_main(a, snap, root, p: Path) -> None:
-    """`workspace main [NAME...] [--clear]`: save the main results in the workspace at `p`, or
-    show those it saves, or, when it saves none, the suggestion `compare --query impact` traces
+class _Workspaces:
+    """What a `workspace` action works on: the working directory and Lean project of the last
+    build, that build's site data (`snap`, None before the first build), and the workspace the
+    command names (`--id`), else the reviewer's own."""
+
+    def __init__(self, a):
+        self.a = a
+        self.work, self.root = _built_work(a)
+        self.snap = _last_build(self.work)
+
+    def reviewer(self):
+        from . import review_cli as rc
+        try:
+            return rc.parse_reviewer(self.a.reviewer, getattr(self.a, "same_family", "unknown"))
+        except rc.ReviewError as e:
+            sys.exit(str(e))
+
+    def path(self) -> Path:
+        from . import workspace as wsp
+        if getattr(self.a, "id", None):
+            return wsp.find(self.work, self.a.id)
+        return wsp.open_for(self.work, self.reviewer(), getattr(self.a, "mode", None),
+                            sources=self.snap.sources() if self.snap else None)
+
+
+def _workspace_list(a, w: _Workspaces) -> None:
+    from . import workspace as wsp
+    rows = [wsp.summary(ws) for _, ws in wsp.list_all(w.work)]
+    if a.json:
+        return _print_json({"schema": "prooflens/workspaces@1", "workspaces": rows})
+    for r in rows:
+        print(f"{r['id']}  {r['mode']:11} {r['reviewer']}  {r['findings']} finding(s), "
+              f"{r['open_questions']} open question(s), {r['reports']} report(s)")
+    if not rows:
+        print("no workspace yet: `machinechecked workspace open --as human:NAME`")
+
+
+def _workspace_show(a, w: _Workspaces) -> None:
+    """`workspace open` and `workspace show`: a workspace's records per claim, opening the
+    reviewer's own when none is named; `show` also checks the Lean facts they cite."""
+    from . import workspace as wsp
+    if a.action == "open" and a.id and a.mode:
+        # Opening by id with another mode is refused by open_for, not changed silently.
+        p = wsp.open_for(w.work, w.reviewer(), a.mode, a.id)
+    else:
+        p = w.path()
+    claim = None
+    if getattr(a, "claim", None):
+        if w.snap is None:
+            sys.exit("no build to resolve the claim against: run view or build first")
+        claim = w.snap.resolve_claim(a.claim)
+    ws = wsp.read(p)
+    v = wsp.view(ws, w.snap, claim, w.root, check_facts=a.action == "show")
+    if a.action == "show" and ws.get("version_maps"):
+        # The findings each version map it keeps reopens, for the maps to this build.
+        from .reopen import for_site
+        v["revisions"] = for_site(ws, w.snap, w.root, w.work, True, v)
+    if a.json:
+        return _print_json({**v, "path": str(p)})
+    _print_workspace(v)
+
+
+def _workspace_update(a, w: _Workspaces) -> None:
+    from . import workspace as wsp
+    raw = json.loads(_text_arg(a.file))
+    ops = raw.get("ops") if isinstance(raw, dict) else raw
+    op_id = a.op_id or (raw.get("op_id") if isinstance(raw, dict) else None)
+    p = w.path()
+    _print_json(wsp.update(p, ops, w.snap, w.root, a.reviewer or None, op_id, a.dry_run))
+
+
+def _workspace_suggest(a, w: _Workspaces) -> None:
+    from . import workspace as wsp
+    from .requirements import suggestion_ops
+    if w.snap is None:
+        sys.exit("no build to read the paper from: run view or build first")
+    p = w.path()
+    cid = w.snap.resolve_claim(a.claim)
+    ops = suggestion_ops(wsp.read(p), w.snap, cid, a.requirement)
+    if not a.apply:
+        return _print_json({"ops": ops})
+    if not ops:
+        return _print_json({"ok": True, "changed": [], "suggested": 0})
+    ack = wsp.update(p, ops, w.snap, w.root, a.reviewer or None, a.op_id)
+    _print_json({**ack, "suggested": len(ops)})
+
+
+def _workspace_export(a, w: _Workspaces) -> None:
+    from . import workspace as wsp
+    body = wsp.export(w.path())
+    Path(a.out).write_text(json.dumps(body, indent=1, ensure_ascii=False) + "\n",
+                           encoding="utf-8")
+    print(f"wrote {a.out} (workspace {body['id']}, {body['mode']})")
+
+
+def _workspace_import(a, w: _Workspaces) -> None:
+    from . import workspace as wsp
+    res = wsp.import_(w.work, json.loads(_text_arg(a.file)), w.snap, a.reviewer,
+                      None if a.file == "-" else Path(a.file).name)
+    _print_json(res)
+    if res["problems"] or res["conflicts"]:
+        raise SystemExit(1)
+
+
+def _workspace_main(a, w: _Workspaces) -> None:
+    """`workspace main [NAME...] [--clear]`: save the main results in the workspace, or show
+    those it saves, or, when it saves none, the suggestion `compare --query impact` traces
     from."""
     from . import workspace as wsp
+    snap, root, p = w.snap, w.root, w.path()
     if a.names and a.clear:
         sys.exit("machinechecked: give the main results or --clear, not both")
     changed = None
@@ -552,93 +759,21 @@ def _workspace_main(a, snap, root, p: Path) -> None:
     print("`machinechecked compare --query impact NAME` traces from these")
 
 
+WORKSPACE_ACTIONS = {"list": _workspace_list, "open": _workspace_show, "show": _workspace_show,
+                     "update": _workspace_update, "suggest": _workspace_suggest,
+                     "main": _workspace_main, "export": _workspace_export,
+                     "import": _workspace_import}
+
+
 def cmd_workspace(a):
-    """`machinechecked workspace open|list|show|update|suggest|export|import|main`: the saved
-    investigation (`workspace.py`), as the reader saves it."""
-    from . import review_cli as rc
+    """`machinechecked workspace ACTION`: the saved investigation (`workspace.py`), as the reader
+    saves it. A refused edit prints its conflicts as JSON and exits 1; so does any error of an
+    action that prints JSON."""
     from . import workspace as wsp
-    from .targets import Snapshot, TargetError
-    work, data, root = _workspace_place(a)
+    from .targets import TargetError
+    w = _Workspaces(a)
     try:
-        snap = Snapshot(data)
-    except TargetError:
-        snap = None
-
-    def who():
-        try:
-            return rc.parse_reviewer(a.reviewer, getattr(a, "same_family", "unknown"))
-        except rc.ReviewError as e:
-            sys.exit(str(e))
-
-    def path():
-        if getattr(a, "id", None):
-            return wsp.find(work, a.id)
-        return wsp.open_for(work, who(), getattr(a, "mode", None),
-                            sources=snap.sources() if snap else None)
-
-    try:
-        if a.action == "list":
-            rows = [wsp.summary(ws) for _, ws in wsp.list_all(work)]
-            if a.json:
-                return _print_json({"schema": "prooflens/workspaces@1", "workspaces": rows})
-            for r in rows:
-                print(f"{r['id']}  {r['mode']:11} {r['reviewer']}  {r['findings']} finding(s), "
-                      f"{r['open_questions']} open question(s), {r['reports']} report(s)")
-            if not rows:
-                print("no workspace yet: `machinechecked workspace open --as human:NAME`")
-        elif a.action in ("open", "show"):
-            if a.action == "open" and a.id and a.mode:
-                # Opening by id with another mode is refused by open_for, not changed silently.
-                p = wsp.open_for(work, who(), a.mode, a.id)
-            else:
-                p = path()
-            claim = None
-            if getattr(a, "claim", None):
-                if snap is None:
-                    sys.exit("no build to resolve the claim against: run view or build first")
-                claim = snap.resolve_claim(a.claim)
-            ws = wsp.read(p)
-            v = wsp.view(ws, snap, claim, root, check_facts=a.action == "show")
-            if a.action == "show" and ws.get("version_maps"):
-                # The findings each version map it keeps reopens, for the maps to this build.
-                from .reopen import for_site
-                v["revisions"] = for_site(ws, snap, root, work, True, v)
-            if a.json:
-                return _print_json({**v, "path": str(p)})
-            _print_workspace(v)
-        elif a.action == "update":
-            raw = json.loads(_text_arg(a.file))
-            ops = raw.get("ops") if isinstance(raw, dict) else raw
-            op_id = a.op_id or (raw.get("op_id") if isinstance(raw, dict) else None)
-            p = path()
-            ack = wsp.update(p, ops, snap, root, a.reviewer or None, op_id, a.dry_run)
-            _print_json(ack)
-        elif a.action == "suggest":
-            from .requirements import suggestion_ops
-            if snap is None:
-                sys.exit("no build to read the paper from: run view or build first")
-            p = path()
-            cid = snap.resolve_claim(a.claim)
-            ops = suggestion_ops(wsp.read(p), snap, cid, a.requirement)
-            if not a.apply:
-                return _print_json({"ops": ops})
-            if not ops:
-                return _print_json({"ok": True, "changed": [], "suggested": 0})
-            ack = wsp.update(p, ops, snap, root, a.reviewer or None, a.op_id)
-            _print_json({**ack, "suggested": len(ops)})
-        elif a.action == "main":
-            _workspace_main(a, snap, root, path())
-        elif a.action == "export":
-            body = wsp.export(path())
-            Path(a.out).write_text(json.dumps(body, indent=1, ensure_ascii=False) + "\n",
-                                   encoding="utf-8")
-            print(f"wrote {a.out} (workspace {body['id']}, {body['mode']})")
-        elif a.action == "import":
-            res = wsp.import_(work, json.loads(_text_arg(a.file)), snap, a.reviewer,
-                              None if a.file == "-" else Path(a.file).name)
-            _print_json(res)
-            if res["problems"] or res["conflicts"]:
-                raise SystemExit(1)
+        WORKSPACE_ACTIONS[a.action](a, w)
     except wsp.Conflict as e:
         _print_json({"ok": False, "error": str(e), "conflicts": e.conflicts})
         raise SystemExit(1)
@@ -649,6 +784,8 @@ def cmd_workspace(a):
             raise SystemExit(1)
         sys.exit(f"machinechecked: {e}")
 
+
+# -- build and check --------------------------------------------------------------------------
 
 def _site_dest(site: str, root: Path) -> Path:
     """The directory `--site` names, refused when it is the project (or holds it), or when it
@@ -661,12 +798,13 @@ def _site_dest(site: str, root: Path) -> Path:
     return dest
 
 
-def cmd_build_simple(a):
+def _build_simple(a):
+    """`build` in zero configuration: the reader as one HTML file, or with --site a directory to
+    publish."""
     from .bundle import bundle
     root, paper = _simple_target(a)
     _settings(a, root)
-    site, index, view = _simple_site(root, paper, a.web, a.reuse_lean,
-                                     getattr(a, "refresh", False))
+    site, index, view = _simple_site(root, paper, a.web, a.reuse_lean, a.refresh)
     _print_simple(view["body"], index.get("semantic"))
     if a.site:
         import shutil
@@ -701,15 +839,18 @@ def cmd_build_simple(a):
 
 
 def cmd_check(a):
-    if getattr(a, "json", False):
+    if a.json:
         return _check_json(a)
     if _assurance_config(a):
-        a.config = str(_assurance_config(a))
-        a.release = None; a.skip_lean = a.skip_tex = False; a.lake = "lake"
-        a.no_lean_build = False; a.reuse_lean = False; a.fail_on_violation = True
-        return cmd_build(a)
-    if getattr(a, "fix_modules", False):
+        # The full assessment's check is its build, which exits 1 on a violation.
+        return _build_full(a, fix_modules=a.fix_modules, fail_on_violation=True)
+    if a.fix_modules:
         sys.exit(NO_MODULES)
+    _check_simple(a)
+
+
+def _check_simple(a):
+    """`check` in zero configuration: exit 1 if a linked declaration is missing or not proved."""
     root, paper = _simple_target(a)
     view = _simple_view(root, paper)
     from .semantic import of_view
@@ -804,96 +945,101 @@ def _check_json(a):
     """`check --json`: every claim with its status and links, as one JSON document on stdout
     (progress goes to stderr). Exit 1 if a linked declaration is missing or not proved."""
     import contextlib
-    import json
     with contextlib.redirect_stdout(sys.stderr):
         if _assurance_config(a):
-            from .pipeline import build
-            cfg = cfgmod.load(_assurance_config(a))
-            res = build(cfg, web_dist=_web_dist(a.web))
-            added = None
-            if getattr(a, "fix_modules", False):
-                cfg, res, added = _fix_modules(
-                    cfg, res, lambda c: build(c, web_dist=_web_dist(a.web)))
-            idx = res["index"]
-            wit = _witness_lists(cfg, res["evidence"])
-            claims = [{"id": c["id"], "paper": c["paper"], "number": c.get("number"),
-                       "title": c.get("title"), "status": c["status"], "status_code": c["status_code"], "class": c["class"],
-                       "unit": c.get("unit", "statement"), "parent": c.get("parent"),
-                       **({"step_review": c["step_review"]} if "step_review" in c else {}),
-                       **wit.get(c["id"], {})}
-                      for c in idx["claims"]]
-            facts = {c["id"]: c.get("semantic") for c in idx["claims"]}
-            for c in claims:
-                c["semantic"] = facts.get(c["id"])
-            out = {"mode": "full", "release": idx["release"],
-                   "project": idx.get("project", {}).get("commit"),
-                   "semantic": idx.get("semantic"),
-                   "findings": idx["findings"]["total"],
-                   "finding_details": _finding_details(cfg, res["evidence"]),
-                   "replay": _replay_guard(cfg, res["evidence"]),
-                   **({"modules_added": added} if added is not None else {})}
-            num = (res.get("content") or {}).get("numbering")
-            if num is not None:
-                out["warnings"] = _reference_warnings(num)
-                out["numbering"] = num
-                # With several papers, each paper's references and warnings by themselves.
-                if num.get("papers"):
-                    from .numbering import paper_view
-                    out["papers"] = {pid: {"warnings": _reference_warnings(paper_view(num, pid)),
-                                           "numbering": paper_view(num, pid)}
-                                     for pid in num["papers"]}
-            failed = bool(idx["findings"]["total"].get("violation"))
+            out, claims, failed = _check_full_json(a)
         else:
-            if getattr(a, "fix_modules", False):
+            if a.fix_modules:
                 sys.exit(NO_MODULES)
-            root, paper = _simple_target(a)
-            from .moddocs import stale_doc_message
-            from .simple import view_release
-            view = _simple_view(root, paper)
-            body = view["body"]
-            claims = [{"id": c["id"], "number": c["number"], "title": c["title"],
-                       "status": c["status"], "status_code": c["status_code"], "class": c["class"],
-                       "links": [{"name": l["name"], "status": l["status"], "status_code": l["status_code"], "class": l["class"],
-                                  **_link_detail(l), "source": l.get("source")}
-                                 for l in c["links"]],
-                       "correspondence": c.get("correspondence"),
-                       "reviews": [{"reviewer": r["reviewer"], "verdict": r["verdict"]["value"],
-                                    "correspondence": r.get("correspondence"),
-                                    "submitted_at": r["submitted_at"], "current": r["current"],
-                                    **({"why": r["why"]} if r.get("why") else {})}
-                                   for r in c.get("reviews", [])],
-                       "suggestions": [{"name": x["name"], "why": x.get("why"),
-                                        "reasons": x.get("reasons", [])}
-                                       for x in c.get("suggestions", [])],
-                       "references": [o["id"] for o in c.get("references", [])],
-                       "unit": c.get("unit", "statement"), "parent": c.get("parent"),
-                       **(_step_json(c) if c.get("unit") else {})}
-                      for c in body["claims"]]
-            from .semantic import of_view
-            summary, facts = of_view(body, root)
-            for c in claims:
-                c["semantic"] = facts.get(c["id"])
-            num = body.get("numbering") or {"references": [], "pattern": None}
-            out = {"mode": "simple", "paper": body["paper"], "title": body["title"],
-                   "release": view_release(body), "commit": body.get("commit"),
-                   "semantic": summary,
-                   "modules": {"built": body["project"]["built"],
-                               "not_built": body["project"]["unbuilt"]},
-                   "notes": body["notes"],
-                   "warnings": [{"kind": "module-doc-name", "file": d["file"], "line": d["line"],
-                                 "name": d["name"], "message": stale_doc_message(d)}
-                                for d in body.get("module_docs", [])]
-                   + _reference_warnings(num),
-                   "numbering": num}
-            failed = any(l["class"] != "proved" for c in claims for l in c["links"])
+            out, claims, failed = _check_simple_json(a)
     summary = {}
     for c in claims:
         summary[c["status"]] = summary.get(c["status"], 0) + 1
-    print(json.dumps({"schema": "machinechecked/check@1", "version": tool_version(), **out,
-                      "summary": summary,
-                      "claims": claims, "ok": not failed, "note": CHECK_NOTE}, indent=1))
+    _print_json({"schema": "machinechecked/check@1", "version": tool_version(), **out,
+                 "summary": summary, "claims": claims, "ok": not failed, "note": CHECK_NOTE},
+                ensure_ascii=True)
     if failed:
         sys.exit(1)
+
+
+def _check_full_json(a) -> tuple[dict, list[dict], bool]:
+    """`check --json` with a machinechecked.toml: the document's fields, its claims, and whether
+    the assessment found a violation."""
+    cfg, res, added = _assess(a, _load_full(a), a.fix_modules)
+    idx = res["index"]
+    wit = _witness_lists(cfg, res["evidence"])
+    claims = [{"id": c["id"], "paper": c["paper"], "number": c.get("number"),
+               "title": c.get("title"), "status": c["status"], "status_code": c["status_code"], "class": c["class"],
+               "unit": c.get("unit", "statement"), "parent": c.get("parent"),
+               **({"step_review": c["step_review"]} if "step_review" in c else {}),
+               **wit.get(c["id"], {})}
+              for c in idx["claims"]]
+    facts = {c["id"]: c.get("semantic") for c in idx["claims"]}
+    for c in claims:
+        c["semantic"] = facts.get(c["id"])
+    out = {"mode": "full", "release": idx["release"],
+           "project": idx.get("project", {}).get("commit"),
+           "semantic": idx.get("semantic"),
+           "findings": idx["findings"]["total"],
+           "finding_details": _finding_details(cfg, res["evidence"]),
+           "replay": _replay_guard(cfg, res["evidence"]),
+           **({"modules_added": added} if added is not None else {})}
+    num = (res.get("content") or {}).get("numbering")
+    if num is not None:
+        out["warnings"] = _reference_warnings(num)
+        out["numbering"] = num
+        # With several papers, each paper's references and warnings by themselves.
+        if num.get("papers"):
+            from .numbering import paper_view
+            out["papers"] = {pid: {"warnings": _reference_warnings(paper_view(num, pid)),
+                                   "numbering": paper_view(num, pid)}
+                             for pid in num["papers"]}
+    return out, claims, bool(idx["findings"]["total"].get("violation"))
+
+
+def _check_simple_json(a) -> tuple[dict, list[dict], bool]:
+    """`check --json` in zero configuration: the document's fields, its claims, and whether a
+    linked declaration is missing or not proved."""
+    from .moddocs import stale_doc_message
+    from .semantic import of_view
+    from .simple import view_release
+    root, paper = _simple_target(a)
+    view = _simple_view(root, paper)
+    body = view["body"]
+    claims = [{"id": c["id"], "number": c["number"], "title": c["title"],
+               "status": c["status"], "status_code": c["status_code"], "class": c["class"],
+               "links": [{"name": l["name"], "status": l["status"], "status_code": l["status_code"], "class": l["class"],
+                          **_link_detail(l), "source": l.get("source")}
+                         for l in c["links"]],
+               "correspondence": c.get("correspondence"),
+               "reviews": [{"reviewer": r["reviewer"], "verdict": r["verdict"]["value"],
+                            "correspondence": r.get("correspondence"),
+                            "submitted_at": r["submitted_at"], "current": r["current"],
+                            **({"why": r["why"]} if r.get("why") else {})}
+                           for r in c.get("reviews", [])],
+               "suggestions": [{"name": x["name"], "why": x.get("why"),
+                                "reasons": x.get("reasons", [])}
+                               for x in c.get("suggestions", [])],
+               "references": [o["id"] for o in c.get("references", [])],
+               "unit": c.get("unit", "statement"), "parent": c.get("parent"),
+               **(_step_json(c) if c.get("unit") else {})}
+              for c in body["claims"]]
+    summary, facts = of_view(body, root)
+    for c in claims:
+        c["semantic"] = facts.get(c["id"])
+    num = body.get("numbering") or {"references": [], "pattern": None}
+    out = {"mode": "simple", "paper": body["paper"], "title": body["title"],
+           "release": view_release(body), "commit": body.get("commit"),
+           "semantic": summary,
+           "modules": {"built": body["project"]["built"],
+                       "not_built": body["project"]["unbuilt"]},
+           "notes": body["notes"],
+           "warnings": [{"kind": "module-doc-name", "file": d["file"], "line": d["line"],
+                         "name": d["name"], "message": stale_doc_message(d)}
+                        for d in body.get("module_docs", [])]
+           + _reference_warnings(num),
+           "numbering": num}
+    return out, claims, any(l["class"] != "proved" for c in claims for l in c["links"])
 
 
 def _forget_indexes(cfg) -> None:
@@ -909,19 +1055,34 @@ def _forget_indexes(cfg) -> None:
 
 def cmd_build(a):
     if not _assurance_config(a):
-        return cmd_build_simple(a)
+        return _build_simple(a)
+    _build_full(a, site=a.site, refresh=a.refresh, fail_on_violation=a.fail_on_violation,
+                release=a.release, skip_lean=a.skip_lean, skip_tex=a.skip_tex, lake=a.lake,
+                lean_build=not a.no_lean_build, reuse_lean=a.reuse_lean)
+
+
+def _assess(a, cfg, fix_modules: bool = False, **settings):
+    """Build and assess `cfg` (`pipeline.build`, with `settings`); with `fix_modules`, add the
+    modules the assessment found missing to `modules` and build again (`_fix_modules`). Returns
+    the configuration, the build and the modules added (None without `fix_modules`)."""
     from .pipeline import build
-    cfg = cfgmod.load(_config_arg(a))
-    dest = _site_dest(a.site, cfg.root) if getattr(a, "site", None) else None
-    if getattr(a, "refresh", False):
-        _forget_indexes(cfg)
-    def run(cfg):
-        return build(cfg, release=a.release, skip_lean=a.skip_lean, skip_tex=a.skip_tex,
-                     lake=a.lake, web_dist=_web_dist(a.web), lean_build=not a.no_lean_build,
-                     reuse_lean=a.reuse_lean)
+
+    def run(c):
+        return build(c, web_dist=_web_dist(a.web), **settings)
     res = run(cfg)
-    if getattr(a, "fix_modules", False):
-        cfg, res, _ = _fix_modules(cfg, res, run)
+    return _fix_modules(cfg, res, run) if fix_modules else (cfg, res, None)
+
+
+def _build_full(a, site: str | None = None, refresh: bool = False, fix_modules: bool = False,
+                fail_on_violation: bool = False, **settings):
+    """`build`, and `check` without --json, with a machinechecked.toml: build and assess
+    (`_assess`), print each paper's statuses and what blocks acceptance, and with `site` write
+    the audit's public export there. With `fail_on_violation`, exit 1 on a violation."""
+    cfg = _load_full(a)
+    dest = _site_dest(site, cfg.root) if site else None
+    if refresh:
+        _forget_indexes(cfg)
+    cfg, res, _ = _assess(a, cfg, fix_modules, **settings)
     idx = res["index"]
     for pid, s in idx["summary"].items():
         print(f"paper {pid}:")
@@ -967,7 +1128,7 @@ def cmd_build(a):
             sys.exit(str(e))
         print(f"wrote the audit to {out['out']}: publish this directory as it is "
               "(audit.json describes it)")
-    if a.fail_on_violation and idx["findings"]["total"].get("violation"):
+    if fail_on_violation and idx["findings"]["total"].get("violation"):
         sys.exit(1)
 
 
@@ -1003,17 +1164,15 @@ def _fix_modules(cfg, res, rebuild):
     return cfg, rebuild(cfg), added
 
 
+# -- the full assessment's other commands -----------------------------------------------------
+
 def cmd_site(a):
-    from .pipeline import rebuild_site
-    cfg = cfgmod.load(_config_arg(a))
-    res = rebuild_site(cfg, _web_dist(a.web), a.release)
-    print(f"site of release {res['release']} written to {res['site']}")
-
-
-def cmd_reassess(a):
-    from .pipeline import reassess
-    cfg = cfgmod.load(_config_arg(a))
-    res = reassess(cfg, _web_dist(a.web), a.release)
+    """`site` writes the reader again from a stored release (`pipeline.rebuild_site`);
+    `reassess` first assesses the latest release's evidence again with the current reviews and
+    dismissals (`pipeline.reassess`). Neither runs Lean or TeX."""
+    from . import pipeline
+    write = pipeline.reassess if a.cmd == "reassess" else pipeline.rebuild_site
+    res = write(_load_full(a), _web_dist(a.web), a.release)
     print(f"site of release {res['release']} written to {res['site']}")
 
 
@@ -1023,10 +1182,8 @@ def cmd_changes(a):
     from . import changes as chg
     from . import evidence as ev
     from .util import read_json
-    if not _assurance_config(a):
-        sys.exit("`changes` compares releases of the full assessment: run it beside "
-                 "machinechecked.toml (or pass -c)")
-    cfg = cfgmod.load(_config_arg(a))
+    cfg = _load_full(a, "`changes` compares releases of the full assessment: run it beside "
+                        "machinechecked.toml (or pass -c)")
     if a.map:
         return _changes_map(a, cfg)
     if a.paper or a.match or a.save:
@@ -1041,11 +1198,8 @@ def cmd_changes(a):
         chg.with_texts(doc, recs[0], recs[1], a.from_source, a.to_source)
     if a.workspace:
         from . import workspace as wsp
-        from .targets import Snapshot, TargetError
-        data = cfg.out_dir / "site" / "data"
-        try:
-            snap = Snapshot(data)
-        except TargetError:
+        snap = _last_build(cfg.out_dir)
+        if snap is None:
             sys.exit("no site of the later release: run `machinechecked site --release "
                      f"{doc['to']['release']}` first")
         if snap.index.get("release") != doc["to"]["release"]:
@@ -1111,11 +1265,7 @@ def _map_workspace(cfg, doc: dict, ws: dict, path: Path, save: bool) -> None:
     `doc['workspace']`; with `save`, the map kept in the workspace."""
     from . import reopen as ro
     from . import workspace as wsp
-    from .targets import Snapshot, TargetError
-    try:
-        snap = Snapshot(cfg.out_dir / "site" / "data")
-    except TargetError:
-        snap = None
+    snap = _last_build(cfg.out_dir)
     if snap is not None and snap.index.get("release") != doc["to"].get("release"):
         snap = None
     view = wsp.view(ws, snap, None, cfg.lean_root) if snap is not None else None
@@ -1130,7 +1280,7 @@ def _map_workspace(cfg, doc: dict, ws: dict, path: Path, save: bool) -> None:
 
 def cmd_bundle(a):
     from .bundle import bundle
-    cfg = cfgmod.load(_config_arg(a))
+    cfg = _load_full(a)
     site = Path(a.site).resolve() if a.site else cfg.out_dir / "site"
     res = bundle(site, Path(a.out).resolve(), a.title)
     print(f"wrote {res['out']}: {res['size'] / 1e6:.1f} MB, {res['files']} data files, "
@@ -1141,7 +1291,7 @@ def cmd_bundle(a):
 
 def cmd_export(a):
     from .export import ExportError, export
-    cfg = cfgmod.load(_config_arg(a))
+    cfg = _load_full(a)
     try:
         res = export(cfg, Path(a.out).resolve(), a.release,
                      None if a.data_only else _web_dist(a.web), paper=a.paper)
@@ -1154,42 +1304,48 @@ def cmd_evidence(a):
     """`machinechecked evidence list|prune`: the full assessment's stored evidence, one file per
     build, and deleting what no release still needs with the releases that name it
     (`evidence.prune`)."""
+    cfg = _load_full(a, "`evidence` manages the full assessment's stored evidence: run it beside "
+                        "machinechecked.toml (or pass -c)")
+    (_evidence_list if a.action == "list" else _evidence_prune)(a, cfg.out_dir)
+
+
+def _mb(n: int) -> str:
+    return f"{n / 1e6:.1f} MB"
+
+
+def _evidence_list(a, out: Path) -> None:
     from . import content as content_mod
     from . import evidence as ev
     from .util import read_json
-    if not _assurance_config(a):
-        sys.exit("`evidence` manages the full assessment's stored evidence: run it beside "
-                 "machinechecked.toml (or pass -c)")
-    cfg = cfgmod.load(_config_arg(a))
-    out = cfg.out_dir
-    mb = lambda n: f"{n / 1e6:.1f} MB"
-    if a.action == "list":
-        rels = [read_json(p) for p in ev.releases(out)]
-        gone = ev.pruned_releases(out)
-        if not rels and not gone:
-            print("no release: run `machinechecked build` first")
-            return
-        latest = (ev.latest(out) or {}).get("release")
-        size = lambda eid: sum(f.stat().st_size for f in (out / "evidence" / f"{eid}.json",
-                                                          content_mod.path(out, eid))
-                               if f.exists())
-        for r in sorted(rels + list(gone.values()), key=lambda r: str(r.get("created") or ""),
-                        reverse=True):
-            eid = r["evidence"]
-            if r["release"] in gone:
-                state = ("evidence missing, release pruned on " if r["missing"] else
-                         "evidence pruned on ") + r["pruned"][:10]
-            elif (out / "evidence" / f"{eid}.json").exists():
-                state = mb(size(eid)) + ("  (latest)" if r["release"] == latest else "")
-            else:
-                state = "evidence " + ev.absence(out, eid).removeprefix("is ")
-            print(f"{r['release']}  evidence {eid[:12]}  {r.get('created', '')}  {state}")
-        stored = {p.stem for d in ("evidence", "content") for p in (out / d).glob("*.json")}
-        loose = stored - {r["evidence"] for r in rels}
-        print(f"{len(stored)} evidence record(s) on disk, {mb(sum(size(e) for e in stored))} with "
-              "their content" + (f"; no release names {len(loose)} of them" if loose else ""))
-        print("`machinechecked evidence prune --dry-run` lists what pruning would delete")
+    rels = [read_json(p) for p in ev.releases(out)]
+    gone = ev.pruned_releases(out)
+    if not rels and not gone:
+        print("no release: run `machinechecked build` first")
         return
+    latest = (ev.latest(out) or {}).get("release")
+    size = lambda eid: sum(f.stat().st_size for f in (out / "evidence" / f"{eid}.json",
+                                                      content_mod.path(out, eid))
+                           if f.exists())
+    for r in sorted(rels + list(gone.values()), key=lambda r: str(r.get("created") or ""),
+                    reverse=True):
+        eid = r["evidence"]
+        if r["release"] in gone:
+            state = ("evidence missing, release pruned on " if r["missing"] else
+                     "evidence pruned on ") + r["pruned"][:10]
+        elif (out / "evidence" / f"{eid}.json").exists():
+            state = _mb(size(eid)) + ("  (latest)" if r["release"] == latest else "")
+        else:
+            state = "evidence " + ev.absence(out, eid).removeprefix("is ")
+        print(f"{r['release']}  evidence {eid[:12]}  {r.get('created', '')}  {state}")
+    stored = {p.stem for d in ("evidence", "content") for p in (out / d).glob("*.json")}
+    loose = stored - {r["evidence"] for r in rels}
+    print(f"{len(stored)} evidence record(s) on disk, {_mb(sum(size(e) for e in stored))} with "
+          "their content" + (f"; no release names {len(loose)} of them" if loose else ""))
+    print("`machinechecked evidence prune --dry-run` lists what pruning would delete")
+
+
+def _evidence_prune(a, out: Path) -> None:
+    from . import evidence as ev
     res = ev.prune(out, a.keep, dry_run=a.dry_run)
     verb = "would delete" if a.dry_run else "deleted"
     for eid, names in res["deleted"].items():
@@ -1198,18 +1354,17 @@ def cmd_evidence(a):
         print(f"kept {eid[:12]}: {'; '.join(why)}")
     names = sum(len(n) for n in res["deleted"].values())
     print(f"{verb} {len(res['deleted'])} evidence record(s) and {names} release(s), "
-          f"{mb(res['bytes'])}")
+          f"{_mb(res['bytes'])}")
 
+
+# -- further commands -------------------------------------------------------------------------
 
 def cmd_cache(a):
     from . import cache
-    from .simple import find_lake_root
     if a.action == "prune":
         cache.prune(a.repo, a.keep, log=lambda m: print(m, file=sys.stderr))
         return
-    project = Path(a.project).resolve() if a.project else find_lake_root(Path.cwd().resolve())
-    if project is None:
-        sys.exit("no Lean project here: run machinechecked inside a directory with a lakefile")
+    project = _lean_root(a.project)
     out = Path(a.out).resolve() if getattr(a, "out", None) else project / ".lean-cache"
     if a.action == "save":
         cache.save(project, out, a.target, a.pin_file, log=lambda m: print(m, file=sys.stderr))
@@ -1224,7 +1379,7 @@ def cmd_cache(a):
 
 def cmd_replay(a):
     from .replay import replay
-    cfg = cfgmod.load(_config_arg(a))
+    cfg = _load_full(a)
     out = Path(a.out).resolve() if a.out else cfg.comparator_log
     if out is None:
         sys.exit("say where to write the record: --out FILE, or `comparator_log` in "
@@ -1250,20 +1405,18 @@ def cmd_replay(a):
 
 
 def cmd_inspect(a):
-    import json
     from .deps import inspect
-    from .simple import find_lake_root
-    root = Path(a.project).resolve() if a.project else find_lake_root(Path.cwd().resolve())
-    if root is None:
-        sys.exit("no Lean project here: run machinechecked inside a directory with a lakefile")
+    root = _lean_root(a.project)
     log = (lambda m: print(m, file=sys.stderr))
     if a.within and not a.used_by:
         sys.exit("--in goes with --used-by: the applications of NAME inside one declaration")
     if a.used_by:
         from .uses import text, uses
         out = uses(root, a.name, a.module, log=log, refresh=a.refresh, within=a.within)
-        print(json.dumps(out, indent=1, ensure_ascii=False) if a.json
-              else text(out, module=a.module))
+        if a.json:
+            _print_json(out)
+        else:
+            print(text(out, module=a.module))
         if not out["ok"]:
             sys.exit(1)
         return
@@ -1271,7 +1424,7 @@ def cmd_inspect(a):
     if not a.dependencies and out.get("closure"):
         out["closure"] = {k: v for k, v in out["closure"].items() if k != "members"}
     if a.json:
-        print(json.dumps(out, indent=1, ensure_ascii=False))
+        _print_json(out)
     else:
         _print_inspect(out, a.dependencies)
     if not out["ok"]:
@@ -1316,7 +1469,7 @@ def _print_inspect(out: dict, dependencies: bool):
 
 def cmd_symbol(a):
     from . import symbols as sy
-    cfg = cfgmod.load(_config_arg(a))
+    cfg = _load_full(a)
     try:
         if a.action == "add":
             ln = sy.add(cfg, a.claim, a.tex, a.decl, a.reviewer, var=a.var, type_of=a.type_of,
@@ -1333,31 +1486,11 @@ def cmd_symbol(a):
 
 
 def cmd_serve(a):
-    cfg = cfgmod.load(_config_arg(a))
+    cfg = _load_full(a)
     site = Path(a.dir).resolve() if a.dir else cfg.out_dir / "site"
     handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(site))
     print(f"serving {site} on http://127.0.0.1:{a.port}")
     http.server.ThreadingHTTPServer(("127.0.0.1", a.port), handler).serve_forever()
-
-
-def _text_arg(v: str | None) -> str:
-    if v is None:
-        return ""
-    return sys.stdin.read() if v == "-" else Path(v).read_text(encoding="utf-8")
-
-
-def _built_work(a) -> tuple[Path, Path | None]:
-    """The working directory of the last build and the Lean project: the full assessment's
-    when a configuration selects it, else the zero-configuration view's in the project here.
-    Nothing is built: the commands that read a build use the one `view` or `build` wrote."""
-    if _assurance_config(a):
-        cfg = cfgmod.load(_assurance_config(a))
-        return cfg.out_dir, cfg.lean_root
-    from .simple import find_lake_root
-    root = find_lake_root(Path.cwd().resolve())
-    if root is None:
-        sys.exit("no Lean project here: run machinechecked inside a directory with a lakefile")
-    return root / cfgmod.work_dir_name(root), root
 
 
 def cmd_compare(a):
@@ -1448,72 +1581,109 @@ def cmd_compare(a):
         print(f"\n(more definitions: --after {nxt})")
 
 
+# -- review -----------------------------------------------------------------------------------
+
+def _review_here(s) -> dict:
+    """The workspace a review session keeps its work in (no id until the first step saves it)."""
+    return {"id": s.workspace["id"] if s.path.exists() else None, "mode": s.mode}
+
+
+def _review_next(a, s) -> None:
+    here = _review_here(s)
+    u = next(iter(s.open_units(a.order)), None)
+    if a.json:
+        _print_json({"schema": "machinechecked/review-next@1",
+                     "release": s.index["release"], "mode": s.queue.get("mode"),
+                     "workspace": here, "order": a.order,
+                     "unit": u and {k: u.get(k) for k in ("id", "kind", "reason", "priority")}})
+        return
+    print(f"{u['id']}  ({u['reason']})" if u else "nothing left to review")
+    for sig in ((u or {}).get("priority") or {}).get("signals") or []:
+        for q in sig.get("questions") or []:
+            print(f"  question: {q}")
+
+
+def _review_status(a, s) -> None:
+    here = _review_here(s)
+    units = s.open_units(a.order)
+    if a.json:
+        _print_json({"schema": "machinechecked/review-status@1",
+                     "release": s.index["release"], "mode": s.queue.get("mode"),
+                     "workspace": here, "reports": len(s.work["reports"]),
+                     "drafts": {i: d["stage"] for i, d in s.work["drafts"].items()},
+                     "order": {"by": a.order, **({"queue": s.queue["order"]}
+                                                 if s.queue.get("order") else {})},
+                     "open": [u["id"] for u in units]})
+        return
+    print(f"{len(s.work['reports'])} report(s), {len(s.work['drafts'])} in progress, "
+          f"{len(units)} unit(s) left to review (release {s.index['release']})")
+    if here["id"]:
+        print(f"  workspace {here['id']} ({here['mode']}"
+              + ("; your readings here are not blind" if s.informed else "") + ")")
+    for uid, d in s.work["drafts"].items():
+        print(f"  {uid}: at step '{d['stage']}'")
+    for name, sig in ((s.queue.get("order") or {}).get("signals") or {}).items():
+        if sig.get("state") != "read":
+            print(f"  order: {name} {sig['state']}: {sig.get('why')}")
+
+
+def _review_text(a, s) -> None:
+    """`review read`, `show` and `author`: what that step of the protocol shows of a unit."""
+    out = getattr(s, a.action)(a.unit, a.json)
+    _print_json(out) if a.json else print(out)
+
+
+def _review_lock(a, s) -> None:
+    s.lock(a.unit, _text_arg(a.text))
+    print(f"reading recorded (not blind: the session is informed); `review show {a.unit}` "
+          "shows the Lean" if s.informed else
+          f"reading locked; `review show {a.unit}` shows the Lean")
+
+
+def _review_decide(a, s) -> None:
+    s.decide(a.unit, a.verdict, _text_arg(a.comparison), _text_arg(a.detail),
+             _text_arg(a.witness),
+             {"coverage": a.coverage, "basis": a.basis,
+              "argument": _text_arg(a.argument),
+              "bridge": dict(zip(("theorem", "target"), a.bridge)) if a.bridge else None,
+              "would_decide": _text_arg(a.would_decide)})
+    print(f"verdict recorded; `review author {a.unit}` shows the author's review")
+
+
+def _review_submit(a, s) -> None:
+    r = s.submit(a.unit, _text_arg(a.text).strip())
+    print(f"report recorded: {r['unit']['id']}, {r['verdict']['value']}; "
+          "`review export --out FILE` writes your reports for the maintainer")
+
+
+def _review_export(a, s) -> None:
+    print(f"wrote {s.export(Path(a.out))}")
+
+
+# The protocol's steps, for a reviewer without a browser (`review_cli`), with what each does.
+REVIEW_STEPS = {
+    "next": (_review_next, "the next unit to review"),
+    "read": (_review_text, "step 1: the paper's statement of a unit"),
+    "lock": (_review_lock, "lock your reading (a file, or - for standard input)"),
+    "show": (_review_text, "step 2, after lock: the unit's Lean"),
+    "decide": (_review_decide, "record your verdict and comparison"),
+    "author": (_review_text, "step 3, after decide: the author's review"),
+    "submit": (_review_submit, "record your disagreements with it and finish the report"),
+    "status": (_review_status, "your progress on this release's queue"),
+    "export": (_review_export, "write your reports as one file, for the maintainer"),
+}
+
+
 def cmd_review_step(a):
+    """One step of the review protocol, in the reviewer's session (`review_cli.Session`). A step
+    that could not be taken exits 2; with --json, it also prints the refusal as a document."""
     from . import review_cli as rc
     work, _ = _built_work(a)
-    as_json = getattr(a, "json", False)
     try:
         s = rc.Session(work, rc.parse_reviewer(a.reviewer, a.same_family), a.workspace, a.mode)
-        # The workspace the work is kept in (no id until the first step saves it).
-        here = {"id": s.workspace["id"] if s.path.exists() else None, "mode": s.mode}
-        if a.action == "next":
-            u = next(iter(s.open_units(a.order)), None)
-            if as_json:
-                _print_json({"schema": "machinechecked/review-next@1",
-                             "release": s.index["release"], "mode": s.queue.get("mode"),
-                             "workspace": here, "order": a.order,
-                             "unit": u and {k: u.get(k) for k in ("id", "kind", "reason",
-                                                                  "priority")}})
-            else:
-                print(f"{u['id']}  ({u['reason']})" if u else "nothing left to review")
-                for sig in ((u or {}).get("priority") or {}).get("signals") or []:
-                    for q in sig.get("questions") or []:
-                        print(f"  question: {q}")
-        elif a.action == "status":
-            units = s.open_units(a.order)
-            if as_json:
-                _print_json({"schema": "machinechecked/review-status@1",
-                             "release": s.index["release"], "mode": s.queue.get("mode"),
-                             "workspace": here, "reports": len(s.work["reports"]),
-                             "drafts": {i: d["stage"] for i, d in s.work["drafts"].items()},
-                             "order": {"by": a.order, **({"queue": s.queue["order"]}
-                                                         if s.queue.get("order") else {})},
-                             "open": [u["id"] for u in units]})
-                return
-            print(f"{len(s.work['reports'])} report(s), {len(s.work['drafts'])} in progress, "
-                  f"{len(units)} unit(s) left to review (release {s.index['release']})")
-            if here["id"]:
-                print(f"  workspace {here['id']} ({here['mode']}"
-                      + ("; your readings here are not blind" if s.informed else "") + ")")
-            for uid, d in s.work["drafts"].items():
-                print(f"  {uid}: at step '{d['stage']}'")
-            for name, sig in ((s.queue.get("order") or {}).get("signals") or {}).items():
-                if sig.get("state") != "read":
-                    print(f"  order: {name} {sig['state']}: {sig.get('why')}")
-        elif a.action in ("read", "show", "author"):
-            out = getattr(s, a.action)(a.unit, as_json)
-            _print_json(out) if as_json else print(out)
-        elif a.action == "lock":
-            s.lock(a.unit, _text_arg(a.text))
-            print(f"reading recorded (not blind: the session is informed); `review show {a.unit}` "
-                  "shows the Lean" if s.informed else
-                  f"reading locked; `review show {a.unit}` shows the Lean")
-        elif a.action == "decide":
-            s.decide(a.unit, a.verdict, _text_arg(a.comparison), _text_arg(a.detail),
-                     _text_arg(a.witness),
-                     {"coverage": a.coverage, "basis": a.basis,
-                      "argument": _text_arg(a.argument),
-                      "bridge": dict(zip(("theorem", "target"), a.bridge)) if a.bridge else None,
-                      "would_decide": _text_arg(a.would_decide)})
-            print(f"verdict recorded; `review author {a.unit}` shows the author's review")
-        elif a.action == "submit":
-            r = s.submit(a.unit, _text_arg(a.text).strip())
-            print(f"report recorded: {r['unit']['id']}, {r['verdict']['value']}; "
-                  "`review export --out FILE` writes your reports for the maintainer")
-        elif a.action == "export":
-            print(f"wrote {s.export(Path(a.out))}")
+        REVIEW_STEPS[a.action][0](a, s)
     except rc.ReviewError as e:
-        if as_json:
+        if a.json:
             _print_json({"schema": "machinechecked/review-error@1", "ok": False,
                          "error": e.to_json()})
         sys.exit(f"machinechecked: {e}")
@@ -1521,12 +1691,12 @@ def cmd_review_step(a):
         sys.exit(f"machinechecked: {e}")
 
 
-def cmd_review(a):
+def cmd_review_promote(a):
     import shlex
     import subprocess
     from . import promote as pr
     from .pipeline import reassess
-    cfg = cfgmod.load(_config_arg(a))
+    cfg = _load_full(a)
     try:
         steps = pr.plan(cfg, pr.load_reports([Path(f) for f in a.reports]),
                         a.accept_same_family, a.allow_revealed)
@@ -1590,50 +1760,65 @@ def cmd_validate(a):
     print(f"{a.file}: valid {a.schema}")
 
 
-def main(argv=None):
-    name = Path(sys.argv[0]).name
-    p = argparse.ArgumentParser(prog=name if name in ("machinechecked", "prooflens")
-                                else "machinechecked", description=__doc__.split("\n\n")[0],
-                                formatter_class=argparse.RawDescriptionHelpFormatter,
-                                epilog="\n\n".join(__doc__.split("\n\n")[1:]))
-    p.add_argument("--version", action="version", version=f"%(prog)s {tool_version()}")
-    sub = p.add_subparsers(dest="cmd", required=True, metavar="{view,build,check}")
+# -- the command line -------------------------------------------------------------------------
 
-    w = sub.add_parser("view", help="open the reader")
-    w.add_argument("paper", nargs="?",
-                   help="the paper: a .tex (its LaTeX root), a .pdf, or a URL of a PDF; "
-                   "found in the project when not given")
-    w.add_argument("--issues", metavar="OWNER/REPO",
-                        help="the GitHub repository where the reader's Report issue opens reports")
-    w.add_argument("--site-url", help="the public address of the published reader, "
-                        "for links to claims")
-    w.add_argument("--author", help="the name the audit is published under (in audit.json)")
-    w.add_argument("--private-repository", action=argparse.BooleanOptionalAction, default=None,
+PAPER_HELP = ("the paper: a .tex (its LaTeX root), a .pdf, or a URL of a PDF; found in the "
+              "project when not given")
+
+
+def _command(sub, name: str, **kw) -> argparse.ArgumentParser:
+    """A command's parser, opening its `--help` with what it does (`COMMANDS`); `--help` lists
+    it only when it is an everyday command."""
+    if next(g for g, n, _ in COMMANDS if n == name) == EVERYDAY:
+        kw.setdefault("help", _summary(name))
+    kw.setdefault("description", _summary(name))
+    return sub.add_parser(name, **kw)
+
+
+def _config_option(p, shown: bool = True) -> None:
+    """-c CONFIG: the full assessment's configuration. The everyday commands find it, so they
+    do not list it."""
+    p.add_argument("-c", "--config", default=None,
+                   help="the full assessment's configuration (default: machinechecked.toml here)"
+                   if shown else argparse.SUPPRESS)
+
+
+def _reviewer_option(p) -> None:
+    p.add_argument("--as", dest="reviewer", default=os.environ.get("MACHINECHECKED_REVIEWER"),
+                   help="human:NAME or llm:MODEL (default: $MACHINECHECKED_REVIEWER)")
+
+
+def _reader_options(p) -> None:
+    """`view` and `build`: the paper, and what the reader says about the audit."""
+    p.add_argument("paper", nargs="?", help=PAPER_HELP)
+    p.add_argument("--issues", metavar="OWNER/REPO",
+                   help="the GitHub repository where the reader's Report issue opens reports")
+    p.add_argument("--site-url", help="the public address of the published reader, "
+                   "for links to claims")
+    p.add_argument("--author", help="the name the audit is published under (in audit.json)")
+    p.add_argument("--private-repository", action=argparse.BooleanOptionalAction, default=None,
                    help="the Lean repository is private: the reader does not show its name "
                    "(its source links still name it, and open only for people with access)")
-    w.add_argument("-c", "--config", help=argparse.SUPPRESS)
+
+
+def _add_view(sub) -> None:
+    w = _command(sub, "view")
+    _reader_options(w)
+    _config_option(w, shown=False)
     w.add_argument("--port", type=int, default=8017)
     w.add_argument("--no-browser", action="store_true")
     w.add_argument("--web", help=argparse.SUPPRESS)
     w.set_defaults(func=cmd_view)
 
-    b = sub.add_parser("build", help="write the reader as one HTML file to share")
-    b.add_argument("paper", nargs="?",
-                   help="the paper: a .tex (its LaTeX root), a .pdf, or a URL of a PDF; "
-                   "found in the project when not given")
-    b.add_argument("--issues", metavar="OWNER/REPO",
-                        help="the GitHub repository where the reader's Report issue opens reports")
-    b.add_argument("--site-url", help="the public address of the published reader, "
-                        "for links to claims")
-    b.add_argument("--author", help="the name the audit is published under (in audit.json)")
-    b.add_argument("--private-repository", action=argparse.BooleanOptionalAction, default=None,
-                   help="the Lean repository is private: the reader does not show its name "
-                   "(its source links still name it, and open only for people with access)")
+
+def _add_build(sub) -> None:
+    b = _command(sub, "build")
+    _reader_options(b)
     b.add_argument("--out", help="the HTML file (default: .machinechecked/MachineChecked.html, "
                    "which Git ignores; it embeds the paper)")
     b.add_argument("--site", metavar="DIR", help="write the reader as a directory to publish "
                    "(for example on GitHub Pages) instead of one HTML file")
-    b.add_argument("-c", "--config", help=argparse.SUPPRESS)
+    _config_option(b, shown=False)
     b.add_argument("--release", help=argparse.SUPPRESS)
     b.add_argument("--skip-lean", action="store_true", help=argparse.SUPPRESS)
     b.add_argument("--skip-tex", action="store_true", help=argparse.SUPPRESS)
@@ -1655,256 +1840,86 @@ def main(argv=None):
     b.add_argument("--fail-on-violation", action="store_true", help=argparse.SUPPRESS)
     b.set_defaults(func=cmd_build)
 
-    k = sub.add_parser("check", help="report what the Lean side establishes (exit 1 if a "
-                                     "linked declaration is missing or unproved, 2 if the check "
-                                     "could not run)")
-    k.add_argument("paper", nargs="?",
-                   help="the paper: a .tex (its LaTeX root), a .pdf, or a URL of a PDF; "
-                   "found in the project when not given")
+
+def _add_check(sub) -> None:
+    k = _command(sub, "check")
+    k.add_argument("paper", nargs="?", help=PAPER_HELP)
     k.add_argument("--json", action="store_true",
                    help="print every claim's status and links as JSON (for scripts and agents)")
     k.add_argument("--fix-modules", action="store_true",
                    help="with a machinechecked.toml: add to `modules` each project module that "
                         "declares a proposition, proof, witness or definition the claims name "
                         "and the check did not find, then check again")
-    k.add_argument("-c", "--config", help=argparse.SUPPRESS)
+    _config_option(k, shown=False)
     k.add_argument("--web", help=argparse.SUPPRESS)
     k.set_defaults(func=cmd_check)
 
-    # The full assessment's own operations; not listed.
-    t = sub.add_parser("site")
-    t.add_argument("-c", "--config", default=None)
-    t.add_argument("--release")
-    t.add_argument("--web")
-    t.set_defaults(func=cmd_site)
 
-    r = sub.add_parser("reassess")
-    r.add_argument("-c", "--config", default=None)
-    r.add_argument("--release")
-    r.add_argument("--web")
-    r.set_defaults(func=cmd_reassess)
+def _add_review(sub) -> None:
+    rv = _command(sub, "review")
+    rvs = rv.add_subparsers(dest="action", required=True)
+    pm = rvs.add_parser("promote", help="turn review reports into review markers (maintainer)")
+    pm.add_argument("reports", nargs="+", help="files exported from the review queue, or directories of them")
+    _config_option(pm)
+    pm.add_argument("--yes", action="store_true", help="write without asking")
+    pm.add_argument("--accept-same-family", action="store_true",
+                    help="accept a model reviewer of the author's family, or of unknown family")
+    pm.add_argument("--allow-revealed", action="store_true",
+                    help="accept a report whose reviewer had seen the unit's Lean or author's "
+                         "review before writing their reading")
+    pm.set_defaults(func=cmd_review_promote)
+    for name, (_, help_) in REVIEW_STEPS.items():
+        sp = rvs.add_parser(name, help=help_)
+        if name not in ("next", "status", "export"):
+            sp.add_argument("unit", help="a unit id of the queue, e.g. spec:Foo.thm_bar")
+        if name in ("lock", "submit"):
+            sp.add_argument("text", help="a file holding your text, or - to read it from standard input")
+        if name == "decide":
+            sp.add_argument("verdict")
+            sp.add_argument("comparison", help="a file holding your comparison, or -")
+            sp.add_argument("--detail", help="a file holding what the verdict needs said")
+            sp.add_argument("--witness", help="a file holding your note on the witness")
+            sp.add_argument("--coverage", help="how far the unit's Lean states the claim, agreeing "
+                            "with the verdict: full or partial (a match); partial, changed or "
+                            "related (a problem); unresolved (cannot determine)")
+            sp.add_argument("--basis", help="how that coverage is supported: direct (one Lean "
+                            "statement), reviewed_composition (your argument) or checked_bridge")
+            sp.add_argument("--argument", help="a file holding a reviewed composition's argument")
+            sp.add_argument("--bridge", nargs=2, metavar=("THEOREM", "TARGET"),
+                            help="a checked bridge: one of the unit's theorems, whose type is "
+                                 "exactly TARGET")
+            sp.add_argument("--would-decide", help="a file holding what would decide an "
+                            "unresolved coverage")
+        if name == "export":
+            sp.add_argument("--out", required=True)
+        if name in ("next", "status", "read", "show", "author"):
+            sp.add_argument("--json", action="store_true",
+                            help="print one JSON document holding only what this step shows")
+        else:
+            sp.set_defaults(json=False)
+        if name in ("next", "status"):
+            sp.add_argument("--order", choices=["priority", "document", "informed"],
+                            default="priority",
+                            help="priority: changed evidence and proof use first (default); "
+                                 "document: the paper's order; informed: also what the "
+                                 "auditors' workspaces record as open, which records that "
+                                 "you have seen prior interpretations")
+        _reviewer_option(sp)
+        sp.add_argument("--same-family", choices=["yes", "no", "unknown"], default="unknown",
+                        help="for a model: whether it is of the statements' author's family")
+        sp.add_argument("--workspace", metavar="ID",
+                        help="review in this workspace of yours (default: your first one, which "
+                             "the review page under `machinechecked view` uses too)")
+        sp.add_argument("--mode", choices=["independent", "informed"],
+                        help="review in your workspace of this mode, opening one if you have "
+                             "none; informed: you have seen the Lean and earlier "
+                             "interpretations, so no step is locked and the report says so")
+        _config_option(sp)
+        sp.set_defaults(func=cmd_review_step)
 
-    ch = sub.add_parser(
-        "changes", help="what changed between two releases and which evidence it reopens",
-        description="Compare two releases of the full assessment (by default the latest and "
-        "the one before it): each claim's passage, its Lean statements and definitions, each "
-        "build's status, and every review the later build no longer counts, with the change "
-        "it depends on and the question a new reading answers. Nothing is changed.")
-    ch.add_argument("-c", "--config", default=None)
-    ch.add_argument("--from", dest="from_release", metavar="RELEASE",
-                    help="the earlier release (default: the one before --to)")
-    ch.add_argument("--to", dest="to_release", metavar="RELEASE",
-                    help="the later release (default: the latest)")
-    ch.add_argument("--from-source", metavar="DIR",
-                    help="the manuscript folder of the earlier revision, to show changed text "
-                    "(with --map, also git:REV: the configured folder as committed at REV)")
-    ch.add_argument("--to-source", metavar="DIR",
-                    help="the manuscript folder of the later revision, to show changed text "
-                    "(with --map, also git:REV)")
-    ch.add_argument("--workspace", metavar="ID",
-                    help="also list this workspace's records that are no longer current (with "
-                    "--map: its findings each paper change reopens, with the change and what "
-                    "they rest on)")
-    ch.add_argument("--save", action="store_true",
-                    help="with --map and --workspace: keep the version map in the workspace, for "
-                    "the reader, `workspace show` and its export")
-    ch.add_argument("--map", action="store_true",
-                    help="the version map: match each claim of the earlier paper revision to "
-                    "the later one by its passage (unchanged, moved, changed, context-changed, "
-                    "removed, new or ambiguous), with each release's own status and reviews; "
-                    "the manuscripts are read from --from-source and --to-source, else at each "
-                    "release's revision")
-    ch.add_argument("--paper", metavar="ID", help="with --map: the paper (needed when the "
-                    "configuration has several)")
-    ch.add_argument("--match", action="append", default=[], metavar="EARLIER=LATER",
-                    help="with --map: the maintainer's match of an earlier claim that no passage "
-                    "or label matched to a later claim nothing else is matched to; repeatable")
-    ch.add_argument("--all", action="store_true", help="list unchanged claims too")
-    ch.add_argument("--json", action="store_true")
-    ch.set_defaults(func=cmd_changes)
 
-    n = sub.add_parser("bundle")
-    n.add_argument("-c", "--config", default=None)
-    n.add_argument("--site")
-    n.add_argument("--out", required=True)
-    n.add_argument("--title")
-    n.set_defaults(func=cmd_bundle)
-
-    e = sub.add_parser("export")
-    e.add_argument("-c", "--config", default=None)
-    e.add_argument("--release")
-    e.add_argument("--out", required=True)
-    e.add_argument("--web")
-    e.add_argument("--paper", metavar="ID",
-                   help="export only this paper: its claims, the declarations they depend on and "
-                   "their reviews; the export is also scanned for the other papers' material")
-    e.add_argument("--data-only", action="store_true",
-                   help="write the audit's data only, without the reader (for a site that "
-                   "reads it with its own reader, such as machinechecked.org)")
-    e.set_defaults(func=cmd_export)
-
-    # The full assessment's stored evidence; maintenance, kept out of the command list.
-    evp = sub.add_parser("evidence", description="List and prune the full assessment's stored "
-                         "evidence (one file per build, in .machinechecked/evidence/).")
-    evs = evp.add_subparsers(dest="action", required=True)
-    eli = evs.add_parser("list", help="each release, newest first, with the size of its "
-                         "evidence, or when it was pruned")
-    epr = evs.add_parser(
-        "prune", help="delete the evidence no release still needs, with its releases",
-        description="Delete stored evidence with the release records that name it, keeping the "
-        "newest KEEP distinct records (the latest, which `reassess`, `site` and `export` read "
-        "and the next build compares with, and the one the latest is compared with), the "
-        "evidence of every release given its own name with `build --release NAME`, of the "
-        "releases a workspace's version map compares, and what a kept record was "
-        "reassessed from. What was pruned is recorded in .machinechecked/pruned.json, so a "
-        "comparison with a pruned release says that its evidence was pruned.")
-    epr.add_argument("--keep", type=int, default=2,
-                     help="how many of the newest evidence records to keep (at least 2; "
-                     "default 2)")
-    epr.add_argument("--dry-run", action="store_true", help="list what would be deleted")
-    for x in (eli, epr):
-        x.add_argument("-c", "--config", default=None, help=argparse.SUPPRESS)
-    evp.set_defaults(func=cmd_evidence)
-
-    ca = sub.add_parser("cache", help="save and restore the Lean build as release assets")
-    cas = ca.add_subparsers(dest="action", required=True)
-    cs = cas.add_parser("save", help="build, then archive the build output in .lean-cache/")
-    cs.add_argument("--target", action="append", default=[],
-                    help="a Lake target to build and archive (default: the default targets)")
-    cs.add_argument("--pin-file", help=argparse.SUPPRESS)
-    cp = cas.add_parser("publish", help="upload the saved archive to the build-cache release")
-    cp.add_argument("repo", metavar="OWNER/REPO")
-    cpr = cas.add_parser("prune", help="delete all but the newest saved builds")
-    cpr.add_argument("repo", metavar="OWNER/REPO")
-    cpr.add_argument("--keep", type=int, required=True,
-                     help="how many to keep per package, platform and Lean version")
-    cpr.add_argument("--project", help=argparse.SUPPRESS)
-    cr = cas.add_parser("restore", help="restore the nearest compatible saved build")
-    cr.add_argument("repo", nargs="?", metavar="OWNER/REPO")
-    cr.add_argument("--from", dest="from_dir", metavar="DIR",
-                    help="restore from a directory of saved archives instead of a release")
-    cr.add_argument("--build", action="store_true",
-                    help="then run `lake build --rehash` (rebuilds only what changed)")
-    for x in (cs, cp, cr):
-        x.add_argument("--project", help="the Lean project (default: the one here)")
-    for x in (cs, cp):
-        x.add_argument("--out", help="where archives are saved (default: .lean-cache/)")
-    ca.set_defaults(func=cmd_cache)
-
-    rp = sub.add_parser(
-        "replay", help="run Comparator and record the replay for the assessment",
-        description="Run Comparator (`lake env comparator CONFIG`) in the Lean project and record "
-        "the replay. Comparator's trust model asks for a checking environment in which the "
-        "solution was not compiled before, `landrun` on PATH, and the whole run under "
-        "`systemd-run --user --property=RestrictAddressFamilies=~AF_UNIX`. This command starts "
-        "that sandbox guard itself when the machine has `systemd-run` and a user systemd "
-        "manager that applies it (or runs directly when it is already under it); --no-guard "
-        "opts out. A replay without the guard still counts, and the audit says it was replayed "
-        "without the sandbox guard. The record says how the run went: the guard, the systemd "
-        "unit, the Landlock ABI, and which comparator, landrun, lean4export and nanoda_bin it "
-        "used, with their SHA-256.")
-    rp.add_argument("comparator_config", metavar="CONFIG",
-                    help="the Comparator configuration (its theorem_names are the proofs "
-                    "replayed)")
-    rp.add_argument("-c", "--config", default=None, help=argparse.SUPPRESS)
-    rp.add_argument("--out", help="the record (default: comparator_log in machinechecked.toml)")
-    rp.add_argument("--comparator", default="comparator", help="the Comparator program")
-    rp.add_argument("--no-guard", action="store_true",
-                    help="run Comparator without the systemd-run sandbox guard")
-    rp.set_defaults(func=cmd_replay)
-
-    ins = sub.add_parser("inspect", help="what a Lean declaration depends on, proofs included")
-    ins.add_argument("name", help="the declaration's full name, e.g. Foo.main_theorem")
-    ins.add_argument("--module", help="the module that declares it, when several declare the name")
-    ins.add_argument("--dependencies", action="store_true",
-                     help="list every declaration of the project it depends on")
-    ins.add_argument("--used-by", action="store_true",
-                     help="where it is used instead: the declarations that use it, each "
-                          "application's arguments and the source of each premise")
-    ins.add_argument("--in", dest="within", metavar="CALLER",
-                     help="with --used-by: only the applications inside this declaration, or "
-                          "the one application with this id (app:CALLER:N), each with every "
-                          "local of its context")
-    ins.add_argument("--json", action="store_true",
-                     help="print one JSON document (for scripts and agents)")
-    ins.add_argument("--project", help="the Lean project (default: the one here)")
-    ins.add_argument("--refresh", action="store_true", help=argparse.SUPPRESS)
-    ins.set_defaults(func=cmd_inspect)
-
-    co = sub.add_parser("compare", help="a claim's paper passage, Lean statements and definitions, "
-                        "from the last build (for scripts and agents)")
-    co.add_argument("claim", nargs="?", help="the claim: its id (P:thm:main), key (thm:main) or "
-                    "number (\"Theorem 2.1\")")
-    co.add_argument("--stage", choices=["read", "compare", "informed"], default="informed",
-                    help="read: the paper only; compare: and the Lean; informed (default): and "
-                    "what people have recorded (notes, reviews, statuses)")
-    co.add_argument("--query", nargs=2, metavar=("OP", "TARGET"),
-                    help="a targeted query: definition NAME, mentions NAME, dependencies NAME, "
-                    "search CLAIM-OR-TEXT (the project's declarations by statement content), "
-                    "proof-facts NAME (the facts inside its proof), uses NAME (where it is "
-                    "applied, with the source of each premise), composition CLAIM (the "
-                    "auditors' compositions for it, with --workspace for one workspace), impact "
-                    "NAME (how each main result uses it, and which claims' Lean uses it), "
-                    "expansion KEY (a definition at the arguments of one application, by the "
-                    "key a statement gives it)")
-    co.add_argument("--in", dest="within", metavar="CALLER",
-                    help="with uses: only the applications inside this declaration, or the one "
-                    "application with this id (app:CALLER:N), each with every local of its "
-                    "context")
-    co.add_argument("--match", metavar="TEXT",
-                    help="with proof-facts: rank the facts by the symbols they share with TEXT")
-    co.add_argument("--main", action="append", metavar="NAME",
-                    help="with impact: a main result to trace from, a declaration or a claim "
-                    "(its linked Lean); repeat for several (default: those `workspace main` "
-                    "saved, else the declarations linked to the paper's theorems)")
-    co.add_argument("--limit", type=int, help="return at most this many definitions or results")
-    co.add_argument("--after", metavar="ID", help="continue a list after this item")
-    co.add_argument("--workspace", metavar="ID", help="include this workspace's requirements and "
-                    "compositions of the claim (informed stage only); with --query composition, "
-                    "only this workspace's; with --query impact, the main results it saves")
-    co.add_argument("--all-libraries", action="store_true",
-                    help="with --query search: search every library of the project, also those "
-                    "the paper's build leaves out because formalization.yaml maps them only to "
-                    "other papers (Lean indexes what the facts store does not hold)")
-    co.add_argument("--json", action="store_true", help="print one JSON document")
-    co.add_argument("-c", "--config", default=None, help=argparse.SUPPRESS)
-    co.set_defaults(func=cmd_compare)
-
-    sy = sub.add_parser("symbol", help="link a symbol of the paper to a Lean object (an assertion "
-                        "under your name; display only)")
-    sys_ = sy.add_subparsers(dest="action", required=True)
-    for name in ("add", "remove", "list"):
-        p_ = sys_.add_parser(name)
-        if name != "list":
-            p_.add_argument("claim", help="the claim id, e.g. P:thm:main")
-            p_.add_argument("tex", help="the symbol as the paper's TeX writes it, e.g. '\\nu'")
-            p_.add_argument("--object", dest="paper_object",
-                            help="the object of the paper the symbol's occurrences are (with "
-                                 "remove: only that object's link)")
-        if name == "add":
-            p_.add_argument("--occurrence", type=int, action="append",
-                            help="link only this occurrence of the symbol, numbered from 1 in "
-                                 "reading order (repeat for several; needs --object)")
-            p_.add_argument("decl", help="the claim's Lean statement")
-            p_.add_argument("--var", help="the variable it is (a binder's name or index)")
-            p_.add_argument("--type-of", dest="type_of", help="the binder whose type it is")
-            p_.add_argument("--term", help="the sub-term it is, as WHERE#K: b:<binder>, c (the "
-                                           "conclusion) or l:<part>, and the sub-term's number")
-            p_.add_argument("--at", help="the sub-term it is, by its identity in the proposition "
-                                         "(the `id` the reader's data gives it)")
-            p_.add_argument("--as", dest="reviewer",
-                            default=os.environ.get("MACHINECHECKED_REVIEWER"),
-                            help="human:NAME or llm:MODEL (default: $MACHINECHECKED_REVIEWER)")
-        p_.add_argument("-c", "--config", default=None)
-        p_.set_defaults(func=cmd_symbol)
-
-    s = sub.add_parser("serve")
-    s.add_argument("-c", "--config", default=None)
-    s.add_argument("--dir")
-    s.add_argument("--port", type=int, default=8017)
-    s.set_defaults(func=cmd_serve)
-
-    lk = sub.add_parser("link")
+def _add_link(sub) -> None:
+    lk = _command(sub, "link")
     lk.add_argument("claim", help="the claim: its id or key (thm:main), or its number "
                     "(\"Lemma 2.3\", or 2.3 when only one claim has it)")
     lk.add_argument("decls", nargs="*", metavar="DECL",
@@ -1943,10 +1958,12 @@ def main(argv=None):
     lk.add_argument("--paper", help="the paper (default: the one found)")
     lk.add_argument("--dry-run", action="store_true", help="show the change, write nothing")
     lk.add_argument("--json", action="store_true", help="print one JSON document")
-    lk.add_argument("-c", "--config", help=argparse.SUPPRESS)
+    _config_option(lk, shown=False)
     lk.set_defaults(func=cmd_link)
 
-    ws = sub.add_parser("workspace")
+
+def _add_workspace(sub) -> None:
+    ws = _command(sub, "workspace")
     wss = ws.add_subparsers(dest="action", required=True)
     for name, help_ in {"open": "open or resume your workspace",
                         "list": "the workspaces of this project",
@@ -1993,87 +2010,117 @@ def main(argv=None):
             sp.add_argument("--dry-run", action="store_true", help="show the result, save nothing")
         if name == "export":
             sp.add_argument("--out", required=True)
-        sp.add_argument("--as", dest="reviewer", default=os.environ.get("MACHINECHECKED_REVIEWER"),
-                        help="human:NAME or llm:MODEL (default: $MACHINECHECKED_REVIEWER)")
+        _reviewer_option(sp)
         sp.add_argument("--same-family", choices=["yes", "no", "unknown"], default="unknown",
                         help=argparse.SUPPRESS)
-        sp.add_argument("-c", "--config", default=None)
+        _config_option(sp)
         sp.set_defaults(func=cmd_workspace)
 
-    rv = sub.add_parser("review")
-    rvs = rv.add_subparsers(dest="action", required=True)
-    pm = rvs.add_parser("promote", help="turn review reports into review markers (maintainer)")
-    pm.add_argument("reports", nargs="+", help="files exported from the review queue, or directories of them")
-    pm.add_argument("-c", "--config", default=None)
-    pm.add_argument("--yes", action="store_true", help="write without asking")
-    pm.add_argument("--accept-same-family", action="store_true",
-                    help="accept a model reviewer of the author's family, or of unknown family")
-    pm.add_argument("--allow-revealed", action="store_true",
-                    help="accept a report whose reviewer had seen the unit's Lean or author's "
-                         "review before writing their reading")
-    pm.set_defaults(func=cmd_review)
-    # The protocol's steps, for a reviewer without a browser (`review_cli`).
-    steps = {
-        "next": "the next unit to review",
-        "read": "step 1: the paper's statement of a unit",
-        "lock": "lock your reading (a file, or - for standard input)",
-        "show": "step 2, after lock: the unit's Lean",
-        "decide": "record your verdict and comparison",
-        "author": "step 3, after decide: the author's review",
-        "submit": "record your disagreements with it and finish the report",
-        "status": "your progress on this release's queue",
-        "export": "write your reports as one file, for the maintainer",
-    }
-    for name, help_ in steps.items():
-        sp = rvs.add_parser(name, help=help_)
-        if name not in ("next", "status", "export"):
-            sp.add_argument("unit", help="a unit id of the queue, e.g. spec:Foo.thm_bar")
-        if name in ("lock", "submit"):
-            sp.add_argument("text", help="a file holding your text, or - to read it from standard input")
-        if name == "decide":
-            sp.add_argument("verdict")
-            sp.add_argument("comparison", help="a file holding your comparison, or -")
-            sp.add_argument("--detail", help="a file holding what the verdict needs said")
-            sp.add_argument("--witness", help="a file holding your note on the witness")
-            sp.add_argument("--coverage", help="how far the unit's Lean states the claim, agreeing "
-                            "with the verdict: full or partial (a match); partial, changed or "
-                            "related (a problem); unresolved (cannot determine)")
-            sp.add_argument("--basis", help="how that coverage is supported: direct (one Lean "
-                            "statement), reviewed_composition (your argument) or checked_bridge")
-            sp.add_argument("--argument", help="a file holding a reviewed composition's argument")
-            sp.add_argument("--bridge", nargs=2, metavar=("THEOREM", "TARGET"),
-                            help="a checked bridge: one of the unit's theorems, whose type is "
-                                 "exactly TARGET")
-            sp.add_argument("--would-decide", help="a file holding what would decide an "
-                            "unresolved coverage")
-        if name == "export":
-            sp.add_argument("--out", required=True)
-        if name in ("next", "status", "read", "show", "author"):
-            sp.add_argument("--json", action="store_true",
-                            help="print one JSON document holding only what this step shows")
-        if name in ("next", "status"):
-            sp.add_argument("--order", choices=["priority", "document", "informed"],
-                            default="priority",
-                            help="priority: changed evidence and proof use first (default); "
-                                 "document: the paper's order; informed: also what the "
-                                 "auditors' workspaces record as open, which records that "
-                                 "you have seen prior interpretations")
-        sp.add_argument("--as", dest="reviewer", default=os.environ.get("MACHINECHECKED_REVIEWER"),
-                        help="human:NAME or llm:MODEL (default: $MACHINECHECKED_REVIEWER)")
-        sp.add_argument("--same-family", choices=["yes", "no", "unknown"], default="unknown",
-                        help="for a model: whether it is of the statements' author's family")
-        sp.add_argument("--workspace", metavar="ID",
-                        help="review in this workspace of yours (default: your first one, which "
-                             "the review page under `machinechecked view` uses too)")
-        sp.add_argument("--mode", choices=["independent", "informed"],
-                        help="review in your workspace of this mode, opening one if you have "
-                             "none; informed: you have seen the Lean and earlier "
-                             "interpretations, so no step is locked and the report says so")
-        sp.add_argument("-c", "--config", default=None)
-        sp.set_defaults(func=cmd_review_step)
 
-    iv = sub.add_parser(
-        "inventory", help="pin the claims' source passages, and retire stale readings",
+def _add_compare(sub) -> None:
+    co = _command(sub, "compare")
+    co.add_argument("claim", nargs="?", help="the claim: its id (P:thm:main), key (thm:main) or "
+                    "number (\"Theorem 2.1\")")
+    co.add_argument("--stage", choices=["read", "compare", "informed"], default="informed",
+                    help="read: the paper only; compare: and the Lean; informed (default): and "
+                    "what people have recorded (notes, reviews, statuses)")
+    co.add_argument("--query", nargs=2, metavar=("OP", "TARGET"),
+                    help="a targeted query: definition NAME, mentions NAME, dependencies NAME, "
+                    "search CLAIM-OR-TEXT (the project's declarations by statement content), "
+                    "proof-facts NAME (the facts inside its proof), uses NAME (where it is "
+                    "applied, with the source of each premise), composition CLAIM (the "
+                    "auditors' compositions for it, with --workspace for one workspace), impact "
+                    "NAME (how each main result uses it, and which claims' Lean uses it), "
+                    "expansion KEY (a definition at the arguments of one application, by the "
+                    "key a statement gives it)")
+    co.add_argument("--in", dest="within", metavar="CALLER",
+                    help="with uses: only the applications inside this declaration, or the one "
+                    "application with this id (app:CALLER:N), each with every local of its "
+                    "context")
+    co.add_argument("--match", metavar="TEXT",
+                    help="with proof-facts: rank the facts by the symbols they share with TEXT")
+    co.add_argument("--main", action="append", metavar="NAME",
+                    help="with impact: a main result to trace from, a declaration or a claim "
+                    "(its linked Lean); repeat for several (default: those `workspace main` "
+                    "saved, else the declarations linked to the paper's theorems)")
+    co.add_argument("--limit", type=int, help="return at most this many definitions or results")
+    co.add_argument("--after", metavar="ID", help="continue a list after this item")
+    co.add_argument("--workspace", metavar="ID", help="include this workspace's requirements and "
+                    "compositions of the claim (informed stage only); with --query composition, "
+                    "only this workspace's; with --query impact, the main results it saves")
+    co.add_argument("--all-libraries", action="store_true",
+                    help="with --query search: search every library of the project, also those "
+                    "the paper's build leaves out because formalization.yaml maps them only to "
+                    "other papers (Lean indexes what the facts store does not hold)")
+    co.add_argument("--json", action="store_true", help="print one JSON document")
+    _config_option(co, shown=False)
+    co.set_defaults(func=cmd_compare)
+
+
+def _add_inspect(sub) -> None:
+    ins = _command(sub, "inspect")
+    ins.add_argument("name", help="the declaration's full name, e.g. Foo.main_theorem")
+    ins.add_argument("--module", help="the module that declares it, when several declare the name")
+    ins.add_argument("--dependencies", action="store_true",
+                     help="list every declaration of the project it depends on")
+    ins.add_argument("--used-by", action="store_true",
+                     help="where it is used instead: the declarations that use it, each "
+                          "application's arguments and the source of each premise")
+    ins.add_argument("--in", dest="within", metavar="CALLER",
+                     help="with --used-by: only the applications inside this declaration, or "
+                          "the one application with this id (app:CALLER:N), each with every "
+                          "local of its context")
+    ins.add_argument("--json", action="store_true",
+                     help="print one JSON document (for scripts and agents)")
+    ins.add_argument("--project", help="the Lean project (default: the one here)")
+    ins.add_argument("--refresh", action="store_true", help=argparse.SUPPRESS)
+    ins.set_defaults(func=cmd_inspect)
+
+
+def _add_changes(sub) -> None:
+    ch = _command(
+        sub, "changes",
+        description="Compare two releases of the full assessment (by default the latest and "
+        "the one before it): each claim's passage, its Lean statements and definitions, each "
+        "build's status, and every review the later build no longer counts, with the change "
+        "it depends on and the question a new reading answers. Nothing is changed.")
+    _config_option(ch)
+    ch.add_argument("--from", dest="from_release", metavar="RELEASE",
+                    help="the earlier release (default: the one before --to)")
+    ch.add_argument("--to", dest="to_release", metavar="RELEASE",
+                    help="the later release (default: the latest)")
+    ch.add_argument("--from-source", metavar="DIR",
+                    help="the manuscript folder of the earlier revision, to show changed text "
+                    "(with --map, also git:REV: the configured folder as committed at REV)")
+    ch.add_argument("--to-source", metavar="DIR",
+                    help="the manuscript folder of the later revision, to show changed text "
+                    "(with --map, also git:REV)")
+    ch.add_argument("--workspace", metavar="ID",
+                    help="also list this workspace's records that are no longer current (with "
+                    "--map: its findings each paper change reopens, with the change and what "
+                    "they rest on)")
+    ch.add_argument("--save", action="store_true",
+                    help="with --map and --workspace: keep the version map in the workspace, for "
+                    "the reader, `workspace show` and its export")
+    ch.add_argument("--map", action="store_true",
+                    help="the version map: match each claim of the earlier paper revision to "
+                    "the later one by its passage (unchanged, moved, changed, context-changed, "
+                    "removed, new or ambiguous), with each release's own status and reviews; "
+                    "the manuscripts are read from --from-source and --to-source, else at each "
+                    "release's revision")
+    ch.add_argument("--paper", metavar="ID", help="with --map: the paper (needed when the "
+                    "configuration has several)")
+    ch.add_argument("--match", action="append", default=[], metavar="EARLIER=LATER",
+                    help="with --map: the maintainer's match of an earlier claim that no passage "
+                    "or label matched to a later claim nothing else is matched to; repeatable")
+    ch.add_argument("--all", action="store_true", help="list unchanged claims too")
+    ch.add_argument("--json", action="store_true")
+    ch.set_defaults(func=cmd_changes)
+
+
+def _add_inventory(sub) -> None:
+    iv = _command(
+        sub, "inventory",
         description="regions: hash line pins as regions at the revision they were pinned at "
         "(docs/SOURCE_REGIONS.md); rebound: change the bounds of claims' regions there; repin: "
         "move the claims to a new revision of the paper; retire: remove the readings review markers "
@@ -2081,17 +2128,221 @@ def main(argv=None):
         "Each prints a plan, and changes files only with --write; pass --help after the action "
         "for its options.")
     iv.add_argument("action", choices=sorted(INVENTORY))
-    iv.add_argument("-c", "--config", default=None, help=argparse.SUPPRESS)
+    _config_option(iv, shown=False)
     iv.add_argument("rest", nargs=argparse.REMAINDER)
     iv.set_defaults(func=cmd_inventory)
 
-    v = sub.add_parser("validate")
+
+def _add_stored_release(sub) -> None:
+    """`site` and `reassess`: the reader again from stored evidence, without Lean or TeX."""
+    for name in ("site", "reassess"):
+        t = _command(sub, name)
+        _config_option(t)
+        t.add_argument("--release", help="the release (default: the latest)" if name == "site"
+                       else "the name of the release it writes (default: r- and its evidence "
+                       "id, or when nothing changed the release it read)")
+        t.add_argument("--web", help=argparse.SUPPRESS)
+        t.set_defaults(func=cmd_site)
+
+
+def _add_bundle(sub) -> None:
+    n = _command(sub, "bundle")
+    _config_option(n)
+    n.add_argument("--site", help="the site directory (default: the last build's)")
+    n.add_argument("--out", required=True, help="the HTML file")
+    n.add_argument("--title", help="the page's title")
+    n.set_defaults(func=cmd_bundle)
+
+
+def _add_export(sub) -> None:
+    e = _command(sub, "export")
+    _config_option(e)
+    e.add_argument("--release", help="the release (default: the latest)")
+    e.add_argument("--out", required=True, help="the directory to write")
+    e.add_argument("--web", help=argparse.SUPPRESS)
+    e.add_argument("--paper", metavar="ID",
+                   help="export only this paper: its claims, the declarations they depend on and "
+                   "their reviews; the export is also scanned for the other papers' material")
+    e.add_argument("--data-only", action="store_true",
+                   help="write the audit's data only, without the reader (for a site that "
+                   "reads it with its own reader, such as machinechecked.org)")
+    e.set_defaults(func=cmd_export)
+
+
+def _add_serve(sub) -> None:
+    s = _command(sub, "serve")
+    _config_option(s)
+    s.add_argument("--dir", help="the directory to serve (default: the last build's site)")
+    s.add_argument("--port", type=int, default=8017)
+    s.set_defaults(func=cmd_serve)
+
+
+def _add_evidence(sub) -> None:
+    evp = _command(sub, "evidence", description="List and prune the full assessment's stored "
+                   "evidence (one file per build, in .machinechecked/evidence/).")
+    evs = evp.add_subparsers(dest="action", required=True)
+    eli = evs.add_parser("list", help="each release, newest first, with the size of its "
+                         "evidence, or when it was pruned")
+    epr = evs.add_parser(
+        "prune", help="delete the evidence no release still needs, with its releases",
+        description="Delete stored evidence with the release records that name it, keeping the "
+        "newest KEEP distinct records (the latest, which `reassess`, `site` and `export` read "
+        "and the next build compares with, and the one the latest is compared with), the "
+        "evidence of every release given its own name with `build --release NAME`, of the "
+        "releases a workspace's version map compares, and what a kept record was "
+        "reassessed from. What was pruned is recorded in .machinechecked/pruned.json, so a "
+        "comparison with a pruned release says that its evidence was pruned.")
+    epr.add_argument("--keep", type=int, default=2,
+                     help="how many of the newest evidence records to keep (at least 2; "
+                     "default 2)")
+    epr.add_argument("--dry-run", action="store_true", help="list what would be deleted")
+    for x in (eli, epr):
+        _config_option(x)
+    evp.set_defaults(func=cmd_evidence)
+
+
+def _add_symbol(sub) -> None:
+    sy = _command(sub, "symbol")
+    sys_ = sy.add_subparsers(dest="action", required=True)
+    for name in ("add", "remove", "list"):
+        p_ = sys_.add_parser(name)
+        if name != "list":
+            p_.add_argument("claim", help="the claim id, e.g. P:thm:main")
+            p_.add_argument("tex", help="the symbol as the paper's TeX writes it, e.g. '\\nu'")
+            p_.add_argument("--object", dest="paper_object",
+                            help="the object of the paper the symbol's occurrences are (with "
+                                 "remove: only that object's link)")
+        if name == "add":
+            p_.add_argument("--occurrence", type=int, action="append",
+                            help="link only this occurrence of the symbol, numbered from 1 in "
+                                 "reading order (repeat for several; needs --object)")
+            p_.add_argument("decl", help="the claim's Lean statement")
+            p_.add_argument("--var", help="the variable it is (a binder's name or index)")
+            p_.add_argument("--type-of", dest="type_of", help="the binder whose type it is")
+            p_.add_argument("--term", help="the sub-term it is, as WHERE#K: b:<binder>, c (the "
+                                           "conclusion) or l:<part>, and the sub-term's number")
+            p_.add_argument("--at", help="the sub-term it is, by its identity in the proposition "
+                                         "(the `id` the reader's data gives it)")
+            _reviewer_option(p_)
+        _config_option(p_)
+        p_.set_defaults(func=cmd_symbol)
+
+
+def _add_replay(sub) -> None:
+    rp = _command(
+        sub, "replay",
+        description="Run Comparator (`lake env comparator CONFIG`) in the Lean project and record "
+        "the replay. Comparator's trust model asks for a checking environment in which the "
+        "solution was not compiled before, `landrun` on PATH, and the whole run under "
+        "`systemd-run --user --property=RestrictAddressFamilies=~AF_UNIX`. This command starts "
+        "that sandbox guard itself when the machine has `systemd-run` and a user systemd "
+        "manager that applies it (or runs directly when it is already under it); --no-guard "
+        "opts out. A replay without the guard still counts, and the audit says it was replayed "
+        "without the sandbox guard. The record says how the run went: the guard, the systemd "
+        "unit, the Landlock ABI, and which comparator, landrun, lean4export and nanoda_bin it "
+        "used, with their SHA-256.")
+    rp.add_argument("comparator_config", metavar="CONFIG",
+                    help="the Comparator configuration (its theorem_names are the proofs "
+                    "replayed)")
+    _config_option(rp)
+    rp.add_argument("--out", help="the record (default: comparator_log in machinechecked.toml)")
+    rp.add_argument("--comparator", default="comparator", help="the Comparator program")
+    rp.add_argument("--no-guard", action="store_true",
+                    help="run Comparator without the systemd-run sandbox guard")
+    rp.set_defaults(func=cmd_replay)
+
+
+def _add_cache(sub) -> None:
+    ca = _command(sub, "cache")
+    cas = ca.add_subparsers(dest="action", required=True)
+    cs = cas.add_parser("save", help="build, then archive the build output in .lean-cache/")
+    cs.add_argument("--target", action="append", default=[],
+                    help="a Lake target to build and archive (default: the default targets)")
+    cs.add_argument("--pin-file", help=argparse.SUPPRESS)
+    cp = cas.add_parser("publish", help="upload the saved archive to the build-cache release")
+    cp.add_argument("repo", metavar="OWNER/REPO")
+    cpr = cas.add_parser("prune", help="delete all but the newest saved builds")
+    cpr.add_argument("repo", metavar="OWNER/REPO")
+    cpr.add_argument("--keep", type=int, required=True,
+                     help="how many to keep per package, platform and Lean version")
+    cpr.add_argument("--project", help=argparse.SUPPRESS)
+    cr = cas.add_parser("restore", help="restore the nearest compatible saved build")
+    cr.add_argument("repo", nargs="?", metavar="OWNER/REPO")
+    cr.add_argument("--from", dest="from_dir", metavar="DIR",
+                    help="restore from a directory of saved archives instead of a release")
+    cr.add_argument("--build", action="store_true",
+                    help="then run `lake build --rehash` (rebuilds only what changed)")
+    for x in (cs, cp, cr):
+        x.add_argument("--project", help="the Lean project (default: the one here)")
+    for x in (cs, cp):
+        x.add_argument("--out", help="where archives are saved (default: .lean-cache/)")
+    ca.set_defaults(func=cmd_cache)
+
+
+def _add_validate(sub) -> None:
+    v = _command(sub, "validate")
     v.add_argument("file")
     v.add_argument("--schema", required=True,
                    choices=["inventory", "evidence", "manifest-index", "manifest-claim"])
     v.set_defaults(func=cmd_validate)
 
-    a = p.parse_args(argv)
+
+def _command_list(prog: str) -> str:
+    """`help --all`: every command by group, with what it does."""
+    import textwrap
+    width = max(len(n) for _, n, _ in COMMANDS) + 2
+    out, group = [], None
+    for g, name, what in COMMANDS:
+        if g != group:
+            out += ([""] if out else []) + [f"{g}:"]
+            group = g
+        out += textwrap.wrap(what, 98, initial_indent=f"  {name:<{width}}",
+                             subsequent_indent=" " * (width + 2))
+    return "\n".join(out + ["", f"`{prog} COMMAND --help` gives a command's options."])
+
+
+def cmd_help(a, parser: argparse.ArgumentParser, commands: dict) -> None:
+    """`help`: the everyday commands, as --help does; with --all, every command; with a command,
+    its options, as COMMAND --help does."""
+    if a.command:
+        if a.command not in commands:
+            sys.exit(f"no command {a.command!r}: `{parser.prog} help --all` lists them")
+        commands[a.command].print_help()
+    elif a.all:
+        print(_command_list(parser.prog))
+    else:
+        parser.print_help()
+
+
+def _parser() -> argparse.ArgumentParser:
+    import textwrap
+    name = Path(sys.argv[0]).name
+    prog = name if name in ("machinechecked", "prooflens") else "machinechecked"
+    further = [n for g, n, _ in COMMANDS if g != EVERYDAY]
+    epilog = ("\n\n".join(__doc__.split("\n\n")[1:]).rstrip() + "\n\n"
+              + textwrap.fill(f"Further commands: {', '.join(further)}. `{prog} help --all` says "
+                              f"what each does, and `{prog} COMMAND --help` gives its options.", 96)
+              + "\n`prooflens` is another name for the same command.")
+    p = argparse.ArgumentParser(prog=prog, description=__doc__.split("\n\n")[0],
+                                formatter_class=argparse.RawDescriptionHelpFormatter,
+                                epilog=epilog)
+    p.add_argument("--version", action="version", version=f"%(prog)s {tool_version()}")
+    sub = p.add_subparsers(dest="cmd", required=True,
+                           metavar="{" + ",".join(n for g, n, _ in COMMANDS if g == EVERYDAY) + "}")
+    for add in (_add_view, _add_build, _add_check, _add_review, _add_link, _add_workspace,
+                _add_compare, _add_inspect, _add_changes, _add_inventory, _add_stored_release,
+                _add_bundle, _add_export, _add_serve, _add_evidence, _add_symbol, _add_replay,
+                _add_cache, _add_validate):
+        add(sub)
+    h = sub.add_parser("help", description="the everyday commands; with --all, every command")
+    h.add_argument("command", nargs="?", help="a command: its options")
+    h.add_argument("--all", action="store_true", help="every command, with what it does")
+    h.set_defaults(func=functools.partial(cmd_help, parser=p, commands=sub.choices))
+    return p
+
+
+def main(argv=None):
+    a = _parser().parse_args(argv)
     try:
         a.func(a)
         sys.stdout.flush()  # what is still buffered, so that a closed pipe is handled below
@@ -2180,27 +2431,12 @@ def _stop_if_reader_gone() -> None:
 
 
 def _could_not_run(a, kind: str, message: str, **extra):
-    """Stop with exit 2: the message on stderr and, for `check --json`, one JSON document on
-    stdout saying the check did not run."""
+    """Stop with exit 2: the message on stderr and, for `check`, `inspect` or `link` with
+    --json, one JSON document on stdout saying the command did not run (`_not_run_json`)."""
     print(f"machinechecked: {message}", file=sys.stderr)
-    if getattr(a, "func", None) is cmd_check and getattr(a, "json", False):
-        import json
-        print(json.dumps({"schema": "machinechecked/check@1", "ok": False,
-                          "error": {"kind": kind, "message": message, **extra},
-                          "note": "Check unavailable; resolve the execution error and retry."},
-                         indent=1))
-    elif getattr(a, "func", None) is cmd_inspect and getattr(a, "json", False):
-        import json
-        print(json.dumps({"schema": "machinechecked/inspect@1", "ok": False,
-                          "name": getattr(a, "name", None),
-                          "error": {"kind": kind, "message": message, **extra},
-                          "note": "Inspection unavailable; resolve the execution error and retry."},
-                         indent=1))
-    elif getattr(a, "func", None) is cmd_link and getattr(a, "json", False):
-        import json
-        print(json.dumps({"schema": "machinechecked/link@1", "ok": False, "written": False,
-                          "error": {"kind": kind, "message": message, **extra}}, indent=1,
-                         ensure_ascii=False))
+    doc = _not_run_json(a, {"kind": kind, "message": message, **extra})
+    if doc is not None:
+        _print_json(*doc)
     raise SystemExit(COULD_NOT_RUN)
 
 

@@ -495,8 +495,6 @@ def _run(argv, capsys):
 
 
 def test_command_line_suggest_show_and_compare(work, tmp_path, monkeypatch, capsys):
-    monkeypatch.setattr(cli, "_workspace_place", lambda a: (work, work / "site" / "data",
-                                                            tmp_path))
     monkeypatch.setattr(cli, "_built_work", lambda a: (work, tmp_path))
     p = opened(work)
     wsp.update(p, YOUNG_READING, snap_of(work))
@@ -583,8 +581,7 @@ def test_a_clause_record_with_two_declarations_round_trips(work, tmp_path, monke
     run), are the records the reader's interface gives and the export and an import carry, with
     their source pins, basis and attribution."""
     import io
-    monkeypatch.setattr(cli, "_workspace_place", lambda a: (work, work / "site" / "data",
-                                                            tmp_path))
+    monkeypatch.setattr(cli, "_built_work", lambda a: (work, tmp_path))
     p = opened(work)
     wid = wsp.read(p)["id"]
     note = 'The paper\'s "C/ε" is Lean\'s `C / ε`;\nboth results give |u| ≤ ε|f| + C/ε.\n'

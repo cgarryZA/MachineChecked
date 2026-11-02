@@ -750,6 +750,24 @@ ILLUSTRATIVE = {
 JSON_BLOCKS = (JSON_OUTPUT_INFORMED, JSON_OP_SUPERSEDE)
 
 
+def test_every_command_the_guides_name_is_listed_by_help_all():
+    """An agent that reads `machinechecked help --all` finds every command the guides use; the
+    everyday ones are those `--help` lists (#79). Builds nothing."""
+    def run(*args):
+        r = subprocess.run([sys.executable, "-m", "prooflens", *args], capture_output=True,
+                           text=True, env={**os.environ, "PYTHONPATH": str(
+                               Path(prooflens.__file__).resolve().parents[1])})
+        assert r.returncode == 0, r.stderr
+        return r.stdout
+    listed = set(re.findall(r"^  (\w+) ", run("help", "--all"), re.M))
+    named = {m for doc in DOCS for m in re.findall(r"\bmachinechecked ([a-z]+)\b", guide(doc))}
+    assert named and named <= listed, sorted(named - listed)
+    commands = run("--help").split("positional arguments:")[1].split("options:")[0]
+    everyday = re.findall(r"^    (\w+) ", commands, re.M)
+    assert everyday == ["view", "build", "check", "review"]
+    assert {"view", "build", "check", "review"} <= named
+
+
 def test_every_documented_command_is_run_or_illustrative():
     shown = Counter((d.doc, d.key) for d in documented())
     have = Counter(ILLUSTRATIVE.keys())

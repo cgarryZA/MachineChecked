@@ -79,6 +79,53 @@ def test_version_flag(capsys):
     assert exc.value.code == 0 and capsys.readouterr().out.strip().endswith(cli.tool_version())
 
 
+@pytest.mark.parametrize("args", [["--help"], ["help"], ["help", "--all"], ["help", "link"],
+                                  ["link", "--help"], ["review", "promote", "--help"]])
+def test_help_exits_0(args, capsys):
+    try:
+        cli.main(args)
+        code = 0
+    except SystemExit as exc:
+        code = exc.code
+    out = capsys.readouterr()
+    assert code == 0 and out.out.startswith(("usage: ", "Everyday commands:")) and out.err == ""
+
+
+def test_help_for_no_such_command_could_not_run(capsys):
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["help", "nope"])
+    assert exc.value.code == 2
+    assert "no command 'nope'" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("cmd, schema", [
+    (["check"], "machinechecked/check@1"),
+    (["inspect", "X.y"], "machinechecked/inspect@1"),
+    (["link", "Theorem 1", "X.y"], "machinechecked/link@1"),
+])
+def test_each_json_command_that_could_not_run_says_so_in_its_own_schema(tmp_path, cmd, schema):
+    """Outside a Lean project, `check`, `inspect` and `link` with --json exit 2 and print one
+    document of their own schema with `ok` false, never a result."""
+    r = subprocess.run([sys.executable, "-m", "prooflens.cli", *cmd, "--json"], cwd=tmp_path,
+                       capture_output=True, text=True)
+    assert r.returncode == 2 and "no Lean project" in r.stderr
+    d = json.loads(r.stdout)
+    assert (d["schema"], d["ok"], d["error"]["kind"]) == (schema, False, "error")
+    assert "no Lean project" in d["error"]["message"]
+    if cmd[0] == "link":
+        assert d["written"] is False
+    if cmd[0] == "inspect":
+        assert d["name"] == "X.y"
+
+
+def test_other_commands_that_could_not_run_print_nothing_on_stdout(tmp_path):
+    for cmd in (["compare", "Theorem 1", "--json"], ["workspace", "list", "--json"],
+                ["review", "next", "--json"], ["changes", "--json"]):
+        r = subprocess.run([sys.executable, "-m", "prooflens.cli", *cmd], cwd=tmp_path,
+                           capture_output=True, text=True)
+        assert r.returncode == 2 and r.stdout == "" and r.stderr.startswith("machinechecked: "), cmd
+
+
 def test_a_missing_program_is_reported_before_a_paper_is_downloaded(tmp_path):
     (tmp_path / "lakefile.toml").write_text('name = "p"\n')
     code, out, err = check(tmp_path, "https://example.invalid/paper.pdf",

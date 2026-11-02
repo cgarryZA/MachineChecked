@@ -24,7 +24,8 @@ uvx machinechecked view paper/main.tex
 
 Requires Python 3.11+, your project's Lean toolchain, and TeX Live for LaTeX or Poppler for PDFs.
 The web reader is included. For a persistent command, run `uv tool install machinechecked`;
-then use `machinechecked` directly.
+then use `machinechecked` directly. `machinechecked --help` lists the everyday commands, and
+`machinechecked help --all` every command.
 
 The reader opens on the paper. Select a claim from the contents or the paper's margin to compare
 its paper passage with its Lean, side by side, the Lean row by row with its exact Lean; a
