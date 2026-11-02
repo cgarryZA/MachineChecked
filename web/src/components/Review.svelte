@@ -6,6 +6,7 @@
            needsDetail, buildReport, exportFile, ORDERS, ORDER_EXPOSURE, byOrder, orderedUnits, recordExposure,
            exposureOf, holdsBack, COVERAGE_FOR, COVERAGE_CHOICES, BASIS_CHOICES, reportCorrespondence,
            draftCoverage, coverageWords, undoReport, leanOf, READER_SEEN } from "../lib/review.js";
+  import { questionsOf } from "../lib/review.js";
   import { chosenWorkspace } from "../lib/workfile.js";
   import Comparison from "./Comparison.svelte";
   import WorkspaceFile from "./WorkspaceFile.svelte";
@@ -289,6 +290,9 @@
   const reason = $derived(!current ? "" : withheld
     ? (queue.units.find((u) => u.id === current.id)?.reason || "") + " · the informed order's reason for it is shown after your verdict"
     : current.reason);
+  // The questions a new reading answers (of a review or a finding that a change reopened), as
+  // the order gives them, held back with its reason.
+  const questions = $derived(!current ? [] : questionsOf(withheld ? queue.units.find((u) => u.id === current.id) : current));
 
   function lockReading() {
     if ((draft.reading || "").trim().length < 20) return;
@@ -471,8 +475,9 @@
     {#if asking}
       <section class="card ask" aria-labelledby="informed-title">
         <p id="informed-title"><strong>The informed order</strong></p>
-        <p class="small">It also uses what the auditors' workspaces record as open for each claim: open questions,
-          differences and hints. These are prior interpretations, which a review otherwise shows after its verdict.
+        <p class="small">It also uses what the auditors' workspaces record for each claim: first the findings a change
+          made due for review, with their questions; then records out of date, open questions, differences and hints;
+          and the main results they save. These are prior interpretations, which a review otherwise shows after its verdict.
           Your readings of the claims it draws on are then recorded as not blind, and their reports are promoted
           only with <code>--allow-revealed</code>.</p>
         <div class="row">
@@ -519,6 +524,11 @@
           <li class:on={draft.stage === "author"}>3. Author's review</li>
         </ol>
         <p class="why faint">{current.kind === "def" ? "Definition" : current.kind === "link" ? "Linked claim" : current.kind === "step" ? "Proof step" : "Statement"} · {reason}{work.skipped.includes(current.id) ? " · skipped before" : ""}</p>
+        {#if questions.length}
+          <ul class="questions small" aria-label="Questions a new reading answers">
+            {#each questions as q}<li>{q}</li>{/each}
+          </ul>
+        {/if}
 
         {#if current.kind === "def"}
           <h2>A definition used by {current.claims.length} claim(s)</h2>
@@ -675,6 +685,7 @@
   .progress { color: var(--muted); }
   .who { margin-left: auto; font-family: var(--mono); font-size: 12px; }
   .warn { background: var(--surface-2); border-left: 3px solid var(--st-open); padding: 6px 10px; font-size: 13px; }
+  .questions { margin: 2px 0 8px; padding-left: 20px; }
   .steps { list-style: none; display: flex; gap: 6px; padding: 0; margin: 0 0 6px; font-size: 13px; }
   .steps li { padding: 2px 10px; border-radius: 999px; background: var(--surface-2); color: var(--muted); }
   .steps li.on { background: var(--accent-soft); color: var(--text); }

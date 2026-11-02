@@ -1443,6 +1443,6 @@ def api(work_dir: Path, data_dir: Path, root: Path | None = None) -> tuple[dict,
            "/api/workspace": one,
            "/api/workspace/revision": revision,
            "/api/workspace/export": lambda q: export(find(work_dir, (q.get("id") or [""])[0])),
-           "/api/review-order": order_route(work_dir, data_dir)}
+           "/api/review-order": order_route(work_dir, data_dir, root)}
     review_get, review_post = review_api(work_dir, data_dir)
     return {**get, **review_get}, {"/api/workspace": post, **review_post}

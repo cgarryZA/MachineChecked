@@ -189,6 +189,14 @@ the project's working directory. `machinechecked review` continues the same revi
 with the same steps and checks, and the page continues what the terminal began
 ([Reviewing from the command line](REVIEWING.md#one-claim-at-a-time)).
 
+The review page says why each unit comes next and, for a review or a finding that a change
+reopened, lists the question a new reading answers. **Order** chooses the paper's order, or
+under `machinechecked view` the informed order: it also reads the auditors' workspaces, and puts
+first the findings a change made due for review, then what is out of date, open or different,
+with the main results a workspace saves and what they use ahead of the rest
+([Review order](REVIEWING.md#review-order)). Those records are prior interpretations, so choosing
+it records that you have seen them.
+
 The paper toolbar provides page navigation, fit/zoom, text search and **Open original PDF**.
 PDF text can be selected and copied. The claim markers occupy the margin.
 

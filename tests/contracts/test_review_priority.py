@@ -6,6 +6,7 @@ Each unit says why it comes where it does; without a record the queue's order st
 Every test here is synthetic: two releases' evidence records, a reverse-reference index and a
 small site, so none runs Lean."""
 
+import hashlib
 import json
 
 import pytest
@@ -15,6 +16,7 @@ from prooflens import cli
 from prooflens import review_cli as rc
 from prooflens import review_queue as rq
 from prooflens import workspace as wsp
+from prooflens.targets import Snapshot
 
 H = {k: k * 64 for k in "abcdef"}
 AUDITOR = rc.parse_reviewer("human:A-Auditor")
@@ -297,24 +299,43 @@ CHANGED, WITNESS, ESTIMATE, FULL, USE = (
 CLAIMS = (CHANGED, WITNESS, ESTIMATE, FULL, USE)
 
 
+LEMMAS = ("Ex.solves", "Ex.bound")
+
+
+def passage_sha(cid):
+    return hashlib.sha256(cid.encode()).hexdigest()
+
+
 def write_site(root, order=(FULL, USE, ESTIMATE, WITNESS, CHANGED)):
     """A synthetic full-assessment site in `root/.machinechecked`: five claims, each stated by
     one proposition, in a queue that `prioritise` has ordered with the comparison of two
     releases, in which Theorem 1's proposition changed. Theorem 5's proposition has a
-    hypothesis that an alignment may leave unmatched."""
+    hypothesis that an alignment may leave unmatched. Each claim's passage is pinned, and the
+    build records a version of each proposition and of two lemmas, so that records made against
+    it are current until something they rest on changes."""
     work = root / ".machinechecked"
     data = work / "site" / "data"
     (data / "claims").mkdir(parents=True)
+    (data / "decls").mkdir()
     hyp = {"binders": [{"id": "/0", "name": "m", "role": "forall", "type": {"text": "Nat"}},
                        {"id": "/1", "name": "h", "role": "hypothesis",
                         "type": {"text": "Finite m"}}],
-           "conclusion": {"text": "Bound m"}}
+           "conclusion": {"text": "Bound m"}, "closure": []}
+    plain = {"binders": [], "conclusion": {"text": "P"}, "closure": []}
     for cid, number, spec in CLAIMS:
         f = cid.replace(":", "_") + ".json"
         (data / "claims" / f).write_text(json.dumps({
             "id": cid, "paper": "P", "number": number, "kind": "theorem", "links": [],
+            "source_sha256": passage_sha(cid),
             "clauses": [{"name": "statement", "spec": spec,
-                         "statement": hyp if cid == USE[0] else None}]}))
+                         "statement": {**(hyp if cid == USE[0] else plain),
+                                       "fingerprint": "fp:" + spec}}]}))
+    for name in LEMMAS:
+        (data / "decls" / f"k-{name}.json").write_text(json.dumps(
+            {"name": name, "kind": "theorem", "fingerprint": "fp:" + name, "uses": []}))
+    (data / "lean-index.json").write_text(json.dumps(
+        [{"name": n, "kind": "theorem", "module": "Ex.M"}
+         for n in [*LEMMAS, *(s for _, _, s in CLAIMS)]]))
     claims = [{"id": c, "paper": "P", "number": n, "file": c.replace(":", "_") + ".json"}
               for c, n, _ in CLAIMS]
     (data / "index.json").write_text(json.dumps({
@@ -337,6 +358,11 @@ def write_site(root, order=(FULL, USE, ESTIMATE, WITNESS, CHANGED)):
 
 def put(rec, base=None):
     return {"op": "put", "record": rec, **({"base_rev": base} if base else {})}
+
+
+def build_of(work):
+    """The build the records are made against, as `machinechecked workspace update` reads it."""
+    return Snapshot(work / "site" / "data")
 
 
 def investigate(work):
@@ -371,7 +397,7 @@ def investigate(work):
         put({"id": "r-u", "kind": "requirement", "claim": u, "local_id": "r1",
              "form": "for every", "binds": ["m"], "text": "for every m"}),
         put({"id": "a-u", "kind": "alignment", "claim": u, "requirements": ["r1"],
-             "lean": [{"decl": USE[2], "binder": 0}]})])
+             "lean": [{"decl": USE[2], "binder": 0}]})], build_of(work))
     return p
 
 
@@ -450,7 +476,8 @@ def test_resolving_a_premise_changes_the_next_question_and_keeps_the_history(tmp
             {"id": "o1", "kind": "compatible witnesses", "text": "the bound is for that u",
              "state": "discharged", "by": {"steps": ["s2"]}}]}, base=c["rev"]),
         {"op": "supersede", "id": "f-w", "base_rev": before["rev"],
-         "reason": "the witnesses agree", "record": {"coverage": "full", "note": "One u."}}])
+         "reason": "the witnesses agree", "record": {"coverage": "full", "note": "One u."}}],
+        build_of(work))
     nxt = session(work).open_units("informed")
     assert nxt[0]["id"] == "spec:" + ESTIMATE[2]
     assert nxt[-1]["reason"] == "Short statement"
@@ -474,7 +501,7 @@ def test_a_resolved_difference_stops_the_hint_and_the_local_difference_stays(tmp
                                        "resolution": {"by": "argument", "text":
                                                       "the use needs only finitely many "
                                                       "derivatives"}},
-                        "note": "Satisfied where it is used."})])
+                        "note": "Satisfied where it is used."})], build_of(work))
     out = session(work).open_units("informed")
     by = {u["id"]: u for u in out}
     assert ids(out) == ["spec:" + ESTIMATE[2], "spec:" + USE[2], "spec:" + FULL[2]]
@@ -625,7 +652,7 @@ def test_a_site_carries_the_priority_order_and_no_prior_interpretation(tmp_path)
     index = write_view_site(view, site, None, root, work)
     stored = json.loads((site / "data" / "review-queue.json").read_text())
     assert stored == plain
-    assert not any(s["kind"] in rq.TIERS[2:] for u in stored["units"]
+    assert not any(s["kind"] in rq.WORKSPACE_KINDS for u in stored["units"]
                    for s in (u.get("priority") or {}).get("signals") or [])
     assert not any("recorded" in u["reason"] for u in stored["units"])
     assert wsp.read(p) == before and [q for q, _ in wsp.list_all(work)] == [p]

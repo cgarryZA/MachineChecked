@@ -1628,7 +1628,8 @@ def _review_status(a, s) -> None:
                      "workspace": here, "reports": len(s.work["reports"]),
                      "drafts": {i: d["stage"] for i, d in s.work["drafts"].items()},
                      "order": {"by": a.order, **({"queue": s.queue["order"]}
-                                                 if s.queue.get("order") else {})},
+                                                 if s.queue.get("order") else {}),
+                               **({"informed": s.order_record} if s.order_record else {})},
                      "open": [u["id"] for u in units]})
         return
     print(f"{len(s.work['reports'])} report(s), {len(s.work['drafts'])} in progress, "
@@ -1638,7 +1639,8 @@ def _review_status(a, s) -> None:
               + ("; your readings here are not blind" if s.informed else "") + ")")
     for uid, d in s.work["drafts"].items():
         print(f"  {uid}: at step '{d['stage']}'")
-    for name, sig in ((s.queue.get("order") or {}).get("signals") or {}).items():
+    for name, sig in [*((s.queue.get("order") or {}).get("signals") or {}).items(),
+                      *(s.order_record or {}).items()]:
         if sig.get("state") != "read":
             print(f"  order: {name} {sig['state']}: {sig.get('why')}")
 
@@ -1694,9 +1696,10 @@ def cmd_review_step(a):
     """One step of the review protocol, in the reviewer's session (`review_cli.Session`). A step
     that could not be taken exits 2; with --json, it also prints the refusal as a document."""
     from . import review_cli as rc
-    work, _ = _built_work(a)
+    work, root = _built_work(a)
     try:
-        s = rc.Session(work, rc.parse_reviewer(a.reviewer, a.same_family), a.workspace, a.mode)
+        s = rc.Session(work, rc.parse_reviewer(a.reviewer, a.same_family), a.workspace, a.mode,
+                       root=root)
         REVIEW_STEPS[a.action][0](a, s)
     except rc.ReviewError as e:
         if a.json:

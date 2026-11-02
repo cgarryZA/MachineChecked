@@ -474,24 +474,31 @@ again), `conflict` (the draft changed meanwhile: read it again with `status`), `
 
 `review next` and `review status` take `--order` ([Review order](REVIEWING.md#review-order)):
 `priority` (the default), `document` (the paper's order), or `informed`, which also ranks the
-units by what the auditors' workspaces in the working directory record as open. `next --json`
-gives the `order` and the unit's `priority`: its `base` reason in the queue, the `signals` that
-move it (each with `kind`, `text` and `claims`: `reopened`, with the `questions` a new reading
-answers, and `changed` since the last release; `open question`, `difference` and `hint` from the
-workspaces; `proof use` when another claim's proof uses its Lean), and its `tier`, the strongest
-signal other than `proof use`, or null. `reason` puts them in words. `status --json` gives the
-`open` units in that order and `order`: the order asked (`by`) and the queue's own record
-(`queue`, with each signal's `state`, `read` or `not available` with `why`). On the toy example,
-with Theorem 2.5 linked and an open question another auditor recorded on it, `review next
---order informed --json` gives (release, mode and workspace left out):
+units by what the auditors' workspaces in the working directory record and by the main results
+they save. `next --json` gives the `order` and the unit's `priority`: its `base` reason in the
+queue, the `signals` that move it (each with `kind`, `text` and `claims`; a reopened review or
+finding also has the `questions` a new reading answers): `reopened` and `changed` since the last
+release; from the workspaces, `reopened finding` (a finding due for review), `out of date` (a
+requirement, alignment or counterexample), `open question`, `difference` and `hint`, and `main
+result`, with its `use` (`itself`, `proof`, `definition` or `statement`); `proof use` when
+another claim's proof uses its Lean. Its `tier` is the strongest signal other than `main result`
+and `proof use`, or null. `reason` puts them in words, naming claims and never the Lean.
+`status --json` gives the `open` units in that order and `order`: the order asked (`by`), the
+queue's own record (`queue`, with each signal's `state`, `read` or `not available` with `why`)
+and, for the informed order, what it read (`informed`: the `workspaces`, and the `main result`
+trace). On the toy example, with Theorem 2.5 linked and saved as the paper's main result, and an
+open question another auditor recorded on it, `review next --order informed --json` gives
+(release, mode and workspace left out):
 
 ```json
 {"schema": "machinechecked/review-next@1", "order": "informed",
  "unit": {"id": "link:thm:bound", "kind": "link",
-          "reason": "An open question is recorded; short statement",
+          "reason": "An open question is recorded; a saved main result; short statement",
           "priority": {"base": "Short statement",
                        "signals": [{"kind": "open question", "text": "an open question is recorded",
-                                    "claims": ["P:thm:bound"]}],
+                                    "claims": ["P:thm:bound"]},
+                                   {"kind": "main result", "text": "a saved main result",
+                                    "claims": ["P:thm:bound"], "use": "itself"}],
                        "tier": "open question"}}}
 ```
 
@@ -812,9 +819,9 @@ Another agent, in its own copy of the project, runs `machinechecked workspace im
 names the claim and the open question, and each record's `currency` is `current` while the
 paper and the Lean are those it was recorded against. It continues with `workspace update --id
 ws-…`, under its own name. There, `machinechecked review next --order informed --json` gives
-`link:thm:bound` first, for its open question ([Reviewing from the
-terminal](#reviewing-from-the-terminal)), and records that this reviewer has seen the
-workspace's interpretations. `../site/data/work/` holds the submitted findings, the composition
+`link:thm:bound` first, for its open question, and says it is the saved main result
+([Reviewing from the terminal](#reviewing-from-the-terminal)), and records that this reviewer
+has seen the workspace's interpretations. `../site/data/work/` holds the submitted findings, the composition
 and the reading; the reader shows them on the claim under **Auditors' readings**, attributed to
 `llm:MODEL`, informed investigation, and in the comparison each finding that names a requirement
 under the rows its alignments name (`f-power` under the conclusion of `Toy.Acceptance.thm_bound`;

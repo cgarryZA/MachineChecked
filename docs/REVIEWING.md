@@ -130,7 +130,8 @@ come in this order:
 1. **Reopened since the last release**: a review that the comparison with the previous release
    no longer counts ([What changed since the last release](ASSURANCE.md#what-changed-since-the-last-release)).
    The reason names what changed: a claim's passage or its context, the Lean statement, or the
-   definition. `review next` also prints the question a new reading answers.
+   definition. `review next` also prints the question a new reading answers, and the review page
+   lists it under the reason.
 2. **Changed since the last release**: a unit with no review to reopen whose Lean statement, a
    definition that statement uses, its definition, or a passage it is read against changed. A
    change of a proof alone moves nothing: a review of a statement does not read its proof. Nor
@@ -161,15 +162,41 @@ never a Lean declaration, since you read them before the Lean is shown.
 - `document`: the paper's order. Any unit can also be taken directly by its id (`review read
   UNIT`), and the reader keeps its choice of paper and section.
 - `informed`: the order above, with what the auditors' workspaces in the working directory
-  record as still open placed after the changes. First open questions (an open obligation of a
-  composition, such as compatible witness choices; a requirement that no step of a composition
-  establishes; a finding that is unresolved or covers part of the claim; an open question), then
-  differences that are not resolved (a recorded difference, such as a derivative order, or a
-  finding that the Lean states the claim differently), then hints (a hypothesis of an aligned Lean
-  statement that no requirement is aligned with). A difference that is resolved or found to be
-  none, and a hint it settles, no longer raise the claim; the workspace keeps their explanation.
-  These records are prior interpretations: asking for this order records in your workspace that
-  you have seen them, for the claims it drew on. A later reading of those claims is then not
+  record. It reads each record against the last build, and what Lean read of the project before
+  (it runs no Lean):
+  1. **Findings due for review** come first: a finding in force that the build no longer
+     supports (its passage, a passage it reads as context, the Lean it cites, or a record it was
+     submitted with changed), or that a [version map](#saved-investigations) the workspace keeps
+     to this release reopens. The reason says what changed, and each finding has its question
+     (*Does finding f-1 still hold for the changed text of Theorem 2.6?*). A passage the map
+     finds moved or renumbered is the same text and reopens nothing.
+  2. The reopened and changed reviews above.
+  3. **Out of date**: a requirement whose governing passages changed, an alignment with the Lean
+     whose Lean or passages changed, a counterexample whose reading, governing passages or
+     evidence changed.
+  4. **Open questions**: an open obligation of a composition, such as compatible witness
+     choices; a requirement that no step of a composition establishes; a finding that is
+     unresolved or covers part of the claim; a candidate counterexample, not yet shown
+     admissible, or an incomplete one; an open question.
+  5. **Differences** that are not resolved: a recorded difference, such as a derivative order; a
+     finding that the Lean states the claim differently; an admissible counterexample to a
+     reading.
+  6. **Hints**: a hypothesis of an aligned Lean statement that no requirement is aligned with; a
+     passage proposed as governing a requirement and not yet accepted; a counterexample of
+     numeric samples only; a finding not known to be current (the build cannot check what it
+     rests on).
+
+  Within each group, the paper's main results that a workspace saves (`workspace main`) come
+  first, with the units their Lean uses: *a saved main result*, *used in the proof of Theorem 1,
+  a saved main result*, or *used in the statement of …*, directly or through other declarations,
+  from the zero-configuration build's reverse references. The full assessment extracts none, so
+  there only a main result itself is marked, and `review status --order informed` says so. Then
+  come the units another claim's proof uses, as above.
+
+  A difference that is resolved or found to be none, a hint it settles, and a finding that a new
+  reading supersedes no longer raise the claim; the workspace keeps their explanation. These records and the main-result selection are prior interpretations: asking for
+  this order records in your workspace that you have seen them, for the claims it drew on (the
+  units it moves and the main results it names). A later reading of those claims is then not
   blind, its report says so, and `review promote` refuses it without `--allow-revealed`.
 
 The Overview's **Review next** lists the first open units of the build's queue in the priority
@@ -183,10 +210,11 @@ copy of the site has them. The informed order reads the auditors' workspaces, so
 view` offers it. Choosing it first says what it uses; once you accept, the page records in your
 workspace that you have seen prior interpretations of the claims it draws on, and only then shows
 the order. A reading of those claims that you lock afterwards lists *workspace ID
-(interpretation-informed review order)* in `reading.revealed_by`. A reading you locked before
-choosing it keeps the queue's reason on its card until you record its verdict, since the
-protocol shows interpretations only after the verdict. The page keeps your choice of order, as
-it keeps your paper and part.
+(interpretation-informed review order)* in `reading.revealed_by`. Each card lists, under its
+reason, the questions a new reading answers, of a review or a finding a change reopened. A
+reading you locked before choosing the informed order keeps the queue's reason and questions on
+its card until you record its verdict, since the protocol shows interpretations only after the
+verdict. The page keeps your choice of order, as it keeps your paper and part.
 
 ## Saved investigations
 
@@ -249,8 +277,9 @@ declarations linked to the paper's theorems. Each name is checked against the bu
 was saved and against which project commit; `--main` names others for one query, and
 `--workspace ID` chooses between several workspaces' selections. A later build that no longer has
 a claim or a declaration of the selection lists it under `problems`, in `workspace show` and in
-the impact answer. A replaced selection is kept in the workspace's provenance. The selection
-changes no status.
+the impact answer. A replaced selection is kept in the workspace's provenance. The informed
+review order puts the main results, and the units their Lean uses, ahead of the rest ([Review
+order](#review-order)). The selection changes no status.
 
 **Facts inside a proof.** An exported theorem can prove more than it states. Under `view`, a linked
 theorem has **Facts inside the proof**: *Read the proof* asks Lean for the propositions its proof
@@ -434,7 +463,8 @@ answer; a claim the map leaves ambiguous reads `unchecked` until the maintainer 
 claim (affected ones first, unaffected ones as still current), and `workspace show` and the
 workspace's export and import carry it. A kept map also gives each reference in the Lean to a
 paper number of the earlier revision its counterpart: `check`, the claim page and `compare` show
-it on every build of the later revision, naming who kept the map. Nothing is moved to another claim: supersede a reopened
+it on every build of the later revision, naming who kept the map. The informed review order
+offers the reopened findings first, with their questions ([Review order](#review-order)). Nothing is moved to another claim: supersede a reopened
 finding once you have read the new text. A cited fact inside a proof is `stale` once that proof
 changes, even when the theorem's statement does not; it, a cited application and a certificate
 read `unchecked` while Lean cannot look at them (their module is not built, a request failed). A
