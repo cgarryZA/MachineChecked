@@ -1440,13 +1440,15 @@ def cmd_review_step(a):
     work, _ = _built_work(a)
     as_json = getattr(a, "json", False)
     try:
-        s = rc.Session(work, rc.parse_reviewer(a.reviewer, a.same_family))
+        s = rc.Session(work, rc.parse_reviewer(a.reviewer, a.same_family), a.workspace, a.mode)
+        # The workspace the work is kept in (no id until the first step saves it).
+        here = {"id": s.workspace["id"] if s.path.exists() else None, "mode": s.mode}
         if a.action == "next":
             u = next(iter(s.open_units(a.order)), None)
             if as_json:
                 _print_json({"schema": "machinechecked/review-next@1",
                              "release": s.index["release"], "mode": s.queue.get("mode"),
-                             "order": a.order,
+                             "workspace": here, "order": a.order,
                              "unit": u and {k: u.get(k) for k in ("id", "kind", "reason",
                                                                   "priority")}})
             else:
@@ -1459,7 +1461,7 @@ def cmd_review_step(a):
             if as_json:
                 _print_json({"schema": "machinechecked/review-status@1",
                              "release": s.index["release"], "mode": s.queue.get("mode"),
-                             "reports": len(s.work["reports"]),
+                             "workspace": here, "reports": len(s.work["reports"]),
                              "drafts": {i: d["stage"] for i, d in s.work["drafts"].items()},
                              "order": {"by": a.order, **({"queue": s.queue["order"]}
                                                          if s.queue.get("order") else {})},
@@ -1467,6 +1469,9 @@ def cmd_review_step(a):
                 return
             print(f"{len(s.work['reports'])} report(s), {len(s.work['drafts'])} in progress, "
                   f"{len(units)} unit(s) left to review (release {s.index['release']})")
+            if here["id"]:
+                print(f"  workspace {here['id']} ({here['mode']}"
+                      + ("; your readings here are not blind" if s.informed else "") + ")")
             for uid, d in s.work["drafts"].items():
                 print(f"  {uid}: at step '{d['stage']}'")
             for name, sig in ((s.queue.get("order") or {}).get("signals") or {}).items():
@@ -1477,7 +1482,9 @@ def cmd_review_step(a):
             _print_json(out) if as_json else print(out)
         elif a.action == "lock":
             s.lock(a.unit, _text_arg(a.text))
-            print(f"reading locked; `review show {a.unit}` shows the Lean")
+            print(f"reading recorded (not blind: the session is informed); `review show {a.unit}` "
+                  "shows the Lean" if s.informed else
+                  f"reading locked; `review show {a.unit}` shows the Lean")
         elif a.action == "decide":
             s.decide(a.unit, a.verdict, _text_arg(a.comparison), _text_arg(a.detail),
                      _text_arg(a.witness),
@@ -1492,7 +1499,12 @@ def cmd_review_step(a):
                   "`review export --out FILE` writes your reports for the maintainer")
         elif a.action == "export":
             print(f"wrote {s.export(Path(a.out))}")
-    except (rc.ReviewError, OSError) as e:
+    except rc.ReviewError as e:
+        if as_json:
+            _print_json({"schema": "machinechecked/review-error@1", "ok": False,
+                         "error": e.to_json()})
+        sys.exit(f"machinechecked: {e}")
+    except OSError as e:
         sys.exit(f"machinechecked: {e}")
 
 
@@ -2036,6 +2048,13 @@ def main(argv=None):
                         help="human:NAME or llm:MODEL (default: $MACHINECHECKED_REVIEWER)")
         sp.add_argument("--same-family", choices=["yes", "no", "unknown"], default="unknown",
                         help="for a model: whether it is of the statements' author's family")
+        sp.add_argument("--workspace", metavar="ID",
+                        help="review in this workspace of yours (default: your first one, which "
+                             "the review page under `machinechecked view` uses too)")
+        sp.add_argument("--mode", choices=["independent", "informed"],
+                        help="review in your workspace of this mode, opening one if you have "
+                             "none; informed: you have seen the Lean and earlier "
+                             "interpretations, so no step is locked and the report says so")
         sp.add_argument("-c", "--config", default=None)
         sp.set_defaults(func=cmd_review_step)
 

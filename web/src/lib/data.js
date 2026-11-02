@@ -262,6 +262,31 @@ export async function askReviewOrder(order) {
   return out;
 }
 
+// The reviewer's review work under `machinechecked view`: the engine keeps it in the reviewer's
+// workspace, shared with `machinechecked review`, and checks and saves each step
+// (`review_cli.api`). Each answer is the work as saved: `{workspace, drafts, reports, exposure,
+// editable}`. A refused step throws, with the engine's `kind` (`order`, `stale`, `conflict`, …).
+async function reviewAnswer(r) {
+  const out = await r.json().catch(() => ({ error: r.statusText }));
+  if (!r.ok) {
+    throw Object.assign(new Error(out.error || r.statusText),
+                        { status: r.status, kind: out.kind || null, conflicts: out.conflicts || null });
+  }
+  return out;
+}
+
+export async function reviewWork(reviewer, sameFamily) {
+  const q = new URLSearchParams({ reviewer, same_family: sameFamily });
+  return reviewAnswer(await fetch(`api/review?${q}`, { cache: "no-store" }));
+}
+
+export async function reviewStep(reviewer, sameFamily, action, body = {}) {
+  return reviewAnswer(await fetch("api/review", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ...body, reviewer, same_family: sameFamily, action }),
+  }));
+}
+
 // The reverse references of a declaration (`data/uses.json`, written by the zero-configuration
 // build): for the module that declares it, the declarations that use it and how. Null when the
 // build holds none; `{ ambiguous }` when several modules declare the name and none is given.

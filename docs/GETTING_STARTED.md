@@ -183,6 +183,11 @@ finding in a workspace, attributed to you ([saved investigations](REVIEWING.md#s
 Click the evidence summary for proof checks, reviews and provenance. The ⋯ menu contains
 **Copy link**, **Report issue** and **Review it**; reviewing opens the selected claim.
 
+Under `machinechecked view`, the review page saves your drafts and reports in your workspace in
+the project's working directory. `machinechecked review` continues the same review in a terminal,
+with the same steps and checks, and the page continues what the terminal began
+([Reviewing from the command line](REVIEWING.md#one-claim-at-a-time)).
+
 The paper toolbar provides page navigation, fit/zoom, text search and **Open original PDF**.
 PDF text can be selected and copied. The claim markers occupy the margin.
 
@@ -616,5 +621,6 @@ The configured `issues` repository receives reports. **Copy link** is available 
 | A marker is approximate (dashed) | Numbered environments in LaTeX are placed exactly. Claims recorded by line are placed by SyncTeX, and claims from a PDF by their headings; both are approximate, and a claim whose place is ambiguous is left unplaced instead of guessed. |
 | A PDF statement is missing | It probably has no bold heading the PDF reader recognises (see above); give the LaTeX source if you have it. |
 | Reader is read-only | A hosted site or standalone HTML cannot save links to your local repository; run `machinechecked view` locally to edit. |
+| A review step is refused | The page or `machinechecked review` says why and what to do: a step before the one it follows, a unit the last build does not have (your draft is kept), Lean the build changed since it was shown to you, or a draft another window or terminal changed meanwhile. Reload the page, or run `machinechecked review status`, and repeat the step. |
 
 For independent review, continue with the [Review guide](REVIEWING.md). For locked specifications and formal acceptance policies, see [Full assessment](ASSURANCE.md).

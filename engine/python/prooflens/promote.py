@@ -19,8 +19,9 @@ it now is, or that the acceptance rules cannot count as an independent review:
   author (or of unknown family) is refused unless the maintainer accepts it explicitly;
 * the reading must have been blind: a report whose unit's Lean or author's review the reviewer
   had already seen while reviewing another unit (`reading.revealed_by`) is refused unless the
-  maintainer accepts it explicitly. The page records this from the work kept in the reviewer's
-  browser; it cannot see what they read elsewhere.
+  maintainer accepts it explicitly. The review page and the command line record this from the
+  reviewer's work (their workspaces, or a static copy's browser); neither can see what they read
+  elsewhere.
 
 A report on a proof step (unit `step:<claim id>`) is checked the same way, against the step's
 source text instead of a declaration: the step's pinned source hash must be the one the report
