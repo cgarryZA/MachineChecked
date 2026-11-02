@@ -167,7 +167,14 @@ prints one JSON document (`machinechecked/compare@1`) for one claim, read from t
   propositions `states`), `conclusion`, `definition` (a definition applied to it, by its
   expansion's key) and `theorem` (a result cited for this object in the workspace, informed
   stage only). `data` lists its type's data fields and `instances` the instances that supply
-  structure on it. `lean.candidates` are suggestions
+  structure on it. `statement.readable` is the statement as the reader shows it, read as
+  mathematics: its rows in order (objects grouped by where they stand, supplied structure,
+  conditions, claims and connectives), each with its `role` (`input`, `assumption`, `output`)
+  and the identity of its expression (`at`), and for each property of an object its `origin`
+  (`type`, `established` for an object the statement produces, `assumed`, or `proved` by a
+  result cited for that object). Each printed expression's `math` reads it as mathematical
+  notions, each node at its sub-term's identity ([DATA_MODEL.md](DATA_MODEL.md)).
+  `lean.candidates` are suggestions
   nobody has confirmed, with their reasons. `lean.definitions` are the definitions the
   statements use, with their type and value and what each says (`defined_by`: its `params`,
   `body` and `result`, or every one of its `equations`, each with its theorem's name and exact

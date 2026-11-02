@@ -6,6 +6,7 @@
   import { expansionFor, expansionsOf } from "../lib/expand.js";
   import { spineOf, conclusionOf, nodesOf, quantifies } from "../lib/tree.js";
   import { statementRows, exactPart } from "../lib/comparison.js";
+  import { printedById } from "../lib/math.js";
 
   // A locked proposition as one tree (`tree`, from the probe), shown in rows: each object that
   // opens it with the conditions on it alone, each other condition, then the conclusion
@@ -21,8 +22,9 @@
   // occurrences of a warning).
   //
   // In a comparison each row has a readable cell and, with `exact`, the exact Lean of that row
-  // beside it; `readable` (a snippet of the row and the statement) replaces the readable cell's
-  // default rendering when a structured rendering of the row is available. `paper` (a snippet of
+  // beside it; `readable` (a snippet of the row, the statement and what this view shares with it,
+  // `ioOf`) replaces the readable cell's default rendering when a structured rendering of the row
+  // is available. `paper` (a snippet of
   // the row's key and `spec`) fills a paper cell before each row; `after` (the same) is drawn
   // under each row, where its inspections open. `onref` hears a declaration opened and the row it was opened
   // from; `onproperty` hears a carried property chosen for inspection, with its object, how it
@@ -97,6 +99,51 @@
     if (id != null) pinned = null;
     onselect?.(id);
   }
+  // A sub-term chosen in a structured rendering of a row (`readable`): its identity as the exact
+  // statement shows it (`id`), the identity of the application it renders (`at`) and its row.
+  // It is the selection of every view, and a selection made in another view replaces it.
+  let readSel = $state(null);
+  $effect(() => { if (selId != null && readSel && readSel.id !== selId) readSel = null; });
+  function selectId(id, at, row) {
+    termSel = null; alone = null;
+    readSel = id == null ? null : { id, at, row };
+    if (id != null) pinned = null;
+    onselect?.(id);
+  }
+  const readText = $derived(readSel ? exactPart(st, readSel.id)?.text ?? null : null);
+  // The definition applied at the chosen sub-term, at its arguments.
+  const readExpansion = $derived.by(() => {
+    if (!readSel?.at) return null;
+    for (const pp of printedById(st).values()) {
+      const x = (pp.expansions || []).find((e) => e.at === readSel.at);
+      if (x) return { x, text: readText };
+    }
+    return null;
+  });
+  // The place (`where`) of the printed expression with identity `id`: a binder's type, the
+  // conclusion, a part of the conclusion or of a hypothesis, an inner binder's type or a
+  // carried property.
+  function whereOf(id) {
+    if (id == null) return null;
+    const i = binders.findIndex((b) => b.type?.id === id);
+    if (i >= 0) return "b:" + i;
+    if (st.conclusion?.id === id) return "c";
+    for (const [n, k] of leafKeys) if (n.leaf?.id === id) return k;
+    const v = vars.findIndex((b) => b?.inner && b.type?.id === id);
+    if (v >= 0) return "x:" + v;
+    const p = carriedPP.findIndex((pp) => pp?.id === id);
+    return p >= 0 ? "p:" + p : null;
+  }
+  // What a structured rendering of row `g` shares with this view: the highlighted variable and
+  // the handler of one hovered or held, the selected sub-term and the handler of one chosen
+  // there, the marks, a linked symbol's highlight (`ext`), the handlers of a declaration, a
+  // name's note and a carried property opened from the row, and the chips that expand the
+  // definitions a printed expression applies (`chips`, a snippet of its identity and the row).
+  const ioOf = (g) => ({ active, sel: currentId ?? readSel?.id ?? null, mark, ext, chips,
+    onvar: onvarAt(g.key), ongloss: onglossAt(g.key), onref: refAt(g.key),
+    onselect: (id, at) => selectId(id, at, g.key),
+    onproperty: onproperty ? (p, how) => onproperty(p, null, how, g.key) : null });
+
   // The parts of the conclusion, numbered in reading order (`l:<n>`), and those of the
   // hypotheses' own trees (`h:<n>`).
   const leafKeys = $derived.by(() => {
@@ -139,7 +186,7 @@
   // A name's plain-English note, shown on request under its row.
   let noted = $state(null);
   const onglossAt = (row) => (name) => { noted = noted?.name === name ? null : { name, row }; pinned = null; };
-  const groupOf = (i) => groups.find((g) => g.head === i);
+  const groupOf = (i) => groups.find((g) => g.head === i || g.heads?.includes(i));
 
   // Properties carried by an object's type (`properties`, from the probe): the fields of a
   // subtype, structure or class, as they apply to that object, with where each comes from. A
@@ -201,7 +248,12 @@
   const besideExact = $derived(exact && width >= 620);
 </script>
 
-{#snippet lean(pp, where, row)}<LeanText {pp} onref={refAt(row)} {refs} {active} onvar={onvarAt(row)} ongloss={onglossAt(row)} {mark} term={termAt(where)} selId={outerId} onterm={where == null ? null : (k) => setTerm(where, k, row)} />{#if where != null}{@const os = expansionsOf(pp)}{#if os.length}{" "}<span class="xs">expand{#each os as o}{" "}<button class="xb" class:on={o.k >= 0 ? termSel?.where === where && termSel.k === o.k : alone?.x === o.x} aria-label={"Expand " + o.text + " at its arguments"} onclick={() => expand(where, o, row)}>{o.label}</button>{/each}</span>{/if}{/if}{/snippet}
+{#snippet lean(pp, where, row)}<LeanText {pp} onref={refAt(row)} {refs} {active} onvar={onvarAt(row)} ongloss={onglossAt(row)} {mark} term={termAt(where)} selId={outerId} onterm={where == null ? null : (k) => setTerm(where, k, row)} />{#if where != null}{@render expandAt(pp, where, row)}{/if}{/snippet}
+
+<!-- The definitions a printed expression applies, each to expand at its arguments. -->
+{#snippet expandAt(pp, where, row)}{@const os = expansionsOf(pp)}{#if os.length}{" "}<span class="xs">expand{#each os as o}{" "}<button class="xb" class:on={o.k >= 0 ? termSel?.where === where && termSel.k === o.k : alone?.x === o.x} aria-label={"Expand " + o.text + " at its arguments"} onclick={() => expand(where, o, row)}>{o.label}</button>{/each}</span>{/if}{/snippet}
+
+{#snippet chips(id, row)}{@const where = whereOf(id)}{#if where != null}{@render expandAt(ppAt(where), where, row)}{/if}{/snippet}
 
 {#snippet xlean(pp, where, row)}<LeanText {pp} onref={refAt(row)} {refs} selId={currentId} onterm={(k) => setExact(where, pp, k, row)} />{/snippet}
 
@@ -275,18 +327,20 @@
 <!-- The readable cell of a row: today's rendering of the Lean, unless a structured rendering of
      the row is given (`readable`). -->
 {#snippet readableOf(g)}
-  {#if readable}{@render readable(g, st)}
+  {#if readable}{@render readable(g, st, ioOf(g))}
   {:else if g.conclusion}
     {#if binders.length}<span class="role">then</span>{/if}
     <div class="body">{#if shape}{@render logic(shape, 0, false, g.key)}{:else}{@render lean(st.conclusion, "c", g.key)}{/if}</div>
   {:else if g.head != null}
-    {@const b = binders[g.head]}
-    <div class="line">
-      <span class="role">{roleOf(b)}</span>
-      {@render name(g.head, g.key)}<span class="colon"> : </span>
-      <span class="ty" class:hl={ext?.type === g.head}>{@render lean(b.type, "b:" + g.head, g.key)}</span>
-    </div>
-    {@render carried(b, howOf(b), g.key)}
+    {#each g.heads || [g.head] as h (h)}
+      {@const b = binders[h]}
+      <div class="line">
+        <span class="role">{roleOf(b)}</span>
+        {@render name(h, g.key)}<span class="colon"> : </span>
+        <span class="ty" class:hl={ext?.type === h}>{@render lean(b.type, "b:" + h, g.key)}</span>
+      </div>
+      {@render carried(b, howOf(b), g.key)}
+    {/each}
     {#each g.members as m}
       <div class="line sub">{@render condition(m, "b:" + m, g.key)}</div>
       <div class="subc">{@render carried(binders[m], howOf(binders[m]), g.key)}{@render inside(binders[m], g.key)}</div>
@@ -303,7 +357,7 @@
     {#if g.conclusion}
       <code class="xl">{@render xlean(exactOf(st.conclusion), "c", g.key)}</code>
     {:else}
-      {#each [g.head, ...g.members].filter((i) => i != null) as i (i)}
+      {#each [...(g.heads || [g.head]), ...g.members].filter((i) => i != null) as i (i)}
         {@const b = binders[i]}
         {@const br = BIND[b.binder] || BIND.explicit}
         <code class="xl">{#if b.role === "forall"}∀ {br[0]}{b.name} : {@render xlean(b.type, "b:" + i, g.key)}{br[1]},{:else if b.role === "exists"}∃ {b.name} : {@render xlean(b.type, "b:" + i, g.key)},{:else if b.role === "instance"}[{@render xlean(exactOf(b.type), "b:" + i, g.key)}] →{:else}{@render xlean(exactOf(b.type), "b:" + i, g.key)} →{/if}</code>
@@ -324,6 +378,14 @@
       {#each groupOf(pinned)?.members || [] as m}
         <p class="small">{@render condition(m, null, key)}</p>
       {/each}
+    </div>
+  {/if}
+  {#if readSel && readSel.row === key && (readText || readExpansion)}
+    <div class="inspect term" aria-live="polite">
+      <p><span class="small faint">Sub-expression</span><button class="x" aria-label="Release" onclick={() => selectId(null)}>×</button></p>
+      {#if readText}<p><code>{readText}</code></p>{/if}
+      <p class="small faint">Activate it again to select the expression around it.</p>
+      {#if readExpansion}<Expansion x={readExpansion.x} occ={readExpansion.text} onref={refAt(key)} {refs} />{/if}
     </div>
   {/if}
   {#if termText && termSel.row === key}

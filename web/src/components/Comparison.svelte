@@ -4,6 +4,7 @@
   import StepContext from "./StepContext.svelte";
   import TexInline from "./TexInline.svelte";
   import Statement from "./Statement.svelte";
+  import ReadableRow from "./ReadableRow.svelte";
   import Definition from "./Definition.svelte";
   import ExactLean from "./ExactLean.svelte";
   import Inspection from "./Inspection.svelte";
@@ -360,11 +361,14 @@
   {/if}
 {/snippet}
 
+<!-- A row of a statement read as mathematics, when the engine arranged it so (#70). -->
+{#snippet readableRow(g, st, io)}<ReadableRow {g} {st} {io} />{/snippet}
+
 <!-- A statement: its rows, then its complete exact Lean. -->
 {#snippet statementOf(spec, st, k)}
   {@render wholeRow(spec)}
   {@render findingsAt(spec + "::top")}
-  <Statement {st} {spec} compact exact paper={paired ? paperCell : null} after={afterRow}
+  <Statement {st} {spec} compact exact readable={st.readable?.rows ? readableRow : null} paper={paired ? paperCell : null} after={afterRow}
     onref={(n, row) => open(n, spec + "::" + row)}
     onproperty={(p, o, how, row) => open(tokenOf({ kind: "property", spec, id: p.type?.id }), spec + "::" + row)}
     ext={extFor(spec)} mark={mark?.(spec, k) ?? null}

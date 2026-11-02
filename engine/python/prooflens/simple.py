@@ -2317,7 +2317,9 @@ def _link_view(l: dict, root: Path | None = None) -> dict:
             "statement": {"binders": rec.get("binders", []), "conclusion": rec.get("conclusion"),
                           "tree": rec.get("tree"),
                           "exact": rec.get("exact") or (rec.get("decl") or {}).get("signature"),
-                          "closure": rec.get("closure", []), "direct": []} if rec else None,
+                          "closure": rec.get("closure", []), "direct": [],
+                          # The statement arranged to be read as mathematics (display only).
+                          "readable": _readable(rec, l["name"])} if rec else None,
             "range": (rec.get("decl") or {}).get("range"),
             "module": (rec.get("decl") or {}).get("module"),
             "doc": (rec.get("decl") or {}).get("doc"),
@@ -2325,6 +2327,13 @@ def _link_view(l: dict, root: Path | None = None) -> dict:
             # linked structure: its fields.
             "definition": _definition(rec["decl"])
             if {"defined_by", "structure"} & set(rec.get("decl") or {}) else None}
+
+
+def _readable(rec: dict, name: str) -> dict | None:
+    """A link's statement arranged to be read as mathematics (`readable.readable`)."""
+    from .readable import readable
+    return readable({**rec, "exact": rec.get("exact") or (rec.get("decl") or {}).get("signature")},
+                    name)
 
 
 def _definition(decl: dict) -> dict:

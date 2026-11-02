@@ -119,6 +119,20 @@ is $1$ or $Q$ holds.
 Some map $\Phi \colon G \to H$ over $\mathbb{N}$ has both $A$ and $B$.
 \end{theorem}
 
+\begin{theorem}\label{thm:bound-once}\lean{Shape.bound_once}\lean{Shape.bound_each}
+There is a constant $C$ with $n \le C n^2 + n$ for every $n$; and for every $n$ there is such a
+constant.
+\end{theorem}
+
+\begin{theorem}\label{thm:isometry}\lean{Shape.isometry_classes}
+Let $\mu$ and $\nu$ be $\sigma$-finite measures and $\Phi \colon L^2(\mu \otimes \nu) \to
+\mathbb{R}^3$ a linear isometry. Every class $F$ has a representative, unique almost everywhere.
+\end{theorem}
+
+\begin{theorem}\label{thm:alternatives}\lean{Shape.alternatives}
+If $m \le b$ for every $m \le n$, then some real $x$ exceeds $n$, or $n = 2x$ for some $x$.
+\end{theorem}
+
 \begin{definition}\label{def:digit}\lean{Shape.Digit.val}
 The value of the digit $d_i$ is $i$, for $i = 0, \dots, 69$.
 \end{definition}

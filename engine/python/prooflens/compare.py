@@ -308,10 +308,14 @@ def _with_objects(decls: list[dict], derivations=()) -> list[dict]:
     each, by where it stands (`objects.objects`), `derivations` (results cited for objects in a
     workspace) included only with the object each names."""
     from .objects import objects
+    from .readable import readable
     for d in decls:
         st = d.get("statement")
         if isinstance(st, dict):
             st["objects"] = objects(st, d.get("name"), derivations)
+            # The statement as the reader shows it, read as mathematics, with the same cited
+            # results on their objects.
+            st["readable"] = readable(st, d.get("name"), derivations)
     return decls
 
 

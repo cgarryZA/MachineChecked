@@ -11,6 +11,7 @@ import re
 from collections import Counter
 
 from . import steps
+from .readable import readable
 from .assess import line_location, match_anchor, unread
 from .source_regions import matches as source_matches
 from .util import content_id, sha256_text
@@ -239,6 +240,8 @@ def build(evidence: dict, release: str, display: dict | None = None
                 "axioms": spec.get("axioms", []), "closure": spec.get("closure", []),
                 "direct": spec.get("direct", []), "legacy_hash": spec.get("legacy_hash"),
                 "fingerprint": spec.get("fingerprint"),
+                # The statement arranged to be read as mathematics (display only).
+                "readable": readable(spec, cl["spec"]),
                 "decl": lean.get("decls", {}).get(cl["spec"])} if spec else None,
                 "proofs": proofs, "witness_record": wit,
                 "evidence": clause_evidence(cl, anchor, t.get("mode"), src_ok, t)})
