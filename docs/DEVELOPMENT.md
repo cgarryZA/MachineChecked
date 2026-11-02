@@ -120,9 +120,76 @@ To bump Paper A:
 
 The detailed engineering rules live in [CLAUDE.md](../CLAUDE.md). The evolving product direction is in [PLAN.md](../PLAN.md).
 
-## Advanced commands
+## The command list
 
-The public command is `machinechecked`; `prooflens` remains an alias for compatibility. Most users need only `view`, `build` and `check`.
+The public command is `machinechecked`; `prooflens` is an alias, the same entry point
+(`prooflens.cli:main`). `machinechecked --help` lists the everyday commands, `view`, `build`,
+`check` and `review` (with the maintainer's `review promote`), and its last lines name every
+other command. `machinechecked help --all` lists all of them by group with what each does, and
+`machinechecked COMMAND --help` (or `help COMMAND`) gives a command's options. The list is
+`COMMANDS` in `cli.py`: a command added to the parser and not to it fails
+`tests/contracts/test_command_name.py`, and a command the agent guides name that `help --all`
+does not list fails `tests/simple/test_agent_guide.py`.
+
+Each command has its own handler in `cli.py` (`cmd_*`; `workspace` and `review` have one
+function per action) and its own parser function (`_add_*`). They share how a command finds what
+it works on: `_load_full` (the full assessment's configuration: `-c`, else `machinechecked.toml`
+in the current directory), `_lean_root` (the Lean project), `_built_work` and `_last_build` (the
+last build's working directory and site data), and `_could_not_run` (exit 2, with the command's
+own JSON document for `check`, `inspect` and `link` with `--json`). `view`, `build` and `check`
+keep one handler for each kind of project, zero configuration and the full assessment, until the
+two share one pipeline (#76).
+
+Where each command is listed (#79). Callers were counted in this repository's workflows,
+scripts, docs and tests, and in machinechecked.org's; the site imports the package and runs no
+command, and its pages and README name `view`, `build`, `check` and `export`.
+
+| Command | Callers | What it is for | Listed |
+|---|---|---|---|
+| `view` | README, Getting started, Reviewing, the skill, the release notes, the site's home page | open the reader | `--help` |
+| `build` | CI (the toy example, the installed wheel), the audit and Paper A workflows (`--site`, `--reuse-lean`), the guides | the reader to share, or a site to publish; a full assessment's release | `--help` |
+| `check` | README, the agent guides, the exit-code tests, the site's `llms.txt` | CI's gate, and JSON for scripts and agents | `--help` |
+| `review` | Reviewing, the agent guides, the reader's Review page; `review promote` in Full assessment | the review protocol from the terminal, and the maintainer's promotion | `--help` |
+| `link` | Getting started, the agent guides | record links from the terminal, as the reader does | `help --all` |
+| `workspace` | the agent guides, Reviewing | keep a saved investigation | `help --all` |
+| `compare` | the agent guides, Reviewing, the reader's hints | a claim's packet, and targeted queries | `help --all` |
+| `inspect` | the agent guides, Getting started | a declaration's dependencies, or where it is used | `help --all` |
+| `changes` | Full assessment, Source regions, Reviewing, the agent guides | compare two releases; the version map | `help --all` |
+| `inventory` | Source regions; messages of `build` and `review promote` | pin and repin the claims' passages | `help --all` |
+| `reassess` | Full assessment, Evidence policy (`review promote` runs the same step) | apply new reviews and dismissals without Lean | `help --all` |
+| `site` | Full assessment; the messages of `changes --workspace` | the reader of a stored release | `help --all` |
+| `bundle` | Full assessment (a private project's one-file audit) | a full assessment's reader as one HTML file | `help --all` |
+| `export` | CI (the demo, `--data-only`), Full assessment, Publication policy, the site's README | the approved public audit | `help --all` |
+| `serve` | Publication policy (an audit's local preview) | serve a built site or an export | `help --all` |
+| `evidence` | Full assessment, Getting started, Data model | list and prune stored evidence | `help --all` |
+| `symbol` | Symbol links | link a symbol of the paper to a Lean object | `help --all` |
+| `replay` | Full assessment, Evidence policy | Comparator's replay record | `help --all` |
+| `cache` | the audit and Paper A workflows (`cache restore`), Getting started; `scripts/lean_cache.py` calls the same code | the Lean build cache for CI | `help --all` |
+| `validate` | no guide; the exit-code tests use it as a stand-in command | check a JSON file against an engine schema (`build` checks its own) | `help --all`, under Development |
+
+Every command keeps its name and its behaviour, so no script that runs one changes. Before #79,
+`--help` listed ten commands, the three everyday ones beside `changes`, `cache`, `replay`,
+`inspect`, `compare`, `symbol` and `inventory`, and named the others in its closing paragraph.
+Now it lists four:
+
+```text
+usage: machinechecked [-h] [--version] {view,build,check,review} ...
+
+positional arguments:
+  {view,build,check,review}
+    view                open the reader
+    build               write the reader as one HTML file to share
+    check               report what the Lean side establishes (exit 1 if a linked declaration is
+                        missing or unproved, 2 if the check could not run)
+    review              review the claims one at a time from the terminal; `review promote` turns
+                        reports into review markers (maintainer)
+…
+Further commands: link, workspace, compare, inspect, changes, inventory, reassess, site, bundle,
+export, serve, evidence, symbol, replay, cache, validate. `machinechecked help --all` says what
+each does, and `machinechecked COMMAND --help` gives its options.
+```
+
+## Advanced commands
 
 ### Content search and paper numbers
 

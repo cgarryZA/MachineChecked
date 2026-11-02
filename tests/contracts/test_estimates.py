@@ -450,8 +450,6 @@ def test_counterexamples_and_certificates_are_validated(work):
 # -- the terminal, the comparison packet and publication ------------------------------------
 
 def test_the_terminal_and_compare_show_the_estimate(work, tmp_path, monkeypatch, capsys):
-    monkeypatch.setattr(cli, "_workspace_place", lambda a: (work, work / "site" / "data",
-                                                            tmp_path))
     monkeypatch.setattr(cli, "_built_work", lambda a: (work, tmp_path))
     p = opened(work)
     wsp.update(p, [put(FAMILY)], snap_of(work))
