@@ -10,8 +10,8 @@ A project with a `machinechecked.toml` (an acceptance layer: locked statements, 
 the full assessment; any other project gets the zero-configuration view, whose only file in the
 repository is `machinechecked.links.json` (its working files, a downloaded paper among them, are
 in `.machinechecked/`, which Git ignores). The full assessment has further commands: reassess,
-site, bundle, export, serve, review promote, replay and validate; `cache` saves and restores
-the Lean build, and `inventory` pins the claims' source passages (each with --help). `compare` gives a claim's passage, Lean statements and
+site, bundle, export, serve, review promote, replay and validate; `evidence` lists and prunes
+its stored evidence; `cache` saves and restores the Lean build, and `inventory` pins the claims' source passages (each with --help). `compare` gives a claim's passage, Lean statements and
 definitions as JSON, and `review` takes the review protocol's steps in either kind of project.
 `link` records a claim's links from the terminal, and `workspace` keeps a saved investigation,
 as the reader does.
@@ -1150,6 +1150,57 @@ def cmd_export(a):
     print(f"exported release {res['release']} to {res['out']}")
 
 
+def cmd_evidence(a):
+    """`machinechecked evidence list|prune`: the full assessment's stored evidence, one file per
+    build, and deleting what no release still needs with the releases that name it
+    (`evidence.prune`)."""
+    from . import content as content_mod
+    from . import evidence as ev
+    from .util import read_json
+    if not _assurance_config(a):
+        sys.exit("`evidence` manages the full assessment's stored evidence: run it beside "
+                 "machinechecked.toml (or pass -c)")
+    cfg = cfgmod.load(_config_arg(a))
+    out = cfg.out_dir
+    mb = lambda n: f"{n / 1e6:.1f} MB"
+    if a.action == "list":
+        rels = [read_json(p) for p in ev.releases(out)]
+        gone = ev.pruned_releases(out)
+        if not rels and not gone:
+            print("no release: run `machinechecked build` first")
+            return
+        latest = (ev.latest(out) or {}).get("release")
+        size = lambda eid: sum(f.stat().st_size for f in (out / "evidence" / f"{eid}.json",
+                                                          content_mod.path(out, eid))
+                               if f.exists())
+        for r in sorted(rels + list(gone.values()), key=lambda r: str(r.get("created") or ""),
+                        reverse=True):
+            eid = r["evidence"]
+            if r["release"] in gone:
+                state = ("evidence missing, release pruned on " if r["missing"] else
+                         "evidence pruned on ") + r["pruned"][:10]
+            elif (out / "evidence" / f"{eid}.json").exists():
+                state = mb(size(eid)) + ("  (latest)" if r["release"] == latest else "")
+            else:
+                state = "evidence " + ev.absence(out, eid).removeprefix("is ")
+            print(f"{r['release']}  evidence {eid[:12]}  {r.get('created', '')}  {state}")
+        stored = {p.stem for d in ("evidence", "content") for p in (out / d).glob("*.json")}
+        loose = stored - {r["evidence"] for r in rels}
+        print(f"{len(stored)} evidence record(s) on disk, {mb(sum(size(e) for e in stored))} with "
+              "their content" + (f"; no release names {len(loose)} of them" if loose else ""))
+        print("`machinechecked evidence prune --dry-run` lists what pruning would delete")
+        return
+    res = ev.prune(out, a.keep, dry_run=a.dry_run)
+    verb = "would delete" if a.dry_run else "deleted"
+    for eid, names in res["deleted"].items():
+        print(f"{verb} {eid[:12]}" + (f" and release {', '.join(names)}" if names else ""))
+    for eid, why in res["kept"].items():
+        print(f"kept {eid[:12]}: {'; '.join(why)}")
+    names = sum(len(n) for n in res["deleted"].values())
+    print(f"{verb} {len(res['deleted'])} evidence record(s) and {names} release(s), "
+          f"{mb(res['bytes'])}")
+
+
 def cmd_cache(a):
     from . import cache
     from .simple import find_lake_root
@@ -1679,6 +1730,29 @@ def main(argv=None):
                    help="write the audit's data only, without the reader (for a site that "
                    "reads it with its own reader, such as machinechecked.org)")
     e.set_defaults(func=cmd_export)
+
+    # The full assessment's stored evidence; maintenance, kept out of the command list.
+    evp = sub.add_parser("evidence", description="List and prune the full assessment's stored "
+                         "evidence (one file per build, in .machinechecked/evidence/).")
+    evs = evp.add_subparsers(dest="action", required=True)
+    eli = evs.add_parser("list", help="each release, newest first, with the size of its "
+                         "evidence, or when it was pruned")
+    epr = evs.add_parser(
+        "prune", help="delete the evidence no release still needs, with its releases",
+        description="Delete stored evidence with the release records that name it, keeping the "
+        "newest KEEP distinct records (the latest, which `reassess`, `site` and `export` read "
+        "and the next build compares with, and the one the latest is compared with), the "
+        "evidence of every release given its own name with `build --release NAME`, of the "
+        "releases a workspace's version map compares, and what a kept record was "
+        "reassessed from. What was pruned is recorded in .machinechecked/pruned.json, so a "
+        "comparison with a pruned release says that its evidence was pruned.")
+    epr.add_argument("--keep", type=int, default=2,
+                     help="how many of the newest evidence records to keep (at least 2; "
+                     "default 2)")
+    epr.add_argument("--dry-run", action="store_true", help="list what would be deleted")
+    for x in (eli, epr):
+        x.add_argument("-c", "--config", default=None, help=argparse.SUPPRESS)
+    evp.set_defaults(func=cmd_evidence)
 
     ca = sub.add_parser("cache", help="save and restore the Lean build as release assets")
     cas = ca.add_subparsers(dest="action", required=True)

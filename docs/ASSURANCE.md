@@ -154,6 +154,32 @@ With several papers in one configuration, `export --paper ID` exports one of the
 
 The export is a complete site, reader included; with `--data-only` it holds only the audit's descriptor and data, for a site that reads it with its own reader (machinechecked.org opens it as `https://machinechecked.org/read/?audit=<its address>`).
 
+### Stored evidence and disk use
+
+Each build stores its evidence in `.machinechecked/evidence/` (and the declaration index that
+search reads in `.machinechecked/content/`), one record per distinct build, and names a release
+for it in `.machinechecked/releases/`. A record holds a full build, so a large project's records
+can take hundreds of megabytes each. To keep the disk this uses bounded:
+
+```sh
+machinechecked evidence list                 # each release, newest first, with its size
+machinechecked evidence prune --dry-run      # what pruning would delete, and why the rest stays
+machinechecked evidence prune --keep N       # delete it (N is 2 by default, and at least 2)
+```
+
+Pruning deletes old evidence together with the release records that name it. It keeps the
+newest `N` evidence records: the latest, which `reassess`, `site` and `export` read and the
+next build compares with, then the one the latest is compared with, then older ones. It also keeps the evidence of every release given its own name
+(`build --release NAME`), of the releases a workspace's version map compares, and the record a
+kept one was reassessed from. `.machinechecked/pruned.json` records what was pruned, so a
+comparison with a pruned release (`changes --from`, or the change summary of an older release
+`site --release` shows) says that its evidence was pruned, and when.
+
+When an earlier release's evidence file was deleted by hand, the next build completes without a
+change summary and warns which release's evidence is missing, and the reader's **Details** page
+says the same; the build after it has its change summary again. `evidence prune` removes a
+release record whose evidence is gone once the record is older than the releases it keeps.
+
 ## What changed since the last release
 
 Each build is a release. A build that reproduces the evidence of an earlier one (after a change
