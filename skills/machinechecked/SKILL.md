@@ -128,7 +128,9 @@ violations and obligations by subject; `findings` holds only their totals. A vio
   its passage, with each release's own status; a shared number or id is only a proposal. With
   `--map --workspace ID`, each finding is reopened exactly when a passage it rests on changed
   (a moved or renumbered passage keeps it current), naming the change and the part, with a
-  question; an ambiguous match is not known to be current.
+  question; an ambiguous match is not known to be current. `--save` keeps the map: `check` and
+  `compare` then give a paper number of the earlier revision cited in the Lean its counterpart
+  (`current`), and the published audit carries the map with what it reopens.
 - **A shareable report**: `machinechecked build` writes `.machinechecked/MachineChecked.html`
   (one file, opens from disk; Git ignores it there, and `--out` puts it elsewhere). `machinechecked build --site public/ --author "Name" --issues owner/repo` writes a
   directory to publish (for example on GitHub Pages) with `audit.json` describing it. Both
@@ -195,6 +197,9 @@ carries every step out on the toy example.
    submitted finding records the parts it rests on with their versions (`dependencies`): it
    reads `stale` naming the part that changed, or `unchecked` with `currency.unknown` when a
    part is not known, never `current`; re-pinning a record does not refresh it, superseding does.
+   A changed definition that a cited statement expands names the expansion as cited and now
+   (`changes[].expansions`). The published audit carries each submitted finding with its
+   `dependencies`; drafts and questions stay in the workspace.
 
 Each answer says what it covers. `retrieval.unavailable` in a `compare` packet lists what is not
 extracted yet, with the issue that owns it; a query answers `available: false` with its

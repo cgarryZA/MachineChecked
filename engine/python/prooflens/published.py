@@ -221,6 +221,12 @@ def load_published_audit(paper: dict, project: dict, listing: dict, fetch) -> di
         contract(w, 'published-work')
         if w.get('claim') != rec['id'] or w.get('release') != idx['release']:
             raise AuditError('Audit workspace records disagree with their claim')
+        for rd in w.get('readings') or []:
+            # What a kept version map says across a revision concerns the published findings.
+            shown = {f.get('id') for f in rd.get('findings') or []}
+            if any(f.get('id') not in shown for r in rd.get('revisions') or []
+                   for f in r.get('findings') or []):
+                raise AuditError('Audit revisions name a finding the audit does not publish')
         return w
 
     def claim(row):

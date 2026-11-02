@@ -5,8 +5,10 @@
 
   // The workspace records the audit publishes for this claim (`published_work.py`): each
   // auditor's requirements, the passages accepted as governing them, the alignments with Lean
-  // and the submitted findings with their evidence and compositions. They are shown as recorded, attributed and
-  // read-only; the claim's status comes from the evidence, never from them.
+  // and the submitted findings with their evidence and compositions and what each rests on, and
+  // what each version map the auditor kept says of them across a revision of the paper. They are
+  // shown as recorded, attributed and read-only; the claim's status comes from the evidence,
+  // never from them.
   let { claim } = $props();
 
   let work = $state(null);
@@ -78,6 +80,31 @@
     if (f.difference) return `A ${f.difference.feature} difference: ${OUTCOME[f.difference.outcome]}`;
     return "No coverage given";
   }
+
+  // What a submitted finding rests on, as it recorded it (`dependencies.py`): each part in words.
+  function depText(it) {
+    switch (it.dependency) {
+      case "passage": return it.claim === claim.id ? "this claim's passage" : `the passage of ${it.claim}`;
+      case "reading": return `requirement ${it.requirement}`;
+      case "context": return `${where(it)} (${ROLE[it.role] || it.role} of ${it.requirement})`;
+      case "object": return (it.lean || []).map(targetText).join("; ") + (it.relation ? ` (${it.relation})` : "");
+      case "composition": return `composition ${it.record}`;
+      case "bridge": return `bridge ${it.theorem} for ${it.target}`;
+      case "counterexample": return `counterexample ${it.record}`;
+      default: return it.ref ? refText(it.ref) : `${it.dependency} ${it.record || ""}`.trim();
+    }
+  }
+
+  // What a version map the auditor kept says of this claim's findings across a revision of the
+  // paper (`reopen.py`, as published): reopened, not known to be current, or still current.
+  const STATE = { reopened: "Due for review", unchecked: "Not known to be current", current: "Still current" };
+  const side = (s) => (s?.release ? `release ${s.release}` : `revision ${s?.revision || "not recorded"}`);
+  const label = (s) => (s ? (s.number ? `${s.number} (${s.claim})` : s.claim) : "");
+  function rowText(row) {
+    if (row.from && row.to) return `${label(row.from)} → ${label(row.to)}: ${row.reason}`;
+    return `${label(row.from || row.to)}: ${row.reason}`;
+  }
+  const diffOf = (ch) => [...(ch?.diff || []), ...(ch?.context || []).flatMap((x) => [...(x.diff || []), ...(x.claim_change?.diff || [])])];
 </script>
 
 {#if work?.readings?.length}
@@ -100,6 +127,31 @@
             {#each (rd.compositions || []).filter((c) => c.id === f.composition) as c (c.id)}<Composition {c} evidence={rd.evidence} />{/each}
             {#if f.supersedes}<p class="faint small">Supersedes {f.supersedes}{f.reason ? `: ${f.reason}` : ""}</p>{/if}
             {#if cited(rd, f).length}<p class="faint small">Evidence: {#each cited(rd, f) as e, i (e.id)}{i ? ", " : ""}<code>{refText(e.ref)}</code> ({e.role}{stale(e) ? ", " + STALE : ""}){/each}</p>{/if}
+            {#if f.dependencies?.items?.length}<p class="faint small" data-line="rests-on">Rests on: {f.dependencies.items.map(depText).join("; ")}{f.dependencies.kinds?.length ? ` [${f.dependencies.kinds.join(", ")}]` : ""}</p>{/if}
+            {#each f.dependencies?.unknown || [] as u}<p class="faint small" data-line="unidentified">Not identified: {u.why}</p>{/each}
+          </div>
+        {/each}
+        {#each rd.revisions || [] as rv}
+          <div class="revision" data-revision={rv.map.paper}>
+            <h3>Across a revision of the paper</h3>
+            <p class="faint small">From {side(rv.map.from)} to {side(rv.map.to)}{rv.map.kept_by ? ` · version map kept by ${rv.map.kept_by}` : ""}{rv.map.kept_at ? " " + day(rv.map.kept_at) : ""}</p>
+            {#each rv.claims as row}<p class="small" data-map-class={row.class}>{rowText(row)}</p>{/each}
+            {#if !rv.build_checked && rv.findings.length}<p class="faint small">The Lean these findings cite is not checked against this audit's build.</p>{/if}
+            {#each rv.findings as f (f.id)}
+              <div class={"across s-" + f.state} data-finding={f.id} data-state={f.state}>
+                <p class="small"><strong>{STATE[f.state]}</strong>: finding {f.id}</p>
+                {#each f.paper.filter((o) => o.state !== "current") as o}
+                  <p class="small">{o.state === "unchecked" ? "Not known" : o.change?.class === "removed" ? "Removed" : "Changed"}: {o.text}: {o.state === "unchecked" ? o.why : o.change?.reason}.</p>
+                  {#if diffOf(o.change).length}<pre class="src">{diffOf(o.change).join("\n")}</pre>{/if}
+                  {#if o.question}<p class="small question">{o.question}</p>{/if}
+                {/each}
+                {#each f.build?.changes || [] as ch}<p class="small">Changed in the Lean of this build: {ch.words}.</p>{/each}
+                {#each f.build?.unknown || [] as u}<p class="faint small">Not known in this build: {u.why}.</p>{/each}
+              </div>
+            {/each}
+            {#each [...(rv.evidence || []), ...(rv.passages || [])].filter((r) => r.state !== "current") as r (r.id)}
+              <p class="small faint" data-record={r.id}>{STATE[r.state]}: {r.requirement ? `the passage ${r.id} (${ROLE[r.role] || r.role} of ${r.requirement})` : `evidence ${r.id}`}: {r.state === "unchecked" ? r.why : r.change?.reason}.</p>
+            {/each}
           </div>
         {/each}
         {#if rd.requirements.length}
@@ -164,5 +216,9 @@
   .frag { margin: 4px 0 4px 8px; }
   .frag.use { opacity: 0.8; }
   .cx { margin: 4px 0 4px 8px; padding-left: 6px; border-left: 2px solid var(--border); }
+  .revision { margin: 10px 0; padding: 4px 0 4px 10px; border-left: 3px solid var(--border); }
+  .across { margin: 6px 0; }
+  .across.s-reopened strong { color: var(--tier-warning); }
+  .question { font-style: italic; }
   .src { margin: 2px 0; padding: 4px 6px; background: var(--surface); border: 1px solid var(--border); border-radius: 4px; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
 </style>

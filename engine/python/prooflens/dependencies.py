@@ -13,7 +13,9 @@ A finding rests on:
   a requirement only through its own evidence: a change of context reopens it only then;
 - the evidence it cites, and that its composition and its counterexamples cite: a declaration
   (`declaration`: its fingerprint and digest, the definitions its statement uses, each with its
-  digest, and the expansions of definitions it prints, by their keys), an application of one
+  digest, and the expansions of definitions it prints, by their keys with the fingerprint of the
+  definition each expands: a changed definition it expands reopens it, naming the expansion as
+  recorded and as the build prints it now), an application of one
   (`application`), a fact inside a proof (`fact`), a certificate (`certificate`), a passage of
   the paper (`paper`) or a source line (`source`, which records no version of its text);
 - its composition (`composition`: a digest of its steps, with their substitutions, of its
@@ -82,9 +84,11 @@ def statement_pins(snap, name: str) -> dict:
     """What a record citing the declaration `name` keeps of its statement, from the build
     `snap`: the definitions its statement uses (`closure`, each with its digest, or None when
     the build shows no version of it), `closure_complete: False` when the build's records of
-    them are incomplete, and the expansions it prints (`expansions`, `{at, name, key}`). Empty
-    when the build shows nothing of what the statement uses: the record then reads as unchecked
-    until it is re-pinned against a build that does."""
+    them are incomplete, and the expansions it prints (`expansions`, `{at, name, key,
+    fingerprint}`: the application expanded, the definition, the key of the stored expansion and
+    the fingerprint of the definition it expands). Empty when the build shows nothing of what the
+    statement uses: the record then reads as unchecked until it is re-pinned against a build that
+    does."""
     if snap is None:
         return {}
     names, complete, _ = snap.closure(name)
@@ -94,9 +98,29 @@ def statement_pins(snap, name: str) -> dict:
     out = {"closure": {m: digests.get(m) for m in names}}
     if not complete:
         out["closure_complete"] = False
-    exp = (snap.statement_records().get(name) or {}).get("expansions")
+    exp = expansions_now(snap, name)
     if exp:
-        out["expansions"] = exp
+        out["expansions"] = list(exp.values())
+    return out
+
+
+def expansions_now(snap, name: str) -> dict[tuple, dict]:
+    """The expansions the statement of `name` prints in the build `snap`, by application and
+    definition (`(at, name)`), each with the fingerprint of the definition it expands: the
+    stored expansion's own, else the build's fingerprint of that definition."""
+    fps = None
+    out = {}
+    for x in (snap.statement_records().get(name) or {}).get("expansions") or []:
+        if not isinstance(x, dict) or not x.get("name"):
+            continue
+        fp = (snap.part(x.get("key")) or {}).get("fingerprint")
+        if not fp:
+            if fps is None:
+                fps = {**snap.store_fingerprints(), **snap.fingerprints()}
+            fp = fps.get(x["name"])
+        out[(x.get("at"), x["name"])] = {"at": x.get("at"), "name": x["name"],
+                                         "key": x.get("key"),
+                                         **({"fingerprint": fp} if fp else {})}
     return out
 
 
@@ -114,7 +138,8 @@ def kept_statement_pins(ref: dict) -> dict:
     if ref.get("closure_complete") is False:
         out["closure_complete"] = False
     if isinstance(ref.get("expansions"), list):
-        out["expansions"] = [{k: x.get(k) for k in ("at", "name", "key")}
+        out["expansions"] = [{k: x.get(k) for k in ("at", "name", "key", "fingerprint")
+                              if k != "fingerprint" or x.get(k)}
                              for x in ref["expansions"] if isinstance(x, dict)]
     return out
 
@@ -166,8 +191,56 @@ def decl_currency(ref: dict, snap, root=None) -> dict:
     if not was:
         return {"state": "unchecked", "changes": [], "reason": unrecorded_reason(ref)}
     if now != was:
-        return {"state": "stale", "changes": [{"decl": ref["decl"], "was": was, "now": now}]}
-    return closure_currency(ref, snap, ref["decl"])
+        return expansion_currency(ref, snap, {"state": "stale", "changes": [
+            {"decl": ref["decl"], "was": was, "now": now}]})
+    return expansion_currency(ref, snap, closure_currency(ref, snap, ref["decl"]))
+
+
+def expansion_currency(ref: dict, snap, res: dict) -> dict:
+    """The currency `res` of a cited declaration with what became of the definitions its
+    statement expands at their arguments (`expansions`, as `statement_pins` records them). A
+    definition whose fingerprint is not the one its expansion recorded changed: the change names
+    the expansion, at the application it expands, as recorded (`was`, its key) and as the build
+    prints it now (`now`, or None when the statement no longer expands it there). When the
+    definitions the statement uses already name that change, its expansions are added to it.
+    A definition the build shows no version of leaves the reference unchecked."""
+    recorded = [x for x in ref.get("expansions") or [] if isinstance(x, dict) and x.get("name")]
+    if not recorded or snap is None:
+        return res
+    owner = ref["decl"]
+    now_exp = expansions_now(snap, owner)
+    fps = {**snap.store_fingerprints(), **snap.fingerprints()}
+    changes = [dict(c) for c in res.get("changes") or []]
+    named = {c["decl"]: c for c in changes if c.get("decl") and c.get("used_by") == owner}
+    unknown = []
+    for x in recorded:
+        n = now_exp.get((x.get("at"), x["name"]))
+        exp = {"at": x.get("at"), "name": x["name"], "was": x.get("key"),
+               "now": (n or {}).get("key")}
+        if x["name"] in named:
+            named[x["name"]].setdefault("expansions", []).append(exp)
+            continue
+        was_fp = x.get("fingerprint")
+        now_fp = (n or {}).get("fingerprint") or fps.get(x["name"])
+        if not was_fp:
+            continue  # recorded before expansions kept their fingerprint: the closure decides
+        if now_fp is None:
+            unknown.append(x["name"])
+        elif now_fp != was_fp:
+            c = {"decl": x["name"], "was": was_fp, "now": now_fp, "used_by": owner,
+                 "expansions": [exp],
+                 "reason": f"{x['name']}, which the statement of {owner} expands at its "
+                           "arguments, changed"}
+            named[x["name"]] = c
+            changes.append(c)
+    if changes:
+        return {"state": "stale", "changes": changes}
+    if unknown and res.get("state") == "current":
+        names = list(dict.fromkeys(unknown))
+        return {"state": "unchecked", "changes": [],
+                "reason": f"no version of {', '.join(names)}, which the statement of {owner} "
+                          "expands at its arguments, is known here"}
+    return res
 
 
 def unrecorded_reason(ref: dict) -> str:
@@ -686,7 +759,7 @@ def item_text(it: dict) -> str:
 def change_text(ch: dict) -> str:
     """One change a finding's currency names, in words."""
     if ch.get("reason"):
-        return ch["reason"]
+        return ch["reason"] + expansion_words(ch)
     if ch.get("decl"):
         return f"{ch['decl']} changed" if ch.get("now") else f"{ch['decl']} is not in the build"
     if ch.get("region"):
@@ -697,6 +770,21 @@ def change_text(ch: dict) -> str:
         return f"the passage of {what} changed" if ch.get("now") else \
             f"{what} is not in the build"
     return "changed since it was recorded"
+
+
+def expansion_words(ch: dict) -> str:
+    """The expansions a change of a definition names, as recorded and now, in words: the keys
+    `compare --query expansion KEY` reads."""
+    out = []
+    for x in ch.get("expansions") or []:
+        if not x.get("now"):
+            out.append(f"its expansion at {x.get('at')} was {x.get('was')}, and the statement no "
+                       "longer expands it there")
+        elif x["now"] == x.get("was"):
+            out.append(f"its expansion at {x.get('at')} is {x['now']}")
+        else:
+            out.append(f"its expansion at {x.get('at')} was {x.get('was')}, now {x['now']}")
+    return ("; " + "; ".join(out)) if out else ""
 
 
 def lines(deps: dict, currency: dict | None = None, pad: str = "           ") -> list[str]:

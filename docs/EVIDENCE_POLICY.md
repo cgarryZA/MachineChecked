@@ -151,11 +151,14 @@ Each clause reports a result for every evidence dimension.
   status or review from one side to the other. With `--workspace`, the map says which of an
   auditor's findings a revision reopens: a finding stays as it was recorded, and one the map
   cannot follow is not known to be current. Findings and maps are workspace records; no status
-  reads them.
+  reads them. A published audit carries, per claim, what each submitted finding rests on and what
+  each kept map reopens, as the paper's publication settings allow.
 - **Suggestions and paper numbers:** a suggestion, a content search result or a check of the
   Lean's references to the paper's numbers names a candidate to inspect and why. It
   establishes nothing about correspondence and never makes a link: a claim with suggestions
-  and no link reads `link.suggested`, unlinked and in the same class as `link.none`.
+  and no link reads `link.suggested`, unlinked and in the same class as `link.none`. A version
+  map an auditor keeps gives a reference to an earlier number its counterpart, attributed to
+  that auditor; it changes nothing else.
 
 ## Provenance of a release
 
