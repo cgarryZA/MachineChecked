@@ -350,6 +350,12 @@ export function stepIssueDraft(unit, verdict, detail) {
   };
 }
 
+// The Lean of `u` (a unit, or a report's pins) in the form a draft records it with the verdict
+// and a report pins it, as `Session.decide` records it in the draft's `lean`.
+export function leanOf(u) {
+  return { fingerprint: u.fingerprint ?? null, fingerprints: u.fingerprints ?? null, legacy_hash: u.legacy_hash ?? null };
+}
+
 // The draft a report came from, as `Session.undo` gives it back under `machinechecked view`: the
 // unit at step 3 with its reading, its comparison and checklist, its verdict and coverage, and the
 // Lean the verdict was recorded against (`lean`, which the report saved again pins), all as the
@@ -364,8 +370,7 @@ export function draftFromReport(r) {
     decided_at: cmp.decided_at ?? null,
     group: v.group ?? null, verdict: v.value ?? null, detail: v.detail || "",
     correspondence: r.correspondence ?? null,
-    lean: { fingerprint: pins.fingerprint ?? null, fingerprints: pins.fingerprints ?? null,
-            legacy_hash: pins.legacy_hash ?? null },
+    lean: leanOf(pins),
     author_shown_at: a.shown_at ?? null, disagreements: a.disagreements || "",
   };
 }
@@ -387,8 +392,9 @@ export function undoReport(work) {
 export function buildReport({ index, unit, draft, reviewer }) {
   const papers = Object.fromEntries((index.papers || []).map((p) => [p.id, p.revision || null]));
   const verdict = draft.verdict;
-  // The Lean the verdict was recorded against: the draft's when Undo kept it from the report, as
-  // `review_cli.report` pins it, else the unit's.
+  // The Lean the verdict was recorded against, as `review_cli.report` pins it: the draft's (recorded
+  // with the verdict, or kept by Undo from the report), else, for a draft saved before the verdict
+  // recorded it, the unit's.
   const lean = draft.lean || unit;
   return {
     schema: REPORT_SCHEMA,

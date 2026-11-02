@@ -3070,6 +3070,37 @@ await check("on a static copy, Undo keeps what the report recorded, its checklis
   assert.deepEqual(second, { ...first, submitted_at: second.submitted_at }, "the report saved again is the one taken back");
 });
 
+// #488: on a static copy, the verdict records the Lean it was recorded against. The site is rebuilt
+// with other Lean for the unit before the report is saved: the report pins the Lean the verdict was
+// recorded against, and the unit is open again for the new Lean.
+await check("on a static copy, a report pins the Lean its verdict was recorded against", 1300, async (pg) => {
+  const site = path.join(root, "review-rebuilt");
+  fs.cpSync(path.join(root, "review"), site, { recursive: true });
+  const queueFile = path.join(site, "data", "review-queue.json");
+  const queue = JSON.parse(fs.readFileSync(queueFile, "utf8"));
+  const [unit] = queue.units;
+  await pg.goto(origin + `/review-rebuilt/#/r/${TOY.release}/review`);
+  await pg.evaluate((k) => localStorage.setItem(k, JSON.stringify({ reviewer: { kind: "human", name: "Synthetic reviewer" } })), REVIEW_KEY);
+  await pg.reload();
+  const stored = () => pg.evaluate((k) => JSON.parse(localStorage.getItem(k)), REVIEW_KEY);
+  await pg.getByRole("textbox", { name: "Your reading", exact: true }).fill("The bound holds for every natural number, with the printed constant.");
+  await pg.getByRole("button", { name: "Lock my reading and show the Lean" }).click();
+  await pg.getByRole("textbox", { name: "Comparison", exact: true }).fill("The quantifiers agree; the constant is the printed one.");
+  await pg.getByRole("button", { name: "Matches the paper", exact: true }).click();
+  await pg.getByRole("radio", { name: "Faithful", exact: true }).check();
+  await pg.getByRole("button", { name: "Record verdict and show the author's review" }).click();
+  await pg.locator(".review .author").waitFor();
+  fs.writeFileSync(queueFile, JSON.stringify({ ...queue, units: [{ ...unit, fingerprint: unit.fingerprint + "-rebuilt" }, ...queue.units.slice(1)] }));
+  await pg.reload();
+  await pg.getByRole("button", { name: "Save report", exact: true }).click();
+  await pg.getByRole("button", { name: "Export reports (1 new)", exact: true }).waitFor();
+  const [report] = (await stored()).reports;
+  assert.deepEqual([report.pins.fingerprint, report.pins.fingerprints, report.pins.legacy_hash], [unit.fingerprint, null, null],
+                   "the report pins the Lean the verdict was recorded against, not the rebuilt site's");
+  await pg.locator(".review .steps li.on", { hasText: "1. Read" }).waitFor();
+  assert.equal(await pg.locator(".review .unit .why").textContent(), "Statement · Synthetic review", "the unit is open again for the new Lean");
+});
+
 // The review page's order (#128): the queue's priority order, or the paper's order the build
 // wrote, each with the engine's reasons; a static copy offers no informed order.
 await check("the review page offers the priority and paper orders with the engine's reasons", 390, async (pg) => {
