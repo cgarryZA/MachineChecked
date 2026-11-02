@@ -205,4 +205,7 @@ call does not contain is not detected ([DEVELOPMENT.md](DEVELOPMENT.md)).
 Evidence records are content-addressed and never rewritten. A release name, once given, keeps its
 evidence. A build that reproduces an earlier evidence record names that record's release again,
 and every command that reads the latest release reads the one the last build produced or
-reproduced.
+reproduced. `machinechecked evidence prune` deletes the evidence of older releases with their
+release records, never the evidence of a release given its own name
+([Stored evidence and disk use](ASSURANCE.md#stored-evidence-and-disk-use)); a comparison that
+would need a pruned release says that its evidence was pruned.
