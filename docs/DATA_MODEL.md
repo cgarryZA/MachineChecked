@@ -1063,13 +1063,16 @@ claim, read-only and attributed. They are never an input to a status.
 ## Links file (`machinechecked.links.json`), written by people, the reader and `link`
 
 Per paper key (the paper's path in the project, or its URL), per claim key: `lean` (the confirmed
-list), `rejected` (suggestions declined) with optional `rejected_reasons` (`{name: {reason, by,
-at}}`), the correspondence reading (`note`, `coverage`, `confidence`, `basis`, `refs`,
-`argument`, `bridge`, `question`, `would_decide`; see above), `by` and `at`. When the confirmed
-list changes, the reading written for the old list moves to `earlier_notes` (with the list it
-described), where it is kept and no longer shown. `machinechecked link` and the reader's
-buttons write it through the same checks (`authoring.py`), refusing a write when the claim's entry
-changed after the request was prepared.
+list), `modules` (`{name: module}`, for a linked or route declaration whose name several modules
+declare: the module meant, read as formalization.yaml's `module`), `rejected` (suggestions
+declined) with optional `rejected_reasons` (`{name: {reason, by, at}}`), the correspondence
+reading (`note`, `coverage`, `confidence`, `basis`, `refs`, `argument`, `bridge`, `question`,
+`would_decide`; see above), `by` and `at`. When the confirmed list changes, or the module of a
+linked name, the reading written for the old list moves to `earlier_notes` (with the list and
+modules it described), where it is kept and no longer shown. `machinechecked link` and the
+reader's buttons write it through the same checks (`authoring.py`), refusing a write when the
+claim's entry changed after the request was prepared. A build notes entries under keys no claim
+of the paper has: they are not shown.
 
 ## Identifiers
 

@@ -309,6 +309,12 @@ def cmd_link(a):
     if _assurance_config(a):
         sys.exit("`link` records the links of the zero-configuration view; a full assessment "
                  "names its declarations in the inventory")
+    if a.paper and not re.match(r"https?://", a.paper) and not Path(a.paper).exists():
+        from .simple import find_lake_root, find_papers
+        root = find_lake_root(Path.cwd().resolve())
+        found = [str(f.relative_to(root)) for f in find_papers(root)] if root else []
+        sys.exit(f"{a.paper}: no such paper" + (f"; the project's papers: {', '.join(found)}"
+                                                 if found else ""))
     root, paper = _simple_target(a)
     try:
         snap = Snapshot(root / cfgmod.work_dir_name(root) / "site" / "data")
@@ -356,11 +362,18 @@ def cmd_link(a):
                      "dry_run": a.dry_run, **change})
         return
     c = change["claim"]
+    from .status import STATUSES
     for d in change["declarations"]:
+        shown = (STATUSES.get(d.get("status_code")) or {}).get("label")
         state = {"built": "in the build", "unbuilt": "its module is not built: Lean has not "
                  "checked it", "not loaded": "its module could not be loaded",
-                 "external": "not a project declaration: Lean checks it at the next build"}
-        print(f"  {d['name']}: {state.get(d['build'], d['build'])}")
+                 "external": "not a project declaration: Lean checks it at the next build",
+                 "as shown": "kept as the last build shows it" + (f" ({shown})" if shown
+                                                                   else "")}
+        print(f"  {d['name']}" + (f" ({d['module']})" if d.get("module") else "")
+              + f": {state.get(d['build'], d['build'])}")
+        if d.get("status_code") == "link.ambiguous":
+            print(f"    several modules declare it: give it as MODULE:{d['name']}")
     if not change["changed"]:
         print(f"{c['id']} ({c['number']}): nothing to change")
     elif a.dry_run:
@@ -1809,7 +1822,8 @@ def main(argv=None):
     lk.add_argument("claim", help="the claim: its id or key (thm:main), or its number "
                     "(\"Lemma 2.3\", or 2.3 when only one claim has it)")
     lk.add_argument("decls", nargs="*", metavar="DECL",
-                    help="the declarations that state it (they replace the confirmed list)")
+                    help="the declarations that state it (they replace the confirmed list); "
+                    "MODULE:NAME when several modules declare NAME")
     lk.add_argument("--add", action="store_true", help="add DECL to the confirmed list")
     lk.add_argument("--route", action="store_true", help="for a proof step: DECL is the "
                     "different formal route used instead of the printed step (none: clear it)")
@@ -2089,6 +2103,11 @@ def _could_not_run(a, kind: str, message: str, **extra):
                           "error": {"kind": kind, "message": message, **extra},
                           "note": "Inspection unavailable; resolve the execution error and retry."},
                          indent=1))
+    elif getattr(a, "func", None) is cmd_link and getattr(a, "json", False):
+        import json
+        print(json.dumps({"schema": "machinechecked/link@1", "ok": False, "written": False,
+                          "error": {"kind": kind, "message": message, **extra}}, indent=1,
+                         ensure_ascii=False))
     raise SystemExit(COULD_NOT_RUN)
 
 

@@ -291,16 +291,20 @@ machinechecked link "Lemma 2.3" --reject Example.other --reason "a different est
 machinechecked link "Lemma 2.3" --clear     # the paper's \lean tags apply again
 ```
 
-A claim is named by its id, its key (`lem:bound`) or its number; a number two claims share, or a
-name the build does not have, is refused with the candidates, and nothing is written. A
-declaration whose module is not built is recorded and reads as such until it is built.
-`--dry-run` shows the change and `--json` prints it as one document.
+A claim is named by its id, its key (`lem:bound`) or its number, and its record is written under
+its key; a number two claims share, or a name the build does not have, is refused with the
+candidates, and nothing is written. A name several modules declare is given as `MODULE:NAME`
+(`machinechecked link "Lemma 2.3" Example.Bounds:Example.inverse_bound`), and the module is
+recorded with the link. A declaration whose module is not built is recorded and reads as such
+until it is built. `--dry-run` shows the change and `--json` prints it as one document. The
+reader's buttons go through the same checks and write the same entries.
 
 A link records the declaration associated with a claim. A correspondence review compares their
 assumptions, definitions and conclusion; see [Reviewing](REVIEWING.md).
 
 **Coverage notes.** An auditor who has compared a claim with its declarations can say how far
-they state it, in the claim's entry of `machinechecked.links.json`:
+they state it, with `machinechecked link` as above; the claim's entry of
+`machinechecked.links.json` then reads:
 
 ```json
 "lemma-8.6": {"lean": ["Proj.inverse_bound", "Proj.inverse_solves"],
@@ -412,7 +416,7 @@ Select a claim to see the printed statement beside its Lean statement. For a LaT
 - **Linked, proof checked:** Lean accepts the named formal theorem, subject to its axioms.
 - **Linked, Lean definition:** the link is to a definition, which introduces a mathematical object.
 - **Linked, Lean not checked:** the project, or the declaration's own module, is not built, so Lean has not been run on it here. A project can be partly built: what is built is checked, and each link says whether its module is.
-- **Linked, Lean name is ambiguous:** several modules declare the same name (a statement left as a challenge and its solution, for instance). Name the intended module in the `formalization.yaml` row (`module: …`). Each Lean library is inspected in its own Lean session, so libraries that cannot be loaded together are handled. A library that cannot be loaded in one session is loaded a few modules at a time; a module that still cannot be loaded on its own is reported as such (**Linked, Lean not checked (module could not be loaded)**), and each link into it, the build's note and `check` give the first lines of what Lean reported, and say when the module's library was loaded apart first.
+- **Linked, Lean name is ambiguous:** several modules declare the same name (a statement left as a challenge and its solution, for instance). Name the intended module in the `formalization.yaml` row (`module: …`), or link the name as `MODULE:NAME` (`machinechecked link CLAIM MODULE:NAME`). Each Lean library is inspected in its own Lean session, so libraries that cannot be loaded together are handled. A library that cannot be loaded in one session is loaded a few modules at a time; a module that still cannot be loaded on its own is reported as such (**Linked, Lean not checked (module could not be loaded)**), and each link into it, the build's note and `check` give the first lines of what Lean reported, and say when the module's library was loaded apart first.
 - **Incomplete (`sorry`):** the formal proof has unfinished obligations.
 - **Further axioms:** the proof relies on axioms beyond the default allowlist.
 - **Definition / declaration not found:** the linked item is not a checked theorem or cannot be resolved from the built modules.

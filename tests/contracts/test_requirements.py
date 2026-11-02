@@ -575,3 +575,73 @@ def test_requirements_survive_export_and_import(work, tmp_path):
     rd = wsp.view(q, Snapshot(other / "site" / "data"))["claims"]["P:eq:young"]["reading"]
     assert [r["local_id"] for r in rd["requirements"]] == ["r1", "r1.1", "r1.1.1"]
     assert all(r["currency"]["state"] == "current" for r in rd["requirements"])
+
+
+def test_a_clause_record_with_two_declarations_round_trips(work, tmp_path, monkeypatch, capsys):
+    """#123: a reading of one requirement of a claim (a clause), aligned with two declarations,
+    and a finding resting on both, recorded from the command line (standard input, after a dry
+    run), are the records the reader's interface gives and the export and an import carry, with
+    their source pins, basis and attribution."""
+    import io
+    monkeypatch.setattr(cli, "_workspace_place", lambda a: (work, work / "site" / "data",
+                                                            tmp_path))
+    p = opened(work)
+    wid = wsp.read(p)["id"]
+    note = 'The paper\'s "C/ε" is Lean\'s `C / ε`;\nboth results give |u| ≤ ε|f| + C/ε.\n'
+    ops = YOUNG_READING + [
+        put({"id": "e-young", "kind": "evidence", "claim": "Equation (1)",
+             "ref": {"decl": "Ex.young"}, "role": "supports"}),
+        put({"id": "e-spec", "kind": "evidence", "claim": "Equation (1)",
+             "ref": {"decl": "Ex.young_spec"}, "role": "supports"}),
+        put({"id": "a-est", "kind": "alignment", "claim": "Equation (1)",
+             "requirements": ["r1.1.1"], "relation": "corresponds",
+             "lean": [{"decl": "Ex.young_spec", "conclusion": True}, {"decl": "Ex.young"}]}),
+        put({"id": "f-est", "kind": "finding", "claim": "Equation (1)", "requirement": "r1.1.1",
+             "coverage": "full", "basis": "reviewed_composition",
+             "argument": "Ex.young states the estimate for the solution Ex.young_spec names.",
+             "evidence": ["e-young", "e-spec"], "note": note})]
+    body = json.dumps({"op_id": "clause-1", "ops": ops}, ensure_ascii=False)
+
+    def update(*extra):
+        monkeypatch.setattr("sys.stdin", io.StringIO(body))
+        code, out, _ = _run(["workspace", "update", "-", "--id", wid, "--as", WHO["id"], *extra],
+                            capsys)
+        return code, json.loads(out)
+
+    code, dry = update("--dry-run")
+    assert code == 0 and dry["dry_run"] and dry["records"]["f-est"]["note"] == note
+    assert "f-est" not in wsp.read(p)["records"]
+    code, ack = update()
+    assert code == 0 and {"a-est", "f-est", "e-young", "e-spec"} <= set(ack["changed"])
+    saved = wsp.read(p)["records"]
+    clause = ("p-est", "p-eps", "a-est", "f-est", "e-young", "e-spec")
+    assert saved["f-est"]["note"] == note and saved["f-est"]["created_by"] == WHO["id"]
+    assert (saved["f-est"]["basis"], saved["f-est"]["requirement"]) == \
+        ("reviewed_composition", "r1.1.1")
+    assert saved["f-est"]["pins"] == {"release": "v-1", "statement_sha256": "s-young"}
+    assert [t["decl"] for t in saved["a-est"]["lean"]] == ["Ex.young_spec", "Ex.young"]
+    assert all(saved[e]["ref"]["fingerprint"] == "fp:young-1" for e in ("e-young", "e-spec"))
+
+    # The reader's interface gives the same records.
+    get, _ = wsp.api(work, work / "site" / "data")
+    shown = get["/api/workspace"]({"id": [wid], "claim": ["P:eq:young"]})["claims"]["P:eq:young"]
+    (f,) = shown["findings"]
+    assert {k: f[k] for k in saved["f-est"]} == saved["f-est"]
+    a = next(x for x in shown["reading"]["alignments"] if x["id"] == "a-est")
+    assert a["created_by"] == WHO["id"] and len(a["lean"]) == 2
+
+    # The export carries them exactly, and an import into another project judges them as
+    # this one does.
+    out = tmp_path / "ws.json"
+    code, _, _ = _run(["workspace", "export", "--id", wid, "--out", str(out)], capsys)
+    exported = json.loads(out.read_text(encoding="utf-8"))
+    assert code == 0 and all(exported["records"][r] == saved[r] for r in clause)
+    other = tmp_path / "other" / ".machinechecked"
+    make_build(other)
+    res = wsp.import_(other, exported, Snapshot(other / "site" / "data"))
+    assert res["problems"] == []
+    kept = wsp.read(wsp.find(other, wid))
+    assert all(kept["records"][r] == saved[r] for r in clause)
+    v = wsp.view(kept, Snapshot(other / "site" / "data"))["claims"]["P:eq:young"]
+    here = wsp.view(wsp.read(p), snap_of(work))["claims"]["P:eq:young"]
+    assert v["findings"][0]["currency"] == here["findings"][0]["currency"]
