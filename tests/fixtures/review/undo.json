@@ -1,0 +1,206 @@
+{
+ "note": "The draft that Undo gives back for a report, as the reader's static review page (web/src/lib/review.js draftFromReport) and the engine (review_cli.Session.undo) must both give it, for synthetic reports: the unit at step 3 with the reading, the comparison and its checklist, the verdict, the coverage and the Lean pins the report recorded.",
+ "cases": [
+  {
+   "name": "a report with its checklist, witness and coverage",
+   "report": {
+    "schema": "prooflens/review-report@1",
+    "mode": "independent",
+    "unit": {
+     "id": "spec:Toy.PaperSpec.thm_even_add",
+     "kind": "spec",
+     "name": "Toy.PaperSpec.thm_even_add",
+     "lean": [
+      "Toy.PaperSpec.thm_even_add"
+     ],
+     "claims": [
+      "T:thm:even-add"
+     ],
+     "papers": [
+      "T"
+     ]
+    },
+    "pins": {
+     "release": "r1",
+     "project_commit": null,
+     "manuscripts": {
+      "T": null
+     },
+     "legacy_hash": null,
+     "fingerprint": "synthetic-fingerprint",
+     "fingerprints": null,
+     "source_sha256": {
+      "T:thm:even-add": "synthetic-source-digest"
+     }
+    },
+    "reviewer": {
+     "id": "human:Synthetic-Reviewer",
+     "kind": "human",
+     "name": "Synthetic Reviewer",
+     "model": null,
+     "same_family_as_author": "no",
+     "identity": "self-declared"
+    },
+    "reading": {
+     "text": "Every pair of even natural numbers has an even sum.",
+     "locked_at": "2026-01-01T00:00:00Z",
+     "revealed_by": [
+      {
+       "unit": "spec:Toy.PaperSpec.thm_bound",
+       "what": "Lean"
+      }
+     ]
+    },
+    "comparison": {
+     "text": "The quantifiers and the conclusion agree.",
+     "witness": "The witness meets the hypotheses at a = 2, b = 4.",
+     "checklist": {
+      "quantifiers": "matches",
+      "conclusion": "differs",
+      "constants": "unsure"
+     },
+     "decided_at": "2026-01-01T00:01:00Z"
+    },
+    "verdict": {
+     "group": "matches",
+     "value": "broader",
+     "detail": "Take the instance b = a."
+    },
+    "correspondence": {
+     "coverage": "full",
+     "basis": "reviewed_composition",
+     "argument": "Apply the sum rule once."
+    },
+    "author_review": {
+     "shown_at": "2026-01-01T00:01:00Z",
+     "disagreements": "The author's review says nothing of the witness."
+    },
+    "submitted_at": "2026-01-01T00:02:00Z",
+    "issue_draft": {
+     "kind": "explanatory note",
+     "title": "Toy.PaperSpec.thm_even_add: broader (T:thm:even-add)",
+     "body": "Review unit `spec:Toy.PaperSpec.thm_even_add`, verdict **broader**.\n\nTake the instance b = a."
+    }
+   },
+   "draft": {
+    "stage": "author",
+    "reading": "Every pair of even natural numbers has an even sum.",
+    "locked_at": "2026-01-01T00:00:00Z",
+    "revealed_by": [
+     {
+      "unit": "spec:Toy.PaperSpec.thm_bound",
+      "what": "Lean"
+     }
+    ],
+    "source_sha256": {
+     "T:thm:even-add": "synthetic-source-digest"
+    },
+    "comparison": "The quantifiers and the conclusion agree.",
+    "witness": "The witness meets the hypotheses at a = 2, b = 4.",
+    "checklist": {
+     "quantifiers": "matches",
+     "conclusion": "differs",
+     "constants": "unsure"
+    },
+    "decided_at": "2026-01-01T00:01:00Z",
+    "group": "matches",
+    "verdict": "broader",
+    "detail": "Take the instance b = a.",
+    "correspondence": {
+     "coverage": "full",
+     "basis": "reviewed_composition",
+     "argument": "Apply the sum rule once."
+    },
+    "lean": {
+     "fingerprint": "synthetic-fingerprint",
+     "fingerprints": null,
+     "legacy_hash": null
+    },
+    "author_shown_at": "2026-01-01T00:01:00Z",
+    "disagreements": "The author's review says nothing of the witness."
+   }
+  },
+  {
+   "name": "a report with no checklist, coverage or passage digests",
+   "report": {
+    "schema": "prooflens/review-report@1",
+    "unit": {
+     "id": "spec:Toy.PaperSpec.thm_bound",
+     "kind": "spec",
+     "name": "Toy.PaperSpec.thm_bound",
+     "lean": [
+      "Toy.PaperSpec.thm_bound"
+     ],
+     "claims": [
+      "T:thm:bound"
+     ],
+     "papers": [
+      "T"
+     ]
+    },
+    "pins": {
+     "release": "r0",
+     "project_commit": null,
+     "manuscripts": {
+      "T": null
+     },
+     "legacy_hash": "synthetic-legacy-hash",
+     "fingerprint": null,
+     "fingerprints": {
+      "Toy.PaperSpec.thm_bound": "synthetic-fingerprint"
+     }
+    },
+    "reviewer": {
+     "id": "human:Synthetic-Reviewer",
+     "kind": "human",
+     "name": "Synthetic Reviewer",
+     "model": null,
+     "same_family_as_author": "no",
+     "identity": "self-declared"
+    },
+    "reading": {
+     "text": "The bound holds for every natural number.",
+     "locked_at": "2026-01-01T00:00:00Z"
+    },
+    "comparison": {
+     "text": "The same bound.",
+     "decided_at": "2026-01-01T00:01:00Z"
+    },
+    "verdict": {
+     "group": "matches",
+     "value": "faithful"
+    },
+    "author_review": {
+     "shown_at": "2026-01-01T00:01:00Z",
+     "disagreements": "none"
+    },
+    "submitted_at": "2026-01-01T00:02:00Z",
+    "issue_draft": null
+   },
+   "draft": {
+    "stage": "author",
+    "reading": "The bound holds for every natural number.",
+    "locked_at": "2026-01-01T00:00:00Z",
+    "revealed_by": [],
+    "source_sha256": null,
+    "comparison": "The same bound.",
+    "witness": "",
+    "checklist": {},
+    "decided_at": "2026-01-01T00:01:00Z",
+    "group": "matches",
+    "verdict": "faithful",
+    "detail": "",
+    "correspondence": null,
+    "lean": {
+     "fingerprint": null,
+     "fingerprints": {
+      "Toy.PaperSpec.thm_bound": "synthetic-fingerprint"
+     },
+     "legacy_hash": "synthetic-legacy-hash"
+    },
+    "author_shown_at": "2026-01-01T00:01:00Z",
+    "disagreements": "none"
+   }
+  }
+ ]
+}
