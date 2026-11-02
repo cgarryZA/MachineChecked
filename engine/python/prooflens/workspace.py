@@ -1233,6 +1233,99 @@ def auditors(ws: dict) -> set[str]:
 
 # -- moving it between machines -------------------------------------------------------------
 
+# The steps of a review draft, and what each step records once it is taken: the locked reading,
+# the verdict with the comparison it was recorded with, and the time the author's review was
+# shown. An import never changes a step a draft has taken.
+STAGES = ("read", "compare", "author")
+TAKEN = (("locked_at", ("reading", "locked_at", "revealed_by", "source_sha256"),
+          "its reading was locked differently here"),
+         ("decided_at", ("group", "verdict", "detail", "comparison", "witness", "checklist",
+                         "correspondence", "decided_at", "lean"),
+          "its verdict was recorded differently here"),
+         ("author_shown_at", ("author_shown_at",),
+          "the author's review was shown at another time here"))
+# What a draft records as seen, which a draft that replaces it keeps when it lacks it: the Lean
+# seen on the claim's page before the reading (as the reader recorded it), and the Lean shown.
+CARRIED = ("reader_exposure", "shown_fingerprint")
+
+
+def _step(d: dict) -> int:
+    return STAGES.index(d.get("stage")) + 1 if d.get("stage") in STAGES else 0
+
+
+def merge_drafts(here: dict, theirs: dict, reports: list, replace: bool = False) -> dict:
+    """The review drafts of a workspace (`here`, by unit id) after an import brings in `theirs`,
+    as the reader's import merges them too (`workfile.js mergeDrafts`). A draft here that the
+    file lacks is kept. A draft of the file is added when here has none, unless a report here
+    was made from it (the same locked reading). It replaces the draft here when it continues
+    it: every step the draft here has taken is the same in the file's, which has taken more.
+    One that the draft here continues is older, and is left. Two drafts at the same step, with
+    the same steps taken, that differ in what was typed: the file's replaces the one here only
+    with `replace`. Drafts whose taken steps differ are left as here. So no import unlocks a
+    reading, changes a recorded verdict, or forgets what a draft records as seen.
+
+    Returns `drafts` (merged), `applied` (`{unit, how}`), `not_applied` (`{unit, kind, why}`,
+    `kind` one of `submitted`, `older`, `typed`, `diverged`) and `kept` (`{unit, current,
+    proposed}`: the draft saved and the other version, for each draft that differed and was
+    not applied or replaced one here; the workspace keeps them under `conflicts`)."""
+    drafts = copy.deepcopy(here)
+    applied, not_applied, kept = [], [], []
+    for uid in sorted(theirs):
+        f, h = theirs[uid], here.get(uid)
+        if h is None:
+            locked = f.get("locked_at")
+            if locked and any((r.get("unit") or {}).get("id") == uid
+                              and (r.get("reading") or {}).get("locked_at") == locked
+                              for r in reports):
+                not_applied.append({"unit": uid, "kind": "submitted",
+                                    "why": "submitted here as a report"})
+                continue
+            drafts[uid] = copy.deepcopy(f)
+            applied.append({"unit": uid, "how": "added"})
+            continue
+        if f == h:
+            continue
+        taken_h = [key for key, _, _ in TAKEN if h.get(key)]
+        taken_f = [key for key, _, _ in TAKEN if f.get(key)]
+        differs = next((why for key, fields, why in TAKEN if key in taken_h and key in taken_f
+                        and any(h.get(k) != f.get(k) for k in fields)), None)
+        sh, sf = _step(h), _step(f)
+
+        def later(a, b, sa, sb):
+            return set(b) <= set(a) and (sa, len(a)) > (sb, len(b))
+
+        if differs is None and later(taken_f, taken_h, sf, sh):
+            how = f"advanced from step {sh} to step {sf}"
+        elif differs is None and later(taken_h, taken_f, sh, sf):
+            not_applied.append({"unit": uid, "kind": "older",
+                                "why": f"older than the draft here (step {sf} in the file, "
+                                       f"step {sh} here)"})
+            continue
+        elif differs is None and taken_h == taken_f and sh == sf:
+            if not replace:
+                not_applied.append({"unit": uid, "kind": "typed",
+                                    "why": "differs from the draft here only in what was typed "
+                                           f"at step {sh}; kept as here"})
+                kept.append({"unit": uid, "current": h, "proposed": f})
+                continue
+            how = f"replaced what was typed at step {sh}"
+        else:
+            not_applied.append({"unit": uid, "kind": "diverged",
+                                "why": (differs or "it has taken other steps than the draft "
+                                        "here") + "; kept as here"})
+            kept.append({"unit": uid, "current": h, "proposed": f})
+            continue
+        d = copy.deepcopy(f)
+        for k in CARRIED:
+            if h.get(k) and not d.get(k):
+                d[k] = h[k]
+        drafts[uid] = d
+        applied.append({"unit": uid, "how": how})
+        if how.startswith("replaced"):
+            kept.append({"unit": uid, "current": d, "proposed": h})
+    return {"drafts": drafts, "applied": applied, "not_applied": not_applied, "kept": kept}
+
+
 def export(path: Path) -> dict:
     """The workspace as a file to hand on: everything it holds, with its mode, exposure, pins
     and authors, less the record of acknowledged requests."""
@@ -1243,13 +1336,17 @@ def export(path: Path) -> dict:
 
 
 def import_(work_dir: Path, data: dict, snap=None, by: str | None = None,
-            source: str | None = None) -> dict:
+            source: str | None = None, replace_drafts: bool = False,
+            dry_run: bool = False) -> dict:
     """Bring an exported workspace into this working directory. It keeps its id, authors,
     pins, mode and exposure. A workspace already here with the same id gains the records it
     lacks, and the main results when it saves none; a record (or main-result selection) both
-    hold in different versions is kept as here and reported as a conflict. References the
-    current build cannot resolve, main results included, are reported as `problems`; the
-    records stay as they were written and are not counted as resolved."""
+    hold in different versions is kept as here and reported as a conflict. Its review drafts
+    are merged by `merge_drafts` (`replace_drafts` is its `replace`): `drafts` lists each
+    draft applied, and each not applied with why; one that differs and is not applied is kept
+    as a conflict too. References the current build cannot resolve, main results included, are
+    reported as `problems`; the records stay as they were written and are not counted as
+    resolved. With `dry_run`, nothing is written and the answer says what the import would do."""
     ws_in = upgrade(dict(data))
     ws_in.pop("exported_at", None)
     ws_in.setdefault("ops", {})
@@ -1294,14 +1391,18 @@ def import_(work_dir: Path, data: dict, snap=None, by: str | None = None,
     except WorkspaceError:
         path = store(work_dir) / f"{ws_in['id']}.json"
         ws_in["provenance"].append(event)
-        with _locked(path):
-            _write(path, ws_in)
+        if not dry_run:
+            with _locked(path):
+                _write(path, ws_in)
         from .reopen import identity
         return {"workspace": ws_in["id"], "path": str(path),
                 "added": sorted(ws_in["records"]) + [
                     "version map " + json.dumps(identity(m), ensure_ascii=False)
                     for m in ws_in.get("version_maps") or []],
-                "conflicts": [], "problems": problems}
+                "drafts": {"applied": [{"unit": u, "how": "added"}
+                                       for u in sorted(ws_in["review"].get("drafts") or {})],
+                           "not_applied": []},
+                "conflicts": [], "problems": problems, **({"dry_run": True} if dry_run else {})}
     added, conflicts = [], []
     with _locked(path):
         ws = read(path)
@@ -1347,11 +1448,25 @@ def import_(work_dir: Path, data: dict, snap=None, by: str | None = None,
         for r in ws_in["review"].get("reports", []):
             if json.dumps(r, sort_keys=True) not in known:
                 ws["review"]["reports"].append(r)
+        merged = merge_drafts(ws["review"].get("drafts") or {},
+                              ws_in["review"].get("drafts") or {}, ws["review"]["reports"],
+                              replace_drafts)
+        ws["review"]["drafts"] = merged["drafts"]
+        replaced = {a["unit"] for a in merged["applied"]}
+        for k in merged["kept"]:
+            c = {"id": f"draft {k['unit']}", "current": k["current"], "proposed": k["proposed"],
+                 "at": at, "by": by,
+                 "how": "import, replaced" if k["unit"] in replaced else "import"}
+            ws.setdefault("conflicts", []).append(c)
+            if k["unit"] not in replaced:
+                conflicts.append(c)
         ws["provenance"].append(event)
         ws["revision"] = ws.get("revision", 0) + 1
-        _write(path, ws)
-    return {"workspace": ws["id"], "path": str(path), "added": added, "conflicts": conflicts,
-            "problems": problems}
+        if not dry_run:
+            _write(path, ws)
+    return {"workspace": ws["id"], "path": str(path), "added": added,
+            "drafts": {"applied": merged["applied"], "not_applied": merged["not_applied"]},
+            "conflicts": conflicts, "problems": problems, **({"dry_run": True} if dry_run else {})}
 
 
 # -- the local reader's interface ------------------------------------------------------------
@@ -1363,7 +1478,7 @@ def api(work_dir: Path, data_dir: Path, root: Path | None = None) -> tuple[dict,
     it keeps reopen, `reopen.for_site`), and `/api/proof-facts?name=&match=` (the facts inside one
     proof, as `compare --query proof-facts` gives them); POST `/api/workspace` with `action`
     `open` (`reviewer`, `mode`, `id`), `update` (`id`, `ops`, `op_id`, `base` ignored), `import`
-    (`data`) or `suggest` (`id`, `claim`, `requirement`: attach the passages
+    (`data`, `replace_drafts`, `dry_run`) or `suggest` (`id`, `claim`, `requirement`: attach the passages
     `requirements.suggest` proposes, as proposals); GET `/api/review-order?order=informed`,
     the review queue in the order that uses the workspaces' records (`review_cli.order_route`);
     and GET and POST `/api/review`, the review protocol's steps on the reviewer's workspace
@@ -1405,7 +1520,8 @@ def api(work_dir: Path, data_dir: Path, root: Path | None = None) -> tuple[dict,
             return update(p, req.get("ops"), snap(), root, req.get("by")
                           or (ws.get("reviewer") or {}).get("id"), req.get("op_id"))
         if action == "import":
-            return import_(work_dir, req.get("data") or {}, snap(), req.get("by"), "reader")
+            return import_(work_dir, req.get("data") or {}, snap(), req.get("by"), "reader",
+                           bool(req.get("replace_drafts")), bool(req.get("dry_run")))
         if action == "suggest":
             from .requirements import suggestion_ops
             p = find(work_dir, req.get("id") or "")

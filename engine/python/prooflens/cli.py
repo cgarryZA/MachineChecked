@@ -715,9 +715,9 @@ def _workspace_export(a, w: _Workspaces) -> None:
 def _workspace_import(a, w: _Workspaces) -> None:
     from . import workspace as wsp
     res = wsp.import_(w.work, json.loads(_text_arg(a.file)), w.snap, a.reviewer,
-                      None if a.file == "-" else Path(a.file).name)
+                      None if a.file == "-" else Path(a.file).name, a.replace_drafts, a.dry_run)
     _print_json(res)
-    if res["problems"] or res["conflicts"]:
+    if res["problems"] or res["conflicts"] or res["drafts"]["not_applied"]:
         raise SystemExit(1)
 
 
@@ -2029,6 +2029,13 @@ def _add_workspace(sub) -> None:
             sp.add_argument("--dry-run", action="store_true", help="show the result, save nothing")
         if name == "export":
             sp.add_argument("--out", required=True)
+        if name == "import":
+            sp.add_argument("--replace-drafts", action="store_true",
+                            help="where the file's review draft and yours are at the same step "
+                                 "and differ only in what was typed, take the file's (yours is "
+                                 "kept under conflicts)")
+            sp.add_argument("--dry-run", action="store_true",
+                            help="show what the import would do, save nothing")
         _reviewer_option(sp)
         sp.add_argument("--same-family", choices=["yes", "no", "unknown"], default="unknown",
                         help=argparse.SUPPRESS)

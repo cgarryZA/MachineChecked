@@ -1,0 +1,552 @@
+{
+ "note": "Review drafts that an import brings into a workspace that already holds drafts, as the engine (workspace.merge_drafts, used by `machinechecked workspace import` and `view`) and the reader's import on a static copy (web/src/lib/workfile.js mergeDrafts) must both merge them. Drafts are named in `named`; a value {\"$\": NAME, ...} is that draft with the fields given.",
+ "named": {
+  "R1": {
+   "stage": "read",
+   "reading": "Every pair of even numbers"
+  },
+  "R2": {
+   "stage": "read",
+   "reading": "For all even a and b"
+  },
+  "R0": {
+   "stage": "read",
+   "reading": "",
+   "reader_exposure": true
+  },
+  "C1": {
+   "stage": "compare",
+   "reading": "Every pair of even natural numbers has an even sum.",
+   "locked_at": "2026-01-01T00:00:00Z",
+   "revealed_by": [],
+   "source_sha256": {
+    "T:thm:even-add": "synthetic-source-digest"
+   },
+   "comparison": "The quantifiers agree.",
+   "checklist": {
+    "quantifiers": "matches"
+   }
+  },
+  "C1-more": {
+   "stage": "compare",
+   "reading": "Every pair of even natural numbers has an even sum.",
+   "locked_at": "2026-01-01T00:00:00Z",
+   "revealed_by": [],
+   "source_sha256": {
+    "T:thm:even-add": "synthetic-source-digest"
+   },
+   "comparison": "The quantifiers agree; the conclusion is to check.",
+   "checklist": {
+    "quantifiers": "matches",
+    "conclusion": "unsure"
+   }
+  },
+  "C1-shown": {
+   "stage": "compare",
+   "reading": "Every pair of even natural numbers has an even sum.",
+   "locked_at": "2026-01-01T00:00:00Z",
+   "revealed_by": [],
+   "source_sha256": {
+    "T:thm:even-add": "synthetic-source-digest"
+   },
+   "comparison": "The quantifiers agree.",
+   "checklist": {
+    "quantifiers": "matches"
+   },
+   "shown_fingerprint": "synthetic-fingerprint"
+  },
+  "C2": {
+   "stage": "compare",
+   "reading": "For all even a and b, a + b is even.",
+   "locked_at": "2026-01-01T00:20:00Z",
+   "revealed_by": [],
+   "source_sha256": {
+    "T:thm:even-add": "synthetic-source-digest"
+   },
+   "comparison": "The quantifiers agree.",
+   "checklist": {
+    "quantifiers": "matches"
+   }
+  },
+  "A1": {
+   "stage": "author",
+   "reading": "Every pair of even natural numbers has an even sum.",
+   "locked_at": "2026-01-01T00:00:00Z",
+   "revealed_by": [],
+   "source_sha256": {
+    "T:thm:even-add": "synthetic-source-digest"
+   },
+   "group": "matches",
+   "verdict": "faithful",
+   "detail": "",
+   "comparison": "The quantifiers and the conclusion agree.",
+   "witness": "",
+   "checklist": {
+    "quantifiers": "matches",
+    "conclusion": "matches"
+   },
+   "correspondence": null,
+   "decided_at": "2026-01-01T00:10:00Z",
+   "lean": {
+    "fingerprint": "synthetic-fingerprint",
+    "fingerprints": null,
+    "legacy_hash": null
+   },
+   "author_shown_at": "2026-01-01T00:10:00Z",
+   "disagreements": ""
+  },
+  "A1-replied": {
+   "stage": "author",
+   "reading": "Every pair of even natural numbers has an even sum.",
+   "locked_at": "2026-01-01T00:00:00Z",
+   "revealed_by": [],
+   "source_sha256": {
+    "T:thm:even-add": "synthetic-source-digest"
+   },
+   "group": "matches",
+   "verdict": "faithful",
+   "detail": "",
+   "comparison": "The quantifiers and the conclusion agree.",
+   "witness": "",
+   "checklist": {
+    "quantifiers": "matches",
+    "conclusion": "matches"
+   },
+   "correspondence": null,
+   "decided_at": "2026-01-01T00:10:00Z",
+   "lean": {
+    "fingerprint": "synthetic-fingerprint",
+    "fingerprints": null,
+    "legacy_hash": null
+   },
+   "author_shown_at": "2026-01-01T00:10:00Z",
+   "disagreements": "none"
+  },
+  "A2": {
+   "stage": "author",
+   "reading": "Every pair of even natural numbers has an even sum.",
+   "locked_at": "2026-01-01T00:00:00Z",
+   "revealed_by": [],
+   "source_sha256": {
+    "T:thm:even-add": "synthetic-source-digest"
+   },
+   "group": "matches",
+   "verdict": "broader",
+   "detail": "Take b = a.",
+   "comparison": "The quantifiers and the conclusion agree.",
+   "witness": "",
+   "checklist": {
+    "quantifiers": "matches",
+    "conclusion": "matches"
+   },
+   "correspondence": null,
+   "decided_at": "2026-01-02T00:00:00Z",
+   "lean": {
+    "fingerprint": "synthetic-fingerprint",
+    "fingerprints": null,
+    "legacy_hash": null
+   },
+   "author_shown_at": "2026-01-02T00:00:00Z",
+   "disagreements": ""
+  }
+ },
+ "cases": [
+  {
+   "name": "a draft here that the file lacks is kept",
+   "here": {
+    "spec:Toy.PaperSpec.thm_even_add": "C1"
+   },
+   "theirs": {},
+   "reports": [],
+   "replace": false,
+   "drafts": {
+    "spec:Toy.PaperSpec.thm_even_add": "C1"
+   },
+   "applied": [],
+   "not_applied": [],
+   "kept": []
+  },
+  {
+   "name": "a draft the file brings is added",
+   "here": {},
+   "theirs": {
+    "spec:Toy.PaperSpec.thm_even_add": "R1"
+   },
+   "reports": [],
+   "replace": false,
+   "drafts": {
+    "spec:Toy.PaperSpec.thm_even_add": "R1"
+   },
+   "applied": [
+    {
+     "unit": "spec:Toy.PaperSpec.thm_even_add",
+     "how": "added"
+    }
+   ],
+   "not_applied": [],
+   "kept": []
+  },
+  {
+   "name": "the same draft changes nothing",
+   "here": {
+    "spec:Toy.PaperSpec.thm_even_add": "C1"
+   },
+   "theirs": {
+    "spec:Toy.PaperSpec.thm_even_add": "C1"
+   },
+   "reports": [],
+   "replace": false,
+   "drafts": {
+    "spec:Toy.PaperSpec.thm_even_add": "C1"
+   },
+   "applied": [],
+   "not_applied": [],
+   "kept": []
+  },
+  {
+   "name": "a draft whose reading the file locked replaces it (#493)",
+   "here": {
+    "spec:Toy.PaperSpec.thm_even_add": "R1"
+   },
+   "theirs": {
+    "spec:Toy.PaperSpec.thm_even_add": "C1"
+   },
+   "reports": [],
+   "replace": false,
+   "drafts": {
+    "spec:Toy.PaperSpec.thm_even_add": "C1"
+   },
+   "applied": [
+    {
+     "unit": "spec:Toy.PaperSpec.thm_even_add",
+     "how": "advanced from step 1 to step 2"
+    }
+   ],
+   "not_applied": [],
+   "kept": []
+  },
+  {
+   "name": "a draft the file took to step 3 replaces it",
+   "here": {
+    "spec:Toy.PaperSpec.thm_even_add": "C1"
+   },
+   "theirs": {
+    "spec:Toy.PaperSpec.thm_even_add": "A1"
+   },
+   "reports": [],
+   "replace": false,
+   "drafts": {
+    "spec:Toy.PaperSpec.thm_even_add": "A1"
+   },
+   "applied": [
+    {
+     "unit": "spec:Toy.PaperSpec.thm_even_add",
+     "how": "advanced from step 2 to step 3"
+    }
+   ],
+   "not_applied": [],
+   "kept": []
+  },
+  {
+   "name": "an older draft is left",
+   "here": {
+    "spec:Toy.PaperSpec.thm_even_add": "A1"
+   },
+   "theirs": {
+    "spec:Toy.PaperSpec.thm_even_add": "C1"
+   },
+   "reports": [],
+   "replace": false,
+   "drafts": {
+    "spec:Toy.PaperSpec.thm_even_add": "A1"
+   },
+   "applied": [],
+   "not_applied": [
+    {
+     "unit": "spec:Toy.PaperSpec.thm_even_add",
+     "kind": "older",
+     "why": "older than the draft here (step 2 in the file, step 3 here)"
+    }
+   ],
+   "kept": []
+  },
+  {
+   "name": "an import never unlocks a reading, even replacing",
+   "here": {
+    "spec:Toy.PaperSpec.thm_even_add": "C1"
+   },
+   "theirs": {
+    "spec:Toy.PaperSpec.thm_even_add": "R2"
+   },
+   "reports": [],
+   "replace": true,
+   "drafts": {
+    "spec:Toy.PaperSpec.thm_even_add": "C1"
+   },
+   "applied": [],
+   "not_applied": [
+    {
+     "unit": "spec:Toy.PaperSpec.thm_even_add",
+     "kind": "older",
+     "why": "older than the draft here (step 1 in the file, step 2 here)"
+    }
+   ],
+   "kept": []
+  },
+  {
+   "name": "what was typed at the same step is kept as here",
+   "here": {
+    "spec:Toy.PaperSpec.thm_even_add": "C1"
+   },
+   "theirs": {
+    "spec:Toy.PaperSpec.thm_even_add": "C1-more"
+   },
+   "reports": [],
+   "replace": false,
+   "drafts": {
+    "spec:Toy.PaperSpec.thm_even_add": "C1"
+   },
+   "applied": [],
+   "not_applied": [
+    {
+     "unit": "spec:Toy.PaperSpec.thm_even_add",
+     "kind": "typed",
+     "why": "differs from the draft here only in what was typed at step 2; kept as here"
+    }
+   ],
+   "kept": [
+    {
+     "unit": "spec:Toy.PaperSpec.thm_even_add",
+     "current": "C1",
+     "proposed": "C1-more"
+    }
+   ]
+  },
+  {
+   "name": "what was typed at the same step is replaced when asked",
+   "here": {
+    "spec:Toy.PaperSpec.thm_even_add": "C1"
+   },
+   "theirs": {
+    "spec:Toy.PaperSpec.thm_even_add": "C1-more"
+   },
+   "reports": [],
+   "replace": true,
+   "drafts": {
+    "spec:Toy.PaperSpec.thm_even_add": "C1-more"
+   },
+   "applied": [
+    {
+     "unit": "spec:Toy.PaperSpec.thm_even_add",
+     "how": "replaced what was typed at step 2"
+    }
+   ],
+   "not_applied": [],
+   "kept": [
+    {
+     "unit": "spec:Toy.PaperSpec.thm_even_add",
+     "current": "C1-more",
+     "proposed": "C1"
+    }
+   ]
+  },
+  {
+   "name": "an unlocked reading typed differently is kept as here",
+   "here": {
+    "spec:Toy.PaperSpec.thm_even_add": "R1"
+   },
+   "theirs": {
+    "spec:Toy.PaperSpec.thm_even_add": "R2"
+   },
+   "reports": [],
+   "replace": false,
+   "drafts": {
+    "spec:Toy.PaperSpec.thm_even_add": "R1"
+   },
+   "applied": [],
+   "not_applied": [
+    {
+     "unit": "spec:Toy.PaperSpec.thm_even_add",
+     "kind": "typed",
+     "why": "differs from the draft here only in what was typed at step 1; kept as here"
+    }
+   ],
+   "kept": [
+    {
+     "unit": "spec:Toy.PaperSpec.thm_even_add",
+     "current": "R1",
+     "proposed": "R2"
+    }
+   ]
+  },
+  {
+   "name": "a response to the author's review typed in the file replaces none typed here when asked",
+   "here": {
+    "spec:Toy.PaperSpec.thm_even_add": "A1"
+   },
+   "theirs": {
+    "spec:Toy.PaperSpec.thm_even_add": "A1-replied"
+   },
+   "reports": [],
+   "replace": true,
+   "drafts": {
+    "spec:Toy.PaperSpec.thm_even_add": "A1-replied"
+   },
+   "applied": [
+    {
+     "unit": "spec:Toy.PaperSpec.thm_even_add",
+     "how": "replaced what was typed at step 3"
+    }
+   ],
+   "not_applied": [],
+   "kept": [
+    {
+     "unit": "spec:Toy.PaperSpec.thm_even_add",
+     "current": "A1-replied",
+     "proposed": "A1"
+    }
+   ]
+  },
+  {
+   "name": "a reading locked differently is kept as here",
+   "here": {
+    "spec:Toy.PaperSpec.thm_even_add": "C1"
+   },
+   "theirs": {
+    "spec:Toy.PaperSpec.thm_even_add": "C2"
+   },
+   "reports": [],
+   "replace": true,
+   "drafts": {
+    "spec:Toy.PaperSpec.thm_even_add": "C1"
+   },
+   "applied": [],
+   "not_applied": [
+    {
+     "unit": "spec:Toy.PaperSpec.thm_even_add",
+     "kind": "diverged",
+     "why": "its reading was locked differently here; kept as here"
+    }
+   ],
+   "kept": [
+    {
+     "unit": "spec:Toy.PaperSpec.thm_even_add",
+     "current": "C1",
+     "proposed": "C2"
+    }
+   ]
+  },
+  {
+   "name": "a verdict recorded differently is kept as here",
+   "here": {
+    "spec:Toy.PaperSpec.thm_even_add": "A1"
+   },
+   "theirs": {
+    "spec:Toy.PaperSpec.thm_even_add": "A2"
+   },
+   "reports": [],
+   "replace": true,
+   "drafts": {
+    "spec:Toy.PaperSpec.thm_even_add": "A1"
+   },
+   "applied": [],
+   "not_applied": [
+    {
+     "unit": "spec:Toy.PaperSpec.thm_even_add",
+     "kind": "diverged",
+     "why": "its verdict was recorded differently here; kept as here"
+    }
+   ],
+   "kept": [
+    {
+     "unit": "spec:Toy.PaperSpec.thm_even_add",
+     "current": "A1",
+     "proposed": "A2"
+    }
+   ]
+  },
+  {
+   "name": "the draft of a report here is not added again",
+   "here": {},
+   "theirs": {
+    "spec:Toy.PaperSpec.thm_even_add": "A1"
+   },
+   "reports": [
+    {
+     "unit": {
+      "id": "spec:Toy.PaperSpec.thm_even_add"
+     },
+     "pins": {
+      "fingerprint": "synthetic-fingerprint"
+     },
+     "reading": {
+      "text": "Every pair of even natural numbers has an even sum.",
+      "locked_at": "2026-01-01T00:00:00Z",
+      "revealed_by": []
+     }
+    }
+   ],
+   "replace": false,
+   "drafts": {},
+   "applied": [],
+   "not_applied": [
+    {
+     "unit": "spec:Toy.PaperSpec.thm_even_add",
+     "kind": "submitted",
+     "why": "submitted here as a report"
+    }
+   ],
+   "kept": []
+  },
+  {
+   "name": "a draft that replaces one here keeps what it records as seen",
+   "here": {
+    "spec:Toy.PaperSpec.thm_even_add": "R0"
+   },
+   "theirs": {
+    "spec:Toy.PaperSpec.thm_even_add": "C1"
+   },
+   "reports": [],
+   "replace": false,
+   "drafts": {
+    "spec:Toy.PaperSpec.thm_even_add": {
+     "$": "C1",
+     "reader_exposure": true
+    }
+   },
+   "applied": [
+    {
+     "unit": "spec:Toy.PaperSpec.thm_even_add",
+     "how": "advanced from step 1 to step 2"
+    }
+   ],
+   "not_applied": [],
+   "kept": []
+  },
+  {
+   "name": "a draft that replaces one here keeps the Lean shown",
+   "here": {
+    "spec:Toy.PaperSpec.thm_even_add": "C1-shown"
+   },
+   "theirs": {
+    "spec:Toy.PaperSpec.thm_even_add": "A1"
+   },
+   "reports": [],
+   "replace": false,
+   "drafts": {
+    "spec:Toy.PaperSpec.thm_even_add": {
+     "$": "A1",
+     "shown_fingerprint": "synthetic-fingerprint"
+    }
+   },
+   "applied": [
+    {
+     "unit": "spec:Toy.PaperSpec.thm_even_add",
+     "how": "advanced from step 2 to step 3"
+    }
+   ],
+   "not_applied": [],
+   "kept": []
+  }
+ ]
+}

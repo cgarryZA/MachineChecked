@@ -50,7 +50,10 @@ export const suggestContext = (id, claim, requirement) =>
 // A workspace as a file to hand on (`machinechecked workspace export`), and a file brought in
 // (`machinechecked workspace import`): `{workspace, added, conflicts, problems}`.
 export const exportWorkspace = (id) => call(`api/workspace/export?id=${encodeURIComponent(id)}`);
-export const importWorkspace = (data, by) => call("api/workspace", { action: "import", data, by });
+// `replace_drafts` takes the file's drafts that differ only in what was typed (`merge_drafts`);
+// `dry_run` saves nothing and says what the import would do.
+export const importWorkspace = (data, by, { replace_drafts = false, dry_run = false } = {}) =>
+  call("api/workspace", { action: "import", data, by, replace_drafts, dry_run });
 
 export function newId(prefix) {
   const r = globalThis.crypto?.randomUUID?.() || Math.random().toString(16).slice(2) + Date.now().toString(16);

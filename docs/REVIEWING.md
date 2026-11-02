@@ -66,12 +66,23 @@ work moves between a static copy, a terminal and `machinechecked view`: `machine
 import` brings the file into a project's working directory, where `review --workspace ID` and the
 review page continue it, and a file exported there continues on a static copy of the same site.
 The drafts, the reports with their pins, the findings and the record of what you had seen travel
-unchanged. On a static copy, importing a file replaces the browser's drafts with the file's,
-asking first when the browser holds work the file does not, and keeps the record of what you had
-seen; under `view`, an imported workspace of yours is the one the page works in. A file of
-another format or a later version is refused with the reason, and so, on a static copy, are an
-informed investigation (its reviews are independent) and, while the browser holds work, another
-reviewer's workspace.
+unchanged; under `view`, an imported workspace of yours is the one the page works in.
+
+A file of a workspace already there (or, on a static copy, the browser's own) merges into it.
+Reports, records and the record of what you had seen are added. Each review draft of the file is
+added when there is none of its unit, and replaces the one there when it continues it: every
+step that one has taken (the locked reading, the verdict, the author's review shown) is the same
+in the file's, which has taken more. A draft is not applied, and the import says which and why,
+when it is older than the one there, when a report there was made from it, or when it differs
+only in what was typed at the same step; there the page asks first, and `workspace import
+--replace-drafts` takes the file's. A draft whose reading was locked differently, or whose
+verdict was recorded differently, is never applied. A draft that differed is kept with both
+versions under the workspace's `conflicts`, and `--dry-run` shows what an import would do. So an
+import never unlocks a reading or changes a recorded verdict, and a report lists what was
+recorded as seen before its reading was locked, an import included. A file of another format or
+a later version is refused with the reason, and so, on a static copy, are an informed
+investigation (its reviews are independent) and, while the browser holds review work, another
+workspace or another reviewer's.
 
 A step is refused, with what to do instead, when it comes before the one it follows, when the
 unit is not in the queue of the last build (your draft of it is kept), when the build changed
@@ -246,7 +257,7 @@ machinechecked workspace show [--claim "Lemma 2.3"] [--json]    # evidence, find
 machinechecked workspace update ops.json [--dry-run]            # apply operations (- for stdin)
 machinechecked workspace main "Theorem 1" [NAME...] [--clear]   # the paper's main results
 machinechecked workspace export --out work.json                 # hand it on
-machinechecked workspace import work.json                       # continue it elsewhere
+machinechecked workspace import work.json [--dry-run]           # continue it elsewhere
 ```
 
 An update file lists operations, applied together or not at all; claims may be named by id, key
