@@ -4,7 +4,7 @@
   import { href, route, go, withQuery } from "../lib/route.svelte.js";
   import { VERDICTS, GROUPS, CHECKLIST, MARKS, STEP_VERDICTS, STEP_GROUPS, loadWork, saveWork, now, reviewerId,
            needsDetail, buildReport, exportFile, ORDERS, ORDER_EXPOSURE, byOrder, orderedUnits, recordExposure,
-           exposureOf, holdsBack, COVERAGE_FOR, COVERAGE_CHOICES, BASIS_CHOICES, reportCorrespondence,
+           revealedIn, holdsBack, COVERAGE_FOR, COVERAGE_CHOICES, BASIS_CHOICES, reportCorrespondence,
            draftCoverage, coverageWords, undoReport, leanOf, READER_SEEN } from "../lib/review.js";
   import { chosenWorkspace } from "../lib/workfile.js";
   import Comparison from "./Comparison.svelte";
@@ -261,20 +261,7 @@
   // (step 2) or author's review (step 3) they reached, and that show u's Lean or u's review,
   // and the prior interpretations of its claims an informed order drew on.
   function revealedBy(u) {
-    const byId = Object.fromEntries(queue.units.map((x) => [x.id, x]));
-    const passed = [
-      ...work.reports.map((r) => ({ id: r.unit.id, lean: true, author: true })),
-      ...Object.entries(work.drafts).map(([id, d]) => ({ id, lean: d.stage !== "read", author: d.stage === "author" })),
-    ];
-    const out = work.drafts[u.id]?.reader_exposure ? [{ unit: u.id, what: "Lean" }] : [];
-    out.push(...exposureOf(work, u));
-    for (const p of passed) {
-      const r = p.id !== u.id && byId[p.id]?.reveals;
-      if (!r) continue;
-      if (p.lean && r.lean?.includes(u.id) && !out.some((o) => o.unit === p.id && o.what === "Lean")) out.push({ unit: p.id, what: "Lean" });
-      if (p.author && r.author?.includes(u.id) && !out.some((o) => o.unit === p.id && o.what === "author's review")) out.push({ unit: p.id, what: "author's review" });
-    }
-    return out;
+    return revealedIn(work, queue.units, u);
   }
   // What the engine says this reviewer had seen, under `machinechecked view`; else what this
   // browser recorded.
@@ -358,7 +345,14 @@
       persist();
       return;
     }
-    const r = buildReport({ index, unit: current, draft: $state.snapshot(draft), reviewer: work.reviewer });
+    // As the engine's submit: what was recorded as seen before the reading was locked, a workspace
+    // imported since included, is listed with what the lock recorded.
+    const d = $state.snapshot(draft);
+    d.revealed_by = [...(d.revealed_by || [])];
+    for (const s of revealedIn(work, queue.units, current, d.locked_at || null)) {
+      if (!d.revealed_by.some((o) => o.unit === s.unit && o.what === s.what)) d.revealed_by.push(s);
+    }
+    const r = buildReport({ index, unit: current, draft: d, reviewer: work.reviewer });
     work.reports.push(r);
     work.skipped = work.skipped.filter((id) => id !== unitId);
     delete work.drafts[unitId];

@@ -4228,11 +4228,31 @@ for (const width of [1300, 390]) {
 
       // In a terminal: `workspace import`, and a finding recorded in the workspace.
       const imported = machinechecked("workspace", "import", path.join(root, `${name}-static.json`), "--as", "human:Synthetic-reviewer");
-      assert.deepEqual({ ...imported, path: null }, { workspace: F1.id, path: null, added: [], conflicts: [], problems: [] });
+      assert.deepEqual({ ...imported, path: null }, { workspace: F1.id, path: null, added: [], conflicts: [], problems: [],
+        drafts: { applied: Object.keys(F1.review.drafts).sort().map((unit) => ({ unit, how: "added" })), not_applied: [] } });
       const ops = path.join(root, `${name}-ops.json`);
       fs.writeFileSync(ops, JSON.stringify({ ops: [{ op: "put", record: { id: "f-synthetic", kind: "finding", claim: "T:thm:triangle",
         coverage: "changed", note: "SYNTHETIC: a finding recorded in a terminal." } }] }));
       machinechecked("workspace", "update", ops, "--id", F1.id, "--as", "human:Synthetic-reviewer");
+
+      // #493: a unit taken to step 2 on the static copy, exported and imported again: the newer
+      // draft comes across, and the import says so.
+      const pos = open.find((u) => u.id === "spec:Toy.PaperSpec.prop_pred_pos");
+      await pg.goto(`${origin}/${name}/#/r/${TOY.release}/read/T/T%3Aprop%3Apred`);
+      await pg.getByRole("button", { name: "More", exact: true }).click();
+      await pg.getByRole("link", { name: "Review it", exact: true }).click();
+      await whyIs(pg, `Statement · ${pos.reason}`);
+      await pg.getByRole("textbox", { name: "Your reading", exact: true }).fill("For every positive n, the predecessor of n is below n.");
+      await pg.getByRole("button", { name: "Lock my reading and show the Lean" }).click();
+      await pg.getByRole("textbox", { name: "Comparison", exact: true }).waitFor();
+      const F1b = await exported(pg, path.join(root, `${name}-static-b.json`));
+      const again = machinechecked("workspace", "import", path.join(root, `${name}-static-b.json`), "--as", "human:Synthetic-reviewer");
+      assert.deepEqual(again.drafts, { applied: [{ unit: pos.id, how: "advanced from step 1 to step 2" }], not_applied: [] });
+      const kept = JSON.parse(fs.readFileSync(path.join(work, "review-work", `${F1.id}.json`), "utf8"));
+      assert.deepEqual(kept.review.drafts[pos.id], F1b.review.drafts[pos.id]);
+      assert.equal(kept.records["f-synthetic"].note, "SYNTHETIC: a finding recorded in a terminal.", "the finding recorded there stays");
+      await pg.goto(`${origin}/${name}/#/r/${TOY.release}/review`);
+      await whyIs(pg, `Definition · ${second.reason}`);
 
       // Under `view`: the page works in the imported workspace once it is chosen, continues the
       // draft, and exports the workspace as `workspace export` writes it.
@@ -4271,6 +4291,20 @@ for (const width of [1300, 390]) {
         const d = F2.review.drafts[second.id], was = F1.review.drafts[second.id];
         assert.deepEqual([d.stage, d.verdict, d.checklist, d.reading, d.locked_at, d.lean.fingerprint],
                          ["author", "faithful", { parameters: "unsure" }, was.reading, was.locked_at, second.fingerprint]);
+        // A response to the author's review typed here, then a file whose draft differs only in
+        // that: the page asks first, and keeps the draft here when asked to.
+        await vp.getByRole("textbox", { name: "Response to the author’s review" }).fill("Typed under view.");
+        const inView = () => JSON.parse(fs.readFileSync(path.join(work, "review-work", `${F1.id}.json`), "utf8")).review.drafts[second.id];
+        assert.ok(await until(() => inView().disagreements === "Typed under view.", 8000), "what was typed is saved");
+        await choose(vp, F2file);
+        const askView = vp.getByRole("region", { name: `Import workspace ${F1.id}` });
+        await askView.waitFor();
+        assert.match(await askView.textContent(), new RegExp(`draft of ${second.id.replace(/\./g, "\\.")} differs from the one here only in\\s+what was typed`));
+        await askView.getByRole("button", { name: "Keep the drafts here" }).click();
+        assert.match(await vp.locator(".review [role=status]", { hasText: "Imported workspace" }).textContent(),
+                     /was not applied: differs from the draft here only in what was typed at step 3; kept as here\./);
+        assert.equal(inView().disagreements, "Typed under view.");
+
         // A file of this reviewer's imported there: the page works in it.
         const copy = path.join(root, `${name}-copy.json`);
         fs.writeFileSync(copy, JSON.stringify({ ...F1, id: "ws-imported-in-view" }));
@@ -4284,18 +4318,15 @@ for (const width of [1300, 390]) {
         assert.ok(await vp.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), "no horizontal scroll");
       } finally { await vp.close(); }
 
-      // Back on the static copy: the browser's draft is older than the file's, so it asks first;
-      // then the work is the workspace's, written again as it was read.
+      // Back on the static copy: the file's draft continues the browser's, which it replaces; the
+      // work is the workspace's, written again as it was read.
       const F2 = JSON.parse(fs.readFileSync(F2file, "utf8"));
       await choose(pg, F2file);
-      const ask = pg.getByRole("region", { name: `Import workspace ${F1.id}` });
-      await ask.waitFor();
-      assert.match(await ask.textContent(), new RegExp(`your draft of ${second.id.replace(/\./g, "\\.")}`));
-      await ask.getByRole("button", { name: "Replace it with the file's work" }).click();
-      // The drafts: the one continued under `view`, and the one the page began before leaving it.
+      // The drafts: the one continued under `view`, and the one taken to step 2 here.
       assert.equal(Object.keys(F2.review.drafts).length, 2);
-      assert.match(await pg.locator(".review [role=status]", { hasText: "Imported workspace" }).textContent(),
-                   new RegExp(`Imported workspace ${F1.id}: 2 drafts, 1 report, 1 record\\.`));
+      const imported2 = await pg.locator(".review [role=status]", { hasText: "Imported workspace" }).textContent();
+      assert.match(imported2, new RegExp(`Imported workspace ${F1.id}: 2 drafts, 1 report, 1 record\\.`));
+      assert.doesNotMatch(imported2, /not applied/);
       await pg.locator(".review .unit", { hasText: "Your verdict: faithful" }).waitFor();
       const F3 = await exported(pg, path.join(root, `${name}-static-again.json`));
       assert.deepEqual({ ...F3, exported_at: null, provenance: null }, { ...F2, exported_at: null, provenance: null },
@@ -4303,6 +4334,22 @@ for (const width of [1300, 390]) {
       assert.deepEqual(F3.provenance.slice(0, -1), F2.provenance);
       assert.deepEqual([F3.provenance.at(-1).event, F3.provenance.at(-1).by, F3.provenance.at(-1).from],
                        ["imported", "human:Synthetic-reviewer", `${name}-view.json`]);
+      // What was typed here at the same step: asked first, kept, or taken from the file.
+      await pg.getByRole("textbox", { name: "Response to the author’s review" }).fill("Typed on the static copy.");
+      await pg.waitForFunction(([k, id]) => JSON.parse(localStorage.getItem(k)).drafts[id]?.disagreements === "Typed on the static copy.", [REVIEW_KEY, second.id]);
+      for (const [button, expected, how] of [["Keep the drafts here", "Typed on the static copy.", "import"],
+                                              ["Take the file's drafts", F2.review.drafts[second.id].disagreements, "import, replaced"]]) {
+        await choose(pg, F2file);
+        const ask = pg.getByRole("region", { name: `Import workspace ${F1.id}` });
+        await ask.waitFor();
+        await ask.getByRole("button", { name: button }).click();
+        await ask.waitFor({ state: "detached" });
+        const w = await browserWork();
+        assert.equal(w.drafts[second.id].disagreements, expected, button);
+        const c = w.workspace.conflicts.at(-1);
+        assert.deepEqual([c.id, c.how], [`draft ${second.id}`, how], button);
+        assert.equal(w.drafts[second.id].locked_at, F2.review.drafts[second.id].locked_at, "the locked reading is as it was");
+      }
       // A newer file is refused here too, with the reason, and changes nothing.
       const before = await browserWork();
       await choose(pg, newer);

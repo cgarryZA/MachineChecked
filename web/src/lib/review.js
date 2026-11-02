@@ -139,23 +139,50 @@ export function recordExposure(work, claims, at, what = ["prior interpretations"
   return true;
 }
 
-// What the recorded exposure says this reviewer had seen of unit `u`, in the form of
-// `reading.revealed_by`, as `Session.revealed_by` reads a workspace's exposure: the Lean of one of
-// its claims as its Lean, and prior interpretations of one of them as its author's review. Each
-// entry is named by where it was seen: in the workspace this browser's work is (once it has been
-// exported or imported), else on this review page.
-export function exposureOf(work, u) {
+// A time the work recorded is no later than `before` (none: any time), as `review_cli._time`
+// compares them; a record without its time counts.
+const by = (before) => (t) => before == null || !t || t <= before;
+
+// What the recorded exposure says this reviewer had seen of unit `u` (by the time `before`), in
+// the form of `reading.revealed_by`, as `Session.revealed_by` reads a workspace's exposure: the
+// Lean of one of its claims as its Lean, and prior interpretations of one of them as its author's
+// review, each named by how it was seen, on this review page or in a workspace imported here.
+export function exposureOf(work, u, before = null) {
   const ids = (u.claims || []).map((c) => c.id);
-  const where = work.workspace?.id ? `workspace ${work.workspace.id}` : "review page";
   const out = [];
   for (const e of work.exposure || []) {
-    if (!(e.claims == null || e.claims.some((c) => ids.includes(c)))) continue;
+    if (!(e.claims == null || e.claims.some((c) => ids.includes(c))) || !by(before)(e.at)) continue;
     for (const w of e.what || []) {
       const what = w === "prior interpretations" ? "author's review" : w;
-      const unit = `${where} (${e.how ?? null})`;
+      const unit = `review page (${e.how ?? null})`;
       if ((what === "Lean" || what === "author's review") && !out.some((o) => o.unit === unit && o.what === what)) {
         out.push({ unit, what });
       }
+    }
+  }
+  return out;
+}
+
+// What this reviewer had seen of unit `u` by the time `before` (none: until now), in the form of
+// `reading.revealed_by`, as `Session.revealed_by` reads the work: the Lean of `u` seen on a claim's
+// page before its reading (as earlier versions of the page recorded it in the draft), what the
+// exposure records of its claims, and the units of `units` whose Lean or author's review the work
+// reached, and which show u's.
+export function revealedIn(work, units, u, before = null) {
+  const at = by(before);
+  const byId = Object.fromEntries(units.map((x) => [x.id, x]));
+  const passed = [
+    ...(work.reports || []).map((r) => ({ id: r.unit.id, lean: at(r.reading?.locked_at), author: at(r.author_review?.shown_at) })),
+    ...Object.entries(work.drafts || {}).map(([id, d]) => ({ id, lean: d.stage !== "read" && at(d.locked_at),
+                                                             author: d.stage === "author" && at(d.author_shown_at || d.decided_at) })),
+  ];
+  const out = work.drafts?.[u.id]?.reader_exposure ? [{ unit: u.id, what: "Lean" }] : [];
+  out.push(...exposureOf(work, u, before));
+  for (const p of passed) {
+    const r = p.id !== u.id && byId[p.id]?.reveals;
+    if (!r) continue;
+    for (const [what, ok, key] of [["Lean", p.lean, "lean"], ["author's review", p.author, "author"]]) {
+      if (ok && r[key]?.includes(u.id) && !out.some((o) => o.unit === p.id && o.what === what)) out.push({ unit: p.id, what });
     }
   }
   return out;

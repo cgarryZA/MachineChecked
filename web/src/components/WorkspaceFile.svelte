@@ -69,28 +69,42 @@
     try { ws = readWorkspaceFile(text); } catch (err) { return refuse(err.message); }
     const plan = importPlan($state.snapshot(work), ws);
     if (plan.error) return refuse(plan.error);
-    if (plan.losing.length) { asking = { ws, losing: plan.losing, from: file.name }; return; }
-    apply(ws, file.name);
+    if (plan.typed.length) { asking = { id: ws.id, typed: plan.typed, go: (replace) => apply(ws, file.name, replace) }; return; }
+    apply(ws, file.name, false);
   }
-  function apply(ws, from) {
+  function apply(ws, from, replace) {
     asking = null;
-    applyImport(work, ws, from);
+    const merge = applyImport(work, ws, from, replace);
     persist();
-    note = { ok: true, text: `Imported workspace ${ws.id}: ${importedWords(ws)}.` };
+    note = { ok: true, text: `Imported workspace ${ws.id}: ${importedWords(ws)}.`, items: notApplied(merge?.not_applied) };
   }
+  // The drafts an import did not apply, and why (`merge_drafts`).
+  const notApplied = (list) => (list || []).map((n) => `The file's draft of ${n.unit} was not applied: ${n.why}.`);
 
   // The engine checks and keeps the file; a workspace of this reviewer's is then the one the page
-  // works in. What the build cannot resolve, and records kept here in another version, are listed.
+  // works in. What the build cannot resolve, and records and drafts kept here in another version,
+  // are listed. Drafts that differ only in what was typed are asked about first, as on a static
+  // copy: the engine says what the import would do before it is made.
   async function importServed(text) {
     let data;
     try { data = JSON.parse(text); } catch { return refuse("not a JSON file"); }
+    let plan;
+    try { plan = await importWorkspace(data, reviewer, { dry_run: true }); } catch (e) { return refuse(e.message); }
+    const typed = plan.drafts.not_applied.filter((n) => n.kind === "typed");
+    if (typed.length) { asking = { id: plan.workspace, typed, go: (replace) => importNow(data, replace) }; return; }
+    await importNow(data, false);
+  }
+  async function importNow(data, replace) {
+    asking = null;
     let res;
-    try { res = await importWorkspace(data, reviewer); } catch (e) { return refuse(e.message); }
+    try { res = await importWorkspace(data, reviewer, { replace_drafts: replace }); } catch (e) { return refuse(e.message); }
     const own = sameReviewer(data?.reviewer?.id, reviewer);
     note = { ok: true, text: `Imported workspace ${res.workspace}` + (own ? "; the review page works in it."
       : ` of ${data?.reviewer?.id || "no named reviewer"}; the review page works in your own workspaces.`),
       items: [...(res.problems || []).map((p) => `${p.record}: ${p.problem}`),
-              ...(res.conflicts || []).map((c) => `${c.id}: kept as this working directory had it; the file's version is kept under conflicts`)] };
+              ...(res.conflicts || []).filter((c) => !String(c.id).startsWith("draft "))
+                .map((c) => `${c.id}: kept as this working directory had it; the file's version is kept under conflicts`),
+              ...notApplied(res.drafts?.not_applied)] };
     await listMine();
     if (own) choose(res.workspace);
   }
@@ -109,12 +123,14 @@
 <input type="file" accept=".json,application/json" hidden bind:this={input} onchange={pick} />
 {#if asking}
   <section class="card wsnote" aria-labelledby="import-title">
-    <p id="import-title"><strong>Import workspace {asking.ws.id}</strong></p>
-    <p class="small">This browser holds review work the file does not: {asking.losing.join("; ")}. Importing replaces
-      it with the file's work, and keeps the record of what you have seen. Export this work first to keep a copy.</p>
+    <p id="import-title"><strong>Import workspace {asking.id}</strong></p>
+    <p class="small">The file's draft of {asking.typed.map((n) => n.unit).join(", ")} differs from the one here only in
+      what was typed. Take the file's, or keep the one here; the other is kept in the workspace's conflicts. A step
+      already taken stays as it is either way.</p>
     <div class="row">
-      <button class="btn" onclick={() => apply(asking.ws, asking.from)}>Replace it with the file's work</button>
-      <button class="btn ghost" onclick={() => (asking = null)}>Keep this browser's work</button>
+      <button class="btn" onclick={() => asking.go(true)}>Take the file's drafts</button>
+      <button class="btn ghost" onclick={() => asking.go(false)}>Keep the drafts here</button>
+      <button class="btn ghost" onclick={() => (asking = null)}>Cancel</button>
     </div>
   </section>
 {/if}
