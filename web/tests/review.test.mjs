@@ -1,13 +1,14 @@
 // The review page's issue drafts: the same, verdict for verdict, as the command line's
 // (tests/fixtures/review/issue-drafts.json, which tests/contracts/test_review_cli.py checks
-// against `review_cli.issue_draft`); and its orders, with the exposure an informed order records.
+// against `review_cli.issue_draft`); its Undo, which gives back the draft the engine's does; and
+// its orders, with the exposure an informed order records.
 // Runs in Node: `node tests/review.test.mjs`.
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { issueDraft, buildReport, orderedUnits, recordExposure, exposureOf, holdsBack, ORDER_SEEN,
-         ORDER_EXPOSURE, reportCorrespondence, draftCoverage } from "../src/lib/review.js";
+         ORDER_EXPOSURE, reportCorrespondence, draftCoverage, draftFromReport, undoReport } from "../src/lib/review.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const DRAFTS = JSON.parse(fs.readFileSync(path.resolve(here, "../../tests/fixtures/review/issue-drafts.json"), "utf8"));
@@ -25,6 +26,36 @@ assert.deepEqual(draftCoverage({ coverage: "full", basis: "direct", argument: "l
                                  bridge: { theorem: "A", target: "B" } }),
                  { coverage: "full", basis: "direct", argument: null, bridge: null, would_decide: null });
 assert.deepEqual(draftCoverage({ basis: "direct" }), { coverage: null, basis: null, argument: null, bridge: null, would_decide: null });
+
+// Undo on a static copy gives back the draft the engine's Undo gives back, report for report
+// (tests/fixtures/review/undo.json, which tests/contracts/test_review_shared.py checks against
+// `review_cli.Session.undo`). Saved again, even on a later build, the report records what it
+// recorded before: its checklist, and the Lean its verdict was recorded against. A draft of the
+// unit in progress is kept, and Undo refused.
+const UNDO = JSON.parse(fs.readFileSync(path.resolve(here, "../../tests/fixtures/review/undo.json"), "utf8"));
+const again = (r, draft) => buildReport({
+  index: { release: r.pins.release, papers: [{ id: "T" }] }, draft,
+  unit: { ...r.unit, claims: r.unit.claims.map((id) => ({ id })), fingerprint: "a later build's", fingerprints: null },
+  reviewer: { kind: "human", name: "Synthetic Reviewer", sameFamily: "no" } });
+for (const c of UNDO.cases) {
+  assert.deepEqual(draftFromReport(c.report), c.draft, c.name);
+  const work = { drafts: {}, reports: [structuredClone(c.report)] };
+  assert.equal(undoReport(work), null, c.name);
+  assert.deepEqual(work, { drafts: { [c.report.unit.id]: c.draft }, reports: [] }, c.name);
+  const r = again(c.report, work.drafts[c.report.unit.id]);
+  assert.deepEqual(r.comparison.checklist, c.draft.checklist, c.name);
+  for (const k of ["fingerprint", "fingerprints", "legacy_hash"]) assert.deepEqual(r.pins[k], c.report.pins[k], `${c.name}: pins.${k}`);
+  work.reports.push(structuredClone(c.report));
+  assert.equal(undoReport(work), `${c.report.unit.id} has a draft in progress; finish or keep it first`);
+  assert.equal(work.reports.length, 1, "nothing is taken back");
+  assert.deepEqual(work.drafts, { [c.report.unit.id]: c.draft }, "the draft in progress is kept");
+}
+{
+  const full = UNDO.cases[0].report;
+  const r = again(full, draftFromReport(full));
+  assert.deepEqual(r, { ...full, submitted_at: r.submitted_at }, "a report saved again is the report taken back");
+}
+assert.equal(undoReport({ drafts: {}, reports: [] }), "there is no report to take back");
 
 // A report carries the coverage recorded with its verdict; an open question's draft says what
 // would decide it, and is never a defect.
