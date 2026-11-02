@@ -33,6 +33,17 @@ state that map gives it, as the Changes view shows it. A published audit counts 
 publishes, as the export checked them (and the maps it publishes, `revisions`); a build counts
 those of the workspaces in its working directory, against its own site data
 (`workspace_findings`).
+
+Clause readings. A workspace's latest submitted finding in force on each clause or requirement
+of a claim, with a coverage, is a reading of that part (`clause_readings`), counted apart from
+the readings of the whole statement: per set and unit, how many claims have a part read so
+(`clause_coverage`). Each names the declaration of the comparison it concerns, when the records
+say: the clause's proposition, or what the requirement is aligned with.
+
+Withheld. A published audit says what its publication settings withhold: per paper, which of
+the paper's text, its Lean and its review texts are not published (`withheld`), and on a
+reading, the parts of it the export left out (a question's words), so that the reader says
+"withheld" where it would otherwise show nothing.
 """
 
 from __future__ import annotations
@@ -59,6 +70,10 @@ FINDING_KEYS = ("open-question", "quantitative-difference", "input-restriction",
 # `unchecked` (not known to be current).
 FINDING_STATES = ("current", "due", "unchecked")
 AUDIT = "audit"
+# A part of a claim read by a workspace: its coverage, or out of date.
+CLAUSE_KEYS = RELATIONS + ("stale",)
+# What a paper's publication settings may withhold (`config.Publish`).
+WITHHOLDS = ("source_text", "lean", "reviews")
 
 # The features of a recorded difference (`estimates.FEATURES`), by finding category.
 QUANTITATIVE = ("constant dependence", "derivative order", "norm", "power", "weight",
@@ -205,13 +220,104 @@ def work_readings(work: dict | None) -> tuple[dict[str, dict], dict[str, dict]]:
             out[sid] = _assessment(sid, f["coverage"], basis, recorded,
                                    state if state in ("current", "stale") else "unchecked",
                                    by=by, provenance=sets[sid]["mode"],
-                                   question=_text(f.get("question")))
+                                   question=_text(f.get("question")),
+                                   withheld=_withheld(f))
         elif found:
             out[sid] = {"set": sid, "coverage": None, "basis": None, "currency": None,
                         "count": "clauses_only", "clauses": len(found),
                         **{k: v for k, v in (("by", by), ("provenance", sets[sid]["mode"]))
                            if v is not None}}
     return out, sets
+
+
+def _withheld(f: dict) -> list[str] | None:
+    """The parts of a reading a published finding records as withheld by its paper's
+    publication settings (`published_work`): its question's words."""
+    gone = f.get("withheld") if isinstance(f.get("withheld"), list) else []
+    out = [k for k in ("question",) if k in gone]
+    return out or None
+
+
+def _part_decl(f: dict, chunk: dict, rd: dict) -> str | None:
+    """The declaration of the comparison a finding on a part of a claim concerns: the target of
+    an alignment of the requirement it names, else the proposition (or first definition) of the
+    clause it names; None when the records do not say."""
+    if f.get("requirement"):
+        for a in rd.get("alignments") or []:
+            if isinstance(a, dict) and f["requirement"] in (a.get("requirements") or []):
+                for t in a.get("lean") or []:
+                    if isinstance(t, dict) and isinstance(t.get("decl"), str):
+                        return t["decl"]
+    if f.get("clause"):
+        for cl in chunk.get("clauses") or []:
+            if isinstance(cl, dict) and cl.get("name") == f["clause"]:
+                name = cl.get("spec") or next(iter(cl.get("defs") or []), None)
+                return name if isinstance(name, str) else None
+    return None
+
+
+def clause_readings(chunk: dict, work: dict | None) -> list[dict]:
+    """Each published workspace's readings of parts of a claim: per clause or requirement its
+    findings name, the latest submitted finding in force with a coverage. Each is `{set, clause
+    or requirement, coverage, basis, currency, count, decl}`: `count` is its coverage, or
+    `stale` when what it rests on changed; `decl` the declaration of the comparison it concerns
+    (`_part_decl`), or null."""
+    out = []
+    for rd in (work or {}).get("readings") or []:
+        if not isinstance(rd, dict) or not isinstance(rd.get("workspace"), str):
+            continue
+        sid = f"workspace:{rd['workspace']}"
+        latest: dict[tuple, dict] = {}
+        for f in sorted((f for f in rd.get("findings") or [] if isinstance(f, dict)
+                         and f.get("in_force") and f.get("coverage") in RELATIONS
+                         and not _statement_level(f)),
+                        key=lambda f: str(f.get("submitted_at") or "")):
+            latest[("requirement", f["requirement"]) if f.get("requirement")
+                   else ("clause", f["clause"])] = f
+        for (kind, name), f in sorted(latest.items()):
+            state = (f.get("currency") or {}).get("state")
+            currency = state if state in ("current", "stale") else "unchecked"
+            basis, _ = _basis(f, True)
+            out.append({"set": sid, kind: name, "coverage": f["coverage"], "basis": basis,
+                        "currency": currency,
+                        "count": "stale" if currency == "stale" else f["coverage"],
+                        "decl": _part_decl(f, chunk, rd)})
+    return out
+
+
+def clause_facts(facts: dict, chunk: dict, work: dict | None) -> None:
+    """Add to a claim's facts its clause readings (`clause_readings`), when it has any."""
+    parts = clause_readings(chunk, work)
+    if parts:
+        facts["clause_readings"] = parts
+
+
+def clause_counts(papers: dict, index: dict, facts: dict[str, dict], order: list[str]) -> None:
+    """Per paper, set and unit, how many claims have a part read under each of `CLAUSE_KEYS`
+    (`clause_coverage`): a claim with several parts read so is counted once, and a claim may be
+    counted under several keys, so these are never added. Absent when no claim has a part read."""
+    for row in index.get("claims") or []:
+        f = facts[row["id"]]
+        parts = f.get("clause_readings") or []
+        if not parts:
+            continue
+        table = papers[row["paper"]].setdefault(
+            "clause_coverage", {s: {u: _zeros(CLAUSE_KEYS) for u in UNITS} for s in order})
+        for s in order:
+            for k in sorted({x["count"] for x in parts if x["set"] == s}):
+                table[s][f["unit"]][k] += 1
+
+
+def withhold(summary: dict, facts: dict[str, dict], withheld: dict[str, list[str]]) -> None:
+    """Record in a published summary what each paper's publication settings withhold
+    (`withheld`: `source_text`, `lean`, `reviews`), and compute its digest again."""
+    for pid, what in (withheld or {}).items():
+        what = [k for k in WITHHOLDS if k in (what or [])]
+        if what and pid in summary["papers"]:
+            summary["papers"][pid]["withheld"] = what
+    summary["digest"] = content_id({"summary": {k: v for k, v in summary.items()
+                                                if k not in ("audit", "digest")},
+                                    "claims": facts})
 
 
 def review_state(chunk: dict, unit: str) -> str:
@@ -464,6 +570,7 @@ def summarise(index: dict, chunks: dict[str, dict], works: dict[str, dict] | Non
         facts[row["id"]] = f
         sets.update(more)
         names[row["id"]] = declarations(chunk)
+        clause_facts(f, chunk, works.get(row["id"]))
     by = sorted({a["by"] for f in facts.values() for a in f["readings"]
                  if a["set"] == AUDIT and a.get("by")})
     order = [AUDIT] + sorted(k for k in sets if k.startswith("review:")) + \
@@ -499,6 +606,7 @@ def summarise(index: dict, chunks: dict[str, dict], works: dict[str, dict] | Non
             p["finding_currency"][unit][k] += n
     for (pid, unit), decls in linked.items():
         papers[pid]["inventory"][unit]["declarations"] = len(decls)
+    clause_counts(papers, index, facts, order)
     shown = {p["id"]: p for p in index.get("papers") or []}
     for pid, p in papers.items():
         ver = (shown.get(pid) or {}).get("paper_version") or {}
@@ -563,10 +671,12 @@ def of_view(body: dict, root: Path | None = None,
     return summarise(index, chunks, author=body.get("author"), found=found)
 
 
-def refresh(data: Path, author: str | None = None) -> dict:
+def refresh(data: Path, author: str | None = None,
+            withheld: dict[str, list[str]] | None = None) -> dict:
     """Compute the summary again over the reader data at `data` as it is written (its index, the
     claim records and the workspace records they name), and write it into `data/index.json`. A
-    published audit's summary is thus computed from exactly the records it publishes."""
+    published audit's summary is thus computed from exactly the records it publishes. `withheld`
+    names, per paper, what its publication settings withhold (`withhold`)."""
     path = data / "index.json"
     index = json.loads(path.read_text(encoding="utf-8"))
     chunks, works = {}, {}
@@ -584,6 +694,8 @@ def refresh(data: Path, author: str | None = None) -> dict:
     summary = apply(index, chunks, works,
                     author if author is not None else (index.get("semantic") or {})
                     .get("audit", {}).get("author"))
+    if withheld:
+        withhold(summary, {r["id"]: r["semantic"] for r in index.get("claims") or []}, withheld)
     write_json(path, index, indent=None)
     return summary
 

@@ -18,6 +18,7 @@
            workspace } from "../lib/inspect.svelte.js";
   import { carriedOf } from "../lib/carried.js";
   import { findingSets, placeFindings, reviewFields } from "../lib/findings.js";
+  import { route } from "../lib/route.svelte.js";
 
   // One claim's comparison, Paper | Lean, shared by the reader, the claim page and the review
   // page. It draws the content its controller allows (`inputs`, from `comparison.comparisonInputs`)
@@ -241,6 +242,26 @@
     return "saved evidence";
   }
 
+  // A link to one declaration's block (`?at=<declaration>::top` with no inspection open, from the
+  // Overview's clauses and requirements) opens the claim at that block once it is drawn, and marks
+  // it. It is reached once for each claim and address.
+  let reached = null;
+  let reachedDecl = $state(null);
+  $effect(() => {
+    const at = route.at, claim = main?.id;
+    void [clauses.length, formal?.links?.length, step?.links?.length];  // drawn again when they load
+    if (!at || trail().length || !root || !claim || reached === claim + "|" + at) return;
+    const decl = at.endsWith("::top") ? at.slice(0, -"::top".length) : at;
+    const el = root.querySelector(`[data-spec="${CSS.escape(decl)}"]`) ||
+      root.querySelector(`[data-decl="${CSS.escape(decl)}"]`) ||
+      [...root.querySelectorAll("[data-defs]")].find((e) => e.dataset.defs.split(" ").includes(decl));
+    if (!el) return;
+    reached = claim + "|" + at;
+    reachedDecl = decl;
+    tick().then(() => el.scrollIntoView({ block: "start" }));
+  });
+  const marked = (...names) => (reachedDecl && names.includes(reachedDecl) ? "" : null);
+
   // Opening and closing an inspection keeps the reader's place: an inspection opens in view with
   // the row it concerns above it, and the scroll position and the element it was opened from come
   // back when the reader returns.
@@ -410,7 +431,7 @@
   {#if step}
     <h3 class="sub">Lean that establishes this step</h3>
     {#each step.links as l (l.name)}
-      <div class="block" data-decl={l.name}>
+      <div class="block" data-decl={l.name} data-reached={marked(l.name)}>
         <p class="decl"><code>{l.name}</code></p>
         {#if l.statement}{@render statementOf(l.name, l.statement, 0)}{/if}
         {@render linkTools?.(l, l.name + "::top", "step")}
@@ -422,7 +443,7 @@
       <h3 class="sub">Different formal route used instead</h3>
       {#if step.route.note}<p class="small">{step.route.note}{#if step.route.by}<span class="faint">{" — " + step.route.by}</span>{/if}</p>{/if}
       {#each step.route.links as l (l.name)}
-        <div class="block route" data-decl={l.name}>
+        <div class="block route" data-decl={l.name} data-reached={marked(l.name)}>
           <p class="decl"><code>{l.name}</code></p>
           {#if l.statement}{@render statementOf(l.name, l.statement, 0)}{/if}
           {@render linkTools?.(l, l.name + "::top", "route")}
@@ -432,7 +453,7 @@
     {/if}
   {:else if simple}
     {#each formal?.links || [] as l (l.name)}
-      <div class="block" data-decl={l.name}>
+      <div class="block" data-decl={l.name} data-reached={marked(l.name)}>
         <p class="decl"><code>{l.name}</code>
           {#if sourceUrl(index, l.path, l.range?.line)}<a class="src-link small" href={sourceUrl(index, l.path, l.range?.line)} target="_blank" rel="noopener" title={sourceTitle(index)}>{sourceLabel(index)}</a>{/if}</p>
         {#if l.definition}{@render definitionOf(l.name, null, l.definition)}
@@ -444,7 +465,7 @@
     {/each}
   {:else}
     {#each clauses as cl, k (k)}
-      <div class="block" class:refuted={cl.state === "refuted"} data-spec={cl.spec}>
+      <div class="block" class:refuted={cl.state === "refuted"} data-spec={cl.spec} data-defs={cl.defs?.length ? cl.defs.join(" ") : null} data-reached={marked(cl.spec, ...(cl.defs || []))}>
         {#if clauses.length > 1}<p class="cname"><TexInline text={cl.label || cl.name} />{#if cl.corrects}<span class="faint">&nbsp;— corrects “<TexInline text={cl.corrects_label || cl.corrects} />”</span>{/if}</p>{/if}
         {#if clauseNote(cl, clauses.length)}<p class="verdict">{clauseNote(cl, clauses.length)}</p>{/if}
         {#if changes(cl)}
@@ -555,6 +576,7 @@
 
 <style>
   .cmp { container-type: inline-size; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+  .cmp :global([data-reached]) { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: var(--radius); }
   .grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; min-width: 0; }
   .grid > section { min-width: 0; }
   @container (min-width: 760px) {

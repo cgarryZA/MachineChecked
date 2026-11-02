@@ -305,6 +305,31 @@ function queueFor(data) {
 }
 fs.cpSync(path.join(root, "toy"), path.join(root, "review-order"), { recursive: true });
 const ORDER_QUEUE = queueFor(path.join(root, "review-order", "data"));
+// The same queue prioritised by the engine with a comparison of two releases that reopened the
+// review of Proposition 2.3's statement, with the question a new reading answers (#477).
+const REOPENED = String.raw`
+import json, sys
+from pathlib import Path
+from prooflens import review_queue as rq
+d = Path(sys.argv[1])
+index = json.loads((d / "index.json").read_text())
+chunks = {c["file"]: json.loads((d / "claims" / c["file"]).read_text()) for c in index["claims"]}
+store = {p.stem: json.loads(p.read_text()) for p in (d / "decls").glob("*.json")}
+doc = {"from": {"release": "r-earlier"}, "to": {"release": index["release"]}, "declarations": [],
+       "claims": [{"claim": "T:prop:pred", "number": "Proposition 2.3", "lean": [], "paper_change": {"class": "changed"},
+                   "evidence": [{"target": "spec", "name": "Toy.PaperSpec.prop_pred", "outcome": "reopened",
+                                 "because": [{"dependency": "paper", "claim": "T:prop:pred", "change": "changed"}],
+                                 "question": "Does the proposition still state Proposition 2.3 as the paper now prints it?"}]}]}
+q = rq.prioritise(rq.assurance_queue(index, chunks, store, []), doc, claims=index["claims"])
+(d / "review-queue.json").write_text(json.dumps(q))
+(d / "index.json").write_text(json.dumps({**index, "review_queue": "data/review-queue.json"}))
+print(json.dumps(q))`;
+fs.cpSync(path.join(root, "toy"), path.join(root, "review-questions"), { recursive: true });
+const QUESTIONS_QUEUE = (() => {
+  const r = spawnSync(process.env.PYTHON || "python3", ["-c", REOPENED, path.join(root, "review-questions", "data")], { encoding: "utf8" });
+  if (r.status !== 0) throw new Error("the engine could not prioritise the review queue:\n" + r.stderr);
+  return JSON.parse(r.stdout);
+})();
 const REVIEW_KEY = "prooflens-review:toy-paper";
 const kindWord = (u) => ({ def: "Definition", link: "Linked claim", step: "Proof step" })[u.kind] || "Statement";
 const whyIs = (pg, text) => pg.waitForFunction((t) => document.querySelector(".review .unit .why")?.textContent === t, text)
@@ -484,6 +509,24 @@ const summarised = spawnSync(process.env.PYTHON || "python3", ["-c",
   ...["toysem", "basissem", "toyworksem", "toyfindsem"].map((d) => path.join(root, d))], { encoding: "utf8" });
 if (summarised.status !== 0) throw new Error("the engine could not summarise:\n" + summarised.stderr);
 const SEM = Object.fromEntries(["toysem", "basissem", "toyworksem", "toyfindsem"].map((d) => [d, JSON.parse(fs.readFileSync(path.join(root, d, "data/index.json"), "utf8"))]));
+
+// #479: a copy of the toy audit whose published readings concern parts of claims (`toyfind`), as
+// an audit that does not publish review texts carries it, with an unresolved reading of Theorem
+// 2.5 whose question's words are withheld (`published_work.withheld_prose`).
+fs.cpSync(path.join(root, "toyfind"), path.join(root, "toyfindclosed"), { recursive: true });
+{
+  const row = TOY.claims.find((c) => c.id === "T:thm:bound");
+  const file = path.join(root, "toyfindclosed/data/work", row.file);
+  const w = JSON.parse(fs.readFileSync(file, "utf8"));
+  w.readings[0].findings.push({ id: "f-open", kind: "finding", claim: "T:thm:bound", coverage: "unresolved", state: "submitted",
+    submitted_at: "2026-10-21T00:00:00Z", created_by: "human:A-Auditor", evidence: [], in_force: true, currency: cur, withheld: ["question", "note"] });
+  fs.writeFileSync(file, JSON.stringify(w));
+  const parts = spawnSync(process.env.PYTHON || "python3", ["-c",
+    "import sys\nfrom pathlib import Path\nfrom prooflens import semantic\n"
+    + "semantic.refresh(Path(sys.argv[1]) / 'data', 'A. Author', {'T': ['reviews']})",
+    path.join(root, "toyfindclosed")], { encoding: "utf8" });
+  if (parts.status !== 0) throw new Error("the engine could not summarise the parts:\n" + parts.stderr);
+}
 
 // #414: the page with two audits of one version (`combined`), as machinechecked.org writes it with
 // each listed audit's semantic summary on its registry entry (its scripts/summary.py record: the
@@ -3173,6 +3216,27 @@ await check("the review page offers the priority and paper orders with the engin
   assert.ok(await pg.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), "no horizontal scroll");
 });
 
+// The questions a new reading answers, under the unit's reason, as `review next` prints them
+// (#477): here of a review the comparison with the previous release reopened.
+await check("the review page shows the question a reopened review asks", 390, async (pg) => {
+  await pg.goto(origin + `/review-questions/#/r/${TOY.release}/review`);
+  await pg.evaluate((k) => localStorage.setItem(k, JSON.stringify({ reviewer: { kind: "human", name: "Synthetic reviewer" } })), REVIEW_KEY);
+  await pg.reload();
+  const first = QUESTIONS_QUEUE.units[0];
+  assert.equal(first.id, "spec:Toy.PaperSpec.prop_pred");
+  assert.equal(first.priority.tier, "reopened");
+  await whyIs(pg, `Statement · ${first.reason}`);
+  assert.match(first.reason, /^Reopened since the last release: the passage of Proposition 2\.3 changed; /);
+  const asked = pg.getByRole("list", { name: "Questions a new reading answers" });
+  assert.deepEqual(await asked.locator("li").allTextContents(),
+                   ["Does the proposition still state Proposition 2.3 as the paper now prints it?"]);
+  // A unit no change reopened asks none.
+  await pg.getByRole("button", { name: "Skip", exact: true }).click();
+  await whyIs(pg, `${kindWord(QUESTIONS_QUEUE.units[1])} · ${QUESTIONS_QUEUE.units[1].reason}`);
+  assert.equal(await asked.count(), 0);
+  assert.ok(await pg.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), "no horizontal scroll");
+});
+
 // #478: the Overview's Review next is the queue the build wrote, in its priority order with the
 // engine's reasons, each entry opening the review page at that unit; nothing is ranked by the page.
 for (const width of [1300, 390]) {
@@ -3409,6 +3473,50 @@ await check("the overview keeps units apart and shows a workspace's readings as 
   await pg.getByRole("button", { name: "Every clause (1 statement)", exact: true }).click();
   assert.equal(await pg.locator(".coverage .claims li").count(), 1);
   assert.match(await pg.locator(".coverage .claims li").textContent(), /Definition 1\.1.*Every clause.*By an argument combining Lean results \(recorded as through a checked bridge\)/s);
+});
+
+for (const width of [1300, 390]) {
+  await check("the overview filters claims by the readings of their parts and links to each part's block", width, async (pg) => {
+    await pg.goto(origin + `/toyfindsem/#/r/${TOY.release}/overview?set=${encodeURIComponent("workspace:ws-b00000000002")}`);
+    await pg.locator(".coverage .semantic").waitFor();
+    const group = pg.locator('.semantic [data-dimension="clause_coverage"]');
+    assert.deepEqual(await group.locator("button").allTextContents(), ["Any", "Stated differently (1 statement)"]);
+    await group.getByRole("button", { name: "Stated differently (1 statement)", exact: true }).click();
+    assert.match(await pg.evaluate(() => location.hash), /clause=changed/);
+    const row = pg.locator(".coverage .claims li");
+    assert.equal(await row.count(), 1);
+    // The whole statement has no reading in this set; its part has one, named and linked.
+    assert.match(await row.locator(".cov").textContent(), /Clauses only \(1\)/);
+    const part = row.locator('[data-part="pos2"]');
+    assert.equal((await part.textContent()).replace(/\s+/g, " ").trim(), "requirement pos2: Stated differently");
+    await part.locator("a").click();
+    await pg.waitForFunction(() => /\/read\/T\/T%3Aprop%3Apred\?at=Toy\.PaperSpec\.prop_pred_pos%3A%3Atop$/.test(location.hash));
+    const block = pg.locator('.cmp [data-spec="Toy.PaperSpec.prop_pred_pos"]');
+    await block.and(pg.locator("[data-reached]")).waitFor();
+    assert.equal(await block.evaluate((e) => { const r = e.getBoundingClientRect(); return r.top < window.innerHeight && r.bottom > 0; }), true, "the part's block is in view");
+    assert.equal(await pg.locator(".cmp [data-reached]").count(), 1, "one block is marked");
+    // Another workspace's part reading: a requirement at the conclusion of Theorem 2.5.
+    await pg.goto(origin + `/toyfindsem/#/r/${TOY.release}/overview?set=${encodeURIComponent("workspace:ws-a00000000001")}&clause=full`);
+    await pg.locator(".coverage .claims li").first().waitFor();
+    assert.equal(await pg.locator(".coverage .claims li").count(), 1, "one claim has a part stated in full");
+    assert.match(await pg.locator('.coverage .claims li [data-part="bound"]').textContent(), /requirement bound: Stated in full/);
+    assert.equal(await pg.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, "no horizontal scroll");
+  });
+}
+
+await check("the overview says what a publication withholds, never not assessed", 390, async (pg) => {
+  await pg.goto(origin + `/toyfindclosed/#/r/${TOY.release}/overview?set=${encodeURIComponent("workspace:ws-a00000000001")}&coverage=unresolved`);
+  await pg.locator(".coverage .claims li").first().waitFor();
+  assert.match(await pg.locator(".coverage .withheld").textContent(), /^This publication withholds review texts and auditors' notes: where a reading's words are not published, the Overview says “Withheld”\.$/);
+  const row = pg.locator(".coverage .claims li");
+  assert.equal(await row.count(), 1);
+  assert.match(await row.locator(".cov").textContent(), /^Unresolved/);
+  assert.equal(await row.locator('.question [data-withheld="question"]').textContent(), "Withheld");
+  assert.doesNotMatch(await row.textContent(), /Not assessed|see the claim/);
+  // An audit that withholds nothing says nothing of it.
+  await pg.goto(origin + `/toyfindsem/#/r/${TOY.release}/overview`);
+  await pg.locator(".coverage .semantic").waitFor();
+  assert.equal(await pg.locator(".coverage .withheld").count(), 0);
 });
 
 // #478: the Overview counts the findings in force of a published audit by their currency, in
@@ -4189,6 +4297,46 @@ print(json.dumps({"id": wsp.read(p)["id"]}))`, work, path.join(root, "toyrev", "
                        ["Any", "Current (1 finding)", "Due for review (2 findings)", "Not known to be current (1 finding)"]);
       await group.getByRole("button", { name: "Due for review (2 findings)", exact: true }).click();
       assert.deepEqual(await pg.locator(".coverage .claims li .claim strong").allTextContents(), ["Theorem 2.1", "Theorem 2.5"]);
+    });
+    // The informed order on the review page (#477): a finding the revision reopened leads, with
+    // the question a new reading answers, as `review next --order informed` gives them; the
+    // queue's own order asks none.
+    await check("the informed review order puts the findings a revision reopened first, with their questions", 1300, async (pg) => {
+      const data = path.join(root, "toyrev", "data");
+      const queue = queueFor(data);
+      const r = spawnSync(process.env.PYTHON || "python3", ["-c", String.raw`
+import json, sys
+from pathlib import Path
+from prooflens.review_cli import order_route
+print(json.dumps(order_route(Path(sys.argv[1]), Path(sys.argv[2]))({"order": ["informed"]})))`, work, data], { encoding: "utf8" });
+      if (r.status !== 0) throw new Error(r.stderr);
+      const expected = JSON.parse(r.stdout);
+      const at = expected.units.findIndex((u) => u.priority.tier === "reopened finding");
+      const due = expected.units[at];
+      assert.equal(due.id, "spec:Toy.PaperSpec.thm_bound");
+      assert.ok(expected.units.slice(0, at).every((u) => u.id.startsWith("def:")), "only the definitions its review shows come before it");
+      assert.match(due.reason, /^A recorded finding is due for review: the passage of Theorem 2\.6 changed in the revision; /);
+      const qs = due.priority.signals.flatMap((s) => s.questions || []);
+      assert.deepEqual(qs, ["Does finding f-bound still hold for the changed text of Theorem 2.6 (T:thm:bound)?"]);
+      await pg.goto(`http://127.0.0.1:${port}/#/r/${TOY.release}/review`);
+      await pg.evaluate((k) => localStorage.setItem(k, JSON.stringify({ reviewer: { kind: "human", name: "Revision reviewer" } })), REVIEW_KEY);
+      await pg.reload();
+      const first = queue.units.find((u) => u.state !== "reviewed");
+      await whyIs(pg, `${kindWord(first)} · ${first.reason}`);
+      const asked = pg.getByRole("list", { name: "Questions a new reading answers" });
+      assert.equal(await asked.count(), 0, "the queue's own order asks nothing of the workspaces");
+      const order = pg.getByRole("combobox", { name: "Order", exact: true });
+      await order.selectOption("informed");
+      const ask = pg.getByRole("region", { name: "The informed order" });
+      assert.match(await ask.textContent(), /findings a change\s+made due for review/);
+      await ask.getByRole("button", { name: "Use the informed order" }).click();
+      await pg.locator(".review [role=status]", { hasText: "draws on the workspaces' records" }).waitFor();
+      for (const u of expected.units.slice(0, at)) {
+        await whyIs(pg, `${kindWord(queue.units.find((x) => x.id === u.id))} · ${u.reason}`);
+        await pg.getByRole("button", { name: "Skip", exact: true }).click();
+      }
+      await whyIs(pg, `Statement · ${due.reason}`);
+      assert.deepEqual(await asked.locator("li").allTextContents(), qs);
     });
     await check("a static copy of the site shows no workspace across the revision", 1300, async (pg) => {
       await pg.goto(origin + "/toychanges/" + `#/r/${TOY.release}/changes`);

@@ -807,6 +807,13 @@
                 },
                 "dependencies": {
                   "$ref": "#/$defs/dependencies"
+                },
+                "withheld": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "The fields of the auditor's prose the publication settings leave out, named, never quoted."
                 }
               }
             }

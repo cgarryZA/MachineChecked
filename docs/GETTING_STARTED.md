@@ -189,6 +189,14 @@ the project's working directory. `machinechecked review` continues the same revi
 with the same steps and checks, and the page continues what the terminal began
 ([Reviewing from the command line](REVIEWING.md#one-claim-at-a-time)).
 
+The review page says why each unit comes next and, for a review or a finding that a change
+reopened, lists the question a new reading answers. **Order** chooses the paper's order, or
+under `machinechecked view` the informed order: it also reads the auditors' workspaces, and puts
+first the findings a change made due for review, then what is out of date, open or different,
+with the main results a workspace saves and what they use ahead of the rest
+([Review order](REVIEWING.md#review-order)). Those records are prior interpretations, so choosing
+it records that you have seen them.
+
 The paper toolbar provides page navigation, fit/zoom, text search and **Open original PDF**.
 PDF text can be selected and copied. The claim markers occupy the margin.
 
@@ -462,6 +470,11 @@ as the engine computed it from the readings, reports and findings:
   findings of the workspaces in the project's working directory, judged as the Changes view
   judges them; a published audit counts the findings it publishes. Select one to show the
   claims with such a finding.
+- **Clauses and requirements** filters by a workspace's readings of parts of a claim (a clause,
+  or a requirement it records), counted apart from readings of whole statements. Each part is
+  listed under the claim's correspondence and links to its declaration in the claim's comparison.
+- A published audit says what its publication settings withhold. Where a reading's question is
+  not published, the Overview says **Withheld**.
 
 `check` and `build` print the same summary of the audit's readings. For the readings above, with
 a statement left unlinked, a notation record and a proof equation read as stating part of its

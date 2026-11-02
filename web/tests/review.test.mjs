@@ -8,7 +8,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { issueDraft, buildReport, orderedUnits, recordExposure, exposureOf, holdsBack, ORDER_SEEN,
-         ORDER_EXPOSURE, reportCorrespondence, draftCoverage, draftFromReport, undoReport } from "../src/lib/review.js";
+         ORDER_EXPOSURE, reportCorrespondence, draftCoverage, draftFromReport, undoReport,
+         questionsOf } from "../src/lib/review.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const DRAFTS = JSON.parse(fs.readFileSync(path.resolve(here, "../../tests/fixtures/review/issue-drafts.json"), "utf8"));
@@ -130,6 +131,24 @@ assert.equal(holdsBack("informed", recorded, { stage: "read" }), false);
 assert.equal(holdsBack("informed", recorded, { stage: "author", revealed_by: [] }), false);
 assert.equal(holdsBack("priority", recorded, blind), false);
 assert.equal(holdsBack("informed", built, blind), false);
+
+// Every signal the workspaces give is held back the same way: a finding a change reopened, a
+// record out of date, a saved main result.
+for (const kind of ["reopened finding", "out of date", "main result"]) {
+  const u = U("spec:w", ["P:w"], { priority: { base: "Short statement", signals: [{ kind, text: "x", claims: ["P:w"] }] } });
+  assert.equal(holdsBack("informed", u, blind), true, kind);
+}
+
+// The questions a new reading answers, as the engine words them, each once; none for a unit
+// whose signals ask none.
+const asked = U("spec:q", ["P:q"], { priority: { base: "Short statement", signals: [
+  { kind: "reopened finding", text: "a recorded finding is due for review: the passage of Theorem 1 changed", claims: ["P:q"],
+    questions: ["Does finding f-1 still hold now that the passage of Theorem 1 changed?"] },
+  { kind: "reopened", text: "reopened since the last release: its Lean statement changed", claims: ["P:q"],
+    questions: ["Does it still state Theorem 1?", "Does finding f-1 still hold now that the passage of Theorem 1 changed?", " ", 7] }] } });
+assert.deepEqual(questionsOf(asked), ["Does finding f-1 still hold now that the passage of Theorem 1 changed?", "Does it still state Theorem 1?"]);
+assert.deepEqual(questionsOf(recorded), []);
+assert.deepEqual(questionsOf(null), []);
 
 // The Overview's Review next (#478): the queue's open units in the queue's own order, with the
 // engine's reasons, named by their claims' numbers and never by their Lean; a definition by the

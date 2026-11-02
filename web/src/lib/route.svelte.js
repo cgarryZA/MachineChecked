@@ -5,7 +5,7 @@
 //   #/read/<paper>[/<claim>] the paper, or a claim's comparison in its place; `?show=<claim>`
 //                            shows the paper at that claim's place, marked
 //   #/overview               every claim, with its correspondence, basis, review and status;
-//                            `?set=&unit=&coverage=&basis=&review=&finding=&finding_currency=&status=`
+//                            `?set=&unit=&coverage=&basis=&review=&finding=&finding_currency=&status=&clause=`
 //                            choose the readings shown and filter the claims
 //   #/claim/<claim>          the passport alone
 //   #/changes                what changed between releases
@@ -13,10 +13,11 @@
 //                            that unit, or at the first unit of that claim
 //
 // A claim's inspections are in the query of its route: `?inspect=<token>…&at=<row>`
-// (lib/inspect.svelte.js). A `?compare=1` in older links is ignored: a claim always opens
+// (lib/inspect.svelte.js); `?at=<declaration>::top` alone opens the claim at that declaration's
+// block of its comparison. A `?compare=1` in older links is ignored: a claim always opens
 // into its comparison.
 
-export const OVERVIEW_FILTERS = ["set", "unit", "coverage", "basis", "review", "finding", "finding_currency", "status"];
+export const OVERVIEW_FILTERS = ["set", "unit", "coverage", "basis", "review", "finding", "finding_currency", "status", "clause"];
 
 function parse(hash) {
   const [path, query = ""] = hash.split("?");
