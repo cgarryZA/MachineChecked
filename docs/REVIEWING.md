@@ -586,6 +586,9 @@ coverage counts as **Reviewed, coverage not recorded**; one made for another tex
 **Out of date**. Two reviewers' readings are never combined. A report is counted as independent
 when it records that nothing of the Lean or the author's review had been shown to its reviewer
 before the reading was locked (`reading.revealed_by` is empty), and as informed otherwise.
+A workspace's finding on a clause or a requirement is a reading of that part: the Overview lists
+it under the claim, filters by it (**Clauses and requirements**) and links to the declaration it
+concerns in the claim's comparison.
 
 ## Maintainer acceptance
 

@@ -12,7 +12,8 @@ Each record keeps its author and times, its pins and its currency against the pu
 computed over the published records alone. The paper's `publish` settings apply: a passage's
 text, file and lines only when the source text is published, a Lean target's text only when the
 Lean is, and the auditor's prose (notes, arguments, questions, reasons, a counterexample's
-specialisation and reduction) only when reviews are. A difference shows its paper expression when
+specialisation and reduction) only when reviews are; a record names the prose fields it leaves
+out (`withheld`), never their words. A difference shows its paper expression when
 the source text is published and its Lean expression when the Lean is. A cited fact
 inside a proof keeps its basis, "established inside this proof under this context", and its
 pins; its proposition and context are Lean text. Its currency, and that of a cited application
@@ -240,6 +241,13 @@ def _composition(r: dict, pub, view: dict) -> dict:
     return out
 
 
+def withheld_prose(r: dict) -> list[str]:
+    """The fields of the auditor's prose a record has, which an export that does not publish
+    reviews leaves out: named, never quoted, so that a reader can say what is withheld."""
+    fields = PROSE + (CX_PROSE if r.get("kind") == "counterexample" else ())
+    return [f for f in fields if r.get(f) not in (None, "", [], {})]
+
+
 def public_record(r: dict, pub, currency: dict, in_force: set[str],
                   compositions: dict | None = None,
                   records: list[dict] | None = None, bridges: dict | None = None,
@@ -254,6 +262,10 @@ def public_record(r: dict, pub, currency: dict, in_force: set[str],
     out = {f: r[f] for f in (*COMMON, *FIELDS[k]) if r.get(f) is not None}
     if pub.reviews:
         out.update({f: r[f] for f in PROSE if r.get(f) not in (None, "")})
+    else:
+        withheld = withheld_prose(r)
+        if withheld:
+            out["withheld"] = withheld
     if k == "finding" and r.get("difference"):
         out["difference"] = _difference(r["difference"], pub)
     if k == "counterexample":

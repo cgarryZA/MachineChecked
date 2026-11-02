@@ -247,6 +247,9 @@ def test_a_paper_that_keeps_its_source_private_publishes_no_passage_text(toy, tm
     assert rd["evidence"][0]["ref"] == {"paper": {"claim": "T:def:even"}}
     assert rd["requirements"][0]["text"] == "the synthetic condition"
     assert rd["findings"][1]["note"] == "SECOND-FINDING-NOTE"
+    # The published summary says what the paper's settings withhold (#479).
+    idx = json.loads((tmp_path / "out" / "data" / "index.json").read_text())
+    assert idx["semantic"]["papers"]["T"]["withheld"] == ["source_text"]
 
 
 def test_a_cited_fact_inside_a_proof_is_published_with_its_basis(tmp_path):

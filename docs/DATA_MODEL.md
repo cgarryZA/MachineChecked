@@ -659,7 +659,8 @@ summary counts, each counted apart and never combined, and `selected` is the one
 | `workspace:<id>` | one published workspace's latest submitted finding in force that records a coverage of the whole statement; `mode` and `reviewer` as the workspace records them |
 
 A finding on a clause or a requirement is not a reading of the whole statement: a claim whose
-workspace has only those is counted as `clauses_only`, never as `full`.
+workspace has only those is counted as `clauses_only`, never as `full`. It is a reading of that
+part, recorded on the claim's row (`clause_readings`) and counted apart (`clause_coverage`).
 
 | Field | Content |
 |---|---|
@@ -672,6 +673,8 @@ workspace has only those is counted as `clauses_only`, never as `full`.
 | `currency` | per set and unit, the claims with a reading: `current` (pinned to this build), `unchecked` (this build could not check it), `unpinned` (a links-file reading, which records no version of what it read), `stale` |
 | `review` | per unit, each claim once: for statements and notation `independent`, `author`, `informed`, `stale`, `unchecked`, `none` (no current review of everything it needs); for proof steps the step's review as printed |
 | `findings` | per unit, how many claims have a recorded finding of each kind: `open-question`, `quantitative-difference`, `input-restriction`, `representation`, `other-difference`, `printed-step`; a claim may have several kinds, so these are never added |
+| `clause_coverage` | optional, present when a workspace reads a part of a claim: per set and unit, how many claims have a part counted under each of `full`, `partial`, `changed`, `related`, `unresolved` and `stale`; a claim is counted once under each key it has and may be under several, so these are never added |
+| `withheld` | optional, in a published audit: what the paper's publication settings withhold, of `source_text`, `lean` and `reviews` |
 | `digest` | the SHA-256 of the summary's counts and every claim's facts, without the audit's identity: two builds of the same records have the same digest, and it changes whenever a reading, a review or a finding changes, also when the Lean and the statuses do not |
 
 A checked bridge counts as `checked_bridge` only while Lean checks it and the target and passage
@@ -693,8 +696,17 @@ false as printed or with a gap. Readings and reports out of date are not counted
 A claim row's `semantic` is `{unit, declarations, readings, review, findings}`. Each reading is
 `{set, coverage, basis, currency, count}` (`count` is the coverage key it is counted under), with
 `recorded_basis`, `by`, `provenance` (`independent` or `informed`), `verdict`, `question` and,
-for `clauses_only`, `clauses` (how many findings) when they apply. The Overview filters by these
-keys, and its address names the filter: `#/r/<release>/overview?set=…&unit=…&coverage=…&basis=…&review=…&finding=…&status=…`.
+for `clauses_only`, `clauses` (how many findings) when they apply, and `withheld` (`["question"]`)
+when a published audit leaves out the words of the question it records. A claim a workspace reads
+in part also has `clause_readings`: per set, the latest submitted finding in force with a coverage
+on each clause or requirement, `{set, clause or requirement, coverage, basis, currency, count,
+decl}`, `count` its coverage or `stale`, and `decl` the declaration of the claim's comparison it
+concerns (the clause's proposition, or a definition claim's first definition; for a requirement,
+the target of its first alignment), or null. The Overview filters by these keys, and its address
+names the filter: `#/r/<release>/overview?set=…&unit=…&coverage=…&basis=…&review=…&finding=…&status=…&clause=…`.
+A part's link opens the claim at that declaration's block of its comparison
+(`#/r/<release>/read/<paper>/<claim>?at=<declaration>::top`). The new fields are optional: a
+reader that does not know them reads the rest of the summary.
 
 ## Audit descriptor (`audit.json`), written by the engine
 
@@ -1053,8 +1065,9 @@ records for the claim:
 | `revisions` | what each version map the workspace keeps says of this claim, when it says anything (below) |
 
 Each record keeps the workspace fields above (`id`, `kind`, `claim`, `clause`, `rev`,
-`created_at`/`created_by`, `updated_at`/`updated_by`, `pins`, and its kind's fields) and gains
-`currency` (`{state, changes}`: `current`, `stale` or `unchecked`), computed against the published
+`created_at`/`created_by`, `updated_at`/`updated_by`, `pins`, and its kind's fields), names the
+fields of the auditor's prose the paper's settings leave out (`withheld`, never their words), and
+gains `currency` (`{state, changes}`: `current`, `stale` or `unchecked`), computed against the published
 data over the published records alone. Proposed and removed fragments, draft findings, evidence
 no submitted finding cites, questions, `exposure`, `resume`, `review`, `conflicts`,
 `provenance` and `ops` are not published.

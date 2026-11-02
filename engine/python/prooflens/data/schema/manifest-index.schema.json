@@ -654,6 +654,116 @@
         },
         "question": {
           "type": "string"
+        },
+        "withheld": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "question"
+            ]
+          },
+          "description": "Optional: what of this reading a published audit withholds by its publication settings (the question's words)."
+        }
+      }
+    },
+    "semanticClauseReading": {
+      "type": "object",
+      "description": "A workspace's reading of a part of a claim (a clause or a requirement its finding names): the latest submitted finding in force on that part with a coverage.",
+      "required": [
+        "set",
+        "coverage",
+        "currency",
+        "count"
+      ],
+      "properties": {
+        "set": {
+          "type": "string"
+        },
+        "clause": {
+          "type": "string"
+        },
+        "requirement": {
+          "type": "string"
+        },
+        "coverage": {
+          "enum": [
+            "full",
+            "partial",
+            "changed",
+            "related",
+            "unresolved"
+          ]
+        },
+        "basis": {
+          "enum": [
+            "direct",
+            "reviewed_composition",
+            "checked_bridge",
+            null
+          ]
+        },
+        "currency": {
+          "enum": [
+            "current",
+            "unchecked",
+            "stale"
+          ]
+        },
+        "count": {
+          "enum": [
+            "full",
+            "partial",
+            "changed",
+            "related",
+            "unresolved",
+            "stale"
+          ]
+        },
+        "decl": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The declaration of the claim's comparison the part concerns, when the records say."
+        }
+      }
+    },
+    "semanticClauseCoverage": {
+      "type": "object",
+      "description": "Claims with at least one part read under each key; a claim is counted once per key and may be counted under several, so these are never added.",
+      "required": [
+        "full",
+        "partial",
+        "changed",
+        "related",
+        "unresolved",
+        "stale"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "full": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "partial": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "changed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "related": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unresolved": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "stale": {
+          "type": "integer",
+          "minimum": 0
         }
       }
     },
@@ -684,6 +794,13 @@
           "items": {
             "$ref": "#/$defs/semanticReading"
           }
+        },
+        "clause_readings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/semanticClauseReading"
+          },
+          "description": "Optional: present when a workspace reads a part of the claim."
         },
         "review": {
           "enum": [
@@ -833,6 +950,17 @@
                   "null"
                 ]
               },
+              "withheld": {
+                "type": "array",
+                "items": {
+                  "enum": [
+                    "source_text",
+                    "lean",
+                    "reviews"
+                  ]
+                },
+                "description": "Optional: in a published audit, what the paper's publication settings withhold."
+              },
               "inventory": {
                 "type": "object",
                 "required": [
@@ -902,6 +1030,30 @@
                     },
                     "proof_steps": {
                       "$ref": "#/$defs/semanticCoverage"
+                    }
+                  }
+                }
+              },
+              "clause_coverage": {
+                "type": "object",
+                "description": "Optional, so that a reader that does not know it reads the rest: per set of readings and unit, the claims with a part read under each key.",
+                "additionalProperties": {
+                  "type": "object",
+                  "required": [
+                    "statements",
+                    "notation",
+                    "proof_steps"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "statements": {
+                      "$ref": "#/$defs/semanticClauseCoverage"
+                    },
+                    "notation": {
+                      "$ref": "#/$defs/semanticClauseCoverage"
+                    },
+                    "proof_steps": {
+                      "$ref": "#/$defs/semanticClauseCoverage"
                     }
                   }
                 }

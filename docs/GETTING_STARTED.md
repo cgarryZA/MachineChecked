@@ -451,6 +451,11 @@ as the engine computed it from the readings, reports and published findings:
   subset.
 - **Readings shown** chooses whose readings are counted: the audit's own (the links file), each
   reviewer's reports, or each published workspace. They are never combined.
+- **Clauses and requirements** filters by a workspace's readings of parts of a claim (a clause,
+  or a requirement it records), counted apart from readings of whole statements. Each part is
+  listed under the claim's correspondence and links to its declaration in the claim's comparison.
+- A published audit says what its publication settings withhold. Where a reading's question is
+  not published, the Overview says **Withheld**.
 - **Review next** opens the review queue in its order.
 
 `check` and `build` print the same summary of the audit's readings. For the readings above, with

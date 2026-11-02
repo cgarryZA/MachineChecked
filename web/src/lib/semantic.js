@@ -146,3 +146,46 @@ export function shortQuestion(reading) {
   const q = typeof reading?.question === "string" ? reading.question.trim() : "";
   return q && q.length <= SHORT ? q : null;
 }
+
+// -- parts of a claim, and what a publication withholds ------------------------------------------
+
+// A claim's readings of its clauses and requirements in the set `setId` (`clause_readings`, as the
+// engine recorded them), each counted apart from the reading of the whole statement.
+export function clauseReadingsOf(row, setId) {
+  return (row?.semantic?.clause_readings || []).filter((r) => r && r.set === setId);
+}
+
+// The keys a claim's parts are counted under in the set `setId`, each once.
+export function clauseKeysOf(row, setId) {
+  return [...new Set(clauseReadingsOf(row, setId).map((r) => r.count))];
+}
+
+// How many claims of each unit have a part counted under `key` in the set `setId`
+// (`clause_coverage`), over the summary's papers.
+export function clauseCounts(summary, setId, key) {
+  const out = {};
+  for (const p of Object.values(summary?.papers || {})) {
+    for (const u of UNITS) {
+      const n = own(p?.clause_coverage?.[setId]?.[u], key);
+      if (Number.isInteger(n) && n > 0) out[u] = (out[u] || 0) + n;
+    }
+  }
+  return out;
+}
+
+// What a part is ("the clause “as printed”", "requirement r1"), in words.
+export function partText(r) {
+  return r?.requirement ? `requirement ${r.requirement}` : r?.clause ? `the clause “${r.clause}”` : "a part";
+}
+
+// What a paper's publication settings withhold, in words ("the paper's text and review texts and
+// auditors' notes"), or "" when it withholds nothing.
+export function withheldText(paper) {
+  const list = (Array.isArray(paper?.withheld) ? paper.withheld : []).map((k) => own(vocabulary.withheld, k)?.label).filter(Boolean);
+  return list.length < 2 ? list.join("") : `${list.slice(0, -1).join(", ")} and ${list.at(-1)}`;
+}
+
+// Whether the question a reading records is withheld by the publication settings.
+export function questionWithheld(reading) {
+  return Array.isArray(reading?.withheld) && reading.withheld.includes("question");
+}

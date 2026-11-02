@@ -6,6 +6,7 @@
   import { summaryOf, keys, words, setLabel, setExplanation, unitOf, readingOf, keysOf,
            unitCounts, countText, inventoryText, coverageText, basisText, shortQuestion } from "../lib/semantic.js";
   import EvidenceSummary from "./EvidenceSummary.svelte";
+  import { clauseReadingsOf, clauseKeysOf, clauseCounts, partText, withheldText, questionWithheld } from "../lib/semantic.js";
   let { index } = $props();
   // The engine's semantic summary (`index.semantic`): the counts and each claim's keys are its
   // own, shown as computed. Without one (older data, a paper page), claims are listed by status.
@@ -36,9 +37,11 @@
   const claims = $derived(all.filter((c) => f.unit === "all" || unitOf(c) === f.unit));
   const counts = $derived(statusSummary(claims));
   const searched = (c) => `${c.number} ${c.heading || ""} ${c.title || ""} ${c.id}`.toLowerCase();
+  // A claim with a part counted under the chosen key of the parts' filter (`?clause=`).
+  const clauseOk = (c) => !f.clause || clauseKeysOf(c, setId).includes(f.clause);
   const shown = $derived(claims.filter((c) => {
     const k = keysOf(c, setId);
-    return (!f.status || c.status_code === f.status) && (!summary || ((!f.coverage || k.coverage === f.coverage) &&
+    return (!f.status || c.status_code === f.status) && (!summary || clauseOk(c)) && (!summary || ((!f.coverage || k.coverage === f.coverage) &&
       (!f.basis || k.basis === f.basis) && (!f.review || k.review === f.review) && (!f.finding || k.findings.includes(f.finding)))) &&
       query.toLowerCase().trim().split(/\s+/).every((w) => searched(c).includes(w));
   }));
@@ -49,7 +52,13 @@
     rows: keys(dimension).map((key) => ({ key, counts: unitCounts(summary, dimension, setId, key) }))
       .filter((r) => f.unit === "all" ? Object.keys(r.counts).length : r.counts[f.unit]) }))
     .filter((g) => g.rows.length) : []);
-  const filtered = $derived(f.status || (summary && (f.coverage || f.basis || f.review || f.finding)) || query.trim());
+  const filtered = $derived(f.status || (summary && (f.coverage || f.basis || f.review || f.finding || f.clause)) || query.trim());
+  // The parts of claims (clauses and requirements) a workspace reads, with the engine's counts
+  // (`clause_coverage`).
+  const clauseRows = $derived(summary ? keys("clause_coverage").map((key) => ({ key, counts: clauseCounts(summary, setId, key) }))
+    .filter((r) => f.unit === "all" ? Object.keys(r.counts).length : r.counts[f.unit]) : []);
+  // A part's row in the claim's comparison: the block of the declaration it concerns.
+  const partHref = (c, r) => withQuery(href(index.release, "read", c.paper, c.id), { at: r.decl + "::top" });
 </script>
 <main class="coverage">
   <h1>Overview</h1>
@@ -84,6 +93,17 @@
           {/each}
         </div>
       {/each}
+      {#if clauseRows.length}
+        <div class="filters" role="group" aria-label="Filter claims by the readings of their clauses and requirements" data-dimension="clause_coverage">
+          <span class="glabel">Clauses and requirements</span>
+          <button class:on={!f.clause} aria-pressed={!f.clause} onclick={() => choose({ clause: null })}>Any</button>
+          {#each clauseRows as r}
+            {@const w = words("clause_coverage", r.key)}
+            <button class:on={f.clause === r.key} aria-pressed={f.clause === r.key} data-key={r.key} title={w.explanation}
+              onclick={() => choose({ clause: r.key })}>{w.label} ({countText(r.counts, f.unit)})</button>
+          {/each}
+        </div>
+      {/if}
     </section>
   {/if}
   <div class="filters" aria-label="Filter claims by status">
@@ -98,6 +118,7 @@
       <section class="paper">
         <div class="phead"><h2><TexInline text={paper.title} /></h2><a href={href(index.release, "read", paper.id)}>Read paper →</a></div>
         {#if summary?.papers?.[paper.id]}<p class="small faint inventory">{inventoryText(summary.papers[paper.id])}</p>{/if}
+        {#if withheldText(summary?.papers?.[paper.id])}<p class="small faint withheld" data-withheld={summary.papers[paper.id].withheld.join(" ")}>This publication withholds {withheldText(summary.papers[paper.id])}: where a reading's words are not published, the Overview says “{words("withheld", "question").label}”.</p>{/if}
         {#if summary}
           <div class="thead" aria-hidden="true"><span>Claim</span><span>Correspondence</span><span>Evidence basis</span><span>Difference or open question</span><span>Review</span></div>
         {/if}
@@ -112,9 +133,9 @@
               </div>
               {#if summary}
                 <dl class="cells">
-                  <div><dt>Correspondence</dt><dd class="cov">{coverageText(reading)}{#if reading?.by}<span class="faint small by">{" · "}{reading.by}</span>{/if}</dd></div>
+                  <div><dt>Correspondence</dt><dd class="cov">{coverageText(reading)}{#if reading?.by}<span class="faint small by">{" · "}{reading.by}</span>{/if}{@render parts(c)}</dd></div>
                   <div><dt>Evidence basis</dt><dd>{basisText(reading) || "—"}</dd></div>
-                  <div><dt>Difference or open question</dt><dd class="question">{#if shortQuestion(reading)}{shortQuestion(reading)}{:else if reading?.question}An open question: see the claim.{:else if k.findings.length}{k.findings.map((x) => words("findings", x).label).join("; ")}{:else}—{/if}</dd></div>
+                  <div><dt>Difference or open question</dt><dd class="question">{#if questionWithheld(reading)}<span title={words("withheld", "question").explanation} data-withheld="question">{words("withheld", "question").label}</span>{:else if shortQuestion(reading)}{shortQuestion(reading)}{:else if reading?.question}An open question: see the claim.{:else if k.findings.length}{k.findings.map((x) => words("findings", x).label).join("; ")}{:else}—{/if}</dd></div>
                   <div><dt>Review</dt><dd>{k.review ? words("review", k.review, unitOf(c)).label : "—"}</dd></div>
                 </dl>
               {/if}
@@ -124,6 +145,11 @@
       </section>
     {/if}
   {/each}
+  {#snippet parts(c)}
+    {#each clauseReadingsOf(c, setId) as r (partText(r))}
+      <span class="part small" data-part={r.requirement || r.clause} data-count={r.count}>{#if r.decl}<a href={partHref(c, r)}>{partText(r)}</a>{:else}{partText(r)}{/if}: {words("clause_coverage", r.count).label}</span>
+    {/each}
+  {/snippet}
   {#if !shown.length}<p>No claims match this selection. <button class="reset" onclick={reset}>Show all claims</button></p>{/if}
   {#if index.gates && Object.keys(index.gates).length}
     <details class="checks"><summary>Paper checks</summary>
@@ -158,7 +184,8 @@
   .count { color: var(--muted); font-size: 14px; }
   .paper { margin-top: 28px; }
   .phead { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; align-items: baseline; }
-  .inventory { margin: 4px 0 0; }
+  .inventory, .withheld { margin: 4px 0 0; }
+  .part { display: block; margin-top: 2px; }
   .claims { list-style: none; padding: 0; margin: 16px 0; }
   .claims li { display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, .7fr); gap: 12px 28px; padding: 14px 0; border-bottom: 1px solid var(--border); align-items: baseline; }
   .claims:not(.sem) li .who { display: contents; }
