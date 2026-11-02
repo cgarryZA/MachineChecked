@@ -5,8 +5,9 @@ Each claim's passage is first verified at its original revision. It is then look
 new snapshot by its exact text: a passage found exactly once, with the same digest, is
 repinned (new location and bounds, the same digests). Every other claim is classified and
 reported. A passage whose text changed keeps the digests and the revision it was pinned at, so
-the source check goes on reporting it until it is reviewed again: a repin never accepts new
-text. Two equally good places are reported as ambiguous, never chosen between.
+the source check goes on reporting it until its new text is pinned (`inventory rebound
+--repin`, claim by claim): a repin never accepts new text. Two equally good places are reported
+as ambiguous, never chosen between.
 """
 
 from __future__ import annotations
@@ -533,7 +534,8 @@ def repin_plan(inventory: dict, paper: str, old_root: Path, new_root: Path, old_
             entries.append({"claim": claim["id"], "class": "pending-review",
                             "from": claim.get("location"),
                             "reason": f"its source pin is of revision {pin}, not {old_rev}: "
-                                      "review the passage and pin it again first"})
+                                      f"pin its text at {old_rev} first (machinechecked "
+                                      "inventory rebound --repin)"})
             continue
         if location(claim) is None:
             if not claim.get("location") or claim.get("source_hash_scheme") is not None:
@@ -689,8 +691,8 @@ def repin_plan(inventory: dict, paper: str, old_root: Path, new_root: Path, old_
 
 def _accept(claim: dict, entry: dict) -> None:
     """Give a claim of the planned inventory its proposed bounds, keeping its digests and the
-    revision they were made at, so the source check goes on reporting it until it is reviewed
-    and pinned again."""
+    revision they were made at, so the source check goes on reporting it until its text at the
+    new revision is pinned (`inventory rebound --repin`)."""
     p = entry.get("proposed")
     why = None
     if entry["class"] not in ("changed", "not-found") or not p:
@@ -951,7 +953,8 @@ def main(argv=None) -> int:
                         help="apply the plan (default: print it only)")
     parser.add_argument("--accept-bounds", action="append", default=[], metavar="CLAIM",
                         help="give CLAIM, a changed or not-found span, the bounds the plan "
-                        "proposes from the line diff (its digests are kept); repeatable")
+                        "proposes from the line diff (its digests are kept: pin its new text "
+                        "with `inventory rebound --repin`); repeatable")
     parser.add_argument("--rewrite-notes", action="store_true",
                         help="give the line references of scope notes whose lines only moved "
                         "their new numbers")

@@ -74,18 +74,19 @@ Build the Lean project to check its linked declarations.
 
 ## Select a claim
 
-The reader opens on the paper. Select a numbered statement in the contents or its margin marker.
-The panel compares **Paper** with **Lean**. The Lean is shown in rows: each object with the
-conditions on it alone (objects introduced together, such as `a b : ℕ`, share a row), each other
-condition, then the conclusion, in the statement's order; a definition has a row of its own. Each
-row reads as mathematics: what each object is, whether it is given, produced by the statement or
-inside an assumption, where each property comes from (its type, an assumption, or producing the
-object), and what each definition says at its arguments. Notation the reader does not know stays
-exact Lean. Selecting a fragment selects the same sub-term in the exact Lean, which is beside the
-row when the panel is wide enough, and the complete exact statement follows the rows. **Expand
-comparison** gives the comparison the full workspace; a short passage of the paper then stays
-beside the Lean while the Lean scrolls. On a phone the paper comes first, then the Lean, row by
-row. The claim page (**Open as a page**, in the ⋯ menu) and the review page use the same
+The reader opens on the paper, with its contents beside it on a wide screen. Select a numbered
+statement in the contents or its margin marker: its comparison of **Paper** with **Lean** takes
+the paper's place, and **Back to paper** (or the browser's Back) returns to where you were
+reading. The Lean is shown in rows: each object with the conditions on it alone (objects
+introduced together, such as `a b : ℕ`, share a row), each other condition, then the conclusion,
+in the statement's order; a definition has a row of its own. Each row reads as mathematics: what
+each object is, whether it is given, produced by the statement or inside an assumption, where
+each property comes from (its type, an assumption, or producing the object), and what each
+definition says at its arguments. Notation the reader does not know stays exact Lean. Selecting
+a fragment selects the same sub-term in the exact Lean, which is beside the row when the window
+is wide enough, and the complete exact statement follows the rows. A short passage of the paper
+stays beside the Lean while the Lean scrolls. On a phone the paper comes first, then the Lean,
+row by row. The claim page (**Open as a page**, in the ⋯ menu) and the review page use the same
 comparison. The exact statement comes directly from Lean; rebuilding an older audit adds it.
 
 When an audit publishes an auditor's reading that aligns passages of the paper with the Lean,
@@ -569,15 +570,15 @@ A paper page that lists audits of several versions gives each version its own pa
 
 When the site relates the claims of two versions, a claim says what it became in the other version and links to it: "Theorem 3 in Latest manuscript (commit abc1234), statement changed", "Lemma 1 in arXiv v1, renumbered", or "Removed in Latest manuscript (commit abc1234)".
 
-In the panel beside the paper, each audit names the version it pins and its commit. **Open the audit** opens the audit of the version shown; audits of other versions link to their own version's page. An audit the site could not load says why ("Audit unavailable: …"), with a plain link to try it in the reader.
+Under **Formalisations**, each audit names the version it pins and its commit. **Open the audit** opens the audit of the version shown; audits of other versions link to their own version's page. An audit the site could not load says why ("Audit unavailable: …"), with a plain link to try it in the reader.
 
 ## Read a paper with several audits
 
 On machinechecked.org, a paper version with audits from several Lean projects opens with all of them, under **All audits** in the formalisation selector:
 
 - Each claim shows the evidence of the default audit: the audit whose repository has the most GitHub stars (or the first listed, when the site has no star counts).
-- A claim the default audit does not map shows the evidence of the next audit, by stars, that maps it. The claim panel names that audit's author, repository and commit, and the contents list marks the claim with its repository.
-- Each claim's status comes from one audit, named in the claim panel.
+- A claim the default audit does not map shows the evidence of the next audit, by stars, that maps it. The claim names that audit's author, repository and commit, and the contents list marks the claim with its repository.
+- Each claim's status comes from one audit, named with the claim.
 - Choosing one project shows only its evidence. A claim its audit does not map is marked **Not in this audit**.
 
 Audits are shown together only on the page of the paper version they pin.

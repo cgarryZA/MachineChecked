@@ -223,9 +223,12 @@ their digests. Repeat `--claim ... --lines ...` to change several claims
 in one write. The snapshot is read as for the migration (`--source`, `--rev`), and must be the
 revision each claim is pinned at; the claim's present pin (a region, or a legacy line hash)
 must match it there. The plan prints, per claim, the old and new bounds with the first and
-last line of each. New bounds that start or end on a blank or comment-only line are refused,
-and so are bounds that contain a sectioning command (`\part` to `\subsubsection`, or
-`\appendix`) after their first line, unless `--across-sections` is given.
+last line of each, and the advice a build gives at the new bounds: `advice`, where the region
+may not hold the claim's text ([above](#pinning-manuscript-source-regions)), and `macros`, the
+macros its passages use that the manuscript defines outside them, other than the
+[notation macros](#notation-macros). New bounds that start or end on a blank or comment-only
+line are refused, and so are bounds that contain a sectioning command (`\part` to
+`\subsubsection`, or `\appendix`) after their first line, unless `--across-sections` is given.
 
 `--write` replaces `location`, `source_region`, `source_sha256` and `source_line_sha256`,
 computed as above, and atomically. A new passage is new text: the claim's `scope_reviewed`
@@ -402,11 +405,13 @@ whose label is carried by several environments at the original revision, is `not
 numbers are computed by compiling, which this command does not do, so pin such a claim by hand.
 
 A claim that keeps its revision records it in its own `commit`, so a later repin reports it
-as `pending-review` rather than comparing it with text it was not pinned to.
+as `pending-review` rather than comparing it with text it was not pinned to, until its text is
+pinned at the new revision ([below](#pinning-a-changed-passage-at-the-new-revision)).
 
 A changed passage is reported with the first line that changed and a diff of the old and new
 lines. It keeps the digests it was reviewed at, so the source check at the new revision
-reports it (`source-changed`) until it is reviewed again and pinned to its new text by hand.
+reports it (`source-changed`) until its new text is pinned with `rebound --repin`
+([below](#pinning-a-changed-passage-at-the-new-revision)) and read again.
 A label locates a changed passage; it never certifies its text. Two equally good places are
 never chosen between, by the nearest line or otherwise: a repeated opening line is not a
 match, an identical passage that occurs twice or a label that occurs twice is ambiguous, a
@@ -436,8 +441,42 @@ removed has no proposal, only a `reason`.
 A proposal is advice. `--write` alone leaves the claim where it was; `--accept-bounds CLAIM`
 (repeatable, with `--write` to write it) gives the claim its proposed place and bounds, and
 nothing else: it keeps its digests and the revision they were made at, so the source check
-goes on reporting it until it is reviewed and pinned again. A claim without a proposal, or
-whose proposal is flagged, is refused; set its bounds by hand.
+goes on reporting it until its new text is pinned (below). A claim without a proposal, or
+whose proposal is flagged, is refused; give it its bounds when you pin it.
+
+### Pinning a changed passage at the new revision
+
+Once the inventory is at the new revision, a passage whose text changed is still pinned to its
+earlier text. Read the plan's diff, then pin the claim's text at the new revision:
+
+```sh
+machinechecked inventory rebound --paper P --claim P:intro:rate --repin
+machinechecked inventory rebound --paper P --claim P:intro:rate --repin --write
+machinechecked inventory rebound --paper P --claim P:rem:bias --repin --lines 120-131 --write
+```
+
+`--repin` reads the manuscript at the revision the inventory records for the paper (the
+configured source, or `--source` and `--rev`, as for any bounds); when the inventory records the
+paper's revision (`papers.P.commit`), the snapshot must be that revision, so move the inventory
+with `repin --write` first. It takes the claims whose pin is of an earlier revision. Without `--lines`, a claim keeps its present bounds: the place
+its label led to, or the bounds `--accept-bounds` gave it. With `--lines` (and `--file`, the
+columns, `--also`, `--macro` or `--single`, as [above](#changing-a-regions-bounds)) it takes other
+bounds, as for a passage that has no proposal or whose proposal is flagged. A claim pinned by its
+environment is found by its own `\label` in an environment of its `kind`, and pinned to that
+environment's body; one the compiled paper finds only by its printed number is refused.
+
+The write sets the claim's `commit` to the paper's revision, its digests to its text at that
+revision (each further passage's too; a pinned macro definition is delimited again from its
+first line), and, when that text differs from the text it was pinned to, its `scope_reviewed`
+to `false`. The plan gives, per claim, the bounds before and after, `commit` before and after,
+the first line that differs from the earlier pin (`where`), and the advice a build gives at the
+new bounds. The checks of `rebound` apply: bounds that start or end on a blank or comment-only
+line, or that cross a heading without `--across-sections`, are refused.
+
+The new pin is new text. Every review that read the earlier text reads the claim as changed, so
+its reviews and its scope decision are due again, and `machinechecked changes` lists the
+reviews it reopens, with the passage that changed. A claim already pinned at the paper's revision
+is verified there and left as it is, so the same command run again changes nothing.
 
 ### Line references in scope notes
 

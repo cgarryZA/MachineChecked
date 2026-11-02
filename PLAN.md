@@ -42,7 +42,7 @@ where its author chooses (for example their GitHub Pages). The site loads it as 
 every string in it as untrusted; it never runs an audit's HTML or JavaScript. An audit the browser
 cannot load is linked instead.
 
-**One page per paper, and it is the paper.** A paper's page is the reader showing the paper itself (its PDF from its source), whether or not anything about it is formalised; what is known about its formalisations sits in a panel beside it, and an audit adds its claims to the same reader. A selector chooses whose formalisation is shown; changing it
+**One page per paper, and it is the paper.** A paper's page is the reader showing the paper itself (its PDF from its source), whether or not anything about it is formalised; what is known about its formalisations opens from its **Formalisations** button, and an audit adds its claims to the same reader. Choosing a claim opens its comparison with the Lean in the paper's place; **Back to paper** returns to the place the reader left. A selector chooses whose formalisation is shown; changing it
 changes the evidence beside each claim, never the paper or its numbering.
 
 **Several audits of one version.** A page opens on its default audit: the one whose repository has
@@ -103,7 +103,7 @@ MachineChecked, install it with one command, and use it without asking anyone.
 | 5 ✓ | Registry and **crawlable paper pages**: plain HTML per paper (`/papers/<arxiv id>/`) with title, authors, identifiers and the linked repositories and audits, then the interactive reader; `sitemap.xml`, `robots.txt` allowing search crawlers, a short `llms.txt`; Navier–Stokes as a curated entry | a paper page is found by a search engine and shows two repositories and one audit |
 | 6 | The `machinechecked cache` commands (save, publish, restore) and a workflow template for anyone's own repository (`audit.yml`), done; then the Navier–Stokes case: built under WSL2 with them, audited, published from a fork and registered; the landing page links it | a reader can go from a claim in the paper to its Lean and raise an issue |
 | 7 ✓ | Listing: the daily `formalization.yaml` job, the report button, `delisted.json`; search by arXiv identifier and OpenAlex | a repository that names an arXiv paper appears with no one approving it |
-| 8 ✓ | Reader polish: collapsible contents, adjustable split, the margin label no longer covering text; README badge ("audit available") | an outside audit links back with a badge |
+| 8 ✓ | Reader polish: collapsible contents, the margin label no longer covering text; README badge ("audit available") | an outside audit links back with a badge |
 
 **Launch** (people, not code): once steps 3, 5 and 6 are live, show it on the Lean Zulip and to
 the mathlib-initiative `formalization.yaml` maintainers, approach about ten researchers with a

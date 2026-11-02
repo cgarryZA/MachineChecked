@@ -1,5 +1,5 @@
 <script>
-  // What is known about a paper's formalisations, beside the paper: the Lean repositories that
+  // What is known about a paper's formalisations, in a dialog: the Lean repositories that
   // formalise it (one at a time, chosen at the top when there are several, or every audited one
   // when the audits are shown together), who says so, the project's description of its review,
   // and its published audits, each with the version of the paper it pins and its commit, and the
