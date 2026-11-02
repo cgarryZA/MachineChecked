@@ -65,6 +65,9 @@
   const me = () => [work.reviewer.id || reviewerId(work.reviewer), work.reviewer.kind === "model" ? work.reviewer.sameFamily || "unknown" : "no"];
   function adopt(st) {
     shared = { workspace: st.workspace, editable: st.editable };
+    // What is typed and not yet saved stays as typed.
+    const mine = pending && st.drafts[pending.unit];
+    if (mine && mine.stage === pending.stage) Object.assign(mine, pending.fields);
     work.drafts = st.drafts; work.reports = st.reports; work.exposure = st.exposure;
   }
   function call(action, body = {}) {
@@ -82,23 +85,30 @@
   }
   $effect(() => { if (served && work.reviewer && !shared) untrack(reload); });
   // What was typed, saved shortly after typing stops: only the fields the unit's step may still
-  // change (`editable`, the engine's list).
+  // change (`editable`, the engine's list). Moving to another unit saves it at once.
   let editTimer = null;
-  function queueEdit() {
+  let pending = null;
+  function sendEdit() {
     clearTimeout(editTimer);
+    const body = pending;
+    pending = null;
+    if (!body) return;
+    const run = chain.then(() => reviewStep(...me(), "edit", body));
+    chain = run.catch(() => {});
+    run.then(() => { serviceError = null; }, (e) => { serviceError = String(e?.message || e); reload(); });
+  }
+  function queueEdit() {
     const u = current, d = draft;
     const fields = shared?.editable?.[d?.stage];
+    if (pending && (pending.unit !== u?.id || pending.stage !== d?.stage)) sendEdit();
     if (!u || !d || !fields) return;
-    const stage = d.stage;
     const snap = $state.snapshot(d);
-    const body = { unit: u.id, stage, fields: Object.fromEntries(fields.filter((k) => k in snap).map((k) => [k, snap[k] ?? null])) };
-    editTimer = setTimeout(() => {
-      const run = chain.then(() => reviewStep(...me(), "edit", body));
-      chain = run.catch(() => {});
-      run.then(() => { serviceError = null; }, (e) => { serviceError = String(e?.message || e); reload(); });
-    }, 400);
+    pending = { unit: u.id, stage: d.stage, fields: Object.fromEntries(fields.filter((k) => k in snap).map((k) => [k, snap[k] ?? null])) };
+    clearTimeout(editTimer);
+    editTimer = setTimeout(sendEdit, 400);
   }
-  function settle() { clearTimeout(editTimer); }
+  // A step about to be sent carries what was typed for it.
+  function settle() { clearTimeout(editTimer); pending = null; }
 
   // What to review: a paper, then a section of statements or a group of definitions.
   let paper = $state(route.target ? "all" : work.selection?.paper || "all");
