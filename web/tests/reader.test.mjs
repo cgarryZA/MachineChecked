@@ -649,13 +649,18 @@ const until = async (cond, ms = 5000) => {
   return cond();
 };
 
-// The Lean names the open claim's panel lists.
-const panelNames = async (pg) => (await pg.locator("aside .lean .block .decl code").allTextContents()).map((s) => s.trim());
+// The Lean names the open claim's comparison lists.
+const panelNames = async (pg) => (await pg.locator(".claim-view .lean .block .decl code").allTextContents()).map((s) => s.trim());
 const open = async (pg, claim) => {
   await pg.evaluate((id) => { location.hash = `#/r/paper/read/P/${encodeURIComponent(id)}`; }, claim);
-  await pg.waitForSelector("aside h1");
+  await pg.waitForSelector(".claim-view h1");
 };
 const dots = async (pg) => pg.locator(".reader-layout > nav.toc li .dot").evaluateAll((ds) => ds.map((d) => d.className));
+// The paper's formalisations, which open from their button as a dialog.
+const showPanel = async (pg) => {
+  await pg.locator(".reader-tools button", { hasText: "Formalisations" }).click();
+  await pg.waitForSelector("dialog[open] .info .card");
+};
 
 await check("a static page asks for nothing outside its directory, and nothing fails", 1300, async (pg) => {
   const outside = [], failed = [];
@@ -677,23 +682,27 @@ for (const width of [1300, 390]) {
     assert.deepEqual(await panelNames(pg), ["A.three"]);
     await open(pg, "P:theorem-2");
     assert.deepEqual(await panelNames(pg), [], "B's link does not show under A");
-    assert.match(await pg.locator("aside").textContent(), /not linked/);
+    assert.match(await pg.locator(".claim-view").textContent(), /not linked/);
   });
 
-  if (width > 1180) await check("the panel gives the site's report link for the chosen listing", width, async (pg) => {
+  await check("the Formalisations dialog gives the site's report link for the chosen listing", width, async (pg) => {
     await pg.goto(origin + "/paper/");
-    const report = pg.locator("a", { hasText: "Report this listing" });
-    await report.waitFor();
+    await showPanel(pg);
+    const report = pg.locator("dialog[open] a", { hasText: "Report this listing" });
     assert.equal(await report.getAttribute("href"), "https://github.com/cgarryZA/machinechecked.org/issues/new?title=x");
+    if (process.env.SHOTS) await pg.screenshot({ path: path.join(process.env.SHOTS, `formalisations-${width}.png`) });
+    await pg.keyboard.press("Escape");
+    await pg.locator("dialog[open]").waitFor({ state: "detached" });
     await pg.selectOption("select[aria-label='Formalisation shown']", B);
-    await pg.waitForFunction(() => !document.body.textContent.includes("Report this listing"));
+    await showPanel(pg);
+    assert.equal(await pg.locator("dialog[open] a", { hasText: "Report this listing" }).count(), 0);
   });
 
   await check("choosing the other project changes every claim view and keeps the claim", width, async (pg) => {
     await pg.goto(origin + "/paper/#/r/paper/read/P/P%3Atheorem-3");
-    await pg.waitForSelector("aside h1");
+    await pg.waitForSelector(".claim-view h1");
     await pg.selectOption("select[aria-label='Formalisation shown']", B);
-    await pg.waitForFunction(() => document.querySelector("aside")?.textContent.includes("B.three"));
+    await pg.waitForFunction(() => document.querySelector(".claim-view")?.textContent.includes("B.three"));
     assert.deepEqual(await panelNames(pg), ["B.three"], "never both projects' links");
     assert.equal(new URL(pg.url()).searchParams.get("project"), B, "the address keeps the choice");
     assert.match(pg.url(), /#\/r\/paper\/read\/P\/P%3Atheorem-3$/, "the selected claim stays open");
@@ -713,17 +722,16 @@ for (const width of [1300, 390]) {
   });
 }
 
-await check("a long Lean name stays inside the claim panel on a phone", 390, async (pg) => {
+await check("a long Lean name stays inside the comparison on a phone", 390, async (pg) => {
   await pg.goto(origin + "/paper/");
   await pg.waitForSelector("select[aria-label='Formalisation shown']");
   await open(pg, "P:theorem-1");
   assert.deepEqual(await panelNames(pg), ["A.Some.Rather.Long.Namespace.with_a_declaration_name_long_enough_to_overflow_a_phone"]);
-  const [scroll, client] = await pg.locator("aside").evaluate((a) => [a.scrollWidth, a.clientWidth]);
-  assert.ok(scroll <= client, `the panel scrolls sideways (${scroll} > ${client})`);
+  const [scroll, client] = await pg.locator(".claim-view").evaluate((a) => [a.scrollWidth, a.clientWidth]);
+  assert.ok(scroll <= client, `the comparison scrolls sideways (${scroll} > ${client})`);
 });
 
-// The paper pane shows a claim's band when the claim is chosen, wherever it is in a long paper,
-// even though choosing it opens the side panel and narrows the pages.
+// Whether the band of claim `id` is in view in the paper pane.
 const bandInView = (id) => {
   const band = document.querySelector(`[data-claim="${CSS.escape(id)}"]`);
   const pane = band?.closest(".paperpane");
@@ -744,21 +752,101 @@ const comesIntoView = async (pg, id) => {
   await frames(pg, 2);
   return pg.evaluate(bandInView, id);
 };
+
+// #465: the reader has two views. A paper opens on its PDF, with its contents where they are open
+// and its formalisations closed; choosing a claim in the PDF or the contents opens its comparison
+// in the paper's place; Back and "Back to paper" return to the PDF where the reader left it.
+const paperPos = (pg) => pg.locator(".paperpane").evaluate((e) => [e.scrollTop, e.scrollLeft]);
+const claimHeading = (n) => new RegExp(`^Theorem ${n}\\b`);
+const showsComparison = async (pg, width, n) => {
+  await pg.locator(".claim-view h1", { hasText: claimHeading(n) }).waitFor();
+  await pg.locator(".claim-view .cmp").waitFor();
+  assert.equal(await pg.locator(".paperpane").isHidden(), true, "the comparison takes the paper's place");
+  const box = await pg.locator(".claim-view").boundingBox();
+  assert.ok(box.width >= width - (width > 1180 ? 260 : 0) - 2, `the comparison has the paper's width (${box.width})`);
+  assert.equal(await pg.getByRole("button", { name: "Expand comparison" }).count(), 0);
+  assert.equal(await pg.getByRole("separator").count(), 0, "no panel to resize");
+};
+const backAt = async (pg, pos, how) => {
+  await pg.locator(".paperpane .pdf canvas").first().waitFor();
+  await frames(pg, 2);
+  assert.equal(await pg.locator(".claim-view").count(), 0, `no claim view after ${how}`);
+  const now = await paperPos(pg);
+  assert.ok(Math.abs(now[0] - pos[0]) <= 1 && now[1] === pos[1], `${how} returns to the same place in the paper (${now} for ${pos})`);
+};
+for (const width of [1300, 390]) {
+  await check("a paper opens on its PDF, a claim on its comparison, and Back returns to the same place", width, async (pg) => {
+    await pg.goto(origin + "/long/");
+    await pg.locator(".paperpane .pdf .page canvas").first().waitFor();
+    assert.equal(await pg.locator(".claim-view").count(), 0, "no claim is open");
+    const paperBox = await pg.locator(".paperpane").boundingBox();
+    assert.ok(paperBox.width >= width - (width > 1180 ? 260 : 0) - 2, `the PDF has the reader's width (${paperBox.width})`);
+    const contents = pg.getByRole("button", { name: "Contents", exact: true });
+    assert.equal(await contents.getAttribute("aria-expanded"), String(width > 1180), "contents open on a wide screen");
+    assert.equal(await pg.locator(".reader-layout > nav.toc").isVisible(), width > 1180);
+    const formalisations = pg.getByRole("button", { name: "Formalisations", exact: true });
+    assert.equal(await formalisations.getAttribute("aria-expanded"), "false", "the formalisations are closed");
+    assert.equal(await pg.locator("dialog[open]").count(), 0);
+    assert.equal(await pg.locator(".info").count(), 0);
+    if (process.env.SHOTS) await pg.screenshot({ path: path.join(process.env.SHOTS, `paper-${width}.png`) });
+
+    // A claim chosen in the PDF.
+    await pg.getByRole("spinbutton", { name: "Page number" }).fill("15");
+    await pg.getByRole("spinbutton", { name: "Page number" }).press("Enter");
+    const band = pg.locator(".pdf [data-claim='P:theorem-15']");
+    await band.scrollIntoViewIfNeeded();
+    await frames(pg, 2);
+    const pos = await paperPos(pg);
+    assert.ok(pos[0] > 0, "the paper is scrolled");
+    await band.click();
+    await showsComparison(pg, width, 15);
+    assert.equal(await pg.locator(".claim-view").evaluate((e) => e === document.activeElement), true, "focus moves to the claim");
+    assert.doesNotMatch(pg.url(), /compare=/);
+    if (process.env.SHOTS) await pg.screenshot({ path: path.join(process.env.SHOTS, `comparison-from-pdf-${width}.png`) });
+    await pg.getByRole("button", { name: "Back to paper", exact: true }).click();
+    await backAt(pg, pos, "Back to paper");
+
+    // A claim chosen in the contents.
+    if (width > 1180) await pg.locator(".reader-layout > nav.toc strong", { hasText: /^Theorem 28$/ }).click();
+    else {
+      await contents.click();
+      await pg.locator("dialog[open] a", { hasText: "Theorem 28" }).click();
+      assert.equal(await pg.locator("dialog[open]").count(), 0, "the contents close");
+    }
+    await showsComparison(pg, width, 28);
+    assert.equal(await pg.locator(".reader-layout > nav.toc").isVisible(), width > 1180, "the contents stay as they were");
+    await pg.goBack();
+    await backAt(pg, pos, "Back");
+    assert.equal(await pg.locator(".reader-layout > nav.toc").isVisible(), width > 1180);
+    // Forward opens the claim again.
+    await pg.goForward();
+    await showsComparison(pg, width, 28);
+
+    // A link of the earlier expanded comparison opens the same view.
+    await pg.goto(origin + "/long/#/r/paper/read/P/P%3Atheorem-2?compare=1");
+    await showsComparison(pg, width, 2);
+    assert.equal(await pg.locator("dialog[open]").count(), 0);
+  });
+}
+
+// A claim opened by its link hides a paper not yet shown: leaving it shows the claim's place in
+// the paper, marked, wherever it is in a long paper.
 const ids = ["P:theorem-2", "P:theorem-15", "P:theorem-28"];
-await check("a claim chosen in a long paper stays in view (contents and deep links)", 1300, async (pg) => {
-  await pg.goto(origin + "/long/");
-  await pg.waitForSelector("nav.toc li");
-  for (const id of [...ids, ids[0]]) {
-    await pg.locator(".reader-layout > nav.toc strong", { hasText: new RegExp(`^Theorem ${id.split("-")[1]}$`) }).click();
-    await pg.locator("aside h1", { hasText: new RegExp(`^Theorem ${id.split("-")[1]}\\b`) }).waitFor();
-    assert.ok(await comesIntoView(pg, id), `${id} not in view after choosing it`);
-  }
+await check("Back to paper from a claim opened by its link shows the claim's place", 1300, async (pg) => {
   for (const id of ids) {
-    const cold = await browser.newPage({ viewport: { width: 1300, height: 900 } });
-    await cold.goto(origin + `/long/#/r/paper/read/P/${encodeURIComponent(id)}`);
-    await cold.waitForSelector("aside h1");
-    assert.ok(await comesIntoView(cold, id), `${id} not in view when opened by its link`);
-    await cold.close();
+    await pg.goto("about:blank");
+    await pg.goto(origin + `/long/#/r/paper/read/P/${encodeURIComponent(id)}`);
+    await pg.waitForSelector(".claim-view h1");
+    await pg.getByRole("button", { name: "Back to paper", exact: true }).click();
+    assert.ok(await comesIntoView(pg, id), `${id} not in view after leaving it`);
+    assert.equal(await pg.locator(`.pdf [data-claim="${id}"]`).first().evaluate((e) => e.classList.contains("sel")), true, `${id} is marked`);
+    // Another claim chosen and left returns to this place, which is no longer marked.
+    const pos = await paperPos(pg);
+    await pg.locator(".reader-layout > nav.toc strong", { hasText: /^Theorem 15$/ }).click();
+    await pg.waitForSelector(".claim-view h1");
+    await pg.getByRole("button", { name: "Back to paper", exact: true }).click();
+    await backAt(pg, pos, "Back to paper");
+    assert.equal(await pg.locator(".pdf .band.sel").count(), 0);
   }
 });
 
@@ -773,12 +861,17 @@ const assertNoPageScroll = async (pg, when) => {
 for (const [width, height] of [[1440, 900], [2000, 1000], [390, 844]]) {
   await check("the document never scrolls after a deep link or scrolling a pane", width, async (pg) => {
     await pg.goto(origin + `/tall/#/r/paper/read/P/${encodeURIComponent("P:theorem-55")}`);
-    await pg.waitForSelector("aside h1");
+    await pg.waitForSelector(".claim-view h1");
     await pg.waitForTimeout(1500);
     await assertNoPageScroll(pg, "after opening a claim by its link");
-    const panes = { contents: ".reader-layout > nav.toc", paper: ".paperpane", claim: "aside.side" };
+    // The contents and the claim, then the paper the claim leaves.
+    const panes = { contents: ".reader-layout > nav.toc", claim: ".claim-view", paper: ".paperpane" };
     let scrolled = 0;
     for (const [name, sel] of Object.entries(panes)) {
+      if (name === "paper") {
+        await pg.getByRole("button", { name: "Back to paper", exact: true }).click();
+        await pg.locator(sel).waitFor();
+      }
       const pane = pg.locator(sel);
       if (!(await pane.count()) || !(await pane.isVisible())) continue;
       const box = await pane.boundingBox();
@@ -788,9 +881,8 @@ for (const [width, height] of [[1440, 900], [2000, 1000], [390, 844]]) {
       await assertNoPageScroll(pg, `after scrolling the ${name} pane`);
       scrolled++;
     }
-    assert.ok(scrolled >= 1, "no pane was scrolled");
+    assert.equal(scrolled, width > 1180 ? 3 : 2, "every pane shown was scrolled");
     if (width > 1180) {
-      assert.equal(scrolled, 3, "contents, paper and claim panes all scrolled");
       const toc = await pg.locator(".reader-layout > nav.toc").evaluate((n) => [n.scrollTop, n.scrollHeight > n.clientHeight]);
       assert.ok(toc[1] && toc[0] > 0, `the contents pane scrolls inside its own box (${toc})`);
     }
@@ -803,7 +895,7 @@ for (const [width, height] of [[1440, 900], [2000, 1000], [390, 844]]) {
 const VERSION = "select[aria-label='Paper version shown']";
 const statusOf = async (pg, claim) => {
   await open(pg, claim);
-  return pg.locator("aside [data-status]").first().getAttribute("data-status");
+  return pg.locator(".claim-view [data-status]").first().getAttribute("data-status");
 };
 const statuses = async (pg, claims) => {
   const out = [];
@@ -863,15 +955,15 @@ for (const width of [1300, 390]) {
 
   await check("a deep link opens a claim in its version", width, async (pg) => {
     await pg.goto(origin + "/versions/latest/#/r/paper/read/P/P%3Atheorem-3");
-    await pg.waitForSelector("aside h1");
-    assert.match(await pg.locator("aside h1").textContent(), /Theorem 3/);
+    await pg.waitForSelector(".claim-view h1");
+    assert.match(await pg.locator(".claim-view h1").textContent(), /Theorem 3/);
     assert.equal(await pg.inputValue(VERSION), "manuscript:abc1234");
-    assert.equal(await pg.locator("aside [data-status]").first().getAttribute("data-status"), "link.no-audit");
+    assert.equal(await pg.locator(".claim-view [data-status]").first().getAttribute("data-status"), "link.no-audit");
     await pg.goto(origin + "/versions/v1/#/r/paper/read/P/P%3Atheorem-2");
-    await pg.waitForSelector("aside h1");
-    assert.match(await pg.locator("aside h1").textContent(), /Theorem 2/);
+    await pg.waitForSelector(".claim-view h1");
+    assert.match(await pg.locator(".claim-view h1").textContent(), /Theorem 2/);
     assert.equal(await pg.inputValue(VERSION), "arxiv:2601.00003v1");
-    assert.equal(await pg.locator("aside [data-status]").first().getAttribute("data-status"), "link.none");
+    assert.equal(await pg.locator(".claim-view [data-status]").first().getAttribute("data-status"), "link.none");
   });
 }
 
@@ -880,8 +972,8 @@ for (const width of [1300, 390]) {
 // page's own.
 const counterpart = async (pg, claim, number) => {
   await open(pg, claim);
-  await pg.waitForFunction((n) => document.querySelector("aside h1")?.textContent.includes(n), number);
-  return (await pg.locator("aside .counterpart").allTextContents()).map((t) => t.replace(/\s+/g, " ").trim());
+  await pg.waitForFunction((n) => document.querySelector(".claim-view h1")?.textContent.includes(n), number);
+  return (await pg.locator(".claim-view .counterpart").allTextContents()).map((t) => t.replace(/\s+/g, " ").trim());
 };
 for (const width of [1300, 390]) {
   await check("a claim shows its counterpart in the other version and links there", width, async (pg) => {
@@ -893,7 +985,7 @@ for (const width of [1300, 390]) {
       ["Lemma 1 in Latest manuscript (commit abc1234), renumbered."]);
     assert.deepEqual(await counterpart(pg, "P:theorem-3", "Theorem 3"),
       ["Removed in Latest manuscript (commit abc1234)."]);
-    assert.equal(await pg.locator("aside .counterpart a").count(), 0, "a removed claim links nowhere");
+    assert.equal(await pg.locator(".claim-view .counterpart a").count(), 0, "a removed claim links nowhere");
     assert.deepEqual(await statuses(pg, ["P:theorem-1", "P:theorem-2", "P:theorem-3"]), ["link.no-audit", "link.none", "link.none"]);
     if (process.env.SHOTS) {
       await counterpart(pg, "P:theorem-1", "Theorem 1");
@@ -901,36 +993,32 @@ for (const width of [1300, 390]) {
     }
 
     await counterpart(pg, "P:theorem-1", "Theorem 1");
-    await pg.locator("aside .counterpart a", { hasText: "Theorem 3" }).click();
+    await pg.locator(".claim-view .counterpart a", { hasText: "Theorem 3" }).click();
     await pg.waitForURL(/\/versions\/latest\//);
     const u = new URL(pg.url());
     assert.equal(decodeURIComponent(u.hash), "#/r/paper/read/P/P:theorem-3");
-    await pg.waitForFunction(() => document.querySelector("aside h1")?.textContent.includes("Theorem 3"));
+    await pg.waitForFunction(() => document.querySelector(".claim-view h1")?.textContent.includes("Theorem 3"));
     assert.equal(await pg.inputValue(VERSION), "manuscript:abc1234");
-    assert.deepEqual((await pg.locator("aside .counterpart").allTextContents()).map((t) => t.replace(/\s+/g, " ").trim()),
+    assert.deepEqual((await pg.locator(".claim-view .counterpart").allTextContents()).map((t) => t.replace(/\s+/g, " ").trim()),
       ["Theorem 1 in arXiv v1, statement changed."]);
-    assert.equal(await pg.locator("aside [data-status]").first().getAttribute("data-status"), "link.no-audit");
+    assert.equal(await pg.locator(".claim-view [data-status]").first().getAttribute("data-status"), "link.no-audit");
     assert.deepEqual(await counterpart(pg, "P:theorem-2", "Theorem 2"), ["New in this version: not in arXiv v1."]);
     assert.deepEqual(await counterpart(pg, "P:lemma-1", "Lemma 1"), ["Theorem 2 in arXiv v1, renumbered."]);
-    await pg.locator("aside .counterpart a", { hasText: "Theorem 2" }).click();
+    await pg.locator(".claim-view .counterpart a", { hasText: "Theorem 2" }).click();
     await pg.waitForURL(/\/versions\/v1\//);
-    await pg.waitForFunction(() => document.querySelector("aside h1")?.textContent.includes("Theorem 2"));
+    await pg.waitForFunction(() => document.querySelector(".claim-view h1")?.textContent.includes("Theorem 2"));
     assert.equal(await pg.inputValue(VERSION), "arxiv:2601.00003v1");
     const [scroll, client] = await pg.evaluate(() => [document.documentElement.scrollWidth, document.documentElement.clientWidth]);
     assert.ok(scroll <= client, `the page scrolls sideways (${scroll} > ${client})`);
   });
 }
 
-// #42: each audit in the panel names the version it pins and its commit; the audit of the page's
-// version is the action, and audits of other versions link to their own pages.
-const showPanel = async (pg, width) => {
-  if (width <= 1180) await pg.locator(".reader-tools button", { hasText: "Formalisations" }).click();
-  await pg.waitForSelector(".info .card");
-};
+// #42: each audit in the Formalisations dialog names the version it pins and its commit; the audit
+// of the page's version is the action, and audits of other versions link to their own pages.
 for (const width of [1300, 390]) {
   await check("each audit names its version and commit; other versions link to their pages", width, async (pg) => {
     await pg.goto(origin + `/versions/v1/?project=${encodeURIComponent(A)}`);
-    await showPanel(pg, width);
+    await showPanel(pg);
     const card = pg.locator(`.info .card[data-repository="${A}"]`);
     assert.deepEqual((await card.locator(".audit.here .btn").allTextContents()).map((t) => t.trim()), ["Open the audit of arXiv v1"]);
     assert.match(await card.locator(".audit.here").textContent(), /by A\. Author · commit 111111111111/);
@@ -943,7 +1031,7 @@ for (const width of [1300, 390]) {
     assert.equal(to.searchParams.get("project"), A);
 
     await pg.goto(origin + `/versions/latest/?project=${encodeURIComponent(A)}`);
-    await showPanel(pg, width);
+    await showPanel(pg);
     assert.deepEqual((await pg.locator(".info .audit.here .btn").allTextContents()).map((t) => t.trim()), ["Open the audit of Latest manuscript (commit abc1234)"]);
     assert.deepEqual((await pg.locator(".info .elsewhere a").allTextContents()).map((t) => t.trim()), ["arXiv v1"]);
     const [scroll, client] = await pg.evaluate(() => [document.documentElement.scrollWidth, document.documentElement.clientWidth]);
@@ -960,7 +1048,7 @@ for (const width of [1300, 390]) {
     const texts = async (loc) => (await loc.allTextContents()).map((t) => t.replace(/\s+/g, " ").trim());
     const open = async (repo) => {
       await pg.goto(origin + `/failed/?project=${encodeURIComponent(repo)}`);
-      await showPanel(pg, width);
+      await showPanel(pg);
       await card(repo).waitFor();
     };
     await open("synthetic/alpha");
@@ -997,7 +1085,7 @@ for (const width of [1300, 390]) {
 // map shows the next audit's evidence, labelled with that audit; choosing one audit shows only its
 // evidence and flags the claims it does not map. Statuses are each one audit's, never combined.
 const CA = "synthetic/alpha", CB = "synthetic/beta", FORMAL = "select[aria-label='Formalisation shown']";
-const SOURCE = "aside [data-source]";
+const SOURCE = ".claim-view [data-source]";
 const sourceOf = async (pg) => (await pg.locator(SOURCE).count()) ? pg.locator(SOURCE).first().getAttribute("data-source") : null;
 for (const width of [1300, 390]) {
   await check("the audits of a version open together, the most-starred first, each claim labelled", width, async (pg) => {
@@ -1018,6 +1106,7 @@ for (const width of [1300, 390]) {
       await pg.goto(origin + "/combined/");
       await pg.waitForSelector(".reader-layout > nav.toc li");
       assert.deepEqual(await pg.locator(".reader-layout > nav.toc li .from").allTextContents(), ["From synthetic/beta"]);
+      await showPanel(pg);
       assert.deepEqual(await pg.locator(".info .card .rank").allTextContents(), ["Default audit · 10 GitHub stars", "Audit 2 · 3 GitHub stars"]);
     }
     if (process.env.SHOTS) await pg.screenshot({ path: path.join(process.env.SHOTS, `combined-${width}.png`) });
@@ -1027,9 +1116,9 @@ for (const width of [1300, 390]) {
 
   await check("choosing one audit shows only its evidence and flags the claims it lacks", width, async (pg) => {
     await pg.goto(origin + "/combined/#/r/paper/read/P/P%3Atheorem-1");
-    await pg.waitForSelector("aside h1");
+    await pg.waitForSelector(".claim-view h1");
     await pg.selectOption(FORMAL, CB);
-    await pg.waitForFunction(() => document.querySelector("aside [data-status]")?.getAttribute("data-status") === "formal.open");
+    await pg.waitForFunction(() => document.querySelector(".claim-view [data-status]")?.getAttribute("data-status") === "formal.open");
     assert.equal(new URL(pg.url()).searchParams.get("project"), CB);
     assert.equal(await sourceOf(pg), null, "one audit chosen: no attribution to another");
     assert.equal(await statusOf(pg, "P:theorem-3"), "link.none");
@@ -1042,7 +1131,9 @@ for (const width of [1300, 390]) {
       await pg.goto(origin + `/combined/?project=${encodeURIComponent(CA)}`);
       await pg.waitForSelector(".reader-layout > nav.toc li");
       assert.deepEqual(await pg.locator(".reader-layout > nav.toc li .from").allTextContents(), ["Not in this audit", "Not in this audit"]);
+      await showPanel(pg);
       assert.equal(await pg.locator(".info .card").count(), 1);
+      await pg.keyboard.press("Escape");
     }
     await pg.selectOption(FORMAL, "");
     assert.equal(new URL(pg.url()).searchParams.get("project"), null, "the audits together leave the address plain");
@@ -1065,13 +1156,13 @@ for (const width of [1300, 390]) {
       route.fulfill({ response, json: rec });
     });
     await pg.goto(origin + `/combined/?project=${encodeURIComponent(CA)}#/r/paper/read/P/P%3Atheorem-1`);
-    const st = pg.locator("aside .view .stmt").first();
+    const st = pg.locator(".claim-view .view .stmt").first();
     await st.locator(".p", { hasText: "+" }).first().click();
     assert.equal((await st.locator(".in").allTextContents()).join(""), "a + b");
     await pg.selectOption(FORMAL, CB);
-    await pg.waitForFunction(() => document.querySelector("aside [data-status]")?.getAttribute("data-status") === "formal.open");
+    await pg.waitForFunction(() => document.querySelector(".claim-view [data-status]")?.getAttribute("data-status") === "formal.open");
     await st.locator(".p", { hasText: "+" }).first().waitFor();
-    assert.equal(await pg.locator("aside .view .stmt .in").count(), 0, "nothing selected in the other audit's statement");
+    assert.equal(await pg.locator(".claim-view .view .stmt .in").count(), 0, "nothing selected in the other audit's statement");
   });
 
   await check("the stars choose the default audit, and the listing's order holds without them", width, async (pg) => {
@@ -1103,7 +1194,7 @@ const VOCAB = JSON.parse(fs.readFileSync(path.resolve(here, "../../engine/python
 for (const width of [1300, 390]) {
   await check("each listed audit shows its own semantic summary, each count linked to its Overview", width, async (pg) => {
     await pg.goto(origin + "/summaries/");
-    await showPanel(pg, width);
+    await showPanel(pg);
     const alpha = pg.locator(`.info .card[data-repository="${CA}"]`), beta = pg.locator(`.info .card[data-repository="${CB}"]`);
     await alpha.locator(".semantic").waitFor();
     assert.equal(await pg.locator(".info .semantic").count(), 1, "one summary, on its own audit's line");
@@ -1143,7 +1234,7 @@ for (const width of [1300, 390]) {
     await pg.locator(".coverage .claims li").first().waitFor();
     assert.equal(await pg.locator(".coverage .claims li").count(), block.coverage[set].statements.unresolved);
     await pg.goto(origin + "/summaries/");
-    await showPanel(pg, width);
+    await showPanel(pg);
     await alpha.locator(".semantic").waitFor();
     // An audit the site could not show a summary for says why, with no count; an audit without a
     // summary shows what it showed before.
@@ -1160,12 +1251,12 @@ for (const width of [1300, 390]) {
 }
 
 // The claim's inspections on the toy audit: a definition opens beside the row it was opened from,
-// with the claim and the paper left where they were; Back closes it and returns to the reference.
+// with the claim left where it was; Back closes it and returns to the reference.
 const toyClaim = async (pg, id) => {
   await pg.goto(origin + `/toy/#/r/${TOY.release}/read/T/${encodeURIComponent(id)}`);
-  await pg.waitForSelector("aside h1");
+  await pg.waitForSelector(".claim-view h1");
 };
-const scrollTops = (pg) => pg.evaluate(() => [document.querySelector("aside")?.scrollTop, document.querySelector(".paperpane")?.scrollTop]);
+const claimScroll = (pg) => pg.locator(".claim-view").evaluate((e) => e.scrollTop);
 
 // The paper's statement is typeset from its source only when all of it can be; otherwise the
 // PDF excerpt is shown, never a partial rendering.
@@ -1179,27 +1270,27 @@ const withExcerpt = async (pg, excerpt) => {
 for (const width of [1300, 390]) {
   await check("a statement is typeset whole from its source, with the PDF and source on request", width, async (pg) => {
     await withExcerpt(pg, EXCERPTS.complete);
-    const ex = pg.locator("aside .view .paper .excerpt");
+    const ex = pg.locator(".claim-view .view .paper .excerpt");
     await ex.locator(".katex").first().waitFor();
     assert.equal(await ex.locator(".katex").count(), 3, "both inline formulas and the display");
     const text = (await ex.textContent()).replace(/\s+/g, " ");
     assert.match(text, /Then, as in \[1, Lemma 3\],/, "a citation with its note; the line after a comment is kept");
     assert.match(text, /Proposition 1\.2 applies to \(1\.1\)\./, "references as printed");
     assert.match(await ex.locator(".display .tag").textContent(), /\(1\.1\)/, "the equation's printed number");
-    assert.ok(!(await pg.locator("aside .paper .crop").isVisible()), "the PDF excerpt is folded");
-    await pg.locator("aside .paper summary", { hasText: "As printed in the PDF" }).click();
-    await pg.locator("aside .paper .crop canvas").waitFor();
-    await pg.locator("aside .paper summary", { hasText: "LaTeX source" }).click();
-    assert.match(await pg.locator("aside .paper .rawsrc pre").textContent(), /% not printed\nThen/);
+    assert.ok(!(await pg.locator(".claim-view .paper .crop").isVisible()), "the PDF excerpt is folded");
+    await pg.locator(".claim-view .paper summary", { hasText: "As printed in the PDF" }).click();
+    await pg.locator(".claim-view .paper .crop canvas").waitFor();
+    await pg.locator(".claim-view .paper summary", { hasText: "LaTeX source" }).click();
+    assert.match(await pg.locator(".claim-view .paper .rawsrc pre").textContent(), /% not printed\nThen/);
   });
 }
 for (const [name, why] of [["katex-refuses", "the reader cannot typeset its mathematics"], ["engine-refuses", "the engine found a command it does not reproduce"]]) {
   await check(`a statement falls back to the PDF whole when ${why}`, 1300, async (pg) => {
     await withExcerpt(pg, EXCERPTS[name]);
-    await pg.locator("aside .paper .crop canvas").waitFor();
-    assert.ok(await pg.locator("aside .paper .crop").isVisible());
-    assert.equal(await pg.locator("aside .paper .excerpt:visible").count(), 0, "no partial rendering");
-    assert.equal(await pg.locator("aside .paper summary", { hasText: "As printed in the PDF" }).count(), 0);
+    await pg.locator(".claim-view .paper .crop canvas").waitFor();
+    assert.ok(await pg.locator(".claim-view .paper .crop").isVisible());
+    assert.equal(await pg.locator(".claim-view .paper .excerpt:visible").count(), 0, "no partial rendering");
+    assert.equal(await pg.locator(".claim-view .paper summary", { hasText: "As printed in the PDF" }).count(), 0);
   });
 }
 // A totalisation warning lists the applications it read with their types, and marks them in
@@ -1217,19 +1308,19 @@ for (const width of [1300, 390]) {
       route.fulfill({ response, json });
     });
     await toyClaim(pg, "T:prop:pred");
-    await pg.locator("aside .view .chipbtn").click();
-    await pg.locator("aside details.warning summary").click();
-    const item = pg.locator("aside [data-finding='totalised:T:prop:pred#0:instSubNat']");
+    await pg.locator(".claim-view .view .chipbtn").click();
+    await pg.locator(".claim-view details.warning summary").click();
+    const item = pg.locator(".claim-view [data-finding='totalised:T:prop:pred#0:instSubNat']");
     const occ = await item.locator(".occ li").allTextContents();
     assert.deepEqual(occ.map((t) => t.replace(/\s+/g, " ").trim()), [
       "in Nat: truncated subtraction on ℕ: a - b = 0 when a < b",
       "in Nat, a group: no exceptional case in this type"]);
-    assert.equal(await pg.locator("aside [data-finding='totalised:T:prop:pred#1:instSubNat'] .show").count(), 0, "nothing to mark");
+    assert.equal(await pg.locator(".claim-view [data-finding='totalised:T:prop:pred#1:instSubNat'] .show").count(), 0, "nothing to mark");
     // A dismissal of the operation in the whole statement says so.
-    assert.match(await pg.locator("aside [data-finding='totalised:T:prop:pred#1:instSubNat'] .dz").textContent(),
+    assert.match(await pg.locator(".claim-view [data-finding='totalised:T:prop:pred#1:instSubNat'] .dz").textContent(),
       /dismissal of the operation in the whole statement/);
     await item.locator(".show").click();
-    const view = pg.locator("aside .view");
+    const view = pg.locator(".claim-view .view");
     await view.locator(".mk").first().waitFor();
     assert.equal((await view.locator(".mk").allTextContents()).join("").replace(/\s+/g, " "), "n − ℕ 1", "the operation, not the whole statement");
     assert.equal(await view.locator(".block").nth(0).locator(".mk").count() > 0, true, "in the printed clause");
@@ -1258,9 +1349,9 @@ for (const width of [1300, 390]) {
       route.fulfill({ response, json });
     });
     await toyClaim(pg, "T:prop:pred");
-    await pg.locator("aside .view .chipbtn").click();
-    await pg.locator("aside details.warning summary").click();
-    const item = pg.locator("aside [data-finding='totalised:T:prop:pred#0:instSubNat']");
+    await pg.locator(".claim-view .view .chipbtn").click();
+    await pg.locator(".claim-view details.warning summary").click();
+    const item = pg.locator(".claim-view [data-finding='totalised:T:prop:pred#0:instSubNat']");
     const conds = await item.locator(".conds li").allTextContents();
     assert.deepEqual(conds.map((t) => t.replace(/\s+/g, " ").trim()), [
       "needs bounded above: established by the premise hf : BddAbove (Set.range f)",
@@ -1272,7 +1363,7 @@ for (const width of [1300, 390]) {
 }
 await check("a theorem of the toy paper is typeset with its equation number", 1300, async (pg) => {
   await toyClaim(pg, "T:thm:triangle");
-  const ex = pg.locator("aside .view .paper .excerpt");
+  const ex = pg.locator(".claim-view .view .paper .excerpt");
   await ex.locator(".katex").first().waitFor();
   assert.match(await ex.locator(".display .tag").textContent(), /\(1\)/);
 });
@@ -1280,31 +1371,28 @@ await check("a theorem of the toy paper is typeset with its equation number", 13
 for (const width of [1300, 390]) {
   await check("a definition opens beside its row, the claim stays; Back returns to the reference as it was", width, async (pg) => {
     await toyClaim(pg, "T:def:even");
-    const ref = pg.locator("aside .lean .ref", { hasText: "Toy.IsEven" });
+    const ref = pg.locator(".claim-view .lean .ref", { hasText: "Toy.IsEven" });
     await ref.scrollIntoViewIfNeeded();
-    const [panel, paper] = await scrollTops(pg);
+    const panel = await claimScroll(pg);
     await ref.click();
-    const insp = pg.locator("aside .inspection");
+    const insp = pg.locator(".claim-view .inspection");
     await insp.locator(".decl.inspector").waitFor();
     assert.equal(await insp.evaluate((e) => e.closest("[data-row]")?.dataset.row), "Toy.IsEven::top", "under the definition's own row");
-    assert.ok(await pg.locator("aside .view h1").isVisible(), "the claim stays");
-    assert.ok(await pg.locator("aside .view .paper .excerpt").isVisible(), "the paper's passage stays");
-    assert.equal(await pg.locator("aside .defn.readable[data-decl='Toy.triangle']").isVisible(), true, "the other definition stays");
+    assert.ok(await pg.locator(".claim-view .view h1").isVisible(), "the claim stays");
+    assert.ok(await pg.locator(".claim-view .view .paper .excerpt").isVisible(), "the paper's passage stays");
+    assert.equal(await pg.locator(".claim-view .defn.readable[data-decl='Toy.triangle']").isVisible(), true, "the other definition stays");
     assert.match(await insp.locator(".crumbs").textContent(), /Back.*IsEven/s);
     assert.equal(await insp.locator(".crumbs .back").evaluate((e) => e === document.activeElement), true, "focus moves to the inspection");
-    assert.equal((await scrollTops(pg))[1], paper, "the paper keeps its position");
     await insp.locator(".crumbs .back").click();
     await insp.waitFor({ state: "detached" });
-    assert.equal(await pg.locator("aside .defn.exact:visible").count(), 2, "both exact definitions remain in the claim comparison");
-    const [panel2, paper2] = await scrollTops(pg);
-    assert.equal(panel2, panel, "the panel's scroll position comes back");
-    assert.equal(paper2, paper, "the paper keeps its position");
+    assert.equal(await pg.locator(".claim-view .defn.exact:visible").count(), 2, "both exact definitions remain in the claim comparison");
+    assert.equal(await claimScroll(pg), panel, "the claim's scroll position comes back");
     assert.equal(await ref.evaluate((e) => e === document.activeElement), true, "focus returns to the reference");
   });
 
   await check("a definition claim shows each definition as it is written, beside the paper", width, async (pg) => {
     await toyClaim(pg, "T:def:even");
-    const view = pg.locator("aside .view");
+    const view = pg.locator(".claim-view .view");
     const even = view.locator(".lean .defn.readable[data-decl='Toy.IsEven']");
     const tri = view.locator(".lean .defn.readable[data-decl='Toy.triangle']");
     await tri.locator(".eq").first().waitFor();
@@ -1337,7 +1425,7 @@ for (const width of [1300, 390]) {
 
   await check("the main view is the paper and the Lean, with the assumptions shown", width, async (pg) => {
     await toyClaim(pg, "T:thm:even-add");
-    const view = pg.locator("aside .view");
+    const view = pg.locator(".claim-view .view");
     await view.locator(".lean .ribbon").waitFor();
     assert.deepEqual(await view.locator(".cmp .grid > section > h2").allTextContents(), ["Paper", "Lean"]);
     assert.equal(await view.locator(".lean .exact-pane .exact pre").count(), 1, "the complete exact statement follows the rows");
@@ -1351,22 +1439,22 @@ for (const width of [1300, 390]) {
       "Correspondence · from a review of Toy.PaperSpec.thm_even_add, by a human reviewer both quantifiers, both hypotheses and the conclusion appear as printed. The witness `thm_even_add_hypotheses` meets the hypotheses at `a = 2`, `b = 4`, which are nonzero.");
     // A statement whose prefix chooses a value is shown in order.
     await toyClaim(pg, "T:thm:bound");
-    const bound = pg.locator("aside .view .lean .block").first();
+    const bound = pg.locator(".claim-view .view .lean .block").first();
     await bound.locator(".ribbon").waitFor();
     assert.match(await bound.locator(".ribbon li").first().textContent(), /there is/i);
   });
 
   await check("the status opens the audit details, where an accepted claim's missing replay is a further check", width, async (pg) => {
     await toyClaim(pg, "T:thm:even-add");
-    await pg.locator("aside .chipbtn").click();
-    const details = pg.locator("aside .details");
+    await pg.locator(".claim-view .chipbtn").click();
+    const details = pg.locator(".claim-view .details");
     await details.waitFor();
     const text = await details.textContent();
     assert.match(text, /Checks and evidence/);
     assert.match(text, /Independent replay: not recorded/);
     assert.ok(!/not accepted/i.test(text), "no 'not accepted' heading on an accepted claim");
-    await pg.locator("aside .crumbs .back").click();
-    await pg.waitForSelector("aside .view h1");
+    await pg.locator(".claim-view .crumbs .back").click();
+    await pg.waitForSelector(".claim-view .view h1");
   });
 
   await check("the audit details list the unreviewed declarations only a witness uses, and a definition's candidates", width, async (pg) => {
@@ -1380,15 +1468,15 @@ for (const width of [1300, 390]) {
     await patch("**/toy/data/claims/*even-add*", { witness_defs: [{ name: "Toy.triangle", witnesses: [W], state: "pending" }] });
     await patch("**/toy/data/claims/*def_even*", { witness_candidates: [{ name: "Toy.triangle", uses: ["Toy.IsEven"], witnesses: [W] }] });
     await toyClaim(pg, "T:thm:even-add");
-    await pg.locator("aside .chipbtn").click();
-    const list = pg.locator("aside .details .witness-defs");
+    await pg.locator(".claim-view .chipbtn").click();
+    const list = pg.locator(".claim-view .details .witness-defs");
     await list.waitFor();
     assert.match(await list.textContent(), /Toy\.triangle\s*— no review/);
     await list.locator("button.ref").click();
-    await pg.waitForSelector("aside .decl.inspector");
+    await pg.waitForSelector(".claim-view .decl.inspector");
     await toyClaim(pg, "T:def:even");
-    await pg.locator("aside .chipbtn").click();
-    const cands = pg.locator("aside .details .witness-candidates");
+    await pg.locator(".claim-view .chipbtn").click();
+    const cands = pg.locator(".claim-view .details .witness-candidates");
     await cands.waitFor();
     assert.match(await cands.textContent(), /Toy\.triangle\s*— uses Toy\.IsEven; used by Toy\.Acceptance\.thm_even_add_hypotheses/);
   });
@@ -1407,7 +1495,7 @@ for (const width of [1300, 390]) {
       route.fulfill({ response, json: rec });
     });
     await toyClaim(pg, "T:thm:bound");
-    const h = pg.locator("aside h3", { hasText: "Paper numbers in the Lean" });
+    const h = pg.locator(".claim-view h3", { hasText: "Paper numbers in the Lean" });
     await h.waitFor();
     const items = await h.locator("xpath=following-sibling::ul[1]/li").allTextContents();
     assert.deepEqual(items, ["the docstring of Toy.PaperSpec.thm_bound (Toy/PaperSpec.lean:25) cites Theorem 2.4: the paper's 2.4 is Remark 2.4, not a theorem"]);
@@ -1425,18 +1513,18 @@ for (const width of [1300, 390]) {
       route.fulfill({ response, json: rec });
     });
     await toyClaim(pg, "T:thm:bound");
-    const h = pg.locator("aside h3", { hasText: "Paper numbers in the Lean" });
+    const h = pg.locator(".claim-view h3", { hasText: "Paper numbers in the Lean" });
     await h.waitFor();
     assert.deepEqual(await h.locator("xpath=following-sibling::ul[1]/li").allTextContents(), [message, message]);
   });
 
   await check("a definition opens beside its paper definition; reviews and provenance are under Details", width, async (pg) => {
     await toyClaim(pg, "T:thm:even-add");
-    await pg.locator("aside .lean .r", { hasText: "IsEven" }).first().click();
-    const insp = pg.locator("aside .decl.inspector");
+    await pg.locator(".claim-view .lean .r", { hasText: "IsEven" }).first().click();
+    const insp = pg.locator(".claim-view .decl.inspector");
     await insp.waitFor();
-    await pg.locator("aside h2", { hasText: "Paper · Definition 1.1" }).waitFor();
-    const def = pg.locator("aside .inspection .paper-def", { has: pg.locator("h2", { hasText: "Paper · Definition 1.1" }) });
+    await pg.locator(".claim-view h2", { hasText: "Paper · Definition 1.1" }).waitFor();
+    const def = pg.locator(".claim-view .inspection .paper-def", { has: pg.locator("h2", { hasText: "Paper · Definition 1.1" }) });
     await def.locator(".excerpt .katex").first().waitFor();
     assert.match(await def.locator(".excerpt").textContent(), /triangular number/, "the paper's definition, typeset from its source");
     const extra = insp.locator("details.extra");
@@ -1448,10 +1536,10 @@ for (const width of [1300, 390]) {
 
   await check("the menu holds the occasional actions", width, async (pg) => {
     await toyClaim(pg, "T:thm:even-add");
-    await pg.locator("aside button[aria-label='More']").click();
-    const items = await pg.locator("aside .menu > a, aside .menu > button").allTextContents();
+    await pg.locator(".claim-view button[aria-label='More']").click();
+    const items = await pg.locator(".claim-view .menu > a, .claim-view .menu > button").allTextContents();
     assert.ok(items.includes("Open as a page") && items.some((i) => /Copy (link|reference)/.test(i)));
-    const reports = pg.locator("aside .menu a", { hasText: "View existing reports" });
+    const reports = pg.locator(".claim-view .menu a", { hasText: "View existing reports" });
     assert.match(await reports.getAttribute("href"), /^https:\/\/github\.com\/cgarryZA\/MachineChecked\/issues\?q=.*T%3Athm%3Aeven-add/);
   });
 }
@@ -1459,14 +1547,14 @@ for (const width of [1300, 390]) {
 for (const width of [1300, 390]) {
     await check("a linked symbol of the paper and its Lean variable highlight each other", width, async (pg) => {
     await toyClaim(pg, "T:thm:even-add");
-    const tex = pg.locator("aside .view .paper .tex");
+    const tex = pg.locator(".claim-view .view .paper .tex");
     await tex.locator("[data-sym]").first().waitFor();
     assert.equal(await tex.locator("[data-sym]").count(), 4, "a and b, twice each, in the mathematics only");
     await tex.locator("[data-sym]").first().hover();
-    const lean = pg.locator("aside .view .lean");
+    const lean = pg.locator(".claim-view .view .lean");
     assert.ok(await lean.locator(".var.hl[data-var='0']").count() > 0, "a is highlighted in the Lean");
     assert.equal(await lean.locator(".v.hl").textContent(), "a");
-    assert.match(await pg.locator("aside .view .linkby").textContent(), /Symbol correspondence by human:A-Referee/);
+    assert.match(await pg.locator(".claim-view .view .linkby").textContent(), /Symbol correspondence by human:A-Referee/);
     await pg.mouse.move(0, 0);
     await lean.locator(".concl .var[data-var='1']").first().hover();
     assert.equal(await tex.locator("[data-sym].hl").count(), 2, "both b in the paper");
@@ -1490,23 +1578,23 @@ for (const width of [1300, 390]) {
       route.fulfill({ response, json: rec });
     });
     await toyClaim(pg, "T:thm:even-add");
-    const tex = pg.locator("aside .view .paper .tex");
+    const tex = pg.locator(".claim-view .view .paper .tex");
     await tex.locator("[data-sym]").first().waitFor();
     await tex.locator("[data-sym]").first().hover();
-    const lean = pg.locator("aside .view .lean");
+    const lean = pg.locator(".claim-view .view .lean");
     assert.deepEqual(await lean.locator(".in").allTextContents(), ["b"], "the conclusion's b, not the binder");
     assert.equal(await lean.locator(".var.hl").count(), 0, "a link to an occurrence is not a link to the variable");
   });
 
 await check("in the local reader a symbol is linked by choosing it and clicking its variable", width, async (pg) => {
     await pg.goto(origin + `/toyedit/#/r/${TOY.release}/read/T/${encodeURIComponent("T:thm:even-add")}`);
-    await pg.waitForSelector("aside .view h1");
-    const mk = pg.locator("aside .mklink");
+    await pg.waitForSelector(".claim-view .view h1");
+    const mk = pg.locator(".claim-view .mklink");
     await mk.locator("summary").click();
     const chips = await mk.locator(".chip").evaluateAll((cs) => cs.map((c) => c.dataset.tex));
     assert.ok(chips.includes("a") && chips.includes("b"), chips.join(","));
     await mk.locator(".chip[data-tex='a']").click();
-    await pg.locator("aside .view .lean .ribbon .v", { hasText: /^a$/ }).click();
+    await pg.locator(".claim-view .view .lean .ribbon .v", { hasText: /^a$/ }).click();
     await mk.locator("input.who").fill("Test Referee");
     assert.match(await mk.textContent(), /to the variable a of Toy\.PaperSpec\.thm_even_add/);
     // Saving posts the link, then reloads the page.
@@ -1519,7 +1607,7 @@ await check("in the local reader a symbol is linked by choosing it and clicking 
       decl: "Toy.PaperSpec.thm_even_add", var: "0", by: "human:Test-Referee" });
     // A published audit offers no such control.
     await toyClaim(pg, "T:thm:even-add");
-    assert.equal(await pg.locator("aside .mklink").count(), 0);
+    assert.equal(await pg.locator(".claim-view .mklink").count(), 0);
   });
 
   await check("a link that takes some occurrences of a symbol marks only those", width, async (pg) => {
@@ -1534,24 +1622,24 @@ await check("in the local reader a symbol is linked by choosing it and clicking 
       route.fulfill({ response, json: rec });
     });
     await toyClaim(pg, "T:thm:even-add");
-    const tex = pg.locator("aside .view .paper .tex");
+    const tex = pg.locator(".claim-view .view .paper .tex");
     await tex.locator("[data-sym]").first().waitFor();
     assert.deepEqual(await tex.locator("[data-sym]").allTextContents(), ["b", "a", "b"], "the a of the sum only");
     await tex.locator("[data-sym]", { hasText: "a" }).hover();
-    assert.match(await pg.locator("aside .view .linkby").textContent(), /Symbol correspondence by human:A-Referee for a in the sum\./);
+    assert.match(await pg.locator(".claim-view .view .linkby").textContent(), /Symbol correspondence by human:A-Referee for a in the sum\./);
   });
 
   await check("in the local reader a definition's symbol is linked at the occurrences chosen", width, async (pg) => {
     await pg.goto(origin + `/toyedit/#/r/${TOY.release}/read/T/${encodeURIComponent("T:def:even")}`);
-    await pg.waitForSelector("aside .view h1");
-    const mk = pg.locator("aside .mklink");
+    await pg.waitForSelector(".claim-view .view h1");
+    const mk = pg.locator(".claim-view .mklink");
     await mk.locator("summary").click();
     await mk.locator(".chip[data-tex='n']").click();
     assert.match(await mk.locator(".occ").textContent(), /It occurs 5 times/);
     await mk.locator("[data-occ='1']").check();
     await mk.locator("[data-occ='2']").check();
     // A claim that only defines: a sub-term of the definition's body is the link's Lean side.
-    const even = pg.locator("aside .view .lean .defn.readable[data-decl='Toy.IsEven']");
+    const even = pg.locator(".claim-view .view .lean .defn.readable[data-decl='Toy.IsEven']");
     await even.locator(".body .p", { hasText: "2" }).first().click();
     await mk.locator("input.who").fill("Test Referee");
     const save = mk.locator("button", { hasText: "Save link" });
@@ -1576,17 +1664,17 @@ await check("in the local reader a symbol is linked by choosing it and clicking 
       route.fulfill({ response, json: rec });
     });
     await pg.goto(origin + `/toyedit/#/r/${TOY.release}/read/T/${encodeURIComponent("T:thm:even-add")}`);
-    await pg.waitForSelector("aside .view h1");
-    const mk = pg.locator("aside .mklink");
+    await pg.waitForSelector(".claim-view .view h1");
+    const mk = pg.locator(".claim-view .mklink");
     await mk.locator("summary").click();
     const old = mk.locator("[data-link='b']");
     assert.match((await old.textContent()).replace(/\s+/g, " "), /\(stale\).*Not shown: it names its Lean object by place and number in an earlier display\. Link it again, or remove it\./);
-    assert.equal(await pg.locator("aside .view .paper .tex [data-sym]").count(), 0, "a stale link is not drawn");
+    assert.equal(await pg.locator(".claim-view .view .paper .tex [data-sym]").count(), 0, "a stale link is not drawn");
   });
 
   await check("a linked definition keeps its parameters in order, and a recursive one shows its equations", width, async (pg) => {
     await pg.goto(origin + `/structure/#/r/${SHAPE.release}/read/P/${encodeURIComponent("P:def:multiple")}`);
-    const lean = pg.locator("aside .view section.lean");
+    const lean = pg.locator(".claim-view .view section.lean");
     const mult = lean.locator(".defn.readable[data-decl='Shape.MultipleAbove']");
     await mult.waitFor();
     assert.match(await mult.locator(".head").textContent(), /\(b : Nat\)\s*\{m : Nat\}\s*\(n : Nat\)\s*:\s*Prop/);
@@ -1594,7 +1682,7 @@ await check("in the local reader a symbol is linked by choosing it and clicking 
     const fib = lean.locator(".defn.readable[data-decl='Shape.fib'] .eq");
     assert.equal(await fib.count(), 3);
     assert.match(await fib.nth(0).textContent(), /Shape\.fib 0 = 0/);
-    const exact = pg.locator("aside .view .exact-pane .defn.exact[data-decl='Shape.fib']");
+    const exact = pg.locator(".claim-view .view .exact-pane .defn.exact[data-decl='Shape.fib']");
     assert.equal(await exact.locator(".thm").count(), 3);
     assert.match(await exact.locator(".src").textContent(), /\| n \+ 2 => fib n \+ fib \(n \+ 1\)/);
   });
@@ -1602,7 +1690,7 @@ await check("in the local reader a symbol is linked by choosing it and clicking 
   await check("properties carried by a type stay with their object: given, assumed or produced", width, async (pg) => {
     const open = async (id) => {
       await pg.goto(origin + `/structure/#/r/${SHAPE.release}/read/P/${encodeURIComponent(id)}`);
-      const st = pg.locator("aside .view :not(.suggestion) > .stmt");
+      const st = pg.locator(".claim-view .view :not(.suggestion) > .stmt");
       await st.waitFor();
       return st;
     };
@@ -1649,8 +1737,8 @@ await check("in the local reader a symbol is linked by choosing it and clicking 
     assert.match(await st.locator(".concl .carried.local .basis").textContent(), /within the clause that contains it/);
     // A sub-term of a property can be selected, and the exact Lean selects the same one.
     await open("P:thm:supplied");
-    await pg.locator("aside .view .carried .prop[data-field='start'] .m.pick > .o").first().click();
-    assert.ok(await pg.locator("aside .view .carried .prop[data-field='start'] .in").count() > 0);
+    await pg.locator(".claim-view .view .carried .prop[data-field='start'] .m.pick > .o").first().click();
+    assert.ok(await pg.locator(".claim-view .view .carried .prop[data-field='start'] .in").count() > 0);
     const exactField = pg.locator(".exact-pane .carried .field[data-field='start']");
     assert.match(await exactField.textContent(), /s\.start : s\.path 0 = d/);
     assert.match(await exactField.locator(".origin").textContent(), /Shape\.Base\.start/);
@@ -1660,8 +1748,8 @@ await check("in the local reader a symbol is linked by choosing it and clicking 
   await check("a structure shows the fields it adds to its parent, and a construction what its value carries", width, async (pg) => {
     const open = async (id) => {
       await pg.goto(origin + `/structure/#/r/${SHAPE.release}/read/P/${encodeURIComponent(id)}`);
-      await pg.locator("aside .view section.lean .defn").first().waitFor();
-      return pg.locator("aside .view section.lean");
+      await pg.locator(".claim-view .view section.lean .defn").first().waitFor();
+      return pg.locator(".claim-view .view section.lean");
     };
     // The concrete structure extends the abstract one: its inherited fields are listed under
     // the parent, and what it adds apart, each stated of an object `self`.
@@ -1677,7 +1765,7 @@ await check("in the local reader a symbol is linked by choosing it and clicking 
     const prof = lean.locator(".defn.readable[data-decl='Shape.Profile'] .made");
     assert.deepEqual(await names(prof.locator(".field")), ["f", "C", "bound"]);
     assert.equal(await prof.locator(".fields.added").count(), 0, "a structure without a parent adds to none");
-    const exact = pg.locator("aside .view .exact-pane .defn.exact[data-decl='Shape.Concrete']");
+    const exact = pg.locator(".claim-view .view .exact-pane .defn.exact[data-decl='Shape.Concrete']");
     assert.match(await exact.locator(".thm[data-field='support']").textContent(), /Shape\.Concrete\.support.*self\.N ≤ n/s);
     // A construction's value carries the fields its definition establishes; a helper that
     // accepts the structure has them in its input's type, apart from its hypothesis.
@@ -1688,7 +1776,7 @@ await check("in the local reader a symbol is linked by choosing it and clicking 
     assert.match(await val.locator(".field[data-field='support']").textContent(), /\(Shape\.build N\)\.N ≤ n → \(Shape\.build N\)\.f n = 0/);
     assert.equal(await val.locator(".field[data-field='N']").count(), 0, "data is not a property");
     await pg.goto(origin + `/structure/#/r/${SHAPE.release}/read/P/${encodeURIComponent("P:thm:vanishes")}`);
-    const st = pg.locator("aside .view :not(.suggestion) > .stmt");
+    const st = pg.locator(".claim-view .view :not(.suggestion) > .stmt");
     await st.waitFor();
     assert.match(await st.locator(".carried.given .prop[data-field='support']").textContent(), /c\.N ≤ n ⟹ c\.f\(n\) = 0.*field support of Concrete/s);
     assert.match(await st.locator(".ribbon > li.hypothesis").textContent(), /assume\s*c\.N ≤ n/);
@@ -1701,7 +1789,7 @@ await check("in the local reader a symbol is linked by choosing it and clicking 
     const fetched = [];
     pg.on("request", (r) => { if (r.url().includes("/data/expansions/")) fetched.push(r.url()); });
     await pg.goto(origin + `/structure/#/r/${SHAPE.release}/read/P/${encodeURIComponent("P:thm:jet")}`);
-    const st = pg.locator("aside .view :not(.suggestion) > .stmt").first();
+    const st = pg.locator(".claim-view .view :not(.suggestion) > .stmt").first();
     await st.locator(".ribbon").waitFor();
     const defined = st.locator(".def[data-definition='Shape.JetBound']");
     await defined.first().locator(".m").first().waitFor();
@@ -1727,7 +1815,7 @@ await check("in the local reader a symbol is linked by choosing it and clicking 
     // A partial application keeps the parameter it still needs; the definition it is passed to
     // expands with it applied, and that application expands in turn.
     await pg.goto(origin + `/structure/#/r/${SHAPE.release}/read/P/${encodeURIComponent("P:thm:below")}`);
-    const every = pg.locator("aside .view :not(.suggestion) > .stmt").filter({ hasText: "Every(AllBelow(7), vs)" }).first();
+    const every = pg.locator(".claim-view .view :not(.suggestion) > .stmt").filter({ hasText: "Every(AllBelow(7), vs)" }).first();
     await every.locator(".ribbon").waitFor();
     await every.locator("button.xb", { hasText: /^Shape\.AllBelow 7$/ }).click();
     xp = every.locator(".inspect .xp").first();
@@ -1738,19 +1826,19 @@ await check("in the local reader a symbol is linked by choosing it and clicking 
     await xp.locator("button.xb").click();
     assert.match(await xp.locator(".xp .body").textContent(), /∀ \(i : Fin 2\), v i ≤ 7/);
     // A bound variable of the definition is renamed apart from the statement's own i.
-    const below = pg.locator("aside .view :not(.suggestion) > .stmt").filter({ hasText: "AllBelow(i, v)" }).first();
+    const below = pg.locator(".claim-view .view :not(.suggestion) > .stmt").filter({ hasText: "AllBelow(i, v)" }).first();
     await below.locator("button.xb").first().click();
     assert.match(await below.locator(".inspect .xp .body").textContent(), /∀ \(i_1 : Fin 3\), v i_1 ≤ i$/);
 
     // A definition by equations shows the equation that applies, specialised, with its case
     // condition and its theorem's name.
     await pg.goto(origin + `/structure/#/r/${SHAPE.release}/read/P/${encodeURIComponent("P:thm:steps")}`);
-    const steps = pg.locator("aside .view :not(.suggestion) > .stmt").filter({ hasText: "steps(k + 3)" }).first();
+    const steps = pg.locator(".claim-view .view :not(.suggestion) > .stmt").filter({ hasText: "steps(k + 3)" }).first();
     await steps.locator(".concl").waitFor();
     await steps.locator("button.xb").click();
     xp = steps.locator(".inspect .xp");
     assert.match((await xp.locator(".eq").textContent()).replace(/\s+/g, " "), /Shape\.steps \(k \+ 3\) = if h : k \+ 3 = 0 then 0 else Shape\.steps \(k \+ 3 - 1\) \+ 1 expand Shape\.steps \(k \+ 3 - 1\) Shape\.steps\.eq_1/);
-    const pick = pg.locator("aside .view :not(.suggestion) > .stmt").filter({ hasText: "pick(k + 1, 0)" }).first();
+    const pick = pg.locator(".claim-view .view :not(.suggestion) > .stmt").filter({ hasText: "pick(k + 1, 0)" }).first();
     await pick.locator("button.xb").click();
     xp = pick.locator(".inspect .xp");
     assert.match((await xp.locator(".eq").textContent()).replace(/\s+/g, " "), /provided \(x_3 : k \+ 1 = 0 → False\): Shape\.pick \(k \+ 1\) 0 = 1 Shape\.pick\.eq_2/);
@@ -1761,7 +1849,7 @@ await check("in the local reader a symbol is linked by choosing it and clicking 
 
   await check("a private definition is shown by the name its author wrote", width, async (pg) => {
     await pg.goto(origin + `/private/#/r/${SHAPE.release}/read/P/${encodeURIComponent("P:thm:steps")}`);
-    const pick = pg.locator("aside .view :not(.suggestion) > .stmt").filter({ hasText: "pick(k + 1, 0)" }).first();
+    const pick = pg.locator(".claim-view .view :not(.suggestion) > .stmt").filter({ hasText: "pick(k + 1, 0)" }).first();
     await pick.locator(".concl").waitFor();
     await pick.locator("button.xb").click();
     const xp = pick.locator(".inspect .xp");
@@ -1772,18 +1860,18 @@ await check("in the local reader a symbol is linked by choosing it and clicking 
     // Its declaration, opened from the statement: the heading is the written name, the stored
     // one is its title.
     await pick.locator(".concl .r", { hasText: /^pick$/ }).first().click();
-    const head = pg.locator("aside .decl.inspector .ihead code").first();
+    const head = pg.locator(".claim-view .decl.inspector .ihead code").first();
     await head.waitFor();
     assert.equal((await head.textContent()).trim(), "Shape.pick");
     assert.equal(await head.getAttribute("title"), "_private.Shape.Expand.0.Shape.pick");
-    assert.doesNotMatch(await pg.locator("aside .decl.inspector .defn.readable").first().textContent(), /_private/);
+    assert.doesNotMatch(await pg.locator(".claim-view .decl.inspector .defn.readable").first().textContent(), /_private/);
   });
 
   await check("a definition with more equations than its record lists loads the others when asked", width, async (pg) => {
     const fetched = [];
     pg.on("request", (r) => { if (r.url().includes("/data/expansions/")) fetched.push(r.url()); });
     await pg.goto(origin + `/structure/#/r/${SHAPE.release}/read/P/${encodeURIComponent("P:def:digit")}`);
-    const view = pg.locator("aside .view");
+    const view = pg.locator(".claim-view .view");
     const val = view.locator(".lean .defn.readable[data-decl='Shape.Digit.val']");
     await val.locator(".eq").first().waitFor();
     // A definition by equations shows its type, then the first 64 of its seventy equations.
@@ -1803,7 +1891,7 @@ await check("in the local reader a symbol is linked by choosing it and clicking 
     assert.equal(await exact.locator(".thm").count(), 70);
     // At the last digit the seventieth equation applies; the 69 others are named, folded.
     await pg.goto(origin + `/structure/#/r/${SHAPE.release}/read/P/${encodeURIComponent("P:thm:digit")}`);
-    const st = pg.locator("aside .view :not(.suggestion) > .stmt").first();
+    const st = pg.locator(".claim-view .view :not(.suggestion) > .stmt").first();
     await st.locator("button.xb").click();
     const xp = st.locator(".inspect .xp");
     assert.match(await xp.locator(".eq").textContent(), /Shape\.Digit\.val\.eq_70/);
@@ -1812,7 +1900,7 @@ await check("in the local reader a symbol is linked by choosing it and clicking 
 
   await check("a statement keeps its order, with each object's own conditions beside it", width, async (pg) => {
     await pg.goto(origin + `/structure/#/r/${SHAPE.release}/read/P/${encodeURIComponent("P:thm:layout")}`);
-    const st = pg.locator("aside .view :not(.suggestion) > .stmt");
+    const st = pg.locator(".claim-view .view :not(.suggestion) > .stmt");
     await st.locator(".ribbon").waitFor();
     const rows = (await st.locator(".ribbon > li").allTextContents()).map((t) => t.replace(/\s+/g, " ").trim());
     assert.equal(rows.length, 7, rows.join(" | "));
@@ -1877,7 +1965,7 @@ await check("in the local reader a symbol is linked by choosing it and clicking 
 
   await check("a \"there is\" inside a conclusion shows its witness's type and scope", width, async (pg) => {
     await pg.goto(origin + `/structure/#/r/${SHAPE.release}/read/P/${encodeURIComponent("P:thm:witnesses")}`);
-    const st = pg.locator("aside .view :not(.suggestion) > .stmt").first();
+    const st = pg.locator(".claim-view .view :not(.suggestion) > .stmt").first();
     await st.locator(".concl").waitFor();
     const parts = (await st.locator(".concl [data-readable] > .parts > li").allTextContents()).map((t) => t.replace(/\s+/g, ""));
     assert.equal(parts.length, 2, parts.join(" | "));
@@ -1894,7 +1982,7 @@ await check("in the local reader a symbol is linked by choosing it and clicking 
 
   await check("negation, implication and \"for every\" inside a conclusion keep their scope", width, async (pg) => {
     await pg.goto(origin + `/structure/#/r/${SHAPE.release}/read/P/${encodeURIComponent("P:thm:shapes")}`);
-    const st = pg.locator("aside .view :not(.suggestion) > .stmt").first();
+    const st = pg.locator(".claim-view .view :not(.suggestion) > .stmt").first();
     await st.locator(".concl").waitFor();
     assert.match((await st.locator(".ribbon").textContent()).replace(/\s+/g, " "), /assume Nonempty\(E\) assumed/);
     const parts = (await st.locator(".concl [data-readable] > .parts > li").allTextContents()).map((t) => t.replace(/\s+/g, ""));
@@ -1906,7 +1994,7 @@ await check("in the local reader a symbol is linked by choosing it and clicking 
   await check("each binder reads in its scope: an assumption's own existence stays inside it", width, async (pg) => {
     const open = async (id) => {
       await pg.goto(origin + `/structure/#/r/${SHAPE.release}/read/P/${encodeURIComponent(id)}`);
-      const st = pg.locator("aside .view :not(.suggestion) > .stmt").first();
+      const st = pg.locator(".claim-view .view :not(.suggestion) > .stmt").first();
       await st.locator(".concl").waitFor();
       return st;
     };
@@ -1959,7 +2047,7 @@ await check("in the local reader a symbol is linked by choosing it and clicking 
   // chosen is a sub-term of the exact statement, and choosing it there or here selects it in both.
   await check("a statement reads as mathematics, each fragment tied to its exact Lean", width, async (pg) => {
     const rowsOf = async (st) => (await st.locator(":scope > .ribbon > li, :scope > .concl").allTextContents()).map((t) => t.replace(/\s+/g, " ").trim());
-    const stmts = pg.locator("aside .view :not(.suggestion) > .stmt");
+    const stmts = pg.locator(".claim-view .view :not(.suggestion) > .stmt");
     await pg.goto(origin + `/toy/#/r/${TOY.release}/read/T/${encodeURIComponent("T:thm:even-add")}`);
     let st = stmts.first();
     await st.locator(".concl .def[data-definition='Toy.IsEven'] .m").first().waitFor();
@@ -1982,7 +2070,7 @@ await check("in the local reader a symbol is linked by choosing it and clicking 
     assert.ok(shown.length >= 4, shown.join(" "));
     assert.deepEqual(shown.filter((a) => !known.has(a)), [], "each is the exact statement's own");
     // Chosen in the exact Lean, the same sub-term is lit here; chosen here, it is lit there.
-    const exactPane = pg.locator("aside .exact-pane .exact > pre").first();
+    const exactPane = pg.locator(".claim-view .exact-pane .exact > pre").first();
     await exactPane.locator(".c.p, .p", { hasText: "+" }).first().click();
     assert.equal((await exactPane.locator(".in").allTextContents()).join("").replace(/^\((.*)\)$/, "$1"), "a + b");
     assert.equal((await st.locator("[data-readable] .in").allTextContents()).join(""), "a + b");
@@ -2040,7 +2128,7 @@ await check("in the local reader a symbol is linked by choosing it and clicking 
 
   await check("clicking inside an expression selects it, and each click widens it", width, async (pg) => {
     await pg.goto(origin + `/structure/#/r/${SHAPE.release}/read/P/${encodeURIComponent("P:thm:layout")}`);
-    const st = pg.locator("aside .view :not(.suggestion) > .stmt");
+    const st = pg.locator(".claim-view .view :not(.suggestion) > .stmt");
     await st.locator(".ribbon").waitFor();
     const plus = st.locator(".concl [data-readable] > .parts > li").nth(1).locator(".m.pick[data-k='op'] > .o", { hasText: "+" }).first();
     const text = async () => (await st.locator(".inspect.term code").textContent()).trim();
@@ -2054,9 +2142,9 @@ await check("in the local reader a symbol is linked by choosing it and clicking 
 
   await check("a sub-term selected in one view of a statement is selected in the other", width, async (pg) => {
     await pg.goto(origin + `/structure/#/r/${SHAPE.release}/read/P/${encodeURIComponent("P:thm:layout")}`);
-    const st = pg.locator("aside .view :not(.suggestion) > .stmt").first();
+    const st = pg.locator(".claim-view .view :not(.suggestion) > .stmt").first();
     await st.locator(".ribbon").waitFor();
-    const exact = pg.locator("aside .exact pre").first();
+    const exact = pg.locator(".claim-view .exact pre").first();
     await exact.waitFor();
     const lit = async (loc) => (await loc.locator(".in").allTextContents()).join("").trim();
     // Chosen in the readable statement: the same sub-term, found by its identity in the
@@ -2074,13 +2162,13 @@ await check("in the local reader a symbol is linked by choosing it and clicking 
   await check("a selection belongs to its claim: choosing another claim clears it", width, async (pg) => {
     const go = async (id) => {
       await pg.goto(origin + `/structure/#/r/${SHAPE.release}/read/P/${encodeURIComponent(id)}`);
-      const st = pg.locator("aside .view :not(.suggestion) > .stmt").first();
+      const st = pg.locator(".claim-view .view :not(.suggestion) > .stmt").first();
       await st.locator(".concl").waitFor();
       return st;
     };
     let st = await go("P:thm:layout");
     await st.locator(".concl [data-readable] > .parts > li").nth(1).locator(".m.pick[data-k='op'] > .o", { hasText: "+" }).first().click();
-    const exact = pg.locator("aside .exact pre").first();
+    const exact = pg.locator(".claim-view .exact pre").first();
     assert.equal((await exact.locator(".in").allTextContents()).join("").trim(), "n + x");
     await go("P:thm:witnesses");
     st = await go("P:thm:layout");
@@ -2091,7 +2179,7 @@ await check("in the local reader a symbol is linked by choosing it and clicking 
 
   await check("a name's plain-English note appears only on request, beside the name", width, async (pg) => {
     await pg.goto(origin + `/structure/#/r/${SHAPE.release}/read/P/${encodeURIComponent("P:thm:layout")}`);
-    const st = pg.locator("aside .view :not(.suggestion) > .stmt");
+    const st = pg.locator(".claim-view .view :not(.suggestion) > .stmt");
     await st.locator(".ribbon").waitFor();
     assert.equal(await st.locator(".note").count(), 0, "no note by default");
     await st.locator("button.g", { hasText: "Inhabited" }).click();
@@ -2103,7 +2191,7 @@ await check("in the local reader a symbol is linked by choosing it and clicking 
 
   await check("hovering a variable highlights it everywhere; a click holds it", width, async (pg) => {
     await pg.goto(origin + `/structure/#/r/${SHAPE.release}/read/P/${encodeURIComponent("P:thm:layout")}`);
-    const st = pg.locator("aside .view :not(.suggestion) > .stmt");
+    const st = pg.locator(".claim-view .view :not(.suggestion) > .stmt");
     await st.locator(".ribbon").waitFor();
     const x = st.locator(".concl .var[data-var='6']").first();
     await x.hover();
@@ -2167,12 +2255,12 @@ for (const width of [1300, 390]) {
 for (const width of [1300, 390]) {
   await check("complete published audit, independent evidence and PDF revision", width, async (pg) => {
     await pg.goto(origin + "/published/#/r/paper/read/P/P%3Atheorem-1");
-    await pg.waitForSelector("aside .lean .block");
-    assert.match(await pg.locator("aside .paper h2").textContent(), /audited revision/);
-    assert.equal(await pg.locator("aside .crop").count(), 1, "full audited PDF crop is available");
-    assert.doesNotMatch(await pg.locator("aside .crop").textContent(), /Estimated/);
+    await pg.waitForSelector(".claim-view .lean .block");
+    assert.match(await pg.locator(".claim-view .paper h2").textContent(), /audited revision/);
+    assert.equal(await pg.locator(".claim-view .crop").count(), 1, "full audited PDF crop is available");
+    assert.doesNotMatch(await pg.locator(".claim-view .crop").textContent(), /Estimated/);
     // The auditor's accepted workspace records, read-only and attributed.
-    const work = pg.locator("aside .published-work");
+    const work = pg.locator(".claim-view .published-work");
     await work.waitFor();
     assert.match(await work.textContent(), /Reading by A Auditor \(self-declared\)/);
     assert.match(await work.locator("[data-req='r1']").textContent(), /the synthetic bound holds/);
@@ -2187,8 +2275,8 @@ for (const width of [1300, 390]) {
     assert.equal(await work.locator("button, input, textarea, select").count(), 0, "nothing to edit");
     // #74: its finding in force, on no requirement, is the whole claim's in the comparison; the
     // superseded one is not drawn there.
-    assert.match(words(await pg.locator("aside .cmp .row-findings.claim [data-finding='f2']").textContent()), /^Every clause, in one Lean statement A synthetic direct reading\. Stated by: Synthetic\.bound By A Auditor, informed investigation/);
-    assert.equal(await pg.locator("aside .cmp [data-finding='f1']").count(), 0);
+    assert.match(words(await pg.locator(".claim-view .cmp .row-findings.claim [data-finding='f2']").textContent()), /^Every clause, in one Lean statement A synthetic direct reading\. Stated by: Synthetic\.bound By A Auditor, informed investigation/);
+    assert.equal(await pg.locator(".claim-view .cmp [data-finding='f1']").count(), 0);
     assert.equal(await pg.locator(".edition select").inputValue(), "original");
     await pg.locator(".view .chipbtn").click();
     for (const [dim, state] of [["formal","proved"],["review","author-reviewed"],["source","fail"],["replay","not-run"]]) {
@@ -2204,12 +2292,12 @@ for (const width of [1300, 390]) {
     await pg.selectOption("select[aria-label='Formalisation shown']", "synthetic/beta");
     await pg.waitForFunction(() => document.querySelector(".view .chipbtn [data-status]")?.dataset.status === "link.none");
     assert.equal(await pg.locator(".view .lean .statement").count(), 0);
-    assert.doesNotMatch(await pg.locator("aside").textContent(), /Synthetic statement review/);
-    assert.equal(await pg.locator("aside .published-work").count(), 0, "another project's readings are not shown");
-    assert.equal(await pg.locator("aside .cmp [data-finding]").count(), 0, "nor its findings");
+    assert.doesNotMatch(await pg.locator(".claim-view").textContent(), /Synthetic statement review/);
+    assert.equal(await pg.locator(".claim-view .published-work").count(), 0, "another project's readings are not shown");
+    assert.equal(await pg.locator(".claim-view .cmp [data-finding]").count(), 0, "nor its findings");
     assert.equal(await pg.locator(".edition select").inputValue(), "original", "project choice keeps the paper");
     await pg.selectOption("select[aria-label='Formalisation shown']", "synthetic/alpha");
-    // Close the panel so the PDF control is reachable on a phone.
+    // The PDF control is the paper's.
     await pg.getByRole("button", { name: "Back to paper", exact: true }).click();
     await pg.selectOption("select[aria-label='Paper revision']", PUB.editions[0].edition);
     assert.equal(new URL(pg.url()).searchParams.get("edition"), PUB.editions[0].edition);
@@ -2217,7 +2305,7 @@ for (const width of [1300, 390]) {
     const extra = PUB.claims.find((c) => c.id !== "P:theorem-1");
     await open(pg, extra.id);
     await pg.waitForFunction(() => document.querySelector(".view .chipbtn [data-status]")?.dataset.status === "formal.refuted.corrected");
-    assert.equal(await pg.locator("aside .lean .block").count(), 2);
+    assert.equal(await pg.locator(".claim-view .lean .block").count(), 2);
     if (process.env.SHOTS) await pg.screenshot({ path: path.join(process.env.SHOTS, `published-${width}.png`) });
   });
 }
@@ -2227,8 +2315,8 @@ for (const width of [1300, 390]) {
 // record has no `matched`, look as before; the status is the engine's in every case.
 for (const width of [1300, 390]) {
   await check("a claim matched by printed number to an audit of another PDF says so", width, async (pg) => {
-    const status = pg.locator("aside .view .chipbtn [data-status]");
-    const note = pg.locator("aside .view .matched");
+    const status = pg.locator(".claim-view .view .chipbtn [data-status]");
+    const note = pg.locator(".claim-view .view .matched");
     const after = ": the audit read another PDF of the paper than the one shown here.";
     await pg.goto(origin + "/matched/#/r/paper/read/P/P%3Atheorem-1");
     await status.waitFor();
@@ -2241,7 +2329,7 @@ for (const width of [1300, 390]) {
     // The audit's own entry is joined to no statement of this PDF.
     const own = MATCHED.claims.find((c) => c.projects);
     await open(pg, own.id);
-    await pg.waitForFunction(() => document.querySelector("aside .view .chipbtn [data-status]")?.dataset.status === "formal.refuted.corrected");
+    await pg.waitForFunction(() => document.querySelector(".claim-view .view .chipbtn [data-status]")?.dataset.status === "formal.refuted.corrected");
     assert.equal(await note.count(), 0);
     // Without the version's label, the note names the revision the audit read.
     await pg.goto(origin + "/matched-revision/#/r/paper/read/P/P%3Atheorem-1");
@@ -2331,13 +2419,13 @@ await check("a definition's row is paired with the passages a published reading 
 await check("a direct audit shows its published readings beside an unchanged status", 1300, async (pg) => {
   const at = `#/r/${TOY.release}/read/T/T%3Adef%3Aeven`;
   await pg.goto(origin + "/toy/?audit=" + encodeURIComponent(origin + "/toy/") + at);
-  await pg.waitForSelector("aside .view .chipbtn [data-status]");
-  const before = await pg.locator("aside .view .chipbtn [data-status]").getAttribute("data-status");
-  assert.equal(await pg.locator("aside .published-work").count(), 0);
+  await pg.waitForSelector(".claim-view .view .chipbtn [data-status]");
+  const before = await pg.locator(".claim-view .view .chipbtn [data-status]").getAttribute("data-status");
+  assert.equal(await pg.locator(".claim-view .published-work").count(), 0);
   await pg.goto(origin + "/toywork/?audit=" + encodeURIComponent(origin + "/toywork/") + at);
-  const work = pg.locator("aside .published-work");
+  const work = pg.locator(".claim-view .published-work");
   await work.waitFor();
-  assert.equal(await pg.locator("aside .view .chipbtn [data-status]").getAttribute("data-status"), before);
+  assert.equal(await pg.locator(".claim-view .view .chipbtn [data-status]").getAttribute("data-status"), before);
   assert.match(await work.textContent(), /Reading by the AI model synthetic-model · independent review/);
   assert.equal(await work.locator("pre.src").textContent(), "A synthetic printed sentence.");
   assert.match(await work.locator("[data-role='statement']").textContent(), /toy\.tex:12 · printed for this claim · accepted by llm:synthetic-model/);
@@ -2372,7 +2460,7 @@ await check("a direct audit shows its published readings beside an unchanged sta
 for (const width of [1440, 1000, 390, 320]) {
   await check("comparison keeps all three representations and long assumptions visible", width, async (pg) => {
     await pg.goto(origin + `/long-statement/#/r/${TOY.release}/read/T/T%3Athm%3Aeven-add?compare=1`);
-    await pg.locator("aside .exact pre").waitFor();
+    await pg.locator(".claim-view .exact pre").waitFor();
     assert.deepEqual(await pg.locator(".cmp .grid > section > h2").allTextContents(), ["Paper", "Lean"]);
     assert.equal(await pg.locator(".lean .ribbon > li").count(), 12);
     assert.match(await pg.locator(".exact pre").textContent(), /x11 : Nat/);
@@ -2414,7 +2502,7 @@ await check("the reader, the claim page and review's Compare draw one comparison
       ["structure", SHAPE.release, "P", "P:thm:" + n, REVIEW_SHAPE, "link:thm:" + n])];
   for (const [site, release, paper, claim, key, unit] of cases) {
     await pg.goto(origin + `/${site}/#/r/${release}/read/${paper}/${encodeURIComponent(claim)}`);
-    const inReader = pg.locator("aside .cmp");
+    const inReader = pg.locator(".claim-view .cmp");
     await inReader.locator(".stmt .readable").first().waitFor();
     const reader = await scopeOf(inReader);
     await pg.goto(origin + `/${site}/#/r/${release}/claim/${encodeURIComponent(claim)}`);
@@ -2440,7 +2528,7 @@ await check("a definition claim shows both its definitions in the reader, on its
              exact: await cmp.locator(".exact-pane .defn.exact").count() };
   };
   await pg.goto(origin + `/toy/#/r/${TOY.release}/read/T/${encodeURIComponent("T:def:even")}`);
-  const reader = await defs(pg.locator("aside .cmp"));
+  const reader = await defs(pg.locator(".claim-view .cmp"));
   assert.equal(reader.even, "∃ (k : Nat), n = 2 * k");
   assert.equal(reader.triangle.length, 2);
   assert.equal(reader.exact, 2);
@@ -2463,9 +2551,9 @@ await check("a definition claim shows both its definitions in the reader, on its
 
 // #77: a definition opened from a row opens below that row: the paper's bound, the theorem and the
 // selected sub-term stay on the page, on a desktop, a short desktop and a phone.
-for (const [width, height, where] of [[1300, 900, "claim"], [1300, 560, "claim"], [1300, 560, "expanded"], [390, 844, "read"]]) {
+for (const [width, height, where] of [[1300, 900, "claim"], [1300, 560, "claim"], [1300, 560, "read"], [390, 844, "read"]]) {
   await check(`a definition opened from a row keeps the paper's bound, the theorem and the selection (${where}, ${height}px high)`, width, async (pg) => {
-    const page = where === "claim" ? `claim/${encodeURIComponent("P:thm:jet")}` : `read/P/${encodeURIComponent("P:thm:jet")}` + (where === "expanded" ? "?compare=1" : "");
+    const page = where === "claim" ? `claim/${encodeURIComponent("P:thm:jet")}` : `read/P/${encodeURIComponent("P:thm:jet")}`;
     await pg.goto(origin + `/structure/#/r/${SHAPE.release}/${page}`);
     const cmp = pg.locator(".cmp");
     const hyp = cmp.locator(".stmt [data-row]").filter({ has: pg.locator("[data-slot=readable]", { hasText: "JetBound(f, S, n + 5, C)" }) });
@@ -2536,17 +2624,17 @@ await check("a pinned property stays with its own witness, claim and audit", 130
   await pg.locator(".stmt [data-row='b:1'] .inspection.pinned").waitFor();
   // A pin made in one audit of a paper is not shown in another audit of it.
   await pg.goto(origin + `/combined/?project=${encodeURIComponent(CA)}#/r/paper/read/P/P%3Atheorem-1`);
-  await pg.locator("aside .chipbtn").click();
-  const details = pg.locator("aside .inspection[data-kind='details']");
+  await pg.locator(".claim-view .chipbtn").click();
+  const details = pg.locator(".claim-view .inspection[data-kind='details']");
   await details.waitFor();
   await details.getByRole("button", { name: "Pin" }).click();
-  await pg.locator("aside .crumbs .back").click();
-  assert.equal(await pg.locator("aside .inspection.pinned[data-kind='details']").count(), 1, "pinned in this audit");
+  await pg.locator(".claim-view .crumbs .back").click();
+  assert.equal(await pg.locator(".claim-view .inspection.pinned[data-kind='details']").count(), 1, "pinned in this audit");
   await pg.selectOption(FORMAL, CB);
-  await pg.waitForFunction(() => document.querySelector("aside [data-status]")?.getAttribute("data-status") === "formal.open");
-  assert.equal(await pg.locator("aside .inspection").count(), 0, "not in the other audit");
+  await pg.waitForFunction(() => document.querySelector(".claim-view [data-status]")?.getAttribute("data-status") === "formal.open");
+  assert.equal(await pg.locator(".claim-view .inspection").count(), 0, "not in the other audit");
   await pg.selectOption(FORMAL, CA);
-  await pg.locator("aside .inspection.pinned[data-kind='details']").waitFor();
+  await pg.locator(".claim-view .inspection.pinned[data-kind='details']").waitFor();
 });
 
 // #77: the review input boundary. The reader draws what people recorded about a claim, attributed;
@@ -2556,7 +2644,7 @@ await check("independent Compare is given the complete mathematics and no prior 
   const fetched = [];
   pg.on("request", (r) => fetched.push(new URL(r.url()).pathname));
   await pg.goto(origin + `/toycmp/#/r/${TOY.release}/read/T/${encodeURIComponent("T:thm:even-add")}`);
-  const reader = pg.locator("aside .cmp");
+  const reader = pg.locator(".claim-view .cmp");
   await reader.locator(".stmt [data-row='b:0'] .pcell .aligned").waitFor();
   assert.match(await reader.getByRole("combobox", { name: "Rows" }).locator("option:checked").textContent(), /Aligned with the paper by A Auditor/);
   assert.match((await reader.locator(".stmt [data-row='b:0'] .pcell").textContent()).replace(/\s+/g, " "),
@@ -2615,7 +2703,7 @@ for (const width of [1300, 390]) {
   await check("findings are shown at the clauses they explain", width, async (pg) => {
     const go = (id) => pg.evaluate(([r, c]) => { location.hash = `#/r/${r}/read/T/${encodeURIComponent(c)}`; }, [TOY.release, id]);
     await pg.goto(origin + `/toyfind/#/r/${TOY.release}/read/T/${encodeURIComponent("T:prop:pred")}`);
-    const cmp = pg.locator("aside .cmp");
+    const cmp = pg.locator(".claim-view .cmp");
     const corrected = cmp.locator(".block[data-spec='Toy.PaperSpec.prop_pred_pos']");
     const pos = corrected.locator(".stmt [data-row='b:0'] [data-finding='f-pos']");
     await pos.waitFor();
@@ -2674,7 +2762,7 @@ for (const width of [1300, 390]) {
     assert.match(words(await step.textContent()), /^The printed step: false as printed It fails at k = 0, n = 1/);
     assert.equal(await cmp.locator("[data-finding='f-c'], [data-finding='f-direct']").count(), 0);
     // The full record is still listed with the audit's readings.
-    assert.equal(await pg.locator("aside .published-work [data-kind='finding']").count(), 1);
+    assert.equal(await pg.locator(".claim-view .published-work [data-kind='finding']").count(), 1);
   });
 }
 
@@ -2683,7 +2771,7 @@ for (const width of [1300, 390]) {
 for (const [width, height] of [[1300, 900], [1300, 520], [390, 844]]) {
   await check(`the comparison keeps its content, sources, keyboard and history (${width}x${height})`, width, async (pg) => {
     await pg.goto(origin + `/toy/#/r/${TOY.release}/read/T/${encodeURIComponent("T:thm:even-add")}`);
-    const cmp = pg.locator("aside .cmp");
+    const cmp = pg.locator(".claim-view .cmp");
     await cmp.locator(".stmt .ribbon > li").first().waitFor();
     assert.equal(await cmp.locator(".stmt .ribbon > li").count(), 3, "every row");
     for (const [what, loc] of [["the conclusion", cmp.locator(".stmt .concl")], ["the exact statement", cmp.locator(".exact-pane .exact pre")], ["the passage", cmp.locator(".paper .excerpt")]]) {
@@ -2723,7 +2811,7 @@ await check("search supports Tab and Enter, definition targets and Escape", 1300
   await pg.locator(".search [role=option]").first().waitFor();
   await input.press("Tab");
   await pg.keyboard.press("Enter");
-  await pg.locator("aside h1").waitFor();
+  await pg.locator(".claim-view h1").waitFor();
   await input.fill("Toy.IsEven");
   const definition = pg.locator(".search [role=option]").filter({ has: pg.locator("code", { hasText: "Toy.IsEven" }) });
   await definition.focus(); await definition.press("Enter");
@@ -2740,7 +2828,7 @@ await check("canonical paper search follows the selected project", 1300, async (
   await search.fill("B.three");
   await pg.locator(".search [role=option]").first().waitFor();
   await search.press("Enter");
-  await pg.waitForFunction(() => document.querySelector("aside")?.textContent.includes("B.three"));
+  await pg.waitForFunction(() => document.querySelector(".claim-view")?.textContent.includes("B.three"));
   assert.deepEqual(await panelNames(pg), ["B.three"]);
 });
 
@@ -2755,7 +2843,7 @@ await check("menus dismiss with Escape and return focus", 390, async (pg) => {
 await check("browser Back and Forward restore definition inspection", 1300, async (pg) => {
   await toyClaim(pg, "T:thm:even-add");
   const before = pg.url();
-  const reference = pg.locator("aside .lean a.r", { hasText: "Toy.IsEven" }).first();
+  const reference = pg.locator(".claim-view .lean a.r", { hasText: "Toy.IsEven" }).first();
   assert.match(await reference.getAttribute("href"), /inspect=Toy.IsEven/);
   await reference.click(); await pg.locator(".crumbs").waitFor();
   await pg.goBack(); await pg.waitForSelector(".view h1"); assert.equal(pg.url(), before);
@@ -2770,17 +2858,17 @@ await check("late claim responses cannot overwrite a newer selection", 1300, asy
   await pg.goto(origin + `/toy/#/r/${TOY.release}/read/T/T%3Athm%3Aeven-add`);
   await requested;
   await pg.evaluate((release) => location.hash = `#/r/${release}/read/T/T%3Athm%3Abound`, TOY.release);
-  await pg.locator("aside h1", { hasText: "Theorem 2.5" }).waitFor();
+  await pg.locator(".claim-view h1", { hasText: "Theorem 2.5" }).waitFor();
   finish(); await pg.waitForLoadState("networkidle");
-  assert.match(await pg.locator("aside h1").textContent(), /Theorem 2.5/);
+  assert.match(await pg.locator(".claim-view h1").textContent(), /Theorem 2.5/);
 });
 
 await check("failed claim loads can be retried", 1300, async (pg) => {
   let attempts = 0;
   await pg.route("**/toy/data/claims/*even-add*", (route) => ++attempts === 1 ? route.fulfill({ status: 503, body: "Unavailable" }) : route.continue());
   await pg.goto(origin + `/toy/#/r/${TOY.release}/read/T/T%3Athm%3Aeven-add`);
-  await pg.locator("aside").getByRole("button", { name: "Try again" }).click();
-  await pg.locator("aside h1").waitFor(); assert.equal(attempts, 2);
+  await pg.locator(".claim-view").getByRole("button", { name: "Try again" }).click();
+  await pg.locator(".claim-view h1").waitFor(); assert.equal(attempts, 2);
 });
 
 await check("names in module docstrings that nothing declares are listed, dismissals shown", 1300, async (pg) => {
@@ -2803,9 +2891,9 @@ await check("contents close after a mobile selection", 390, async (pg) => {
   await pg.getByRole("button", { name: "Contents", exact: true }).click();
   assert.equal(await pg.getByRole("button", { name: "Contents", exact: true }).getAttribute("aria-expanded"), "true");
   await pg.locator("dialog[open] a", { hasText: "Theorem 3" }).click();
-  await pg.locator("aside h1").waitFor();
+  await pg.locator(".claim-view h1").waitFor();
   assert.equal(await pg.locator("dialog[open]").count(), 0);
-  assert.equal(await pg.locator("aside").evaluate((e) => e === document.activeElement), true);
+  assert.equal(await pg.locator(".claim-view").evaluate((e) => e === document.activeElement), true);
 });
 
 await check("PDF text, links, page search and zoom work together", 1300, async (pg) => {
@@ -2833,28 +2921,18 @@ await check("PDF text, links, page search and zoom work together", 1300, async (
   assert.ok((await pg.locator(".band").first().boundingBox()).width <= 32, "claim marker occupies the margin");
 });
 
-await check("expression controls have names and pane resizing works by keyboard", 1440, async (pg) => {
+await check("expression controls have names and the paper's pages scroll by keyboard", 1440, async (pg) => {
   await toyClaim(pg, "T:thm:even-add");
   const empty = await pg.locator(".lean [role=button]").evaluateAll((es) => es.filter((e) => !/[\p{L}\p{N}∀∃∈≤≥=+×→↔∧∨¬]/u.test(e.textContent)).map((e) => e.textContent));
   assert.deepEqual(empty, []);
-  const splitter = pg.getByRole("separator", { name: "Claim panel width" });
-  await splitter.focus(); const before = Number(await splitter.getAttribute("aria-valuenow"));
-  await splitter.press("ArrowRight"); assert.ok(Number(await splitter.getAttribute("aria-valuenow")) < before);
-  // The separator names the panel it resizes and how its keys work; the value is the width.
-  const panel = await splitter.getAttribute("aria-controls");
-  assert.equal(await pg.locator(`#${panel}`).evaluate((e) => e.tagName), "ASIDE");
-  assert.match(await pg.locator("#" + await splitter.getAttribute("aria-describedby")).textContent(), /arrows widen and narrow the panel/);
-  assert.equal(await splitter.getAttribute("aria-valuetext"), `${await splitter.getAttribute("aria-valuenow")} pixels`);
-  await splitter.press("Home"); assert.equal(await splitter.getAttribute("aria-valuenow"), "320");
-  await splitter.press("End"); assert.equal(await splitter.getAttribute("aria-valuenow"), await splitter.getAttribute("aria-valuemax"));
   // The paper's pages are a labelled region with a tab stop, which scrolls by keyboard.
+  await pg.getByRole("button", { name: "Back to paper", exact: true }).click();
   const pages = pg.getByRole("region", { name: "Paper pages" });
   assert.equal(await pages.getAttribute("tabindex"), "0");
   assert.match(await pg.locator("#" + await pages.getAttribute("aria-describedby")).textContent(), /arrow keys, Page Up and Page Down/);
   await pg.locator(".pdf canvas").first().waitFor();
-  // End widened the panel. The pages take their new width a frame later and scroll to keep the
-  // claim in view; until then the pane's position is the one of the earlier width, so it is read
-  // once those frames are drawn.
+  // The pages take their width a frame after they are shown and scroll to the claim left; until
+  // then the pane's position is not settled, so it is read once those frames are drawn.
   await frames(pg, 2);
   const scroller = await pages.evaluateHandle((e) => [e, e.parentElement].find((x) => x.scrollHeight > x.clientHeight));
   const top = await scroller.evaluate((e) => e.scrollTop);
@@ -2878,9 +2956,9 @@ for (const scheme of ["light", "dark"]) await check(`${scheme} theme text meets 
 
 await check("multi-page excerpts include both pages", 390, async (pg) => {
   await pg.goto(origin + "/long/#/r/paper/read/P/P%3Atheorem-2?compare=1");
-  await pg.locator("aside .crop canvas").last().waitFor();
-  assert.equal(await pg.locator("aside .crop canvas").count(), 2);
-  assert.deepEqual(await pg.locator("aside .crop .page-label").allTextContents(), ["Page 2", "Page 3"]);
+  await pg.locator(".claim-view .crop canvas").last().waitFor();
+  assert.equal(await pg.locator(".claim-view .crop canvas").count(), 2);
+  assert.deepEqual(await pg.locator(".claim-view .crop .page-label").allTextContents(), ["Page 2", "Page 3"]);
 });
 
 await check("search retries after a failed index request", 1300, async (pg) => {
@@ -2977,7 +3055,7 @@ await check("the review page offers the priority and paper orders with the engin
 
 await check("a declaration lists its users; a static copy names the command for its applications", 390, async (pg) => {
   await pg.goto(origin + `/uses/#/r/${USES.release}/read/P/${encodeURIComponent("P:lem:half")}?inspect=Uses.half_lt`);
-  const uses = pg.locator("aside .decl.inspector details.uses");
+  const uses = pg.locator(".claim-view .decl.inspector details.uses");
   await uses.locator("summary").click();
   await uses.locator(".list li").first().waitFor();
   const users = (await uses.locator(".list li").allTextContents()).map((t) => t.replace(/\s+/g, " ").trim());
@@ -2989,7 +3067,7 @@ await check("a declaration lists its users; a static copy names the command for 
   // A user opens in the inspector, and its own users are listed there.
   await uses.getByRole("button", { name: "Uses.half_lt_four" }).click();
   await pg.waitForURL(/inspect=Uses.half_lt_four/);
-  const next = pg.locator("aside .decl.inspector:visible details.uses");
+  const next = pg.locator(".claim-view .decl.inspector:visible details.uses");
   await next.locator("summary").click();
   assert.match(await next.locator(".list").textContent(), /Uses\.main_bound/);
 });
@@ -3006,7 +3084,7 @@ await check("a declaration lists its users; a static copy names the command for 
     for (const width of [1300, 390]) {
       await check("each application shows its arguments and whether the caller assumes or proves each premise", width, async (pg) => {
         await pg.goto(`http://127.0.0.1:${port}/#/r/${USES.release}/read/P/${encodeURIComponent("P:lem:half")}?inspect=Uses.half_lt`);
-        const uses = pg.locator("aside .decl.inspector details.uses");
+        const uses = pg.locator(".claim-view .decl.inspector details.uses");
         await uses.locator("summary").click();
         await uses.getByRole("button", { name: "Show each application" }).click();
         await uses.locator(".app").first().waitFor();
@@ -3045,7 +3123,7 @@ await check("a declaration lists its users; a static copy names the command for 
 for (const width of [1300, 390]) {
   await check("a proof step shows its own finding beside the equation, apart from its parent", width, async (pg) => {
     await toyClaim(pg, "T:eq:bound-range");
-    const view = pg.locator("aside .view");
+    const view = pg.locator(".claim-view .view");
     assert.equal(await view.locator(".chipbtn [data-status]").getAttribute("data-status"), "scope.proof-step", "the scope decision is the status");
     const finding = view.locator(".paper .finding");
     assert.equal(await finding.getAttribute("data-review"), "false");
@@ -3057,16 +3135,16 @@ for (const width of [1300, 390]) {
     assert.match(await view.locator(".paper .context").textContent(), /k = 1/);
     // A linked step that no one has reviewed reads as not reviewed.
     await toyClaim(pg, "T:eq:bound-sum");
-    assert.equal(await pg.locator("aside .view .paper .finding").getAttribute("data-review"), "unreviewed");
-    assert.match(await pg.locator("aside .view .paper .finding").textContent(), /not reviewed/);
-    assert.match(await pg.locator("aside .view section.lean").textContent(), /Toy\.Acceptance\.thm_triangle/);
+    assert.equal(await pg.locator(".claim-view .view .paper .finding").getAttribute("data-review"), "unreviewed");
+    assert.match(await pg.locator(".claim-view .view .paper .finding").textContent(), /not reviewed/);
+    assert.match(await pg.locator(".claim-view .view section.lean").textContent(), /Toy\.Acceptance\.thm_triangle/);
     // The parent keeps its own status and lists its steps.
     await toyClaim(pg, "T:thm:bound");
-    assert.equal(await pg.locator("aside .view .chipbtn [data-status]").getAttribute("data-status"), "formal.review-pending");
-    const rows = pg.locator("aside .view .steps li");
+    assert.equal(await pg.locator(".claim-view .view .chipbtn [data-status]").getAttribute("data-status"), "formal.review-pending");
+    const rows = pg.locator(".claim-view .view .steps li");
     assert.equal(await rows.count(), 2);
     assert.match(await rows.nth(1).textContent(), /Equation \(3\).*false as printed/s);
-    assert.equal(await pg.locator("aside .view .paper .finding").count(), 0, "the parent has no step finding");
+    assert.equal(await pg.locator(".claim-view .view .paper .finding").count(), 0, "the parent has no step finding");
     await rows.nth(1).locator("a").click();
     await pg.waitForFunction(() => decodeURIComponent(location.hash).endsWith("T:eq:bound-range"));
   });
@@ -3077,14 +3155,14 @@ for (const width of [1300, 390]) {
 for (const width of [1300, 390]) {
   await check("a proof step's cut context says where it was cut, in the reader and the review", width, async (pg) => {
     await toyClaim(pg, "T:eq:bound-range");
-    const whole = pg.locator("aside .view .paper .context");
+    const whole = pg.locator(".claim-view .view .paper .context");
     assert.equal(await whole.getAttribute("data-cut"), "whole");
     assert.equal((await whole.locator("summary").textContent()).trim(), "Its context in the proof");
     assert.equal(await whole.locator(".cut, .cut-end").count(), 0);
 
     await pg.goto(origin + `/cut-step/#/r/${TOY.release}/read/T/${encodeURIComponent("T:eq:bound-range")}`);
-    await pg.waitForSelector("aside h1");
-    const ctx = pg.locator("aside .view .paper .context");
+    await pg.waitForSelector(".claim-view h1");
+    const ctx = pg.locator(".claim-view .view .paper .context");
     assert.equal(await ctx.getAttribute("data-cut"), "cut");
     assert.equal((await ctx.locator("summary").textContent()).trim(), "Its context in the proof (cut)");
     await ctx.locator("summary").click();
@@ -3092,7 +3170,7 @@ for (const width of [1300, 390]) {
       "Cut at toy.tex:71. This shows the first 20000 of its 28000 characters; the context runs on to line 80. Read the rest in the paper.");
     assert.ok(await ctx.locator(".cut-end").isVisible(), "the text ends with a mark at the cut");
     assert.match(await ctx.locator(".tex").textContent(), /k = 1/, "the kept text is still shown");
-    assert.equal(await pg.locator("aside .view .chipbtn [data-status]").getAttribute("data-status"), "scope.proof-step", "the status is unchanged");
+    assert.equal(await pg.locator(".claim-view .view .chipbtn [data-status]").getAttribute("data-status"), "scope.proof-step", "the status is unchanged");
 
     // The review page shows the same cut before the reading is locked.
     await pg.goto(origin + `/cut-step/#/r/${TOY.release}/review?claim=T%3Aeq%3Abound-range`);
@@ -3106,9 +3184,9 @@ for (const width of [1300, 390]) {
 
     // Evidence that does not record where it was cut says only how much is shown.
     await pg.goto(origin + `/cut-step-old/#/r/${TOY.release}/read/T/${encodeURIComponent("T:eq:bound-range")}`);
-    await pg.waitForSelector("aside h1");
-    await pg.locator("aside .view .paper .context summary").click();
-    assert.equal(await pg.locator("aside .view .paper .context .cut").textContent(),
+    await pg.waitForSelector(".claim-view h1");
+    await pg.locator(".claim-view .view .paper .context summary").click();
+    assert.equal(await pg.locator(".claim-view .view .paper .context .cut").textContent(),
       "This shows only its first 20000 characters; the build does not record where it was cut. Read the rest in the paper.");
     assert.equal(await pg.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, "no horizontal scroll");
   });

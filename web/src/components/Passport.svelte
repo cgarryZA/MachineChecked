@@ -30,7 +30,7 @@
   // of the printed statement with its Lean (Comparison.svelte), which the review page shares.
   // Everything else (reviews, evidence, provenance) is in the audit details, which open above the
   // comparison like an inspection, the comparison staying where it is.
-  let { index, claimId, full = false, editable = false, comparison = false } = $props();
+  let { index, claimId, full = false, editable = false } = $props();
 
   let loaded = $state(null);
   // On a page with several projects, the claim as the chosen project (or the audit that maps it,
@@ -446,7 +446,7 @@
 {:else if !claim}
   <p class="muted">Loading…</p>
 {:else}
-  <article class="passport" class:full class:comparison={comparison || full} bind:this={article}>
+  <article class="passport" class:full bind:this={article}>
     <div class="view">
     <header>
       <h1>{claim.number || claim.id}{#if claim.heading}<span class="title">&nbsp;— <TexInline text={claim.heading} /></span>{/if}</h1>
