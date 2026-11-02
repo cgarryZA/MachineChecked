@@ -277,7 +277,9 @@ one docstring listing several, is reported by itself. In a full assessment, `mac
 changes --map` matches the claims of two releases' revisions of the paper and gives each
 disagreeing reference the later number the map names for it: one, several when the match is
 ambiguous, a proposal marked as one, or none for a removed claim
-([the version map](SOURCE_REGIONS.md#comparing-two-revisions-the-version-map)).
+([the version map](SOURCE_REGIONS.md#comparing-two-revisions-the-version-map)). Once an auditor
+keeps the map in a workspace (`changes --map --workspace ID --save`), `check`, the claim page and
+`compare` show that counterpart on every build of the later revision, and say who kept the map.
 
 A suggestion's cited number rests on the docstring's reference to it. A number of another work
 (`Theorem 2.1 of [Gauss]`), a section, or the start of a longer number (`Theorem 2.1.3`) is

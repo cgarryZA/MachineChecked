@@ -231,6 +231,34 @@ def apply(index: dict, chunks: dict, content: dict | None) -> tuple[dict, dict]:
     return index, chunks
 
 
+def with_kept_maps(content: dict | None, work_dir: Path, index: dict) -> dict | None:
+    """The content with each reference to a paper number that disagrees with its paper given its
+    counterpart in this version (`current`) through the version maps the auditors' workspaces
+    keep whose later side is this build (`version_map.kept_numbering`), its message saying whose
+    map gives it. A copy: the content stored with the evidence is never changed, and no status
+    reads it. `index` is the build's index (its release, papers and claims)."""
+    num = (content or {}).get("numbering")
+    if not num or not num.get("references"):
+        return content
+    from copy import deepcopy
+    from . import numbering as nb
+    from .version_map import kept_numbering
+    papers = index.get("papers") or []
+    out = None
+    for p in papers:
+        nmap = kept_numbering(work_dir, p.get("id"), index.get("release"), p.get("revision"))
+        if nmap is None:
+            continue
+        if out is None:
+            out = deepcopy(content)
+        refs = [o for o in out["numbering"]["references"] if nb.suspect(o)
+                and (o.get("attributed") == p["id"] or (len(papers) == 1 and
+                                                          not o.get("attributed")))]
+        claims = [c for c in index.get("claims") or [] if c.get("paper") == p["id"]]
+        nb.resolve(refs, nmap, nb.inventory(claims, True)["statements"])
+    return out if out is not None else content
+
+
 def write(data: Path, content: dict | None) -> None:
     if not content:
         return
