@@ -1,11 +1,11 @@
 <script>
   import { untrack } from "svelte";
-  import { loadQueue, loadClaim, canEdit, askReviewOrder } from "../lib/data.js";
+  import { loadQueue, loadClaim, canEdit, askReviewOrder, reviewWork, reviewStep } from "../lib/data.js";
   import { href, route, go, withQuery } from "../lib/route.svelte.js";
   import { VERDICTS, GROUPS, CHECKLIST, MARKS, STEP_VERDICTS, STEP_GROUPS, loadWork, saveWork, now, reviewerId,
-           needsDetail, buildReport, exportFile, ORDERS, ORDER_SEEN, orderedUnits, recordExposure, exposureOf,
-           holdsBack, COVERAGE_FOR, COVERAGE_CHOICES, BASIS_CHOICES, reportCorrespondence, draftCoverage,
-           coverageWords } from "../lib/review.js";
+           needsDetail, buildReport, exportFile, ORDERS, ORDER_EXPOSURE, byOrder, orderedUnits, recordExposure,
+           exposureOf, holdsBack, COVERAGE_FOR, COVERAGE_CHOICES, BASIS_CHOICES, reportCorrespondence,
+           draftCoverage, coverageWords } from "../lib/review.js";
   import Comparison from "./Comparison.svelte";
   import { comparisonInputs, pinScope } from "../lib/comparison.js";
 
@@ -28,20 +28,87 @@
     return () => { live = false; };
   });
 
-  // This browser's review workspace is the one of the project the page opens on. The site loads
-  // one index per page (App.svelte), so the project does not change while the page is open.
+  // The review work of the project the page opens on. The site loads one index per page
+  // (App.svelte), so the project does not change while the page is open. Under `machinechecked
+  // view` (`served`) the engine keeps the drafts, reports and exposure in the reviewer's
+  // workspace, the one `machinechecked review` continues, and makes every step with the command
+  // line's checks; this browser keeps only who is reviewing and the page's choices (paper, part,
+  // order, skipped units). A static copy of the site keeps all of it in this browser.
   const project = untrack(() => index.project?.name) || "project";
-  let work = $state(loadWork(project));
+  const served = untrack(() => canEdit(index));
+  let work = $state(served ? { ...loadWork(project), drafts: {}, reports: [], exposure: [] } : loadWork(project));
   let stored = $state(true);
-  function persist() { stored = saveWork(project, $state.snapshot(work)); }
+  const PAGE = ["reviewer", "selection", "order", "skipped", "exported"];
+  function persist() {
+    if (!served) { stored = saveWork(project, $state.snapshot(work)); return; }
+    const snap = $state.snapshot(work);
+    stored = saveWork(project, { ...loadWork(project), ...Object.fromEntries(PAGE.map((k) => [k, snap[k]])) });
+    queueEdit();
+  }
 
   // Who is reviewing: asked once, kept in this browser.
   let who = $state({ kind: "human", name: "", model: "", sameFamily: "no" });
   function setReviewer() {
     if (who.kind === "human" ? !who.name.trim() : !who.model.trim()) return;
-    work.reviewer = { ...who, sameFamily: who.kind === "human" ? "no" : who.sameFamily };
+    const r = { ...who, sameFamily: who.kind === "human" ? "no" : who.sameFamily };
+    // The id is fixed once, so that the engine finds the same workspace on another day.
+    work.reviewer = { ...r, id: reviewerId(r) };
     persist();
   }
+
+  // The engine's review service (`review_cli.api`). `shared` is the work as the engine last
+  // saved it; each step answers with it. Requests go one after another, so that what was typed
+  // is saved before the step that follows it.
+  let shared = $state(null);
+  let serviceError = $state(null);
+  let chain = Promise.resolve();
+  const me = () => [work.reviewer.id || reviewerId(work.reviewer), work.reviewer.kind === "model" ? work.reviewer.sameFamily || "unknown" : "no"];
+  function adopt(st) {
+    shared = { workspace: st.workspace, editable: st.editable };
+    // What is typed and not yet saved stays as typed.
+    const mine = pending && st.drafts[pending.unit];
+    if (mine && mine.stage === pending.stage) Object.assign(mine, pending.fields);
+    work.drafts = st.drafts; work.reports = st.reports; work.exposure = st.exposure;
+  }
+  function call(action, body = {}) {
+    const run = chain.then(() => reviewStep(...me(), action, body));
+    chain = run.catch(() => {});
+    return run.then((st) => { adopt(st); serviceError = null; return st; });
+  }
+  // A step the engine refused: its reason is shown, and the work is read again, since another
+  // window or a terminal may have moved the unit on.
+  async function act(action, body = {}) {
+    try { return await call(action, body); } catch (e) { serviceError = String(e?.message || e); await reload(); return null; }
+  }
+  async function reload() {
+    try { adopt(await reviewWork(...me())); } catch (e) { serviceError = String(e?.message || e); }
+  }
+  $effect(() => { if (served && work.reviewer && !shared) untrack(reload); });
+  // What was typed, saved shortly after typing stops: only the fields the unit's step may still
+  // change (`editable`, the engine's list). Moving to another unit saves it at once.
+  let editTimer = null;
+  let pending = null;
+  function sendEdit() {
+    clearTimeout(editTimer);
+    const body = pending;
+    pending = null;
+    if (!body) return;
+    const run = chain.then(() => reviewStep(...me(), "edit", body));
+    chain = run.catch(() => {});
+    run.then(() => { serviceError = null; }, (e) => { serviceError = String(e?.message || e); reload(); });
+  }
+  function queueEdit() {
+    const u = current, d = draft;
+    const fields = shared?.editable?.[d?.stage];
+    if (pending && (pending.unit !== u?.id || pending.stage !== d?.stage)) sendEdit();
+    if (!u || !d || !fields) return;
+    const snap = $state.snapshot(d);
+    pending = { unit: u.id, stage: d.stage, fields: Object.fromEntries(fields.filter((k) => k in snap).map((k) => [k, snap[k] ?? null])) };
+    clearTimeout(editTimer);
+    editTimer = setTimeout(sendEdit, 400);
+  }
+  // A step about to be sent carries what was typed for it.
+  function settle() { clearTimeout(editTimer); pending = null; }
 
   // What to review: a paper, then a section of statements or a group of definitions.
   let paper = $state(route.target ? "all" : work.selection?.paper || "all");
@@ -72,7 +139,10 @@
     fetching = true; orderError = null;
     try {
       const got = await askReviewOrder("informed");
-      if (recordExposure(work, got.drawn, now())) persist();
+      // Recorded before the order is shown: in the reviewer's workspace when the engine keeps
+      // the work, else in this browser.
+      if (served) { if (got.drawn.length) await call("expose", { claims: got.drawn, what: ["prior interpretations"], how: ORDER_EXPOSURE }); }
+      else if (recordExposure(work, got.drawn, now())) persist();
       informed = got;
     } catch (e) {
       orderError = String(e?.message || e);
@@ -107,17 +177,42 @@
   const doneBefore = $derived(selected.filter((u) => u.state === "reviewed").length);
   const unexported = $derived(work.reports.length - (work.exported || 0));
 
-  // The card's draft, kept as it is typed.
+  // The card's draft, kept as it is typed. Opened from a claim's page (**Review it**), the
+  // claim's Lean was shown before the reading: that is recorded first.
+  const READER_SEEN = "the claim's page in the reader";
+  const begun = new Set();
+  let seenOf = $state({});
   $effect(() => {
     if (!current) return;
+    const seenHere = route.readerSeen && current.claims.some((c) => c.id === route.target);
+    if (served) {
+      const u = current, d = work.drafts[u.id];
+      if (!shared || begun.has(u.id) || (d && d.stage !== "read")) return;
+      begun.add(u.id);
+      untrack(async () => {
+        if (seenHere && !(await act("expose", { claims: [route.target], what: ["Lean"], how: READER_SEEN }))) return;
+        const st = await act("begin", { unit: u.id });
+        if (st) seenOf[u.id] = st.seen_before;
+      });
+      return;
+    }
     if (!work.drafts[current.id]) work.drafts[current.id] = { stage: "read", reading: "" };
     const d = work.drafts[current.id];
-    if (d.stage === "read" && !d.reader_exposure && route.readerSeen && current.claims.some((c) => c.id === route.target)) {
+    if (d.stage === "read" && !d.reader_exposure && seenHere) {
       d.reader_exposure = true;
       persist();
     }
   });
   const draft = $derived(current ? work.drafts[current.id] || null : null);
+  // A verdict recorded in a terminal: the author's review is shown once the engine has recorded
+  // that it is (`review author`), as the command line does.
+  const shownFor = new Set();
+  $effect(() => {
+    if (!served || !current || draft?.stage !== "author" || draft.author_shown_at || shownFor.has(current.id)) return;
+    shownFor.add(current.id);
+    const id = current.id;
+    untrack(() => act("author", { unit: id }));
+  });
 
   // What the card shows, loaded when it changes.
   let claims = $state([]);
@@ -133,7 +228,9 @@
   // clause, a linked claim's declarations, a proof step's links, or a definition of its own).
   const inputs = $derived.by(() => {
     if (!current || !draft) return null;
-    const mode = draft.stage === "read" ? "read" : draft.stage === "compare" ? "compare" : "after";
+    // Under `machinechecked view`, what people recorded is drawn once the engine has recorded
+    // that the author's review is shown.
+    const mode = draft.stage === "read" ? "read" : draft.stage === "compare" || (served && !draft.author_shown_at) ? "compare" : "after";
     if (current.kind === "def") return comparisonInputs(mode, [], { decls: mode === "read" ? [] : [{ name: current.name, key: current.key }] });
     const only = current.kind === "spec" ? [current.name] : current.kind === "link" ? current.lean || null : null;
     return comparisonInputs(mode, claims, { only });
@@ -160,8 +257,11 @@
     }
     return out;
   }
-  const seenBefore = $derived(current && draft?.stage === "read" ? revealedBy(current) : []);
-  const seenText = (s) => s.unit === ORDER_SEEN ? "prior interpretations of its claims (through the informed order)"
+  // What the engine says this reviewer had seen, under `machinechecked view`; else what this
+  // browser recorded.
+  const seenBefore = $derived(current && draft?.stage === "read"
+    ? (served ? seenOf[current.id] || [] : revealedBy(current)) : []);
+  const seenText = (s) => byOrder(s) ? "prior interpretations of its claims (through the informed order)"
     : `the ${s.what} of this unit (in ${s.unit})`;
   // The reason the card gives: the order's own, unless the informed order's would show prior
   // interpretations before the verdict of a reading locked without them (`holdsBack`).
@@ -172,6 +272,7 @@
 
   function lockReading() {
     if ((draft.reading || "").trim().length < 20) return;
+    if (served) { settle(); act("lock", { unit: current.id, reading: draft.reading }); return; }
     draft.revealed_by = revealedBy(current);
     // The passages read are those of this release: the report pins their digests.
     draft.source_sha256 = current.source_sha256 || null;
@@ -209,6 +310,15 @@
   }
   function decide() {
     if (!canDecide) return;
+    if (served) {
+      // The engine pins the bridge's target and checks that the Lean drawn here is the build's.
+      settle();
+      const d = $state.snapshot(draft);
+      act("decide", { unit: current.id, verdict: d.verdict, comparison: d.comparison, detail: d.detail || "",
+        witness: d.witness || "", checklist: d.checklist || {}, coverage: current.kind !== "step" ? draftCoverage(d) : null,
+        shown: { fingerprint: current.fingerprint || null, fingerprints: current.fingerprints || null }, show_author: true });
+      return;
+    }
     if (current.kind !== "step") {
       const given = draftCoverage(draft);
       if (given.bridge) given.bridge = { ...given.bridge, target_fingerprint: targetPin(given.bridge) };
@@ -216,8 +326,17 @@
     }
     draft.decided_at = now(); draft.stage = "author"; draft.author_shown_at = now(); persist();
   }
-  function saveReport() {
+  async function saveReport() {
     const unitId = current.id;
+    if (served) {
+      settle();
+      const st = await act("submit", { unit: unitId, disagreements: draft.disagreements || "none" });
+      if (!st) return;
+      work.skipped = work.skipped.filter((id) => id !== unitId);
+      lastIssue = st.report.issue_draft;
+      persist();
+      return;
+    }
     const r = buildReport({ index, unit: current, draft: $state.snapshot(draft), reviewer: work.reviewer });
     work.reports.push(r);
     work.skipped = work.skipped.filter((id) => id !== unitId);
@@ -230,7 +349,17 @@
     else work.skipped = [...work.skipped.filter((id) => id !== current.id), current.id];
     persist();
   }
-  function undo() {
+  async function undo() {
+    if (served) {
+      if (!work.reports.length) return;
+      settle();
+      if (await act("undo")) {
+        work.exported = Math.min(work.exported || 0, work.reports.length);
+        lastIssue = null;
+        persist();
+      }
+      return;
+    }
     const r = work.reports.pop();
     if (!r) return;
     work.drafts[r.unit.id] = {
@@ -300,12 +429,25 @@
       <span class="progress">
         {savedHere} saved · {skippedHere.length} skipped · {fresh.length} to review{doneBefore ? ` · ${doneBefore} already independently reviewed` : ""}
       </span>
-      <span class="who faint" title="self-declared">{reviewerId(work.reviewer)}</span>
+      <span class="who faint" title="self-declared">{work.reviewer.id || reviewerId(work.reviewer)}</span>
       <button class="btn ghost" disabled={!work.reports.length} onclick={undo}>Undo last</button>
       <button class="btn" disabled={!work.reports.length} onclick={doExport}>Export reports{unexported > 0 ? ` (${unexported} new)` : ""}</button>
     </div>
+    {#if served && shared}
+      <p class="faint small" data-workspace={shared.workspace.id}>Your work is saved in your workspace {shared.workspace.id}, which
+        <code>machinechecked review --as {me()[0]}</code> continues in a terminal.</p>
+      {#if shared.workspace.mode === "informed"}
+        <p class="warn" role="status">This workspace is an informed investigation: you have seen the Lean and earlier
+          interpretations, so its reports record that their readings were not blind.</p>
+      {/if}
+    {/if}
+    {#if serviceError}
+      <p class="warn" role="alert">{serviceError}</p>
+    {/if}
     {#if unexported > 0 || !stored}
-      <p class="warn" role="status">{!stored ? "Browser storage unavailable. Export after every report." : `${unexported} report(s) saved in this browser. Export to keep a copy.`}</p>
+      <p class="warn" role="status">{!stored && !served ? "Browser storage unavailable. Export after every report."
+        : served ? `${unexported} report(s) not yet exported. Export them for the maintainer.`
+        : `${unexported} report(s) saved in this browser. Export to keep a copy.`}</p>
     {/if}
     {#if asking}
       <section class="card ask" aria-labelledby="informed-title">
@@ -344,6 +486,8 @@
 
     {#if order === "informed" && !informed && !orderError}
       <p class="muted">Loading the informed order…</p>
+    {:else if served && !shared}
+      <p class="muted">Loading your review work…</p>
     {:else if !current}
       <section class="card"><p>Review complete for this selection.</p></section>
     {:else if !draft}
@@ -375,7 +519,7 @@
           <p class="small">{#each claims as c, i (c.id)}{i ? " · " : ""}<a href={href(index.release, "read", c.paper, c.id)} target="_blank" rel="noopener" title="Opens the paper and Lean reader">Open {c.number || c.id} in the paper ↗</a>{/each}</p>
         {/if}
 
-        <h3 id="reading-label">Your reading{draft.stage !== "read" ? " (locked " + draft.locked_at + ")" : ""}</h3>
+        <h3 id="reading-label">Your reading{draft.stage === "read" ? "" : draft.locked_at ? " (locked " + draft.locked_at + ")" : " (not recorded)"}</h3>
         {#if draft.stage === "read"}
           {#if seenBefore.length}
             <p class="warn">You have already seen {seenBefore.map(seenText).join(" and ")}. The report records this prior exposure.</p>
@@ -474,12 +618,16 @@
             <p class="small"><strong>Your verdict:</strong> {draft.verdict}{draft.detail ? " — " + draft.detail : ""} <span class="faint">(recorded {draft.decided_at})</span></p>
             {#if coverageWords(draft.correspondence)}<p class="small"><strong>Your coverage:</strong> {coverageWords(draft.correspondence)}</p>{/if}
             <h3>The author's review</h3>
-            {#each current.author_review as r}
-              <p class="lbl">{r.by}{r.file ? " · " + r.file + (r.line ? ":" + r.line : "") : ""}</p>
-              <pre class="author">{r.text || "No text was written with this review marker."}</pre>
+            {#if served && !draft.author_shown_at}
+              <p class="muted">Loading…</p>
             {:else}
-              <p class="faint">No review by the author is recorded for this unit.</p>
-            {/each}
+              {#each current.author_review as r}
+                <p class="lbl">{r.by}{r.file ? " · " + r.file + (r.line ? ":" + r.line : "") : ""}</p>
+                <pre class="author">{r.text || "No text was written with this review marker."}</pre>
+              {:else}
+                <p class="faint">No review by the author is recorded for this unit.</p>
+              {/each}
+            {/if}
             <label for="author-response">Response to the author’s review</label>
             <textarea id="author-response" rows="3" bind:value={draft.disagreements} oninput={persist} placeholder="Where you disagree with the author's review, or where it claims more than the Lean shows (or “none”). Your verdict stays as recorded."></textarea>
             <div class="row">

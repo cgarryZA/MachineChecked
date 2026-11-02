@@ -3379,6 +3379,21 @@ await check("a static copy of the reader offers no proof reading", 1300, async (
     return r.stdout ? JSON.parse(r.stdout) : null;
   };
   const claimUrl = `http://127.0.0.1:${port}/#/r/${TOY.release}/claim/${encodeURIComponent("T:thm:even-add")}`;
+  // A reviewer's review work as the engine keeps it (`review_cli.Session.state`), and steps made
+  // as `machinechecked review` makes them (`s` is that reviewer's session), answering with the work.
+  const REVIEW_SESSION = String.raw`
+import json, sys
+from pathlib import Path
+from prooflens import review_cli as rc
+work = Path(sys.argv[1])
+s = rc.Session(work, rc.parse_reviewer(sys.argv[2]), data_dir=work.parent / "toyws" / "data")
+`;
+  const reviewSteps = (who, steps) => {
+    const r = spawnSync(process.env.PYTHON || "python3", ["-c", REVIEW_SESSION + steps + "\nprint(json.dumps(rc.Session(work, s.reviewer, data_dir=s.data).state()))", work, who], { encoding: "utf8" });
+    if (r.status !== 0) throw new Error(r.stderr);
+    return JSON.parse(r.stdout);
+  };
+  const reviewState = (who) => reviewSteps(who, "");
   try {
     await check("an investigation started in the reader is resumed and edited from the terminal", 1300, async (pg) => {
       await pg.goto(claimUrl);
@@ -3723,14 +3738,24 @@ print(json.dumps(order_route(work, data)({"order": ["informed"]})))`);
       assert.ok(expected.drawn.includes("T:prop:pred") && expected.drawn.includes("T:cor:even-triangle"));
       assert.notDeepEqual(expected.units.map((u) => u.id), queue.units.filter((u) => u.state !== "reviewed").map((u) => u.id));
       const saved = () => pg.evaluate((k) => JSON.parse(localStorage.getItem(k) || "{}"), REVIEW_KEY);
+      // The page keeps the reviewer's work in their workspace, through the engine's review
+      // service: `shared()` is that work as the engine has it.
+      const shared = () => reviewState("human:Synthetic-reviewer");
+      // A reading locked in a terminal before the informed order is chosen (at a time well before
+      // it: times are kept to the second, and one in the same second counts as before the lock);
+      // its verdict is not yet recorded.
+      reviewSteps("human:Synthetic-reviewer", String.raw`
+s.read("spec:Toy.PaperSpec.prop_pred")
+s.lock("spec:Toy.PaperSpec.prop_pred", "A reading locked before the informed order.")
+s.work["drafts"]["spec:Toy.PaperSpec.prop_pred"]["locked_at"] = "2026-01-01T00:00:00Z"
+s.save()`);
       await pg.goto(`http://127.0.0.1:${port}/#/r/${TOY.release}/review`);
-      // A reading locked before the informed order is chosen; its verdict is not yet recorded.
-      await pg.evaluate(([k, id]) => localStorage.setItem(k, JSON.stringify({ reviewer: { kind: "human", name: "Synthetic reviewer" },
-        drafts: { [id]: { stage: "compare", reading: "A reading locked before the informed order.", locked_at: "2026-01-01T00:00:00Z", revealed_by: [] } } })), [REVIEW_KEY, locked]);
+      await pg.evaluate((k) => localStorage.setItem(k, JSON.stringify({ reviewer: { kind: "human", name: "Synthetic reviewer" } })), REVIEW_KEY);
       const asked = [];
       pg.on("request", (r) => { if (r.url().includes("/api/review-order")) asked.push(r.url()); });
       await pg.reload();
       await whyIs(pg, `Statement · ${byId[locked].reason}`);
+      assert.match(await pg.locator(".review .locked").textContent(), /A reading locked before the informed order\./);
       const order = pg.getByRole("combobox", { name: "Order", exact: true });
       assert.equal(await order.locator("option[value=informed]").evaluate((o) => o.disabled), false, "the local server offers it");
       // Choosing it asks first; nothing is fetched or recorded until the reviewer agrees.
@@ -3742,13 +3767,12 @@ print(json.dumps(order_route(work, data)({"order": ["informed"]})))`);
       await ask.getByRole("button", { name: "Keep the priority order" }).click();
       assert.equal(await ask.count(), 0);
       assert.deepEqual(asked, []);
-      assert.deepEqual((await saved()).exposure || [], []);
+      assert.deepEqual(shared().exposure, []);
       await order.selectOption("informed");
       await ask.getByRole("button", { name: "Use the informed order" }).click();
       await pg.locator(".review [role=status]", { hasText: "draws on the workspaces' records" }).waitFor();
-      let work = await saved();
-      assert.equal(work.order, "informed");
-      assert.deepEqual(work.exposure.map((e) => [e.what, e.claims, e.how]),
+      assert.equal((await saved()).order, "informed");
+      assert.deepEqual(shared().exposure.map((e) => [e.what, e.claims, e.how]),
                        [[["prior interpretations"], [...expected.drawn].sort(), "interpretation-informed review order"]]);
       // The reading locked without it: its card keeps the queue's reason until the verdict.
       await whyIs(pg, `Statement · ${byId[locked].reason} · the informed order's reason for it is shown after your verdict`);
@@ -3758,18 +3782,20 @@ print(json.dumps(order_route(work, data)({"order": ["informed"]})))`);
       await pg.getByRole("button", { name: "Record verdict and show the author's review" }).click();
       await whyIs(pg, `Statement · ${expected.units[0].reason}`);
       await pg.getByRole("button", { name: "Save report", exact: true }).click();
-      assert.deepEqual((await saved()).reports[0].reading.revealed_by, [], "that reading was blind");
+      assert.ok(await until(() => shared().reports.length === 1, 8000), "the report is saved in the workspace");
+      assert.deepEqual(shared().reports[0].reading.revealed_by, [], "that reading was blind");
       // The next units come in the engine's informed order, with its reasons; a reading of a claim
       // the order drew on is recorded as not blind.
       const next = expected.units[1];
       assert.match(next.reason, /^An open question is recorded; /);
       await whyIs(pg, `${kindWord(byId[next.id])} · ${next.reason}`);
-      assert.match(await pg.locator(".review .unit .warn").textContent(), /prior interpretations of its claims \(through the informed order\)/);
+      await pg.locator(".review .unit .warn", { hasText: "prior interpretations of its claims (through the informed order)" }).waitFor();
       await pg.getByRole("textbox", { name: "Your reading", exact: true }).fill("A reading made after choosing the informed order.");
       await pg.getByRole("button", { name: "Lock my reading and show the Lean" }).click();
       await whyIs(pg, `${kindWord(byId[next.id])} · ${next.reason}`);
-      work = await saved();
-      assert.deepEqual(work.drafts[next.id].revealed_by, [{ unit: "review page (interpretation-informed review order)", what: "author's review" }]);
+      assert.ok(await until(() => shared().drafts[next.id]?.stage === "compare", 8000), "the reading is locked in the workspace");
+      const wid = shared().workspace.id;
+      assert.deepEqual(shared().drafts[next.id].revealed_by, [{ unit: `workspace ${wid} (interpretation-informed review order)`, what: "author's review" }]);
       await pg.getByRole("button", { name: "Skip", exact: true }).click();
       for (const u of expected.units.slice(2, 5)) {
         await whyIs(pg, `${kindWord(byId[u.id])} · ${u.reason}`);
@@ -3779,7 +3805,76 @@ print(json.dumps(order_route(work, data)({"order": ["informed"]})))`);
       await pg.reload();
       await pg.locator(".review [role=status]", { hasText: "draws on the workspaces' records" }).waitFor();
       assert.equal(await order.inputValue(), "informed");
-      assert.equal((await saved()).exposure.length, 1);
+      assert.equal(shared().exposure.length, 1);
+    });
+
+    // #122: one review, begun in the reader and continued in a terminal, and the other way
+    // round, under the engine's own local server: the same draft, pins, exposure and verdict.
+    await check("a review begun in the reader is continued in a terminal, and the other way round", 1300, async (pg) => {
+      const who = "human:Resume-reviewer";
+      const state = () => reviewState(who);
+      const queue = JSON.parse(fs.readFileSync(path.join(root, "toyws", "data", "review-queue.json"), "utf8"));
+      const unit = queue.units.find((u) => u.claims.some((c) => c.id === "T:thm:even-add"));
+      // Opened from the claim's page: its Lean was shown before the reading.
+      await pg.goto(`http://127.0.0.1:${port}/#/r/${TOY.release}/read/T/T%3Athm%3Aeven-add`);
+      await pg.getByRole("button", { name: "More", exact: true }).click();
+      await pg.getByRole("link", { name: "Review it", exact: true }).click();
+      // The claim page's investigation asks for a name too: this is the review page's.
+      const setup = pg.locator("main.review .setup");
+      await setup.getByRole("textbox", { name: "Your name" }).fill("Resume reviewer");
+      await setup.getByRole("button", { name: "Start", exact: true }).click();
+      await pg.locator(".review .unit .warn", { hasText: "prior exposure" }).waitFor();
+      const reading = "Every pair of even natural numbers has an even sum, read in the reader.";
+      await pg.getByRole("textbox", { name: "Your reading", exact: true }).fill(reading);
+      // What is typed is saved in the workspace before it is locked.
+      assert.ok(await until(() => state().drafts[unit.id]?.reading === reading, 8000), "the typed reading is saved");
+      await pg.getByRole("button", { name: "Lock my reading and show the Lean" }).click();
+      assert.ok(await until(() => state().drafts[unit.id]?.stage === "compare", 8000), "the reading is locked");
+      // The terminal continues it: the Lean, then the verdict.
+      const after = reviewSteps(who, String.raw`
+u = "${unit.id}"
+s.show(u)
+s.decide(u, "faithful", "Compared in the terminal: the same quantifiers.", coverage={"coverage": "full", "basis": "direct"})`);
+      const d = after.drafts[unit.id];
+      assert.equal(d.reading, reading);
+      assert.deepEqual(d.source_sha256, unit.source_sha256 ?? null);
+      // Back in the reader: the terminal's verdict, then the author's review, recorded as shown.
+      await pg.reload();
+      await pg.locator(".review .unit", { hasText: "Your verdict: faithful" }).waitFor();
+      assert.match(await pg.locator(".review .unit").textContent(), /Your coverage: Every clause/);
+      assert.ok(await until(() => !!state().drafts[unit.id].author_shown_at, 8000), "the engine recorded that the author's review was shown");
+      await pg.waitForFunction(() => ![...document.querySelectorAll(".review .unit p.muted")].some((x) => x.textContent === "Loading…"));
+      await pg.getByRole("textbox", { name: "Response to the author’s review" }).fill("none");
+      await pg.getByRole("button", { name: "Save report", exact: true }).click();
+      assert.ok(await until(() => state().reports.length === 1, 8000), "the report is saved");
+      const r = state().reports[0];
+      assert.equal(r.reading.text, reading);
+      assert.equal(r.verdict.value, "faithful");
+      assert.equal(r.comparison.text, "Compared in the terminal: the same quantifiers.");
+      assert.deepEqual(r.correspondence, { coverage: "full", basis: "direct" });
+      assert.deepEqual(r.reading.revealed_by.map((s) => s.what), ["Lean"], "the claim's page showed its Lean");
+      assert.match(r.reading.revealed_by[0].unit, /\(the claim's page in the reader\)$/);
+      // The other way round: a reading locked in the terminal is finished in the reader. The
+      // page offers the queue's first open unit.
+      const second = queue.units.find((u) => u.state !== "reviewed" && u.id !== unit.id);
+      const begun = reviewSteps(who, String.raw`
+u = "${second.id}"
+s.read(u)
+s.lock(u, "A reading of the second unit, locked in the terminal.")`);
+      assert.equal(begun.drafts[second.id].stage, "compare");
+      await pg.goto(`http://127.0.0.1:${port}/#/r/${TOY.release}/review`);
+      await pg.locator(".review .locked", { hasText: "A reading of the second unit, locked in the terminal." }).waitFor();
+      await pg.getByRole("textbox", { name: "Comparison", exact: true }).fill("Compared in the reader.");
+      await pg.getByRole("button", { name: "Matches the paper", exact: true }).click();
+      await pg.getByRole("radio", { name: "Faithful", exact: true }).check();
+      await pg.getByRole("button", { name: "Record verdict and show the author's review" }).click();
+      assert.ok(await until(() => state().drafts[second.id]?.stage === "author" && !!state().drafts[second.id].author_shown_at, 8000));
+      const done = reviewSteps(who, String.raw`
+r = s.submit("${second.id}", "none")`);
+      const r2 = done.reports.find((x) => x.unit.id === second.id);
+      assert.equal(r2.comparison.text, "Compared in the reader.");
+      assert.equal(r2.reading.text, "A reading of the second unit, locked in the terminal.");
+      assert.ok(r2.reading.locked_at <= r2.comparison.decided_at && r2.comparison.decided_at <= r2.author_review.shown_at);
     });
   } finally { py.kill(); }
 }

@@ -43,6 +43,29 @@ work is kept in your workspace in the project's working directory (`review-work/
 In zero configuration, export into `machinechecked-reviews/` to publish the reports with the
 audit.
 
+**One review, in the browser or the terminal.** Under `machinechecked view`, the review page
+keeps your work in the same workspace and makes each step through the same checks: the drafts,
+the locked readings, the verdicts, the reports and what you had seen are those `machinechecked
+review` reads. Begin a unit on the page and continue it in a terminal with `--as` naming you as
+the page does (`human:Ada-Lovelace` for the name *Ada Lovelace*), or the other way round: the
+page shows the unit at the step the terminal left it, and a verdict recorded in the terminal is
+followed on the page by the author's review. What you type on the page is saved as you type. A
+static copy of the site (an audit, a bundle) keeps the page's work in the browser instead.
+
+The page and the commands without `--workspace` or `--mode` use your first workspace
+(`review-work/<reviewer>.json`). `--workspace ID` names another of yours (`workspace list` gives
+the ids), and `--mode informed` or `--mode independent` your workspace of that mode, opening one
+if you have none. A workspace's mode is chosen when it is opened; `review` never changes it
+(a `mode` operation of `workspace update` does, and keeps what you had seen).
+
+A step is refused, with what to do instead, when it comes before the one it follows, when the
+unit is not in the queue of the last build (your draft of it is kept), when the build changed
+the unit's Lean since it was shown to you (look at it again, then record the verdict), or when
+another window or terminal changed the unit's draft meanwhile (nothing is saved; look at it
+again and repeat the step). With `--json`, a refused step prints `{"ok": false, "error": {"kind",
+"message"}}`, with `kind` one of `order`, `unknown-unit`, `stale`, `conflict`, `reported`,
+`invalid`, `workspace` and `no-build`, and exits 2.
+
 `read` gives every passage of the unit in full: a statement stated in several places, or a
 definition used by many claims, is read in all of them. Each passage says where it is, where its
 text comes from (the LaTeX source, or text extracted from the PDF) and whether its position is
@@ -63,6 +86,25 @@ claim's passage, its linked statements, its definitions and everything recorded 
 inspection: someone who has used it on a claim has seen its Lean and its interpretations, and a
 later review of that claim is not blind. Say so in the reading, and record it in your
 workspace (an `exposure` operation, below) so that the report lists it.
+
+An informed investigation can also report through the review steps, in an informed workspace:
+
+```sh
+machinechecked review show UNIT --mode informed      # the Lean, with no reading locked first
+machinechecked review lock UNIT reading.md --mode informed    # optional: your reading
+machinechecked review decide UNIT VERDICT comparison.md --mode informed
+machinechecked review author UNIT --mode informed
+machinechecked review submit UNIT none.md --mode informed
+```
+
+No step is locked: the workspace records that you have seen the Lean and the earlier
+interpretations of every claim. A reading is kept only when you record one, with the time you
+recorded it, until the verdict; the verdict and the comparison may be recorded again until the
+report is submitted, which needs a verdict. The report says `"mode": "informed"` and lists the
+workspace's exposure in `reading.revealed_by`, so it counts as informed, never independent.
+`review promote` applies its usual rules: a report with no reading, or with steps out of order,
+is refused; one with a reading recorded before its verdict, and the author's review shown after
+it, is refused as not blind unless the maintainer passes `--allow-revealed`.
 
 ## Review order
 
@@ -119,8 +161,8 @@ On the review page, **Order** offers the same three: *Priority*, *Paper order* a
 with the reasons the command line gives. The build writes the first two into the queue, so every
 copy of the site has them. The informed order reads the auditors' workspaces, so `machinechecked
 view` offers it. Choosing it first says what it uses; once you accept, the page records in your
-browser that you have seen prior interpretations of the claims it draws on, and only then shows
-the order. A reading of those claims that you lock afterwards lists *review page
+workspace that you have seen prior interpretations of the claims it draws on, and only then shows
+the order. A reading of those claims that you lock afterwards lists *workspace ID
 (interpretation-informed review order)* in `reading.revealed_by`. A reading you locked before
 choosing it keeps the queue's reason on its card until you record its verdict, since the
 protocol shows interpretations only after the verdict. The page keeps your choice of order, as
@@ -506,9 +548,12 @@ Theorem 2.5: false as printed”).
 
 The reviewer supplies their name or model identity, and the report records it as **self-declared**.
 
-Drafts are saved in this browser’s local storage. **Export reports regularly** to keep a durable
-copy and share your work. The JSON contains your interpretation, comparison, verdict, source
-revision, Lean fingerprints and reviewer attribution.
+Under `machinechecked view`, drafts and reports are saved in your workspace in the project's
+working directory, which `machinechecked review` continues; on a static copy of the site they are
+saved in this browser's local storage. **Export reports** to share your work with the
+maintainer. The JSON contains your interpretation, comparison, verdict, source revision, the
+Lean fingerprints the verdict was recorded against, the mode of the review and reviewer
+attribution.
 
 The maintainer reads the report and decides whether to promote its review markers.
 

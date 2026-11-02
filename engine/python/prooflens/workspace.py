@@ -207,10 +207,11 @@ def find(work_dir: Path, wid: str) -> Path:
 
 
 def open_for(work_dir: Path, reviewer: dict, mode: str | None = None, wid: str | None = None,
-             sources: dict | None = None, selection: dict | None = None) -> Path:
+             sources: dict | None = None, selection: dict | None = None,
+             flag: str = "--id") -> Path:
     """The workspace to continue: the one named, else this reviewer's (of the mode asked, if
     one is), else a new one. A reviewer's first workspace is the file the review protocol
-    already used (`review-work/<reviewer>.json`)."""
+    already used (`review-work/<reviewer>.json`). `flag` is the option that names one."""
     if wid:
         p = find(work_dir, wid)
         ws = read(p)
@@ -224,7 +225,7 @@ def open_for(work_dir: Path, reviewer: dict, mode: str | None = None, wid: str |
     if len(mine) == 1:
         return mine[0][0]
     if len(mine) > 1:
-        raise WorkspaceError("this reviewer has several workspaces; choose one with --id: "
+        raise WorkspaceError(f"this reviewer has several workspaces; choose one with {flag}: "
                              + ", ".join(f"{ws['id']} ({ws['mode']})" for _, ws in mine))
     default = store(work_dir) / f"{reviewer_slug(reviewer.get('id') or 'reviewer')}.json"
     ws = new(reviewer, mode or "independent", sources, selection)
@@ -1053,6 +1054,44 @@ def save_review(path: Path, review: dict, reviewer: dict | None = None) -> None:
         _write(path, ws)
 
 
+class DraftChanged(WorkspaceError):
+    """A review draft that changed on disk since it was read; `current` is the saved one."""
+
+    def __init__(self, uid: str, current: dict | None):
+        super().__init__(f"{uid} was changed meanwhile")
+        self.current = current
+
+
+def save_review_unit(path: Path, uid: str, before: dict | None, after: dict | None,
+                     reviewer: dict | None = None, add: dict | None = None,
+                     remove: dict | None = None) -> None:
+    """Save one unit's review draft (`after`; None once it is submitted), with a report
+    submitted (`add`) or taken back (`remove`), leaving the rest of the workspace as it is on
+    disk: a browser and a terminal can work on different units of one workspace. Nothing is
+    written, and DraftChanged is raised, when the saved draft is no longer `before`."""
+    with _locked(path):
+        ws = read(path) if path.exists() else new(reviewer or {}, "independent")
+        if reviewer and not ws.get("reviewer"):
+            ws["reviewer"] = reviewer
+        rv = ws.setdefault("review", {"drafts": {}, "reports": []})
+        drafts = rv.setdefault("drafts", {})
+        if drafts.get(uid) != before:
+            raise DraftChanged(uid, drafts.get(uid))
+        if after is None:
+            drafts.pop(uid, None)
+        else:
+            drafts[uid] = after
+        reports = rv.setdefault("reports", [])
+        if remove is not None:
+            if remove not in reports:
+                raise DraftChanged(uid, drafts.get(uid))
+            reports.remove(remove)
+        if add is not None:
+            reports.append(add)
+        ws["revision"] = ws.get("revision", 0) + 1
+        _write(path, ws)
+
+
 # -- reading it back -----------------------------------------------------------------------
 
 def current_findings(ws: dict) -> list[dict]:
@@ -1325,10 +1364,12 @@ def api(work_dir: Path, data_dir: Path, root: Path | None = None) -> tuple[dict,
     proof, as `compare --query proof-facts` gives them); POST `/api/workspace` with `action`
     `open` (`reviewer`, `mode`, `id`), `update` (`id`, `ops`, `op_id`, `base` ignored), `import`
     (`data`) or `suggest` (`id`, `claim`, `requirement`: attach the passages
-    `requirements.suggest` proposes, as proposals); and GET `/api/review-order?order=informed`,
-    the review queue in the order that uses the workspaces' records (`review_cli.order_route`).
-    They call the functions the command line calls."""
+    `requirements.suggest` proposes, as proposals); GET `/api/review-order?order=informed`,
+    the review queue in the order that uses the workspaces' records (`review_cli.order_route`);
+    and GET and POST `/api/review`, the review protocol's steps on the reviewer's workspace
+    (`review_cli.api`). They call the functions the command line calls."""
     from .review_cli import ReviewError, order_route, parse_reviewer
+    from .review_cli import api as review_api
     from .targets import Snapshot, TargetError
 
     def snap():
@@ -1403,4 +1444,5 @@ def api(work_dir: Path, data_dir: Path, root: Path | None = None) -> tuple[dict,
            "/api/workspace/revision": revision,
            "/api/workspace/export": lambda q: export(find(work_dir, (q.get("id") or [""])[0])),
            "/api/review-order": order_route(work_dir, data_dir)}
-    return get, {"/api/workspace": post}
+    review_get, review_post = review_api(work_dir, data_dir)
+    return {**get, **review_get}, {"/api/workspace": post, **review_post}

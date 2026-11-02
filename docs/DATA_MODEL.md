@@ -89,7 +89,12 @@ project's `machinechecked-reviews/` folder.
 
 A review report (`prooflens/review-report@1`) pins the same digests as `pins.source_sha256`
 (claim id to digest), taken when the reading is locked; `review promote` refuses a report whose
-digests are missing or differ from the current ones.
+digests are missing or differ from the current ones. Its Lean pins (`fingerprint`,
+`fingerprints`, `legacy_hash`) are those of the unit when the verdict was recorded. Its `mode`
+is `independent` (the three steps, each locked) or `informed` (made in an informed workspace: no
+step is locked, `reading.text` is empty and `reading.locked_at` null when the reviewer recorded
+no reading, and `reading.revealed_by` lists the workspace's exposure); a report without `mode`
+was made before it was recorded, by the independent steps.
 
 A report's `correspondence` is the coverage its reviewer recorded with the verdict (at
 `comparison.decided_at`), or `null`; an older report has none, and its coverage is not recorded.
@@ -720,8 +725,9 @@ version, and, given a listing's `version`, refuses an audit that pins another on
 An auditor's saved investigation: `<work dir>/review-work/<file>.json` (Git ignores the working
 directory). The file's name is not its identity; `id` is. `engine/python/prooflens/workspace.py`
 reads and writes it for `machinechecked workspace`, for the reader under `machinechecked view`
-(`/api/workspace…` on the loopback server) and for `machinechecked review`, with one validation
-path. A workspace records evidence and readings and is never an input to a status.
+(`/api/workspace…` on the loopback server; the review page's steps through `/api/review`, which
+calls the session `machinechecked review` uses) and for `machinechecked review`, with one
+validation path. A workspace records evidence and readings and is never an input to a status.
 
 | Field | Content |
 |---|---|
@@ -734,7 +740,7 @@ path. A workspace records evidence and readings and is never an input to a statu
 | `records` | evidence, findings and questions, by record id (below) |
 | `resume` | where to continue: `claim`, `clause`, `question`, `pinned` references, `at`, `by`; kept apart from the evidence. The reader's pins are `{token, at, ident, label, release, repo}`: the inspection (a declaration's name, or `property:`, `fact:`, `application:`, `evidence:` with its identity), the comparison row it is beside, the identity of what it shows, and the release and project it was made on; the reader reopens a pin only on that release and project, for the same object |
 | `main_results` | the paper's main results as the auditor chose them (`workspace main`), which `compare --query impact` traces from: `selected` (each `{claim}`, standing for the claim's linked Lean, or `{decl, module, build}`, a project declaration), `by`, `at`, and `pins` (`release`, project `commit` and `repository` of the build they were checked against); absent until chosen |
-| `review` | the review protocol's `drafts` (locked reading, verdict, author-review step) and submitted `reports` (`prooflens/review-report@1`) |
+| `review` | the review protocol's `drafts` by unit id (`stage`: `read`, `compare` or `author`; the reading and, once locked, `locked_at`, `revealed_by` and `source_sha256`; `shown_fingerprint`, the Lean last shown; the comparison, `checklist`, verdict and `correspondence`, with `decided_at` and `lean`, the Lean pins the verdict was recorded against; `author_shown_at`; and what was typed so far) and submitted `reports` (`prooflens/review-report@1`). A step saves its unit's draft only while the saved draft is the one it read, so the review page and a terminal can work in one workspace |
 | `version_maps` | the version maps the auditor keeps (`changes --map --workspace ID --save`): each the map without `references`, with `kept_at` and `kept_by`; one per paper and pair of releases; absent until one is kept |
 | `conflicts` | refused edits, each with the saved record (`current`) and the proposal (`proposed`) |
 | `provenance` | upgrades, mode changes, imports and replaced main results (`was`), with time and person |

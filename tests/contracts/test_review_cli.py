@@ -118,6 +118,51 @@ def test_a_review_after_importing_an_informed_investigation_is_not_blind(toy, tm
     assert not why, why
 
 
+@needs_lean
+@needs_tex
+def test_an_informed_report_is_promoted_only_by_the_established_rules(toy, tmp_path,
+                                                                      monkeypatch, capsys):
+    """#122: an informed session's report keeps no reading it did not record. Without one it is
+    never promoted; with a reading recorded before its verdict and the author's review after
+    it, it is refused as not blind unless the maintainer passes --allow-revealed."""
+    _, _, cfg = build(toy)
+    monkeypatch.chdir(toy)
+    reading, comparison, none = (tmp_path / n for n in ("reading.md", "comparison.md", "none.md"))
+    reading.write_text("T_n is the sum 0 + 1 + ... + n, defined for every natural number n.")
+    comparison.write_text("The recursion adds n + 1 to T_n; T_0 = 0. It is the paper's sum.")
+    none.write_text("none")
+    informed = ["--mode", "informed"]
+    reports = []
+    for read_first in (False, True):
+        who = ["--as", f"human:Informed-{int(read_first)}", *informed]
+
+        def step(*args):
+            cli.main(["review", *args, *who])
+            return capsys.readouterr().out
+
+        assert "Toy.triangle" in step("show", UNIT)        # no lock first
+        if read_first:
+            step("lock", UNIT, str(reading))
+        step("decide", UNIT, "faithful", str(comparison))
+        step("author", UNIT)
+        step("submit", UNIT, str(none))
+        out = tmp_path / f"informed-{int(read_first)}.json"
+        step("export", "--out", str(out))
+        r, = pr.load_reports([out])
+        assert r["mode"] == "informed" and r["reading"]["revealed_by"]
+        reports.append(r)
+    bare, read = reports
+    assert (bare["reading"]["text"], bare["reading"]["locked_at"]) == ("", None)
+    for allow in (False, True):
+        (_, _, why), = pr.plan(cfg, [bare], allow_revealed=allow)
+        assert "the report has no reading of the paper" in why
+        assert any("not recorded in order" in w for w in why)
+    (_, _, why), = pr.plan(cfg, [read])
+    assert len(why) == 1 and "not blind" in why[0], why
+    (_, _, why), = pr.plan(cfg, [read], allow_revealed=True)
+    assert not why, why
+
+
 def test_a_reviewer_must_be_named(toy, monkeypatch, capsys):
     monkeypatch.chdir(toy)
     monkeypatch.delenv("MACHINECHECKED_REVIEWER", raising=False)

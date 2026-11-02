@@ -406,7 +406,8 @@ def _resumed(sh, r):
 
 
 def _informed_order(sh, r):
-    """The answer the reference shows for the toy example, release and mode left out."""
+    """The answer the reference shows for the toy example, release, mode and workspace left
+    out."""
     shown, got = json_block(JSON_OUTPUT_INFORMED), r.json()
     assert {k: got[k] for k in shown if k != "unit"} == {k: v for k, v in shown.items()
                                                           if k != "unit"}

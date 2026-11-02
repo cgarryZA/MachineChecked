@@ -447,6 +447,16 @@ stage shows the Lean and what others recorded. The steps are saved in your works
 `{"op": "exposure", "what": ["Lean", "prior interpretations"], "claims": ["thm:bound"],
 "how": "compare"}`, so the report lists it.
 
+The reader's review page under `machinechecked view` uses the same workspace, so a unit a person
+began there is continued from the terminal with the same `--as`, and the other way round.
+`--mode informed` reviews in your informed workspace instead: no step is locked, a reading is
+kept only when you `lock` one, and the report says `"mode": "informed"` and lists what you had
+seen ([Informed investigation](REVIEWING.md#one-claim-at-a-time)). With `--json`, a refused step
+prints `{"ok": false, "error": {"kind", "message"}}` and exits 2: `order` (a step before the one it
+follows), `unknown-unit`, `stale` (the build changed the unit's Lean since `show`: run `show`
+again), `conflict` (the draft changed meanwhile: read it again with `status`), `reported`,
+`invalid`, `workspace` or `no-build`.
+
 `review next` and `review status` take `--order` ([Review order](REVIEWING.md#review-order)):
 `priority` (the default), `document` (the paper's order), or `informed`, which also ranks the
 units by what the auditors' workspaces in the working directory record as open. `next --json`
@@ -458,7 +468,7 @@ signal other than `proof use`, or null. `reason` puts them in words. `status --j
 `open` units in that order and `order`: the order asked (`by`) and the queue's own record
 (`queue`, with each signal's `state`, `read` or `not available` with `why`). On the toy example,
 with Theorem 2.5 linked and an open question another auditor recorded on it, `review next
---order informed --json` gives (release and mode left out):
+--order informed --json` gives (release, mode and workspace left out):
 
 ```json
 {"schema": "machinechecked/review-next@1", "order": "informed",

@@ -43,7 +43,7 @@ The optional **Review** view guides you through three steps:
 
 1. Read the paper and record your interpretation.
 2. Compare the Lean statement's assumptions and conclusion; record a verdict.
-3. Read the author's review, save your report in the browser, and export it.
+3. Read the author's review, save your report, and export it.
 
 The maintainer evaluates reports and promotes reviews into the project's acceptance records.
 [Review guide →](docs/REVIEWING.md)

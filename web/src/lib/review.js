@@ -1,9 +1,12 @@
-// The reviewer's work: drafts and finished reports, kept in this browser and exported as a file.
+// The reviewer's work: drafts and finished reports, exported as a file.
 //
 // A report records what the reviewer did, in the order the queue let them do it: their own
 // reading of the paper (locked before the Lean was shown), their comparison and verdict, then
 // their response to the author’s review. The maintainer evaluates the exported report.
-// The report records the steps and prior exposure observed in this browser.
+// Under `machinechecked view` the engine keeps the work in the reviewer's workspace and makes
+// each step (`review_cli.api`, shared with `machinechecked review`); a static copy of the site
+// keeps it in this browser, with the functions below, and its report records the steps and
+// prior exposure observed in this browser.
 
 import { BASIS, COVERAGE, basisWords, coverageLabel, readingWords } from "./coverage.js";
 
@@ -150,7 +153,14 @@ export function exposureOf(work, u) {
 export function holdsBack(order, u, draft) {
   return order === "informed" && draft?.stage === "compare"
     && (u.priority?.signals || []).some((s) => WORKSPACE_SIGNALS.includes(s.kind))
-    && !(draft.revealed_by || []).some((s) => s.unit === ORDER_SEEN);
+    && !(draft.revealed_by || []).some(byOrder);
+}
+
+// Whether an entry of `reading.revealed_by` is the informed order's exposure: as this browser
+// records it (`ORDER_SEEN`), or as the engine names it from the reviewer's workspace
+// (`workspace <id> (interpretation-informed review order)`).
+export function byOrder(seen) {
+  return String(seen?.unit || "").endsWith(`(${ORDER_EXPOSURE})`);
 }
 
 // The reviewer's coverage, recorded with the verdict: how far the unit's Lean states the claim
@@ -345,6 +355,9 @@ export function buildReport({ index, unit, draft, reviewer }) {
   const verdict = draft.verdict;
   return {
     schema: REPORT_SCHEMA,
+    // The page's own protocol is independent review; an informed session's reports are made by
+    // the engine (`review_cli.report`).
+    mode: "independent",
     unit: { id: unit.id, kind: unit.kind, name: unit.name,
             lean: unit.kind === "step" ? unit.lean || [] : unit.lean || [unit.name],
             claims: unit.claims.map((c) => c.id), papers: unit.papers || [],
