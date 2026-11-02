@@ -5,7 +5,7 @@
   import { VERDICTS, GROUPS, CHECKLIST, MARKS, STEP_VERDICTS, STEP_GROUPS, loadWork, saveWork, now, reviewerId,
            needsDetail, buildReport, exportFile, ORDERS, ORDER_EXPOSURE, byOrder, orderedUnits, recordExposure,
            exposureOf, holdsBack, COVERAGE_FOR, COVERAGE_CHOICES, BASIS_CHOICES, reportCorrespondence,
-           draftCoverage, coverageWords } from "../lib/review.js";
+           draftCoverage, coverageWords, undoReport } from "../lib/review.js";
   import { questionsOf } from "../lib/review.js";
   import Comparison from "./Comparison.svelte";
   import { comparisonInputs, pinScope } from "../lib/comparison.js";
@@ -364,15 +364,9 @@
       }
       return;
     }
-    const r = work.reports.pop();
-    if (!r) return;
-    work.drafts[r.unit.id] = {
-      stage: "author", reading: r.reading.text, locked_at: r.reading.locked_at, revealed_by: r.reading.revealed_by,
-      source_sha256: r.pins.source_sha256,
-      comparison: r.comparison.text, witness: r.comparison.witness, decided_at: r.comparison.decided_at,
-      group: r.verdict.group, verdict: r.verdict.value, detail: r.verdict.detail,
-      correspondence: r.correspondence ?? null,
-      author_shown_at: r.author_review.shown_at, disagreements: r.author_review.disagreements };
+    // In this browser, as the engine does it; a refusal is shown as the engine's are.
+    serviceError = undoReport(work);
+    if (serviceError) return;
     work.exported = Math.min(work.exported || 0, work.reports.length);
     lastIssue = null;
     persist();

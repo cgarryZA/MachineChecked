@@ -3064,6 +3064,37 @@ await check("review opens the selected claim, keeps protocol order and exports a
   assert.deepEqual(exported.reports[0], report);
 });
 
+// #473: on a static copy, Undo gives the report's unit back at step 3 as the engine's Undo does,
+// so the report saved again records what the first one recorded, its checklist among it.
+await check("on a static copy, Undo keeps what the report recorded, its checklist among it", 390, async (pg) => {
+  await pg.goto(origin + `/review/#/r/${TOY.release}/review`);
+  await pg.evaluate((k) => localStorage.setItem(k, JSON.stringify({ reviewer: { kind: "human", name: "Synthetic reviewer" } })), REVIEW_KEY);
+  await pg.reload();
+  const stored = () => pg.evaluate((k) => JSON.parse(localStorage.getItem(k)), REVIEW_KEY);
+  await pg.getByRole("textbox", { name: "Your reading", exact: true }).fill("The bound holds for every natural number, with the printed constant.");
+  await pg.getByRole("button", { name: "Lock my reading and show the Lean" }).click();
+  await pg.getByRole("button", { name: "Quantifiers and their order: matches", exact: true }).click();
+  await pg.getByRole("button", { name: "Constants: unsure", exact: true }).click();
+  await pg.getByRole("textbox", { name: "Comparison", exact: true }).fill("The quantifiers agree; the constant is the printed one.");
+  await pg.getByRole("button", { name: "Matches the paper", exact: true }).click();
+  await pg.getByRole("radio", { name: "Faithful", exact: true }).check();
+  await pg.getByRole("button", { name: "Record verdict and show the author's review" }).click();
+  await pg.locator(".review .author").waitFor();
+  await pg.getByRole("button", { name: "Save report", exact: true }).click();
+  await pg.getByRole("button", { name: "Export reports (1 new)", exact: true }).waitFor();
+  const [first] = (await stored()).reports;
+  assert.deepEqual(first.comparison.checklist, { quantifiers: "matches", constants: "unsure" });
+  await pg.getByRole("button", { name: "Undo last", exact: true }).click();
+  await pg.getByRole("button", { name: "Save report", exact: true }).waitFor();
+  const work = await stored();
+  assert.deepEqual(work.reports, []);
+  assert.deepEqual(work.drafts[first.unit.id].checklist, first.comparison.checklist, "the draft keeps the checklist");
+  await pg.getByRole("button", { name: "Save report", exact: true }).click();
+  await pg.getByRole("button", { name: "Export reports (1 new)", exact: true }).waitFor();
+  const [second] = (await stored()).reports;
+  assert.deepEqual(second, { ...first, submitted_at: second.submitted_at }, "the report saved again is the one taken back");
+});
+
 // The review page's order (#128): the queue's priority order, or the paper's order the build
 // wrote, each with the engine's reasons; a static copy offers no informed order.
 await check("the review page offers the priority and paper orders with the engine's reasons", 390, async (pg) => {

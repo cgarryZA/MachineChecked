@@ -363,9 +363,46 @@ export function stepIssueDraft(unit, verdict, detail) {
   };
 }
 
+// The draft a report came from, as `Session.undo` gives it back under `machinechecked view`: the
+// unit at step 3 with its reading, its comparison and checklist, its verdict and coverage, and the
+// Lean the verdict was recorded against (`lean`, which the report saved again pins), all as the
+// report recorded them.
+export function draftFromReport(r) {
+  const rd = r.reading || {}, cmp = r.comparison || {}, v = r.verdict || {}, a = r.author_review || {};
+  const pins = r.pins || {};
+  return {
+    stage: "author", reading: rd.text || "", locked_at: rd.locked_at ?? null, revealed_by: rd.revealed_by || [],
+    source_sha256: pins.source_sha256 ?? null,
+    comparison: cmp.text || "", witness: cmp.witness || "", checklist: cmp.checklist || {},
+    decided_at: cmp.decided_at ?? null,
+    group: v.group ?? null, verdict: v.value ?? null, detail: v.detail || "",
+    correspondence: r.correspondence ?? null,
+    lean: { fingerprint: pins.fingerprint ?? null, fingerprints: pins.fingerprints ?? null,
+            legacy_hash: pins.legacy_hash ?? null },
+    author_shown_at: a.shown_at ?? null, disagreements: a.disagreements || "",
+  };
+}
+
+// Takes back the reviewer's last report in `work`, as `Session.undo` does: its unit returns to
+// step 3 (`draftFromReport`) and the report is removed until it is saved again. Returns why it was
+// refused, changing nothing, or null: there is no report, or its unit has a draft in progress
+// (begun again on a later build, say), which is kept.
+export function undoReport(work) {
+  const r = work.reports.at(-1);
+  if (!r) return "there is no report to take back";
+  const uid = r.unit?.id;
+  if (work.drafts[uid]) return `${uid} has a draft in progress; finish or keep it first`;
+  work.drafts[uid] = draftFromReport(r);
+  work.reports.pop();
+  return null;
+}
+
 export function buildReport({ index, unit, draft, reviewer }) {
   const papers = Object.fromEntries((index.papers || []).map((p) => [p.id, p.revision || null]));
   const verdict = draft.verdict;
+  // The Lean the verdict was recorded against: the draft's when Undo kept it from the report, as
+  // `review_cli.report` pins it, else the unit's.
+  const lean = draft.lean || unit;
   return {
     schema: REPORT_SCHEMA,
     // The page's own protocol is independent review; an informed session's reports are made by
@@ -379,9 +416,9 @@ export function buildReport({ index, unit, draft, reviewer }) {
       release: index.release,
       project_commit: index.project?.commit || null,
       manuscripts: Object.fromEntries((unit.papers || []).map((p) => [p, papers[p] ?? null])),
-      legacy_hash: unit.legacy_hash || null,
-      fingerprint: unit.fingerprint || null,
-      fingerprints: unit.fingerprints || null,
+      legacy_hash: lean.legacy_hash || null,
+      fingerprint: lean.fingerprint || null,
+      fingerprints: lean.fingerprints || null,
       // The digests of the paper passages shown when the reading was locked.
       source_sha256: draft.source_sha256 ?? null,
     },
