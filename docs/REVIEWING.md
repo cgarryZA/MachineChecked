@@ -178,9 +178,8 @@ never a Lean declaration, since you read them before the Lean is shown.
   there only a main result itself is marked, and `review status --order informed` says so. Then
   come the units another claim's proof uses, as above.
 
-  A difference that is resolved or found to be none, and a hint it settles, no longer raise the
-  claim; a finding superseded by a new reading no longer does either; the workspace keeps their
-  explanation. These records and the main-result selection are prior interpretations: asking for
+  A difference that is resolved or found to be none, a hint it settles, and a finding that a new
+  reading supersedes no longer raise the claim; the workspace keeps their explanation. These records and the main-result selection are prior interpretations: asking for
   this order records in your workspace that you have seen them, for the claims it drew on (the
   units it moves and the main results it names). A later reading of those claims is then not
   blind, its report says so, and `review promote` refuses it without `--allow-revealed`.

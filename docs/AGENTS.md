@@ -461,8 +461,8 @@ again), `conflict` (the draft changed meanwhile: read it again with `status`), `
 `priority` (the default), `document` (the paper's order), or `informed`, which also ranks the
 units by what the auditors' workspaces in the working directory record and by the main results
 they save. `next --json` gives the `order` and the unit's `priority`: its `base` reason in the
-queue, the `signals` that move it (each with `kind`, `text` and `claims`; a signal a change
-caused also has the `questions` a new reading answers): `reopened` and `changed` since the last
+queue, the `signals` that move it (each with `kind`, `text` and `claims`; a reopened review or
+finding also has the `questions` a new reading answers): `reopened` and `changed` since the last
 release; from the workspaces, `reopened finding` (a finding due for review), `out of date` (a
 requirement, alignment or counterexample), `open question`, `difference` and `hint`, and `main
 result`, with its `use` (`itself`, `proof`, `definition` or `statement`); `proof use` when
