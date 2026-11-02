@@ -2,7 +2,7 @@
  "Uses.half_lt": {
   "schema": "machinechecked/uses@1",
   "name": "Uses.half_lt",
-  "tool": "0.1.10",
+  "tool": "0.1.20",
   "note": "Uses are read from Lean's elaborated terms. Where a premise comes from is what the term shows; whether it matches a condition of the paper takes a reviewer.",
   "ok": true,
   "status": "found",
@@ -16,10 +16,10 @@
    "libraries": [
     "Uses"
    ],
-   "modules": 4,
+   "modules": 5,
    "unbuilt": [],
    "failed": {},
-   "declarations_searched": 14
+   "declarations_searched": 18
   },
   "complete": true,
   "answer": "used",
@@ -92,6 +92,7 @@
        "id": "/",
        "segments": [
         {
+         "at": "/",
          "t": "m",
          "var": 0
         }
@@ -101,6 +102,7 @@
       },
       "binder": "n",
       "binder_info": "explicit",
+      "depends": [],
       "index": 0,
       "origin": {
        "binder": "fun",
@@ -121,12 +123,16 @@
        "terms": [],
        "text": "Nat"
       },
+      "type_former": false,
       "supplied": "the caller's parameter m"
      },
      {
       "argument": null,
       "binder": "h",
       "binder_info": "explicit",
+      "depends": [
+       0
+      ],
       "index": 1,
       "origin": {
        "binder": "fun",
@@ -147,6 +153,7 @@
          "t": " "
         },
         {
+         "at": "/1",
          "t": "m",
          "var": 0
         }
@@ -160,6 +167,7 @@
        ],
        "text": "Uses.Good m"
       },
+      "type_former": false,
       "supplied": "the caller's hypothesis hm",
       "discharge": "assumed"
      },
@@ -167,6 +175,9 @@
       "argument": null,
       "binder": "hpos",
       "binder_info": "explicit",
+      "depends": [
+       0
+      ],
       "index": 2,
       "origin": {
        "binder": "fun",
@@ -187,6 +198,7 @@
          "t": " < "
         },
         {
+         "at": "/1",
          "t": "m",
          "var": 0
         }
@@ -200,6 +212,7 @@
        ],
        "text": "0 < m"
       },
+      "type_former": false,
       "supplied": "the caller's hypothesis hp",
       "discharge": "assumed"
      }
@@ -224,6 +237,7 @@
      "id": "/",
      "segments": [
       {
+       "at": "/0/1/0/1",
        "t": "m",
        "var": 0
       },
@@ -239,6 +253,7 @@
        "t": " < "
       },
       {
+       "at": "/1",
        "t": "m",
        "var": 0
       }
@@ -261,6 +276,7 @@
      {
       "binder": "fun",
       "id": "/",
+      "kind": "caller parameter",
       "local": 0,
       "name": "m",
       "parameter": true,
@@ -279,6 +295,7 @@
      {
       "binder": "fun",
       "id": "/1",
+      "kind": "caller hypothesis",
       "local": 1,
       "name": "hm",
       "parameter": true,
@@ -293,6 +310,7 @@
          "t": " "
         },
         {
+         "at": "/1",
          "t": "m",
          "var": 0
         }
@@ -310,6 +328,7 @@
      {
       "binder": "fun",
       "id": "/1/1",
+      "kind": "caller hypothesis",
       "local": 2,
       "name": "hp",
       "parameter": true,
@@ -324,6 +343,7 @@
          "t": " < "
         },
         {
+         "at": "/1",
          "t": "m",
          "var": 0
         }
@@ -337,6 +357,36 @@
        ],
        "text": "0 < m"
       }
+     }
+    ],
+    "objects": [
+     {
+      "index": 0,
+      "binder": "n",
+      "argument": "m",
+      "supplied": "the caller's parameter m",
+      "properties": [
+       {
+        "basis": "premise",
+        "index": 1,
+        "binder": "h",
+        "statement": "Uses.Good m",
+        "discharge": "assumed",
+        "supplied": "the caller's hypothesis hm"
+       },
+       {
+        "basis": "premise",
+        "index": 2,
+        "binder": "hpos",
+        "statement": "0 < m",
+        "discharge": "assumed",
+        "supplied": "the caller's hypothesis hp"
+       },
+       {
+        "basis": "conclusion",
+        "statement": "m / 2 < m"
+       }
+      ]
      }
     ]
    },
@@ -372,6 +422,7 @@
          "t": "("
         },
         {
+         "at": "/1/0/1",
          "t": "m",
          "var": 0
         },
@@ -403,6 +454,7 @@
       },
       "binder": "n",
       "binder_info": "explicit",
+      "depends": [],
       "index": 0,
       "origin": {
        "head": "HMul.hMul",
@@ -420,12 +472,16 @@
        "terms": [],
        "text": "Nat"
       },
+      "type_former": false,
       "supplied": "a term built in the caller"
      },
      {
       "argument": null,
       "binder": "h",
       "binder_info": "explicit",
+      "depends": [
+       0
+      ],
       "index": 1,
       "origin": {
        "kind": "theorem application",
@@ -459,6 +515,7 @@
          "t": "("
         },
         {
+         "at": "/1/1/0/1",
          "t": "m",
          "var": 0
         },
@@ -497,6 +554,7 @@
        ],
        "text": "Uses.Good (2 * (m + 1))"
       },
+      "type_former": false,
       "supplied": "by Uses.good_double",
       "discharge": "proved"
      },
@@ -504,6 +562,9 @@
       "argument": null,
       "binder": "hpos",
       "binder_info": "explicit",
+      "depends": [
+       0
+      ],
       "index": 2,
       "origin": {
        "kind": "theorem application",
@@ -533,6 +594,7 @@
          "t": "("
         },
         {
+         "at": "/1/1/0/1",
          "t": "m",
          "var": 0
         },
@@ -567,6 +629,7 @@
        ],
        "text": "0 < 2 * (m + 1)"
       },
+      "type_former": false,
       "supplied": "by Decidable.byContradiction",
       "discharge": "proved"
      }
@@ -602,6 +665,7 @@
        "t": "("
       },
       {
+       "at": "/0/1/0/1/1/0/1",
        "t": "m",
        "var": 0
       },
@@ -639,6 +703,7 @@
        "t": "("
       },
       {
+       "at": "/1/1/0/1",
        "t": "m",
        "var": 0
       },
@@ -692,6 +757,7 @@
      {
       "binder": "fun",
       "id": "/",
+      "kind": "caller parameter",
       "local": 0,
       "name": "m",
       "parameter": true,
@@ -706,6 +772,36 @@
        "terms": [],
        "text": "Nat"
       }
+     }
+    ],
+    "objects": [
+     {
+      "index": 0,
+      "binder": "n",
+      "argument": "2 * (m + 1)",
+      "supplied": "a term built in the caller",
+      "properties": [
+       {
+        "basis": "premise",
+        "index": 1,
+        "binder": "h",
+        "statement": "Uses.Good (2 * (m + 1))",
+        "discharge": "proved",
+        "supplied": "by Uses.good_double"
+       },
+       {
+        "basis": "premise",
+        "index": 2,
+        "binder": "hpos",
+        "statement": "0 < 2 * (m + 1)",
+        "discharge": "proved",
+        "supplied": "by Decidable.byContradiction"
+       },
+       {
+        "basis": "conclusion",
+        "statement": "2 * (m + 1) / 2 < 2 * (m + 1)"
+       }
+      ]
      }
     ]
    },
@@ -738,6 +834,7 @@
       },
       "binder": "n",
       "binder_info": "explicit",
+      "depends": [],
       "index": 0,
       "origin": {
        "head": "OfNat.ofNat",
@@ -755,12 +852,16 @@
        "terms": [],
        "text": "Nat"
       },
+      "type_former": false,
       "supplied": "a numeral"
      },
      {
       "argument": null,
       "binder": "h",
       "binder_info": "explicit",
+      "depends": [
+       0
+      ],
       "index": 1,
       "origin": {
        "kind": "theorem application",
@@ -791,6 +892,7 @@
        ],
        "text": "Uses.Good 4"
       },
+      "type_former": false,
       "supplied": "by Uses.good_double",
       "discharge": "proved"
      },
@@ -798,6 +900,9 @@
       "argument": null,
       "binder": "hpos",
       "binder_info": "explicit",
+      "depends": [
+       0
+      ],
       "index": 2,
       "origin": {
        "kind": "theorem application",
@@ -828,6 +933,7 @@
        ],
        "text": "0 < 4"
       },
+      "type_former": false,
       "supplied": "by of_decide_eq_true",
       "discharge": "proved"
      }
@@ -882,7 +988,37 @@
      ],
      "text": "4 / 2 < 4"
     },
-    "locals": []
+    "locals": [],
+    "objects": [
+     {
+      "index": 0,
+      "binder": "n",
+      "argument": "4",
+      "supplied": "a numeral",
+      "properties": [
+       {
+        "basis": "premise",
+        "index": 1,
+        "binder": "h",
+        "statement": "Uses.Good 4",
+        "discharge": "proved",
+        "supplied": "by Uses.good_double"
+       },
+       {
+        "basis": "premise",
+        "index": 2,
+        "binder": "hpos",
+        "statement": "0 < 4",
+        "discharge": "proved",
+        "supplied": "by of_decide_eq_true"
+       },
+       {
+        "basis": "conclusion",
+        "statement": "4 / 2 < 4"
+       }
+      ]
+     }
+    ]
    },
    {
     "id": "app:Uses.main_bound:0",
@@ -905,6 +1041,7 @@
        "id": "/",
        "segments": [
         {
+         "at": "/",
          "t": "n",
          "var": 0
         }
@@ -914,6 +1051,7 @@
       },
       "binder": "n",
       "binder_info": "explicit",
+      "depends": [],
       "index": 0,
       "origin": {
        "binder": "fun",
@@ -934,12 +1072,16 @@
        "terms": [],
        "text": "Nat"
       },
+      "type_former": false,
       "supplied": "the caller's parameter n"
      },
      {
       "argument": null,
       "binder": "h",
       "binder_info": "explicit",
+      "depends": [
+       0
+      ],
       "index": 1,
       "origin": {
        "binder": "fun",
@@ -960,6 +1102,7 @@
          "t": " "
         },
         {
+         "at": "/1",
          "t": "n",
          "var": 0
         }
@@ -973,6 +1116,7 @@
        ],
        "text": "Uses.Good n"
       },
+      "type_former": false,
       "supplied": "the caller's hypothesis h",
       "discharge": "assumed"
      },
@@ -980,6 +1124,9 @@
       "argument": null,
       "binder": "hpos",
       "binder_info": "explicit",
+      "depends": [
+       0
+      ],
       "index": 2,
       "origin": {
        "binder": "fun",
@@ -1000,6 +1147,7 @@
          "t": " < "
         },
         {
+         "at": "/1",
          "t": "n",
          "var": 0
         }
@@ -1013,6 +1161,7 @@
        ],
        "text": "0 < n"
       },
+      "type_former": false,
       "supplied": "the caller's hypothesis hpos",
       "discharge": "assumed"
      }
@@ -1037,6 +1186,7 @@
      "id": "/",
      "segments": [
       {
+       "at": "/0/1/0/1",
        "t": "n",
        "var": 0
       },
@@ -1052,6 +1202,7 @@
        "t": " < "
       },
       {
+       "at": "/1",
        "t": "n",
        "var": 0
       }
@@ -1074,6 +1225,7 @@
      {
       "binder": "fun",
       "id": "/",
+      "kind": "caller parameter",
       "local": 0,
       "name": "n",
       "parameter": true,
@@ -1092,6 +1244,7 @@
      {
       "binder": "fun",
       "id": "/1",
+      "kind": "caller hypothesis",
       "local": 1,
       "name": "h",
       "parameter": true,
@@ -1106,6 +1259,7 @@
          "t": " "
         },
         {
+         "at": "/1",
          "t": "n",
          "var": 0
         }
@@ -1123,6 +1277,7 @@
      {
       "binder": "fun",
       "id": "/1/1",
+      "kind": "caller hypothesis",
       "local": 2,
       "name": "hpos",
       "parameter": true,
@@ -1137,6 +1292,7 @@
          "t": " < "
         },
         {
+         "at": "/1",
          "t": "n",
          "var": 0
         }
@@ -1150,6 +1306,36 @@
        ],
        "text": "0 < n"
       }
+     }
+    ],
+    "objects": [
+     {
+      "index": 0,
+      "binder": "n",
+      "argument": "n",
+      "supplied": "the caller's parameter n",
+      "properties": [
+       {
+        "basis": "premise",
+        "index": 1,
+        "binder": "h",
+        "statement": "Uses.Good n",
+        "discharge": "assumed",
+        "supplied": "the caller's hypothesis h"
+       },
+       {
+        "basis": "premise",
+        "index": 2,
+        "binder": "hpos",
+        "statement": "0 < n",
+        "discharge": "assumed",
+        "supplied": "the caller's hypothesis hpos"
+       },
+       {
+        "basis": "conclusion",
+        "statement": "n / 2 < n"
+       }
+      ]
      }
     ],
     "caller_claims": [
@@ -1166,7 +1352,7 @@
  "Uses.half_lt_four": {
   "schema": "machinechecked/uses@1",
   "name": "Uses.half_lt_four",
-  "tool": "0.1.10",
+  "tool": "0.1.20",
   "note": "Uses are read from Lean's elaborated terms. Where a premise comes from is what the term shows; whether it matches a condition of the paper takes a reviewer.",
   "ok": true,
   "status": "found",
@@ -1180,10 +1366,10 @@
    "libraries": [
     "Uses"
    ],
-   "modules": 4,
+   "modules": 5,
    "unbuilt": [],
    "failed": {},
-   "declarations_searched": 14
+   "declarations_searched": 18
   },
   "complete": true,
   "answer": "used",
@@ -1262,6 +1448,7 @@
      "text": "4 / 2 < 4"
     },
     "locals": [],
+    "objects": [],
     "caller_claims": [
      "P:thm:main"
     ]
@@ -1272,5 +1459,492 @@
   "linked_users": [
    "Uses.main_bound"
   ]
+ },
+ "Uses.half_lt in app:Uses.caller_proves:0": {
+  "schema": "machinechecked/uses@1",
+  "name": "Uses.half_lt",
+  "tool": "0.1.20",
+  "note": "Uses are read from Lean's elaborated terms. Where a premise comes from is what the term shows; whether it matches a condition of the paper takes a reviewer.",
+  "ok": true,
+  "status": "found",
+  "declaration": {
+   "id": "decl:Uses.half_lt",
+   "name": "Uses.half_lt",
+   "module": "Uses.Main",
+   "kind": "theorem"
+  },
+  "scope": {
+   "libraries": [
+    "Uses"
+   ],
+   "modules": 5,
+   "unbuilt": [],
+   "failed": {},
+   "declarations_searched": 2
+  },
+  "complete": true,
+  "answer": "used",
+  "users": [
+   {
+    "id": "decl:Uses.caller_proves",
+    "name": "Uses.caller_proves",
+    "module": "Uses.Main",
+    "kind": "theorem",
+    "refs": [
+     "proof"
+    ]
+   }
+  ],
+  "further": [],
+  "further_note": "not extracted when one declaration is searched",
+  "imports_without_use": [],
+  "applications": [
+   {
+    "id": "app:Uses.caller_proves:0",
+    "callee": "Uses.half_lt",
+    "caller": "Uses.caller_proves",
+    "location": {
+     "declaration": "Uses.caller_proves",
+     "path": "/1",
+     "range": {
+      "end_line": 28,
+      "line": 26
+     },
+     "precision": "declaration",
+     "note": "the position is the application's path in the elaborated term; the source line is the enclosing declaration's"
+    },
+    "available": true,
+    "params": [
+     {
+      "argument": {
+       "id": "/",
+       "segments": [
+        {
+         "t": "2"
+        },
+        {
+         "ref": "HMul.hMul",
+         "t": " * "
+        },
+        {
+         "ref": "HAdd.hAdd",
+         "t": "("
+        },
+        {
+         "at": "/1/0/1",
+         "t": "m",
+         "var": 0
+        },
+        {
+         "ref": "HAdd.hAdd",
+         "t": " + "
+        },
+        {
+         "t": "1"
+        },
+        {
+         "ref": "HAdd.hAdd",
+         "t": ")"
+        }
+       ],
+       "terms": [
+        {
+         "from": 0,
+         "id": "/0/0/0/0/0/0",
+         "to": 7
+        },
+        {
+         "from": 2,
+         "id": "/1/0/0/0/0/0/0",
+         "to": 7
+        }
+       ],
+       "text": "2 * (m + 1)"
+      },
+      "binder": "n",
+      "binder_info": "explicit",
+      "depends": [],
+      "index": 0,
+      "origin": {
+       "head": "HMul.hMul",
+       "kind": "term"
+      },
+      "role": "parameter",
+      "type": {
+       "id": "/",
+       "segments": [
+        {
+         "ref": "Nat",
+         "t": "Nat"
+        }
+       ],
+       "terms": [],
+       "text": "Nat"
+      },
+      "type_former": false,
+      "supplied": "a term built in the caller"
+     },
+     {
+      "argument": null,
+      "binder": "h",
+      "binder_info": "explicit",
+      "depends": [
+       0
+      ],
+      "index": 1,
+      "origin": {
+       "kind": "theorem application",
+       "name": "Uses.good_double",
+       "owner": "Uses.good_double"
+      },
+      "role": "premise",
+      "type": {
+       "id": "/",
+       "segments": [
+        {
+         "ref": "Uses.Good",
+         "t": "Uses.Good"
+        },
+        {
+         "t": " "
+        },
+        {
+         "ref": "HMul.hMul",
+         "t": "("
+        },
+        {
+         "t": "2"
+        },
+        {
+         "ref": "HMul.hMul",
+         "t": " * "
+        },
+        {
+         "ref": "HAdd.hAdd",
+         "t": "("
+        },
+        {
+         "at": "/1/1/0/1",
+         "t": "m",
+         "var": 0
+        },
+        {
+         "ref": "HAdd.hAdd",
+         "t": " + "
+        },
+        {
+         "t": "1"
+        },
+        {
+         "ref": "HAdd.hAdd",
+         "t": ")"
+        },
+        {
+         "ref": "HMul.hMul",
+         "t": ")"
+        }
+       ],
+       "terms": [
+        {
+         "from": 0,
+         "id": "/",
+         "to": 11
+        },
+        {
+         "from": 2,
+         "id": "/1/0/0/0/0/0/0",
+         "to": 11
+        },
+        {
+         "from": 5,
+         "id": "/1/1/0/0/0/0/0/0",
+         "to": 10
+        }
+       ],
+       "text": "Uses.Good (2 * (m + 1))"
+      },
+      "type_former": false,
+      "supplied": "by Uses.good_double",
+      "discharge": "proved"
+     },
+     {
+      "argument": null,
+      "binder": "hpos",
+      "binder_info": "explicit",
+      "depends": [
+       0
+      ],
+      "index": 2,
+      "origin": {
+       "kind": "theorem application",
+       "name": "Decidable.byContradiction",
+       "owner": "Decidable.byContradiction"
+      },
+      "role": "premise",
+      "type": {
+       "id": "/",
+       "segments": [
+        {
+         "t": "0"
+        },
+        {
+         "ref": "LT.lt",
+         "t": " < "
+        },
+        {
+         "t": "2"
+        },
+        {
+         "ref": "HMul.hMul",
+         "t": " * "
+        },
+        {
+         "ref": "HAdd.hAdd",
+         "t": "("
+        },
+        {
+         "at": "/1/1/0/1",
+         "t": "m",
+         "var": 0
+        },
+        {
+         "ref": "HAdd.hAdd",
+         "t": " + "
+        },
+        {
+         "t": "1"
+        },
+        {
+         "ref": "HAdd.hAdd",
+         "t": ")"
+        }
+       ],
+       "terms": [
+        {
+         "from": 0,
+         "id": "/0/0/0/0",
+         "to": 9
+        },
+        {
+         "from": 2,
+         "id": "/1/0/0/0/0/0/0",
+         "to": 9
+        },
+        {
+         "from": 4,
+         "id": "/1/1/0/0/0/0/0/0",
+         "to": 9
+        }
+       ],
+       "text": "0 < 2 * (m + 1)"
+      },
+      "type_former": false,
+      "supplied": "by Decidable.byContradiction",
+      "discharge": "proved"
+     }
+    ],
+    "premises": [
+     {
+      "binder": "h",
+      "statement": "Uses.Good (2 * (m + 1))",
+      "discharge": "proved",
+      "supplied": "by Uses.good_double"
+     },
+     {
+      "binder": "hpos",
+      "statement": "0 < 2 * (m + 1)",
+      "discharge": "proved",
+      "supplied": "by Decidable.byContradiction"
+     }
+    ],
+    "unsupplied": [],
+    "extra_args": 0,
+    "result": {
+     "id": "/",
+     "segments": [
+      {
+       "t": "2"
+      },
+      {
+       "ref": "HMul.hMul",
+       "t": " * "
+      },
+      {
+       "ref": "HAdd.hAdd",
+       "t": "("
+      },
+      {
+       "at": "/0/1/0/1/1/0/1",
+       "t": "m",
+       "var": 0
+      },
+      {
+       "ref": "HAdd.hAdd",
+       "t": " + "
+      },
+      {
+       "t": "1"
+      },
+      {
+       "ref": "HAdd.hAdd",
+       "t": ")"
+      },
+      {
+       "ref": "HDiv.hDiv",
+       "t": " / "
+      },
+      {
+       "t": "2"
+      },
+      {
+       "ref": "LT.lt",
+       "t": " < "
+      },
+      {
+       "t": "2"
+      },
+      {
+       "ref": "HMul.hMul",
+       "t": " * "
+      },
+      {
+       "ref": "HAdd.hAdd",
+       "t": "("
+      },
+      {
+       "at": "/1/1/0/1",
+       "t": "m",
+       "var": 0
+      },
+      {
+       "ref": "HAdd.hAdd",
+       "t": " + "
+      },
+      {
+       "t": "1"
+      },
+      {
+       "ref": "HAdd.hAdd",
+       "t": ")"
+      }
+     ],
+     "terms": [
+      {
+       "from": 0,
+       "id": "/0/0/0/0",
+       "to": 17
+      },
+      {
+       "from": 0,
+       "id": "/0/1/0/0/0/0/0/0",
+       "to": 9
+      },
+      {
+       "from": 0,
+       "id": "/0/1/0/1/0/0/0/0/0/0",
+       "to": 7
+      },
+      {
+       "from": 2,
+       "id": "/0/1/0/1/1/0/0/0/0/0/0",
+       "to": 7
+      },
+      {
+       "from": 10,
+       "id": "/1/0/0/0/0/0/0",
+       "to": 17
+      },
+      {
+       "from": 12,
+       "id": "/1/1/0/0/0/0/0/0",
+       "to": 17
+      }
+     ],
+     "text": "2 * (m + 1) / 2 < 2 * (m + 1)"
+    },
+    "locals": [
+     {
+      "binder": "fun",
+      "id": "/",
+      "kind": "caller parameter",
+      "local": 0,
+      "name": "m",
+      "parameter": true,
+      "type": {
+       "id": "/",
+       "segments": [
+        {
+         "ref": "Nat",
+         "t": "Nat"
+        }
+       ],
+       "terms": [],
+       "text": "Nat"
+      }
+     }
+    ],
+    "objects": [
+     {
+      "index": 0,
+      "binder": "n",
+      "argument": "2 * (m + 1)",
+      "supplied": "a term built in the caller",
+      "properties": [
+       {
+        "basis": "premise",
+        "index": 1,
+        "binder": "h",
+        "statement": "Uses.Good (2 * (m + 1))",
+        "discharge": "proved",
+        "supplied": "by Uses.good_double"
+       },
+       {
+        "basis": "premise",
+        "index": 2,
+        "binder": "hpos",
+        "statement": "0 < 2 * (m + 1)",
+        "discharge": "proved",
+        "supplied": "by Decidable.byContradiction"
+       },
+       {
+        "basis": "conclusion",
+        "statement": "2 * (m + 1) / 2 < 2 * (m + 1)"
+       }
+      ]
+     }
+    ],
+    "context": [
+     {
+      "binder": "fun",
+      "id": "/",
+      "kind": "caller parameter",
+      "local": 0,
+      "name": "m",
+      "parameter": true,
+      "type": {
+       "id": "/",
+       "segments": [
+        {
+         "ref": "Nat",
+         "t": "Nat"
+        }
+       ],
+       "terms": [],
+       "text": "Nat"
+      }
+     }
+    ]
+   }
+  ],
+  "applications_complete": true,
+  "applications_note": null,
+  "within": {
+   "caller": "Uses.caller_proves",
+   "module": "Uses.Main",
+   "searched": true,
+   "application": "app:Uses.caller_proves:0",
+   "found": true
+  },
+  "linked_users": []
  }
 }

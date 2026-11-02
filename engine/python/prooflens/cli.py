@@ -215,8 +215,11 @@ def _simple_site(root: Path, paper: Path, web: str | None, reuse_lean: bool = Fa
     return site, index, view
 
 
-def _print_simple(body):
+def _print_simple(body, summary: dict | None = None):
+    """A view's notes and warnings, its status counts and its semantic summary (`summary`, as
+    `semantic.py` computes it)."""
     from .moddocs import stale_doc_message
+    from .semantic import text
     from .simple import view_summary
     for n in body.get("notes", []):
         print(f"note: {n}")
@@ -228,11 +231,17 @@ def _print_simple(body):
             print(f"warning: {nb.message(o)}")
     for s, k in sorted(view_summary(body).items()):
         print(f"  {k:4d}  {s}")
+    for line in text(summary):
+        print(line)
+    from .semantic import in_text, reading_words
     for c in body.get("claims", []):
         cor = c.get("correspondence") or {}
         if cor.get("basis") == "reviewed_composition":
-            print(f"composition {c.get('number') or c['id']}: every clause by the auditor's "
-                  f"composition, which Lean has not checked. Next step: {cor['next_step']}")
+            # The reading's own coverage and basis: a composition may cover part of the claim,
+            # or state it differently.
+            words = reading_words(cor.get("coverage"), cor["basis"]) or "no coverage recorded"
+            print(f"composition {c.get('number') or c['id']}: {in_text(words)}, which Lean has "
+                  f"not checked. Next step: {cor['next_step']}")
 
 
 # -- everyday commands ------------------------------------------------------------------------
@@ -265,7 +274,7 @@ def cmd_view(a):
     _settings(a, root)
     print(f"MachineChecked: {paper.relative_to(root)} in {root.name}")
     site, index, view = _simple_site(root, paper, a.web)
-    _print_simple(view["body"])
+    _print_simple(view["body"], index.get("semantic"))
     key = view["body"]["paper"]
 
     def on_link(req):
@@ -391,6 +400,13 @@ def _print_workspace(v: dict) -> None:
     if r:
         print("  resume at " + ", ".join(f"{k} {r[k]}" for k in ("claim", "clause", "question")
                                           if r.get(k)))
+    m = v.get("main_results")
+    if m:
+        print("  main results: " + ", ".join(e.get("claim") or e.get("decl")
+                                             for e in m["selected"])
+              + f" (saved by {m.get('by')} at {m.get('at')})")
+        for p in m.get("problems") or []:
+            print(f"    {p.get('claim') or p.get('decl')}: {p['problem']}")
     for e in v.get("exposure") or []:
         print(f"  had seen: {', '.join(e['what'])} of "
               f"{'every claim' if e.get('claims') is None else ', '.join(e['claims'])} "
@@ -415,6 +431,8 @@ def _print_workspace(v: dict) -> None:
             for ch in e["currency"].get("changes") or []:
                 if ch.get("reason"):
                     print(f"           {ch['reason']}")
+            if e["currency"].get("state") == "unchecked" and e["currency"].get("reason"):
+                print(f"           not known to be current: {e['currency']['reason']}")
         for f in c["findings"]:
             tag = f["state"] + ("" if f["in_force"] else ", superseded")
             print(f"  finding  {f['id']}  {tag}: coverage {f.get('coverage') or '-'}"
@@ -441,6 +459,9 @@ def _print_workspace(v: dict) -> None:
                 from .simple import COMPOSITION_NEXT_STEP
                 print("           Lean has not checked this combination. Next step: "
                       + COMPOSITION_NEXT_STEP)
+            if f.get("dependencies") is not None:
+                from .dependencies import lines as dependency_lines
+                print("\n".join(dependency_lines(f["dependencies"], f["currency"])))
         for q in c["questions"]:
             print(f"  question {q['id']}  {q['state']}: {q['text']}")
         for comp in c.get("compositions") or []:
@@ -452,11 +473,75 @@ def _print_workspace(v: dict) -> None:
             print("  requirements:")
             for line in reading_lines(rd):
                 print("  " + line)
+    rev = v.get("revisions") or {}
+    if rev:
+        from .reopen import lines as reopened_lines
+        for doc in rev.get("maps") or []:
+            print("\n".join(reopened_lines(doc)))
+        for m in rev.get("other") or []:
+            print(f"  a version map of paper {m['paper']} from release "
+                  f"{m['from'].get('release')} to release {m['to'].get('release')} is kept; it "
+                  f"judges the findings against a build of release {m['to'].get('release')}")
+
+
+def _workspace_main(a, snap, root, p: Path) -> None:
+    """`workspace main [NAME...] [--clear]`: save the main results in the workspace at `p`, or
+    show those it saves, or, when it saves none, the suggestion `compare --query impact` traces
+    from."""
+    from . import workspace as wsp
+    if a.names and a.clear:
+        sys.exit("machinechecked: give the main results or --clear, not both")
+    changed = None
+    if a.names or a.clear:
+        changed = wsp.update(p, [{"op": wsp.MAIN_OP, "main": [] if a.clear else a.names}], snap,
+                             root, a.reviewer or None)["changed"]
+    ws = wsp.read(p)
+    sel = wsp.main_results_view(ws, snap, root)
+    suggested = None
+    if sel is None and snap is not None:
+        from . import compare as cmp
+        from .impact import selection
+        site = cmp.Site(snap.data)
+        s = selection(site, None, cmp.linked_claims(site))
+        suggested = {"rule": s["rule"],
+                     "main_results": [{k: e[k] for k in ("name", "claims")}
+                                      for e in s["main_results"]]}
+    if a.json:
+        return _print_json({"workspace": ws["id"], "main_results": sel, "suggested": suggested,
+                            **({"changed": changed} if changed is not None else {})})
+    if sel is None:
+        print(f"workspace {ws['id']} saves no main results; `compare --query impact` traces "
+              + (f"the suggestion ({suggested['rule']}):" if suggested else "the suggestion"))
+        for e in (suggested or {}).get("main_results") or []:
+            print(f"  {e['name']}" + (f"  [{', '.join(e['claims'])}]" if e["claims"] else ""))
+        print("save others: machinechecked workspace main NAME... (a claim, for its linked "
+              "Lean, or a declaration)")
+        return
+    from .impact import root_names
+    pins = sel.get("pins") or {}
+    print(f"workspace {ws['id']}: main results saved by {sel.get('by')} at {sel.get('at')}"
+          + (f", against release {pins['release']}" if pins.get("release") else "")
+          + (f", project commit {pins['commit'][:7]}" if pins.get("commit") else "") + ":")
+    now = ((snap.sources() if snap is not None else {}).get("project") or {}).get("commit")
+    if pins.get("commit") and now and now != pins["commit"]:
+        print(f"  (this build is of commit {now[:7]})")
+    problems = {(p_.get("claim"), p_.get("decl")): p_["problem"] for p_ in sel["problems"]}
+    for e in sel["selected"]:
+        why = problems.get((e.get("claim"), e.get("decl")))
+        if e.get("claim"):
+            ch = (snap.chunk(e["claim"]) if snap is not None else None) or {}
+            line = f"  {e['claim']}" + (f" ({ch['number']})" if ch.get("number") else "")
+            if not why:
+                line += ", its linked Lean" if root_names(ch) else ": no Lean is linked to it"
+        else:
+            line = f"  {e['decl']}" + (f" ({e['module']})" if e.get("module") else "")
+        print(line + (f": {why}" if why else ""))
+    print("`machinechecked compare --query impact NAME` traces from these")
 
 
 def cmd_workspace(a):
-    """`machinechecked workspace open|list|show|update|suggest|export|import`: the saved investigation
-    (`workspace.py`), as the reader saves it."""
+    """`machinechecked workspace open|list|show|update|suggest|export|import|main`: the saved
+    investigation (`workspace.py`), as the reader saves it."""
     from . import review_cli as rc
     from . import workspace as wsp
     from .targets import Snapshot, TargetError
@@ -499,7 +584,12 @@ def cmd_workspace(a):
                 if snap is None:
                     sys.exit("no build to resolve the claim against: run view or build first")
                 claim = snap.resolve_claim(a.claim)
-            v = wsp.view(wsp.read(p), snap, claim, root, check_facts=a.action == "show")
+            ws = wsp.read(p)
+            v = wsp.view(ws, snap, claim, root, check_facts=a.action == "show")
+            if a.action == "show" and ws.get("version_maps"):
+                # The findings each version map it keeps reopens, for the maps to this build.
+                from .reopen import for_site
+                v["revisions"] = for_site(ws, snap, root, work, True, v)
             if a.json:
                 return _print_json({**v, "path": str(p)})
             _print_workspace(v)
@@ -523,6 +613,8 @@ def cmd_workspace(a):
                 return _print_json({"ok": True, "changed": [], "suggested": 0})
             ack = wsp.update(p, ops, snap, root, a.reviewer or None, a.op_id)
             _print_json({**ack, "suggested": len(ops)})
+        elif a.action == "main":
+            _workspace_main(a, snap, root, path())
         elif a.action == "export":
             body = wsp.export(path())
             Path(a.out).write_text(json.dumps(body, indent=1, ensure_ascii=False) + "\n",
@@ -562,7 +654,7 @@ def cmd_build_simple(a):
     _settings(a, root)
     site, index, view = _simple_site(root, paper, a.web, a.reuse_lean,
                                      getattr(a, "refresh", False))
-    _print_simple(view["body"])
+    _print_simple(view["body"], index.get("semantic"))
     if a.site:
         import shutil
         dest = _site_dest(a.site, root)
@@ -580,6 +672,9 @@ def cmd_build_simple(a):
         except published_work.PublishError as e:
             shutil.rmtree(dest)
             sys.exit(f"machinechecked: {e}")
+        # The semantic summary of what is published, the workspace readings included.
+        from . import semantic
+        semantic.refresh(dest / "data")
         print(f"wrote the reader to {dest}: publish this directory as it is "
               "(audit.json describes it)")
         return
@@ -600,9 +695,12 @@ def cmd_check(a):
         a.release = None; a.skip_lean = a.skip_tex = False; a.lake = "lake"
         a.no_lean_build = False; a.reuse_lean = False; a.fail_on_violation = True
         return cmd_build(a)
+    if getattr(a, "fix_modules", False):
+        sys.exit(NO_MODULES)
     root, paper = _simple_target(a)
     view = _simple_view(root, paper)
-    _print_simple(view["body"])
+    from .semantic import of_view
+    _print_simple(view["body"], of_view(view["body"], root)[0])
     bad = [(c["number"], l) for c in view["body"]["claims"]
            for l in c["links"] if l["class"] != "proved"]
     for number, l in bad:
@@ -636,6 +734,9 @@ def _step_json(c: dict) -> dict:
 
 
 CHECK_NOTE = "Results describe the linked Lean declarations; correspondence reviews compare them with the paper."
+
+NO_MODULES = ("--fix-modules: only a project with a machinechecked.toml lists `modules`; "
+              "zero configuration reads every built module")
 
 
 FINDING_KEYS = ("id", "tier", "code", "subject", "message", "trigger", "file", "line",
@@ -696,6 +797,10 @@ def _check_json(a):
             from .pipeline import build
             cfg = cfgmod.load(_assurance_config(a))
             res = build(cfg, web_dist=_web_dist(a.web))
+            added = None
+            if getattr(a, "fix_modules", False):
+                cfg, res, added = _fix_modules(
+                    cfg, res, lambda c: build(c, web_dist=_web_dist(a.web)))
             idx = res["index"]
             wit = _witness_lists(cfg, res["evidence"])
             claims = [{"id": c["id"], "paper": c["paper"], "number": c.get("number"),
@@ -704,11 +809,16 @@ def _check_json(a):
                        **({"step_review": c["step_review"]} if "step_review" in c else {}),
                        **wit.get(c["id"], {})}
                       for c in idx["claims"]]
+            facts = {c["id"]: c.get("semantic") for c in idx["claims"]}
+            for c in claims:
+                c["semantic"] = facts.get(c["id"])
             out = {"mode": "full", "release": idx["release"],
                    "project": idx.get("project", {}).get("commit"),
+                   "semantic": idx.get("semantic"),
                    "findings": idx["findings"]["total"],
                    "finding_details": _finding_details(cfg, res["evidence"]),
-                   "replay": _replay_guard(cfg, res["evidence"])}
+                   "replay": _replay_guard(cfg, res["evidence"]),
+                   **({"modules_added": added} if added is not None else {})}
             num = (res.get("content") or {}).get("numbering")
             if num is not None:
                 out["warnings"] = _reference_warnings(num)
@@ -721,6 +831,8 @@ def _check_json(a):
                                      for pid in num["papers"]}
             failed = bool(idx["findings"]["total"].get("violation"))
         else:
+            if getattr(a, "fix_modules", False):
+                sys.exit(NO_MODULES)
             root, paper = _simple_target(a)
             from .moddocs import stale_doc_message
             from .simple import view_release
@@ -733,6 +845,7 @@ def _check_json(a):
                                  for l in c["links"]],
                        "correspondence": c.get("correspondence"),
                        "reviews": [{"reviewer": r["reviewer"], "verdict": r["verdict"]["value"],
+                                    "correspondence": r.get("correspondence"),
                                     "submitted_at": r["submitted_at"], "current": r["current"],
                                     **({"why": r["why"]} if r.get("why") else {})}
                                    for r in c.get("reviews", [])],
@@ -743,9 +856,14 @@ def _check_json(a):
                        "unit": c.get("unit", "statement"), "parent": c.get("parent"),
                        **(_step_json(c) if c.get("unit") else {})}
                       for c in body["claims"]]
+            from .semantic import of_view
+            summary, facts = of_view(body, root)
+            for c in claims:
+                c["semantic"] = facts.get(c["id"])
             num = body.get("numbering") or {"references": [], "pattern": None}
             out = {"mode": "simple", "paper": body["paper"], "title": body["title"],
                    "release": view_release(body), "commit": body.get("commit"),
+                   "semantic": summary,
                    "modules": {"built": body["project"]["built"],
                                "not_built": body["project"]["unbuilt"]},
                    "notes": body["notes"],
@@ -784,9 +902,13 @@ def cmd_build(a):
     dest = _site_dest(a.site, cfg.root) if getattr(a, "site", None) else None
     if getattr(a, "refresh", False):
         _forget_indexes(cfg)
-    res = build(cfg, release=a.release, skip_lean=a.skip_lean, skip_tex=a.skip_tex, lake=a.lake,
-                web_dist=_web_dist(a.web), lean_build=not a.no_lean_build,
-                reuse_lean=a.reuse_lean)
+    def run(cfg):
+        return build(cfg, release=a.release, skip_lean=a.skip_lean, skip_tex=a.skip_tex,
+                     lake=a.lake, web_dist=_web_dist(a.web), lean_build=not a.no_lean_build,
+                     reuse_lean=a.reuse_lean)
+    res = run(cfg)
+    if getattr(a, "fix_modules", False):
+        cfg, res, _ = _fix_modules(cfg, res, run)
     idx = res["index"]
     for pid, s in idx["summary"].items():
         print(f"paper {pid}:")
@@ -794,6 +916,9 @@ def cmd_build(a):
             print(f"  {v:4d}  {k}")
     print("findings:", ", ".join(f"{v} {k}" for k, v in sorted(idx["findings"]["total"].items()))
           or "none")
+    from .semantic import text
+    for line in text(idx.get("semantic")):
+        print(line)
     # Violations and obligations, one per line: they are few, and they block acceptance.
     details = _finding_details(cfg, res["evidence"])
     for f in details:
@@ -833,6 +958,38 @@ def cmd_build(a):
         sys.exit(1)
 
 
+def _fix_modules(cfg, res, rebuild):
+    """`check --fix-modules`: add to `modules` each project module that the assessment of the
+    build `res` names as the one module declaring a name the probe did not find
+    (`Assessor.not_found`), say what it added, and build again with them. A name that several
+    unlisted modules declare adds none. Returns the configuration, the build and the modules
+    added."""
+    from . import evidence as ev
+    found = ev.load(cfg.out_dir, res["evidence"])["body"]["assessment"].get(
+        "unlisted_modules") or {}
+    names: dict[str, list[str]] = {}
+    for name, mods in found.items():
+        if len(mods) == 1:
+            names.setdefault(mods[0], []).append(name)
+        else:
+            print(f"--fix-modules: {name} is declared in {', '.join(mods[:-1])} and {mods[-1]}, "
+                  "none of which is listed in `modules`: list the one meant")
+    try:
+        added = cfgmod.add_modules(cfg.path, sorted(names))
+    except cfgmod.ConfigError as e:
+        whole = cfg.modules + [m for m in sorted(names) if m not in cfg.modules]
+        sys.exit(f"{e}; list them by hand: modules = {json.dumps(whole, ensure_ascii=False)}")
+    if not added:
+        print("--fix-modules: nothing to add to `modules`")
+        return cfg, res, []
+    print(f"--fix-modules: added to `modules` in {cfg.path.name}:")
+    for m in added:
+        print(f"  {m}, which declares {', '.join(names[m])}")
+    print("--fix-modules: assessing again with them")
+    cfg = cfgmod.load(cfg.path)
+    return cfg, rebuild(cfg), added
+
+
 def cmd_site(a):
     from .pipeline import rebuild_site
     cfg = cfgmod.load(_config_arg(a))
@@ -857,6 +1014,10 @@ def cmd_changes(a):
         sys.exit("`changes` compares releases of the full assessment: run it beside "
                  "machinechecked.toml (or pass -c)")
     cfg = cfgmod.load(_config_arg(a))
+    if a.map:
+        return _changes_map(a, cfg)
+    if a.paper or a.match or a.save:
+        sys.exit("--paper, --match and --save belong to the version map: add --map")
     try:
         doc = chg.between(cfg.out_dir, a.from_release, a.to_release)
     except chg.ChangesError as e:
@@ -886,6 +1047,72 @@ def cmd_changes(a):
     if a.json:
         return _print_json(doc)
     print(chg.text(doc, a.all))
+
+
+def _changes_map(a, cfg):
+    """`machinechecked changes --map`: the version map of a paper between two releases
+    (`version_map.py`): each claim of the earlier revision matched to the later one by its
+    passage, with both sides' facts; with `--workspace`, the workspace's findings it reopens
+    (`reopen.py`). It reads stored evidence and the manuscripts, and changes nothing but, with
+    `--save`, the version maps the workspace keeps."""
+    from . import version_map as vm
+    resolve = []
+    for m in a.match:
+        old, sep, new = m.partition("=")
+        if not (sep and old and new):
+            sys.exit(f"--match {m}: give it as EARLIER=LATER, an earlier and a later claim id")
+        resolve.append((old, new))
+    ws = path = None
+    if a.workspace:
+        from . import workspace as wsp
+        try:
+            path = wsp.find(cfg.out_dir, a.workspace)
+            ws = wsp.read(path)
+        except wsp.WorkspaceError as e:
+            sys.exit(str(e))
+    elif a.save:
+        sys.exit("--save keeps the version map in a workspace: add --workspace ID")
+    from . import reopen as ro
+    try:
+        paper = vm._paper(cfg, a.paper)
+        doc = vm.between(cfg, paper.id, a.from_release, a.to_release, a.from_source,
+                         a.to_source, resolve, ro.regions_of(ws, paper.id) if ws else ())
+    except (ValueError, RuntimeError, OSError) as e:
+        sys.exit(f"changes --map: {e}")
+    if ws is not None:
+        _map_workspace(cfg, doc, ws, path, a.save)
+    if a.json:
+        return _print_json(doc)
+    print(vm.text(doc, a.all))
+    if ws is not None:
+        print()
+        print("\n".join(ro.lines(doc["workspace"])))
+        if a.save:
+            print(f"  kept the version map in workspace {ws['id']}: the reader's Details page, "
+                  "`workspace show` and its export judge its findings with it")
+
+
+def _map_workspace(cfg, doc: dict, ws: dict, path: Path, save: bool) -> None:
+    """`changes --map --workspace ID`: the workspace's findings judged across the version map
+    `doc` (`reopen.py`), their Lean side against the later release's site when it is built, as
+    `doc['workspace']`; with `save`, the map kept in the workspace."""
+    from . import reopen as ro
+    from . import workspace as wsp
+    from .targets import Snapshot, TargetError
+    try:
+        snap = Snapshot(cfg.out_dir / "site" / "data")
+    except TargetError:
+        snap = None
+    if snap is not None and snap.index.get("release") != doc["to"].get("release"):
+        snap = None
+    view = wsp.view(ws, snap, None, cfg.lean_root) if snap is not None else None
+    doc["workspace"] = ro.reopen(doc, ws, snap, cfg.lean_root, ro.lean_texts(cfg.out_dir, doc),
+                                 view=view)
+    if save:
+        try:
+            wsp.update(path, [{"op": "version-map", "map": doc}], snap, cfg.lean_root)
+        except wsp.WorkspaceError as e:
+            sys.exit(f"changes --map --save: {e}")
 
 
 def cmd_bundle(a):
@@ -996,10 +1223,13 @@ def cmd_inspect(a):
     if root is None:
         sys.exit("no Lean project here: run machinechecked inside a directory with a lakefile")
     log = (lambda m: print(m, file=sys.stderr))
+    if a.within and not a.used_by:
+        sys.exit("--in goes with --used-by: the applications of NAME inside one declaration")
     if a.used_by:
         from .uses import text, uses
-        out = uses(root, a.name, a.module, log=log, refresh=a.refresh)
-        print(json.dumps(out, indent=1, ensure_ascii=False) if a.json else text(out))
+        out = uses(root, a.name, a.module, log=log, refresh=a.refresh, within=a.within)
+        print(json.dumps(out, indent=1, ensure_ascii=False) if a.json
+              else text(out, module=a.module))
         if not out["ok"]:
             sys.exit(1)
         return
@@ -1026,6 +1256,8 @@ def _print_inspect(out: dict, dependencies: bool):
     line = (d.get("range") or {}).get("line")
     print(f"{d['name']}  ({d['kind']}, {d['file']}" + (f":{line}" if line else "") + ")")
     print(f"  statement: {d['statement']}")
+    if d.get("statement_note"):
+        print(f"  ({d['statement_note']})")
     print(f"  axioms: {', '.join(d['axioms']) or 'none'}" + ("  (uses sorry)" if d["sorry"] else ""))
     for label, key in (("statement uses", "statement_dependencies"),
                        (f"{out['value_kind']} uses", "proof_dependencies")):
@@ -1054,11 +1286,12 @@ def cmd_symbol(a):
     try:
         if a.action == "add":
             ln = sy.add(cfg, a.claim, a.tex, a.decl, a.reviewer, var=a.var, type_of=a.type_of,
-                        term=a.term, at=a.at)
-            print(f"linked {a.tex} in {a.claim} to {ln['lean']} (by {ln['by']}); "
-                  "rebuild the site to show it")
+                        term=a.term, at=a.at, occurrence=a.occurrence,
+                        paper_object=a.paper_object)
+            print(f"linked {sy.symbol_text(ln['symbol'])} in {a.claim} to {ln['lean']} "
+                  f"(by {ln['by']}); rebuild the site to show it")
         elif a.action == "remove":
-            print(f"removed {sy.remove(cfg, a.claim, a.tex)} link(s)")
+            print(f"removed {sy.remove(cfg, a.claim, a.tex, a.paper_object)} link(s)")
         else:
             print(sy.listing(cfg))
     except (sy.SymbolError, OSError) as e:
@@ -1105,7 +1338,7 @@ def cmd_compare(a):
             out = cmp.query(site, op, target, a.limit, a.after, root,
                             log=lambda m: print(m, file=sys.stderr), match=a.match,
                             workspace=a.workspace, main=a.main,
-                            every_library=a.all_libraries)
+                            every_library=a.all_libraries, within=a.within)
             if a.json:
                 return _print_json(out)
             if not out["available"]:
@@ -1155,11 +1388,13 @@ def cmd_compare(a):
             except wsp.WorkspaceError as e:
                 raise cmp.CompareError(str(e), "unknown-workspace") from None
             v = wsp.view(ws, Snapshot(work / "site" / "data"), cid, root)
+            from .objects import derivations
             reading = {"workspace": ws["id"], "reviewer": v["reviewer"], "mode": v["mode"],
                        **((v["claims"].get(cid) or {}).get("reading")
                           or {"requirements": [], "witnesses": [], "alignments": [],
                               "questions": []}),
-                       "compositions": (v["claims"].get(cid) or {}).get("compositions") or []}
+                       "compositions": (v["claims"].get(cid) or {}).get("compositions") or [],
+                       "derivations": derivations((v["claims"].get(cid) or {}).get("evidence"))}
         out = cmp.claim_packet(site, a.claim, a.stage, a.limit, a.after, reading)
     except cmp.CompareError as e:
         if e.kind in ("no-build", "no-project") and not a.json:
@@ -1224,7 +1459,11 @@ def cmd_review_step(a):
             print(f"reading locked; `review show {a.unit}` shows the Lean")
         elif a.action == "decide":
             s.decide(a.unit, a.verdict, _text_arg(a.comparison), _text_arg(a.detail),
-                     _text_arg(a.witness))
+                     _text_arg(a.witness),
+                     {"coverage": a.coverage, "basis": a.basis,
+                      "argument": _text_arg(a.argument),
+                      "bridge": dict(zip(("theorem", "target"), a.bridge)) if a.bridge else None,
+                      "would_decide": _text_arg(a.would_decide)})
             print(f"verdict recorded; `review author {a.unit}` shows the author's review")
         elif a.action == "submit":
             r = s.submit(a.unit, _text_arg(a.text).strip())
@@ -1252,6 +1491,8 @@ def cmd_review(a):
         u = r.get("unit", {})
         head = f"{u.get('name')} ({u.get('kind')}) by {r.get('reviewer', {}).get('id')}: " \
                f"{r.get('verdict', {}).get('value')}"
+        if pr.coverage_text(r):
+            head += f"; coverage: {pr.coverage_text(r)}"
         if why:
             print(f"REFUSED  {head}")
             for w in why:
@@ -1376,6 +1617,10 @@ def main(argv=None):
                    "found in the project when not given")
     k.add_argument("--json", action="store_true",
                    help="print every claim's status and links as JSON (for scripts and agents)")
+    k.add_argument("--fix-modules", action="store_true",
+                   help="with a machinechecked.toml: add to `modules` each project module that "
+                        "declares a proposition, proof, witness or definition the claims name "
+                        "and the check did not find, then check again")
     k.add_argument("-c", "--config", help=argparse.SUPPRESS)
     k.add_argument("--web", help=argparse.SUPPRESS)
     k.set_defaults(func=cmd_check)
@@ -1405,11 +1650,29 @@ def main(argv=None):
     ch.add_argument("--to", dest="to_release", metavar="RELEASE",
                     help="the later release (default: the latest)")
     ch.add_argument("--from-source", metavar="DIR",
-                    help="the manuscript folder of the earlier revision, to show changed text")
+                    help="the manuscript folder of the earlier revision, to show changed text "
+                    "(with --map, also git:REV: the configured folder as committed at REV)")
     ch.add_argument("--to-source", metavar="DIR",
-                    help="the manuscript folder of the later revision, to show changed text")
+                    help="the manuscript folder of the later revision, to show changed text "
+                    "(with --map, also git:REV)")
     ch.add_argument("--workspace", metavar="ID",
-                    help="also list this workspace's records that are no longer current")
+                    help="also list this workspace's records that are no longer current (with "
+                    "--map: its findings each paper change reopens, with the change and what "
+                    "they rest on)")
+    ch.add_argument("--save", action="store_true",
+                    help="with --map and --workspace: keep the version map in the workspace, for "
+                    "the reader, `workspace show` and its export")
+    ch.add_argument("--map", action="store_true",
+                    help="the version map: match each claim of the earlier paper revision to "
+                    "the later one by its passage (unchanged, moved, changed, context-changed, "
+                    "removed, new or ambiguous), with each release's own status and reviews; "
+                    "the manuscripts are read from --from-source and --to-source, else at each "
+                    "release's revision")
+    ch.add_argument("--paper", metavar="ID", help="with --map: the paper (needed when the "
+                    "configuration has several)")
+    ch.add_argument("--match", action="append", default=[], metavar="EARLIER=LATER",
+                    help="with --map: the maintainer's match of an earlier claim that no passage "
+                    "or label matched to a later claim nothing else is matched to; repeatable")
     ch.add_argument("--all", action="store_true", help="list unchanged claims too")
     ch.add_argument("--json", action="store_true")
     ch.set_defaults(func=cmd_changes)
@@ -1509,6 +1772,10 @@ def main(argv=None):
     ins.add_argument("--used-by", action="store_true",
                      help="where it is used instead: the declarations that use it, each "
                           "application's arguments and the source of each premise")
+    ins.add_argument("--in", dest="within", metavar="CALLER",
+                     help="with --used-by: only the applications inside this declaration, or "
+                          "the one application with this id (app:CALLER:N), each with every "
+                          "local of its context")
     ins.add_argument("--json", action="store_true",
                      help="print one JSON document (for scripts and agents)")
     ins.add_argument("--project", help="the Lean project (default: the one here)")
@@ -1528,18 +1795,24 @@ def main(argv=None):
                     "proof-facts NAME (the facts inside its proof), uses NAME (where it is "
                     "applied, with the source of each premise), composition CLAIM (the "
                     "auditors' compositions for it, with --workspace for one workspace), impact "
-                    "NAME (how each main result uses it, and which claims' Lean uses it)")
+                    "NAME (how each main result uses it, and which claims' Lean uses it), "
+                    "expansion KEY (a definition at the arguments of one application, by the "
+                    "key a statement gives it)")
+    co.add_argument("--in", dest="within", metavar="CALLER",
+                    help="with uses: only the applications inside this declaration, or the one "
+                    "application with this id (app:CALLER:N), each with every local of its "
+                    "context")
     co.add_argument("--match", metavar="TEXT",
                     help="with proof-facts: rank the facts by the symbols they share with TEXT")
     co.add_argument("--main", action="append", metavar="NAME",
                     help="with impact: a main result to trace from, a declaration or a claim "
-                    "(its linked Lean); repeat for several (default: the declarations linked to "
-                    "the paper's theorems)")
+                    "(its linked Lean); repeat for several (default: those `workspace main` "
+                    "saved, else the declarations linked to the paper's theorems)")
     co.add_argument("--limit", type=int, help="return at most this many definitions or results")
     co.add_argument("--after", metavar="ID", help="continue a list after this item")
     co.add_argument("--workspace", metavar="ID", help="include this workspace's requirements and "
                     "compositions of the claim (informed stage only); with --query composition, "
-                    "only this workspace's")
+                    "only this workspace's; with --query impact, the main results it saves")
     co.add_argument("--all-libraries", action="store_true",
                     help="with --query search: search every library of the project, also those "
                     "the paper's build leaves out because formalization.yaml maps them only to "
@@ -1556,7 +1829,13 @@ def main(argv=None):
         if name != "list":
             p_.add_argument("claim", help="the claim id, e.g. P:thm:main")
             p_.add_argument("tex", help="the symbol as the paper's TeX writes it, e.g. '\\nu'")
+            p_.add_argument("--object", dest="paper_object",
+                            help="the object of the paper the symbol's occurrences are (with "
+                                 "remove: only that object's link)")
         if name == "add":
+            p_.add_argument("--occurrence", type=int, action="append",
+                            help="link only this occurrence of the symbol, numbered from 1 in "
+                                 "reading order (repeat for several; needs --object)")
             p_.add_argument("decl", help="the claim's Lean statement")
             p_.add_argument("--var", help="the variable it is (a binder's name or index)")
             p_.add_argument("--type-of", dest="type_of", help="the binder whose type it is")
@@ -1626,12 +1905,23 @@ def main(argv=None):
                         "suggest": "propose the passages near a claim that may govern a "
                                    "requirement (printed as operations, or saved with --apply)",
                         "export": "write a workspace as one file",
-                        "import": "bring in an exported workspace"}.items():
+                        "import": "bring in an exported workspace",
+                        "main": "save the paper's main results, which `compare --query impact` "
+                                "traces from (without NAME: show them)"}.items():
         sp = wss.add_parser(name, help=help_)
         if name in ("update", "import"):
             sp.add_argument("file", help="a JSON file, or - for standard input")
-        if name in ("open", "show", "update", "export", "suggest"):
+        if name in ("open", "show", "update", "export", "suggest", "main"):
             sp.add_argument("--id", help="the workspace (default: yours)")
+        if name == "main":
+            sp.add_argument("names", nargs="*", metavar="NAME",
+                            help="a claim (id, key or number; its linked Lean) or a declaration "
+                                 "(MODULE:NAME when several modules declare it); they replace "
+                                 "the main results saved")
+            sp.add_argument("--clear", action="store_true",
+                            help="remove the main results saved (impact traces the suggestion "
+                                 "again)")
+            sp.add_argument("--json", action="store_true")
         if name == "suggest":
             sp.add_argument("--claim", required=True, help="the claim (id, key or number)")
             sp.add_argument("--requirement", required=True,
@@ -1695,6 +1985,17 @@ def main(argv=None):
             sp.add_argument("comparison", help="a file holding your comparison, or -")
             sp.add_argument("--detail", help="a file holding what the verdict needs said")
             sp.add_argument("--witness", help="a file holding your note on the witness")
+            sp.add_argument("--coverage", help="how far the unit's Lean states the claim, agreeing "
+                            "with the verdict: full or partial (a match); partial, changed or "
+                            "related (a problem); unresolved (cannot determine)")
+            sp.add_argument("--basis", help="how that coverage is supported: direct (one Lean "
+                            "statement), reviewed_composition (your argument) or checked_bridge")
+            sp.add_argument("--argument", help="a file holding a reviewed composition's argument")
+            sp.add_argument("--bridge", nargs=2, metavar=("THEOREM", "TARGET"),
+                            help="a checked bridge: one of the unit's theorems, whose type is "
+                                 "exactly TARGET")
+            sp.add_argument("--would-decide", help="a file holding what would decide an "
+                            "unresolved coverage")
         if name == "export":
             sp.add_argument("--out", required=True)
         if name in ("next", "status", "read", "show", "author"):

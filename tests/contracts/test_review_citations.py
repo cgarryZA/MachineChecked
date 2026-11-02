@@ -108,6 +108,23 @@ def test_review_text_that_records_a_removal_cites_nothing(tmp_path):
         "Foo.Spec.old_claim", "Foo.old_lemma"]
 
 
+LIVE = "<!-- spec-review: Foo.spec 0123456789abcdef0123456789abcdef -->"
+RETIRED = "<!-- retired def-review: Foo.Bar fedcba9876543210fedcba9876543210 -->"
+UNNAMED = f"A reading of `Foo.bar` by `referee.one`.\n{LIVE}\n{RETIRED}\n"
+
+
+def test_a_marker_without_attributes_names_no_reviewer(tmp_path):
+    """#363: a marker may have no attributes. Its review text is read, and it names no reviewer
+    whose name the citations skip."""
+    f = tmp_path / "reviews.md"
+    f.write_text(UNNAMED)
+    assert [c["token"] for c in citations([f], tmp_path)] == ["Foo.bar", "referee.one"]
+    # The reviewer that a live or a retired marker names is skipped.
+    for marker in (LIVE, RETIRED):
+        f.write_text(UNNAMED.replace(marker, marker.replace(" -->", " by=referee.one -->")))
+        assert [c["token"] for c in citations([f], tmp_path)] == ["Foo.bar"]
+
+
 @needs_lean
 @pytest.mark.parametrize("toolchain", [None, "leanprover/lean4:v4.24.0"])
 def test_the_probe_resolves_names_by_their_last_components(tmp_path, toolchain):
@@ -168,3 +185,41 @@ def test_a_dangling_citation_is_a_warning_or_in_strict_mode_a_violation(toy):
     assert {f["tier"] for f in findings(body, "review-citation")} == {"violation"}
     assert not index["gates"]["T"]["consistency"]["pass"]
     assert {c["id"]: c["status"] for c in index["claims"]} == before
+
+
+# Two markers written without their attributes (#363): one with no review text, and one whose
+# review text cites a name nothing declares.
+NO_ATTRIBUTES = """
+## A marker copied without its attributes
+
+<!-- spec-review: Foo.spec 0123456789abcdef0123456789abcdef -->
+
+## A reading recorded without its attributes
+
+The reading cites `Toy.no_such_lemma`.
+
+<!-- def-review: Foo.Bar fedcba9876543210fedcba9876543210 -->
+"""
+
+
+@needs_lean
+@needs_tex
+def test_a_marker_without_attributes_does_not_stop_the_build(toy):
+    """#363: the build reads markers written without attributes. Each is recorded with no
+    reviewer named, the one with no review text is listed as recording no reading, and the
+    citations of the other's review text are checked."""
+    path = toy / "reviews" / "T.md"
+    with open(path, "a") as f:
+        f.write(NO_ATTRIBUTES)
+    lines = path.read_text().split("\n")
+    at = {name: next(i for i, x in enumerate(lines, 1) if f"-review: {name} " in x)
+          for name in ("Foo.spec", "Foo.Bar")}
+    _, body, _ = build(toy)
+    got = {r["name"]: (r["file"], r["line"], r["by"], r["kind"])
+           for r in body["reviews"]["records"] if r["name"] in at}
+    assert got == {name: ("reviews/T.md", line, "unknown", "unknown")
+                   for name, line in at.items()}
+    assert [(f["subject"], f["file"], f["line"]) for f in findings(body, "review-without-reading")
+            ] == [("Foo.spec", "reviews/T.md", at["Foo.spec"])]
+    assert [(f["trigger"], f["line"]) for f in findings(body, "review-citation")] == [
+        ("Toy.no_such_lemma", at["Foo.Bar"] - 2)]

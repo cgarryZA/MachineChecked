@@ -149,10 +149,23 @@ def test_a_step_finding_belongs_to_its_source_text_and_never_to_its_parent(toy):
     step = next(c for c in inv["claims"] if c["id"] == "T:eq:bound-sum")
     step["coverage"] = "composed"
     step.pop("basis")
+    # A step with no Lean links keeps an unresolved reading, and stays unlinked (#407).
+    open_q = next(c for c in inv["claims"] if c["id"] == "T:eq:bound-range")
+    open_q.update(coverage="unresolved", note="Whether the family holds for k = 0 is open.")
     (toy / "claims.json").write_text(json.dumps(inv))
     index, _, cfg = build(toy, reuse_lean=True)
     cor = chunk(cfg, "T:eq:bound-sum")["step"]["correspondence"]
     assert (cor["coverage"], cor["basis"]) == ("full", "reviewed_composition")
+    s = chunk(cfg, "T:eq:bound-range")["step"]
+    assert s["links"] == [] and (s["correspondence"]["coverage"], s["correspondence"]["basis"],
+                                 s["correspondence"]["note"]) == (
+        "unresolved", None, "Whether the family holds for k = 0 is open.")
+    written = json.loads((cfg.out_dir / "site/data/index.json").read_text())
+    row = next(c for c in written["claims"] if c["id"] == "T:eq:bound-range")
+    assert (row["semantic"]["readings"][0]["count"], row["semantic"]["declarations"]) == (
+        "unresolved", 0)
+    assert written["semantic"]["papers"]["T"]["coverage"]["audit"]["proof_steps"][
+        "unresolved"] == 1
     # Whatever is recorded on a step, no assessed status moves.
     assert {c["id"]: c["status"] for c in index["claims"]} == {**EXPECTED, **STEPS}
     # An inventory written before unit kinds: a claim recorded by line whose scope is
@@ -168,6 +181,72 @@ def test_a_step_finding_belongs_to_its_source_text_and_never_to_its_parent(toy):
     assert row["status"] == STEPS["T:eq:bound-sum"]
     assert "step:T:eq:bound-sum" in {u["id"] for u in json.loads(
         (cfg.out_dir / "site/data/review-queue.json").read_text())["units"]}
+
+
+def test_an_unlinked_step_keeps_an_unresolved_reading_and_stays_unlinked():
+    """A full assessment's proof step with no Lean links keeps an unresolved reading (#407): the
+    semantic summary counts it as unresolved, with an open question, and the step stays
+    unlinked, with no basis, in the queue and in its parent's list. A reading of any other
+    coverage describes linked declarations and is not kept without them. No status moves."""
+    from prooflens import review_queue, semantic, steps
+    from prooflens.status import fields
+    by, note = "A. Auditor", "Whether the printed bound needs k at least 1 is open."
+    parent = {"id": "P:thm:x", "number": "Theorem 1", "title": "", "heading": None,
+              "file": "P_thm_x.json"}
+
+    def step(cid, **reading):
+        return {"id": cid, "paper": "P", "kind": "equation", "number": "Equation (1)",
+                "unit": "proof-equation", "parent": parent["id"], "scope": "proof-step",
+                "location": "p.tex:5", "source_sha256": "a" * 64, "clauses": [], **reading}
+
+    # An unlinked step's unresolved reading is kept, without the basis it records: there is
+    # no Lean for a basis to rest on.
+    claim = step("P:eq:x", coverage="unresolved", basis="direct", confidence="low", note=note,
+                 by=by)
+    block, names = steps.full_block(claim, parent, {"links": {}}, None, "proof-equation")
+    assert block["links"] == [] and block["route"] is None and names == set()
+    assert block["correspondence"] == {"source": "inventory", "coverage": "unresolved",
+                                       "basis": None, "confidence": "low", "note": note, "by": by}
+    assert block["review"]["state"] == "unreviewed"
+    # A linked step's reading keeps its basis, as before.
+    assert steps.correspondence({**claim, "lean": ["X.a"]}, "inventory")["basis"] == "direct"
+    # Without links, any other reading, a note alone or no reading at all is not kept.
+    for reading in ({"coverage": "full", "basis": "direct"}, {"coverage": "partial"},
+                    {"coverage": "composed"}, {"note": note}, {}):
+        assert steps.correspondence(step("P:eq:y", **reading), "inventory") is None, reading
+
+    row = {"id": "P:eq:x", "paper": "P", "file": "P_eq_x.json", "kind": "equation",
+           "number": "Equation (1)", "title": "", **fields("scope.proof-step")}
+    chunks = {"P_eq_x.json": {"id": "P:eq:x", "kind": "equation", "unit": "proof-equation",
+                              "parent": parent["id"], "source_sha256": "a" * 64, "clauses": [],
+                              "step": block},
+              "P_thm_x.json": {"id": "P:thm:x", "kind": "theorem", "unit": "statement",
+                               "clauses": []}}
+    index = {"claims": [row, {"id": "P:thm:x", "paper": "P", "file": "P_thm_x.json",
+                              "kind": "theorem", "number": "Theorem 1", "title": "",
+                              **fields("formal.unspecified")}], "papers": []}
+    before = [(r["status_code"], r["status"], r["class"]) for r in index["claims"]]
+    steps.attach_parents(index["claims"], chunks)
+    s = semantic.apply(index, chunks)
+    assert [(r["status_code"], r["status"], r["class"]) for r in index["claims"]] == before
+    p = s["papers"]["P"]
+    assert p["inventory"]["proof_steps"] == {"records": 1, "linked": 0, "links": 0,
+                                             "declarations": 0}
+    assert p["coverage"]["audit"]["proof_steps"]["unresolved"] == 1
+    assert p["coverage"]["audit"]["proof_steps"]["not_assessed"] == 0
+    assert p["basis"]["audit"]["proof_steps"]["unspecified"] == 1
+    assert p["findings"]["proof_steps"]["open-question"] == 1
+    assert row["semantic"]["readings"] == [{"set": "audit", "coverage": "unresolved",
+                                            "basis": None, "currency": "unpinned",
+                                            "count": "unresolved", "by": by}]
+    assert (row["semantic"]["declarations"], row["semantic"]["findings"]) == (
+        0, ["open-question"])
+    # The parent and the review queue still show a step with no Lean linked.
+    assert [(x["id"], x["linked"], x["route"]) for x in chunks["P_thm_x.json"]["steps"]] == [
+        ("P:eq:x", [], [])]
+    (u,) = review_queue.step_units(index, chunks)
+    assert (u["lean"], u["state"]) == ([], "pending")
+    assert u["reason"] == "Proof step of Theorem 1; no Lean is linked to it"
 
 
 def test_unit_kinds():

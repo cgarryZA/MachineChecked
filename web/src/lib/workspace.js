@@ -29,6 +29,10 @@ export const openWorkspace = (reviewer, mode, id) =>
 export const showWorkspace = (id, claim) =>
   call(`api/workspace?id=${encodeURIComponent(id)}${claim ? `&claim=${encodeURIComponent(claim)}` : ""}`);
 
+// The findings of a workspace that a revision of the paper reopens, for each version map it keeps
+// to this site's release (`reopen.for_site` of the engine), with the Lean side against this build.
+export const revisionOf = (id) => call(`api/workspace/revision?id=${encodeURIComponent(id)}`);
+
 // `ops` are applied together or not at all. The request id makes a retried request harmless.
 export const updateWorkspace = (id, ops) =>
   call("api/workspace", { action: "update", id, ops, op_id: newId("req") });

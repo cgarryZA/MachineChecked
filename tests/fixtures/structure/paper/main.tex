@@ -60,8 +60,33 @@ On a probability space, the whole space has measure one.
 No solution for $0$ has a negative bound.
 \end{theorem}
 
+\begin{theorem}\label{thm:two-solutions}\lean{Shape.two_solutions}
+Two solutions $s$ and $t$ for the same datum start at the same point.
+\end{theorem}
+
 \begin{theorem}\label{thm:both}\lean{Shape.both}
 If $a \le b$ and $b \le a$, then $a = b$.
+\end{theorem}
+
+\begin{definition}\label{def:profile}\lean{Shape.Profile}\lean{Shape.Concrete}
+A profile is a function $f$ with $f(n) \le C$ for every $n$. A concrete profile is a profile that
+vanishes from $N$ on and has period $p$ below $N$.
+\end{definition}
+
+\begin{theorem}\label{thm:build}\lean{Shape.build}\lean{Shape.build_rec}
+The zero profile below $N$ is a concrete profile, and $f(n + 1) = f(n)$ for it.
+\end{theorem}
+
+\begin{theorem}\label{thm:vanishes}\lean{Shape.vanishes}
+A concrete profile vanishes from $N$ on.
+\end{theorem}
+
+\begin{theorem}\label{thm:scaled}\lean{Shape.scaled}
+A scaled family for $d$ and $w$ that starts at $d$ starts at $d$.
+\end{theorem}
+
+\begin{theorem}\label{thm:both-pos}\lean{Shape.both_pos}
+An object with both extents has a positive first coordinate.
 \end{theorem}
 
 \begin{theorem}\label{thm:jet}\lean{Shape.jet_lower}
@@ -74,6 +99,54 @@ A vector bounded by $i$ is bounded by $i + 1$; vectors bounded by $7$ are bounde
 
 \begin{theorem}\label{thm:steps}\lean{Shape.steps_pos}\lean{Shape.pick_at}
 The number of steps down from $k + 3$ is positive, and $\mathrm{pick}(k + 1, 0) = 1$.
+\end{theorem}
+
+\begin{theorem}\label{thm:conditional}\lean{Shape.conditional}
+If every $x$ with $A(x)$ has some $y$ with $B(x, y)$, and $A(a)$ holds, then some $y$ has
+$B(a, y)$.
+\end{theorem}
+
+\begin{theorem}\label{thm:alternating}\lean{Shape.alternating}
+For every $x$ there is $y$ such that $x + z \le y + z$ for every $z$.
+\end{theorem}
+
+\begin{theorem}\label{thm:premised}\lean{Shape.premised}
+If $P$ holds, some $x$ is $0$; $Q$ holds exactly when some $n$ equals itself; and either some $x$
+is $1$ or $Q$ holds.
+\end{theorem}
+
+\begin{theorem}\label{thm:one-map}\lean{Shape.one_map}
+Some map $\Phi \colon G \to H$ over $\mathbb{N}$ has both $A$ and $B$.
+\end{theorem}
+
+\begin{theorem}\label{thm:bound-once}\lean{Shape.bound_once}\lean{Shape.bound_each}
+There is a constant $C$ with $n \le C n^2 + n$ for every $n$; and for every $n$ there is such a
+constant.
+\end{theorem}
+
+\begin{theorem}\label{thm:isometry}\lean{Shape.isometry_classes}
+Let $\mu$ and $\nu$ be $\sigma$-finite measures and $\Phi \colon L^2(\mu \otimes \nu) \to
+\mathbb{R}^3$ a linear isometry. Every class $F$ has a representative, unique almost everywhere.
+\end{theorem}
+
+\begin{theorem}\label{thm:alternatives}\lean{Shape.alternatives}
+If $m \le b$ for every $m \le n$, then some real $x$ exceeds $n$, or $n = 2x$ for some $x$.
+\end{theorem}
+
+\begin{definition}\label{def:digit}\lean{Shape.Digit.val}
+The value of the digit $d_i$ is $i$, for $i = 0, \dots, 69$.
+\end{definition}
+
+\begin{theorem}\label{thm:digit}\lean{Shape.last_digit}
+The value of the digit $d_{69}$ is $69$.
+\end{theorem}
+
+\begin{theorem}\label{thm:digit-index}\lean{Shape.last_index}
+A digit whose constructor index is $69$ has the value $69$.
+\end{theorem}
+
+\begin{theorem}\label{thm:margin}\lean{Shape.margin_half}
+Half of $k + 2$ is less than $k + 2 + k$.
 \end{theorem}
 
 \end{document}

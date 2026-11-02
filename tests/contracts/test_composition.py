@@ -92,7 +92,7 @@ def test_a_composition_that_covers_every_clause_is_the_auditors_argument(tmp_pat
     assert c["evidence"] == ["e-exists", "e-bound"] and c["currency"]["state"] == "current"
     assert v["compositions"] == 1
     text = "\n".join(cp.lines(c))
-    assert "every clause, by the auditor's composition" in text
+    assert "every clause, by an argument combining Lean results" in text
     assert "u of s1 is same object as v of s2 (retained witness)" in text
     assert "Lean has not checked this combination" in text
 

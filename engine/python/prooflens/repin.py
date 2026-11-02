@@ -549,7 +549,7 @@ def repin_plan(inventory: dict, paper: str, old_root: Path, new_root: Path, old_
             continue
         if claim.get("source_hash_scheme") not in SCHEMES:
             raise RegionError(f"{claim['id']}: pin its source region at the original revision "
-                              "first (python -m prooflens.source_regions)")
+                              "first (machinechecked inventory regions)")
         try:
             full = pin_of(old_root, claim)
         except (RegionError, OSError, UnicodeError) as error:

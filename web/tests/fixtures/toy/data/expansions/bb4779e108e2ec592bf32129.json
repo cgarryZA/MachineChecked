@@ -1,1 +1,0 @@
-{"args": [{"binder": "explicit", "name": "", "value": {"id": "/1/0/1/1/1", "segments": [{"t": "n"}], "terms": [], "text": "n"}}], "at": "/1/0/1/1", "checked": true, "defined_by": "equations", "equations": [], "equations_not_applying": ["Toy.triangle.eq_1", "Toy.triangle.eq_2"], "equations_omitted": 0, "id": "/1/0/1/1=", "name": "Toy.triangle"}

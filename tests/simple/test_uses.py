@@ -6,7 +6,9 @@ condition with `good_double`. The specialised helper `half_lt_four` is used by t
 wrapper `main_bound`, the declaration the paper's theorem is linked to. `twice` applies
 `good_double` twice, each time to a variable printed `x` bound in its own scope; `uses_instance`
 applies `length_pos` with an implicit type and an instance. `Good` is mentioned in statements
-and in the body of `goodSet`; `Uses.Other` imports `Uses.Main` and uses nothing of it.
+and in the body of `goodSet`; `Uses.Other` imports `Uses.Main` and uses nothing of it. In
+`Uses.Select`, `from_fact` applies `lt_double` with its condition from a fact established
+earlier in the proof, and `many` applies it nine times.
 """
 
 import shutil
@@ -238,6 +240,137 @@ def test_the_build_writes_the_reverse_references_and_compare_answers(project, tm
 
 
 @needs_lean
+def test_each_object_receives_the_premises_and_the_conclusion_about_it(project):
+    out = uses(project, "Uses.half_lt")
+    # The number the caller constructs receives the condition, proved there, and the conclusion.
+    (n,) = app(out, "Uses.caller_proves")["objects"]
+    assert (n["binder"], n["argument"], n["supplied"]) == ("n", "2 * (m + 1)",
+                                                          "a term built in the caller")
+    assert [(p["basis"], p.get("binder"), p.get("discharge")) for p in n["properties"]] == [
+        ("premise", "h", "proved"), ("premise", "hpos", "proved"), ("conclusion", None, None)]
+    assert n["properties"][0]["statement"] == "Uses.Good (2 * (m + 1))"
+    assert n["properties"][2]["statement"] == "2 * (m + 1) / 2 < 2 * (m + 1)"
+    # The caller's own variable receives it from the caller's hypothesis.
+    (m,) = app(out, "Uses.caller_assumes")["objects"]
+    assert m["argument"] == "m" and m["supplied"] == "the caller's parameter m"
+    assert [p.get("discharge") for p in m["properties"]] == ["assumed", "assumed", None]
+    t = us.text(out)
+    assert "premise   h : Uses.Good (2 * (m + 1))  (about n)" in t
+    assert "gives     2 * (m + 1) / 2 < 2 * (m + 1)  (about n)" in t
+
+    # A type and an instance are not objects; each object gets what mentions it.
+    a = app(uses(project, "Uses.length_pos"), "Uses.uses_instance")
+    assert [p["depends"] for p in a["params"]] == [[], [0], [0], [0], [0, 2, 3]]
+    objs = {o["binder"]: o for o in a["objects"]}
+    assert list(objs) == ["xs", "x"]
+    assert [p["basis"] for p in objs["xs"]["properties"]] == ["premise", "conclusion"]
+    assert [p["basis"] for p in objs["x"]["properties"]] == ["premise"]
+    # What the declaration's type records is not part of the caller's digest.
+    bare = {**a, "params": [{k: v for k, v in p.items() if k not in us.OF_THE_TYPE}
+                            for p in a["params"]]}
+    assert us.app_hash(bare) == us.app_hash(a)
+
+
+@needs_lean
+def test_one_declaration_or_one_application_is_read_with_its_context(project, monkeypatch,
+                                                                     capsys):
+    whole = uses(project, "Uses.lt_double")
+    assert len([a for a in whole["applications"] if a["caller"] == "Uses.many"]) == 8
+    assert not whole["applications_complete"]
+    assert "`--in CALLER` describes those of one declaration." in us.text(whole)
+
+    # Inside `many` alone, all nine are described, each with every local of its context.
+    one = uses(project, "Uses.lt_double", within="Uses.many")
+    assert one["ok"] and one["complete"] and one["applications_complete"]
+    assert one["within"] == {"caller": "Uses.many", "module": "Uses.Select", "searched": True}
+    assert [u["name"] for u in one["users"]] == ["Uses.many"] and one["further"] == []
+    ids = [a["id"] for a in one["applications"]]
+    assert ids == [f"app:Uses.many:{k}" for k in range(9)]
+    first = {a["id"]: a for a in whole["applications"]}
+    assert all(first[a["id"]]["params"] == a["params"] for a in one["applications"][:8])
+    ctx = one["applications"][8]["context"]
+    assert [(c["name"], c["kind"]) for c in ctx] == [("m", "caller parameter"),
+                                                      ("h", "caller hypothesis")]
+
+    # One application by its id: the same answer, from the store.
+    sel = uses(project, "Uses.lt_double", within="app:Uses.many:8")
+    assert [a["id"] for a in sel["applications"]] == ["app:Uses.many:8"]
+    assert sel["within"]["found"] and sel["cache"]["hit"]
+
+    # A fact established earlier supplies the condition; the context also holds one the
+    # application does not mention.
+    (a,) = uses(project, "Uses.lt_double", within="Uses.from_fact")["applications"]
+    assert [(c["name"], c["kind"]) for c in a["context"]] == [
+        ("m", "caller parameter"), ("_other", "local fact"), ("hpos", "local fact")]
+    assert [x["name"] for x in a["locals"]] == ["m", "hpos"]
+    h = param(a, "h")
+    assert (h["origin"]["kind"], h["origin"]["name"], h["discharge"]) == (
+        "local fact", "hpos", "proved")
+    assert a["objects"][0]["argument"] == "m + 1"
+
+    # A declaration that does not use it, and one that does not exist.
+    none = uses(project, "Uses.lt_double", within="Uses.caller_assumes")
+    assert none["ok"] and none["complete"] and none["users"] == []
+    assert none["answer"] == "no use found in this scope"
+    gone = uses(project, "Uses.lt_double", within="Uses.nowhere")
+    assert not gone["ok"] and gone["status"] == "not found"
+
+    # An application only the narrower answer describes can be cited, and is current.
+    doc, found = us.locate(project, {"callee": "Uses.lt_double", "id": "app:Uses.many:8"})
+    assert found["id"] == "app:Uses.many:8"
+    ref = us.citation(doc, found)
+    assert us.app_currency(project, ref)["state"] == "current"
+
+    # The command prints the context and the reference to cite.
+    from prooflens.cli import main
+    capsys.readouterr()
+    main(["inspect", "Uses.lt_double", "--used-by", "--in", "app:Uses.many:8",
+          "--project", str(project)])
+    t = capsys.readouterr().out
+    assert "searched Uses.many and the constants Lean generated for it" in t
+    assert "context   m : Nat  (a parameter of the caller)" in t
+    assert "h : 0 < m  (a hypothesis of the caller)" in t
+    assert '"id": "app:Uses.many:8"' in t
+    with pytest.raises(SystemExit):
+        main(["inspect", "Uses.lt_double", "--in", "Uses.many", "--project", str(project)])
+
+
+TWIN = """namespace Uses
+
+theorem lt_double (n : Nat) (h : 0 < n) : n < 2 * n := by omega
+
+end Uses
+
+theorem Twin.step : 1 < 2 * 1 := Uses.lt_double 1 (by decide)
+
+theorem Twin.top : 1 < 2 * 1 := Twin.step
+"""
+
+
+@needs_lean
+def test_further_callers_stay_in_the_environment_of_the_declaration(tmp_path):
+    """A second library declares a declaration of the same name, with users of its own: they
+    are not callers of the first, even when the references of both libraries are stored."""
+    root = tmp_path / "uses"
+    shutil.copytree(SRC, root)
+    lake = root / "lakefile.toml"
+    lake.write_text(lake.read_text().replace('defaultTargets = ["Uses"]',
+                                             'defaultTargets = ["Uses", "Twin"]')
+                    + '\n[[lean_lib]]\nname = "Twin"\n')
+    (root / "Twin.lean").write_text(TWIN)
+    _build(root)
+    assert uses(root, "Uses.lt_double")["status"] == "ambiguous"
+    # The references of every library are stored.
+    assert uses(root, "Twin.step")["ok"]
+    ours = uses(root, "Uses.lt_double", module="Uses.Select")
+    assert [u["name"] for u in ours["users"]] == ["Uses.from_fact", "Uses.many"]
+    assert ours["further"] == []
+    twin = uses(root, "Uses.lt_double", module="Twin")
+    assert [u["name"] for u in twin["users"]] == ["Twin.step"]
+    assert [f["name"] for f in twin["further"]] == ["Twin.top"]
+
+
+@needs_lean
 @pytest.mark.parametrize("toolchain", ["leanprover/lean4:v4.24.0"])
 def test_the_extraction_runs_on_an_older_lean(tmp_path, toolchain):
     if subprocess.run(["elan", "toolchain", "list"], capture_output=True,
@@ -251,3 +384,8 @@ def test_the_extraction_runs_on_an_older_lean(tmp_path, toolchain):
     assert param(app(out, "Uses.caller_assumes"), "h")["discharge"] == "assumed"
     assert param(app(out, "Uses.caller_proves"), "h")["discharge"] == "proved"
     assert out["further"] == [] and "Uses.Other" in out["imports_without_use"]
+    assert [p["basis"] for p in app(out, "Uses.caller_proves")["objects"][0]["properties"]] == [
+        "premise", "premise", "conclusion"]
+    (a,) = uses(root, "Uses.lt_double", within="Uses.from_fact")["applications"]
+    assert [(c["name"], c["kind"]) for c in a["context"]] == [
+        ("m", "caller parameter"), ("_other", "local fact"), ("hpos", "local fact")]

@@ -68,12 +68,64 @@ def same_version(a: str, b: str) -> bool:
     return a.lower() == b.lower()
 
 
+_ABSENT = object()
+
+
+def take_semantic(idx: dict) -> tuple[object, dict[int, object]]:
+    """Remove the semantic summary from an index (`semantic`, or `_ABSENT`) and each claim row's
+    facts (`semantic`, by the row's position), so that the rest is validated without them."""
+    summary = idx.pop('semantic', _ABSENT)
+    facts = {i: row.pop('semantic') for i, row in enumerate(idx.get('claims') or [])
+             if isinstance(row, dict) and 'semantic' in row}
+    return summary, facts
+
+
+def semantic_part(summary, facts: dict[int, object]) -> dict | None:
+    """The semantic summary of a published audit, as this version reads it: None when the index
+    has none; `{state: 'loaded', summary}` when it is in the format this version reads
+    (`semantic.SCHEMA`) and valid, with every claim row's facts; else `{state: 'set-aside',
+    reason, detail, format}`, where `reason` is `unsupported` (another format) or `invalid`.
+    The summary and the claims' facts are one export: they load or are set aside together. The
+    summary is never an input to a status, so setting it aside changes no status or claim."""
+    from jsonschema import validate as check
+    from .schemas import schema
+    from .semantic import SCHEMA
+    if summary is _ABSENT and not facts:
+        return None
+    fmt = summary.get('schema') if isinstance(summary, dict) else None
+    fmt = fmt if isinstance(fmt, str) else None
+
+    def aside(reason, detail):
+        return {'state': 'set-aside', 'reason': reason, 'detail': detail, 'format': fmt}
+    if summary is _ABSENT:
+        return aside('invalid', 'Claim rows have semantic facts, and the index has no summary')
+    if not isinstance(summary, dict):
+        return aside('invalid', 'The semantic summary is not an object')
+    if fmt != SCHEMA:
+        return aside('unsupported', f'The semantic summary is in format {fmt or "(none)"}; '
+                                    f'this version reads {SCHEMA}')
+    defs = schema('manifest-index')['$defs']
+    where = 'semantic'
+    try:
+        check(summary, {'$ref': '#/$defs/semantic', '$defs': defs})
+        for i, f in sorted(facts.items()):
+            where = f'claims/{i}/semantic'
+            check(f, {'$ref': '#/$defs/semanticClaim', '$defs': defs})
+    except ValidationError as e:
+        return aside('invalid', 'Invalid semantic summary at '
+                     + '/'.join([where, *map(str, e.absolute_path)]))
+    return {'state': 'loaded', 'summary': summary}
+
+
 def load_published_audit(paper: dict, project: dict, listing: dict, fetch) -> dict:
     """Fetch and validate one snapshot. ``fetch(url, byte_limit)`` returns bytes.
 
     The public paper identity and version must match the listing. PDF coordinates remain
     attached to the audit's verified PDF bytes. The original paper PDF keeps its own anchors.
     All claim chunks and their declaration closure are required; partial snapshots are refused.
+    The index's semantic summary is optional data beside the evidence: the record carries it as
+    `semantic_summary` (`semantic_part`), and one this version cannot read is set aside, with
+    why, while the audit's statuses and claims load as they would without it.
     """
     base = listing['url'].rstrip('/') + '/'
     u = urlsplit(base)
@@ -134,11 +186,18 @@ def load_published_audit(paper: dict, project: dict, listing: dict, fetch) -> di
         raise AuditError('Audit descriptor and data name different releases')
     if idx.get('project', {}).get('commit') != f['commit'] or idx.get('project', {}).get('repository', '').lower() != f['repository'].lower():
         raise AuditError('Audit descriptor and data name different project revisions')
+    # The semantic summary is checked apart from the evidence (`semantic_part`): one this version
+    # cannot read is set aside, and the audit loads without it.
+    summary, facts = take_semantic(idx)
     # Validate shape after normalising unknown codes, never using labels as logic.
     for row in idx.get('claims', []):
         code = row.get('status_code')
         row.update(fields(code if code in STATUSES else 'unknown'))
     contract(idx, 'manifest-index')
+    semantic = semantic_part(summary, facts)
+    if semantic and semantic['state'] == 'loaded':
+        for i, row_facts in facts.items():
+            idx['claims'][i]['semantic'] = row_facts
     ps = idx.get('papers', [])
     matched = [p for p in ps if p.get('id') == public.get('key')] if public.get('key') else ps if len(ps) == 1 else []
     if len(matched) != 1:
@@ -233,4 +292,5 @@ def load_published_audit(paper: dict, project: dict, listing: dict, fetch) -> di
             'paper_version': pinned,
             'claims': records, 'store': store, 'expansions': expansions, 'pdfs': pdfs, 'paper': audited_paper,
             'context': {k: idx.get(k) for k in ('release', 'evidence', 'project', 'lean', 'issues', 'site_url', 'created', 'tool')},
-            'gates': idx.get('gates', {}).get(ap['id']), 'state': 'loaded'}
+            'gates': idx.get('gates', {}).get(ap['id']), 'state': 'loaded',
+            **({'semantic_summary': semantic} if semantic else {})}

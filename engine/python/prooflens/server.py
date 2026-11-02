@@ -6,7 +6,8 @@ rejects suggestions) in `prooflens.links.json` and rebuilds the view; with `{"ke
 [names] | null, "note"}` it records the different formal route used instead of a proof step. In a full assessment,
 `POST /api/symbol` with `{"action": "add" | "remove", "claim", "tex", "decl", "var" | "type_of",
 "by"}` records or removes a symbol link (docs/SYMBOL_LINKS.md) and rewrites the site. The
-workspace routes (`workspace.api`) read and update the auditor's saved investigation, and `GET
+workspace routes (`workspace.api`) read and update the auditor's saved investigation and give the
+review page the order that uses it (`GET /api/review-order`), and `GET
 /api/uses?name=` answers where a declaration is used (`uses.route`). A refused
 edit answers 400 with its message (and `candidates` when a name did not resolve); an edit of a
 record changed meanwhile answers 409 with `conflicts`, each holding both versions.

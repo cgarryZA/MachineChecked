@@ -33,11 +33,16 @@ and fails the paper's consistency check.
 
 Every definition in the closure of a proposition needs its own review, including the auxiliary
 declarations Lean generates (`match_1`, `_f`): they are part of the definition's meaning. A
-declaration that only a witness's statement uses needs no review; it is listed while it has
-none, and a project can require its review (`require_witness_def_reviews`), which can only hold
-a status back. A proof (a declaration whose type is a proposition: a theorem, a `_proof_1` Lean
-generates, a `Prop`-valued instance such as `Fact (2 ≠ 0)`) carries no data, so it cannot fix
-the instance a witness exhibits: it is not listed and needs no review.
+closure is taken with the proofs in each statement and definition erased, a witness's as a
+proposition's. A declaration that only a witness's statement uses needs no review; it is listed
+while it has none, and a project can require its review (`require_witness_def_reviews`), which
+can only hold a status back. A proof (a declaration whose type is a proposition: a theorem, a
+`_proof_1` Lean generates, a `Prop`-valued instance such as `Fact (2 ≠ 0)`) carries no data, so
+it cannot fix the instance a witness exhibits: it is not listed and needs no review. The tactic
+script Lean stores for a tactic default (`pos : 0 < val := by decide`, an auto-parameter such as
+`Pos.pos._autoParam`) gives only a proof of the proposition its field or binder states, and that
+proposition is reviewed with the structure or definition: the script needs no review, in a
+proposition's closure or a witness's.
 
 ## A review is a reading of a text
 
@@ -89,11 +94,16 @@ passage of its own.
 - **A reading of a passage that no longer uses the declaration.** When the inventory moves a
   clause to another claim, a marker's reading of the old claim's passage is no reading of a
   passage that uses the declaration now. `inventory retire` lists such readings and, with
-  `--write`, removes exactly them: it never rewrites one to the new claim and adds none, and a
-  marker left with no reading records `source=none`, so that the history rule above does not
-  apply to it. The claims that now use the declaration read as unread until someone reads them
-  ([moving a clause](SOURCE_REGIONS.md#moving-a-clause-to-another-claim)). A marker retired whole
-  (`<!-- retired spec-review: ... -->`) records no review; it keeps its review text in the file.
+  `--write`, removes exactly them: it never rewrites one to the new claim and adds none. A
+  marker none of whose readings still applies is retired whole instead, with the readings it
+  recorded, except a definition's that no claim names, whose review reads no passage and which
+  is left as it is. The claims that now use the declaration read as unread until someone reads
+  them ([moving a clause](SOURCE_REGIONS.md#moving-a-clause-to-another-claim)). A marker retired
+  whole (`<!-- retired spec-review: ... -->`) records no review; it keeps its review text and its
+  attributes in the file. A marker an earlier version left as `source=none` gets the readings
+  the Git history shows it had (`--markers`), and is then treated the same way; when the history
+  does not show them, or one of them applies again, it is left for the maintainer, never
+  guessed.
 
 ## Gates
 
@@ -134,7 +144,13 @@ Each clause reports a result for every evidence dimension.
   what changed in each claim's passage and Lean and which reviews the later build no longer
   counts, with the dependency that changed. It reports each build's own statuses and changes
   none; a change can only leave evidence due for review, and a review is never carried to
-  another declaration or claim.
+  another declaration or claim. `changes --map` matches the claims of two paper revisions by
+  their passages: the same text shows the same passage, a label locates a changed one, and a
+  shared number or id only proposes a match until the maintainer names it. A match carries no
+  status or review from one side to the other. With `--workspace`, the map says which of an
+  auditor's findings a revision reopens: a finding stays as it was recorded, and one the map
+  cannot follow is not known to be current. Findings and maps are workspace records; no status
+  reads them.
 - **Suggestions and paper numbers:** a suggestion, a content search result or a check of the
   Lean's references to the paper's numbers names a candidate to inspect and why. It
   establishes nothing about correspondence and never makes a link: a claim with suggestions
@@ -151,11 +167,20 @@ Every evidence record contains:
   the files read during compilation;
 - the hashes of the review files.
 
-`machinechecked build --reuse-lean` reuses stored probe records only when a SHA-256 over every Lean input
-(the project's and every path dependency's sources, lakefiles, manifest and toolchain) and the
-probe itself are unchanged; otherwise it stops with exit code 2 and says to run `machinechecked
-build` without `--reuse-lean`. `machinechecked reassess` applies new reviews and dismissals to stored
-evidence, and refuses when the claim inventory changed.
+`machinechecked build --reuse-lean` reuses the probe records of the newest stored release made
+from the same Lean inputs (a SHA-256 over the project's and every path dependency's sources,
+lakefiles, manifest and toolchain), by the same probe, with the same probe settings (`modules`,
+`scope_roots`, the layer prefixes and `allowed_axioms`) and read by the same version of
+MachineChecked (`lean_records_engine`: the records are its reading of the probe's output, and a
+reassessment keeps it), when they answer every request of the claim inventory. A later release
+made otherwise does not hide it. A record that does not state its probe settings or the version
+that read it (stored by an earlier version) is not reused. A build with `--no-lean-build` probes
+the Lean build files as they are, which may be older than the sources: it records no digest of
+the Lean inputs, so its records are not reused. When no release qualifies, the build stops with
+exit code 2, names the condition the closest release fails, and says to run
+`machinechecked build` without `--reuse-lean`. `machinechecked reassess` applies new reviews and
+dismissals to stored evidence, and refuses when the claim inventory changed; when nothing changed,
+it reproduces the release it read.
 
 In zero configuration, every build reuses the Lean facts it extracted before (a module's index, a
 linked declaration's record, an `inspect` answer) while the modules of the environment they came
@@ -178,6 +203,9 @@ when every library is indexed. A dependency's command that names a declaration w
 call does not contain is not detected ([DEVELOPMENT.md](DEVELOPMENT.md)).
 
 Evidence records are content-addressed and never rewritten. A release name, once given, keeps its
-evidence. `machinechecked evidence prune` may delete the file of an older record
-([Stored evidence](ASSURANCE.md#stored-evidence)); its release then says that its evidence was
-pruned, and nothing is compared with it or reassessed from it.
+evidence. A build that reproduces an earlier evidence record names that record's release again,
+and every command that reads the latest release reads the one the last build produced or
+reproduced.
+`machinechecked evidence prune` deletes the evidence of older releases with their release records
+([Stored evidence](ASSURANCE.md#stored-evidence)): nothing is compared with a pruned release or
+reassessed from it, and a comparison that would need it says that its evidence was pruned.

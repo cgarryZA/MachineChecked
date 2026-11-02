@@ -8,7 +8,9 @@ reports, claim by claim:
   or new, from the digests each build recorded; a removed claim whose text another claim now has
   is offered as a match, never applied;
 - the Lean: for each clause, whether its proposition, each project definition in its closure and
-  each of its proofs changed, with the statement text of both builds;
+  each of its proofs changed, with the statement text of both builds; the tactic script Lean
+  stores for a tactic default is not listed (it gives only a proof, and an edit of the tactic
+  shows as a change of the proof of the declaration whose source has the default);
 - the evidence: for each review the assessment counted in the earlier build, whether the later
   build still counts it, and if not, the exact dependency that changed and the question a new
   reading must answer;
@@ -138,7 +140,8 @@ class Version:
 
     def closure(self, cl: dict) -> list[str]:
         """The project definitions a clause's meaning depends on: its proposition's closure, or
-        a definition claim's definitions and their closures."""
+        a definition claim's definitions and their closures, without the tactic scripts of
+        tactic defaults (`auto_param`), which the assessment asks no review of either."""
         specs, defs = self.lean.get("specs") or {}, self.lean.get("defs") or {}
         if cl.get("spec"):
             names = (specs.get(cl["spec"]) or {}).get("closure") or []
@@ -146,7 +149,16 @@ class Version:
             names = list(cl.get("defs") or [])
             for d in cl.get("defs") or []:
                 names += (defs.get(d) or {}).get("closure") or []
-        return [n for n in dict.fromkeys(names) if n not in specs]
+        return [n for n in dict.fromkeys(names) if n not in specs and not self.auto_param(n)]
+
+    def auto_param(self, name: str) -> bool:
+        """Whether this build's probe says the declaration `name` is the tactic script Lean
+        stores for a tactic default (`pos : 0 < val := by decide`). Running it gives a proof of
+        what the field or binder states, so an edit of the tactic changes no statement: it is a
+        change of the authored source of the declaration that has the default (its structure,
+        definition or theorem), which the comparison reports there. A record without the
+        probe's answer is a definition like any other, as in `assess.py`."""
+        return ((self.lean.get("decls") or {}).get(name) or {}).get("auto_param") is True
 
 
 def statement_text(name: str, spec: dict | None, rec: dict | None) -> str | None:
@@ -345,6 +357,16 @@ def _because(target: str, name: str, old_r: dict, new_r: dict, cid: str, old: Ve
                **_paper_dependency(paper, sc)}
         return [dep], (f"Pin {_label(new, sc)} again at the text the paper now prints, then: "
                        f"does {name} still {what} it?")
+    if why == "shadowed":
+        # A review at the current hash exists, but a later marker at another hash is the
+        # record. The markers keep their places only where the reviews are published (`_strip`).
+        s = new_r.get("shadowed") or {}
+        return ([{"dependency": "record", "reason": why, "claim": None,
+                  "reading": dict(s.get("reading") or {}), "record": dict(s.get("record") or {}),
+                  "detail": "its review at the current hash is followed in the review files by "
+                            "a marker at another hash, which is the record"}],
+                f"Record the review of {name} again after the later marker at another hash, or "
+                "retire that marker.")
     detail = WHY.get(why, "its last review is not current")
     sc = new_r.get("source_claim")
     return ([{"dependency": "record", "reason": why, "claim": sc, "detail": detail}],
@@ -423,7 +445,10 @@ def clause_changes(cid: str, old: Version, new: Version, paper: dict[str, dict]
                                       "to": new.decl(spec_b)}
         defs_a = old.closure(x) if x else []
         defs_b = new.closure(y) if y else []
-        defs = [_decl_entry(d, old, new) for d in dict.fromkeys(defs_a + defs_b)]
+        # A record of an earlier probe does not say whether it is a tactic script: the other
+        # build's answer counts for both.
+        defs = [_decl_entry(d, old, new) for d in dict.fromkeys(defs_a + defs_b)
+                if not (old.auto_param(d) or new.auto_param(d))]
         row["definitions"] = [d for d in defs if d["change"] != "unchanged"]
         row["definitions_unchanged"] = sum(d["change"] == "unchanged" for d in defs)
         proofs = []
@@ -602,8 +627,10 @@ def compare(old_record: dict, old_release: str, new_record: dict, new_release: s
 
 def _declaration_changes(old: Version, new: Version) -> list[dict]:
     """Every project declaration whose statement or proof changed, or that one build has and
-    the other has not, with the claims that depend on it in either build."""
-    names = set((old.lean.get("decls") or {})) | set((new.lean.get("decls") or {}))
+    the other has not, with the claims that depend on it in either build. The tactic scripts
+    of tactic defaults are left out (`Version.auto_param`)."""
+    names = {n for n in set((old.lean.get("decls") or {})) | set((new.lean.get("decls") or {}))
+             if not (old.auto_param(n) or new.auto_param(n))}
     users: dict[str, set[str]] = {}
     for v in (new, old):
         for cid, a in v.assessed.items():
@@ -638,6 +665,9 @@ def workspace_due(view: dict, wid: str) -> dict:
         rows.append({"id": r["id"], "kind": r["kind"], "claim": cid,
                      "state": cur.get("state"), "changes": cur.get("changes") or [],
                      "pinned_release": (r.get("pins") or {}).get("release"),
+                     **({"unknown": cur["unknown"]} if cur.get("unknown") else {}),
+                     **({"reason": cur["reason"]} if cur.get("reason")
+                        and cur.get("state") == "unchecked" else {}),
                      **({"submitted": True} if r.get("state") == "submitted" else {}),
                      **({"proposed": True} if r.get("state") == "proposed" else {})})
 
@@ -675,14 +705,24 @@ def due(doc: dict) -> list[dict]:
 # -- reading releases ------------------------------------------------------------------------------
 
 def previous_release(out_dir, release: str) -> str | None:
-    """The latest release before `release` whose evidence differs from it."""
+    """The release before `release` whose evidence differs from it: the last one a build
+    produced or reproduced before the last build of `release` (`evidence.built`). When no
+    recorded build gives one (a store made before builds were recorded, or no earlier build
+    with other evidence), the latest release made before it."""
     from . import evidence as ev
     from .util import read_json
     rels = [read_json(p) for p in ev.releases(out_dir)]
     names = [r["release"] for r in rels]
     if release not in names:
         return None
-    mine = rels[names.index(release)]["evidence"]
+    evidence = {r["release"]: r["evidence"] for r in rels}
+    mine = evidence[release]
+    made = ev.built(out_dir)
+    if release in made:
+        last = max(i for i, name in enumerate(made) if name == release)
+        for name in reversed(made[:last]):
+            if evidence.get(name, mine) != mine:
+                return name
     for r in reversed(rels[:names.index(release)]):
         if r["evidence"] != mine:
             return r["release"]
@@ -690,14 +730,22 @@ def previous_release(out_dir, release: str) -> str | None:
 
 
 def between(out_dir, old_release: str | None = None, new_release: str | None = None) -> dict:
-    """The comparison of two named releases of `out_dir`: by default the latest and the one
-    before it."""
+    """The comparison of two named releases of `out_dir`: by default the latest
+    (`evidence.latest`) and the one before it."""
+    old_release, old, new_release, new = records(out_dir, old_release, new_release)
+    return compare(old, old_release, new, new_release)
+
+
+def records(out_dir, old_release: str | None = None, new_release: str | None = None
+            ) -> tuple[str, dict, str, dict]:
+    """Two named releases of `out_dir` and their evidence records, `(earlier name, record,
+    later name, record)`: by default the latest (`evidence.latest`) and the one before it."""
     from . import evidence as ev
     from .util import read_json
     rels = ev.releases(out_dir)
     if not rels:
         raise ChangesError("no release: run `machinechecked build` first")
-    new_release = new_release or read_json(rels[-1])["release"]
+    new_release = new_release or ev.latest(out_dir)["release"]
     old_release = old_release or previous_release(out_dir, new_release)
     if old_release is None:
         raise ChangesError(f"release {new_release} has no earlier release with other evidence "
@@ -712,7 +760,7 @@ def between(out_dir, old_release: str | None = None, new_release: str | None = N
         if why:
             raise ChangesError(f"no comparison: {why}")
         recs[name] = ev.load(out_dir, read_json(path)["evidence"])
-    return compare(recs[old_release], old_release, recs[new_release], new_release)
+    return old_release, recs[old_release], new_release, recs[new_release]
 
 
 class ChangesError(RuntimeError):
@@ -912,6 +960,9 @@ def workspace_lines(due: dict) -> list[str]:
                    + (", proposed" if r.get("proposed") else ""))
         for words in dict.fromkeys(_record_change_words(ch) for ch in r.get("changes") or []):
             out.append("    because: " + words)
+        for words in dict.fromkeys([u.get("why") or "" for u in r.get("unknown") or []]
+                                   + ([r["reason"]] if r.get("reason") else [])):
+            out.append("    not known: " + words)
     if rows:
         out.append("  " + due["note"])
     return out

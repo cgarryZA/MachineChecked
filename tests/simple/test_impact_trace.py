@@ -10,6 +10,7 @@ of it.
 """
 
 import json
+import re
 import shutil
 import subprocess
 
@@ -162,3 +163,67 @@ def test_the_command_prints_the_trace(project, monkeypatch, capsys):
     q = json.loads(capsys.readouterr().out)
     assert q["schema"] == cmp.QUERY_SCHEMA and q["op"] == "impact"
     assert q["results"][0]["main_results"][0]["use"] == "none"
+
+
+def _cited(out: str) -> dict:
+    """The reference the terminal text offers to cite."""
+    (line,) = re.findall(r"^  cite as evidence: (\{.*\})(?: \(or another .*\))?$", out, re.M)
+    return json.loads(line)
+
+
+@needs_lean
+@needs_tex
+def test_the_printed_ids_and_positions_are_what_workspace_evidence_cites(project, monkeypatch,
+                                                                        capsys):
+    """#401: the terminal text of `uses` names each application by its id and that of
+    `proof-facts` gives each fact's position; a workspace takes both as evidence. #402: in
+    `impact`, the two applications of `good_double` in `twice` (the same result, each argument
+    printed `x`) are one entry with both ids."""
+    monkeypatch.chdir(project)
+    who = ["--as", "llm:test"]
+    try:
+        cli.main(["compare", "--query", "uses", "Uses.half_lt"])
+        out = capsys.readouterr().out
+        printed = re.findall(r"^  application (app:\S+) in ([^\s,]+)", out, re.M)
+        cli.main(["compare", "--query", "uses", "Uses.half_lt", "--json"])
+        apps = json.loads(capsys.readouterr().out)["results"][0]["applications"]
+        assert printed == [(a["id"], a["caller"]) for a in apps] and len(printed) > 1
+        app = _cited(out)["app"]
+        assert app == {"callee": "Uses.half_lt", "id": printed[0][0]}
+        (app["id"],) = [i for i, caller in printed if caller == "Uses.main_bound"]
+
+        cli.main(["compare", "--query", "proof-facts", "Uses.main_bound"])
+        out = capsys.readouterr().out
+        positions = re.findall(r"^  (f\d+) .*\[.*at (/[\d/]*)\]$", out, re.M)
+        cli.main(["compare", "--query", "proof-facts", "Uses.main_bound", "--json"])
+        facts = json.loads(capsys.readouterr().out)["results"]
+        assert positions == [(f["id"], f["ref"]["at"]) for f in facts] and positions
+        fact = _cited(out)["fact"]
+        assert fact == {"decl": "Uses.main_bound", "at": positions[0][1]}
+
+        cli.main(["workspace", "open", "--mode", "informed", *who])
+        ops = project / "ops.json"
+        ops.write_text(json.dumps({"ops": [
+            {"op": "put", "record": {"id": "e-app", "kind": "evidence", "claim": "thm:main",
+                                     "role": "supports", "ref": {"app": app}}},
+            {"op": "put", "record": {"id": "e-fact", "kind": "evidence", "claim": "thm:main",
+                                     "role": "supports", "ref": {"fact": fact}}}]}))
+        capsys.readouterr()
+        cli.main(["workspace", "update", str(ops), *who])
+        assert json.loads(capsys.readouterr().out)["ok"]
+        cli.main(["workspace", "show", "--json", *who])
+        ev = {e["id"]: e for e in json.loads(capsys.readouterr().out)["claims"]["P:thm:main"]
+              ["evidence"]}
+        assert ev["e-app"]["ref"]["app"]["caller"] == "Uses.main_bound"
+        assert {e["currency"]["state"] for e in ev.values()} == {"current"}
+
+        cli.main(["compare", "--query", "impact", "Uses.good_double", "--main", "Uses.twice"])
+        out = capsys.readouterr().out
+        ids = [a["id"] for a in impact(project, "Uses.good_double", "Uses.twice")["applications"]
+               if a["caller"] == "Uses.twice"]
+        assert len(ids) == 2
+        assert (f"      2 applications in Uses.twice, with the same result: {', '.join(ids)}\n"
+                "        gives Uses.Good (2 * x)\n") in out
+    finally:
+        shutil.rmtree(project / ".machinechecked" / "review-work", ignore_errors=True)
+        (project / "ops.json").unlink(missing_ok=True)

@@ -95,6 +95,10 @@ theorem probability (Ω : Type) [MeasureData Ω] [IsProbability Ω] :
 theorem none_large : ¬ ∃ s : Solution 0, s.bound < 0 :=
   fun ⟨_, h⟩ => Nat.not_lt_zero _ h
 
+/-- Two solutions for the same datum start at the same point: each carries its own `start`. -/
+theorem two_solutions (d : Nat) (s t : Solution d) : s.path 0 = t.path 0 :=
+  s.start.trans t.start.symm
+
 /-- An assumed conjunction is one assumption with two parts. -/
 theorem both (a b : Nat) (h : a ≤ b ∧ b ≤ a) : a = b :=
   Nat.le_antisymm h.1 h.2

@@ -39,8 +39,9 @@ export function chooseProject(repo) {
   const u = new URL(location.href);
   if (together) u.searchParams.delete("project");
   else u.searchParams.set("project", repo);
-  u.hash = withQuery(u.hash, { inspect: null });
+  u.hash = withQuery(u.hash, { inspect: null, at: null });
   route.inspection = [];
+  route.at = null;
   history.replaceState(history.state, "", u);
 }
 

@@ -20,9 +20,17 @@ auditor's compositions: arguments that combine several results, with an optional
 (`composition.py`), and, for an estimate, the differences found, candidate counterexamples and
 Lean certificates (`estimates.py`).
 
+A workspace also keeps the auditor's choice of the paper's main results (`main_results`): the
+claims and declarations `compare --query impact` traces from, with who chose them and the
+release and project commit they were checked against.
+
 A workspace records evidence and readings; it changes no status. A submitted finding is never
-edited: a later one supersedes it, with its reason, and both remain. Exposure (what the auditor
-had seen) is only ever added to, so neither resuming nor importing makes an investigation blind.
+edited: a later one supersedes it, with its reason, and both remain. It records what it rests on
+when it is submitted, with the version of each part (`dependencies.py`), so that a later build
+reopens exactly the findings whose parts changed. A workspace may keep version maps of the paper
+(`version_maps`), which say which findings a revision of the paper reopens (`reopen.py`), so
+that they travel with its export. Exposure (what the auditor had seen) is only
+ever added to, so neither resuming nor importing makes an investigation blind.
 """
 
 from __future__ import annotations
@@ -50,7 +58,8 @@ OPS_KEPT = 500
 
 # Fields the service sets; a client's value for them is ignored.
 MANAGED = ("kind", "rev", "created_at", "created_by", "updated_at", "updated_by", "state",
-           "submitted_at", "supersedes", "reason", "pins", "state_by", "state_at")
+           "submitted_at", "supersedes", "reason", "pins", "state_by", "state_at",
+           "dependencies")
 
 
 class WorkspaceError(RuntimeError):
@@ -186,6 +195,7 @@ def summary(ws: dict) -> dict:
             "open_questions": sum(1 for r in recs if r.get("kind") == "question"
                                   and r.get("state") == "open"),
             "reports": len((ws.get("review") or {}).get("reports", [])),
+            "version_maps": len(ws.get("version_maps") or []),
             "resume": ws.get("resume") or {}}
 
 
@@ -309,13 +319,12 @@ def _app_ref(a, root) -> dict:
     from . import uses as us
     from .simple import ViewError
     try:
-        doc = us.uses(Path(root), a["callee"], a.get("module"))
+        doc, found = us.locate(Path(root), a)
     except ViewError as e:
         raise WorkspaceError(str(e)) from None
     if not doc.get("ok"):
         raise WorkspaceError(f"{a['callee']}: {doc.get('status')}"
                              + (f": {doc['reason']}" if doc.get("reason") else ""))
-    found = us.find_application(doc, a)
     if found is None:
         raise WorkspaceError(f"no application {a['id']} of {a['callee']}: ask `compare --query "
                              f"uses {a['callee']}` again")
@@ -356,10 +365,16 @@ def _ref(ref, snap, root) -> dict:
             out["fingerprint"] = snap.fingerprints().get(out["decl"]) or \
                 snap.store_fingerprints().get(out["decl"])
             out["digest"] = snap.digests().get(out["decl"])
+            # The definitions its statement uses, and the expansions it prints, as the build
+            # has them: the statement means what they say.
+            from .dependencies import statement_pins
+            out.update(statement_pins(snap, out["decl"]))
         else:
             for k in ("build", "fingerprint", "digest"):
                 if ref.get(k):
                     out[k] = ref[k]
+            from .dependencies import kept_statement_pins
+            out.update(kept_statement_pins(ref))
         return out
     if kinds == ["source"]:
         s = ref["source"]
@@ -371,8 +386,13 @@ def _ref(ref, snap, root) -> dict:
     p = ref["paper"]
     if not isinstance(p, dict):
         raise WorkspaceError("a paper reference is {claim, quote}")
-    return {"paper": {"claim": _claim(p.get("claim"), snap),
-                      "quote": _text(p.get("quote"), "the quotation")}}
+    out = {"claim": _claim(p.get("claim"), snap), "quote": _text(p.get("quote"), "the quotation")}
+    # The version of the claim's passage quoted: the build's pin of it.
+    sha = (snap.chunk(out["claim"]) or {}).get("source_sha256") if snap is not None else \
+        p.get("sha256")
+    if isinstance(sha, str) and sha:
+        out["sha256"] = sha
+    return {"paper": out}
 
 
 def ref_text(ref: dict) -> str:
@@ -456,6 +476,21 @@ def _content(kind: str, rec: dict, ws: dict, snap, root, cur: dict | None = None
     if kind == "evidence":
         out["ref"] = _ref(rec.get("ref"), snap, root)
         out["role"] = _choice(rec.get("role") or "candidate", ROLES, "the role", False)
+        if rec.get("object") is not None:
+            # The object of the claim's Lean the cited result derives a property of; it keeps
+            # the binder it was recorded at until it is re-pinned.
+            from .objects import ObjectError, object_ref
+            was = (cur or {}).get("object") or {}
+            o = rec["object"]
+            if not repin and isinstance(o, dict) and was and o.get("decl") == was["decl"] and \
+                    o.get("var") in (was["var"], was.get("name")):
+                out["object"] = was
+            else:
+                try:
+                    out["object"] = object_ref(o, None if snap is None else
+                                               rq._statements(snap, out["claim"]))
+                except ObjectError as e:
+                    raise WorkspaceError(str(e)) from None
         out.pop("evidence", None)
         if out["role"] == "rejected" and rec.get("reason"):
             out["why_rejected"] = _text(rec["reason"], "the reason")
@@ -592,9 +627,20 @@ def _record_op(ws, op, snap, root, by, at, changed):
             raise WorkspaceError("a requirement stays with its claim")
         if cur["kind"] == "evidence" and not repin and content["ref"].get("decl") and \
                 content["ref"]["decl"] == (cur.get("ref") or {}).get("decl"):
-            # The evidence keeps the fingerprint it was recorded at until it is re-pinned.
+            # The evidence keeps the fingerprint it was recorded at, and the versions of the
+            # definitions its statement uses, until it is re-pinned.
             for k in ("fingerprint", "digest"):
                 content["ref"][k] = cur["ref"].get(k)
+            for k in ("closure", "closure_complete", "expansions"):
+                content["ref"].pop(k, None)
+                if k in cur["ref"]:
+                    content["ref"][k] = cur["ref"][k]
+        was_paper = (cur.get("ref") or {}).get("paper") or {}
+        if cur["kind"] == "evidence" and not repin and content["ref"].get("paper") and \
+                (content["ref"]["paper"]["claim"], content["ref"]["paper"]["quote"]) == \
+                (was_paper.get("claim"), was_paper.get("quote")):
+            # A quoted passage keeps the version it was quoted from until it is re-pinned.
+            content["ref"]["paper"] = dict(was_paper)
         cert = (cur.get("ref") or {}).get("certificate") or {}
         if cur["kind"] == "evidence" and not repin and content["ref"].get("certificate") and \
                 all(content["ref"]["certificate"].get(k) == cert.get(k)
@@ -668,6 +714,13 @@ def _record_op(ws, op, snap, root, by, at, changed):
             if users:
                 raise WorkspaceError(f"{rid} ({cur['local_id']}) is used by {', '.join(users)}; "
                                      "remove them first")
+        if cur["kind"] == "fragment":
+            from .requirements import fragment_users
+            users = fragment_users(ws, rid)
+            if users:
+                raise WorkspaceError(f"{rid} is a passage of alignment(s) {', '.join(users)}; "
+                                     "remove it from them first, or mark it removed (`state`: "
+                                     "removed, with `why_removed`), which keeps it")
         del ws["records"][rid]
         changed.append(rid)
         return None
@@ -681,8 +734,10 @@ def _record_op(ws, op, snap, root, by, at, changed):
         if cur.get("composition"):
             # The composition may have changed since the draft was written.
             _composition_basis(dict(cur), cur["composition"], cur.get("basis"), ws)
+        from .dependencies import recorded
+        # What it rests on, as it is submitted: kept with it from now on.
         cur.update(state="submitted", submitted_at=at, rev=cur["rev"] + 1, updated_at=at,
-                   updated_by=by)
+                   updated_by=by, dependencies=recorded(cur, ws["records"]))
         changed.append(rid)
         return None
     if kind == "supersede":
@@ -704,10 +759,13 @@ def _record_op(ws, op, snap, root, by, at, changed):
         nid = rec.get("id") or _new_id("f")
         if nid in ws["records"]:
             raise WorkspaceError(f"{nid} exists already")
-        ws["records"][nid] = {"id": nid, "kind": "finding", **content, "state": "submitted",
-                              "submitted_at": at, "supersedes": rid, "reason": reason, "rev": 1,
-                              "created_at": at, "created_by": by, "updated_at": at,
-                              "updated_by": by, "pins": _pins(content["claim"], snap)}
+        new_rec = {"id": nid, "kind": "finding", **content, "state": "submitted",
+                   "submitted_at": at, "supersedes": rid, "reason": reason, "rev": 1,
+                   "created_at": at, "created_by": by, "updated_at": at,
+                   "updated_by": by, "pins": _pins(content["claim"], snap)}
+        from .dependencies import recorded
+        new_rec["dependencies"] = recorded(new_rec, ws["records"])
+        ws["records"][nid] = new_rec
         changed.append(nid)
         return None
     raise WorkspaceError(f"unknown operation {kind!r}")
@@ -745,6 +803,18 @@ def _workspace_op(ws, op, snap, by, at, changed):
             ws["provenance"].append({"event": f"mode {ws['mode']} -> {mode}", "at": at, "by": by})
             ws["mode"] = mode
             changed.append("mode")
+    elif kind == "version-map":
+        # A version map the workspace keeps (`reopen.py`), replacing one of the same paper and
+        # revisions: the reader, `workspace show` and the export judge the findings with it.
+        from . import reopen as ro
+        try:
+            doc = ro.check_map(op.get("map"))
+        except ro.MapError as e:
+            raise WorkspaceError(str(e)) from None
+        doc.update(kept_at=at, kept_by=by)
+        maps = [m for m in ws.get("version_maps") or [] if ro.map_key(m) != ro.map_key(doc)]
+        ws["version_maps"] = maps + [doc]
+        changed.append("version_maps")
     elif kind == "exposure":
         what = op.get("what")
         what = [what] if isinstance(what, str) else what
@@ -758,6 +828,156 @@ def _workspace_op(ws, op, snap, by, at, changed):
         changed.append("exposure")
     else:
         raise WorkspaceError(f"unknown operation {kind!r}")
+
+
+# -- the main results ------------------------------------------------------------------------
+
+MAIN_OP = "main-results"
+
+
+def _main_claim(q: str, snap) -> str | None:
+    """The claim `q` names, or None when it names none; a name several claims share is
+    refused."""
+    from .targets import TargetError
+    try:
+        return snap.resolve_claim(q)
+    except TargetError as e:
+        if e.kind == "ambiguous":
+            raise WorkspaceError(str(e) + ": " + ", ".join(c["id"] for c in e.candidates)) \
+                from None
+        return None
+
+
+def _main_decl(name: str, module: str | None, snap, root) -> dict:
+    """The project declaration `name` (in `module`, when given), as the build has it."""
+    from .targets import TargetError, resolve_declaration
+    try:
+        r = resolve_declaration(name, snap, root, module)
+    except TargetError as e:
+        if e.kind == "ambiguous":
+            mods = ", ".join(c["module"] for c in e.candidates)
+            raise WorkspaceError(f"{name} is declared in several modules ({mods}); name one as "
+                                 "MODULE:NAME") from None
+        if e.kind == "no-build" or any(c.get("module") for c in e.candidates):
+            # The build has no index to look in, or the name is declared in other modules
+            # than the one given: the reason says which.
+            raise WorkspaceError(str(e)) from None
+        near = list(dict.fromkeys(c["name"] for c in e.candidates if c.get("name")))
+        raise WorkspaceError(
+            f"{name if not module else f'{module}:{name}'} is neither a claim of release "
+            f"{snap.index.get('release')} nor a declaration of the project"
+            + (f" (did you mean: {', '.join(near)})" if near else "")) from None
+    return {"decl": r["name"], "module": r["module"], "build": r["build"]}
+
+
+def main_result_entries(names, snap, root: Path | None = None) -> list[dict]:
+    """The main results `names` names, checked against the build `snap`: each a claim (by id,
+    key or number), standing for its linked Lean, as `{claim}`, or a declaration of the project
+    (`NAME`, or `MODULE:NAME` when several modules declare it; or `{decl, module}`), as `{decl,
+    module, build}`. A name is read as a claim first."""
+    if snap is None:
+        raise WorkspaceError("main results are checked against a build: run `machinechecked view` "
+                             "or `build` first")
+    if not isinstance(names, list):
+        raise WorkspaceError("`main` is a list of claims and declarations")
+    out: list[dict] = []
+    for n in names:
+        if isinstance(n, dict) and isinstance(n.get("claim"), str) and not n.get("decl"):
+            cid = _main_claim(n["claim"], snap)
+            if cid is None:
+                raise WorkspaceError(f"no claim {n['claim']!r} in release "
+                                     f"{snap.index.get('release')}")
+            e = {"claim": cid}
+        elif isinstance(n, dict) and isinstance(n.get("decl"), str) and not n.get("claim"):
+            e = _main_decl(n["decl"].strip(), _text(n.get("module"), "the module") or None,
+                           snap, root)
+        elif isinstance(n, str) and n.strip():
+            q = n.strip()
+            cid = _main_claim(q, snap)
+            if cid is not None:
+                e = {"claim": cid}
+            else:
+                module, _, name = q.rpartition(":") if ":" in q else ("", "", q)
+                e = _main_decl(name, module or None, snap, root)
+        else:
+            raise WorkspaceError("a main result is a claim or a declaration: its name, or "
+                                 "{claim} or {decl, module}")
+        if e not in out:
+            out.append(e)
+    return out
+
+
+def _main_results_op(ws, op, snap, root, by, at, changed) -> None:
+    """Save the main results `op['main']` names, replacing those saved (kept in `provenance`);
+    an empty list removes them."""
+    entries = main_result_entries(op.get("main"), snap, root)
+    prev = ws.get("main_results")
+    if entries == ((prev or {}).get("selected") or []):
+        return
+    if prev:
+        ws.setdefault("provenance", []).append({"event": "main results replaced", "at": at,
+                                                "by": by, "was": prev})
+    if entries:
+        src = snap.sources()
+        ws["main_results"] = {"selected": entries, "by": by, "at": at,
+                              "pins": {"release": src.get("release"),
+                                       **{k: v for k, v in (src.get("project") or {}).items()
+                                          if k in ("commit", "repository")}}}
+    else:
+        ws.pop("main_results", None)
+    changed.append("main_results")
+
+
+def main_results_problems(sel: dict | None, snap, root: Path | None = None) -> list[dict]:
+    """The entries of a saved main-result selection that the build `snap` does not have: a claim
+    not in its release, a declaration it does not declare (in the module recorded) or that
+    several of its modules declare. A declaration the build cannot look up (it keeps no index of
+    the project's declarations and no record of this one) is not counted as missing."""
+    from .targets import TargetError, resolve_declaration
+    out = []
+    index = snap.lean_index()
+    for e in (sel or {}).get("selected") or []:
+        if e.get("claim"):
+            if snap.chunk(e["claim"]) is None:
+                out.append({"claim": e["claim"], "problem": f"no claim {e['claim']} in release "
+                                                            f"{snap.index.get('release')}"})
+            continue
+        name, module = e.get("decl"), e.get("module")
+        if index is None and not snap.store_records(name):
+            continue
+        try:
+            resolve_declaration(name, snap, root, module)
+        except TargetError as err:
+            if err.kind == "no-build":
+                continue
+            now = sorted({c["module"] for c in err.candidates if c.get("module")})
+            out.append({"decl": name, **({"module": module} if module else {}), "problem": (
+                f"{name} is declared in several modules of this build" if err.kind == "ambiguous"
+                else f"{name} is not declared in {module} in this build"
+                + (f"; it is declared in {', '.join(now)}" if now else "") if module
+                else f"{name} is not a declaration of this build")})
+    return out
+
+
+def main_results_view(ws: dict, snap, root: Path | None = None) -> dict | None:
+    """The workspace's saved main results, with what the build `snap` lacks of them
+    (`problems`), or None when it saves none."""
+    sel = ws.get("main_results")
+    if not sel:
+        return None
+    return {**sel, "problems": main_results_problems(sel, snap, root) if snap is not None
+            else []}
+
+
+def main_result_selections(work_dir: Path, wid: str | None = None) -> list[dict]:
+    """The main-result selections saved in the workspaces of `work_dir` (only in `wid`, when one
+    is named), each with its workspace's id, reviewer and mode."""
+    rows = list_all(work_dir)
+    if wid and not any(ws["id"] == wid for _, ws in rows):
+        raise WorkspaceError(f"no workspace {wid} in {store(work_dir)}")
+    return [{"workspace": ws["id"], "reviewer": (ws.get("reviewer") or {}).get("id"),
+             "mode": ws.get("mode"), **ws["main_results"]}
+            for _, ws in rows if (not wid or ws["id"] == wid) and ws.get("main_results")]
 
 
 def apply(ws: dict, ops: list[dict], snap=None, root: Path | None = None, by: str | None = None,
@@ -775,8 +995,10 @@ def apply(ws: dict, ops: list[dict], snap=None, root: Path | None = None, by: st
     for op in ops:
         if not isinstance(op, dict):
             raise WorkspaceError("each operation is an object")
-        if op.get("op") in ("resume", "mode", "exposure"):
+        if op.get("op") in ("resume", "mode", "exposure", "version-map"):
             _workspace_op(work, op, snap, by, at, changed)
+        elif op.get("op") == MAIN_OP:
+            _main_results_op(work, op, snap, root, by, at, changed)
         else:
             c = _record_op(work, op, snap, root, by, at, changed)
             if c:
@@ -843,42 +1065,18 @@ def current_findings(ws: dict) -> list[dict]:
 def currency(ws: dict, snap, root: Path | None = None, check_facts: bool = False) \
         -> dict[str, dict]:
     """Whether each record's evidence is still what the current build shows. A declaration
-    whose fingerprint changed makes its evidence `stale`, and so every finding and question
-    that cites it; a finding is also stale when its claim's printed text changed. A fact inside
-    a proof is stale when that proof changed: it is read from the cache of `compare --query
-    proof-facts`, or asked of Lean when `check_facts` is set. A record the build cannot check is
-    `unchecked`; nothing here changes a status."""
+    whose fingerprint changed, or one of the definitions its statement uses, makes its evidence
+    `stale`, and so every question that cites it. A fact inside a proof is stale when that proof
+    changed: it is read from the cache of `compare --query proof-facts`, or asked of Lean when
+    `check_facts` is set. A finding's currency is that of what it rests on
+    (`dependencies.check`): stale when a part changed, unchecked when one is not known. A record
+    the build cannot check is `unchecked`; nothing here changes a status."""
+    from . import dependencies as dp
     from . import requirements as rq
-    digests = snap.digests() if snap is not None else {}
-    out = rq.currency(ws, snap)
+    out = rq.currency(ws, snap, root)
     for r in ws["records"].values():
-        if r.get("kind") != "evidence":
-            continue
-        ref = r.get("ref") or {}
-        if "certificate" in ref:
-            from .estimates import certificate_currency
-            out[r["id"]] = certificate_currency(Path(root) if root else None,
-                                                ref["certificate"], check_facts)
-            continue
-        if "fact" in ref:
-            from .proof_facts import currency as fact_currency
-            out[r["id"]] = fact_currency(Path(root) if root else None, ref["fact"], check_facts)
-            continue
-        if "app" in ref:
-            from .uses import app_currency
-            out[r["id"]] = app_currency(Path(root) if root else None, ref["app"], check_facts)
-            continue
-        if "decl" not in ref:
-            out[r["id"]] = {"state": "unchecked", "changes": []}
-            continue
-        was, now_d = ref.get("digest") or ref.get("fingerprint"), digests.get(ref["decl"])
-        if not was or now_d is None:
-            out[r["id"]] = {"state": "unchecked", "changes": []}
-        elif now_d != was:
-            out[r["id"]] = {"state": "stale", "changes": [
-                {"decl": ref["decl"], "was": was, "now": now_d}]}
-        else:
-            out[r["id"]] = {"state": "current", "changes": []}
+        if r.get("kind") == "evidence":
+            out[r["id"]] = dp.evidence_currency(r.get("ref") or {}, snap, root, check_facts)
     from . import composition as cp
     for r in ws["records"].values():
         if r.get("kind") == "composition":
@@ -889,7 +1087,12 @@ def currency(ws: dict, snap, root: Path | None = None, check_facts: bool = False
             out[r["id"]] = est.counterexample_currency(
                 r, [x for x in ws["records"].values() if x.get("claim") == r["claim"]], out)
     for r in ws["records"].values():
-        if r.get("kind") not in ("finding", "question"):
+        if r.get("kind") == "finding":
+            # Through what it rests on (`dependencies.py`): a submitted finding through the
+            # versions it was submitted with.
+            out[r["id"]] = dp.check(r, ws["records"], snap, root, out, check_facts)
+            continue
+        if r.get("kind") != "question":
             continue
         changes = [ch for e in r.get("evidence") or [] for ch in out.get(e, {}).get("changes", [])]
         changes += est.finding_changes(r, ws["records"], out)
@@ -904,6 +1107,9 @@ def currency(ws: dict, snap, root: Path | None = None, check_facts: bool = False
                 changes.append({"claim": r["claim"], "was": pin, "now": None})
             elif pin and ch.get("source_sha256") != pin:
                 changes.append({"claim": r["claim"], "was": pin, "now": ch.get("source_sha256")})
+            elif pin and dp.unprinted(ch, r["claim"]):
+                changes.append({"claim": r["claim"], "was": pin, "now": ch.get("source_sha256"),
+                                "reason": dp.unprinted(ch, r["claim"])})
         out[r["id"]] = {"state": "stale" if changes else "current", "changes": changes}
     return out
 
@@ -938,6 +1144,9 @@ def view(ws: dict, snap=None, claim: str | None = None, root: Path | None = None
         item = {**r, "currency": cur.get(r["id"], {"state": "unchecked", "changes": []})}
         if r["kind"] == "finding":
             item["in_force"] = r["id"] in in_force
+            # What it rests on: as submitted, or, for a draft, as its records give it now.
+            from .dependencies import of as dependencies_of
+            item["dependencies"] = dependencies_of(r, ws["records"])
             chk = cp.finding_bridge(r, comps, snap, root, check_facts)
             if chk is not None and r.get("bridge") and not r.get("composition"):
                 item["bridge_check"] = chk
@@ -951,8 +1160,11 @@ def view(ws: dict, snap=None, claim: str | None = None, root: Path | None = None
     for cid, c in claims.items():
         c["reading"] = rq.reading([r for r in ws["records"].values() if r["claim"] == cid], cur,
                                   snap, cid)
+    from .reopen import identity
     return {"schema": "prooflens/workspace-view@1", **summary(ws),
             "selection": ws.get("selection") or {}, "sources": ws.get("sources") or {},
+            "main_results": main_results_view(ws, snap, root),
+            "kept_maps": [identity(m) for m in ws.get("version_maps") or []],
             "current_sources": snap.sources() if snap is not None else None,
             "exposure": ws.get("exposure") or [], "conflicts": ws.get("conflicts") or [],
             "claims": claims}
@@ -966,14 +1178,17 @@ def exposed(ws: dict, claim_ids: list[str]) -> list[dict]:
 
 def auditors(ws: dict) -> set[str]:
     """Everyone the workspace records as having worked in it: its reviewer, the authors of its
-    records and of its edits (refused ones too), whoever set where to resume, and whoever changed
-    its mode or imported it. What the workspace records as seen, each of them had seen."""
-    out = {(ws.get("reviewer") or {}).get("id"), (ws.get("resume") or {}).get("by")}
+    records and of its edits (refused ones too), whoever set where to resume or chose its main
+    results, and whoever changed its mode or imported it. What the workspace records as seen,
+    each of them had seen."""
+    out = {(ws.get("reviewer") or {}).get("id"), (ws.get("resume") or {}).get("by"),
+           (ws.get("main_results") or {}).get("by")}
     for r in (ws.get("records") or {}).values():
         if isinstance(r, dict):
             out |= {r.get(k) for k in ("created_by", "updated_by", "state_by")}
     for k in ("conflicts", "provenance"):
         out |= {e.get("by") for e in ws.get(k) or [] if isinstance(e, dict)}
+    out |= {m.get("kept_by") for m in ws.get("version_maps") or [] if isinstance(m, dict)}
     return {x for x in out if isinstance(x, str) and x}
 
 
@@ -992,8 +1207,9 @@ def import_(work_dir: Path, data: dict, snap=None, by: str | None = None,
             source: str | None = None) -> dict:
     """Bring an exported workspace into this working directory. It keeps its id, authors,
     pins, mode and exposure. A workspace already here with the same id gains the records it
-    lacks; a record both hold in different versions is kept as here and reported as a
-    conflict. References the current build cannot resolve are reported as `problems`; the
+    lacks, and the main results when it saves none; a record (or main-result selection) both
+    hold in different versions is kept as here and reported as a conflict. References the
+    current build cannot resolve, main results included, are reported as `problems`; the
     records stay as they were written and are not counted as resolved."""
     ws_in = upgrade(dict(data))
     ws_in.pop("exported_at", None)
@@ -1020,6 +1236,18 @@ def import_(work_dir: Path, data: dict, snap=None, by: str | None = None,
         for e in r.get("evidence") or []:
             if e not in ws_in["records"]:
                 problems.append({"record": r.get("id"), "problem": f"evidence {e} is missing"})
+    if snap is not None:
+        problems += [{"record": "main_results", "problem": p["problem"]}
+                     for p in main_results_problems(ws_in.get("main_results"), snap)]
+    if "version_maps" in ws_in:
+        from .reopen import MapError, check_map
+        maps = []
+        for m in ws_in["version_maps"] if isinstance(ws_in["version_maps"], list) else [None]:
+            try:
+                maps.append(check_map(m))
+            except MapError as e:
+                problems.append({"record": "version_maps", "problem": f"{e}; it is left out"})
+        ws_in["version_maps"] = maps
     at = now()
     event = {"event": "imported", "at": at, "by": by, "from": source}
     try:
@@ -1029,7 +1257,11 @@ def import_(work_dir: Path, data: dict, snap=None, by: str | None = None,
         ws_in["provenance"].append(event)
         with _locked(path):
             _write(path, ws_in)
-        return {"workspace": ws_in["id"], "path": str(path), "added": sorted(ws_in["records"]),
+        from .reopen import identity
+        return {"workspace": ws_in["id"], "path": str(path),
+                "added": sorted(ws_in["records"]) + [
+                    "version map " + json.dumps(identity(m), ensure_ascii=False)
+                    for m in ws_in.get("version_maps") or []],
                 "conflicts": [], "problems": problems}
     added, conflicts = [], []
     with _locked(path):
@@ -1044,6 +1276,28 @@ def import_(work_dir: Path, data: dict, snap=None, by: str | None = None,
                      "at": at, "by": by, "how": "import"}
                 ws.setdefault("conflicts", []).append(c)
                 conflicts.append(c)
+        from .reopen import identity, map_key
+        kept = {map_key(m): m for m in ws.get("version_maps") or []}
+        for m in ws_in.get("version_maps") or []:
+            mine = kept.get(map_key(m))
+            if mine is None:
+                ws.setdefault("version_maps", []).append(m)
+                kept[map_key(m)] = m
+                added.append("version map " + json.dumps(identity(m), ensure_ascii=False))
+            elif mine != m:
+                c = {"id": "version_map", "current": identity(mine), "proposed": m, "at": at,
+                     "by": by, "how": "import"}
+                ws.setdefault("conflicts", []).append(c)
+                conflicts.append(c)
+        theirs, mine = ws_in.get("main_results"), ws.get("main_results")
+        if theirs and not mine:
+            ws["main_results"] = theirs
+            added.append("main_results")
+        elif theirs and theirs != mine:
+            c = {"id": "main_results", "current": mine, "proposed": theirs, "at": at, "by": by,
+                 "how": "import"}
+            ws.setdefault("conflicts", []).append(c)
+            conflicts.append(c)
         for e in ws_in["exposure"]:
             if e not in ws["exposure"]:
                 ws["exposure"].append(e)
@@ -1066,13 +1320,15 @@ def import_(work_dir: Path, data: dict, snap=None, by: str | None = None,
 def api(work_dir: Path, data_dir: Path, root: Path | None = None) -> tuple[dict, dict]:
     """The routes `machinechecked view`'s local server answers for the reader: GET
     `/api/workspaces` (the list), `/api/workspace?id=&claim=` (one, as `view` gives it) and
-    `/api/workspace/export?id=`, and `/api/proof-facts?name=&match=` (the facts inside one
+    `/api/workspace/export?id=`, `/api/workspace/revision?id=` (the findings the version maps
+    it keeps reopen, `reopen.for_site`), and `/api/proof-facts?name=&match=` (the facts inside one
     proof, as `compare --query proof-facts` gives them); POST `/api/workspace` with `action`
     `open` (`reviewer`, `mode`, `id`), `update` (`id`, `ops`, `op_id`, `base` ignored), `import`
     (`data`) or `suggest` (`id`, `claim`, `requirement`: attach the passages
-    `requirements.suggest` proposes, as proposals). They call the functions the command line
-    calls."""
-    from .review_cli import ReviewError, parse_reviewer
+    `requirements.suggest` proposes, as proposals); and GET `/api/review-order?order=informed`,
+    the review queue in the order that uses the workspaces' records (`review_cli.order_route`).
+    They call the functions the command line calls."""
+    from .review_cli import ReviewError, order_route, parse_reviewer
     from .targets import Snapshot, TargetError
 
     def snap():
@@ -1133,9 +1389,18 @@ def api(work_dir: Path, data_dir: Path, root: Path | None = None) -> tuple[dict,
         except CompareError as e:
             raise WorkspaceError(str(e)) from None
 
+    def revision(q):
+        # The findings each version map the workspace keeps reopens, for the maps to this
+        # site's release (`reopen.for_site`).
+        from .reopen import for_site
+        ws, s = read(find(work_dir, (q.get("id") or [""])[0])), snap()
+        return for_site(ws, s, root, work_dir, view=view(ws, s, None, root))
+
     get = {"/api/workspaces": lambda q: {"workspaces": [summary(ws) for _, ws in
                                                         list_all(work_dir)]},
            "/api/proof-facts": facts,
            "/api/workspace": one,
-           "/api/workspace/export": lambda q: export(find(work_dir, (q.get("id") or [""])[0]))}
+           "/api/workspace/revision": revision,
+           "/api/workspace/export": lambda q: export(find(work_dir, (q.get("id") or [""])[0])),
+           "/api/review-order": order_route(work_dir, data_dir)}
     return get, {"/api/workspace": post}

@@ -2,10 +2,12 @@
   // What is known about a paper's formalisations, beside the paper: the Lean repositories that
   // formalise it (one at a time, chosen at the top when there are several, or every audited one
   // when the audits are shown together), who says so, the project's description of its review,
-  // and its published audits, each with the version of the paper it pins and its commit.
+  // and its published audits, each with the version of the paper it pins and its commit, and the
+  // semantic summary the site gives that audit (`AuditSummary`).
   import { project } from "../lib/project.svelte.js";
   import { auditOf } from "../lib/data.js";
   import { pageVersions, versionHref, versionLabel } from "../lib/versions.js";
+  import AuditSummary from "./AuditSummary.svelte";
   let { paper, index = null } = $props();
 
   const https = (u) => typeof u === "string" && /^https:\/\/[^\s"'<>]+$/.test(u);
@@ -30,13 +32,20 @@
     return s.source === "formalization.yaml" ? "Linked by the repository's formalization.yaml" : "Listed by the site's maintainer";
   }
 
+  // An audit the site could not load: machinechecked.org gives each registered audit its `state`
+  // (and `detail`, why it did not load). It is shown with its reason, never as this page's audit.
+  const failedState = (a) => a.state === "unavailable" || a.state === "incompatible";
+  const why = (s) => `Audit ${s.state}${typeof s.detail === "string" && s.detail ? ": " + s.detail : ""}`;
+
   // A listing's audits, each placed by the version it pins: this page's (`here`), another version
-  // with its own page (`href`), or neither (an audit this page could not place, such as one that
-  // did not load). The version's label is MachineChecked's, from the page's versions or from the
-  // audit this page loaded, never one the listing supplies.
+  // with its own page (`href`), or neither (an audit this page could not place). An audit the site
+  // says did not load is `failed`; one without a state is placed as the others. The version's
+  // label is MachineChecked's, from the page's versions or from the audit this page loaded, never
+  // one the listing supplies.
   function placed(f) {
     const loaded = auditOf(index, f.repository);
     return (f.audits || []).filter((a) => https(a.url)).map((a) => {
+      if (failedState(a)) return { ...a, failed: true, label: null, commit: null, here: false, href: null };
       const onPage = !!loaded && same(loaded.url, a.url);
       const v = versions.find((x) => (x.audits || []).some((y) => same(y.url, a.url) && (!y.repository || y.repository === f.repository)));
       if (v) {
@@ -69,7 +78,8 @@
     {@const audits = placed(f)}
     {@const here = audits.filter((a) => a.here)}
     {@const elsewhere = audits.filter((a) => !a.here && a.href)}
-    {@const unplaced = audits.filter((a) => !a.here && !a.href)}
+    {@const unplaced = audits.filter((a) => !a.here && !a.href && !a.failed)}
+    {@const failed = audits.filter((a) => a.failed)}
     <div class="card" data-repository={f.repository}>
       {#if project.combined}<p class="small faint rank">{i === 0 ? "Default audit" : `Audit ${i + 1}`}{Number.isInteger(index?.stars?.[f.repository]) ? ` · ${index.stars[f.repository]} GitHub ${index.stars[f.repository] === 1 ? "star" : "stars"}` : ""}</p>{/if}
       <p class="repo"><a href={`https://github.com/${f.repository}/tree/${f.commit}`} target="_blank" rel="noopener"><code>{f.repository}</code></a></p>
@@ -77,15 +87,21 @@
         {provenance(f)}{#if f.stated_by?.source === "formalization.yaml"}&nbsp;· <a href={`https://github.com/${f.repository}/blob/${f.commit}/formalization.yaml`} target="_blank" rel="noopener">view it</a>{/if}&nbsp;· at <code>{f.commit.slice(0, 12)}</code>
       </p>
       {#if f.review_status}<p class="small muted">Project review: {f.review_status}</p>{/if}
-      {#if f.audit_state?.state === "unavailable" || f.audit_state?.state === "incompatible"}
+      {#if failedState(f.audit_state || {}) && !failed.some((a) => why(a) === why(f.audit_state))}
         <p class="small">Audit {f.audit_state.state}: {f.audit_state.detail}</p>
       {/if}
       {#each here as a}
         <p class="audit here"><a class="btn" href={"/read/?audit=" + encodeURIComponent(a.url)}>Open the audit{a.label ? " of " + a.label : ""}</a>
           <span class="small">by {a.author}{#if a.commit}{" · commit "}<code>{a.commit.slice(0, 12)}</code>{/if}</span></p>
+        <AuditSummary audit={a} />
       {/each}
       {#each unplaced as a}
         <p class="audit small"><a href={"/read/?audit=" + encodeURIComponent(a.url)}>Open the audit</a> by {a.author}</p>
+        <AuditSummary audit={a} />
+      {/each}
+      {#each failed as a}
+        <p class="audit failed small" data-state={a.state}>{why(a)}<br>
+          <a href={"/read/?audit=" + encodeURIComponent(a.url)}>Open the audit</a> by {a.author}</p>
       {/each}
       {#if elsewhere.length}
         <p class="small muted">{here.length ? "Audits of other versions:" : "Audits of other versions of the paper:"}</p>
@@ -95,7 +111,7 @@
       {/if}
       {#if !audits.length}
         <p class="small">No claim-level audit is published yet.</p>
-      {:else if !here.length && !unplaced.length}
+      {:else if !here.length && !unplaced.length && !failed.length}
         <p class="small">No audit of this version of the paper is published yet.</p>
       {/if}
       {#if reportOk(f.report_url)}<p class="small"><a href={f.report_url} target="_blank" rel="noopener">Report this listing</a></p>{/if}
@@ -127,6 +143,7 @@
   .card { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; background: var(--surface); }
   .card p { margin: 4px 0; }
   .repo { font-size: 15px; overflow-wrap: anywhere; }
+  .failed { overflow-wrap: anywhere; }
   .btn { display: inline-block; padding: 4px 12px; border-radius: 6px; background: var(--accent); color: var(--surface); text-decoration: none; }
   .related { margin-top: 18px; }
   .related summary { cursor: pointer; color: var(--muted); }

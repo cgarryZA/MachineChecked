@@ -144,9 +144,11 @@ def test_proof_steps_in_zero_configuration(proj):
         ids["step:P:eq:bound-range"]["state"] == "reviewed"
     assert ids["step:P:eq:bound-sum"]["state"] == "pending"
     assert "link:eq:bound-sum" not in ids
-    assert q == prioritise(simple_queue(json.loads((site / "data/index.json").read_text()),
+    written = json.loads((site / "data/index.json").read_text())
+    assert q == prioritise(simple_queue(written,
                                         {c["file"]: chunk(c["id"]) for c in index["claims"]}),
-                           uses=v.get("uses"), unbuilt=v["body"]["project"]["unbuilt"])
+                           uses=v.get("uses"), unbuilt=v["body"]["project"]["unbuilt"],
+                           claims=written["claims"])
 
     # Removing the route leaves the step unlinked again.
     save_route(proj, PAPER, "eq:bound-range", None)

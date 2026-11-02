@@ -35,7 +35,9 @@ project, unreadable paper or failed Lean probe). In that last case the document 
 the JSON. `version` is MachineChecked's version, and `release` identifies the evidence the
 statuses come from (it changes when the paper, the links or the Lean change). Each `status_code` is a stable machine-readable result; `status` is its display label.
 A link whose module is not built (`link.module-unbuilt`) or could not be loaded
-(`link.module-failed`) has a `status_detail` naming that module; an ambiguous link
+(`link.module-failed`) has a `status_detail` naming that module (for one that could not be
+loaded, with the first lines of what Lean reported, and whether the module's library could not
+be loaded in one session first); an ambiguous link
 (`link.ambiguous`) has one naming the modules that declare the name. `check` prints the same
 detail after the link's status.
 `class` is only its coarse group for colouring (`proved`, `open`, `malformed`,
@@ -44,15 +46,26 @@ Without a `machinechecked.toml`, `warnings` lists names in module docstrings tha
 and its dependencies do not declare (`kind` `module-doc-name`, with `file`, `line`, `name` and
 `message`; the message says when a short name reaches only a module or a namespace), and
 references to the paper's numbers that disagree with the paper read here
-(`kind` `paper-reference`, with `file`, `line`, `reference`, `status`, `id` and `message`);
+(`kind` `paper-reference`, with `file`, `line`, `reference`, `status`, `id` and `message`;
+each reference has its own `id`, a second copy of the same text in one place included);
 they do not change the exit code. `numbering` holds every such reference
 (`numbering.references`: `reference`, its exact `text` and `context`, its `source` with
-declaration, module, file, line and `where` it is, and `status`: `exact`, `other-kind`,
-`absent`, `unchecked` or `other-source`; `stale_lead` and `content.closer` when an exact
-reference's declaration reads closer to another statement) and the project-level `pattern`
-(counts by status, `drift`, and whether the paper's numbering is complete). Each suggestion
-has `reasons`: `signal` (`content`, `uses`, `number`, `lexical`, `structure`) and `text`; a
-`number` reason has `basis` "a lead" or "a possibly stale lead".
+declaration, module, file, line and `where` it is (`docstring`, `name`, `module docstring` or
+`comment`; a comment's declaration is null when it is on none), its `role` (`statement` or
+`cited`), and `status`: `exact`, `other-kind`, `absent`, `unchecked` or `other-source`;
+`stale_lead` and `content.closer` when an exact reference's declaration reads closer to
+another statement) and the project-level `pattern` (counts by status, `places`: the
+declarations and modules holding disagreeing references, `drift`, `examples` (reference ids),
+and whether the paper's numbering is complete). Each suggestion has `reasons`: `signal`
+(`content`, `uses`, `number`, `lexical`, `structure`) and `text`; a `number` reason has
+`basis` "a lead" or "a possibly stale lead", and `references`: the ids of the references in
+`numbering` it rests on.
+In either mode, `semantic` is the audit's semantic summary (`prooflens/semantic-summary@1`):
+per paper and per unit (`statements`, `notation`, `proof_steps`), the inventory, the formal
+status counts, and per set of readings the coverage, basis and currency counts, with the
+reviews and the kinds of finding recorded; each claim's `semantic` holds its own readings and
+keys. Quote these counts as they are, each with its unit: they are never added into a total or a
+percentage ([data model](DATA_MODEL.md#semantic-summary-prooflenssemantic-summary1-derived)).
 
 In a project with a `machinechecked.toml` (the full assessment), the document also has
 `findings` (totals per tier, dismissed warnings left out) and `finding_details`: each finding
@@ -93,7 +106,10 @@ configuration; with several papers they are absent. Report the violations and ob
 subject and message; they are what blocks a claim from being accepted. `replay` is null when no Comparator replay counts; otherwise it
 gives the record's `guard` (`guarded`, `unguarded`, or `unrecorded` for an older record), the
 number of proofs `replayed`, and a `message` when they were not shown to run under the sandbox
-guard.
+guard. A violation whose message says `machinechecked check --fix-modules` lists a module names
+a declaration in a project module missing from `modules`: `check --json --fix-modules` adds each
+such module to `machinechecked.toml`, checks again, and gives the modules it added in
+`modules_added` (empty when there was nothing to add); what it did is on stderr.
 
 ### What a declaration rests on
 
@@ -138,11 +154,43 @@ prints one JSON document (`machinechecked/compare@1`) for one claim, read from t
   gives the file and line, and `reason` says it in words). Read those in the paper.
 - `lean.declarations`: every linked declaration (or locked statement) with its complete
   statement: `statement.text` exactly as Lean prints it, `binders` and `conclusion` with their
-  expression ids, and Lean's checks (axioms, sorry, errors). `lean.candidates` are suggestions
+  expression ids, `tree` (the whole statement as one tree, where each variable's `scope` says
+  whether the statement establishes it, it is given, or it stands inside an assumption, a
+  negation, an alternative or an equivalence), and Lean's checks (axioms, sorry, errors).
+  `statement.objects` lists each object the statement binds, by number, with its `position`
+  (`given`, `produced`, `assumed`, `premise`, `denied`, `alternative`, `equivalent`), a
+  `reading` of what that position means for it, and what the statement says about it in
+  `properties`, each with its `basis`: `type` (a field its type carries: a subtype's predicate,
+  a structure's or class's proof field, inherited ones once, with the `field`, the structure
+  that declares it, the parent projections it comes through, `via`, and its exact `statement`
+  and `id`), `premise` (a hypothesis or premise that mentions it, with what a structure of
+  propositions `states`), `conclusion`, `definition` (a definition applied to it, by its
+  expansion's key) and `theorem` (a result cited for this object in the workspace, informed
+  stage only). `data` lists its type's data fields and `instances` the instances that supply
+  structure on it. `statement.readable` is the statement as the reader shows it, read as
+  mathematics: its rows in order (objects grouped by where they stand, supplied structure,
+  conditions, claims and connectives), each with its `role` (`input`, `assumption`, `output`)
+  and the identity of its expression (`at`), and for each property of an object its `origin`
+  (`type`, `established` for an object the statement produces, `assumed`, or `proved` by a
+  result cited for that object). Each printed expression's `math` reads it as mathematical
+  notions, each node at its sub-term's identity ([DATA_MODEL.md](DATA_MODEL.md)).
+  `lean.candidates` are suggestions
   nobody has confirmed, with their reasons. `lean.definitions` are the definitions the
-  statements use, with their type and value; `generated_for` marks the equations Lean generated
-  for one of them. `lean.references` are the references to the paper's numbers that concern
-  the claim, and `lean.numbering` their project-level pattern (as in `check --json`).
+  statements use, with their type and value and what each says (`defined_by`: its `params`,
+  `body` and `result`, or every one of its `equations`, each with its theorem's name and exact
+  statement); a structure has its fields (`structure`: `declares`, what it adds, and
+  `inherits`, by parent) and a definition whose value is a structure what that value carries
+  (`result_properties`, basis `definition`); `expansion: generic` marks them as the definitions as declared. `generated_for`
+  marks the equations Lean generated for one of them, and the tactic script of a tactic default
+  (`(h : 0 < n := by omega)`) with the declaration whose type has the default.
+  `lean.expansions` are the definitions at the arguments of each application in a linked
+  statement or a definition's body, the records the reader shows under the keys the statement
+  gives them (`expansions[].key`): the arguments by parameter, then the body with them
+  substituted or each equation that applies, as Lean substituted and checked them, with the
+  definition's `fingerprint`. An expansion's own applications are references; `--query
+  expansion KEY` gives one by its key. `lean.references` are the references to the paper's
+  numbers that concern the claim, and `lean.numbering` their project-level pattern (as in
+  `check --json`).
 - `interpretations` (stage `informed`, the default): the correspondence note, review reports,
   author's review markers, symbol links, the status and the assessment's findings.
 - `retrieval`: what is `included`, what the stage `withheld`, what is `unavailable` because it
@@ -167,25 +215,34 @@ Targeted queries have one shape (`machinechecked/query@1`: `op`, `target`, `cont
 machinechecked compare --query definition Toy.triangle --json   # its type, value, equations
 machinechecked compare --query mentions Toy.triangle --json     # statements that use it
 machinechecked compare --query dependencies Toy.Acceptance.thm_bound --json   # runs inspect
-machinechecked compare --query search "Theorem 2" --json       # declarations stating a claim
+machinechecked compare --query search "Theorem 2.5" --json     # declarations stating a claim
 machinechecked compare --query search 'n ≤ C * n ^ 2' --json   # ... or an expression, or words
-machinechecked compare --query proof-facts Example.bound --json  # facts inside its proof
-machinechecked compare --query proof-facts Example.bound --match "C * h"   # ranked by symbols
+machinechecked compare --query proof-facts Toy.Acceptance.thm_bound --json   # facts inside its proof
+machinechecked compare --query proof-facts Toy.Acceptance.thm_bound --match "n * n"   # ranked by symbols
 machinechecked compare --query uses Toy.IsEven --json          # where it is used, and how
 machinechecked compare --query impact Toy.triangle --json      # which main results use it
+machinechecked workspace main "Theorem 2.5" --as llm:MODEL     # save the main results it traces
 ```
 
 `search` ranks every declaration of the project's built modules, linked or not, by how much of
 the query its complete statement, docstring, name and used definitions carry. A claim as the
 target searches with its printed statement, over declarations of its sort, and says when a
-result orders `∀` and `∃` differently. Each result has its complete `statement`, its `score`
-and its `reasons`; a result reached through a close match it uses says so (`signal` `uses`,
-with `via`). It is the search the suggestions and the reader use, from the build's content
-index (`data/retrieval.json`), with no Lean session; `--limit` and `--after` page it. The
-zero-configuration build writes that index; on a full assessment's build `search` answers
-`available: false`. Nothing people recorded (links, rejections, notes) enters it. In zero
-configuration, `mentions` reads the complete statements of that index; with an older build it
-reads previews (`complete: false` on such a result: get its statement with `dependencies`).
+result orders `∀` and `∃` differently. A declaration as the target searches for declarations
+of its sort like it (`subject.declaration`): from a theorem, a theorem with the same
+conclusion comes first, and each result's `structure` reasons compare it with the theorem as
+Lean prints them, up to the names of their variables: the same or a different conclusion, the
+hypotheses it does not assume or also assumes (`hypotheses`, exactly as printed), variables of
+other types (`here`, `there`), and the order of `∀` and `∃`. Whether one statement implies the
+other remains a question for review. Each result has its complete `statement`, its `score` and
+its `reasons`; the `content` reason lists the shared terms, where they occur, and, for a
+theorem with hypotheses, those in its conclusion (`conclusion`); a result reached through a
+close match it uses says so (`signal` `uses`, with `via`). It is the search the suggestions and
+the reader use, from the build's content index (`data/retrieval.json`), with no Lean session;
+`--limit` and `--after` page it. Both the zero-configuration build and the full assessment
+write that index. Nothing people recorded (links, rejections, notes) enters it. `mentions`
+reads the complete statements of that index; with an older build it reads previews
+(`complete: false` on such a result: get its statement with `dependencies`). `dependencies`
+keeps the first 4000 characters of a statement; a longer one has `statement_complete: false`.
 
 `uses` (also `machinechecked inspect NAME --used-by`) answers with one document
 (`machinechecked/uses@1`) read from Lean's elaborated terms:
@@ -202,23 +259,44 @@ reads previews (`complete: false` on such a result: get its statement with `depe
   hypothesis, a hypothesis introduced in the proof, a theorem applied there, a constructor, a
   projection of a structure, an instance, or a term built in place) and `discharge` sums it up:
   `assumed` by the caller, `proved` in the caller, or `local`. `result` is the conclusion the
-  application obtains; `unsupplied` the binders it leaves open. Printed expressions mark each
+  application obtains; `unsupplied` the binders it leaves open. `objects` says which object
+  receives each property: every argument supplied for a parameter (not a type or an instance),
+  with the premises whose statement mentions that parameter (`basis` `premise`, with their
+  `discharge`) and the conclusion when it mentions it (`conclusion`). Which binders a statement
+  mentions is read from the declaration's type in Lean, never from printed names (`depends` on
+  each binder, `result_depends`). Printed expressions mark each
   variable by its index in `locals`, whose `id` is the position of its binder, so two variables
   printed alike in different scopes stay distinct. `location.path` is the application's
   position in the elaborated term; its line is the enclosing declaration's.
-- `scope`, `complete` and `answer`: the modules searched, those not built or not loaded, and
+- `scope`, `complete` and `answer`: the modules searched, those not built, those not loaded
+  (`failed`, each with the first lines of what Lean reported, as `check` gives them), and
   `used`, `no use found in this scope`, or `not traced` when some modules were not searched.
 
-The first `uses` query after a change runs Lean once over the project; later queries reuse the
-answers until a Lean input changes.
+Without `--json`, `uses` names each application by its `id`, marks each premise and the
+conclusion with the objects they are about (`(about n)`), and ends with the reference a
+workspace cites (`cite as evidence: {"app": {"callee": …, "id": …}}`). `--in CALLER` reads one
+declaration (with the constants Lean generated for it), and `--in APP_ID` one application:
+up to 64 applications in it rather than 8, each with `context`, every local in scope with its
+`kind` (a parameter or hypothesis of the caller, a fact established earlier in the proof, a
+variable introduced there), not only those it mentions. Its scope is that declaration:
+`within` names it, and `no use found in this scope` means that it does not use NAME. An
+application found that way is cited like any other. The first `uses` query after a change runs
+Lean once over the project; later queries reuse the answers until a Lean input changes.
 
 `impact NAME` traces the same references and answers whether each main result uses NAME, with
 one result (`machinechecked/impact@1`):
 
-- `selection`: which main results are traced. By default (`basis` `suggested`) they are the
-  declarations linked to the paper's theorems; `--main NAME`, repeated, names them instead
-  (`basis` `given`), each a declaration or a claim standing for its linked Lean, and
-  `unlinked_claims` lists a named claim that has none.
+- `selection`: which main results are traced, and where the choice comes from. `--main NAME`,
+  repeated, names them (`basis` `given`), each a declaration or a claim standing for its linked
+  Lean. Without it, the main results saved in a workspace are traced (`basis` `saved`, with the
+  `workspace`, `reviewer`, `by`, `at` and `pins`: the release and project commit they were
+  checked against, and a `note` when the build is of another commit). `machinechecked workspace
+  main NAME...` saves them; when several workspaces save some, `--workspace ID` chooses one (the
+  query is refused until it does). Without either, they are the declarations linked to the
+  paper's theorems (`basis` `suggested`). `unlinked_claims` lists a chosen claim with no linked
+  Lean, and `problems` what a saved selection names that the build no longer has (a claim not
+  in its release, a declaration not declared); such a declaration stays a main result, *not
+  traced*.
 - `main_results`: for each, `use` (`proof`, `definition body`, `statement` when it is in the
   statement only, `none`, `not traced`, or `itself`), the `answer` in words ("used by its proof,
   directly; also in its statement", "formalized separately: not used by this main result") and
@@ -233,7 +311,9 @@ one result (`machinechecked/impact@1`):
   `complete: false` when an answer is `not traced`.
 
 *Formalized separately* says only that this main result's Lean does not refer to NAME; *not
-traced* gives what is missing and never means unused. The answer changes no status.
+traced* gives what is missing and never means unused. The answer changes no status. Without
+`--json`, each application is named by its `id`; applications in one declaration with the same
+premises and result are shown once, with their number and ids.
 
 `proof-facts NAME` asks Lean, for that one declaration, for the propositions its proof establishes
 along the way: each `have` (and `let` of a proposition), each goal a `show` states, and each
@@ -241,7 +321,8 @@ application of a theorem of the project or of a theorem to a local fact. Each re
 `type`, the locals it needs (`assumptions`: the hypotheses and variables its type and its proof
 mention), the `cases` of the proof it lies in (a branch of a case split, a witness of an
 `obtain`), the `premises` of an applied theorem with the local that supplies each, `used_by`, its
-`source` line (`located` says how it was found) and its `ref`, the reference a workspace cites.
+`source` line (`located` says how it was found) and its `ref`, the reference a workspace cites
+(without `--json`, each fact's position `at` and a `cite as evidence` line).
 `subject` holds the exported statement (`basis: "exported theorem"`), the proof's hash and what
 was inspected, `source_only` (a `have` or `show` of the source with no typed counterpart, for
 instance inside a lemma Lean generated, listed under `proof.auxiliary` and asked about by its own
@@ -316,6 +397,28 @@ adds `workspace.records`: the saved investigation's evidence, findings, question
 counterexamples and compositions that are not current, each with its `state` and `changes`
 (`workspace show --json` gives the currency of its requirements and passages).
 
+`machinechecked changes --map --json` prints the version map instead (`prooflens/version-map@1`,
+[DATA_MODEL.md](DATA_MODEL.md#version-map-prooflensversion-map1-derived)): each claim of the
+earlier paper revision matched to the later one by its passage, whatever the two inventories
+call it, with `class` (`unchanged`, `moved`, `context-changed`, `changed`, `removed`,
+`ambiguous`, `unknown`, `new`), `by` (how it was matched), both sides' places, numbers and
+recorded statuses (`from.recorded`, `to.recorded`), the `change` and the changed `context`.
+`ambiguous` entries list `candidates`; a candidate by `number`, `id` or `line-diff` is a
+proposal, never a match: report it as one and leave the choice to the maintainer
+(`--match EARLIER=LATER`). `references` gives the later build's disagreeing paper numbers with
+the counterpart the map names (`current`).
+
+With `--map --workspace ID`, `workspace` is the workspace's findings judged through the map
+(`prooflens/reopened@1`,
+[DATA_MODEL.md](DATA_MODEL.md#findings-across-a-revision-prooflensreopened1-derived)): each
+finding's `state` (`reopened`, `unchecked`, `current`), and per paper part it rests on (`paper`)
+the `change` with its `diff`, the `dependency` and the `question`; `build` is its Lean side
+against the later release's site, kept apart. Report a reopened finding with its question and
+the part it names; an `unchecked` one is not known to be current, never current; a finding is
+never moved to another claim. `--save` keeps the map in the workspace, and `workspace show
+--json` then gives the same under `revisions` against a build of the later release, without
+the manuscripts.
+
 ### Reviewing from the terminal
 
 `machinechecked review next|read|lock|show|decide|author|submit|status|export` takes a unit of
@@ -329,11 +432,14 @@ machinechecked review next --json            # {"unit": {"id": "link:thm:odd-add
 machinechecked review read link:thm:odd-add --json    # the paper only
 machinechecked review lock link:thm:odd-add reading.md
 machinechecked review show link:thm:odd-add --json    # and the Lean
-machinechecked review decide link:thm:odd-add faithful comparison.md
+machinechecked review decide link:thm:odd-add faithful comparison.md --coverage full --basis direct
 machinechecked review author link:thm:odd-add          # what was recorded before
 machinechecked review submit link:thm:odd-add none.md
 machinechecked review export --out machinechecked-reviews/my-reviews.json
 ```
+
+`decide` records the coverage and its basis with the verdict, both optional
+([Coverage with the verdict](REVIEWING.md#coverage-with-the-verdict)).
 
 Run `compare` on a claim only after its review, or say in the reading that you had: its default
 stage shows the Lean and what others recorded. The steps are saved in your workspace
@@ -401,18 +507,29 @@ machinechecked workspace show --json
 
 `update` prints the acknowledgement (`changed`, `revisions`, `revision`) or `ok: false` with the
 `error` (exit 1); an edit of a record changed since its `base_rev` returns `conflicts` with both
-versions. Repeat a request with its `op_id` after a lost answer: it changes nothing. `show
---json` gives every record with its `currency` (`current`, `stale` with the `changes`, or
-`unchecked`) and the `resume` point. To cite a fact inside a proof, put its `ref` from
-`compare --query proof-facts` as `"ref": {"fact": REF}`; a finding resting on it takes basis
-`reviewed_composition` (it is not `direct` coverage), and `show` marks it `stale` once that proof
-changes. Requirements of a claim (`requirement`), the passages that govern each one
+versions. Repeat a request with its `op_id` after a lost answer: it changes nothing. A reviewer
+with several workspaces in the project (the review protocol's independent one and an informed
+one, say) names one with `--id`; `workspace list` gives their ids. `show --json` gives every
+record with its `currency` (`current`, `stale` with the `changes`, or `unchecked`) and the
+`resume` point. Each finding has its `dependencies`: the parts it rests on, each with its
+version (the passage, the requirements and passages of its reading, alignments, cited
+declarations with the definitions their statements use, applications, facts, the composition,
+the bridge), and `kinds`, the evidence kinds it uses. A submitted finding records them when it is
+submitted; it reads `stale` when one changed, naming it, and `unchecked` when one is not known
+(`currency.unknown`, each with `why`), never `current`. To cite a fact inside a proof, put its `ref` from `compare --query proof-facts`
+as `"ref": {"fact": REF}`; a finding resting on it takes basis `reviewed_composition` (it is not
+`direct` coverage), and `show` marks it `stale` once that proof changes. Requirements of a claim
+(`requirement`), the passages that govern each one
 (`fragment`: a region of the paper's source with its role, origin and scope) and their
 association with Lean (`alignment`) are records of the same workspace; `show --json` gives each
 claim's `reading`, `workspace suggest --claim C --requirement r1 [--apply]` proposes nearby
 passages, and `compare C --workspace ID --json` carries the reading in
 `interpretations.requirements` (and that workspace's compositions in
-`interpretations.compositions`). An argument that combines several results is a `composition`
+`interpretations.compositions`). Evidence that derives a property of one object of the claim's
+Lean names it, `"object": {"decl": NAME, "var": N}` (its number in `statement.objects`, or its
+name when only one object has it); the record pins the object's binder, and the informed
+packet lists a supporting result with that object only (basis `theorem`, and in
+`interpretations.derivations`), never with another object of the same name or type. An argument that combines several results is a `composition`
 record ([Reviewing](REVIEWING.md#saved-investigations)); a step can cite an application from
 `compare --query uses` as `"ref": {"app": {"callee": NAME, "id": APP_ID}}`. Differences from the
 Lean are findings with a `difference` on the affected requirement; a counterexample
@@ -513,16 +630,25 @@ machinechecked build
 ```sh
 machinechecked compare --query uses Toy.Acceptance.thm_triangle
 machinechecked compare --query proof-facts Toy.Acceptance.thm_bound --match "n ≤ n * n"
+machinechecked workspace main "Theorem 2.5"
 machinechecked compare --query impact Toy.triangle
 ```
 
 `uses` finds one application, `app:Toy.Acceptance.thm_bound:0`: `parameter n : Nat := n (the
-variable n introduced in the proof)`, giving `2 * Toy.triangle n = n * (n + 1)`. `proof-facts`
-ranks first `f2`, `hn : n ≤ n * n` at `Toy/Acceptance.lean:44`, in the case `n : Nat`;
-its basis is "established inside this proof under this context". `impact` traces from the main
-result now linked to Theorem 2.5: `Toy.Acceptance.thm_bound` is "used by its proof, directly;
-also in its statement" (through `Toy.PaperSpec.thm_bound`), and Theorem 2.5 is the one claim
-whose Lean uses `Toy.triangle`.
+variable n introduced in the proof)`, giving `2 * Toy.triangle n = n * (n + 1)`. It prints the
+reference a workspace cites: `{"app": {"callee": "Toy.Acceptance.thm_triangle", "id":
+"app:Toy.Acceptance.thm_bound:0"}}`. `proof-facts` ranks first `f2`, `hn : n ≤ n * n` at
+`Toy/Acceptance.lean:44, at /1/1/2`, in the case `n : Nat`, each fact "established inside this
+proof under its context", and prints its reference: `{"fact": {"decl":
+"Toy.Acceptance.thm_bound", "at": "/1/1/2"}}`. `--json` gives both answers in full.
+`workspace main` saves Theorem 2.5 as the paper's main result, under your name and with the
+build's release and project commit. `impact` traces from that selection ("Main results (saved in
+workspace ws-… by llm:MODEL …)"): `Toy.Acceptance.thm_bound` is "used by its proof, directly;
+also in its statement" (through `Toy.PaperSpec.thm_bound`), with `8 applications in
+Toy.Acceptance.thm_bound, with the same result: app:Toy.Acceptance.thm_bound:0 to
+app:Toy.Acceptance.thm_bound:7`, and Theorem 2.5 is the one claim whose Lean uses
+`Toy.triangle`. Without a saved selection, `impact` traces the declarations linked to the
+paper's theorems, as a suggestion.
 
 **5. Assemble the evidence.** Cite the application and the fact, and combine them. The
 composition's bridge asks Lean to check that `Toy.Acceptance.thm_bound` proves
@@ -559,9 +685,9 @@ JSON
 machinechecked compare --query composition "Theorem 2.5"
 ```
 
-The fact's `at` is its position in the proof term, as `proof-facts` gives it in `ref`; the
-workspace keeps the fact's hashes and type with it. The composition reads `every clause, through
-a bridge Lean checks`.
+The application and the fact are cited as `uses` and `proof-facts` print them; the fact's `at` is
+its position in the proof term, and the workspace keeps the fact's hashes and type with it. The composition reads `every clause, through
+a checked bridge`.
 
 **6. Compare the estimate and the printed proof.** The Lean writes `C * (n * n)` for `C n²`, a
 difference of notation only. The proof's Equation (3), "for every natural number $k \ge 0$, $n
@@ -617,9 +743,9 @@ The first `compare` shows the step with the proof around it. In `step.json`,
 step. `show` reads the step as `for every n (n ≥ 0); for every k (k ≥ 0): n ≤ k n²` and the
 counterexample as `an admissible counterexample to this reading`, with the certificate's scope:
 it certifies `ToyAudit.bound_range_at_one` only, not the reading. Run before that fragment is
-recorded, `workspace suggest --claim "Equation (3)" --requirement n.k` proposes the same line 75,
-the sentence before the display, as the quantifier's domain; `--apply` saves it as a proposal,
-and a `put` of it with `"state": "accepted"` accepts it.
+recorded, `machinechecked workspace suggest --claim "Equation (3)" --requirement n.k` proposes
+the same line 75, the sentence before the display, as the quantifier's domain; `--apply` saves
+it as a proposal, and a `put` of it with `"state": "accepted"` accepts it.
 
 **7. Record what is open, and hand the work on.**
 
@@ -641,9 +767,14 @@ Another agent, in its own copy of the project, runs `machinechecked workspace im
 ../t25-work.json --as llm:OTHER` and `machinechecked workspace show --id ws-… --json`: `resume`
 names the claim and the open question, and each record's `currency` is `current` while the
 paper and the Lean are those it was recorded against. It continues with `workspace update --id
-ws-…`, under its own name. `../site/data/work/` holds the submitted findings, the composition
+ws-…`, under its own name. There, `machinechecked review next --order informed --json` gives
+`link:thm:bound` first, for its open question ([Reviewing from the
+terminal](#reviewing-from-the-terminal)), and records that this reviewer has seen the
+workspace's interpretations. `../site/data/work/` holds the submitted findings, the composition
 and the reading; the reader shows them on the claim under **Auditors' readings**, attributed to
-`llm:MODEL`, informed investigation. Theorem 2.5 reads `linked: Lean proof checked`: a
+`llm:MODEL`, informed investigation, and in the comparison each finding that names a requirement
+under the rows its alignments name (`f-power` under the conclusion of `Toy.Acceptance.thm_bound`;
+`f-bound` on the whole claim). Theorem 2.5 reads `linked: Lean proof checked`: a
 finding changes no status. An independent review of the claim goes through `machinechecked
 review`, whose report lists this workspace's exposure in `reading.revealed_by`.
 
@@ -666,7 +797,10 @@ checks again with its bridge, and supersede the finding:
             "note": "The argument gives C = 1 for every n, positive or not."}}
 ```
 
-Both findings remain, and `show` lists `f-bound-2` as current. In a full assessment,
+Both findings remain, and `show` lists `f-bound-2` as current. `f-power`, submitted against the
+earlier reading, stays `stale`: a submitted finding keeps the versions it was submitted with, and
+its `changes` name the requirements and passages re-pinned since. Supersede it the same way once
+you have read its difference against the new text. In a full assessment,
 `machinechecked changes --workspace ID` lists the stale evidence, findings, questions,
 counterexamples and compositions beside the reviews the new release reopened.
 

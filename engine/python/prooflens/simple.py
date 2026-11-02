@@ -229,19 +229,19 @@ def suggest(claim: dict, index: list[dict], limit: int = 3,
     for a declaration of the claim's own sort (theorems for a theorem, definitions for a
     definition) above one of the other sort; a theorem whose statement is such a cited
     definition above both; a module docstring citing it suggests the module's last declaration
-    of the claim's sort. A citation that is a possibly stale lead (`numbering.reliability`)
-    counts less and says so. The name signal is resemblance to the claim's label, or title words
+    of the claim's sort. The citation rests on the docstring's references with the claim's
+    number (`numbering.citation`, whose ids its reason lists): one naming another work, a
+    section or another statement of the paper is no lead, and a possibly stale lead counts
+    less and says so. The name signal is resemblance to the claim's label, or title words
     shared with a name, one of them rare among the project's names. A declaration is suggested
     when its content score reaches `CONTENT_MIN` or another signal names it. A candidate from a
     namespace only another paper of the project uses is ranked low and says so. Ties are broken
     by name, never by index order."""
-    from .numbering import claim_ref, printed, reliability
+    from .numbering import citation
     from .retrieval import paper_quantifiers
     ctx = ctx or SuggestContext(index)
     out: dict[str, dict] = {}
     names = {d["name"]: d for d in index}
-    ref = claim_ref(claim)
-    ref = printed(*ref) if ref else None
 
     def entry(name):
         d = names.get(name)
@@ -259,11 +259,17 @@ def suggest(claim: dict, index: list[dict], limit: int = 3,
         e[signal] = value
         e["reasons"][signal] = {"signal": signal, "text": why, **(extra or {})}
 
-    def cite(name, value, why):
-        factor, stale = reliability(ctx.numbering, name, ref) if ref else (1.0, None)
+    def cite(name, value, why, source=None, module=None):
+        """Count the citation of the claim's number in the docstring of `source` (by default
+        `name`), or of `module`, for `name`; False when it is no lead to the claim."""
+        basis = citation(ctx.numbering, claim, None if module else source or name, module)
+        if basis is None:
+            return False
+        factor, stale, ids = basis
         add(name, "number", value * factor, why + (f" ({stale})" if stale else ""),
             {"reference": claim["number"], "basis": "a possibly stale lead" if stale
-             else "a lead"})
+             else "a lead", **({"references": ids} if ids else {})})
+        return True
 
     wants_def = claim["kind"] in DEFINITION_ENVS
 
@@ -271,7 +277,8 @@ def suggest(claim: dict, index: list[dict], limit: int = 3,
         return d["kind"] != "theorem" if wants_def else d["kind"] == "theorem"
 
     number = claim["number"]
-    num_re = re.compile(r"\b" + re.escape(number) + r"\b", re.I)
+    # The claim's number as written, not the start of a longer one (`Theorem 2.1.3`).
+    num_re = re.compile(r"\b" + re.escape(number) + r"\b(?!\.\d)", re.I)
     label = set(_tokens(claim.get("label") or "")) - ENV_WORDS
     words = _tokens(claim.get("title") or "")
     cited_defs = set()
@@ -280,10 +287,9 @@ def suggest(claim: dict, index: list[dict], limit: int = 3,
         if doc and num_re.search(doc):
             if sort_ok(d):
                 cite(d["name"], 0.9, f"its docstring cites {number}")
-            else:
-                cite(d["name"], 0.6, f"its docstring cites {number}")
-                if d["kind"] != "theorem":
-                    cited_defs.add(d["name"])
+            elif cite(d["name"], 0.6, f"its docstring cites {number}") \
+                    and d["kind"] != "theorem":
+                cited_defs.add(d["name"])
         if not sort_ok(d):
             continue
         short = d["name"].rsplit(".", 1)[-1]
@@ -297,18 +303,20 @@ def suggest(claim: dict, index: list[dict], limit: int = 3,
             add(d["name"], "lexical", 0.45, "its name shares words with the title")
     # A theorem whose statement is a cited definition proves what that definition states.
     if cited_defs and not wants_def:
+        defs = sorted(cited_defs)
         for d in index:
             ty = (d.get("type") or "").strip()
-            if d["kind"] == "theorem" and ty and any(c == ty or c.endswith("." + ty)
-                                                     for c in cited_defs):
-                cite(d["name"], 0.95, f"it proves {ty}, whose docstring cites {number}")
+            src = next((c for c in defs if c == ty or c.endswith("." + ty)),
+                       None) if d["kind"] == "theorem" and ty else None
+            if src:
+                cite(d["name"], 0.95, f"it proves {ty}, whose docstring cites {number}", src)
     for m, doc in ctx.module_docs.items():
         if num_re.search(doc):
             mine = [d for d in index if d.get("module") == m and sort_ok(d)]
             if mine:
                 last = max(mine, key=lambda d: ((d.get("range") or {}).get("line") or 0, d["name"]))
                 cite(last["name"], 0.3, f"its module's docstring cites {number} (the module's "
-                     f"last {last['kind']})")
+                     f"last {last['kind']})", module=m)
     # The claim's content, over every declaration of its sort.
     text = claim_text(claim)
     if text.strip():
@@ -473,7 +481,9 @@ def correspondence(claim: dict, entry: dict, bridge: dict | None = None) -> dict
     some), the auditor's argument for a reviewed composition, and the bridge's evidence
     (`bridge`, from `bridge_evidence`) for a checked bridge. An unresolved reading keeps its open
     question and what would decide it. A value outside the supported ones is dropped, never
-    guessed, and a basis not given stays unspecified (`None`). A stored `composed` coverage reads
+    guessed, and a basis not given stays unspecified (`None`). A basis says how the linked
+    declarations support the coverage, so a reading with none linked has no basis, and none of
+    the references, argument or bridge that go with one. A stored `composed` coverage reads
     as `full` with basis `reviewed_composition`, its note as the argument when none is given. A
     reviewed composition carries `next_step`, stating the combination as one Lean result."""
     if "lean" in entry:
@@ -491,6 +501,8 @@ def correspondence(claim: dict, entry: dict, bridge: dict | None = None) -> dict
         if not (note or cov):
             return None
         linked = entry["lean"] if isinstance(entry["lean"], list) else []
+        if not linked:
+            basis = None
         refs = entry.get("refs")
         refs = [n for n in refs if n in linked] if isinstance(refs, list) else list(linked)
         if basis == "checked_bridge":
@@ -582,8 +594,15 @@ def review_view(r: dict, links: list[dict], claim: dict) -> dict:
     if why is None and (read is None or read != claim.get("source_sha256")):
         current, why = False, "source-unrecorded" if read is None else "source-changed"
     rv, verdict = r.get("reviewer") or {}, r.get("verdict") or {}
+    seen = (r.get("reading") or {}).get("revealed_by")
     return {"reviewer": {k: rv.get(k) for k in ("id", "kind", "name", "model", "identity",
                                                  "same_family_as_author")},
+            # What the report records its reviewer had seen of the Lean or the author's review
+            # before the reading was locked (`reading.revealed_by`), or None when it records
+            # nothing.
+            "revealed": sorted({e["what"] for e in seen if isinstance(e, dict)
+                                and isinstance(e.get("what"), str)})
+            if isinstance(seen, list) else None,
             "verdict": {"group": verdict.get("group"), "value": verdict.get("value"),
                         "detail": _text(verdict.get("detail"))},
             "reading": _text((r.get("reading") or {}).get("text")),
@@ -593,7 +612,66 @@ def review_view(r: dict, links: list[dict], claim: dict) -> dict:
             "submitted_at": r.get("submitted_at"),
             "reviewed": sorted(fps), "release": pins.get("release"),
             "project_commit": pins.get("project_commit"), "current": current,
+            "correspondence": report_coverage(r, claim, current),
             **({"why": why} if why else {})}
+
+
+def report_coverage(r: dict, claim: dict, current) -> dict | None:
+    """A report's coverage (its `correspondence`, recorded with the verdict) as the reader shows
+    it, in the form of a claim's reading (`correspondence`): `{coverage, basis, refs, argument,
+    next_step, bridge, question, would_decide}`. None when the report records no supported
+    coverage: an older report's coverage is not recorded, never guessed. Values outside the
+    supported ones are dropped. The open question of an unresolved coverage is the verdict's
+    detail. A checked bridge reads as one only while the report is current, the claim's links
+    record the same bridge, Lean checks it, and the target is the version the reviewer read
+    (`target_fingerprint`); otherwise it reads as the reviewer's composition, with what it was
+    recorded as (`recorded_basis`) and why (`basis_reason`)."""
+    cor = r.get("correspondence")
+    if not isinstance(cor, dict) or cor.get("coverage") not in COVERAGE:
+        return None
+    cov = cor["coverage"]
+    basis = cor.get("basis") if cor.get("basis") in BASIS else None
+    lean = (r.get("unit") or {}).get("lean")
+    reviewed = [n for n in lean if isinstance(n, str)] if isinstance(lean, list) else []
+    out = {"coverage": cov, "basis": basis, "refs": reviewed if basis else [], "argument": None,
+           "next_step": None, "bridge": None, "question": None, "would_decide": None}
+    if basis == "checked_bridge":
+        b = cor.get("bridge") if isinstance(cor.get("bridge"), dict) else {}
+        names = (b.get("theorem"), b.get("target"))
+        own = (claim.get("correspondence") or {}).get("bridge") or {}
+        why = []
+        if not all(isinstance(n, str) and n for n in names):
+            why.append("no bridge theorem and target are recorded")
+        elif (own.get("theorem"), own.get("target")) != names:
+            why.append("the claim's links record no such bridge, so Lean does not check it")
+        elif own.get("state") not in ("checked", "stale"):
+            why += own.get("reasons") or ["Lean does not check the bridge"]
+        if not why:
+            pin, now = b.get("target_fingerprint"), (own.get("current") or {}).get(
+                "target_fingerprint")
+            if current is not True:
+                why.append("the report was made for other paper text or other declarations")
+            if not pin:
+                why.append("no reviewed version of the target is recorded")
+            elif pin != now:
+                why.append("the target is not the version the reviewer read")
+        if why:
+            out.update(basis="reviewed_composition", recorded_basis="checked_bridge",
+                       basis_reason=why, bridge={"theorem": names[0], "target": names[1]})
+        else:
+            out.update(refs=[names[0]], bridge={
+                "theorem": names[0], "target": names[1], "state": "checked", "reasons": [],
+                "pinned": {"target_fingerprint": b.get("target_fingerprint"),
+                           "source_sha256": (report_digests(r) or {}).get(claim["id"])},
+                "current": own.get("current")})
+    if out["basis"] == "reviewed_composition":
+        out["next_step"] = COMPOSITION_NEXT_STEP
+        if basis == "reviewed_composition":
+            out["argument"] = _reading_text(cor.get("argument"), ARGUMENT_CHARS) or None
+    if cov == "unresolved":
+        out["question"] = _reading_text((r.get("verdict") or {}).get("detail")) or None
+        out["would_decide"] = _reading_text(cor.get("would_decide")) or None
+    return out
 
 
 def route_link_names(claim: dict, entry: dict) -> list[str]:
@@ -606,31 +684,25 @@ def route_link_names(claim: dict, entry: dict) -> list[str]:
     return list(claim.get("declared_route") or [])
 
 
-COVERAGE_WORDS = {"full": "every clause", "partial": "part of the claim",
-                  "changed": "stated differently", "related": "a related result, not this claim",
-                  "unresolved": "unresolved"}
-BASIS_WORDS = {"direct": "in one Lean statement", "reviewed_composition":
-               "by the auditor's composition", "checked_bridge": "through a bridge"}
-
-
 def reading_text(cor: dict | None) -> str:
-    """A correspondence reading (`correspondence`) for the terminal: its coverage and basis,
-    note, the composition's argument with what Lean has not checked and the next step, a
-    bridge's state, and an unresolved reading's question. Empty when nothing is recorded."""
+    """A correspondence reading (`correspondence`) for the terminal: its coverage and basis (in
+    the words of `semantic.reading_words`), note, the composition's argument with what Lean has
+    not checked and the next step, a bridge's state, and an unresolved reading's question. Empty
+    when nothing is recorded."""
+    from .semantic import reading_words
     cor = cor or {}
     if not (cor.get("note") or cor.get("coverage")):
         return ""
-    head = COVERAGE_WORDS.get(cor.get("coverage"), "")
-    if head and cor.get("basis") in BASIS_WORDS:
-        head += ", " + BASIS_WORDS[cor["basis"]]
-    lines = [head.capitalize()] if head else []
+    b = cor.get("bridge") or {}
+    # A bridge reads as checked only while Lean checks it.
+    head = reading_words(cor.get("coverage"), cor.get("basis"), b.get("state") or "unchecked")
+    lines = [head] if head else []
     if cor.get("note"):
         lines.append(cor["note"])
     if cor.get("basis") == "reviewed_composition":
         lines.append("The auditor's argument: " + (cor.get("argument") or "not written."))
         lines.append("Lean has not checked this combination. Next step: "
                      + (cor.get("next_step") or COMPOSITION_NEXT_STEP))
-    b = cor.get("bridge") or {}
     if cor.get("basis") == "checked_bridge" and b:
         lines.append(f"Bridge {b.get('theorem')} to target {b.get('target')}: "
                      + {"checked": "Lean checks it", "stale": "out of date: "
@@ -754,9 +826,9 @@ def save_settings(root: Path, issues: str | None = None, site_url: str | None = 
 
 # -- the Lean side ---------------------------------------------------------------------------
 
-# What an index preview keeps: the reader lists a declaration's statement only to this length,
-# and suggestions read a docstring only for the statement numbers it cites. The facts store
-# keeps the whole record.
+# What an index preview keeps: the reader lists a declaration's statement only to this length.
+# Suggestions, the content index and the paper-number checks read the complete records, which
+# the facts store keeps.
 INDEX_TYPE_CHARS, INDEX_DOC_CHARS = 300, 4000
 
 
@@ -832,7 +904,8 @@ def stale_docs_note(found: list[dict]) -> str:
 def probe_modules(root: Path, modules: list[str], libs: list[str], requests: list[dict],
                   lake: str = "lake", log=print, work: Path | None = None,
                   sessions: dict[str, list[str]] | None = None,
-                  retry: set[str] | None = None, extra: dict | None = None
+                  retry: set[str] | None = None, extra: dict | None = None,
+                  split: dict[str, dict] | None = None
                   ) -> tuple[list[dict], dict[str, str]]:
     """Probe the built modules without assuming they can all be imported into one Lean session.
 
@@ -844,10 +917,13 @@ def probe_modules(root: Path, modules: list[str], libs: list[str], requests: lis
     given. Returns the records and the modules that could not be loaded, with the reason;
     `sessions`, when given, receives the modules of each session started, by its label, and
     `retry` the failed modules whose failure was not an error Lean reported in them (out of
-    memory, a timeout, a killed or unfinished session): another attempt may load them."""
+    memory, a timeout, a killed or unfinished session): another attempt may load them. A module
+    fails only in a session of its own; `split`, when given, receives each failed module that
+    was loaded on its own because the session of its library's modules failed: that library
+    (`library`) and how many of its modules that session loaded (`modules`)."""
     recs, failed = [], {}
 
-    def run(group: list[str], label: str):
+    def run(group: list[str], label: str, whole: dict | None = None):
         if sessions is not None:
             sessions[label] = list(group)
         try:
@@ -855,16 +931,18 @@ def probe_modules(root: Path, modules: list[str], libs: list[str], requests: lis
                                    label=label, extra=extra)
         except ViewError as e:
             if len(group) == 1:
-                failed[group[0]] = str(e)[-600:]
+                failed[group[0]] = kept_failure(str(e))
                 if retry is not None and not getattr(e, "deterministic", False):
                     retry.add(group[0])
+                if split is not None and whole is not None:
+                    split[group[0]] = dict(whole)
                 return
-            errors = [l.strip() for l in str(e).splitlines() if "error" in l]
-            reason = errors[0].split("error:", 1)[-1].strip()[:200] if errors else "no error message"
+            reason = loading_error(str(e), root, lines=1) or "no error message"
             log(f"lean: {label} could not be loaded in one session ({reason}); splitting it")
+            whole = whole or {"library": label, "modules": len(group)}
             half = len(group) // 2
-            run(group[:half], label + "/a")
-            run(group[half:], label + "/b")
+            run(group[:half], label + "/a", whole)
+            run(group[half:], label + "/b", whole)
             return
         for r in out:
             r["probe_group"] = label
@@ -919,17 +997,75 @@ def declaring_modules(root: Path, modules: list[str], name: str) -> list[str]:
     return out
 
 
+def kept_failure(text: str, size: int = 600) -> str:
+    """What is kept of a failed session's message: all of it when it is short, else its first
+    and its last `size` characters, cut at whole lines where it has them: Lean's first errors,
+    and what its end says (a resource that ran out, the free space left)."""
+    if len(text) <= 2 * size:
+        return text
+    head, tail = text[:size], text[-size:]
+    head = head.rsplit("\n", 1)[0] if "\n" in head else head
+    tail = tail.split("\n", 1)[-1] if "\n" in tail else tail
+    return f"{head}\n…\n{tail}"
+
+
+PROBE_POSITION = re.compile(r"^(?:\S*prooflens-probe-[^/\\\s]*[/\\])?Probe\.lean:\d+:\d+:\s*")
+LEAN_ERROR = re.compile(r"\berror\b", re.I)
+SESSION_FAILED = re.compile(r"^the Lean probe failed \(-?\d+\):$")
+
+
+def loading_error(reason: str, root: Path | None = None, lines: int = 3,
+                  width: int = 160) -> str:
+    """What a session reported when it could not load a module, on one line, from the failure
+    `probe_modules` stored: its first lines that report an error (each without the position in
+    the probe's own file and the word `error:`), else those naming a resource it ran out of,
+    else its first lines; at most `lines` of them, each cut to `width` characters, and "…" when
+    there were more. Paths in the project are given from its root, and the home folder as `~`,
+    so that a published site does not show where the project was built."""
+    from .probe import RESOURCE_SIGNS
+    text = str(reason)
+    for path, short in [(root, ""), (Path.home(), "~/")]:
+        path = Path(path).resolve() if path is not None else None
+        if path is not None and len(path.parts) > 1:
+            text = text.replace(str(path) + os.sep, short)
+    rows = [PROBE_POSITION.sub("", l.strip()) for l in text.splitlines()
+            if l.strip() and l.strip() != "…"]
+    errors = [l.split("error:", 1)[-1].strip() if "error:" in l else l
+              for l in rows if LEAN_ERROR.search(l)]
+    picked = (errors or [l for l in rows if any(s in l.lower() for s in RESOURCE_SIGNS)]
+              or [l for l in rows if not SESSION_FAILED.match(l)] or rows)
+    picked = [l.rstrip(":").strip() for l in picked if l.rstrip(":").strip()]
+    shown = [l if len(l) <= width else l[:width - 1].rstrip() + "…" for l in picked[:lines]]
+    return "; ".join(shown + (["…"] if len(picked) > len(shown) else []))
+
+
+def module_failed_detail(module: str, reason: str, split: dict | None = None,
+                         root: Path | None = None) -> str:
+    """The detail of a link whose module could not be loaded: the module, how it was loaded (on
+    its own, after the session of its library's modules failed when `split` says so) and what
+    that session reported (`loading_error`)."""
+    how = (f", after {split['modules']} modules of {split['library']} could not be loaded in one "
+           f"Lean session" if split and split.get("library") and split.get("modules") else "")
+    error = loading_error(reason, root)
+    return f"Module {module} could not be loaded on its own{how}" + (f": {error}" if error
+                                                                     else ".")
+
+
 def resolve_link(name: str, records: list[dict], module: str | None, root: Path,
-                 unbuilt: list[str], failed: dict[str, str]) -> tuple[dict | None, dict | None]:
+                 unbuilt: list[str], failed: dict[str, str],
+                 split: dict[str, dict] | None = None) -> tuple[dict | None, dict | None]:
     """The probe record a link means, or why there is none.
 
     A declaration is identified by its name and its module: when several loaded modules declare
     the name, the module the project gave (formalization.yaml's `module`) decides, and without
     one the link is ambiguous rather than guessed. With no record, the source says whether the
     declaration's module is unbuilt or could not be loaded: only a declaration absent from the
-    modules that were inspected reads as not found."""
+    modules that were inspected reads as not found. A module that could not be loaded is named
+    with what Lean reported (`module_failed_detail`; `split` as `probe_modules` gives it)."""
     found = [r for r in records if "missing" not in r.get("errors", [])]
     mod_of = lambda r: (r.get("decl") or {}).get("module") or r.get("module")
+    not_loaded = lambda m: fields("link.module-failed", module_failed_detail(
+        m, failed[m], (split or {}).get(m), root))
     if module:
         mine = [r for r in found if mod_of(r) == module]
         if mine:
@@ -937,7 +1073,7 @@ def resolve_link(name: str, records: list[dict], module: str | None, root: Path,
         if module in unbuilt:
             return None, fields("link.module-unbuilt", f"Module {module} is not built.")
         if module in failed:
-            return None, fields("link.module-failed", f"Module {module} could not be loaded.")
+            return None, not_loaded(module)
     elif len({mod_of(r) for r in found}) > 1:
         mods = ", ".join(sorted({str(mod_of(r)) for r in found}))
         return None, fields("link.ambiguous", f"Declared in {mods}.")
@@ -946,7 +1082,7 @@ def resolve_link(name: str, records: list[dict], module: str | None, root: Path,
     for m in declaring_modules(root, unbuilt, name):
         return None, fields("link.module-unbuilt", f"Module {m} is not built.")
     for m in declaring_modules(root, list(failed), name):
-        return None, fields("link.module-failed", f"Module {m} could not be loaded.")
+        return None, not_loaded(m)
     return None, None
 
 
@@ -1149,7 +1285,9 @@ class LeanFacts:
     does not import or elaborate), a failure the same inputs repeat. A failure of resources or of
     the session (out of memory, a timeout, a heartbeat budget, a killed or unfinished session) is
     stored only as an attempt: the next build loads the module again and says that the earlier
-    attempt failed.
+    attempt failed. A stored failure keeps what the session reported and, for a module loaded
+    on its own after its library's session failed, that library (`split`), for the detail of
+    the links into it.
 
     A checked bridge (`bridges`, pairs of a theorem and its target) is checked by an `accept`
     request asked with the theorem's record. Its answer is stored like a link record, per pair
@@ -1177,6 +1315,7 @@ class LeanFacts:
         self.fresh_decls: dict[str, dict] = {}
         self.fresh_index: dict[str, list[dict]] = {}
         self.retry: set[str] = set()                 # failures of this build to try again
+        self.split: dict[str, dict] = {}             # failed modules loaded apart from their library
         self.bridges: set[tuple[str, str]] = set(bridges)
         self.fresh_accepts: dict[tuple[str, str], list[dict]] = {}
         self.acceptrecs: dict[tuple[str, str], list[dict]] = {}
@@ -1214,7 +1353,8 @@ class LeanFacts:
         sessions: dict[str, list[str]] = {}
         recs, failed = probe_modules(self.root, modules, self.libs,
                                      requests + [{"kind": "modules", "name": ""}], self.lake,
-                                     self.log, self.work, sessions=sessions, retry=self.retry)
+                                     self.log, self.work, sessions=sessions, retry=self.retry,
+                                     split=self.split)
         self.sessions += len(sessions)
         self._store(recs, sessions, failed, any(r["kind"] == "index" for r in requests))
         for r in recs:
@@ -1315,7 +1455,8 @@ class LeanFacts:
                     self._put("attempt", m, {}, reason=reason)
                     st.remove("failed", m)
                 else:
-                    self._put("failed", m, project, reason=reason)
+                    how = {"split": self.split[m]} if m in self.split else {}
+                    self._put("failed", m, project, reason=reason, **how)
                     st.remove("attempt", m)
 
     def _answers(self, name: str, where: dict[str, set[str]], groups: list[list[str]],
@@ -1435,6 +1576,8 @@ class LeanFacts:
             f, _ = self._get("failed", m)
             if f is not None:
                 failed[m] = f["reason"]
+                if f.get("split"):
+                    self.split[m] = f["split"]
                 continue
             earlier = None if self.refresh else st.peek("attempt", m)
             stale[m] = f"an earlier attempt failed: {_first_line(earlier['reason'])}" \
@@ -1757,7 +1900,7 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
     if fy and "error" in fy:
         notes.append(fy["error"])
     index, linkrecs, decls, acceptrecs, module_docs = [], {}, {}, {}, []
-    failed, facts_used, refs = {}, {"sessions": 0}, []
+    failed, split, facts_used, refs = {}, {}, {"sessions": 0}, []
     retrieval, numbering, index_scope_info = None, None, None
     if fy and "error" not in fy:
         for c in claims:
@@ -1848,14 +1991,16 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
             note = nb.drift_note(numbering["pattern"], numbering["references"])
             if note:
                 notes.append(note)
-            ctx = SuggestContext(index, root, foreign, retrieval, numbering)
+            # Suggestions read the complete records too: a cited number can come after the
+            # preview's docstring ends.
+            ctx = SuggestContext(full, root, foreign, retrieval, numbering)
             for c in claims:
                 entry = links.get(c["key"], {})
                 if steps.is_step(c):
                     # A proof step is linked by someone who read it; nothing is suggested for it.
                     c["suggestions"] = []
                     continue
-                c["suggestions"] = [s for s in suggest(c, index, ctx=ctx)
+                c["suggestions"] = [s for s in suggest(c, full, ctx=ctx)
                                     if s["name"] not in entry.get("rejected", [])
                                     and s["name"] not in c["link_names"]]
                 # Every suggestion shown is checked by Lean, not only the first.
@@ -1864,17 +2009,17 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
             acceptrecs = lean.acceptrecs
         facts_used = {"sessions": lean.sessions, **lean.store.stats}
         refs = [r for m in sorted(lean.refs) for r in lean.refs[m]]
+        split = lean.split
         again = sorted(m for m in failed if m in lean.retry)
         kept = sorted(m for m in failed if m not in lean.retry)
         if kept:
             notes.append(f"{len(kept)} built module(s) could not be loaded by MachineChecked "
-                         f"and are not indexed: {', '.join(kept[:5])}"
-                         + ("…" if len(kept) > 5 else ""))
+                         f"and are not indexed: {failed_modules(kept, failed, root)}")
         if again:
             notes.append(f"{len(again)} built module(s) could not be loaded this time (out of "
                          "memory, a time limit or an interrupted Lean session) and are not "
-                         f"indexed; the next build tries them again: {', '.join(again[:5])}"
-                         + ("…" if len(again) > 5 else ""))
+                         f"indexed; the next build tries them again: "
+                         f"{failed_modules(again, failed, root)}")
 
     # Statuses.
     def checked(c, n, source):
@@ -1883,7 +2028,7 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
             state = fields("link.unbuilt")
         else:
             rec, why = resolve_link(n, linkrecs.get(n, []), c.get("declared_modules", {}).get(n),
-                                    root, unbuilt, failed)
+                                    root, unbuilt, failed, split)
             state = why or link_state(rec)
         return {"name": n, **state, "source": source, "record": rec}
 
@@ -1910,7 +2055,11 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
             accept = _one(recs) or ({"errors": ["missing"]} if recs and all(
                 "missing" in (r.get("errors") or []) for r in recs) else None)
             bridge = bridge_evidence(c, entry, accept, _one(linkrecs.get(target, [])), decls)
-        c["correspondence"] = correspondence(c, entry, bridge) if c["links"] else None
+        # A reading describes the linked declarations; an unlinked claim keeps an unresolved
+        # one, whose open question may be whether any Lean states the claim.
+        cor = correspondence(c, entry, bridge)
+        c["correspondence"] = cor if c["links"] or (cor or {}).get("coverage") == "unresolved" \
+            else None
         c["reviews"] = [review_view(r, c["links"], c) for r in reports.get("link:" + c["key"], [])]
         c["references"] = claim_references(c, numbering)
         if c["links"]:
@@ -1944,6 +2093,16 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
             "uses": site_index(refs) if refs else None}
 
 
+def failed_modules(modules: list[str], failed: dict[str, str], root: Path) -> str:
+    """The first five of `modules` that could not be loaded, each with the first line of what
+    its session reported (`loading_error`), for the build's notes."""
+    shown = []
+    for m in modules[:5]:
+        error = loading_error(failed.get(m, ""), root, lines=1, width=120)
+        shown.append(f"{m} ({error})" if error else m)
+    return ", ".join(shown) + ("…" if len(modules) > 5 else "")
+
+
 def paper_numbering(root: Path, index: list[dict], claims: list[dict], tex: dict,
                     aux: Path | None, foreign, retrieval) -> dict:
     """The project's references to the paper's numbers, checked against the paper read here
@@ -1958,7 +2117,8 @@ def paper_numbering(root: Path, index: list[dict], claims: list[dict], tex: dict
         complete, reason = False, "the paper's statements could not be read in this build"
     inv = nb.inventory(claims, complete, reason,
                        nb.sections_from_aux(aux) if aux is not None else None)
-    blocks = nb.module_doc_blocks(root, {d.get("module") for d in index if d.get("module")})
+    modules = {d.get("module") for d in index if d.get("module")}
+    blocks = nb.module_doc_blocks(root, modules) + nb.comment_blocks(root, modules, index)
     return nb.analyse(index, claims, inv, blocks, foreign, retrieval, claim_text)
 
 
@@ -2075,6 +2235,7 @@ def write_view_site(view: dict, site: Path, web_dist: Path | None,
                          **source_info(root, body["project"]["libs"])},
              "tool": {"name": "machinechecked"},
              "issues": body.get("issues"), "site_url": body.get("site_url"),
+             "author": body.get("author"),
              "formalization": body.get("formalization"),
              "lean": None, "notes": body["notes"],
              "papers": [{"id": "P", "title": body["title"], "mode": body["tex"]["mode"],
@@ -2096,7 +2257,8 @@ def write_view_site(view: dict, site: Path, web_dist: Path | None,
     from .review_queue import prioritise, simple_queue
     write_preview(site, index, chunks, store, {"P": view["pdf"]} if view["pdf"] else {},
                   web_dist, prioritise(simple_queue(index, chunks), uses=view.get("uses"),
-                                       unbuilt=body["project"]["unbuilt"]))
+                                       unbuilt=body["project"]["unbuilt"],
+                                       claims=index["claims"]))
     index["review_queue"] = "data/review-queue.json"
     from . import audit
     key = body.get("paper") or ""
@@ -2153,14 +2315,25 @@ def _link_view(l: dict, root: Path | None = None) -> dict:
             "axioms": rec.get("axioms"), "sorry": rec.get("sorry"),
             "errors": rec.get("errors"),
             "statement": {"binders": rec.get("binders", []), "conclusion": rec.get("conclusion"),
+                          "tree": rec.get("tree"),
                           "exact": rec.get("exact") or (rec.get("decl") or {}).get("signature"),
-                          "closure": rec.get("closure", []), "direct": []} if rec else None,
+                          "closure": rec.get("closure", []), "direct": [],
+                          # The statement arranged to be read as mathematics (display only).
+                          "readable": _readable(rec, l["name"])} if rec else None,
             "range": (rec.get("decl") or {}).get("range"),
             "module": (rec.get("decl") or {}).get("module"),
             "doc": (rec.get("decl") or {}).get("doc"),
-            # A linked definition: what it says (its body or equations, and its source).
-            "definition": _definition(rec["decl"]) if "defined_by" in (rec.get("decl") or {})
-            else None}
+            # A linked definition: what it says (its body or equations, and its source); a
+            # linked structure: its fields.
+            "definition": _definition(rec["decl"])
+            if {"defined_by", "structure"} & set(rec.get("decl") or {}) else None}
+
+
+def _readable(rec: dict, name: str) -> dict | None:
+    """A link's statement arranged to be read as mathematics (`readable.readable`)."""
+    from .readable import readable
+    return readable({**rec, "exact": rec.get("exact") or (rec.get("decl") or {}).get("signature")},
+                    name)
 
 
 def _definition(decl: dict) -> dict:

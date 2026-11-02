@@ -33,7 +33,7 @@ from .config import work_dir_name
 from .deps import NOT_CHECKED, _resolve, _short, _tool_version, not_checked_reason, store
 from .facts import graphs
 from .probe import lib_names
-from .simple import ViewError, built_modules, probe_modules
+from .simple import ViewError, built_modules, module_failed_detail, probe_modules
 
 SCHEMA = "machinechecked/proof-facts@1"
 BASIS = "established inside this proof under this context"
@@ -278,7 +278,7 @@ def extract(root: Path, name: str, module: str | None = None, lake: str = "lake"
             recs, failed = probe_modules(root, [target], libs, request, lake, log=quiet,
                                          work=work, extra=extra)
             if failed:
-                raise ViewError(failed[target])
+                raise ViewError(module_failed_detail(target, failed[target], root=root))
             env = st.environment([target], next(iter(graphs(recs).values()), {}))
         else:
             # The source does not show the name: ask every library, each in its own session.

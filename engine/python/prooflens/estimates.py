@@ -334,7 +334,8 @@ def check(root: Path, theorem: str, target: str, certifies: str, module: str | N
     from .deps import _resolve, _short, store
     from .facts import graphs
     from .probe import lib_names
-    from .simple import ViewError, built_modules, probe_modules, target_fingerprint
+    from .simple import (ViewError, built_modules, module_failed_detail, probe_modules,
+                         target_fingerprint)
     from .config import work_dir_name
     libs = lib_names(root)
     if not libs:
@@ -365,7 +366,7 @@ def check(root: Path, theorem: str, target: str, certifies: str, module: str | N
         recs, failed = probe_modules(root, [mod], libs, request, lake, log=lambda m: None,
                                      work=root / work_dir_name(root) / "build")
         if failed:
-            raise ViewError(failed[mod])
+            raise ViewError(module_failed_detail(mod, failed[mod], root=root))
         env = st.environment([mod], next(iter(graphs(recs).values()), {}))
         pr = next((r for r in recs if r.get("record") in ("refute", "accept")
                    and r.get("name") == theorem), None)

@@ -29,6 +29,8 @@ import json
 import re
 from pathlib import Path
 
+from . import manifest as mf
+
 PACKET_SCHEMA = "machinechecked/compare@1"
 QUERY_SCHEMA = "machinechecked/query@1"
 STAGES = ("read", "compare", "informed")
@@ -40,8 +42,6 @@ CONTAINS = {"read": ["paper"], "compare": ["paper", "Lean"],
 # Content the packet's shape provides for but the engine does not extract yet, by owner issue.
 NOT_EXTRACTED = [
     {"what": "standing assumptions and definitions the passage refers to", "owner": "#69"},
-    {"what": "definitions expanded at their actual arguments", "owner": "#97"},
-    {"what": "properties carried by the types of the objects", "owner": "#98"},
     {"what": "typed facts inside proofs", "owner": "#145",
      "request": "`compare --query proof-facts NAME` reads one proof on request"},
 ]
@@ -145,6 +145,19 @@ class Site:
                     self._store.setdefault(rec["name"], {**rec, "_key": p.stem})
         return self._store
 
+    def script_owners(self) -> dict[str, str]:
+        """The declaration each tactic-default script of the store belongs to: the one whose
+        type has the default (`targets.script_owners`)."""
+        if not hasattr(self, "_scripts"):
+            from .targets import script_owners
+            self._scripts = script_owners(self.store().values())
+        return self._scripts
+
+    def generated(self, name: str, owner: str) -> bool:
+        """Whether `name` is a constant Lean generated for `owner`: by its name (`_generated`),
+        or, for the tactic script of a tactic default, by the records, whatever its name."""
+        return _generated(name, owner) or self.script_owners().get(name) == owner
+
     def queue(self) -> dict | None:
         p = self.data / "review-queue.json"
         return json.loads(p.read_text(encoding="utf-8")) if p.exists() else None
@@ -171,6 +184,18 @@ class Site:
     def numbering(self) -> dict | None:
         """The project's references to the paper's numbers (`numbering.py`)."""
         p = self.data / "numbering.json"
+        try:
+            return json.loads(p.read_text(encoding="utf-8")) if p.exists() else None
+        except ValueError:
+            return None
+
+    def part(self, key: str) -> dict | None:
+        """A part stored on its own under its key (`data/expansions/<key>.json`,
+        `manifest.split_expansions`): a definition expanded at an application, or a page of a
+        declaration's equations. None when the build has no such part."""
+        if not re.fullmatch(r"[0-9a-f]{24}", str(key or "")):
+            return None
+        p = self.data / "expansions" / f"{key}.json"
         try:
             return json.loads(p.read_text(encoding="utf-8")) if p.exists() else None
         except ValueError:
@@ -266,16 +291,32 @@ def passage(ch: dict, stage: str) -> dict:
 # -- the Lean ----------------------------------------------------------------------------------
 
 def _statement(st: dict | None) -> dict | None:
-    """A statement in full: its exact text, and its binders and conclusion with their
-    expression identifiers."""
+    """A statement in full: its exact text, its binders and conclusion with their expression
+    identifiers, and the whole of it as one tree (`tree`), with where each variable stands."""
     if not st:
         return None
     exact = st.get("exact")
     return {"text": _text(exact) if exact else None, "exact": exact,
             "binders": [{k: b.get(k) for k in ("id", "name", "role", "binder", "supplies", "type")
                          if b.get(k) is not None} for b in st.get("binders") or []],
-            "conclusion": st.get("conclusion"), "closure": list(st.get("closure") or []),
-            "fingerprint": st.get("fingerprint")}
+            "conclusion": st.get("conclusion"), "tree": st.get("tree"),
+            "closure": list(st.get("closure") or []), "fingerprint": st.get("fingerprint")}
+
+
+def _with_objects(decls: list[dict], derivations=()) -> list[dict]:
+    """The declarations with the objects of each statement and what the statement says about
+    each, by where it stands (`objects.objects`), `derivations` (results cited for objects in a
+    workspace) included only with the object each names."""
+    from .objects import objects
+    from .readable import readable
+    for d in decls:
+        st = d.get("statement")
+        if isinstance(st, dict):
+            st["objects"] = objects(st, d.get("name"), derivations)
+            # The statement as the reader shows it, read as mathematics, with the same cited
+            # results on their objects.
+            st["readable"] = readable(st, d.get("name"), derivations)
+    return decls
 
 
 def _link(l: dict, role: str) -> dict:
@@ -315,17 +356,89 @@ def _clause(cl: dict) -> dict:
             "lean": cl.get("checks")}
 
 
-def _definition(rec: dict, stage: str) -> dict:
+def _definition(rec: dict, stage: str, site: Site | None = None) -> dict:
     out = {"id": f"def:{rec['name']}", "name": rec["name"], "kind": rec.get("kind"),
            "module": rec.get("module"), "range": rec.get("range"), "doc": rec.get("doc"),
            "fingerprint": rec.get("fingerprint"),
            "signature": _text(rec.get("signature")) or None,
            "value": _text(rec.get("value")) or None, "uses": list(rec.get("uses") or []),
            "expansion": "generic",
-           "note": "the definition as declared; its expansion at the arguments a statement "
-                   "applies it to is not extracted yet (#97)"}
+           "note": "the definition as declared; `lean.expansions` gives it at the arguments of "
+                   "each application a statement or body here makes, and `--query expansion KEY` "
+                   "any expansion by its key"}
+    out.update(_says(rec, site))
+    out.update(_made_of(rec))
     if stage == "informed" and rec.get("review") is not None:
         out["review"] = rec["review"]
+    return out
+
+
+def _says(rec: dict, site: Site | None = None) -> dict:
+    """What a definition says, from its declaration record, as the reader shows it (#97):
+    `defined_by` (`body` or `equations`), its parameters, body and result type, or every
+    equation Lean derives for it, each `{name, statement, params, equation}` (with those stored
+    in pages of their own, `equations_more`, read from `site`), and its authored source. A page
+    the build does not hold is listed in `equations_unavailable`. The applications inside a body
+    refer to their expansions by key (`_expansions`)."""
+    if "defined_by" not in rec:
+        return {}
+    out = {k: rec[k] for k in ("defined_by", "params", "body", "result", "equation_names",
+                               "equations_omitted", "definition_error", "lean_source")
+           if rec.get(k) is not None}
+    if rec.get("equations") is not None:
+        eqs, gone = list(rec["equations"]), []
+        for ref in rec.get("equations_more") or []:
+            page = site.part(ref.get("key")) if site else None
+            if page is None:
+                gone.append({"name": ref.get("name"), "key": ref.get("key"),
+                             "available": False})
+            else:
+                eqs += page.get("equations") or []
+        out["equations"] = eqs
+        if gone:
+            out["equations_unavailable"] = gone
+    return out
+
+
+def _made_of(rec: dict) -> dict:
+    """What a structure is made of (`structure`, its fields grouped into those it declares and
+    those it inherits from each parent, `objects.structure_view`), and what a construction's
+    value carries (`result_properties`: the fields of its value, established by the
+    definition), from the declaration record, with any failure to read them."""
+    from .objects import structure_view
+    out = {k: rec[k] for k in ("structure_error", "result_properties",
+                               "result_properties_omitted", "result_properties_error")
+           if rec.get(k) is not None}
+    view = structure_view(rec)
+    if view is not None:
+        out["structure"] = view
+    return out
+
+
+def _expansions(site: Site, parts: list) -> list[dict]:
+    """The expansions `parts` (a packet's declarations and definitions) refer to by key, in the
+    order they occur: each a definition at the arguments of one application in a statement or a
+    body, as the reader shows it, `{key, at, id, name, fingerprint, args, defined_by, ...}`. An
+    expansion's own applications stay references (`--query expansion KEY` gives each); one the
+    build does not hold is `{key, available: false}`."""
+    keys: dict[str, None] = {}
+
+    def walk(o):
+        if isinstance(o, dict):
+            if mf.is_expansion_ref(o):
+                keys.setdefault(o["key"])
+            else:
+                for v in o.values():
+                    walk(v)
+        elif isinstance(o, list):
+            for v in o:
+                walk(v)
+    walk(parts)
+    out = []
+    for k in keys:
+        x = site.part(k)
+        out.append({"key": k, **x} if x is not None else
+                   {"key": k, "available": False, "reason": "this build holds no file for it"})
     return out
 
 
@@ -350,9 +463,9 @@ def _definitions(site: Site, ch_list: list[dict], names: list[str], stage: str,
             out.append({"id": f"def:{n}", "name": n, "available": False,
                         "reason": "this build holds no record of it"})
             continue
-        d = _definition(rec, stage)
+        d = _definition(rec, stage, site)
         d["generated_for"] = next((m for m in [*owners, *names]
-                                   if m != n and _generated(n, m)), None)
+                                   if m != n and site.generated(n, m)), None)
         out.append(d)
     return out
 
@@ -445,11 +558,15 @@ def claim_packet(site: Site, claim: str, stage: str = "informed", limit: int | N
         decls = _step_decls(ch) if ch.get("step") else \
             [_link(l, "link") for l in ch.get("links") or []]
         decls += [_clause(cl) for cl in ch.get("clauses") or [] if cl.get("statement")]
-        cands = [_link(s, "candidate") for s in ch.get("suggestions") or []]
+        # Results an auditor cited for objects are prior interpretations: informed stage only.
+        derived = ((reading or {}).get("derivations") or []) if stage == "informed" else []
+        _with_objects(decls, derived)
+        cands = _with_objects([_link(s, "candidate") for s in ch.get("suggestions") or []])
         names = [n for d in decls for n in ((d.get("statement") or {}).get("closure") or [])]
         names += [n for n in (ch.get("decls") or {}) if n not in names]
         defs, page = _page(_definitions(site, [ch], names, stage), limit, after)
         out["lean"] = {"declarations": decls, "candidates": cands, "definitions": defs,
+                       "expansions": _expansions(site, [decls, defs]),
                        "references": ch.get("references") or []}
         num = site.numbering()
         if num and num.get("pattern"):
@@ -464,6 +581,7 @@ def claim_packet(site: Site, claim: str, stage: str = "informed", limit: int | N
         if reading is not None:
             reading = dict(reading)
             out["interpretations"]["compositions"] = reading.pop("compositions", [])
+            out["interpretations"]["derivations"] = reading.pop("derivations", [])
             out["interpretations"]["requirements"] = reading
         sections.append("interpretations")
     out["retrieval"] = _retrieval(stage, sections, page)
@@ -510,9 +628,11 @@ def unit_packet(site: Site, unit: dict, stage: str) -> dict:
         else:
             rec = site.store().get(unit["name"])
             if rec:
-                decls.append({**_definition(rec, stage), "role": "definition under review"})
-                names = sorted(m for m in site.store() if _generated(m, rec["name"]))
+                decls.append({**_definition(rec, stage, site),
+                              "role": "definition under review"})
+                names = sorted(m for m in site.store() if site.generated(m, rec["name"]))
                 names += [n for n in rec.get("uses") or [] if n not in names]
+        _with_objects(decls)
         for d in decls:
             names += [n for n in (d.get("statement") or {}).get("closure") or []
                       if n not in names]
@@ -523,7 +643,8 @@ def unit_packet(site: Site, unit: dict, stage: str) -> dict:
                           "reason": "this build holds no statement for it"})
         defs = _definitions(site, chunks, names, stage,
                             (unit["name"],) if unit["kind"] == "def" else ())
-        out["lean"] = {"declarations": decls, "definitions": defs}
+        out["lean"] = {"declarations": decls, "definitions": defs,
+                       "expansions": _expansions(site, [decls, defs])}
         page = {"total": len(defs), "returned": len(defs), "complete": True, "after": None,
                 "next": None}
         sections.append("lean")
@@ -588,7 +709,8 @@ def _mentions(site: Site, name: str) -> list[dict]:
         ty = d.get("type") or ""
         if pat.search(ty) or spat.search(ty):
             found[n] = {"id": f"decl:{n}", "name": n, "module": d.get("module"),
-                        "statement": ty, "complete": len(ty) < 300, "claims": [],
+                        "statement": ty, "complete": d.get("type_complete", len(ty) < 300),
+                        "claims": [],
                         "note": "a preview of the type, from the build's index of the project"}
     return sorted(found.values(), key=lambda r: r["name"])
 
@@ -600,13 +722,17 @@ QUERIES = {
     "search": "the project's declarations whose complete statements best match a claim's printed "
               "statement, a Lean expression or words, with the reasons for each",
     "dependencies": "what a declaration's statement and proof use (runs `inspect`)",
-    "uses": "where a declaration is applied, and the source of each premise",
+    "uses": "where a declaration is applied, and the source of each premise (with --in, inside "
+            "one declaration or one application, with the context of each)",
     "proof-facts": "the typed facts inside a declaration's proof, each with its assumptions and "
                    "cases (Lean reads the proof once; the answer is cached)",
     "composition": "the auditors' compositions for a claim: the steps, the results each rests "
                    "on, substitutions, identifications, obligations and any Lean bridge",
     "impact": "how each main result uses a declaration (the path from its proof or its "
               "statement, and the applications at the end), and which claims' Lean uses it",
+    "expansion": "a definition at the arguments of one application, by the key a statement, a "
+                 "body or another expansion gives it (`expansions[].key`): the arguments by "
+                 "parameter, and the body or the equations that apply there",
 }
 # Queries the engine does not answer yet, by owner issue.
 NOT_YET: dict[str, str] = {}
@@ -645,7 +771,7 @@ def mark_claims(doc: dict, claims: dict[str, list[str]]) -> dict:
 def query(site: Site, op: str, target: str, limit: int | None = None, after: str | None = None,
           root: Path | None = None, log=None, match: str | None = None,
           workspace: str | None = None, main: list[str] | None = None,
-          every_library: bool = False) -> dict:
+          every_library: bool = False, within: str | None = None) -> dict:
     """One targeted query: `{op, context, target, results, provenance, retrieval}`. An
     operation the engine does not extract yet answers `available: false` with its owner.
     `search` with `every_library` searches every library of the project, also those the
@@ -655,10 +781,15 @@ def query(site: Site, op: str, target: str, limit: int | None = None, after: str
     `composition` answers with the compositions recorded for the target claim in the
     workspaces of the build's working directory (or in `workspace`): prior interpretations,
     which an independent review reads only after its verdict. `impact` traces the target from
-    the main results named in `main` (declarations or claims), else from the declarations
-    linked to the paper's theorems (`impact.py`)."""
+    the main results named in `main` (declarations or claims), else from those saved in a
+    workspace of the working directory (in `workspace`, when named), else from the declarations
+    linked to the paper's theorems (`impact.py`). `uses` with `within` (`--in`) answers for
+    one declaration, or one application by its id, with every local of each application's
+    context."""
     if op not in QUERIES:
         raise CompareError(f"no query {op!r}; the queries are: {', '.join(QUERIES)}", "bad-query")
+    if within and op != "uses":
+        raise CompareError("--in goes with the query uses", "bad-query")
     out = {"schema": QUERY_SCHEMA, "op": op, "target": target, "limit": limit, "after": after,
            "context": site.snapshot()}
     if op in NOT_YET:
@@ -671,9 +802,16 @@ def query(site: Site, op: str, target: str, limit: int | None = None, after: str
             raise CompareError(f"{target}: this build holds no record of it; `dependencies` "
                                "asks Lean", "unknown-declaration",
                                difflib.get_close_matches(target, list(store), n=5, cutoff=0.5))
-        names = [target] + sorted(m for m in store if _generated(m, target))
+        names = [target] + sorted(m for m in store if site.generated(m, target))
         results = _definitions(site, [], names, "compare")
         prov = "the build's declaration records"
+    elif op == "expansion":
+        x = site.part(target)
+        if x is None:
+            raise CompareError(f"{target}: this build holds no expansion under this key; a "
+                               "statement's `expansions` give the keys", "unknown-expansion")
+        results = [{"key": target, **x}]
+        prov = "the build's expansions, computed and checked by Lean when it was built"
     elif op == "mentions":
         results = _mentions(site, target)
         prov = "the statements of the build, and its index of the project"
@@ -681,10 +819,11 @@ def query(site: Site, op: str, target: str, limit: int | None = None, after: str
         if root is None:
             raise CompareError("`uses` needs the Lean project", "no-project")
         from .uses import uses
-        results = [mark_claims(uses(root, target, None, log=log), linked_claims(site))]
+        results = [mark_claims(uses(root, target, None, log=log, within=within),
+                               linked_claims(site))]
         prov = "Lean (the elaborated terms of the project), cached until a Lean input changes"
     elif op == "impact":
-        results = [_impact(site, root, target, main, log)]
+        results = [_impact(site, root, target, main, log, workspace)]
         prov = ("Lean (the references of the project's declarations and the applications of the "
                 "target, from its elaborated terms), cached until a Lean input changes")
     elif op == "search":
@@ -738,11 +877,13 @@ def search(site: Site, target: str, limit: int | None = None, after: str | None 
            every_library: Path | None = None, log=None) -> dict:
     """The content search (`retrieval.Retrieval.search`) the reader and the suggestions use. A
     target naming a claim searches with its printed statement, over declarations of its sort;
-    any other target is the query itself. Nothing recorded by people (links, rejections, notes)
-    enters the search or its results. It searches the build's content index; with
-    `every_library` (the Lean project), the index of every built module instead, from the
-    facts store, extracting what it does not hold (a paper's build leaves out the libraries
-    formalization.yaml maps only to other papers)."""
+    a target naming a declaration of the index searches for declarations like it
+    (`Retrieval.search_like`), and from a theorem says how each result's hypotheses and
+    conclusion compare with its; any other target is the query itself. Nothing recorded by
+    people (links, rejections, notes) enters the search or its results. It searches the
+    build's content index; with `every_library` (the Lean project), the index of every built
+    module instead, from the facts store, extracting what it does not hold (a paper's build
+    leaves out the libraries formalization.yaml maps only to other papers)."""
     from .retrieval import paper_quantifiers
     if every_library is not None:
         ret, scope = _every_library(every_library, log)
@@ -756,8 +897,15 @@ def search(site: Site, target: str, limit: int | None = None, after: str | None 
         cid = site.resolve_claim(target)
     except CompareError:
         cid = None
-    kinds, order, subject = None, None, {"text": target}
-    if cid:
+    kinds, order, subject, like = None, None, {"text": target}, None
+    if cid is None and target in ret.by_name:
+        like = target
+        d = ret.docs[ret.by_name[target]]
+        theorem = d.get("kind") == "theorem"
+        subject = {"declaration": target, "module": d.get("module"), "statement": d.get("type"),
+                   "complete": True, "kinds": "theorems" if theorem else "definitions",
+                   **({"note": LIKE_NOTE} if theorem else {})}
+    elif cid:
         ch = site.chunk(cid) or {}
         text = " ".join(x for x in (ch.get("title"), ch.get("statement_tex")
                                     or (ch.get("anchor") or {}).get("statement")) if x)
@@ -769,7 +917,8 @@ def search(site: Site, target: str, limit: int | None = None, after: str | None 
     else:
         text = target
     try:
-        res = ret.search(text, kinds=kinds, limit=limit or 20, after=after, paper_order=order)
+        res = ret.search_like(like, limit=limit or 20, after=after) if like else \
+            ret.search(text, kinds=kinds, limit=limit or 20, after=after, paper_order=order)
     except ValueError as e:
         raise CompareError(str(e), "bad-cursor") from None
     for r in res["results"]:
@@ -781,6 +930,11 @@ def search(site: Site, target: str, limit: int | None = None, after: str | None 
     return {"available": True, "subject": subject, "results": res["results"],
             "query": res["query"], "scope": {"declarations": len(ret), **scope},
             "provenance": prov, "retrieval": res["page"]}
+
+
+LIKE_NOTE = ("each result's hypotheses and conclusion are compared with the declaration's as "
+             "Lean prints them, up to the names of their variables; whether one statement "
+             "implies the other is a question for review")
 
 
 def _build_scope(site: Site) -> dict:
@@ -815,17 +969,41 @@ def _every_library(root: Path, log) -> tuple:
     return Retrieval.build(full), scope
 
 
-def _impact(site: Site, root: Path | None, target: str, main: list[str] | None, log) -> dict:
+def _impact(site: Site, root: Path | None, target: str, main: list[str] | None, log,
+            workspace: str | None = None) -> dict:
     """The impact document of `target` (`impact.impact`), or the reason there is none, as a
     refusal."""
     if root is None:
         raise CompareError("`impact` needs the Lean project", "no-project")
     from .impact import impact
     from .simple import ViewError
+    saved = None if main else saved_main_results(site, workspace, root)
     try:
-        return impact(site, root, target, main, log)
+        return impact(site, root, target, main, log, saved)
     except ViewError as e:
         raise CompareError(str(e), "no-project") from None
+
+
+def saved_main_results(site: Site, workspace: str | None, root: Path | None) -> dict | None:
+    """The main results saved in the workspace named, else in the one workspace of the build's
+    working directory that saves any, with what this build lacks of them (`problems`); None when
+    no workspace saves any, and `{workspace, selected: None}` when the one named saves none.
+    Several workspaces saving main results, and none named, is refused with their ids."""
+    from . import workspace as wsp
+    from .targets import Snapshot
+    try:
+        found = wsp.main_result_selections(site.data.parent.parent, workspace)
+    except wsp.WorkspaceError as e:
+        raise CompareError(str(e), "unknown-workspace") from None
+    if not found:
+        return {"workspace": workspace, "selected": None} if workspace else None
+    if len(found) > 1:
+        raise CompareError("several workspaces save main results ("
+                           + ", ".join(f"{s['workspace']} by {s['by']}" for s in found)
+                           + "): choose one with --workspace ID, or name the main results with "
+                             "--main", "ambiguous", [s["workspace"] for s in found])
+    (s,) = found
+    return {**s, "problems": wsp.main_results_problems(s, Snapshot(site.data), root)}
 
 
 def _proof_facts(root: Path, target: str, log) -> dict:
@@ -882,10 +1060,14 @@ def search_text(out: dict) -> str:
     """A content search for the terminal: each result with its reasons and complete statement."""
     sub = out.get("subject") or {}
     head = (f"Declarations ({sub.get('kinds')}) matching {sub['claim']}" if sub.get("claim")
-            else f"Declarations matching {sub.get('text')!r}")
+            else f"Declarations ({sub.get('kinds')}) like {sub['declaration']}"
+            if sub.get("declaration") else f"Declarations matching {sub.get('text')!r}")
     lines = [f"{head}, among {out['scope']['declarations']} declarations of the project:"]
-    if out["scope"].get("note"):
-        lines.append(f"({out['scope']['note']})")
+    if sub.get("declaration"):
+        lines.append(f"  {sub['statement']}")
+    for note in (sub.get("note"), out["scope"].get("note")):
+        if note:
+            lines.append(f"({note})")
     for r in out["results"]:
         lines.append(f"\n{r['name']}  ({r.get('kind')}, {r.get('module')})")
         for x in r["reasons"]:
@@ -901,11 +1083,13 @@ def search_text(out: dict) -> str:
 def statement_lines(d: dict) -> list[str]:
     """A declaration for the terminal: its binders and conclusion, then its exact text. An
     `inspect` answer (the result of the `dependencies` query) is shown by
-    `dependencies_lines`."""
+    `dependencies_lines`, an expansion by `expansion_lines`."""
     if d.get("schema"):
         from .deps import SCHEMA as INSPECT_SCHEMA
         if d["schema"] == INSPECT_SCHEMA:
             return dependencies_lines(d)
+    if "at" in d and ("defined_by" in d or "error" in d):
+        return expansion_lines(d)
     st = d.get("statement")
     name = d.get("name")
     if st is None:
@@ -913,7 +1097,8 @@ def statement_lines(d: dict) -> list[str]:
             out = [f"{name}  ({d.get('kind')})", f"  type : {d['signature']}"]
             if d.get("value"):
                 out.append(f"  value: {d['value']}")
-            return out
+            from .objects import structure_lines
+            return out + says_lines(d) + structure_lines(d)
         return [f"{name}: {d.get('unavailable') or 'no statement in this build'}"]
     lines = [name]
     for b in st["binders"]:
@@ -923,9 +1108,67 @@ def statement_lines(d: dict) -> list[str]:
     lines.append(f"  {'then' if st['binders'] else '':9} {_text(st.get('conclusion'))}")
     if st.get("text"):
         lines.append(f"  exact: {st['text']}")
+    if st.get("objects"):
+        from .objects import object_lines
+        lines += object_lines(st["objects"])
     if d.get("witness"):
         lines.append(f"\nWitness: {d['witness']}")
     return lines
+
+
+BRACKETS = {"explicit": "()", "implicit": "{}", "strict-implicit": "⦃⦄", "instance": "[]"}
+
+
+def _binder(p: dict) -> str:
+    """A parameter as Lean writes it: `(n : Nat)`, `{α : Type}`, `[LE α]`."""
+    left, right = BRACKETS.get(p.get("binder"), "()")
+    t = _text(p.get("type"))
+    return f"{left}{t}{right}" if p.get("binder") == "instance" else \
+        f"{left}{p.get('name')} : {t}{right}"
+
+
+def says_lines(d: dict) -> list[str]:
+    """What a definition says (`_says`), for the terminal: its parameters and body, or each
+    equation Lean derives for it, with its theorem."""
+    if d.get("defined_by") == "body":
+        ps = " ".join(_binder(p) for p in d.get("params") or [])
+        return [(f"  defined, for {ps}, as: " if ps else "  defined as: ") + _text(d.get("body"))]
+    if d.get("defined_by") == "equations":
+        out = [f"  equation {e.get('name')}: {_text(e.get('statement'))}"
+               for e in d.get("equations") or []]
+        if d.get("equations_omitted"):
+            out.append(f"  ({d['equations_omitted']} further equation(s) were not read from "
+                       "Lean; `equation_names` names every one)")
+        for g in d.get("equations_unavailable") or []:
+            out.append(f"  (the equations from {g['name']} on are not in this build)")
+        return out
+    if d.get("definition_error"):
+        return [f"  what it says could not be read from Lean: {d['definition_error']}"]
+    return []
+
+
+def expansion_lines(x: dict) -> list[str]:
+    """A definition at the arguments of one application (`--query expansion`, a packet's
+    `lean.expansions`), for the terminal: the arguments by parameter, then the body there with
+    any parameter still to supply, or each equation that applies, with its conditions."""
+    if x.get("available") is False:
+        return [f"expansion {x.get('key')}: ({x.get('reason')})"]
+    out = [f"{x.get('name')} at the application {x.get('at')}  [expansion {x.get('key')}]"]
+    args = ", ".join(f"{a.get('name') or '_'} := {_text(a.get('value'))}"
+                     for a in x.get("args") or [])
+    if args:
+        out.append(f"  arguments: {args}")
+    if x.get("error"):
+        out.append(f"  not expanded: {x['error']}")
+    elif x.get("defined_by") == "body":
+        ps = " ".join(_binder(p) for p in x.get("params") or [])
+        out.append((f"  still to supply {ps}: " if ps else "  is: ") + _text(x.get("body")))
+    else:
+        for e in x.get("equations") or []:
+            out.append(f"  {e.get('name')}: {_text(e.get('statement'))}")
+        if not x.get("equations"):
+            out.append("  no equation applies to these arguments as written")
+    return out
 
 
 def dependencies_lines(doc: dict) -> list[str]:
@@ -982,7 +1225,9 @@ def dependencies_lines(doc: dict) -> list[str]:
 
 def proof_facts_text(q: dict) -> str:
     """A `proof-facts` answer for the terminal: the exported statement, then each fact with
-    what it needs, the cases it lies in and where the source states it."""
+    what it needs, the cases it lies in, where the source states it and its position in the
+    proof (`at`), which workspace evidence cites (`{"fact": {decl, at}}`, with the module when
+    the query named one)."""
     sub = q.get("subject") or {}
     d = sub.get("declaration") or {}
     line = (d.get("range") or {}).get("line")
@@ -999,6 +1244,9 @@ def proof_facts_text(q: dict) -> str:
         where = f"{src.get('file')}:{src.get('line')}" if src.get("line") else ""
         if src.get("located") == "the declaration only":
             where += " (the declaration; this fact's line is not known)"
+        at = (f.get("ref") or {}).get("at")
+        if at:
+            where += (", " if where else "") + f"at {at}"
         label = f.get("name") if f["kind"] != "application" else f.get("head")
         out.append(f"  {f['id']:4} {f['what']}: " + (f"{label} : " if label else "")
                    + _text(f.get("type")) + (f"   [{where}]" if where else ""))
@@ -1016,6 +1264,15 @@ def proof_facts_text(q: dict) -> str:
             out.append("         used by " + ", ".join(f["used_by"]))
         if f.get("match"):
             out.append("         shares " + " ".join(f["match"]["shared"]))
+    cited = [f["ref"] for f in q["results"] if (f.get("ref") or {}).get("at")]
+    if cited:
+        from .uses import cite_text
+        named = ":" in (q.get("target") or "")
+        module = cited[0].get("module") if named else None
+        ref = {"decl": cited[0]["decl"], **({"module": module} if module else {}),
+               "at": cited[0]["at"]}
+        out.append("  cite as evidence: " + cite_text({"fact": ref})
+                   + (" (or another fact's at)" if len(cited) > 1 else ""))
     for o in sub.get("source_only") or []:
         out.append(f"  source only, line {o['source']['line']}: {o['text']}  ({o['note']})")
     proof = sub.get("proof") or {}
@@ -1061,6 +1318,10 @@ def packet_text(pk: dict) -> str:
                 out.append(f"{d['name']}: ({d['reason']})")
             elif not d.get("generated_for"):
                 out.append("\n".join(statement_lines(d)))
+        if lean.get("expansions"):
+            out.append("Definitions at the arguments of each application above, substituted "
+                       "and checked by Lean:\n"
+                       + "\n".join(y for x in lean["expansions"] for y in expansion_lines(x)))
         if not lean["declarations"]:
             out.append("No Lean is linked to this step: assess the printed step itself."
                        if pk.get("note", "").startswith("no Lean is linked to this step")

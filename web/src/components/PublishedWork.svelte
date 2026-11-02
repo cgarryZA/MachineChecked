@@ -56,6 +56,13 @@
   const governing = (rd, lid) => rd.fragments.filter((f) => f.requirement === lid && f.role !== "later use");
   const uses = (rd, lid) => rd.fragments.filter((f) => f.requirement === lid && f.role === "later use");
   const aligned = (rd, lid) => rd.alignments.filter((a) => (a.requirements || []).includes(lid));
+  // The passages an alignment names, when it names some: a passage the audit no longer publishes
+  // (it was removed since) is named as such.
+  const onPassages = (rd, a) => (a.fragments || []).map((id) => {
+    const f = rd.fragments.find((x) => x.id === id);
+    return f ? where(f) : "a passage no longer kept";
+  }).join("; ");
+  const staleWhy = (a) => ((a.currency?.changes || []).some((c) => c.fragment) ? "a passage it names no longer governs the reading" : "the Lean " + STALE);
   const cited = (rd, f) => (f.evidence || []).map((id) => rd.evidence.find((e) => e.id === id)).filter(Boolean);
   const view = (rd, f) => {
     // A finding that rests on a composition reads as that composition, shown below it.
@@ -85,7 +92,7 @@
           <div class="item" data-kind="finding" class:old={!f.in_force}>
             <p class="small"><strong>{findingHead(f, cv)}</strong>
               <span class="faint">· {f.in_force ? "submitted" : "superseded"} {day(f.submitted_at)} by {f.created_by}{f.requirement ? ` · on ${f.requirement}` : ""}</span>
-              {#if stale(f)}<span class="stale"> · its evidence {STALE}</span>{/if}</p>
+              {#if stale(f)}<span class="stale"> · its evidence {STALE}</span>{:else if f.currency?.state === "unchecked"}<span class="faint" data-currency="unchecked"> · not known to be current</span>{/if}</p>
             {#each cv?.lines || [] as line}<p class="small" data-line={line.label}><span class="faint">{line.label}:</span> {line.names?.join(", ") || ""}{line.names?.length && line.text ? ". " : ""}<span class="text">{line.text || ""}</span>{#if line.note} <span class="faint">{line.note}</span>{/if}</p>{/each}
             {#if f.difference}{@const d = f.difference}<p class="small diff" data-feature={d.feature}>{#if d.paper}paper <code>{d.paper}</code>{/if}{#if d.lean}{d.paper ? "; " : ""}Lean <code>{d.lean}</code>{/if}{#if d.transport}<span class="faint">{` · transport inspected: ${d.transport}`}</span>{/if}{#if d.resolution}<span class="faint">{` · resolved by ${d.resolution.by}${d.resolution.text ? ": " + d.resolution.text : ""}`}</span>{/if}{#if d.why}<span class="faint">{` · ${d.why}`}</span>{/if}</p>{/if}
             {#if !f.composition && recordedBasisText(f)}<p class="small faint" data-line="recorded">{recordedBasisText(f)}</p>{/if}
@@ -126,7 +133,7 @@
                 </div>
               {/each}
               {#each aligned(rd, r.local_id) as a (a.id)}
-                <p class="small lean" data-alignment={a.id}><span class="faint">Lean:</span> {a.lean.map(targetText).join("; ")} <span class="faint">· {a.relation} · recorded by {a.created_by}</span>{#if a.note} <span class="text">{a.note}</span>{/if}{#if stale(a)}<span class="stale"> · the Lean {STALE}</span>{/if}</p>
+                <p class="small lean" data-alignment={a.id}>{#if a.fragments?.length}<span class="faint">On {onPassages(rd, a)}:</span>{" "}{/if}<span class="faint">Lean:</span> {a.lean.map(targetText).join("; ")} <span class="faint">· {a.relation} · recorded by {a.created_by}</span>{#if a.note} <span class="text">{a.note}</span>{/if}{#if stale(a)}<span class="stale">{" · " + staleWhy(a)}</span>{/if}</p>
               {/each}
             </div>
           {/each}

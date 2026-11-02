@@ -12,12 +12,13 @@ Each review has three stages:
 
 **1. Read the paper.** Before the Lean statement is revealed, write an independent interpretation of the setting, hypotheses, quantifiers, conclusion and any ambiguity. The app records a snapshot when you move on.
 
-**2. Compare with Lean.** Inspect the elaborated Lean proposition, relevant definitions, quantifier order and witnesses. A short checklist names what to compare (the setting, each hypothesis, quantifiers and their order, the definitions relied on, the conclusion, constants, and any result or axiom taken as an assumption; for a definition, the object, its parameters and its conventions at edge cases); marking each item *matches*, *differs* or *unsure* is optional and is kept in the report. Record how it compares with the paper. The review protocol has eight precise verdicts, grouped in the interface under *Matches*, *Problem* and *Cannot determine*.
+**2. Compare with Lean.** The page shows the comparison the reader shows: the paper's passage beside the unit's Lean in rows, each row's exact Lean beside it when there is room, the complete exact statement, and its definitions; a definition, a property of an object or another reference opens below its row with the passage and the statement still on the page. Inspect the elaborated Lean proposition, relevant definitions, quantifier order and witnesses. This step is given the paper and the Lean as Lean gives them, and nothing a person recorded about the claim: no symbol link, alignment or pairing of rows, correspondence note, review (of the statement or of its definitions), finding, the route a proof step's author names, or the paper definition a declaration is linked to. They are left out of what the page loads and draws, not hidden on it, and after the verdict the page shows them. A short checklist names what to compare (the setting, each hypothesis, quantifiers and their order, the definitions relied on, the conclusion, constants, and any result or axiom taken as an assumption; for a definition, the object, its parameters and its conventions at edge cases); marking each item *matches*, *differs* or *unsure* is optional and is kept in the report. Record how it compares with the paper. The review protocol has eight precise verdicts, grouped in the interface under *Matches*, *Problem* and *Cannot determine*. With the verdict you may record the coverage and its basis ([below](#coverage-with-the-verdict)).
 
-**3. Read the author's review.** Only after recording your verdict does the queue show the existing author review. Record disagreements alongside your initial interpretation.
+**3. Read the author's review.** Only after recording your verdict does the queue show the existing author review, and the comparison what people recorded about the claim (its symbol links, published alignments, each finding at the rows it explains, and the `Correspondence:` field of a review of the proposition). Record disagreements alongside your initial interpretation.
 
 The report records the steps completed in this reader. The queue offers changed evidence first
-and says why each unit comes where it does ([Review order](#review-order)).
+and says why each unit comes where it does; **Order** chooses the paper's order or the informed
+order instead ([Review order](#review-order)).
 
 **From the command line.** The same three steps, with the same locks, for a reviewer without a browser (a scripted or batch reviewer, say). Name yourself with `--as human:NAME` or `--as llm:MODEL` (or `MACHINECHECKED_REVIEWER`); texts are files, or `-` for standard input:
 
@@ -26,7 +27,7 @@ machinechecked review next                          # the next unit to review, a
 machinechecked review read UNIT                     # step 1: the paper's statement only
 machinechecked review lock UNIT reading.md          # locks your reading
 machinechecked review show UNIT                     # step 2 (refused before lock): the Lean
-machinechecked review decide UNIT VERDICT comparison.md [--detail detail.md]
+machinechecked review decide UNIT VERDICT comparison.md [--detail detail.md] [--coverage C ...]
 machinechecked review author UNIT                   # step 3 (refused before decide)
 machinechecked review submit UNIT disagreements.md  # finishes the report
 machinechecked review status
@@ -75,7 +76,9 @@ come in this order:
    definition. `review next` also prints the question a new reading answers.
 2. **Changed since the last release**: a unit with no review to reopen whose Lean statement, a
    definition that statement uses, its definition, or a passage it is read against changed. A
-   change of a proof alone moves nothing: a review of a statement does not read its proof.
+   change of a proof alone moves nothing: a review of a statement does not read its proof. Nor
+   does an edit of a definition that leaves its statement and value as they were (a proof
+   inside it, or the tactic of a tactic default).
 3. The other units, in the queue's own order: less effort first, preferring units that many
    claims depend on.
 
@@ -112,6 +115,17 @@ never a Lean declaration, since you read them before the Lean is shown.
   you have seen them, for the claims it drew on. A later reading of those claims is then not
   blind, its report says so, and `review promote` refuses it without `--allow-revealed`.
 
+On the review page, **Order** offers the same three: *Priority*, *Paper order* and *Informed*,
+with the reasons the command line gives. The build writes the first two into the queue, so every
+copy of the site has them. The informed order reads the auditors' workspaces, so `machinechecked
+view` offers it. Choosing it first says what it uses; once you accept, the page records in your
+browser that you have seen prior interpretations of the claims it draws on, and only then shows
+the order. A reading of those claims that you lock afterwards lists *review page
+(interpretation-informed review order)* in `reading.revealed_by`. A reading you locked before
+choosing it keeps the queue's reason on its card until you record its verdict, since the
+protocol shows interpretations only after the verdict. The page keeps your choice of order, as
+it keeps your paper and part.
+
 ## Saved investigations
 
 A workspace keeps an investigation of the paper against the Lean so that you, or another auditor
@@ -127,7 +141,12 @@ start one under your name, record a finding (its coverage and note, citing the l
 declarations), ask a question, submit a draft finding. A claim page shows the Lean, so a
 workspace started there is an *informed investigation*: it records that you saw the Lean and
 earlier interpretations, and it has no blind reading. Independent review uses the review page or
-`machinechecked review`, with the locks above.
+`machinechecked review`, with the locks above. A piece of saved evidence opens beside the claim
+from the section's **Evidence** list; the comparison's **Rows** can pair its rows with the
+alignments of your investigation, and each finding of it, draft or submitted, is shown at the rows
+its requirement is aligned with; and its pins are kept in the workspace's resume state
+(`pinned`), each with the build it was made on, so resuming the investigation in another browser
+opens them again on that build.
 
 **From the command line.** The same records, with the same checks:
 
@@ -135,6 +154,7 @@ earlier interpretations, and it has no blind reading. Independent review uses th
 machinechecked workspace open --mode informed --as human:NAME   # start or resume
 machinechecked workspace show [--claim "Lemma 2.3"] [--json]    # evidence, findings, questions
 machinechecked workspace update ops.json [--dry-run]            # apply operations (- for stdin)
+machinechecked workspace main "Theorem 1" [NAME...] [--clear]   # the paper's main results
 machinechecked workspace export --out work.json                 # hand it on
 machinechecked workspace import work.json                       # continue it elsewhere
 ```
@@ -159,11 +179,23 @@ changes nothing. A finding is a draft until `{"op": "submit", "id", "base_rev"}`
 finding is never edited, but `{"op": "supersede", "id", "base_rev", "reason", "record"}` records a
 later one with its reason, and both remain.
 
+**Main results.** `workspace main NAME...` saves which claims (each standing for its linked Lean)
+and declarations are the paper's main results (in an update file: `{"op": "main-results", "main":
+[NAME, ...]}`); without names it shows them, or, when none are saved, the suggestion: the
+declarations linked to the paper's theorems. Each name is checked against the build when saved.
+`compare --query impact NAME` then traces NAME from them and says whose selection it used, when it
+was saved and against which project commit; `--main` names others for one query, and
+`--workspace ID` chooses between several workspaces' selections. A later build that no longer has
+a claim or a declaration of the selection lists it under `problems`, in `workspace show` and in
+the impact answer. A replaced selection is kept in the workspace's provenance. The selection
+changes no status.
+
 **Facts inside a proof.** An exported theorem can prove more than it states. Under `view`, a linked
 theorem has **Facts inside the proof**: *Read the proof* asks Lean for the propositions its proof
 establishes along the way, each with the hypotheses it needs and the case of the proof it lies in,
 and each theorem the proof applies with the local that supplies each of its hypotheses (`compare
---query proof-facts NAME` gives the same in a terminal). *Cite in the investigation* saves a fact
+--query proof-facts NAME` gives the same in a terminal, with the reference that cites each fact,
+as `compare --query uses` gives one for each application). *Cite in the investigation* saves a fact
 as evidence; it keeps its basis, established inside that proof under that context, so a finding
 resting on it records the coverage as your composition, not as direct coverage. A `have` the
 source states but the compiled proof does not keep is shown as source text only.
@@ -195,8 +227,8 @@ which objects of different steps are the same, and what remains open:
 
 Full coverage is recorded only when every requirement of the claim is established by a step and
 no obligation is open; two separate existence results leave a `compatible witnesses` obligation
-open until a step or evidence discharges it. The reader shows **Every clause, by the auditor's
-composition**, the steps, and the next step: state the combination as one Lean result. When you
+open until a step or evidence discharges it. The reader shows **Every clause, by an argument combining
+Lean results**, the steps, and the next step: state the combination as one Lean result. When you
 have done that, attach it as the composition's `bridge`, `{"theorem": NAME, "target": SPEC}`, with
 `SPEC` a proposition stated as a definition that you have read against the paper. Lean checks it
 when it is saved, and refuses a theorem whose type is not exactly the target. The composition then
@@ -233,9 +265,15 @@ it was attached with. A later use (a choice of ε < 1 further on) is shown as a 
 changes the reading of the quantifier it uses. `machinechecked workspace suggest --claim C
 --requirement r1.1` proposes nearby passages (add `--apply` to save them as proposals); accept
 one by putting it with `"state": "accepted"`, or remove it with `"state": "removed"` and
-`why_removed`, which keeps who removed it and why. In the reader, the Investigation section
-shows the requirements with their passages and alignments, and offers **Add a requirement**,
-**Suggest nearby context**, **Accept** and **Remove**. When a governing passage changes, its
+`why_removed`, which keeps who removed it and why. An alignment may name particular passages
+(`"fragments": [ids]`) rather than whole requirements: one passage can align with several parts
+of the Lean, and several passages (the display, its quantifier, the dependence of its constant)
+with one. Its targets may be parts of a definition a claim only defines, of a definition
+expanded at its arguments, or of any equation of a definition. In the reader, the Investigation
+section shows the requirements with their passages and alignments, and offers **Add a
+requirement**, **Suggest nearby context**, **Accept**, **Remove** and **Align with the Lean**:
+tick the requirements (and, if you like, only some of their passages), add the expression you
+selected in the Lean or a whole declaration, and save; an alignment can be removed there too. When a governing passage changes, its
 requirement goes stale even if the display itself did not change; in a full assessment,
 `machinechecked changes --workspace ID` lists the stale requirements, passages and alignments
 with the other records. `machinechecked compare CLAIM
@@ -294,16 +332,47 @@ them, or the certificate, makes it `stale`, and so the finding that cites it
 (`"counterexamples": [ID]`). A refuted printed step is a finding on the step, with `"verdict":
 "false as printed"`; its enclosing result keeps its own evidence and status.
 
-When a declaration that evidence cites changes (its statement, or a definition's equations), or a
-claim's printed text changes, `show` marks that evidence and the findings that cite it as
-`stale`; the others stay current. In a full assessment, `machinechecked changes --workspace ID`
+When a declaration that evidence cites changes (its statement, a definition's equations, or a
+definition its statement uses), `show` marks that evidence `stale`; a quoted passage of the paper
+is stale once the claim's passage changes. A finding is checked through what it rests on: the
+claim's passage; the requirement it names, with those it sits inside, the passages that govern
+them and their alignments; the evidence it cites, and that its composition and counterexamples
+cite; its composition; and, for a checked bridge, the bridge. A submitted finding records these
+parts with the version of each when you submit it (`dependencies`, with the kinds of evidence it
+uses: statement comparison, object correspondence, composition, proof route, checked bridge);
+`show --json` gives them, a draft's as its records give them now. A finding is `stale` when one
+of its parts changed, and only then: an edit to a theorem's proof leaves a statement comparison
+of that theorem current and reopens a finding that cites a fact or an application inside that
+proof, and a finding on the whole claim is reopened by a changed passage of context only through
+its own evidence or composition. It is `unchecked`, never
+current, when a part cannot be identified or checked: evidence recorded without the definitions
+its statement uses, a source line, a finding's own bridge, Lean that has not looked, a
+declaration the build shows no version of. `show` and the reader say why and what would let a
+build check it (for example that its module is not built, or that the build ran no Lean). Re-pin a
+record with `"repin": true` once you have checked it again: a draft that cites it follows it,
+while a submitted finding keeps the versions it was submitted with and reads `stale`, naming the
+record, until you supersede it. In a full assessment, `machinechecked changes --workspace ID`
 lists them beside the review markers the new release reopened, each with what changed
-([What changed since the last release](ASSURANCE.md#what-changed-since-the-last-release)). A cited fact inside a proof is `stale` once that proof
+([What changed since the last release](ASSURANCE.md#what-changed-since-the-last-release)).
+
+When the paper itself is revised, `machinechecked changes --map --workspace ID` judges each
+finding through the version map, which follows every passage by its text. A passage that only
+moved or was renumbered leaves a statement comparison current. A changed or removed passage
+reopens exactly the findings that read it, and so does a change of what a passage is read with:
+the definition of a macro it uses, the prose opening its section, a claim it refers to, or a
+passage you attached to a requirement. A definition claim that the claim's Lean relies on
+reopens only a finding that cites a declaration whose statement uses that definition. Each
+reopened finding names the change (with the diff), the part it rests on and a question to
+answer; a claim the map leaves ambiguous reads `unchecked` until the maintainer resolves it with
+`--match`. The Lean side is checked against the later release's site and listed apart. With
+`--save` the workspace keeps the map: the reader's Details page then lists the findings by
+claim (affected ones first, unaffected ones as still current), and `workspace show` and the
+workspace's export and import carry it. Nothing is moved to another claim: supersede a reopened
+finding once you have read the new text. A cited fact inside a proof is `stale` once that proof
 changes, even when the theorem's statement does not; it, a cited application and a certificate
 read `unchecked` while Lean cannot look at them (their module is not built, a request failed). A
 published audit shows them as `show` does, checked against the Lean its release was built from,
-and as `unchecked` once that Lean has changed. Re-pin a record with `"repin": true` once you have checked it
-again. Changing to independent mode, or importing, keeps what the workspace records you had seen,
+and as `unchecked` once that Lean has changed. Changing to independent mode, or importing, keeps what the workspace records you had seen,
 so an informed investigation never becomes a blind review. A report made with `machinechecked
 review` lists the exposure of every workspace in the working directory that you (the reviewer
 `--as` names) opened, imported or recorded work in, and the units whose Lean or author's review
@@ -315,11 +384,33 @@ when it was recorded before the lock. `review promote` refuses the report withou
 publishes, for each claim, the records you have accepted: the requirements, the passages
 accepted as governing them, the alignments with Lean, and the submitted findings (superseded ones
 too, with the reason) with the evidence and counterexamples they cite. Each keeps its author, its pins and whether it
-is current against the published build. Proposed and removed passages, draft findings, evidence
+is current against the published build. The main results you saved are published too, with who
+saved them, when, the project commit they were checked against and what the published build no
+longer has of them. Proposed and removed passages, draft findings, evidence
 no submitted finding cites, questions, exposure and the review protocol's drafts stay in the
 workspace. The paper's `publish` settings apply: a passage's text and lines appear only when the
 source text is published, and your notes and reasons only when reviews are. The reader shows the
-records read-only on the claim, under **Auditors' readings**; they change no status.
+records read-only on the claim, under **Auditors' readings**, and each finding in the comparison,
+at the rows it explains; they change no status.
+
+**Placing a finding at a clause.** The comparison shows a finding at a row of the Lean only
+through your own reading: give the finding its `requirement`, and align that requirement with the
+Lean it concerns (a variable, a binder, a sub-term, or the conclusion). One finding may concern
+several rows, and its explanation is written once. A finding on no requirement is a finding on the
+whole claim, and one whose alignment names Lean that has changed since stays there until you
+align the requirement again: the reader never moves a finding to an expression that merely looks
+the same. A difference of a proof step's equation belongs to that step's own claim, not to the
+theorem it is a step of.
+
+```json
+{"ops": [
+  {"op": "put", "record": {"kind": "requirement", "claim": "Proposition 2.3", "local_id": "pos",
+   "form": "assumption", "text": "n is positive"}},
+  {"op": "put", "record": {"kind": "alignment", "claim": "Proposition 2.3", "requirements": ["pos"],
+   "relation": "additional assumption", "lean": [{"decl": "Toy.PaperSpec.prop_pred_pos", "binder": 1}]}},
+  {"op": "put", "record": {"kind": "finding", "claim": "Proposition 2.3", "requirement": "pos",
+   "note": "The correction adds 0 < n; the printed claim has no such condition."}}]}
+```
 
 ## What a verdict means
 
@@ -336,8 +427,39 @@ records read-only on the claim, under **Auditors' readings**; they change no sta
 
 A saved report carries an issue draft for the maintainer: an explanatory note for representation
 choices or a broader statement, a defect for a problem verdict, and an open question for *Cannot
-determine*, with the reviewer's question. The review page and the command line write the same
-drafts.
+determine*, with the reviewer's question and what would decide it. The review page and the
+command line write the same drafts.
+
+### Coverage with the verdict
+
+With the verdict, record how far the unit's Lean states the claim and, separately, how that is
+supported, in the words of the links file and of a workspace finding. The coverage agrees with
+the verdict:
+
+| Verdict | Coverage |
+|---|---|
+| *Matches* | `full` (every clause) or `partial` (part of the claim) |
+| *Problem* | `partial`, `changed` (stated differently) or `related` (a related result, not this claim) |
+| *Cannot determine* | `unresolved`: the verdict's detail is the open question |
+
+The basis is `direct` (one Lean statement), `reviewed_composition` (your argument combining the
+unit's declarations, which Lean has not checked) or `checked_bridge` (one of the unit's theorems
+whose type Lean checks is exactly a target proposition you read against the paper). Both are
+optional, and both are recorded before the author's review is shown:
+
+```sh
+machinechecked review decide link:thm:four broader comparison.md --detail detail.md \
+  --coverage full --basis reviewed_composition --argument argument.md
+machinechecked review decide link:thm:three faithful comparison.md \
+  --coverage full --basis checked_bridge --bridge Cover.three_even Cover.Spec.three_even
+machinechecked review decide link:thm:double "cannot determine" comparison.md \
+  --detail question.md --coverage unresolved --would-decide decide.md
+```
+
+The review page offers the same choices under the verdict. A report records them as its
+`correspondence`; a report without one records no coverage, and none is read from its verdict.
+A review of a proof step records whether the step holds, and no coverage. Coverage and basis
+change no status, and promotion writes the same marker with them or without them.
 
 A review can start before a theorem is proved, once its formal statement exists. The queue lists the claims that still await one.
 
@@ -394,11 +516,22 @@ The maintainer reads the report and decides whether to promote its review marker
 
 In zero configuration, put exported report files in the project's `machinechecked-reviews/`
 folder and build again. Each statement shows its reports under its links: the verdict, the
-reviewer as recorded, the comparison and the locked reading. A report pins the text of the
-statement it read; it is marked when the paper now prints another text, when it pins none, or
-when the claim now links other declarations or their statements changed since it was recorded.
-Reports are shown as their reviewers wrote them and change no status; `check --json` lists them
-per claim.
+coverage recorded with it, the reviewer as recorded, the comparison and the locked reading. A
+report pins the text of the statement it read; it is marked when the paper now prints another
+text, when it pins none, or when the claim now links other declarations or their statements
+changed since it was recorded. A report's checked bridge reads as one while the report is
+current, the claim's links record the same bridge, Lean checks it and its target is the version
+the reviewer was shown; otherwise it reads as the reviewer's composition, saying what it was
+recorded as and why. Reports are shown as their reviewers wrote them and change no status;
+`check --json` lists them per claim, with their coverage.
+
+The Overview and the audit's [semantic summary](DATA_MODEL.md#semantic-summary-prooflenssemantic-summary1-derived)
+count each reviewer's latest report of each statement as a set of readings of its own (**Reviews
+by** the reviewer): its coverage, its basis, and whether it is current. A report that records no
+coverage counts as **Reviewed, coverage not recorded**; one made for another text or other Lean as
+**Out of date**. Two reviewers' readings are never combined. A report is counted as independent
+when it records that nothing of the Lean or the author's review had been shown to its reviewer
+before the reading was locked (`reading.revealed_by` is empty), and as informed otherwise.
 
 ## Maintainer acceptance
 
@@ -410,7 +543,7 @@ machinechecked review promote machinechecked-reviews-....json
 
 A directory of reports may be given instead of the files: it stands for the `*.json` files directly in it, in name order.
 
-Promotion checks that the manuscript, the passages read (their digests, pinned when the reading was locked) and the formal statements still match the review pins, that the review stages were recorded in the required order, and that the verdict is eligible. It displays the planned changes and requires the maintainer's decision. Model-family and author restrictions still apply. A report whose reading was not blind is refused unless the maintainer passes `--allow-revealed`.
+Promotion checks that the manuscript, the passages read (their digests, pinned when the reading was locked) and the formal statements still match the review pins, that the review stages were recorded in the required order, and that the verdict is eligible. An open question stays open: a report whose verdict is *Cannot determine*, or whose coverage is unresolved, records neither a review nor a defect, and promotion refuses it, as it refuses a coverage the protocol does not write. It displays the planned changes, with each report's coverage, and requires the maintainer's decision. Model-family and author restrictions still apply. A report whose reading was not blind is refused unless the maintainer passes `--allow-revealed`.
 
 Promotion records the maintainer’s decision for the reviewed proposition or definition. The marker it writes records the digests of the paper passages read, so a later change to that text reopens the review. A passage the manuscript no longer matches reads as unread until it is pinned again, and promotion refuses a report on it (see [Evidence policy](EVIDENCE_POLICY.md#a-review-is-a-reading-of-a-text), which also says how markers written before the digests were recorded are read, and how to add the digests to them).
 Acceptance also requires the claim’s proofs and all other required checks.

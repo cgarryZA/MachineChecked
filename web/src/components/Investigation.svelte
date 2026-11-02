@@ -2,26 +2,32 @@
   import { listWorkspaces, openWorkspace, showWorkspace, updateWorkspace, suggestContext, newId,
     rememberedWorkspace, rememberWorkspace, humanId } from "../lib/workspace.js";
   import { href } from "../lib/route.svelte.js";
-  import { compositionView, findingCoverageView, recordedBasisText } from "../lib/coverage.js";
+  import { compositionView, findingCoverageView, recordedBasisText, readingWords } from "../lib/coverage.js";
+  import { workspace, pinsIn, setPins, openInspection, tokenOf } from "../lib/inspect.svelte.js";
   import Composition from "./Composition.svelte";
 
   // The auditor's saved investigation of this claim, under `machinechecked view`: its open
   // questions, findings and evidence, saved by the engine in the project's working directory, and
   // continued with `machinechecked workspace` in a terminal. A claim page shows the Lean, so a
   // workspace opened here is an informed investigation; an independent review uses the review page.
-  let { index, claim } = $props();
+  // `selection` is the expression selected in the claim's Lean ({spec, id}), which an alignment
+  // can name. The open workspace is shared with the comparison above, whose rows can follow its
+  // alignments and where its saved evidence opens; the comparison's pins (`scope`, the claim's
+  // view) are kept in the workspace's resume state, and come back when it is resumed here.
+  let { index, claim, selection = null, scope = null } = $props();
 
   // The readings a finding can record: the links file's coverage and, for full coverage, how it
-  // is supported (a checked bridge is recorded with `machinechecked workspace update`).
-  const CHOICES = {
-    direct: { label: "Every clause, in one Lean statement", coverage: "full", basis: "direct" },
-    composition: { label: "Every clause, by my composition", coverage: "full", basis: "reviewed_composition" },
-    full: { label: "Every clause", coverage: "full" },
-    partial: { label: "Part of the claim", coverage: "partial" },
-    changed: { label: "Stated differently", coverage: "changed" },
-    related: { label: "A related result", coverage: "related" },
-    unresolved: { label: "Unresolved", coverage: "unresolved" },
-  };
+  // is supported (a checked bridge is recorded with `machinechecked workspace update`), each in the
+  // engine's words for it.
+  const CHOICES = Object.fromEntries(Object.entries({
+    direct: { coverage: "full", basis: "direct" },
+    composition: { coverage: "full", basis: "reviewed_composition" },
+    full: { coverage: "full" },
+    partial: { coverage: "partial" },
+    changed: { coverage: "changed" },
+    related: { coverage: "related" },
+    unresolved: { coverage: "unresolved" },
+  }).map(([k, c]) => [k, { ...c, label: readingWords(c.coverage, c.basis) }]));
 
   let available = $state(true);
   let mine = $state([]);
@@ -71,6 +77,9 @@
   const estimatesFor = (lid) => (est.estimates || []).filter((e) => e.requirement === lid);
   const differencesFor = (lid) => [...(est.differences || []), ...(est.resolved || [])].filter((d) => d.requirement === lid);
   const changed = (x) => x?.currency?.state === "stale";
+  // Why a record is not known to be current, in the engine's words: each part it rests on that
+  // the build cannot check, once.
+  const unknownWhy = (cur) => [...new Set([...(cur?.unknown || []).map((u) => u.why), cur?.reason].filter(Boolean))].join("; ");
   function findingHead(f, cv) {
     if (cv?.headline) return cv.headline;
     if (f.verdict) return "The printed step: " + f.verdict;
@@ -84,11 +93,41 @@
       mine = (await listWorkspaces()).workspaces.filter((w) => w.mode === "informed");
       if (wsId && !mine.some((w) => w.id === wsId)) { wsId = null; rememberWorkspace(null); }
       view = wsId ? await showWorkspace(wsId) : null;
+      workspace.id = view ? wsId : null;
+      workspace.view = view;
+      restorePins();
     } catch (e) {
       if (e.status === 404) available = false;   // a server without workspaces
       else error = String(e.message || e);
     }
   }
+  $effect(() => () => { workspace.id = null; workspace.view = null; });
+
+  // Pins, in the workspace's resume state: each with the release and project it was made in, so
+  // that a resumed pin is shown only on the same build of the same project (and, through its
+  // identity, on the same object).
+  const savedPins = (r) => (r?.claim === claim.id && Array.isArray(r.pinned) ? r.pinned : [])
+    .filter((p) => p && typeof p === "object" && p.token && p.release === scope?.release && (p.repo ?? null) === scope?.repo);
+  const pinsHere = $derived(scope ? pinsIn(scope).map((p) => ({ token: p.token, at: p.at, ident: p.ident, label: p.label,
+    release: scope.release, repo: scope.repo })) : []);
+  let restored = null;
+  function restorePins() {
+    if (!view || !scope || restored === view.id + claim.id) return;
+    restored = view.id + claim.id;
+    const saved = savedPins(view.resume);
+    if (saved.length && !pinsIn(scope).length) setPins(scope, saved.map(({ release, repo, ...p }) => p));
+  }
+  // The resume state with this claim's pins: every resume edit sends them, since it replaces the
+  // state as a whole.
+  const resumeOp = (extra = {}) => ({ op: "resume", state: { claim: claim.id, ...extra, ...(pinsHere.length ? { pinned: pinsHere } : {}) } });
+  $effect(() => {
+    const now = JSON.stringify(pinsHere);
+    if (!view || busy || restored !== view.id + claim.id) return;
+    const had = JSON.stringify(savedPins(view.resume));
+    if (now === had || (!pinsHere.length && view.resume?.claim !== claim.id)) return;
+    const q = view.resume?.claim === claim.id && view.resume.question ? { question: view.resume.question } : {};
+    run([resumeOp(q)]);
+  });
 
   $effect(() => { claim.id; refresh(); });
   // A fact cited from a proof's facts is saved by that panel; show it here too.
@@ -145,7 +184,7 @@
   async function addQuestion() {
     const id = newId("q");
     if (await run([{ op: "put", record: { id, kind: "question", claim: claim.id, text: question } },
-      { op: "resume", state: { claim: claim.id, question: id } }])) question = "";
+      resumeOp({ question: id })])) question = "";
   }
 
   // A put replaces the record's content, so the question's other fields go with it.
@@ -154,7 +193,7 @@
     ...(q.clause ? { clause: q.clause } : {}), ...(q.note ? { note: q.note } : {}),
     ...(q.answer ? { answer: q.answer } : {}), ...(q.evidence ? { evidence: q.evidence } : {}) } }]);
   const submit = (f) => run([{ op: "submit", id: f.id, base_rev: f.rev }]);
-  const resumeHere = () => run([{ op: "resume", state: { claim: claim.id } }]);
+  const resumeHere = () => run([resumeOp()]);
 
   async function addRequirement() {
     const binds = binding ? rqBinds.split(",").map((b) => b.trim()).filter(Boolean) : [];
@@ -193,6 +232,38 @@
     const r = f.region || {};
     return `${r.file}:${r.start_line}${r.end_line && r.end_line !== r.start_line ? "–" + r.end_line : ""}`;
   }
+  // Aligning requirements, or particular passages of them, with the Lean: each target is the
+  // expression selected in the Lean above or a whole declaration of the claim, and the
+  // engine checks it against the build and pins what it says.
+  const RELATIONS = ["corresponds", "additional assumption", "changed", "alternative representation"];
+  let alReqs = $state([]);
+  let alFrags = $state([]);
+  let alTargets = $state([]);
+  let alRel = $state("corresponds");
+  let alNote = $state("");
+  let alDecl = $state("");
+  const leanNames = $derived([...new Set([...(claim.links || []).map((l) => l.name),
+    ...(claim.clauses || []).flatMap((c) => (c.spec ? [c.spec] : c.defs || []))])].filter(Boolean));
+  const passages = $derived(Object.fromEntries((reading.requirements || [])
+    .flatMap((r) => Object.values(r.fragments || {}).flat()).map((f) => [f.id, f])));
+  const namedPassages = (lids) => (reading.requirements || []).filter((r) => lids.includes(r.local_id))
+    .flatMap((r) => [...r.fragments.governing, ...r.fragments.later_uses]);
+  const onPassages = (a) => (a.fragments || []).map((f) => (passages[f] ? where(passages[f]) : `${f} (no longer kept)`)).join("; ");
+  function addTarget(t) {
+    if (!alTargets.some((x) => x.decl === t.decl && x.at === t.at)) alTargets = [...alTargets, t];
+  }
+  function pickReq(lid, on) {
+    alReqs = on ? [...alReqs, lid] : alReqs.filter((x) => x !== lid);
+    alFrags = alFrags.filter((f) => alReqs.includes(passages[f]?.requirement));
+  }
+  async function addAlignment() {
+    const ops = [{ op: "put", record: { id: newId("a"), kind: "alignment", claim: claim.id,
+      requirements: alReqs, ...(alFrags.length ? { fragments: alFrags } : {}), relation: alRel,
+      lean: alTargets, ...(alNote.trim() ? { note: alNote } : {}) } }];
+    if (await run(ops)) { alReqs = []; alFrags = []; alTargets = []; alNote = ""; alRel = "corresponds"; }
+  }
+  const removeAlignment = (a) => run([{ op: "delete", id: a.id, base_rev: a.rev }]);
+
   function targetText(t) {
     const part = t.conclusion ? "the conclusion" : "var" in t ? "variable" : "binder" in t ? "hypothesis or type" : "at" in t ? "sub-term" : null;
     return t.decl + (part ? ` (${part}${t.target ? ": " + t.target : ""})` : "");
@@ -240,7 +311,8 @@
         <div class="item" data-kind="finding" data-state={f.state} class:old={!f.in_force}>
           <p class="small"><strong>{findingHead(f, cv)}</strong>
             <span class="faint">· {f.in_force ? (f.state === "submitted" ? "submitted" : "draft") : "superseded"} · {f.created_by}{f.requirement ? ` · on ${f.requirement}` : ""}</span>
-            {#if f.currency?.state === "stale"}<span class="stale"> · evidence changed since</span>{/if}</p>
+            {#if f.currency?.state === "stale"}<span class="stale" title={(f.currency.changes || []).map((c) => c.reason).filter(Boolean).join("; ")}> · evidence changed since</span>{:else if f.currency?.state === "unchecked"}<span class="faint" data-currency="unchecked" title={unknownWhy(f.currency)}> · not known to be current</span>{/if}</p>
+          {#if f.currency?.state === "unchecked" && unknownWhy(f.currency)}<p class="small faint" data-unknown={f.id}>Not known to be current: {unknownWhy(f.currency)}.</p>{/if}
           {#each cv?.lines || [] as line}<p class="small" data-line={line.label}><span class="faint">{line.label}:</span> {line.names?.join(", ") || ""}{line.names?.length && line.text ? ". " : ""}<span class="text">{line.text || ""}</span>{#if line.note} <span class="faint">{line.note}</span>{/if}</p>{/each}
           {#if f.composition}<p class="small faint">Rests on composition {f.composition}{f.recorded_basis ? `; recorded as ${f.recorded_basis === "checked_bridge" ? "a checked bridge" : f.recorded_basis}, its bridge is not checked now` : ""}.</p>
           {:else if recordedBasisText(f)}<p class="small faint" data-line="recorded">{recordedBasisText(f)}</p>{/if}
@@ -300,7 +372,8 @@
               {/if}
               {#each r.alignments as aid}
                 {@const a = alignments[aid]}
-                {#if a}<p class="small lean" data-alignment={a.id}><span class="faint">Lean:</span> {a.lean.map(targetText).join("; ")} <span class="faint">· {a.relation} · recorded by {a.created_by}</span>{#if a.currency?.state === "stale"}<span class="stale"> · the Lean changed since</span>{/if}</p>{/if}
+                {#if a}<p class="small lean" data-alignment={a.id}>{#if a.fragments?.length}<span class="faint">On {onPassages(a)}:</span>{" "}{/if}<span class="faint">Lean:</span> {a.lean.map(targetText).join("; ")} <span class="faint">· {a.relation} · recorded by {a.created_by}</span>{#if a.note}{" "}<span class="text">{a.note}</span>{/if}{#if a.currency?.state === "stale"}<span class="stale">{" · " + ((a.currency.changes || []).some((c) => c.fragment) ? "a passage it names no longer governs the reading" : "the Lean changed since")}</span>{:else if a.currency?.state === "unchecked" && a.currency.reason}<span class="faint" data-unknown={a.id}> · not known to be current: {a.currency.reason}</span>{/if}
+                  · <button class="link" disabled={busy} onclick={() => removeAlignment(a)}>Remove</button></p>{/if}
               {/each}
               {#each r.questions as q}<p class="small question">Question: {q}</p>{/each}
               {#each estimatesFor(r.local_id) as e (e.requirement)}
@@ -342,13 +415,17 @@
             <p class="small hint" data-binder={h.binder}>{h.text} <span class="faint">(computed hint: inspect it)</span></p>
           {/each}
           {#each reading.alignments.filter((a) => !a.requirements.length) as a (a.id)}
-            <p class="small lean" data-alignment={a.id}><span class="faint">Lean only ({a.relation}):</span> {a.lean.map(targetText).join("; ")} <span class="faint">· recorded by {a.created_by}</span>{#if a.note} <span class="text">{a.note}</span>{/if}</p>
+            <p class="small lean" data-alignment={a.id}><span class="faint">Lean only ({a.relation}):</span> {a.lean.map(targetText).join("; ")} <span class="faint">· recorded by {a.created_by}</span>{#if a.note} <span class="text">{a.note}</span>{/if}
+              · <button class="link" disabled={busy} onclick={() => removeAlignment(a)}>Remove</button></p>
           {/each}
         </div>
       {/if}
 
       {#if here.evidence.length}
-        <p class="small faint">Evidence: {#each here.evidence as e, i (e.id)}{i ? ", " : ""}<code>{refText(e.ref)}</code> ({e.role}{e.ref?.fact ? ", " + e.ref.fact.basis : ""}{e.currency?.state === "stale" ? ", changed since" : ""}){/each}</p>
+        <p class="small faint evidence">Evidence: {#each here.evidence as e, i (e.id)}{i ? ", " : ""}<button class="link ev" data-evidence={e.id} title="Inspect it beside the claim" onclick={() => openInspection(tokenOf({ kind: "evidence", ws: wsId, id: e.id }), "top")}><code>{refText(e.ref)}</code></button> ({e.role}{e.ref?.fact ? ", " + e.ref.fact.basis : ""}{e.currency?.state === "stale" ? ", changed since" : e.currency?.state === "unchecked" ? ", not known to be current" : ""}){/each}</p>
+        {#each here.evidence.filter((e) => e.currency?.state === "unchecked" && e.currency.reason) as e (e.id)}
+          <p class="small faint" data-unknown={e.id}><code>{refText(e.ref)}</code> is not known to be current: {e.currency.reason}.</p>
+        {/each}
       {/if}
 
       <details class="add">
@@ -373,6 +450,24 @@
         <button class="act" disabled={busy || !rqId.trim() || !rqText.trim()} onclick={addRequirement}>Save requirement</button>
         <p class="faint small">Other passages (the sentence that sets a quantifier's domain, a standing assumption) are attached with “Suggest nearby context” or <code>machinechecked workspace update</code>.</p>
       </details>
+      {#if reading.requirements.length}
+        <details class="add align">
+          <summary>Align with the Lean</summary>
+          <p class="small">Requirements: {#each reading.requirements as r (r.id)}<label><input type="checkbox" data-al-req={r.local_id} checked={alReqs.includes(r.local_id)} onchange={(e) => pickReq(r.local_id, e.currentTarget.checked)} /> {r.local_id}</label>{/each}</p>
+          {#if namedPassages(alReqs).length}
+            <p class="small">Only these passages: {#each namedPassages(alReqs) as f (f.id)}<label><input type="checkbox" data-al-frag={f.id} checked={alFrags.includes(f.id)} onchange={(e) => (alFrags = e.currentTarget.checked ? [...alFrags, f.id] : alFrags.filter((x) => x !== f.id))} /> {where(f)} ({ROLE[f.role]})</label>{/each}
+              <span class="faint">(none ticked: the whole requirement)</span></p>
+          {/if}
+          <p class="small">Lean: {#if selection}<button class="act" disabled={busy} onclick={() => addTarget({ decl: selection.spec, at: selection.id })}>Add the expression selected in {selection.spec}</button>{:else}<span class="faint">select an expression in the Lean above, or add</span>{/if}
+            <select bind:value={alDecl} aria-label="A whole declaration"><option value="">a whole declaration…</option>{#each leanNames as n}<option value={n}>{n}</option>{/each}</select>
+            <button class="act" disabled={busy || !alDecl} onclick={() => { addTarget({ decl: alDecl }); alDecl = ""; }}>Add</button></p>
+          {#each alTargets as t, i (t.decl + (t.at || ""))}<p class="small target" data-al-target={t.at || t.decl}><code>{t.decl}</code>{t.at ? ` (sub-term ${t.at})` : ""} <button class="link" onclick={() => (alTargets = alTargets.filter((_, j) => j !== i))}>Remove</button></p>{/each}
+          <p class="small"><label>Relation <select bind:value={alRel} aria-label="Relation">{#each RELATIONS as r}<option value={r}>{r}</option>{/each}</select></label></p>
+          <textarea bind:value={alNote} rows="2" placeholder="What the correspondence rests on (optional)" aria-label="Alignment note"></textarea>
+          <button class="act" disabled={busy || !alTargets.length || (!alReqs.length && alRel !== "additional assumption")} onclick={addAlignment}>Save alignment</button>
+          <p class="faint small">An alignment records your reading of the correspondence. Lean has not checked it.</p>
+        </details>
+      {/if}
       <details class="add">
         <summary>Ask a question</summary>
         <textarea bind:value={question} rows="2" placeholder="The next question about this claim" aria-label="Question"></textarea>

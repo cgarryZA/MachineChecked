@@ -119,6 +119,52 @@ def test_a_word_that_only_starts_like_ref_cites_no_other_work():
         == {("R.a", "Theorem 2.1"): "exact"}
 
 
+def test_a_capitalised_word_after_the_number_names_a_work_only_as_a_citation():
+    # After "of", "in" or "from", a capitalised word names another work only as a citation
+    # does: authors with a year, a title or a citation, or several authors (#349). A term, a
+    # figure, table, equation or proof of this paper, the paper itself and one name alone leave
+    # a stale number checked.
+    checked = {"P.a": "Theorem 9.9 in Hilbert spaces.", "P.b": "Lemma 7.7 in Banach spaces.",
+               "P.c": "Theorem 9.9 from Fourier analysis.", "P.d": "Theorem 9.9 in Figure 2.",
+               "P.e": "Theorem 9.9 in Table 1.", "P.f": "Theorem 9.9 in Eq. (4).",
+               "P.g": "Theorem 9.9 in Proof of Lemma 3.", "P.h": "Theorem 9.9 of the Paper.",
+               "P.i": "Theorem 9.9 of this Paper.",
+               "P.j": "Theorem 9.9 in Hilbert and Banach spaces.",
+               "P.k": "Theorem 9.9 in Navier–Stokes equations.", "P.l": "Theorem 9.9 in Rudin.",
+               "P.m": "Theorem 9.9 in Figure~2 and Table 1.", "P.n": "Theorem 9.9 in Dimension 3."}
+    elsewhere = {"Q.a": "Theorem 4.1 of [Gauss].", "Q.b": "Theorem 9.9 of \\cite{AB}.",
+                 "Q.c": "Theorem 9.9 of~\\cite{AB}.", "Q.d": "Theorem 9.9~\\cite{AB}.",
+                 "Q.e": "Theorem 3 in Hardy and Wright (1979).",
+                 "Q.f": "Theorem 3 in Hardy–Wright, *An Introduction*, Ch. IV.",
+                 "Q.g": "Theorem 3 in Hardy and Wright.", "Q.h": "Theorem 9.9 of Gauss, 1801.",
+                 "Q.i": "Theorem 9.9 in Smith et al.", "Q.j": "Theorem 9.9 in Serre's book.",
+                 "Q.k": "Theorem 9.9 of Serre, *A Course in Arithmetic*.",
+                 "Q.l": "Theorem 9.9 of *An Introduction*.",
+                 "Q.m": "Theorem 9.9 in \\emph{Elements}.",
+                 "Q.n": "Theorem 9.9 in Hardy, Littlewood and Pólya.",
+                 "Q.o": "Theorem 9.9 in Eq. (4) of [AB].",
+                 "Q.p": "Theorem 9.9 in Proof of Lemma 3 of [AB].", "Q.q": "Theorem 9.9 of Paper B.",
+                 "Q.r": "Theorem 9.9 in Ref. [3].", "Q.s": "Theorem 9.9 of \\citet{AB}.",
+                 "Q.t": "Theorem 9.9~\\citep[Ch. 2]{AB}.", "Q.u": "Theorem 9.9 in Gauss \\citep{G}.",
+                 "Q.v": "Theorem 9.9 in Volume 2 of [B]."}
+    index = [decl(n, d) for n, d in {**checked, **elsewhere}.items()]
+    out = nb.analyse(index, CLAIMS, INV)
+    first = {}
+    for o in out["references"]:
+        first.setdefault(o["source"]["declaration"], o)
+    for n in checked:
+        assert first[n]["status"] == "absent" and nb.suspect(first[n]), (n, first[n])
+    for n in elsewhere:
+        assert first[n]["status"] == "other-source", (n, first[n])
+        assert first[n]["detail"] == "it refers to another work"
+    # The current numbers, written the same way, are exact.
+    index = [decl("R.a", "Theorem 2.1 in Hilbert spaces."), decl("R.b", "Theorem 3.1 in Figure 2."),
+             decl("R.c", "Proposition 2.3 of the Paper.")]
+    assert statuses(nb.analyse(index, CLAIMS, INV)) == {
+        ("R.a", "Theorem 2.1"): "exact", ("R.b", "Theorem 3.1"): "exact",
+        ("R.c", "Proposition 2.3"): "exact"}
+
+
 def test_an_authors_possessive_or_a_books_chapter_before_the_number_is_another_work():
     # What comes just before the number names another work: an author's possessive, or a
     # chapter after a comma as a book's citation gives it (#287).
@@ -223,6 +269,30 @@ def test_a_version_map_resolves_one_target_and_keeps_several():
         next(o for o in out["references"] if o["source"]["declaration"] == "P.a"))
 
 
+def test_a_repeated_reference_has_its_own_id(tmp_path):
+    # The same text twice in one docstring, name or module docstring line gives two references
+    # with different ids (#348); the first keeps the id it has alone.
+    pad = "x " * 40
+    index = [decl("P.a", "Lemma 7.7, and again Lemma 7.7."), decl("P.lemma_7_7_lemma_7_7"),
+             decl("P.b", f"{pad}Lemma 7.7 {pad}Lemma 7.7 {pad}")]
+    (tmp_path / "P").mkdir()
+    (tmp_path / "P" / "Main.lean").write_text("/-! Lemma 8.1 and Lemma 8.1. -/\n")
+    out = nb.analyse(index, CLAIMS, INV, nb.module_doc_blocks(tmp_path, ["P.Main"]))
+    refs = out["references"]
+    by = {}
+    for o in refs:
+        by.setdefault((o["source"]["declaration"] or o["source"]["module"],
+                       o["source"]["where"]), []).append(o)
+    assert sorted(len(v) for v in by.values()) == [2, 2, 2, 2]
+    assert len({o["id"] for o in refs}) == len(refs) == 8
+    # Long enough apart, two copies have the same context and place in it: only the id differs.
+    b1, b2 = by[("P.b", "docstring")]
+    assert (b1["context"], b1["at"]) == (b2["context"], b2["at"]) and b1["id"] != b2["id"]
+    assert {o["status"] for o in refs} == {"absent"} and out["pattern"]["absent"] == 8
+    alone = nb.find_references([decl("P.a", "Lemma 7.7.")], [])
+    assert alone[0]["id"] == by[("P.a", "docstring")][0]["id"]
+
+
 def test_module_docstrings_are_read_with_their_lines(tmp_path):
     (tmp_path / "P").mkdir()
     (tmp_path / "P" / "Main.lean").write_text(
@@ -232,6 +302,134 @@ def test_module_docstrings_are_read_with_their_lines(tmp_path):
     lem = next(o for o in out["references"] if o["reference"] == "Lemma 8.1")
     assert lem["status"] == "absent" and lem["source"]["line"] == 6
     assert lem["source"]["where"] == "module docstring"
+
+
+COMMENTED = """import X
+
+/-! Lemma 8.1 is read as a module docstring. -/
+
+-- Lemma 2.5: an earlier number, just before the declaration,
+-- continued on a second line with Section 4.
+/-- Theorem 3.1. -/
+theorem bound : True := by
+  -- by Lemma 2.3, and lemma21 is code
+  have s := "-- Lemma 9.9 is in a string"
+  have c := '"'
+  have h' := 1 -- Corollary 2.4, after code; Theorem 4.1 of [Gauss]
+  trivial
+
+/- A block /- with a nested Lemma 7.1 -/ and Lemma 7.2
+   on its second line, Proposition 2.3 -/
+
+/-- Lemma 6.6 is a docstring. -/
+def other := 1
+"""
+
+
+def test_comments_are_read_with_their_declarations(tmp_path):
+    # Ordinary comments, each with its line and the declaration it is on: the one whose source
+    # holds it, or that starts just after it; otherwise its module. Doc comments and module
+    # docstrings are read once, strings and character literals hold no comment, and a kind
+    # written against its number is code.
+    (tmp_path / "P").mkdir()
+    (tmp_path / "P" / "Main.lean").write_text(COMMENTED)
+    index = [{**decl("P.bound", "Theorem 3.1.", line=7), "range": {"line": 7, "end_line": 13}},
+             {**decl("P.other", "Lemma 6.6 is a docstring.", kind="def", line=18),
+              "range": {"line": 18, "end_line": 19}}]
+    blocks = nb.module_doc_blocks(tmp_path, ["P.Main"]) + \
+        nb.comment_blocks(tmp_path, ["P.Main"], index)
+    out = nb.analyse(index, CLAIMS, INV, blocks)
+    got = [(o["reference"], o["source"]["where"], o["source"]["declaration"],
+            o["source"]["line"], o["role"], o["status"]) for o in out["references"]]
+    assert got == [
+        ("Theorem 3.1", "docstring", "P.bound", 7, "statement", "exact"),
+        ("Lemma 6.6", "docstring", "P.other", 18, "statement", "absent"),
+        ("Lemma 8.1", "module docstring", None, 3, "cited", "absent"),
+        ("Lemma 2.5", "comment", "P.bound", 5, "statement", "absent"),
+        ("Section 4", "comment", "P.bound", 6, "cited", "absent"),
+        ("Lemma 2.3", "comment", "P.bound", 9, "cited", "other-kind"),
+        ("Corollary 2.4", "comment", "P.bound", 12, "cited", "absent"),
+        ("Theorem 4.1", "comment", "P.bound", 12, "cited", "other-source"),
+        ("Lemma 7.1", "comment", None, 15, "cited", "absent"),
+        ("Lemma 7.2", "comment", None, 15, "cited", "absent"),
+        ("Proposition 2.3", "comment", None, 16, "cited", "exact")]
+    by = {(o["reference"], o["source"]["where"]): o for o in out["references"]}
+    assert by[("Lemma 2.3", "comment")]["message"] == (
+        "a comment on P.bound (P/Main.lean:9) cites Lemma 2.3: the paper's 2.3 is "
+        "Proposition 2.3, not a lemma")
+    assert by[("Lemma 7.1", "comment")]["message"].startswith(
+        "a comment in module P.Main (P/Main.lean:15) cites Lemma 7.1")
+    assert len({o["id"] for o in out["references"]}) == len(out["references"])
+    # A namespace the project maps to another paper holds no reference to this one.
+    mapped = nb.analyse(index, CLAIMS, INV, blocks, foreign={"P"})
+    assert {o["status"] for o in mapped["references"]} == {"other-source"}
+
+
+def test_one_place_with_several_disagreements_is_not_a_pattern():
+    # Three stale numbers in one docstring are one place: no pattern until a second
+    # declaration or module disagrees too. The examples come from distinct places first.
+    index = [decl("P.a", "Lemma 6.6, Lemma 6.7 and Lemma 6.8."), decl("P.b", "Theorem 2.1."),
+             decl("P.c", "Theorem 3.1.")]
+    out = nb.analyse(index, CLAIMS, INV)
+    assert out["pattern"]["absent"] == 3 and out["pattern"]["places"] == 1
+    assert not out["pattern"]["drift"] and nb.drift_note(out["pattern"], out["references"]) is None
+    index.append(decl("P.d", "Lemma 6.9."))
+    out = nb.analyse(index, CLAIMS, INV)
+    assert out["pattern"]["drift"] and out["pattern"]["places"] == 2
+    ref = {o["id"]: o for o in out["references"]}
+    assert [ref[i]["source"]["declaration"] for i in out["pattern"]["examples"]] == \
+        ["P.a", "P.d", "P.a", "P.a"]
+    note = nb.drift_note(out["pattern"], out["references"])
+    assert "4 of the 6 references checked" in note and "in 2 declarations or modules" in note
+    assert "Lemma 6.6 in the docstring of P.a" in note and "Lemma 6.9 in the docstring of P.d" in note
+
+
+def test_a_number_the_paper_prints_twice_is_exact_and_says_so():
+    twice = CLAIMS + [{"id": "P:t21b", "kind": "theorem", "number": "Theorem 2.1",
+                       "scope": "formal", "statement": "x"}]
+    out = nb.analyse([decl("P.a", "Theorem 2.1.")], twice, nb.inventory(twice, True))
+    o = out["references"][0]
+    assert o["status"] == "exact" and o["paper"]["claims"] == ["P:t21", "P:t21b"]
+    assert "2 statements printed Theorem 2.1" in o["detail"] and not nb.suspect(o)
+
+
+def test_a_cited_number_rests_on_this_papers_reference(tmp_path):
+    # A suggestion's cited number is a lead only when the docstring's reference with that number
+    # names the claim: not another work's Theorem 2.1, nor the start of Theorem 2.1.3. The
+    # reason lists the references it rests on; a stale one, or any under a pattern, says so.
+    from prooflens.simple import SuggestContext, suggest
+    claim = {**CLAIMS[0], "label": "thm:odd", "title": ""}
+    (tmp_path / "P").mkdir()
+    (tmp_path / "P" / "Other.lean").write_text("/-! Theorem 2.1 of [Gauss]. -/\n")
+    (tmp_path / "P" / "Mine.lean").write_text("/-! The proof of Theorem 2.1. -/\n")
+    index = [decl("P.ok", "Theorem 2.1: odd squares are odd."),
+             decl("P.gauss", "This is Theorem 2.1 of [Gauss]."),
+             decl("P.longer", "Theorem 2.1.3 is a part of it."),
+             decl("P.both", "Theorem 2.1 of [Gauss] gives Theorem 2.1."),
+             decl("P.other_last", module="P.Other", line=5),
+             decl("P.mine_last", module="P.Mine", line=5)]
+    blocks = nb.module_doc_blocks(tmp_path, ["P.Other", "P.Mine"])
+    num = nb.analyse(index, CLAIMS, INV, blocks)
+    ctx = SuggestContext(index, tmp_path, numbering=num)
+    got = {s["name"]: next((r for r in s["reasons"] if r["signal"] == "number"), None)
+           for s in suggest(claim, index, limit=10, ctx=ctx)}
+    ids = {(o["source"]["declaration"] or o["source"]["module"], o["text"], o["status"]): o["id"]
+           for o in num["references"]}
+    assert set(got) == {"P.ok", "P.both", "P.mine_last"}
+    assert got["P.ok"]["basis"] == "a lead" and \
+        got["P.ok"]["references"] == [ids[("P.ok", "Theorem 2.1", "exact")]]
+    assert got["P.both"]["references"] == [ids[("P.both", "Theorem 2.1", "exact")]]
+    assert got["P.mine_last"]["references"] == [ids[("P.Mine", "Theorem 2.1", "exact")]]
+    # Without the project's references the citations count as before.
+    plain = {s["name"] for s in suggest(claim, index, limit=10, ctx=SuggestContext(index, tmp_path))}
+    assert {"P.gauss", "P.other_last"} <= plain
+    # Under a pattern of stale numbers, each cited number is a possibly stale lead.
+    drift = {**num, "pattern": {**num["pattern"], "drift": True}}
+    got = {s["name"]: next(r for r in s["reasons"] if r["signal"] == "number")
+           for s in suggest(claim, index, limit=10, ctx=SuggestContext(index, tmp_path,
+                                                                         numbering=drift))}
+    assert {r["basis"] for r in got.values()} == {"a possibly stale lead"}
+    assert all("another version of the paper" in r["text"] for r in got.values())
 
 
 LEMMA_41 = CLAIMS + [{"id": "P:l41", "kind": "lemma", "number": "Lemma 4.1", "scope": "formal",
@@ -407,6 +605,17 @@ def test_several_papers_read_a_citation_at_the_references_own_place():
         ("Common.d", "Lemma 2.2", "B", "absent"), ("Common.d", "Lemma 2.2", "A", "exact")]
 
 
+def test_several_papers_read_a_title_after_the_number():
+    # A paper's title after "of", "in" or "from" is no citation, so the reference is checked,
+    # against the paper whose title it is; a capitalised term that is no paper's title leaves
+    # the reference to be attributed as any other (#349).
+    papers = [("A", "Odd squares"), ("B", "Triangle bounds")]
+    refs = nb.find_references([decl("Common.c", "Lemma 2.2 of Odd squares, Lemma 2.2 in the "
+                                    "Triangle bounds and Lemma 2.2 in Hilbert spaces.")], [])
+    assert [o.get("status") for o in refs] == [None, None, None]
+    assert [nb.attribute(o, {}, papers)[0] for o in refs] == ["A", "B", None]
+
+
 def test_several_papers_leave_an_unattributable_reference_unchecked():
     from types import SimpleNamespace
     from prooflens import content
@@ -428,6 +637,46 @@ def test_several_papers_leave_an_unattributable_reference_unchecked():
     assert "no claim of any paper" in loose["detail"]
     assert not nb.suspect(shared) and num["pattern"]["unchecked"] == 2
     assert any("2 of the Lean's references" in n for n in notes)
+
+
+def test_several_papers_read_a_cite_as_a_bracket():
+    # A `\cite` names a paper as a bracket does (#350): the `\cite` whose note holds the
+    # number, or one after it before the next reference; one of several works names none.
+    papers = [("U", ""), ("A", "")]
+
+    def named(doc):
+        return [nb.attribute(o, {}, papers)[0]
+                for o in nb.find_references([decl("P.a", doc)], [])]
+
+    assert named("Theorem 9.9 of \\cite{U}.") == named("\\cite[Lemma 2.1]{U}.") == ["U"]
+    assert named("\\citet[Lemma 2.1]{ U }.") == named("\\cite[see][Lemma 2.1]{U}.") == ["U"]
+    assert named("\\cite[Lemma 2.1, Lemma 2.2]{U}.") == ["U", "U"]
+    assert named("\\cite[Lemma 2.1]{U} and \\cite[Lemma 3.2]{A}.") == ["U", "A"]
+    assert named("Lemma 2.1 of \\cite{A} and Lemma 2.1 of \\cite{U}.") == ["A", "U"]
+    assert named("Lemma 2.1 of \\cite[Section 3]{U} and Lemma 2.1 of \\cite{A}.") == \
+        ["U", "U", "A"]
+    assert named("\\cite[Lemma 2.1]{A,U}.") == named("Lemma 2.1 of \\cite{A, U}.") == [None]
+    assert named("\\cite[Lemma 2.1]{Gauss} and Lemma 2.2 of \\cite{U}.") == [None, "U"]
+    # Each is then checked against the paper it names.
+    from types import SimpleNamespace
+    from prooflens import content
+    papers = [SimpleNamespace(id="A", title="Odd squares"),
+              SimpleNamespace(id="B", title="Triangle bounds")]
+    tex = {"A": {"mode": "latex", "anchors": [{"env": "lemma", "number": "2.2"}]},
+           "B": {"mode": "latex", "anchors": [{"env": "theorem", "number": "1.1"}]}}
+    inv_claims = [{"id": "A:l22", "paper": "A", "kind": "lemma", "number": "Lemma 2.2",
+                   "clauses": [{"spec": "PA.l22"}]},
+                  {"id": "B:t11", "paper": "B", "kind": "theorem", "number": "Theorem 1.1",
+                   "clauses": [{"spec": "PB.t11"}]}]
+    full = [decl("Common.c", "\\cite[Lemma 2.2]{A} and Theorem 1.1 of \\cite{B}.",
+                 module="Common"),
+            decl("Common.d", "\\cite[Lemma 2.2]{B} and \\cite[Lemma 2.2]{Gauss}.",
+                 module="Common")]
+    num = content.several(papers, tex, inv_claims, {}, full, [], None, None, [])
+    assert [(o["source"]["declaration"], o["reference"], o.get("attributed"), o["status"])
+            for o in num["references"]] == [
+        ("Common.c", "Lemma 2.2", "A", "exact"), ("Common.c", "Theorem 1.1", "B", "exact"),
+        ("Common.d", "Lemma 2.2", "B", "absent"), ("Common.d", "Lemma 2.2", None, "other-source")]
 
 
 def test_formalization_rows_name_their_papers_declarations():

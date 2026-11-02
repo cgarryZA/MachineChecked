@@ -1,17 +1,43 @@
 // The words for an auditor's correspondence reading (`correspondence` of a claim, from the
 // links file): its coverage, how far the claim and the linked declarations agree, and its basis,
 // how that agreement is supported. Neither is a status, and the words never say more than the
-// reading records: a value this table does not know is shown as no value.
+// reading records: a value the vocabulary does not know is shown as no value. Every value's words
+// are the engine's (`data/semantic.json`, as `semantic.reading_words` uses them), the same in the
+// terminal, the Overview and every page that shows a reading.
+import vocabulary from "../../../engine/python/prooflens/data/semantic.json" with { type: "json" };
 
-const COVERAGE = {
-  full: "Every clause",
-  partial: "States part of the claim",
-  changed: "States it differently",
-  related: "A related result, not this claim",
-  unresolved: "Unresolved",
-};
-const BASIS = ["direct", "reviewed_composition", "checked_bridge"];
+export const COVERAGE = ["full", "partial", "changed", "related", "unresolved"];
+export const BASIS = ["direct", "reviewed_composition", "checked_bridge"];
 const BRIDGE = ["checked", "stale", "unchecked"];
+
+function label(dimension, key) {
+  const table = vocabulary[dimension] || {};
+  return typeof key === "string" && Object.hasOwn(table, key) ? table[key].label : null;
+}
+
+// Words as they read inside a sentence: the first letter in lower case.
+export function inText(words) {
+  return words ? words.charAt(0).toLowerCase() + words.slice(1) : words;
+}
+
+// The words for a basis. A checked bridge whose state (`bridge`) is `stale` or `unchecked` reads as
+// that state; with no state given, it reads as recorded.
+export function basisWords(basis, bridge) {
+  if (basis === "checked_bridge" && (bridge === "stale" || bridge === "unchecked")) return label("bridge", bridge);
+  return BASIS.includes(basis) ? label("basis", basis) : null;
+}
+
+// The words for a coverage (null for a value the vocabulary does not name).
+export function coverageLabel(coverage) {
+  return COVERAGE.includes(coverage) ? label("coverage", coverage) : null;
+}
+
+// A reading's coverage and basis in words: "Part of the claim, in one Lean statement".
+export function readingWords(coverage, basis, bridge) {
+  const head = coverageLabel(coverage), how = basisWords(basis, bridge);
+  return head && how ? `${head}, ${inText(how)}` : head;
+}
+
 // Beside every composition: what would make it a Lean result (the engine's `next_step`).
 const NEXT_STEP = "State the combination as one Lean result.";
 
@@ -31,24 +57,19 @@ export function coverageView(cor) {
   if (!cor) return null;
   // `composed` is the earlier single value for full coverage by the auditor's composition.
   const legacy = cor.coverage === "composed";
-  const coverage = legacy ? "full" : Object.hasOwn(COVERAGE, cor.coverage) ? cor.coverage : null;
+  const coverage = legacy ? "full" : COVERAGE.includes(cor.coverage) ? cor.coverage : null;
   const basis = legacy ? "reviewed_composition" : coverage && BASIS.includes(cor.basis) ? cor.basis : null;
   const bridge = basis === "checked_bridge" && cor.bridge && typeof cor.bridge === "object" ? cor.bridge : null;
   const state = bridge && BRIDGE.includes(bridge.state) ? bridge.state : "unchecked";
   const refs = names(cor.refs);
   const lines = [];
-  let headline = coverage ? COVERAGE[coverage] : null;
+  // A bridge reads as checked only while Lean checks it.
+  const headline = coverage ? readingWords(coverage, basis, state) : null;
   let tone = coverage ? "warning" : "note";
   if (coverage === "full") {
     tone = "full";
-    if (basis === "direct") headline = "States every clause";
-    else if (basis === "reviewed_composition") { headline = "Every clause, by the auditor's composition"; tone = "reading"; }
-    else if (basis === "checked_bridge") {
-      headline = state === "checked" ? "Every clause, through a checked bridge"
-        : state === "stale" ? "Every clause, through a checked bridge; the auditor's reading is out of date"
-        : "Every clause, through a bridge Lean does not check";
-      if (state !== "checked") tone = "warning";
-    }
+    if (basis === "reviewed_composition") tone = "reading";
+    else if (basis === "checked_bridge" && state !== "checked") tone = "warning";
   }
   if (coverage === "unresolved") tone = "open";
   if (basis === "direct" && refs.length) lines.push({ label: "Stated by", names: refs });
@@ -102,13 +123,11 @@ export function recordedBasisText(f) {
 // it. A composition never has the words or the tone of a direct result.
 export function compositionView(c) {
   if (!c) return null;
-  const coverage = Object.hasOwn(COVERAGE, c.coverage) ? c.coverage : null;
+  const coverage = COVERAGE.includes(c.coverage) ? c.coverage : null;
   const check = c.bridge_check && typeof c.bridge_check === "object" ? c.bridge_check : null;
   const bridgeState = check && BRIDGE.includes(check.state) ? check.state : check ? "unchecked" : null;
   const basis = c.basis === "checked_bridge" && bridgeState === "checked" ? "checked_bridge" : "reviewed_composition";
-  const how = basis === "checked_bridge" ? "through a checked bridge" : "by the auditor's composition";
-  const headline = coverage === "full" ? `Every clause, ${how}`
-    : coverage ? `${COVERAGE[coverage]}, ${how}` : `A composition, ${how}; no coverage recorded`;
+  const headline = coverage ? readingWords(coverage, basis) : `${basisWords(basis)}; no coverage recorded`;
   const gaps = c.gaps && typeof c.gaps === "object" ? c.gaps : {};
   return {
     headline, basis, bridgeState,

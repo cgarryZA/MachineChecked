@@ -21,9 +21,16 @@ with tempfile.TemporaryDirectory() as tmp:
                     ignore=shutil.ignore_patterns(".prooflens", ".machinechecked", "symbols.json"))
     run = lambda *a: subprocess.run([*MC, *a], cwd=work, check=True)  # noqa: E731
     run("build")
+    stored = lambda: set(work.glob(".*/releases/*.json"))  # noqa: E731
+    first = stored()
     run("symbol", "add", "T:thm:even-add", "a", SPEC, "--var", "a", "--as", "human:A-Referee")
     run("symbol", "add", "T:thm:even-add", "b", SPEC, "--var", "b", "--as", "human:A-Referee")
     run("build", "--reuse-lean")
+    # The toy is a release without an earlier one: the build made before its links were
+    # recorded is not kept (the reader's tests make a site with changes apart).
+    if stored() - first:
+        for p in first:
+            p.unlink()
     run("export", "--out", str(Path(tmp) / "site"), "--data-only")
     shutil.rmtree(OUT, ignore_errors=True)
     shutil.copytree(Path(tmp) / "site" / "data", OUT)

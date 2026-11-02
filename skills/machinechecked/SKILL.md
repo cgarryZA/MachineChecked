@@ -42,7 +42,9 @@ changes when the paper, the links or the Lean change), for quoting which run a r
 Per claim: `number` ("Theorem 2.1"), `status_code`, `status`, `links`
 (each with `name`, `status`, `source`) and `suggestions` (unconfirmed candidates, with `why`).
 A link whose module is not built or could not be loaded, or whose name is ambiguous, also has
-`status_detail`, naming the module or the modules that declare the name.
+`status_detail`, naming the module or the modules that declare the name; for a module that could
+not be loaded, it also gives the first lines of what Lean reported, and says when the module's
+library could not be loaded in one session first.
 
 | status | meaning |
 |---|---|
@@ -53,7 +55,7 @@ A link whose module is not built or could not be loaded, or whose name is ambigu
 | `linked: Lean definition` | the link names a definition |
 | `linked: Lean not checked (the project is not built)` | Lean was not run |
 | `linked: Lean not checked (module not built)` | the declaration's module is not built yet; build it to check |
-| `linked: Lean not checked (module could not be loaded)` | the module failed to load; report the loading error |
+| `linked: Lean not checked (module could not be loaded)` | the module failed to load; report the loading error its `status_detail` gives |
 | `linked: Lean name is ambiguous` | several modules declare the name (e.g. a challenge statement and its solution); name the module in `formalization.yaml` |
 | `suggested link, not confirmed` | a candidate awaiting confirmation |
 | `not linked` | no Lean counterpart is known |
@@ -69,7 +71,10 @@ Report correspondence using its own review records.
 
 With a `machinechecked.toml` (the full assessment), `finding_details` lists each finding
 (`tier`, `code`, `subject`, `message`, and `dismissed` when a warning was dismissed): quote the
-violations and obligations by subject; `findings` holds only their totals.
+violations and obligations by subject; `findings` holds only their totals. A violation saying
+`machinechecked check --fix-modules` lists a module is a declaration whose module is missing from
+`modules`: with the user's agreement, run `check --json --fix-modules`, which edits
+`machinechecked.toml`, checks again and lists the modules it added in `modules_added`.
 
 ## Typical tasks
 
@@ -93,8 +98,9 @@ violations and obligations by subject; `findings` holds only their totals.
   a lemma can be formalised without being used by that proof. If two modules declare the
   name, pass `--module`. A dependency identifies constants used by Lean terms.
 - **Does the main result use this lemma?** `machinechecked compare --query impact NAME --json`
-  answers for each main result (the declarations linked to the paper's theorems, or those
-  `--main` names): used by its proof, in its statement only, formalized separately, or not
+  answers for each main result (those `--main` names, else those saved with `machinechecked
+  workspace main NAME...`, which `selection` attributes, else the declarations linked to the
+  paper's theorems): used by its proof, in its statement only, formalized separately, or not
   traced, with the path of references and the applications of NAME at its end, and lists the
   claims whose linked Lean uses NAME. *Formalized separately* says only that this main
   result's Lean does not refer to NAME; *not traced* says the trace is incomplete, never that
@@ -108,11 +114,16 @@ violations and obligations by subject; `findings` holds only their totals.
   in a workspace.
 - **What changed since the last build?** After a rebuild, `machinechecked workspace show
   --json` marks the saved records whose paper text, statement, proof or certificate changed
-  `stale`. In a full assessment, `machinechecked changes --json` compares two releases claim by
+  `stale`, and the findings resting on them, each finding naming the part that changed (a
+  definition its cited statement uses included). In a full assessment, `machinechecked changes --json` compares two releases claim by
   claim and names every review the later build no longer counts, with the dependency that
   changed; `--workspace ID` adds the workspace's records that are not current, of every
   kind: evidence, findings, questions, counterexamples, compositions, requirements, fragments
-  and alignments.
+  and alignments. `--map` matches each claim of the earlier paper revision to the later one by
+  its passage, with each release's own status; a shared number or id is only a proposal. With
+  `--map --workspace ID`, each finding is reopened exactly when a passage it rests on changed
+  (a moved or renumbered passage keeps it current), naming the change and the part, with a
+  question; an ambiguous match is not known to be current.
 - **A shareable report**: `machinechecked build` writes `.machinechecked/MachineChecked.html`
   (one file, opens from disk; Git ignores it there, and `--out` puts it elsewhere). `machinechecked build --site public/ --author "Name" --issues owner/repo` writes a
   directory to publish (for example on GitHub Pages) with `audit.json` describing it. Both
@@ -135,11 +146,14 @@ carries every step out on the toy example.
    proposes nearby passages; a proposal stays a guess until you accept it. A passage that uses
    the result later is a fragment with role `later use`, shown apart from the reading.
 2. **Search by content.** `compare --query search CLAIM` ranks the project's declarations by
-   what their statements say; `search 'EXPRESSION'` takes a formula or words (both read the
-   zero-configuration build's content index). A paper number in a docstring is a lead:
-   `check --json` lists in `numbering` each number that names another kind of statement
+   what their statements say; `search 'EXPRESSION'` takes a formula or words, and `search NAME`
+   finds the declarations like NAME, each with the hypotheses it does not assume or also
+   assumes and whether its conclusion is the same (all read the build's content index). A paper number in a docstring or comment is a
+   lead: `check --json` lists in `numbering` each number that names another kind of statement
    (`other-kind`), none (`absent`), or a declaration that reads closer to another claim
-   (`stale_lead`). Before concluding that a requirement has no support, look at the results
+   (`stale_lead`), and a suggestion's `number` reason names the references it rests on
+   (`references`). Under `pattern.drift`, treat each cited number as possibly stale and decide
+   by content. Before concluding that a requirement has no support, look at the results
    that use the weaker ones (`--query uses`), the statements about the same objects (`--query
    mentions`) and the stronger wrappers a search reaches through a close match (`signal`
    `uses`).
@@ -148,9 +162,11 @@ carries every step out on the toy example.
    NAME --json` go further. Compare quantifier order, domains, hypotheses, definitions and the
    conclusion.
 4. **Follow the objects.** `--query uses NAME` gives each application of NAME with the argument
-   supplied to every binder and the origin of each premise (its `discharge`: `assumed` by the
-   caller, `proved` in it, or `local`). `--query proof-facts NAME` gives the facts a proof
-   establishes on the way, each under its assumptions and case.
+   supplied to every binder, the origin of each premise (its `discharge`: `assumed` by the
+   caller, `proved` in it, or `local`) and the object each premise and the conclusion are
+   about (`objects`); `--in APP_ID` reads one application with its whole context. `--query proof-facts NAME` gives the facts a proof
+   establishes on the way, each under its assumptions and case. Each prints the reference
+   evidence cites: an application's `id`, a fact's position `at`.
 5. **Assemble.** Cite declarations, applications (`{"app": {callee, id}}`) and proof facts
    (`{"fact": REF}`) as evidence, and combine them in a `composition` with its substitutions,
    the objects different steps share, and its open obligations. A `bridge` attached to it is
@@ -161,15 +177,19 @@ carries every step out on the toy example.
    reading, with a Lean certificate as evidence when you have one. A printed proof step is a
    claim of its own (`compare "Equation (3)"`), with its own verdict, such as `false as
    printed`. `--query impact NAME` says whether each main result uses NAME (`--main NAME`
-   chooses them) and lists the claims whose Lean uses it: a difference between NAME and the
-   paper can matter only to those.
+   chooses them for one query; `workspace main NAME...` saves the user's choice in the
+   workspace, with your name and the project commit) and lists the claims whose Lean uses it: a
+   difference between NAME and the paper can matter only to those.
 7. **Conclude.** A finding gives the coverage and its basis: `direct` (one Lean statement),
    `reviewed_composition` (your argument) or `checked_bridge` (a composition whose bridge Lean
    checks; any other reads as your argument). It is your reading, attributed
    to you, and changes no status. Save what remains open as a `question` and set the `resume`
    point. Submit the findings that are final; `build --site DIR` publishes them with the audit.
 8. **Resume.** `workspace export` and `workspace import` hand a workspace on; `workspace show
-   --json` gives its `resume` point and each record's `currency` against the current build.
+   --json` gives its `resume` point and each record's `currency` against the current build. A
+   submitted finding records the parts it rests on with their versions (`dependencies`): it
+   reads `stale` naming the part that changed, or `unchecked` with `currency.unknown` when a
+   part is not known, never `current`; re-pinning a record does not refresh it, superseding does.
 
 Each answer says what it covers. `retrieval.unavailable` in a `compare` packet lists what is not
 extracted yet, with the issue that owns it; a query answers `available: false` with its

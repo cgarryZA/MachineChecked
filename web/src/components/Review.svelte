@@ -1,24 +1,36 @@
 <script>
-  import { loadQueue, loadClaim } from "../lib/data.js";
+  import { untrack } from "svelte";
+  import { loadQueue, loadClaim, canEdit, askReviewOrder } from "../lib/data.js";
   import { href, route, go, withQuery } from "../lib/route.svelte.js";
   import { VERDICTS, GROUPS, CHECKLIST, MARKS, STEP_VERDICTS, STEP_GROUPS, loadWork, saveWork, now, reviewerId,
-           needsDetail, buildReport, exportFile } from "../lib/review.js";
-  import ProofStep from "./ProofStep.svelte";
-  import StepContext from "./StepContext.svelte";
-  import PaperStatement from "./PaperStatement.svelte";
-  import Statement from "./Statement.svelte";
-  import Decl from "./Decl.svelte";
-  import TexInline from "./TexInline.svelte";
+           needsDetail, buildReport, exportFile, ORDERS, ORDER_SEEN, orderedUnits, recordExposure, exposureOf,
+           holdsBack, COVERAGE_FOR, COVERAGE_CHOICES, BASIS_CHOICES, reportCorrespondence, draftCoverage,
+           coverageWords } from "../lib/review.js";
+  import Comparison from "./Comparison.svelte";
+  import { comparisonInputs, pinScope } from "../lib/comparison.js";
 
   // The review queue: one unit at a time, in three steps. Read the paper and write your own
   // reading; then see the Lean, compare and record a verdict; then read the author's review.
+  // Each step draws the reader's comparison (Comparison.svelte) from the inputs the protocol
+  // allows it (`comparison.comparisonInputs`): the paper only; then the paper with the unit's
+  // complete Lean as Lean extracted it, without any association, review or finding a person
+  // recorded; then, after the verdict, the records as the reader shows them.
   let { index } = $props();
 
   let queue = $state(null);
   let error = $state(null);
-  loadQueue(index).then((q) => (queue = q)).catch((e) => (error = String(e)));
+  // The queue of the index the page is given, loaded again when it is given another; a reply
+  // for an earlier index is dropped.
+  $effect(() => {
+    let live = true;
+    queue = null; error = null;
+    loadQueue(index).then((q) => { if (live) queue = q; }).catch((e) => { if (live) error = String(e); });
+    return () => { live = false; };
+  });
 
-  const project = index.project?.name || "project";
+  // This browser's review workspace is the one of the project the page opens on. The site loads
+  // one index per page (App.svelte), so the project does not change while the page is open.
+  const project = untrack(() => index.project?.name) || "project";
   let work = $state(loadWork(project));
   let stored = $state(true);
   function persist() { stored = saveWork(project, $state.snapshot(work)); }
@@ -43,13 +55,53 @@
   const groupLabel = (g) => g.startsWith("def:") ? "Definitions · " + g.slice(4)
     : "Statements · " + (index.papers.length > 1 ? "Paper " + g.split(":")[1] + " " : "") + "§" + g.split(":")[2];
 
-  const inPaper = $derived(queue ? queue.units.filter((u) => paper === "all" || (u.papers || []).includes(paper)) : []);
+  // The order: the queue's own (priority), the paper's, or the informed order, which also uses
+  // what the auditors' workspaces record as open. The build writes the first two; the informed
+  // order comes from the local server of `machinechecked view`. Its records are prior
+  // interpretations: choosing it asks first, and the exposure is recorded before the order is
+  // shown, so that a reading of a claim it drew on is not taken as blind.
+  const local = $derived(canEdit(index));
+  const offered = (o) => o === "priority" || (o === "document" ? !!queue?.orders?.document : o === "informed" && local);
+  const order = $derived(offered(work.order) ? work.order : "priority");
+  let informed = $state(null);
+  let orderError = $state(null);
+  let asking = $state(false);
+  let fetching = false;
+  async function loadInformed() {
+    if (fetching) return;
+    fetching = true; orderError = null;
+    try {
+      const got = await askReviewOrder("informed");
+      if (recordExposure(work, got.drawn, now())) persist();
+      informed = got;
+    } catch (e) {
+      orderError = String(e?.message || e);
+    } finally { fetching = false; }
+  }
+  $effect(() => { if (queue && order === "informed" && !informed && !orderError) loadInformed(); });
+  function chooseOrder(o) {
+    if (o === order) return;
+    if (o === "informed") { asking = true; return; }
+    asking = false;
+    work.order = o; go(withQuery(location.hash, { claim: null, seen: null })); persist();
+  }
+  async function useInformed() {
+    asking = false;
+    informed = null;
+    await loadInformed();
+    if (!informed) return;
+    work.order = "informed"; go(withQuery(location.hash, { claim: null, seen: null })); persist();
+  }
+  const arranged = $derived(order === "document" ? queue?.orders?.document : order === "informed" ? informed?.units : null);
+  const ordered = $derived(queue ? orderedUnits(queue.units, arranged) : []);
+
+  const inPaper = $derived(ordered.filter((u) => paper === "all" || (u.papers || []).includes(paper)));
   const groups = $derived([...new Set(inPaper.map(groupOf))].sort());
   const selected = $derived(inPaper.filter((u) => group === "all" || groupOf(u) === group));
   const open = $derived(selected.filter((u) => u.state !== "reviewed" && !reportFor(u)));
   const fresh = $derived(open.filter((u) => !work.skipped.includes(u.id)));
   const skippedHere = $derived(open.filter((u) => work.skipped.includes(u.id)));
-  const requested = $derived(queue?.units.find((u) => u.claims.some((c) => c.id === route.target) && !reportFor(u) && !work.skipped.includes(u.id)));
+  const requested = $derived(ordered.find((u) => u.claims.some((c) => c.id === route.target) && !reportFor(u) && !work.skipped.includes(u.id)));
   const current = $derived(requested || fresh[0] || skippedHere[0] || null);
   const savedHere = $derived(selected.filter((u) => reportFor(u)).length);
   const doneBefore = $derived(selected.filter((u) => u.state === "reviewed").length);
@@ -77,13 +129,21 @@
     Promise.all(u.claims.map((c) => loadClaim(index, c.id).catch(() => null)))
       .then((cs) => { if (current === u) claims = cs.filter(Boolean); });
   });
-  const clause = $derived(current?.kind === "spec"
-    ? claims.flatMap((c) => c.clauses || []).find((cl) => cl.spec === current.name) : null);
+  // What the card's comparison may show at this step: the unit's declarations (a statement's
+  // clause, a linked claim's declarations, a proof step's links, or a definition of its own).
+  const inputs = $derived.by(() => {
+    if (!current || !draft) return null;
+    const mode = draft.stage === "read" ? "read" : draft.stage === "compare" ? "compare" : "after";
+    if (current.kind === "def") return comparisonInputs(mode, [], { decls: mode === "read" ? [] : [{ name: current.name, key: current.key }] });
+    const only = current.kind === "spec" ? [current.name] : current.kind === "link" ? current.lean || null : null;
+    return comparisonInputs(mode, claims, { only });
+  });
+  const cardScope = $derived(current ? pinScope(index, "unit:" + current.id, null) : null);
   const host = $derived(claims[0]);
-  const paperOf = (c) => index.papers.find((p) => p.id === c.paper);
 
   // What this reviewer has already seen of unit `u`, in this browser: the units whose Lean
-  // (step 2) or author's review (step 3) they reached, and that show u's Lean or u's review.
+  // (step 2) or author's review (step 3) they reached, and that show u's Lean or u's review,
+  // and the prior interpretations of its claims an informed order drew on.
   function revealedBy(u) {
     const byId = Object.fromEntries(queue.units.map((x) => [x.id, x]));
     const passed = [
@@ -91,6 +151,7 @@
       ...Object.entries(work.drafts).map(([id, d]) => ({ id, lean: d.stage !== "read", author: d.stage === "author" })),
     ];
     const out = work.drafts[u.id]?.reader_exposure ? [{ unit: u.id, what: "Lean" }] : [];
+    out.push(...exposureOf(work, u));
     for (const p of passed) {
       const r = p.id !== u.id && byId[p.id]?.reveals;
       if (!r) continue;
@@ -100,6 +161,14 @@
     return out;
   }
   const seenBefore = $derived(current && draft?.stage === "read" ? revealedBy(current) : []);
+  const seenText = (s) => s.unit === ORDER_SEEN ? "prior interpretations of its claims (through the informed order)"
+    : `the ${s.what} of this unit (in ${s.unit})`;
+  // The reason the card gives: the order's own, unless the informed order's would show prior
+  // interpretations before the verdict of a reading locked without them (`holdsBack`).
+  const withheld = $derived(!!current && !!draft && holdsBack(order, current, draft));
+  const reason = $derived(!current ? "" : withheld
+    ? (queue.units.find((u) => u.id === current.id)?.reason || "") + " · the informed order's reason for it is shown after your verdict"
+    : current.reason);
 
   function lockReading() {
     if ((draft.reading || "").trim().length < 20) return;
@@ -111,12 +180,40 @@
   // A proof step is reviewed as printed, with verdicts of its own.
   const verdicts = $derived(current?.kind === "step" ? STEP_VERDICTS : VERDICTS);
   const groupsOf = $derived(current?.kind === "step" ? STEP_GROUPS : GROUPS);
-  function choose(g) { draft.group = g; draft.verdict = verdicts[g].length === 1 ? verdicts[g][0].value : null; persist(); }
+  function choose(g) {
+    draft.group = g; draft.verdict = verdicts[g].length === 1 ? verdicts[g][0].value : null;
+    // A coverage that does not agree with the new kind of verdict is not kept.
+    if (draft.coverage && !(COVERAGE_FOR[g] || []).includes(draft.coverage)) draft.coverage = null;
+    persist();
+  }
   const detailWanted = $derived(draft?.verdict ? needsDetail(draft.verdict) : null);
+  // The reviewer's coverage, recorded with the verdict, for a statement or a definition (a proof
+  // step's review records whether the step holds).
+  const coverageChoices = $derived(COVERAGE_CHOICES.filter((c) => (COVERAGE_FOR[draft?.group] || []).includes(c.value)));
+  const coverageProblems = $derived(current && current.kind !== "step" && draft?.stage === "compare"
+    ? reportCorrespondence(current, draft.verdict, draftCoverage(draft)).problems : []);
   const canDecide = $derived(!!draft?.verdict && (!detailWanted || (draft.detail || "").trim().length > 0)
-                             && (draft.comparison || "").trim().length > 0);
+                             && (draft.comparison || "").trim().length > 0 && !coverageProblems.length);
+  function chooseBasis() {
+    if (draft.basis === "checked_bridge" && !draft.bridge) draft.bridge = { theorem: (current.lean || [])[0] || "", target: "" };
+    persist();
+  }
+  // The version of a bridge's target in this build, when a claim's links record that bridge and
+  // the build checked it: the report pins it, so a later change to the target is seen.
+  function targetPin(b) {
+    for (const c of claims) {
+      const own = c?.correspondence?.bridge;
+      if (own && own.theorem === b.theorem && own.target === b.target) return own.current?.target_fingerprint || null;
+    }
+    return null;
+  }
   function decide() {
     if (!canDecide) return;
+    if (current.kind !== "step") {
+      const given = draftCoverage(draft);
+      if (given.bridge) given.bridge = { ...given.bridge, target_fingerprint: targetPin(given.bridge) };
+      draft.correspondence = reportCorrespondence(current, draft.verdict, given).correspondence;
+    }
     draft.decided_at = now(); draft.stage = "author"; draft.author_shown_at = now(); persist();
   }
   function saveReport() {
@@ -141,6 +238,7 @@
       source_sha256: r.pins.source_sha256,
       comparison: r.comparison.text, witness: r.comparison.witness, decided_at: r.comparison.decided_at,
       group: r.verdict.group, verdict: r.verdict.value, detail: r.verdict.detail,
+      correspondence: r.correspondence ?? null,
       author_shown_at: r.author_review.shown_at, disagreements: r.author_review.disagreements };
     work.exported = Math.min(work.exported || 0, work.reports.length);
     lastIssue = null;
@@ -190,6 +288,15 @@
           {#each groups as g}<option value={g}>{groupLabel(g)}</option>{/each}
         </select>
       </label>
+      <label title={queue.order?.note || ""}>Order
+        <select aria-label="Order" value={order} onchange={(e) => { chooseOrder(e.currentTarget.value); e.currentTarget.value = order; }}>
+          {#each ORDERS as o}
+            <option value={o.value} disabled={!offered(o.value)} title={offered(o.value) ? o.hint
+              : o.value === "informed" ? "Offered by machinechecked view, which reads the auditors' workspaces"
+              : "This build's queue has no paper order; build again to add it"}>{o.label}</option>
+          {/each}
+        </select>
+      </label>
       <span class="progress">
         {savedHere} saved · {skippedHere.length} skipped · {fresh.length} to review{doneBefore ? ` · ${doneBefore} already independently reviewed` : ""}
       </span>
@@ -199,6 +306,27 @@
     </div>
     {#if unexported > 0 || !stored}
       <p class="warn" role="status">{!stored ? "Browser storage unavailable. Export after every report." : `${unexported} report(s) saved in this browser. Export to keep a copy.`}</p>
+    {/if}
+    {#if asking}
+      <section class="card ask" aria-labelledby="informed-title">
+        <p id="informed-title"><strong>The informed order</strong></p>
+        <p class="small">It also uses what the auditors' workspaces record as open for each claim: open questions,
+          differences and hints. These are prior interpretations, which a review otherwise shows after its verdict.
+          Your readings of the claims it draws on are then recorded as not blind, and their reports are promoted
+          only with <code>--allow-revealed</code>.</p>
+        <div class="row">
+          <button class="btn" onclick={useInformed}>Use the informed order</button>
+          <button class="btn ghost" onclick={() => (asking = false)}>Keep the {order === "document" ? "paper" : "priority"} order</button>
+        </div>
+      </section>
+    {/if}
+    {#if orderError}
+      <p class="warn" role="alert">The informed order could not be loaded: {orderError}{order === "informed" ? " The queue's own order is shown." : ""}
+        {#if order === "informed"}<button class="btn ghost" onclick={() => (orderError = null)}>Try again</button>{/if}</p>
+    {:else if order === "informed" && informed}
+      <p class="faint small" role="status">{informed.drawn.length
+        ? `The informed order draws on the workspaces' records of ${informed.drawn.length} claim(s); your readings of them are recorded as not blind.`
+        : "The auditors' workspaces record nothing open for these units."}</p>
     {/if}
     {#if queue.needs_statement.length && (paper === "all" || queue.needs_statement.some((c) => c.paper === paper))}
       <p class="faint small">{queue.needs_statement.filter((c) => paper === "all" || c.paper === paper).length} claim(s) await a formal statement before review.</p>
@@ -214,7 +342,9 @@
       </section>
     {/if}
 
-    {#if !current}
+    {#if order === "informed" && !informed && !orderError}
+      <p class="muted">Loading the informed order…</p>
+    {:else if !current}
       <section class="card"><p>Review complete for this selection.</p></section>
     {:else if !draft}
       <p class="muted">Loading…</p>
@@ -225,7 +355,7 @@
           <li class:on={draft.stage === "compare"}>2. Compare</li>
           <li class:on={draft.stage === "author"}>3. Author's review</li>
         </ol>
-        <p class="why faint">{current.kind === "def" ? "Definition" : current.kind === "link" ? "Linked claim" : current.kind === "step" ? "Proof step" : "Statement"} · {current.reason}{work.skipped.includes(current.id) ? " · skipped before" : ""}</p>
+        <p class="why faint">{current.kind === "def" ? "Definition" : current.kind === "link" ? "Linked claim" : current.kind === "step" ? "Proof step" : "Statement"} · {reason}{work.skipped.includes(current.id) ? " · skipped before" : ""}</p>
 
         {#if current.kind === "def"}
           <h2>A definition used by {current.claims.length} claim(s)</h2>
@@ -233,31 +363,22 @@
             {#each current.claims as c, i}{i ? ", " : ""}<a href={href(index.release, "read", c.id.split(":")[0], c.id)} target="_blank" rel="noopener">{c.id}</a>{/each}
           </p>
         {:else}
-          {#snippet printed(c)}
-            <h2>{c.number}{#if c.heading}<span class="ht">&nbsp;— <TexInline text={c.heading} /></span>{/if}</h2>
-            {#if !c.heading && c.title}<p class="desc"><TexInline text={c.title} /></p>{/if}
-            <PaperStatement claim={c} paper={paperOf(c)} evidence={false} />
-            {#if c.step}
-              <p class="small">A step of the proof of {c.step.parent?.number || c.step.parent?.id || "its result"}. Is it valid as printed? Judge the step on its own.</p>
-              {#if c.context_tex}<StepContext text={c.context_tex} cut={c.context_cut} open />{/if}
-            {/if}
-            <p class="small"><a href={href(index.release, "read", c.paper, c.id)} target="_blank" rel="noopener" title="Opens the paper and Lean reader">Open in the paper ↗</a></p>
-          {/snippet}
-          {#if claims[0]}{@render printed(claims[0])}{/if}
+          {#if claims[0]?.step}<p class="small">A step of the proof of {claims[0].step.parent?.number || claims[0].step.parent?.id || "its result"}. Is it valid as printed? Judge the step on its own.</p>{/if}
           {#if claims.length < current.claims.length}
             <p class="warn">{current.claims.length - claims.length} of this unit's {current.claims.length} claims could not be loaded from this build.</p>
           {/if}
-          {#if claims.length > 1}
-            <details class="also"><summary>Also stated in {claims.length - 1} other place(s)</summary>
-              {#each claims.slice(1) as c (c.id)}{@render printed(c)}{/each}
-            </details>
-          {/if}
+        {/if}
+        {#if inputs && (inputs.passages.length || inputs.formal || inputs.definitions.length)}
+          <Comparison {index} {inputs} scope={cardScope} headings />
+        {/if}
+        {#if current.kind !== "def"}
+          <p class="small">{#each claims as c, i (c.id)}{i ? " · " : ""}<a href={href(index.release, "read", c.paper, c.id)} target="_blank" rel="noopener" title="Opens the paper and Lean reader">Open {c.number || c.id} in the paper ↗</a>{/each}</p>
         {/if}
 
         <h3 id="reading-label">Your reading{draft.stage !== "read" ? " (locked " + draft.locked_at + ")" : ""}</h3>
         {#if draft.stage === "read"}
           {#if seenBefore.length}
-            <p class="warn">You have already seen {seenBefore.map((s) => `the ${s.what} of this unit (in ${s.unit})`).join(" and ")}. The report records this prior exposure.</p>
+            <p class="warn">You have already seen {seenBefore.map(seenText).join(" and ")}. The report records this prior exposure.</p>
           {/if}
           <p class="faint small">{current.kind === "def"
             ? "What is this object in the paper? Its setting, what it is built from, and anything left ambiguous."
@@ -271,28 +392,7 @@
           </div>
         {:else}
           <pre class="locked">{draft.reading}</pre>
-
-          <h3>In Lean{#if current.kind !== "step"} <code class="small">{current.name}</code>{/if}</h3>
-          {#if current.kind === "def"}
-            <Decl name={current.name} key={current.key} open hideReview />
-          {:else if current.kind === "spec" && clause?.statement}
-            <Statement st={clause.statement} spec={current.name} />
-            {#if clause.statement.closure?.length}
-              <details class="closure"><summary>Definitions it uses ({clause.statement.closure.length})</summary>
-                {#each clause.statement.closure as n}<Decl name={n} key={host?.decls?.[n]} hideReview />{/each}
-              </details>
-            {/if}
-            {#if current.witness}<p class="small">Witness: <code>{current.witness}</code></p>{/if}
-          {:else if current.kind === "step"}
-            {#if host}<ProofStep claim={host} {index} part="lean" />{:else}<p class="faint">Loading…</p>{/if}
-          {:else if current.kind === "link"}
-            {#each host?.links || [] as l}
-              <p class="small"><code>{l.name}</code></p>
-              {#if l.statement}<Statement st={l.statement} />{/if}
-            {/each}
-          {:else}
-            <p class="faint">Loading…</p>
-          {/if}
+          {#if current.kind !== "def" && !host}<p class="faint">Loading…</p>{/if}
 
           {#if draft.stage === "compare"}
             <h3 id="comparison-label">Comparison</h3>
@@ -328,6 +428,43 @@
                 <label for="verdict-detail">{detailWanted}</label>
                 <textarea id="verdict-detail" rows="3" bind:value={draft.detail} oninput={persist} placeholder={detailWanted}></textarea>
               {/if}
+              {#if current.kind !== "step"}
+                <div class="cover" role="group" aria-label="Coverage">
+                  <label>Coverage of the claim (optional)
+                    <select aria-label="Coverage of the claim" bind:value={draft.coverage} onchange={persist}>
+                      <option value={null}>Not recorded</option>
+                      {#each coverageChoices as c}<option value={c.value}>{c.label}</option>{/each}
+                    </select>
+                  </label>
+                  {#if draft.coverage}
+                    <label>How it is supported (optional)
+                      <select aria-label="How it is supported" bind:value={draft.basis} onchange={chooseBasis}>
+                        <option value={null}>Not recorded</option>
+                        <!-- A checked bridge is one of the claim's linked theorems. -->
+                        {#each BASIS_CHOICES.filter((b) => b.value !== "checked_bridge" || current.lean?.length) as b}<option value={b.value}>{b.label}</option>{/each}
+                      </select>
+                    </label>
+                  {/if}
+                  {#if draft.coverage && draft.basis === "reviewed_composition"}
+                    <label for="cover-argument">Your argument: how these results together give the claim</label>
+                    <textarea id="cover-argument" rows="3" bind:value={draft.argument} oninput={persist}></textarea>
+                    <p class="faint small">Lean has not checked this combination.</p>
+                  {/if}
+                  {#if draft.coverage && draft.basis === "checked_bridge" && draft.bridge}
+                    <label>Bridge theorem
+                      <select aria-label="Bridge theorem" bind:value={draft.bridge.theorem} onchange={persist}>
+                        {#each current.lean || [] as n}<option value={n}>{n}</option>{/each}
+                      </select>
+                    </label>
+                    <label>Its target, a proposition stated as a definition <input aria-label="Bridge target" bind:value={draft.bridge.target} oninput={persist} /></label>
+                  {/if}
+                  {#if draft.coverage === "unresolved"}
+                    <label for="cover-decide">What would decide it (optional)</label>
+                    <textarea id="cover-decide" rows="2" bind:value={draft.would_decide} oninput={persist}></textarea>
+                  {/if}
+                  {#each coverageProblems as p}<p class="warn">{p.charAt(0).toUpperCase() + p.slice(1)}.</p>{/each}
+                </div>
+              {/if}
             {/if}
             <div class="row">
               <button class="btn" disabled={!canDecide} onclick={decide}>Record verdict and show the author's review</button>
@@ -335,6 +472,7 @@
             </div>
           {:else}
             <p class="small"><strong>Your verdict:</strong> {draft.verdict}{draft.detail ? " — " + draft.detail : ""} <span class="faint">(recorded {draft.decided_at})</span></p>
+            {#if coverageWords(draft.correspondence)}<p class="small"><strong>Your coverage:</strong> {coverageWords(draft.correspondence)}</p>{/if}
             <h3>The author's review</h3>
             {#each current.author_review as r}
               <p class="lbl">{r.by}{r.file ? " · " + r.file + (r.line ? ":" + r.line : "") : ""}</p>
@@ -356,7 +494,7 @@
 </main>
 
 <style>
-  .review { max-width: 920px; margin: 0 auto; padding: 16px 16px 80px; }
+  .review { max-width: 1320px; margin: 0 auto; padding: 16px 16px 80px; }
   .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px 20px; margin: 12px 0; }
   .setup h1 { margin-top: 0; }
   fieldset { border: 0; padding: 0; margin: 12px 0; display: flex; gap: 16px; }
@@ -364,7 +502,9 @@
   input:not([type]), select, textarea { font: inherit; font-size: 16px; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; }
   textarea { width: 100%; box-sizing: border-box; margin: 6px 0; font-family: var(--sans); }
   .bar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; font-size: 14px; }
-  .bar label { display: flex; gap: 6px; align-items: center; }
+  .bar label { display: flex; gap: 6px; align-items: center; min-width: 0; max-width: 100%; }
+  /* A long paper title narrows its select instead of widening the page. */
+  .bar select { min-width: 0; max-width: 100%; }
   .progress { color: var(--muted); }
   .who { margin-left: auto; font-family: var(--mono); font-size: 12px; }
   .warn { background: var(--surface-2); border-left: 3px solid var(--st-open); padding: 6px 10px; font-size: 13px; }
@@ -373,8 +513,6 @@
   .steps li.on { background: var(--accent-soft); color: var(--text); }
   .why { font-size: 13px; margin: 4px 0 8px; }
   h2 { font-size: 15px; font-weight: 600; margin: 14px 0 6px; }
-  .ht { font-weight: 400; color: var(--muted); }
-  .desc { margin: -2px 0 8px; font-size: 14px; color: var(--muted); }
   h3 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin: 18px 0 6px; }
   .locked, .author, .issue pre { white-space: pre-wrap; font: 14px/1.5 var(--sans); background: var(--surface-2); padding: 8px 10px; border-radius: 6px; margin: 0; }
   .row { display: flex; gap: 8px; margin-top: 8px; }
@@ -385,10 +523,11 @@
   .choice { flex: 1; min-width: 160px; padding: 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface-2); cursor: pointer; font-size: 14px; color: var(--text); }
   .choice.on { border-color: var(--accent); background: var(--accent-soft); }
   .verdicts { display: flex; flex-direction: column; gap: 4px; font-size: 14px; margin: 6px 0; }
+  .cover { display: flex; flex-direction: column; gap: 6px; font-size: 14px; margin: 10px 0 4px; }
+  .cover > label:not([for]) { display: flex; flex-direction: column; gap: 4px; }
+  .cover select, .cover input { max-width: 100%; }
   .lbl { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--faint); margin: 8px 0 2px; }
   .small { font-size: 13px; }
-  .also summary { cursor: pointer; font-size: 13px; color: var(--accent); margin: 10px 0; }
-  .closure summary { cursor: pointer; font-size: 13px; color: var(--accent); margin: 8px 0; }
   .bad { color: var(--st-malformed); }
   @media (max-width: 640px) { .who { margin-left: 0; } }
   .checklist { list-style: none; padding: 0; margin: 6px 0; }

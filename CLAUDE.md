@@ -65,7 +65,7 @@ break stored evidence and exported reports for no user-visible gain.
 | Path | What |
 |---|---|
 | `engine/python/prooflens/` | the engine: `cli.py` (commands), `simple.py` (zero configuration), `pipeline.py` (full assessment), `assess.py` (statuses), `manifest.py` (site data), `tex.py` + `data/prooflens.sty` (LaTeX anchors), `paper.py` (the site's paper pages), `cache.py` (the Lean build cache), `replay.py` (Comparator replay records), `data/ProofLensProbe.lean` (the Lean probe), `deps.py` (`inspect`: statement and proof dependencies), `review_queue.py`, `review_sources.py` (the paper text a review marker read), `promote.py`, `bundle.py`, `export.py` |
-| `engine/python/prooflens/web/` | the **built** reader, committed (users need no Node) |
+| `engine/python/prooflens/web/` | the **built** reader, committed on main by CI (users need no Node) |
 | `web/src/` | the reader's sources (Svelte 5, Vite, pdf.js 4.10, KaTeX) |
 | `tests/` | `contracts/`, `mutations/`, `security/`, `simple/`; `conftest.py` copies the toy example per test |
 | `examples/` | `toy-paper` (full assessment, the main fixture), `plain-paper` (zero configuration) |
@@ -78,7 +78,7 @@ pip install -e '.[test]'
 pytest -q tests/contracts/test_display.py   # the test files a change touches; most need elan + TeX Live
 pytest -q                                   # the whole suite: about 55 min on CI's runners
 (cd examples/plain-paper && lake build)     # the zero-configuration tests need it built
-(cd web && npm ci && npm run build)         # after any change under web/src: commit the result
+(cd web && npm ci && npm run build)         # after any change under web/src, to test it; never commit the result
 (cd web && node tests/reader.test.mjs)      # the reader in a browser (CHROMIUM=/opt/pw-browsers/chromium in cloud sessions)
 ```
 
@@ -86,8 +86,12 @@ pytest -q                                   # the whole suite: about 55 min on C
   `docs/DEVELOPMENT.md`), each about 15 minutes of tests and 18 with its setup. Locally, run the
   test files a change touches and the tests of the modules they import or that import them; CI
   is the full check.
-- After changing `web/src`, rebuild and commit `engine/python/prooflens/web/`; CI fails if the
-  committed build differs from the sources. The build is deterministic.
+- CI builds the reader from `web/src` after each push to main and commits
+  `engine/python/prooflens/web/` when it differs; every CI job that uses the reader builds it from
+  the pull request's sources first. A pull request leaves `engine/python/prooflens/web/` as main
+  has it, and CI fails one that changes it. After rebuilding it locally to test, restore it before
+  committing: `git checkout HEAD -- engine/python/prooflens/web && git clean -fdq
+  engine/python/prooflens/web`. The build is deterministic.
 - After changing `data/prooflens.sty` or `tex.py`, the zero-configuration TeX cache is keyed on
   them, so it rebuilds by itself.
 - To see the reader: `prooflens build` in an example, then serve `.prooflens/site` or open the
@@ -102,10 +106,16 @@ emits a `probe-error` record for that request instead of failing the whole probe
 
 ## Regression against a real formalisation
 
-A downstream private project runs this engine on its papers and compares every status with its
-own acceptance checker (0 differences is the bar). Changes to `assess.py`, `manifest.py`,
-`tex.py`, the probe or the review parsers must keep it at 0; that check is run from the
-downstream project, and its results are reported without its content.
+CI's `Paper A statuses` check (`.github/workflows/paper-a.yml`) builds the public Paper A with
+the pull request's engine and compares every claim's status with Paper A's own acceptance
+checker; any difference fails it (0 differences is the bar). It runs on changes to the probe,
+`assess.py`, `status.py`, `manifest.py`, `tex.py`, `source_regions.py` or the review parsers, so
+green CI covers the regression. A change that leaves the probe alone reuses the stored Lean
+results and takes minutes. `docs/DEVELOPMENT.md` says how the check works and how to bump Paper A.
+
+A downstream private project also runs this engine on its papers and compares every status with
+its own acceptance checker. That check is run by hand from the downstream project from time to
+time, and its results are reported without its content.
 
 ## Style
 

@@ -34,9 +34,10 @@ def test_a_link_is_shown_as_its_authors_and_changes_no_status(toy, monkeypatch, 
     _, ch = chunk(cfg, "T:thm:even-add")
     assert ch["symbols"] == [
         {"symbol": {"tex": "a", "occurrence": "all"}, "lean": {"decl": SPEC, "var": 0},
-         "by": WHO, "stale": False},
+         "by": WHO, "stale": False, "stale_because": []},
         {"symbol": {"tex": "b", "occurrence": "all"},
-         "lean": {"decl": SPEC, "binder": 1, "path": "type"}, "by": WHO, "stale": False}]
+         "lean": {"decl": SPEC, "binder": 1, "path": "type"}, "by": WHO, "stale": False,
+         "stale_because": []}]
     # Both are made on the passage the reader typesets, and pinned to its context.
     data = json.loads((toy / "symbols.json").read_text())
     assert [ln["pins"]["excerpt"] for ln in data["links"]] == [ch["excerpt"]["fingerprint"]] * 2
@@ -44,7 +45,8 @@ def test_a_link_is_shown_as_its_authors_and_changes_no_status(toy, monkeypatch, 
     data["links"][0]["pins"]["statement"] = "pl-fp-v1:" + "0" * 64
     (toy / "symbols.json").write_text(json.dumps(data))
     _, _, cfg = build(toy, reuse_lean=True)
-    assert [s["stale"] for s in chunk(cfg, "T:thm:even-add")[1]["symbols"]] == [True, False]
+    assert [(s["stale"], s["stale_because"]) for s in chunk(cfg, "T:thm:even-add")[1]["symbols"]] \
+        == [(True, ["statement"]), (False, [])]
 
 
 @needs_lean
@@ -141,3 +143,110 @@ def test_a_link_on_a_typeset_passage_goes_stale_with_its_context():
     assert stale(on_excerpt, None) == [True]
     assert stale(link(), {**excerpt, "fingerprint": "tex-excerpt-v1:two"}) == [False]
     assert stale(link(), excerpt, tex="Changed $a$.") == [True]
+
+
+def test_a_link_names_one_object_by_its_identity_and_says_why_it_is_stale():
+    """#73: a property of an object's type (prefixed by the object's identity and the field), one
+    occurrence of a variable and an equation of a definition each have an identity a link or an
+    alignment can name; a variable is named by its number and pinned to its binder's identity;
+    a link that no longer holds says why, and one made by place and number is never drawn."""
+    from prooflens.manifest import symbol_links
+    from prooflens.symbols import IDS, target_text, term_by_id
+    from prooflens.util import sha256_text
+    text = "For solutions $s$ and $t$."
+
+    def start(obj, who, var):
+        return {"field": "start", "kind": "proposition", "type": {
+            "id": f"{obj}#start:/", "text": f"{who}.path 0 = d",
+            "segments": [{"t": who, "var": var, "at": f"{obj}#start:/0/1/1"}, {"t": ".path 0 = d"}],
+            "terms": [{"id": f"{obj}#start:/", "from": 0, "to": 2}]}}
+    spec = {"fingerprint": "fp", "binders": [
+        {"name": "d", "role": "forall", "id": "/", "type": {"text": "Nat"}},
+        {"name": "s", "role": "forall", "id": "/1", "type": {"text": "Solution d"},
+         "properties": [start("/1", "s", 1)]},
+        {"name": "t", "role": "forall", "id": "/1/1", "type": {"text": "Solution d"},
+         "properties": [start("/1/1", "t", 2)]}],
+        "conclusion": {"id": "/1/1/1", "text": "s = t",
+                       "segments": [{"t": "s", "var": 1, "at": "/1/1/1/0/1"}, {"t": " = "},
+                                    {"t": "t", "var": 2, "at": "/1/1/1/1"}],
+                       "terms": [{"id": "/1/1/1", "from": 0, "to": 3}]}}
+    # The same field of two objects: each identity names its own object's statement.
+    assert term_by_id(spec, "/1#start:/") == "s.path 0 = d"
+    assert term_by_id(spec, "/1/1#start:/") == "t.path 0 = d"
+    # One occurrence of a variable, apart from the variable.
+    assert term_by_id(spec, "/1/1/1/1") == "t" and term_by_id(spec, "/1/1/1/9") is None
+    # An equation of a linked definition, named by its theorem.
+    eqn = {"text": "F 0 = 0", "segments": [{"t": "F 0"}, {"t": " = 0"}],
+           "terms": [{"id": "Ex.F.eq_1:/", "from": 0, "to": 2}]}
+    assert term_by_id({"definition": {"equations": [{"statement": eqn}]}}, "Ex.F.eq_1:/") == "F 0 = 0"
+
+    lean = {"specs": {SPEC: spec}}
+
+    def why(lean_end, **pins):
+        pins = {"statement": "fp", "source": sha256_text(text), **pins}
+        display = {"symbols": [{"claim": "P:x", "symbol": {"tex": "s"}, "lean": {"decl": SPEC, **lean_end},
+                                "by": WHO, "pins": pins}]}
+        [ln] = symbol_links(display, "P:x", text, lean)
+        assert ln["stale"] == bool(ln["stale_because"])
+        return ln["stale_because"]
+    assert why({"at": "/1#start:/"}, target="s.path 0 = d", ids=IDS) == []
+    assert why({"at": "/1#start:/"}, target="t.path 0 = d") == ["target"]
+    assert why({"at": "/1/1/1/1"}) == ["unpinned"]
+    assert why({"at": "/7"}, target="s") == ["missing"]
+    assert why({"term": 0, "in": "c"}, target=target_text(spec, {"at": "/1/1/1"})) == ["positional"]
+    assert why({"var": 2}, target="t", binder_id="/1/1") == []
+    assert why({"var": 2}, target="t", binder_id="/1") == ["target"], "another variable named t"
+    assert why({"var": 1}, target="s", ids="older@0") == ["ids"]
+    assert why({"var": 1}, target="s", statement="fp-other") == ["statement"]
+
+
+@needs_lean
+@needs_tex
+def test_a_definitions_symbol_is_linked_apart_for_each_object_it_stands_for(toy, monkeypatch):
+    """#99: Definition 1.1 only defines, so its symbols link into its definitions. Its `n` is
+    printed five times: twice for the number defined even, three times in the triangular
+    numbers. Each object's occurrences are linked apart and named; they never share one."""
+    from prooflens.symbols import remove
+
+    before, body, cfg = build(toy)
+    decls = body["lean"]["decls"]
+
+    def terms(name):
+        for pp in (decls[name].get("body"), *(q.get("statement") for q in
+                                              decls[name].get("equations") or [])):
+            for t in (pp or {}).get("terms") or []:
+                yield t["id"], "".join(s["t"] for s in pp["segments"][t["from"]:t["to"]])
+    even = next(i for i, text in terms("Toy.IsEven") if text == "n = 2 * k")
+    # The smallest sub-term of an equation of the triangular numbers that mentions n.
+    tri = min((x for x in terms("Toy.triangle") if "n" in x[1]), key=lambda x: len(x[1]))[0]
+    add(cfg, "T:def:even", "n", "Toy.IsEven", WHO, at=even, occurrence=[2, 1],
+        paper_object="n, the number defined")
+    monkeypatch.chdir(toy)
+    cli.main(["symbol", "add", "T:def:even", "n", "Toy.triangle", "--at", tri, "--occurrence",
+              "3", "--occurrence", "4", "--occurrence", "5", "--object", "n, the index of T",
+              "--as", WHO])
+    for kw, why in [
+        ({"var": "n", "occurrence": [5, 1], "paper_object": "another n"}, "linked already at"),
+        ({"var": "n"}, "linked already at"),                              # every occurrence
+        ({"var": "n", "occurrence": [6], "paper_object": "x"}, "occurs 5 time"),
+        ({"var": "n", "occurrence": [1]}, "name it"),
+    ]:
+        with pytest.raises(SymbolError, match=why):
+            add(cfg, "T:def:even", "n", "Toy.IsEven", WHO, **kw)
+    with pytest.raises(SymbolError, match="not a statement of T:def:even, nor one of its definitions"):
+        add(cfg, "T:def:even", "n", SPEC, WHO, var="a")
+    # The same object's link is replaced, not doubled.
+    add(cfg, "T:def:even", "n", "Toy.IsEven", WHO, at=even, occurrence=[1, 2],
+        paper_object="n, the number defined")
+    after, _, cfg = build(toy, reuse_lean=True)
+    assert {c["id"]: c["status"] for c in after["claims"]} == \
+        {c["id"]: c["status"] for c in before["claims"]}
+    links = chunk(cfg, "T:def:even")[1]["symbols"]
+    assert [(ln["symbol"], ln["lean"], ln["stale"]) for ln in links] == [
+        ({"tex": "n", "occurrence": [3, 4, 5], "of": 5, "object": "n, the index of T"},
+         {"decl": "Toy.triangle", "at": tri}, False),
+        ({"tex": "n", "occurrence": [1, 2], "of": 5, "object": "n, the number defined"},
+         {"decl": "Toy.IsEven", "at": even}, False)]
+    assert remove(cfg, "T:def:even", "n", "n, the index of T") == 1
+    assert [ln["symbol"]["object"] for ln in json.loads((toy / "symbols.json").read_text())["links"]] \
+        == ["n, the number defined"]

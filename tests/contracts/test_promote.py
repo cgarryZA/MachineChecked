@@ -56,6 +56,8 @@ def test_promotion_end_to_end(toy, tmp_path):
     names = ["Toy.PaperSpec.thm_triangle", "Toy.triangle", "Toy.triangle._f",
              "Toy.triangle.match_1"]
     good = [report(index, units[n]) for n in names]
+    # A report may record the reviewer's coverage; the marker is the same with it or without.
+    good[0]["correspondence"] = {"coverage": "full", "basis": "direct"}
     f = tmp_path / "reviews.json"
     f.write_text(json.dumps({"schema": "prooflens/review-reports@1", "reports": good}))
 
@@ -79,10 +81,23 @@ def test_promotion_end_to_end(toy, tmp_path):
                                                "source_sha256": {"T:def:even": "0" * 64}}},
         "no text": {**report(index, u), "pins": {**report(index, u)["pins"],
                                                   "source_sha256": None}},
+        # An unresolved coverage is an open question, whatever the verdict says (#138).
+        "open question": {**report(index, u, verdict="cannot determine", detail="Is T_0 = 0?"),
+                          "correspondence": {"coverage": "unresolved"}},
+        "unresolved": {**report(index, u), "correspondence": {"coverage": "unresolved"}},
+        "coverage": {**report(index, u), "correspondence": {"coverage": "verified"}},
     }
     for k, r in bad.items():
         (_, _, why), = pr.plan(cfg, [r])
         assert why, k
+    (_, _, why), = pr.plan(cfg, [bad["open question"]])
+    assert why == ["verdict 'cannot determine' is not one that is recorded as a review: it "
+                   "leaves an open question, and no defect"]
+    (_, _, why), = pr.plan(cfg, [bad["unresolved"]])
+    assert any("unresolved: an open question records no review, and no defect" in w for w in why)
+    (_, _, why), = pr.plan(cfg, [bad["coverage"]])
+    assert why == ["the report's coverage: coverage 'verified' is not one of: full, partial, "
+                   "changed, related, unresolved"]
     (_, _, why), = pr.plan(cfg, [bad["text"]])
     assert why == ["the paper's text changed since the review (source digests differ)"]
     (_, _, why), = pr.plan(cfg, [bad["no text"]])
@@ -116,6 +131,10 @@ def test_promotion_end_to_end(toy, tmp_path):
     # The report is kept beside the markers, in full and as the protocol's text block.
     reports = list((toy / "reviews/reports").glob("*.json"))
     assert len(reports) == 4 and len(list((toy / "reviews/reports").glob("*.md"))) == 4
+    blocks = [p.read_text() for p in (toy / "reviews/reports").glob("*.md")]
+    assert sum("Coverage (recorded with the verdict): every clause, in one Lean statement" in b
+               for b in blocks) == 1
+    assert sum("Coverage" in b for b in blocks) == 1
 
     res = reassess(cfg, log=lambda *a: None)
     assert status(res["index"], "T:thm:triangle") == "formal: accepted"

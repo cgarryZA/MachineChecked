@@ -35,6 +35,56 @@ def _generated(rest: str) -> bool:
                for c in rest.split("."))
 
 
+def script_owners(records) -> dict[str, str]:
+    """The declaration each tactic-default script among the declaration records `records`
+    belongs to. A binder or a structure field with a tactic default (`(h : 0 < n := by omega)`)
+    makes Lean store the tactic as a declaration of its own, which the probe marks `auto_param`,
+    and the type of the declaration that has the default names it (`autoParam (0 < n) …`): a
+    definition's or a theorem's, or a structure's constructor's. Its name does not always say
+    whose it is: a binder's script is `f._auto_1` on Lean 4.32 and `_auto._@.M._hyg.N` on Lean
+    4.24. So the owner is the declaration whose printed type refers to the script (the first by
+    name, of several). A script no printed type refers to has no owner here."""
+    scripts, typed = set(), []
+    for r in records:
+        n = r.get("name")
+        if not n:
+            continue
+        if r.get("auto_param") is True:
+            scripts.add(n)
+            continue
+        sig = r.get("signature")
+        refs = {s["ref"] for s in (sig.get("segments") if isinstance(sig, dict) else None) or []
+                if isinstance(s, dict) and isinstance(s.get("ref"), str)}
+        if refs:
+            typed.append((n, refs))
+    out: dict[str, str] = {}
+    for n, refs in sorted(typed, key=lambda x: x[0]):
+        for s in refs & scripts:
+            out.setdefault(s, n)
+    return out
+
+
+def _expansion_refs(obj) -> list[dict]:
+    """The expansions a printed statement or definition refers to (`{at, name, key}`, as the
+    site data stores them, `manifest.split_expansions`), each once, in the order found."""
+    out, seen, stack = [], set(), [obj]
+    while stack:
+        o = stack.pop(0)
+        if isinstance(o, list):
+            stack[:0] = o
+        elif isinstance(o, dict):
+            refs = o.get("expansions")
+            for x in refs if isinstance(refs, list) else []:
+                if isinstance(x, dict) and x.get("key"):
+                    ref = {k: x.get(k) for k in ("at", "name", "key")}
+                    k = (ref["at"], ref["name"], ref["key"])
+                    if k not in seen:
+                        seen.add(k)
+                        out.append(ref)
+            stack[:0] = [v for k, v in o.items() if k != "expansions"]
+    return out
+
+
 def _norm(s: str) -> str:
     return re.sub(r"\s+", " ", str(s or "")).strip().lower()
 
@@ -54,6 +104,9 @@ class Snapshot:
         self._chunks: dict[str, dict | None] = {}
         self._fps: dict[str, str] | None = None
         self._digests: dict[str, str] | None = None
+        self._scripts: dict[str, str] | None = None
+        self._statements: dict[str, dict] | None = None
+        self._store: dict[str, dict] | None = None
 
     # -- identity --------------------------------------------------------------------------
 
@@ -180,22 +233,131 @@ class Snapshot:
                 out.append(rec)
         return out
 
+    def script_owners(self) -> dict[str, str]:
+        """The owner of each tactic-default script of the shared declaration store
+        (`script_owners`)."""
+        if self._scripts is None:
+            def records():
+                for p in sorted((self.data / "decls").glob("*.json")):
+                    try:
+                        yield json.loads(p.read_text(encoding="utf-8"))
+                    except (OSError, ValueError):
+                        continue
+            self._scripts = script_owners(records())
+        return self._scripts
+
     def digests(self) -> dict[str, str]:
         """A digest per declaration of its fingerprint and those of the constants Lean generated
         for it (`N._f`, `N.match_1`, `N.eq_1`, …), which hold what a definition by recursion or
         by cases says: a change to its equations changes the digest even when the
-        declaration's own fingerprint does not."""
+        declaration's own fingerprint does not. The tactic script of a tactic default in its
+        type is one of them whatever its name, by the records (`script_owners`)."""
         if self._digests is not None:
             return self._digests
         own = {**self.store_fingerprints(), **self.fingerprints()}
+        scripts = self.script_owners()
         names = sorted(own)
         out = {}
         for n in names:
-            parts = [own[m] for m in names if m.startswith(n + ".") and _generated(m[len(n) + 1:])]
+            parts = [own[m] for m in names
+                     if (m.startswith(n + ".") and _generated(m[len(n) + 1:]))
+                     or scripts.get(m) == n]
             out[n] = own[n] if not parts else "ws-digest:" + hashlib.sha256(
                 "\n".join([own[n], *parts]).encode()).hexdigest()
         self._digests = out
         return out
+
+    def statement_records(self) -> dict[str, dict]:
+        """The statement record the build shows for each declaration, by name, from the claims'
+        links, suggestions, proof steps' links and formal routes, and the clauses' propositions:
+        `closure` (the project constants its statement uses, with proofs erased, and for a
+        definition those of its value; absent when the record gives none) and `expansions`, the
+        applications of definitions it prints as the build expanded them (`{at, name, key}`, the
+        key naming the stored expansion, which changes with the definition)."""
+        if self._statements is not None:
+            return self._statements
+        out: dict[str, dict] = {}
+
+        def add(name, st, definition=None):
+            if not name or not isinstance(st, dict) or name in out:
+                return
+            rec = {"expansions": _expansion_refs([st, definition])}
+            if isinstance(st.get("closure"), list):
+                rec["closure"] = [n for n in st["closure"] if isinstance(n, str)]
+            out[name] = rec
+
+        for c in self.claims:
+            ch = self.chunk(c["id"]) or {}
+            step = ch.get("step") or {}
+            for l in ((ch.get("links") or []) + (ch.get("suggestions") or [])
+                      + (step.get("links") or []) + ((step.get("route") or {}).get("links")
+                                                     or [])):
+                if isinstance(l, dict):
+                    add(l.get("name"), l.get("statement"), l.get("definition"))
+            for cl in ch.get("clauses") or []:
+                add(cl.get("spec"), cl.get("statement"))
+        self._statements = out
+        return out
+
+    def part(self, key: str) -> dict | None:
+        """A part the site stores on its own under its key (`data/expansions/<key>.json`,
+        `manifest.split_expansions`): a definition expanded at an application, or a page of a
+        declaration's equations; None when the build has no such part."""
+        if not re.fullmatch(r"[0-9a-f]{24}", str(key or "")):
+            return None
+        p = self.data / "expansions" / f"{key}.json"
+        try:
+            return json.loads(p.read_text(encoding="utf-8")) if p.exists() else None
+        except (OSError, ValueError):
+            return None
+
+    def declaration(self, key: str) -> dict | None:
+        """The record of the shared declaration store under `key` (a claim's `decls` gives each
+        of its declarations' keys); None when the build has no such record."""
+        if not re.fullmatch(r"[0-9a-f]{24}", str(key or "")):
+            return None
+        p = self.data / "decls" / f"{key}.json"
+        try:
+            return json.loads(p.read_text(encoding="utf-8")) if p.exists() else None
+        except (OSError, ValueError):
+            return None
+
+    def _store_by_name(self) -> dict[str, dict]:
+        if self._store is None:
+            out: dict[str, dict] = {}
+            for p in sorted((self.data / "decls").glob("*.json")):
+                try:
+                    rec = json.loads(p.read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    continue
+                if rec.get("name"):
+                    out.setdefault(rec["name"], rec)
+            self._store = out
+        return self._store
+
+    def closure(self, name: str) -> tuple[list[str] | None, bool, str | None]:
+        """The project constants the statement of `name` uses (for a definition, its value's
+        too), as `(names, complete, source)`: from its statement record (`statement`), else by
+        following what each record of the shared declaration store uses (`declarations`), which
+        is incomplete when a constant used has no record there; `(None, False, None)` when the
+        build shows neither."""
+        st = self.statement_records().get(name)
+        if st is not None and "closure" in st:
+            return sorted(set(st["closure"]) - {name}), True, "statement"
+        store = self._store_by_name()
+        if "uses" not in store.get(name, {}):
+            return None, False, None
+        seen, todo, complete = set(), [name], True
+        while todo:
+            for u in store[todo.pop()].get("uses") or []:
+                if u == name or u in seen:
+                    continue
+                seen.add(u)
+                if "uses" in store.get(u, {}):
+                    todo.append(u)
+                else:
+                    complete = False
+        return sorted(seen), complete, "declarations"
 
     def lean_index(self) -> list[dict] | None:
         """The project's declarations as the build indexed them (zero configuration), or None
@@ -215,18 +377,18 @@ def resolve_declaration(name: str, snap: Snapshot, root: Path | None, module: st
     (the build indexed it), `unbuilt` (its module's source declares it and the module is not
     built), `not loaded` (its module is built but could not be loaded) or `external` (not a
     project declaration; accepted only with `external`, and checked by Lean at the next
-    build). A name the project does not declare is refused, with the nearest names."""
-    from .probe import lib_names
-    from .simple import built_modules, declaring_modules
+    build). A name the project does not declare is refused, with the nearest names. A full
+    assessment keeps no Lean index, so a declaration of a built module that its build records
+    no version of is refused with what would let a build record one (`_unrecorded`). With
+    `module`, only that module is searched (`_in_module`)."""
+    from .simple import declaring_modules
     name = str(name or "").strip()
     if not re.fullmatch(r"[^\s]+", name):
         raise TargetError(f"{name!r} is not a declaration name")
     index = snap.lean_index() or []
     mods = sorted({d.get("module") for d in index if d.get("name") == name})
     if module:
-        if module in mods:
-            return {"name": name, "module": module, "build": "built"}
-        mods = []
+        return _in_module(name, module, snap, root, index, mods, external)
     if len(mods) > 1:
         raise TargetError(f"{name} is declared in several modules: {', '.join(mods)}; the links "
                           "file cannot yet record which one is meant", [{"name": name, "module": m}
@@ -235,29 +397,146 @@ def resolve_declaration(name: str, snap: Snapshot, root: Path | None, module: st
     if mods:
         return {"name": name, "module": mods[0], "build": "built"}
     if not index:
-        # A full assessment keeps no Lean index: the declarations its probe recorded (the
-        # shared store) are the build's own.
-        stored = sorted({r.get("module") for r in snap.store_records(name) if r.get("module")})
-        if module in stored or (len(stored) == 1 and not module):
-            return {"name": name, "module": module or stored[0], "build": "built"}
+        stored = _stored_modules(snap, name)
+        if len(stored) == 1:
+            return {"name": name, "module": stored[0], "build": "built"}
     if root is not None:
-        libs = lib_names(root)
-        built, unbuilt = built_modules(root, libs) if libs else ([], [])
-        # The working directory holds the site (`site/data`) and the facts store beside it.
-        from .facts import load_failures
-        failed = load_failures(snap.data.parent.parent / "build")
-        for m in declaring_modules(root, [module] if module in unbuilt else unbuilt, name):
+        built, unbuilt, failed = _project_modules(snap, root)
+        for m in declaring_modules(root, unbuilt, name):
             return {"name": name, "module": m, "build": "unbuilt"}
         for m in declaring_modules(root, list(failed), name):
             return {"name": name, "module": m, "build": "not loaded"}
-        if not index and built and not module:
-            # No index of a built project: this build did not run Lean.
+        if not index and built and _full_assessment(snap):
+            _unrecorded(name, snap, declaring_modules(root, built, name))
+            if not external:
+                raise TargetError(
+                    f"this build records no version of {name}, and no module of the project "
+                    "declares it as far as its source shows (pass --external for one from a "
+                    "dependency)", [{"name": n} for n in _near(_known(snap, root, built), name)])
+        elif not index and built:
+            # No index of a built project: this view did not run Lean.
             raise TargetError(f"{name}: this build has no Lean index; run `machinechecked view` "
                               "after `lake build`", kind="no-build")
     if external:
-        return {"name": name, "module": module, "build": "external"}
-    names = [d["name"] for d in index if d.get("name")]
-    near = [n for n in names if n.endswith("." + name)][:5] or \
-        difflib.get_close_matches(name, names, n=5, cutoff=0.6)
+        return {"name": name, "module": None, "build": "external"}
     raise TargetError(f"{name} is not a declaration of the project (pass --external for one "
-                      "from a dependency)", [{"name": n} for n in near])
+                      "from a dependency)", [{"name": n} for n in _near(index, name)])
+
+
+def _full_assessment(snap: Snapshot) -> bool:
+    """Whether `snap` is a full assessment's build (a project with a configuration), not a
+    zero-configuration view."""
+    return snap.index.get("mode") != "simple"
+
+
+def _unrecorded(name: str, snap: Snapshot, declares: list[str]) -> None:
+    """Refuse `name` in a full assessment's build that has no record of it: the build ran no
+    Lean, or it ran Lean and the built modules `declares` declare `name` (as far as their source
+    shows) but the probe recorded only what the inventory uses. Returns when Lean ran and no
+    module declares it. The reasons are those `dependencies.absent_reason` gives evidence already
+    recorded, with the steps that would let a build record it."""
+    from .dependencies import _listed_modules
+    if not snap.index.get("lean"):
+        raise TargetError(f"this build ran no Lean, so it records no version of {name}: build "
+                          "again with Lean", kind="no-build")
+    if not declares:
+        return
+    msg = (f"this build records no version of {name}: a full assessment records the "
+           "declarations its inventory's clauses name and those their statements use, and "
+           f"{name} is not among them")
+    listed = _listed_modules(snap)
+    unlisted = [m for m in declares if listed is not None and m not in listed]
+    if unlisted:
+        msg += (f"; its module {unlisted[0]} is not listed in `modules` of the configuration "
+                "either")
+    msg += (". To cite it, name it in a clause or a proof step of the inventory"
+            + (f", list {unlisted[0]} in `modules`," if unlisted else "") + " and build again")
+    raise TargetError(msg, [{"name": name, "module": m} for m in declares], kind="unrecorded")
+
+
+def _known(snap: Snapshot, root: Path, built: list[str]) -> list[dict]:
+    """The declarations a full assessment's build can name without an index: those its shared
+    store records, and those the sources of the built modules `built` declare."""
+    from .simple import declared_names
+    names = set(snap.store_fingerprints())
+    for m in built:
+        try:
+            names |= declared_names((root / (m.replace(".", "/") + ".lean"))
+                                    .read_text(encoding="utf-8", errors="replace"))
+        except OSError:
+            continue
+    return [{"name": n} for n in sorted(names)]
+
+
+def _stored_modules(snap: Snapshot, name: str) -> list[str]:
+    """The modules of the shared store's records of `name`: a full assessment keeps no Lean
+    index, and the declarations its probe recorded are the build's own."""
+    return sorted({r.get("module") for r in snap.store_records(name) if r.get("module")})
+
+
+def _project_modules(snap: Snapshot, root: Path) -> tuple[list[str], list[str], dict]:
+    """The project's built and unbuilt modules, and those the last extraction could not load
+    (with the reason)."""
+    from .facts import load_failures
+    from .probe import lib_names
+    from .simple import built_modules
+    libs = lib_names(root)
+    built, unbuilt = built_modules(root, libs) if libs else ([], [])
+    # The working directory holds the site (`site/data`) and the facts store beside it.
+    return built, unbuilt, load_failures(snap.data.parent.parent / "build")
+
+
+def _near(index: list[dict], name: str) -> list[str]:
+    names = [d["name"] for d in index if d.get("name")]
+    return [n for n in names if n.endswith("." + name)][:5] or \
+        difflib.get_close_matches(name, names, n=5, cutoff=0.6)
+
+
+def _in_module(name: str, module: str, snap: Snapshot, root: Path | None, index: list[dict],
+               indexed: list[str], external: bool) -> dict:
+    """`name` in `module` and nowhere else: `built` when the build's index (or, without one,
+    the shared store) has it there, `unbuilt` when the module is not built and its source
+    declares it, `not loaded` when the module could not be loaded and its source declares it.
+    Anything else is refused, naming the modules that do declare it; a name the project declares
+    nowhere is `external` only with `external`. A full assessment's build without a record of it
+    is read as `resolve_declaration` reads it (`_unrecorded`)."""
+    from .simple import declaring_modules
+    if module in indexed:
+        return {"name": name, "module": module, "build": "built"}
+    stored = [] if index else _stored_modules(snap, name)
+    if module in stored:
+        return {"name": name, "module": module, "build": "built"}
+    elsewhere, cannot_tell, scanned = set(indexed) | set(stored), False, None
+    if root is not None:
+        built, unbuilt, failed = _project_modules(snap, root)
+        if module in unbuilt and declaring_modules(root, [module], name):
+            return {"name": name, "module": module, "build": "unbuilt"}
+        if module in failed and declaring_modules(root, [module], name):
+            return {"name": name, "module": module, "build": "not loaded"}
+        elsewhere |= set(declaring_modules(root, unbuilt, name))
+        elsewhere |= set(declaring_modules(root, list(failed), name))
+        if not index and built and _full_assessment(snap):
+            # Without an index, the sources of the built modules show where it is declared.
+            _unrecorded(name, snap, declaring_modules(root, [module], name)
+                        if module in built else [])
+            elsewhere |= set(declaring_modules(root, built, name))
+            scanned = _known(snap, root, built)
+        else:
+            cannot_tell = not index and bool(built)
+    elsewhere.discard(module)
+    if elsewhere:
+        where = sorted(elsewhere)
+        raise TargetError(f"{name} is not declared in {module}; it is declared in "
+                          f"{', '.join(where)}", [{"name": name, "module": m} for m in where])
+    if external:
+        return {"name": name, "module": module, "build": "external"}
+    if cannot_tell:
+        raise TargetError(f"{name}: this build has no Lean index to find it in {module}; run "
+                          "`machinechecked view` after `lake build`", kind="no-build")
+    if scanned is not None:
+        raise TargetError(f"{name} is not declared in {module}, nor elsewhere in the project as "
+                          "far as its source shows (pass --external for one from a dependency)",
+                          [{"name": n} for n in _near(scanned, name)])
+    raise TargetError(f"{name} is not declared in {module}, nor elsewhere in the project (pass "
+                      "--external for one from a dependency)",
+                      [{"name": n} for n in _near(index, name)])

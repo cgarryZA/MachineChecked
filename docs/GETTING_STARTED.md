@@ -75,10 +75,40 @@ Build the Lean project to check its linked declarations.
 ## Select a claim
 
 The reader opens on the paper. Select a numbered statement in the contents or its margin marker.
-The panel shows **Paper**, **Readable Lean** and **Exact Lean**. **Expand comparison** gives
-these representations the full workspace, keeping every hypothesis visible. On a phone they
-follow one another in reading order. The exact statement comes directly from Lean; rebuilding
-an older audit adds it.
+The panel compares **Paper** with **Lean**. The Lean is shown in rows: each object with the
+conditions on it alone (objects introduced together, such as `a b : ℕ`, share a row), each other
+condition, then the conclusion, in the statement's order; a definition has a row of its own. Each
+row reads as mathematics: what each object is, whether it is given, produced by the statement or
+inside an assumption, where each property comes from (its type, an assumption, or producing the
+object), and what each definition says at its arguments. Notation the reader does not know stays
+exact Lean. Selecting a fragment selects the same sub-term in the exact Lean, which is beside the
+row when the panel is wide enough, and the complete exact statement follows the rows. **Expand
+comparison** gives the comparison the full workspace; a short passage of the paper then stays
+beside the Lean while the Lean scrolls. On a phone the paper comes first, then the Lean, row by
+row. The claim page (**Open as a page**, in the ⋯ menu) and the review page use the same
+comparison. The exact statement comes directly from Lean; rebuilding an older audit adds it.
+
+When an audit publishes an auditor's reading that aligns passages of the paper with the Lean,
+or your own investigation has one, **Rows** pairs each row with the passages aligned with it,
+the requirement each states and who recorded it; a row no passage is aligned with says so, and
+the printed passage stays whole above the rows. Lean has not checked these associations;
+**The Lean's own rows** puts the whole passage beside the Lean again.
+
+An auditor's finding is shown under the row of the Lean it explains when its reading records
+which: the finding names a requirement, and an alignment of the same reading names a variable,
+an assumption, a part of the conclusion or the conclusion of a declaration shown. The finding
+gives its coverage and basis in the same words as everywhere else, or the difference it records
+(the paper's expression and the Lean's), its note, the requirement and passages it concerns, each
+Lean target with its role (an object the statement is given or produces, an assumption, the
+conclusion) and the relation recorded, and its auditor; the date, the evidence and any
+composition are under **Details**. A finding that concerns several rows is written out at the
+first and named at the others, and findings of several auditors at one row stay apart. A finding
+on no requirement, on a requirement aligned with nothing, or aligned with Lean whose statement
+changed since it was recorded is listed under **Findings on the whole claim**, with the Lean it
+named; it is never moved to another expression. A review of a proposition with a
+`Correspondence:` field shows that field above the proposition's rows, as written, up to the next
+field (`Verdict:`, say) or section; the reviewer and the full review are in **Audit details**.
+Findings and notes change no status.
 
 An object whose type is a subtype, structure or class shows the properties its type carries,
 as they apply to it, with the field and structure each comes from: for a given object they are
@@ -86,18 +116,33 @@ part of what is given, for a witness they are established with it, and for an ob
 assumption, a negation or one alternative they stay inside it. An assumption that is a class of
 propositions shows what its fields state. **Exact Lean** lists each carried property as the Lean
 term that gives it (`s.start : s.path 0 = d`) with its field's declaration; many fields are
-folded under a summary.
+folded under a summary. A linked structure lists its fields, those inherited under each parent
+and those it adds apart, so a structure that extends another shows exactly what it adds; a
+definition whose value is a structure lists the properties that value carries, established by
+the definition.
 
 Click a variable to see its type and conditions. Click an expression to select it; further clicks
-widen the selection. Dotted names open short mathematical notes. A Lean declaration name opens
-its complete definition; **Back** and browser Back restore the claim view and reading position.
-Definition links can be copied or opened in another tab.
+widen the selection, and the same expression is selected in the exact Lean. Dotted names open
+short mathematical notes.
+
+A Lean declaration name opens its complete definition just below the row it is in; the claim,
+the selected expression and the paper's passage stay on the page. A property carried by an
+object's type opens the same way from its field (**field start of Solution**), and says whether
+it is part of what the statement is given, established with an object the statement produces,
+or what an assumption states. A reference inside an inspection continues it, with the trail at
+its top; **Back**, Escape and browser Back return to where you were, the focus on the name you
+opened it from, and browser Forward opens it again. **Pin** keeps an inspection open while you
+open another reference; a pin belongs to its claim, project and build, so it is not shown on
+another object, another audit or another build. **Audit details** opens above the comparison in
+the same way. Definition links can be copied or opened in another tab.
 
 A definition shows what it says: its parameters, in their order and as they are written, and its
-body; a definition by pattern matching or recursion shows the equations Lean derives for it
-(its equation theorems), each under its own variables. **Exact Lean** shows the authored source
-of the definition, the exact statement of each equation theorem and the elaborated value; the
-compiled form of a recursive definition is folded under **Compiled value**.
+body with its type; a definition by pattern matching or recursion shows its type and the
+equations Lean derives for it (its equation theorems), each under its own variables. **Exact
+Lean** shows the authored source of the definition, the exact statement of each equation theorem
+with its name and the elaborated value; the compiled form of a recursive definition is folded
+under **Compiled value**. A definition with more than 64 equations shows the first 64, and
+**Show the further equations** loads the others.
 
 A definition applied in a statement expands where it stands: after the expression, **expand**
 lists its applications of the project's definitions. Choosing one shows the arguments, by the
@@ -109,14 +154,18 @@ Lean performs the substitution and checks it. Applications inside an expansion e
 statement, proof or definition body); a user opens like any declaration, so a specialised lemma
 leads to the general result that applies it. In the reader `view` serves, **Show each
 application** asks Lean for every application: the argument supplied for each binder, whether
-the caller assumes each premise or proves it (and with what), and the conclusion obtained. From
-a terminal: `machinechecked inspect NAME --used-by`, or `machinechecked compare --query uses
-NAME --json`.
+the caller assumes each premise or proves it (and with what), the conclusion obtained, and the
+object each premise and the conclusion are about; *Show its context* lists every local in scope
+at one application. From a terminal: `machinechecked inspect NAME --used-by`, or
+`machinechecked compare --query uses NAME --json`; `--in CALLER` (or an application's id)
+reads one declaration's applications with their contexts.
 
 **How the main results use a declaration.** `machinechecked compare --query impact NAME` traces
 NAME from each main result of the paper. The main results are the declarations linked to the
-paper's theorems, shown as a suggestion; `--main` chooses them instead (a declaration, or a claim
-for its linked declarations; repeat it for several). Each main result has its own answer: *used
+paper's theorems, shown as a suggestion. `machinechecked workspace main "Theorem 1" [NAME...]`
+saves your own choice in your workspace (a claim, for its linked declarations, or a declaration),
+and the answer then says whose choice it traces from and the project commit it was saved
+against; `--main` chooses them for one query. Each main result has its own answer: *used
 by its proof*, *in its statement only*, *formalized separately: not used by this main result*,
 or *not traced*. A use comes with the shortest path of Lean references from the main result to
 NAME, direct or through other declarations, and with the applications of NAME at the end of a
@@ -152,15 +201,17 @@ You can:
 - **Link** a suggested declaration;
 - choose **Not this** to reject the suggestion;
 - search the project's declarations by statement, symbols or name, or with **Search with this
-  claim**, and link another. Open a result to read its complete statement.
+  claim**, and link another. Open a result to read its complete statement. **Similar** finds
+  the declarations like a result; for a theorem, each says how its hypotheses and conclusion
+  differ from the result's.
 
 The search box at the top of the reader finds declarations by their statements too.
 
 ### Paper numbers in the Lean
 
 `view`, `build` and `check` read every reference to a numbered statement or section in the
-project's docstrings, declaration names and module docstrings (`Theorem 2.1`, `lemma_3_4`), and
-compare it with the paper read here:
+project's docstrings, declaration names, module docstrings and comments (`Theorem 2.1`,
+`lemma_3_4`, `-- by Lemma 2.2`), and compare it with the paper read here:
 
 - the paper has that statement;
 - the number belongs to another kind of statement (`Lemma 3.3` where the paper's 3.3 is a
@@ -171,14 +222,18 @@ compare it with the paper read here:
 - the reference is to another work, or in a namespace the project maps to another paper.
 
 A reference is to another work when a citation follows its number (`Theorem 4.1 of [Gauss]`,
-`Theorem 3 in Hardy and Wright`, `Lemma 9 of ref. [3]`, `Lemma 9 [AB]`) or comes just before
-it: an open citation bracket (`[AB, Lemma 9]`), `et al.`, an author's possessive
-(`Gauss's Lemma 4.22`, `[AB]'s Lemma 9`, `Smith et al.'s Theorem 3`), or a chapter after a
-comma, as a book's citation gives it (`Hardy–Wright, *An Introduction*, Ch. IV, Prop. 4.7`).
-A possessive of the paper, a part of it or the Lean (`the paper's Lemma 2.1`,
+`Lemma 9 [AB]`, `Lemma 9~\cite{AB}`, `Lemma 9 of ref. [3]`, `of *An Introduction*`), with a
+work's authors (`Theorem 3 in Hardy and Wright`, `of Gauss (1801)`, `in Smith et al.`,
+`in Serre's book`, `of Serre, *A Course in Arithmetic*`) or another paper (`of Paper B`), or
+when a citation comes just before it: an open citation bracket (`[AB, Lemma 9]`), `et al.`, an
+author's possessive (`Gauss's Lemma 4.22`, `[AB]'s Lemma 9`, `Smith et al.'s Theorem 3`), or a
+chapter after a comma, as a book's citation gives it (`Hardy–Wright, *An Introduction*, Ch. IV,
+Prop. 4.7`). A possessive of the paper, a part of it or the Lean (`the paper's Lemma 2.1`,
 `Lean's Theorem 2.1`), a part of the paper or the Lean after the number
-(`Lemma 7.7 in Section 7`, `from Appendix A`, `in Lean`), an ordinary word after it
-(`in refined form`, `in reference to Lemma 2`), a possessive earlier in the sentence
+(`Lemma 7.7 in Section 7`, `from Appendix A`, `in Figure 2`, `in Eq. (4)`, `in Proof of
+Lemma 3`, `in Lean`), the paper itself (`of the Paper`), a mathematical term or an ordinary
+word after it (`in Hilbert spaces`, `in refined form`, `in reference to Lemma 2`), one name
+alone with no year, title or citation (`in Rudin`), a possessive earlier in the sentence
 (`By Gauss's lemma and Lemma 2.1`) and a chapter in prose (`In Chapter 4, Lemma 4.2`) leave
 the reference checked against the paper. A citation after the part names another work
 (`Lemma 4.1 in Section 4 of [AB]`).
@@ -193,10 +248,30 @@ A declaration's name and its docstring's opening citation (`/-- Theorem 3.1. …
 the declaration states. When that number exists but the declaration reads much closer to
 another statement, the reference is named as a possibly stale lead, with the closer statement.
 A later citation in the docstring (`under Assumption 2.2`) names what the statement relies on,
-and is checked only for the number and kind it cites. `check` prints each disagreement
-with its file and line. When several references disagree, the reader's notes say that the Lean
-appears to follow another version of the paper, and suggestions then rank content further
-above cited numbers. None of this links a declaration or changes a status. A full assessment
+and is checked only for the number and kind it cites. A comment (`--` or `/- … -/`) belongs to
+the declaration it lies in or that starts on the next line, and otherwise to its module. A
+comment just before a declaration that opens with a reference (`-- Lemma 2.5: …`) names what the
+declaration states; any other reference in a comment is a citation. In a comment, a kind
+written against its number (`lemma21`) is code, not a reference. When the paper prints one
+number twice, the reference is exact and says that it does not tell which. `check` prints each
+disagreement with its file and line.
+
+When several references disagree with the paper, making a good share of those checked and
+lying in more than one declaration or module, the reader's notes say that the Lean appears to
+follow another version of the paper, with counts and a few examples. One stray reference, or
+one docstring listing several, is reported by itself. In a full assessment, `machinechecked
+changes --map` matches the claims of two releases' revisions of the paper and gives each
+disagreeing reference the later number the map names for it: one, several when the match is
+ambiguous, a proposal marked as one, or none for a removed claim
+([the version map](SOURCE_REGIONS.md#comparing-two-revisions-the-version-map)).
+
+A suggestion's cited number rests on the docstring's reference to it. A number of another work
+(`Theorem 2.1 of [Gauss]`), a section, or the start of a longer number (`Theorem 2.1.3`) is
+no lead to the claim. The number's reason lists the references it rests on and calls the
+number "a lead", or "a possibly stale lead" when its declaration reads closer to another
+statement or the Lean appears to follow another version. A possibly stale lead counts less,
+so statement content ranks further above it; the candidate it names can still be the right
+one. None of this links a declaration or changes a status. A full assessment
 (a project with a `machinechecked.toml`) checks the same references, each against the paper it
 belongs to when there are several ([ASSURANCE.md](ASSURANCE.md)).
 
@@ -256,10 +331,11 @@ full coverage:
                          "target_fingerprint": "…", "source_sha256": "…"}}
 ```
 
-- `direct`: the linked declarations state the claim. The reader shows **States every clause**.
+- `direct`: the linked declarations state the claim. The reader shows **Every clause, in one Lean
+  statement**.
 - `reviewed_composition`: the claim follows by combining the linked declarations through the
-  auditor's `argument`. The reader shows **Every clause, by the auditor's composition**, with the
-  argument, its author, and that Lean has not checked the combination. Beside it the reader and
+  auditor's `argument`. The reader shows **Every clause, by an argument combining Lean results**,
+  with the argument, its author, and that Lean has not checked the combination. Beside it the reader and
   `check` give the next step: state the combination as one Lean result. A composition never reads
   as a direct result. A stored `"coverage": "composed"` reads as `full` with this basis, its note
   as the argument.
@@ -282,7 +358,9 @@ An `unresolved` reading records the question and what would decide it:
                "would_decide": "The paper's standing conventions."}
 ```
 
-The reader shows **Unresolved** with the open question and what would decide it.
+The reader shows **Unresolved** with the open question and what would decide it. A claim with
+no declaration linked keeps only an `unresolved` reading, whose question may be whether any Lean
+states the claim; with nothing linked, the reading has no basis.
 
 ## Link a proof step
 
@@ -334,7 +412,7 @@ Select a claim to see the printed statement beside its Lean statement. For a LaT
 - **Linked, proof checked:** Lean accepts the named formal theorem, subject to its axioms.
 - **Linked, Lean definition:** the link is to a definition, which introduces a mathematical object.
 - **Linked, Lean not checked:** the project, or the declaration's own module, is not built, so Lean has not been run on it here. A project can be partly built: what is built is checked, and each link says whether its module is.
-- **Linked, Lean name is ambiguous:** several modules declare the same name (a statement left as a challenge and its solution, for instance). Name the intended module in the `formalization.yaml` row (`module: …`). Each Lean library is inspected in its own Lean session, so libraries that cannot be loaded together are handled; a module MachineChecked cannot load at all is reported as such, with the loading error.
+- **Linked, Lean name is ambiguous:** several modules declare the same name (a statement left as a challenge and its solution, for instance). Name the intended module in the `formalization.yaml` row (`module: …`). Each Lean library is inspected in its own Lean session, so libraries that cannot be loaded together are handled. A library that cannot be loaded in one session is loaded a few modules at a time; a module that still cannot be loaded on its own is reported as such (**Linked, Lean not checked (module could not be loaded)**), and each link into it, the build's note and `check` give the first lines of what Lean reported, and say when the module's library was loaded apart first.
 - **Incomplete (`sorry`):** the formal proof has unfinished obligations.
 - **Further axioms:** the proof relies on axioms beyond the default allowlist.
 - **Definition / declaration not found:** the linked item is not a checked theorem or cannot be resolved from the built modules.
@@ -346,6 +424,45 @@ to load) and keeps the new answers in place of the old; `inspect` answers and th
 papers' libraries stay. When nothing changed, it gives the statuses that reusing them gives.
 
 For projects with a separate acceptance framework, further statuses and evidence are available. [Read the evidence policy](EVIDENCE_POLICY.md) before interpreting them.
+
+## See the whole audit at once
+
+The **Overview** lists every claim with its correspondence with the Lean, how that is
+supported (its evidence basis), the difference or open question recorded, its review, and its
+proof status. Its counts are the audit's [semantic summary](DATA_MODEL.md#semantic-summary-prooflenssemantic-summary1-derived),
+as the engine computed it from the readings, reports and published findings:
+
+- Each count names its unit: statements, notation records or proof steps. Each claim is counted
+  once in each dimension; counts of different units, and of different dimensions, are never
+  added.
+- Select a count to show those claims. The address keeps the selection, so a link opens the same
+  subset.
+- **Readings shown** chooses whose readings are counted: the audit's own (the links file), each
+  reviewer's reports, or each published workspace. They are never combined.
+- **Review next** opens the review queue in its order.
+
+`check` and `build` print the same summary of the audit's readings. For the readings above, with
+a statement left unlinked, a notation record and a proof equation read as stating part of its
+step:
+
+```
+semantic summary of paper P (the audit's readings):
+  5 statements, 4 linked to 3 declarations
+    correspondence: every clause (3); unresolved (1); not assessed (1)
+    basis: in one Lean statement (1); by an argument combining Lean results (1); through a checked bridge (1); basis not recorded (1)
+    reviews: not reviewed (5)
+    findings: open questions (1)
+  1 notation record, 1 linked to 1 declaration
+    correspondence: not assessed (1)
+    reviews: not reviewed (1)
+  1 proof step, 1 linked to 1 declaration
+    correspondence: part of the claim (1)
+    basis: in one Lean statement (1)
+    reviews: printed step not reviewed (1)
+```
+
+`check --json` gives the whole summary as `semantic`, and each claim's readings as its own
+`semantic`. The summary changes no status.
 
 ## Share or publish
 
@@ -443,7 +560,7 @@ A paper page that lists audits of several versions gives each version its own pa
 
 When the site relates the claims of two versions, a claim says what it became in the other version and links to it: "Theorem 3 in Latest manuscript (commit abc1234), statement changed", "Lemma 1 in arXiv v1, renumbered", or "Removed in Latest manuscript (commit abc1234)".
 
-In the panel beside the paper, each audit names the version it pins and its commit. **Open the audit** opens the audit of the version shown; audits of other versions link to their own version's page.
+In the panel beside the paper, each audit names the version it pins and its commit. **Open the audit** opens the audit of the version shown; audits of other versions link to their own version's page. An audit the site could not load says why ("Audit unavailable: …"), with a plain link to try it in the reader.
 
 ## Read a paper with several audits
 

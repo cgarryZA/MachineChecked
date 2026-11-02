@@ -101,12 +101,15 @@ def route_names(entry: dict) -> list[str]:
 
 
 def correspondence(entry: dict, source: str) -> dict | None:
-    """The mapper's reading of how far the linked declarations state the step."""
+    """The mapper's reading of how far the linked declarations state the step. A reading
+    describes the linked declarations, so a step with none keeps only an unresolved one, whose
+    open question may be whether any Lean states the step; with no Lean, it has no basis."""
     note = _str(entry.get("note"))
     cov, basis = coverage_basis(entry)
-    if not (note or cov) or not lean_names(entry):
+    linked = bool(lean_names(entry))
+    if not (note or cov) or not (linked or cov == "unresolved"):
         return None
-    return {"source": source, "coverage": cov, "basis": basis,
+    return {"source": source, "coverage": cov, "basis": basis if linked else None,
             "confidence": entry.get("confidence") if entry.get("confidence") in CONFIDENCE
             else None,
             "note": note, "by": entry["by"] if isinstance(entry.get("by"), str) else None}

@@ -58,6 +58,7 @@
  "tests/mutations/test_mutations.py": 171.3,
  "tests/security/test_check_public.py": 0.3,
  "tests/security/test_security.py": 63.7,
+ "tests/simple/test_agent_guide.py": 180.0,
  "tests/simple/test_audit.py": 73.5,
  "tests/simple/test_cache.py": 6.9,
  "tests/simple/test_composition_bridge.py": 86.5,

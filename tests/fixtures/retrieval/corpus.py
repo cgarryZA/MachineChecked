@@ -53,6 +53,12 @@ DECLS = [
     decl("Long.big_b", f"∀ (g : ℕ → ℝ), {FILLER} → Integrable g → ∃ s, HasSum g s"),
     # A name citing a number, with unrelated content.
     decl("Seq.thm_4_1", "∀ (a : ℕ), a + 0 = a", "Theorem 4.1."),
+    # Alternatives to a theorem, to search from it: the same conclusion under more
+    # hypotheses, over another domain with its variables renamed, and a restatement with its
+    # hypotheses in the other order.
+    decl("Ineq.triangle_abs_of_nonneg", "∀ (a b : ℝ), 0 ≤ a → 0 ≤ b → |a + b| ≤ |a| + |b|"),
+    decl("Ineq.triangle_abs_int", "∀ (x y : ℤ), |x + y| ≤ |x| + |y|"),
+    decl("Ineq.amgm_two'", "∀ (x y : ℝ), 0 ≤ y → 0 ≤ x → √(x * y) ≤ (x + y) / 2"),
 ]
 
 CLAIMS = [
@@ -76,6 +82,22 @@ CLAIMS = [
     ("J", "There is a constant $C$ such that $f(n) \\le C$ for all natural numbers $n$.",
      "Unif.exists_const_forall"),
     ("K", "If $g$ is summable then $g$ has a sum.", "Long.big_a"),
+]
+
+# Theorems to search from (`Retrieval.search_like`).
+LIKE = ["Ineq.triangle_abs", "Ineq.triangle_abs_of_nonneg", "Ineq.amgm_two",
+        "Fn.deriv_inv_bound_aux", "Unif.exists_const_forall", "Num.IsPerfect"]
+
+# Printed statements whose parts (`lean_shape`) both implementations must read alike.
+SHAPES = [
+    "∀ ε > 0, ∃ δ > 0, ∀ (x : ℝ), |x| < δ → |f x| < ε",
+    "∀ {α : Type u_1} [inst : LinearOrder α] (a b : α), a ≤ b → b ≤ a → a = b",
+    "∀ x ∈ s, (f x) ≤ 1 → (g x) ≤ 1",
+    "[Fact (1 < p)] → ∀ (x : ℝ), 0 ≤ x ^ p",
+    "∀ (u : ℕ → ℝ),\n    Monotone u →\n      BddAbove (Set.range u) → ∃ L, Filter.Tendsto u Filter.atTop (nhds L)",
+    "(n : ℕ) → (a + b) ≤ n → ∀ x✝ x₁, P x✝ x₁ n",
+    "True",
+    "",
 ]
 
 QUERIES = [

@@ -123,7 +123,7 @@ def test_a_composition_with_a_checked_bridge(tmp_path, monkeypatch, capsys):
     capsys.readouterr()
     cli.main(["compare", "--query", "composition", "Theorem 1"])
     out = capsys.readouterr().out
-    assert "every clause, through a bridge Lean checks" in out
+    assert "every clause, through a checked bridge" in out
     assert "bridge Comp.pos_double_even for Comp.Spec.pos_double_even: Lean checks it" in out
 
     # Recording all this changes no status.

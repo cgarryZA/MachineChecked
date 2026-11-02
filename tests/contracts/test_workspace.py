@@ -21,20 +21,27 @@ WHO = rc.parse_reviewer("human:A-Auditor")
 OTHER = rc.parse_reviewer("human:B-Auditor")
 
 
-def _claim(cid, number, kind, key, sha, links=(), decls=None):
+def _claim(cid, number, kind, key, sha, links=(), decls=None, uses=None):
+    # Each link's statement record gives the project definitions it uses (`closure`), as the
+    # build records it.
     return {"id": cid, "paper": "P", "number": number, "kind": kind, "key": key,
-            "source_sha256": sha, "links": [{"name": n, "fingerprint": f} for n, f in links],
+            "source_sha256": sha,
+            "links": [{"name": n, "fingerprint": f,
+                       "statement": {"closure": list((uses or {}).get(n, ()))}}
+                      for n, f in links],
             "suggestions": [], "clauses": [], "decls": decls or {}}
 
 
 def make_build(work, fp_bound="fp:bound-1", fp_tri="fp:tri-1", fp_tri_f="fp:tri_f-1",
-               sha_bound="s-bound-1", release="v-1"):
+               sha_bound="s-bound-1", release="v-1", bound_uses=()):
     """A synthetic build's site data under `work/site/data`: four claims (two share the number
-    2.3), a theorem and a definition with a generated constant."""
+    2.3), a theorem and a definition with a generated constant. The theorem's statement uses the
+    definitions `bound_uses` (none by default)."""
     data = work / "site" / "data"
     claims = [
         _claim("P:lem:bound", "Lemma 2.3", "lemma", "lem:bound", sha_bound,
-               [("Ex.inverse_bound", fp_bound)], {"Ex.tri": "k-tri", "Ex.tri._f": "k-tri-f"}),
+               [("Ex.inverse_bound", fp_bound)], {"Ex.tri": "k-tri", "Ex.tri._f": "k-tri-f"},
+               {"Ex.inverse_bound": bound_uses}),
         _claim("P:rem-2.3", "Remark 2.3", "remark", "remark-2.3", "s-rem"),
         _claim("P:thm:main", "Theorem 1", "theorem", "thm:main", "s-main",
                [("Ex.main", "fp:main-1")]),
@@ -47,7 +54,7 @@ def make_build(work, fp_bound="fp:bound-1", fp_tri="fp:tri-1", fp_tri_f="fp:tri_
         (data / "claims" / f"{c['key'].replace(':', '_')}.json").write_text(json.dumps(c))
     for key, name, fp in (("k-tri", "Ex.tri", fp_tri), ("k-tri-f", "Ex.tri._f", fp_tri_f)):
         (data / "decls" / f"{key}.json").write_text(json.dumps({"name": name, "fingerprint": fp,
-                                                                  "kind": "def"}))
+                                                                  "kind": "def", "uses": []}))
     index = {"schema": "prooflens/manifest@1", "release": release,
              "project": {"name": "ex", "commit": "abc123"},
              "papers": [{"id": "P", "title": "Synthetic", "revision": "abc123",

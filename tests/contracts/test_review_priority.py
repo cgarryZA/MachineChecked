@@ -187,6 +187,43 @@ def test_a_reopened_review_comes_first_then_a_changed_passage_with_its_reason():
     assert rq.prioritise(queue(assurance_units()), changes=doc) == out
 
 
+def definition_edit(fingerprint: str, source: str) -> dict:
+    """Theorem 1's proposition uses a definition, and no review of either is current. In the
+    later build the definition has `fingerprint` (its statement and value, proofs erased) and
+    the digest `source` of its authored source; in the earlier one `fp:def-1` and `src-1`."""
+    specs = {MAIN: {"fingerprint": "fp:main", "closure": [DEF], "exact": {"text": "∀ m, B m"}}}
+
+    def build(eid, fp, src, inputs):
+        assessed = [{"id": "P:main", "status": "s", "status_code": "formal.review-pending",
+                     "clauses": [{"name": "statement", "spec": MAIN,
+                                  "spec_review": rv("pending"),
+                                  "def_reviews": {DEF: rv("pending")}}]}]
+        return record(eid, [claim("P:main", "Theorem 1", H["a"], 1, MAIN)], assessed,
+                      [decl(MAIN, "fp:main", "x"),
+                       {**decl(DEF, fp, "fun m => m + 5"), "lean_source": {"sha256": src}}],
+                      specs, {"P:main": region(H["a"], 1)}, inputs)
+    return chg.compare(build("e1", "fp:def-1", "src-1", "l1"), "r-1",
+                       build("e2", fingerprint, source, "l2"), "r-2")
+
+
+def test_a_definition_whose_source_alone_changed_gives_no_signal():
+    """#397: an edit of a definition's authored source that leaves its statement and value as
+    they were (a proof inside it, the tactic of a tactic default) changes nothing a review of
+    the statement that uses it, or of the definition, reads. A changed value does."""
+    units = [unit("spec:" + MAIN, [("P:main", "Theorem 1")]),
+             unit("def:" + DEF, [("P:main", None)], source_sha256={"P:main": H["a"]})]
+    source = definition_edit("fp:def-1", "src-2")
+    assert [d["change"] for d in source["claims"][0]["lean"][0]["definitions"]] == ["proof"]
+    assert rq.change_signals(units, source) == {}
+    value = definition_edit("fp:def-2", "src-2")
+    assert [d["change"] for d in value["claims"][0]["lean"][0]["definitions"]] == ["statement"]
+    got = rq.change_signals(units, value)
+    assert [s["text"] for s in got["spec:" + MAIN]] == [
+        "changed since the last release: a definition its Lean statement uses"]
+    assert [s["text"] for s in got["def:" + DEF]] == [
+        "changed since the last release: this definition's Lean"]
+
+
 def test_ties_keep_the_queue_order():
     """Two units with the same signal keep their order, whichever order they come in."""
     doc = {"from": {"release": "r-1"}, "to": {"release": "r-2"}, "declarations": [],
@@ -278,12 +315,13 @@ def write_site(root, order=(FULL, USE, ESTIMATE, WITNESS, CHANGED)):
             "id": cid, "paper": "P", "number": number, "kind": "theorem", "links": [],
             "clauses": [{"name": "statement", "spec": spec,
                          "statement": hyp if cid == USE[0] else None}]}))
+    claims = [{"id": c, "paper": "P", "number": n, "file": c.replace(":", "_") + ".json"}
+              for c, n, _ in CLAIMS]
     (data / "index.json").write_text(json.dumps({
         "schema": "prooflens/manifest@1", "mode": "full", "release": "r-2",
         "project": {"name": "ex", "commit": "c" * 40},
         "papers": [{"id": "P", "title": "Synthetic", "revision": "c" * 40}],
-        "claims": [{"id": c, "paper": "P", "number": n, "file": c.replace(":", "_") + ".json"}
-                   for c, n, _ in CLAIMS]}))
+        "claims": claims}))
     doc = {"from": {"release": "r-1"}, "to": {"release": "r-2"}, "declarations": [],
            "claims": [{"claim": CHANGED[0], "number": CHANGED[1], "lean": [],
                        "paper_change": {"class": "unchanged"},
@@ -292,7 +330,7 @@ def write_site(root, order=(FULL, USE, ESTIMATE, WITNESS, CHANGED)):
                                                   "now": "fp:2"}],
                                      "question": "Does it still state Theorem 1?"}]}]}
     q = rq.prioritise(queue([unit("spec:" + s, [(c, n)], fingerprint="fp:" + s)
-                             for c, n, s in order]), changes=doc)
+                             for c, n, s in order]), changes=doc, claims=claims)
     (data / "review-queue.json").write_text(json.dumps(q))
     return work
 
@@ -461,6 +499,57 @@ def test_document_order_and_explicit_selection_stay_available(tmp_path):
     assert "Theorem 4" in s.read("spec:" + FULL[2])
     with pytest.raises(rc.ReviewError, match="not one of"):
         s.open_units("by-hunch")
+
+
+def test_the_reader_has_the_paper_order_the_command_line_gives(tmp_path):
+    """The build writes the paper's order into the queue for the reader's review page: the units,
+    order and reasons of `review status --order document`."""
+    work = write_site(tmp_path)
+    stored = json.loads((work / "site/data/review-queue.json").read_text())
+    doc = session(work).open_units("document")
+    assert stored["orders"]["document"] == [{"id": u["id"], "reason": u["reason"]} for u in doc]
+    assert stored["orders"]["document"][0]["reason"].startswith("In the paper's order; reopened")
+    # The queue's own order and reasons are unchanged by it.
+    assert ids(stored["units"]) == ids(session(work).open_units())
+    assert "orders" not in rq.prioritise(queue([unit("spec:A", [("P:a", "Theorem 1")])]))
+
+
+def test_the_local_server_gives_the_reader_the_informed_order_and_writes_nothing(tmp_path):
+    """`GET /api/review-order?order=informed` of `machinechecked view`'s server gives the units,
+    reasons and priority records of `review next --order informed`, and the claims it drew on.
+    The review page records that exposure in the reviewer's browser, so the server writes no
+    workspace."""
+    import threading
+    import urllib.error
+    import urllib.request
+    from prooflens.server import make_server
+    work = write_site(tmp_path)
+    p = investigate(work)
+    before = wsp.read(p)
+    httpd = make_server(work / "site", 0, api=wsp.api(work, work / "site" / "data"))
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{httpd.server_address[1]}/api/review-order"
+    try:
+        with urllib.request.urlopen(base + "?order=informed", timeout=10) as r:
+            got = json.loads(r.read())
+        with pytest.raises(urllib.error.HTTPError) as refused:
+            urllib.request.urlopen(base + "?order=document", timeout=10)
+        assert refused.value.code == 400
+        assert "data/review-queue.json" in json.loads(refused.value.read())["error"]
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+    assert (got["schema"], got["order"], got["release"]) == ("machinechecked/review-order@1",
+                                                             "informed", "r-2")
+    assert got["exposure"] == {"what": ["prior interpretations"], "how": rc.ORDER_EXPOSURE}
+    assert [q for q, _ in wsp.list_all(work)] == [p] and wsp.read(p) == before
+    s = session(work)
+    cli_units = s.open_units("informed")
+    assert got["units"] == [{k: u.get(k) for k in ("id", "reason", "priority")}
+                            for u in cli_units]
+    assert got["units"][1]["reason"].startswith("An open obligation is recorded")
+    e, = wsp.read(work / "review-work" / "human_B-Referee.json")["exposure"]
+    assert sorted(got["drawn"]) == e["claims"] == sorted([WITNESS[0], ESTIMATE[0], USE[0]])
 
 
 def test_the_command_line_says_why_and_asks_the_question(tmp_path, monkeypatch, capsys):

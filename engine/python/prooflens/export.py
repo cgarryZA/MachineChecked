@@ -33,7 +33,8 @@ def _pick(d: dict | None, keys: list[str]) -> dict | None:
 DECL_KEYS_LEAN = ["name", "kind", "module", "range", "doc", "signature", "value", "uses",
                   "fingerprint", "legacy_hash", "defined_by", "params", "body", "equations",
                   "equation_names", "equations_omitted", "definition_error", "result",
-                  "lean_source"]
+                  "lean_source", "structure", "structure_error", "result_properties",
+                  "result_properties_omitted", "result_properties_error"]
 DECL_KEYS_MIN = ["name", "kind", "module", "fingerprint", "legacy_hash"]
 
 
@@ -306,16 +307,16 @@ def built_lean_root(cfg: Config, record: dict) -> Path | None:
 
 def export(cfg: Config, out: Path, release: str | None = None,
            web_dist: Path | None = None, paper: str | None = None) -> dict:
-    """The approved public fields of a release, scanned for private material. With `paper`, only
-    that paper: its claims, the declarations they depend on (their closure) and their reviews,
-    scanned also against what belongs to the other papers alone."""
+    """The approved public fields of a release (by default the latest, `evidence.latest`),
+    scanned for private material. With `paper`, only that paper: its claims, the declarations
+    they depend on (their closure) and their reviews, scanned also against what belongs to the
+    other papers alone."""
     if paper is not None and paper not in {p.id for p in cfg.papers}:
         raise ExportError(f"no paper {paper} in the configuration")
-    rels = ev.releases(cfg.out_dir)
-    if not rels:
-        raise ExportError("no release: run `prooflens build` first")
-    relrec = read_json(cfg.out_dir / "releases" / f"{release}.json") if release \
-        else read_json(rels[-1])
+    last = ev.latest(cfg.out_dir)
+    if last is None:
+        raise ExportError("no release: run `machinechecked build` first")
+    relrec = read_json(cfg.out_dir / "releases" / f"{release}.json") if release else last
     record = ev.load(cfg.out_dir, relrec["evidence"])
     # With the display layer the site is built with (descriptions, printed numbers, symbol
     # links): what is shown changes, never what is assessed.
@@ -370,14 +371,17 @@ def export(cfg: Config, out: Path, release: str | None = None,
                                 "file"]) for c in index["claims"]]
     pidx["units"] = index.get("units") or {}
     write_json(data / "index.json", pidx, indent=None)
-    # Definitions expanded at their applications are written on their own, and only those that
-    # a published statement or declaration refers to (`mf.split_expansions`).
+    # Definitions expanded at their applications, and a declaration's equations after its first
+    # 64, are written on their own, and only those that a published statement or declaration
+    # refers to (`mf.split_expansions`).
     expansions: dict[str, dict] = {}
+    pins = mf.fingerprints(store)
     for name, chunk in chunks.items():
         pc = public_claim(chunk, pubs[chunk["paper"]])
         if (ref_chunks.get(name) or {}).get("references"):
             pc["references"] = ref_chunks[name]["references"]
-        write_json(data / "claims" / name, mf.split_expansions(pc, expansions), indent=None)
+        write_json(data / "claims" / name, mf.split_expansions(pc, expansions, pins),
+                   indent=None)
     # Declarations are shared between papers: their Lean text and review texts are exported only
     # when every paper allows it. A redacted record is a different record, so it gets its own key.
     shown = [p for p in cfg.papers if paper is None or p.id == paper]
@@ -387,7 +391,7 @@ def export(cfg: Config, out: Path, release: str | None = None,
     for key, d in store.items():
         q = _pick(d, DECL_KEYS_LEAN if lean_ok else DECL_KEYS_MIN)
         q["review"] = _reviews(d.get("review"), rev_ok)
-        q = mf.split_expansions(q, expansions)
+        q = mf.split_expansions(q, expansions, pins)
         new = mf.record_key(q)
         rekey[key] = new
         write_json(data / "decls" / f"{new}.json", q, indent=None)
@@ -411,16 +415,6 @@ def export(cfg: Config, out: Path, release: str | None = None,
     elif unavailable:
         pidx["changes_unavailable"] = unavailable[0]
         write_json(data / "index.json", pidx, indent=None)
-    # The workspace records the auditors accepted, with what each paper publishes, and what Lean
-    # says of them now when the Lean project is the one the release was built from.
-    from . import published_work
-    paper_of = {c["id"]: c["paper"] for c in chunks.values()}
-    try:
-        published_work.write(data, cfg.out_dir, lambda cid: pubs[paper_of[cid]],
-                             cfg.out_dir / "sources", built_lean_root(cfg, record))
-    except published_work.PublishError as e:
-        shutil.rmtree(out)
-        raise ExportError(str(e)) from None
     # The search index, with only what each paper allows.
     srch = mf.search_index(index, chunks)
     pub_search = {"claims": [], "decls": srch["decls"] if lean_ok else []}
@@ -434,6 +428,21 @@ def export(cfg: Config, out: Path, release: str | None = None,
         pidx.update({k: v for k, v in content_mod.apply(pidx, {}, found)[0].items()
                      if k in ("retrieval", "numbering")})
         write_json(data / "index.json", pidx, indent=None)
+    # The workspace records the auditors accepted, with what each paper publishes, and what Lean
+    # says of them now when the Lean project is the one the release was built from; and the
+    # main results the auditors saved, which it adds to the index written above.
+    from . import published_work
+    paper_of = {c["id"]: c["paper"] for c in chunks.values()}
+    try:
+        published_work.write(data, cfg.out_dir, lambda cid: pubs[paper_of[cid]],
+                             cfg.out_dir / "sources", built_lean_root(cfg, record))
+    except published_work.PublishError as e:
+        shutil.rmtree(out)
+        raise ExportError(str(e)) from None
+    # The semantic summary, computed from the records just published (`semantic.py`), so that
+    # nothing the export leaves out is counted.
+    from . import semantic
+    semantic.refresh(data, cfg.author)
     from . import audit
     arx = [p.source["arxiv"] for p in shown if p.source.get("arxiv")]
     write_json(out / audit.NAME, audit.descriptor(

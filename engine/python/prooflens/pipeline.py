@@ -15,7 +15,7 @@ from . import manifest as mf
 from . import review_queue as rq
 from .assess import Assessor, line_location
 from .config import Config, ConfigError
-from .probe import FINGERPRINT_VERSION, MODDOCS, requests_from_inventory, run_probe
+from .probe import FINGERPRINT_VERSION, MODDOCS, probe_query, requests_from_inventory, run_probe
 from .reviews import load_dismissals, load_reviews
 from .review_sources import carried
 from .schemas import validate
@@ -87,22 +87,22 @@ def build(cfg: Config, release: str | None = None, skip_lean: bool = False,
     lean = None
     lean_digest = None
     probe_used = probe_digest()  # the probe this build runs, read before it runs
+    settings_used = probe_settings_digest(cfg)
+    engine_used = records_engine()
     if reuse_lean:
-        lean = reusable_lean(cfg)
-        missing = [r["name"] for r in requests_from_inventory(inv)
-                   if (r["kind"] == "spec" and r["name"] not in lean["specs"])
-                   or (r["kind"] == "decl" and r["name"] not in lean["defs"])
-                   or (r["kind"] == "link" and r["name"] not in lean.get("links", {}))
-                   or (r["kind"] in ("accept", "refute", "witness") and
-                       f"{r['kind']}:{r['name']}:{r.get('spec') or ''}" not in lean["proofs"])]
-        if missing:
-            raise StaleEvidence(f"the stored Lean results do not cover {', '.join(missing[:5])}"
-                                + (", …" if len(missing) > 5 else "") + "; " + RUN_PROBE)
+        reused, lean = reusable_lean(cfg, requests_from_inventory(inv))
         lean_digest = lean_inputs_digest(cfg)
-        log("probe: reusing the stored probe records (no Lean input changed)")
+        log(f"probe: reusing the probe records of release {reused} (the same Lean inputs, "
+            "probe, probe settings and version of MachineChecked)")
     elif not skip_lean:
-        lean_digest = lean_inputs_digest(cfg)
+        # Without `lake build` the probe reads the build files as they are, which may be older
+        # than the sources: its records are not known to describe these Lean inputs, so none
+        # are recorded, and reuse, promotion and symbol links do not take them as current.
+        lean_digest = lean_inputs_digest(cfg) if lean_build else None
         log(f"probe: {len(requests_from_inventory(inv))} requests in {cfg.lean_root}")
+        if not lean_build:
+            log("probe: the Lean project is not built first (`--no-lean-build`), so this build "
+                "records no digest of its Lean inputs and `--reuse-lean` will not reuse it")
         from .review_citations import citations, names_request
         cited = names_request(citations(cfg.reviews, cfg.root,
                                         getattr(cfg, "review_citations_ignore", None)))
@@ -202,6 +202,8 @@ def build(cfg: Config, release: str | None = None, skip_lean: bool = False,
         "provenance": {"tool": {"name": "prooflens", "version": tool_version(),
                                 "fingerprint": FINGERPRINT_VERSION},
                        "probe_sha256": probe_used if lean else None,
+                       "probe_settings_sha256": settings_used if lean else None,
+                       "lean_records_engine": engine_used if lean else None,
                        "lean_inputs_sha256": lean_digest,
                        "lean_reused": reuse_lean,
                        "lean": (lean or {}).get("env"), "project": project_provenance(cfg),
@@ -217,7 +219,7 @@ def build(cfg: Config, release: str | None = None, skip_lean: bool = False,
     ev.record_release(cfg.out_dir, rel, eid)
     record = ev.load(cfg.out_dir, eid)
     index, chunks, store = mf.build(record, rel, display)
-    index.update(issues=cfg.issues, site_url=cfg.site_url)
+    index.update(issues=cfg.issues, site_url=cfg.site_url, author=cfg.author)
     index["project"].update(source_info(cfg))
     site = cfg.out_dir / "site"
     found = content_mod.load(cfg.out_dir, eid, record["body"])
@@ -228,7 +230,7 @@ def build(cfg: Config, release: str | None = None, skip_lean: bool = False,
         log(f"note: {unavailable[0]}")
     write_preview(site, index, chunks, store, pdfs, web_dist,
                   rq.prioritise(rq.assurance_queue(index, chunks, store, cfg.statement_authors),
-                                changes),
+                                changes, claims=index["claims"]),
                   changes=changes, content=found)
     for n in (found or {}).get("notes", []):
         log(f"note: {n}")
@@ -251,16 +253,24 @@ def lean_input_roots(cfg: Config) -> list[Path]:
     return roots
 
 
+# Folders under a Lean root that hold no Lean inputs: Lake's builds and packages, Git's, and the
+# engine's work directories, where a probe stopped mid-run can leave its Probe.lean.
+NOT_LEAN_INPUTS = {".lake", ".git", ".prooflens", ".machinechecked"}
+
+
 def lean_inputs_digest(cfg: Config) -> str:
     """SHA-256 over the content of every Lean input of the project and its path dependencies
-    (sources, lakefiles, manifest, toolchain), committed or not."""
+    (sources, lakefiles, manifest, toolchain), committed or not. The work directory is not an
+    input, whatever it is called (`out_dir`)."""
     import hashlib
     h = hashlib.sha256()
+    work = getattr(cfg, "out_dir", None)
     for root in lean_input_roots(cfg):
+        inside = work is not None and work != root and Path(work).is_relative_to(root)
         files = []
         for pat in LEAN_INPUTS:
-            files += [f for f in root.rglob(pat) if ".lake" not in f.parts and ".git" not in
-                      f.parts and ".prooflens" not in f.parts]
+            files += [f for f in root.rglob(pat) if not NOT_LEAN_INPUTS.intersection(f.parts)
+                      and not (inside and f.is_relative_to(work))]
         h.update(f"root {root.name}\n".encode())
         for f in sorted(set(files)):
             h.update(f"{f.relative_to(root)}\n".encode())
@@ -273,6 +283,22 @@ def probe_digest() -> str:
                        .read_text())
 
 
+def probe_settings_digest(cfg: Config) -> str:
+    """SHA-256 over what the probe's records depend on besides the Lean, the probe and the
+    requests: the modules it loads, and the scope roots, layer prefixes and allowed axioms it is
+    given (`probe.probe_query`)."""
+    return sha256_text(canonical_json({"modules": cfg.modules,
+                                       "query": probe_query(cfg, [])}))
+
+
+def records_engine() -> dict:
+    """The engine that read the probe's output into Lean records (`probe.parse_records`,
+    `merge_records`, `attach_sources` and the fingerprints): its version and fingerprint
+    version. A record keeps it when reassessed, since its Lean records are carried unchanged,
+    and stored records are reused only by the same engine, as the facts store's are."""
+    return {"version": tool_version(), "fingerprint": FINGERPRINT_VERSION}
+
+
 def source_info(cfg: Config) -> dict:
     """The project's source repository, for the reader's Lean source links."""
     from . import audit
@@ -280,26 +306,81 @@ def source_info(cfg: Config) -> dict:
                              cfg.repository_private)
 
 
-def reusable_lean(cfg: Config) -> dict:
-    """The probe records of the latest evidence, if they still describe this checkout: the same
-    content of every Lean input (here and in every path dependency) and the same probe."""
-    rels = ev.releases(cfg.out_dir)
-    if not rels:
-        raise StaleEvidence("no stored Lean results to reuse; " + RUN_PROBE)
-    try:
-        body = ev.load(cfg.out_dir, read_json(rels[-1])["evidence"])["body"]
-    except ev.EvidenceMissing as e:
-        raise StaleEvidence(f"no stored Lean results to reuse: {e}; " + RUN_PROBE) from e
-    lean, prov = body.get("lean"), body["provenance"]
-    if not lean or not prov.get("lean_inputs_sha256") or not prov.get("probe_sha256"):
-        raise StaleEvidence("the stored Lean results do not record their Lean inputs; "
-                            + RUN_PROBE)
-    if prov["lean_inputs_sha256"] != lean_inputs_digest(cfg):
-        raise StaleEvidence("Lean inputs changed since the stored Lean results (here or in a "
-                            "path dependency); " + RUN_PROBE)
-    if prov["probe_sha256"] != probe_digest():
-        raise StaleEvidence("the Lean probe changed since the stored Lean results; " + RUN_PROBE)
-    return lean
+def reusable_lean(cfg: Config, requests: list[dict]) -> tuple[str, dict]:
+    """The newest stored release whose probe records describe this checkout, and those records:
+    made from the same content of every Lean input (here and in every path dependency), by the
+    same probe, with the same probe settings, read by the same engine (`records_engine`), and
+    answering every one of `requests`. It need not be the latest release: a build that
+    reproduces an earlier evidence record names no new release. When no release qualifies, the
+    refusal says how far the closest came."""
+    want = (lean_inputs_digest(cfg), probe_digest(), probe_settings_digest(cfg),
+            records_engine())
+    closest, why, seen = -1, "no stored Lean results to reuse", set()
+    for rel in reversed(ev.releases(cfg.out_dir)):
+        try:
+            named = read_json(rel)
+            name, eid = named["release"], named["evidence"]
+            if eid in seen:
+                continue
+            seen.add(eid)
+            path = cfg.out_dir / "evidence" / f"{eid}.json"
+            rec = read_json(path)
+            body = rec["body"]
+            lean, prov = body.get("lean"), body["provenance"]
+        except (OSError, ValueError, KeyError, TypeError):
+            continue  # a record that cannot be read cannot be reused
+        if not lean:
+            continue
+        stage, reason = _reuse_stage(lean, prov, want, requests)
+        if reason is None:
+            # The id is checked only for the record reused: each is a large file.
+            return name, ev.checked(rec, eid, path)["body"]["lean"]
+        if stage > closest:
+            closest, why = stage, reason
+    raise StaleEvidence(why + "; " + RUN_PROBE)
+
+
+def _reuse_stage(lean: dict, prov: dict, want: tuple[str, str, str, dict],
+                 requests: list[dict]) -> tuple[int, str | None]:
+    """How far stored probe records `lean`, with provenance `prov`, match the checkout's Lean
+    inputs, probe and probe settings and this engine, `want`, and cover `requests`: the number
+    of conditions met in turn, and why the next one fails (None when every one holds)."""
+    inputs, probe, settings, engine = (prov.get("lean_inputs_sha256"), prov.get("probe_sha256"),
+                                       prov.get("probe_settings_sha256"),
+                                       prov.get("lean_records_engine"))
+    if not inputs or not probe:
+        return 0, ("the stored Lean results do not record their Lean inputs (a build with "
+                   "`--no-lean-build` records none: its build files may be older than the "
+                   "sources)")
+    if inputs != want[0]:
+        return 1, ("Lean inputs changed since the stored Lean results (here or in a path "
+                   "dependency)")
+    if probe != want[1]:
+        return 2, "the Lean probe changed since the stored Lean results"
+    if not settings:
+        return 3, ("the stored Lean results do not record the probe's settings (an earlier "
+                   "version of MachineChecked stored them)")
+    if settings != want[2]:
+        return 4, ("the probe's settings (`modules`, `scope_roots`, `spec_prefix`, "
+                   "`accept_prefix` or `allowed_axioms` in the configuration) changed since the "
+                   "stored Lean results")
+    if not isinstance(engine, dict) or not engine:
+        return 5, ("the stored Lean results do not record the version of MachineChecked that "
+                   "read them (an earlier version stored them)")
+    if engine != want[3]:
+        name = lambda e: f"{e.get('version')}, fingerprints {e.get('fingerprint')}"
+        return 6, ("the stored Lean results were read by another version of MachineChecked "
+                   f"({name(engine)}; this is {name(want[3])})")
+    missing = [r["name"] for r in requests
+               if (r["kind"] == "spec" and r["name"] not in lean.get("specs", {}))
+               or (r["kind"] == "decl" and r["name"] not in lean.get("defs", {}))
+               or (r["kind"] == "link" and r["name"] not in lean.get("links", {}))
+               or (r["kind"] in ("accept", "refute", "witness") and
+                   f"{r['kind']}:{r['name']}:{r.get('spec') or ''}" not in lean.get("proofs", {}))]
+    if missing:
+        return 7, (f"the stored Lean results do not cover {', '.join(missing[:5])}"
+                   + (", …" if len(missing) > 5 else ""))
+    return 8, None
 
 
 def manual_anchors(cfg: Config, pid: str) -> dict:
@@ -334,12 +415,15 @@ def inventory_changed(cfg: Config, body: dict) -> str | None:
 
 def reassess(cfg: Config, web_dist: Path | None = None, release: str | None = None,
              log=print) -> dict:
-    """Assess the latest evidence again with the current rules and the current review files,
-    without probing or compiling, and store the result as a new evidence record and release."""
-    rels = ev.releases(cfg.out_dir)
-    if not rels:
+    """Assess the latest release's evidence (`evidence.latest`) again with the current rules and
+    the current review files, without probing or compiling, and store the result as a new
+    evidence record and release. When nothing changed (the record would differ from the one
+    read only in naming it in `reassessed_from`), the reassessment reproduces the release it
+    read, as a repeated build does."""
+    last = ev.latest(cfg.out_dir)
+    if last is None:
         raise StaleEvidence(NO_RELEASE)
-    old = ev.load(cfg.out_dir, read_json(rels[-1])["evidence"])["body"]
+    old = ev.load(cfg.out_dir, last["evidence"])["body"]
     why = inventory_changed(cfg, old)
     if why:
         raise StaleEvidence(why)
@@ -357,13 +441,27 @@ def reassess(cfg: Config, web_dist: Path | None = None, release: str | None = No
             "provenance": {**old["provenance"],
                            "tool": {**old["provenance"]["tool"], "version": tool_version()},
                            "comparator_log_sha256": sha256_file(comp) if comp_text else None,
-                           "reassessed_from": read_json(rels[-1])["evidence"]}}
+                           "reassessed_from": last["evidence"]}}
     body.pop("schema", None)
+    if _apart_from_origin(body) == _apart_from_origin(old):
+        eid, rel = last["evidence"], release or last["release"]
+        ev.record_release(cfg.out_dir, rel, eid)
+        log(f"evidence {eid[:12]}  release {rel} (reassessed: nothing changed)")
+        return rebuild_site(cfg, web_dist, rel)
     eid = ev.store(cfg.out_dir, body)
     rel = release or f"r-{eid[:12]}"
     ev.record_release(cfg.out_dir, rel, eid)
     log(f"evidence {eid[:12]}  release {rel} (reassessed)")
     return rebuild_site(cfg, web_dist, rel)
+
+
+def _apart_from_origin(body: dict) -> str:
+    """An evidence body's canonical JSON without its schema and without the record it was
+    reassessed from: what a reassessment shares with the record it read when nothing
+    changed."""
+    prov = {k: v for k, v in body["provenance"].items() if k != "reassessed_from"}
+    return canonical_json({**{k: v for k, v in body.items() if k != "schema"},
+                           "provenance": prov})
 
 
 def pdf_paths(cfg: Config, body: dict) -> dict:
@@ -382,16 +480,16 @@ def pdf_paths(cfg: Config, body: dict) -> dict:
 
 
 def rebuild_site(cfg: Config, web_dist: Path | None = None, release: str | None = None) -> dict:
-    """The preview site again from a stored release, without probing or compiling. A PDF is
-    included only if the one on disk is the one the evidence records."""
-    rels = ev.releases(cfg.out_dir)
-    if not rels:
+    """The preview site again from a stored release (by default the latest, `evidence.latest`),
+    without probing or compiling. A PDF is included only if the one on disk is the one the
+    evidence records."""
+    last = ev.latest(cfg.out_dir)
+    if last is None:
         raise StaleEvidence(NO_RELEASE)
-    rel = read_json(cfg.out_dir / "releases" / f"{release}.json") if release else \
-        read_json(rels[-1])
+    rel = read_json(cfg.out_dir / "releases" / f"{release}.json") if release else last
     record = ev.load(cfg.out_dir, rel["evidence"])
     index, chunks, store = mf.build(record, rel["release"], load_display(cfg))
-    index.update(issues=cfg.issues, site_url=cfg.site_url)
+    index.update(issues=cfg.issues, site_url=cfg.site_url, author=cfg.author)
     index["project"].update(source_info(cfg))
     site = cfg.out_dir / "site"
     found = content_mod.load(cfg.out_dir, rel["evidence"], record["body"])
@@ -401,7 +499,7 @@ def rebuild_site(cfg: Config, web_dist: Path | None = None, release: str | None 
         index["changes_unavailable"] = unavailable[0]
     write_preview(site, index, chunks, store, pdf_paths(cfg, record["body"]), web_dist,
                   rq.prioritise(rq.assurance_queue(index, chunks, store, cfg.statement_authors),
-                                changes),
+                                changes, claims=index["claims"]),
                   changes=changes, content=found)
     return {"release": rel["release"], "site": site, "index": index, "content": found}
 
@@ -440,21 +538,28 @@ def write_preview(site: Path, index: dict, chunks: dict, store: dict, pdfs: dict
                   web_dist: Path | None, queue: dict | None = None,
                   expansions: dict | None = None, changes: dict | None = None,
                   content: dict | None = None):
-    """Write the reader and its data to `site`. Definitions expanded at their applications are
-    written on their own (`data/expansions/<key>.json`, `mf.split_expansions`), together with
-    `expansions` already split off (those of published audits). `changes`, the comparison with
+    """Write the reader and its data to `site`. Definitions expanded at their applications, and
+    a declaration's equations after its first 64, are written on their own
+    (`data/expansions/<key>.json`, `mf.split_expansions`), together with `expansions` already
+    split off (those of published audits). `changes`, the comparison with
     the release before, is written as `data/changes.json`; `content`, the content index and
-    the paper-number check (`content.py`), as `data/retrieval.json` and `data/numbering.json`."""
+    the paper-number check (`content.py`), as `data/retrieval.json` and `data/numbering.json`.
+    An audit's index (not a paper page's) gets its semantic summary (`semantic.py`), computed from
+    these records."""
+    if index.get("mode") != "paper":
+        from . import semantic
+        semantic.apply(index, chunks, author=index.get("author"))
     index, chunks = content_mod.apply(index, chunks, content)
     expansions = dict(expansions or {})
+    pins = mf.fingerprints(store)
     # A declaration record without its expansions is a different record: it gets its own key.
     rekey, split_store = {}, {}
     for k, r in store.items():
-        q = mf.split_expansions(r, expansions)
+        q = mf.split_expansions(r, expansions, pins)
         rekey[k] = mf.record_key(q) if q != r else k
         split_store[rekey[k]] = q
     store = split_store
-    chunks = {n: {**mf.split_expansions(c, expansions),
+    chunks = {n: {**mf.split_expansions(c, expansions, pins),
                   **({"decls": {d: rekey.get(k, k) for d, k in c["decls"].items()}}
                      if isinstance(c.get("decls"), dict) else {})}
               for n, c in chunks.items()}
