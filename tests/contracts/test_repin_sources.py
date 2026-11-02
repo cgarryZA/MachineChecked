@@ -164,6 +164,104 @@ def test_an_environment_found_only_by_its_number_blocks_the_write(vendored, caps
     assert (proj / "claims.json").read_bytes() == before
 
 
+ZERO = {"id": "T:thm:zero", "paper": "T", "kind": "theorem", "number": "Theorem 2",
+        "location": "paper.tex", "scope": "formal", "clauses": [],
+        "source_sha256": env_hash("Zero is even.")}
+
+
+def test_a_claim_found_by_its_number_is_carried_over_with_keep(vendored, capsys):
+    """#445: a revision that leaves an unlabelled environment's text alone moves the rest of the
+    inventory, the kept claim with it."""
+    proj = vendored
+    inv = json.loads((proj / "claims.json").read_text(encoding="utf-8"))
+    inv["claims"].append(ZERO)
+    (proj / "claims.json").write_text(json.dumps(inv, indent=1) + "\n", encoding="utf-8")
+    write(proj / "manuscript", "Intro.\n", EQ, THM, NOLABEL)
+    git(proj, "add", "-A")
+    git(proj, "commit", "-q", "-m", "unlabelled theorem")
+    write(proj / "manuscript", "Intro.\nAdded.\n\n", EQ,
+          THM.replace("two even", "two even or two odd"), NOLABEL)
+    args = ("--from-source", "git:HEAD", "--to", NEW)
+    before = (proj / "claims.json").read_bytes()
+    code, _, err = run(repin.main, proj, *args, "--write", capsys=capsys)
+    assert code == 2 and "--keep CLAIM" in err
+    assert (proj / "claims.json").read_bytes() == before
+    code, out, err = run(repin.main, proj, *args, "--keep", "T:thm:zero", capsys=capsys)
+    assert code == 0, err
+    plan = json.loads(out)
+    zero = by_claim(plan)["T:thm:zero"]
+    assert zero["class"] == "unchanged" and zero["kept"] is True
+    assert "printed number" in zero["note"] and plan["blocking"] == []
+    assert (proj / "claims.json").read_bytes() == before, "a plan writes nothing"
+    code, out, err = run(repin.main, proj, *args, "--keep", "T:thm:zero", "--write",
+                         capsys=capsys)
+    assert code == 0 and json.loads(out)["written"] is True, err
+    after = json.loads((proj / "claims.json").read_text(encoding="utf-8"))
+    c = {x["id"]: x for x in after["claims"]}
+    assert after["papers"]["T"]["commit"] == NEW[:7]
+    # The kept claim is carried over as it was, now read at the new revision.
+    assert c["T:thm:zero"] == ZERO
+    # The rest of the plan is written: the moved display takes its place, and the changed
+    # theorem keeps its digest and revision.
+    assert c["T:eq:q"]["location"] == "paper.tex:7" and "commit" not in c["T:eq:q"]
+    assert c["T:thm:t"]["source_sha256"] == env_hash(BODY)
+    assert c["T:thm:t"]["commit"] == OLD[:7]
+
+
+def test_a_kept_claim_whose_number_changed_is_reported_by_the_next_build():
+    """A kept claim's printed number is not computed by the repin: when a theorem is inserted
+    before it, the build finds another theorem under its number, and reports both."""
+    from types import SimpleNamespace
+    from prooflens.assess import Assessor
+
+    def anchor(n, body, line):
+        return {"id": f"a{n}", "env": "theorem", "number": str(n), "label": None,
+                "file": "paper.tex", "line": line, "source_sha256": env_hash(body)}
+    inv = {"claims": [{**ZERO, "scope_reviewed": True}]}
+    tex = {"T": {"mode": "latex", "envs": ["theorem"], "regions": {},
+                 "anchors": [anchor(2, "Two is even.", 8), anchor(3, "Zero is even.", 11)]}}
+    cfg = SimpleNamespace(statement_authors=[], papers=[], lean_root=None)
+    lean = {"specs": {}, "proofs": {}, "decls": {}, "defs": {}, "layering": []}
+    findings = Assessor(cfg, inv, lean, tex, [], []).run()["findings"]
+    codes = {(f["code"], f["subject"]) for f in findings if f["tier"] == "violation"}
+    assert ("source-changed", "T:thm:zero") in codes
+    assert any(code == "inventory-gap" for code, _ in codes)
+
+
+def test_keep_needs_the_same_text_at_both_revisions(tmp_path):
+    old = write(tmp_path / "old", "Intro.\n", EQ, THM, NOLABEL)
+    inv = {"papers": {"T": {"commit": OLD[:7]}}, "claims": claims(old, [ZERO])}
+
+    def plan(*parts, keep=("T:thm:zero",), files=None):
+        new = write(tmp_path / f"new{len(list(tmp_path.iterdir()))}", *parts)
+        for name, text in (files or {}).items():
+            (new / name).write_text(text, encoding="utf-8")
+        return repin.repin_plan(inv, "T", old, new, OLD, NEW, keep=keep)
+
+    result, report = plan("Intro.\n", EQ, "\\input{results}\n",
+                          files={"results.tex": THM + NOLABEL})
+    zero = by_claim(report)["T:thm:zero"]
+    assert zero["class"] == "moved" and zero["to"] == "results.tex"
+    assert next(c for c in result["claims"] if c["id"] == "T:thm:zero")["location"] == \
+        "results.tex"
+    changed = NOLABEL.replace("Zero is even.", "Zero is even, and so is two.")
+    with pytest.raises(source_regions.RegionError, match="no environment theorem of the new "
+                       "revision has its text: it changed or was removed"):
+        plan("Intro.\n", EQ, THM, changed)
+    with pytest.raises(source_regions.RegionError, match="2 environments of the new revision"):
+        plan("Intro.\n", EQ, THM, NOLABEL, NOLABEL)
+    with pytest.raises(source_regions.RegionError, match="may not print"):
+        plan("Intro.\n", EQ, THM, "\\iffalse\n" + NOLABEL + "\\fi\n")
+    with pytest.raises(source_regions.RegionError, match="it is unchanged"):
+        plan("Intro.\n", EQ, THM, NOLABEL, keep=("T:thm:zero", "T:thm:t"))
+    with pytest.raises(source_regions.RegionError, match="T:intro: --keep carries over"):
+        plan("Intro.\n", EQ, THM, NOLABEL, keep=("T:thm:zero", "T:intro"))
+    twice = write(tmp_path / "twice", "Intro.\n", EQ, THM, NOLABEL, NOLABEL)
+    with pytest.raises(source_regions.RegionError, match="2 environments at the original"):
+        repin.repin_plan({"claims": claims(twice, [ZERO])}, "T", twice, twice, OLD, NEW,
+                         keep=["T:thm:zero"])
+
+
 def test_an_environment_moved_to_another_file_and_a_repeated_label(vendored, capsys):
     proj = vendored
     (proj / "manuscript" / "results.tex").write_text(THM, encoding="utf-8")

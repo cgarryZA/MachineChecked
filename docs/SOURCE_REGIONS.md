@@ -382,7 +382,7 @@ classifies the claim:
 | `removed` | its text is not found, and its label is not in the new revision | keeps its place, digests and revision |
 | `not-found` | its text is not found, and it has no label to find a changed version by | keeps its place, digests and revision |
 | `ambiguous` | its text or its label occurs more than once, or its text occurs only where the paper may not print it | nothing is written |
-| `not-handled` | an environment pin this command cannot place (below) | nothing is written |
+| `not-handled` | an environment pin this command cannot place (below) | nothing is written, unless the claim is kept with `--keep` (below) |
 | `pending-review` | its pin is of another revision (a passage that changed in an earlier repin) | nothing |
 | `unpinned` | it has no source pin | nothing |
 
@@ -399,7 +399,24 @@ label that is gone is `removed`. A label that occurs twice is `ambiguous`, and s
 label when one environment of the new revision has the claim's text under another label (the
 match is shown, not taken). A claim the compiled paper finds only by its printed number, or
 whose label is carried by several environments at the original revision, is `not-handled`:
-numbers are computed by compiling, which this command does not do, so pin such a claim by hand.
+numbers are computed by compiling, which this command does not do.
+
+When the new revision leaves such a claim's environment alone, `--keep CLAIM` (repeatable)
+carries it over and lets the rest of the plan be written:
+
+```sh
+machinechecked inventory repin --paper P --to NEW --keep P:definition-6.1 --write
+```
+
+An environment of the claim's `kind` must hold its text (the digest of its body) exactly once
+at the original revision, and exactly once, where the paper prints it, at the new revision. The
+claim is then `unchanged` (or `moved`, to the file that now holds it), its entry says `kept`
+with a `note`, and it takes the new revision as any unchanged claim does; its digest and
+`number` stay as they are. Its printed number is not computed: the next build finds it by that
+number and compares the text there with the pin, so an environment numbered before it in the new
+revision is reported by the source check (`source-changed`, with the environment left without a
+claim as an `inventory-gap`), never taken. A kept claim whose text changed, was removed, or occurs
+twice is refused, and so is `--keep` of a claim this command can place; pin those by hand.
 
 A claim that keeps its revision records it in its own `commit`, so a later repin reports it
 as `pending-review` rather than comparing it with text it was not pinned to.
@@ -463,7 +480,7 @@ that rests on the surrounding text needs checking. The plan counts the symbol li
 claim that changed or whose surroundings changed; a symbol link keeps the printed text it was
 made on and shows as stale in the reader when that text changes.
 
-`--write` refuses while any claim is ambiguous or not handled. It writes atomically and only if neither the
+`--write` refuses while any claim is ambiguous, or not handled and not kept. It writes atomically and only if neither the
 inventory nor the configuration changed during planning. It changes only the selected paper's
 claims (`location`, `source_region`, `commit`, and line digests a claim was pinned without),
 the paper's `commit` under `papers`, and the paper's source revision in the configuration.

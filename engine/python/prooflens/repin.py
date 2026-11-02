@@ -33,8 +33,9 @@ CONTEXT = 2  # lines on each side compared for a change of the passage's surroun
 SKIP = {".git", ".lake", ".machinechecked", ".prooflens"}
 
 # The classes of a claim, in the order the plan lists them. Only `unchanged` and `moved`
-# claims are repinned; `ambiguous` and `not-handled` claims prevent a write. `unpinned` claims
-# have no source pin to move.
+# claims are repinned; `ambiguous` and `not-handled` claims prevent a write (a `not-handled`
+# claim carried over with `--keep` is `unchanged` or `moved`). `unpinned` claims have no source
+# pin to move.
 CLASSES = ("unchanged", "moved", "changed", "removed", "not-found", "ambiguous",
            "not-handled", "pending-review", "unpinned")
 
@@ -316,6 +317,52 @@ def statement_entry(claim: dict, old_root: Path, new_root: Path, old_files, new_
     return entry, None
 
 
+def kept_statement(claim: dict, entry: dict, old_root: Path, new_root: Path, old_files,
+                   new_files, old_rev: str) -> tuple[dict, Statement]:
+    """The plan entry of a claim pinned by its environment that this command cannot place
+    (`not-handled`: the compiled paper finds it by its printed number) and that `--keep` carries
+    over, with its environment in the new snapshot. Its environment is found by its text: one
+    environment of its kind whose body has the claim's digest at the original revision, and
+    exactly one, where the paper prints it, at the new revision. Its text is then the same at
+    both revisions. Its printed number is not computed: the next build compares the claim with
+    the environment that number names."""
+    cid = claim["id"]
+    if entry["class"] != "not-handled":
+        raise RegionError(f"{cid}: --keep carries over a claim this command cannot place, and "
+                          f"it is {entry['class']}")
+    kind = claim.get("kind")
+    what = "environment" + (f" {kind}" if kind else "")
+    sha = claim.get("source_sha256")
+    old = [s for s in statements(old_root, old_files, kind) if s.sha256 == sha]
+    if not old:
+        raise RegionError(f"{cid}: --keep: no {what} at the original revision {old_rev} has "
+                          "its text; the baseline is not the reviewed text")
+    if len(old) > 1:
+        raise RegionError(f"{cid}: --keep: {len(old)} environments at the original revision "
+                          "have its text (" + ", ".join(f"{s.file}:{s.line}" for s in old)
+                          + "); pin it by hand")
+    new = [s for s in statements(new_root, new_files, kind) if s.sha256 == sha]
+    if not new:
+        raise RegionError(f"{cid}: --keep: no {what} of the new revision has its text: it "
+                          "changed or was removed; pin it by hand")
+    if len(new) > 1:
+        raise RegionError(f"{cid}: --keep: {len(new)} environments of the new revision have "
+                          "its text (" + ", ".join(f"{s.file}:{s.line}" for s in new)
+                          + "); pin it by hand")
+    target = new[0]
+    if target.hidden:
+        raise RegionError(f"{cid}: --keep: its text occurs only where the paper may not print "
+                          f"it ({target.file}:{target.line})")
+    out = {"claim": cid, "from": claim.get("location"), "pin": "environment",
+           "class": "unchanged" if target.file == old[0].file else "moved", "kept": True,
+           "from_region": {"file": old[0].file, "start_line": old[0].line},
+           "to": target.file, "to_region": {"file": target.file, "start_line": target.line},
+           "note": "carried over with --keep: its environment has the same text at both "
+                   "revisions; the compiled paper finds it by its printed number, which this "
+                   "command does not compute, so the next build checks that number"}
+    return out, target
+
+
 def _body(root: Path, s: Statement) -> list[str]:
     from .tex import statement_at
     return (statement_at(root / s.file, s.line, s.env) or "").split("\n")
@@ -502,7 +549,8 @@ def note_references(note: str, own: str | None, old_files: dict[str, str],
 
 
 def repin_plan(inventory: dict, paper: str, old_root: Path, new_root: Path, old_rev: str,
-               new_rev: str, accept=(), rewrite_notes: bool = False) -> tuple[dict, dict]:
+               new_rev: str, accept=(), rewrite_notes: bool = False,
+               keep=()) -> tuple[dict, dict]:
     """The inventory with the paper's claims moved from `old_rev` (snapshot `old_root`) to
     `new_rev` (snapshot `new_root`), and the report of what happened to each claim. Raises
     RegionError, before matching anything, if a claim does not match its pin at `old_rev`.
@@ -511,8 +559,10 @@ def repin_plan(inventory: dict, paper: str, old_root: Path, new_root: Path, old_
     claims in `accept` take them (their digests and revision kept), and a claim in `accept`
     without usable proposed bounds is refused. The line references of the claims' scope notes
     are listed under `notes`; with `rewrite_notes`, those whose lines only moved take their new
-    numbers."""
-    accept = set(accept)
+    numbers. The claims in `keep`, pinned by an environment this command cannot place, are
+    carried over when their environment's text is the same at both revisions
+    (`kept_statement`); any other claim in `keep` is refused."""
+    accept, keep = set(accept), set(keep)
     result = deepcopy(inventory)
     claims = [c for c in result["claims"] if c["paper"] == paper]
     if not claims:
@@ -544,6 +594,10 @@ def repin_plan(inventory: dict, paper: str, old_root: Path, new_root: Path, old_
                 continue
             entry, target = statement_entry(claim, old_root, new_root, old_files, new_files,
                                             old_rev)
+            if claim["id"] in keep:
+                entry, target = kept_statement(claim, entry, old_root, new_root, old_files,
+                                               new_files, old_rev)
+                keep.discard(claim["id"])
             entries.append(entry)
             _apply_statement(claim, entry, target, paper_pin, old_rev, new_rev)
             continue
@@ -662,6 +716,11 @@ def repin_plan(inventory: dict, paper: str, old_root: Path, new_root: Path, old_
         raise RegionError(", ".join(sorted(accept)) + ": no bounds are proposed for "
                           + ("it" if len(accept) == 1 else "them")
                           + " (only a changed or not-found span of this paper has them)")
+    if keep:
+        raise RegionError(", ".join(sorted(keep)) + ": --keep carries over a claim of this "
+                          "paper pinned by an environment this command cannot place, at the "
+                          "original revision; " + ("it is" if len(keep) == 1 else "they are")
+                          + " not one")
     notes = _notes(inventory, result, paper, entries, old_files, new_files, rewrite_notes)
 
     pins = result.get("papers", {}).get(paper)
@@ -952,6 +1011,10 @@ def main(argv=None) -> int:
     parser.add_argument("--accept-bounds", action="append", default=[], metavar="CLAIM",
                         help="give CLAIM, a changed or not-found span, the bounds the plan "
                         "proposes from the line diff (its digests are kept); repeatable")
+    parser.add_argument("--keep", action="append", default=[], metavar="CLAIM",
+                        help="carry over CLAIM, pinned by an environment this command cannot "
+                        "place (found by its printed number), when an environment of its kind "
+                        "has its text once at both revisions; repeatable")
     parser.add_argument("--rewrite-notes", action="store_true",
                         help="give the line references of scope notes whose lines only moved "
                         "their new numbers")
@@ -1000,7 +1063,8 @@ def main(argv=None) -> int:
                     raise RegionError("repinning needs pinned LaTeX source snapshots")
                 new_dir, new_rev = new.dir, new.revision
             result, report = repin_plan(inventory, paper.id, old_dir, new_dir, old_rev,
-                                        new_rev, args.accept_bounds, args.rewrite_notes)
+                                        new_rev, args.accept_bounds, args.rewrite_notes,
+                                        args.keep)
             if vendored:
                 # A folder has no revision of its own: the inventory records the one it holds.
                 pins = result.setdefault("papers", {}).setdefault(paper.id, {})
@@ -1029,8 +1093,11 @@ def main(argv=None) -> int:
                          for k, what in (("ambiguous", "ambiguous claims"),
                                          ("not-handled", "claims it cannot place"))
                          if any(kinds[c] == k for c in report["blocking"])]
+                hint = (" (carry a claim over with --keep CLAIM when its environment did not "
+                        "change)" if any(kinds[c] == "not-handled" for c in report["blocking"])
+                        else "")
                 parser.exit(2, "repin: nothing written: " + "; ".join(parts)
-                            + "; resolve them first\n")
+                            + "; resolve them first" + hint + "\n")
             config_text = None
             if key is not None and new_value != old_value:
                 config_text = retarget_config(before_cfg.decode("utf-8"), paper.id, key,
