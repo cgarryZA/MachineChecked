@@ -139,8 +139,8 @@ def check_report(r: dict, body: dict, cfg: Config, accept_same_family: bool,
         unpinned = sorted(set(want) & set(unpinned_passages(inv, body.get("tex"))))
         if unpinned:
             why.append("the manuscript no longer matches the pin of " + ", ".join(unpinned)
-                       + ": pin the passage again (machinechecked inventory repin) and review "
-                       "it from a new build")
+                       + ": pin the passage again (machinechecked inventory rebound --repin, at "
+                       "the paper's new revision) and review it from a new build")
     papers = body["provenance"]["papers"]
     for pid, revn in (pins.get("manuscripts") or {}).items():
         if pid in papers and papers[pid].get("revision") != revn:
