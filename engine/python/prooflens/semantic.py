@@ -28,9 +28,11 @@ each workspace is a set of its own, never combined with another.
 Findings in force. Every submitted finding in force of the auditors' workspaces (on the whole
 statement, a clause or a requirement) is counted once, by whether it is current for this build,
 due for review (a part it rests on changed since it was submitted) or not known to be current
-(`finding_currency`). A published audit counts the findings it publishes, as the export checked
-them; a build counts those of the workspaces in its working directory, against its own site
-data (`workspace_findings`).
+(`finding_currency`). A finding that a version map kept to the build's release judges is in the
+state that map gives it, as the Changes view shows it. A published audit counts the findings it
+publishes, as the export checked them (and the maps it publishes, `revisions`); a build counts
+those of the workspaces in its working directory, against its own site data
+(`workspace_findings`).
 """
 
 from __future__ import annotations
@@ -298,12 +300,39 @@ def finding_state(currency: str | None) -> str:
     return {"current": "current", "stale": "due"}.get(currency, "unchecked")
 
 
-def published_findings(work: dict | None) -> list[str]:
+# A version map's judgement of a finding (`reopen.STATES`) as a state of `FINDING_STATES`, and
+# which of two judgements is the less current.
+MAP_STATE = {"reopened": "due", "unchecked": "unchecked", "current": "current"}
+RANK = {"due": 0, "unchecked": 1, "current": 2}
+
+
+def _judge(out: dict[str, str], fid, state) -> None:
+    """Record a map's judgement `state` of the finding `fid` in `out`, keeping the less current
+    when another map judged it too."""
+    s = MAP_STATE.get(state, "unchecked")
+    if fid not in out or RANK[s] < RANK[out[fid]]:
+        out[fid] = s
+
+
+def published_findings(work: dict | None, release: str | None = None) -> list[str]:
     """The state of each submitted finding in force of a claim's published workspace records
-    (`prooflens/published-work@1`), as the export checked it."""
-    return [finding_state((f.get("currency") or {}).get("state"))
-            for rd in (work or {}).get("readings") or [] if isinstance(rd, dict)
-            for f in rd.get("findings") or [] if isinstance(f, dict) and f.get("in_force")]
+    (`prooflens/published-work@1`): the state a version map kept to the published `release`
+    gives it (`revisions`), as the Changes view shows it, when one judges it; otherwise its
+    currency as the export checked it."""
+    out = []
+    for rd in (work or {}).get("readings") or []:
+        if not isinstance(rd, dict):
+            continue
+        judged: dict[str, str] = {}
+        for rev in rd.get("revisions") or []:
+            to = ((rev or {}).get("map") or {}).get("to") or {}
+            if release is not None and to.get("release") == release:
+                for f in rev.get("findings") or []:
+                    if isinstance(f, dict):
+                        _judge(judged, f.get("id"), f.get("state"))
+        out += [judged.get(f.get("id")) or finding_state((f.get("currency") or {}).get("state"))
+                for f in rd.get("findings") or [] if isinstance(f, dict) and f.get("in_force")]
+    return out
 
 
 def finding_currency(states: list[str]) -> dict[str, int]:
@@ -363,8 +392,6 @@ def _judged_by_maps(ws: dict, kept: dict, snap, root: Path | None) -> dict[str, 
     if not ws.get("version_maps"):
         return {}
     from .reopen import for_site
-    word = {"reopened": "due", "unchecked": "unchecked", "current": "current"}
-    rank = {"due": 0, "unchecked": 1, "current": 2}
     out: dict[str, str] = {}
     try:
         doc = for_site({"id": ws.get("id"), "records": kept,
@@ -374,18 +401,17 @@ def _judged_by_maps(ws: dict, kept: dict, snap, root: Path | None) -> dict[str, 
         return {r["id"]: "unchecked" for r in kept.values() if r.get("kind") == "finding"}
     for m in doc.get("maps") or []:
         for f in m.get("findings") or []:
-            s = word.get(f.get("state"), "unchecked")
-            if f.get("id") not in out or rank[s] < rank[out[f["id"]]]:
-                out[f["id"]] = s
+            _judge(out, f.get("id"), f.get("state"))
     return out
 
 
 def claim_facts(row: dict, chunk: dict, work: dict | None = None,
-                found: list[str] | None = None) -> tuple[dict, dict]:
+                found: list[str] | None = None, release: str | None = None
+                ) -> tuple[dict, dict]:
     """What the summary records of one claim (its index row's `semantic`), and the descriptors
     of the sets of readings it appears in. `found` is the state of each finding in force of the
     claim when they come from the working directory's workspaces (`workspace_findings`);
-    otherwise they are the published ones `work` holds."""
+    otherwise they are the published ones `work` holds, judged for `release`."""
     unit = unit_of(row, chunk)
     readings, sets = {}, {}
     own = audit_reading(chunk)
@@ -398,7 +424,7 @@ def claim_facts(row: dict, chunk: dict, work: dict | None = None,
     out = {"unit": unit, "declarations": len(declarations(chunk)), "readings": listed,
            "review": review_state(chunk, unit),
            "findings": finding_categories(chunk, listed, work)}
-    states = (found or []) + published_findings(work)
+    states = (found or []) + published_findings(work, release)
     if states:
         out["finding_currency"] = finding_currency(states)
     return out, sets
@@ -433,7 +459,8 @@ def summarise(index: dict, chunks: dict[str, dict], works: dict[str, dict] | Non
     facts, sets, names = {}, {}, {}
     for row in index.get("claims") or []:
         chunk = chunks.get(row.get("file")) or {}
-        f, more = claim_facts(row, chunk, works.get(row["id"]), found.get(row["id"]))
+        f, more = claim_facts(row, chunk, works.get(row["id"]), found.get(row["id"]),
+                              index.get("release"))
         facts[row["id"]] = f
         sets.update(more)
         names[row["id"]] = declarations(chunk)

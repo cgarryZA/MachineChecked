@@ -106,7 +106,8 @@ def records(claims=CLAIMS, work=WORK):
              "claims": rows}
     works = {cid: {"schema": "prooflens/published-work@1", "claim": cid, "readings": [
         {"workspace": "ws-111111111111", "mode": "independent",
-         "reviewer": {"id": "human:W", "kind": "human", "name": "W"}, "findings": fs}]}
+         "reviewer": {"id": "human:W", "kind": "human", "name": "W"},
+         "findings": copy.deepcopy(fs)}]}
         for cid, fs in work.items()}
     return index, chunks, works
 
@@ -532,3 +533,26 @@ def test_check_and_the_site_count_the_same_findings_in_zero_configuration(tmp_pa
     assert "finding_currency" not in json.loads(
         (site / "data" / "index.json").read_text())["claims"][0]["semantic"]
 
+
+
+def test_a_published_audit_counts_findings_as_its_published_maps_judge_them():
+    """A published reading carries what each version map its workspace keeps says of its
+    findings (`revisions`). A map to the audit's release judges the findings it follows, as the
+    Changes view does; a map to another release judges nothing here."""
+    index, chunks, works = records()
+    rd = works["P:f"]["readings"][0]
+
+    def revision(release, states):
+        return {"map": {"paper": "P", "from": {"release": "v-earlier"}, "to": {"release": release}},
+                "build_checked": True, "claims": [],
+                "findings": [{"id": fid, "claim": "P:f", "state": st} for fid, st in states]}
+
+    rd["revisions"] = [revision("v-other", [("f2", "reopened"), ("f3", "reopened")])]
+    s, facts = semantic.summarise(index, chunks, works)
+    assert facts["P:f"]["finding_currency"] == {"current": 2, "due": 0, "unchecked": 0}
+    rd["revisions"].append(revision("v-synthetic", [("f2", "reopened"), ("f3", "current")]))
+    rd["revisions"].append(revision("v-synthetic", [("f3", "unchecked")]))
+    s, facts = semantic.summarise(index, chunks, works)
+    assert facts["P:f"]["finding_currency"] == {"current": 0, "due": 1, "unchecked": 1}
+    assert s["papers"]["P"]["finding_currency"]["statements"] == {
+        "current": 1, "due": 1, "unchecked": 1}

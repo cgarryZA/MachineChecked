@@ -693,8 +693,9 @@ resolution; any other); a *faithful with representation choices* report; a *broa
 *narrower*, *mismatched*, *vacuous* or *refutation not valid* report (other differences); a step
 false as printed or with a gap. Readings and reports out of date are not counted as findings.
 
-The findings in force (`finding_currency`) are, in a published audit, those it publishes, in the
-state the export checked (each finding's `currency`). In a build, they are the submitted findings
+The findings in force (`finding_currency`) are, in a published audit, those it publishes: a
+finding that a version map published with it (`revisions`) to the audit's release judges is in
+the state the map gives it, any other in the state the export checked (its `currency`). In a build, they are the submitted findings
 of the workspaces in its working directory that an export of it would publish: a finding that a
 version map the workspace keeps to the build's release judges is in the state the map gives it
 (`reopened` counts as `due`), as the Changes view shows it; any other is checked against the
