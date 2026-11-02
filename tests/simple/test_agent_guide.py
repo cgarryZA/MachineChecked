@@ -689,6 +689,12 @@ def _recorded(sh, r):
     assert [e["id"] for e in c["evidence"]] == ["e-1"]
     (f,) = c["findings"]
     assert (f["id"], f["coverage"], f["evidence"]) == ("f-1", "full", ["e-1"])
+    # One clause: its requirements, and the alignment of the conclusion with two Lean targets.
+    rd = c["reading"]
+    assert [r["local_id"] for r in rd["requirements"]] == ["r1", "r1.1"]
+    (a,) = rd["alignments"]
+    assert [t["decl"] for t in a["lean"]] == ["Plain.oddSum_eq_sq", "Plain.oddSum"]
+    assert a["lean"][0]["target"] == "Plain.oddSum n = n * n"
 
 
 PLAIN_STEPS = [
