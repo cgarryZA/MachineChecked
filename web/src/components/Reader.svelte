@@ -2,7 +2,7 @@
   import { untrack } from "svelte";
   import { inScope, statusView } from "../lib/presentation.js";
   import TexInline from "./TexInline.svelte";
-  import { href, go } from "../lib/route.svelte.js";
+  import { href, go, route } from "../lib/route.svelte.js";
   import PdfView from "./PdfView.svelte";
   import Passport from "./Passport.svelte";
   import PaperInfo from "./PaperInfo.svelte";
@@ -28,12 +28,14 @@
   // A chosen claim shows its comparison in place of the paper, which stays loaded and hidden.
   // Leaving the claim shows the paper where the reader left it: the pane keeps its scroll
   // position, and `place` restores it where a browser does not. A paper not yet shown (a claim
-  // opened by its link) shows the place of the claim left, marked (`at`).
+  // opened by its link) shows the place of the claim left, marked (`at`). A link to the paper at
+  // a claim (`?show=<claim>`, the claim page's "Show in the paper") shows that place, marked.
   let place = null, before = untrack(() => claimId), seen = !before, at = $state(null);
   function keepPlace() { if (pane?.clientHeight) place = [pane.scrollTop, pane.scrollLeft]; }
   $effect(() => {
     if (claimId) at = null;
     else if (!seen) { seen = true; at = before; }
+    else if (route.show) at = route.show;
     before = claimId;
   });
   $effect(() => { if (!claimId && pane && place) [pane.scrollTop, pane.scrollLeft] = place; });
