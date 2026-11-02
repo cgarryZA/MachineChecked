@@ -750,6 +750,9 @@ reads and writes it for `machinechecked workspace`, for the reader under `machin
 (`/api/workspace…` on the loopback server; the review page's steps through `/api/review`, which
 calls the session `machinechecked review` uses) and for `machinechecked review`, with one
 validation path. A workspace records evidence and readings and is never an input to a status.
+A static copy of the site writes its review page's work as a workspace file and reads one
+(`web/src/lib/workfile.js`): the fields of an independent workspace that `workspace.new` opens,
+its drafts, reports and exposure, and every other field of an imported file kept as it was.
 
 | Field | Content |
 |---|---|

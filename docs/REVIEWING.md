@@ -55,8 +55,23 @@ static copy of the site (an audit, a bundle) keeps the page's work in the browse
 The page and the commands without `--workspace` or `--mode` use your first workspace
 (`review-work/<reviewer>.json`). `--workspace ID` names another of yours (`workspace list` gives
 the ids), and `--mode informed` or `--mode independent` your workspace of that mode, opening one
-if you have none. A workspace's mode is chosen when it is opened; `review` never changes it
+if you have none. On the page, **Workspace** chooses among yours as `--workspace` does, and this
+browser keeps the choice. A workspace's mode is chosen when it is opened; `review` never changes it
 (a `mode` operation of `workspace update` does, and keeps what you had seen).
+
+**Workspace files.** **Export workspace** on the review page saves your review work as a
+workspace file (`prooflens/workspace@1`, the file `machinechecked workspace export` writes), and
+**Import workspace** continues one. A static copy of the site writes and reads the file itself, so
+work moves between a static copy, a terminal and `machinechecked view`: `machinechecked workspace
+import` brings the file into a project's working directory, where `review --workspace ID` and the
+review page continue it, and a file exported there continues on a static copy of the same site.
+The drafts, the reports with their pins, the findings and the record of what you had seen travel
+unchanged. On a static copy, importing a file replaces the browser's drafts with the file's,
+asking first when the browser holds work the file does not, and keeps the record of what you had
+seen; under `view`, an imported workspace of yours is the one the page works in. A file of
+another format or a later version is refused with the reason, and so, on a static copy, are an
+informed investigation (its reviews are independent) and, while the browser holds work, another
+reviewer's workspace.
 
 A step is refused, with what to do instead, when it comes before the one it follows, when the
 unit is not in the queue of the last build (your draft of it is kept), when the build changed
@@ -562,7 +577,8 @@ working directory, which `machinechecked review` continues; on a static copy of 
 saved in this browser's local storage. **Export reports** to share your work with the
 maintainer. The JSON contains your interpretation, comparison, verdict, source revision, the
 Lean fingerprints the verdict was recorded against, the mode of the review and reviewer
-attribution.
+attribution. **Export workspace** saves the drafts too, to continue them elsewhere
+([Workspace files](#one-claim-at-a-time)).
 
 The maintainer reads the report and decides whether to promote its review markers.
 
