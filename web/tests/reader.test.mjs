@@ -850,6 +850,23 @@ await check("Back to paper from a claim opened by its link shows the claim's pla
   }
 });
 
+// The claim page's "Show in the paper" opens the paper, not the claim, at the claim's place,
+// marked (#471).
+for (const width of [1300, 390]) {
+  await check("Show in the paper opens the paper at the claim's place", width, async (pg) => {
+    for (const id of ["P:theorem-15", "P:theorem-28"]) {
+      await pg.goto("about:blank");
+      await pg.goto(origin + `/long/#/r/paper/claim/${encodeURIComponent(id)}`);
+      await pg.locator("button[aria-label='More']").click();
+      await pg.getByRole("link", { name: "Show in the paper", exact: true }).click();
+      await pg.waitForSelector(`.pdf [data-claim="${id}"]`);
+      assert.equal(await pg.locator(".claim-view").count(), 0, "no claim is open");
+      assert.ok(await comesIntoView(pg, id), `${id} not in view`);
+      assert.equal(await pg.locator(`.pdf [data-claim="${id}"]`).first().evaluate((e) => e.classList.contains("sel")), true, `${id} is marked`);
+    }
+  });
+}
+
 // The reader fills the window and the document never scrolls (#65, #214): not after opening a
 // claim deep in a long paper by its link, and not after wheel scrolling in any pane.
 const pageScroll = (pg) => pg.evaluate(() => ({ height: innerHeight, scrollHeight: document.scrollingElement.scrollHeight, scrollY }));
