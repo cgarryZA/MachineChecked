@@ -485,6 +485,24 @@ const summarised = spawnSync(process.env.PYTHON || "python3", ["-c",
 if (summarised.status !== 0) throw new Error("the engine could not summarise:\n" + summarised.stderr);
 const SEM = Object.fromEntries(["toysem", "basissem", "toyworksem", "toyfindsem"].map((d) => [d, JSON.parse(fs.readFileSync(path.join(root, d, "data/index.json"), "utf8"))]));
 
+// #479: a copy of the toy audit whose published readings concern parts of claims (`toyfind`), as
+// an audit that does not publish review texts carries it, with an unresolved reading of Theorem
+// 2.5 whose question's words are withheld (`published_work.withheld_prose`).
+fs.cpSync(path.join(root, "toyfind"), path.join(root, "toyfindclosed"), { recursive: true });
+{
+  const row = TOY.claims.find((c) => c.id === "T:thm:bound");
+  const file = path.join(root, "toyfindclosed/data/work", row.file);
+  const w = JSON.parse(fs.readFileSync(file, "utf8"));
+  w.readings[0].findings.push({ id: "f-open", kind: "finding", claim: "T:thm:bound", coverage: "unresolved", state: "submitted",
+    submitted_at: "2026-10-21T00:00:00Z", created_by: "human:A-Auditor", evidence: [], in_force: true, currency: cur, withheld: ["question", "note"] });
+  fs.writeFileSync(file, JSON.stringify(w));
+  const parts = spawnSync(process.env.PYTHON || "python3", ["-c",
+    "import sys\nfrom pathlib import Path\nfrom prooflens import semantic\n"
+    + "semantic.refresh(Path(sys.argv[1]) / 'data', 'A. Author', {'T': ['reviews']})",
+    path.join(root, "toyfindclosed")], { encoding: "utf8" });
+  if (parts.status !== 0) throw new Error("the engine could not summarise the parts:\n" + parts.stderr);
+}
+
 // #414: the page with two audits of one version (`combined`), as machinechecked.org writes it with
 // each listed audit's semantic summary on its registry entry (its scripts/summary.py record: the
 // counts of the audited paper, the sets of readings, and the pins it was checked against). The
@@ -3409,6 +3427,50 @@ await check("the overview keeps units apart and shows a workspace's readings as 
   await pg.getByRole("button", { name: "Every clause (1 statement)", exact: true }).click();
   assert.equal(await pg.locator(".coverage .claims li").count(), 1);
   assert.match(await pg.locator(".coverage .claims li").textContent(), /Definition 1\.1.*Every clause.*By an argument combining Lean results \(recorded as through a checked bridge\)/s);
+});
+
+for (const width of [1300, 390]) {
+  await check("the overview filters claims by the readings of their parts and links to each part's block", width, async (pg) => {
+    await pg.goto(origin + `/toyfindsem/#/r/${TOY.release}/overview?set=${encodeURIComponent("workspace:ws-b00000000002")}`);
+    await pg.locator(".coverage .semantic").waitFor();
+    const group = pg.locator('.semantic [data-dimension="clause_coverage"]');
+    assert.deepEqual(await group.locator("button").allTextContents(), ["Any", "Stated differently (1 statement)"]);
+    await group.getByRole("button", { name: "Stated differently (1 statement)", exact: true }).click();
+    assert.match(await pg.evaluate(() => location.hash), /clause=changed/);
+    const row = pg.locator(".coverage .claims li");
+    assert.equal(await row.count(), 1);
+    // The whole statement has no reading in this set; its part has one, named and linked.
+    assert.match(await row.locator(".cov").textContent(), /Clauses only \(1\)/);
+    const part = row.locator('[data-part="pos2"]');
+    assert.equal((await part.textContent()).replace(/\s+/g, " ").trim(), "requirement pos2: Stated differently");
+    await part.locator("a").click();
+    await pg.waitForFunction(() => /\/read\/T\/T%3Aprop%3Apred\?at=Toy\.PaperSpec\.prop_pred_pos%3A%3Atop$/.test(location.hash));
+    const block = pg.locator('.cmp [data-spec="Toy.PaperSpec.prop_pred_pos"]');
+    await block.and(pg.locator("[data-reached]")).waitFor();
+    assert.equal(await block.evaluate((e) => { const r = e.getBoundingClientRect(); return r.top < window.innerHeight && r.bottom > 0; }), true, "the part's block is in view");
+    assert.equal(await pg.locator(".cmp [data-reached]").count(), 1, "one block is marked");
+    // Another workspace's part reading: a requirement at the conclusion of Theorem 2.5.
+    await pg.goto(origin + `/toyfindsem/#/r/${TOY.release}/overview?set=${encodeURIComponent("workspace:ws-a00000000001")}&clause=full`);
+    await pg.locator(".coverage .claims li").first().waitFor();
+    assert.equal(await pg.locator(".coverage .claims li").count(), 1, "one claim has a part stated in full");
+    assert.match(await pg.locator('.coverage .claims li [data-part="bound"]').textContent(), /requirement bound: Stated in full/);
+    assert.equal(await pg.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, "no horizontal scroll");
+  });
+}
+
+await check("the overview says what a publication withholds, never not assessed", 390, async (pg) => {
+  await pg.goto(origin + `/toyfindclosed/#/r/${TOY.release}/overview?set=${encodeURIComponent("workspace:ws-a00000000001")}&coverage=unresolved`);
+  await pg.locator(".coverage .claims li").first().waitFor();
+  assert.match(await pg.locator(".coverage .withheld").textContent(), /^This publication withholds review texts and auditors' notes: where a reading's words are not published, the Overview says “Withheld”\.$/);
+  const row = pg.locator(".coverage .claims li");
+  assert.equal(await row.count(), 1);
+  assert.match(await row.locator(".cov").textContent(), /^Unresolved/);
+  assert.equal(await row.locator('.question [data-withheld="question"]').textContent(), "Withheld");
+  assert.doesNotMatch(await row.textContent(), /Not assessed|see the claim/);
+  // An audit that withholds nothing says nothing of it.
+  await pg.goto(origin + `/toyfindsem/#/r/${TOY.release}/overview`);
+  await pg.locator(".coverage .semantic").waitFor();
+  assert.equal(await pg.locator(".coverage .withheld").count(), 0);
 });
 
 // #478: the Overview counts the findings in force of a published audit by their currency, in

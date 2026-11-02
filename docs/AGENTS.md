@@ -65,8 +65,14 @@ per paper and per unit (`statements`, `notation`, `proof_steps`), the inventory,
 status counts, and per set of readings the coverage, basis and currency counts, with the
 reviews, the kinds of finding recorded and the findings in force by currency
 (`finding_currency`: `current`, `due` for review, `unchecked`, counted in findings, from the
-workspaces in the working directory); each claim's `semantic` holds its own readings and keys. Quote these counts as they are, each with its unit: they are never added into a total or a
-percentage ([data model](DATA_MODEL.md#semantic-summary-prooflenssemantic-summary1-derived)).
+workspaces in the working directory); each claim's `semantic` holds its own readings and keys,
+and `clause_readings` when a workspace reads a clause or requirement of it (each with the `decl`
+of the comparison it concerns). Quote these counts as they are, each with its unit: they are
+never added into a total or a percentage
+([data model](DATA_MODEL.md#semantic-summary-prooflenssemantic-summary1-derived)). In a published
+audit, a paper's `withheld` lists what its publication settings leave out, and a reading's
+`withheld` (`["question"]`) says its question's words are not published: report that as withheld,
+never as not assessed.
 
 In a project with a `machinechecked.toml` (the full assessment), the document also has
 `findings` (totals per tier, dismissed warnings left out) and `finding_details`: each finding
