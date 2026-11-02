@@ -2,7 +2,8 @@
 // link names one snapshot of the evidence and never silently resolves to a later one.
 //
 //   #/                       the first paper
-//   #/read/<paper>[/<claim>] the paper, or a claim's comparison in its place
+//   #/read/<paper>[/<claim>] the paper, or a claim's comparison in its place; `?show=<claim>`
+//                            shows the paper at that claim's place, marked
 //   #/overview               every claim, with its correspondence, basis, review and status;
 //                            `?set=&unit=&coverage=&basis=&review=&finding=&status=` choose the
 //                            readings shown and filter the claims
@@ -19,7 +20,7 @@ export const OVERVIEW_FILTERS = ["set", "unit", "coverage", "basis", "review", "
 function parse(hash) {
   const [path, query = ""] = hash.split("?");
   const params = new URLSearchParams(query);
-  const state = { inspection: params.getAll("inspect"), at: params.get("at"), target: params.get("claim"), readerSeen: params.get("seen") === "lean",
+  const state = { inspection: params.getAll("inspect"), at: params.get("at"), target: params.get("claim"), show: params.get("show"), readerSeen: params.get("seen") === "lean",
     filters: Object.fromEntries(OVERVIEW_FILTERS.map((k) => [k, params.get(k)])) };
   let parts = path.replace(/^#\/?/, "").split("/").map((s) => { try { return decodeURIComponent(s); } catch { return s; } });
   let release = null;

@@ -462,7 +462,7 @@
                 <a class="act" href={issueUrl(evidenceIndex, claim)} target="_blank" rel="noopener" title={"Opens a draft issue in " + evidenceIndex.issues + " with this claim's details filled in"}>Report issue ↗</a>
               {/if}
               {#if !full}<a href={href(index.release, "claim", claim.id)}>Open as a page</a>{/if}
-              {#if full && meta?.anchor}<a href={href(index.release, "read", claim.paper, claim.id)}>Show in the paper</a>{/if}
+              {#if full && meta?.anchor}<a href={withQuery(href(index.release, "read", claim.paper), { show: claim.id })}>Show in the paper</a>{/if}
               <button onclick={() => { copyLink(); menu = false; }}>{claimLink(index, claim) ? "Copy link" : "Copy reference"}</button>
               {#if reportsUrl(evidenceIndex, claim)}<a href={reportsUrl(evidenceIndex, claim)} target="_blank" rel="noopener">View existing reports ↗</a>{/if}
               {#if index.review_queue && (inScope(claim) || claim.step)}
