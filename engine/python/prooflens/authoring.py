@@ -1,10 +1,12 @@
 """Validated writes of semantic links (`machinechecked link`, and the reader's Link, Unlink and
 Not this buttons under `machinechecked view`).
 
-Both paths resolve the claim against the selected build before anything is written, check the
-declarations, coverage, confidence and note, and record the same entry of
-`machinechecked.links.json`. A link records a correspondence; it changes no status by itself
-(the next build reads it, and Lean decides what the linked declarations establish).
+Both paths go through `plan` and `write`: the claim is resolved against the selected build, and
+the declarations, coverage, confidence and note are checked, before anything is written; both
+record the same entry of `machinechecked.links.json`. A declaration is named `NAME`, or
+`MODULE:NAME` when several modules declare the name; the module is then recorded with the link.
+A link records a correspondence; it changes no status by itself (the next build reads it, and
+Lean decides what the linked declarations establish).
 """
 
 from __future__ import annotations
@@ -130,10 +132,59 @@ def _tidy_reading(entry: dict) -> None:
         entry.pop(k, None)
 
 
+def split_module(name: str) -> tuple[str | None, str]:
+    """A declaration given as `MODULE:NAME` as `(MODULE, NAME)`, a plain name as `(None,
+    NAME)`. A name quoted with «» is never split."""
+    n = str(name or "").strip()
+    if ":" in n and "«" not in n:
+        module, _, rest = n.rpartition(":")
+        return module.strip() or None, rest.strip()
+    return None, n
+
+
+def _known(snap: Snapshot, cid: str, entry: dict, suggested: bool) -> dict[str, dict]:
+    """The declarations linked to the claim, each with the record the build shows: its links, a
+    proof step's links and formal route, and the names its links-file entry holds; with
+    `suggested`, its suggestions and rejections too."""
+    ch = snap.chunk(cid) or {}
+    st = ch.get("step") or {}
+    out: dict[str, dict] = {}
+    for l in ((ch.get("links") or []) + (st.get("links") or [])
+              + ((st.get("route") or {}).get("links") or [])
+              + ((ch.get("suggestions") or []) if suggested else [])):
+        if isinstance(l, dict) and isinstance(l.get("name"), str):
+            out.setdefault(l["name"], l)
+    for n in (list(entry.get("lean") or []) + list((entry.get("route") or {}).get("lean") or [])
+              + (list(entry.get("rejected") or []) if suggested else [])):
+        if isinstance(n, str):
+            out.setdefault(n, {"name": n})
+    return out
+
+
+def _declaration(name: str, module: str | None, snap: Snapshot, root: Path, external: bool,
+                 known: dict[str, dict]) -> dict:
+    """What a declaration of a request is in the build (`targets.resolve_declaration`). A name
+    in `known` that does not resolve to one declaration (one Lean found outside the project, or
+    one several modules declare) is kept as the build shows it, with its status: a link the
+    claim has already, or a suggestion declined, which adds nothing the build has not checked.
+    Any other name that does not resolve is refused, with the candidates: a name newly linked
+    that several modules declare is given as MODULE:NAME."""
+    try:
+        return resolve_declaration(name, snap, root, module, external=external)
+    except TargetError as e:
+        if module is None and name in known:
+            shown = known[name]
+            return {"name": name, "module": shown.get("module"), "build": "as shown",
+                    **({"status_code": shown["status_code"]} if shown.get("status_code")
+                       else {})}
+        raise LinkError(str(e) + (" as MODULE:NAME" if e.kind == "ambiguous" else ""),
+                        e.candidates, e.kind) from None
+
+
 def plan(root: Path, paper: str, snap: Snapshot, claim: str, lean: list[str] | None = None,
          add: bool = False, reject: list[str] | None = None, clear: bool = False,
          note: str | None = None, coverage: str | None = None, confidence: str | None = None,
-         reason: str | None = None, by: str | None = None, check_names: bool = True,
+         reason: str | None = None, by: str | None = None,
          external: bool = False, basis: str | None = None, refs: list[str] | None = None,
          argument: str | None = None, bridge: dict | None = None, question: str | None = None,
          would_decide: str | None = None, route: list[str] | None = None) -> dict:
@@ -150,7 +201,11 @@ def plan(root: Path, paper: str, snap: Snapshot, claim: str, lean: list[str] | N
 
     `route` (a proof step only) replaces the step's different formal route: the declarations
     that reach its enclosing result by another argument (with `add`, they are added to it); a
-    note given with it describes the route."""
+    note given with it describes the route.
+
+    Each declaration is `NAME` or `MODULE:NAME` (`split_module`). A module given for a linked or
+    route declaration is recorded in the entry's `modules`, which the next build reads as
+    formalization.yaml's `module`; a rejection is by name."""
     try:
         cid = snap.resolve_claim(claim)
     except TargetError as e:
@@ -160,6 +215,21 @@ def plan(root: Path, paper: str, snap: Snapshot, claim: str, lean: list[str] | N
     before = copy.deepcopy(links.get("papers", {}).get(paper, {}).get(key))
     entry = copy.deepcopy(before) or {}
     shown = [l["name"] for l in (snap.chunk(cid) or {}).get("links") or []]
+    known = {"lean": _known(snap, cid, entry, False), "route": _known(snap, cid, entry, False),
+             "reject": _known(snap, cid, entry, True)}
+    given = {"lean": None if lean is None else [split_module(n) for n in lean],
+             "reject": None if reject is None else [split_module(n) for n in reject],
+             "route": None if route is None else [split_module(n) for n in route]}
+    for pairs in given.values():
+        for m, n in pairs or []:
+            if m and not n:
+                raise LinkError(f"{m}: no declaration name after the module")
+    lean, reject, route = ([n for _, n in pairs] if pairs is not None else None
+                           for pairs in given.values())
+    chosen: dict[str, str] = {}
+    for m, n in (given["lean"] or []) + (given["route"] or []):
+        if m and chosen.setdefault(n, m) != m:
+            raise LinkError(f"{n} is given in two modules ({chosen[n]}, {m}); link one of them")
 
     if clear and (lean or reject):
         raise LinkError("--clear removes the claim's confirmed links; give it alone")
@@ -183,24 +253,21 @@ def plan(root: Path, paper: str, snap: Snapshot, claim: str, lean: list[str] | N
         raise LinkError(f"the note is longer than {simple.NOTE_CHARS} characters")
 
     decls = []
-    names = list(dict.fromkeys(lean or [])) + list(dict.fromkeys(reject or [])) + \
-        list(dict.fromkeys(route or []))
-    for n in names:
-        if not check_names:
-            decls.append({"name": n, "module": None, "build": "unchecked"})
-            continue
-        try:
-            decls.append(resolve_declaration(n, snap, root, external=external))
-        except TargetError as e:
-            raise LinkError(str(e), e.candidates, e.kind) from None
+    for k in ("lean", "reject", "route"):
+        for m, n in dict.fromkeys(given[k] or []):
+            decls.append(_declaration(n, m, snap, root, external, known[k]))
 
     at = _now()
+
+    recorded = dict(entry["modules"]) if isinstance(entry.get("modules"), dict) else {}
 
     def retire_note():
         old = {k: entry.pop(k) for k in NOTE_FIELDS if k in entry}
         if old:
+            mods = {n: recorded[n] for n in entry.get("lean") or [] if recorded.get(n)}
             entry.setdefault("earlier_notes", []).append(
-                {**old, "lean": entry.get("lean"), "by": entry.get("by"), "until": at})
+                {**old, "lean": entry.get("lean"), **({"modules": mods} if mods else {}),
+                 "by": entry.get("by"), "until": at})
 
     if clear:
         if "lean" in entry:
@@ -212,7 +279,9 @@ def plan(root: Path, paper: str, snap: Snapshot, claim: str, lean: list[str] | N
         bad = [n for n in new if n in (reject or [])]
         if bad:
             raise LinkError(f"{', '.join(bad)} is both linked and rejected")
-        if entry.get("lean") != new:
+        # A module named now for a declaration already linked changes which declaration it is.
+        if entry.get("lean") != new or any(chosen.get(n) and chosen[n] != recorded.get(n)
+                                           for n in new):
             retire_note()
             entry["lean"] = new
             entry["at"] = at
@@ -263,6 +332,13 @@ def plan(root: Path, paper: str, snap: Snapshot, claim: str, lean: list[str] | N
         _tidy_reading(entry)
         if by:
             entry["by"] = by
+    # The modules of the linked and route declarations: named now, else as recorded.
+    names = list(entry.get("lean") or []) + list((entry.get("route") or {}).get("lean") or [])
+    mods = {n: chosen.get(n) or recorded[n] for n in names if chosen.get(n) or recorded.get(n)}
+    if mods:
+        entry["modules"] = mods
+    else:
+        entry.pop("modules", None)
     after = entry or None
     return {"paper": paper, "claim": snap.claim_ref(cid), "declarations": decls,
             "before": before, "after": after, "changed": before != after}
@@ -292,9 +368,9 @@ def write(root: Path, change: dict) -> None:
 
 def from_reader(root: Path, paper: str, snap: Snapshot, req: dict) -> dict:
     """A request of the reader's local server (`POST /api/link`, `{key, lean, reject}`, or
-    `{key, route, note}` for a proof step's formal route),
-    checked and recorded as `machinechecked link` records it. The reader picks declarations
-    from the build's own lists, so their names are not checked again here."""
+    `{key, route, note}` for a proof step's formal route), checked and recorded by `plan` and
+    `write`, as `machinechecked link` records it: the same claim resolution, the same
+    declaration checks, the same entry."""
     if not isinstance(req.get("key"), str):
         raise LinkError("the request names no claim")
     lean, reject, route = req.get("lean"), req.get("reject"), req.get("route")
@@ -303,10 +379,10 @@ def from_reader(root: Path, paper: str, snap: Snapshot, req: dict) -> dict:
             raise LinkError("declarations are a list of names")
     by = req.get("by") if isinstance(req.get("by"), str) else None
     if "route" in req:
-        ch = plan(root, paper, snap, req["key"], route=route or [], check_names=False, by=by,
+        ch = plan(root, paper, snap, req["key"], route=route or [], by=by,
                   note=req["note"] if isinstance(req.get("note"), str) else None)
     else:
         ch = plan(root, paper, snap, req["key"], lean=lean, reject=reject,
-                  clear=lean is None and not reject, check_names=False, by=by)
+                  clear=lean is None and not reject, by=by)
     write(root, ch)
     return ch

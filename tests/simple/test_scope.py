@@ -191,6 +191,47 @@ def test_a_link_into_another_papers_library_is_checked_there(pair):
 
 @needs_lean
 @needs_tex
+def test_link_names_the_module_of_a_name_two_libraries_declare(pair, monkeypatch, capsys):
+    """`machinechecked link` resolves names in a library left out of the paper's index as the
+    build does (#123): `Shared.dup` is ambiguous, `Beta.Main:Shared.dup` says which one is meant,
+    and the next build reads the module recorded with the link."""
+    import json
+    from prooflens import cli
+    root, sessions = pair
+    monkeypatch.chdir(root)
+    cli.main(["build", "alpha.tex"])
+    capsys.readouterr()
+
+    def link(*args):
+        try:
+            cli.main(["link", "--paper", "alpha.tex", *args, "--json"])
+            code = 0
+        except SystemExit as e:
+            code = e.code
+        return code, json.loads(capsys.readouterr().out)
+
+    code, out = link("thm:three", "Shared.dup")
+    assert code == 1 and out["error"]["kind"] == "ambiguous"
+    assert [c["module"] for c in out["error"]["candidates"]] == ["Alpha.Main", "Beta.Main"]
+    assert not (root / "machinechecked.links.json").exists()
+    code, out = link("thm:three", "Beta.Main:Shared.dup")
+    assert code == 0 and out["declarations"] == [{"name": "Shared.dup", "module": "Beta.Main",
+                                                  "build": "built"}]
+    code, out = link("thm:two", "Beta.linked_from_alpha")
+    assert code == 0 and out["declarations"][0]["module"] == "Beta.Main"
+    entries = json.loads((root / "machinechecked.links.json").read_text())["papers"]["alpha.tex"]
+    assert entries["thm:three"] == {"lean": ["Shared.dup"], "at": entries["thm:three"]["at"],
+                                    "modules": {"Shared.dup": "Beta.Main"}}
+    st = by_number(view(root))
+    dup = st["Theorem 3"]["links"][0]
+    rec = dup["record"]
+    assert dup["status_code"] == "link.checked"
+    assert ((rec.get("decl") or {}).get("module") or rec.get("module")) == "Beta.Main"
+    assert st["Theorem 2"]["links"][0]["status_code"] == "link.checked"
+
+
+@needs_lean
+@needs_tex
 def test_a_projection_another_library_generates_keeps_a_link_ambiguous(pair):
     """`Foo.bar` is a theorem the source of Alpha states, and a projection Lean generates in
     Beta from `structure Foo where bar : Nat`, whose source declares no `Foo.bar`. The module

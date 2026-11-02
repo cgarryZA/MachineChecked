@@ -1,13 +1,17 @@
 """Change the bounds of claims' source regions at the paper revision they are pinned at
-(docs/SOURCE_REGIONS.md, "Changing a region's bounds").
+(docs/SOURCE_REGIONS.md, "Changing a region's bounds"), or pin claims whose passage changed at a
+new revision of the paper ("Pinning a changed passage at the new revision").
 
 A pin is replaced only at its own revision: the snapshot must be the revision the claim was
 pinned at, and the claim's present pin must match it there, so that the new digests are of the
-same manuscript. The new bounds are refused when they start or end on a blank or comment-only
-line, and, unless allowed, when they run across a sectioning command. The new digests are
-computed as `source_regions` computes them. A new passage is a new text: the claim's scope
-decision is marked as needing a new reading, and every review marker that recorded the old
-digest reads the claim as changed.
+same manuscript. With `--repin` the snapshot is instead the revision the inventory now records
+for the paper, and the claim's pin is of another revision: its text here becomes the pinned
+text, and the claim records this revision. The new bounds are refused when they start or end on
+a blank or comment-only line, and, unless allowed, when they run across a sectioning command.
+The new digests are computed as `source_regions` computes them, and the plan gives the advice a
+build gives at the new bounds. A new passage is a new text: the claim's scope decision is marked
+as needing a new reading, and every review marker that recorded the old digest reads the claim
+as changed.
 """
 
 from __future__ import annotations
@@ -20,9 +24,11 @@ from pathlib import Path
 import re
 import tempfile
 
+from .repin import _names_of, _pin, statements, tex_files
 from .source_regions import (
-    MACRO, SCHEMES, RegionError, definition_part, location, pin, same_revision, source_file,
-    tex_sources, write_plan,
+    MACRO, SCHEMES, RegionError, advice_message, changed_line, definition_part, definitions,
+    location, pin, region_advice, same_revision, source_file, tex_sources, theorem_names,
+    unpinned_macros, write_plan,
 )
 
 COMMENT = re.compile(r"(?<!\\)%.*")
@@ -117,19 +123,124 @@ def _check(cid: str, region, what: str, across_sections: bool, sections: bool = 
                           "passage does")
 
 
+def _legacy(line: str) -> str:
+    """The legacy opening-line hash of a line: its whitespace collapsed."""
+    return hashlib.sha256(" ".join(line.split()).encode("utf-8")).hexdigest()
+
+
+def _same_text(claim: dict, new) -> bool:
+    """Whether a claim's pin, of another revision, holds the text `new` pins there: the same
+    digest under the same scheme, or a legacy hash of the one line `new` is."""
+    scheme = claim.get("source_hash_scheme")
+    if scheme is None:
+        return not new.parts and new.main.kind == "line" and \
+            claim.get("source_sha256") == _legacy(new.main.text)
+    return scheme == new.scheme and claim.get("source_sha256") == new.sha256
+
+
+def _recorded(claim: dict, revision: str) -> dict:
+    """A claim's bounds as the inventory records them, and the revision its pin is of (whose
+    text the snapshot does not hold)."""
+    name, line = location(claim)
+    span = claim.get("source_region") or {}
+    out = {"file": name, "start_line": line, **span, "revision": revision}
+    if claim.get("source_parts"):
+        out["parts"] = [p["location"] for p in claim["source_parts"]]
+    return out
+
+
+def _commit(claim: dict, papers_pin, revision: str) -> str:
+    """The revision a claim pinned at `revision` records: the paper's own pin, which names it,
+    else `revision` in the form of the claim's present pin."""
+    return str(papers_pin) if papers_pin else _pin(claim.get("commit"), revision, revision)
+
+
+def _repin_environment(claim: dict, req: dict, root: Path, files: dict[str, str],
+                       revision: str, rev_pin: str, commit: str, moving: bool) -> dict:
+    """Pin a claim located by its environment (a file without a line, and the digest of the
+    environment's body) at `revision`: the environment of its kind that carries its own label,
+    hashed as the compiled paper's anchors hash it. A claim the compiled paper finds only by
+    its printed number is refused, since numbers are computed by compiling. A claim already
+    pinned at `revision` (not `moving`) must match it there, and is left as it is."""
+    cid = claim["id"]
+    if any(req.get(k) for k in ("start", "file", "start_column", "end_column")) or \
+            req.get("parts") is not None:
+        raise RegionError(f"{cid}: it is pinned by its environment, whose bounds are the "
+                          "environment's own; give it no --lines, --file, columns or further "
+                          "passages")
+    if not claim.get("location") or claim.get("source_hash_scheme") is not None:
+        raise RegionError(f"{cid}: its source pin has neither a line nor a file of an "
+                          "environment; pin it by hand")
+    kind = claim.get("kind")
+    what = "environment" + (f" {kind}" if kind else "")
+    found = [s for s in statements(root, files, kind) if _names_of(claim) & set(s.labels)]
+    if not found:
+        raise RegionError(f"{cid}: no {what} at {revision} carries its label; the compiled "
+                          "paper finds it by its printed number, which this command does not "
+                          "compute: pin it by hand")
+    if len(found) > 1:
+        raise RegionError(f"{cid}: its label is carried by {len(found)} environments at "
+                          f"{revision} (" + ", ".join(f"{s.file}:{s.line}" for s in found)
+                          + ")")
+    s = found[0]
+    if s.hidden:
+        raise RegionError(f"{cid}: its label occurs only where the paper may not print it "
+                          f"({s.file}:{s.line})")
+    entry = {"claim": cid, "pin": "environment",
+             "old": {"file": claim["location"], "revision": rev_pin},
+             "new": {"file": s.file, "start_line": s.line, "environment": s.env},
+             "old_sha256": claim.get("source_sha256"), "sha256": s.sha256}
+    if not moving:
+        if s.sha256 != claim.get("source_sha256") or s.file != claim["location"]:
+            raise RegionError(f"{cid}: its environment at {revision} differs from its pin; the "
+                              "snapshot is not the text it was pinned to")
+        entry["unchanged"] = True
+        return entry
+    if not claim.get("source_sha256"):
+        raise RegionError(f"{cid}: it has no source pin to move")
+    entry["commit"] = {"before": claim.get("commit"), "after": commit}
+    claim["location"] = s.file
+    claim["commit"] = commit
+    if s.sha256 != claim.get("source_sha256"):
+        claim["source_sha256"] = s.sha256
+        entry["scope_reviewed"] = {"before": claim.get("scope_reviewed"), "after": False}
+        claim["scope_reviewed"] = False
+    return entry
+
+
 def rebound_plan(inventory: dict, paper: str, root: Path, revision: str,
-                 requests: list[dict], across_sections: bool = False) -> tuple[dict, list]:
+                 requests: list[dict], across_sections: bool = False, repin: bool = False,
+                 notation=()) -> tuple[dict, list]:
     """The inventory with each requested claim's region set to its new bounds at `revision`,
     and one change record per claim. `requests` holds `claim`, `start`, `end` (None: the
     passage that starts there), optional `file`, `start_column`, `end_column`, and `parts`:
     None keeps the further passages the pin lists, a list replaces them (`[]` removes them);
     each is a `location` with an optional `end_line`, or a `macro` (with an optional `file`
     and `line`) whose definition is pinned. Raises RegionError, writing nothing, when any
-    request is refused."""
+    request is refused.
+
+    With `repin`, `revision` must be the one the inventory records for the paper, and a claim
+    whose pin is of another revision is pinned at `revision` and records it (`commit`); one
+    already pinned at `revision` is verified there, as without `repin`. A request whose `start`
+    is None keeps the claim's present bounds; a claim pinned by its environment is found by its
+    label. The text a moving claim has here need not be the text it was pinned to: the digests
+    are of the text here, and when they differ the claim's scope decision reopens, as for any
+    new bounds.
+
+    Each record carries the advice a build gives at the new bounds: `advice`, where the region
+    may not hold the claim's text, and `macros`, the macros its passages use that the
+    manuscript defines outside them, other than the `notation` macros."""
     result = deepcopy(inventory)
     by_id = {c["id"]: c for c in result["claims"] if c["paper"] == paper}
     papers_pin = ((inventory.get("papers") or {}).get(paper) or {}).get("commit")
-    changes, seen, sources = [], set(), None
+    if repin and papers_pin and not same_revision(str(papers_pin).removeprefix("arxiv:"),
+                                                  revision):
+        raise RegionError(f"the paper is pinned at revision {papers_pin} "
+                          f"(papers.{paper}.commit), not {revision}; pin its claims at the "
+                          "paper's revision (move the inventory with `machinechecked inventory "
+                          "repin` first)")
+    changes, seen, sources, files = [], set(), None, None
+    defs = theorems = None
     for req in requests:
         cid = req["claim"]
         if cid not in by_id:
@@ -142,34 +253,59 @@ def rebound_plan(inventory: dict, paper: str, root: Path, revision: str,
         if not rev_pin:
             raise RegionError(f"{cid}: it records no paper revision; record the one it was "
                               f"pinned at (its commit, or papers.{paper}.commit) first")
-        if not same_revision(str(rev_pin).removeprefix("arxiv:"), revision):
+        # A claim pinned at another revision moves to this one; with `repin`, one already pinned
+        # here (a second run of the same command) is verified here as for any new bounds.
+        moving = not same_revision(str(rev_pin).removeprefix("arxiv:"), revision)
+        if moving and not repin:
             raise RegionError(f"{cid}: it is pinned at revision {rev_pin}, not {revision}; "
-                              "change its bounds at the revision it is pinned at")
-        old = _verified(root, claim, revision)
-        name = req.get("file") or location(claim)[0]
-        new_claim = {**claim, "location": f"{name}:{req['start']}"}
-        new_claim.pop("source_region", None)
-        if req.get("end") is not None or req.get("start_column") or req.get("end_column"):
-            span = {"end_line": req["end"] if req.get("end") is not None else req["start"]}
-            for k in ("start_column", "end_column"):
-                if req.get(k):
-                    span[k] = req[k]
-            new_claim["source_region"] = span
+                              "change its bounds at the revision it is pinned at, or pin it "
+                              "at this one with --repin")
+        if repin and location(claim) is None:
+            if files is None:
+                files = tex_files(root)
+            changes.append(_repin_environment(claim, req, root, files, revision, rev_pin,
+                                              _commit(claim, papers_pin, revision), moving))
+            continue
+        if moving:
+            if not claim.get("source_sha256"):
+                raise RegionError(f"{cid}: it has no source pin to move")
+            if claim.get("source_hash_scheme") not in (None, *SCHEMES):
+                raise RegionError(f"{cid}: unknown source hash scheme "
+                                  f"{claim['source_hash_scheme']!r}")
+        old = None if moving else _verified(root, claim, revision)
+        if req.get("start") is None:
+            if not repin:
+                raise RegionError(f"{cid}: no bounds given")
+            new_claim = dict(claim)   # its present place and bounds
+        else:
+            name = req.get("file") or location(claim)[0]
+            new_claim = {**claim, "location": f"{name}:{req['start']}"}
+            new_claim.pop("source_region", None)
+            if req.get("end") is not None or req.get("start_column") or req.get("end_column"):
+                span = {"end_line": req["end"] if req.get("end") is not None else req["start"]}
+                for k in ("start_column", "end_column"):
+                    if req.get(k):
+                        span[k] = req[k]
+                new_claim["source_region"] = span
+        if sources is None:
+            sources = tex_sources(root)
+            defs, theorems = definitions(sources), theorem_names(sources)
         wanted = req.get("parts")
         if wanted is None:
             wanted = [{k: v for k, v in p.items() if k not in ("sha256", "line_sha256")}
                       for p in claim.get("source_parts") or []]
         parts = []
         for want in wanted:
-            if "location" in want:
+            if "location" in want and not (moving and want.get("macro")):
                 parts.append({k: want[k] for k in ("location", "end_line", "start_column",
                                                    "end_column", "macro") if k in want})
             else:
-                if sources is None:
-                    sources = tex_sources(root)
+                # A macro part kept at a new revision is delimited again there, from the
+                # definition on its line: the definition's text, and so its extent, may differ.
+                at = location(want) if "location" in want else (want.get("file"),
+                                                                 want.get("line"))
                 try:
-                    parts.append(definition_part(sources, want["macro"], want.get("file"),
-                                                 want.get("line")))
+                    parts.append(definition_part(sources, want["macro"], *at))
                 except RegionError as error:
                     raise RegionError(f"{cid}: {error}") from None
         new_claim.pop("source_parts", None)
@@ -184,7 +320,9 @@ def rebound_plan(inventory: dict, paper: str, root: Path, revision: str,
         for i, (part, region) in enumerate(new.parts, start=1):
             _check(cid, region, f"the bounds of part {i}", across_sections,
                    sections=not part.get("macro"))
-        if old is None:
+        if moving:
+            was = _recorded(claim, rev_pin)
+        elif old is None:
             line = source_file(root, location(claim)[0]).read_text(
                 encoding="utf-8").split("\n")[location(claim)[1] - 1]
             was = {"file": location(claim)[0], "start_line": location(claim)[1],
@@ -201,18 +339,33 @@ def rebound_plan(inventory: dict, paper: str, root: Path, revision: str,
                                              else {})} for p, r in new.parts]
         entry = {"claim": cid, "old": was, "new": now, "old_sha256": claim.get("source_sha256"),
                  "sha256": new.sha256}
+        notes = region_advice(root, new.main, theorems)
+        if notes:
+            rec = new.main.record()
+            entry["advice"] = [{**n, "message": advice_message(cid, rec, n)} for n in notes]
+        macros = [m for m in unpinned_macros(new, defs) if m["macro"] not in notation]
+        if macros:
+            entry["macros"] = macros
         stored = [{**p, "sha256": r.sha256, "line_sha256": r.line_sha256}
                   for p, r in new.parts]
-        if old is not None and new.sha256 == old.sha256 and \
+        if moving:
+            same = _same_text(claim, new)
+            if not same and (where := changed_line(claim, new.record())):
+                entry["where"] = where
+            commit = _commit(claim, papers_pin, revision)
+            entry["commit"] = {"before": claim.get("commit"), "after": commit}
+            claim["commit"] = commit
+        elif old is not None and new.sha256 == old.sha256 and \
                 new_claim["location"] == claim["location"] and \
                 new_claim.get("source_region") == claim.get("source_region") and \
                 stored == (claim.get("source_parts") or []):
             entry["unchanged"] = True
             changes.append(entry)
             continue
-        same = new.sha256 == old.sha256 if old is not None else (
-            not new.parts and new.main.kind == "line"
-            and new_claim["location"] == claim["location"])
+        else:
+            same = new.sha256 == old.sha256 if old is not None else (
+                not new.parts and new.main.kind == "line"
+                and new_claim["location"] == claim["location"])
         claim["location"] = new_claim["location"]
         if "source_region" in new_claim:
             claim["source_region"] = new_claim["source_region"]
@@ -234,14 +387,21 @@ def rebound_plan(inventory: dict, paper: str, root: Path, revision: str,
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
-        description="Change the bounds of claims' source regions at their pinned revision")
+        description="Change the bounds of claims' source regions at their pinned revision, or "
+        "pin them at the paper's new revision (--repin)")
     parser.add_argument("--config", required=True)
     parser.add_argument("--paper", required=True)
     parser.add_argument("--claim", action="append", required=True,
                         help="a claim id (repeat, with one --lines each)")
-    parser.add_argument("--lines", action="append", required=True,
+    parser.add_argument("--lines", action="append",
                         help="the new bounds: A-B (lines A to B, inclusive), or A (the line or "
-                        "display that starts on line A)")
+                        "display that starts on line A); with --repin, leave it out to keep the "
+                        "claims' present bounds")
+    parser.add_argument("--repin", action="store_true",
+                        help="pin claims whose pin is of an earlier revision at the revision "
+                        "the inventory now records for the paper (after `inventory repin`): "
+                        "their text there becomes the pinned text, and when it differs their "
+                        "scope decision and the reviews that read them reopen")
     parser.add_argument("--file", help="the file of the new bounds (one claim only; default: "
                         "the claim's file)")
     parser.add_argument("--start-column", type=int, help="1-based column the passage starts at "
@@ -268,8 +428,12 @@ def main(argv=None) -> int:
     from .config import load
     from .source_regions import baseline
     try:
-        if len(args.claim) != len(args.lines):
-            raise RegionError("give one --lines for each --claim")
+        lines = args.lines or []
+        if (lines or not args.repin) and len(args.claim) != len(lines):
+            raise RegionError("give one --lines for each --claim"
+                              + (", or none to keep their present bounds" if args.repin else ""))
+        if not lines and (args.file or args.start_column or args.end_column):
+            raise RegionError("--file and the columns are part of new bounds: give --lines")
         if len(args.claim) > 1 and (args.file or args.start_column or args.end_column
                                     or args.also or args.macro or args.single):
             raise RegionError("--file, the columns, --also, --macro and --single apply to one "
@@ -282,8 +446,8 @@ def main(argv=None) -> int:
             parts = [parse_part(x) for x in args.also or []] + \
                 [parse_macro(x) for x in args.macro or []]
         requests = []
-        for cid, spec in zip(args.claim, args.lines):
-            start, end = parse_lines(spec)
+        for cid, spec in zip(args.claim, lines or [None] * len(args.claim)):
+            start, end = parse_lines(spec) if spec is not None else (None, None)
             requests.append({"claim": cid, "start": start, "end": end, "file": args.file,
                              "start_column": args.start_column, "end_column": args.end_column,
                              "parts": parts})
@@ -295,14 +459,15 @@ def main(argv=None) -> int:
             root, revision = baseline(cfg, paper, inventory, Path(temp) / paper.id,
                                       args.source, args.rev)
             result, changes = rebound_plan(inventory, paper.id, root, revision, requests,
-                                           args.across_sections)
+                                           args.across_sections, args.repin,
+                                           getattr(paper, "notation_macros", ()))
         written = False
         if args.write and result != inventory:
             write_plan(cfg.inventory, before, result)
             written = True
         print(json.dumps({"applied": args.write, "written": written, "paper": paper.id,
-                          "revision": revision, "changes": changes}, indent=2,
-                         ensure_ascii=False))
+                          "revision": revision, "repin": args.repin, "changes": changes},
+                         indent=2, ensure_ascii=False))
         return 0
     except (ValueError, OSError, RuntimeError) as error:
         parser.exit(2, f"rebound: {error}\n")
