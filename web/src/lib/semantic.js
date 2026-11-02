@@ -6,7 +6,9 @@ import vocabulary from "../../../engine/python/prooflens/data/semantic.json" wit
 import { inText } from "./coverage.js";
 
 export const UNITS = ["statements", "notation", "proof_steps"];
-export const DIMENSIONS = ["coverage", "basis", "review", "findings"];
+export const DIMENSIONS = ["coverage", "basis", "review", "findings", "finding_currency"];
+// The dimensions counted per unit for every set of readings alike.
+const PER_UNIT = ["review", "findings", "finding_currency"];
 const RELATIONS = ["full", "partial", "changed", "related", "unresolved"];
 const own = (table, key) => (table && Object.hasOwn(table, key) ? table[key] : null);
 
@@ -64,16 +66,27 @@ export function readingOf(row, setId) {
   return (row?.semantic?.readings || []).find((r) => r && r.set === setId) || null;
 }
 
-// A claim's key in each dimension, for the set `setId`: as the engine counted it.
+// A claim's key in each dimension, for the set `setId`: as the engine counted it. Its findings in
+// force are keyed by each state at least one of them is in.
 export function keysOf(row, setId) {
   const r = readingOf(row, setId);
   const coverage = r ? r.count : "not_assessed";
+  const fc = row?.semantic?.finding_currency;
   return {
     coverage,
     basis: r && RELATIONS.includes(r.count) ? r.basis || "unspecified" : null,
     review: row?.semantic?.review || null,
     findings: Array.isArray(row?.semantic?.findings) ? row.semantic.findings : [],
+    finding_currency: keys("finding_currency").filter((k) => Number.isInteger(own(fc, k)) && fc[k] > 0),
   };
+}
+
+// A claim's findings in force by their currency, in words ("2 current · 1 due for review"), or
+// "" when it has none. Each count is of findings.
+export function findingCurrencyText(row) {
+  const fc = row?.semantic?.finding_currency;
+  return keys("finding_currency").filter((k) => Number.isInteger(own(fc, k)) && fc[k] > 0)
+    .map((k) => `${fc[k]} ${inText(words("finding_currency", k).label)}`).join(" · ");
 }
 
 // How many claims of each unit the engine counted under `key` of `dimension` (for the set
@@ -83,7 +96,7 @@ export function unitCounts(summary, dimension, setId, key) {
   const out = {};
   for (const p of Object.values(summary?.papers || {})) {
     for (const u of UNITS) {
-      const table = dimension === "review" || dimension === "findings" ? p?.[dimension]?.[u] : p?.[dimension]?.[setId]?.[u];
+      const table = PER_UNIT.includes(dimension) ? p?.[dimension]?.[u] : p?.[dimension]?.[setId]?.[u];
       const n = own(table, key);
       if (Number.isInteger(n) && n > 0) out[u] = (out[u] || 0) + n;
     }
@@ -91,8 +104,13 @@ export function unitCounts(summary, dimension, setId, key) {
   return out;
 }
 
-// The count shown beside a filter: the chosen unit's, or each unit's with its name.
-export function countText(counts, unit) {
+// The count shown beside a filter: the chosen unit's, or each unit's with its name. Findings in
+// force are counted in findings, whatever the unit of the claims they are on.
+export function countText(counts, unit, dimension) {
+  if (dimension === "finding_currency") {
+    const n = unit === "all" ? UNITS.reduce((t, u) => t + (counts[u] || 0), 0) : counts[unit] || 0;
+    return `${n} finding${n === 1 ? "" : "s"}`;
+  }
   if (unit !== "all") return String(counts[unit] || 0);
   return UNITS.filter((u) => counts[u]).map((u) => `${counts[u]} ${unitWord(u, counts[u])}`).join(", ");
 }

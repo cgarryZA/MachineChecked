@@ -69,6 +69,11 @@
     "other-difference": {"label": "Other differences", "explanation": "Another recorded difference, or a review verdict that the Lean is broader, narrower, mismatched or vacuous."},
     "printed-step": {"label": "Printed steps that fail or have a gap", "explanation": "A review of a printed proof step found it false as printed, or holding with a gap."}
   },
+  "finding_currency": {
+    "current": {"label": "Current", "explanation": "A submitted finding in force whose passages, Lean and records are those of this build."},
+    "due": {"label": "Due for review", "explanation": "A submitted finding in force that rests on a passage, a Lean statement or a record that changed since it was submitted: read it again, then supersede it."},
+    "unchecked": {"label": "Not known to be current", "explanation": "A submitted finding in force that rests on a part this build cannot check."}
+  },
   "sets": {
     "audit": {"label": "The audit's readings", "explanation": "The correspondence readings recorded with the links: the links file, or the inventory for a proof step."},
     "review": {"label": "Reviews by", "explanation": "The coverage each of this reviewer's latest reports records with its verdict."},

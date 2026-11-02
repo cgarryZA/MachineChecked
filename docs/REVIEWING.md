@@ -172,6 +172,11 @@ never a Lean declaration, since you read them before the Lean is shown.
   you have seen them, for the claims it drew on. A later reading of those claims is then not
   blind, its report says so, and `review promote` refuses it without `--allow-revealed`.
 
+The Overview's **Review next** lists the first open units of the build's queue in the priority
+order, each with its reason, and opens the review page at the unit you select. It never uses the
+informed order, whatever order the review page is set to, so it records no exposure and shows no
+prior interpretation.
+
 On the review page, **Order** offers the same three: *Priority*, *Paper order* and *Informed*,
 with the reasons the command line gives. The build writes the first two into the queue, so every
 copy of the site has them. The informed order reads the auditors' workspaces, so `machinechecked
@@ -441,6 +446,16 @@ review` lists the exposure of every workspace in the working directory that you 
 your review work in them showed. Exposure that an import brings after you lock a reading counts
 when it was recorded before the lock. `review promote` refuses the report without
 `--allow-revealed`.
+
+**Findings due for review.** `view`, `build` and `check` count the submitted findings in force
+of the workspaces in the working directory, by whether each is current for the build, due for
+review or not known to be current, as the Changes view judges them (through a kept version map to
+this release, otherwise against the build as `workspace show` checks them). The Overview shows
+the counts under **Findings in force** and filters the claims by them; `check` prints them per
+unit (`findings in force: 3 current; 1 due for review`); `check --json` gives them in the
+[semantic summary](DATA_MODEL.md#semantic-summary-prooflenssemantic-summary1-derived)
+(`finding_currency`). A published audit counts the findings it publishes. A draft is not
+counted, and no count changes a status.
 
 **What a published audit carries.** `machinechecked export` (and `build --site`, `check --site`)
 publishes, for each claim, the records you have accepted: the requirements, the passages

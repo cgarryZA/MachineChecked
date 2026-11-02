@@ -1,13 +1,25 @@
 <script>
   import TexInline from "./TexInline.svelte";
-  import { projectClaims } from "../lib/data.js";
+  import { projectClaims, loadQueue } from "../lib/data.js";
   import { statusView, statusSummary, evidenceView } from "../lib/presentation.js";
   import { href, route, withQuery, OVERVIEW_FILTERS } from "../lib/route.svelte.js";
   import { summaryOf, keys, words, setLabel, setExplanation, unitOf, readingOf, keysOf,
-           unitCounts, countText, inventoryText, coverageText, basisText, shortQuestion } from "../lib/semantic.js";
+           unitCounts, countText, inventoryText, coverageText, basisText, shortQuestion, findingCurrencyText } from "../lib/semantic.js";
+  import { reviewNext } from "../lib/reviewnext.js";
   import EvidenceSummary from "./EvidenceSummary.svelte";
   import { clauseReadingsOf, clauseKeysOf, clauseCounts, partText, withheldText, questionWithheld } from "../lib/semantic.js";
   let { index } = $props();
+  // Review next: the first open units of the review queue the build wrote, in its priority order
+  // and with its reasons (lib/reviewnext.js), each opening the review page at that unit.
+  let next = $state(null);
+  let nextError = $state(null);
+  $effect(() => {
+    let live = true;
+    next = null; nextError = null;
+    if (index.review_queue) loadQueue(index).then((q) => { if (live) next = reviewNext(q, index.claims); })
+      .catch((e) => { if (live) nextError = String(e?.message || e); });
+    return () => { live = false; };
+  });
   // The engine's semantic summary (`index.semantic`): the counts and each claim's keys are its
   // own, shown as computed. Without one (older data, a paper page), claims are listed by status.
   const summary = $derived(summaryOf(index));
@@ -42,17 +54,19 @@
   const shown = $derived(claims.filter((c) => {
     const k = keysOf(c, setId);
     return (!f.status || c.status_code === f.status) && (!summary || clauseOk(c)) && (!summary || ((!f.coverage || k.coverage === f.coverage) &&
-      (!f.basis || k.basis === f.basis) && (!f.review || k.review === f.review) && (!f.finding || k.findings.includes(f.finding)))) &&
+      (!f.basis || k.basis === f.basis) && (!f.review || k.review === f.review) && (!f.finding || k.findings.includes(f.finding)) &&
+      (!f.finding_currency || k.finding_currency.includes(f.finding_currency)))) &&
       query.toLowerCase().trim().split(/\s+/).every((w) => searched(c).includes(w));
   }));
   // The semantic filters: each key the engine counted for the chosen unit (and set), with its count.
   const GROUPS = [["coverage", "coverage", "Correspondence"], ["basis", "basis", "Evidence basis"],
-                  ["review", "review", "Review"], ["findings", "finding", "Recorded findings"]];
+                  ["review", "review", "Review"], ["findings", "finding", "Recorded findings"],
+                  ["finding_currency", "finding_currency", "Findings in force"]];
   const groups = $derived(summary ? GROUPS.map(([dimension, param, label]) => ({ dimension, param, label,
     rows: keys(dimension).map((key) => ({ key, counts: unitCounts(summary, dimension, setId, key) }))
       .filter((r) => f.unit === "all" ? Object.keys(r.counts).length : r.counts[f.unit]) }))
     .filter((g) => g.rows.length) : []);
-  const filtered = $derived(f.status || (summary && (f.coverage || f.basis || f.review || f.finding || f.clause)) || query.trim());
+  const filtered = $derived(f.status || (summary && (f.coverage || f.basis || f.review || f.finding || f.finding_currency || f.clause)) || query.trim());
   // The parts of claims (clauses and requirements) a workspace reads, with the engine's counts
   // (`clause_coverage`).
   const clauseRows = $derived(summary ? keys("clause_coverage").map((key) => ({ key, counts: clauseCounts(summary, setId, key) }))
@@ -63,6 +77,29 @@
 <main class="coverage">
   <h1>Overview</h1>
   <p class="muted">{summary ? "Each claim's correspondence with the Lean, how it is supported, its review and its proof results." : "Claims, proof results and correspondence reviews."}</p>
+  {#if index.review_queue}
+    <section class="next" aria-labelledby="review-next">
+      <h2 id="review-next">Review next</h2>
+      {#if nextError}
+        <p class="small faint">The review queue could not be loaded: {nextError}</p>
+      {:else if !next}
+        <p class="small faint">Loading the review queue…</p>
+      {:else if !next.entries.length}
+        <p class="small">Every unit in this build's review queue is reviewed. <a href={href(index.release, "review")}>Open the review queue →</a></p>
+      {:else}
+        <ol>
+          {#each next.entries as e (e.id)}
+            <li data-unit={e.id}>
+              <a href={withQuery(href(index.release, "review"), { unit: e.id })}><strong>{e.label}</strong></a>
+              <span class="small faint">{e.kind}</span>
+              {#if e.reason}<span class="why small">{e.reason}</span>{/if}
+            </li>
+          {/each}
+        </ol>
+        <p class="small faint">In the review queue's priority order: changed evidence first, then use in another claim's proof, then less effort. {next.open} {next.open === 1 ? "unit is" : "units are"} open in this build. <a href={href(index.release, "review")}>Open the review queue →</a></p>
+      {/if}
+    </section>
+  {/if}
   <label class="search">Find a claim <input type="search" bind:value={query} placeholder="Number or mathematical title" /></label>
   {#if unitCount.proof_steps || unitCount.notation}
     <div class="filters" aria-label="Filter by kind of unit">
@@ -89,7 +126,7 @@
           {#each g.rows as r}
             {@const w = words(g.dimension, r.key, f.unit)}
             <button class:on={f[g.param] === r.key} aria-pressed={f[g.param] === r.key} data-key={r.key} title={w.explanation}
-              onclick={() => choose({ [g.param]: r.key })}>{w.label} ({countText(r.counts, f.unit)})</button>
+              onclick={() => choose({ [g.param]: r.key })}>{w.label} ({countText(r.counts, f.unit, g.dimension)})</button>
           {/each}
         </div>
       {/each}
@@ -111,7 +148,7 @@
     <button class:on={!f.status} aria-pressed={!f.status} onclick={() => choose({ status: null })}>All ({claims.length})</button>
     {#each counts as row}<button class:on={f.status === row.status_code} aria-pressed={f.status === row.status_code} onclick={() => choose({ status: row.status_code })}>{statusView(row).label} ({row.count})</button>{/each}
   </div>
-  <p class="count" role="status">{shown.length} claim{shown.length === 1 ? "" : "s"}{#if filtered}{" "}<button class="reset inline" onclick={reset}>Clear the filters</button>{/if}{#if index.review_queue}{" "}<a class="next" href={href(index.release, "review")}>Review next →</a>{/if}</p>
+  <p class="count" role="status">{shown.length} claim{shown.length === 1 ? "" : "s"}{#if filtered}{" "}<button class="reset inline" onclick={reset}>Clear the filters</button>{/if}</p>
   {#each index.papers as paper}
     {@const rows = shown.filter((c) => c.paper === paper.id)}
     {#if rows.length}
@@ -136,7 +173,7 @@
                   <div><dt>Correspondence</dt><dd class="cov">{coverageText(reading)}{#if reading?.by}<span class="faint small by">{" · "}{reading.by}</span>{/if}{@render parts(c)}</dd></div>
                   <div><dt>Evidence basis</dt><dd>{basisText(reading) || "—"}</dd></div>
                   <div><dt>Difference or open question</dt><dd class="question">{#if questionWithheld(reading)}<span title={words("withheld", "question").explanation} data-withheld="question">{words("withheld", "question").label}</span>{:else if shortQuestion(reading)}{shortQuestion(reading)}{:else if reading?.question}An open question: see the claim.{:else if k.findings.length}{k.findings.map((x) => words("findings", x).label).join("; ")}{:else}—{/if}</dd></div>
-                  <div><dt>Review</dt><dd>{k.review ? words("review", k.review, unitOf(c)).label : "—"}</dd></div>
+                  <div><dt>Review</dt><dd>{k.review ? words("review", k.review, unitOf(c)).label : "—"}{#if findingCurrencyText(c)}<span class="small faint fc">Findings in force: {findingCurrencyText(c)}</span>{/if}</dd></div>
                 </dl>
               {/if}
             </li>
@@ -180,7 +217,13 @@
   button { font: inherit; font-size: 14px; border: 1px solid var(--border); border-radius: var(--radius); padding: 6px 10px; background: var(--surface); color: var(--text); cursor: pointer; }
   button.on { background: var(--accent-soft); border-color: var(--accent); }
   .reset.inline { border: 0; background: none; color: var(--accent); padding: 0 4px; }
-  .next { margin-left: 8px; }
+  .next { margin: 20px 0; padding: 12px 16px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+  .next h2 { font-size: 18px; margin: 0 0 8px; }
+  .next ol { margin: 0 0 8px; padding-left: 22px; display: flex; flex-direction: column; gap: 6px; }
+  .next li { overflow-wrap: anywhere; }
+  .next .why { display: block; color: var(--muted); }
+  .next p { margin: 0; }
+  .fc { display: block; margin-top: 2px; }
   .count { color: var(--muted); font-size: 14px; }
   .paper { margin-top: 28px; }
   .phead { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; align-items: baseline; }

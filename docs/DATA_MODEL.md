@@ -627,7 +627,9 @@ nothing. A map never changes a status.
 `data/index.json` has `semantic`, one summary of the semantic work the audit records, and each
 claim row has `semantic`, what the summary counts of that claim. `engine/python/prooflens/semantic.py`
 computes both from the records the data holds (the claim records, and the published workspace
-records they name); the words for every key are in `data/semantic.json`. A published audit's
+records they name), and a build (`view`, `build`, `check`) also from the submitted findings of
+the workspaces in its working directory, checked against its own data (`finding_currency`
+below); the words for every key are in `data/semantic.json`. A published audit's
 summary (`export`, `build --site`, `check --site`) is computed again from the records it
 publishes, so a record the export leaves out is not counted. `check --json` gives the same
 summary as `semantic` and each claim's facts as its `semantic`; `check` and `build` print it
@@ -673,6 +675,7 @@ part, recorded on the claim's row (`clause_readings`) and counted apart (`clause
 | `currency` | per set and unit, the claims with a reading: `current` (pinned to this build), `unchecked` (this build could not check it), `unpinned` (a links-file reading, which records no version of what it read), `stale` |
 | `review` | per unit, each claim once: for statements and notation `independent`, `author`, `informed`, `stale`, `unchecked`, `none` (no current review of everything it needs); for proof steps the step's review as printed |
 | `findings` | per unit, how many claims have a recorded finding of each kind: `open-question`, `quantitative-difference`, `input-restriction`, `representation`, `other-difference`, `printed-step`; a claim may have several kinds, so these are never added |
+| `finding_currency` | optional (a summary written before it has none, and a reader that does not know it reads the rest): per unit of the claims they are on, how many submitted findings in force (on the whole statement, a clause or a requirement) are `current` for this build, `due` for review (a part one rests on changed since it was submitted) or `unchecked` (not known to be current); counted in findings, each once |
 | `clause_coverage` | optional, present when a workspace reads a part of a claim: per set and unit, how many claims have a part counted under each of `full`, `partial`, `changed`, `related`, `unresolved` and `stale`; a claim is counted once under each key it has and may be under several, so these are never added |
 | `withheld` | optional, in a published audit: what the paper's publication settings withhold, of `source_text`, `lean` and `reviews` |
 | `digest` | the SHA-256 of the summary's counts and every claim's facts, without the audit's identity: two builds of the same records have the same digest, and it changes whenever a reading, a review or a finding changes, also when the Lean and the statuses do not |
@@ -693,7 +696,21 @@ resolution; any other); a *faithful with representation choices* report; a *broa
 *narrower*, *mismatched*, *vacuous* or *refutation not valid* report (other differences); a step
 false as printed or with a gap. Readings and reports out of date are not counted as findings.
 
-A claim row's `semantic` is `{unit, declarations, readings, review, findings}`. Each reading is
+The findings in force (`finding_currency`) are, in a published audit, those it publishes: a
+finding that a version map published with it (`revisions`) to the audit's release judges is in
+the state the map gives it, any other in the state the export checked (its `currency`). In a build, they are the submitted findings
+of the workspaces in its working directory that an export of it would publish: a finding that a
+version map the workspace keeps to the build's release judges is in the state the map gives it
+(`reopened` counts as `due`), as the Changes view shows it; any other is checked against the
+build as `workspace show` checks it (`stale` counts as `due`). Lean is not asked: a fact inside a
+proof is read from the facts store. `check` writes no site, so it checks them against the data
+the site would hold, written to a temporary directory; its summary is the one `view` and `build`
+write. A draft is never counted, nor a finding on a claim the build does not have (an export
+does not publish it).
+
+A claim row's `semantic` is `{unit, declarations, readings, review, findings}`, with
+`finding_currency` (`{current, due, unchecked}`, how many of its findings in force are in each
+state) when it has a finding in force. Each reading is
 `{set, coverage, basis, currency, count}` (`count` is the coverage key it is counted under), with
 `recorded_basis`, `by`, `provenance` (`independent` or `informed`), `verdict`, `question` and,
 for `clauses_only`, `clauses` (how many findings) when they apply, and `withheld` (`["question"]`)
@@ -703,10 +720,13 @@ on each clause or requirement, `{set, clause or requirement, coverage, basis, cu
 decl}`, `count` its coverage or `stale`, and `decl` the declaration of the claim's comparison it
 concerns (the clause's proposition, or a definition claim's first definition; for a requirement,
 the target of its first alignment), or null. The Overview filters by these keys, and its address
-names the filter: `#/r/<release>/overview?set=…&unit=…&coverage=…&basis=…&review=…&finding=…&status=…&clause=…`.
+names the filter: `#/r/<release>/overview?set=…&unit=…&coverage=…&basis=…&review=…&finding=…&finding_currency=…&status=…&clause=…`.
 A part's link opens the claim at that declaration's block of its comparison
 (`#/r/<release>/read/<paper>/<claim>?at=<declaration>::top`). The new fields are optional: a
 reader that does not know them reads the rest of the summary.
+Its **Review next** lists the first open units of the build's review queue (`data/review-queue.json`,
+`review_queue.prioritise`) in the queue's priority order, each with the reason the engine gave it;
+each opens the review page at that unit (`#/r/<release>/review?unit=<unit id>`).
 
 ## Audit descriptor (`audit.json`), written by the engine
 

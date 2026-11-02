@@ -294,8 +294,26 @@ def _simple_site(root: Path, paper: Path, web: str | None, reuse_lean: bool = Fa
     from .simple import write_view_site
     view = _simple_view(root, paper, reuse_lean, refresh)
     site = root / cfgmod.work_dir_name(root) / "site"
-    index = write_view_site(view, site, _web_dist(web), root)
+    index = write_view_site(view, site, _web_dist(web), root, site.parent)
     return site, index, view
+
+
+def _check_summary(view: dict, root: Path) -> tuple[dict, dict]:
+    """The semantic summary `check` gives in zero configuration, and each claim's facts: those
+    of the site this view would write (`semantic.of_view`), with the findings in force of the
+    working directory's workspaces checked against that site's data, which is written to a
+    temporary directory for the purpose when there are any (`check` writes no site)."""
+    from . import semantic
+    work = root / cfgmod.work_dir_name(root)
+    found = None
+    if semantic.has_findings(work):
+        import tempfile
+        from .simple import write_view_site
+        with tempfile.TemporaryDirectory() as tmp:
+            site = Path(tmp) / "site"
+            write_view_site({**view, "pdf": None}, site, None, root)
+            found = semantic.workspace_findings(work, site / "data", root)
+    return semantic.of_view(view["body"], root, found)
 
 
 def _print_simple(body, summary: dict | None = None):
@@ -853,8 +871,7 @@ def _check_simple(a):
     """`check` in zero configuration: exit 1 if a linked declaration is missing or not proved."""
     root, paper = _simple_target(a)
     view = _simple_view(root, paper)
-    from .semantic import of_view
-    _print_simple(view["body"], of_view(view["body"], root)[0])
+    _print_simple(view["body"], _check_summary(view, root)[0])
     bad = [(c["number"], l) for c in view["body"]["claims"]
            for l in c["links"] if l["class"] != "proved"]
     for number, l in bad:
@@ -1001,7 +1018,6 @@ def _check_simple_json(a) -> tuple[dict, list[dict], bool]:
     """`check --json` in zero configuration: the document's fields, its claims, and whether a
     linked declaration is missing or not proved."""
     from .moddocs import stale_doc_message
-    from .semantic import of_view
     from .simple import view_release
     root, paper = _simple_target(a)
     view = _simple_view(root, paper)
@@ -1024,7 +1040,7 @@ def _check_simple_json(a) -> tuple[dict, list[dict], bool]:
                "unit": c.get("unit", "statement"), "parent": c.get("parent"),
                **(_step_json(c) if c.get("unit") else {})}
               for c in body["claims"]]
-    summary, facts = of_view(body, root)
+    summary, facts = _check_summary(view, root)
     for c in claims:
         c["semantic"] = facts.get(c["id"])
     num = body.get("numbering") or {"references": [], "pattern": None}
