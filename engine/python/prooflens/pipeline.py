@@ -227,7 +227,7 @@ def build(cfg: Config, release: str | None = None, skip_lean: bool = False,
     changes = release_changes(cfg, rel, unavailable)
     if unavailable:
         index["changes_unavailable"] = unavailable[0]
-        log(f"note: {unavailable[0]}")
+        log(f"warning: {unavailable[0]}")
     write_preview(site, index, chunks, store, pdfs, web_dist,
                   rq.prioritise(rq.assurance_queue(index, chunks, store, cfg.statement_authors),
                                 changes, claims=index["claims"]),
@@ -486,7 +486,7 @@ def rebuild_site(cfg: Config, web_dist: Path | None = None, release: str | None 
     last = ev.latest(cfg.out_dir)
     if last is None:
         raise StaleEvidence(NO_RELEASE)
-    rel = read_json(cfg.out_dir / "releases" / f"{release}.json") if release else last
+    rel = ev.release(cfg.out_dir, release) if release else last
     record = ev.load(cfg.out_dir, rel["evidence"])
     index, chunks, store = mf.build(record, rel["release"], load_display(cfg))
     index.update(issues=cfg.issues, site_url=cfg.site_url, author=cfg.author)

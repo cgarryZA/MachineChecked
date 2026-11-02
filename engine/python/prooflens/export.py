@@ -316,7 +316,7 @@ def export(cfg: Config, out: Path, release: str | None = None,
     last = ev.latest(cfg.out_dir)
     if last is None:
         raise ExportError("no release: run `machinechecked build` first")
-    relrec = read_json(cfg.out_dir / "releases" / f"{release}.json") if release else last
+    relrec = ev.release(cfg.out_dir, release) if release else last
     record = ev.load(cfg.out_dir, relrec["evidence"])
     # With the display layer the site is built with (descriptions, printed numbers, symbol
     # links): what is shown changes, never what is assessed.

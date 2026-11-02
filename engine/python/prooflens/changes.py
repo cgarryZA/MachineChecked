@@ -708,16 +708,21 @@ def previous_release(out_dir, release: str) -> str | None:
     """The release before `release` whose evidence differs from it: the last one a build
     produced or reproduced before the last build of `release` (`evidence.built`). When no
     recorded build gives one (a store made before builds were recorded, or no earlier build
-    with other evidence), the latest release made before it."""
+    with other evidence), the latest release made before it. A release `evidence prune` removed
+    counts as it did before it was pruned, so that the comparison says its evidence was pruned
+    rather than going back to an older release."""
     from . import evidence as ev
     from .util import read_json
     rels = [read_json(p) for p in ev.releases(out_dir)]
+    gone = ev.pruned_releases(out_dir)
+    if gone:
+        rels = sorted(rels + list(gone.values()), key=lambda r: str(r.get("created") or ""))
     names = [r["release"] for r in rels]
     if release not in names:
         return None
     evidence = {r["release"]: r["evidence"] for r in rels}
     mine = evidence[release]
-    made = ev.built(out_dir)
+    made = ev.built(out_dir, with_pruned=True)
     if release in made:
         last = max(i for i, name in enumerate(made) if name == release)
         for name in reversed(made[:last]):
@@ -753,7 +758,7 @@ def records(out_dir, old_release: str | None = None, new_release: str | None = N
     recs = {}
     for name in (old_release, new_release):
         path = out_dir / "releases" / f"{name}.json"
-        if not path.exists():
+        if not path.exists() and ev.gone_release(out_dir, name) is None:
             raise ChangesError(f"no release {name}: the releases are "
                                + ", ".join(read_json(p)["release"] for p in rels))
         why = ev.release_unavailable(out_dir, name)
