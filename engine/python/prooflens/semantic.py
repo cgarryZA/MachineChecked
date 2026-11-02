@@ -24,6 +24,13 @@ reviewer's latest report of each claim, with the coverage it records with its ve
 coverage of the whole statement; a finding on a clause or a requirement is not a reading of the
 whole statement, and a claim with only those is counted as `clauses_only`. Each reviewer and
 each workspace is a set of its own, never combined with another.
+
+Findings in force. Every submitted finding in force of the auditors' workspaces (on the whole
+statement, a clause or a requirement) is counted once, by whether it is current for this build,
+due for review (a part it rests on changed since it was submitted) or not known to be current
+(`finding_currency`). A published audit counts the findings it publishes, as the export checked
+them; a build counts those of the workspaces in its working directory, against its own site
+data (`workspace_findings`).
 """
 
 from __future__ import annotations
@@ -46,6 +53,9 @@ REVIEW_KEYS = ("independent", "author", "informed", "stale", "unchecked", "none"
 STEP_REVIEW_KEYS = ("holds", "gap", "false", "undetermined", "stale", "unreviewed")
 FINDING_KEYS = ("open-question", "quantitative-difference", "input-restriction",
                 "representation", "other-difference", "printed-step")
+# A finding in force by its currency: `current`, `due` for review (a workspace record's `stale`),
+# `unchecked` (not known to be current).
+FINDING_STATES = ("current", "due", "unchecked")
 AUDIT = "audit"
 
 # The features of a recorded difference (`estimates.FEATURES`), by finding category.
@@ -281,9 +291,101 @@ def finding_categories(chunk: dict, readings: list[dict], work: dict | None) -> 
     return [k for k in FINDING_KEYS if k in found]
 
 
-def claim_facts(row: dict, chunk: dict, work: dict | None = None) -> tuple[dict, dict]:
+def finding_state(currency: str | None) -> str:
+    """A finding in force by its currency (`FINDING_STATES`): `current` only when its currency
+    is; `due` for review when a part it rests on changed (`stale`); otherwise not known to be
+    current (`unchecked`)."""
+    return {"current": "current", "stale": "due"}.get(currency, "unchecked")
+
+
+def published_findings(work: dict | None) -> list[str]:
+    """The state of each submitted finding in force of a claim's published workspace records
+    (`prooflens/published-work@1`), as the export checked it."""
+    return [finding_state((f.get("currency") or {}).get("state"))
+            for rd in (work or {}).get("readings") or [] if isinstance(rd, dict)
+            for f in rd.get("findings") or [] if isinstance(f, dict) and f.get("in_force")]
+
+
+def finding_currency(states: list[str]) -> dict[str, int]:
+    """How many of a claim's findings in force are in each state."""
+    return {k: sum(1 for s in states if s == k) for k in FINDING_STATES}
+
+
+def _submitted(spaces) -> bool:
+    return any(r.get("kind") == "finding" and r.get("state") == "submitted"
+               for _, ws in spaces for r in (ws.get("records") or {}).values())
+
+
+def has_findings(work_dir: Path | None) -> bool:
+    """Whether a workspace in `work_dir` has a submitted finding."""
+    from . import workspace as wsp
+    return work_dir is not None and _submitted(wsp.list_all(work_dir))
+
+
+def workspace_findings(work_dir: Path | None, data: Path,
+                       root: Path | None = None) -> dict[str, list[str]]:
+    """Per claim of the build whose site data is `data`, the state of each submitted finding in
+    force that the workspaces in `work_dir` record: the findings an export of this build would
+    publish (`published_work.accepted`). A finding that a version map the workspace keeps to
+    this build's release judges is in the state that map gives it, as the Changes view shows it
+    (`reopen.for_site`: due for review when the revision or this build changed a part it rests
+    on); any other is checked against this build as `workspace show` checks it
+    (`workspace.currency`). Lean is not asked: a fact inside a proof is read from the facts store
+    of the project at `root`, and is not known to be current when it is not there. A finding on
+    a claim this build does not have is not counted, as an export does not publish it."""
+    from . import workspace as wsp
+    spaces = wsp.list_all(work_dir) if work_dir is not None else []
+    if not _submitted(spaces):
+        return {}
+    from .published_work import accepted
+    from .targets import Snapshot, TargetError
+    try:
+        snap = Snapshot(data)
+    except TargetError:
+        return {}
+    claims = {c["id"] for c in snap.claims}
+    out: dict[str, list[str]] = {}
+    for _, ws in spaces:
+        kept = {rid: r for rid, r in accepted(ws).items() if r.get("claim") in claims}
+        if not any(r.get("kind") == "finding" for r in kept.values()):
+            continue
+        cur = wsp.currency({"records": kept}, snap, root, check_facts=False)
+        judged = _judged_by_maps(ws, kept, snap, root)
+        for f in wsp.current_findings({"records": kept}):
+            out.setdefault(f["claim"], []).append(
+                judged.get(f["id"]) or finding_state((cur.get(f["id"]) or {}).get("state")))
+    return out
+
+
+def _judged_by_maps(ws: dict, kept: dict, snap, root: Path | None) -> dict[str, str]:
+    """The state (`FINDING_STATES`) that the version maps `ws` keeps to the release of `snap`
+    give each finding of `kept` they judge; when two judge one, the less current state."""
+    if not ws.get("version_maps"):
+        return {}
+    from .reopen import for_site
+    word = {"reopened": "due", "unchecked": "unchecked", "current": "current"}
+    rank = {"due": 0, "unchecked": 1, "current": 2}
+    out: dict[str, str] = {}
+    try:
+        doc = for_site({"id": ws.get("id"), "records": kept,
+                        "version_maps": ws["version_maps"]}, snap, root)
+    except (KeyError, TypeError, ValueError):
+        # A kept map that cannot be read judges nothing, so no finding is known to be current.
+        return {r["id"]: "unchecked" for r in kept.values() if r.get("kind") == "finding"}
+    for m in doc.get("maps") or []:
+        for f in m.get("findings") or []:
+            s = word.get(f.get("state"), "unchecked")
+            if f.get("id") not in out or rank[s] < rank[out[f["id"]]]:
+                out[f["id"]] = s
+    return out
+
+
+def claim_facts(row: dict, chunk: dict, work: dict | None = None,
+                found: list[str] | None = None) -> tuple[dict, dict]:
     """What the summary records of one claim (its index row's `semantic`), and the descriptors
-    of the sets of readings it appears in."""
+    of the sets of readings it appears in. `found` is the state of each finding in force of the
+    claim when they come from the working directory's workspaces (`workspace_findings`);
+    otherwise they are the published ones `work` holds."""
     unit = unit_of(row, chunk)
     readings, sets = {}, {}
     own = audit_reading(chunk)
@@ -293,9 +395,13 @@ def claim_facts(row: dict, chunk: dict, work: dict | None = None) -> tuple[dict,
         readings.update(got)
         sets.update(more)
     listed = [readings[k] for k in sorted(readings, key=lambda k: (k != AUDIT, k))]
-    return {"unit": unit, "declarations": len(declarations(chunk)), "readings": listed,
-            "review": review_state(chunk, unit),
-            "findings": finding_categories(chunk, listed, work)}, sets
+    out = {"unit": unit, "declarations": len(declarations(chunk)), "readings": listed,
+           "review": review_state(chunk, unit),
+           "findings": finding_categories(chunk, listed, work)}
+    states = (found or []) + published_findings(work)
+    if states:
+        out["finding_currency"] = finding_currency(states)
+    return out, sets
 
 
 def _zeros(keys) -> dict[str, int]:
@@ -312,18 +418,22 @@ def _block(sets: list[str]) -> dict:
         "currency": {s: {u: _zeros(CURRENCY_KEYS) for u in UNITS} for s in sets},
         "review": {"statements": _zeros(REVIEW_KEYS), "notation": _zeros(REVIEW_KEYS),
                    "proof_steps": _zeros(STEP_REVIEW_KEYS)},
-        "findings": {u: _zeros(FINDING_KEYS) for u in UNITS}}
+        "findings": {u: _zeros(FINDING_KEYS) for u in UNITS},
+        "finding_currency": {u: _zeros(FINDING_STATES) for u in UNITS}}
 
 
 def summarise(index: dict, chunks: dict[str, dict], works: dict[str, dict] | None = None,
-              author: str | None = None) -> tuple[dict, dict[str, dict]]:
+              author: str | None = None, found: dict[str, list[str]] | None = None
+              ) -> tuple[dict, dict[str, dict]]:
     """The summary of `index` (its claims, with their records `chunks` by file and the published
-    workspace records `works` by claim id), and each claim's facts, by claim id."""
-    works = works or {}
+    workspace records `works` by claim id), and each claim's facts, by claim id. `found` holds,
+    by claim id, the state of each finding in force of the working directory's workspaces
+    (`workspace_findings`), for a build that publishes none."""
+    works, found = works or {}, found or {}
     facts, sets, names = {}, {}, {}
     for row in index.get("claims") or []:
         chunk = chunks.get(row.get("file")) or {}
-        f, more = claim_facts(row, chunk, works.get(row["id"]))
+        f, more = claim_facts(row, chunk, works.get(row["id"]), found.get(row["id"]))
         facts[row["id"]] = f
         sets.update(more)
         names[row["id"]] = declarations(chunk)
@@ -358,6 +468,8 @@ def summarise(index: dict, chunks: dict[str, dict], works: dict[str, dict] | Non
         p["review"][unit][f["review"]] += 1
         for k in f["findings"]:
             p["findings"][unit][k] += 1
+        for k, n in (f.get("finding_currency") or {}).items():
+            p["finding_currency"][unit][k] += n
     for (pid, unit), decls in linked.items():
         papers[pid]["inventory"][unit]["declarations"] = len(decls)
     shown = {p["id"]: p for p in index.get("papers") or []}
@@ -382,20 +494,23 @@ def summarise(index: dict, chunks: dict[str, dict], works: dict[str, dict] | Non
 
 
 def apply(index: dict, chunks: dict[str, dict], works: dict[str, dict] | None = None,
-          author: str | None = None) -> dict:
+          author: str | None = None, found: dict[str, list[str]] | None = None) -> dict:
     """Set the index's `semantic` summary and each claim row's `semantic` facts; returns the
     summary."""
-    summary, facts = summarise(index, chunks, works, author)
+    summary, facts = summarise(index, chunks, works, author, found)
     for row in index.get("claims") or []:
         row["semantic"] = facts[row["id"]]
     index["semantic"] = summary
     return summary
 
 
-def of_view(body: dict, root: Path | None = None) -> tuple[dict, dict[str, dict]]:
+def of_view(body: dict, root: Path | None = None,
+            found: dict[str, list[str]] | None = None) -> tuple[dict, dict[str, dict]]:
     """The summary of a zero-configuration view, and each claim's facts, as the site
     `simple.write_view_site` writes would give them, without writing it (for `check`): the same
-    claims, with the records the summary reads. `root` is the Lean project, for its repository."""
+    claims, with the records the summary reads. `root` is the Lean project, for its repository;
+    `found`, the findings in force of the working directory's workspaces
+    (`workspace_findings`)."""
     from . import simple, steps
     rows, chunks = [], {}
     for c in body["claims"]:
@@ -418,7 +533,7 @@ def of_view(body: dict, root: Path | None = None) -> tuple[dict, dict[str, dict]
              "papers": [{"id": p, "revision": body.get("commit"), **simple._paper_version(body)}
                         for p in sorted({r["paper"] for r in rows})],
              "claims": rows}
-    return summarise(index, chunks, author=body.get("author"))
+    return summarise(index, chunks, author=body.get("author"), found=found)
 
 
 def refresh(data: Path, author: str | None = None) -> dict:
@@ -490,10 +605,20 @@ def _counts(table: dict[str, int], words: dict) -> str:
     return "; ".join(f"{in_text(words[k]['label'])} ({n})" for k, n in table.items() if n)
 
 
+def currency_text(table: dict[str, int] | None) -> str | None:
+    """The findings in force of one unit by their currency, counted in findings: "findings in
+    force: 3 current; 1 due for review"; None when there are none."""
+    words, table = VOCABULARY["finding_currency"], table or {}
+    parts = [f"{table[k]} {in_text(words[k]['label'])}" for k in FINDING_STATES
+             if isinstance(table.get(k), int) and table[k] > 0]
+    return "findings in force: " + "; ".join(parts) if parts else None
+
+
 def text(summary: dict | None) -> list[str]:
     """A short account of the summary for `check` and `build`: per paper and unit, how many
     claims there are and how many are linked, and the coverage and basis of the audit's own
-    readings, the reviews and the findings recorded. Plain counts, each with its unit."""
+    readings, the reviews, the findings recorded and the findings in force by their currency.
+    Plain counts, each with its unit."""
     if not summary:
         return []
     v = VOCABULARY
@@ -519,6 +644,9 @@ def text(summary: dict | None) -> list[str]:
             found = _counts(p["findings"][u], v["findings"])
             if found:
                 lines.append("    findings: " + found)
+            line = currency_text((p.get("finding_currency") or {}).get(u))
+            if line:
+                lines.append("    " + line)
     if others:
         lines.append(f"  {len(others)} further set{'' if len(others) == 1 else 's'} of readings "
                      "(one per reviewer and per workspace) "

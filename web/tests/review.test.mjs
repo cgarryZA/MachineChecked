@@ -99,3 +99,28 @@ assert.equal(holdsBack("informed", recorded, { stage: "read" }), false);
 assert.equal(holdsBack("informed", recorded, { stage: "author", revealed_by: [] }), false);
 assert.equal(holdsBack("priority", recorded, blind), false);
 assert.equal(holdsBack("informed", built, blind), false);
+
+// The Overview's Review next (#478): the queue's open units in the queue's own order, with the
+// engine's reasons, named by their claims' numbers and never by their Lean; a definition by the
+// claims that use it.
+{
+  const { reviewNext, kindWord } = await import("../src/lib/reviewnext.js");
+  const claims = [{ id: "P:a", number: "Theorem 1" }, { id: "P:b", number: "Lemma 2" }, { id: "P:c", number: "(3)" }];
+  const queue = { units: [
+    { id: "spec:X.a", kind: "spec", name: "X.a", state: "pending", reason: "Reopened since the last release: the passage of Theorem 1 changed; short statement", claims: [{ id: "P:a" }] },
+    { id: "def:X.d", kind: "def", name: "X.d", state: "pending", reason: "Short definition; used by 2 claim(s)", claims: [{ id: "P:a" }, { id: "P:b" }] },
+    { id: "spec:X.b", kind: "spec", name: "X.b", state: "reviewed", reason: "Short statement", claims: [{ id: "P:b" }] },
+    { id: "step:P:c", kind: "step", name: "(3)", state: "pending", reason: "Proof step of Theorem 1", claims: [{ id: "P:c" }] },
+    { id: "link:x", kind: "link", name: "X.x", state: "pending", reason: "Short statement", claims: [{ id: "P:x", number: "Theorem 9" }] }] };
+  const got = reviewNext(queue, claims, 3);
+  assert.equal(got.open, 4);
+  assert.deepEqual(got.entries, [
+    { id: "spec:X.a", kind: "Statement", label: "Theorem 1", reason: queue.units[0].reason },
+    { id: "def:X.d", kind: "Definition", label: "A definition used by Theorem 1 and Lemma 2", reason: queue.units[1].reason },
+    { id: "step:P:c", kind: "Proof step", label: "(3)", reason: "Proof step of Theorem 1" }]);
+  assert.ok(!got.entries.some((e) => `${e.label} ${e.reason}`.includes("X.")), "no Lean name in what is shown");
+  assert.equal(reviewNext(queue, claims).entries[3].label, "Theorem 9");
+  assert.equal(kindWord({ kind: "link" }), "Linked claim");
+  assert.deepEqual(reviewNext({ units: [{ ...queue.units[2] }] }, claims), { entries: [], open: 0 });
+  assert.deepEqual(reviewNext(null, claims), { entries: [], open: 0 });
+}

@@ -231,7 +231,7 @@ def build(cfg: Config, release: str | None = None, skip_lean: bool = False,
     write_preview(site, index, chunks, store, pdfs, web_dist,
                   rq.prioritise(rq.assurance_queue(index, chunks, store, cfg.statement_authors),
                                 changes, claims=index["claims"]),
-                  changes=changes, content=found)
+                  changes=changes, content=found, work_dir=cfg.out_dir, root=cfg.lean_root)
     for n in (found or {}).get("notes", []):
         log(f"note: {n}")
     log(f"evidence {eid[:12]}  release {rel}  site {site}")
@@ -500,7 +500,7 @@ def rebuild_site(cfg: Config, web_dist: Path | None = None, release: str | None 
     write_preview(site, index, chunks, store, pdf_paths(cfg, record["body"]), web_dist,
                   rq.prioritise(rq.assurance_queue(index, chunks, store, cfg.statement_authors),
                                 changes, claims=index["claims"]),
-                  changes=changes, content=found)
+                  changes=changes, content=found, work_dir=cfg.out_dir, root=cfg.lean_root)
     return {"release": rel["release"], "site": site, "index": index, "content": found}
 
 
@@ -537,7 +537,8 @@ def load_display(cfg: Config) -> dict | None:
 def write_preview(site: Path, index: dict, chunks: dict, store: dict, pdfs: dict,
                   web_dist: Path | None, queue: dict | None = None,
                   expansions: dict | None = None, changes: dict | None = None,
-                  content: dict | None = None):
+                  content: dict | None = None, work_dir: Path | None = None,
+                  root: Path | None = None):
     """Write the reader and its data to `site`. Definitions expanded at their applications, and
     a declaration's equations after its first 64, are written on their own
     (`data/expansions/<key>.json`, `mf.split_expansions`), together with `expansions` already
@@ -545,7 +546,9 @@ def write_preview(site: Path, index: dict, chunks: dict, store: dict, pdfs: dict
     the release before, is written as `data/changes.json`; `content`, the content index and
     the paper-number check (`content.py`), as `data/retrieval.json` and `data/numbering.json`.
     An audit's index (not a paper page's) gets its semantic summary (`semantic.py`), computed from
-    these records."""
+    these records and the findings in force of the workspaces in `work_dir`, checked against
+    the data written (`with_workspace_findings`)."""
+    given, summarised = index, chunks
     if index.get("mode") != "paper":
         from . import semantic
         semantic.apply(index, chunks, author=index.get("author"))
@@ -590,3 +593,24 @@ def write_preview(site: Path, index: dict, chunks: dict, store: dict, pdfs: dict
     for pid, pdf in pdfs.items():
         (data / "papers").mkdir(parents=True, exist_ok=True)
         link_or_copy(pdf, data / "papers" / f"{pid}.pdf")
+    if index.get("mode") != "paper" and work_dir is not None:
+        with_workspace_findings(data, index, given, summarised, work_dir, root)
+
+
+def with_workspace_findings(data: Path, written: dict, given: dict, chunks: dict,
+                            work_dir: Path, root: Path | None = None) -> None:
+    """Count in the semantic summary of the site data at `data` the submitted findings in force
+    of the workspaces in `work_dir`, each checked against that data (`semantic.workspace_findings`
+    reads it, so it is written first). `written` is the index as written, `given` the caller's
+    (both get the summary), and `chunks` the claim records the summary was computed from.
+    Nothing changes when the workspaces have no such finding."""
+    from . import semantic
+    found = semantic.workspace_findings(work_dir, data, root)
+    if not found:
+        return
+    semantic.apply(written, chunks, author=written.get("author"), found=found)
+    given["semantic"] = written["semantic"]
+    for row, mine in zip(given.get("claims") or [], written.get("claims") or []):
+        row["semantic"] = mine["semantic"]
+    validate(written, "manifest-index")
+    write_json(data / "index.json", written, indent=None)

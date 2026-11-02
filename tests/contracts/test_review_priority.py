@@ -578,3 +578,56 @@ def test_the_command_line_says_why_and_asks_the_question(tmp_path, monkeypatch, 
     out = run("next", "--order", "informed", "--json")
     assert json.loads(out)["order"] == "informed"
     assert wsp.read(work / "review-work" / "human_B-Referee.json")["exposure"]
+
+
+def test_a_site_carries_the_priority_order_and_no_prior_interpretation(tmp_path):
+    """The review queue a site carries, which the Overview's Review next shows, is the priority
+    order with its reasons. A build that reads the working directory's workspaces (to count
+    their findings in the semantic summary) puts nothing they record into that queue, and
+    records no exposure: what the workspaces record reaches an order only through the informed
+    order, which asks first."""
+    from prooflens.simple import write_view_site
+    from prooflens.status import fields
+    from prooflens.targets import Snapshot
+
+    def claim(key, number, name):
+        return {"id": f"P:{key}", "key": key, "paper": "P", "number": number, "title": "",
+                "kind": "theorem", "scope": "formal", "location": "main.tex",
+                "source_sha256": "s-" + key, **fields("link.checked"),
+                "links": [{"name": name, **fields("link.checked"), "source": "confirmed"}],
+                "suggestions": [], "correspondence": None, "reviews": [], "references": []}
+
+    body = {"mode": "simple", "paper": "paper/main.tex", "title": "A synthetic paper",
+            "notes": [], "project": {"name": "synthetic", "libs": [], "built": 0, "unbuilt": 0},
+            "commit": None, "author": None, "issues": None, "site_url": None,
+            "formalization": None, "pdf_sha256": None, "tex": {"mode": "latex", "anchors": []},
+            "decls": {}, "index": [], "module_docs": [], "numbering": None,
+            "claims": [claim("thm:one", "Theorem 1", "X.one"),
+                       claim("thm:two", "Theorem 2", "X.two")]}
+    root = tmp_path / "project"
+    root.mkdir()
+    work, view = root / ".machinechecked", {"body": body, "pdf": None}
+    site = work / "site"
+    write_view_site(view, site, None, root)
+    plain = json.loads((site / "data" / "review-queue.json").read_text())
+    p = wsp.open_for(work, AUDITOR, "informed", sources=Snapshot(site / "data").sources())
+    wsp.update(p, [put({"id": "q-two", "kind": "question", "claim": "Theorem 2",
+                        "text": "Is the bound uniform?"}),
+                   put({"id": "f-two", "kind": "finding", "claim": "Theorem 2",
+                        "coverage": "unresolved", "question": "Is the bound uniform?",
+                        "note": "Open."}),
+                   {"op": "submit", "id": "f-two", "base_rev": 1}], Snapshot(site / "data"))
+    before = wsp.read(p)
+    # The workspace records an open question that the informed order would put first.
+    signals, drawn = rq.workspace_signals(plain["units"], [before])
+    assert drawn == ["P:thm:two"] and {s["kind"] for v in signals.values() for s in v} == \
+        {"open question"}
+    index = write_view_site(view, site, None, root, work)
+    stored = json.loads((site / "data" / "review-queue.json").read_text())
+    assert stored == plain
+    assert not any(s["kind"] in rq.TIERS[2:] for u in stored["units"]
+                   for s in (u.get("priority") or {}).get("signals") or [])
+    assert not any("recorded" in u["reason"] for u in stored["units"])
+    assert wsp.read(p) == before and [q for q, _ in wsp.list_all(work)] == [p]
+    # The build counted the workspace's finding in its summary.
+    assert index["semantic"]["papers"]["P"]["finding_currency"]["statements"]["current"] == 1

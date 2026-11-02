@@ -111,9 +111,9 @@
   function settle() { clearTimeout(editTimer); pending = null; }
 
   // What to review: a paper, then a section of statements or a group of definitions.
-  let paper = $state(route.target ? "all" : work.selection?.paper || "all");
-  let group = $state(route.target ? "all" : work.selection?.group || "all");
-  function select() { work.selection = { paper, group }; go(withQuery(location.hash, { claim: null, seen: null })); persist(); }
+  let paper = $state(route.target || route.unit ? "all" : work.selection?.paper || "all");
+  let group = $state(route.target || route.unit ? "all" : work.selection?.group || "all");
+  function select() { work.selection = { paper, group }; go(withQuery(location.hash, { claim: null, unit: null, seen: null })); persist(); }
 
   const fpOf = (u) => u.fingerprint || JSON.stringify(u.fingerprints || {});
   const reportFor = (u) => work.reports.find((r) => r.unit.id === u.id &&
@@ -153,14 +153,14 @@
     if (o === order) return;
     if (o === "informed") { asking = true; return; }
     asking = false;
-    work.order = o; go(withQuery(location.hash, { claim: null, seen: null })); persist();
+    work.order = o; go(withQuery(location.hash, { claim: null, unit: null, seen: null })); persist();
   }
   async function useInformed() {
     asking = false;
     informed = null;
     await loadInformed();
     if (!informed) return;
-    work.order = "informed"; go(withQuery(location.hash, { claim: null, seen: null })); persist();
+    work.order = "informed"; go(withQuery(location.hash, { claim: null, unit: null, seen: null })); persist();
   }
   const arranged = $derived(order === "document" ? queue?.orders?.document : order === "informed" ? informed?.units : null);
   const ordered = $derived(queue ? orderedUnits(queue.units, arranged) : []);
@@ -171,7 +171,8 @@
   const open = $derived(selected.filter((u) => u.state !== "reviewed" && !reportFor(u)));
   const fresh = $derived(open.filter((u) => !work.skipped.includes(u.id)));
   const skippedHere = $derived(open.filter((u) => work.skipped.includes(u.id)));
-  const requested = $derived(ordered.find((u) => u.claims.some((c) => c.id === route.target) && !reportFor(u) && !work.skipped.includes(u.id)));
+  // A unit asked for by its id (`?unit=`, the Overview's Review next) or by a claim of it (`?claim=`).
+  const requested = $derived(ordered.find((u) => (route.unit ? u.id === route.unit : u.claims.some((c) => c.id === route.target)) && !reportFor(u) && !work.skipped.includes(u.id)));
   const current = $derived(requested || fresh[0] || skippedHere[0] || null);
   const savedHere = $derived(selected.filter((u) => reportFor(u)).length);
   const doneBefore = $derived(selected.filter((u) => u.state === "reviewed").length);
