@@ -223,7 +223,11 @@ def build(cfg: Config, release: str | None = None, skip_lean: bool = False,
     index["project"].update(source_info(cfg))
     site = cfg.out_dir / "site"
     found = content_mod.load(cfg.out_dir, eid, record["body"])
-    changes = release_changes(cfg, rel)
+    unavailable = []
+    changes = release_changes(cfg, rel, unavailable)
+    if unavailable:
+        index["changes_unavailable"] = unavailable[0]
+        log(f"warning: {unavailable[0]}")
     write_preview(site, index, chunks, store, pdfs, web_dist,
                   rq.prioritise(rq.assurance_queue(index, chunks, store, cfg.statement_authors),
                                 changes, claims=index["claims"]),
@@ -482,14 +486,17 @@ def rebuild_site(cfg: Config, web_dist: Path | None = None, release: str | None 
     last = ev.latest(cfg.out_dir)
     if last is None:
         raise StaleEvidence(NO_RELEASE)
-    rel = read_json(cfg.out_dir / "releases" / f"{release}.json") if release else last
+    rel = ev.release(cfg.out_dir, release) if release else last
     record = ev.load(cfg.out_dir, rel["evidence"])
     index, chunks, store = mf.build(record, rel["release"], load_display(cfg))
     index.update(issues=cfg.issues, site_url=cfg.site_url, author=cfg.author)
     index["project"].update(source_info(cfg))
     site = cfg.out_dir / "site"
     found = content_mod.load(cfg.out_dir, rel["evidence"], record["body"])
-    changes = release_changes(cfg, rel["release"])
+    unavailable = []
+    changes = release_changes(cfg, rel["release"], unavailable)
+    if unavailable:
+        index["changes_unavailable"] = unavailable[0]
     write_preview(site, index, chunks, store, pdf_paths(cfg, record["body"]), web_dist,
                   rq.prioritise(rq.assurance_queue(index, chunks, store, cfg.statement_authors),
                                 changes, claims=index["claims"]),
@@ -497,15 +504,23 @@ def rebuild_site(cfg: Config, web_dist: Path | None = None, release: str | None 
     return {"release": rel["release"], "site": site, "index": index, "content": found}
 
 
-def release_changes(cfg: Config, release: str) -> dict | None:
+def release_changes(cfg: Config, release: str, notes: list | None = None) -> dict | None:
     """What changed from the release before `release` to it (`changes.py`), for the reader;
-    None for a first release, or when the earlier evidence is of a form the comparison cannot
-    read. It changes nothing that is assessed."""
+    None for a first release, when the evidence of either release is no longer on disk (pruned
+    or deleted: then `notes` gets one sentence naming the release), or when the earlier evidence
+    is of a form the comparison cannot read. It changes nothing that is assessed."""
     from . import changes
     try:
-        if changes.previous_release(cfg.out_dir, release) is None:
+        before = changes.previous_release(cfg.out_dir, release)
+        if before is None:
             return None
-        return changes.between(cfg.out_dir, None, release)
+        for name in (before, release):
+            why = ev.release_unavailable(cfg.out_dir, name)
+            if why:
+                if notes is not None:
+                    notes.append(f"No change summary: {why}.")
+                return None
+        return changes.between(cfg.out_dir, before, release)
     except (changes.ChangesError, ev.EvidenceError, KeyError, TypeError, ValueError):
         return None
 
