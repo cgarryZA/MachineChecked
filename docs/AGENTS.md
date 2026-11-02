@@ -191,7 +191,10 @@ prints one JSON document (`machinechecked/compare@1`) for one claim, read from t
   definition's `fingerprint`. An expansion's own applications are references; `--query
   expansion KEY` gives one by its key. `lean.references` are the references to the paper's
   numbers that concern the claim, and `lean.numbering` their project-level pattern (as in
-  `check --json`).
+  `check --json`); a reference to a number of an earlier revision has `current`, its
+  counterpart through the version maps the workspaces keep for this build, with
+  `current.source.kept` naming each map and who kept it (as in `check --json`'s `numbering`).
+  The text output lists the references that disagree with the paper, each with its message.
 - `interpretations` (stage `informed`, the default): the correspondence note, review reports,
   author's review markers, symbol links, the status and the assessment's findings.
 - `retrieval`: what is `included`, what the stage `withheld`, what is `unavailable` because it
@@ -418,7 +421,12 @@ against the later release's site, kept apart. Report a reopened finding with its
 the part it names; an `unchecked` one is not known to be current, never current; a finding is
 never moved to another claim. `--save` keeps the map in the workspace, and `workspace show
 --json` then gives the same under `revisions` against a build of the later release, without
-the manuscripts.
+the manuscripts. On every build of the later revision, `check --json` (`numbering`, `warnings`)
+and `compare` then give each reference in the Lean to an earlier paper number its `current`
+counterpart, attributed to who kept the map. A published audit carries each kept map on the
+claims it concerns, with what it reopens, and each submitted finding's `dependencies`, as the
+paper's publication settings allow (`work` of a claim's passport,
+[DATA_MODEL.md](DATA_MODEL.md#published-workspace-records-prooflenspublished-work1-written-by-the-export)).
 
 ### Reviewing from the terminal
 
@@ -543,7 +551,10 @@ version (the passage, the requirements and passages of its reading, alignments, 
 declarations with the definitions their statements use, applications, facts, the composition,
 the bridge), and `kinds`, the evidence kinds it uses. A submitted finding records them when it is
 submitted; it reads `stale` when one changed, naming it, and `unchecked` when one is not known
-(`currency.unknown`, each with `why`), never `current`. To cite a fact inside a proof, put its `ref` from `compare --query proof-facts`
+(`currency.unknown`, each with `why`), never `current`. A cited declaration records each
+definition its statement expands at its arguments with that definition's fingerprint; when one
+changes, the change carries `expansions` (`{at, name, was, now}`: the expansion's key as cited
+and in this build, for `compare --query expansion KEY`). To cite a fact inside a proof, put its `ref` from `compare --query proof-facts`
 as `"ref": {"fact": REF}`; a finding resting on it takes basis `reviewed_composition` (it is not
 `direct` coverage), and `show` marks it `stale` once that proof changes. Requirements of a claim
 (`requirement`), the passages that govern each one

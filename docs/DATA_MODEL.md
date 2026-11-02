@@ -366,8 +366,9 @@ with the reviews.
 claims of one paper between two releases' revisions by their passages
 ([SOURCE_REGIONS.md](SOURCE_REGIONS.md#comparing-two-revisions-the-version-map)) and is derived
 from the two releases' evidence and the two manuscripts alone; no status, fingerprint or gate
-reads it, and the export does not carry it. A workspace may keep it (`changes --map --workspace
-ID --save`, below).
+reads it. A workspace may keep it (`changes --map --workspace ID --save`, below); the export
+publishes a kept map on the claims it concerns, as their papers' publication settings allow
+([published workspace records](#published-workspace-records-prooflenspublished-work1-written-by-the-export)).
 
 | Field | Content |
 |---|---|
@@ -408,7 +409,14 @@ The paper-number check reads `numbers` as a version map (`numbering.resolve`, wi
 earlier number that disagrees with the later paper (`absent`, `other-kind`, or a possibly stale
 lead) gets `current`: `reference` and `claims` for one counterpart (with `proposed` when its
 claim is ambiguous), `ambiguous` for several, or `none` for a removed claim, with `source` and
-`matches` (the map's entries for the number). Its status stays its own.
+`matches` (the map's entries for the number). Its status stays its own. The version maps the
+workspaces of the working directory keep do the same for a build of their later side (its
+release, or the paper revision it read; `version_map.kept_numbering`): `check`, the site's claim
+passports (`references`, and `data/numbering.json`) and `compare` give each disagreeing reference
+its `current`, whose `source` is `{schema, paper, kept}`, `kept` naming each map (`workspace`,
+`paper`, `from`, `to`, `kept_at`, `kept_by`) and its message who kept it. Several kept maps are
+read together: a number they map to different counterparts gets `ambiguous`. The content stored
+with the evidence is not changed, and the export shows the references as the build checked them.
 
 An entry of `passages` follows one region a workspace attached (a fragment's `region`, or one a
 finding rests on as it was submitted): `region` (`paper`, `file`, `start_line`, `end_line`,
@@ -449,8 +457,10 @@ and `state`:
 - `reopened`, with `change` (`class`, `reason`, and `diff`, `where`, `context` as the map gives
   them; a claim relied on carries its own change as `claim_change`, and `through` names the cited
   declarations whose statements use its definitions) and `question`;
-- `unchecked`, with `why` (and `candidates` for an ambiguous claim): the map cannot follow it,
-  the part read another text than the earlier revision prints, or it records no version.
+- `unchecked`, with `why` (and `candidates` for an ambiguous claim) and `cause`: `not in the
+  map`, `not recorded` (it records no version), `another text` (it read another text than the
+  earlier revision prints), `definitions not recorded` (whether it relies on a changed definition
+  claim is not known), `ambiguous` or `not followed` (the map cannot follow it).
 
 A definition claim the claim's Lean relies on (`via: ["lean"]`) concerns only a finding that
 cites a declaration whose statement uses one of its definitions, and is unknown when the
@@ -776,8 +786,9 @@ optional `clause` and `note`, `rev`, `created_at`/`created_by`, `updated_at`/`up
   uses, for a definition its value's too, with its digest as below, or null when the build shows
   none; from its statement record, else by following what the build's declaration records use,
   with `closure_complete: false` when a record is missing) and `expansions` (the applications of
-  definitions it prints, as the build expanded them: `{at, name, key}`, `key` naming the stored
-  expansion, `data/expansions/<key>.json`), `{source:
+  definitions it prints, as the build expanded them: `{at, name, key, fingerprint}`, `key` naming
+  the stored expansion, `data/expansions/<key>.json`, and `fingerprint` the fingerprint of the
+  definition it expands), `{source:
   {file, line}}`, `{paper: {claim, quote, sha256}}` (`sha256` the claim's passage pin when it was
   quoted), `{app: {...}}`: an application of a declaration, as
   `compare --query uses` gives it (`callee`, `module`, `id`, `caller`, `via`, the `arguments`
@@ -928,10 +939,16 @@ changes no status.
 **Currency.** Evidence on a declaration is pinned to its `fingerprint` and to a `digest` of that
 fingerprint with those of the constants Lean generated for it (`N._f`, `N.match_1`, `N.eq_1`), which
 carry a definition's equations, and of the tactic script of each tactic default its type has,
-and to the digest of each definition its statement uses (`closure`). Against a later build,
+to the digest of each definition its statement uses (`closure`), and to the fingerprint of each
+definition it expands at its arguments (`expansions`). Against a later build,
 evidence whose digest changed, or one of whose definitions' digests changed (the change names
 the definition and the declaration that uses it), is `stale`, and so is every question that
-cites it; the others stay `current` (`unchecked` when the build shows no fingerprint, or no
+cites it. A definition whose fingerprint is not the one its expansion recorded changed as well,
+even when the definitions were not recorded: the change adds `expansions`, each `{at, name,
+was, now}`, the key of the expansion as recorded and as the build prints it now (null when the
+statement no longer expands it there); the expansion's key alone, which changes with the form it
+is stored in, decides nothing, and a definition the build shows no version of leaves the
+evidence `unchecked`; the others stay `current` (`unchecked` when the build shows no fingerprint, or no
 version of a definition it uses, or when its definitions were not recorded: re-pin it). An
 unchecked declaration's `reason` says why the build shows no version of it and what would let a
 build check it: there is no build, the build ran no Lean (or the view has no Lean index), it is
@@ -989,7 +1006,8 @@ brings a draft up to date and leaves a submitted finding stale until it is super
 it is `unchecked` when an item is unknown or cannot be checked now (`currency.unknown`, each
 `{dependency, record, why}`), including a finding submitted before findings recorded their
 dependencies; else `current`. Dependencies are workspace records: the export of a workspace
-carries them, a published audit does not, and no status reads them. Across a revision of the
+carries them, a published audit carries each submitted finding's as its paper's publication
+settings allow, and no status reads them. Across a revision of the
 paper, a version map judges the paper parts by their text instead
 ([Findings across a revision](#findings-across-a-revision-prooflensreopened1-derived)).
 
@@ -1029,8 +1047,9 @@ version maps it lacks) and keeps a record, main results or a version map both ho
 versions as it is, listing the other under `conflicts`; a version map of another form is left
 out and reported. A kept map judges the findings without the manuscripts, so the findings it
 reopens travel with the workspace. References the current build cannot resolve, main results included, are reported as
-`problems`. A published audit carries the accepted records and the main results of every
-workspace in the working directory, below; the workspace itself stays local.
+`problems`. A published audit carries the accepted records, what its submitted findings rest
+on, the version maps it keeps and the main results of every workspace in the working directory,
+below; the workspace itself stays local.
 
 ## Published workspace records (`prooflens/published-work@1`), written by the export
 
@@ -1047,9 +1066,10 @@ records for the claim:
 | `requirements` | every requirement of the claim, in reading order, with `depth` |
 | `fragments` | the passages with `state` `accepted` (governing ones and later uses) |
 | `alignments` | every alignment |
-| `findings` | the submitted findings, superseded ones included, each with `in_force` |
+| `findings` | the submitted findings, superseded ones included, each with `in_force` and `dependencies` (below) |
 | `evidence` | the evidence records those findings and compositions cite |
 | `compositions` | the compositions those findings rest on, with `basis`, `gaps`, `complete`, `next_step` and `bridge_check` |
+| `revisions` | what each version map the workspace keeps says of this claim, when it says anything (below) |
 
 Each record keeps the workspace fields above (`id`, `kind`, `claim`, `clause`, `rev`,
 `created_at`/`created_by`, `updated_at`/`updated_by`, `pins`, and its kind's fields) and gains
@@ -1058,10 +1078,41 @@ data over the published records alone. Proposed and removed fragments, draft fin
 no submitted finding cites, questions, `exposure`, `resume`, `review`, `conflicts`,
 `provenance` and `ops` are not published.
 
+A finding's `dependencies` are what it rests on ([Dependencies of a
+finding](#workspace-prooflensworkspace1-written-by-the-reader-and-the-command-line)), as it
+recorded them at submission (`at`; a finding submitted before findings recorded them has its
+records' now, without `at`): `kinds`, `items` and `unknown` (`dependency`, `record`, `claim`,
+`requirement`, `why`). An item keeps its ids, role and content identity; a region only `paper`
+and `sha256` without the source text, a quoted passage its `claim` and `sha256` (its `quote`
+with the source text), an alignment's target its `target` text only with the Lean, and a
+certificate's `file` and `type` and a source line only with the Lean.
+
+An entry of `revisions` is one version map the workspace keeps (`version_maps`) for this claim's
+paper, judged over the published records alone (`reopen.reopen`, its Lean side against the
+published build when the map's later release is the build's): `map` (`paper`, `from`, `to`,
+`kept_at`, `kept_by`), `build_checked`, `claims` (the map's entries whose earlier or later side
+is this claim), `findings` (each finding in force that rests on the paper: `id`, `claim`,
+`state`, `kinds`, `class`, `earlier`, `later`, `paper`, and `build` with `state`, `changes`,
+each with `words` and `question`, and `unknown`), and `evidence` and `passages` (the evidence
+quoting the paper and the passages attached to the claim's requirements, each with its state).
+A finding is named by its id: its record is in `findings` above. A map entry keeps `class`, `by`,
+`renumbered`, `moved`, `candidates` (`claim`, `by`), the maintainer's `resolved` (`by`, `was`)
+and each side's `claim`, `number`, `kind`, `label`, `scope`, `sha256`, `pin_sha256` and `pin`;
+neither side's `recorded` status or reviews. With the source text it also keeps each side's
+`location` and `bounds`, the map's `reason`, `change` (with its diff), `context`,
+`surroundings_changed`, `printed_at` and `proposed`, and a part keeps the map's words (`text`,
+`note`, `why`, `change`, `question`). Without it, `reason` is the class in words, a context
+change keeps `what`, `change` and the claim, number and Lean names it concerns but no macro name,
+and a part keeps `state`, `class`, the claims and numbers of each side and words that quote no
+place or text of the paper: its `text`, `change.reason`, `question`, and `why` (the map's own
+when its `cause` names claims, numbers and declarations only). A declaration's `statement` in
+both releases is kept only with the Lean. The site's loader refuses a file whose `revisions` name
+a finding it does not publish.
+
 The paper's `publish` settings apply. Without `source_text`, a region keeps only `paper` and
 `sha256` (no `text`, file or lines), a changed region's entry in `changes` loses its location,
 and a `paper` evidence reference loses its `quote`. Without `lean`, an alignment target loses its
-`target` text, a `source` evidence reference its file and line, and a `fact` evidence reference
+`target` text, a changed sub-term in `changes` its texts (`was`, `now`), a `source` evidence reference its file and line, and a `fact` evidence reference
 its `type`, `assumptions`, `variables`, `cases` and `source` (its declaration, position, pins and
 `basis` stay). A cited fact's, application's or certificate's currency is checked against the
 Lean project the release was built from, as `workspace show` checks it (asking Lean when the
