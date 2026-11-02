@@ -2186,9 +2186,11 @@ def view_summary(body: dict) -> dict[str, int]:
 
 
 def write_view_site(view: dict, site: Path, web_dist: Path | None,
-                    root: Path | None = None) -> dict:
+                    root: Path | None = None, work_dir: Path | None = None) -> dict:
     """The site of a view: the same app as the full reader, in its simple mode, with its audit
-    descriptor (`audit.json`). `root` is the Lean project, for the descriptor's repository."""
+    descriptor (`audit.json`). `root` is the Lean project, for the descriptor's repository;
+    `work_dir`, the working directory, whose workspaces' findings in force the semantic summary
+    counts (`pipeline.with_workspace_findings`)."""
     from . import manifest as mf
     body = view["body"]
     eid = content_id(body)
@@ -2286,7 +2288,8 @@ def write_view_site(view: dict, site: Path, web_dist: Path | None,
     write_preview(site, index, chunks, store, {"P": view["pdf"]} if view["pdf"] else {},
                   web_dist, prioritise(simple_queue(index, chunks), uses=view.get("uses"),
                                        unbuilt=body["project"]["unbuilt"],
-                                       claims=index["claims"]))
+                                       claims=index["claims"]),
+                  work_dir=work_dir, root=root)
     index["review_queue"] = "data/review-queue.json"
     from . import audit
     key = body.get("paper") or ""

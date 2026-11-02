@@ -139,3 +139,24 @@ assert.equal(coverageView(null), null);
   }
   assert.equal(inText("In one Lean statement"), "in one Lean statement");
 }
+
+// Findings in force by their currency (#478): their words are the vocabulary's, a claim is keyed
+// by each state one of its findings is in, and the count beside a filter is of findings.
+{
+  const vocabulary = JSON.parse(readFileSync(new URL("../../engine/python/prooflens/data/semantic.json", import.meta.url), "utf8"));
+  const { keys, keysOf, words, countText, unitCounts, findingCurrencyText } = await import("../src/lib/semantic.js");
+  assert.deepEqual(keys("finding_currency"), ["current", "due", "unchecked"]);
+  for (const k of keys("finding_currency")) assert.equal(words("finding_currency", k).label, vocabulary.finding_currency[k].label);
+  const row = { semantic: { unit: "statements", readings: [], review: "none", findings: [], finding_currency: { current: 2, due: 1, unchecked: 0 } } };
+  assert.deepEqual(keysOf(row, "audit").finding_currency, ["current", "due"]);
+  assert.deepEqual(keysOf({ semantic: { unit: "statements" } }, "audit").finding_currency, [], "an earlier summary has none");
+  assert.equal(findingCurrencyText(row), `2 current · 1 ${vocabulary.finding_currency.due.label.toLowerCase()}`);
+  assert.equal(findingCurrencyText({ semantic: {} }), "");
+  const summary = { papers: { P: { finding_currency: { statements: { current: 2, due: 1, unchecked: 0 }, notation: { current: 0, due: 0, unchecked: 0 },
+                                                        proof_steps: { current: 1, due: 0, unchecked: 0 } } } } };
+  const current = unitCounts(summary, "finding_currency", "audit", "current");
+  assert.deepEqual(current, { statements: 2, proof_steps: 1 });
+  assert.equal(countText(current, "all", "finding_currency"), "3 findings");
+  assert.equal(countText(unitCounts(summary, "finding_currency", "audit", "due"), "statements", "finding_currency"), "1 finding");
+  assert.equal(countText(current, "all"), "2 statements, 1 proof step", "other dimensions count claims");
+}

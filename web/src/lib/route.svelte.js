@@ -5,22 +5,23 @@
 //   #/read/<paper>[/<claim>] the paper, or a claim's comparison in its place; `?show=<claim>`
 //                            shows the paper at that claim's place, marked
 //   #/overview               every claim, with its correspondence, basis, review and status;
-//                            `?set=&unit=&coverage=&basis=&review=&finding=&status=` choose the
-//                            readings shown and filter the claims
+//                            `?set=&unit=&coverage=&basis=&review=&finding=&finding_currency=&status=`
+//                            choose the readings shown and filter the claims
 //   #/claim/<claim>          the passport alone
 //   #/changes                what changed between releases
-//   #/review                 the review queue
+//   #/review                 the review queue; `?unit=<unit id>` or `?claim=<claim>` opens it at
+//                            that unit, or at the first unit of that claim
 //
 // A claim's inspections are in the query of its route: `?inspect=<token>…&at=<row>`
 // (lib/inspect.svelte.js). A `?compare=1` in older links is ignored: a claim always opens
 // into its comparison.
 
-export const OVERVIEW_FILTERS = ["set", "unit", "coverage", "basis", "review", "finding", "status"];
+export const OVERVIEW_FILTERS = ["set", "unit", "coverage", "basis", "review", "finding", "finding_currency", "status"];
 
 function parse(hash) {
   const [path, query = ""] = hash.split("?");
   const params = new URLSearchParams(query);
-  const state = { inspection: params.getAll("inspect"), at: params.get("at"), target: params.get("claim"), show: params.get("show"), readerSeen: params.get("seen") === "lean",
+  const state = { inspection: params.getAll("inspect"), at: params.get("at"), target: params.get("claim"), unit: params.get("unit"), show: params.get("show"), readerSeen: params.get("seen") === "lean",
     filters: Object.fromEntries(OVERVIEW_FILTERS.map((k) => [k, params.get(k)])) };
   let parts = path.replace(/^#\/?/, "").split("/").map((s) => { try { return decodeURIComponent(s); } catch { return s; } });
   let release = null;
