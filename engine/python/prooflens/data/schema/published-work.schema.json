@@ -804,6 +804,9 @@
                       }
                     }
                   }
+                },
+                "dependencies": {
+                  "$ref": "#/$defs/dependencies"
                 }
               }
             }
@@ -1446,6 +1449,329 @@
                 }
               }
             }
+          },
+          "revisions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/revision"
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "region": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "paper": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "file": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "start_line": {
+          "type": "integer"
+        },
+        "end_line": {
+          "type": "integer"
+        },
+        "start_column": {
+          "type": "integer"
+        },
+        "end_column": {
+          "type": "integer"
+        },
+        "sha256": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "dependency": {
+      "type": "object",
+      "required": [
+        "dependency"
+      ],
+      "properties": {
+        "dependency": {
+          "enum": [
+            "passage",
+            "reading",
+            "context",
+            "object",
+            "declaration",
+            "application",
+            "fact",
+            "certificate",
+            "paper",
+            "source",
+            "composition",
+            "bridge",
+            "counterexample",
+            "evidence"
+          ]
+        },
+        "record": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "via": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "region": {
+          "$ref": "#/$defs/region"
+        },
+        "passage": {
+          "type": "object"
+        },
+        "lean": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "ref": {
+          "type": "object"
+        }
+      }
+    },
+    "dependencies": {
+      "type": "object",
+      "required": [
+        "kinds",
+        "items",
+        "unknown"
+      ],
+      "properties": {
+        "kinds": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "statement comparison",
+              "object correspondence",
+              "composition",
+              "proof route",
+              "checked bridge"
+            ]
+          }
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/dependency"
+          }
+        },
+        "unknown": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "why"
+            ]
+          }
+        },
+        "at": {
+          "type": "string"
+        }
+      }
+    },
+    "part": {
+      "type": "object",
+      "required": [
+        "state"
+      ],
+      "properties": {
+        "state": {
+          "enum": [
+            "reopened",
+            "unchecked",
+            "current"
+          ]
+        },
+        "dependency": {
+          "$ref": "#/$defs/dependency"
+        },
+        "text": {
+          "type": "string"
+        },
+        "class": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "earlier": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "later": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "change": {
+          "type": "object"
+        },
+        "why": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "question": {
+          "type": "string"
+        },
+        "note": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "candidates": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "revision": {
+      "type": "object",
+      "required": [
+        "map",
+        "build_checked",
+        "claims",
+        "findings",
+        "evidence",
+        "passages"
+      ],
+      "properties": {
+        "map": {
+          "type": "object",
+          "required": [
+            "paper",
+            "from",
+            "to"
+          ],
+          "properties": {
+            "paper": {
+              "type": "string"
+            },
+            "from": {
+              "type": "object"
+            },
+            "to": {
+              "type": "object"
+            },
+            "kept_at": {
+              "type": "string"
+            },
+            "kept_by": {
+              "type": "string"
+            }
+          }
+        },
+        "build_checked": {
+          "type": "boolean"
+        },
+        "claims": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "class",
+              "from",
+              "to"
+            ],
+            "properties": {
+              "class": {
+                "type": "string"
+              },
+              "reason": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "from": {
+                "type": [
+                  "object",
+                  "null"
+                ]
+              },
+              "to": {
+                "type": [
+                  "object",
+                  "null"
+                ]
+              }
+            }
+          }
+        },
+        "findings": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "claim",
+              "state",
+              "paper"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "claim": {
+                "type": "string"
+              },
+              "state": {
+                "enum": [
+                  "reopened",
+                  "unchecked",
+                  "current"
+                ]
+              },
+              "paper": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/part"
+                }
+              },
+              "build": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/part"
+          }
+        },
+        "passages": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/part"
           }
         }
       }

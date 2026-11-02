@@ -30,6 +30,7 @@ import re
 from pathlib import Path
 
 from . import manifest as mf
+from .numbering import suspect as nb_suspect
 
 PACKET_SCHEMA = "machinechecked/compare@1"
 QUERY_SCHEMA = "machinechecked/query@1"
@@ -188,6 +189,32 @@ class Site:
             return json.loads(p.read_text(encoding="utf-8")) if p.exists() else None
         except ValueError:
             return None
+
+    def references(self, ch: dict) -> list[dict]:
+        """The claim's references to the paper's numbers (`content.claim_references`), each that
+        disagrees with the paper given its counterpart through the version maps the auditors'
+        workspaces keep now (`version_map.kept_numbering`), which may be newer than the build."""
+        refs = ch.get("references") or []
+        if not any(nb_suspect(o) for o in refs):
+            return refs
+        from copy import deepcopy
+        from . import numbering as nb
+        from .version_map import kept_numbering
+        pid = ch.get("paper")
+        paper = next((p for p in self.index.get("papers") or [] if p.get("id") == pid), {})
+        nmap = kept_numbering(self.data.parent.parent, pid, self.index.get("release"),
+                              paper.get("revision"))
+        if nmap is None:
+            return refs
+        refs = deepcopy(refs)
+        for o in refs:
+            src = (o.get("current") or {}).get("source")
+            if isinstance(src, dict) and src.get("kept"):
+                o.pop("current")  # read again from the maps kept now
+        claims = [c for c in self.claims if c.get("paper") == pid]
+        nb.resolve([o for o in refs if nb.suspect(o)], nmap,
+                   nb.inventory(claims, True)["statements"])
+        return refs
 
     def part(self, key: str) -> dict | None:
         """A part stored on its own under its key (`data/expansions/<key>.json`,
@@ -567,7 +594,7 @@ def claim_packet(site: Site, claim: str, stage: str = "informed", limit: int | N
         defs, page = _page(_definitions(site, [ch], names, stage), limit, after)
         out["lean"] = {"declarations": decls, "candidates": cands, "definitions": defs,
                        "expansions": _expansions(site, [decls, defs]),
-                       "references": ch.get("references") or []}
+                       "references": site.references(ch)}
         num = site.numbering()
         if num and num.get("pattern"):
             out["lean"]["numbering"] = num["pattern"]
@@ -1322,6 +1349,11 @@ def packet_text(pk: dict) -> str:
             out.append("Definitions at the arguments of each application above, substituted "
                        "and checked by Lean:\n"
                        + "\n".join(y for x in lean["expansions"] for y in expansion_lines(x)))
+        refs = [o for o in lean.get("references") or [] if nb_suspect(o)]
+        if refs:
+            out.append("References in the Lean to the paper's numbers that disagree with this "
+                       "version of the paper:\n" + "\n".join("  " + o["message"] for o in refs
+                                                              if o.get("message")))
         if not lean["declarations"]:
             out.append("No Lean is linked to this step: assess the printed step itself."
                        if pk.get("note", "").startswith("no Lean is linked to this step")

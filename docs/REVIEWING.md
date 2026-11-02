@@ -376,7 +376,10 @@ them, or the certificate, makes it `stale`, and so the finding that cites it
 
 When a declaration that evidence cites changes (its statement, a definition's equations, or a
 definition its statement uses), `show` marks that evidence `stale`; a quoted passage of the paper
-is stale once the claim's passage changes. A finding is checked through what it rests on: the
+is stale once the claim's passage changes. Evidence also records each definition its statement
+expands at its arguments, with that definition's fingerprint: when the definition changes, the
+change names the expansion as you read it and as the build prints it now (`compare --query
+expansion KEY` shows each). A finding is checked through what it rests on: the
 claim's passage; the requirement it names, with those it sits inside, the passages that govern
 them and their alignments; the evidence it cites, and that its composition and counterexamples
 cite; its composition; and, for a checked bridge, the bridge. A submitted finding records these
@@ -409,7 +412,9 @@ answer; a claim the map leaves ambiguous reads `unchecked` until the maintainer 
 `--match`. The Lean side is checked against the later release's site and listed apart. With
 `--save` the workspace keeps the map: the reader's Details page then lists the findings by
 claim (affected ones first, unaffected ones as still current), and `workspace show` and the
-workspace's export and import carry it. Nothing is moved to another claim: supersede a reopened
+workspace's export and import carry it. A kept map also gives each reference in the Lean to a
+paper number of the earlier revision its counterpart: `check`, the claim page and `compare` show
+it on every build of the later revision, naming who kept the map. Nothing is moved to another claim: supersede a reopened
 finding once you have read the new text. A cited fact inside a proof is `stale` once that proof
 changes, even when the theorem's statement does not; it, a cited application and a certificate
 read `unchecked` while Lean cannot look at them (their module is not built, a request failed). A
@@ -425,13 +430,17 @@ when it was recorded before the lock. `review promote` refuses the report withou
 **What a published audit carries.** `machinechecked export` (and `build --site`, `check --site`)
 publishes, for each claim, the records you have accepted: the requirements, the passages
 accepted as governing them, the alignments with Lean, and the submitted findings (superseded ones
-too, with the reason) with the evidence and counterexamples they cite. Each keeps its author, its pins and whether it
-is current against the published build. The main results you saved are published too, with who
+too, with the reason) with the evidence and counterexamples they cite and what each finding
+rests on. Each keeps its author, its pins and whether it is current against the published build.
+Each version map you kept is published on the claims it concerns: the claim's earlier and later
+numbers, and which of your findings the revision reopened, with the question each asks. The
+main results you saved are published too, with who
 saved them, when, the project commit they were checked against and what the published build no
 longer has of them. Proposed and removed passages, draft findings, evidence
 no submitted finding cites, questions, exposure and the review protocol's drafts stay in the
-workspace. The paper's `publish` settings apply: a passage's text and lines appear only when the
-source text is published, and your notes and reasons only when reviews are. The reader shows the
+workspace. The paper's `publish` settings apply: a passage's text and lines, and a version map's
+places, diffs and reasons, appear only when the source text is published; the Lean's text only
+when the Lean is; and your notes and reasons only when reviews are. The reader shows the
 records read-only on the claim, under **Auditors' readings**, and each finding in the comparison,
 at the rows it explains; they change no status.
 

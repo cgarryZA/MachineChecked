@@ -787,6 +787,32 @@ def numbering_map(doc: dict) -> dict:
             "entries": doc["numbers"]}
 
 
+def kept_numbering(work_dir, paper: str, release: str | None,
+                   revision: str | None) -> dict | None:
+    """The numbers of the version maps the workspaces of `work_dir` keep for `paper` whose later
+    side is this build (its `release`, or the paper `revision` it read), in the form
+    `numbering.resolve` reads, or None when no kept map applies. The source names each map: the
+    workspace that keeps it, both sides, and who kept it when. Several maps are read together: a
+    number they map to different counterparts is ambiguous."""
+    from . import workspace as wsp
+    from .reopen import identity
+    if not wsp.store(Path(work_dir)).is_dir():
+        return None
+    kept, entries = [], []
+    for _, ws in wsp.list_all(Path(work_dir)):
+        for m in ws.get("version_maps") or []:
+            to = (m or {}).get("to") or {}
+            if m.get("paper") != paper or not m.get("numbers") or not (
+                    (release and to.get("release") == release)
+                    or (revision and to.get("revision") == revision)):
+                continue
+            kept.append({"workspace": ws.get("id"), **identity(m)})
+            entries += [e for e in m["numbers"] if isinstance(e, dict)]
+    if not kept:
+        return None
+    return {"source": {"schema": SCHEMA, "paper": paper, "kept": kept}, "entries": entries}
+
+
 # -- two releases ----------------------------------------------------------------------------------
 
 def release_facts(v, cid: str) -> dict | None:

@@ -340,7 +340,12 @@ fs.writeFileSync(path.join(root, "toywork/data/work", workRow.file), JSON.string
                    currency: { state: "stale", changes: [{ fragment: "p-gone", was: "accepted", now: "missing" }] } }],
     findings: [
       { id: "f-c1", kind: "finding", claim: "T:def:even", coverage: "partial", basis: "reviewed_composition", composition: "c-1",
-        state: "submitted", submitted_at: "2026-10-20T00:00:00Z", created_by: "llm:synthetic-model", evidence: [], in_force: true, currency: cur },
+        state: "submitted", submitted_at: "2026-10-20T00:00:00Z", created_by: "llm:synthetic-model", evidence: [], in_force: true, currency: cur,
+        // What it rests on (#462), as `published_work.public_dependencies` gives it.
+        dependencies: { kinds: ["composition"], at: "2026-10-20T00:00:00Z", unknown: [{ dependency: "evidence", record: "e-9", why: "the evidence e-9 is not in this workspace" }],
+          items: [{ dependency: "passage", claim: "T:def:even", sha256: "x" }, { dependency: "reading", record: "q1", requirement: "even", sha256: "y" },
+                  { dependency: "context", record: "p1", requirement: "even", role: "statement", origin: "printed", region: { paper: "T", sha256: "z" } },
+                  { dependency: "composition", record: "c-1", sha256: "w" }] } },
       { id: "f-c2", kind: "finding", claim: "T:def:even", coverage: "full", basis: "checked_bridge", composition: "c-2",
         state: "submitted", submitted_at: "2026-10-20T00:00:00Z", created_by: "llm:synthetic-model", evidence: [], in_force: true, currency: cur },
       { id: "f-c3", kind: "finding", claim: "T:def:even", coverage: "full", basis: "reviewed_composition", recorded_basis: "checked_bridge",
@@ -360,7 +365,20 @@ fs.writeFileSync(path.join(root, "toywork/data/work", workRow.file), JSON.string
       { id: "c-2", kind: "composition", claim: "T:def:even", coverage: "full", basis: "checked_bridge", created_by: "llm:synthetic-model",
         steps: [{ id: "s1", establishes: "the whole definition", uses: ["e-1"], requirements: ["even"] }],
         evidence: ["e-1"], gaps: { requirements: 1, uncovered: [], open: [] }, complete: true, next_step: null,
-        bridge: { theorem: "Toy.synthetic_bridge", target: "Toy.Spec.synthetic" }, bridge_check: { state: "checked", reasons: [] }, currency: cur }] }] }));
+        bridge: { theorem: "Toy.synthetic_bridge", target: "Toy.Spec.synthetic" }, bridge_check: { state: "checked", reasons: [] }, currency: cur }],
+    // A version map the auditor kept (#462), as `published_work.revisions` gives it for a paper
+    // whose source text is not published: classes, claims and words that quote no place.
+    revisions: [{ map: { paper: "T", from: { release: "r-earlier" }, to: { release: TOY.release }, kept_at: "2026-10-21T00:00:00Z", kept_by: "llm:synthetic-model" },
+      build_checked: true,
+      claims: [{ class: "changed", by: ["label"], reason: "its text changed", from: { claim: "T:def:even", number: "Definition 1.2" }, to: { claim: "T:def:even", number: "Definition 1.1" } }],
+      findings: [
+        { id: "f-c1", claim: "T:def:even", state: "reopened", kinds: ["composition"], class: "changed",
+          paper: [{ state: "reopened", class: "changed", text: "the passage of T:def:even", dependency: { dependency: "passage", claim: "T:def:even", sha256: "x" },
+                    change: { class: "changed", reason: "its text changed" }, question: "Does finding f-c1 still hold for the changed text of Definition 1.1 (T:def:even)?" }],
+          build: { state: "current", changes: [] } },
+        { id: "f-c2", claim: "T:def:even", state: "unchecked", kinds: ["composition"], class: "changed",
+          paper: [{ state: "unchecked", text: "the passage of T:def:even", why: "the version of the passage of Definition 1.2 (T:def:even) it read was not recorded" }] }],
+      evidence: [], passages: [] }] }] }));
 
 // #77: the toy audit with records people made about Theorem 2.1 (its symbol links, a
 // correspondence note, and a published reading that aligns passages of the paper with rows of the
@@ -2415,6 +2433,28 @@ await check("direct audit has compact attribution with provenance on request", 3
   await banner.locator("a").click();
   await pg.waitForSelector("main.ch");
   assert.match(await pg.locator("main.ch").textContent(), /A. Author/);
+});
+
+// #462: a published finding says what it rests on, and a version map its auditor kept says what a
+// revision of the paper reopens, attributed, without quoting the paper where it is not published.
+await check("a published reading shows what each finding rests on and what a kept map reopens", 390, async (pg) => {
+  const at = `#/r/${TOY.release}/read/T/T%3Adef%3Aeven`;
+  await pg.goto(origin + "/toywork/?audit=" + encodeURIComponent(origin + "/toywork/") + at);
+  const work = pg.locator(".claim-view .published-work");
+  await work.waitFor();
+  const rests = work.locator("[data-kind='finding']").first().locator("[data-line='rests-on']");
+  assert.equal((await rests.textContent()).replace(/\s+/g, " "),
+    "Rests on: this claim's passage; requirement even; a passage of the paper (its text is not published) (the statement of even); composition c-1 [composition]");
+  assert.match(await work.locator("[data-line='unidentified']").textContent(), /Not identified: the evidence e-9 is not in this workspace/);
+  const rv = work.locator("[data-revision='T']");
+  const text = (await rv.textContent()).replace(/\s+/g, " ");
+  assert.match(text, /From release r-earlier to release [^ ]+ · version map kept by llm:synthetic-model 2026-10-21/);
+  assert.match(text, /Definition 1\.2 \(T:def:even\) → Definition 1\.1 \(T:def:even\): its text changed/);
+  assert.match(await rv.locator("[data-finding='f-c1']").textContent(), /Due for review: finding f-c1[\s\S]*Changed: the passage of T:def:even: its text changed\.[\s\S]*Does finding f-c1 still hold for the changed text of Definition 1\.1/);
+  assert.match(await rv.locator("[data-finding='f-c2']").textContent(), /Not known to be current: finding f-c2[\s\S]*Not known: the passage of T:def:even: the version of the passage/);
+  assert.equal(await rv.locator("pre").count(), 0, "no diff where the paper's text is not published");
+  const [scroll, client] = await pg.evaluate(() => [document.documentElement.scrollWidth, document.documentElement.clientWidth]);
+  assert.ok(scroll <= client, `the page scrolls sideways (${scroll} > ${client})`);
 });
 
 // #77: a published reading pairs a definition's row with the passages aligned with it: each passage
