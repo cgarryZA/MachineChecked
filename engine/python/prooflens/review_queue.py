@@ -257,15 +257,24 @@ def simple_queue(index: dict, chunks: dict) -> dict:
 # `prioritise` reorders the open units of a built queue by what the build's records say about
 # them: the comparison with the previous release (`changes.py`) and the reverse references of
 # the Lean (`uses.site_index`). `arrange` does the same for the command line with the records of
-# the auditors' workspaces (`workspace_signals`), or in the paper's order. Each reads records
-# only and starts no Lean; none changes a unit's state, a status or a marker, and the steps of
-# each unit keep their locks. A signal's words name the paper's claims, never a Lean
-# declaration: a reviewer reads them before the Lean is shown.
+# the auditors' workspaces (`workspace_signals`, `main_result_signals`), or in the paper's order.
+# Each reads records only and starts no Lean; none changes a unit's state, a status or a marker,
+# and the steps of each unit keep their locks. A signal's words name the paper's claims, never a
+# Lean declaration: a reviewer reads them before the Lean is shown.
 
 # The signals that order the units, strongest first. A unit's place is set by its strongest one;
-# being used in another claim's proof (`proof use`) comes next, then the queue's own order.
-TIERS = ("reopened", "changed", "open question", "difference", "hint")
+# being a saved main result or used by one (`main result`) comes next, then being used in another
+# claim's proof (`proof use`), then the queue's own order. A finding of a workspace that a change
+# reopened (`reopened finding`) comes first; only the informed order reads it.
+TIERS = ("reopened finding", "reopened", "changed", "out of date", "open question", "difference",
+         "hint")
+MAIN = "main result"
 RELEVANCE = "proof use"
+# The signals read from the auditors' workspaces: prior interpretations, which only the informed
+# order reads.
+WORKSPACE_KINDS = ("reopened finding", "out of date", "open question", "difference", "hint", MAIN)
+# How a main result's terms use a unit's Lean, strongest first.
+MAIN_USES = ("proof", "definition", "statement")
 ORDERS = ("priority", "document", "informed")
 ORDER_NOTE = ("The order suggests what to review next. It changes no status and no review; "
               "where a record is missing, the queue's order stands.")
@@ -301,11 +310,12 @@ def _numbers(units: list[dict], extra: dict | None = None) -> dict[str, str]:
     return out
 
 
-def _add(found: list[dict], kind: str, text: str, claims=(), questions=()) -> None:
-    """Add a signal to `found`, once per text, keeping the claims and questions it came from."""
+def _add(found: list[dict], kind: str, text: str, claims=(), questions=(), **more) -> None:
+    """Add a signal to `found`, once per text, keeping the claims and questions it came from
+    (and `more` fields, such as how a main result uses the unit: `use`)."""
     s = next((x for x in found if x["kind"] == kind and x["text"] == text), None)
     if s is None:
-        s = {"kind": kind, "text": text, "claims": []}
+        s = {"kind": kind, "text": text, "claims": [], **more}
         found.append(s)
     s["claims"] += [c for c in dict.fromkeys(claims) if c and c not in s["claims"]]
     for q in questions:
@@ -453,26 +463,39 @@ def proof_use_signals(units: list[dict], uses: dict) -> dict[str, list[dict]]:
     return out
 
 
-def workspace_signals(units: list[dict], workspaces: list[dict], site=None
+def workspace_signals(units: list[dict], workspaces: list[dict], site=None, root=None
                       ) -> tuple[dict[str, list[dict]], list[str]]:
-    """What the auditors' workspaces record as still open for each open unit's claims: an open
-    obligation of a composition, a requirement no step of it establishes, a finding that is
-    unresolved or covers part of the claim, an open question (`open question`); a difference
-    that is not resolved, or a finding that the Lean states the claim differently (`difference`);
-    a hypothesis of an aligned Lean statement that no requirement is aligned with and no
-    difference settles (`hint`). A difference resolved or found to be none, and a hint a
-    difference settles, give no words: the workspace keeps their explanation. A definition takes
-    no words from its claims' records. `site` (the build's claims) gives the statements of the
-    hints. Returns the signals by unit and the claims whose records they come from: those are
-    prior interpretations."""
+    """What the auditors' workspaces record as still open for each open unit's claims: a finding
+    in force that a change reopened, with the question a new reading answers (`reopened
+    finding`, `finding_signals`); a requirement, an alignment or a counterexample that is out of
+    date (`out of date`, `record_signals`); an open obligation of a composition, a requirement
+    no step of it establishes, a finding that is unresolved, covers part of the claim or is not
+    known to be current, a candidate or incomplete counterexample, an open question (`open
+    question`); a difference that is not resolved, a finding that the Lean states the claim
+    differently, an admissible counterexample (`difference`); a hypothesis of an aligned Lean
+    statement that no requirement is aligned with and no difference settles, a passage proposed
+    and not yet accepted, a counterexample of numeric samples only (`hint`). A difference
+    resolved or found to be none, and a hint a difference settles, give no words: the workspace
+    keeps their explanation. A definition takes no words from its claims' records. `site`, the
+    build's site data (`targets.Snapshot`), gives the statements of the hints and what the
+    records are checked against, with `root`, the Lean project, for what Lean read before (no
+    Lean runs); without it, only what the records say of themselves is read. Returns the signals
+    by unit and the claims whose records they come from: those are prior interpretations."""
     from . import composition as cp
     from . import estimates as est
     from .workspace import current_findings
-    per: dict[str, list[tuple[str, str]]] = {}
+    per: dict[str, list[tuple[str, str, list]]] = {}
+    numbers = _numbers(units)
 
-    def add(cid, kind, text):
-        if cid and (kind, text) not in per.setdefault(cid, []):
-            per[cid].append((kind, text))
+    def add(cid, kind, text, questions=()):
+        if not cid:
+            return
+        rows = per.setdefault(cid, [])
+        row = next((r for r in rows if r[0] == kind and r[1] == text), None)
+        if row is None:
+            rows.append((kind, text, list(dict.fromkeys(q for q in questions if q))))
+        else:
+            row[2].extend(q for q in questions if q and q not in row[2])
 
     for ws in workspaces:
         recs = [r for r in (ws.get("records") or {}).values() if isinstance(r, dict)]
@@ -509,17 +532,245 @@ def workspace_signals(units: list[dict], workspaces: list[dict], site=None
                 add(cid, "hint", "a hypothesis of its Lean statement is aligned with no "
                     "requirement" if n == 1 else f"{n} hypotheses of its Lean statement are "
                     "aligned with no requirement")
+        if hasattr(site, "digests"):
+            from .workspace import currency
+            cur = currency(ws, site, root)
+            judged = map_judgments(ws, site, root)
+            finding_signals(ws, cur, judged, numbers, add)
+            record_signals(ws, cur, judged, numbers, add)
     out: dict[str, list[dict]] = {}
     drawn: list[str] = []
     for u in units:
         if u["state"] == "reviewed" or u["kind"] == "def":
             continue
         for c in u.get("claims") or []:
-            for kind, text in per.get(c["id"], []):
-                _add(out.setdefault(u["id"], []), kind, text, [c["id"]])
+            for kind, text, questions in per.get(c["id"], []):
+                _add(out.setdefault(u["id"], []), kind, text, [c["id"]], questions)
                 if c["id"] not in drawn:
                     drawn.append(c["id"])
     return out, drawn
+
+
+def change_words(changes: list[dict], numbers: dict) -> str:
+    """What changed in what a workspace record rests on (`workspace.currency`), in words that
+    name the paper's claims and never the Lean: a reviewer reads them before the Lean is
+    shown."""
+    out = []
+    for ch in changes:
+        cid = ch.get("passage") or ch.get("claim")
+        if ch.get("record") or ch.get("counterexample"):
+            out.append(ch.get("reason") or "a record it rests on changed")
+        elif ch.get("fragment"):
+            out.append("a passage it names is no longer accepted")
+        elif ch.get("region"):
+            out.append("a passage of the paper it reads changed" if ch.get("now")
+                       else "the paper no longer has a passage it reads")
+        elif cid:
+            label = _label(cid, numbers)
+            out.append(f"{label} is not in this build" if "now" in ch and ch["now"] is None
+                       else f"the paper no longer prints the pinned passage of {label}"
+                       if ch.get("reason") else f"the passage of {label} changed")
+        else:
+            out.append("the Lean it rests on changed")
+    return "; ".join(dict.fromkeys(out)) or "what it rests on changed"
+
+
+def _counted(n: int, one: str, many: str) -> str:
+    return one if n == 1 else many.format(n=n)
+
+
+def _without_lean(part: dict) -> dict:
+    """A part of a finding the version map reopened (`reopen.py`), its change worded without the
+    declarations through which the finding relies on it, for a question a reviewer reads before
+    the Lean is shown."""
+    from .version_map import _context_words
+    ch = dict(part.get("change") or {})
+    ctx = [{k: v for k, v in x.items() if k != "through"} for x in ch.get("context") or []]
+    if ctx:
+        ch["context"] = ctx
+        if ch.get("class") == "context-changed":
+            ch["reason"] = "; ".join(dict.fromkeys(_context_words(x) for x in ctx))
+    return {**part, "change": ch}
+
+
+def _map_words(row: dict, f: dict, numbers: dict) -> tuple[list[str], list[str]]:
+    """What a version map says reopened a finding (`reopen.reopen`'s row for it), in words that
+    name claims only, and the question a new reading answers about each part."""
+    from . import dependencies as dp
+    from . import reopen as ro
+    words, questions = [], []
+    for part in row.get("paper") or []:
+        if part.get("state") != "reopened":
+            continue
+        dep = part.get("dependency") or {}
+        cls = (part.get("change") or {}).get("class")
+        if dep.get("dependency") == dp.CONTEXT and dep.get("region"):
+            words.append("a passage it reads as context changed in the revision")
+        else:
+            side = part.get("later") or part.get("earlier") or {}
+            cid = side.get("claim") or f.get("claim")
+            label = side.get("number") or _label(cid, numbers)
+            words.append(f"{label} is not in the later revision" if cls == "removed" else
+                         f"the context of {label}'s passage changed in the revision"
+                         if cls == "context-changed" else
+                         f"the passage of {label} changed in the revision")
+        questions.append(ro._question(f, _without_lean(part), dep))
+    build = row.get("build") or {}
+    if build.get("state") == "stale":
+        w = change_words(build.get("changes") or [], numbers)
+        words.append(w)
+        questions.append(f"Does {ro._what(f)} still hold now that {w}?")
+    return words, questions
+
+
+def map_judgments(ws: dict, snap, root=None) -> dict:
+    """What the version maps the workspace `ws` keeps to the release of the build `snap` say of
+    its records (`reopen.reopen`): each finding in force that rests on the paper (`findings`, by
+    id) and each passage attached to a requirement (`passages`, by id), and the papers they map
+    (`papers`). A map to another release says nothing here."""
+    from . import reopen as ro
+    release = snap.index.get("release")
+    out: dict = {"papers": set(), "findings": {}, "passages": {}}
+    for doc in ws.get("version_maps") or []:
+        if (doc.get("to") or {}).get("release") != release:
+            continue
+        try:
+            got = ro.reopen(doc, ws, snap, root)
+        except ro.MapError:
+            continue
+        out["papers"].add(got["paper"])
+        for row in got["findings"]:
+            out["findings"].setdefault(row["id"], row)
+        for row in got["passages"]:
+            out["passages"].setdefault(row["id"], row)
+    return out
+
+
+def finding_signals(ws: dict, cur: dict, judged: dict, numbers: dict, add) -> None:
+    """The findings in force of the workspace `ws` that are not current against the build, by
+    claim (`add(claim, kind, text, questions)`). A finding that a version map the workspace
+    keeps to this release judges (`judged`, `map_judgments`) reads as the map says; any other
+    as its currency (`cur`, `workspace.currency`) says. A reopened one is due for review
+    (`reopened finding`), with the question a new reading answers about each part that changed;
+    one that is not known to be current is a hint."""
+    from . import reopen as ro
+    from .workspace import current_findings
+    rows = judged.get("findings") or {}
+    due: dict[str, tuple[int, list[str], list[str]]] = {}
+    unknown: dict[str, int] = {}
+    for f in sorted(current_findings(ws), key=lambda r: r["id"]):
+        cid = f.get("claim")
+        row = rows.get(f["id"])
+        state = row["state"] if row is not None else (cur.get(f["id"]) or {}).get("state")
+        if state == "reopened" and row is not None:
+            words, questions = _map_words(row, f, numbers)
+        elif state == "stale":
+            w = change_words((cur.get(f["id"]) or {}).get("changes") or [], numbers)
+            words, questions = [w], [f"Does {ro._what(f)} still hold now that {w}?"]
+        else:
+            if state == "unchecked":
+                unknown[cid] = unknown.get(cid, 0) + 1
+            continue
+        n, said, asked = due.get(cid, (0, [], []))
+        due[cid] = (n + 1, said + words, asked + questions)
+    for cid, (n, words, questions) in due.items():
+        add(cid, "reopened finding",
+            _counted(n, "a recorded finding is", "{n} recorded findings are")
+            + " due for review: " + "; ".join(dict.fromkeys(words)), questions)
+    for cid, n in unknown.items():
+        add(cid, "hint", _counted(n, "a recorded finding is", "{n} recorded findings are")
+            + " not known to be current")
+
+
+def _paper_change(ch: dict) -> bool:
+    """Whether a change of a record's currency is one of the paper's text."""
+    return bool(ch.get("region") or ch.get("passage")
+                or (ch.get("claim") and not ch.get("record")))
+
+
+def record_signals(ws: dict, cur: dict, judged: dict, numbers: dict, add) -> None:
+    """The requirements, alignments and counterexamples of the workspace `ws` that are out of
+    date against the build (`cur`, `workspace.currency`): a requirement whose accepted passages
+    changed, an alignment whose Lean or passages changed, a counterexample whose reading,
+    governing passages or evidence changed (`out of date`). For a paper that a version map the
+    workspace keeps to this release follows (`judged`, `map_judgments`), the map says whether
+    a passage changed: one it finds moved is the same text. Also what each counterexample that
+    is current shows of its reading (`estimates.analyse`): admissible (`difference`), a
+    candidate or incomplete (`open question`), numeric samples only (`hint`); and the passages
+    proposed as governing a requirement and not yet accepted (`hint`). By claim, as
+    `add(claim, kind, text)`."""
+    from . import estimates as est
+    papers = judged.get("papers") or set()
+    passages = judged.get("passages") or {}
+    by: dict[str, list[dict]] = {}
+    for r in (ws.get("records") or {}).values():
+        if isinstance(r, dict) and r.get("claim"):
+            by.setdefault(r["claim"], []).append(r)
+    for cid, rs in by.items():
+        found: dict[tuple[str, str, str], list[str]] = {}
+        mapped = cid.split(":", 1)[0] in papers
+
+        def note(kind, one, many, words=""):
+            found.setdefault((kind, one, many), []).append(words)
+
+        def governing(lids, roles=None):
+            return [f for f in rs if f.get("kind") == "fragment" and f.get("requirement") in lids
+                    and (f.get("state") or "accepted") == "accepted"
+                    and (roles is None or f.get("role") not in roles)]
+
+        def changed(changes, fragments) -> str:
+            """What changed, with the paper's side as the map says when it follows the paper."""
+            if mapped:
+                changes = [c for c in changes if not _paper_change(c)]
+            words = [change_words(changes, numbers)] if changes else []
+            if mapped and any((passages.get(f["id"]) or {}).get("state") == "reopened"
+                              for f in fragments):
+                words.append("a passage that governs it changed in the revision")
+            return "; ".join(words)
+
+        for r in sorted(rs, key=lambda r: r.get("id") or ""):
+            kind = r.get("kind")
+            if kind == "requirement":
+                frs = governing({r.get("local_id")})
+                said = changed([c for f in frs for c in (cur.get(f["id"]) or {}).get("changes")
+                                or []], frs)
+                if said:
+                    note("out of date", "a recorded requirement is out of date",
+                         "{n} recorded requirements are out of date", said)
+            elif kind == "alignment":
+                frs = [f for f in rs if f.get("id") in (r.get("fragments") or [])]
+                said = changed((cur.get(r["id"]) or {}).get("changes") or [], frs)
+                if said:
+                    note("out of date", "a recorded alignment with the Lean is out of date",
+                         "{n} recorded alignments with the Lean are out of date", said)
+            elif kind == "counterexample":
+                ob = est.obligation(rs, r.get("requirement"), tuple(r.get("reading") or ()))
+                frs = governing(set((ob or {}).get("involved") or ()), ("later use",))
+                said = changed((cur.get(r["id"]) or {}).get("changes") or [], frs)
+                if said:
+                    note("out of date", "a recorded counterexample is out of date",
+                         "{n} recorded counterexamples are out of date", said)
+                    continue
+                standing = est.analyse(r, ob)["standing"]
+                if standing == "admissible counterexample":
+                    note("difference", "an admissible counterexample to a reading is recorded",
+                         "{n} admissible counterexamples to readings are recorded")
+                elif standing == "candidate":
+                    note("open question", "a candidate counterexample is recorded, not yet "
+                         "shown admissible", "{n} candidate counterexamples are recorded, not "
+                         "yet shown admissible")
+                elif standing == "incomplete":
+                    note("open question", "an incomplete counterexample is recorded",
+                         "{n} incomplete counterexamples are recorded")
+                elif standing == "illustration":
+                    note("hint", "a counterexample of numeric samples only is recorded",
+                         "{n} counterexamples of numeric samples only are recorded")
+            elif kind == "fragment" and r.get("state") == "proposed":
+                note("hint", "a passage proposed as governing a requirement is not yet accepted",
+                     "{n} passages proposed as governing requirements are not yet accepted")
+        for (kind, one, many), words in found.items():
+            said = "; ".join(dict.fromkeys(w for w in words if w))
+            add(cid, kind, _counted(len(words), one, many) + (f": {said}" if said else ""))
 
 
 def _tier(u: dict) -> str | None:
@@ -528,10 +779,134 @@ def _tier(u: dict) -> str | None:
     return min(kinds, key=TIERS.index) if kinds else None
 
 
-def _rank(u: dict) -> tuple[int, bool]:
+def _rank(u: dict) -> tuple[int, bool, bool]:
     t = _tier(u)
-    return (TIERS.index(t) if t else len(TIERS),
-            not any(s["kind"] == RELEVANCE for s in u["priority"]["signals"]))
+    kinds = {s["kind"] for s in u["priority"]["signals"]}
+    return (TIERS.index(t) if t else len(TIERS), MAIN not in kinds, RELEVANCE not in kinds)
+
+
+def _main_uses(start: list[str], users: dict[str, dict[str, set]], mains: set[str]
+               ) -> dict[str, str]:
+    """The main declarations (`mains`) whose terms refer to one of `start`, directly or through
+    other declarations (followed `TRACE_DEPTH` steps), each with how its last reference is made,
+    the strongest of `MAIN_USES` over every path."""
+    best: dict[str, str] = {}
+    seen, frontier = set(start), list(start)
+    for _ in range(TRACE_DEPTH):
+        nxt = []
+        for n in frontier:
+            for user in sorted(users.get(n, {})):
+                refs = users[n][user]
+                if user in mains:
+                    how = "proof" if "proof" in refs else "definition" if refs - {"statement"} \
+                        else "statement"
+                    if user not in best or MAIN_USES.index(how) < MAIN_USES.index(best[user]):
+                        best[user] = how
+                if user not in seen:
+                    seen.add(user)
+                    nxt.append(user)
+        frontier = nxt
+    return best
+
+
+def main_result_signals(units: list[dict], selections: list[dict], uses: dict | None, chunk
+                        ) -> tuple[dict[str, list[dict]], list[str]]:
+    """What the main-result selections the auditors' workspaces save (`workspace main`) say of
+    each open unit: that it is a saved main result (`use` `itself`: one of its claims is
+    selected, or a declaration selected is one it states), or that a saved main result uses its
+    Lean, in its proof, its definition or its statement (`use`), directly or through other
+    declarations, from the build's reverse references (`uses`, `uses.site_index`; None when the
+    build has none, and then only the first is read). A claim selected stands for its linked
+    Lean (`impact.root_names`); `chunk` gives a claim's record. A use found is a fact about Lean
+    terms, and finding none says nothing. Returns the signals by unit and the claims they draw
+    on: the selection is an auditor's, a prior interpretation."""
+    from .impact import root_names
+    claims_of: dict[str, list[str]] = {}   # a main declaration, and the claims it stands for
+    selected: set[str] = set()              # the claims selected
+    named_decls: set[str] = set()           # the declarations selected by their names
+    for sel in selections:
+        for e in sel.get("selected") or []:
+            if e.get("claim"):
+                ch = chunk(e["claim"])
+                if ch is None:
+                    continue
+                selected.add(e["claim"])
+                for n in root_names(ch):
+                    if e["claim"] not in claims_of.setdefault(n, []):
+                        claims_of[n].append(e["claim"])
+            elif e.get("decl"):
+                named_decls.add(e["decl"])
+                claims_of.setdefault(e["decl"], [])
+    users: dict[str, dict[str, set]] = {}
+    for name, entries in ((uses or {}).get("by_name") or {}).items():
+        for e in entries:
+            for x in e.get("users") or []:
+                users.setdefault(name, {}).setdefault(x["name"], set()).update(x.get("refs") or [])
+
+    def states(u):
+        """The declarations that state a unit's claims: a link's, or a locked proposition."""
+        return list(dict.fromkeys(u.get("lean") or [])) if u["kind"] == "link" else \
+            [u["name"]] if u["kind"] == "spec" else []
+
+    stated: dict[str, list[str]] = {}       # a declaration, and the claims that it states
+    for u in units:
+        for n in states(u):
+            for c in u.get("claims") or []:
+                if c["id"] not in stated.setdefault(n, []):
+                    stated[n].append(c["id"])
+    numbers = _numbers(units)
+    out: dict[str, list[dict]] = {}
+    drawn: list[str] = []
+    for u in units:
+        if u["state"] == "reviewed" or u["kind"] == "def":
+            continue
+        own = [c["id"] for c in u.get("claims") or []]
+        mine = states(u)
+        found: list[dict] = []
+        if selected & set(own) or named_decls & set(mine):
+            _add(found, MAIN, "a saved main result", own, use="itself")
+        traced = list(dict.fromkeys(mine + list(u.get("lean") or []) + list(u.get("route") or [])))
+        best = _main_uses(traced, users, set(claims_of) - set(traced)) if users else {}
+        for how in MAIN_USES:
+            named, unnamed = [], False
+            for m, h in best.items():
+                if h != how:
+                    continue
+                names = [c for c in claims_of[m] or stated.get(m, []) if c not in own]
+                named += [c for c in names if c not in named]
+                unnamed |= not (claims_of[m] or stated.get(m))
+            if named:
+                _add(found, MAIN, (f"used in the {how} of " if len(named) == 1 else
+                                   f"used in the {how}s of ")
+                     + _list([_label(c, numbers) for c in named])
+                     + (", a saved main result" if len(named) == 1 else ", saved main results"),
+                     named, use=how)
+            elif unnamed:
+                _add(found, MAIN, f"used in the {how} of a saved main result", (), use=how)
+        if found:
+            out[u["id"]] = found
+            for c in own + [c for s in found for c in s["claims"]]:
+                if c not in drawn:
+                    drawn.append(c)
+    return out, drawn
+
+
+def _fold_proof_use(p: dict, numbers: dict) -> None:
+    """A main-result signal of a use in a proof says what the proof-use signal says of the
+    same claims, and more: those claims leave the proof-use signal, which goes when none is
+    left."""
+    shown = {c for s in p["signals"] if s["kind"] == MAIN and s.get("use") == "proof"
+             for c in s["claims"]}
+    if not shown:
+        return
+    for s in [s for s in p["signals"] if s["kind"] == RELEVANCE]:
+        rest = [c for c in s["claims"] if c not in shown]
+        if not rest:
+            p["signals"].remove(s)
+        elif rest != s["claims"]:
+            s.update(claims=rest, text=("used in the proof of " if len(rest) == 1 else
+                                        "used in the proofs of ")
+                     + _list([_label(c, numbers) for c in rest]))
 
 
 def _revealed_first(units: list[dict]) -> list[dict]:
@@ -574,7 +949,7 @@ def _reason(u: dict, ahead: list[dict], numbers: dict, by: str) -> str:
     signals, strongest first, the units it comes before because their review shows it, then the
     reason the queue gave it."""
     p = u["priority"]
-    kinds = TIERS + (RELEVANCE,)
+    kinds = TIERS + (MAIN, RELEVANCE)
     parts = ["in the paper's order"] if by == "document" else []
     parts += [s["text"] for s in sorted(p["signals"], key=lambda s: kinds.index(s["kind"])
                                         if s["kind"] in kinds else len(kinds))]
@@ -594,18 +969,20 @@ def arrange(units: list[dict], signals: dict[str, list[dict]], by: str = "priori
             claims: list[dict] | None = None) -> list[dict]:
     """Copies of `units` (open units, in the queue's order) with `signals` added to the signals
     each already has, in the order `by` gives. `priority`: by the strongest signal (`TIERS`),
-    then units used in another claim's proof, then the queue's order; with no signal at all, the
-    queue's order and reasons stand. `document`: by the place in `claims` (the paper's claims, in
-    order) of the unit's first claim, then the queue's order. Either way a unit that another
-    reveals comes just before it (`_revealed_first`) and says so, and each unit's `reason` says
-    why it comes where it does."""
+    then saved main results and units they use, then units used in another claim's proof, then
+    the queue's order; with no signal at all, the queue's order and reasons stand. `document`:
+    by the place in `claims` (the paper's claims, in order) of the unit's first claim, then the
+    queue's order. Either way a unit that another reveals comes just before it
+    (`_revealed_first`) and says so, and each unit's `reason` says why it comes where it does."""
     pos = {u["id"]: i for i, u in enumerate(units)}
+    numbers = _numbers(units)
     out = []
     for u in units:
         p = _priority(u)
         for s in signals.get(u["id"]) or []:
             _add(p["signals"], s["kind"], s["text"], s.get("claims") or (),
-                 s.get("questions") or ())
+                 s.get("questions") or (), **({"use": s["use"]} if "use" in s else {}))
+        _fold_proof_use(p, numbers)
         out.append({**u, "priority": p})
     if by == "document":
         at = {c["id"]: i for i, c in enumerate(claims or [])}
@@ -622,7 +999,6 @@ def arrange(units: list[dict], signals: dict[str, list[dict]], by: str = "priori
     final = _revealed_first(ranked)
     rank = {u["id"]: i for i, u in enumerate(ranked)}
     placed = {u["id"]: i for i, u in enumerate(final)}
-    numbers = _numbers(units)
     for u in final:
         ahead = [v for v in ranked[:rank[u["id"]]] if placed[v["id"]] > placed[u["id"]]]
         u["priority"]["tier"] = _tier(u)

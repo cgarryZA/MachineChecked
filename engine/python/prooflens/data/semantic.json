@@ -15,6 +15,20 @@
     "clauses_only": {"label": "Clauses only", "explanation": "Parts of the claim are assessed; no reading of the whole statement is recorded."},
     "not_assessed": {"label": "Not assessed", "explanation": "No reading of the claim is recorded in this set."}
   },
+  "clause_coverage": {
+    "full": {"label": "Stated in full", "explanation": "A reading of a clause or requirement of the claim records that the Lean it concerns states all of it."},
+    "partial": {"label": "Stated in part", "explanation": "A reading of a clause or requirement records that the Lean states part of it."},
+    "changed": {"label": "Stated differently", "explanation": "A reading of a clause or requirement records that the Lean states it differently."},
+    "related": {"label": "A related result only", "explanation": "A reading of a clause or requirement records that the Lean is a related result, not that part."},
+    "unresolved": {"label": "Unresolved", "explanation": "A reading of a clause or requirement records an open question that decides it."},
+    "stale": {"label": "Out of date", "explanation": "A reading of a clause or requirement was made for another text of the claim or other Lean."}
+  },
+  "withheld": {
+    "question": {"label": "Withheld", "explanation": "The reading records an open question; the publication settings withhold its words."},
+    "source_text": {"label": "the paper's text", "explanation": "Passages, places and quotations of the paper are not published."},
+    "lean": {"label": "the Lean statements", "explanation": "Lean statements, declaration bodies and the Lean text of auditors' records are not published."},
+    "reviews": {"label": "review texts and auditors' notes", "explanation": "Reviewers' texts and the prose of auditors' records (notes, arguments, questions, reasons) are not published; their readings, verdicts and authors are."}
+  },
   "basis": {
     "direct": {"label": "In one Lean statement", "explanation": "A linked declaration states the claim."},
     "reviewed_composition": {"label": "By an argument combining Lean results", "explanation": "An argument combines the linked results; Lean has not checked the combination."},
