@@ -64,12 +64,17 @@
 
   // The engine's review service (`review_cli.api`). `shared` is the work as the engine last
   // saved it; each step answers with it. Requests go one after another, so that what was typed
-  // is saved before the step that follows it.
+  // is saved before the step that follows it. Until the engine has given the work, `shared` is
+  // null and nothing is done in the workspace. `generation` counts the workspaces the page has
+  // worked in: an answer for an earlier one is dropped.
   let shared = $state(null);
   let serviceError = $state(null);
   let chain = Promise.resolve();
+  let generation = $state(0);
   const me = () => [work.reviewer.id || reviewerId(work.reviewer), work.reviewer.kind === "model" ? work.reviewer.sameFamily || "unknown" : "no"];
-  function adopt(st) {
+  function adopt(st, gen = generation) {
+    if (gen !== generation) return;
+    if (typeof st?.workspace?.id !== "string") throw new Error("The engine's answer names no workspace.");
     shared = { workspace: st.workspace, editable: st.editable };
     // What is typed and not yet saved stays as typed.
     const mine = pending && st.drafts[pending.unit];
@@ -77,9 +82,10 @@
     work.drafts = st.drafts; work.reports = st.reports; work.exposure = st.exposure;
   }
   function call(action, body = {}) {
+    const gen = generation;
     const run = chain.then(() => reviewStep(...me(), action, body));
     chain = run.catch(() => {});
-    return run.then((st) => { adopt(st); serviceError = null; return st; });
+    return run.then((st) => { adopt(st, gen); serviceError = null; return st; });
   }
   // A step the engine refused: its reason is shown, and the work is read again, since another
   // window or a terminal may have moved the unit on.
@@ -87,9 +93,11 @@
     try { return await call(action, body); } catch (e) { serviceError = String(e?.message || e); await reload(); return null; }
   }
   async function reload() {
-    try { adopt(await reviewWork(...me())); } catch (e) { serviceError = String(e?.message || e); }
+    const gen = generation;
+    try { adopt(await reviewWork(...me()), gen); } catch (e) { if (gen === generation) serviceError = String(e?.message || e); }
   }
-  $effect(() => { if (served && work.reviewer && !shared) untrack(reload); });
+  // Read when the page has no work yet, and again in each workspace it moves to.
+  $effect(() => { generation; if (served && work.reviewer && !shared) untrack(reload); });
   // Another of the reviewer's workspaces to work in (none: their first). What was typed is saved
   // in the one it was typed in; then the page forgets which units it began, and reads the work
   // of the one chosen.
@@ -97,7 +105,11 @@
     sendEdit();
     await chain;
     reviewInWorkspace(id);
+    generation++;
     begun.clear(); shownFor.clear(); seenOf = {};
+    // The informed order's exposure is recorded in the workspace worked in: it is asked for
+    // again once the one chosen is loaded.
+    informed = null; orderError = null;
     serviceError = null; shared = null;
   }
   // What was typed, saved shortly after typing stops: only the fields the unit's step may still
@@ -149,22 +161,28 @@
   let informed = $state(null);
   let orderError = $state(null);
   let asking = $state(false);
-  let fetching = false;
+  let fetching = null;
+  // Under `machinechecked view` the exposure is recorded in the workspace the page works in, so
+  // the order is asked for only once the engine has given that workspace, and an answer that
+  // comes after the page moved to another is dropped.
+  const workspaceReady = $derived(!served || !!shared?.workspace);
   async function loadInformed() {
-    if (fetching) return;
-    fetching = true; orderError = null;
+    const gen = generation;
+    if (fetching === gen || !workspaceReady) return;
+    fetching = gen; orderError = null;
     try {
       const got = await askReviewOrder("informed");
+      if (gen !== generation) return;
       // Recorded before the order is shown: in the reviewer's workspace when the engine keeps
       // the work, else in this browser.
       if (served) { if (got.drawn.length) await call("expose", { claims: got.drawn, what: ["prior interpretations"], how: ORDER_EXPOSURE }); }
       else if (recordExposure(work, got.drawn, now())) persist();
-      informed = got;
+      if (gen === generation) informed = got;
     } catch (e) {
-      orderError = String(e?.message || e);
-    } finally { fetching = false; }
+      if (gen === generation) orderError = String(e?.message || e);
+    } finally { if (fetching === gen) fetching = null; }
   }
-  $effect(() => { if (queue && order === "informed" && !informed && !orderError) loadInformed(); });
+  $effect(() => { if (queue && order === "informed" && !informed && !orderError && workspaceReady) loadInformed(); });
   function chooseOrder(o) {
     if (o === order) return;
     if (o === "informed") { asking = true; return; }
@@ -450,7 +468,7 @@
       <WorkspaceFile {index} units={queue.units} {served} bind:work {persist} reviewer={me()[0]}
         current={shared?.workspace || null} onswitch={switchWorkspace} />
     </div>
-    {#if served && shared}
+    {#if served && shared?.workspace}
       <p class="faint small" data-workspace={shared.workspace.id}>Your work is saved in your workspace {shared.workspace.id}, which
         <code>machinechecked review --as {me()[0]}</code> continues in a terminal.</p>
       {#if shared.workspace.mode === "informed"}
@@ -475,7 +493,7 @@
           Your readings of the claims it draws on are then recorded as not blind, and their reports are promoted
           only with <code>--allow-revealed</code>.</p>
         <div class="row">
-          <button class="btn" onclick={useInformed}>Use the informed order</button>
+          <button class="btn" disabled={!workspaceReady} onclick={useInformed}>Use the informed order</button>
           <button class="btn ghost" onclick={() => (asking = false)}>Keep the {order === "document" ? "paper" : "priority"} order</button>
         </div>
       </section>
@@ -502,10 +520,14 @@
       </section>
     {/if}
 
-    {#if order === "informed" && !informed && !orderError}
+    {#if served && !shared}
+      {#if serviceError}
+        <p class="muted">Your review work could not be read. <button class="btn ghost" onclick={() => { serviceError = null; reload(); }}>Read it again</button></p>
+      {:else}
+        <p class="muted">Loading your review work…</p>
+      {/if}
+    {:else if order === "informed" && !informed && !orderError}
       <p class="muted">Loading the informed order…</p>
-    {:else if served && !shared}
-      <p class="muted">Loading your review work…</p>
     {:else if !current}
       <section class="card"><p>Review complete for this selection.</p></section>
     {:else if !draft}

@@ -267,11 +267,13 @@ export async function askReviewOrder(order) {
 // (`review_cli.api`). Each answer is the work as saved: `{workspace, drafts, reports, exposure,
 // editable}`. A refused step throws, with the engine's `kind` (`order`, `stale`, `conflict`, …).
 async function reviewAnswer(r) {
-  const out = await r.json().catch(() => ({ error: r.statusText }));
+  const out = await r.json().catch(() => null);
   if (!r.ok) {
-    throw Object.assign(new Error(out.error || r.statusText),
-                        { status: r.status, kind: out.kind || null, conflicts: out.conflicts || null });
+    throw Object.assign(new Error(out?.error || r.statusText),
+                        { status: r.status, kind: out?.kind || null, conflicts: out?.conflicts || null });
   }
+  // An answer whose body cannot be read (cut short, say by a reload) is no answer.
+  if (!out || typeof out !== "object") throw new Error("The engine's answer could not be read.");
   return out;
 }
 

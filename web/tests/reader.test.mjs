@@ -4117,6 +4117,133 @@ s.save()`);
       assert.deepEqual(reviewState(who).exposure, before);
     });
 
+    // #495: the review page acts on the reviewer's workspace only once the engine has given it.
+    // `holdWork(pg)` holds the engine's answers to the page's reads of the review work (GET
+    // /api/review) for a workspace (`""`: none named, the reviewer's first) until released.
+    const holdWork = async (pg) => {
+      const gates = new Map();
+      await pg.route(/\/api\/review\?/, async (route) => {
+        const response = await route.fetch();
+        const gate = gates.get(new URL(route.request().url()).searchParams.get("workspace") || "");
+        if (gate) await gate.promise;
+        await route.fulfill({ response }).catch(() => {});
+      });
+      return {
+        hold: (ws) => { let release; gates.set(ws, { promise: new Promise((ok) => { release = ok; }), release: () => release() }); },
+        release: (ws) => { gates.get(ws)?.release(); gates.delete(ws); },
+      };
+    };
+    const posted = (pg) => {
+      const out = [];
+      pg.on("request", (r) => { if (r.method() === "POST" && new URL(r.url()).pathname === "/api/review") out.push({ ...JSON.parse(r.postData() || "{}"), at: Date.now() }); });
+      return out;
+    };
+    const ordered = (exposure) => exposure.filter((e) => e.how === "interpretation-informed review order");
+    // An auditor's open question, which the informed order draws on.
+    const openQuestion = () => engine(String.raw`
+import sys
+from pathlib import Path
+from prooflens import review_cli as rc
+from prooflens import workspace as wsp
+from prooflens.targets import Snapshot
+work = Path(sys.argv[1])
+s = Snapshot(work.parent / "toyws" / "data")
+p = wsp.open_for(work, rc.parse_reviewer("human:Open-auditor"), "informed", sources=s.sources())
+if "q-open" not in wsp.read(p)["records"]:
+    wsp.update(p, [{"op": "put", "record": {"id": "q-open", "kind": "question", "claim": "T:thm:bound", "text": "Is C uniform?"}}], s)`);
+
+    await check("the review page records the informed order's exposure only in a workspace it has loaded", 1300, async (pg) => {
+      queueFor(path.join(root, "toyws", "data"));
+      openQuestion();
+      const who = "human:Late-reviewer";
+      const held = await holdWork(pg);
+      const posts = posted(pg);
+      const asked = [];
+      pg.on("request", (r) => { if (new URL(r.url()).pathname === "/api/review-order") asked.push(r.url()); });
+      await pg.goto(`http://127.0.0.1:${port}/#/r/${TOY.release}/review`);
+      held.hold("");
+      await pg.evaluate((k) => localStorage.setItem(k, JSON.stringify({ reviewer: { kind: "human", name: "Late reviewer" }, order: "informed" })), REVIEW_KEY);
+      await pg.reload();
+      await pg.locator(".review .bar").waitFor();
+      // While the engine has not given the work, the page asks for no order and records nothing.
+      await pg.waitForTimeout(1500);
+      assert.deepEqual([asked, posts.map((x) => x.action)], [[], []]);
+      assert.equal(await pg.locator(".review [data-workspace]").count(), 0);
+      held.release("");
+      await pg.locator(".review [data-workspace]").waitFor();
+      await pg.locator(".review [role=status]", { hasText: "draws on the workspaces' records" }).waitFor();
+      assert.ok(posts.some((x) => x.action === "expose"));
+      assert.equal(ordered(reviewState(who).exposure).length, 1, "recorded in the workspace the page works in");
+    });
+
+    await check("an answer the review page cannot read is an error, not a workspace", 1300, async (pg) => {
+      // A body cut short (a read interrupted, say by a reload): the page shows why and offers to
+      // read the work again; it draws nothing from it.
+      queueFor(path.join(root, "toyws", "data"));
+      let cut = true;
+      await pg.route(/\/api\/review\?/, async (route) => {
+        if (!cut) return route.continue();
+        await route.fulfill({ status: 200, contentType: "application/json", body: '{"schema": "machinechecked/review-work@1", "workspace": ' });
+      });
+      await pg.goto(`http://127.0.0.1:${port}/#/r/${TOY.release}/review`);
+      await pg.evaluate((k) => localStorage.setItem(k, JSON.stringify({ reviewer: { kind: "human", name: "Synthetic reviewer" } })), REVIEW_KEY);
+      await pg.reload();
+      await pg.locator(".review [role=alert]", { hasText: "could not be read" }).waitFor();
+      assert.equal(await pg.locator(".review [data-workspace]").count(), 0);
+      assert.equal(await pg.locator(".review .unit").count(), 0, "no unit is begun");
+      cut = false;
+      await pg.getByRole("button", { name: "Read it again", exact: true }).click();
+      await pg.locator(".review [data-workspace]").waitFor();
+      assert.equal(await pg.locator(".review [role=alert]").count(), 0);
+    });
+
+    await check("switching workspaces records the informed order's exposure in the one chosen, once loaded", 1300, async (pg) => {
+      queueFor(path.join(root, "toyws", "data"));
+      openQuestion();
+      // Two workspaces of one reviewer: the first, and a copy of it under another id.
+      const ids = engine(String.raw`
+import json, sys
+from pathlib import Path
+from prooflens import review_cli as rc
+from prooflens import workspace as wsp
+from prooflens.targets import Snapshot
+work = Path(sys.argv[1])
+s = Snapshot(work.parent / "toyws" / "data")
+p = wsp.open_for(work, rc.parse_reviewer("human:Switch-reviewer"), "independent", sources=s.sources())
+a = wsp.export(p)
+wsp.import_(work, {**a, "id": "ws-switch-second"}, s, "human:Switch-reviewer", "test")
+print(json.dumps({"a": a["id"], "b": "ws-switch-second"}))`);
+      const file = (id) => JSON.parse(fs.readFileSync(path.join(work, "review-work", id === ids.a ? "human_Switch-reviewer.json" : `${id}.json`), "utf8"));
+      const held = await holdWork(pg);
+      await pg.goto(`http://127.0.0.1:${port}/#/r/${TOY.release}/review`);
+      // The first workspace's answer is held; the reviewer chooses the other meanwhile.
+      held.hold("");
+      await pg.evaluate((k) => localStorage.setItem(k, JSON.stringify({ reviewer: { kind: "human", name: "Switch reviewer" }, order: "informed" })), REVIEW_KEY);
+      await pg.reload();
+      const choice = pg.getByRole("combobox", { name: "Workspace", exact: true });
+      await pg.waitForFunction(() => document.querySelectorAll(".review select[aria-label=Workspace] option").length === 2);
+      await choice.selectOption(ids.b);
+      await pg.locator(`.review [data-workspace="${ids.b}"]`).waitFor();
+      await pg.locator(".review [role=status]", { hasText: "draws on the workspaces' records" }).waitFor();
+      // The first workspace's answer, given late, does not take the page back to it.
+      held.release("");
+      await pg.waitForTimeout(1000);
+      assert.equal(await pg.locator(`.review [data-workspace="${ids.b}"]`).count(), 1);
+      assert.equal(ordered(file(ids.a).exposure || []).length, 0, "nothing recorded in a workspace never loaded");
+      assert.equal(ordered(file(ids.b).exposure || []).length, 1);
+      // Back to the first, its answer held: nothing is recorded there until it is loaded, and then
+      // the informed order is asked for again and recorded there.
+      held.hold(ids.a);
+      await choice.selectOption(ids.a);
+      await pg.waitForTimeout(1500);
+      assert.equal(ordered(file(ids.a).exposure || []).length, 0);
+      assert.equal(await pg.locator(".review [data-workspace]").count(), 0);
+      held.release(ids.a);
+      await pg.locator(`.review [data-workspace="${ids.a}"]`).waitFor();
+      await pg.locator(".review [role=status]", { hasText: "draws on the workspaces' records" }).waitFor();
+      assert.ok(await until(() => ordered(file(ids.a).exposure || []).length === 1, 8000), "recorded in the workspace chosen");
+    });
+
     // #122: one review, begun in the reader and continued in a terminal, and the other way
     // round, under the engine's own local server: the same draft, pins, exposure and verdict.
     await check("a review begun in the reader is continued in a terminal, and the other way round", 1300, async (pg) => {
