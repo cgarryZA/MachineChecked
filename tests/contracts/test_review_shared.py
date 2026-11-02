@@ -12,6 +12,7 @@ import json
 import threading
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 import pytest
 
@@ -164,6 +165,27 @@ def test_the_independent_locks_hold_through_the_service(work):
     assert (d["reading"], d["verdict"], d["locked_at"]) == (
         READING, "faithful", t["reading"]["locked_at"])
     refused("order", page, work, A, "lock", unit=UNIT, reading=READING)
+
+
+UNDO = json.loads((Path(__file__).resolve().parents[1] / "fixtures" / "review"
+                   / "undo.json").read_text(encoding="utf-8"))
+
+
+@pytest.mark.parametrize("case", UNDO["cases"], ids=lambda c: c["name"])
+def test_undo_gives_back_the_draft_the_static_page_does(work, case):
+    """Undo returns the report's unit to step 3 with the draft of tests/fixtures/review/undo.json,
+    which web/tests/review.test.mjs checks the review page of a static copy gives back too; with
+    a draft of that unit in progress, it is refused and the draft is kept."""
+    s = session(work, A)
+    r = case["report"]
+    uid = r["unit"]["id"]
+    wsp.save_review_unit(s.path, uid, None, None, s.reviewer, add=r)
+    assert session(work, A).undo() == case["draft"]
+    s = session(work, A)
+    assert s.work["reports"] == [] and s.work["drafts"] == {uid: case["draft"]}
+    wsp.save_review_unit(s.path, uid, case["draft"], case["draft"], s.reviewer, add=r)
+    refused("order", session(work, A).undo)
+    assert session(work, A).work["drafts"] == {uid: case["draft"]}
 
 
 def test_a_changed_build_or_draft_is_refused_and_nothing_is_lost(work):
