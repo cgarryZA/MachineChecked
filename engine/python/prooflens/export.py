@@ -316,7 +316,7 @@ def export(cfg: Config, out: Path, release: str | None = None,
     last = ev.latest(cfg.out_dir)
     if last is None:
         raise ExportError("no release: run `machinechecked build` first")
-    relrec = read_json(cfg.out_dir / "releases" / f"{release}.json") if release else last
+    relrec = ev.release(cfg.out_dir, release) if release else last
     record = ev.load(cfg.out_dir, relrec["evidence"])
     # With the display layer the site is built with (descriptions, printed numbers, symbol
     # links): what is shown changes, never what is assessed.
@@ -405,11 +405,15 @@ def export(cfg: Config, out: Path, release: str | None = None,
     # What changed since the release before, with what the papers publish.
     from . import changes as chg
     from .pipeline import release_changes
-    doc = release_changes(cfg, relrec["release"])
+    unavailable = []
+    doc = release_changes(cfg, relrec["release"], unavailable)
     if doc is not None:
         write_json(data / "changes.json", chg.public(doc, pubs, lean_ok, rev_ok, paper),
                    indent=None)
         pidx["changes"] = "data/changes.json"
+        write_json(data / "index.json", pidx, indent=None)
+    elif unavailable:
+        pidx["changes_unavailable"] = unavailable[0]
         write_json(data / "index.json", pidx, indent=None)
     # The search index, with only what each paper allows.
     srch = mf.search_index(index, chunks)

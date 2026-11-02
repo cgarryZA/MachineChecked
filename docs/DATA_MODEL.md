@@ -130,6 +130,13 @@ with other evidence created before it. Releases are ordered by
 `created`, and those created in the same second by the log, then by name; no file time is read,
 so copying or restoring `.machinechecked/` changes no command's release.
 
+`machinechecked evidence prune` deletes evidence files with their content files and the release
+records that name them, and records each in `.machinechecked/pruned.json`: `{evidence id:
+{pruned, releases, missing}}`, with `pruned` the time, `releases` the removed records as they
+were, and `missing: true` when the evidence file was already gone. A removed release still
+counts as the release before a later one, so a comparison with it says that its evidence was
+pruned; its name is never given to other evidence.
+
 `.machinechecked/evidence/<id>.json` (`.prooflens/` in older projects), with `id` the SHA-256 of the canonical JSON of `body`:
 
 | Field of `body` | Content |
@@ -328,7 +335,9 @@ page of equations its claims and declarations refer to and checks each against i
 
 `machinechecked changes --json`, and `data/changes.json` of a site or an export whose release
 has an earlier one (the index names it as `changes`). It compares two evidence records and is
-derived from them alone; no status, fingerprint or gate reads it.
+derived from them alone; no status, fingerprint or gate reads it. When the evidence of either
+release is no longer on disk (pruned, with its date, or deleted by hand), there is no
+comparison and the index gives the reason as `changes_unavailable`.
 
 | Field | Content |
 |---|---|
