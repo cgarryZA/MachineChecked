@@ -47,6 +47,11 @@ export const proofFacts = (name, match) =>
 export const suggestContext = (id, claim, requirement) =>
   call("api/workspace", { action: "suggest", id, claim, requirement, op_id: newId("req") });
 
+// A workspace as a file to hand on (`machinechecked workspace export`), and a file brought in
+// (`machinechecked workspace import`): `{workspace, added, conflicts, problems}`.
+export const exportWorkspace = (id) => call(`api/workspace/export?id=${encodeURIComponent(id)}`);
+export const importWorkspace = (data, by) => call("api/workspace", { action: "import", data, by });
+
 export function newId(prefix) {
   const r = globalThis.crypto?.randomUUID?.() || Math.random().toString(16).slice(2) + Date.now().toString(16);
   return `${prefix}-${r.replace(/-/g, "").slice(0, 12)}`;
