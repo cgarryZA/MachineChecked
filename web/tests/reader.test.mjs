@@ -3663,11 +3663,14 @@ print(json.dumps(order_route(work, data)({"order": ["informed"]})))`);
       // The page keeps the reviewer's work in their workspace, through the engine's review
       // service: `shared()` is that work as the engine has it.
       const shared = () => reviewState("human:Synthetic-reviewer");
-      // A reading locked in a terminal before the informed order is chosen; its verdict is not yet
-      // recorded.
+      // A reading locked in a terminal before the informed order is chosen (at a time well before
+      // it: times are kept to the second, and one in the same second counts as before the lock);
+      // its verdict is not yet recorded.
       reviewSteps("human:Synthetic-reviewer", String.raw`
 s.read("spec:Toy.PaperSpec.prop_pred")
-s.lock("spec:Toy.PaperSpec.prop_pred", "A reading locked before the informed order.")`);
+s.lock("spec:Toy.PaperSpec.prop_pred", "A reading locked before the informed order.")
+s.work["drafts"]["spec:Toy.PaperSpec.prop_pred"]["locked_at"] = "2026-01-01T00:00:00Z"
+s.save()`);
       await pg.goto(`http://127.0.0.1:${port}/#/r/${TOY.release}/review`);
       await pg.evaluate((k) => localStorage.setItem(k, JSON.stringify({ reviewer: { kind: "human", name: "Synthetic reviewer" } })), REVIEW_KEY);
       const asked = [];
@@ -3738,8 +3741,10 @@ s.lock("spec:Toy.PaperSpec.prop_pred", "A reading locked before the informed ord
       await pg.goto(`http://127.0.0.1:${port}/#/r/${TOY.release}/read/T/T%3Athm%3Aeven-add`);
       await pg.getByRole("button", { name: "More", exact: true }).click();
       await pg.getByRole("link", { name: "Review it", exact: true }).click();
-      await pg.getByRole("textbox", { name: "Your name" }).fill("Resume reviewer");
-      await pg.getByRole("button", { name: "Start", exact: true }).click();
+      // The claim page's investigation asks for a name too: this is the review page's.
+      const setup = pg.locator("main.review .setup");
+      await setup.getByRole("textbox", { name: "Your name" }).fill("Resume reviewer");
+      await setup.getByRole("button", { name: "Start", exact: true }).click();
       await pg.locator(".review .unit .warn", { hasText: "prior exposure" }).waitFor();
       const reading = "Every pair of even natural numbers has an even sum, read in the reader.";
       await pg.getByRole("textbox", { name: "Your reading", exact: true }).fill(reading);
