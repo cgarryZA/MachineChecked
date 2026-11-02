@@ -1,12 +1,14 @@
 <script>
   import { untrack } from "svelte";
-  import { loadQueue, loadClaim, canEdit, askReviewOrder, reviewWork, reviewStep } from "../lib/data.js";
+  import { loadQueue, loadClaim, canEdit, askReviewOrder, reviewWork, reviewStep, reviewInWorkspace } from "../lib/data.js";
   import { href, route, go, withQuery } from "../lib/route.svelte.js";
   import { VERDICTS, GROUPS, CHECKLIST, MARKS, STEP_VERDICTS, STEP_GROUPS, loadWork, saveWork, now, reviewerId,
            needsDetail, buildReport, exportFile, ORDERS, ORDER_EXPOSURE, byOrder, orderedUnits, recordExposure,
            exposureOf, holdsBack, COVERAGE_FOR, COVERAGE_CHOICES, BASIS_CHOICES, reportCorrespondence,
-           draftCoverage, coverageWords, undoReport } from "../lib/review.js";
+           draftCoverage, coverageWords, undoReport, READER_SEEN } from "../lib/review.js";
+  import { chosenWorkspace } from "../lib/workfile.js";
   import Comparison from "./Comparison.svelte";
+  import WorkspaceFile from "./WorkspaceFile.svelte";
   import { comparisonInputs, pinScope } from "../lib/comparison.js";
 
   // The review queue: one unit at a time, in three steps. Read the paper and write your own
@@ -36,6 +38,9 @@
   // order, skipped units). A static copy of the site keeps all of it in this browser.
   const project = untrack(() => index.project?.name) || "project";
   const served = untrack(() => canEdit(index));
+  // Under `machinechecked view`, the workspace of the reviewer's that this browser chose to work in
+  // (`WorkspaceFile`), named before the work is first read.
+  if (served) reviewInWorkspace(chosenWorkspace(project));
   let work = $state(served ? { ...loadWork(project), drafts: {}, reports: [], exposure: [] } : loadWork(project));
   let stored = $state(true);
   const PAGE = ["reviewer", "selection", "order", "skipped", "exported"];
@@ -84,6 +89,16 @@
     try { adopt(await reviewWork(...me())); } catch (e) { serviceError = String(e?.message || e); }
   }
   $effect(() => { if (served && work.reviewer && !shared) untrack(reload); });
+  // Another of the reviewer's workspaces to work in (none: their first). What was typed is saved
+  // in the one it was typed in; then the page forgets which units it began, and reads the work
+  // of the one chosen.
+  async function switchWorkspace(id) {
+    sendEdit();
+    await chain;
+    reviewInWorkspace(id);
+    begun.clear(); shownFor.clear(); seenOf = {};
+    serviceError = null; shared = null;
+  }
   // What was typed, saved shortly after typing stops: only the fields the unit's step may still
   // change (`editable`, the engine's list). Moving to another unit saves it at once.
   let editTimer = null;
@@ -178,8 +193,8 @@
   const unexported = $derived(work.reports.length - (work.exported || 0));
 
   // The card's draft, kept as it is typed. Opened from a claim's page (**Review it**), the
-  // claim's Lean was shown before the reading: that is recorded first.
-  const READER_SEEN = "the claim's page in the reader";
+  // claim's Lean was shown before the reading: that is recorded first, as exposure of the claim
+  // (on a static copy as the engine records it, so that a workspace file carries it).
   const begun = new Set();
   let seenOf = $state({});
   $effect(() => {
@@ -198,10 +213,7 @@
     }
     if (!work.drafts[current.id]) work.drafts[current.id] = { stage: "read", reading: "" };
     const d = work.drafts[current.id];
-    if (d.stage === "read" && !d.reader_exposure && seenHere) {
-      d.reader_exposure = true;
-      persist();
-    }
+    if (d.stage === "read" && seenHere && recordExposure(work, [route.target], now(), ["Lean"], READER_SEEN)) persist();
   });
   const draft = $derived(current ? work.drafts[current.id] || null : null);
   // A verdict recorded in a terminal: the author's review is shown once the engine has recorded
@@ -212,6 +224,13 @@
     shownFor.add(current.id);
     const id = current.id;
     untrack(() => act("author", { unit: id }));
+  });
+  // On a static copy, a verdict recorded elsewhere and imported in a workspace file: the card
+  // shows the author's review with it, and records that it is shown now.
+  $effect(() => {
+    if (served || !current || draft?.stage !== "author" || draft.author_shown_at) return;
+    draft.author_shown_at = now();
+    persist();
   });
 
   // What the card shows, loaded when it changes.
@@ -396,6 +415,7 @@
       {/if}
       <p class="faint small">Reviewer identity is self-declared.</p>
       <button class="btn" onclick={setReviewer}>Start</button>
+      {#if !served}<WorkspaceFile {index} units={queue.units} {served} bind:work {persist} compact />{/if}
     </section>
   {:else}
     <div class="bar">
@@ -426,6 +446,8 @@
       <span class="who faint" title="self-declared">{work.reviewer.id || reviewerId(work.reviewer)}</span>
       <button class="btn ghost" disabled={!work.reports.length} onclick={undo}>Undo last</button>
       <button class="btn" disabled={!work.reports.length} onclick={doExport}>Export reports{unexported > 0 ? ` (${unexported} new)` : ""}</button>
+      <WorkspaceFile {index} units={queue.units} {served} bind:work {persist} reviewer={me()[0]}
+        current={shared?.workspace || null} onswitch={switchWorkspace} />
     </div>
     {#if served && shared}
       <p class="faint small" data-workspace={shared.workspace.id}>Your work is saved in your workspace {shared.workspace.id}, which

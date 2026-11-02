@@ -19,6 +19,7 @@ import "./retrieval.test.mjs";
 import "./comparison.test.mjs";
 import "./findings.test.mjs";
 import "./names.test.mjs";
+import "./workfile.test.mjs";
 import { chromium } from "playwright";
 import http from "node:http";
 import fs from "node:fs";
@@ -4070,6 +4071,185 @@ print(json.dumps({"id": ws["id"]}))`, work, path.join(root, "toyunknown", "data"
         "Not known to be current: this build shows no version of Toy.IsEvenOld.");
       assert.equal(await inv.locator("[data-unknown='e-gone']").textContent(),
         "Toy.IsEvenOld is not known to be current: this build shows no version of Toy.IsEvenOld.");
+    });
+  } finally { py.kill(); }
+}
+
+// #482: review work moves as a workspace file between a static copy of the site, the command line
+// and `machinechecked view`, and back, keeping its drafts, findings, pins and exposure. One toy site
+// is both the static copy (served here) and the last build of a project whose working directory the
+// engine's local server and `machinechecked workspace` use.
+for (const width of [1300, 390]) {
+  const name = `wsfile-${width}`;
+  const site = path.join(root, name);
+  fs.cpSync(path.join(root, "toy"), site, { recursive: true });
+  const queue = queueFor(path.join(site, "data"));
+  const proj = path.join(root, `${name}-project`);
+  const work = path.join(proj, ".machinechecked");
+  fs.mkdirSync(work, { recursive: true });
+  fs.writeFileSync(path.join(proj, "lakefile.toml"), 'name = "toy"\n');
+  fs.symlinkSync(site, path.join(work, "site"), "dir");
+  // `machinechecked ARGS...` in the project, with its JSON answer.
+  const machinechecked = (...args) => {
+    const r = spawnSync(process.env.PYTHON || "python3", ["-c", "import sys; from prooflens import cli; cli.main(sys.argv[1:])", ...args],
+                        { cwd: proj, encoding: "utf8" });
+    if (r.status !== 0) throw new Error(`machinechecked ${args.join(" ")}:\n${r.stdout}${r.stderr}`);
+    return r.stdout.trim().startsWith("{") ? JSON.parse(r.stdout) : r.stdout;
+  };
+  const saved = async (download, file) => { fs.copyFileSync(await (await download).path(), file); return JSON.parse(fs.readFileSync(file, "utf8")); };
+  const exported = (pg, file) => {
+    const download = pg.waitForEvent("download");
+    return pg.getByRole("button", { name: "Export workspace", exact: true }).click().then(() => saved(download, file));
+  };
+  const choose = async (pg, file) => {
+    const chooser = pg.waitForEvent("filechooser");
+    await pg.getByRole("button", { name: "Import workspace", exact: true }).click();
+    await (await chooser).setFiles(file);
+  };
+  const refusal = /The file was not imported: not a workspace this version can read \(schema 'prooflens\/workspace@2'\)\./;
+  const open = queue.units.filter((u) => u.state !== "reviewed");
+  const [first, second] = open;
+  assert.deepEqual([first.id, second.kind], ["spec:Toy.PaperSpec.prop_pred", "def"], "the toy queue as this test reads it");
+  const newer = path.join(root, `${name}-newer.json`);
+  fs.writeFileSync(newer, JSON.stringify({ schema: "prooflens/workspace@2", id: "ws-from-a-later-version", mode: "independent" }));
+  const { spawn } = await import("node:child_process");
+  const py = spawn(process.env.PYTHON || "python3", [path.join(here, "fixtures", "workspace_server.py"), site, work]);
+  const port = await new Promise((ok, fail) => {
+    py.stdout.once("data", (d) => ok(String(d).trim()));
+    py.once("exit", (c) => fail(new Error("the workspace server stopped: " + c)));
+  });
+  try {
+    await check("review work travels as a workspace file between a static copy, the command line and view", width, async (pg) => {
+      // On the static copy: a report, a draft at step 2, and the claim's Lean seen before a reading.
+      await pg.goto(`${origin}/${name}/#/r/${TOY.release}/read/T/T%3Aprop%3Apred`);
+      await pg.getByRole("button", { name: "More", exact: true }).click();
+      await pg.getByRole("link", { name: "Review it", exact: true }).click();
+      await pg.getByRole("textbox", { name: "Your name" }).fill("Synthetic reviewer");
+      await pg.getByRole("button", { name: "Start", exact: true }).click();
+      await pg.locator(".review .unit .warn", { hasText: "prior exposure" }).waitFor();
+      await pg.getByRole("textbox", { name: "Your reading", exact: true }).fill("For every natural number n, the predecessor of n is at most n.");
+      await pg.getByRole("button", { name: "Lock my reading and show the Lean" }).click();
+      await pg.getByRole("button", { name: "Quantifiers and their order: matches", exact: true }).click();
+      await pg.getByRole("textbox", { name: "Comparison", exact: true }).fill("The quantifier and the bound agree.");
+      await pg.getByRole("button", { name: "Matches the paper", exact: true }).click();
+      await pg.getByRole("radio", { name: "Faithful", exact: true }).check();
+      await pg.getByRole("button", { name: "Record verdict and show the author's review" }).click();
+      await pg.getByRole("button", { name: "Save report", exact: true }).click();
+      await pg.getByRole("button", { name: "Export reports (1 new)", exact: true }).waitFor();
+      await pg.goto(`${origin}/${name}/#/r/${TOY.release}/review`);
+      await whyIs(pg, `Definition · ${second.reason}`);
+      await pg.getByRole("textbox", { name: "Your reading", exact: true }).fill("The triangular number of n: the sum of the first n numbers.");
+      await pg.getByRole("button", { name: "Lock my reading and show the Lean" }).click();
+      await pg.getByRole("button", { name: "Its parameters: unsure", exact: true }).click();
+      await pg.getByRole("textbox", { name: "Comparison", exact: true }).fill("The same recursion; the parameter's type to check.");
+      const browserWork = (p = pg) => p.evaluate((k) => JSON.parse(localStorage.getItem(k)), REVIEW_KEY);
+      const F1 = await exported(pg, path.join(root, `${name}-static.json`));
+      const mine = await browserWork();
+      assert.equal(F1.schema, "prooflens/workspace@1");
+      assert.equal(F1.mode, "independent");
+      assert.equal(F1.reviewer.id, "human:Synthetic-reviewer");
+      assert.equal(mine.workspace.id, F1.id, "this browser's work is that workspace from now on");
+      assert.deepEqual(F1.review, { drafts: mine.drafts, reports: mine.reports });
+      assert.deepEqual(F1.review.drafts[second.id].checklist, { parameters: "unsure" });
+      assert.deepEqual(F1.review.reports.map((r) => [r.unit.id, r.pins.fingerprint]), [[first.id, first.fingerprint]]);
+      assert.deepEqual(F1.exposure.map((e) => [e.what, e.claims, e.how]), [[["Lean"], ["T:prop:pred"], "the claim's page in the reader"]]);
+      assert.deepEqual(F1.review.reports[0].reading.revealed_by, [{ unit: "review page (the claim's page in the reader)", what: "Lean" }]);
+
+      // In a terminal: `workspace import`, and a finding recorded in the workspace.
+      const imported = machinechecked("workspace", "import", path.join(root, `${name}-static.json`), "--as", "human:Synthetic-reviewer");
+      assert.deepEqual({ ...imported, path: null }, { workspace: F1.id, path: null, added: [], conflicts: [], problems: [] });
+      const ops = path.join(root, `${name}-ops.json`);
+      fs.writeFileSync(ops, JSON.stringify({ ops: [{ op: "put", record: { id: "f-synthetic", kind: "finding", claim: "T:thm:triangle",
+        coverage: "changed", note: "SYNTHETIC: a finding recorded in a terminal." } }] }));
+      machinechecked("workspace", "update", ops, "--id", F1.id, "--as", "human:Synthetic-reviewer");
+
+      // Under `view`: the page works in the imported workspace once it is chosen, continues the
+      // draft, and exports the workspace as `workspace export` writes it.
+      const F2file = path.join(root, `${name}-view.json`);
+      const vp = await browser.newPage({ viewport: { width, height: 900 } });
+      vp.setDefaultTimeout(10000);
+      try {
+        await vp.goto(`http://127.0.0.1:${port}/#/r/${TOY.release}/review`);
+        await vp.evaluate((k) => localStorage.setItem(k, JSON.stringify({ reviewer: { kind: "human", name: "Synthetic reviewer" } })), REVIEW_KEY);
+        await vp.reload();
+        await vp.locator(".review [data-workspace]").waitFor();
+        // The reviewer's first workspace, which the page begins its first unit in.
+        const firstFile = path.join(work, "review-work", "human_Synthetic-reviewer.json");
+        assert.ok(await until(() => fs.existsSync(firstFile), 8000), "the page began a unit in the first workspace");
+        const first = JSON.parse(fs.readFileSync(firstFile, "utf8")).id;
+        const choice = vp.getByRole("combobox", { name: "Workspace", exact: true });
+        await choice.selectOption(F1.id);
+        await vp.locator(`.review [data-workspace="${F1.id}"]`).waitFor();
+        // The reviewer's first workspace, which the page began a unit in, stays on offer.
+        await vp.waitForFunction(() => document.querySelectorAll(".review select[aria-label=Workspace] option").length === 2);
+        assert.deepEqual((await choice.locator("option").allTextContents()).sort(), [`${F1.id} (independent)`, `${first} (independent)`].sort());
+        await whyIs(vp, `Definition · ${second.reason}`);
+        assert.equal(await vp.getByRole("button", { name: "Its parameters: unsure", exact: true }).getAttribute("aria-pressed"), "true");
+        assert.equal(await vp.getByRole("textbox", { name: "Comparison", exact: true }).inputValue(), "The same recursion; the parameter's type to check.");
+        await vp.getByRole("button", { name: "Matches the paper", exact: true }).click();
+        await vp.getByRole("radio", { name: "Faithful", exact: true }).check();
+        await vp.getByRole("button", { name: "Record verdict and show the author's review" }).click();
+        await vp.getByRole("button", { name: "Save report", exact: true }).waitFor();
+        const F2 = await exported(vp, F2file);
+        const cli = path.join(root, `${name}-cli.json`);
+        machinechecked("workspace", "export", "--id", F1.id, "--out", cli);
+        assert.deepEqual({ ...F2, exported_at: null }, { ...JSON.parse(fs.readFileSync(cli, "utf8")), exported_at: null }, "as `workspace export` writes it");
+        assert.deepEqual(F2.review.reports, F1.review.reports, "the report and its pins");
+        assert.deepEqual(F2.exposure, F1.exposure, "what was seen");
+        assert.equal(F2.records["f-synthetic"].note, "SYNTHETIC: a finding recorded in a terminal.");
+        const d = F2.review.drafts[second.id], was = F1.review.drafts[second.id];
+        assert.deepEqual([d.stage, d.verdict, d.checklist, d.reading, d.locked_at, d.lean.fingerprint],
+                         ["author", "faithful", { parameters: "unsure" }, was.reading, was.locked_at, second.fingerprint]);
+        // A file of this reviewer's imported there: the page works in it.
+        const copy = path.join(root, `${name}-copy.json`);
+        fs.writeFileSync(copy, JSON.stringify({ ...F1, id: "ws-imported-in-view" }));
+        await choose(vp, copy);
+        await vp.locator(".review [role=status]", { hasText: "Imported workspace ws-imported-in-view; the review page works in it." }).waitFor();
+        await vp.locator('.review [data-workspace="ws-imported-in-view"]').waitFor();
+        await vp.locator(".review .steps li.on", { hasText: "2. Compare" }).waitFor();
+        // A newer file is refused there, with the engine's reason.
+        await choose(vp, newer);
+        assert.match(await vp.locator(".review [role=alert]", { hasText: "not imported" }).textContent(), refusal);
+        assert.ok(await vp.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), "no horizontal scroll");
+      } finally { await vp.close(); }
+
+      // Back on the static copy: the browser's draft is older than the file's, so it asks first;
+      // then the work is the workspace's, written again as it was read.
+      const F2 = JSON.parse(fs.readFileSync(F2file, "utf8"));
+      await choose(pg, F2file);
+      const ask = pg.getByRole("region", { name: `Import workspace ${F1.id}` });
+      await ask.waitFor();
+      assert.match(await ask.textContent(), new RegExp(`your draft of ${second.id.replace(/\./g, "\\.")}`));
+      await ask.getByRole("button", { name: "Replace it with the file's work" }).click();
+      // The drafts: the one continued under `view`, and the one the page began before leaving it.
+      assert.equal(Object.keys(F2.review.drafts).length, 2);
+      assert.match(await pg.locator(".review [role=status]", { hasText: "Imported workspace" }).textContent(),
+                   new RegExp(`Imported workspace ${F1.id}: 2 drafts, 1 report, 1 record\\.`));
+      await pg.locator(".review .unit", { hasText: "Your verdict: faithful" }).waitFor();
+      const F3 = await exported(pg, path.join(root, `${name}-static-again.json`));
+      assert.deepEqual({ ...F3, exported_at: null, provenance: null }, { ...F2, exported_at: null, provenance: null },
+                       "the drafts, findings, pins and exposure exactly");
+      assert.deepEqual(F3.provenance.slice(0, -1), F2.provenance);
+      assert.deepEqual([F3.provenance.at(-1).event, F3.provenance.at(-1).by, F3.provenance.at(-1).from],
+                       ["imported", "human:Synthetic-reviewer", `${name}-view.json`]);
+      // A newer file is refused here too, with the reason, and changes nothing.
+      const before = await browserWork();
+      await choose(pg, newer);
+      assert.match(await pg.locator(".review [role=alert]", { hasText: "not imported" }).textContent(), refusal);
+      assert.deepEqual(await browserWork(), before);
+      assert.ok(await pg.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), "no horizontal scroll");
+
+      // Another browser, with no reviewer named yet, continues the workspace from the file.
+      const other = await browser.newPage({ viewport: { width, height: 900 } });
+      other.setDefaultTimeout(10000);
+      try {
+        await other.goto(`${origin}/${name}/#/r/${TOY.release}/review`);
+        await choose(other, F2file);
+        await other.locator(".review .who", { hasText: "human:Synthetic-reviewer" }).waitFor();
+        await other.locator(".review .unit", { hasText: "Your verdict: faithful" }).waitFor();
+        const theirs = await browserWork(other);
+        assert.deepEqual([theirs.drafts, theirs.reports, theirs.exposure], [F2.review.drafts, F2.review.reports, F2.exposure]);
+      } finally { await other.close(); }
     });
   } finally { py.kill(); }
 }
