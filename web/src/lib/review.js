@@ -101,15 +101,15 @@ export const GROUPS = [
 export const ORDERS = [
   { value: "priority", label: "Priority", hint: "Changed evidence and proof use first, then less effort" },
   { value: "document", label: "Paper order", hint: "The paper's order" },
-  { value: "informed", label: "Informed", hint: "Also what the auditors' workspaces record as open: prior interpretations" },
+  { value: "informed", label: "Informed", hint: "Also what the auditors' workspaces record: findings due for review first, open questions, main results. Prior interpretations" },
 ];
 
 // How a report names what showed its reviewer prior interpretations through the informed order
 // (`review_cli.ORDER_EXPOSURE`, which the command line records in the reviewer's workspace).
 export const ORDER_EXPOSURE = "interpretation-informed review order";
 export const ORDER_SEEN = `review page (${ORDER_EXPOSURE})`;
-// The signals the informed order adds from the workspaces (`review_queue.workspace_signals`).
-const WORKSPACE_SIGNALS = ["open question", "difference", "hint"];
+// The signals the informed order adds from the workspaces (`review_queue.WORKSPACE_KINDS`).
+const WORKSPACE_SIGNALS = ["reopened finding", "out of date", "open question", "difference", "hint", "main result"];
 
 // The queue's units in an order the engine arranged: `arranged` lists open units with their
 // reasons (and priority records), as the build's paper order or the local server's informed
@@ -122,6 +122,19 @@ export function orderedUnits(units, arranged) {
     .map((x) => ({ ...byId.get(x.id), reason: x.reason, ...(x.priority ? { priority: x.priority } : {}) }));
   const placed = new Set(listed.map((u) => u.id));
   return [...listed, ...units.filter((u) => !placed.has(u.id))];
+}
+
+// The questions a new reading of unit `u` answers, as the engine words them for its signals
+// (a review or a finding that a change reopened), each once, in the order of its signals; the
+// command line prints the same (`review next`).
+export function questionsOf(u) {
+  const out = [];
+  for (const s of u?.priority?.signals || []) {
+    for (const q of Array.isArray(s?.questions) ? s.questions : []) {
+      if (typeof q === "string" && q.trim() && !out.includes(q)) out.push(q);
+    }
+  }
+  return out;
 }
 
 // Records in the reviewer's work that they have seen prior interpretations of `claims` (the

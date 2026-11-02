@@ -17,9 +17,10 @@ such as an informed investigation they opened or imported (which has seen the Le
 claim).
 
 `next` and `status` give the open units in the queue's order (`review_queue.prioritise`), in the
-paper's, or in an order that also uses what the auditors' workspaces record as open; that last
-order rests on prior interpretations, so asking for it is recorded as exposure. The reader's
-review page asks the local server for that order (`order_route`) and records the exposure.
+paper's, or in an order that also uses what the auditors' workspaces record as open (findings a
+change reopened first, with their questions) and the main results they save; that last order
+rests on prior interpretations, so asking for it is recorded as exposure. The reader's review
+page asks the local server for that order (`order_route`) and records the exposure.
 
 Under `machinechecked view`, the reader's review page works through this session too (`api`):
 its drafts, reports and exposure are those of the reviewer's workspace, so a unit begun in the
@@ -237,9 +238,14 @@ class Session:
     operation of the workspace changes it, keeping what was seen."""
 
     def __init__(self, target: Config | Path, reviewer: dict, workspace: str | None = None,
-                 mode: str | None = None, data_dir: Path | None = None):
+                 mode: str | None = None, data_dir: Path | None = None,
+                 root: Path | None = None):
         work = Path(getattr(target, "out_dir", target))
         self.work_dir = work
+        # The Lean project: what Lean read of it before tells whether a workspace's records are
+        # current, for the informed order (no Lean runs).
+        self.root = Path(root) if root else None
+        self.order_record: dict | None = None
         self.data = Path(data_dir) if data_dir else work / "site" / "data"
         if not (self.data / "review-queue.json").exists():
             raise ReviewError("no review queue: run `machinechecked view` or `machinechecked "
@@ -334,9 +340,10 @@ class Session:
     def open_units(self, order: str = "priority") -> list[dict]:
         """The units left to review, in the order asked (`review_queue.ORDERS`): the queue's
         (`priority`), the paper's (`document`), or the queue's with what the workspaces of this
-        working directory record as open (`informed`). Those records are prior
-        interpretations: an informed order records that exposure in this reviewer's workspace,
-        for the claims it drew on, so that a later reading of them is not taken as blind."""
+        working directory record as open and their saved main results (`informed`; the records
+        it read are then in `order_record`). Those records are prior interpretations: an
+        informed order records that exposure in this reviewer's workspace, for the claims it drew
+        on, so that a later reading of them is not taken as blind."""
         units = [u for u in self.queue["units"] if u["state"] != "reviewed"
                  and not self.reported(u)]
         if order == "priority":
@@ -345,7 +352,8 @@ class Session:
             return rq.arrange(units, {}, "document", self.index.get("claims") or [])
         if order != "informed":
             raise ReviewError(f"order {order!r} is not one of: {', '.join(rq.ORDERS)}")
-        units, drawn = informed_order(units, self.work_dir, self.site)
+        units, drawn, self.order_record = informed_order(units, self.work_dir, self.data,
+                                                         self.root, self.queue)
         if drawn:
             self.expose(drawn, ORDER_EXPOSURE)
         return units
@@ -730,23 +738,64 @@ def check_checklist(given) -> dict:
     return {k: v for k, v in given.items() if v is not None}
 
 
-def informed_order(units: list[dict], work_dir: Path, site) -> tuple[list[dict], list[str]]:
+def informed_order(units: list[dict], work_dir: Path, data_dir: Path, root: Path | None = None,
+                   queue: dict | None = None) -> tuple[list[dict], list[str], dict]:
     """`units` (open units, in the queue's order) in the informed order: the queue's, with what
-    every workspace of `work_dir` records as open (`review_queue.workspace_signals`), and the
-    claims whose records it drew on. Reading them is seeing prior interpretations of those
-    claims; the caller records that."""
+    every workspace of `work_dir` records as open, checked against the build whose site data is
+    `data_dir` and what Lean read of the project at `root` before (no Lean runs;
+    `review_queue.workspace_signals`), and what their saved main results say of each unit
+    (`review_queue.main_result_signals`); the claims whose records it drew on; and which records
+    it read (`informed_record`). Reading them is seeing prior interpretations of those claims;
+    the caller records that. `queue` is the build's queue, whose record says whether the
+    reverse references were traced in full."""
+    from .targets import Snapshot
+    snap = Snapshot(data_dir)
     spaces = [ws for _, ws in wsp.list_all(work_dir)]
-    signals, drawn = rq.workspace_signals(units, spaces, site)
-    return rq.arrange(units, signals), drawn
+    signals, drawn = rq.workspace_signals(units, spaces, snap, root)
+    selections = [ws["main_results"] for ws in spaces if ws.get("main_results")]
+    path = Path(data_dir) / "uses.json"
+    uses = json.loads(path.read_text(encoding="utf-8")) \
+        if snap.index.get("uses") and path.is_file() else None
+    mains, more = rq.main_result_signals(units, selections, uses, snap.chunk)
+    for k, v in mains.items():
+        signals.setdefault(k, []).extend(v)
+    drawn += [c for c in more if c not in drawn]
+    trace = (((queue or {}).get("order") or {}).get("signals") or {}).get(rq.RELEVANCE)
+    return (rq.arrange(units, signals), drawn,
+            informed_record(snap, spaces, selections, uses, trace))
 
 
-def order_route(work_dir: Path, data_dir: Path):
+def informed_record(snap, spaces: list[dict], selections: list[dict], uses: dict | None,
+                    trace: dict | None = None) -> dict:
+    """Which records the informed order read, each `read`, `incomplete` or `not available` with
+    why: the workspaces, and the trace from their saved main results through the build's
+    reverse references (`trace`: the queue's record of them). Without the trace a saved main
+    result itself is still marked."""
+    out = {"workspaces": {"state": "read", "count": len(spaces)} if spaces else
+           {"state": "not available", "why": "no workspace in the working directory"}}
+    if not selections:
+        out[rq.MAIN] = {"state": "not available",
+                        "why": "no workspace saves the paper's main results (`workspace main`)"}
+    elif uses is None:
+        out[rq.MAIN] = {"state": "not available", "why": (
+            "this build extracted no reverse references" if snap.index.get("mode") == "simple"
+            else "the full assessment extracts no reverse references")
+            + ": a saved main result itself is marked, not what it uses"}
+    elif (trace or {}).get("state") == "incomplete":
+        out[rq.MAIN] = dict(trace)
+    else:
+        out[rq.MAIN] = {"state": "read"}
+    return out
+
+
+def order_route(work_dir: Path, data_dir: Path, root: Path | None = None):
     """`GET /api/review-order?order=informed` of `machinechecked view`'s local server: the open
     units of the last build's queue in the informed order, each with its reason and priority
-    record, and the claims it drew on (`drawn`), for the reader's review page. The page keeps
-    its reviewer's work in the browser, so it records there, before it shows the order, that the
-    reviewer has seen prior interpretations of those claims; this route writes nothing. The
-    priority and document orders are in the queue the build wrote."""
+    record, the claims it drew on (`drawn`) and the records it read (`signals`), for the reader's
+    review page; `root` is the Lean project, for what Lean read of it before. The page records,
+    before it shows the order, that the reviewer has seen prior interpretations of those claims;
+    this route writes nothing. The priority and document orders are in the queue the build
+    wrote."""
     def get(q: dict) -> dict:
         order = (q.get("order") or ["informed"])[0]
         if order != "informed":
@@ -757,11 +806,13 @@ def order_route(work_dir: Path, data_dir: Path):
             raise ReviewError("no review queue: run `machinechecked view` or `machinechecked "
                               "build` first")
         queue = json.loads(path.read_text(encoding="utf-8"))
-        units, drawn = informed_order([u for u in queue["units"] if u["state"] != "reviewed"],
-                                      work_dir, cmp.Site(data_dir))
+        units, drawn, record = informed_order(
+            [u for u in queue["units"] if u["state"] != "reviewed"], work_dir, data_dir, root,
+            queue)
         return {"schema": "machinechecked/review-order@1", "release": queue.get("release"),
                 "order": "informed", "drawn": drawn,
                 "exposure": {"what": ["prior interpretations"], "how": ORDER_EXPOSURE},
+                "signals": record,
                 "units": [{k: u.get(k) for k in ("id", "reason", "priority")} for u in units]}
     return get
 
