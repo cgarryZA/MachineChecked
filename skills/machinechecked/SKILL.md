@@ -109,7 +109,12 @@ violations and obligations by subject; `findings` holds only their totals. A vio
 - **Link a claim to a declaration**: the user does it in `machinechecked view` (Link / Not
   this); with the user's agreement, `machinechecked link "Theorem 2" Pkg.name --as NAME --json`
   records it (`--reject NAME`, `--clear`; `--dry-run` first), or a `\lean{Name}` tag in the
-  LaTeX. An unknown or ambiguous claim or name is refused with candidates.
+  LaTeX. An unknown or ambiguous claim or name is refused with candidates and nothing is
+  written; give a name several modules declare as `MODULE:NAME`. Evidence for one clause of a
+  claim is a workspace record: a `requirement` for the clause, and an `alignment` of it with
+  one or more Lean targets, `{"kind": "alignment", "claim": "Theorem 2", "requirements":
+  ["r1.1"], "lean": [{"decl": "Pkg.thm", "conclusion": true}, {"decl": "Pkg.defn"}]}`
+  (AGENTS.md, Recording links and findings, runs one).
 - **Does the Lean establish a claim as printed?** Investigate it (below) and save the evidence
   in a workspace.
 - **What changed since the last build?** After a rebuild, `machinechecked workspace show
