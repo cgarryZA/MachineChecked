@@ -441,8 +441,13 @@ For projects with a separate acceptance framework, further statuses and evidence
 
 The **Overview** lists every claim with its correspondence with the Lean, how that is
 supported (its evidence basis), the difference or open question recorded, its review, and its
-proof status. Its counts are the audit's [semantic summary](DATA_MODEL.md#semantic-summary-prooflenssemantic-summary1-derived),
-as the engine computed it from the readings, reports and published findings:
+proof status. It opens with **Review next**: the first units of the review queue in its
+priority order (changed evidence first, then use in another claim's proof, then less effort),
+each with the reason it comes there. Select one to open the review page at that unit. The list
+uses only the build's own records, so it shows nothing a later blind reading must not see.
+
+Its counts are the audit's [semantic summary](DATA_MODEL.md#semantic-summary-prooflenssemantic-summary1-derived),
+as the engine computed it from the readings, reports and findings:
 
 - Each count names its unit: statements, notation records or proof steps. Each claim is counted
   once in each dimension; counts of different units, and of different dimensions, are never
@@ -451,7 +456,12 @@ as the engine computed it from the readings, reports and published findings:
   subset.
 - **Readings shown** chooses whose readings are counted: the audit's own (the links file), each
   reviewer's reports, or each published workspace. They are never combined.
-- **Review next** opens the review queue in its order.
+- **Findings in force** counts the auditors' submitted findings, in findings, by whether each is
+  **current** for this build, **due for review** (a passage, Lean statement or record it rests
+  on changed since it was submitted) or **not known to be current**. Under `view` these are the
+  findings of the workspaces in the project's working directory, judged as the Changes view
+  judges them; a published audit counts the findings it publishes. Select one to show the
+  claims with such a finding.
 
 `check` and `build` print the same summary of the audit's readings. For the readings above, with
 a statement left unlinked, a notation record and a proof equation read as stating part of its
@@ -472,6 +482,9 @@ semantic summary of paper P (the audit's readings):
     basis: in one Lean statement (1)
     reviews: printed step not reviewed (1)
 ```
+
+With submitted findings in a workspace, each unit also has a line counted in findings, such as
+`findings in force: 3 current; 1 due for review`.
 
 `check --json` gives the whole summary as `semantic`, and each claim's readings as its own
 `semantic`. The summary changes no status.

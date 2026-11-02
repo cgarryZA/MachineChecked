@@ -543,6 +543,30 @@
         }
       }
     },
+    "semanticFindingCurrency": {
+      "type": "object",
+      "description": "Submitted findings in force of the auditors' workspaces, counted in findings, by whether each is current for this build, due for review (a part it rests on changed since it was submitted) or not known to be current.",
+      "required": [
+        "current",
+        "due",
+        "unchecked"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "current": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "due": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unchecked": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
     "semanticInventory": {
       "type": "object",
       "required": [
@@ -712,6 +736,10 @@
               "printed-step"
             ]
           }
+        },
+        "finding_currency": {
+          "$ref": "#/$defs/semanticFindingCurrency",
+          "description": "Optional: present when the claim has a submitted finding in force; how many are in each state."
         }
       }
     },
@@ -990,6 +1018,27 @@
                   },
                   "proof_steps": {
                     "$ref": "#/$defs/semanticFindings"
+                  }
+                }
+              },
+              "finding_currency": {
+                "type": "object",
+                "description": "Optional, so that a reader that does not know it reads the rest: per unit of the claims they are on.",
+                "required": [
+                  "statements",
+                  "notation",
+                  "proof_steps"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "statements": {
+                    "$ref": "#/$defs/semanticFindingCurrency"
+                  },
+                  "notation": {
+                    "$ref": "#/$defs/semanticFindingCurrency"
+                  },
+                  "proof_steps": {
+                    "$ref": "#/$defs/semanticFindingCurrency"
                   }
                 }
               }

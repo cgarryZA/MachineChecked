@@ -63,8 +63,9 @@ and whether the paper's numbering is complete). Each suggestion has `reasons`: `
 In either mode, `semantic` is the audit's semantic summary (`prooflens/semantic-summary@1`):
 per paper and per unit (`statements`, `notation`, `proof_steps`), the inventory, the formal
 status counts, and per set of readings the coverage, basis and currency counts, with the
-reviews and the kinds of finding recorded; each claim's `semantic` holds its own readings and
-keys. Quote these counts as they are, each with its unit: they are never added into a total or a
+reviews, the kinds of finding recorded and the findings in force by currency
+(`finding_currency`: `current`, `due` for review, `unchecked`, counted in findings, from the
+workspaces in the working directory); each claim's `semantic` holds its own readings and keys. Quote these counts as they are, each with its unit: they are never added into a total or a
 percentage ([data model](DATA_MODEL.md#semantic-summary-prooflenssemantic-summary1-derived)).
 
 In a project with a `machinechecked.toml` (the full assessment), the document also has

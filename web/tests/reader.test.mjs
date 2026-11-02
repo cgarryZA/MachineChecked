@@ -478,12 +478,12 @@ fs.cpSync(path.join(root, "toy"), path.join(root, "toyfind"), { recursive: true 
 // The engine's semantic summary (#129, `semantic.refresh`) of copies of the toy audit, of the
 // readings and reports above, and of the toy audit with its published workspace records, as a
 // published audit carries it.
-for (const [from, to] of [["toy", "toysem"], ["basis", "basissem"], ["toywork", "toyworksem"]]) fs.cpSync(path.join(root, from), path.join(root, to), { recursive: true });
+for (const [from, to] of [["toy", "toysem"], ["basis", "basissem"], ["toywork", "toyworksem"], ["toyfind", "toyfindsem"]]) fs.cpSync(path.join(root, from), path.join(root, to), { recursive: true });
 const summarised = spawnSync(process.env.PYTHON || "python3", ["-c",
   "import sys\nfrom pathlib import Path\nfrom prooflens import semantic\nfor d in sys.argv[1:]: semantic.refresh(Path(d) / 'data', 'A. Author')",
-  ...["toysem", "basissem", "toyworksem"].map((d) => path.join(root, d))], { encoding: "utf8" });
+  ...["toysem", "basissem", "toyworksem", "toyfindsem"].map((d) => path.join(root, d))], { encoding: "utf8" });
 if (summarised.status !== 0) throw new Error("the engine could not summarise:\n" + summarised.stderr);
-const SEM = Object.fromEntries(["toysem", "basissem", "toyworksem"].map((d) => [d, JSON.parse(fs.readFileSync(path.join(root, d, "data/index.json"), "utf8"))]));
+const SEM = Object.fromEntries(["toysem", "basissem", "toyworksem", "toyfindsem"].map((d) => [d, JSON.parse(fs.readFileSync(path.join(root, d, "data/index.json"), "utf8"))]));
 
 // #414: the page with two audits of one version (`combined`), as machinechecked.org writes it with
 // each listed audit's semantic summary on its registry entry (its scripts/summary.py record: the
@@ -3173,6 +3173,40 @@ await check("the review page offers the priority and paper orders with the engin
   assert.ok(await pg.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), "no horizontal scroll");
 });
 
+// #478: the Overview's Review next is the queue the build wrote, in its priority order with the
+// engine's reasons, each entry opening the review page at that unit; nothing is ranked by the page.
+for (const width of [1300, 390]) {
+  await check("the overview ranks what to review next and opens the review page at a unit", width, async (pg) => {
+    await pg.goto(origin + `/review-order/#/r/${TOY.release}/overview`);
+    await pg.evaluate((k) => localStorage.setItem(k, JSON.stringify({ reviewer: { kind: "human", name: "Synthetic reviewer" }, order: "document" })), REVIEW_KEY);
+    await pg.reload();
+    const next = pg.getByRole("region", { name: "Review next" });
+    await next.locator("li").first().waitFor();
+    const open = ORDER_QUEUE.units.filter((u) => u.state !== "reviewed");
+    assert.ok(open.length > 5);
+    // The queue's first five open units, in its priority order (not the paper order the review
+    // page was left on), each with the engine's reason and named by its claims' numbers.
+    assert.deepEqual(await next.locator("li").evaluateAll((xs) => xs.map((x) => x.dataset.unit)), open.slice(0, 5).map((u) => u.id));
+    const number = Object.fromEntries(TOY.claims.map((c) => [c.id, c.number]));
+    for (const [i, u] of open.slice(0, 5).entries()) {
+      const text = words(await next.locator("li").nth(i).textContent());
+      const names = u.claims.map((c) => number[c.id]);
+      assert.ok(text.startsWith(u.kind === "def" ? "A definition used by " + names[0] : names[0]), text);
+      assert.ok(text.endsWith(`${kindWord(u)} ${u.reason}`), text);
+      if (u.kind !== "step") assert.ok(!text.includes(u.name), "the unit's Lean is not named");
+    }
+    assert.match(words(await next.locator("p").last().textContent()), new RegExp(`^In the review queue's priority order: .* ${open.length} units are open in this build\\. Open the review queue →$`));
+    // An entry opens the review page at its unit, whatever the order chosen there.
+    const third = open[2];
+    await next.locator("li").nth(2).getByRole("link").click();
+    const hash = await pg.evaluate(() => location.hash);
+    assert.match(hash, /\/review\?unit=/);
+    assert.equal(new URLSearchParams(hash.split("?")[1]).get("unit"), third.id);
+    await whyIs(pg, `${kindWord(third)} · ${(ORDER_QUEUE.orders.document.find((x) => x.id === third.id) || third).reason}`);
+    if (width < 500) assert.ok(await pg.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), "no horizontal scroll");
+  });
+}
+
 await check("a declaration lists its users; a static copy names the command for its applications", 390, async (pg) => {
   await pg.goto(origin + `/uses/#/r/${USES.release}/read/P/${encodeURIComponent("P:lem:half")}?inspect=Uses.half_lt`);
   const uses = pg.locator(".claim-view .decl.inspector details.uses");
@@ -3375,6 +3409,30 @@ await check("the overview keeps units apart and shows a workspace's readings as 
   await pg.getByRole("button", { name: "Every clause (1 statement)", exact: true }).click();
   assert.equal(await pg.locator(".coverage .claims li").count(), 1);
   assert.match(await pg.locator(".coverage .claims li").textContent(), /Definition 1\.1.*Every clause.*By an argument combining Lean results \(recorded as through a checked bridge\)/s);
+});
+
+// #478: the Overview counts the findings in force of a published audit by their currency, in
+// findings, and filters the claims by it.
+await check("the overview counts findings in force that are current and due for review", 1300, async (pg) => {
+  await pg.goto(origin + `/toyfindsem/#/r/${TOY.release}/overview`);
+  const group = pg.locator('.semantic [data-dimension="finding_currency"]');
+  await group.waitFor();
+  assert.deepEqual(SEM.toyfindsem.semantic.papers.T.finding_currency.statements, { current: 7, due: 1, unchecked: 0 });
+  assert.deepEqual(await group.locator("button").allTextContents(), ["Any", "Current (8 findings)", "Due for review (1 finding)"]);
+  await group.getByRole("button", { name: "Due for review (1 finding)", exact: true }).click();
+  assert.match(await pg.evaluate(() => location.hash), /\/overview\?finding_currency=due$/);
+  assert.equal(await pg.locator(".coverage .claims li").count(), 1);
+  const row = pg.locator(".coverage .claims li");
+  assert.match(await row.locator(".claim").textContent(), /Theorem 2\.5/);
+  assert.equal(await row.locator(".fc").textContent(), "Findings in force: 4 current · 1 due for review");
+  // Each unit by itself: the proof step's finding is counted with the proof steps.
+  await pg.goto(origin + `/toyfindsem/#/r/${TOY.release}/overview?unit=proof_steps`);
+  await group.waitFor();
+  assert.deepEqual(await group.locator("button").allTextContents(), ["Any", "Current (1 finding)"]);
+  // An audit whose summary has no such counts shows no such filter.
+  await pg.goto(origin + `/toysem/#/r/${TOY.release}/overview`);
+  await pg.locator(".coverage .semantic").waitFor();
+  assert.equal(await pg.locator('.semantic [data-dimension="finding_currency"]').count(), 0);
 });
 
 await check("a proof step with no Lean link is reviewed as printed and reported as a step", 390, async (pg) => {
@@ -3928,6 +3986,29 @@ s.save()`);
       assert.equal(shared().exposure.length, 1);
     });
 
+    // #478: under the local server, which offers the informed order, the Overview's Review next
+    // is still the queue's own priority order, even for a reviewer who chose the informed order
+    // on the review page: it asks for no order, fetches no workspace record and records nothing.
+    await check("the overview's review next shows no prior interpretation", 1300, async (pg) => {
+      const queue = queueFor(path.join(root, "toyws", "data"));
+      const who = "human:Synthetic-reviewer";
+      const before = reviewState(who).exposure;
+      const asked = [];
+      pg.on("request", (r) => { const u = new URL(r.url()).pathname; if (u.includes("/api/review-order") || u.includes("/data/work/")) asked.push(u); });
+      await pg.goto(`http://127.0.0.1:${port}/#/r/${TOY.release}/overview`);
+      await pg.evaluate((k) => localStorage.setItem(k, JSON.stringify({ reviewer: { kind: "human", name: "Synthetic reviewer" }, order: "informed" })), REVIEW_KEY);
+      await pg.reload();
+      const next = pg.getByRole("region", { name: "Review next" });
+      await next.locator("li").first().waitFor();
+      const open = queue.units.filter((u) => u.state !== "reviewed").slice(0, 5);
+      assert.deepEqual(await next.locator("li").evaluateAll((xs) => xs.map((x) => x.dataset.unit)), open.map((u) => u.id));
+      for (const [i, u] of open.entries()) assert.ok(words(await next.locator("li").nth(i).textContent()).endsWith(u.reason), u.id);
+      assert.doesNotMatch(await next.textContent(), /recorded|open question/i);
+      await pg.waitForLoadState("networkidle");
+      assert.deepEqual(asked, []);
+      assert.deepEqual(reviewState(who).exposure, before);
+    });
+
     // #122: one review, begun in the reader and continued in a terminal, and the other way
     // round, under the engine's own local server: the same draft, pins, exposure and verdict.
     await check("a review begun in the reader is continued in a terminal, and the other way round", 1300, async (pg) => {
@@ -4042,6 +4123,11 @@ for f in (data / "claims").glob("*.json"):
     fp = s.fingerprints()["Toy.PaperSpec.thm_even_add"]
     if fp in t:
         f.write_text(t.replace(fp, "pl-fp-v1:synthetic-later"))
+# The build's semantic summary counts the workspace's findings in force, as a view's build does.
+from prooflens.pipeline import with_workspace_findings
+index = json.loads((data / "index.json").read_text())
+chunks = {c["file"]: json.loads((data / "claims" / c["file"]).read_text()) for c in index["claims"]}
+with_workspace_findings(data, index, index, chunks, work)
 print(json.dumps({"id": wsp.read(p)["id"]}))`, work, path.join(root, "toyrev", "data"), TOY.release], { encoding: "utf8" });
   if (made.status !== 0) throw new Error("the engine could not make the workspace:\n" + made.stderr);
   const wsId = JSON.parse(made.stdout).id;
@@ -4094,6 +4180,16 @@ print(json.dumps({"id": wsp.read(p)["id"]}))`, work, path.join(root, "toyrev", "
         if (process.env.SHOTS) await pg.screenshot({ path: path.join(process.env.SHOTS, `revision-${width}.png`), fullPage: true });
       });
     }
+    // #478: the Overview counts the findings in force as the Changes view judges them.
+    await check("the overview counts the findings a revision reopens as due for review", 1300, async (pg) => {
+      await pg.goto(`http://127.0.0.1:${port}/#/r/${TOY.release}/overview`);
+      const group = pg.locator('.semantic [data-dimension="finding_currency"]');
+      await group.waitFor();
+      assert.deepEqual(await group.locator("button").allTextContents(),
+                       ["Any", "Current (1 finding)", "Due for review (2 findings)", "Not known to be current (1 finding)"]);
+      await group.getByRole("button", { name: "Due for review (2 findings)", exact: true }).click();
+      assert.deepEqual(await pg.locator(".coverage .claims li .claim strong").allTextContents(), ["Theorem 2.1", "Theorem 2.5"]);
+    });
     await check("a static copy of the site shows no workspace across the revision", 1300, async (pg) => {
       await pg.goto(origin + "/toychanges/" + `#/r/${TOY.release}/changes`);
       await pg.locator("[data-changes]").waitFor();
