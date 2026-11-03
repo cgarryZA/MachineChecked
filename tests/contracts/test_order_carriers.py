@@ -24,7 +24,8 @@ from prooflens.probe import lean_session, parse_records
 
 SRC = ROOT / "tests" / "fixtures" / "carriers"
 SPECS = ["join", "extended", "real", "alias", "both", "sets", "plain", "poly", "deep",
-         "divNat", "divField", "divExtended", "divGroup", "divPlain", "divPoly", "integrals",
+         "divNat", "divField", "divThree", "divExtended", "divGroup", "divPlain", "divPoly",
+         "integrals",
          "integralUnit", "sumExtended", "sumReal", "roots", "two", "twoMixed", "twoMoved",
          "supBounded", "supUnbounded", "supOther", "supLater", "supQuantified", "supConditional",
          "supEmpty", "supRefuted", "infAndSet", "integrable", "integrableOn", "finite",
@@ -133,6 +134,31 @@ def test_each_supremum_is_judged_by_its_type(tmp_path, toolchain):
 
     each_occurrence_has_its_own_finding(recs)
     side_conditions(recs)
+    each_application_says_where_it_is(recs)
+
+
+def each_application_says_where_it_is(recs):
+    """Each warning about one application carries the sub-term at each of its positions, as
+    Lean prints it, with the nearest binder or hypothesis around it (#509): a reader can tell
+    `T / N` from `x / y` and `N / T` without rebuilding them from their positions."""
+    found = {f["at"]: f for f in assess(recs["divThree"], []) if f["trigger"] == "HDiv.hDiv"}
+    subs = {f["at"]: [(s["at"], s["text"], s.get("within")) for s in f["occurrences"][0]["subterms"]]
+            for f in found.values()}
+    ids = {b["name"]: b["id"] for b in recs["divThree"]["binders"]}
+    assert [b["name"] for b in recs["divThree"]["binders"]] == ["T", "N", "h1", "x", "y"]
+    assert sorted((t, w["kind"], w["part"], w["name"], w["id"]) for [(_, t, w)] in subs.values()) == [
+        ("N / T", "exists", "scope", "y", ids["y"]),
+        ("T / N", "hypothesis", "type", "h1", ids["h1"]),
+        ("x / y", "exists", "scope", "y", ids["y"])]
+    assert all(at == f_at for f_at, [(at, _, _)] in subs.items())
+    # The finding as `check --json` lists it carries them.
+    assert all(f["occurrences"][0]["subterms"][0]["text"] for f in found.values())
+
+    # One application at two positions: the sub-term at each, under the variable of its scope.
+    [occ] = occurrences(recs["divField"], "HDiv.hDiv")
+    assert [(s["at"], s["text"], s["within"]["kind"], s["within"]["name"])
+            for s in occ["subterms"]] == [(a, "x / y", "forall", "y") for a in occ["at"]]
+    assert len(occ["at"]) == 2
 
 
 def assess(rec, dismissals, fp="fp-1"):
@@ -188,6 +214,50 @@ def each_occurrence_has_its_own_finding(recs):
                for f in assess(recs["two"], old))
     assert all(not f.get("dismissed") and f["dismissal_stale"]
                for f in assess(recs["two"], old, fp="fp-2"))
+
+
+def test_subterms_name_their_binders_as_the_statement_does():
+    """A sub-term's binder or hypothesis is named as the statement record names it (an unnamed
+    hypothesis is `h1`), inside the tree too; a record from before the probe printed sub-terms
+    has none, and its other fields are what they were (#509)."""
+    rec = {"name": "P.s", "consts": ["HDiv.hDiv"],
+           "binders": [{"id": "/", "name": "T"}, {"id": "/1", "name": "h1"}],
+           "tree": {"op": "forall", "id": "/", "name": "T", "args": [
+               {"op": "hypothesis", "id": "/1", "name": "h1", "args": [
+                   {"op": "exists", "id": "/1/1/1", "name": "y", "args": []}]}]},
+           "order_ops": {"complete": True, "occurrences": [
+               {"const": "HDiv.hDiv", "carrier": "Real", "carrier_head": "Real",
+                "at": ["/1/0/0/1", "/1/1/1/1/0/1"], "subterms": [
+                    {"at": "/1/0/0/1", "text": "T / 2",
+                     "within": {"kind": "hypothesis", "part": "type", "id": "/1", "name": None}},
+                    {"at": "/1/1/1/1/0/1", "text": "T / 2",
+                     "within": {"kind": "exists", "part": "scope", "id": "/1/1/1", "name": "y"}}]},
+               {"const": "HDiv.hDiv", "carrier": "Real", "carrier_head": "Real", "at": ["/1/0"],
+                "subterms": [{"at": "/1/0"}]}]}}
+    first, second = occurrences(rec, "HDiv.hDiv")
+    assert [(s["at"], s["text"], s["within"]["name"]) for s in first["subterms"]] == [
+        ("/1/0/0/1", "T / 2", "h1"), ("/1/1/1/1/0/1", "T / 2", "y")]
+    assert second["subterms"] == [{"at": "/1/0", "text": None}], "past the probe's limit"
+    for o in rec["order_ops"]["occurrences"]:
+        o.pop("subterms")
+    assert all("subterms" not in o for o in occurrences(rec, "HDiv.hDiv"))
+
+
+def test_subterms_are_published_with_the_lean():
+    """An application's sub-terms are Lean text: an export carries them only when the paper
+    publishes its Lean (#509)."""
+    from prooflens.config import Publish
+    from prooflens.export import public_claim
+    occ = {"operation": "HDiv.hDiv", "type": "Real", "at": ["/1"],
+           "subterms": [{"at": "/1", "text": "T / N"}]}
+    chunk = {"clauses": [], "findings": [{"id": "totalised:C#0:HDiv.hDiv@/1", "tier": "warning",
+                                          "code": "totalised", "occurrences": [occ]}]}
+    shown = public_claim(chunk, Publish(pdf=False, source_text=False, lean=True, reviews=False))
+    assert shown["findings"][0]["occurrences"] == [occ]
+    hidden = public_claim(chunk, Publish(pdf=False, source_text=False, lean=False, reviews=False))
+    assert hidden["findings"][0]["occurrences"] == [{"operation": "HDiv.hDiv", "type": "Real",
+                                                     "at": ["/1"]}]
+    assert chunk["findings"][0]["occurrences"][0]["subterms"], "the build's own data is kept"
 
 
 def test_a_record_without_types_is_unresolved_not_real():

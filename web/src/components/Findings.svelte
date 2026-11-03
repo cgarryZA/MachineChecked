@@ -2,7 +2,8 @@
   // Findings by tier. A violation contradicts acceptance and is always shown. Review obligations
   // are open work, listed as review tasks. Warnings are heuristics, shown as heuristic findings:
   // they are grouped by the operation that raised them and folded away, low-signal ones last. A warning about a
-  // totalised operation lists the applications it read (`occurrences`), each with its type and
+  // totalised operation lists the applications it read (`occurrences`), each with the sub-term
+  // at each of its positions and the binder or hypothesis around it (`subterms`), its type and
   // what the type gives, and the conditions its rule needs there with what establishes or
   // refutes them; `onshow` marks them in the statement. Such a warning is about one
   // application (`at`), and its dismissal names that application.
@@ -35,6 +36,18 @@
   };
   const outcome = (o) => o.state === "applies" ? o.rule : o.state === "none" ? "no exceptional case in this type" : "unresolved";
   const shown = (f) => (f.occurrences || []).filter((o) => o.state !== "none" && o.at?.length);
+  // Where a sub-term stands: in the statement of a hypothesis, an instance or a variable's type,
+  // or under the variable whose scope holds it.
+  const QUANT = { forall: "∀", exists: "∃", fun: "fun", let: "let" };
+  function near(w) {
+    const n = w.name;
+    if (w.part === "type") {
+      if (w.kind === "hypothesis") return n ? `in the hypothesis ${n}` : "in a hypothesis";
+      if (w.kind === "instance") return n ? `in the instance ${n}` : "in an instance";
+      return n ? `in the type of ${n}` : "in the type of a variable";
+    }
+    return `under ${QUANT[w.kind] ?? w.kind}${n ? ` ${n}` : ""}`;
+  }
 </script>
 
 {#if !findings.length}
@@ -73,7 +86,7 @@
               {#if f.occurrences?.length}
                 <ul class="occ">
                   {#each f.occurrences as o, i (i)}
-                    <li data-state={o.state}><span class="ty">in <code>{o.type || "a type not read"}</code>{#if STRUCTURE[o.structure]}, {STRUCTURE[o.structure]}{/if}</span>: {outcome(o)}
+                    <li data-state={o.state}>{#if o.subterms?.length}<span class="subs">{#each o.subterms as s, k (k)}{#if k}; {/if}<code class="sub" data-at={s.at}>{s.text ?? "not printed"}</code>{#if s.within}{" "}{near(s.within)}{/if}{/each}</span>,{" "}{/if}<span class="ty">in <code>{o.type || "a type not read"}</code>{#if STRUCTURE[o.structure]}, {STRUCTURE[o.structure]}{/if}</span>: {outcome(o)}
                       {#if o.conditions?.length}
                         <ul class="conds">
                           {#each o.conditions as c, j (j)}
@@ -115,7 +128,7 @@
   .dz { display: block; font-size: 12px; color: var(--muted); }
   .occ { list-style: none; padding-left: 8px; font-size: 12px; color: var(--muted); }
   .occ li { margin: 1px 0; overflow-wrap: anywhere; }
-  .occ .ty code { color: var(--text, inherit); }
+  .occ .ty code, .occ .sub { color: var(--text, inherit); }
   .conds { list-style: none; padding-left: 10px; }
   .conds code { overflow-wrap: anywhere; }
   .show { border: 0; padding: 0; background: none; font: inherit; font-size: 12px; color: var(--accent); cursor: pointer; text-decoration: underline; min-height: 0; }

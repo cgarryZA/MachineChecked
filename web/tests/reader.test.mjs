@@ -1432,7 +1432,8 @@ for (const width of [1300, 390]) {
       const json = await response.json();
       json.findings = json.findings.map((f) => f.subject.endsWith("#0") ? { ...f, occurrences: [
         { operation: f.trigger, type: "Nat", type_head: "Nat", structure: null, state: "applies",
-          rule: "truncated subtraction on ℕ: a - b = 0 when a < b", at: ["/1/0/1"] },
+          rule: "truncated subtraction on ℕ: a - b = 0 when a < b", at: ["/1/0/1"],
+          subterms: [{ at: "/1/0/1", text: "n - 1", within: { kind: "forall", part: "scope", id: "/", name: "n" } }] },
         { operation: f.trigger, type: "Nat", type_head: "Nat", structure: "group", state: "none", rule: null, at: [] }] }
         : f.dismissed ? { ...f, at: "/1/1/1", dismissed: { ...f.dismissed, form: "statement" } } : f);
       route.fulfill({ response, json });
@@ -1443,7 +1444,7 @@ for (const width of [1300, 390]) {
     const item = pg.locator(".claim-view [data-finding='totalised:T:prop:pred#0:instSubNat']");
     const occ = await item.locator(".occ li").allTextContents();
     assert.deepEqual(occ.map((t) => t.replace(/\s+/g, " ").trim()), [
-      "in Nat: truncated subtraction on ℕ: a - b = 0 when a < b",
+      "n - 1 under ∀ n, in Nat: truncated subtraction on ℕ: a - b = 0 when a < b",
       "in Nat, a group: no exceptional case in this type"]);
     assert.equal(await pg.locator(".claim-view [data-finding='totalised:T:prop:pred#1:instSubNat'] .show").count(), 0, "nothing to mark");
     // A dismissal of the operation in the whole statement says so.
