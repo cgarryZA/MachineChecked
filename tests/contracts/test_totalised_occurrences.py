@@ -1,7 +1,8 @@
 """A totalisation warning carries the applications it is about (#232): each with its operation,
 its type, the structure on the type that decides the rule, the state of the rule there and the
-positions of the application in the statement. The evidence, `check --json`, the site data and
-an export carry the same records; the warning changes no status."""
+positions of the application in the statement, with the sub-term at each (#509). The evidence,
+`check --json`, the site data and an export carry the same records; the warning changes no
+status."""
 
 import json
 
@@ -26,6 +27,10 @@ def test_occurrences_round_trip(toy, tmp_path, monkeypatch, capsys):
         "operation": "HDiv.hDiv", "type_head": "Nat", "structure": "unknown", "state": "applies"}
     assert occ["rule"] == "division in ℕ rounds down and n / 0 = 0" and occ["at"]
     assert "occurrences_complete" not in f
+    # Each position carries the sub-term there, under the variable whose scope holds it (#509);
+    # `check --json` and the export below carry the same.
+    assert [(s["at"], s["text"], s["within"]["kind"], s["within"]["part"], s["within"]["name"])
+            for s in occ["subterms"]] == [(a, "n / 1", "forall", "scope", "n") for a in occ["at"]]
 
     # The position is a sub-term of the printed statement: the division itself.
     spec = body["lean"]["specs"]["Toy.PaperSpec.prop_pred"]

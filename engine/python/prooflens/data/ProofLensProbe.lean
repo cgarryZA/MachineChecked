@@ -2022,8 +2022,60 @@ partial def opsForall (e : Expr) (pos : SubExpr.Pos) (domains : Array (Expr × S
     opsVisit e pos w
 end
 
+/-- At most this many positions of a statement's applications are printed (`subtermAt`). -/
+def maxSubterms : Nat := 512
+
+/-- The sub-term of `e` at `p`, printed in the context of the binders around it (`text`, at most
+2000 characters), and the nearest binder or hypothesis around it (`within`): the last on the way
+from the root to `p` whose scope holds the sub-term (a variable bound by `∀`, `∃`, `fun` or
+`let`: `part` `scope`) or whose statement holds it (a hypothesis, an instance, a variable's type:
+`part` `type`), with its `kind`, its identity (`id`, as the statement's binders name it) and its
+`name` (null when Lean made it up). What follows a hypothesis or an instance is not inside it.
+Display only. -/
+partial def subtermAt (e : Expr) (p : SubExpr.Pos) : MetaM (List (String × Json)) :=
+  go e p.toArray.toList .root none false
+where
+  near (kind part : String) (n : Name) (pos : SubExpr.Pos) : Option Json :=
+    some (Json.mkObj [("kind", Json.str kind), ("part", Json.str part),
+      ("id", Json.str (toString pos)),
+      ("name", if n.hasMacroScopes || n.isAnonymous then Json.null else Json.str n.toString)])
+  /-- `e` at `pos`, the rest of the path `path`; `isExists` when `e` is the predicate of `∃`. -/
+  go (e : Expr) (path : List Nat) (pos : SubExpr.Pos) (within : Option Json) (isExists : Bool) :
+      MetaM (List (String × Json)) := do
+    let e := e.consumeMData
+    match path with
+    | [] =>
+      let text ← withOptions (·.setBool `pp.funBinderTypes true) (ppExpr e)
+      let text := toString text
+      let text := if text.length > 2000 then prefixOf text 2000 ++ " …" else text
+      return [("text", Json.str text)] ++ (match within with | some j => [("within", j)] | none => [])
+    | c :: rest =>
+      match e, c with
+      | .app f _, 0 => go f rest (pos.push 0) within false
+      | .app f a, 1 => go a rest (pos.push 1) within (f.isAppOfArity ``Exists 1)
+      | .forallE n t _ bi, 0 => do
+        let prop ← isProp t
+        let kind := if bi.isInstImplicit then "instance" else if prop then "hypothesis" else "forall"
+        go t rest (pos.push 0) (near kind "type" n pos) false
+      | .forallE n t b bi, 1 => do
+        let assumed := bi.isInstImplicit || (← isProp t)
+        withLocalDecl n bi t fun x =>
+          go (b.instantiate1 x) rest (pos.push 1) (if assumed then within else near "forall" "scope" n pos) false
+      | .lam n t _ _, 0 => go t rest (pos.push 0) (near (if isExists then "exists" else "fun") "type" n pos) false
+      | .lam n t b bi, 1 =>
+        withLocalDecl n bi t fun x =>
+          go (b.instantiate1 x) rest (pos.push 1) (near (if isExists then "exists" else "fun") "scope" n pos) false
+      | .letE n t _ _ _, 0 => go t rest (pos.push 0) (near "let" "type" n pos) false
+      | .letE _ _ v _ _, 1 => go v rest (pos.push 1) within false
+      | .letE n t v b _, 2 =>
+        withLetDecl n t v fun x => go (b.instantiate1 x) rest (pos.push 2) (near "let" "scope" n pos) false
+      | .proj _ _ b, 0 => go b rest (pos.push 0) within false
+      | _, _ => return []
+
 /-- Each application of a totalised operation in `e`, with its carrier and the positions it
-occurs at in `e` (`at`, as the printed sub-terms name them). `complete: false` when some
+occurs at in `e` (`at`, as the printed sub-terms name them), each with the sub-term there and
+the binder or hypothesis around it (`subterms`, `subtermAt`; a position past the first
+`maxSubterms`, or one that fails to print, has `at` only). `complete: false` when some
 applications may be missing, with the reason in `stopped`: the walk reached its limit of nodes
 (`nodes`), or failed, for example by running out of heartbeats (`error`). -/
 def orderOpsJson (e : Expr) (inside : Name → Bool) : MetaM Json := do
@@ -2034,7 +2086,15 @@ def orderOpsJson (e : Expr) (inside : Name → Bool) : MetaM Json := do
     return true
   let left ← w.budget.get
   let stopped := if !finished then "error" else if left == 0 then "nodes" else ""
-  let occ := (← w.out.get).map fun (j, at_) => Json.mkObj (j ++ [("at", toJson at_)])
+  let printed ← IO.mkRef 0
+  let occ ← (← w.out.get).mapM fun (j, at_) => do
+    let subs ← at_.mapM fun s => do
+      let n ← printed.modifyGet fun k => (k, k + 1)
+      let fields ← match SubExpr.Pos.fromString? s with
+        | .ok p => if n < maxSubterms then orDefault [] (subtermAt e p) else pure []
+        | .error _ => pure []
+      return Json.mkObj ([("at", Json.str s)] ++ fields)
+    return Json.mkObj (j ++ [("at", toJson at_), ("subterms", Json.arr subs)])
   return Json.mkObj ([("occurrences", Json.arr occ), ("complete", stopped == "")] ++
     (if stopped == "" then [] else [("stopped", Json.str stopped)]))
 
