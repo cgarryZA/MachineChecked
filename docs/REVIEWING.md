@@ -344,6 +344,43 @@ changes either way. A finding with basis `checked_bridge` reads so while it rest
 composition and the check holds; any other reads as your composition, saying what it was recorded
 as and why, in `workspace show`, the reader and an export.
 
+**Connections between objects.** When one result's object is another's (the profile a
+preparation returns and the correction consumes, a function equal to another on the horizon, the
+class of a function), record how, exactly, as a `connection` evidence reference. Its ends are
+objects of Lean results: a variable of a statement (`{"decl": D, "var": "x"}`, by name or
+number), a sub-term (`{"decl": D, "at": ID}`), a declaration (`{"decl": D}`), an application's
+argument (`{"app": {...}, "param": "W"}`) or a local of a fact inside a proof (`{"fact": {...},
+"local": "x"}`). Its relation is one of `definitional` (with the definitions that `unfolds`),
+`projection` (with its `field`), `equal`, `equal on a domain` (with its `domain`), `eventually
+equal` (`along` a filter), `equal as classes` (`modulo` an equivalence, its measure named),
+`restriction` (to a `domain`), `coercion`, `transformation` (with the property it `preserves`)
+or `shared witness`; `conditions` say when it holds and `support` names the theorems,
+applications or facts that state it:
+
+```json
+{"op": "put", "record": {"id": "e-uv", "kind": "evidence", "claim": "Theorem 1",
+ "role": "supports", "ref": {"connection": {
+   "from": {"decl": "Syn.u"}, "to": {"decl": "Syn.v"}, "relation": "equal on a domain",
+   "domain": "[0, T]", "conditions": ["T > 0"], "support": [{"decl": "Syn.u_eq_v_on"}]}}}}
+```
+
+A type, a definition or a declaration both ends' statements use is refused as support: sharing
+them relates nothing. Two witnesses of separate existence results are separate choices: a
+`shared witness` between them needs a result that relates them, other than the existence results
+themselves; calling both witnesses `x` changes nothing. A single result `∃ x, P x ∧ Q x` gives
+one witness, and a connection at its one binder needs nothing further. A composition's
+identification cites connections as its `evidence`, and its relation must fit theirs. Identifying
+two objects as the same through an equality that holds only on a domain (or along a filter, or
+between classes) leaves the composition a `local to global` (or `equality transport`) obligation,
+open until a step or other evidence extends it; identify them as a `restriction` where the
+equality holds, and nothing is left open. Each connection is pinned to its ends and its support:
+when one of them changes, or the build numbers an end's binder or sub-term otherwise, that
+connection reads as changed since, and the others stay current. `compare --query connections
+CLAIM` lists them, and the informed comparison (`compare CLAIM --workspace ID`) carries them; the
+read and compare stages of an independent review do not. An export publishes the connections a
+submitted finding or its composition cites; their ends' Lean text, scope and conditions only with
+the Lean. A connection changes no status.
+
 **Requirements and the passages that govern them.** A claim's meaning can depend on sentences
 outside its display: "for every ε > 0" before an estimate, "with C independent of ε" after it, a
 standing assumption at the start of a section. Break the claim into requirements, each with the

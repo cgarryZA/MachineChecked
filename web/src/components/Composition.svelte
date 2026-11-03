@@ -1,5 +1,6 @@
 <script>
   import { compositionView } from "../lib/coverage.js";
+  import { connectionText } from "../lib/connections.js";
 
   // An auditor's composition (`composition.py`): the steps of the argument, the result each one
   // rests on, the substitutions and identifications between steps, the obligations and any Lean
@@ -16,6 +17,7 @@
   function refText(id) {
     const r = byId[id]?.ref;
     if (!r) return id;
+    if (r.connection) return connectionText(r.connection);
     if (r.app) return `${r.app.callee} applied in ${r.app.caller}${r.app.result ? ", giving " + r.app.result : ""}`;
     if (r.fact) return `${r.fact.name || r.fact.head || "a fact"}${r.fact.type ? " : " + r.fact.type : ""}, inside the proof of ${r.fact.decl}`;
     return r.decl || id;
@@ -40,11 +42,12 @@
       {/each}
     </ol>
     {#each c.identifications || [] as x}
-      <p class="small" data-identification><span class="faint">Same object:</span> {side(x.left)} and {side(x.right)} <span class="faint">({x.relation}; {x.how}{x.evidence?.length ? ": " + x.evidence.map(refText).join("; ") : ""})</span></p>
+      <p class="small" data-identification><span class="faint">{x.relation === "same object" ? "Same object" : "Identified"}:</span> {side(x.left)} and {side(x.right)} <span class="faint">({x.relation}; {x.how}{x.evidence?.length ? ": " + x.evidence.map(refText).join("; ") : ""})</span></p>
     {/each}
     {#each c.obligations || [] as o (o.id)}
       <p class="small" data-obligation={o.id} data-state={o.state}><span class={o.state === "open" ? "open" : "faint"}>{o.state === "open" ? "Open" : "Discharged"}: {OBLIGATION[o.kind] || o.kind}</span>
         {#if o.text}<span class="text">{o.text}</span>{/if}
+        {#if o.connection}<span class="faint"> · left by the connection {refText(o.connection)}</span>{/if}
         {#if o.by}<span class="faint"> · by {[...(o.by.steps || []).map((s) => "step " + s), ...(o.by.evidence || []).map(refText)].join("; ")}</span>{/if}</p>
     {/each}
     {#if v.uncovered.length}<p class="small open">No step establishes {v.uncovered.join(", ")}.</p>{/if}

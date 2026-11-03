@@ -17,8 +17,9 @@ with its first result and changes nothing.
 A workspace also keeps the auditor's breakdown of a claim into requirements, the passages of
 the paper that govern each one and their association with Lean (`requirements.py`), the
 auditor's compositions: arguments that combine several results, with an optional Lean bridge
-(`composition.py`), and, for an estimate, the differences found, candidate counterexamples and
-Lean certificates (`estimates.py`).
+(`composition.py`), the connections between objects of different results, each with its exact
+relation, conditions and support (`connections.py`), and, for an estimate, the differences
+found, candidate counterexamples and Lean certificates (`estimates.py`).
 
 A workspace also keeps the auditor's choice of the paper's main results (`main_results`): the
 claims and declarations `compare --query impact` traces from, with who chose them and the
@@ -335,15 +336,19 @@ def _app_ref(a, root) -> dict:
 def _ref(ref, snap, root) -> dict:
     """An evidence reference: exactly one of a declaration (`decl`, optional `module`), an
     application of one (`app`), a fact inside a proof (`fact`), a Lean certificate
-    (`certificate`: `{theorem, target, certifies}`, `estimates.certificate_ref`), a source
+    (`certificate`: `{theorem, target, certifies}`, `estimates.certificate_ref`), a connection
+    between two objects (`connection`: `{from, to, relation, ...}`, `connections.ref`), a source
     location (`source`: `{file, line}`), or a passage of the paper (`paper`: `{claim, quote}`)."""
     if not isinstance(ref, dict):
         raise WorkspaceError("an evidence record needs a `ref`")
-    kinds = [k for k in ("decl", "app", "fact", "certificate", "source", "paper")
+    kinds = [k for k in ("decl", "app", "fact", "certificate", "connection", "source", "paper")
              if ref.get(k)]
     if len(kinds) != 1:
         raise WorkspaceError("an evidence `ref` names exactly one of decl, app, fact, "
-                             "certificate, source, paper")
+                             "certificate, connection, source, paper")
+    if kinds == ["connection"]:
+        from .connections import ref as connection_ref
+        return {"connection": connection_ref(ref["connection"], snap, root)}
     if kinds == ["fact"]:
         return {"fact": _fact_ref(ref["fact"], root)}
     if kinds == ["app"]:
@@ -399,8 +404,11 @@ def _ref(ref, snap, root) -> dict:
 def ref_text(ref: dict) -> str:
     """What a stored evidence reference names, in the reader's words: the declaration, the
     application (`callee applied in caller`), the fact inside a proof, the certificate, the
-    source location or the paper passage."""
+    connection between two objects, the source location or the paper passage."""
     ref = ref or {}
+    if ref.get("connection"):
+        from .connections import text
+        return text(ref["connection"])
     if ref.get("decl"):
         return ref["decl"]
     if ref.get("app"):
@@ -660,6 +668,12 @@ def _record_op(ws, op, snap, root, by, at, changed):
                 (was_app.get("callee"), was_app.get("id")):
             # A cited application keeps the elaboration it was recorded from until re-pinned.
             content["ref"]["app"] = was_app
+        was_conn = (cur.get("ref") or {}).get("connection")
+        if cur["kind"] == "evidence" and not repin and content["ref"].get("connection") and \
+                was_conn:
+            # A connection keeps the versions of its ends and support until it is re-pinned.
+            from .connections import keep_pins
+            content["ref"]["connection"] = keep_pins(content["ref"]["connection"], was_conn)
         kept = {k: v for k, v in cur.items() if k not in MANAGED and k != "id"}
         if cur["kind"] in ("question", "fragment"):
             kept["state"] = cur.get("state")

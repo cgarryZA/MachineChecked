@@ -357,7 +357,10 @@ each page is kept in the facts store, like `inspect`'s answers, and reused until
 declaration's module or a module it imports changes.
 `--query composition CLAIM` gives the compositions the workspaces record for the claim (one
 workspace's with `--workspace ID`), each as `workspace show` gives it: its steps, `basis`, `gaps`,
-`next_step` and `bridge_check`. They are prior interpretations (`subject.contains`). A query
+`next_step` and `bridge_check`. They are prior interpretations (`subject.contains`).
+`--query connections CLAIM` gives the connections between objects the workspaces record for the
+claim (one workspace's with `--workspace ID`), each the evidence record as `workspace show` gives
+it, with its `currency`; they are prior interpretations too. A query
 kind whose extraction is not built yet, or that this build cannot answer, gives `available:
 false` with its `reason`, which names the issue that owns it when there is one. An error is `{"ok": false, "error":
 {kind, message, candidates}}` with exit 1 (exit 2, kind `no-build`, when there is no build to
@@ -591,26 +594,31 @@ association with Lean (`alignment`) are records of the same workspace; `show --j
 claim's `reading`, `workspace suggest --claim C --requirement r1 [--apply]` proposes nearby
 passages, and `compare C --workspace ID --json` carries the reading in
 `interpretations.requirements` (and that workspace's compositions in
-`interpretations.compositions`). Evidence that derives a property of one object of the claim's
+`interpretations.compositions`, and its connections in `interpretations.connections`; the read
+and compare stages carry none). Evidence that derives a property of one object of the claim's
 Lean names it, `"object": {"decl": NAME, "var": N}` (its number in `statement.objects`, or its
 name when only one object has it); the record pins the object's binder, and the informed
 packet lists a supporting result with that object only (basis `theorem`, and in
 `interpretations.derivations`), never with another object of the same name or type. An argument that combines several results is a `composition`
 record ([Reviewing](REVIEWING.md#saved-investigations)); a step can cite an application from
-`compare --query uses` as `"ref": {"app": {"callee": NAME, "id": APP_ID}}`. Differences from the
+`compare --query uses` as `"ref": {"app": {"callee": NAME, "id": APP_ID}}`. How one result's
+object is related to another's is evidence `{"connection": {from, to, relation, ...}}`, with its
+scope, `conditions` and `support` ([Reviewing](REVIEWING.md#saved-investigations), [data
+model](DATA_MODEL.md#workspace-prooflensworkspace1-written-by-the-reader-and-the-command-line));
+an identification of a composition cites it as evidence, and an equality that holds only on a
+domain, used to identify two objects outright, leaves an open `local to global` obligation. Differences from the
 Lean are findings with a `difference` on the affected requirement; one resolved by a checked
 bridge names its `theorem`, its `target` and the difference's `conditions` it resolves, Lean
-checks it when it is recorded, and it reads as resolved only while Lean checks it. An alignment
-that names the paper's `expression` (exactly as a passage governing it writes it: `"expression":
-"m + 4"`) with a Lean expression (`conclusion`, `binder` or `at`) gives a computed hint in the
-reading's `estimates.hints` when the two differ in quantity (`kind` `offset`, `coefficient`,
-`power` or `terms`, with both texts, both normal forms, the variables matched and the definition
-the Lean expression stands in), or `not compared` with the reason (a variable no alignment or
-symbol link matches, a construct the TeX reader does not read: "unsupported: …"). Variables
-aligned with Lean variables also give a `quantifier order` hint when the reading and the Lean
-statement choose them in a different order (`∃ C, ∀ n` against `∀ n, ∃ C`, with `dependence:
-{paper, lean}`), and a `quantifier` hint when one side produces a variable the other takes as
-given. A hint is a
+checks it when it is recorded, and it reads as resolved only while Lean checks it. An alignment that names the
+paper's `expression` (exactly as a passage governing it writes it: `"expression": "m + 4"`) with
+a Lean expression (`conclusion`, `binder` or `at`) gives a computed hint in the reading's
+`estimates.hints` when the two differ in quantity (`kind` `offset`, `coefficient`, `power` or
+`terms`, with both texts, both normal forms, the variables matched and the definition the Lean
+expression stands in), or `not compared` with the reason (a variable no alignment or symbol link
+matches, a construct the TeX reader does not read: "unsupported: …"). Variables aligned with Lean
+variables also give a `quantifier order` hint when the reading and the Lean statement choose them
+in a different order (`∃ C, ∀ n` against `∀ n, ∃ C`, with `dependence: {paper, lean}`), and a
+`quantifier` hint when one side produces a variable the other takes as given. A hint is a
 pointer, never a finding: dismiss it with a difference that names it, `"hint": {"alignment": ID,
 "kind": KIND}`. A counterexample
 (`counterexample`: a specialisation, its reduction and violation, its admissibility obligations)

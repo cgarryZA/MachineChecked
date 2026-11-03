@@ -978,7 +978,12 @@
                   "type": "string"
                 },
                 "ref": {
-                  "type": "object"
+                  "type": "object",
+                  "properties": {
+                    "connection": {
+                      "$ref": "#/$defs/connection"
+                    }
+                  }
                 }
               }
             }
@@ -1253,6 +1258,10 @@
                       },
                       "note": {
                         "type": "string"
+                      },
+                      "connection": {
+                        "type": "string",
+                        "description": "the connection whose partial relation, used to identify two objects outright, leaves this obligation"
                       }
                     }
                   }
@@ -1587,6 +1596,7 @@
             "application",
             "fact",
             "certificate",
+            "connection",
             "paper",
             "source",
             "composition",
@@ -1851,6 +1861,159 @@
           "type": "array",
           "items": {
             "$ref": "#/$defs/part"
+          }
+        }
+      }
+    },
+    "connectionEnd": {
+      "type": "object",
+      "description": "An end of a connection: a declaration's variable (var, with the binder's id), sub-term (at) or the declaration itself; an application's argument (app, param); or a local of a fact inside a proof (fact, local). Its Lean text (name, type, target, value, local_text) only with the Lean.",
+      "properties": {
+        "decl": {
+          "type": "string"
+        },
+        "module": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "build": {
+          "type": "string"
+        },
+        "fingerprint": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "digest": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "var": {
+          "type": "integer"
+        },
+        "id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "op": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "at": {
+          "type": "string"
+        },
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "type": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "target": {
+          "type": "string"
+        },
+        "app": {
+          "type": "object"
+        },
+        "param": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        },
+        "fact": {
+          "type": "object"
+        },
+        "local": {
+          "type": "string"
+        },
+        "local_text": {
+          "type": "string"
+        }
+      }
+    },
+    "connection": {
+      "type": "object",
+      "description": "A connection between two objects (connections.py): its relation, its ends and its support by identity and pins; its scope and conditions only with the Lean.",
+      "required": [
+        "relation",
+        "from",
+        "to"
+      ],
+      "properties": {
+        "relation": {
+          "enum": [
+            "definitional",
+            "projection",
+            "equal",
+            "equal on a domain",
+            "eventually equal",
+            "equal as classes",
+            "restriction",
+            "coercion",
+            "transformation",
+            "shared witness"
+          ]
+        },
+        "from": {
+          "$ref": "#/$defs/connectionEnd"
+        },
+        "to": {
+          "$ref": "#/$defs/connectionEnd"
+        },
+        "domain": {
+          "type": "string"
+        },
+        "along": {
+          "type": "string"
+        },
+        "modulo": {
+          "type": "string"
+        },
+        "field": {
+          "type": "string"
+        },
+        "preserves": {
+          "type": "string"
+        },
+        "conditions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "support": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "unfolds": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "decl"
+            ],
+            "properties": {
+              "decl": {
+                "type": "string"
+              }
+            }
           }
         }
       }

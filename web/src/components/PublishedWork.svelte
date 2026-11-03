@@ -3,6 +3,7 @@
   import { compositionView, findingCoverageView, recordedBasisText } from "../lib/coverage.js";
   import { differenceOutcome, resolutionText } from "../lib/findings.js";
   import Composition from "./Composition.svelte";
+  import { connectionText } from "../lib/connections.js";
 
   // The workspace records the audit publishes for this claim (`published_work.py`): each
   // auditor's requirements, the passages accepted as governing them, the alignments with Lean
@@ -44,6 +45,7 @@
     return t.decl + (part ? ` (${part}${t.target ? ": " + t.target : ""})` : "");
   }
   function refText(r) {
+    if (r?.connection) return connectionText(r.connection);
     if (r?.app) return `${r.app.callee} applied in ${r.app.caller}`;
     if (r?.certificate) {
       const c = r.certificate;

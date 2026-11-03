@@ -1582,6 +1582,14 @@ def cmd_compare(a):
                 if not out["results"]:
                     print(f"no composition is recorded for {out['subject']['claim']}")
                 return
+            if op == "connections":
+                from .connections import lines as connection_lines
+                for c in out["results"]:
+                    print(f"{c['workspace']} ({c['mode']}), {c['reviewer']}:")
+                    print("\n".join(connection_lines(c)))
+                if not out["results"]:
+                    print(f"no connection is recorded for {out['subject']['claim']}")
+                return
             for r in out["results"]:
                 print("\n".join(cmp.statement_lines(r)) if "statement" not in r
                       or isinstance(r.get("statement"), dict) else
@@ -1591,23 +1599,8 @@ def cmd_compare(a):
             return
         if not a.claim:
             sys.exit("name a claim (its id, key or number), or give --query OP TARGET")
-        reading = None
-        if a.workspace:
-            from . import workspace as wsp
-            from .targets import Snapshot
-            cid = site.resolve_claim(a.claim)
-            try:
-                ws = wsp.read(wsp.find(work, a.workspace))
-            except wsp.WorkspaceError as e:
-                raise cmp.CompareError(str(e), "unknown-workspace") from None
-            v = wsp.view(ws, Snapshot(work / "site" / "data"), cid, root)
-            from .objects import derivations
-            reading = {"workspace": ws["id"], "reviewer": v["reviewer"], "mode": v["mode"],
-                       **((v["claims"].get(cid) or {}).get("reading")
-                          or {"requirements": [], "witnesses": [], "alignments": [],
-                              "questions": []}),
-                       "compositions": (v["claims"].get(cid) or {}).get("compositions") or [],
-                       "derivations": derivations((v["claims"].get(cid) or {}).get("evidence"))}
+        reading = cmp.workspace_reading(site, work, a.workspace, a.claim, root) \
+            if a.workspace else None
         out = cmp.claim_packet(site, a.claim, a.stage, a.limit, a.after, reading)
     except cmp.CompareError as e:
         if e.kind in ("no-build", "no-project") and not a.json:
@@ -2085,7 +2078,8 @@ def _add_compare(sub) -> None:
                     "search CLAIM-OR-TEXT (the project's declarations by statement content), "
                     "proof-facts NAME (the facts inside its proof), uses NAME (where it is "
                     "applied, with the source of each premise), composition CLAIM (the "
-                    "auditors' compositions for it, with --workspace for one workspace), impact "
+                    "auditors' compositions for it, with --workspace for one workspace), "
+                    "connections CLAIM (the auditors' connections between objects), impact "
                     "NAME (how each main result uses it, and which claims' Lean uses it), "
                     "expansion KEY (a definition at the arguments of one application, by the "
                     "key a statement gives it)")
@@ -2104,9 +2098,10 @@ def _add_compare(sub) -> None:
                     "(with proof-facts: the facts of one page, 200 by default)")
     co.add_argument("--after", metavar="ID", help="continue a list after this item (with "
                     "proof-facts: Lean reads the page after this fact)")
-    co.add_argument("--workspace", metavar="ID", help="include this workspace's requirements and "
-                    "compositions of the claim (informed stage only); with --query composition, "
-                    "only this workspace's; with --query impact, the main results it saves")
+    co.add_argument("--workspace", metavar="ID", help="include this workspace's requirements, "
+                    "compositions and connections of the claim (informed stage only); with "
+                    "--query composition or connections, only this workspace's; with --query "
+                    "impact, the main results it saves")
     co.add_argument("--all-libraries", action="store_true",
                     help="with --query search: search every library of the project, also those "
                     "the paper's build leaves out because formalization.yaml maps them only to "
