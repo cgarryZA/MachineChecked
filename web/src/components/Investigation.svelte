@@ -7,6 +7,8 @@
   import { differenceOutcome, resolutionText } from "../lib/findings.js";
   import { mathPieces } from "../lib/comparison.js";
   import Composition from "./Composition.svelte";
+  import CompositionEditor from "./CompositionEditor.svelte";
+  import { newComposition, compositionDraft } from "../lib/workspace.js";
   import { connectionText } from "../lib/connections.js";
   import { impactHead, impactView } from "../lib/impact.js";
 
@@ -299,6 +301,11 @@
     return t.decl + (part ? ` (${part}${t.target ? ": " + t.target : ""})` : "");
   }
 
+  // The composition being written or edited (`CompositionEditor.svelte`), or null. A composition
+  // a submitted finding rests on is not edited: the engine refuses, and a new one is recorded.
+  let composing = $state(null);
+  $effect(() => { void claim.id; composing = null; });
+
   // A finding that rests on a composition reads as that composition: its argument is shown
   // with the composition, under Compositions. Its own bridge reads as the engine checked it.
   function findingView(f) {
@@ -315,6 +322,27 @@
     return r.decl || (r.source ? r.source.file + (r.source.line ? ":" + r.source.line : "") : "a passage of the paper");
   }
 </script>
+
+<!-- The investigation's compositions, each with its editor, and a new one. -->
+{#snippet compositions()}
+  <div class="compositions" aria-label="Compositions">
+    {#if here.compositions?.length || composing}<h3>Compositions</h3>
+      <p class="faint small">Arguments that combine several results, written here or with <code>machinechecked workspace update</code>.</p>{/if}
+    {#each here.compositions || [] as c (c.id)}
+      <Composition {c} evidence={here.evidence} />
+      {#if composing?.id === c.id}
+        <CompositionEditor bind:draft={composing} {claim} {here} {busy} {error} save={run} oncancel={() => { composing = null; error = null; }} />
+      {:else}
+        <p class="small"><button class="link" disabled={busy} data-edit-composition={c.id} onclick={() => (composing = compositionDraft(c))}>Edit composition {c.id}</button></p>
+      {/if}
+    {/each}
+    {#if composing && !composing.id}
+      <CompositionEditor bind:draft={composing} {claim} {here} {busy} {error} save={run} oncancel={() => { composing = null; error = null; }} />
+    {:else if !composing}
+      <p class="small"><button class="act" disabled={busy} onclick={() => (composing = newComposition())}>Write a composition</button></p>
+    {/if}
+  </div>
+{/snippet}
 
 {#if available}
   <section class="investigation" aria-label="Investigation">
@@ -353,13 +381,7 @@
           {#if f.state === "draft"}<button class="act" disabled={busy} onclick={() => submit(f)}>Submit</button>{/if}
         </div>
       {/each}
-      {#if here.compositions?.length}
-        <div class="compositions" aria-label="Compositions">
-          <h3>Compositions</h3>
-          <p class="faint small">Arguments that combine several results, recorded with <code>machinechecked workspace update</code>.</p>
-          {#each here.compositions as c (c.id)}<Composition {c} evidence={here.evidence} />{/each}
-        </div>
-      {/if}
+      {@render compositions()}
       {#if reading.requirements.length || reading.alignments.length}
         <div class="reading" aria-label="Requirements">
           <h3>Requirements</h3>
@@ -522,7 +544,7 @@
         <button class="act" disabled={busy || !question.trim()} onclick={addQuestion}>Save question</button>
       </details>
     {/if}
-    {#if error}<p class="bad small" role="alert">{error}</p>{/if}
+    {#if error && !composing}<p class="bad small" role="alert">{error}</p>{/if}
   </section>
 {/if}
 

@@ -74,3 +74,87 @@ export function humanId(name) {
   const slug = String(name || "").trim().replace(/\s+/g, "-");
   return slug ? `human:${slug}` : "";
 }
+
+// -- writing a composition ------------------------------------------------------------------
+// A composition (`composition.py`) as the reader's form holds it, and the `put` the engine
+// checks. The engine refuses what does not hold (a step resting on nothing, an `after` that is not
+// an earlier step, a retained witness of a step it does not follow, full coverage with a printed
+// requirement no step establishes or an obligation open, a bridge Lean does not check) and adds
+// the obligations an identification through a partial connection leaves; the reader sends the
+// form as it is and shows the refusal as the engine words it.
+
+export const COMPOSITION_RELATIONS = ["same object", "equal", "restriction", "coercion", "other"];
+export const COMPOSITION_HOW = ["evidence", "retained witness", "definition"];
+export const OBLIGATION_KINDS = ["compatible witnesses", "local to global", "equality transport",
+  "constant dependence", "genericity", "side condition", "other"];
+
+const freshId = (prefix, taken) => {
+  let n = 1;
+  while (taken.includes(prefix + n)) n++;
+  return prefix + n;
+};
+export const newStep = (steps = []) => ({ id: freshId("s", steps.map((s) => s.id)), establishes: "", requirements: [],
+  uses: [], after: [], substitutions: [], inference: "" });
+export const newIdentification = (steps = []) => ({ left: { step: steps[0]?.id || "", object: "" },
+  right: { step: steps.at(-1)?.id || "", object: "" }, relation: "same object", how: "evidence", evidence: [] });
+export const newObligation = (obligations = []) => ({ id: freshId("o", obligations.map((o) => o.id)), kind: "compatible witnesses",
+  text: "", state: "open", steps: [], evidence: [] });
+export const newComposition = () => ({ id: null, rev: null, statement: "", steps: [newStep()], identifications: [],
+  obligations: [], coverage: "", bridge: { theorem: "", target: "" } });
+
+// A saved composition (`workspace.view`) as the form edits it.
+export function compositionDraft(c) {
+  return {
+    id: c.id, rev: c.rev ?? null, statement: c.statement || "",
+    steps: (c.steps || []).map((s) => ({ id: s.id, establishes: s.establishes || "", requirements: [...(s.requirements || [])],
+      uses: [...(s.uses || [])], after: [...(s.after || [])],
+      substitutions: (s.substitutions || []).map((x) => ({ variable: x.variable, value: x.value, in: x.in || "" })),
+      inference: s.inference || "" })),
+    identifications: (c.identifications || []).map((x) => ({ left: { ...x.left }, right: { ...x.right },
+      relation: x.relation, how: x.how, evidence: [...(x.evidence || [])] })),
+    obligations: (c.obligations || []).map((o) => ({ id: o.id, kind: o.kind, text: o.text || "", state: o.state,
+      steps: [...(o.by?.steps || [])], evidence: [...(o.by?.evidence || [])], ...(o.connection ? { connection: o.connection } : {}) })),
+    coverage: c.coverage || "", bridge: { theorem: c.bridge?.theorem || "", target: c.bridge?.target || "" },
+  };
+}
+
+// The draft without step `id`, and without the references to it the form shows as choices (the
+// steps another follows from, the steps that discharge an obligation). An identification that
+// names it stays, for the engine to refuse.
+export function withoutStep(draft, id) {
+  return { ...draft, steps: draft.steps.filter((s) => s.id !== id).map((s) => ({ ...s, after: s.after.filter((a) => a !== id) })),
+    obligations: draft.obligations.map((o) => ({ ...o, steps: o.steps.filter((s) => s !== id) })) };
+}
+
+const words = (v) => (typeof v === "string" ? v.trim() : "");
+
+// The `put` that saves the draft for `claim`: a new composition, or the next revision of the one
+// it edits (`base_rev`). Empty optional fields are left out; nothing else is changed.
+export function compositionOp(draft, claim) {
+  const rec = { kind: "composition", claim,
+    steps: draft.steps.map((s) => ({ id: s.id, establishes: s.establishes,
+      ...(s.requirements.length ? { requirements: s.requirements } : {}),
+      ...(s.uses.length ? { uses: s.uses } : {}), ...(s.after.length ? { after: s.after } : {}),
+      ...(s.substitutions.length ? { substitutions: s.substitutions.map((x) => ({ variable: x.variable, value: x.value, ...(x.in ? { in: x.in } : {}) })) } : {}),
+      ...(words(s.inference) ? { inference: s.inference } : {}) })) };
+  if (words(draft.statement)) rec.statement = draft.statement;
+  if (draft.identifications.length) {
+    rec.identifications = draft.identifications.map((x) => ({ left: x.left, right: x.right, relation: x.relation, how: x.how,
+      ...(x.evidence.length ? { evidence: x.evidence } : {}) }));
+  }
+  if (draft.obligations.length) {
+    rec.obligations = draft.obligations.map((o) => ({ id: o.id, kind: o.kind, text: o.text, state: o.state,
+      ...(o.steps.length || o.evidence.length ? { by: { ...(o.steps.length ? { steps: o.steps } : {}), ...(o.evidence.length ? { evidence: o.evidence } : {}) } } : {}),
+      ...(o.connection ? { connection: o.connection } : {}) }));
+  }
+  if (draft.coverage) rec.coverage = draft.coverage;
+  if (words(draft.bridge.theorem) || words(draft.bridge.target)) rec.bridge = { theorem: words(draft.bridge.theorem), target: words(draft.bridge.target) };
+  return { op: "put", ...(draft.id ? { id: draft.id, base_rev: draft.rev, record: { id: draft.id, ...rec } } : { record: { id: newId("c"), ...rec } }) };
+}
+
+// The evidence records of a claim a composition can cite: a step rests on a declaration, an
+// application or a fact inside a proof; an identification or a discharge may also rest on a
+// connection between objects. A rejected candidate is cited by neither.
+const usable = (e) => e?.role !== "rejected";
+export const stepEvidence = (evidence) => (evidence || []).filter((e) => usable(e) && (e.ref?.decl || e.ref?.app || e.ref?.fact));
+export const linkEvidence = (evidence) => (evidence || []).filter((e) => usable(e) && (e.ref?.decl || e.ref?.app || e.ref?.fact || e.ref?.connection));
