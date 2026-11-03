@@ -607,7 +607,9 @@ scope, `conditions` and `support` ([Reviewing](REVIEWING.md#saved-investigations
 model](DATA_MODEL.md#workspace-prooflensworkspace1-written-by-the-reader-and-the-command-line));
 an identification of a composition cites it as evidence, and an equality that holds only on a
 domain, used to identify two objects outright, leaves an open `local to global` obligation. Differences from the
-Lean are findings with a `difference` on the affected requirement. An alignment that names the
+Lean are findings with a `difference` on the affected requirement; one resolved by a checked
+bridge names its `theorem`, its `target` and the difference's `conditions` it resolves, Lean
+checks it when it is recorded, and it reads as resolved only while Lean checks it. An alignment that names the
 paper's `expression` (exactly as a passage governing it writes it: `"expression": "m + 4"`) with
 a Lean expression (`conclusion`, `binder` or `at`) gives a computed hint in the reading's
 `estimates.hints` when the two differ in quantity (`kind` `offset`, `coefficient`, `power` or

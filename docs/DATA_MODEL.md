@@ -869,10 +869,16 @@ optional `clause` and `note`, `rev`, `created_at`/`created_by`, `updated_at`/`up
   may also record a `difference` on its `requirement`
   (`{feature, paper, lean, outcome, conditions, transport, resolution, why, hint}`; `hint` names
   the computed hint it settles: `{decl, binder}` for a hypothesis no requirement is aligned with,
-  `{alignment, kind}` for a hint of an alignment's expression), a `verdict`
-  on a printed step (`holds as printed`, `holds, with a gap in the argument`, `false as
-  printed`, `cannot determine`) and the `counterexamples` it rests on (pinned by digest); such a
-  finding is submitted without a coverage. `state` is `draft`
+  `{alignment, kind}` for a hint of an alignment's expression; a `resolution` is `{by, text,
+  conditions?, theorem?}`, and a `checked bridge` adds `target`, optional `module`, and what Lean
+  checked when it was recorded: `module`, `file`, `file_sha256`, `type`, `axioms`,
+  `target_fingerprint`, the claim's passage `source_sha256` and `checked_at`; shown, the
+  difference carries `bridge_check` (`{state: checked | stale | unchecked, reasons}`) and the
+  conditions its resolution leaves open, `open_conditions` and `partial`, and is resolved only
+  while the bridge is checked and no condition is open), a `verdict` on a printed step (`holds as
+  printed`, `holds, with a gap in the argument`, `false as printed`, `cannot determine`) and the
+  `counterexamples` it rests on (pinned by digest); such a finding is submitted without a
+  coverage. `state` is `draft`
   or `submitted` (`submitted_at`). A submitted finding is never edited or deleted: a later
   finding names it in `supersedes`, with its `reason`, and both are kept. A finding records what
   it rests on when it is submitted (`dependencies`, below).
@@ -1042,7 +1048,7 @@ identity:
 | `object` | an alignment of one of those requirements | `requirements`, `relation`, `lean` (each target's place, `target` text, `fingerprint`, `digest`, `closure`) |
 | `declaration`, `application`, `fact`, `certificate`, `connection`, `paper`, `source` | evidence it cites, or that its composition or counterexamples cite | `role` and `ref`: the reference's identifying fields and pins (a declaration's `closure` and `expansions` included; a connection whole, with its ends, scope and support) |
 | `composition` | the composition it rests on | `sha256`: a digest of its statement, steps (their evidence, requirements, substitutions and inferences), identifications, obligations, coverage and bridge pins |
-| `bridge` | for a finding recorded as a checked bridge: its composition's bridge, or its own | `theorem`, `target`, and for a composition's, `target_fingerprint` and `source_sha256` |
+| `bridge` | for a finding recorded as a checked bridge: its composition's bridge, or its own; for a difference resolved by a checked bridge, that bridge (`of`: `resolution`) | `theorem`, `target`, and for a composition's or a resolution's, `target_fingerprint` and `source_sha256` |
 | `counterexample` | a counterexample it cites | `sha256` (the finding's pin of it) |
 
 `dependencies` is `{kinds, items, unknown, at}`: `kinds` the evidence kinds it uses

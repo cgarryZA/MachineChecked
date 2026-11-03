@@ -181,6 +181,39 @@ export function placeFindings(sets, statements) {
 // -- one finding in words ---------------------------------------------------------------------
 
 const OUTCOME = { open: "not yet decided", difference: "a difference", resolved: "resolved", "no difference": "no difference" };
+
+// A recorded difference as the engine shows it (`estimates.difference_view`): a resolution by a
+// checked bridge carries whether Lean checks the bridge now (`bridge_check`), and one that names
+// some of the difference's conditions leaves the others open (`open_conditions`, `partial`). The
+// words are the engine's (`estimates.outcome_text`, `estimates.resolution_text`): a bridge Lean
+// does not check now is recorded, never resolving.
+const bridgeHolds = (d) => !d?.bridge_check || d.bridge_check.state === "checked";
+const conditionWords = (cs) => (cs.length === 1 ? "the condition " : "the conditions ") + cs.join(", ");
+
+// A difference's outcome, in words.
+export function differenceOutcome(d) {
+  if (d?.outcome === "resolved") {
+    if (!bridgeHolds(d)) return "recorded as resolved; Lean does not check its bridge now";
+    if (d.partial || d.open_conditions?.length) return "resolved in part";
+  }
+  return OUTCOME[d?.outcome] || d?.outcome || "";
+}
+
+// How a difference is resolved, in words; null without a resolution.
+export function resolutionText(d) {
+  const r = d?.resolution;
+  if (!r) return null;
+  const named = r.conditions || [];
+  const where = named.length ? " for " + conditionWords(named) : "";
+  const left = d.open_conditions || [];
+  const still = left.length ? "; still open: " + conditionWords(left) : d.partial ? "; some of its conditions are still open" : "";
+  if (!bridgeHolds(d)) {
+    const why = (d.bridge_check.reasons || []).join("; ") || "it is not checked";
+    return `recorded as resolved by a checked bridge${where}; Lean does not check it now: ${why}${still}`;
+  }
+  return `resolved by ${r.by}${where}` + (r.text ? ": " + r.text : "") + still;
+}
+
 const MODE = { informed: "informed investigation", independent: "independent review" };
 const RELATION = { corresponds: "corresponds", "additional assumption": "an additional assumption of the Lean",
                    changed: "changed", "alternative representation": "an alternative representation" };
@@ -289,7 +322,7 @@ export function findingView(entry, statements, claimId) {
     ? { headline: compositionView({ coverage: f.coverage, basis: f.basis, bridge_check: comp.bridge_check }).headline, lines: [], tone: "reading" }
     : findingCoverageView({ ...f, refs: cited.map((e) => e.ref?.decl).filter(Boolean) });
   const d = f.difference || null;
-  const diffWords = d ? `${/^[aeiou]/i.test(d.feature || "") ? "An" : "A"} ${d.feature} difference: ${OUTCOME[d.outcome] || d.outcome}` : null;
+  const diffWords = d ? `${/^[aeiou]/i.test(d.feature || "") ? "An" : "A"} ${d.feature} difference: ${differenceOutcome(d)}` : null;
   const stepWords = f.verdict ? "The printed step: " + f.verdict : null;
   // A finding that records only a note is headed by the note itself.
   const head = cv?.headline || stepWords || diffWords || f.note || "A finding recorded without a note";
@@ -314,7 +347,7 @@ export function findingView(entry, statements, claimId) {
   return {
     id: f.id, head, tone: cv?.tone || (d?.outcome === "difference" ? "warning" : f.verdict ? "reading" : "note"),
     lines: cv?.lines || [], recorded: comp ? null : recordedBasisText(f),
-    composition: comp, difference: d ? { ...d, words: diffWords === head ? null : diffWords } : null,
+    composition: comp, difference: d ? { ...d, words: diffWords === head ? null : diffWords, how: resolutionText(d) } : null,
     verdict: stepWords && stepWords !== head ? stepWords : null, note: f.note && f.note !== head ? f.note : null, clause: f.clause || null,
     question: f.coverage === "unresolved" ? f.question || null : null,
     requirement: req, passages, lean,

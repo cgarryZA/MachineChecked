@@ -529,6 +529,23 @@ fs.cpSync(path.join(root, "toyfind"), path.join(root, "toyfindclosed"), { recurs
   if (parts.status !== 0) throw new Error("the engine could not summarise the parts:\n" + parts.stderr);
 }
 
+// #499: a copy of `toyfind` whose proof step carries a difference recorded as resolved by a checked
+// bridge that was not checked against the Lean project at export (`published_work._difference`).
+fs.cpSync(path.join(root, "toyfind"), path.join(root, "toyfindbridge"), { recursive: true });
+{
+  const row = TOY.claims.find((c) => c.id === "T:eq:bound-range");
+  const file = path.join(root, "toyfindbridge/data/work", row.file);
+  const w = JSON.parse(fs.readFileSync(file, "utf8"));
+  w.readings[0].findings.push({ id: "f-res", kind: "finding", claim: "T:eq:bound-range", requirement: "n.k.1", state: "submitted",
+    submitted_at: "2026-10-21T00:00:00Z", created_by: "human:A-Auditor", evidence: [], in_force: true, currency: cur,
+    note: "SYNTHETIC-BRIDGE: a bridge restates the step for k ≥ 1.",
+    difference: { feature: "domain", outcome: "resolved", paper: "k ≥ 0", lean: "1 ≤ k",
+                  resolution: { by: "checked bridge", theorem: "ToyAudit.bound_range_corrected_holds", target: "ToyAudit.bound_range_corrected",
+                                text: "the bridge restates it" },
+                  bridge_check: { state: "unchecked", reasons: ["no Lean project to check the bridge against"] } } });
+  fs.writeFileSync(file, JSON.stringify(w));
+}
+
 // #414: the page with two audits of one version (`combined`), as machinechecked.org writes it with
 // each listed audit's semantic summary on its registry entry (its scripts/summary.py record: the
 // counts of the audited paper, the sets of readings, and the pins it was checked against). The
@@ -2900,6 +2917,24 @@ for (const width of [1300, 390]) {
   });
 }
 
+// #499: a difference recorded as resolved by a checked bridge that Lean did not check at export
+// reads as recorded, with why, at its clause and with the audit's readings; never as resolved.
+await check("a checked bridge Lean does not check reads as recorded, not resolved", 1300, async (pg) => {
+  await pg.goto(origin + `/toyfindbridge/#/r/${TOY.release}/read/T/${encodeURIComponent("T:eq:bound-range")}`);
+  const res = pg.locator(".claim-view .cmp .row-findings.claim [data-finding='f-res']");
+  await res.waitFor();
+  const recorded = "recorded as resolved by a checked bridge; Lean does not check it now: no Lean project to check the bridge against";
+  const text = words(await res.textContent());
+  assert.match(text, /^A domain difference: recorded as resolved; Lean does not check its bridge now /);
+  assert.ok(text.includes("paper k ≥ 0; Lean 1 ≤ k · " + recorded), text);
+  assert.equal(await res.locator(".diff [data-bridge=unchecked]").count(), 1);
+  const pub = pg.locator(".claim-view .published-work [data-kind='finding']", { hasText: "SYNTHETIC-BRIDGE" });
+  const ptext = words(await pub.textContent());
+  assert.match(ptext, /^A domain difference: recorded as resolved; Lean does not check its bridge now/);
+  assert.ok(ptext.includes(recorded), ptext);
+  for (const t of [text, ptext]) assert.ok(!/resolved by checked bridge|difference: resolved/.test(t), t);
+});
+
 // #77: on a desktop, a short desktop and a phone, the comparison keeps its complete content, its
 // sources, keyboard operation and the browser's history.
 for (const [width, height] of [[1300, 900], [1300, 520], [390, 844]]) {
@@ -3976,6 +4011,12 @@ wsp.update(p, [
   {"op": "put", "record": {"id": "e-pro", "kind": "evidence", "claim": C, "role": "supports", "ref": cert("ToyAudit.bound_range_corrected_holds", "ToyAudit.bound_range_corrected", "proves", "∀ (n k : Nat), 1 ≤ k → n ≤ k * n ^ 2")}},
   {"op": "put", "record": {"id": "f-fixed", "kind": "finding", "claim": C, "requirement": "n.kc", "coverage": "full", "basis": "checked_bridge", "evidence": ["e-pro"], "note": "holds for k ≥ 1"}},
   {"op": "put", "record": {"id": "f-order", "kind": "finding", "claim": C, "requirement": "n.k.1", "difference": {"feature": "domain", "paper": "k ≥ 0", "lean": "1 ≤ k", "outcome": "difference", "transport": "none applies: k = 0 is excluded"}, "note": "the Lean adds k ≥ 1"}}], s)
+# A difference recorded as resolved by a checked bridge Lean never checked, as a hand-edited
+# workspace file can hold one (#499): the engine reads it as recorded, not resolved.
+ws = wsp.read(p)
+ws["records"]["f-bridge"] = {**ws["records"]["f-order"], "id": "f-bridge", "note": "SYNTHETIC-BRIDGE", "difference": {"feature": "representation", "paper": "k n²", "lean": "k * n ^ 2", "outcome": "resolved", "transport": "a bridge", "resolution": {"by": "checked bridge", "theorem": "ToyAudit.bound_range_corrected_holds", "target": "ToyAudit.bound_range_corrected", "text": "the bridge restates it"}}}
+with wsp._locked(p):
+    wsp._write(p, ws)
 print("null")`);
       await pg.goto(`http://127.0.0.1:${port}/#/r/${TOY.release}/claim/${encodeURIComponent("T:eq:bound-range")}`);
       const inv = pg.locator("section.investigation");
@@ -3996,6 +4037,11 @@ print("null")`);
       assert.match(await corrected.locator(".cert").textContent(), /ToyAudit\.bound_range_corrected_holds is exactly ToyAudit\.bound_range_corrected/);
       assert.match(await inv.locator("[data-req='n.k']").textContent(), /n\.k for every k \(k ≥ 0\): every natural number k ≥ 0/);
       assert.match(await req.locator(".diff[data-feature=domain]").textContent(), /Domain, a difference: paper k ≥ 0; Lean 1 ≤ k · transport inspected: none applies/);
+      const bridged = "recorded as resolved by a checked bridge; Lean does not check it now: Lean did not check it when it was recorded";
+      assert.equal(words(await req.locator(".diff[data-feature=representation]").textContent()),
+                   "Representation, recorded as resolved; Lean does not check its bridge now: paper k n²; Lean k * n ^ 2 · transport inspected: a bridge · " + bridged);
+      const bridgeFinding = inv.locator("[data-kind=finding]", { hasText: "SYNTHETIC-BRIDGE" });
+      assert.equal(await bridgeFinding.locator("strong").first().textContent(), "A representation difference: recorded as resolved; Lean does not check its bridge now");
       assert.match(await inv.locator("[data-kind=finding]", { hasText: "k = 0, n = 1." }).textContent(), /The printed step: false as printed/);
       // A finding recorded as a checked bridge with no bridge reads as the auditor's composition.
       const fixed = inv.locator("[data-kind=finding]", { hasText: "holds for k ≥ 1" });

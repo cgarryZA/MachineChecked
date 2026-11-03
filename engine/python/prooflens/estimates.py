@@ -10,7 +10,12 @@ correction of one of these requirements gives a separate reading; the printed on
 A difference is a finding on the affected requirement: the feature compared (a domain, the order
 of quantifiers, a constant's dependence, a derivative order, …), the exact paper and Lean
 expressions, and what the auditor concluded: still open, a difference, resolved by a stated
-transport (a common extension, a checked bridge, an argument), or no difference at all.
+transport (a common extension, a checked bridge, an argument), or no difference at all. A
+resolution that names some of the difference's conditions resolves those only; the others stay
+open. A checked bridge is a theorem whose type is exactly a target proposition: Lean checks it
+(`check`) when it is recorded, and it is refused otherwise; it is pinned to the target and the
+claim's passage as they were then. It reads as resolving the difference only while Lean checks it
+now (`resolution_check`); otherwise as recorded as resolved, with what Lean does not check.
 
 A counterexample is an auditor's record against one reading of a requirement: its
 specialisation (values for the variables, channels set to zero, dimensions, limits), the
@@ -92,10 +97,18 @@ def _texts(v, what) -> list[str]:
 
 DIFF_KEYS = ("feature", "paper", "lean", "outcome", "conditions", "transport", "resolution",
              "why", "hint")
+RESOLUTION_KEYS = ("by", "text", "theorem", "target", "module", "conditions")
+# What a checked bridge keeps of Lean's check when it is recorded.
+BRIDGE_PINS = ("module", "file", "file_sha256", "type", "axioms", "target_fingerprint",
+               "source_sha256", "checked_at")
+BRIDGE = "checked bridge"
 
 
-def difference_content(d) -> dict:
-    """A difference as a finding records it, checked."""
+def difference_content(d, cur: dict | None = None, repin: bool = False, snap=None,
+                       root: Path | None = None, claim: str | None = None) -> dict:
+    """A difference as a finding records it, checked. A resolution by a checked bridge is
+    checked by Lean now against the claim's passage in `snap` (`_bridge_pins`), unless `cur`, the
+    difference being replaced, holds the same bridge and it is not re-pinned."""
     if not isinstance(d, dict):
         raise _err("a difference is {feature, paper, lean, outcome, …}")
     extra = set(d) - set(DIFF_KEYS)
@@ -120,15 +133,33 @@ def difference_content(d) -> dict:
     if out["outcome"] == "resolved":
         if not isinstance(res, dict):
             raise _err("a resolved difference names its resolution (`resolution`: {by, text})")
-        r = {"by": _choice(res.get("by"), RESOLVED_BY, "the resolution", False),
-             "text": _text(res.get("text"), "how it resolves the difference (`text`)", True)}
-        if res.get("theorem") not in (None, ""):
-            r["theorem"] = _text(res["theorem"], "the theorem").strip()
-        if r["by"] == "checked bridge" and not r.get("theorem"):
-            raise _err("a checked bridge names its theorem (`resolution.theorem`)")
-        extra = set(res) - {"by", "text", "theorem"}
+        extra = set(res) - set(RESOLUTION_KEYS) - set(BRIDGE_PINS)
         if extra:
             raise _err(f"a resolution has no field {', '.join(sorted(extra))}")
+        r = {"by": _choice(res.get("by"), RESOLVED_BY, "the resolution", False),
+             "text": _text(res.get("text"), "how it resolves the difference (`text`)", True)}
+        for k in ("theorem", "target", "module"):
+            if res.get(k) not in (None, ""):
+                r[k] = _text(res[k], f"the bridge's {k}").strip()
+        named = list(dict.fromkeys(_texts(res.get("conditions"), "`resolution.conditions`")))
+        for c in named:
+            if c not in conds:
+                raise _err(f"“{c}” is not one of the difference's conditions: a resolution "
+                           "names the conditions it resolves (`resolution.conditions`)")
+        if named:
+            r["conditions"] = named
+        if r["by"] == BRIDGE:
+            if not (r.get("theorem") and r.get("target")):
+                raise _err("a checked bridge names its theorem and the target proposition its "
+                           "type states exactly (`resolution.theorem`, `resolution.target`)")
+            if conds and not named:
+                raise _err("a checked bridge resolves only the conditions it names: name them "
+                           "(`resolution.conditions`); the difference's others stay open")
+            old = ((cur or {}).get("resolution") or {}) \
+                if (cur or {}).get("outcome") == "resolved" else {}
+            r.update(_bridge_pins(r, old, repin, snap, root, claim))
+        elif any(k in r for k in ("target", "module")) or set(res) & set(BRIDGE_PINS):
+            raise _err("only a checked bridge has a target and what Lean checked")
         out["resolution"] = r
     elif res is not None:
         raise _err("only a resolved difference has a resolution")
@@ -139,6 +170,168 @@ def difference_content(d) -> dict:
     if d.get("hint") is not None:
         out["hint"] = hint_ref(d["hint"])
     return out
+
+
+def _bridge_pins(r: dict, old: dict, repin: bool, snap, root, claim: str | None) -> dict:
+    """What a checked bridge keeps of Lean's check: Lean checks now that the type of its theorem
+    is exactly its target, a proposition stated as a definition, with no `sorry` and only the
+    standard axioms (`check`), and the bridge is pinned to the target as Lean has it and to the
+    claim's passage. A bridge Lean does not check is refused. One already recorded keeps the
+    versions it was checked at until it is re-pinned."""
+    if not repin and old.get("by") == BRIDGE and old.get("checked_at") and \
+            (old.get("theorem"), old.get("target")) == (r["theorem"], r["target"]) and \
+            r.get("module") in (None, old.get("module")):
+        return {k: old[k] for k in BRIDGE_PINS if k in old}
+    lroot = lean_root(root)
+    if lroot is None or snap is None or not claim:
+        raise _err("a checked bridge is checked by Lean when it is recorded, against the claim's "
+                   "passage: it needs the Lean project and its build")
+    from .simple import ViewError
+    thm, target = r["theorem"], r["target"]
+    try:
+        doc = check(lroot, thm, target, "proves", r.get("module"))
+    except ViewError as e:
+        raise _err(f"the bridge {thm} for {target} was not checked: {e}") from None
+    if not doc.get("ok") or doc.get("status") != "checked":
+        why = doc.get("reasons") or [doc.get("reason") or doc.get("status")]
+        raise _err(f"the bridge {thm} for {target} is refused: " + "; ".join(map(str, why)))
+    import datetime as _dt
+    pins = {"module": doc.get("module"), "file": doc.get("file"),
+            "file_sha256": doc.get("file_sha256"), "type": doc.get("type"),
+            "axioms": doc.get("axioms") or [], "target_fingerprint": doc.get("target_fingerprint"),
+            "source_sha256": (snap.chunk(claim) or {}).get("source_sha256"),
+            "checked_at": _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
+    return {k: v for k, v in pins.items() if v is not None}
+
+
+def is_bridge(d: dict | None) -> bool:
+    """Whether a difference is recorded as resolved by a checked bridge."""
+    return (d or {}).get("outcome") == "resolved" and \
+        ((d or {}).get("resolution") or {}).get("by") == BRIDGE
+
+
+def resolution_check(d: dict | None, claim: str, snap, root, check_now: bool = False) \
+        -> dict | None:
+    """Whether Lean checks now the checked bridge a difference is resolved by, or None for a
+    difference not resolved by one: `checked` (the type of its theorem is exactly its target, a
+    proposition stated as a definition, with no `sorry` and only the standard axioms, and the
+    target and the claim's passage are the versions it was recorded with), `stale` (Lean checks
+    it, but the target or the passage changed since), or `unchecked`, each with `reasons`. The
+    answer is read from the facts store, or asked of Lean when `check_now` is set; without `snap`
+    the passage is not compared."""
+    if not is_bridge(d):
+        return None
+    res = d["resolution"]
+    out = {"theorem": res.get("theorem"), "target": res.get("target"), "state": "unchecked",
+           "reasons": []}
+    if not (res.get("theorem") and res.get("target")):
+        out["reasons"].append("no theorem and target proposition are recorded for it")
+        return out
+    if not (res.get("checked_at") and res.get("target_fingerprint")):
+        out["reasons"].append("Lean did not check it when it was recorded")
+        return out
+    lroot = lean_root(root)
+    if lroot is None:
+        out["reasons"].append("no Lean project to check the bridge against")
+        return out
+    from .deps import NOT_CHECKED, not_checked_reason
+    from .simple import ViewError
+    try:
+        doc = check(lroot, res["theorem"], res["target"], "proves", res.get("module"),
+                    cached_only=not check_now)
+    except ViewError as e:
+        out["reasons"].append(str(e))
+        return out
+    if not doc.get("ok") or doc.get("status") != "checked":
+        if doc.get("status") in NOT_CHECKED:
+            out["reasons"].append(not_checked_reason(res["theorem"], doc))
+        else:
+            out["reasons"] += [str(x) for x in doc.get("reasons") or []] or \
+                [doc.get("reason") or str(doc.get("status"))]
+        return out
+    why = out["reasons"]
+    if doc.get("target_fingerprint") != res.get("target_fingerprint"):
+        why.append("the target is not the version the auditor read")
+    if snap is not None:
+        from .dependencies import unprinted
+        ch = snap.chunk(claim)
+        passage = None if ch is None or unprinted(ch, claim) else ch.get("source_sha256")
+        if passage != res.get("source_sha256"):
+            why.append("the paper's passage is not the version the auditor read")
+    out["state"] = "stale" if why else "checked"
+    return out
+
+
+def open_conditions(d: dict | None) -> list[str]:
+    """The conditions of a resolved difference that its resolution does not name: they stay
+    open. A resolution that names none resolves the difference as a whole."""
+    d = d or {}
+    named = (d.get("resolution") or {}).get("conditions") or []
+    if d.get("outcome") != "resolved" or not named:
+        return []
+    return [c for c in d.get("conditions") or [] if c not in named]
+
+
+def difference_view(d: dict, chk: dict | None) -> dict:
+    """A recorded difference as it is shown: for a resolution by a checked bridge, whether Lean
+    checks the bridge now (`bridge_check`, from `resolution_check`; a check not given reads as
+    unchecked), and the conditions its resolution leaves open (`open_conditions`, and `partial`).
+    """
+    out = dict(d)
+    if is_bridge(d):
+        c = chk or {"state": "unchecked", "reasons": ["Lean's check of the bridge is not known"]}
+        out["bridge_check"] = {"state": c.get("state") or "unchecked",
+                               "reasons": list(c.get("reasons") or [])}
+    left = open_conditions(d)
+    if left:
+        out.update(open_conditions=left, partial=True)
+    return out
+
+
+def settled(dv: dict) -> bool:
+    """Whether a difference as shown (`difference_view`) is settled now: found to be none, or
+    resolved as a whole by a resolution that holds now (a checked bridge only while Lean checks
+    it)."""
+    if dv.get("outcome") == "no difference":
+        return True
+    return dv.get("outcome") == "resolved" and not dv.get("partial") and \
+        (dv.get("bridge_check") or {"state": "checked"})["state"] == "checked"
+
+
+def _conditions_words(cs: list[str]) -> str:
+    return ("the condition " if len(cs) == 1 else "the conditions ") + ", ".join(cs)
+
+
+def outcome_text(dv: dict) -> str:
+    """A difference's outcome as shown (`difference_view`), in words: a resolution by a checked
+    bridge Lean does not check now is recorded, not holding, and one that leaves conditions open
+    resolves the difference in part."""
+    if dv.get("outcome") == "resolved":
+        if (dv.get("bridge_check") or {"state": "checked"})["state"] != "checked":
+            return "recorded as resolved; Lean does not check its bridge now"
+        if dv.get("partial"):
+            return "resolved in part"
+    return OUTCOME_WORDS.get(dv.get("outcome"), str(dv.get("outcome")))
+
+
+def resolution_text(dv: dict) -> str | None:
+    """How a difference as shown (`difference_view`) is resolved, in words; None without a
+    resolution. A checked bridge Lean does not check now reads as recorded, with why."""
+    r = dv.get("resolution")
+    if not r:
+        return None
+    named = r.get("conditions") or []
+    where = f" for {_conditions_words(named)}" if named else ""
+    left = dv.get("open_conditions") or []
+    still = (f"; still open: {_conditions_words(left)}" if left else
+             "; some of its conditions are still open" if dv.get("partial") else "")
+    b = dv.get("bridge_check")
+    if b and b.get("state") != "checked":
+        why = "; ".join(b.get("reasons") or []) or "it is not checked"
+        return (f"recorded as resolved by a checked bridge{where}; Lean does not check it now: "
+                f"{why}{still}")
+    return f"resolved by {r.get('by')}{where}" + (f": {r['text']}" if r.get("text") else "") + \
+        still
 
 
 def hint_ref(h) -> dict:
@@ -278,12 +471,15 @@ def counterexample_pin(c: dict) -> str:
                                           "obligation_sha256", "evidence_pins")})
 
 
-def finding_fields(out: dict, rec: dict, ws: dict, cur: dict | None, repin: bool) -> None:
-    """The fields a finding adds for an estimate: a structured difference, a verdict on a
-    printed step, and the counterexamples it rests on (pinned as they were)."""
+def finding_fields(out: dict, rec: dict, ws: dict, cur: dict | None, repin: bool, snap=None,
+                   root: Path | None = None) -> None:
+    """The fields a finding adds for an estimate: a structured difference (a checked bridge it is
+    resolved by checked by Lean in the project at `root`, against the build `snap`), a verdict on
+    a printed step, and the counterexamples it rests on (pinned as they were)."""
     from .steps import STATE
     if rec.get("difference") is not None:
-        out["difference"] = difference_content(rec["difference"])
+        out["difference"] = difference_content(rec["difference"], (cur or {}).get("difference"),
+                                               repin, snap, root, out["claim"])
         if not out.get("requirement"):
             raise _err("a difference is attached to the requirement it affects (`requirement`)")
         _hint_alignment(out, ws)
@@ -1343,7 +1539,8 @@ def analysis(records: list[dict], cur: dict, snap=None, claim: str | None = None
     counterexample or a verdict, its printed reading and each corrected reading,
     each with its obligation, counterexamples (analysed against that reading), the findings and
     certificates that are evidence for it; the differences recorded, open ones apart from
-    resolved ones; and the computed hints."""
+    settled ones (a resolution by a checked bridge Lean does not check now, as `cur` gives it,
+    or one that leaves conditions open, is not settled); and the computed hints."""
     from .workspace import current_findings
     reqs = {r["local_id"]: r for r in records if r.get("kind") == "requirement"}
     cxs = [r for r in records if r.get("kind") == "counterexample"]
@@ -1419,17 +1616,19 @@ def analysis(records: list[dict], cur: dict, snap=None, claim: str | None = None
                                          "currency": cur.get(f["id"], unknown)} for f in fs],
                            "certificates": certs})
         out.append({"requirement": lid, "readings": rd_out})
-    diffs, settled = [], []
+    diffs, done = [], []
     for f in sorted(finds, key=lambda f: (f["created_at"], f["id"])):
         if not f.get("difference") or f["id"] not in in_force:
             continue
-        item = {"finding": f["id"], "requirement": f.get("requirement"), **f["difference"],
+        # A resolution holds only as `difference_view` reads it now: a checked bridge Lean does
+        # not check, or conditions left open, keep the difference with the open ones.
+        dv = difference_view(f["difference"], (cur.get(f["id"]) or {}).get("resolution"))
+        item = {"finding": f["id"], "requirement": f.get("requirement"), **dv,
                 "state": f.get("state"), "by": f.get("created_by"),
                 "currency": cur.get(f["id"], unknown)}
-        (settled if f["difference"]["outcome"] in ("resolved", "no difference")
-         else diffs).append(item)
+        (done if settled(dv) else diffs).append(item)
     hs, inherited = hints(records, snap, claim) if claim else ([], [])
-    return {"estimates": out, "differences": diffs, "resolved": settled,
+    return {"estimates": out, "differences": diffs, "resolved": done,
             "hints": [h for h in hs if not h.get("settled_by")],
             "settled_hints": [h for h in hs if h.get("settled_by")], "inherited": inherited}
 
@@ -1519,19 +1718,24 @@ def lines(block: dict) -> list[str]:
             for s in rd["specialisations"]:
                 out.append(f"    to try: {s['try']} (from {s['rule']})")
     for d in block.get("differences") or []:
+        how = resolution_text(d)
         out.append(f"  difference on {d['requirement']} ({d['feature']}, "
-                   f"{OUTCOME_WORDS[d['outcome']]}): paper {d['paper']}"
+                   f"{outcome_text(d)}): paper {d['paper']}"
                    + (f"; Lean {d['lean']}" if d.get("lean") else "")
-                   + (f"; transport inspected: {d['transport']}" if d.get("transport") else ""))
+                   + (f"; transport inspected: {d['transport']}" if d.get("transport") else "")
+                   + (f"; {how}" if how else ""))
     for d in block.get("resolved") or []:
-        how = (f"resolved by {d['resolution']['by']}: {d['resolution']['text']}"
-               if d["outcome"] == "resolved" else f"no difference: {d['why']}")
+        how = resolution_text(d) if d["outcome"] == "resolved" else f"no difference: {d['why']}"
         out.append(f"  {d['feature']} on {d['requirement']}, {how}")
     for h in block.get("hints") or []:
         out.append(f"  hint: {h['text']}")
+    shown = {d.get("finding"): d for d in (block.get("differences") or [])
+             + (block.get("resolved") or [])}
     for h in block.get("settled_hints") or []:
         s = h.get("settled") or {}
-        out.append(f"  hint dismissed by {h['settled_by']} ({OUTCOME_WORDS.get(s.get('outcome'))}"
+        # The outcome of the difference that dismissed it, as the reading shows it now.
+        out.append(f"  hint dismissed by {h['settled_by']} "
+                   f"({outcome_text(shown.get(h['settled_by']) or s)}"
                    f", {s.get('by')}): {h['text']} Why: {s.get('why')}")
     for h in block.get("inherited") or []:
         out.append(f"  {h['decl']} assumes {h['lean']}: inherited from {h['from']} "
