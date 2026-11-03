@@ -2382,11 +2382,17 @@ def moduleDocRecords (h : IO.FS.Handle) (roots : Array Name) : MetaM Unit := do
       while !p.isAnonymous do
         unless spaces.contains p do spaces := spaces.push p
         p := p.getPrefix
-    -- The source is read from the project the probe runs in; a module whose file is elsewhere
-    -- (a dependency's) is resolved with the namespaces it declares into only.
-    let file : System.FilePath := mod.components.foldl (fun p c => p / c.toString) "."
-    let (entered, opens) ← try fileScopes (← IO.FS.readFile (file.addExtension "lean"))
-      catch _ => pure (#[], [])
+    -- The source is read from the project the probe runs in: at the module's place in its
+    -- folder, else in a source folder Lake gives (`LEAN_SRC_PATH`, which holds each library's
+    -- `srcDir`). A module whose file is found in neither is resolved with the namespaces it
+    -- declares into only.
+    let rel := (System.mkFilePath (mod.components.map (·.toString))).addExtension "lean"
+    let dirs := ("." : System.FilePath) ::
+      ((← IO.getEnv "LEAN_SRC_PATH").map System.SearchPath.parse |>.getD [])
+    let file? ← dirs.findM? fun d => (d / rel).pathExists
+    let (entered, opens) ← match file? with
+      | some d => try fileScopes (← IO.FS.readFile (d / rel)) catch _ => pure (#[], [])
+      | none => pure (#[], [])
     for ns in entered do
       unless spaces.contains ns do spaces := spaces.push ns
     let scopes := #[Name.anonymous] ++ spaces

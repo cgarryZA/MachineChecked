@@ -13,7 +13,7 @@ You need a Lean project with a `lakefile`, Python 3.11 or later, and a working L
 lake build
 ```
 
-MachineChecked reads the built declarations and reports which modules need building.
+MachineChecked reads the built declarations and reports which modules need building. A library may keep its sources in a folder of its own (`srcDir` in `lakefile.toml` or `lakefile.lean`, written as a string or as strings joined with `/`); MachineChecked reads each module's source there.
 
 For a LaTeX paper, install TeX Live with `latexmk`. Some papers also need `xelatex` or `lualatex`. For a PDF, install Poppler (`pdftohtml`, `pdfinfo`). The web reader is included.
 

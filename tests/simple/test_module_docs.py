@@ -322,3 +322,72 @@ def test_the_sources_are_read_with_every_namespace_a_file_opens():
     assert {"Lib.Core", "Lib.Wide", "Lib.Far", "Lib.Once", "Lib.Some"} <= opened
     # A name hidden on the next line, or listed explicitly, is not a namespace.
     assert not {"y", "b", "b)", "t", "u"} & opened
+
+
+# The same project with its library's sources in `src/`, set in either form of lakefile: the
+# library's own `srcDir` in `lakefile.toml`, the package's in `lakefile.lean` (#535).
+LAKEFILES = {
+    "toml": ("lakefile.toml", 'name = "lib"\ndefaultTargets = ["Lib"]\n\n'
+                              '[[lean_lib]]\nname = "Lib"\nsrcDir = "src"\n'),
+    "lean": ("lakefile.lean", 'import Lake\nopen Lake DSL\n\npackage lib where\n'
+                              '  srcDir := "src"\n\n@[default_target]\nlean_lib Lib\n'),
+}
+
+
+def src_dir_project(tmp_path, toolchain, lakefile):
+    root = tmp_path / "lib"
+    (root / "src").mkdir(parents=True)
+    name, text = LAKEFILES[lakefile]
+    (root / name).write_text(text)
+    (root / "lean-toolchain").write_text((toolchain or (SRC / "lean-toolchain").read_text()
+                                          .strip()) + "\n")
+    if toolchain and subprocess.run(["elan", "toolchain", "list"], capture_output=True,
+                                    text=True).stdout.find(toolchain) < 0:
+        pytest.skip(f"{toolchain} is not installed")
+    for name, text in OPENS.items():
+        (root / "src" / name).parent.mkdir(parents=True, exist_ok=True)
+        (root / "src" / name).write_text(text)
+    subprocess.run(["lake", "build"], cwd=root, check=True, capture_output=True, timeout=900)
+    return root
+
+
+@needs_lean
+@pytest.mark.parametrize("lakefile", ["toml", "lean"])
+@pytest.mark.parametrize("toolchain", [None, "leanprover/lean4:v4.24.0"])
+def test_a_library_with_a_src_dir_is_read_in_its_source_folder(tmp_path, toolchain, lakefile):
+    """A library whose lakefile sets `srcDir` keeps its modules' sources in that folder: the
+    probe reads a module's `open`s there, so the names they make declarations are not listed;
+    a name that resolves to nothing is listed with the module's file in that folder, and the
+    engine finds the library's modules, their files and a declaration's source there (#535)."""
+    from prooflens.probe import MODDOCS, lean_session, lean_source, lib_names, parse_records
+    from prooflens.simple import built_modules
+    from prooflens.source_names import undeclared_doc_names
+    root = src_dir_project(tmp_path, toolchain, lakefile)
+    query = {"scope_roots": ["Lib"], "spec_prefix": "Lib.Spec", "accept_prefix": "Lib.Acceptance",
+             "allowed_axioms": ["propext", "Classical.choice", "Quot.sound"],
+             "requests": [MODDOCS]}
+    res = lean_session(root, ["Lib"], query, parse_records, work=root / ".work")
+    assert not {r["name"] for r in res["moddocs"]} & {"Foo", "Baz", "Qux"}
+    found = stale_doc_names(res["moddocs"], root)
+    assert [(d["file"], d["name"], d["kind"]) for d in found] == [
+        ("src/Lib/Main.lean", "Gone", "none")]
+    # The module is the project's own, so its name is looked up in the sources and kept.
+    assert undeclared_doc_names(found, root) == found
+    assert sorted(built_modules(root, lib_names(root))[0]) == [
+        "Lib", "Lib.Defs", "Lib.Main", "Lib.Main.Qux"]
+    src = lean_source(root, {"module": "Lib.Main", "range": {"line": 19, "end_line": 19}})
+    assert src["file"] == "src/Lib/Main.lean" and src["text"].startswith("theorem qux_holds")
+
+
+@needs_lean
+@needs_tex
+def test_a_src_dir_project_builds_in_zero_configuration(tmp_path):
+    """Zero configuration on a library with a `srcDir`: the build indexes its modules and lists
+    only the name that resolves to nothing, with its file in the source folder (#535)."""
+    root = src_dir_project(tmp_path, None, "toml")
+    shutil.copytree(SRC / "paper", root / "paper")
+    view = build_view(root, root / "paper/main.tex", root / ".machinechecked",
+                      log=lambda m: None)
+    assert [(d["file"], d["name"]) for d in view["body"]["module_docs"]] == [
+        ("src/Lib/Main.lean", "Gone")]
+    assert {d["module"] for d in view["body"]["index"]} >= {"Lib.Defs", "Lib.Main"}

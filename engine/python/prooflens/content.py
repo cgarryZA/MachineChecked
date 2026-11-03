@@ -75,14 +75,14 @@ def claim_declarations(c: dict, defs: bool = True) -> set[str]:
 
 
 def several(papers, tex: dict, inv_claims: list[dict], auxes: dict, full: list[dict],
-            blocks: list[dict], fy, retrieval, notes: list[str]) -> dict:
+            blocks: list[dict], fy, retrieval, notes: list[str], root=None) -> dict:
     """The Lean's references to the numbers of a configuration's several papers: each is
     attributed to one paper (`numbering.attribute`) and checked against that paper's numbering;
     one that cannot be attributed stays unchecked, with the reason."""
     from . import formalization as fz
     from . import numbering as nb
     from .simple import claim_text
-    refs = nb.find_references(full, blocks)
+    refs = nb.find_references(full, blocks, root=root)
     def named(pid, defs):
         return set().union(set(), *(claim_declarations(c, defs) for c in inv_claims
                                     if c.get("paper") == pid))
@@ -160,14 +160,15 @@ def build(cfg, tex: dict, inv_claims: list[dict], auxes: dict, lake: str = "lake
         paper = cfg.papers[0]
         claims, inv = paper_inventory(paper.id, tex, inv_claims, auxes)
         foreign = fz.foreign_roots(fy, paper.title) if fy and "error" not in fy else set()
-        numbering = nb.analyse(full, claims, inv, blocks, foreign, retrieval, claim_text)
+        numbering = nb.analyse(full, claims, inv, blocks, foreign, retrieval, claim_text,
+                               root=root)
         note = nb.drift_note(numbering["pattern"], numbering["references"],
                             suggestions=False)
         if note:
             notes.append(note)
     else:
         numbering = several(cfg.papers, tex, inv_claims, auxes, full, blocks, fy, retrieval,
-                            notes)
+                            notes, root)
     return {"schema": SCHEMA, "retrieval": retrieval.export(), "numbering": numbering,
             "notes": notes, "modules": {"indexed": len(built) - len(failed),
                                         "failed": len(failed), "unbuilt": len(unbuilt)}}

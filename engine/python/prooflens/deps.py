@@ -132,7 +132,9 @@ def _user_facing(nodes: dict[str, dict]):
     return lambda names: sorted(collapse(names))
 
 
-def _assemble(name: str, nodes: list[dict], summary: dict) -> dict:
+def _assemble(name: str, nodes: list[dict], summary: dict,
+              lean_root: Path | None = None) -> dict:
+    from .layout import module_file
     by = {n["name"]: n for n in nodes}
     root = by[name]
     uf = _user_facing(by)
@@ -144,7 +146,7 @@ def _assemble(name: str, nodes: list[dict], summary: dict) -> dict:
     for c in distinct:
         external[c.split(".")[0]] = external.get(c.split(".")[0], 0) + 1
     decl = {"name": name, "kind": root["kind"], "module": root["module"],
-            "file": root["module"].replace(".", "/") + ".lean", "range": root["range"],
+            "file": module_file(lean_root, root["module"]), "range": root["range"],
             "doc": root["doc"], "statement": root["type"],
             "axioms": summary.get("axioms", []), "sorry": summary.get("sorry", False)}
     return {
@@ -237,7 +239,7 @@ def inspect(root: Path, name: str, module: str | None = None, lake: str = "lake"
                 {n["name"] for n in nodes}:
             body = {"ok": False, "status": "not found", "modules": [target] if target else []}
         else:
-            body = {"ok": True, "status": "found", **_assemble(name, nodes, summary)}
+            body = {"ok": True, "status": "found", **_assemble(name, nodes, summary, root)}
         st.put("deps", key, env, body=body)
     return mark_cut({**head, **body, "cache": {"hit": False, "key": _short(key)}})
 

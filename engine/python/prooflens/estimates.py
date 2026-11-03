@@ -609,7 +609,8 @@ def check(root: Path, theorem: str, target: str, certifies: str, module: str | N
             reasons.append("the target is not a proposition stated as a definition")
         decls = {r["name"]: r for r in recs if r.get("record") == "decl" and r.get("name")}
         env_rec = next((r for r in recs if r.get("record") == "env"), {})
-        file = mod.replace(".", "/") + ".lean"
+        from .layout import module_file
+        file = module_file(root, mod)
         body = {"ok": True, "status": "checked" if not reasons else "failed",
                 "theorem": theorem, "target": target, "certifies": certifies, "module": mod,
                 "file": file, "file_sha256": _file_digest(root / file),

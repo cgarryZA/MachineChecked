@@ -17,6 +17,7 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
+from .layout import module_file
 from .source_names import SourceNames, last, source_roots
 
 
@@ -42,7 +43,7 @@ def stale_doc_names(records: list[dict], lean_root: Path | None = None) -> list[
         kind = r.get("kind", "none")
         if kind == "none" and src is not None and src.declares_in(n, r.get("scopes", ())):
             continue
-        file = r["module"].replace(".", "/") + ".lean"
+        file = module_file(lean_root, r["module"])
         if (file, r["line"], n) not in seen:
             seen.add((file, r["line"], n))
             out.append({"module": r["module"], "file": file, "line": r["line"], "name": n,
