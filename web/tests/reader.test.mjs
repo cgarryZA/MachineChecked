@@ -411,8 +411,23 @@ fs.writeFileSync(path.join(root, "toywork/data/work", workRow.file), JSON.string
 // #77: the toy audit with records people made about Theorem 2.1 (its symbol links, a
 // correspondence note, and a published reading that aligns passages of the paper with rows of the
 // Lean), with the review queue the engine builds for it: the reader draws them, independent
-// Compare is given none of them.
+// Compare is given none of them. #549: the reading also records connections between objects (as
+// `connections.public` publishes them with the Lean), and the claim carries connections computed
+// from Lean's terms (`computed_connections`).
 fs.cpSync(path.join(root, "toy"), path.join(root, "toycmp"), { recursive: true });
+const CONN = (() => {
+  const spec = "Toy.PaperSpec.thm_even_add", proof = "Toy.Acceptance.thm_even_add";
+  const fact = { decl: proof, at: "/1", name: "ha" }, app = { callee: "Toy.IsEven", caller: proof, id: "app:Toy.Acceptance.thm_even_add:0" };
+  const a = { decl: spec, var: 0, id: "/", name: "a", type: "Nat" }, b = { decl: spec, var: 1, id: "/1", name: "b", type: "Nat" };
+  const ev = (id, connection, currency = cur) => ({ id, kind: "evidence", claim: "T:thm:even-add", role: "supports", ref: { connection }, currency });
+  return {
+    recorded: [ev("e-wit", { relation: "equal", from: a, to: { fact, local: "a" }, conditions: ["SYNTHETIC-CONNECTION: as the proof introduces it"], support: [{ fact }] }),
+               ev("e-old", { relation: "shared witness", from: b, to: { fact, local: "b" } },
+                  { state: "stale", changes: [{ decl: spec, var: 1, reason: "Toy.PaperSpec.thm_even_add: variable 1 is now c : Nat, not b : Nat, the object the connection was recorded at" }] })],
+    computed: [{ relation: "equal", from: { fact, local: "a" }, to: { app, param: "n" }, support: [{ app }] },
+               { relation: "definitional", from: { decl: spec, at: "/1/1/1/1", target: "Toy.IsEven (a + b)" }, to: { fact, local: "h" },
+                 unfolds: [{ decl: "Toy.IsEven" }], conditions: ["SYNTHETIC-COMPUTED"] }] };
+})();
 {
   const row = TOY.claims.find((c) => c.id === "T:thm:even-add");
   const file = path.join(root, "toycmp/data/claims", row.file);
@@ -421,6 +436,7 @@ fs.cpSync(path.join(root, "toy"), path.join(root, "toycmp"), { recursive: true }
   rec.correspondence = { source: "confirmed", coverage: "full", basis: "direct", refs: [spec], note: "SYNTHETIC-NOTE: the author's reading of the sum.",
                          by: "A. Auditor", argument: null, bridge: null, question: null, would_decide: null, confidence: null };
   rec.work = "work/" + row.file;
+  rec.computed_connections = CONN.computed;
   fs.writeFileSync(file, JSON.stringify(rec));
   fs.mkdirSync(path.join(root, "toycmp/data/work"), { recursive: true });
   const req = (local_id, form, text) => ({ id: "q-" + local_id, kind: "requirement", claim: row.id, local_id, form, text, depth: 0, currency: cur });
@@ -438,7 +454,7 @@ fs.cpSync(path.join(root, "toy"), path.join(root, "toycmp"), { recursive: true }
       findings: [{ id: "f-sum", kind: "finding", claim: row.id, requirement: "sum", coverage: "full", basis: "direct", state: "submitted",
                    submitted_at: "2026-10-20T00:00:00Z", created_by: "human:A-Auditor", evidence: [], in_force: true, currency: cur,
                    note: "SYNTHETIC-FINDING: the conclusion is the paper's." }],
-      evidence: [], compositions: [] }] }));
+      evidence: CONN.recorded, compositions: [] }] }));
 }
 queueFor(path.join(root, "toycmp", "data"));
 
@@ -2834,9 +2850,10 @@ await check("independent Compare is given the complete mathematics and no prior 
   await pg.waitForLoadState("networkidle");
   const html = await pg.evaluate(() => document.body.innerHTML);
   for (const absent of ["A-Referee", "A-Auditor", "SYNTHETIC-NOTE", "SYNTHETIC-PASSAGE", "SYNTHETIC-REQUIREMENT", "a.referee", "Paper · Definition",
-                        "SYNTHETIC-FINDING", "both quantifiers", "Correspondence"])
+                        "SYNTHETIC-FINDING", "both quantifiers", "Correspondence", "SYNTHETIC-CONNECTION", "SYNTHETIC-COMPUTED", "definitionally equal"])
     assert.ok(!html.includes(absent), `${absent} is not on the page`);
   assert.equal(await cmp.locator(".row-findings, [data-finding], [data-review-field]").count(), 0, "no finding or author's note in Compare");
+  assert.equal(await cmp.locator(".row-connections, [data-connection]").count(), 0, "no connection between objects, recorded or computed, in Compare");
   assert.deepEqual(fetched.filter((p) => p.includes("/data/work/")), [], "nor fetched");
   await insp.locator(".back").click();
   // After the verdict, the later stage shows what people recorded, attributed.
@@ -2847,7 +2864,53 @@ await check("independent Compare is given the complete mathematics and no prior 
   await cmp.locator(".paper [data-sym]").first().waitFor();
   await cmp.locator(".stmt [data-row='b:0'] .pcell .aligned").waitFor();
   await cmp.locator(".stmt [data-row='c'] [data-finding='f-sum']").waitFor();
+  await cmp.locator(".stmt [data-row='b:0'] .row-connections [data-origin='recorded']").waitFor();
+  await cmp.locator(".stmt [data-row='c'] .row-connections [data-origin='computed']").waitFor();
 });
+
+// #549: each object's connections beside its row, with relation, conditions and support, recorded
+// and computed ones marked apart; one that changed since it was recorded is never placed at a
+// row; the chain from one object to another on request.
+for (const width of [1300, 390]) {
+  await check("an object's connections are beside its row, and the chain on request", width, async (pg) => {
+    await pg.goto(origin + `/toycmp/#/r/${TOY.release}/read/T/${encodeURIComponent("T:thm:even-add")}`);
+    const cmp = pg.locator(".claim-view .cmp");
+    const rowA = cmp.locator(".stmt [data-row='b:0'] .row-connections");
+    await rowA.waitFor();
+    const conns = async (loc) => loc.locator("[data-connection]").evaluateAll((cs) => cs.map((c) => [c.dataset.origin, c.dataset.state || "", c.textContent.replace(/\s+/g, " ").trim()]));
+    assert.deepEqual(await conns(rowA), [["recorded", "current",
+      "Recorded a of Toy.PaperSpec.thm_even_add and a in the proof of Toy.Acceptance.thm_even_add are equal, when SYNTHETIC-CONNECTION: as the proof introduces it, by ha inside the proof of Toy.Acceptance.thm_even_add. Recorded by A Auditor"]]);
+    // The conclusion's sub-term, with the connection the build computed, marked apart.
+    assert.deepEqual(await conns(cmp.locator(".stmt [data-row='c'] .row-connections")), [["computed", "",
+      "Computed `Toy.IsEven (a + b)` in Toy.PaperSpec.thm_even_add and h in the proof of Toy.Acceptance.thm_even_add are definitionally equal, when SYNTHETIC-COMPUTED, unfolding Toy.IsEven. Computed from the Lean's terms"]]);
+    // The row of b, whose connection changed since it was recorded, has none: that one is with the
+    // whole claim, with what changed, and so is the one between objects of Lean not shown here.
+    assert.equal(await cmp.locator(".stmt [data-row='b:2'] .row-connections, .stmt [data-row='b:3'] .row-connections").count(), 0);
+    const whole = cmp.locator(".row-connections[data-connections-at='claim']");
+    const rest = await conns(whole);
+    assert.deepEqual(rest.map(([o, st]) => [o, st]), [["recorded", "stale"], ["computed", ""]]);
+    assert.match(rest[0][2], /b of Toy\.PaperSpec\.thm_even_add and b in the proof of Toy\.Acceptance\.thm_even_add are one witness\. Recorded by A Auditor · changed since it was recorded Changed: Toy\.PaperSpec\.thm_even_add: variable 1 is now c : Nat, not b : Nat.*Not placed at a row/);
+    assert.match(rest[1][2], /a in the proof of Toy\.Acceptance\.thm_even_add and n of Toy\.IsEven applied in Toy\.Acceptance\.thm_even_add are equal, by Toy\.IsEven applied in Toy\.Acceptance\.thm_even_add\. Computed from the Lean's terms Its objects are in Lean this comparison does not show/);
+    // The chain, on request: from a, through the recorded connection to the proof's a, then the
+    // computed one to the argument of Toy.IsEven.
+    assert.equal(await rowA.locator("[data-chain-step]").count(), 0, "only on request");
+    await rowA.locator("details.chain > summary").click();
+    assert.match(await rowA.locator(".pick").textContent(), /From a of Toy\.PaperSpec\.thm_even_add/);
+    const to = rowA.getByRole("combobox", { name: "Chain to" });
+    assert.deepEqual((await to.locator("option").allTextContents()).map((t) => t.trim()),
+      ["a in the proof of Toy.Acceptance.thm_even_add", "n of Toy.IsEven applied in Toy.Acceptance.thm_even_add"]);
+    await to.selectOption({ label: "n of Toy.IsEven applied in Toy.Acceptance.thm_even_add" });
+    const steps = rowA.locator("[data-chain-step]");
+    await pg.waitForFunction(() => document.querySelectorAll(".stmt [data-row='b:0'] [data-chain-step]").length === 2);
+    assert.deepEqual(await steps.evaluateAll((ls) => ls.map((l) => l.dataset.origin)), ["recorded", "computed"]);
+    assert.match(await steps.nth(0).textContent(), /^a of Toy\.PaperSpec\.thm_even_add and a in the proof of Toy\.Acceptance\.thm_even_add are equal, when SYNTHETIC-CONNECTION/);
+    assert.match(await steps.nth(1).textContent(), /are equal, by Toy\.IsEven applied in Toy\.Acceptance\.thm_even_add\. Computed from the Lean's terms$/);
+    assert.match(await rowA.locator(".chain").textContent(), /Its steps come from more than one record/);
+    if (width < 500) assert.ok(await pg.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), "no sideways scroll");
+    const [scroll, client] = await pg.locator(".claim-view").evaluate((v) => [v.scrollWidth, v.clientWidth]);
+    assert.ok(scroll <= client + 1, `the comparison stays inside the claim view (${scroll} > ${client})`);
+  });
+}
 
 // #74: findings at the paper and Lean clauses they explain, each through an alignment of its own
 // reading, attributed; what no alignment places stays on the whole claim. A proof step's finding
