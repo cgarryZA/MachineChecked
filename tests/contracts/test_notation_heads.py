@@ -5,7 +5,7 @@ computed hints (#538, part of #111), on the structure fixture's built data
 The fixture's Definition 4 writes `J_x(D, k, C)`, `J_t(D, k, C)` and `J(D, k, C)` for the bounds
 on the derivatives in space, in time and in all variables (`Shape.SpaceJet`, `Shape.TimeJet`,
 `Shape.FullJet`), and `M_x(u, t, N)`, `M_t(u, x, N)` for the norms in space and in time
-(`Shape.supSpace`, `Shape.supTime`). Theorem 30 (`Shape.full_jet_split`) and Theorem 31
+(`Shape.supSpace`, `Shape.supTime`). Theorem 32 (`Shape.full_jet_split`) and Theorem 33
 (`Shape.norm_bounds`) use them. An alignment of the paper's notation with a whole declaration
 matches them; an aligned paper expression that applies a notation is then compared with Lean's
 application of a definition, and naming another definition gives a `head` hint. A hint is a
