@@ -2086,15 +2086,18 @@ def _add_compare(sub) -> None:
     co.add_argument("--in", dest="within", metavar="CALLER",
                     help="with uses: only the applications inside this declaration, or the one "
                     "application with this id (app:CALLER:N), each with every local of its "
-                    "context")
+                    "context; with proof-facts: only the facts at or inside this position of "
+                    "the proof (a fact's `at`, such as an application's)")
     co.add_argument("--match", metavar="TEXT",
                     help="with proof-facts: rank the facts by the symbols they share with TEXT")
     co.add_argument("--main", action="append", metavar="NAME",
                     help="with impact: a main result to trace from, a declaration or a claim "
                     "(its linked Lean); repeat for several (default: those `workspace main` "
                     "saved, else the declarations linked to the paper's theorems)")
-    co.add_argument("--limit", type=int, help="return at most this many definitions or results")
-    co.add_argument("--after", metavar="ID", help="continue a list after this item")
+    co.add_argument("--limit", type=int, help="return at most this many definitions or results "
+                    "(with proof-facts: the facts of one page, 200 by default)")
+    co.add_argument("--after", metavar="ID", help="continue a list after this item (with "
+                    "proof-facts: Lean reads the page after this fact)")
     co.add_argument("--workspace", metavar="ID", help="include this workspace's requirements, "
                     "compositions and connections of the claim (informed stage only); with "
                     "--query composition or connections, only this workspace's; with --query "
