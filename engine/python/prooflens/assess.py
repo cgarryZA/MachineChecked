@@ -233,15 +233,51 @@ def _rule(c: str, o: dict) -> tuple[str, str | None]:
     return "applies", TOTALISED[c]
 
 
+def _binder_names(srec: dict) -> dict[str, str]:
+    """The name the statement record gives each of its binders, by the binder's identity: those
+    that open it (an unnamed hypothesis is `h1`, `h2`, …) and those inside its tree."""
+    out: dict[str, str] = {}
+
+    def walk(n):
+        if not isinstance(n, dict):
+            return
+        if n.get("id") is not None and n.get("name"):
+            out.setdefault(n["id"], n["name"])
+        walk(n.get("logic"))
+        for a in n.get("args") or []:
+            walk(a)
+    for b in srec.get("binders") or []:
+        if b.get("id") is not None and b.get("name"):
+            out[b["id"]] = b["name"]
+    walk(srec.get("tree"))
+    return out
+
+
+def _subterms(o: dict, names: dict[str, str]) -> list[dict]:
+    """The sub-term at each position of one recorded application (`at`, and `text` when the
+    probe printed it), with the binder or hypothesis around it (`within`), named as the
+    statement names it."""
+    out = []
+    for s in o.get("subterms") or []:
+        rec = {"at": s.get("at"), "text": s.get("text")}
+        w = s.get("within")
+        if isinstance(w, dict):
+            rec["within"] = {**w, "name": names.get(w.get("id")) or w.get("name")}
+        out.append(rec)
+    return out
+
+
 def occurrences(srec: dict, c: str) -> list[dict] | None:
     """The applications of the totalised operation `c` that the probe read in a statement, each
     with its type (`type`, its head constant `type_head`), the structure on it that decides the
-    rule (`structure`), the state of the rule there and the rule itself, and the positions of
-    the application in the proposition (`at`). None for an operation the probe does not read
-    by type, and for a record from before it read them."""
+    rule (`structure`), the state of the rule there and the rule itself, the positions of the
+    application in the proposition (`at`), and the sub-term at each with the binder or
+    hypothesis around it (`subterms`, when the probe printed them). None for an operation the
+    probe does not read by type, and for a record from before it read them."""
     ops = srec.get("order_ops")
     if not isinstance(ops, dict) or c not in READ_BY_TYPE:
         return None
+    names = _binder_names(srec)
     out = []
     for o in _occurrences(c, ops):
         state, rule = _rule(c, o)
@@ -250,6 +286,8 @@ def occurrences(srec: dict, c: str) -> list[dict] | None:
         rec = {"operation": c, "type": o.get("carrier") or None,
                "type_head": o.get("carrier_head") or None, "structure": structure,
                "state": state, "rule": rule, "at": list(o.get("at") or [])}
+        if o.get("subterms"):
+            rec["subterms"] = _subterms(o, names)
         if state == "applies" and o.get("conditions"):
             conds = [{k: d[k] for k in ("condition", "state", "by", "premise", "statement")
                       if k in d} for d in o["conditions"]]
