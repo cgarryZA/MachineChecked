@@ -842,7 +842,9 @@ optional `clause` and `note`, `rev`, `created_at`/`created_by`, `updated_at`/`up
   records no version of the target or of the passage the auditor read, so Lean's check of it
   reads as out of date; a finding with no bridge reads as `reviewed_composition` too. A finding
   may also record a `difference` on its `requirement`
-  (`{feature, paper, lean, outcome, conditions, transport, resolution, why, hint}`), a `verdict`
+  (`{feature, paper, lean, outcome, conditions, transport, resolution, why, hint}`; `hint` names
+  the computed hint it settles: `{decl, binder}` for a hypothesis no requirement is aligned with,
+  `{alignment, kind}` for a hint of an alignment's expression), a `verdict`
   on a printed step (`holds as printed`, `holds, with a gap in the argument`, `false as
   printed`, `cannot determine`) and the `counterexamples` it rests on (pinned by digest); such a
   finding is submitted without a coverage. `state` is `draft`
@@ -896,7 +898,10 @@ optional `clause` and `note`, `rev`, `created_at`/`created_by`, `updated_at`/`up
   `changed`, `alternative representation`). A requirement may have several alignments and a
   target may serve several requirements; one passage may align with several targets and several
   passages with one. A passage an alignment names is not deleted while it does (it is marked
-  removed instead).
+  removed instead). Optional `expression` (up to 400 characters): the paper's expression the
+  alignment concerns, which must occur exactly in a passage that governs it (one it names, else
+  an accepted passage of its requirements that is not a later use); it gives the computed hints
+  of quantity (below), and is not published.
 - **`composition`**: an argument that several results together cover the claim
   (`composition.py`). `steps`, in order, each `{id, establishes, requirements, uses, after,
   substitutions, inference, note}`: what it establishes, the requirements it establishes (with
@@ -983,7 +988,9 @@ or whose claim's passage changed, is `stale`, and so is an alignment whose decla
 definition its statement uses, changed, or one of whose named passages changed or no longer
 governs the reading (removed, or not published: `{fragment, was, now}`), or one of whose targets
 names a sub-term by identity whose text in the build is not the text it was recorded with
-(`{decl, at, was, now, reason}`: the identity names another expression, or none), and every requirement
+(`{decl, at, was, now, reason}`: the identity names another expression, or none), or whose paper
+`expression` no passage that governs it prints any more (`{record, reason}`; `unchecked` when
+such a passage cannot be read), and every requirement
 they belong to, and every question that names that requirement. A finding's currency is that of its dependencies (below). The saved
 records are not re-pinned silently: a `put` with `repin: true` re-pins a record to the current
 build.
@@ -1035,13 +1042,34 @@ source, and `reading_sha256`, a digest of the form, words and governing fragment
 printed reading and each corrected one, as an obligation with its variables in order, the
 counterexamples analysed against it (`form`: family, instance, fixed constants or incomplete;
 `standing`), its findings and certificates, and specialisations to try from the domains; the
-differences recorded, open apart from resolved; the computed hints, and the hypotheses inherited
-from standing assumptions); the `witnesses` (each `there is`, its `scope`: `produced`, `assumed` inside an assumption,
+differences recorded, open apart from resolved; the computed `hints`, those a difference settles
+apart (`settled_hints`, each with `settled_by` and `settled`: `{finding, outcome, why, by}`), and
+the hypotheses inherited from standing assumptions); the `witnesses` (each `there is`, its `scope`: `produced`, `assumed` inside an assumption,
 `denied` inside a `not`, or `alternative` inside an `or`; the variables it is chosen `after` and
 `before`; its `conditions`); and the `alignments`. `workspace suggest` proposes fragments from the
 passage's neighbourhood (the sentence before and after it, quantifier or dependence wording
 inside it, the prose opening its section, the claims it cites); a proposal is a guess until
 accepted.
+
+**Computed hints.** `estimates.hints`, from the claim's alignments and the build's statements.
+Every hint has `kind`, `basis` ("computed hint") and `text`. A hypothesis of an aligned
+statement that no requirement is aligned with is `unmatched hypothesis` (`decl`, `binder`,
+`lean`). An alignment with a paper `expression` gives, for each of its targets that is an
+expression (`conclusion`, `binder` or `at`), a hint when the two differ in quantity or cannot be
+compared (`expressions.py`): `kind` `offset` (with `difference`, Lean's minus the paper's),
+`coefficient` (with `factor`, Lean's over the paper's), `power`, `terms`, or `not compared` (with
+`reason`: "unsupported: …" for what the TeX reader does not read, a variable matched with none
+of the other side, a Lean operation that is not this arithmetic, an alignment out of date);
+`feature`, one of the differences' features (`index offset`, `weight`, `power`, `other`; none
+for `not compared`); `alignment`, `requirements`, `decl` and `target`; `paper` and `lean`, each
+`{text, normal}` (the exact expression and its normal form, a polynomial with rational
+coefficients; `lean.at` when it is an argument of the target); `variables` (each `{paper, lean,
+via}`: the alignment or symbol link that matched them); `conditions` (the divisors taken to be
+nonzero); and `definition` (`{name, parameter, expansion, expanded}`: the definition the Lean
+expression is an argument of, or is inside, with its expansion at these arguments). A rename and
+an equal form give none. `check --json` lists each claim's `hints` and `dismissed_hints`, each
+with the `workspace`, its auditor (`by`) and `mode`. Hints change no status and no review record;
+the semantic summary does not count them and a published audit does not carry them.
 
 **Mode and exposure.** An informed workspace records at its creation that the Lean and prior
 interpretations were open to its auditor; it has no locked reading. A mode change and an import

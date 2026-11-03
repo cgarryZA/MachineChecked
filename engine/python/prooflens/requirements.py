@@ -429,6 +429,8 @@ def alignment_content(out: dict, rec: dict, ws: dict, snap, root, cur: dict | No
                                              for r in reqs))
     if frags:
         out["fragments"] = [f["id"] for f in frags]
+    if rec.get("expression") not in (None, ""):
+        out["expression"] = alignment_expression(rec["expression"], ws, out, snap)
     lean = rec.get("lean")
     if isinstance(lean, dict):
         lean = [lean]
@@ -442,6 +444,79 @@ def alignment_content(out: dict, rec: dict, ws: dict, snap, root, cur: dict | No
             targets.append(tgt)
     out["lean"] = targets
     return out
+
+
+EXPRESSION_CHARS = 400
+
+
+def governing(records, claim: str, requirements, fragments=None) -> list[dict]:
+    """The passages that govern an alignment: those it names (`fragments`), else every accepted
+    passage of its requirements that is not a later use."""
+    recs = list(records.values()) if isinstance(records, dict) else list(records)
+    if fragments:
+        by = {r["id"]: r for r in recs}
+        return [by[f] for f in fragments if (by.get(f) or {}).get("state") == "accepted"]
+    return [f for f in recs if f.get("kind") == "fragment" and f.get("claim") == claim
+            and f.get("requirement") in (requirements or []) and f.get("state") == "accepted"
+            and f.get("role") != "later use"]
+
+
+def passage_text(fr: dict, snap, now: bool = False) -> str | None:
+    """The source text of a passage: a region's as it was attached (or, with `now`, as the
+    build's copy of the source reads it), or a claim's whole passage as the build prints it.
+    None when it cannot be read."""
+    from .source_regions import RegionError, extract
+    if fr.get("passage"):
+        ch = snap.chunk(fr["passage"]["claim"]) if snap is not None else None
+        return (ch or {}).get("statement_tex")
+    reg = fr.get("region") or {}
+    if not now:
+        return reg.get("text")
+    src = sources_dir(snap, reg.get("paper"))
+    if src is None or not reg.get("file"):
+        return None
+    try:
+        return extract(src, region_claim(reg)).text
+    except (RegionError, OSError, UnicodeError):
+        return None
+
+
+def alignment_expression(expr, ws: dict, out: dict, snap) -> str:
+    """An alignment's paper `expression`, checked: it occurs, exactly as the source writes it, in
+    a passage that governs the alignment."""
+    e = _text(expr, "the paper's expression (`expression`)", True).strip()
+    if len(e) > EXPRESSION_CHARS:
+        raise _err(f"an expression is at most {EXPRESSION_CHARS} characters")
+    gov = governing(ws["records"], out["claim"], out["requirements"], out.get("fragments"))
+    if not gov:
+        raise _err("an alignment's `expression` is printed in a passage that governs it: attach "
+                   "that passage to its requirement first, or name it in `fragments`")
+    if not any(e in (passage_text(f, snap) or "") for f in gov):
+        raise _err(f"{e!r} does not occur in a passage that governs this alignment ("
+                   + "; ".join(where_text(f) for f in gov)
+                   + "): give the expression exactly as the paper's source writes it")
+    return e
+
+
+def with_expression(cur: dict, r: dict, records, snap) -> dict:
+    """An alignment's currency with that of its paper `expression`: stale once no passage that
+    governs the alignment prints the expression any more, unchecked when a passage that might
+    cannot be read."""
+    if not r.get("expression") or snap is None:
+        return cur
+    gov = governing(records, r["claim"], r.get("requirements"), r.get("fragments"))
+    texts = [passage_text(f, snap, now=True) for f in gov]
+    if any(t is not None and r["expression"] in t for t in texts):
+        return cur
+    if any(t is None for t in texts):
+        if cur["state"] != "current":
+            return cur
+        return {"state": "unchecked", "changes": [],
+                "reason": "a passage that governs its paper expression cannot be read in this "
+                          "build"}
+    change = {"record": r["id"], "reason": "its paper expression no longer occurs in a passage "
+                                           "that governs it"}
+    return {"state": "stale", "changes": [*cur.get("changes", []), change]}
 
 
 def references(ws: dict, claim: str, lid: str, but: str | None = None) -> list[str]:
@@ -576,6 +651,9 @@ def currency(ws: dict, snap, root=None) -> dict[str, dict]:
     for r in ws["records"].values():
         if r.get("kind") == "alignment" and r.get("fragments"):
             out[r["id"]] = _with_passages(out[r["id"]], r, ws, out)
+    for r in ws["records"].values():
+        if r.get("kind") == "alignment" and r.get("expression"):
+            out[r["id"]] = with_expression(out[r["id"]], r, ws["records"], snap)
     for r in ws["records"].values():
         if r.get("kind") != "requirement":
             continue
@@ -998,7 +1076,8 @@ def lines(rd: dict) -> list[str]:
         on = [where_text(passages[f]) if f in passages else f"{f} (not kept)"
               for f in a.get("fragments") or []]
         out.append(f"  {', '.join(a['requirements']) or '(no requirement)'}"
-                   + (f" on {'; '.join(on)}" if on else "") + " -> "
+                   + (f" on {'; '.join(on)}" if on else "")
+                   + (f", the paper's {a['expression']}" if a.get("expression") else "") + " -> "
                    + "; ".join(target_text(t) for t in a["lean"])
                    + f"  ({a['relation']}, recorded by {a.get('created_by')})"
                    + ("  [stale]" if a["currency"]["state"] == "stale" else ""))

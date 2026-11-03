@@ -314,6 +314,81 @@ def term_by_id(spec: dict, at: str, part=None) -> str | None:
     return None
 
 
+def _printed_with_expansions(spec: dict, at: str, part=None):
+    """Every printed expression of a statement record that may hold the identity `at`, with the
+    expansion it is printed in (None for the record's own), in the order `term_by_id` reads
+    them: an expansion only when `at` extends its identity."""
+    todo = [(pp, None) for pp in (*printed(spec), *carried(spec), *defined(spec))
+            if isinstance(pp, dict)]
+    d = spec.get("definition") or {}
+    pages = list(d.get("equations_more") or []) if part is not None else []
+    reads = 0
+    while todo or pages:
+        if not todo:
+            ref = pages.pop(0)
+            reads += 1
+            page = part(ref.get("key")) if isinstance(ref, dict) and reads <= PARTS_READ else None
+            for q in (page or {}).get("equations") or []:
+                if isinstance(q, dict):
+                    todo += [(x, None) for x in (q.get("statement"), q.get("equation"),
+                                                 *((p or {}).get("type")
+                                                   for p in q.get("params") or []))
+                             if isinstance(x, dict)]
+            continue
+        pp, within = todo.pop(0)
+        yield pp, within
+        for x in pp.get("expansions") or []:
+            if not isinstance(x, dict):
+                continue
+            if isinstance(x.get("id"), str) and not at.startswith(x["id"]):
+                continue
+            if _is_ref(x):
+                reads += 1
+                if part is None or reads > PARTS_READ:
+                    continue
+                x = part(x["key"])
+                if not isinstance(x, dict):
+                    continue
+            todo += [(p, x) for p in _expansion_printed(x) if isinstance(p, dict)]
+
+
+def _math_path(node, at: str, budget: list[int]) -> list[dict] | None:
+    """The nodes from `node` down to the one whose identity is `at`, or None."""
+    if not isinstance(node, dict) or budget[0] <= 0:
+        return None
+    budget[0] -= 1
+    if node.get("id") == at:
+        return [node]
+    for v in node.values():
+        for child in (v if isinstance(v, list) else [v]):
+            if isinstance(child, dict) and "k" in child:
+                found = _math_path(child, at, budget)
+                if found is not None:
+                    return [node, *found]
+    return None
+
+
+def math_context(spec: dict, at: str, part=None) -> dict | None:
+    """Where the mathematics (`math`, the probe's reading of a printed expression) of the
+    expression whose identity is `at` stands: the node (`math`), the nodes above it in its printed
+    expression (`path`, outermost first), that printed expression (`printed`) and the definition
+    expanded at its arguments it is printed in (`expansion`, None for the statement's own),
+    found wherever `term_by_id` finds its text. None when no printed expression reads it."""
+    if not isinstance(at, str):
+        return None
+    for pp, within in _printed_with_expansions(spec, at, part):
+        path = _math_path(pp.get("math"), at, [20000])
+        if path is not None:
+            return {"math": path[-1], "path": path[:-1], "printed": pp, "expansion": within}
+    return None
+
+
+def math_by_id(spec: dict, at: str, part=None) -> dict | None:
+    """The mathematics of the expression whose identity is `at` (`math_context`), or None."""
+    found = math_context(spec, at, part)
+    return found["math"] if found else None
+
+
 def _text(pp) -> str:
     if not isinstance(pp, dict):
         return pp or ""
