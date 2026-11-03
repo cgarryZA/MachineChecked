@@ -368,6 +368,19 @@ changes either way. A finding with basis `checked_bridge` reads so while it rest
 composition and the check holds; any other reads as your composition, saying what it was recorded
 as and why, in `workspace show`, the reader and an export.
 
+Under `machinechecked view`, the investigation on a claim's page writes the same record: **Write a
+composition**, or **Edit composition** on one of yours. The form takes the steps (what each
+establishes, the evidence of the investigation it rests on, the earlier steps it follows from, the
+requirements it establishes, its substitutions and your inference), the identifications between
+the steps' objects (with the evidence they rest on, connections between objects included), the
+obligations (open, or discharged by steps or evidence), the coverage and a bridge. Saving sends it
+through the same checks as `workspace update`: a refusal (a step resting on nothing, full coverage
+with an obligation open, a bridge Lean does not check) is shown as the engine words it, and the
+form keeps what you wrote. An obligation an identification leaves is added by the engine and shown
+with the connection it comes from. An edit is saved only over the version shown; one changed
+elsewhere meanwhile is kept, and the form says so. A published audit shows compositions read-only,
+and the read and compare stages of an independent review show none.
+
 **Connections between objects.** When one result's object is another's (the profile a
 preparation returns and the correction consumes, a function equal to another on the horizon, the
 class of a function), record how, exactly, as a `connection` evidence reference. Its ends are

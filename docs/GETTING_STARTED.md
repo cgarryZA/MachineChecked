@@ -373,6 +373,11 @@ full coverage:
 `refs` may list the linked declarations a basis rests on (all of them by default). Without a
 `basis`, the reading reads **Every clause**, and its support is not recorded.
 
+An argument of several steps (which result each step rests on, the objects identified between
+steps, what remains open) is a composition of your investigation. Under `machinechecked view`,
+write it on the claim's page with **Write a composition**; the engine checks it when it is saved
+and shows its refusals as it words them ([Compositions](REVIEWING.md#saved-investigations)).
+
 An `unresolved` reading records the question and what would decide it:
 
 ```json

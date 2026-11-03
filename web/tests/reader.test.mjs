@@ -20,6 +20,7 @@ import "./comparison.test.mjs";
 import "./findings.test.mjs";
 import "./connections.test.mjs";
 import "./impact.test.mjs";
+import "./compose.test.mjs";
 import "./names.test.mjs";
 import "./workfile.test.mjs";
 import { chromium } from "playwright";
@@ -5053,6 +5054,173 @@ print("null")`, who);
       assert.doesNotMatch(await cmp.textContent(), /Computed hint|differ by 1/);
     });
   } finally { py.kill(); }
+}
+
+// #552: compositions written in the reader under `view`, through the engine's checks: steps with
+// what each rests on, follows from and establishes, substitutions, identifications citing a
+// connection between objects, obligations, coverage and a bridge; the engine's refusals shown as
+// it words them; a static copy reads them only, and independent Compare is given none.
+{
+  const { spawn } = await import("node:child_process");
+  fs.cpSync(path.join(root, "toy"), path.join(root, "toycompose"), { recursive: true });
+  const work = path.join(root, "toycompose-work");
+  const engine = (code) => {
+    const r = spawnSync(process.env.PYTHON || "python3", ["-c", String.raw`
+import json, sys
+from pathlib import Path
+from prooflens import review_cli as rc, workspace as wsp
+from prooflens.targets import Snapshot
+work = Path(sys.argv[1])
+snap = Snapshot(work.parent / "toycompose" / "data")
+` + code, work], { encoding: "utf8" });
+    if (r.status !== 0) throw new Error(r.stderr);
+    return r.stdout ? JSON.parse(r.stdout) : null;
+  };
+  // An informed investigation of Theorem 2.5 with its requirements, two results as evidence and a
+  // connection between objects that holds on a domain only.
+  const WS = engine(String.raw`
+p = wsp.open_for(work, rc.parse_reviewer("human:A-Auditor"), "informed", sources=snap.sources())
+C = "T:thm:bound"
+wsp.update(p, [
+ {"op": "put", "record": {"id": "r-c", "kind": "requirement", "claim": C, "local_id": "c", "form": "there is", "binds": ["C"], "text": "a constant C, independent of n"}},
+ {"op": "put", "record": {"id": "r-b", "kind": "requirement", "claim": C, "local_id": "c.1", "parent": "c", "form": "conclusion", "text": "T_n ≤ C n²"}},
+ {"op": "put", "record": {"id": "e-bound", "kind": "evidence", "claim": C, "ref": {"decl": "Toy.Acceptance.thm_bound"}, "role": "supports"}},
+ {"op": "put", "record": {"id": "e-tri", "kind": "evidence", "claim": C, "ref": {"decl": "Toy.Acceptance.thm_triangle"}, "role": "supports"}},
+ {"op": "put", "record": {"id": "e-conn", "kind": "evidence", "claim": C, "role": "supports", "ref": {"connection": {
+   "from": {"decl": "Toy.PaperSpec.thm_bound", "var": 1}, "to": {"decl": "Toy.PaperSpec.thm_triangle", "var": 0},
+   "relation": "equal on a domain", "domain": "n ≥ 1", "support": [{"decl": "Toy.Acceptance.thm_triangle"}]}}}}], snap)
+print(json.dumps(wsp.read(p)["id"]))`);
+  const compositions = () => engine(String.raw`
+p = wsp.find(work, sys.argv[1] if len(sys.argv) > 2 else "` + WS + String.raw`")
+print(json.dumps([r for r in wsp.read(p)["records"].values() if r["kind"] == "composition"]))`);
+  const py = spawn(process.env.PYTHON || "python3", [path.join(here, "fixtures", "workspace_server.py"), path.join(root, "toycompose"), work]);
+  const port = await new Promise((ok, fail) => {
+    py.stdout.once("data", (d) => ok(String(d).trim()));
+    py.once("exit", (c) => fail(new Error("the workspace server stopped: " + c)));
+  });
+  const openInvestigation = async (pg) => {
+    await pg.goto(`http://127.0.0.1:${port}/#/r/${TOY.release}/claim/${encodeURIComponent("T:thm:bound")}`);
+    const inv = pg.locator("section.investigation");
+    await inv.getByRole("button", { name: /^Continue ws-/ }).click();
+    await inv.getByRole("button", { name: "Write a composition" }).waitFor();
+    return inv;
+  };
+  try {
+    await check("a composition is written in the reader through the engine's checks, its refusals as it words them", 1300, async (pg) => {
+      const inv = await openInvestigation(pg);
+      await inv.getByRole("button", { name: "Write a composition" }).click();
+      const ed = inv.locator("[data-composing=new]");
+      const s1 = ed.locator("[data-step-edit=s1]");
+      await s1.getByRole("textbox", { name: "What s1 establishes" }).fill("2 T_n = n(n + 1)");
+      await s1.locator("[data-use=e-tri]").check();
+      await s1.getByRole("button", { name: "Add a substitution" }).click();
+      await s1.getByRole("textbox", { name: "Variable" }).fill("n");
+      await s1.getByRole("textbox", { name: "Value" }).fill("n");
+      await s1.getByRole("combobox", { name: "In the evidence" }).selectOption("e-tri");
+      await ed.getByRole("button", { name: "Add a step" }).click();
+      const s2 = ed.locator("[data-step-edit=s2]");
+      await s2.getByRole("textbox", { name: "What s2 establishes" }).fill("T_n ≤ 1 · n² for every n");
+      await s2.locator("[data-use=e-bound]").check();
+      await s2.locator("[data-after=s1]").check();
+      await s2.locator("[data-req=c]").check();
+      await s2.getByRole("textbox", { name: "Inference of s2" }).fill("2 T_n = n² + n ≤ 2 n²");
+      // The n of each step identified as the same object through the connection, which holds on a
+      // domain only: the engine adds the obligation that leaves.
+      await ed.getByRole("button", { name: "Add an identification" }).click();
+      const id0 = ed.locator("[data-ident-edit='0']");
+      await id0.getByRole("combobox", { name: "Left step" }).selectOption("s1");
+      await id0.getByRole("textbox", { name: "Left object" }).fill("n");
+      await id0.getByRole("combobox", { name: "Right step" }).selectOption("s2");
+      await id0.getByRole("textbox", { name: "Right object" }).fill("n");
+      await id0.locator("[data-ident-evidence=e-conn]").check();
+      await ed.getByRole("combobox", { name: "Composition coverage" }).selectOption("full");
+      await ed.getByRole("button", { name: "Save composition" }).click();
+      const alert = ed.getByRole("alert");
+      await alert.waitFor();
+      assert.equal(await alert.textContent(), "full coverage needs every clause established: obligation(s) o1 are open");
+      assert.deepEqual(compositions(), [], "nothing is saved");
+      assert.equal(await s1.getByRole("textbox", { name: "What s1 establishes" }).inputValue(), "2 T_n = n(n + 1)", "the form keeps what was written");
+      await ed.getByRole("combobox", { name: "Composition coverage" }).selectOption("partial");
+      await ed.getByRole("button", { name: "Save composition" }).click();
+      const shown = inv.locator(".compositions [data-composition]");
+      await shown.waitFor();
+      assert.equal(await inv.locator("[data-composing]").count(), 0, "the form closes once it is saved");
+      const [saved] = compositions();
+      assert.deepEqual(saved.steps, [
+        { id: "s1", establishes: "2 T_n = n(n + 1)", uses: ["e-tri"], substitutions: [{ variable: "n", value: "n", in: "e-tri" }] },
+        { id: "s2", establishes: "T_n ≤ 1 · n² for every n", requirements: ["c"], uses: ["e-bound"], after: ["s1"], inference: "2 T_n = n² + n ≤ 2 n²" }]);
+      assert.deepEqual(saved.identifications, [{ left: { step: "s1", object: "n" }, right: { step: "s2", object: "n" }, relation: "same object", how: "evidence", evidence: ["e-conn"] }]);
+      assert.deepEqual(saved.obligations.map((o) => [o.id, o.kind, o.state, o.connection]), [["o1", "local to global", "open", "e-conn"]]);
+      assert.equal(saved.coverage, "partial");
+      assert.match(await shown.locator("[data-obligation=o1]").textContent(), /Open: a local-to-global step[\s\S]*left by the connection/);
+      assert.match(await shown.locator("[data-step=s1]").textContent(), /n := n/);
+      // Edited: a bridge Lean does not check is refused; an obligation discharged by a step is saved.
+      await inv.locator(`[data-edit-composition="${saved.id}"]`).click();
+      const edit = inv.locator(`[data-composing="${saved.id}"]`);
+      assert.equal(await edit.locator("[data-step-edit=s2]").getByRole("textbox", { name: "What s2 establishes" }).inputValue(), "T_n ≤ 1 · n² for every n");
+      await edit.getByRole("textbox", { name: "Bridge theorem" }).fill("Toy.Acceptance.thm_bound");
+      await edit.getByRole("textbox", { name: "Bridge target" }).fill("Toy.PaperSpec.thm_bound");
+      await edit.getByRole("button", { name: "Save composition" }).click();
+      await edit.getByRole("alert").waitFor();
+      assert.equal(await edit.getByRole("alert").textContent(), "a bridge is checked by Lean against the claim's passage: it needs the Lean project and its build");
+      await edit.getByRole("textbox", { name: "Bridge theorem" }).fill("");
+      await edit.getByRole("textbox", { name: "Bridge target" }).fill("");
+      const o1 = edit.locator("[data-obligation-edit=o1]");
+      await o1.getByRole("combobox", { name: "State" }).selectOption("discharged");
+      await o1.locator("[data-by-step=s2]").check();
+      await edit.getByRole("button", { name: "Save composition" }).click();
+      await pg.waitForFunction(() => !document.querySelector("[data-composing]"));
+      const [again] = compositions();
+      assert.equal(again.rev, 2);
+      assert.deepEqual(again.obligations[0], { ...saved.obligations[0], state: "discharged", by: { steps: ["s2"] } });
+      assert.ok(!again.bridge);
+      // Changed in a terminal while the form is open: nothing is saved over it.
+      await inv.locator(`[data-edit-composition="${saved.id}"]`).click();
+      engine(String.raw`
+p = wsp.find(work, "` + WS + String.raw`")
+c = wsp.read(p)["records"]["` + saved.id + String.raw`"]
+keep = {k: c[k] for k in ("id", "kind", "claim", "steps", "identifications", "obligations", "coverage")}
+wsp.update(p, [{"op": "put", "base_rev": c["rev"], "record": {**keep, "statement": "Written in a terminal."}}], snap)`);
+      await edit.getByRole("textbox", { name: "Combined statement" }).fill("Written in the reader.");
+      await edit.getByRole("button", { name: "Save composition" }).click();
+      await edit.getByRole("alert").waitFor();
+      assert.match(await edit.getByRole("alert").textContent(), /changed elsewhere/);
+      assert.equal(compositions()[0].statement, "Written in a terminal.");
+    });
+
+    await check("the composition form fits a phone", 390, async (pg) => {
+      const inv = await openInvestigation(pg);
+      await inv.getByRole("button", { name: "Write a composition" }).click();
+      const ed = inv.locator("[data-composing=new]");
+      await ed.getByRole("button", { name: "Add an identification" }).click();
+      await ed.getByRole("button", { name: "Add an obligation" }).click();
+      await ed.locator("[data-step-edit=s1]").getByRole("button", { name: "Add a substitution" }).click();
+      assert.ok(await pg.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), "no sideways scroll");
+      await ed.locator("[data-step-edit=s1] [data-use=e-bound]").check();
+      await ed.getByRole("button", { name: "Save composition" }).click();
+      await ed.getByRole("alert").waitFor();
+      assert.match(await ed.getByRole("alert").textContent(), /^what step s1 establishes \(`establishes`\)/);
+      await ed.getByRole("button", { name: "Cancel" }).click();
+      assert.equal(await inv.locator("[data-composing]").count(), 0);
+    });
+  } finally { py.kill(); }
+
+  // A static copy reads the published compositions and offers no form; independent Compare is
+  // given none of them.
+  fs.cpSync(path.join(root, "toyfind"), path.join(root, "toyfindq"), { recursive: true });
+  queueFor(path.join(root, "toyfindq", "data"));
+  await check("a static copy shows compositions read-only, and independent Compare none", 1300, async (pg) => {
+    await pg.goto(origin + `/toyfindq/#/r/${TOY.release}/claim/${encodeURIComponent("T:thm:bound")}`);
+    await pg.locator("main.page [data-composition=c-arg]").first().waitFor({ state: "attached" });
+    assert.equal(await pg.locator("section.investigation, [data-composing], [data-edit-composition]").count(), 0);
+    assert.equal(await pg.getByRole("button", { name: "Write a composition" }).count(), 0);
+    const cmp = await compareStage(pg, "toyfindq", TOY.release, REVIEW_KEY, "spec:Toy.PaperSpec.thm_bound", "T:thm:bound");
+    await cmp.locator(".stmt .ribbon > li").first().waitFor();
+    await pg.waitForLoadState("networkidle");
+    assert.equal(await cmp.locator("[data-composition], [data-composing], .row-findings").count(), 0);
+    const html = await pg.evaluate(() => document.body.innerHTML);
+    for (const absent of ["T_n ≤ n² for every n", "A-Auditor", "State the combination as one Lean result"]) assert.ok(!html.includes(absent), `${absent} is not on the page`);
+  });
 }
 
 await browser.close();
