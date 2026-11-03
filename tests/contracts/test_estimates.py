@@ -515,6 +515,20 @@ def test_a_bridge_pinned_without_a_lean_project_is_not_checked(work):
         ["no theorem and target proposition are recorded for it"]
 
 
+def test_a_hint_dismissed_by_a_bridge_lean_does_not_check_says_so():
+    # The dismissed hint is worded with the outcome of its difference as the reading shows it.
+    d = est.difference_view({"feature": "domain", "paper": "x", "outcome": "resolved",
+                             "resolution": {"by": "checked bridge", "theorem": "Ex.b",
+                                            "target": "Ex.B", "text": "t"}},
+                            {"state": "unchecked", "reasons": ["r"]})
+    block = {"differences": [{"finding": "f-b", "requirement": "r1", **d}],
+             "settled_hints": [{"settled_by": "f-b", "text": "a hint.",
+                                "settled": {"finding": "f-b", "outcome": "resolved",
+                                            "why": "t", "by": "human:A"}}]}
+    assert "  hint dismissed by f-b (recorded as resolved; Lean does not check its bridge now, " \
+        "human:A): a hint. Why: t" in est.lines(block)
+
+
 def test_a_resolution_naming_some_conditions_leaves_the_others_open(work):
     p = opened(work)
     wsp.update(p, [put({"id": "f-part", "kind": "finding", "claim": CLAIM,

@@ -297,7 +297,10 @@ theorem has **Facts inside the proof**: *Read the proof* asks Lean for the propo
 establishes along the way, each with the hypotheses it needs and the case of the proof it lies in,
 and each theorem the proof applies with the local that supplies each of its hypotheses (`compare
 --query proof-facts NAME` gives the same in a terminal, with the reference that cites each fact,
-as `compare --query uses` gives one for each application). *Cite in the investigation* saves a fact
+as `compare --query uses` gives one for each application). Lean reads the facts a page at a time;
+*Read more* adds the next page, and each fact keeps its number on every page. In a terminal,
+`--after` reads the next page and `--in AT` the facts inside one application, by its position
+`at`. *Cite in the investigation* saves a fact
 as evidence; it keeps its basis, established inside that proof under that context, so a finding
 resting on it records the coverage as your composition, not as direct coverage. A `have` the
 source states but the compiled proof does not keep is shown as source text only.
@@ -413,6 +416,48 @@ first (a common extension, a bridge, the full theorem), so that a change of repr
 recorded as a defect. The reading lists the Lean hypotheses no requirement is aligned with as
 hints to inspect; a hypothesis aligned with a requirement that a standing assumption governs is
 shown as inherited from it.
+
+**Computed hints of quantity.** An alignment may name the paper's `expression`, exactly as the
+source writes it in a passage that governs the alignment (a passage it names, or an accepted
+passage of its requirements); the alignment goes out of date when no such passage prints it any
+more. With a Lean target that is an expression (the conclusion, a hypothesis or a sub-term,
+inside a definition expanded at its arguments too), the reading compares the two:
+
+```json
+{"op": "put", "record": {"kind": "alignment", "claim": "Theorem 17", "requirements": ["m.h"],
+ "expression": "m + 4", "lean": [{"decl": "Example.jet_lower", "binder": "h"}]}}
+```
+
+Both are put in one normal form, a polynomial with rational coefficients (a quotient by a monomial
+is a negative power; an absolute value or a norm is a variable of its own), and a difference is a
+hint: an `offset` (feature `index offset`: `m + 4` against `JetBound f S (n + 5) C`, naming the
+definition, the argument the expression stands in and its expansion), a `coefficient` (`weight`:
+`2(a + b)` against `a + b`), a `power` or other `terms`. The paper's variables are matched with
+the Lean's only through an alignment of a requirement's variable (`binds`) with a Lean variable
+(`var`) and through symbol links, so a rename gives no hint, and neither does an equal form
+(`2(a + b)` against `2a + 2b`); a variable matched with none gives `not compared`, never a
+difference. A bounded TeX reader reads the paper's side (`+`, `-`, `\cdot`, `/`, juxtaposition,
+`\frac`, `^`, numerals, identifiers with sub- or superscripts, brackets of any size, `|·|` and
+`\|·\|`). Anything else, and a Lean operation that is not this arithmetic (a subtraction in ℕ,
+cut off at 0, or a division in ℕ or ℤ), is `not compared`, with the reason and both exact texts.
+A hint is a pointer to inspect: record what you conclude as a difference, and dismiss a hint by
+naming it in that difference (`"hint": {"alignment": ID, "kind": KIND}`); the reading then lists
+it apart, with your outcome and reason. Hints show in `workspace show`, in `compare CLAIM
+--workspace ID` at the informed stage, and in `check --json`, attributed to the workspace and
+auditor whose alignment gives them. They change no status or review record, the semantic summary
+does not count them, a published audit does not carry them, and the stages of an independent
+review show none.
+
+In the reader, **Align with the Lean** offers the mathematics of the passages that govern the
+alignment (the inside of each `$…$` or display, and each side of a relation in it) to pick as
+the **Paper expression**, which you can then trim. When the comparison's rows follow your
+investigation, each hint is beside the row of its Lean target, marked **Computed hint**, a
+pointer to inspect and not a finding, with the paper's and the Lean's expressions as written and
+their normal forms. **Dismiss**, in the Investigation, asks for your reason and records it as a
+draft finding: a difference on the alignment's requirement with outcome `no difference` that
+names the hint. The hint is then listed under **Dismissed hints**, with who dismissed it and why,
+both in the Investigation and beside its row. Review's Compare stage pairs no rows with an
+investigation and shows no hint.
 
 A counterexample is a record of its own against one reading of a requirement:
 

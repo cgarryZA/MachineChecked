@@ -271,9 +271,10 @@ FACT_KEPT = ("decl", "module", "at", "fact_hash", "proof_hash", "kind", "name", 
 
 def _fact_ref(f, root) -> dict:
     """A fact inside a proof (`fact`: `{decl, at, fact_hash?, module?}`, as `compare --query
-    proof-facts` gives it in each fact's `ref`). With the Lean project it is looked up (the
-    answer is cached) and kept with its proposition, assumptions, cases and pins; its basis is
-    always that it is established inside that proof under that context."""
+    proof-facts` gives it in each fact's `ref`). With the Lean project it is looked up on any
+    page of the proof (each answer is cached) and kept with its proposition, assumptions, cases
+    and pins; its basis is always that it is established inside that proof under that
+    context."""
     if not isinstance(f, dict) or not isinstance(f.get("decl"), str) or \
             not isinstance(f.get("at"), str):
         raise WorkspaceError("a fact reference is {decl, at} (and fact_hash), as "
@@ -286,13 +287,12 @@ def _fact_ref(f, root) -> dict:
         return {k: f[k] for k in FACT_KEPT if f.get(k) is not None} | {"basis": pf.BASIS}
     from .simple import ViewError
     try:
-        doc = pf.extract(Path(root), f["decl"], f.get("module"))
+        doc, found = pf.locate(Path(root), f)
     except ViewError as e:
         raise WorkspaceError(str(e)) from None
     if not doc.get("ok"):
         raise WorkspaceError(f"{f['decl']}: {doc.get('status')}"
                              + (f": {doc['reason']}" if doc.get("reason") else ""))
-    found = pf.find_fact(doc, f)
     if found is None:
         raise WorkspaceError(f"no fact at {f['at']} in the proof of {f['decl']}"
                              + (" with that proposition" if f.get("fact_hash") else "")
@@ -1480,8 +1480,9 @@ def api(work_dir: Path, data_dir: Path, root: Path | None = None) -> tuple[dict,
     """The routes `machinechecked view`'s local server answers for the reader: GET
     `/api/workspaces` (the list), `/api/workspace?id=&claim=` (one, as `view` gives it) and
     `/api/workspace/export?id=`, `/api/workspace/revision?id=` (the findings the version maps
-    it keeps reopen, `reopen.for_site`), and `/api/proof-facts?name=&match=` (the facts inside one
-    proof, as `compare --query proof-facts` gives them); POST `/api/workspace` with `action`
+    it keeps reopen, `reopen.for_site`), and `/api/proof-facts?name=&match=&after=&in=` (a page
+    of the facts inside one proof, as `compare --query proof-facts` gives them); POST
+    `/api/workspace` with `action`
     `open` (`reviewer`, `mode`, `id`), `update` (`id`, `ops`, `op_id`, `base` ignored), `import`
     (`data`, `replace_drafts`, `dry_run`) or `suggest` (`id`, `claim`, `requirement`: attach the passages
     `requirements.suggest` proposes, as proposals); GET `/api/review-order?order=informed`,
@@ -1541,13 +1542,16 @@ def api(work_dir: Path, data_dir: Path, root: Path | None = None) -> tuple[dict,
         raise WorkspaceError(f"unknown action {action!r}")
 
     def facts(q):
-        # The facts inside one proof, on request (`compare --query proof-facts`); cached.
+        # The facts inside one proof, on request (`compare --query proof-facts`), a page at a
+        # time (`after`, `in`); each page is cached.
         if root is None:
             raise WorkspaceError("no Lean project to read the proof from")
         from .compare import CompareError, Site, query
         try:
             return query(Site(data_dir), "proof-facts", (q.get("name") or [""])[0], root=root,
-                         match=(q.get("match") or [None])[0] or None)
+                         match=(q.get("match") or [None])[0] or None,
+                         after=(q.get("after") or [None])[0] or None,
+                         within=(q.get("in") or [None])[0] or None)
         except CompareError as e:
             raise WorkspaceError(str(e)) from None
 

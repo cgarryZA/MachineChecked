@@ -537,7 +537,8 @@ def workspace_signals(units: list[dict], workspaces: list[dict], site=None, root
                 add(cid, "open question", "an open question is recorded")
         for cid in sorted({r["claim"] for r in recs if r.get("kind") == "alignment"}):
             hs, _ = est.hints([r for r in recs if r.get("claim") == cid], site, cid)
-            n = sum(1 for h in hs if not h.get("settled_by"))
+            n = sum(1 for h in hs if not h.get("settled_by")
+                    and h["kind"] == "unmatched hypothesis")
             if n:
                 add(cid, "hint", "a hypothesis of its Lean statement is aligned with no "
                     "requirement" if n == 1 else f"{n} hypotheses of its Lean statement are "

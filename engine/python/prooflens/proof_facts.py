@@ -15,6 +15,11 @@ term. The source line of a named fact is found by its name in the declaration's 
 is marked as found that way; a `have` or `show` of the source with no typed counterpart is listed
 apart, as source text only.
 
+Lean reads one page of facts at a time: the facts after a given one (`after`, a fact's id), at or
+under a position in the term (`within`, a fact's `at`, such as an application's), at most
+`limits["facts"]` of them (200 by default). A fact's id is its place among all the facts of the
+proof, so no page renumbers it, and each page reports a fact exactly as the whole list would.
+
 A fact inside a proof is established inside this proof, under its context. It is never an
 exported theorem, and nothing here says that one proposition implies another: a search ranks
 candidates, it does not compare bounds.
@@ -154,6 +159,10 @@ def _text(pp) -> str:
     return (pp or {}).get("text", "") if isinstance(pp, dict) else str(pp or "")
 
 
+def _index(f: dict) -> int:
+    return int(f["id"][1:])
+
+
 def _assemble(rec: dict, root: Path) -> dict:
     locals_ = {l["id"]: l for l in rec.get("locals") or []}
     scopes = {s["id"]: dict(s) for s in rec.get("scopes") or []}
@@ -162,21 +171,23 @@ def _assemble(rec: dict, root: Path) -> dict:
                       if l.get("origin") == "bound" and (l.get("scope") or [None])[-1] == s["id"]]
         s["text"] = _scope_text(s, locals_)
     facts = [dict(f) for f in rec.get("facts") or []]
-    by_local = {f["local"]: f["id"] for f in facts if f.get("local")}
     for f in facts:
         f["basis"] = BASIS
         f["what"] = KIND_WORDS.get(f["kind"], f["kind"])
         f["assumptions"] = [_local_ref(locals_.get(i), i) for i in f.get("needs") or []]
         f["cases"] = [scopes[s]["text"] for s in f.get("scope") or [] if s in scopes]
-        f["uses_facts"] = [by_local[i] for i in f.get("uses") or [] if i in by_local]
+        f["uses_facts"] = list(f.get("uses_facts") or [])
+        f["used_by"] = list(f.get("used_by") or [])
         f["ref"] = {"decl": rec["name"], "module": rec.get("module"), "at": f["at"],
                     "fact_hash": f["fact_hash"], "proof_hash": rec.get("proof_hash")}
-    for f in facts:
-        f["used_by"] = [g["id"] for g in facts if f.get("local") and f["local"] in
-                        (g.get("uses") or []) and g["id"] != f["id"]]
     cut = list(rec.get("cut") or [])
     file, lines = _source(root, rec.get("module") or "", rec.get("range"))
-    only = _place(facts, file, lines, rec.get("range"), not cut)
+    # The source lines are matched against every `have` and `show` of the proof (the record's
+    # outline), the page's own facts among them, so a fact is placed as the whole list places it.
+    mine = {f["id"]: f for f in facts}
+    walk = {o["id"]: dict(o) for o in rec.get("outline") or []} | mine
+    only = _place(sorted(walk.values(), key=_index), file, lines, rec.get("range"), not cut)
+    page = rec.get("page") or {}
     return {
         "declaration": {"name": rec["name"], "kind": rec.get("kind"), "module": rec.get("module"),
                         "file": file, "range": rec.get("range"),
@@ -185,11 +196,15 @@ def _assemble(rec: dict, root: Path) -> dict:
                         f"exported {rec.get('kind') or 'declaration'}",
                         "axioms": rec.get("axioms") or [], "sorry": bool(rec.get("sorry"))},
         "proof": {"hash": rec.get("proof_hash"), "visited": rec.get("visited"),
-                  "complete": not cut, "cut": [{"nodes": "the walk reached its node limit",
-                                                "facts": "the walk reached its fact limit"}
+                  "complete": not cut, "cut": [{"nodes": "the walk reached its node limit"}
                                                .get(c, c) for c in cut],
                   "limits": rec.get("limits"), "auxiliary": rec.get("auxiliary") or [],
                   "inspected": INSPECTED, "not_inspected": NOT_INSPECTED},
+        "page": {"after": page.get("after"), "within": page.get("within"),
+                 "size": (rec.get("limits") or {}).get("facts"),
+                 "before": page.get("before") or 0, "count": page.get("kept", len(facts)),
+                 "total": page.get("selected", len(facts)), "more": bool(page.get("more")),
+                 "next": page.get("last") if page.get("more") else None},
         "facts": facts, "locals": list(locals_.values()), "scopes": list(scopes.values()),
         "source_only": only,
     }
@@ -233,16 +248,46 @@ def rank(facts: list[dict], query: str) -> list[dict]:
 
 # -- the request ---------------------------------------------------------------------------
 
+FACT_ID = re.compile(r"f(\d+)")
+POSITION = re.compile(r"/(?:[0-3](?:/[0-3])*)?")
+
+
+def page_request(after: str | None, within: str | None) -> dict:
+    """The probe's fields for a page: the facts after the fact `after` (its id, `f12`), at or
+    under the term position `within` (a fact's `at`, `/1/0/1`). Raises ValueError on anything
+    else."""
+    out = {}
+    if after is not None:
+        m = FACT_ID.fullmatch(after)
+        if not m:
+            raise ValueError(f"{after!r} is not a fact of a proof (f0, f1, …, as a page gives "
+                             "them)")
+        out["facts_after"] = int(m.group(1))
+    if within is not None:
+        if not POSITION.fullmatch(within):
+            raise ValueError(f"{within!r} is not a position in a proof term (a fact's at, "
+                             "such as /1/0/1)")
+        out["facts_within"] = within
+    return out
+
+
 def extract(root: Path, name: str, module: str | None = None, lake: str = "lake", log=None,
-            refresh: bool = False, limits: dict | None = None, cached_only: bool = False) -> dict:
+            refresh: bool = False, limits: dict | None = None, cached_only: bool = False,
+            after: str | None = None, within: str | None = None) -> dict:
     """The facts inside the proof of `name` in the Lean project at `root`, as one JSON-ready
-    document. `limits` (`nodes`, `facts`, and `heartbeats` in thousands) bound the walk;
+    document. `limits` (`nodes`, `facts`, and `heartbeats` in thousands) bound the walk, `facts`
+    the facts of one page; `after` (a fact's id) and `within` (a term position) say which page
+    (`page_request`), and `page` in the answer says which it is and whether more remain;
     `cached_only` answers from the facts store or not at all (`status: "not extracted"`).
 
     The answer is kept in the facts store shared with `view`, `build`, `check` and `inspect`
     and reused while the modules of the environment it was read from (the declaration's module
     and what it imports, sources and compiled files) and the probe are unchanged; an edit to
     another module keeps it."""
+    try:
+        page = page_request(after, within)
+    except ValueError as e:
+        raise ViewError(str(e)) from None
     libs = lib_names(root)
     if not libs:
         raise ViewError("no Lean library found in the lakefile")
@@ -254,7 +299,9 @@ def extract(root: Path, name: str, module: str | None = None, lake: str = "lake"
     if answer is not None:
         return {**head, "ok": False, **answer}
     st = store(root, libs)
-    key = f"{name}\0{target or '*'}\0{json.dumps(limits or {}, sort_keys=True)}"
+    asked = {**(limits or {}), **({"after": after} if after else {}),
+             **({"within": within} if within else {})}
+    key = f"{name}\0{target or '*'}\0{json.dumps(asked, sort_keys=True)}"
     if cached_only or not refresh:
         entry, _ = st.get(KIND, key)
         if entry is not None:
@@ -268,7 +315,8 @@ def extract(root: Path, name: str, module: str | None = None, lake: str = "lake"
         if entry is not None:  # another process read it meanwhile
             return {**head, **entry["body"], "cache": {"hit": True, "key": _short(key)}}
         work = root / work_dir_name(root) / "build"
-        request = [{"kind": "proof-facts", "name": name}, {"kind": "modules", "name": ""}]
+        request = [{"kind": "proof-facts", "name": name, **page},
+                   {"kind": "modules", "name": ""}]
         extra = {"facts_nodes": (limits or {}).get("nodes"),
                  "facts_items": (limits or {}).get("facts"),
                  "max_heartbeats": (limits or {}).get("heartbeats")}
@@ -315,6 +363,21 @@ def extract(root: Path, name: str, module: str | None = None, lake: str = "lake"
             body = {"ok": True, "status": "found", **_assemble(rec, root)}
         st.put(KIND, key, env, body=body)
     return {**head, **body, "cache": {"hit": False, "key": _short(key)}}
+
+
+def locate(root: Path, ref: dict, limits: dict | None = None) -> tuple[dict, dict | None]:
+    """The answer that holds the fact `ref` names (`{decl, at, fact_hash?, module?}`), and the
+    fact, None when the proof no longer has it: the first page of the proof, else the pages of
+    the facts at or under its position."""
+    doc = extract(root, ref["decl"], ref.get("module"), limits=limits)
+    found = find_fact(doc, ref) if doc.get("ok") else None
+    after = None
+    while found is None and doc.get("ok") and (doc.get("page") or {}).get("more"):
+        doc = extract(root, ref["decl"], ref.get("module"), limits=limits, after=after,
+                      within=ref["at"])
+        found = find_fact(doc, ref) if doc.get("ok") else None
+        after = (doc.get("page") or {}).get("next")
+    return doc, found
 
 
 def find_fact(doc: dict, ref: dict) -> dict | None:

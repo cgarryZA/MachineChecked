@@ -172,7 +172,8 @@ carries every step out on the toy example.
    supplied to every binder, the origin of each premise (its `discharge`: `assumed` by the
    caller, `proved` in it, or `local`) and the object each premise and the conclusion are
    about (`objects`); `--in APP_ID` reads one application with its whole context. `--query proof-facts NAME` gives the facts a proof
-   establishes on the way, each under its assumptions and case. Each prints the reference
+   establishes on the way, each under its assumptions and case, a page at a time (`--after` the
+   `next` it returns; `--in AT` for the facts inside one application). Each prints the reference
    evidence cites: an application's `id`, a fact's position `at`.
 5. **Assemble.** Cite declarations, applications (`{"app": {callee, id}}`) and proof facts
    (`{"fact": REF}`) as evidence, and combine them in a `composition` with its substitutions,

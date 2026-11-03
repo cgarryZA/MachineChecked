@@ -57,4 +57,17 @@ def above (n : Nat) : {m : Nat // n ≤ m} :=
     have step : n ≤ n + 1 := Nat.le_succ n
     exact step⟩
 
+/-- Two weakenings, each with facts of its own inside its arguments. -/
+theorem nested (x C h : Int) (hC : 0 ≤ C) (hh : 0 ≤ h) (hx : x + 1 ≤ C * h) :
+    x ≤ C * (h + h) ∧ x ≤ C * (h + h) := by
+  constructor
+  · apply weaken hC hh
+    have inner : x ≤ C * h := by omega
+    exact inner
+  · apply weaken hC
+    · have pos : 0 ≤ h := hh
+      exact pos
+    · have again : x ≤ C * h := by omega
+      exact again
+
 end Facts

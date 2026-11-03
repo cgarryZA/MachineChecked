@@ -37,6 +37,11 @@ structure Request where
   callers : Option (Array String) := none
   /-- For `names`: the names to resolve. -/
   names : Option (Array String) := none
+  /-- For `proof-facts`: the page asked for, the facts after the one with this index and those
+  at or under this term position (a fact's `at`, such as an application's); from the first fact
+  of the whole proof if none. -/
+  facts_after : Option Nat := none
+  facts_within : Option String := none
   deriving FromJson, Inhabited
 
 structure Query where
@@ -2494,9 +2499,15 @@ A `proof-facts` request reads one declaration's value, unerased, for the proposi
 establishes along the way: each `have` (or `let` of a proposition), each goal a `show` states, and
 each application of a theorem of the project, or of any theorem to a local fact. Each comes with
 its type, the local context it holds in (the binders and hypotheses around it, including the case
-of a case split it lies in), the hypotheses it needs and its position in the term. The walk is
-bounded in the nodes it visits and the facts it reports, and says when it was cut short. It adds a
-record of its own and changes no other. -/
+of a case split it lies in), the hypotheses it needs and its position in the term.
+
+The walk goes through the whole term in the same order whatever is asked, so a fact's index among
+the facts it meets is its identity (`f12`), as a local's (`l3`) and a case's (`s1`) are: no page
+renumbers them. A request asks for one page: the facts after a given one (`facts_after`), at or
+under a term position (`facts_within`), at most `facts_items` of them. Only the page's facts are
+printed; the record says which page it is and whether more remain. The walk is bounded in the
+nodes it visits, and says when it was cut short. It adds a record of its own and changes no
+other. -/
 
 /-- The most nodes of a proof term one request visits, and the most facts it reports. -/
 def factsMaxNodes : Nat := 200000
@@ -2512,6 +2523,8 @@ structure PFLocal where
 
 /-- A fact found in a proof. For an application, `type` is the application itself. -/
 structure PFItem where
+  /-- Its index among the facts the walk meets. -/
+  index : Nat
   kind : String
   name : Name
   type : Expr
@@ -2538,6 +2551,24 @@ structure PFState where
   /-- The generated lemmas the proof applies (`_proof_1`, say): parts of it this walk does not
   enter. -/
   aux : Array Name := #[]
+  /-- The page asked for: the facts after the one with this index, at or under this position. -/
+  after : Option Nat := none
+  within : Option String := none
+  /-- The facts met so far, on the page or not. -/
+  met : Nat := 0
+  /-- The facts met at or under `within` (every fact when none), and how many of them lie at or
+  before `after`. -/
+  selected : Nat := 0
+  before : Nat := 0
+  /-- Whether a fact of the selection was met once the page was full. -/
+  more : Bool := false
+  /-- The fact that introduces each `have` local, by the local's index. -/
+  binders : Std.HashMap Nat Nat := {}
+  /-- For each local a fact of the page introduces, the facts whose proof uses it. -/
+  users : Std.HashMap Nat (Array Nat) := {}
+  /-- Every `have` and `show` met, with its index and name, on the page or not: the source lines
+  are matched against all of them, so a fact is placed the same way on every page. -/
+  outline : Array (Nat × String × Name) := #[]
 
 abbrev PFM := StateRefT PFState MetaM
 
@@ -2546,20 +2577,44 @@ def pfUses (e : Expr) : PFM (Array Nat) := do
   let idx := (← get).index
   return ((collectFVars {} e).fvarIds.filterMap (idx[·]?)).qsort (· < ·)
 
-def pfFull : PFM Bool := do
-  let s ← get
-  if s.items.size ≥ s.maxItems then
-    unless s.cut.contains "facts" do modify fun s => { s with cut := s.cut.push "facts" }
-    return true
-  return false
+/-- Whether a fact at `pos` lies at or under the position `w`, both as positions print
+(`/1/0/2`, the root `/`). -/
+def pfWithin (w : String) (pos : SubExpr.Pos) : Bool :=
+  let p := toString pos
+  w == "/" || p == w || p.startsWith (w ++ "/")
 
-def pfRecord (kind : String) (n : Name) (ty : Expr) (ctx scope : Array Nat) (pos : SubExpr.Pos)
-    (uses : Array Nat) (head : Name := .anonymous) (bound : Option Nat := none) : PFM Unit := do
-  unless ← pfFull do
-    let it : PFItem :=
-      { kind := kind, name := n, type := ty, ctx := ctx, scope := scope, pos := pos,
-        uses := uses, head := head, bound := bound }
-    modify fun s => { s with items := s.items.push it }
+/-- Counts a fact the walk meets. A fact of the page is kept, with its type and the locals its
+proof uses (`fact`, run only when needed); of any other fact, only whether it uses a local a fact
+of the page introduces. -/
+def pfRecord (kind : String) (n : Name) (ctx scope : Array Nat) (pos : SubExpr.Pos)
+    (fact : Unit → PFM (Expr × Array Nat)) (head : Name := .anonymous)
+    (bound : Option Nat := none) : PFM Unit := do
+  let s ← get
+  let k := s.met
+  let inside := match s.within with | some w => pfWithin w pos | none => true
+  let past := match s.after with | some a => k > a | none => true
+  let keep := inside && past && s.items.size < s.maxItems
+  modify fun s => { s with
+    met := k + 1,
+    selected := if inside then s.selected + 1 else s.selected,
+    before := if inside && !past then s.before + 1 else s.before,
+    more := s.more || (inside && past && !keep),
+    binders := match bound with | some i => s.binders.insert i k | none => s.binders,
+    outline := if kind == "application" then s.outline else s.outline.push (k, kind, n) }
+  -- A fact that uses a local of the page's facts lies in that local's scope, so `ctx` holds it.
+  let watched := ctx.any s.users.contains
+  if keep || watched then
+    let (ty, uses) ← fact ()
+    if watched then
+      modify fun s => { s with users := uses.foldl (fun m i =>
+        match m[i]? with | some us => m.insert i (us.push k) | none => m) s.users }
+    if keep then
+      let it : PFItem :=
+        { index := k, kind := kind, name := n, type := ty, ctx := ctx, scope := scope,
+          pos := pos, uses := uses, head := head, bound := bound }
+      modify fun s => { s with items := s.items.push it,
+                               users := match bound with
+                                 | some i => s.users.insert i #[] | none => s.users }
 
 /-- Runs `k` with a new local `n : t`, kept (with its declaration) for the report. -/
 def pfWithLocal (n : Name) (bi : BinderInfo) (t : Expr) (origin : String)
@@ -2602,9 +2657,10 @@ partial def pfVisit (roots : Array Name) (e : Expr) (fvs : Array Expr) (ctx scop
     let t := t.instantiateRev fvs
     pfVisit roots v fvs ctx scope pv 0
     let prop ← isProp t
-    let uses ← if prop then pfUses (v.instantiateRev fvs) else pure #[]
     pfWithLocal n .default t (if prop then "have" else "let") ctx scope fun x i => do
-      if prop then pfRecord "have" n t ctx scope pos uses (bound := some i)
+      if prop then
+        pfRecord "have" n ctx scope pos (fun _ => do return (t, ← pfUses (v.instantiateRev fvs)))
+          (bound := some i)
       pfVisit roots b (fvs.push x) (ctx.push i) scope pb 0
   match e with
   | .mdata _ b => pfVisit roots b fvs ctx scope pos stmt
@@ -2624,13 +2680,14 @@ partial def pfVisit (roots : Array Name) (e : Expr) (fvs : Array Expr) (ctx scop
     if f.isConstOf ``id && k == 2 then
       let t := args[0]!.consumeMData.instantiateRev fvs
       if ← isProp t then
-        pfRecord "show" .anonymous t ctx scope pos (← pfUses (args[1]!.instantiateRev fvs))
+        pfRecord "show" .anonymous ctx scope pos
+          (fun _ => do return (t, ← pfUses (args[1]!.instantiateRev fvs)))
     if let .const c _ := f then
       let env ← getEnv
       if let some (.thmInfo _) := env.find? c then
         if userFacing c && (inScope roots env c || (← args.anyM (pfIsFact fvs))) then
-          pfRecord "application" c (e.instantiateRev fvs) ctx scope pos
-            (← pfUses (e.instantiateRev fvs)) c
+          pfRecord "application" c ctx scope pos
+            (fun _ => do let a := e.instantiateRev fvs; return (a, ← pfUses a)) c
         else if !userFacing c && inScope roots env c && !(← get).aux.contains c then
           modify fun s => { s with aux := s.aux.push c }
     else
@@ -2698,8 +2755,11 @@ context (another case's binder of the same name does not rename it). -/
 def pfContext (s : PFState) (ids : Array Nat) : LocalContext :=
   ids.foldl (fun l i => l.addDecl (s.lctx.get! s.locals[i]!.fvar)) {}
 
-def proofFactsRecord (h : IO.FS.Handle) (q : Query) (roots : Array Name) (n : Name) :
-    MetaM Unit := do
+/-- A fact's identity as the record gives it. -/
+def pfId (k : Nat) : String := s!"f{k}"
+
+def proofFactsRecord (h : IO.FS.Handle) (q : Query) (roots : Array Name) (n : Name)
+    (after : Option Nat) (within : Option String) : MetaM Unit := do
   let env ← getEnv
   let some ci := env.find? n
     | emit h (Json.mkObj [("record", "proof-facts"), ("name", n.toString),
@@ -2713,13 +2773,13 @@ def proofFactsRecord (h : IO.FS.Handle) (q : Query) (roots : Array Name) (n : Na
   let value ← instantiateMVars value
   let arity := ci.type.getForallBinderNames.length
   let init : PFState := { maxNodes := q.facts_nodes.getD factsMaxNodes,
-                          maxItems := q.facts_items.getD factsMaxItems }
+                          maxItems := q.facts_items.getD factsMaxItems,
+                          after := after, within := within }
   let ((), s) ← (pfVisit roots value #[] #[] #[] .root arity).run init
   withLCtx s.lctx (← getLocalInstances) do
     let vars := s.locals.map (·.fvar)
     let mut items : Array Json := #[]
     let mut wanted : Std.HashSet Nat := {}
-    let mut k := 0
     for it in s.items do
       -- Each fact is printed with a heartbeat budget of its own.
       let j? ← withCurrHeartbeats <| withLCtx (pfContext s it.ctx) (← getLocalInstances) do
@@ -2729,7 +2789,8 @@ def proofFactsRecord (h : IO.FS.Handle) (q : Query) (roots : Array Name) (n : Na
           let needs ← pfNeeds s ty it.uses
           let alone ← mkForallFVars (needs.map (mkFVar s.locals[·]!.fvar)) ty
           let premises ← if it.kind == "application" then pfPremises s it.type else pure #[]
-          pure (some (Json.mkObj [("id", Json.str s!"f{k}"), ("kind", Json.str it.kind),
+          let users := match it.bound with | some i => s.users.getD i #[] | none => #[]
+          pure (some (Json.mkObj [("id", Json.str (pfId it.index)), ("kind", Json.str it.kind),
             ("name", if it.name.isAnonymous then Json.null
               else Json.str it.name.eraseMacroScopes.toString),
             ("generated_name", toJson it.name.hasMacroScopes),
@@ -2738,6 +2799,10 @@ def proofFactsRecord (h : IO.FS.Handle) (q : Query) (roots : Array Name) (n : Na
             ("context", toJson (it.ctx.map (s!"l{·}"))),
             ("uses", toJson (it.uses.map (s!"l{·}"))),
             ("local", match it.bound with | some i => Json.str s!"l{i}" | none => Json.null),
+            -- The facts that introduce the locals its proof uses, and the facts whose proof uses
+            -- the local it introduces, on any page.
+            ("uses_facts", toJson ((it.uses.filterMap (s.binders[·]?)).map pfId)),
+            ("used_by", toJson (users.map pfId)),
             ("needs", toJson (needs.map (s!"l{·}"))),
             ("scope", toJson (it.scope.map (s!"s{·}"))),
             ("premises", Json.arr premises),
@@ -2747,7 +2812,6 @@ def proofFactsRecord (h : IO.FS.Handle) (q : Query) (roots : Array Name) (n : Na
       if let some (j, ctx) := j? then
         items := items.push j
         for i in ctx do wanted := wanted.insert i
-      k := k + 1
     let mut locals : Array Json := #[]
     let mut scopes : Std.HashSet Nat := {}
     for i in wanted.toArray.qsort (· < ·) do
@@ -2777,7 +2841,21 @@ def proofFactsRecord (h : IO.FS.Handle) (q : Query) (roots : Array Name) (n : Na
       ("facts", Json.arr items), ("locals", Json.arr locals), ("scopes", Json.arr scopesJson),
       ("visited", toJson s.visited), ("cut", toJson s.cut),
       ("auxiliary", toJson (s.aux.map toString)),
-      ("limits", Json.mkObj [("nodes", toJson s.maxNodes), ("facts", toJson s.maxItems)])])
+      ("limits", Json.mkObj [("nodes", toJson s.maxNodes), ("facts", toJson s.maxItems)]),
+      -- The page: what was asked, the facts selected (at or under `within`) and how many of
+      -- them lie before it, the last fact it holds, and whether more remain after it.
+      ("page", Json.mkObj [
+        ("after", match after with | some a => Json.str (pfId a) | none => Json.null),
+        ("within", match within with | some w => Json.str w | none => Json.null),
+        ("selected", toJson s.selected), ("before", toJson s.before),
+        ("kept", toJson s.items.size),
+        ("last", match s.items.back? with
+          | some it => Json.str (pfId it.index) | none => Json.null),
+        ("more", toJson s.more)]),
+      ("outline", Json.arr (s.outline.map fun (k, kind, nm) => Json.mkObj [
+        ("id", Json.str (pfId k)), ("kind", Json.str kind),
+        ("name", if nm.isAnonymous then Json.null else Json.str nm.eraseMacroScopes.toString),
+        ("generated_name", toJson nm.hasMacroScopes)]))])
 
 /-- Every module of the environment with the modules it imports directly: what a record
 extracted in this environment can depend on. -/
@@ -3346,7 +3424,8 @@ open ProofLensProbe in
         | "names" => namesRecord h (r.names.getD #[])
         | "link" => linkRecord h q inside seen r.name.toName
         | "deps" => depsRecords h inside r.name.toName
-        | "proof-facts" => proofFactsRecord h q roots r.name.toName
+        | "proof-facts" =>
+          proofFactsRecord h q roots r.name.toName r.facts_after r.facts_within
         | "modules" => moduleRecords h
         | "decl" => do
           let env ← getEnv
