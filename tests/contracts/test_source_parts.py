@@ -349,3 +349,103 @@ def test_promotion_expects_the_reading_digest_with_the_notation(tmp_path):
                            {"kind": "spec", "name": "Synthetic.spec"})
     assert want == digests(inv, "spec", "Synthetic.spec", tex)
     assert want["T:est"] != c["source_sha256"]
+
+
+# -- #511: a macro whose definition another claim's pin holds -----------------------------------
+
+RATE = ("\\documentclass{article}\n\\input{figs/values}\n\\begin{document}\n"        # 1-3
+        "The scheme converges at rate $\\rateVal$ in $\\stepVal$ steps.\n"            # 4
+        "\\end{document}\n")
+RATE_VALUES = ("% generated\n"                                                      # 1
+               "\\newcommand{\\stepVal}{12}\n"                                      # 2
+               "\\newcommand{\\aVal}{1}\n"                                          # 3
+               "\\newcommand{\\rateVal}{999}\n"                                     # 4
+               "\\newcommand{\\bVal}{2}\n")                                         # 5
+
+
+def rate_claims(root, values=None):
+    """The passage that prints the values, and a claim pinning lines 3-5 of the values file."""
+    (root / "figs").mkdir(parents=True, exist_ok=True)
+    (root / "main.tex").write_text(RATE, encoding="utf-8")
+    (root / "figs" / "values.tex").write_text(RATE_VALUES, encoding="utf-8")
+    out = []
+    for cid, loc, span in (("P:sec:rate", "main.tex:4", None),
+                           ("P:macros:rate", "figs/values.tex:3", values or {"end_line": 5})):
+        c = {"id": cid, "paper": "P", "location": loc, "scope": "expository",
+             "scope_reviewed": True, "clauses": [],
+             **({"source_region": span} if span else {})}
+        r = extract(root, c)
+        out.append({**c, "source_hash_scheme": SCHEME, "source_sha256": r.sha256,
+                    "source_line_sha256": r.line_sha256})
+    return out
+
+
+def warnings_of(root, rec, dismissals=()):
+    import json
+    from prooflens.assess import Assessor
+    c = {"id": "T:rate", "paper": "T", "location": "main.tex:4", "scope": "expository",
+         "scope_reviewed": True, "clauses": [], "source_hash_scheme": SCHEME,
+         "source_sha256": rec["sha256"]}
+    cfg = SimpleNamespace(statement_authors=[], papers=[SimpleNamespace(id="T")], lean_root=root)
+    lean = {"specs": {}, "proofs": {}, "decls": {}, "defs": {}, "layering": []}
+    tex = {"T": {"mode": "latex", "envs": [], "anchors": [], "regions": {"T:rate": rec}}}
+    out = Assessor(cfg, {"claims": [c]}, lean, tex, [], list(dismissals),
+                   json.dumps({"commit": REV, "replayed": []}), REV).run()
+    return {f["code"]: f for f in out["findings"]
+            if f["code"].startswith("source-macro")}, out
+
+
+def test_a_macro_pinned_by_another_claim_is_reported_as_pinned_there(tmp_path):
+    passage, values = rate_claims(tmp_path)
+    inv = {"claims": [passage, values]}
+    rec = collect(inv, "P", tmp_path)["P:sec:rate"]
+    # \rateVal is held by the values claim's pin; \stepVal is not.
+    assert rec["macros"] == [{"macro": "\\stepVal", "defined": ["figs/values.tex:2"]}]
+    (m,) = rec["pinned_elsewhere"]
+    assert (m["macro"], m["defined"], m["claims"]) == ("\\rateVal", ["figs/values.tex:4"],
+                                                       ["P:macros:rate"])
+    found, out = warnings_of(tmp_path, rec)
+    assert found["source-macro-unpinned"]["trigger"] == "\\stepVal"
+    elsewhere = found["source-macro-pinned-elsewhere"]
+    assert elsewhere["tier"] == "warning" and elsewhere["trigger"] == "\\rateVal"
+    assert "\\rateVal at figs/values.tex:4, pinned by P:macros:rate" in elsewhere["message"]
+    assert "reopens no reading of this passage" in elsewhere["message"]
+    assert out["claims"][0]["status_code"] == "scope.expository"
+    # Without the values claim, or with a pin that does not match the manuscript, or one that
+    # holds only part of the definition, the macro is unpinned.
+    assert "pinned_elsewhere" not in collect({"claims": [passage]}, "P", tmp_path)["P:sec:rate"]
+    stale = {**values, "source_sha256": "0" * 64}
+    rec2 = collect({"claims": [passage, stale]}, "P", tmp_path)["P:sec:rate"]
+    assert "pinned_elsewhere" not in rec2
+    assert [x["macro"] for x in rec2["macros"]] == ["\\rateVal", "\\stepVal"]
+    _, part = rate_claims(tmp_path, {"end_line": 4, "end_column": 20})
+    rec3 = collect({"claims": [passage, part]}, "P", tmp_path)["P:sec:rate"]
+    assert "pinned_elsewhere" not in rec3
+    # The rebound plan reports it as a build does.
+    plan_inv = {"papers": {"P": {"commit": REV[:7]}}, "claims": [passage, values]}
+    _, (entry,) = rebound_plan(plan_inv, "P", tmp_path, REV,
+                               [{"claim": "P:sec:rate", "start": 4, "end": 4}])
+    assert [x["macro"] for x in entry["macros"]] == ["\\stepVal"]
+    assert [(x["macro"], x["claims"]) for x in entry["pinned_elsewhere"]] == [
+        ("\\rateVal", ["P:macros:rate"])]
+
+
+def test_a_dismissal_of_it_lapses_when_the_definition_changes(tmp_path):
+    passage, values = rate_claims(tmp_path)
+    rec = collect({"claims": [passage, values]}, "P", tmp_path)["P:sec:rate"]
+    found, _ = warnings_of(tmp_path, rec)
+    f = found["source-macro-pinned-elsewhere"]
+    dismissal = {"code": f["code"], "subject": "T:rate", "trigger": f["trigger"],
+                 "fingerprint": f["fingerprint"], "rationale": "the value is pinned",
+                 "by": "synthetic-reviewer"}
+    found, _ = warnings_of(tmp_path, rec, [dismissal])
+    assert found["source-macro-pinned-elsewhere"]["dismissed"]["by"] == "synthetic-reviewer"
+    # The value changes and the values claim is pinned again: the passage still prints it, so
+    # the dismissal lapses.
+    (tmp_path / "figs" / "values.tex").write_text(RATE_VALUES.replace("999", "998"),
+                                                  encoding="utf-8")
+    repinned = {**values, "source_sha256": extract(tmp_path, values).sha256}
+    rec = collect({"claims": [passage, repinned]}, "P", tmp_path)["P:sec:rate"]
+    found, _ = warnings_of(tmp_path, rec, [dismissal])
+    f = found["source-macro-pinned-elsewhere"]
+    assert "dismissed" not in f and f["dismissal_stale"] is True

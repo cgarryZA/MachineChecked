@@ -48,6 +48,16 @@ a review responsibility.
 | `spans-section` | a heading (`\part` to `\subparagraph`, `\appendix`) occurs after the region's first line |
 | `cuts-environment` | the region holds the `\begin` or the `\end` of a display (`equation`, `align`, …), a `proof` or a theorem-like environment (one declared with `\newtheorem`) without the other; the environments are named, with the bounds that contain them whole and, when some of the region's text remains, the bounds that leave them out |
 
+For the sentence advice and the paragraphs it names, a paragraph ends at a blank line, a line of
+LaTeX structure (`\begin`, `\end`, `\item`, `\label`, a heading), a line that holds only macro
+definitions (`\newcommand`, `\renewcommand`, `\providecommand`, `\DeclareMathOperator`, `\def`,
+`\gdef`, `\let`; one or several), and a line that holds a single command with its arguments
+(`\includegraphics[width=0.6\linewidth]{figs/rate.pdf}`, `\input{figs/rate-figure}`, a wrapper
+macro of either). A region of a file of definitions, a caption pinned from its `\caption{`
+line and a section's prose after an `\input` line therefore get no sentence advice. A command
+that prints words or a reference inside a sentence (`\emph`, `\textbf`, `\cite`, `\ref`,
+`\eqref`, `\footnote`, …) alone on a line is read as part of the sentence around it.
+
 A region pinned at a label line gives no protection: a change of the paragraph it is about
 reopens nothing. Pin the paragraph instead, from its first line with an explicit end:
 
@@ -130,6 +140,18 @@ definitions whose values the claim states (`rebound --macro`, below), and dismis
 when the rest is notation whose definition is not part of the claim. The dismissal is tied to
 the passage's digest and to the macros named (its trigger), so it reopens when either changes.
 
+A macro whose every definition lies whole inside a passage that another claim pins (a claim
+located at `figs/values.tex:3` with `end_line` 5 pins the definitions on those lines), while
+that claim's pin matches the manuscript, is reported apart: the warning
+`source-macro-pinned-elsewhere`, one per passage, names each such macro, where it is defined
+and the claims that pin it. A change to such a definition fails the other claim's source check
+(`source-changed`), but reopens no reading of this passage: its readings depend on the value
+only when its own pin holds the definition (`rebound --macro`). The source evidence lists these
+macros under `pinned_elsewhere`, and the rebound plan as a build does. A dismissal of the warning
+is tied to the passage's digest, the digests of the definitions and the macros named, so it
+reopens when the value changes. A macro the other pin holds only in part, or whose pin no longer
+matches, keeps `source-macro-unpinned`.
+
 ### Notation macros
 
 List the paper's notation in `machinechecked.toml`, under `[project]` for every paper or under
@@ -156,6 +178,31 @@ the reading did not record the definitions of the notation its passage uses
 (`source-notation-unrecorded`). Promote a new reading to record them. A macro the manuscript
 defines elsewhere and the list leaves out still gets the one dismissible warning per passage.
 Without `notation_macros`, a reading records the pin itself, as before.
+
+Listing a macro therefore reopens every review whose reading of a passage that uses it
+recorded the pin alone, although neither the passage nor the definition changed; leaving a
+listed macro out reopens, the same way, the readings that recorded its definitions. See the
+cost before changing the list:
+
+```sh
+machinechecked inventory notation --add E            # list \E
+machinechecked inventory notation --remove R --paper P
+```
+
+The plan reads the latest release (build first, with the list as configured) and the paper as
+the configuration gives it, and prints, for the list with the macros added and left out:
+
+| Field | What |
+|---|---|
+| `passages` | the claims whose reading digest changes, with the listed macros their passage uses now and with the new list |
+| `reopened` | each review marker that would no longer count: its file, line, reviewer and declaration, and per review the passages it read and why it would be pending (`source-notation-unrecorded` for a reading that recorded the pin alone, `source-changed` for one that recorded a definition left out) |
+| `restored` | each marker that would count again (a reading that recorded the pin alone, when the macro is left out) |
+| `statuses` | each claim whose status would change, now and with the new list |
+
+It writes nothing and records no reading. A reopened review is renewed by a new reading of the
+passage with its notation, promoted as any other (`review promote`): a marker is never moved
+to the new digest without one. Leaving a macro unlisted and dismissing its
+`source-macro-unpinned` warning keeps the readings as they are.
 
 ## Replacing a legacy opening-line hash
 
