@@ -101,7 +101,7 @@
                 {#if onshow && shown(f).length}<button class="show" onclick={() => onshow(f)}>Show in the statement</button>{/if}
               {/if}
               {#if f.resolved}<span class="dz">resolved: the statement supplies every condition the rule needs here</span>{/if}
-              {#if f.dismissed}<span class="dz">dismissed by {f.dismissed.by}: “{f.dismissed.rationale}”{#if f.dismissed.form === "statement"} (a dismissal of the operation in the whole statement: it holds until the statement changes){/if}</span>
+              {#if f.dismissed}<span class="dz">dismissed by {f.dismissed.by}{#if f.dismissed.rationale}: “{f.dismissed.rationale}”{/if}{#if f.dismissed.form === "statement"} (a dismissal of the operation in the whole statement: it holds until the statement changes){/if}</span>
               {:else if f.dismissal_stale}<span class="dz">an earlier dismissal no longer applies: {f.at ? "this application changed" : "the statement changed"}</span>{/if}
             </li>
           {/each}
