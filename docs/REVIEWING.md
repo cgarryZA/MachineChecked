@@ -292,6 +292,15 @@ the impact answer. A replaced selection is kept in the workspace's provenance. T
 review order puts the main results, and the units their Lean uses, ahead of the rest ([Review
 order](#review-order)). The selection changes no status.
 
+The reader's Overview has a **Main results** panel. Under `machinechecked view` it shows a
+workspace's saved selection (who saved it, when, the release and project commit it was checked
+against, and each entry's problem) or, when it saves none, the suggestion; you add a claim or a
+declaration by name, remove one, clear them or save the suggestion, each through the same
+`main-results` operation, and a name the engine refuses is shown with its reason as the engine
+gives it. An edit saves only over the selection shown: if it changed elsewhere meanwhile, the
+panel shows the new one and saves nothing. A published audit shows each workspace's selection
+read-only, with what its data cannot name counted.
+
 **What a difference affects at a use.** A difference between a lemma and its Lean can matter at
 one use and not at another: a fifth derivative where the paper prints four is harmless to a
 construction that needs only some finite number of derivatives, and not to a consumer that uses
