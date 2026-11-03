@@ -165,8 +165,8 @@ reads one declaration's applications with their contexts.
 NAME from each main result of the paper. The main results are the declarations linked to the
 paper's theorems, shown as a suggestion. `machinechecked workspace main "Theorem 1" [NAME...]`
 saves your own choice in your workspace (a claim, for its linked declarations, or a declaration),
-and the answer then says whose choice it traces from and the project commit it was saved
-against; `--main` chooses them for one query. Each main result has its own answer: *used
+as does the **Main results** panel of the reader's Overview under `machinechecked view`, and the
+answer then says whose choice it traces from and the project commit it was saved against; `--main` chooses them for one query. Each main result has its own answer: *used
 by its proof*, *in its statement only*, *formalized separately: not used by this main result*,
 or *not traced*. A use comes with the shortest path of Lean references from the main result to
 NAME, direct or through other declarations, and with the applications of NAME at the end of a
@@ -416,6 +416,38 @@ machinechecked link eq:bound-sum Toy.Acceptance.thm_triangle --coverage full
 machinechecked link "Equation (3)" Toy.Acceptance.thm_bound --route --note "Lean bounds n by n * n."
 machinechecked link eq:bound-range --route        # clears the recorded route
 ```
+
+Any other lines of a proof can be selected as a **proof passage**: give the result whose proof
+holds them and the lines, in the paper's source as the build reads it (`main.tex`, or
+`paper/main.tex` from the project's root):
+
+```sh
+machinechecked link "Theorem 3" --passage main.tex:31-32 Plain.sq_odd --route \
+  --note "Lean multiplies out (2k + 1)(2k + 1)."
+machinechecked link thm:square/passage-1 --passage main.tex:33-34   # pins it again
+machinechecked link thm:square/passage-1 --passage none             # removes it
+```
+
+The passage gets a key of its own (`thm:square/passage-1`), is listed among the steps of its
+result as **Proof of Theorem 3, main.tex:31–32**, and is linked and reviewed (`step:` unit) like
+an equation. Its lines must lie inside the proof, open and close the same environments, and
+meet no other step: a line of a proof belongs to one step, so an overlapping selection is
+refused. In the local reader, **Select a passage of its proof** on a result shows its proof line
+by line; click the first line, then the last, and **Select as a proof passage**. The links file
+keeps the passage's pin, the digest of its lines' text, with its parent:
+
+```json
+"thm:square/passage-1": {"passage": {"file": "main.tex", "start_line": 31, "end_line": 32,
+                                     "parent": "thm:square", "scheme": "tex-region-v1",
+                                     "sha256": "…", "line_sha256": ["…", "…"], "by": "…"},
+                         "route": {"lean": ["Plain.sq_odd"], "note": "…"}}
+```
+
+When the paper changes so that those lines no longer hold that text, the passage reads
+**its lines changed since it was selected**: it shows no text, no review of it counts, and the
+build's notes say where the text is now when the file holds it at one place. Select it again
+there (`link KEY --passage FILE:A-B`, or **Select it there**) to restore it; a review made on the
+same text counts again.
 
 A row of `formalization.yaml` can name a step (`source: Equation (3)`) and, with
 `route: different`, its formal route. A step linked only to a formal route reads **linked: a

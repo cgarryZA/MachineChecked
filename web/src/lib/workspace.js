@@ -37,6 +37,15 @@ export const revisionOf = (id) => call(`api/workspace/revision?id=${encodeURICom
 export const updateWorkspace = (id, ops) =>
   call("api/workspace", { action: "update", id, ops, op_id: newId("req") });
 
+// The main results the workspace saves, or the suggestion when it saves none, as `compare --query
+// impact` traces from them (`impact.workspace_selection`), with this build's release and commit.
+export const mainResults = (id) => call(`api/main-results?id=${encodeURIComponent(id)}`);
+
+// Save the main results `main` (claims and declarations: names, `{claim}` or `{decl, module}`)
+// with the engine's `main-results` operation, which checks each against the build and refuses
+// what it cannot name; an empty list removes them.
+export const saveMainResults = (id, main) => updateWorkspace(id, [{ op: "main-results", main }]);
+
 // A page of the typed facts inside one declaration's proof (`compare --query proof-facts`): the
 // facts after the fact `after` (its id) when given, ranked by `match` when given. Lean reads each
 // page on its first request; the engine caches the answer.

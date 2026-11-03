@@ -141,6 +141,72 @@ def proof_steps(pid: str, anchors: list[dict], snap: Path, numbers: dict[str, st
     return steps.step_claims(pid, statements, snap, files, numbers)
 
 
+def with_passages(claims: list[dict], pid: str, entries: dict, snap: Path, work: Path,
+                  compiled: dict, notes: list[str]) -> list[dict]:
+    """The paper's claims with the proof passages its links file selects
+    (`steps.passage_claims`), each among the proof steps in the order of the source, with where
+    SyncTeX puts its lines (`line_anchor`). The notes on passages are added to `notes`."""
+    statements = [c for c in claims if not steps.is_step(c)]
+    equations = [c for c in claims if steps.is_step(c)]
+    found, more = steps.passage_claims(pid, entries, statements, snap,
+                                       [r for c in equations if (r := steps.step_region(c))])
+    notes += more
+    if not found:
+        return claims
+    placed = passage_anchors(work, pid, compiled, [c["passage"] for c in found
+                                                   if c["passage"]["matches"]])
+    for c in found:
+        p = c["passage"]
+        c["line_anchor"] = placed.get(f"{p['file']}:{p['start_line']}-{p['end_line']}")
+
+    def order(c):
+        r = steps.step_region(c) or {}
+        return r.get("file") or "", r.get("start_line") or 0
+    return statements + sorted(equations + found, key=order)
+
+
+# SyncTeX is asked about at most this many lines of a passage, from its first.
+PASSAGE_LINES = 60
+
+
+def passage_anchors(work: Path, pid: str, compiled: dict, pins: list[dict]) -> dict:
+    """Where SyncTeX puts each passage's lines, by `file:A-B`: the band covering the boxes of
+    its lines on the page of its first line SyncTeX places, `approximate`; None when SyncTeX
+    places none. Kept in the build directory while the compiled paper is the same."""
+    import subprocess
+    from types import SimpleNamespace
+    from .tex import synctex_lines
+    cache = work / "passage-anchors.json"
+    kept = read_json(cache) if cache.exists() else {}
+    if kept.get("digest") != compiled["digest"]:
+        kept = {"digest": compiled["digest"], "anchors": {}}
+    pdf = Path(compiled["pdf"])
+    shims = [SimpleNamespace(line=a.get("line"), begin=a.get("begin"), file=a.get("file"))
+             for a in compiled.get("anchors") or [] if a.get("line")]
+    out, asked = {}, False
+    for p in pins:
+        k = f"{p['file']}:{p['start_line']}-{p['end_line']}"
+        if k in kept["anchors"]:
+            out[k] = kept["anchors"][k]
+            continue
+        last = min(p["end_line"], p["start_line"] + PASSAGE_LINES - 1)
+        locs = [f"{p['file']}:{n}" for n in range(p["start_line"], last + 1)]
+        try:
+            found = synctex_lines(pdf.parent, pdf, work / pid, locs,
+                                  compiled["page_size"][1], shims)
+        except (OSError, ValueError, subprocess.SubprocessError):
+            found = {}
+        bands = [found[l] for l in locs if (found.get(l) or {}).get("kind") == "approximate"]
+        on = [x for x in bands if bands and x["page"] == bands[0]["page"]]
+        out[k] = {"kind": "approximate", "page": on[0]["page"],
+                  "y0": min(x["y0"] for x in on), "y1": max(x["y1"] for x in on)} if on else None
+        kept["anchors"][k] = out[k]
+        asked = True
+    if asked:
+        write_json(cache, kept, indent=None)
+    return out
+
+
 def source_tags(lines: list[str], line: int, env: str) -> list[str]:
     """The arguments of the `\\lean{…}` tags in the environment `env` opening on `line`, with
     TeX comments removed (a commented-out tag is no tag)."""
@@ -1854,6 +1920,7 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
     # The paper.
     snap = acquire(cfg, paper, out_dir / "sources" / paper.id)
     tex, pdf, claims, aux = {"mode": snap.mode}, None, [], None
+    compiled = None
     if snap.mode == "latex":
         envs = sorted(set(DEFAULT_ENVS) | set(theorem_envs(snap.dir)))
         # The compiled paper is reused while its sources are unchanged (a link changes nothing
@@ -1891,6 +1958,7 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
             for c in proof_steps(paper.id, anchors, snap.dir, t["numbers"]):
                 c["line_anchor"] = t["step_anchors"].get(c["location"])
                 claims.append(c)
+            compiled = {**t, "digest": digest}
         except TexError as e:
             notes.append("the paper did not compile, so its claims are not listed: "
                          + str(e).splitlines()[0])
@@ -1907,6 +1975,10 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
             notes.append("the paper is a PDF: its statements were found by their bold headings, "
                          "and where each one ends is estimated")
     paper_key = links_key(root, paper_path)
+    if compiled is not None:
+        claims = with_passages(claims, paper.id,
+                               load_links(root).get("papers", {}).get(paper_key, {}), snap.dir,
+                               out_dir / "build", compiled, notes)
 
     # The Lean project.
     fy = fz.load(root)
@@ -2229,7 +2301,8 @@ def write_view_site(view: dict, site: Path, web_dist: Path | None,
             "scope_reviewed": True, "location": c["location"],
             "source_sha256": c["source_sha256"], **fields(c["status_code"], c.get("status_detail")),
             "anchor": {**anchor, "kind": akind} if anchor else None, "source_matches": None,
-            "statement_tex": (anchor or {}).get("statement") if akind == "exact"
+            # A proof step SyncTeX did not place has no anchor, and keeps its own text.
+            "statement_tex": anchor.get("statement") if anchor and akind == "exact"
             else c.get("statement_tex"),
             "excerpt": (body["tex"].get("excerpts") or {}).get(c["key"]) if akind == "exact"
             else None,
@@ -2249,6 +2322,9 @@ def write_view_site(view: dict, site: Path, web_dist: Path | None,
                                  [_link_view(l, root) for l in c.get("route_links", [])],
                                  c.get("correspondence"), c.get("route_note"),
                                  steps.review(c.get("step_reports", []), c["source_sha256"])))
+            if c.get("passage"):
+                # A selected passage's pin, and whether its lines still hold its text.
+                chunks[fname]["step"]["passage"] = c["passage"]
     steps.attach_parents(index_claims, chunks)
     summary = {}
     for c in index_claims:

@@ -5,14 +5,18 @@ statement's links and status as they were."""
 import json
 import re
 import shutil
+from pathlib import Path
 
 import pytest
 
 from conftest import needs_lean, needs_tex
+from prooflens import authoring, cli as _cli, simple as _simple
 from prooflens.manifest import claim_file
 from prooflens.review_queue import prioritise, simple_queue
 from prooflens.simple import build_view, built_modules, save_link, save_route, write_view_site
-from prooflens.steps import aux_numbers, find_proof_equations
+from prooflens.steps import (PassageError, aux_numbers, find_proof_equations, parse_passage,
+                             passage_claims, passage_key, select_passage)
+from prooflens.targets import Snapshot
 
 TRI, BOUND = "Toy.Acceptance.thm_triangle", "Toy.Acceptance.thm_bound"
 PAPER = "paper/toy.tex"
@@ -217,3 +221,225 @@ def test_link_records_a_step_and_its_route_from_the_terminal(proj, monkeypatch, 
     # Without declarations, --route clears the step's route.
     cli.main(["link", "eq:bound-range", "--route"])
     assert load_links(proj)["papers"][PAPER]["eq:bound-range"]["route"]["lean"] == []
+
+
+# -- proof passages (#544) --------------------------------------------------------------------
+
+PLAIN = Path(__file__).resolve().parents[2] / "examples" / "plain-paper"
+SQ = "Plain.sq_odd"
+TEX = r"""\begin{theorem}\label{thm:a}
+A.
+\end{theorem}
+\begin{theorem}\label{thm:b}
+B.
+\end{theorem}
+\begin{proof}[Proof of Theorem~\ref{thm:a}]
+First line.
+\begin{equation}
+x = y
+\end{equation}
+% only a comment
+Last line.
+\end{proof}
+"""
+STATEMENTS = [{"id": "P:thm:a", "key": "thm:a", "number": "Theorem 1", "label": "thm:a",
+               "location": "p.tex", "line": 1},
+              {"id": "P:thm:b", "key": "thm:b", "number": "Theorem 2", "label": "thm:b",
+               "location": "p.tex", "line": 4}]
+
+
+def test_a_passage_is_whole_lines_inside_one_proof(tmp_path):
+    (tmp_path / "p.tex").write_text(TEX)
+    assert parse_passage("p.tex:8-13") == ("p.tex", 8, 13)
+    assert parse_passage("p.tex:8") == ("p.tex", 8, 8)
+    for bad in ("p.tex", "p.tex:9-8", "p.tex:0-2"):
+        with pytest.raises(PassageError):
+            parse_passage(bad)
+
+    def refused(a, b, taken=()):
+        with pytest.raises(PassageError) as e:
+            select_passage(tmp_path, "p.tex", a, b, STATEMENTS, list(taken))
+        return str(e.value)
+
+    assert "not inside a proof" in refused(2, 2)
+    assert "not inside a proof" in refused(7, 8)        # the proof's opening line
+    assert "not inside a proof" in refused(13, 14)      # its closing line
+    assert "begins the equation environment at line 9 without its end" in refused(8, 10)
+    assert "ends the equation environment at line 11" in refused(10, 13)
+    assert "hold no text" in refused(12, 12)
+    assert "outside it" in refused(8, 99)
+    hit = refused(8, 13, [{"id": "P:eq:x", "number": "Equation (1)", "file": "p.tex",
+                           "start_line": 9, "end_line": 11}])
+    assert "overlap Equation (1) (lines 9-11)" in hit
+    sel = select_passage(tmp_path, "p.tex", 8, 13, STATEMENTS, [])
+    # The proof names Theorem 1, which it follows only at a distance.
+    assert sel["parent"]["id"] == "P:thm:a" and sel["proof_line"] == 7
+    pin = sel["pin"]
+    assert (pin["file"], pin["start_line"], pin["end_line"], pin["scheme"]) == \
+        ("p.tex", 8, 13, "tex-region-v1")
+    assert len(pin["line_sha256"]) == 6
+    assert passage_key("thm:a", ["thm:a/passage-1", "thm:a/passage-3", "thm:b/passage-7"]) == \
+        "thm:a/passage-4"
+
+
+def test_a_passage_whose_lines_changed_has_no_current_text(tmp_path):
+    (tmp_path / "p.tex").write_text(TEX)
+    sel = select_passage(tmp_path, "p.tex", 13, 13, STATEMENTS, [])
+    entries = {"thm:a/passage-1": {"passage": {**sel["pin"], "parent": "thm:a"},
+                                   "route": {"lean": ["X.y"]}}}
+    (c,), notes = passage_claims("P", entries, STATEMENTS, tmp_path)
+    assert notes == []
+    assert (c["id"], c["unit"], c["parent"], c["number"]) == (
+        "P:thm:a/passage-1", "proof-passage", "P:thm:a", "Proof of Theorem 1, p.tex:13")
+    assert c["source_sha256"] == sel["pin"]["sha256"] and c["statement_tex"] == "Last line."
+    assert c["passage"]["matches"] and "First line." in c["context_tex"]
+    # A line added above it: its lines hold other text now, and its text is two lines on.
+    (tmp_path / "p.tex").write_text(TEX.replace("First line.\n", "First line.\nMore.\n"))
+    (c,), notes = passage_claims("P", entries, STATEMENTS, tmp_path)
+    assert c["source_sha256"] is None and c["statement_tex"] is None
+    assert c["passage"]["matches"] is False
+    assert c["passage"]["moved_to"] == {"start_line": 14, "end_line": 14}
+    assert "no review of it counts" in notes[0] and "now at line 14" in notes[0]
+    assert "machinechecked link thm:a/passage-1 --passage p.tex:14`" in notes[0]
+
+
+@pytest.fixture
+def plain(tmp_path, monkeypatch, capsys):
+    dst = tmp_path / "plain"
+    shutil.copytree(PLAIN, dst, ignore=shutil.ignore_patterns(
+        ".prooflens", ".machinechecked", "prooflens.links.json", "machinechecked.links.json"),
+        symlinks=True)
+    if not built_modules(dst, ["Plain"])[0]:
+        pytest.skip("the plain example is not built")
+    monkeypatch.chdir(dst)
+    _cli.main(["build"])
+    capsys.readouterr()
+    return dst
+
+
+def link(capsys, *args):
+    try:
+        _cli.main(["link", *args, "--json"])
+        code = 0
+    except SystemExit as e:
+        code = e.code
+    return code, json.loads(capsys.readouterr().out)
+
+
+def plain_view(root):
+    return build_view(root, root / "paper/main.tex", root / ".machinechecked",
+                      log=lambda m: None)
+
+
+@needs_lean
+@needs_tex
+def test_a_proof_passage_in_zero_configuration(plain, capsys, tmp_path):
+    key, cid, PAPERP = "thm:square/passage-1", "P:thm:square/passage-1", "paper/main.tex"
+    before = {c["id"]: c["status_code"] for c in plain_view(plain)["body"]["claims"]}
+    # Lines 31-32 of the proof of Theorem 3, with the formal route Lean takes instead.
+    code, out = link(capsys, "Theorem 3", "--passage", "main.tex:31-32", SQ, "--route",
+                     "--note", "Lean multiplies out (2k + 1)(2k + 1).", "--as", "human:A-Referee")
+    assert code == 0 and out["written"]
+    assert out["claim"] == {"id": cid, "key": key, "paper": "P", "kind": "passage",
+                            "number": "Proof of Theorem 3, main.tex:31\u201332"}
+    pin = out["after"]["passage"]
+    assert (pin["file"], pin["start_line"], pin["end_line"], pin["parent"], pin["by"]) == \
+        ("main.tex", 31, 32, "thm:square", "human:A-Referee")
+    assert out["after"]["route"]["lean"] == [SQ]
+    # The same lines again are the same passage; a path from the project's root is the same.
+    code, out = link(capsys, "Theorem 3", "--passage", "paper/main.tex:31-32")
+    assert code == 0 and out["claim"]["id"] == cid and not out["changed"]
+    # Overlapping lines, lines of another result's proof, and lines outside a proof are refused.
+    for args, why in ((("Theorem 3", "--passage", "main.tex:30-31"), "overlap " + key),
+                      (("Theorem 2", "--passage", "main.tex:30"), "in the proof of Theorem 3"),
+                      (("Theorem 3", "--passage", "main.tex:26-27"), "not inside a proof")):
+        code, out = link(capsys, *args)
+        assert code == 1 and not out["written"] and why in out["error"]["message"], out
+    # The reader's request records a passage as `link --passage` does.
+    snap = Snapshot(plain / ".machinechecked/site/data")
+    ch = authoring.from_reader(plain, PAPERP, snap, {"key": "thm:square",
+                                                     "passage": "main.tex:30"})
+    assert ch["claim"]["id"] == "P:thm:square/passage-2"
+    entries = _simple.load_links(plain)["papers"][PAPERP]
+    assert entries["thm:square/passage-2"]["passage"]["start_line"] == 30
+
+    # The next build lists both under Theorem 3, counts them as proof passages, and leaves
+    # every statement as it was.
+    _cli.main(["build"])
+    capsys.readouterr()
+    site = plain / ".machinechecked/site/data"
+    index = json.loads((site / "index.json").read_text())
+    rows = {c["id"]: c for c in index["claims"]}
+    assert {k: rows[k]["status_code"] for k in before} == before
+    assert rows[cid]["unit"] == "proof-passage" and rows[cid]["parent"] == "P:thm:square"
+    assert rows[cid]["status_code"] == "link.other-route"
+    assert rows[cid]["anchor"]["kind"] == "approximate"
+    assert index["units"]["P"]["proof-passage"] == {"linked: a different formal route": 1,
+                                                    "not linked": 1}
+    assert index["semantic"]["papers"]["P"]["inventory"]["proof_passages"] == 2
+
+    def chunk(c):
+        return json.loads((site / "claims" / claim_file(c)).read_text())
+
+    parent = chunk("P:thm:square")
+    assert [s["id"] for s in parent["steps"]] == ["P:thm:square/passage-2", cid]
+    st = chunk(cid)
+    assert st["statement_tex"] == "Then $n^2 = 4k^2 + 4k + 1 = 2(2k^2 + 2k) + 1$,\nwhich is odd."
+    assert "Write the odd number" in st["context_tex"]
+    assert st["step"]["passage"]["matches"] and st["step"]["review"]["state"] == "unreviewed"
+    assert [l["name"] for l in st["step"]["route"]["links"]] == [SQ]
+    queue = {u["id"]: u for u in json.loads((site / "review-queue.json").read_text())["units"]}
+    assert queue["step:" + cid]["state"] == "pending"
+    # The local server gives the proof's lines with the steps in them, for the reader.
+    proof = authoring.proof_route(site)({"claim": ["P:thm:square"]})["proofs"]
+    assert [(p["file"], p["start_line"], p["end_line"]) for p in proof] == [("main.tex", 29, 33)]
+    assert proof[0]["lines"][2] == "Then $n^2 = 4k^2 + 4k + 1 = 2(2k^2 + 2k) + 1$,"
+    assert [s["id"] for s in proof[0]["steps"]] == ["P:thm:square/passage-2", cid]
+
+    # `check --json` reports it, with its pin and its own review.
+    _cli.main(["check", "--json"])
+    found = {c["id"]: c for c in json.loads(capsys.readouterr().out)["claims"]}
+    assert (found[cid]["unit"], found[cid]["parent"], found[cid]["step_review"]) == \
+        ("proof-passage", "P:thm:square", "unreviewed")
+    assert found[cid]["passage"]["matches"] and found[cid]["route"][0]["name"] == SQ
+
+    # Reviewed as a `step:` unit, through the protocol.
+    reading, cmp_, none = (tmp_path / n for n in ("reading.md", "comparison.md", "none.md"))
+    reading.write_text("n^2 expands to 2(2k^2 + 2k) + 1, an odd number.")
+    cmp_.write_text("The expansion is correct.")
+    none.write_text("none")
+    unit = "step:" + cid
+    who = ["--as", "human:A-Referee"]
+    for args in (("read", unit), ("lock", unit, str(reading)), ("show", unit),
+                 ("decide", unit, "holds as printed", str(cmp_)), ("author", unit),
+                 ("submit", unit, str(none))):
+        _cli.main(["review", *args, *who])
+    (plain / "machinechecked-reviews").mkdir()
+    _cli.main(["review", "export", "--out", "machinechecked-reviews/r.json", *who])
+    _cli.main(["build"])
+    capsys.readouterr()
+    assert chunk(cid)["step"]["review"]["state"] == "holds"
+    assert "step" not in chunk("P:thm:square") and chunk("P:thm:square")["reviews"] == []
+
+    # A line added above it moves its text: the passage's lines no longer hold it, so the
+    # review does not count, and the build says where the text is now.
+    tex = plain / PAPERP
+    tex.write_text(tex.read_text().replace("\\begin{proof}\n", "\\begin{proof}\nWe compute.\n"))
+    v = plain_view(plain)
+    c = next(c for c in v["body"]["claims"] if c["id"] == cid)
+    assert c["source_sha256"] is None and c["passage"]["moved_to"] == {"start_line": 32,
+                                                                       "end_line": 33}
+    assert any(key in n and "no review of it counts" in n for n in v["body"]["notes"])
+    write_view_site(v, plain / ".machinechecked/site", None, plain)
+    assert chunk(cid)["step"]["review"]["state"] == "stale"
+    # Selected again at its new lines, it is the text that was reviewed.
+    code, out = link(capsys, key, "--passage", "main.tex:32-33")
+    assert code == 0 and out["after"]["passage"]["start_line"] == 32
+    assert out["after"]["route"]["lean"] == [SQ]
+    _cli.main(["build"])
+    capsys.readouterr()
+    assert chunk(cid)["step"]["review"]["state"] == "holds"
+    # `--passage none` removes a passage.
+    code, out = link(capsys, "P:thm:square/passage-2", "--passage", "none")
+    assert code == 0 and out["after"] is None
+    assert "thm:square/passage-2" not in _simple.load_links(plain)["papers"][PAPERP]

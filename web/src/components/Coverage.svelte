@@ -7,6 +7,7 @@
            unitCounts, countText, inventoryText, coverageText, basisText, shortQuestion, findingCurrencyText } from "../lib/semantic.js";
   import { reviewNext } from "../lib/reviewnext.js";
   import EvidenceSummary from "./EvidenceSummary.svelte";
+  import MainResults from "./MainResults.svelte";
   import { clauseReadingsOf, clauseKeysOf, clauseCounts, partText, withheldText, questionWithheld } from "../lib/semantic.js";
   let { index } = $props();
   // Review next: the first open units of the review queue the build wrote, in its priority order
@@ -100,6 +101,7 @@
       {/if}
     </section>
   {/if}
+  <MainResults {index} />
   <label class="search">Find a claim <input type="search" bind:value={query} placeholder="Number or mathematical title" /></label>
   {#if unitCount.proof_steps || unitCount.notation}
     <div class="filters" aria-label="Filter by kind of unit">
