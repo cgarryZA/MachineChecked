@@ -669,8 +669,21 @@ function proofFactsApi(url, query, req, res) {
     return;
   }
   if (url === "/pfedit/api/workspace") return json(PF_WS);
+  if (url === "/pfedit/api/proof") return json(PF_PROOF);
+  if (url === "/pfedit/api/link" && req.method === "POST") {
+    let body = "";
+    req.on("data", (c) => (body += c));
+    req.on("end", () => { pfLinked.push(JSON.parse(body)); json({ claim: { id: "P:lem:sharp/passage-1" }, changed: true }); });
+    return;
+  }
   res.writeHead(404); res.end();
 }
+// The proof of Lemma 1 as the local server gives it for the selection of a passage
+// (`authoring.proof_route`), with one step already selected in it; and the links it is sent.
+const PF_PROOF = { claim: "P:lem:sharp", proofs: [{ file: "main.tex", start_line: 20, end_line: 25,
+  lines: ["\\begin{proof}", "Since $C h \\ge x + 1$,", "we have $x \\le x + 1 \\le C h$.", "This is the bound.", "Nothing more is needed.", "\\end{proof}"],
+  steps: [{ id: "P:lem:sharp/passage-1", number: "Proof of Lemma 1, main.tex:24", unit: "proof-passage", start_line: 24, end_line: 24 }] }] };
+const pfLinked = [];
 
 // `/pfsearch/` is the same local reader with the synthetic content index of
 // tests/fixtures/retrieval (written by the engine), and a library its build leaves out: the
@@ -3578,6 +3591,50 @@ for (const width of [1300, 390]) {
     await pg.waitForFunction(() => decodeURIComponent(location.hash).endsWith("T:eq:bound-range"));
   });
 }
+
+// #544: a selected proof passage says which lines it was selected at; when they no longer hold
+// its text, it says so on its page and in its parent's list of steps, and where the text is now.
+await check("a proof passage whose lines changed says so, and where its text is now", 1300, async (pg) => {
+  const parentRow = TOY.claims.find((c) => c.id === "T:thm:bound");
+  const moved = { file: "toy.tex", start_line: 75, end_line: 78, sha256: "a".repeat(64), scheme: "tex-region-v1", matches: false, moved_to: { start_line: 77, end_line: 80 } };
+  await pg.route(`**/toy/data/claims/${stepRow.file}`, async (route) => {
+    const c = await (await route.fetch()).json();
+    route.fulfill({ json: { ...c, step: { ...c.step, unit: "proof-passage", passage: moved, review: { state: "stale", finding: null, reports: [] } } } });
+  });
+  await pg.route(`**/toy/data/claims/${parentRow.file}`, async (route) => {
+    const c = await (await route.fetch()).json();
+    route.fulfill({ json: { ...c, steps: c.steps.map((x) => x.id === "T:eq:bound-range" ? { ...x, unit: "proof-passage", review: "stale", passage: { file: "toy.tex", start_line: 75, end_line: 78, matches: false } } : x) } });
+  });
+  await toyClaim(pg, "T:eq:bound-range");
+  const finding = pg.locator(".claim-view .view .paper .finding");
+  assert.match(words(await finding.locator(".kind").textContent()), /^Passage of a proof of Theorem 2\.5, selected at toy\.tex:75–78$/);
+  assert.match(words(await finding.locator("[data-passage=changed]").textContent()), /no longer hold the text it was selected at, so no review of it counts until it is selected again; that text is now at toy\.tex:77–80\./);
+  assert.equal(await finding.getByRole("button").count(), 0, "a static copy offers no selection");
+  await toyClaim(pg, "T:thm:bound");
+  assert.match(words(await pg.locator(".claim-view .view .steps li").nth(1).textContent()), /its lines changed since it was selected/);
+});
+
+// #544: in the local reader, lines of a statement's proof are selected as a passage and sent as
+// `link --passage` sends them; a line of a step already selected cannot be chosen again.
+for (const width of [1300, 390]) await check("lines of a proof are selected as a passage in the local reader", width, async (pg) => {
+  await pg.goto(origin + `/pfedit/#/r/${PF.release}/claim/${encodeURIComponent("P:lem:sharp")}`);
+  const select = pg.locator("details.select");
+  await select.locator("summary").click();
+  const src = select.locator("ol.src");
+  await src.waitFor();
+  assert.equal(await src.locator("button.ln").count(), 6);
+  assert.ok(await src.locator("button[data-line='20']").isDisabled(), "the proof's opening line is not in a passage");
+  assert.ok(await src.locator("button[data-line='24']").isDisabled(), "a line of a selected step is taken");
+  assert.match(await src.locator("button[data-line='24']").textContent(), /Proof of Lemma 1, main\.tex:24/);
+  await src.locator("button[data-line='22']").click();
+  await src.locator("button[data-line='21']").click();
+  assert.equal(await src.locator("button.ln.on").count(), 2);
+  assert.match(words(await select.locator(".pick").textContent()), /^Lines 21–22 of main\.tex\./);
+  const sent = pfLinked.length;
+  await select.getByRole("button", { name: "Select as a proof passage" }).click();
+  assert.ok(await until(() => pfLinked.length > sent), "the selection is sent");
+  assert.deepEqual(pfLinked.at(-1), { key: "lem:sharp", passage: "main.tex:21-22" });
+});
 
 // A context the build holds only in part is drawn as partial, with where it was cut, in the step
 // view and on the review page; a whole context carries no such mark.
