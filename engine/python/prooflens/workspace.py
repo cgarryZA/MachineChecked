@@ -528,6 +528,10 @@ def _content(kind: str, rec: dict, ws: dict, snap, root, cur: dict | None = None
             _composition_basis(out, rec["composition"], basis, ws)
         if rec.get("confidence") is not None:
             out["confidence"] = _choice(rec["confidence"], confidence, "confidence")
+        if rec.get("impact") is not None:
+            # What a recorded difference affects at one use (`impact.py`).
+            from .impact import impact_content
+            impact_content(out, rec["impact"], rec, ws, snap, cur, repin)
         if rec.get("argument") is not None:
             if basis != "reviewed_composition":
                 raise WorkspaceError("an argument belongs to a reviewed composition (`basis`: "
@@ -742,10 +746,11 @@ def _record_op(ws, op, snap, root, by, at, changed):
     if kind == "submit":
         if cur["kind"] != "finding" or cur.get("state") != "draft":
             raise WorkspaceError(f"{rid} is not a draft finding")
-        if not (cur.get("coverage") or cur.get("difference") or cur.get("verdict")) or \
+        if not (cur.get("coverage") or cur.get("difference") or cur.get("verdict")
+                or cur.get("impact")) or \
                 not (cur.get("note") or cur.get("evidence") or cur.get("counterexamples")):
-            raise WorkspaceError(f"{rid}: a submitted finding has its coverage (or a difference "
-                                 "or a verdict) and a note or evidence")
+            raise WorkspaceError(f"{rid}: a submitted finding has its coverage (or a difference, "
+                                 "a verdict or an impact) and a note or evidence")
         if cur.get("composition"):
             # The composition may have changed since the draft was written.
             _composition_basis(dict(cur), cur["composition"], cur.get("basis"), ws)
@@ -766,11 +771,11 @@ def _record_op(ws, op, snap, root, by, at, changed):
         rec.setdefault("claim", cur["claim"])
         content = _content("finding", rec, ws, snap, root)
         if not (content.get("coverage") or content.get("difference")
-                or content.get("verdict")) or \
+                or content.get("verdict") or content.get("impact")) or \
                 not (content.get("note") or content.get("evidence")
                      or content.get("counterexamples")):
-            raise WorkspaceError("a superseding finding has its coverage (or a difference or a "
-                                 "verdict) and a note or evidence")
+            raise WorkspaceError("a superseding finding has its coverage (or a difference, a "
+                                 "verdict or an impact) and a note or evidence")
         nid = rec.get("id") or _new_id("f")
         if nid in ws["records"]:
             raise WorkspaceError(f"{nid} exists already")

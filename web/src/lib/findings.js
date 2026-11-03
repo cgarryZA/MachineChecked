@@ -15,6 +15,7 @@ import { alignmentSource, rowOfTarget, statementRows } from "./comparison.js";
 import { spineOf, conclusionOf } from "./tree.js";
 import { compositionView, findingCoverageView, recordedBasisText } from "./coverage.js";
 import { connectionText } from "./connections.js";
+import { impactHead, impactView } from "./impact.js";
 
 // -- correspondence fields of a review --------------------------------------------------------
 
@@ -292,7 +293,8 @@ export function findingView(entry, statements, claimId) {
   const diffWords = d ? `${/^[aeiou]/i.test(d.feature || "") ? "An" : "A"} ${d.feature} difference: ${OUTCOME[d.outcome] || d.outcome}` : null;
   const stepWords = f.verdict ? "The printed step: " + f.verdict : null;
   // A finding that records only a note is headed by the note itself.
-  const head = cv?.headline || stepWords || diffWords || f.note || "A finding recorded without a note";
+  const head = cv?.headline || stepWords || diffWords || (f.impact ? impactHead(f.impact) : null) || f.note
+    || "A finding recorded without a note";
   const req = f.requirement ? set.requirements.get(f.requirement) || { local_id: f.requirement, missing: true } : null;
   // The passages of its requirement that its alignments name, else those that govern it.
   const named = [...new Set(targets.map((x) => x.alignment))].flatMap((a) => a.passages)
@@ -315,6 +317,7 @@ export function findingView(entry, statements, claimId) {
     id: f.id, head, tone: cv?.tone || (d?.outcome === "difference" ? "warning" : f.verdict ? "reading" : "note"),
     lines: cv?.lines || [], recorded: comp ? null : recordedBasisText(f),
     composition: comp, difference: d ? { ...d, words: diffWords === head ? null : diffWords } : null,
+    impact: impactView(f, set.evidence),
     verdict: stepWords && stepWords !== head ? stepWords : null, note: f.note && f.note !== head ? f.note : null, clause: f.clause || null,
     question: f.coverage === "unresolved" ? f.question || null : null,
     requirement: req, passages, lean,

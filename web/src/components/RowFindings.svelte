@@ -39,6 +39,7 @@
             <p class="small diff" data-feature={d.feature} data-outcome={d.outcome}>{#if d.paper}paper <code>{d.paper}</code>{/if}{#if d.lean}{d.paper ? "; " : ""}Lean <code>{d.lean}</code>{/if}{#if d.why}<span class="faint">{" · " + d.why}</span>{/if}{#if d.transport}<span class="faint">{" · transport inspected: " + d.transport}</span>{/if}{#if d.resolution}<span class="faint">{" · resolved by " + d.resolution.by + (d.resolution.text ? ": " + d.resolution.text : "")}</span>{/if}</p>
           {/if}
           {#if v.verdict}<p class="small">{v.verdict}.</p>{/if}
+          {#if v.impact}<p class="small" data-impact={v.impact.outcome}><span class="faint">At</span> {v.impact.use}<span class="faint"> · {v.impact.difference}</span></p>{#if v.impact.why}<p class="small text">{v.impact.why}</p>{/if}{/if}
           {#if v.note}<p class="small text">{v.note}</p>{/if}
           {#if v.question}<p class="small"><span class="faint">Open question:</span> <span class="text">{v.question}</span></p>{/if}
           {#if v.requirement}

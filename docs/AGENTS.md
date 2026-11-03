@@ -323,6 +323,15 @@ one result (`machinechecked/impact@1`):
 - `claims`: every claim with linked Lean, its `relation` (`linked`, `uses`, `not traced`,
   `none`) and each declaration's `use`, `answer` and `paths`. A difference between NAME and the
   paper can matter only to the claims that use it.
+- `recorded`: the impacts the workspaces record at NAME's applications (findings with an
+  `impact`), each with its `finding`, `claim`, `workspace`, `reviewer`, the `use` (`evidence`,
+  application `id`, `caller`), the `requirement` at that use and its text, the `outcome`
+  (`sufficient for this use`, `not sufficient`, `a separate scope question`, `unresolved`), `why`,
+  the `difference` it concerns as it was read, and its `currency`; a main result lists those at
+  its applications in `impacts`. `applications_all` names every application of NAME: one with no
+  recorded impact has none, whatever another use's outcome. Record one as a finding with
+  `"impact": {"difference": FINDING, "use": EVIDENCE, "outcome": ..., "why": ...}` and the
+  requirement at the use ([Reviewing](REVIEWING.md#saved-investigations)).
 - `applications` as `uses` gives them (with `applications_complete`), `imports_without_use`,
   `locations` (the module, kind and line of each declaration on a path), `scope`, and
   `complete: false` when an answer is `not traced`.

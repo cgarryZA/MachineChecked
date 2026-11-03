@@ -292,6 +292,30 @@ the impact answer. A replaced selection is kept in the workspace's provenance. T
 review order puts the main results, and the units their Lean uses, ahead of the rest ([Review
 order](#review-order)). The selection changes no status.
 
+**What a difference affects at a use.** A difference between a lemma and its Lean can matter at
+one use and not at another: a fifth derivative where the paper prints four is harmless to a
+construction that needs only some finite number of derivatives, and not to a consumer that uses
+the four-derivative bound itself. Record it at the use, as a finding of the claim whose Lean makes
+the application, with an `impact`:
+
+```json
+{"op": "put", "record": {"kind": "finding", "claim": "Theorem 1", "requirement": "r2",
+ "impact": {"difference": "f-diff", "use": "e-use", "outcome": "sufficient for this use",
+            "why": "the construction needs some finite number of derivatives; n + 5 is finite"}}}
+```
+
+`difference` is the finding that records the difference, `use` an evidence record citing the
+application (`{"app": {"callee": NAME, "id": APP_ID}}`, as `compare --query uses` or `impact`
+gives it), `requirement` what the consumer needs there, and `outcome` one of *sufficient for this
+use*, *not sufficient*, *a separate scope question* or *unresolved*, with your explanation. The
+difference stays recorded as it is; the impact explains its consequence at that one application
+and says nothing of another. It reads as changed when the application changes (a change to the
+caller's proof alone does it, while the comparison of statements stays current), when the
+difference is superseded or changes, or when the requirement changes. `compare --query impact
+NAME` lists the impacts recorded at NAME's applications and the applications with none; the reader
+shows each beside its application under **Used by** and with the findings of its claim. An impact
+is your reading, attributed to you, and changes no status.
+
 **Facts inside a proof.** An exported theorem can prove more than it states. Under `view`, a linked
 theorem has **Facts inside the proof**: *Read the proof* asks Lean for the propositions its proof
 establishes along the way, each with the hypotheses it needs and the case of the proof it lies in,

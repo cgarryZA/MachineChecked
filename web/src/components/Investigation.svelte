@@ -7,6 +7,7 @@
   import { mathPieces } from "../lib/comparison.js";
   import Composition from "./Composition.svelte";
   import { connectionText } from "../lib/connections.js";
+  import { impactHead, impactView } from "../lib/impact.js";
 
   // The auditor's saved investigation of this claim, under `machinechecked view`: its open
   // questions, findings and evidence, saved by the engine in the project's working directory, and
@@ -86,6 +87,7 @@
     if (cv?.headline) return cv.headline;
     if (f.verdict) return "The printed step: " + f.verdict;
     if (f.difference) return `A ${f.difference.feature} difference: ${OUTCOME[f.difference.outcome]}`;
+    if (f.impact) return impactHead(f.impact);
     return "No coverage given";
   }
 
@@ -341,6 +343,7 @@
           {#each cv?.lines || [] as line}<p class="small" data-line={line.label}><span class="faint">{line.label}:</span> {line.names?.join(", ") || ""}{line.names?.length && line.text ? ". " : ""}<span class="text">{line.text || ""}</span>{#if line.note} <span class="faint">{line.note}</span>{/if}</p>{/each}
           {#if f.composition}<p class="small faint">Rests on composition {f.composition}{f.recorded_basis ? `; recorded as ${f.recorded_basis === "checked_bridge" ? "a checked bridge" : f.recorded_basis}, its bridge is not checked now` : ""}.</p>
           {:else if recordedBasisText(f)}<p class="small faint" data-line="recorded">{recordedBasisText(f)}</p>{/if}
+          {#if f.impact}{@const iv = impactView(f, here.evidence)}<p class="small" data-impact={f.impact.outcome}><span class="faint">At</span> {iv.use}<span class="faint"> · {iv.difference}</span></p>{#if iv.why}<p class="small text">{iv.why}</p>{/if}{/if}
           {#if f.note}<p class="small text">{f.note}</p>{/if}
           {#if f.supersedes}<p class="faint small">Supersedes {f.supersedes}: {f.reason}</p>{/if}
           {#if f.state === "draft"}<button class="act" disabled={busy} onclick={() => submit(f)}>Submit</button>{/if}
