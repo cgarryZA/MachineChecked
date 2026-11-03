@@ -20,6 +20,7 @@ import "./comparison.test.mjs";
 import "./findings.test.mjs";
 import "./connections.test.mjs";
 import "./impact.test.mjs";
+import "./mainresults.test.mjs";
 import "./names.test.mjs";
 import "./workfile.test.mjs";
 import { chromium } from "playwright";
@@ -685,6 +686,57 @@ fs.cpSync(path.join(root, "prooffacts"), path.join(root, "pfpaged"), { recursive
 fs.writeFileSync(path.join(root, "pfpaged", "data", "index.json"), JSON.stringify({ ...PF, editable: true }));
 const pfCursors = [];
 
+// #550: the main results a workspace saves. `/toymain/` is the toy audit with one published
+// selection, as `published_work.main_results` writes it (with a claim the release no longer has,
+// and one of a paper it does not publish); `/mainedit/` is the toy reader as the local `view`
+// serves it, its workspace routes answered by the engine itself (`workspace.api`) over a working
+// directory of its own.
+const ENGINE_ROUTES = String.raw`
+import json, sys
+from pathlib import Path
+from urllib.parse import parse_qs
+from prooflens import workspace as wsp
+work, method, route, query = Path(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4]
+gets, posts = wsp.api(work, work / "site" / "data", None)
+table = gets if method == "GET" else posts
+if route not in table:
+    print(json.dumps([404, {"error": "not found"}]))
+    sys.exit()
+try:
+    out = table[route](parse_qs(query)) if method == "GET" else \
+        {"ok": True, **(table[route](json.loads(sys.stdin.read() or "{}")) or {})}
+    print(json.dumps([200, out]))
+except Exception as e:
+    print(json.dumps([409 if getattr(e, "conflicts", None) is not None else 400, {"error": str(e)}]))`;
+const engineRoute = (work, method, route, query = "", body = "") => {
+  const r = spawnSync(process.env.PYTHON || "python3", ["-c", ENGINE_ROUTES, work, method, route, query], { input: body, encoding: "utf8" });
+  if (r.status !== 0) throw new Error("the engine's local routes failed:\n" + r.stderr);
+  return JSON.parse(r.stdout);
+};
+const MAINWORK = path.join(root, "mainwork"), PUBWORK = path.join(root, "pubwork");
+for (const w of [MAINWORK, PUBWORK]) fs.cpSync(path.join(root, "toy", "data"), path.join(w, "site", "data"), { recursive: true });
+const MAIN_WS = engineRoute(MAINWORK, "POST", "/api/workspace", "", JSON.stringify({ action: "open", reviewer: "human:A-Auditor", mode: "informed" }))[1].id;
+const saveMain = (main) => engineRoute(MAINWORK, "POST", "/api/workspace", "", JSON.stringify({ action: "update", id: MAIN_WS, ops: [{ op: "main-results", main }] }));
+const PUBLISHED_MAIN = (() => {
+  const r = spawnSync(process.env.PYTHON || "python3", ["-c", String.raw`
+import json, sys
+from pathlib import Path
+from prooflens import published_work as pw, review_cli as rc, workspace as wsp
+from prooflens.targets import Snapshot
+work = Path(sys.argv[1])
+snap = Snapshot(work / "site" / "data")
+p = wsp.open_for(work, rc.parse_reviewer("human:A-Auditor"), "informed", sources=snap.sources())
+wsp.update(p, [{"op": wsp.MAIN_OP, "main": ["Theorem 2.5", "Toy.triangle"]}], snap, None)
+raw = json.loads(p.read_text())
+raw["main_results"]["selected"] += [{"claim": "T:thm:gone"}, {"claim": "Q:thm:other"}]
+p.write_text(json.dumps(raw))
+print(json.dumps(pw.main_results(work, snap)))`, PUBWORK], { encoding: "utf8" });
+  if (r.status !== 0) throw new Error("the engine could not publish the main results:\n" + r.stderr);
+  return JSON.parse(r.stdout);
+})();
+fs.cpSync(path.join(root, "toy"), path.join(root, "toymain"), { recursive: true });
+fs.writeFileSync(path.join(root, "toymain/data/index.json"), JSON.stringify({ ...TOY, main_results: PUBLISHED_MAIN }));
+
 const types = { ".pdf": "application/pdf", ".html": "text/html", ".json": "application/json", ".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css", ".woff2": "font/woff2" };
 // `/toyedit/` is the toy reader as the local `view` serves it: its index says it may edit, and
 // symbol links it saves are captured here instead of written.
@@ -705,6 +757,21 @@ const server = http.createServer((req, res) => {
     return res.end(JSON.stringify({ ...PF, editable: true }));
   }
   if (url.startsWith("/pfedit/")) url = "/prooffacts/" + url.slice("/pfedit/".length);
+  if (url.startsWith("/mainedit/api/")) {
+    let body = "";
+    req.on("data", (c) => (body += c));
+    req.on("end", () => {
+      const [code, out] = engineRoute(MAINWORK, req.method, url.slice("/mainedit".length), req.url.split("?")[1] || "", body);
+      res.writeHead(code, { "content-type": "application/json" });
+      res.end(JSON.stringify(out));
+    });
+    return;
+  }
+  if (url === "/mainedit/data/index.json") {
+    res.writeHead(200, { "content-type": "application/json" });
+    return res.end(JSON.stringify({ ...TOY, editable: true }));
+  }
+  if (url.startsWith("/mainedit/")) url = "/toy/" + url.slice("/mainedit/".length);
   if (url === "/toyedit/api/symbol" && req.method === "POST") {
     let body = "";
     req.on("data", (c) => (body += c));
@@ -5116,6 +5183,80 @@ print("null")`, who);
       assert.doesNotMatch(await cmp.textContent(), /Computed hint|differ by 1/);
     });
   } finally { py.kill(); }
+}
+
+// #550: the main results each declaration's use is traced from, with who saved them, when, their
+// pins and their problems: read-only in a published audit; under `view`, added, removed and
+// cleared through the engine's `main-results` operation, its refusals shown in its words.
+const itemsOf = async (loc) => (await loc.locator("li").allTextContents()).map(words);
+for (const width of [1300, 390]) {
+  await check("a published audit's main results are shown, read-only", width, async (pg) => {
+    await pg.goto(origin + `/toymain/#/r/${TOY.release}/overview`);
+    const panel = pg.locator("section.mains");
+    const pub = panel.locator("[data-published]");
+    await pub.waitFor();
+    assert.match(words(await pub.locator("p").first().textContent()),
+      new RegExp(`^Saved in workspace ws-\\w+ by A Auditor \\(informed\\)\\. Saved by human:A-Auditor on \\S+, against release ${TOY.release}\\.$`));
+    assert.deepEqual(await itemsOf(pub), ["Theorem 2.5 (T:thm:bound) · stands for its linked Lean", "Toy.triangle · in Toy.Defs",
+      `T:thm:gone · no claim T:thm:gone in release ${TOY.release}`]);
+    assert.match(words(await pub.locator("[data-left-out]").textContent()), /^1 more not named: main results this published data cannot name/);
+    assert.equal(await panel.locator("input, select, button").count(), 0, "read-only");
+    if (width < 500) assert.ok(await pg.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), "no sideways scroll");
+    // The toy audit publishes none: no panel.
+    await pg.goto(origin + `/toy/#/r/${TOY.release}/overview`);
+    await pg.locator("main.coverage h1").waitFor();
+    assert.equal(await pg.locator("section.mains").count(), 0);
+  });
+
+  await check("under view the main results are edited through the engine, its refusals shown as it words them", width, async (pg) => {
+    saveMain([]);
+    await pg.goto(origin + `/mainedit/#/r/${TOY.release}/overview`);
+    const panel = pg.locator("section.mains");
+    await panel.locator("[data-suggested]").waitFor();
+    assert.equal(words(await panel.locator("[data-suggested]").textContent()),
+      "This workspace saves none; impact traces from the suggestion, the declarations linked to the paper's theorems.");
+    assert.deepEqual(await itemsOf(panel.locator(".entries")), ["Toy.Acceptance.thm_even_add · linked to Theorem 2.1 (T:thm:even-add)",
+      "Toy.Acceptance.thm_triangle · linked to Theorem 2.2 (T:thm:triangle)", "Toy.Acceptance.thm_bound · linked to Theorem 2.5 (T:thm:bound)"]);
+    const box = panel.getByRole("textbox", { name: "Main result to add" });
+    const add = panel.getByRole("button", { name: "Add", exact: true });
+    await box.fill("Theorem 2.5");
+    await add.click();
+    await panel.locator("[data-saved]").waitFor();
+    assert.match(words(await panel.locator("[data-saved]").textContent()), new RegExp(`^Saved by human:A-Auditor on \\S+, against release ${TOY.release}\\.$`));
+    assert.deepEqual(await itemsOf(panel.locator(".entries")), ["Theorem 2.5 (T:thm:bound) · its linked Lean: Toy.Acceptance.thm_bound Remove"]);
+    assert.equal(await box.inputValue(), "");
+    // A name the build cannot check is refused, in the engine's words, and nothing is saved.
+    await box.fill("No.Such.thing");
+    await add.click();
+    const alert = panel.getByRole("alert");
+    await alert.waitFor();
+    assert.equal(await alert.textContent(), `No.Such.thing is neither a claim of release ${TOY.release} nor a declaration of the project`);
+    assert.equal(await box.inputValue(), "No.Such.thing", "what was typed stays, to correct it");
+    assert.equal(await panel.locator(".entries li").count(), 1);
+    await box.fill("Toy.triangle");
+    await box.press("Enter");
+    await pg.waitForFunction(() => document.querySelectorAll("section.mains .entries li").length === 2);
+    assert.equal(await panel.getByRole("alert").count(), 0);
+    assert.deepEqual((await itemsOf(panel.locator(".entries")))[1], "Toy.triangle · in Toy.Defs Remove");
+    // Saved elsewhere meanwhile (a terminal): the reader saves nothing over it, and shows it.
+    saveMain(["Theorem 2.1"]);
+    await panel.getByRole("button", { name: "Remove Theorem 2.5 (T:thm:bound)" }).click();
+    await alert.waitFor();
+    assert.match(await alert.textContent(), /changed elsewhere .* Nothing was saved; they are shown now\.$/);
+    assert.deepEqual(await itemsOf(panel.locator(".entries")), ["Theorem 2.1 (T:thm:even-add) · its linked Lean: Toy.Acceptance.thm_even_add Remove"]);
+    assert.deepEqual(engineRoute(MAINWORK, "GET", "/api/main-results", "id=" + MAIN_WS)[1].selected, [{ claim: "T:thm:even-add" }]);
+    // Removing one saves the others; Clear removes them all, and the suggestion is traced again.
+    await box.fill("Toy.triangle");
+    await add.click();
+    await pg.waitForFunction(() => document.querySelectorAll("section.mains .entries li").length === 2);
+    await panel.getByRole("button", { name: "Remove Theorem 2.1 (T:thm:even-add)" }).click();
+    await pg.waitForFunction(() => document.querySelectorAll("section.mains .entries li").length === 1);
+    assert.deepEqual(engineRoute(MAINWORK, "GET", "/api/main-results", "id=" + MAIN_WS)[1].selected, [{ decl: "Toy.triangle", module: "Toy.Defs", build: "built" }]);
+    await panel.getByRole("button", { name: "Clear" }).click();
+    await panel.locator("[data-suggested]").waitFor();
+    assert.equal(engineRoute(MAINWORK, "GET", "/api/main-results", "id=" + MAIN_WS)[1].basis, "suggested");
+    if (width < 500) assert.ok(await pg.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), "no sideways scroll");
+  });
 }
 
 await browser.close();

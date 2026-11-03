@@ -8,6 +8,9 @@ import copy
 import json
 import re
 import shutil
+import threading
+import urllib.error
+import urllib.request
 
 import jsonschema
 import pytest
@@ -23,6 +26,7 @@ from prooflens import workspace as wsp
 from prooflens.config import Publish
 from prooflens.published import AuditError
 from prooflens.schemas import schema
+from prooflens.server import make_server
 from prooflens.targets import Snapshot
 
 WHO = rc.parse_reviewer("human:A-Auditor")
@@ -244,6 +248,72 @@ def test_the_command_line_saves_shows_and_traces_from_them(work, lean, tmp_path,
     assert err.count("Syn.twin") == 1
     cli.main(["workspace", "main", "--clear"])
     assert "saves no main results" in capsys.readouterr().out
+
+
+def test_the_local_reader_shows_and_edits_them_through_the_engine(work, lean):
+    """`machinechecked view`'s routes (#550): `GET /api/main-results` gives what `compare --query
+    impact` traces from for one workspace (its saved selection, or the suggestion), with this
+    build's release and commit; the reader edits it with the `main-results` operation of `POST
+    /api/workspace`, and a refusal is the engine's message, verbatim."""
+    data = data_of(work)
+    p = wsp.open_for(work, WHO, "informed", sources=Snapshot(data).sources())
+    wid = wsp.read(p)["id"]
+    httpd = make_server(work / "site", 0, api=wsp.api(work, data, lean["root"]))
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{httpd.server_address[1]}/api/"
+
+    def get():
+        with urllib.request.urlopen(base + "main-results?id=" + wid, timeout=10) as r:
+            return json.loads(r.read())
+
+    def edit(main):
+        req = urllib.request.Request(base + "workspace", json.dumps(
+            {"action": "update", "id": wid, "ops": [{"op": wsp.MAIN_OP, "main": main}],
+             "op_id": f"req-{len(main)}-{main[:1]}"}).encode(),
+            {"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return json.loads(r.read())
+
+    def traced(doc):
+        return {k: v for k, v in doc.items() if k not in ("main_results", "build")}
+
+    try:
+        doc = get()
+        assert doc["basis"] == "suggested" and doc["rule"] == im.SUGGESTED
+        assert doc["note"] == f"workspace {wid} saves no main results"
+        assert doc["build"] == {"release": "v-synthetic", "commit": "c" * 40}
+        assert {"name": "Syn.main", "claims": ["S:thm:main"], "selected": ["S:thm:main"]} in \
+            doc["main_results"]
+        assert edit(["Theorem 1", "Syn.step", "Lemma 7"])["changed"] == ["main_results"]
+        doc = get()
+        assert (doc["basis"], doc["workspace"], doc["reviewer"], doc["by"]) == (
+            "saved", wid, WHO["id"], WHO["id"])
+        assert doc["selected"] == [{"claim": "S:thm:main"},
+                                   {"decl": "Syn.step", "module": "Syn.Main", "build": "built"},
+                                   {"claim": "S:lem:none"}]
+        assert doc["pins"] == {"release": "v-synthetic", "commit": "c" * 40} and doc["at"]
+        assert doc["problems"] == [] and doc["unlinked_claims"] == ["S:lem:none"]
+        assert [(m["name"], m["selected"]) for m in doc["main_results"]] == [
+            ("Syn.main", ["S:thm:main"]), ("Syn.step", ["named"])]
+        # The same answer `compare --query impact` traces from.
+        assert traced(doc) == ask(work, lean, "Syn.used", workspace=wid)["selection"]
+        # Removing one is saving the others; a refusal answers 400 with the engine's words.
+        assert edit([{"claim": "S:thm:main"}, {"decl": "Syn.step", "module": "Syn.Main"}])[
+            "changed"] == ["main_results"]
+        assert [e.get("claim") or e.get("decl") for e in get()["selected"]] == [
+            "S:thm:main", "Syn.step"]
+        with pytest.raises(urllib.error.HTTPError) as e:
+            edit(["Syn.twin"])
+        assert e.value.code == 400
+        assert json.loads(e.value.read())["error"] == (
+            "Syn.twin is declared in several modules (Syn.A, Syn.B); name one as MODULE:NAME")
+        assert len(get()["selected"]) == 2, "nothing is saved"
+        # Clearing removes them: the suggestion again.
+        assert edit([])["changed"] == ["main_results"]
+        assert get()["basis"] == "suggested"
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
 
 
 def test_a_published_audit_carries_each_saved_selection(work, lean, tmp_path):

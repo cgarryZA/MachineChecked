@@ -278,6 +278,21 @@ def selection(site, main: list[str] | None, claims_of: dict[str, list[str]],
     return out
 
 
+def workspace_selection(site, ws: dict, root: Path | None = None) -> dict:
+    """The main results `compare --query impact --workspace ID` traces from for the workspace
+    `ws`, as `selection` gives them: those it saves, with who saved them, when, their pins and
+    what this build lacks of them, or the suggestion when it saves none. The reader's panel
+    shows this answer; it reads the build and runs no Lean."""
+    from . import workspace as wsp
+    from .compare import linked_claims
+    from .targets import Snapshot
+    view = wsp.main_results_view(ws, Snapshot(site.data), root)
+    saved = ({"workspace": ws["id"], "reviewer": (ws.get("reviewer") or {}).get("id"),
+              "mode": ws.get("mode"), **view} if view else {"workspace": ws["id"],
+                                                             "selected": None})
+    return selection(site, None, linked_claims(site), saved)
+
+
 # -- the answer ------------------------------------------------------------------------------
 
 def _how_far(steps: list[dict]) -> str:
