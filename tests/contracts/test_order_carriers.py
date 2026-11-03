@@ -244,8 +244,8 @@ def test_subterms_name_their_binders_as_the_statement_does():
 
 
 def test_subterms_are_published_with_the_lean():
-    """An application's sub-terms are Lean text: an export carries them only when the paper
-    publishes its Lean (#509)."""
+    """An application's sub-terms and type are Lean text: an export carries them only when the
+    paper publishes its Lean (#509, #559)."""
     from prooflens.config import Publish
     from prooflens.export import public_claim
     occ = {"operation": "HDiv.hDiv", "type": "Real", "at": ["/1"],
@@ -255,8 +255,7 @@ def test_subterms_are_published_with_the_lean():
     shown = public_claim(chunk, Publish(pdf=False, source_text=False, lean=True, reviews=False))
     assert shown["findings"][0]["occurrences"] == [occ]
     hidden = public_claim(chunk, Publish(pdf=False, source_text=False, lean=False, reviews=False))
-    assert hidden["findings"][0]["occurrences"] == [{"operation": "HDiv.hDiv", "type": "Real",
-                                                     "at": ["/1"]}]
+    assert hidden["findings"][0]["occurrences"] == [{"operation": "HDiv.hDiv", "at": ["/1"]}]
     assert chunk["findings"][0]["occurrences"][0]["subterms"], "the build's own data is kept"
 
 

@@ -30,13 +30,40 @@ def _pick(d: dict | None, keys: list[str]) -> dict | None:
     return {k: d[k] for k in keys if k in d}
 
 
+# The codes of the findings whose message can quote the Lean (a type, a hypothesis).
+LEAN_QUOTING = {"totalised", "witness"}
+
+# The fields of an application a warning is about that quote the Lean, and of its conditions.
+LEAN_OCCURRENCE_KEYS = {"type", "rule", "subterms"}
+LEAN_CONDITION_KEYS = {"statement"}
+
+
 def _public_finding(f: dict, keys: list[str], lean: bool) -> dict:
-    """The fields `keys` of a finding; the sub-terms of its applications (`subterms`, Lean
-    text) only when the Lean is published."""
+    """The fields `keys` of a finding. Without the Lean (`lean` false), its message and the
+    applications it is about are the forms the assessment made without quoting it
+    (`withheld`); a finding recorded before those forms existed keeps no field that can quote
+    the Lean (`LEAN_QUOTING`, `LEAN_OCCURRENCE_KEYS`, `LEAN_CONDITION_KEYS`); and a dismissal
+    keeps who made it, not its rationale, which can quote the Lean."""
     out = _pick(f, keys)
-    if not lean and out.get("occurrences"):
-        out["occurrences"] = [{k: v for k, v in o.items() if k != "subterms"}
-                              for o in out["occurrences"]]
+    if lean:
+        return out
+    if out.get("dismissed"):
+        out["dismissed"] = {**out["dismissed"], "rationale": ""}
+    held = f.get("withheld") or {}
+    if "message" in out and (f.get("code") in LEAN_QUOTING or "message" in held):
+        out["message"] = held.get("message",
+                                  f"a {f.get('code')} finding; its message quotes the Lean, "
+                                  "which this audit does not publish")
+    if out.get("occurrences"):
+        occ = held.get("occurrences") or [{k: v for k, v in o.items()
+                                           if k not in LEAN_OCCURRENCE_KEYS}
+                                          for o in out["occurrences"]]
+        out["occurrences"] = [{**{k: v for k, v in o.items() if k != "subterms"},
+                               **({"conditions": [{k: v for k, v in c.items()
+                                                   if k not in LEAN_CONDITION_KEYS}
+                                                  for c in o["conditions"]]}
+                                  if o.get("conditions") else {})}
+                              for o in occ]
     return out
 
 
@@ -136,6 +163,10 @@ def public_claim(chunk: dict, pub) -> dict:
     for cl in chunk["clauses"]:
         c = _pick(cl, ["name", "spec", "accept", "refute", "corrects", "witness", "defs", "state",
                        "review", "checks", "evidence"])
+        if not pub.lean and c.get("checks"):
+            # A witness's check carries the statement it proves.
+            c["checks"] = {k: ({x: y for x, y in v.items() if x != "type"}
+                               if isinstance(v, dict) else v) for k, v in c["checks"].items()}
         c["regimes"] = [_pick(r, ["name", "description", "witness", "discharged"] +
                               (["type"] if pub.lean else [])) for r in cl.get("regimes", [])]
         if pub.lean and cl.get("statement"):
@@ -145,7 +176,8 @@ def public_claim(chunk: dict, pub) -> dict:
         else:
             c["statement"] = None
         if "spec_review" in cl:
-            c["spec_review"] = _reviews(cl["spec_review"], pub.reviews)
+            # A review of a Lean statement quotes it: its text needs the Lean published too.
+            c["spec_review"] = _reviews(cl["spec_review"], pub.reviews and pub.lean)
         if "def_reviews" in cl:
             c["def_reviews"] = {n: _pick(r, ["state", "by", "kind"])
                                 for n, r in cl["def_reviews"].items()}
@@ -169,8 +201,10 @@ def public_claim(chunk: dict, pub) -> dict:
 
 def public_step(st: dict, pub) -> dict:
     """A proof step's links, formal route and review, with what `pub` allows: the Lean
-    statements of its links when the Lean is published, the reviewers' texts when reviews are,
-    its source location when the source text is."""
+    statements of its links when the Lean is published, the reviewers' texts when reviews are
+    (their comparison with the Lean, and their verdict's detail, when the Lean is too; their
+    reading of the paper is made before the Lean is shown), its source location when the
+    source text is."""
     def link(l):
         q = dict(l)
         if not pub.lean:
@@ -183,6 +217,9 @@ def public_step(st: dict, pub) -> dict:
         q = dict(r)
         if not pub.reviews:
             q["reading"] = q["comparison"] = q["text"] = ""
+            q["verdict"] = {**q["verdict"], "detail": ""}
+        elif not pub.lean:
+            q["comparison"] = q["text"] = ""
             q["verdict"] = {**q["verdict"], "detail": ""}
         reports.append(q)
     finding = next((q for q in reversed(reports) if q.get("current")), None)
@@ -400,10 +437,12 @@ def export(cfg: Config, out: Path, release: str | None = None,
     shown = [p for p in cfg.papers if paper is None or p.id == paper]
     lean_ok = all(p.publish.lean for p in shown)
     rev_ok = all(p.publish.reviews for p in shown)
+    # A review of a declaration quotes its Lean: its text needs the Lean published too.
+    rev_text_ok = rev_ok and lean_ok
     rekey = {}
     for key, d in store.items():
         q = _pick(d, DECL_KEYS_LEAN if lean_ok else DECL_KEYS_MIN)
-        q["review"] = _reviews(d.get("review"), rev_ok)
+        q["review"] = _reviews(d.get("review"), rev_text_ok)
         q = mf.split_expansions(q, expansions, pins)
         new = mf.record_key(q)
         rekey[key] = new

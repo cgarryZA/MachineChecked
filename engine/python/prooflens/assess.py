@@ -66,12 +66,23 @@ ORDER_OPS = {"iSup": "supremum", "sSup": "supremum", "SupSet.sSup": "supremum",
              "iInf": "infimum", "sInf": "infimum", "InfSet.sInf": "infimum"}
 
 
-def _order_warning(c: str, spec: str, ops) -> str | None:
+# What a warning says of a type it could not read, in the engine's words (not the Lean's).
+NOT_READ = "not read: it is used without its type"
+
+
+def _types(types: list[str], lean: bool) -> str:
+    """The types a warning names, as Lean prints them; without the Lean (`lean` false), only
+    what the engine says of them."""
+    shown = [t for t in types if lean or t == NOT_READ]
+    return f" ({', '.join(shown)})" if shown else ""
+
+
+def _order_warning(c: str, spec: str, ops, lean: bool = True) -> str | None:
     """The warning for the order operation `c` in `spec`, from the types of its applications
     there: none when each is taken in a complete lattice (every family has one), the real-number
     rule for the reals, a default value in another conditionally complete type, and an
     unresolved type otherwise. A record without `order_ops` (an older probe) leaves the type
-    unresolved."""
+    unresolved. Without `lean`, the types are described and not quoted."""
     what = ORDER_OPS[c]
     side = "above" if what == "supremum" else "below"
     occ = [o for o in (ops or {}).get("occurrences") or [] if o.get("const") == c]
@@ -86,7 +97,7 @@ def _order_warning(c: str, spec: str, ops) -> str | None:
                       and o.get("lattice") not in ("complete", "conditional")})
     walked = ops.get("complete", True)
     if not occ and walked:
-        unknown = ["not read: it is used without its type"]
+        unknown = [NOT_READ]
     parts = []
     if not walked:
         # The walk stopped early: an application it did not reach may be in any type.
@@ -95,11 +106,12 @@ def _order_warning(c: str, spec: str, ops) -> str | None:
     if real:
         parts.append(TOTALISED[c])
     if other:
-        parts.append(f"a {what} in {', '.join(other)} is a default value when the family is "
+        where = ", ".join(other) if lean else "a conditionally complete type other than ℝ"
+        parts.append(f"a {what} in {where} is a default value when the family is "
                      f"empty or not bounded {side}")
     if unknown:
-        parts.append(f"Lean finds no lattice structure on the type of a {what} "
-                     f"({', '.join(unknown)}), so whether it can take a default value is "
+        parts.append(f"Lean finds no lattice structure on the type of a {what}"
+                     f"{_types(unknown, lean)}, so whether it can take a default value is "
                      "unresolved")
     if not parts:
         return None
@@ -129,9 +141,9 @@ def _occurrences(c: str, ops) -> list[dict]:
         if isinstance(ops, dict) else []
 
 
-def _division_rule(c: str, o: dict) -> tuple[str, str | None]:
+def _division_rule(c: str, o: dict, lean: bool = True) -> tuple[str, str | None]:
     """The state of the rule for one division or inverse (`applies`, `none` or `unresolved`),
-    with the rule when it applies."""
+    with the rule when it applies (naming its type only with `lean`)."""
     what = DIVISION_OPS[c][0]
     rule = DIVISION_BY_HEAD.get((c, o.get("carrier_head")))
     if rule:
@@ -140,14 +152,16 @@ def _division_rule(c: str, o: dict) -> tuple[str, str | None]:
         return "none", None
     if o.get("algebra") == "group-with-zero":
         zero = "x / 0 = 0" if what == "division" else "0⁻¹ = 0"
-        return "applies", f"{what} in {o.get('carrier') or o.get('carrier_head')}: {zero}"
+        where = (o.get("carrier") or o.get("carrier_head")) if lean else "a group with zero"
+        return "applies", f"{what} in {where}: {zero}"
     return "unresolved", None
 
 
-def _division_warning(c: str, spec: str, ops) -> str | None:
+def _division_warning(c: str, spec: str, ops, lean: bool = True) -> str | None:
     """The warning for a division or an inverse `c` in `spec`, from the types of its
     applications there: none in a group, `0` in a group with zero, the rule of ℕ, ℤ or ℝ≥0∞ in
-    those types, and an unresolved type otherwise (also for a record without `order_ops`)."""
+    those types, and an unresolved type otherwise (also for a record without `order_ops`).
+    Without `lean`, the types are described and not quoted."""
     what, outcome = DIVISION_OPS[c]
     if not isinstance(ops, dict):
         return (f"the type of this {what} is not recorded (the evidence predates the record), so "
@@ -159,9 +173,9 @@ def _division_warning(c: str, spec: str, ops) -> str | None:
         parts.append(f"the statement is too large to read the type of every {what}, so "
                      f"{outcome} is unresolved")
     elif not occ:
-        unknown.append("not read: it is used without its type")
+        unknown.append(NOT_READ)
     for o in occ:
-        state, rule = _division_rule(c, o)
+        state, rule = _division_rule(c, o, lean)
         if state == "none":
             continue
         if rule is None:
@@ -173,7 +187,7 @@ def _division_warning(c: str, spec: str, ops) -> str | None:
     if unknown:
         article = "an" if what == "inverse" else "a"
         parts.append(f"Lean finds neither a group nor a field structure on the type of {article} "
-                     f"{what} ({', '.join(unknown)}), so {outcome} is unresolved")
+                     f"{what}{_types(unknown, lean)}, so {outcome} is unresolved")
     if not parts:
         return None
     return "; ".join(parts) + f" ({c} occurs in {spec})"
@@ -212,9 +226,10 @@ STRUCTURES = {("lattice", "complete"): "complete-lattice",
               ("subsingleton", True): "one-element"}
 
 
-def _rule(c: str, o: dict) -> tuple[str, str | None]:
+def _rule(c: str, o: dict, lean: bool = True) -> tuple[str, str | None]:
     """The state of the rule of `c` at one recorded application `o` (`applies`, `none`: the type
-    gives it no exceptional case, or `unresolved`), with the rule when it applies."""
+    gives it no exceptional case, or `unresolved`), with the rule when it applies (naming its
+    type only with `lean`)."""
     if c in ORDER_OPS:
         what = ORDER_OPS[c]
         if o.get("carrier_head") == "Real":
@@ -223,11 +238,13 @@ def _rule(c: str, o: dict) -> tuple[str, str | None]:
             return "none", None
         if o.get("lattice") == "conditional":
             side = "above" if what == "supremum" else "below"
-            return "applies", (f"a {what} in {o.get('carrier') or o.get('carrier_head')} is a "
+            where = ((o.get("carrier") or o.get("carrier_head")) if lean
+                     else "a conditionally complete type other than ℝ")
+            return "applies", (f"a {what} in {where} is a "
                                f"default value when the family is empty or not bounded {side}")
         return "unresolved", None
     if c in DIVISION_OPS:
-        return _division_rule(c, o)
+        return _division_rule(c, o, lean)
     if c in EXEMPT and EXEMPT[c](o):
         return "none", None
     return "applies", TOTALISED[c]
@@ -267,30 +284,32 @@ def _subterms(o: dict, names: dict[str, str]) -> list[dict]:
     return out
 
 
-def occurrences(srec: dict, c: str) -> list[dict] | None:
+def occurrences(srec: dict, c: str, lean: bool = True) -> list[dict] | None:
     """The applications of the totalised operation `c` that the probe read in a statement, each
     with its type (`type`, its head constant `type_head`), the structure on it that decides the
     rule (`structure`), the state of the rule there and the rule itself, the positions of the
     application in the proposition (`at`), and the sub-term at each with the binder or
     hypothesis around it (`subterms`, when the probe printed them). None for an operation the
-    probe does not read by type, and for a record from before it read them."""
+    probe does not read by type, and for a record from before it read them. Without `lean`, no
+    field quotes the Lean: no `type`, `subterms` or condition's `statement`, and the rule
+    describes the type."""
     ops = srec.get("order_ops")
     if not isinstance(ops, dict) or c not in READ_BY_TYPE:
         return None
     names = _binder_names(srec)
     out = []
     for o in _occurrences(c, ops):
-        state, rule = _rule(c, o)
+        state, rule = _rule(c, o, lean)
         structure = next((v for (k, val), v in STRUCTURES.items() if o.get(k) == val
                           and k in o), None)
-        rec = {"operation": c, "type": o.get("carrier") or None,
+        rec = {"operation": c, **({"type": o.get("carrier") or None} if lean else {}),
                "type_head": o.get("carrier_head") or None, "structure": structure,
                "state": state, "rule": rule, "at": list(o.get("at") or [])}
-        if o.get("subterms"):
+        if o.get("subterms") and lean:
             rec["subterms"] = _subterms(o, names)
         if state == "applies" and o.get("conditions"):
-            conds = [{k: d[k] for k in ("condition", "state", "by", "premise", "statement")
-                      if k in d} for d in o["conditions"]]
+            keys = ("condition", "state", "by", "premise") + (("statement",) if lean else ())
+            conds = [{k: d[k] for k in keys if k in d} for d in o["conditions"]]
             rec.update(conditions=conds, condition_state=condition_state(conds))
         out.append(rec)
     return out
@@ -316,36 +335,38 @@ def occurrence_fingerprint(o: dict, decls: dict) -> str | None:
                                                              ensure_ascii=False))
 
 
-def _unresolved(c: str, o: dict) -> str:
+def _unresolved(c: str, o: dict, lean: bool = True) -> str:
     """Why the rule of `c` at one application is unresolved: Lean finds no structure on its
-    type that decides it."""
-    ty = o.get("carrier") or "?"
+    type that decides it (named only with `lean`)."""
+    ty = f" ({o.get('carrier') or '?'})" if lean else ""
     if c in ORDER_OPS:
-        return (f"Lean finds no lattice structure on the type of this {ORDER_OPS[c]} ({ty}), so "
+        return (f"Lean finds no lattice structure on the type of this {ORDER_OPS[c]}{ty}, so "
                 "whether it can take a default value is unresolved")
     what, outcome = DIVISION_OPS[c]
-    return (f"Lean finds neither a group nor a field structure on the type of this {what} "
-            f"({ty}), so {outcome} is unresolved")
+    return (f"Lean finds neither a group nor a field structure on the type of this {what}"
+            f"{ty}, so {outcome} is unresolved")
 
 
-def totalised_findings(srec: dict, spec: str, decls: dict | None = None) -> list[dict]:
+def totalised_findings(srec: dict, spec: str, decls: dict | None = None,
+                       lean: bool = True) -> list[dict]:
     """The totalisation warnings of `spec`, one per application of an operation the probe read
     by type whose rule applies or is unresolved there (`occurrence`: the record, with its
     `fingerprint`), and one per operation for what is not read application by application: an
     operation not read by type, evidence from before the record, an operation used without
-    being read, and the applications a walk that stopped early did not reach."""
+    being read, and the applications a walk that stopped early did not reach. Without `lean`,
+    the same warnings in the same order, quoting no Lean."""
     ops = srec.get("order_ops")
     out = []
-    for c, msg in totalised(srec, spec):
+    for c, msg in totalised(srec, spec, lean):
         if c not in READ_BY_TYPE or not isinstance(ops, dict):
             out.append({"trigger": c, "message": msg, "occurrence": None})
             continue
-        occ = occurrences(srec, c)
+        occ = occurrences(srec, c, lean)
         raw = _occurrences(c, ops)
         for o, r in zip(occ, raw):
             if o["state"] == "none":
                 continue
-            why = o["rule"] if o["state"] == "applies" else _unresolved(c, r)
+            why = o["rule"] if o["state"] == "applies" else _unresolved(c, r, lean)
             out.append({"trigger": c, "message": f"{why} ({c} occurs in {spec})",
                         "occurrence": {**o, "fingerprint": occurrence_fingerprint(r, decls or {})}})
         if not ops.get("complete", True):
@@ -359,19 +380,19 @@ def totalised_findings(srec: dict, spec: str, decls: dict | None = None) -> list
     return out
 
 
-def totalised(srec: dict, spec: str) -> list[tuple[str, str]]:
+def totalised(srec: dict, spec: str, lean: bool = True) -> list[tuple[str, str]]:
     """The totalised operations `spec` uses, each with its warning (`TOTALISED`): the operation
     is the trigger. Suprema, infima, divisions, inverses, integrals and sums are judged by the
-    types they are taken in."""
+    types they are taken in, which the warning quotes only with `lean`."""
     out = []
     ops = srec.get("order_ops")
     for c in srec.get("consts", []):
         if c not in TOTALISED:
             continue
         if c in ORDER_OPS:
-            msg = _order_warning(c, spec, ops)
+            msg = _order_warning(c, spec, ops, lean)
         elif c in DIVISION_OPS:
-            msg = _division_warning(c, spec, ops)
+            msg = _division_warning(c, spec, ops, lean)
         elif c in EXEMPT and _exempt(c, ops):
             msg = None
         else:
@@ -1051,25 +1072,29 @@ class Assessor:
         configured = getattr(self.cfg, "inhabited_classes", None)
         allowed = set(INHABITED_CLASSES if configured is None else configured)
         earlier: set[str] = set()
-        needs, classes = [], []
+        needs, named, classes = [], [], []
         for b in srec.get("binders", []):
             role, text = b.get("role"), (b.get("type") or {}).get("text", "?")
             if role == "hypothesis":
                 needs.append(f"{b.get('name', '?')} : {text}")
+                named.append(f"the hypothesis {b.get('name', '?')}")
             elif role == "instance":
                 cls = instance_class(b, earlier, allowed)
                 if cls is None:
                     needs.append(f"[{text}]")
+                    named.append("an instance")
                 else:
                     classes.append(cls)
             if b.get("name"):
                 earlier.add(b["name"])
         if needs:
-            shown = "; ".join(needs[:3]) + ("; …" if len(needs) > 3 else "")
+            def listed(xs):
+                return "; ".join(xs[:3]) + ("; …" if len(xs) > 3 else "")
+            message = "{} has hypotheses but no witness that they can be met ({})"
+            # Without the Lean, the binders are named and their statements not quoted.
             self.findings.append(_finding(
-                "obligation", "witness", subj,
-                f"{spec} has hypotheses but no witness that they can be met ({shown})",
-                binders=needs))
+                "obligation", "witness", subj, message.format(spec, listed(needs)),
+                binders=needs, withheld={"message": message.format(spec, listed(named))}))
         elif classes:
             names = ", ".join(dict.fromkeys(classes))
             self.add_warning(
@@ -1092,6 +1117,8 @@ class Assessor:
         fingerprint matches, and says so (`dismissed.form`: `statement`)."""
         fp = srec.get("fingerprint")
         items = totalised_findings(srec, spec, self.lean.get("decls") or {})
+        # The same warnings quoting no Lean, for an export that does not publish it.
+        held = totalised_findings(srec, spec, self.lean.get("decls") or {}, lean=False)
         targets: dict[tuple[str, str], tuple[str, dict]] = {}
         for d in self.dismissals:
             if d.get("code") != "totalised" or d.get("subject") != spec or "at" not in d:
@@ -1110,15 +1137,18 @@ class Assessor:
                 continue
             if d["at"] not in same and any(a == d["at"] for a, _ in here):
                 targets.setdefault((d["trigger"], d["at"]), ("stale", d))
-        for i in items:
+        for i, h in zip(items, held):
             c, o = i["trigger"], i["occurrence"]
             extra, ofp = {}, None
             if o is not None:
                 ofp = o.pop("fingerprint")
+                h["occurrence"].pop("fingerprint", None)
                 extra = {"occurrences": [o], "at": o["at"][0] if o["at"] else None,
                          "statement_fingerprint": fp}
             elif i.get("incomplete"):
                 extra = {"occurrences": [], "occurrences_complete": False}
+            extra["withheld"] = {"message": h["message"],
+                                 **({"occurrences": [h["occurrence"]]} if o is not None else {})}
             if o is not None and o.get("condition_state") == "established":
                 # Every condition of the rule is supplied: the warning is resolved, with the
                 # evidence in its occurrence. No status depends on it.
