@@ -517,27 +517,79 @@ def finding_bridge(f: dict, compositions: dict, snap, root, check_now: bool = Fa
 
 def currency(rec: dict, ws: dict, cur: dict, snap) -> dict:
     """A composition's currency: stale when evidence it uses changed, when a requirement a step
-    establishes changed, or when its claim's printed text changed. Its bridge is checked apart
-    (`bridge_currency`)."""
+    establishes changed, or when its claim's printed text changed (`changes`, all of them). It
+    also says which part each change affects: each step's own currency (`steps`, by step id,
+    `step_currency`), and the steps that are stale (`affects`); each identification's and each
+    obligation's (`identifications`, in order, and `obligations`, by id: stale when evidence it
+    cites changed); and the changes of the claim's printed text (`claim`), which concern the
+    composition as a whole. Its bridge is checked apart (`bridge_currency`)."""
     from . import requirements as rq
     changes = [ch for e in rec.get("evidence") or [] for ch in cur.get(e, {}).get("changes", [])]
     for lid in dict.fromkeys(l for s in rec.get("steps") or [] for l in s.get("requirements")
                              or []):
         changes += rq.requirement_changes(ws, rec["claim"], lid, cur)
     pin = (rec.get("pins") or {}).get("statement_sha256")
+    claim = []
     if snap is not None:
         ch = snap.chunk(rec["claim"])
         if ch is None:
-            changes.append({"claim": rec["claim"], "was": pin, "now": None})
+            claim.append({"claim": rec["claim"], "was": pin, "now": None})
         elif pin and ch.get("source_sha256") != pin:
-            changes.append({"claim": rec["claim"], "was": pin, "now": ch.get("source_sha256")})
+            claim.append({"claim": rec["claim"], "was": pin, "now": ch.get("source_sha256")})
         else:
             from .dependencies import unprinted
             if pin and unprinted(ch, rec["claim"]):
-                changes.append({"claim": rec["claim"], "was": pin,
-                                "now": ch.get("source_sha256"),
-                                "reason": unprinted(ch, rec["claim"])})
-    return {"state": "stale" if changes else "current", "changes": changes}
+                claim.append({"claim": rec["claim"], "was": pin,
+                              "now": ch.get("source_sha256"),
+                              "reason": unprinted(ch, rec["claim"])})
+    changes += claim
+    steps = step_currency(rec, ws, cur)
+
+    def cited(ids) -> dict:
+        found = [{**c, "evidence": e} for e in ids for c in cur.get(e, {}).get("changes", [])]
+        return {"state": "stale" if found else "current", "changes": found}
+    return {"state": "stale" if changes else "current", "changes": changes, "steps": steps,
+            "affects": [sid for sid, s in steps.items() if s["state"] == "stale"],
+            "identifications": [cited(x.get("evidence") or [])
+                                for x in rec.get("identifications") or []],
+            "obligations": {o["id"]: cited(((o.get("by") or {}).get("evidence") or [])
+                                           + ([o["connection"]] if o.get("connection") else []))
+                            for o in rec.get("obligations") or []},
+            "claim": claim}
+
+
+def step_currency(rec: dict, ws: dict, cur: dict) -> dict[str, dict]:
+    """Each step's currency, by step id, in the order of the steps: `stale` when evidence it
+    uses changed or a requirement it establishes did (`changes`, each naming its `evidence`
+    record or its `requirement`), or when it follows from a stale step (`follows`, those steps);
+    `unchecked` when the build cannot check evidence it uses (`unchecked`, those records) or it
+    follows from such a step; else `current`. A change to one step's evidence leaves the steps
+    that do not follow from it current."""
+    from . import requirements as rq
+    rank = {"current": 0, "unchecked": 1, "stale": 2}
+    out: dict[str, dict] = {}
+    for s in rec.get("steps") or []:
+        own, unknown = [], []
+        for e in s.get("uses") or []:
+            c = cur.get(e) or {"state": "unchecked", "changes": []}
+            own += [{**ch, "evidence": e} for ch in c.get("changes") or []]
+            if c.get("state") == "unchecked":
+                unknown.append(e)
+        for lid in s.get("requirements") or []:
+            own += [{**ch, "requirement": lid}
+                    for ch in rq.requirement_changes(ws, rec["claim"], lid, cur)]
+        before = {a: out[a]["state"] for a in s.get("after") or [] if a in out}
+        worst = max([rank[v] for v in before.values()] + [0])
+        state = "stale" if own or worst == 2 else "unchecked" if unknown or worst == 1 \
+            else "current"
+        x = {"state": state, "changes": own}
+        follows = [a for a, v in before.items() if v != "current"]
+        if follows:
+            x["follows"] = follows
+        if unknown:
+            x["unchecked"] = unknown
+        out[s["id"]] = x
+    return out
 
 
 def view(rec: dict, ws: dict, cur: dict, bridge: dict | None) -> dict:
@@ -557,29 +609,60 @@ def view(rec: dict, ws: dict, cur: dict, bridge: dict | None) -> dict:
     return out
 
 
+def step_mark(cur: dict | None) -> str:
+    """What changed in one part of a composition (a step's, an identification's or an
+    obligation's currency), for the end of its line: nothing while it is current."""
+    from .dependencies import change_text
+    if not cur or cur.get("state") == "current":
+        return ""
+    if cur["state"] == "unchecked":
+        why = (f" ({', '.join(cur['unchecked'])} not checked)" if cur.get("unchecked")
+               else "")
+        follows = (f"; follows step {', '.join(cur['follows'])}, which is not current"
+                   if cur.get("follows") else "")
+        return f"  [not known to be current{why}{follows}]"
+    said = [f"{ch['evidence']}: {change_text(ch)}" if ch.get("evidence") else
+            f"requirement {ch['requirement']}: {change_text(ch)}" if ch.get("requirement") else
+            change_text(ch) for ch in cur.get("changes") or []]
+    if cur.get("follows"):
+        said.append(f"follows step {', '.join(cur['follows'])}, which is not current")
+    return "  [stale: " + "; ".join(said) + "]"
+
+
 def lines(c: dict) -> list[str]:
-    """A composition for the terminal."""
+    """A composition for the terminal: each step, identification and obligation with what
+    changed in it since it was recorded (`step_mark`)."""
+    from .dependencies import change_text
     from .semantic import basis_words, in_text, reading_words
     # Its basis is a checked bridge only while Lean checks the bridge (`view`).
     head = in_text(reading_words(c.get("coverage"))) or "no coverage recorded"
+    cur = c.get("currency") or {}
+    affects = cur.get("affects") or []
     out = [f"  composition {c['id']}: {head}, {in_text(basis_words(c['basis']))}"
-           + ("  [stale]" if c["currency"]["state"] == "stale" else "")]
+           + (f"  [stale: {'step' if len(affects) == 1 else 'steps'} {', '.join(affects)}]"
+              if cur.get("state") == "stale" and affects else
+              "  [stale]" if cur.get("state") == "stale" else "")]
+    if cur.get("claim"):
+        out.append("    changed since it was recorded: "
+                   + "; ".join(change_text(ch) for ch in cur["claim"]))
     if c.get("statement"):
         out.append(f"    combined statement: {c['statement']}")
     for s in c["steps"]:
         rests = ", ".join((s.get("uses") or []) + [f"step {a}" for a in s.get("after") or []])
         out.append(f"    {s['id']}: {s['establishes']}  (from {rests}"
                    + (f"; establishes {', '.join(s['requirements'])}" if s.get("requirements")
-                      else "") + ")")
+                      else "") + ")" + step_mark((cur.get("steps") or {}).get(s["id"])))
         for x in s.get("substitutions") or []:
             out.append(f"        {x['variable']} := {x['value']}"
                        + (f" in {x['in']}" if x.get("in") else ""))
         if s.get("inference"):
             out.append(f"        the auditor's inference: {s['inference']}")
-    for x in c.get("identifications") or []:
+    idents = cur.get("identifications") or []
+    for k, x in enumerate(c.get("identifications") or []):
         out.append(f"    {x['left']['object']} of {x['left']['step']} is {x['relation']} as "
                    f"{x['right']['object']} of {x['right']['step']} ({x['how']}"
-                   + (f": {', '.join(x['evidence'])}" if x.get("evidence") else "") + ")")
+                   + (f": {', '.join(x['evidence'])}" if x.get("evidence") else "") + ")"
+                   + step_mark(idents[k] if k < len(idents) else None))
     for o in c.get("obligations") or []:
         by = o.get("by") or {}
         out.append(f"    obligation {o['id']} ({OBLIGATION_WORDS[o['kind']]}), {o['state']}: "
@@ -587,7 +670,8 @@ def lines(c: dict) -> list[str]:
                    + (f" (left by the connection {o['connection']})" if o.get("connection")
                       else "")
                    + (" — discharged by " + ", ".join(
-                       (by.get("steps") or []) + (by.get("evidence") or [])) if by else ""))
+                       (by.get("steps") or []) + (by.get("evidence") or [])) if by else "")
+                   + step_mark((cur.get("obligations") or {}).get(o["id"])))
     g = c["gaps"]
     if g["uncovered"]:
         out.append(f"    no step establishes: {', '.join(g['uncovered'])}")
