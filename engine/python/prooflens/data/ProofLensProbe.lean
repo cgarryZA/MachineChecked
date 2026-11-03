@@ -410,7 +410,9 @@ def termsJson (terms : Array (Nat × Nat × String)) : Json := Id.run do
 /-! ### Instance arguments a reader must see
 
 An application is printed without its instance arguments (`[MeasurableSpace α]`), which a reader
-takes to be those instance resolution finds where the application stands. One that may not be is
+takes to be those instance resolution finds where the application stands. In the statement of a
+specification or a link (its exact text, its binders' types, its leaves, its conclusion, its
+hypotheses' trees and the sub-terms of its totalisation warnings), one that may not be is
 printed (#515): its application is printed with `@`, its explicit arguments, the instance
 arguments to show and `_` for its other implicit arguments (`@StronglyMeasurable _ _ _ m f`). An
 instance argument is left out when resolution in its context finds it (up to unfolding
@@ -422,7 +424,10 @@ statement says. An argument built from instances alone, none of which has a comp
 local instance of the same class, or of one it extends or that extends it, about a common
 argument), is what resolution finds, and is left out without running it. An argument whose
 check fails, or that comes after the most checks of one expression, is printed; when the walk
-itself fails, every implicit argument of the expression is. Display only: fingerprints read the
+itself fails, every implicit argument of the expression is. The statement is walked once, each
+sub-term in the scope of the binders around it, and its parts are printed with what the walk
+found; what else the probe prints (a definition's value and equations, an expansion, the
+properties a type carries) keeps Lean's printing. Display only: fingerprints read the
 expression, not its printing. -/
 
 /-- An application whose instance arguments are not all left out: its position, its number of
@@ -435,16 +440,15 @@ structure ShownApp where
   deriving Inhabited
 
 /-- The applications of an expression with instance arguments to print, by position in the
-expression; `failed` when the walk failed, `cut` when it stopped at its limit of nodes. -/
+expression; `failed` when the walk failed. -/
 structure Shown where
   apps : Array ShownApp := #[]
   failed : Bool := false
-  cut : Bool := false
   deriving Inhabited
 
 /-- At most this many nodes of one expression are walked, and this many instance arguments
 checked; the arguments after the last check are printed. -/
-def maxShownNodes : Nat := 20000
+def maxShownNodes : Nat := 50000
 def maxShownChecks : Nat := 2000
 
 structure ShownWalk where
@@ -620,7 +624,7 @@ def instancesToShow (e : Expr) : MetaM Shown := do
                          plain := ← IO.mkRef {} }
   let ok ← tryCatchRuntimeEx (withCurrHeartbeats do shownVisit w e .root; return true)
     fun _ => pure false
-  return { apps := ← w.out.get, failed := !ok, cut := (← w.nodes.get) == 0 }
+  return { apps := ← w.out.get, failed := !ok }
 
 /-- The options that print the instance arguments `s` says: an application with some is printed
 explicitly, at each of its partial applications that holds one (a delaborator may print a part of
@@ -651,14 +655,10 @@ def Shown.under (s : Shown) (p : SubExpr.Pos) : Shown := Id.run do
 def Shown.at (s : Shown) (root : SubExpr.Pos) : Shown :=
   { s with apps := s.apps.map fun a => { a with pos := root.append a.pos } }
 
-/-- The instance arguments to print of the sub-term at `p` of an expression whose own are
-`whole`, when its walk reached every node (`none` otherwise, for the sub-term's own walk). The
-statement is walked once, in the scope of the binders around each sub-term, and the parts of it
-printed apart (its binders' types, its leaves, its conclusion) are printed as in it. -/
+/-- The instance arguments to print of the sub-term at `p` of a statement whose own are `whole`
+(none for an expression that is not part of a statement). -/
 def Shown.part (whole : Option Shown) (p : SubExpr.Pos) : Option Shown :=
-  match whole with
-  | some w => if w.cut then none else some (w.under p)
-  | none => none
+  whole.map (·.under p)
 
 /-- The delaborator that prints the instance arguments `s` says. -/
 def Shown.delab (s : Shown) : PrettyPrinter.Delaborator.Delab :=
@@ -684,12 +684,10 @@ def ppShownTagged (e : Expr) (s : Shown) : MetaM Widget.CodeWithInfos :=
 /-- The fields of a pretty-printed expression with navigable constants and binders; plain text
 if tagging fails, and a marker if printing fails, so that one large term cannot stop the probe.
 `root` is the position of `e` in the whole proposition (`id`), after the prefix `pfx`. The
-instance arguments a reader must see are printed (`instancesToShow`, unless given as `shown`). -/
+instance arguments `shown` says are printed (those of a statement, `instancesToShow`). -/
 def ppFields (e : Expr) (vars : Array FVarId := #[]) (root : SubExpr.Pos := .root)
     (pfx : String := "") (shown : Option Shown := none) : MetaM (List (String × Json)) := do
-  let s ← match shown with
-    | some s => pure s
-    | none => instancesToShow e
+  let s := shown.getD {}
   try
     -- The type of a bound variable is printed (`pp.funBinderTypes`): `∃ Φ : T, …` says what Φ
     -- is. The head of every application is tagged too (`pp.tagAppFns`), so that the function a
@@ -1019,7 +1017,7 @@ partial def predMath (c : MathCtx) (k : String) (p : Expr) (pos : SubExpr.Pos) (
 partial def typeMath (c : MathCtx) (x : Expr) : MetaM Json := do
   try
     let t ← instantiateMVars (← inferType x)
-    mathOf (({ c with anchored := false } : MathCtx).showing (← instancesToShow t)) t .root
+    mathOf (({ c with anchored := false } : MathCtx).showing {}) t .root
   catch _ => return Json.null
 
 /-- An application of the constant `n` to `args`. -/
@@ -1201,15 +1199,12 @@ partial def constMath (c : MathCtx) (e : Expr) (n : Name) (args : Array Expr) (p
 end
 
 /-- The `math` of a printed expression `e`, at `root` (identities prefixed `pfx`), the statement's
-variables numbered by `vars`, the instance arguments to print `shown` (by positions in `e`;
-`instancesToShow` if none). A failure, including running out of heartbeats, is a node of exact
-Lean that records it. -/
+variables numbered by `vars`, the instance arguments to print `shown` (by positions in `e`). A
+failure, including running out of heartbeats, is a node of exact Lean that records it. -/
 def mathField (e : Expr) (vars : Array FVarId) (root : SubExpr.Pos) (pfx : String)
     (shown : Option Shown := none) : MetaM Json := do
   let budget ← IO.mkRef maxMathNodes
-  let s ← match shown with
-    | some s => pure s
-    | none => instancesToShow e
+  let s := shown.getD {}
   let c : MathCtx := ({ vars, pfx, budget } : MathCtx).showing (s.at root)
   tryCatchRuntimeEx (withCurrHeartbeats do mathOf c (← instantiateMVars e) root) fun err => do
     return Json.mkObj [("k", "lean"), ("id", Json.str (pfx ++ toString root)),
@@ -1217,9 +1212,8 @@ def mathField (e : Expr) (vars : Array FVarId) (root : SubExpr.Pos) (pfx : Strin
 
 /-- A printed expression (`ppJson`) with its mathematics (`math`). -/
 def ppMathJson (e : Expr) (vars : Array FVarId := #[]) (root : SubExpr.Pos := .root)
-    (pfx : String := "") : MetaM Json := do
-  let s ← instancesToShow e
-  return Json.mkObj ((← ppFields e vars root pfx s) ++ [("math", ← mathField e vars root pfx s)])
+    (pfx : String := "") : MetaM Json :=
+  return Json.mkObj ((← ppFields e vars root pfx) ++ [("math", ← mathField e vars root pfx)])
 
 /-! ## A definition at its actual arguments
 
@@ -1345,10 +1339,7 @@ arguments and the right side are. -/
 partial def ppExpanded (inside : Name → Bool) (depth : Nat) (e : Expr) (vars : Array FVarId)
     (root : SubExpr.Pos) (pfx : String := "") (eqn : Bool := false) (shown : Option Shown := none) :
     MetaM Json := do
-  let s ← match shown with
-    | some s => pure s
-    | none => instancesToShow e
-  let fields := (← ppFields e vars root pfx s) ++ [("math", ← mathField e vars root pfx s)]
+  let fields := (← ppFields e vars root pfx shown) ++ [("math", ← mathField e vars root pfx shown)]
   if depth == 0 then return Json.mkObj fields
   let found ← IO.mkRef ((0, 0) : Nat × Nat)
   let out ← if eqn && e.isAppOfArity ``Eq 3 then do
@@ -1805,17 +1796,13 @@ partial def statementJson (inside : Name → Bool) (e : Expr) (acc : Array Opene
       let objects := fun (k : Nat) => (List.range k).toArray.filter fun i => acc[i]!.data
       let (concl, vars') ← treeJson inside statementDepth vars e pos { after := objects acc.size }
         whole
-      -- Each hypothesis's own tree, its variables numbered after the conclusion's. It is read
-      -- with the local instances of its scope: the binders after it are not instances there.
+      -- Each hypothesis's own tree, its variables numbered after the conclusion's.
       let mut vs := vars'
       let mut logics : Array (List (String × Json)) := #[]
       for i in [:acc.size] do
         match acc[i]!.hyp with
         | some (t, tp) =>
-          let later := (vars.extract (vars.size - acc.size + i) vars.size).map Expr.fvar
-          let (l, vs') ← withTheReader Meta.Context (fun ctx => { ctx with
-              localInstances := ctx.localInstances.filter (!later.contains ·.fvar) })
-            (hypothesisTree inside vs t tp (objects i) whole)
+          let (l, vs') ← hypothesisTree inside vs t tp (objects i) whole
           vs := vs'
           logics := logics.push l
         | none => logics := logics.push []
@@ -2368,13 +2355,14 @@ end
 def maxSubterms : Nat := 512
 
 /-- The sub-term of `e` at `p`, printed in the context of the binders around it with the instance
-arguments a reader must see (`text`, at most 2000 characters, `instancesToShow`), and the nearest binder or hypothesis around it (`within`): the last on the way
+arguments `whole` (the statement's) says (`text`, at most 2000 characters), and the nearest binder or hypothesis around it (`within`): the last on the way
 from the root to `p` whose scope holds the sub-term (a variable bound by `∀`, `∃`, `fun` or
 `let`: `part` `scope`) or whose statement holds it (a hypothesis, an instance, a variable's type:
 `part` `type`), with its `kind`, its identity (`id`, as the statement's binders name it) and its
 `name` (null when Lean made it up). What follows a hypothesis or an instance is not inside it.
 Display only. -/
-partial def subtermAt (e : Expr) (p : SubExpr.Pos) : MetaM (List (String × Json)) :=
+partial def subtermAt (e : Expr) (p : SubExpr.Pos) (whole : Option Shown := none) :
+    MetaM (List (String × Json)) :=
   go e p.toArray.toList .root none false
 where
   near (kind part : String) (n : Name) (pos : SubExpr.Pos) : Option Json :=
@@ -2387,7 +2375,8 @@ where
     let e := e.consumeMData
     match path with
     | [] =>
-      let text ← withOptions (·.setBool `pp.funBinderTypes true) (ppShown e (← instancesToShow e))
+      let text ← withOptions (·.setBool `pp.funBinderTypes true)
+        (ppShown e ((Shown.part whole p).getD {}))
       let text := toString text
       let text := if text.length > 2000 then prefixOf text 2000 ++ " …" else text
       return [("text", Json.str text)] ++ (match within with | some j => [("within", j)] | none => [])
@@ -2420,7 +2409,8 @@ the binder or hypothesis around it (`subterms`, `subtermAt`; a position past the
 `maxSubterms`, or one that fails to print, has `at` only). `complete: false` when some
 applications may be missing, with the reason in `stopped`: the walk reached its limit of nodes
 (`nodes`), or failed, for example by running out of heartbeats (`error`). -/
-def orderOpsJson (e : Expr) (inside : Name → Bool) : MetaM Json := do
+def orderOpsJson (e : Expr) (inside : Name → Bool) (whole : Option Shown := none) :
+    MetaM Json := do
   let w : OpsWalk := { inside, out := ← IO.mkRef #[], budget := ← IO.mkRef opsNodes,
                        cache := ← IO.mkRef #[], seen := ← IO.mkRef {} }
   let finished ← orDefault false do
@@ -2433,7 +2423,7 @@ def orderOpsJson (e : Expr) (inside : Name → Bool) : MetaM Json := do
     let subs ← at_.mapM fun s => do
       let n ← printed.modifyGet fun k => (k, k + 1)
       let fields ← match SubExpr.Pos.fromString? s with
-        | .ok p => if n < maxSubterms then orDefault [] (subtermAt e p) else pure []
+        | .ok p => if n < maxSubterms then orDefault [] (subtermAt e p whole) else pure []
         | .error _ => pure []
       return Json.mkObj ([("at", Json.str s)] ++ fields)
     return Json.mkObj (j ++ [("at", toJson at_), ("subterms", Json.arr subs)])
@@ -2473,7 +2463,7 @@ def specRecord (h : IO.FS.Handle) (q : Query) (inside : Name → Bool) (seen : I
     | .defnInfo d => d.value.getUsedConstants.map toString
     | _ => #[]
   let ops ← match ci with
-    | .defnInfo d => orderOpsJson d.value inside
+    | .defnInfo d => orderOpsJson d.value inside whole
     | _ => pure Json.null
   emit h (Json.mkObj [("record", "spec"), ("name", spec.toString), ("errors", toJson errs),
     ("axioms", toJson (axs.map toString)), ("decl", j),
