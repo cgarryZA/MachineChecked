@@ -11,7 +11,7 @@
 // The words for coverage and basis are the engine's (`coverage.js`). Nothing here is a status,
 // and an independent stage of the review protocol is given none of it (`findingSets`).
 
-import { alignmentSource, rowOfTarget, statementRows } from "./comparison.js";
+import { alignmentSource, rowOfTarget, innerRow, statementRows } from "./comparison.js";
 import { spineOf, conclusionOf } from "./tree.js";
 import { compositionView, findingCoverageView, recordedBasisText } from "./coverage.js";
 import { connectionText } from "./connections.js";
@@ -127,19 +127,6 @@ function placeTarget(a, t, statements) {
   if (!st || !sub) return { state: "here", row: "top" };
   const row = rowOfTarget(st, t) ?? innerRow(st, t);
   return row ? { state: "here", row } : { state: "missing" };
-}
-
-// The row of a variable bound inside the statement (after the binders that open it): the
-// conclusion's, or that of the hypothesis whose own tree binds it.
-function innerRow(st, t) {
-  if (t.var == null || !/^\d+$/.test(String(t.var))) return null;
-  const i = Number(t.var);
-  const binds = (n) => !!n && typeof n === "object" && ((n.var === i && (n.op === "exists" || n.op === "forall"))
-    || (n.args || []).some(binds));
-  if (binds(conclusionOf(st))) return st.conclusion ? "c" : null;
-  const rows = statementRows(st);
-  const k = spineOf(st).findIndex((b) => binds(b.logic));
-  return k < 0 ? null : rows.find((r) => r.head === k || r.members.includes(k))?.key ?? null;
 }
 
 // The rows of a comparison, in the order it draws them: for each declaration shown, the

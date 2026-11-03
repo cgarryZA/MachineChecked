@@ -25,7 +25,8 @@ const evenAdd = { ...claim("toy", "T_thm_even-add"),
   correspondence: { coverage: "full", note: "SYNTHETIC-NOTE: the author's reading", by: "SYNTHETIC-AUTHOR" },
   reviews: [{ verdict: { value: "faithful", detail: "SYNTHETIC-REVIEW" }, reviewer: { id: "human:SYNTHETIC-REVIEWER" } }],
   findings: [{ id: "totalised:SYNTHETIC", subject: "T:thm:even-add#0", dismissed: { by: "SYNTHETIC-AUTHOR", rationale: "SYNTHETIC-RATIONALE" } }],
-  work: "work/even-add.json" };
+  work: "work/even-add.json",
+  computed_connections: [{ relation: "projection", field: "SYNTHETIC-FIELD", from: { decl: "Toy.PaperSpec.thm_even_add", var: 0 }, to: { decl: "Toy.IsEven" } }] };
 assert.ok(evenAdd.symbols.length, "the fixture has symbol links");
 
 // Independent Read: the paper only.
@@ -33,6 +34,7 @@ const read = comparisonInputs("read", [evenAdd]);
 assert.equal(read.formal, null);
 assert.deepEqual(read.definitions, []);
 assert.equal(read.annotations, null);
+assert.equal(read.connections, null);
 assert.ok(read.passages[0].excerpt && read.passages[0].statement_tex, "the printed passage, complete");
 
 // Independent Compare: the paper and the complete Lean as Lean gives it, and nothing a person
@@ -40,11 +42,13 @@ assert.ok(read.passages[0].excerpt && read.passages[0].statement_tex, "the print
 const compare = comparisonInputs("compare", [evenAdd], { only: ["Toy.PaperSpec.thm_even_add"] });
 const text = JSON.stringify(compare);
 for (const absent of ["SYNTHETIC-NOTE", "SYNTHETIC-AUTHOR", "SYNTHETIC-REVIEW", "SYNTHETIC-REVIEWER", "A-Referee",
-                      "work/even-add.json", "totalised", "spec_review", "def_reviews", "a.referee", "status_code", "blockers"]) {
+                      "work/even-add.json", "totalised", "spec_review", "def_reviews", "a.referee", "status_code", "blockers",
+                      "SYNTHETIC-FIELD", "computed_connections"]) {
   assert.ok(!text.includes(absent), `${absent} is not in Compare's inputs`);
 }
 assert.equal(compare.annotations, null);
-for (const k of ["symbols", "correspondence", "reviews", "findings", "work", "status", "clauses", "decls"]) {
+assert.equal(compare.connections, null, "no connection between objects, recorded or computed");
+for (const k of ["symbols", "correspondence", "reviews", "findings", "work", "status", "clauses", "decls", "computed_connections"]) {
   assert.ok(!(k in compare.passages[0]), `the paper side has no ${k}`);
 }
 const cl = compare.formal.clauses[0];
@@ -56,9 +60,11 @@ const reading = comparisonInputs("reading", [evenAdd]);
 assert.equal(reading.formal, evenAdd);
 assert.deepEqual(reading.annotations.symbols, evenAdd.symbols);
 assert.equal(reading.annotations.work, "work/even-add.json");
+assert.deepEqual(reading.connections.computed, evenAdd.computed_connections);
 const after = comparisonInputs("after", [evenAdd], { only: ["No.Such"] });
 assert.deepEqual(after.formal.clauses, [], "the later stage shows the unit's declarations only");
 assert.equal(after.formal.correspondence.note, "SYNTHETIC-NOTE: the author's reading");
+assert.deepEqual(after.connections.computed, evenAdd.computed_connections, "the later stage shows the connections");
 assert.throws(() => comparisonInputs("anything", [evenAdd]));
 
 // A proof step: its linked Lean and the declarations of its route, without the route's note, the
