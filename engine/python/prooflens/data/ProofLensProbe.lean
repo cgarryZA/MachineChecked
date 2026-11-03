@@ -418,9 +418,12 @@ instances), and finds no other one when a local instance it uses is left out: wi
 `mΩ` and `m` on `Ω` in scope, resolution finds `m`, the later one, but a reader cannot tell which
 is meant, so `m` is printed. One of a class Lean finds `Subsingleton` on (`Decidable p`) is left
 out too: any two of its instances are equal, so which one is used does not change what the
-statement says. An argument whose check fails, or that comes after the most checks of one
-expression, is printed; when the walk itself fails, every implicit argument of the expression
-is. Display only: fingerprints read the expression, not its printing. -/
+statement says. An argument built from instances alone, none of which has a competitor (another
+local instance of the same class, or of one it extends or that extends it, about a common
+argument), is what resolution finds, and is left out without running it. An argument whose
+check fails, or that comes after the most checks of one expression, is printed; when the walk
+itself fails, every implicit argument of the expression is. Display only: fingerprints read the
+expression, not its printing. -/
 
 /-- An application whose instance arguments are not all left out: its position, its number of
 arguments, the instance arguments to print and the implicit arguments to print as `_`. -/
@@ -432,10 +435,11 @@ structure ShownApp where
   deriving Inhabited
 
 /-- The applications of an expression with instance arguments to print, by position in the
-expression; `failed` when the walk failed. -/
+expression; `failed` when the walk failed, `cut` when it stopped at its limit of nodes. -/
 structure Shown where
   apps : Array ShownApp := #[]
   failed : Bool := false
+  cut : Bool := false
   deriving Inhabited
 
 /-- At most this many nodes of one expression are walked, and this many instance arguments
@@ -449,6 +453,90 @@ structure ShownWalk where
   checks : IO.Ref Nat
   /-- Each check, by the local instances it was made with, the class and the argument. -/
   cache : IO.Ref (Std.HashMap (Array Expr × Expr × Expr) Bool)
+  /-- Each class with the classes it extends, itself included. -/
+  ancestors : IO.Ref (Std.HashMap Name NameSet)
+  /-- The local instances of each context, by its local instances: each with its class and the
+  arguments of its type. -/
+  locals : IO.Ref (Std.HashMap (Array Expr) (Array (Expr × Name × Array Expr)))
+  /-- Each instance term met, by the local instances of its context: `plainInstance`. -/
+  plain : IO.Ref (Std.HashMap (Array Expr × Expr) Bool)
+
+/-- The classes `c` extends, itself included, transitively. -/
+partial def classAncestors (env : Environment) (c : Name) (acc : NameSet := {}) : NameSet :=
+  if acc.contains c then acc
+  else if !isStructure env c then acc.insert c
+  else (getStructureParentInfo env c).foldl (fun a p => classAncestors env p.structName a)
+    (acc.insert c)
+
+def ShownWalk.ancestorsOf (w : ShownWalk) (c : Name) : MetaM NameSet := do
+  if let some a := (← w.ancestors.get)[c]? then return a
+  let a := classAncestors (← getEnv) c
+  w.ancestors.modify (·.insert c a)
+  return a
+
+/-- The local instances of the current context, each with its class and the arguments of its
+type. -/
+def ShownWalk.localInfo (w : ShownWalk) : MetaM (Array (Expr × Name × Array Expr)) := do
+  let lis ← getLocalInstances
+  let key := lis.map (·.fvar)
+  if let some l := (← w.locals.get)[key]? then return l
+  let mut l := #[]
+  for li in lis do
+    let ty ← instantiateMVars (← inferType li.fvar)
+    l := l.push (li.fvar, li.className, ty.getAppArgs)
+  w.locals.modify (·.insert key l)
+  return l
+
+/-- Whether a local instance other than those `inst` is built from competes with `inst` (of class
+`c`, type `ty`): one of the same class, or of one it extends or that extends it, whose type has an
+argument in common with `ty`. Resolution may then find either. -/
+def competed (w : ShownWalk) (inst : Expr) (c : Name) (ty : Expr) : MetaM Bool := do
+  let args := ty.getAppArgs
+  for (x, xc, xargs) in ← w.localInfo do
+    if inst.containsFVar x.fvarId! then continue
+    unless xargs.any args.contains do continue
+    if (← w.ancestorsOf c).contains xc || (← w.ancestorsOf xc).contains c then return true
+  return false
+
+/-- Whether `a`, an instance of the class `ty`, is built from instances alone (a local instance,
+a global one applied to arguments whose instance arguments are built so too, a parent of one, or
+a class's constructor applied to such instances), none of which has a competitor (`competed`): it
+is then what resolution finds. -/
+partial def plainInstance (w : ShownWalk) (a ty : Expr) : MetaM Bool := do
+  let a := a.consumeMData
+  let key := ((← getLocalInstances).map (·.fvar), a)
+  if let some b := (← w.plain.get)[key]? then return b
+  let b ← go a
+  w.plain.modify (·.insert key b)
+  return b
+where
+  go (a : Expr) : MetaM Bool := do
+    let some c ← (match ty.getAppFn.constName? with
+      | some c => pure (some c)
+      | none => return (← whnfR ty).getAppFn.constName?) | return false
+    if ← competed w a c ty then return false
+    let env ← getEnv
+    match a.getAppFn.consumeMData with
+    | .fvar _ => return (← getLocalInstances).any (·.fvar == a.getAppFn.consumeMData)
+    | .proj _ _ b => return a.getAppNumArgs == 0 && (← plainInstance w b (← inferType b))
+    | .const n _ =>
+      -- A constructor of a class takes its parents and fields explicitly: each must be an
+      -- instance built so too, or a type.
+      let ctor := match env.find? n with
+        | some (.ctorInfo ci) => isClass env ci.induct
+        | _ => false
+      -- A class's projection to a parent is an instance whether or not it is registered as one.
+      let parent := (env.getProjectionFnInfo? n).any (·.fromClass)
+      unless ctor || parent || isInstanceCore env n do return false
+      let mut fty ← inferType a.getAppFn
+      for arg in a.getAppArgs do
+        unless fty.isForall do fty ← whnf fty
+        let .forallE _ d b bi := fty | return false
+        if bi.isInstImplicit || (ctor && bi.isExplicit) then
+          unless (← isClass? d).isSome && (← plainInstance w arg d) do return false
+        fty := b.instantiate1 arg
+      return true
+    | _ => return false
 
 /-- Whether instance resolution, in the current context, finds `a` for the class `ty` (up to
 unfolding instances), and finds no other instance when one of the local instances it uses is
@@ -478,7 +566,9 @@ def instanceLeftOut (w : ShownWalk) (a ty : Expr) : MetaM Bool := do
   if let some b := (← w.cache.get)[key]? then return b
   if (← w.checks.get) ≥ maxShownChecks then return false
   w.checks.modify (· + 1)
-  let b ← tryCatchRuntimeEx (withCurrHeartbeats (instanceFound a ty)) fun _ => pure false
+  let b ← tryCatchRuntimeEx (withCurrHeartbeats do
+      if ← plainInstance w a ty then return true
+      instanceFound a ty) fun _ => pure false
   w.cache.modify (·.insert key b)
   return b
 
@@ -525,10 +615,12 @@ partial def shownVisit (w : ShownWalk) (e : Expr) (pos : SubExpr.Pos) : MetaM Un
 /-- The instance arguments of `e` a reader must see (`Shown`), in the current context. -/
 def instancesToShow (e : Expr) : MetaM Shown := do
   let w : ShownWalk := { out := ← IO.mkRef #[], nodes := ← IO.mkRef maxShownNodes,
-                         checks := ← IO.mkRef 0, cache := ← IO.mkRef {} }
+                         checks := ← IO.mkRef 0, cache := ← IO.mkRef {},
+                         ancestors := ← IO.mkRef {}, locals := ← IO.mkRef {},
+                         plain := ← IO.mkRef {} }
   let ok ← tryCatchRuntimeEx (withCurrHeartbeats do shownVisit w e .root; return true)
     fun _ => pure false
-  return { apps := ← w.out.get, failed := !ok }
+  return { apps := ← w.out.get, failed := !ok, cut := (← w.nodes.get) == 0 }
 
 /-- The options that print the instance arguments `s` says: an application with some is printed
 explicitly, at each of its partial applications that holds one (a delaborator may print a part of
@@ -558,6 +650,15 @@ def Shown.under (s : Shown) (p : SubExpr.Pos) : Shown := Id.run do
 /-- `s` with its positions in an expression standing at `root`. -/
 def Shown.at (s : Shown) (root : SubExpr.Pos) : Shown :=
   { s with apps := s.apps.map fun a => { a with pos := root.append a.pos } }
+
+/-- The instance arguments to print of the sub-term at `p` of an expression whose own are
+`whole`, when its walk reached every node (`none` otherwise, for the sub-term's own walk). The
+statement is walked once, in the scope of the binders around each sub-term, and the parts of it
+printed apart (its binders' types, its leaves, its conclusion) are printed as in it. -/
+def Shown.part (whole : Option Shown) (p : SubExpr.Pos) : Option Shown :=
+  match whole with
+  | some w => if w.cut then none else some (w.under p)
+  | none => none
 
 /-- The delaborator that prints the instance arguments `s` says. -/
 def Shown.delab (s : Shown) : PrettyPrinter.Delaborator.Delab :=
@@ -1242,8 +1343,11 @@ the project's definitions inside it (`expansions`) when `depth` is positive. Whe
 equation (`eqn`), the application its left side states is the one being expanded: only its
 arguments and the right side are. -/
 partial def ppExpanded (inside : Name → Bool) (depth : Nat) (e : Expr) (vars : Array FVarId)
-    (root : SubExpr.Pos) (pfx : String := "") (eqn : Bool := false) : MetaM Json := do
-  let s ← instancesToShow e
+    (root : SubExpr.Pos) (pfx : String := "") (eqn : Bool := false) (shown : Option Shown := none) :
+    MetaM Json := do
+  let s ← match shown with
+    | some s => pure s
+    | none => instancesToShow e
   let fields := (← ppFields e vars root pfx s) ++ [("math", ← mathField e vars root pfx s)]
   if depth == 0 then return Json.mkObj fields
   let found ← IO.mkRef ((0, 0) : Nat × Nat)
@@ -1577,7 +1681,8 @@ pretty-printed, with the applications of the project's definitions expanded to `
 threaded through the tree, so that every variable has a number of its own: two witnesses in
 sibling parts never share one. Each node carries its position (`id`). -/
 partial def treeJson (inside : Name → Bool) (depth : Nat) (vars : Array FVarId) (e : Expr)
-    (pos : SubExpr.Pos) (p : Place) : MetaM (Json × Array FVarId) := do
+    (pos : SubExpr.Pos) (p : Place) (whole : Option Shown := none) :
+    MetaM (Json × Array FVarId) := do
   let node := fun (op : String) (args : Array Json) =>
     Json.mkObj [("op", Json.str op), ("id", Json.str (toString pos)), ("args", Json.arr args)]
   let op := if e.isAppOfArity ``And 2 then some "and"
@@ -1585,21 +1690,23 @@ partial def treeJson (inside : Name → Bool) (depth : Nat) (vars : Array FVarId
     else if e.isAppOfArity ``Iff 2 then some "iff" else none
   if let some o := op then
     let (a, vars) ← treeJson inside depth vars e.appFn!.appArg! pos.pushAppFn.pushAppArg (p.enter o)
-    let (b, vars) ← treeJson inside depth vars e.appArg! pos.pushAppArg (p.enter o)
+      whole
+    let (b, vars) ← treeJson inside depth vars e.appArg! pos.pushAppArg (p.enter o) whole
     return (node o #[a, b], vars)
   if e.isAppOfArity ``Not 1 then
-    let (a, vars) ← treeJson inside depth vars e.appArg! pos.pushAppArg (p.enter "not")
+    let (a, vars) ← treeJson inside depth vars e.appArg! pos.pushAppArg (p.enter "not") whole
     return (node "not" #[a], vars)
   let binder : String → Name → Expr → Expr → BinderInfo → SubExpr.Pos →
       MetaM (Json × Array FVarId) := fun op n t body bi at_ => do
     let tj ← ppExpanded inside depth t vars at_.pushBindingDomain
+      (shown := Shown.part whole at_.pushBindingDomain)
     let data := !(← isProp t)
     withLocalDecl n bi t fun x => do
       let idx := vars.size
       let vs := vars.push x.fvarId!
       let props ← propertiesOf x vs s!"{at_}#"
       let (b, vs') ← treeJson inside depth vs (body.instantiate1 x) at_.pushBindingBody
-        { p with after := if data then p.after.push idx else p.after }
+        { p with after := if data then p.after.push idx else p.after } whole
       let fields : List (String × Json) := [("op", Json.str op),
         ("name", Json.str n.eraseMacroScopes.toString), ("var", toJson idx),
         ("id", Json.str (toString at_)), ("binder", Json.str (binderStr bi)),
@@ -1609,15 +1716,16 @@ partial def treeJson (inside : Name → Bool) (depth : Nat) (vars : Array FVarId
     if (← isProp t) && !body.hasLooseBVars then
       -- An implication inside a part: its premise is a part of its own, not an assumption of
       -- the whole statement.
-      let (a, vars) ← treeJson inside depth vars t pos.pushBindingDomain (p.enter "if")
-      let (b, vars) ← treeJson inside depth vars body pos.pushBindingBody (p.enter "then")
+      let (a, vars) ← treeJson inside depth vars t pos.pushBindingDomain (p.enter "if") whole
+      let (b, vars) ← treeJson inside depth vars body pos.pushBindingBody (p.enter "then") whole
       return (node "implies" #[a, b], vars)
     return ← binder "forall" n t body bi pos
   match isExistsApp e with
   | some (_, .lam n t body bi) =>
     -- The witness is bound by the predicate `fun x => …`, the second argument of `Exists`.
     binder "exists" n t body bi pos.pushAppArg
-  | _ => return (Json.mkObj [("leaf", ← ppExpanded inside depth e vars pos)], vars)
+  | _ => return (Json.mkObj [("leaf", ← ppExpanded inside depth e vars pos
+      (shown := Shown.part whole pos))], vars)
 
 /-- A binder that opens the statement, as `statementJson` meets it: its fields as one of the
 statement's `binders`, its role, whether it binds an object, the properties its type carries and,
@@ -1635,10 +1743,11 @@ from `vars.size`; its nodes stand inside the hypothesis (`assume`) and may depen
 `after`. Its leaves are printed without expansions (the hypothesis's type has them). A failure is
 recorded (`logic_error`) and stops nothing else. -/
 def hypothesisTree (inside : Name → Bool) (vars : Array FVarId) (t : Expr) (pos : SubExpr.Pos)
-    (after : Array Nat) : MetaM (List (String × Json) × Array FVarId) := do
+    (after : Array Nat) (whole : Option Shown := none) :
+    MetaM (List (String × Json) × Array FVarId) := do
   unless shaped t do return ([], vars)
   let act : MetaM (List (String × Json) × Array FVarId) := withCurrHeartbeats do
-    let (j, vs) ← treeJson inside 0 vars t pos (({ after := after } : Place).enter "assume")
+    let (j, vs) ← treeJson inside 0 vars t pos (({ after := after } : Place).enter "assume") whole
     return ([("logic", j)], vs)
   tryCatchRuntimeEx act fun err => do
     return ([("logic_error", Json.str s!"probe-error: {← err.toMessageData.toString}")], vars)
@@ -1651,7 +1760,7 @@ has its own tree (`logic`). Definitions are not unfolded: the binders are those 
 specification. The opening binders are numbered first, in order, then the variables inside the
 conclusion, then those inside each hypothesis. -/
 partial def statementJson (inside : Name → Bool) (e : Expr) (acc : Array Opener := #[])
-    (vars : Array FVarId := #[]) (pos : SubExpr.Pos := .root) :
+    (vars : Array FVarId := #[]) (pos : SubExpr.Pos := .root) (whole : Option Shown := none) :
     MetaM (Array Json × Json × Json) := do
   match e with
   | .forallE n t body bi =>
@@ -1659,6 +1768,7 @@ partial def statementJson (inside : Name → Bool) (e : Expr) (acc : Array Opene
     let role :=
       if bi.isInstImplicit then "instance" else if isHyp then "hypothesis" else "forall"
     let tj ← ppExpanded inside statementDepth t vars pos.pushBindingDomain
+      (shown := Shown.part whole pos.pushBindingDomain)
     withLocalDecl n bi t fun x => do
       let hyps := (acc.filter (·.role == "hypothesis")).size
       let nm := if n.hasMacroScopes || n.isAnonymous then s!"h{hyps + 1}"
@@ -1674,12 +1784,13 @@ partial def statementJson (inside : Name → Bool) (e : Expr) (acc : Array Opene
       let o : Opener := { base, role, data := !isHyp, extra,
                           hyp := if isHyp then some (t, pos.pushBindingDomain) else none }
       statementJson inside (body.instantiate1 x) (acc.push o) (vars.push x.fvarId!)
-        pos.pushBindingBody
+        pos.pushBindingBody whole
   | _ =>
     match isExistsApp e with
     | some (_, .lam n t body bi) =>
       let lam := pos.pushAppArg
       let tj ← ppExpanded inside statementDepth t vars lam.pushBindingDomain
+        (shown := Shown.part whole lam.pushBindingDomain)
       let data := !(← isProp t)
       withLocalDecl n bi t fun x => do
         let props ← propertiesOf x (vars.push x.fvarId!) s!"{lam}#"
@@ -1688,11 +1799,12 @@ partial def statementJson (inside : Name → Bool) (e : Expr) (acc : Array Opene
           ("type", tj), ("binder", Json.str (binderStr bi))]
         let o : Opener := { base, role := "exists", data, extra := props }
         statementJson inside (body.instantiate1 x) (acc.push o) (vars.push x.fvarId!)
-          lam.pushBindingBody
+          lam.pushBindingBody whole
     | _ =>
       -- The objects among the first `k` opening binders, by number.
       let objects := fun (k : Nat) => (List.range k).toArray.filter fun i => acc[i]!.data
       let (concl, vars') ← treeJson inside statementDepth vars e pos { after := objects acc.size }
+        whole
       -- Each hypothesis's own tree, its variables numbered after the conclusion's. It is read
       -- with the local instances of its scope: the binders after it are not instances there.
       let mut vs := vars'
@@ -1703,7 +1815,7 @@ partial def statementJson (inside : Name → Bool) (e : Expr) (acc : Array Opene
           let later := (vars.extract (vars.size - acc.size + i) vars.size).map Expr.fvar
           let (l, vs') ← withTheReader Meta.Context (fun ctx => { ctx with
               localInstances := ctx.localInstances.filter (!later.contains ·.fvar) })
-            (hypothesisTree inside vs t tp (objects i))
+            (hypothesisTree inside vs t tp (objects i) whole)
           vs := vs'
           logics := logics.push l
         | none => logics := logics.push []
@@ -1720,7 +1832,7 @@ partial def statementJson (inside : Name → Bool) (e : Expr) (acc : Array Opene
       -- The conclusion: the one leaf, with its expansions, or the whole of it printed.
       let conclusion ← match concl.getObjVal? "leaf" with
         | .ok leaf => pure leaf
-        | .error _ => pure (Json.mkObj (← ppFields e vars pos))
+        | .error _ => pure (Json.mkObj (← ppFields e vars pos "" (Shown.part whole pos)))
       return (acc.map (Json.mkObj ·.base), conclusion, tree)
 
 /-- Constants of the project that `e` uses directly. -/
@@ -2255,8 +2367,8 @@ end
 /-- At most this many positions of a statement's applications are printed (`subtermAt`). -/
 def maxSubterms : Nat := 512
 
-/-- The sub-term of `e` at `p`, printed in the context of the binders around it (`text`, at most
-2000 characters), and the nearest binder or hypothesis around it (`within`): the last on the way
+/-- The sub-term of `e` at `p`, printed in the context of the binders around it with the instance
+arguments a reader must see (`text`, at most 2000 characters, `instancesToShow`), and the nearest binder or hypothesis around it (`within`): the last on the way
 from the root to `p` whose scope holds the sub-term (a variable bound by `∀`, `∃`, `fun` or
 `let`: `part` `scope`) or whose statement holds it (a hypothesis, an instance, a variable's type:
 `part` `type`), with its `kind`, its identity (`id`, as the statement's binders name it) and its
@@ -2275,7 +2387,7 @@ where
     let e := e.consumeMData
     match path with
     | [] =>
-      let text ← withOptions (·.setBool `pp.funBinderTypes true) (ppExpr e)
+      let text ← withOptions (·.setBool `pp.funBinderTypes true) (ppShown e (← instancesToShow e))
       let text := toString text
       let text := if text.length > 2000 then prefixOf text 2000 ++ " …" else text
       return [("text", Json.str text)] ++ (match within with | some j => [("within", j)] | none => [])
@@ -2344,11 +2456,14 @@ def specRecord (h : IO.FS.Handle) (q : Query) (inside : Name → Bool) (seen : I
   let bad := disallowed (q.allowed_axioms.map (·.toName)) axs
   unless bad.isEmpty do errs := errs.push s!"axioms={bad.toList}"
   let (j, used) ← declRecord inside spec ci
+  let whole ← match ci with
+    | .defnInfo d => some <$> instancesToShow d.value
+    | _ => pure none
   let (binders, concl, tree) ← match ci with
-    | .defnInfo d => statementJson inside d.value
+    | .defnInfo d => statementJson inside d.value (whole := whole)
     | _ => pure (#[], Json.null, Json.null)
   let exact ← match ci with
-    | .defnInfo d => ppJson d.value
+    | .defnInfo d => pure (Json.mkObj (← ppFields d.value #[] .root "" (Shown.part whole .root)))
     | _ => pure Json.null
   let closure ← emitClosure h inside spec used seen
   let direct ← match ci with
@@ -2701,8 +2816,9 @@ def linkRecord (h : IO.FS.Handle) (q : Query) (inside : Name → Bool) (seen : I
       | some (.defnInfo d) => if d.type == .sort .zero then pure d.value else pure ci.type
       | _ => pure ci.type
     | _ => pure ci.type
-  let (binders, concl, tree) ← statementJson inside stmt
-  let exact ← ppJson stmt
+  let whole ← instancesToShow stmt
+  let (binders, concl, tree) ← statementJson inside stmt (whole := some whole)
+  let exact := Json.mkObj (← ppFields stmt #[] .root "" (Shown.part (some whole) .root))
   let axs ← collectAxioms n
   let bad := disallowed (q.allowed_axioms.map (·.toName)) axs
   let (j, used) ← declRecord inside n ci

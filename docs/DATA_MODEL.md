@@ -183,9 +183,11 @@ its application is printed with `@`, its explicit arguments, the instance argume
 `StronglyMeasurable[m] f`). An instance argument is left out only when resolution in its context
 finds it, up to unfolding instances, and finds no other one when a local instance it uses is left
 out: with two σ-algebras `mΩ` and `m` on `Ω` in scope, resolution finds the later one, `m`, but a
-reader cannot tell which is meant, so it is printed. One of a class Lean finds `Subsingleton` on
-(`Decidable p`) stays implicit: any two of its instances are equal. An argument whose check fails
-is printed. This changes what is printed only, never a fingerprint.
+reader cannot tell which is meant, so it is printed. An argument built from instances alone
+(global ones, local ones, a class's parents), none of which another local instance of a related
+class about a common argument could replace, is what resolution finds, and is not searched for.
+One of a class Lean finds `Subsingleton` on (`Decidable p`) stays implicit: any two of its
+instances are equal. An argument whose check fails is printed. This changes what is printed only, never a fingerprint.
 
 A statement record holds the whole proposition as one tree, `tree`. Its `binders` (the binders
 that open it, each `{role, name, id, type, binder, supplies}`, `role` one of `forall`,
