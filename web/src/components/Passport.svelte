@@ -223,7 +223,7 @@
 
 <!-- Under the paper's passage: the review of a proof step, and making a symbol link. -->
 {#snippet paperTools()}
-  {#if claim.step}<ProofStep {claim} {index} part="finding" />{/if}
+  {#if claim.step}<ProofStep {claim} {index} part="finding" editable={editable && simple} busy={!!busy} onpassage={(spec) => act({ passage: spec }, "passage")} />{/if}
   {#if editable && !simple && claim.statement_tex && claim.clauses.some((c) => c.statement || c.defs?.length)}
     <details class="mklink" bind:open={linking}>
       <summary>Link a symbol to the Lean</summary>
@@ -524,6 +524,7 @@
         </details>
       {/each}
       <ProofStep {claim} {index} part="list" />
+      {#if editable && simple && !claim.step}<ProofStep {claim} {index} part="select" editable busy={!!busy} error={busy === "passage" ? null : saveError} onpassage={(spec) => act({ passage: spec }, "passage")} />{/if}
     </header>
 
     <Comparison {index} {inputs} {scope} bind:selection={selAt} mark={(spec, k) => (claim.clauses?.length ? markFor(k) : null)}
