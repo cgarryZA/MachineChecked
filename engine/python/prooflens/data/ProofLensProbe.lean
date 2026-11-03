@@ -416,9 +416,11 @@ arguments to show and `_` for its other implicit arguments (`@StronglyMeasurable
 instance argument is left out when resolution in its context finds it (up to unfolding
 instances), and finds no other one when a local instance it uses is left out: with two σ-algebras
 `mΩ` and `m` on `Ω` in scope, resolution finds `m`, the later one, but a reader cannot tell which
-is meant, so `m` is printed. An argument whose check fails, or that comes after the most checks
-of one expression, is printed; when the walk itself fails, every implicit argument of the
-expression is. Display only: fingerprints read the expression, not its printing. -/
+is meant, so `m` is printed. One of a class Lean finds `Subsingleton` on (`Decidable p`) is left
+out too: any two of its instances are equal, so which one is used does not change what the
+statement says. An argument whose check fails, or that comes after the most checks of one
+expression, is printed; when the walk itself fails, every implicit argument of the expression
+is. Display only: fingerprints read the expression, not its printing. -/
 
 /-- An application whose instance arguments are not all left out: its position, its number of
 arguments, the instance arguments to print and the implicit arguments to print as `_`. -/
@@ -451,7 +453,7 @@ structure ShownWalk where
 /-- Whether instance resolution, in the current context, finds `a` for the class `ty` (up to
 unfolding instances), and finds no other instance when one of the local instances it uses is
 left out. -/
-def instanceFound (a ty : Expr) : MetaM Bool := do
+def instanceResolved (a ty : Expr) : MetaM Bool := do
   let some r ← synthInstance? ty | return false
   unless ← withTransparency .instances (isDefEq r a) do return false
   for li in ← getLocalInstances do
@@ -461,6 +463,13 @@ def instanceFound (a ty : Expr) : MetaM Bool := do
     if let some r' := other then
       unless ← withTransparency .instances (isDefEq r' a) do return false
   return true
+
+/-- Whether the instance argument `a` of the class `ty` may be left out: resolution finds it
+(`instanceResolved`), or Lean finds `Subsingleton` on the class, so that every instance of it
+is `a`. -/
+def instanceFound (a ty : Expr) : MetaM Bool := do
+  if ← instanceResolved a ty then return true
+  return (← synthInstance? (← mkAppM ``Subsingleton #[ty])).isSome
 
 /-- Whether the instance argument `a` (of class `ty`) may be left out: `instanceFound`, false
 when the check fails or no check is left. -/

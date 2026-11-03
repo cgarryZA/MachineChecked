@@ -421,6 +421,11 @@ def test_instance_arguments_a_reader_must_see_are_printed(tmp_path, toolchain):
     assert [a["leaf"]["text"] for a in h1["logic"]["args"]] == \
         ["MeasureTheory.StronglyMeasurable f", "Measurable g"]
 
+    # A decision procedure resolution would not find stays implicit: any two decisions of a
+    # proposition are equal (Lean finds `Subsingleton (Decidable p)`), so it changes nothing.
+    rec = statement(root, "Shape.decided")
+    assert rec["exact"]["text"] == "∀ (n : Nat), (if n = 0 then 0 else n) ≤ n"
+
 
 def props(o, kind="proposition"):
     return [(p["field"], p["type"]["text"]) for p in o.get("properties", []) if p["kind"] == kind]

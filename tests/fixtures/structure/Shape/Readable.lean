@@ -5,8 +5,8 @@ import Shape.Analysis
 
 Synthetic statements for the readable presentation of a statement: the two orders of a constant
 and a "for every", a linear isometry with representatives unique almost everywhere, a statement
-with an alternative, two witnesses of one name, coercions and a quantified assumption, and
-measurability for a σ-algebra other than the instance.
+with an alternative, two witnesses of one name, coercions and a quantified assumption,
+measurability for a σ-algebra other than the instance, and a choice by a decision procedure.
 -/
 
 namespace Shape
@@ -48,5 +48,11 @@ def Adapted : Prop :=
       StronglyMeasurable[mΩ] g → StronglyMeasurable[m] g
 
 theorem adapted : Adapted := fun _ _ _ _ _ _ _ => trivial
+
+/-- A choice by a decision procedure resolution would not find: any two decisions of a
+proposition are equal, so it gives the same value as any other. -/
+theorem decided : ∀ n : Nat, @ite Nat (n = 0) (Classical.propDecidable (n = 0)) 0 n ≤ n := by
+  intro n
+  split <;> omega
 
 end Shape
