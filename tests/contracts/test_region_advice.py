@@ -78,6 +78,54 @@ def test_the_repin_plan_carries_the_advice_at_the_new_revision(tmp_path):
     assert e["advice"][0]["suggested"]["line"] == 9
 
 
+# #508: lines that hold no sentence (definitions, a single command with its arguments) bound one.
+VALUES = ("\\newcommand{\\aVal}{1}\n"
+          "\\newcommand{\\bVal}{2}\n"
+          "\\def\\cVal{3}\n"
+          "\\gdef\\dVal{4}\n"
+          "\\providecommand{\\eVal}{5}\\DeclareMathOperator*{\\fOp}{f\\,op} % two on a line\n"
+          "\\renewcommand{\\gVal}[1]{#1^{7}}\n")
+FIGURE = ("\\begin{figure}\n"
+          "\\centering\n"
+          "\\includegraphics[width=0.6\\linewidth]{figs/rate.pdf}\n"
+          "\\caption{The error of the scheme against the step size; the slope\n"
+          "is one.}\n"
+          "\\label{X:fig:rate}\n"
+          "\\end{figure}\n"
+          "\\begin{figure}\n"
+          "\\ratefigure[0.5]{figs/rate}\n"
+          "\\caption{The same error on a finer grid.}\n"
+          "\\end{figure}\n\n")
+BODY = ("\\section{Rates}\n"
+        "\\input{figs/rate-figure}\n"
+        "The estimator converges at rate $n^{-1/2}$, uniformly\n"
+        "over the compact parameter set.\n"
+        "\\input{figs/rate-table}\n\n")
+INLINE = ("The bound is sharp, as shown in\n"
+          "\\cite{X:smith}\n"
+          "and extended to the whole line.\n\n")
+
+
+def test_definition_and_command_lines_end_sentences(tmp_path):
+    root = write(tmp_path / "p", FIGURE, BODY, INLINE)
+    (root / "values.tex").write_text(VALUES, encoding="utf-8")
+    values = (root / "values.tex").read_text().splitlines()
+    for line, end in ((3, 5), (2, 2), (4, 6), (1, 6)):
+        c = {"id": "T:values", "paper": "T", "location": f"values.tex:{line}",
+             "source_region": {"end_line": end}}
+        assert advice(values, extract(root, c)) == [], (line, end)
+    # Lines: 1-3 the preamble, 4-10 the first figure (7-8 its caption), 11-14 the second
+    # (13 its caption), 16 \section, 17 \input, 18-19 the prose, 20 \input, 22-24 the prose
+    # with a citation alone on line 23.
+    assert kinds(root, claim(root, "caption", 7, 8)) == []
+    assert kinds(root, claim(root, "caption2", 13)) == []
+    assert kinds(root, claim(root, "body", 18, 19)) == []
+    assert kinds(root, claim(root, "body1", 18)) == [("ends-mid-sentence", (18, 19))]
+    # A command that prints words inside a sentence is part of it.
+    assert kinds(root, claim(root, "inline", 24)) == [("starts-mid-sentence", (22, 24))]
+    assert kinds(root, claim(root, "inline1", 22)) == [("ends-mid-sentence", (22, 24))]
+
+
 # #200: a whole-line region that holds the \begin or the \end of an environment without the other.
 THEOREM = "\\newtheorem{theorem}{Theorem}\n"
 CUT = ("\\begin{theorem}\\label{X:thm:rate}\n"

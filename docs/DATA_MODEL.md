@@ -119,6 +119,10 @@ Dismissals of warnings (`dismissals.json`):
 totalisation warning about one application also has `at` (the warning's `at`), and its
 `fingerprint` is the application's (`pl-occ-v1:…`); without `at` it names the operation in the
 whole proposition and its `fingerprint` is the proposition's ([ASSURANCE.md](ASSURANCE.md)).
+A warning that a dismissal matches has `dismissed`, and is never also marked `dismissal_stale`
+because of another dismissal of its code, subject and trigger; a warning that none matches has
+`dismissal_stale` when such a dismissal matches no warning the assessment reports (it lapsed),
+or, for one application, when the dismissal's `at` is its position and it follows no application.
 
 ## Evidence (`evidence.schema.json`), written by the engine
 
