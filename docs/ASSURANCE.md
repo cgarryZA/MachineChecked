@@ -21,7 +21,8 @@ inventory = "claims.json"
 reviews = ["reviews/statements.md", "reviews/definitions.md"]
 statement_authors = ["me"]
 ai_reviewers = ["claude*"]
-notation_macros = ["R", "E"]  # optional: notation whose definitions readings record
+notation_macros = ["R", "E"]  # optional: notation whose definitions readings record (listing
+                              # one reopens readings: `machinechecked inventory notation`)
 
 [review]
 check = "python3 tools/check.py"  # optional post-promotion check
@@ -185,8 +186,9 @@ release record whose evidence is gone once the record is older than the releases
 Each build is a release. A build that reproduces the evidence of an earlier one (after a change
 is reverted, say) names that earlier release again. The latest release is the one the last build
 produced or reproduced: `site`, `export` and `changes` read it unless given a release, and
-`reassess`, `inventory retire --markers`, `review promote` and `symbol add` always read it. When
-the paper or the Lean changes, compare the new release with the one before it:
+`reassess`, `inventory retire --markers`, `inventory notation`, `review promote` and `symbol add`
+always read it. When the paper or the Lean changes, compare the new release with the one before
+it:
 
 ```sh
 machinechecked changes                       # the latest release against the one before it
