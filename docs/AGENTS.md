@@ -583,7 +583,9 @@ packet lists a supporting result with that object only (basis `theorem`, and in
 `interpretations.derivations`), never with another object of the same name or type. An argument that combines several results is a `composition`
 record ([Reviewing](REVIEWING.md#saved-investigations)); a step can cite an application from
 `compare --query uses` as `"ref": {"app": {"callee": NAME, "id": APP_ID}}`. Differences from the
-Lean are findings with a `difference` on the affected requirement; a counterexample
+Lean are findings with a `difference` on the affected requirement; one resolved by a checked
+bridge names its `theorem`, its `target` and the difference's `conditions` it resolves, Lean
+checks it when it is recorded, and it reads as resolved only while Lean checks it; a counterexample
 (`counterexample`: a specialisation, its reduction and violation, its admissibility obligations)
 is read against its requirement's quantifiers, and a Lean certificate is evidence
 `{"certificate": {theorem, target, certifies}}` that Lean checks when it is recorded. A

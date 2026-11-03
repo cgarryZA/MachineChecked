@@ -8,12 +8,14 @@ With f = 0 and |u| = 1 it reduces to 1 ≤ C/ε, which ε = C + 1 violates for e
 """
 
 import json
+from pathlib import Path
 
 import pytest
 
 from test_requirements import PAPER, _run, make_build
 
 from prooflens import cli
+from prooflens import dependencies as dp
 from prooflens import estimates as est
 from prooflens import published_work as pw
 from prooflens import requirements as rq
@@ -407,6 +409,143 @@ def test_a_representation_difference_resolved_by_a_common_extension_is_not_a_def
     assert "difference on r1.1.1 (derivative order, a difference): paper m + 4; Lean n + 5" \
         in text
     assert "domain on r1.1.1, resolved by common extension" in text
+
+
+# -- a difference resolved by a checked bridge (#499) ----------------------------------------
+
+DOMAIN = {"feature": "domain", "paper": "x", "transport": "t", "outcome": "resolved"}
+
+
+def test_a_checked_bridge_resolution_lean_has_not_checked_is_refused(work):
+    p = opened(work)
+    for res, why in (({"by": "checked bridge", "theorem": "Nope.x", "text": "t"},
+                      "names its theorem and the target"),
+                     ({"by": "checked bridge", "theorem": "Nope.x", "target": "Nope.X",
+                       "text": "t"}, "needs the Lean project and its build")):
+        with pytest.raises(wsp.WorkspaceError, match=why):
+            wsp.update(p, [put({"id": "f-res", "kind": "finding", "claim": CLAIM,
+                                "requirement": "r1.1.1",
+                                "difference": {**DOMAIN, "resolution": res}})], snap_of(work))
+    assert "f-res" not in wsp.read(p)["records"]
+    # A bridge resolves only the conditions it names, and those are the difference's own; a
+    # resolution of another kind has no target.
+    conds = {**DOMAIN, "conditions": ["n = m", "k > 0"]}
+    for res, why in (({"by": "checked bridge", "theorem": "Ex.t", "target": "Ex.T", "text": "t"},
+                      "resolves only the conditions it names"),
+                     ({"by": "argument", "text": "t", "conditions": ["n < m"]},
+                      "is not one of the difference's conditions"),
+                     ({"by": "argument", "text": "t", "target": "Ex.T"},
+                      "only a checked bridge has a target")):
+        with pytest.raises(wsp.WorkspaceError, match=why):
+            wsp.update(p, [put({"kind": "finding", "claim": CLAIM, "requirement": "r1.1.1",
+                                "difference": {**conds, "resolution": res}})], snap_of(work))
+
+
+def recorded_without_lean(work, p, **resolution):
+    """A finding whose difference is recorded as resolved by a checked bridge that Lean did not
+    check, as an imported workspace can hold one: written as an argument, submitted, and handed
+    on with its resolution changed."""
+    wsp.update(p, [put({"id": "f-res", "kind": "finding", "claim": CLAIM, "requirement": "r1.1.1",
+                        "difference": {**DOMAIN, "resolution": {"by": "argument", "text": "t"}},
+                        "note": "the bridge transports it"}),
+                   {"op": "submit", "id": "f-res", "base_rev": 1}], snap_of(work))
+    data = wsp.export(p)
+    data["records"]["f-res"]["difference"]["resolution"] = {
+        "by": "checked bridge", "theorem": "Nope.x", "text": "RESOLUTION-TEXT", **resolution}
+    p.unlink()  # handed on to a working directory that does not have it
+    return Path(wsp.import_(work, data, snap_of(work))["path"])
+
+
+def test_a_checked_bridge_lean_does_not_check_reads_as_recorded_everywhere(work, tmp_path,
+                                                                            monkeypatch, capsys):
+    p = recorded_without_lean(work, opened(work), target="Nope.X")
+    # The reading: not resolved, recorded as resolved by a bridge Lean does not check.
+    b = block(work, p)
+    assert b["resolved"] == []
+    d, = b["differences"]
+    assert d["bridge_check"] == {"state": "unchecked",
+                                 "reasons": ["Lean did not check it when it was recorded"]}
+    assert est.outcome_text(d) == "recorded as resolved; Lean does not check its bridge now"
+    text = "\n".join(est.lines(b))
+    assert ("difference on r1.1.1 (domain, recorded as resolved; Lean does not check its bridge "
+            "now): paper x; transport inspected: t; recorded as resolved by a checked bridge; "
+            "Lean does not check it now: Lean did not check it when it was recorded") in text
+    assert "resolved by checked bridge" not in text
+    # The finding: its difference carries the check, its currency is not known to be current,
+    # and it rests on a checked bridge.
+    v = wsp.view(wsp.read(p), snap_of(work))
+    f, = v["claims"][CLAIM]["findings"]
+    assert f["difference"]["bridge_check"]["state"] == "unchecked"
+    assert f["currency"]["state"] == "unchecked"
+    assert any("Lean does not check the bridge Nope.x for Nope.X the difference is resolved by "
+               "now" in u["why"] for u in f["currency"]["unknown"])
+    deps = dp.collect(wsp.read(p)["records"]["f-res"], wsp.read(p)["records"])
+    assert "checked bridge" in deps["kinds"]
+    assert {"dependency": "bridge", "of": "resolution", "theorem": "Nope.x",
+            "target": "Nope.X"} in deps["items"]
+    # `workspace show`.
+    monkeypatch.setattr(cli, "_built_work", lambda a: (work, tmp_path))
+    code, out, _ = _run(["workspace", "show", "--id", wsp.read(p)["id"]], capsys)
+    assert code == 0
+    assert "recorded as resolved by a checked bridge; Lean does not check it now: Lean did not " \
+        "check it when it was recorded" in out
+    assert "resolved by checked bridge" not in out
+    # A published audit, with and without the review texts.
+    for pub in (EVERYTHING, CLOSED):
+        rd, = pw.readings(work, snap_of(work), lambda cid: pub, {CLAIM})[CLAIM]
+        validate({"schema": pw.SCHEMA, "release": "v-1", "claim": CLAIM, "readings": [rd]},
+                 "published-work")
+        pd = rd["findings"][0]["difference"]
+        assert pd["outcome"] == "resolved" and pd["bridge_check"]["state"] == "unchecked"
+        assert est.resolution_text(pd).startswith(
+            "recorded as resolved by a checked bridge; Lean does not check it now: ")
+        assert ("RESOLUTION-TEXT" in json.dumps(rd)) == (pub is EVERYTHING)
+
+
+def test_a_bridge_pinned_without_a_lean_project_is_not_checked(work):
+    p = recorded_without_lean(work, opened(work), target="Nope.X", type="Nope.X",
+                              target_fingerprint="f" * 16, source_sha256="0" * 64,
+                              checked_at="2026-11-01T00:00:00Z")
+    d, = block(work, p)["differences"]
+    assert d["bridge_check"]["reasons"] == ["no Lean project to check the bridge against"]
+    # Without a target there is nothing for Lean to check against.
+    r = dict(rec(p, "f-res")["difference"])
+    r["resolution"] = {k: v for k, v in r["resolution"].items() if k != "target"}
+    assert est.resolution_check(r, CLAIM, snap_of(work), None)["reasons"] == \
+        ["no theorem and target proposition are recorded for it"]
+
+
+def test_a_resolution_naming_some_conditions_leaves_the_others_open(work):
+    p = opened(work)
+    wsp.update(p, [put({"id": "f-part", "kind": "finding", "claim": CLAIM,
+                        "requirement": "r1.1.1",
+                        "difference": {"feature": "derivative order", "paper": "m + 4",
+                                       "lean": "n + 5", "outcome": "resolved",
+                                       "conditions": ["n = m", "k > 0"],
+                                       "resolution": {"by": "argument", "text": "shift the index",
+                                                      "conditions": ["n = m"]}},
+                        "note": "n"})], snap_of(work))
+    b = block(work, p)
+    assert b["resolved"] == []
+    d, = b["differences"]
+    assert d["open_conditions"] == ["k > 0"] and d["partial"]
+    assert est.outcome_text(d) == "resolved in part"
+    assert est.resolution_text(d) == ("resolved by argument for the condition n = m: shift the "
+                                      "index; still open: the condition k > 0")
+    # Published without the review texts, the conditions are withheld; that some stay open is not.
+    wsp.update(p, [{"op": "submit", "id": "f-part", "base_rev": 1}], snap_of(work))
+    rd, = pw.readings(work, snap_of(work), lambda cid: CLOSED, {CLAIM})[CLAIM]
+    pd = rd["findings"][0]["difference"]
+    assert pd["partial"] and "open_conditions" not in pd and "k > 0" not in json.dumps(rd)
+    assert est.resolution_text(pd) == ("resolved by argument; some of its conditions are still "
+                                       "open")
+    # A resolution that names every condition resolves the difference.
+    edit_d = {**rec(p, "f-part")["difference"]}
+    edit_d["resolution"] = {**edit_d["resolution"], "conditions": ["n = m", "k > 0"]}
+    wsp.update(p, [put({"id": "f-two", "kind": "finding", "claim": CLAIM,
+                        "requirement": "r1.1.1", "difference": edit_d, "note": "n"})],
+               snap_of(work))
+    assert [x["finding"] for x in block(work, p)["resolved"]] == ["f-two"]
 
 
 # -- validation ------------------------------------------------------------------------------

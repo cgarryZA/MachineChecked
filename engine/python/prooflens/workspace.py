@@ -543,7 +543,7 @@ def _content(kind: str, rec: dict, ws: dict, snap, root, cur: dict | None = None
         if out["coverage"] == "unresolved" and not (out.get("question") or "").strip():
             raise WorkspaceError("an unresolved finding states its open question (`question`)")
         from .estimates import finding_fields
-        finding_fields(out, rec, ws, cur, repin)
+        finding_fields(out, rec, ws, cur, repin, snap, root)
     elif kind == "question":
         out["text"] = _text(rec.get("text"), "the question", True)
         out["state"] = _choice(rec.get("state") or "open", QUESTION_STATES, "the state", False)
@@ -1194,6 +1194,11 @@ def view(ws: dict, snap=None, claim: str | None = None, root: Path | None = None
                 # as the auditor's composition until there is one.
                 item.update(basis=cp.BASIS_REVIEWED, recorded_basis=cp.BASIS_BRIDGE,
                             basis_reason=list(chk.get("reasons") or []))
+            if r.get("difference"):
+                # A checked bridge it is resolved by holds only while Lean checks it now.
+                from .estimates import difference_view
+                item["difference"] = difference_view(r["difference"],
+                                                     item["currency"].get("resolution"))
         c[{"evidence": "evidence", "finding": "findings", "question": "questions",
            "counterexample": "counterexamples"}[r["kind"]]].append(item)
     for cid, c in claims.items():

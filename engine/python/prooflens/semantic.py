@@ -356,7 +356,8 @@ def review_state(chunk: dict, unit: str) -> str:
 def finding_categories(chunk: dict, readings: list[dict], work: dict | None) -> list[str]:
     """The kinds of difference and open question recorded for a claim (`FINDING_KEYS`), from
     readings that are not out of date, each reviewer's latest report that is not, a proof step's
-    review and the published workspace findings in force."""
+    review and the published workspace findings in force. A difference recorded as resolved
+    counts as a difference while its resolution does not hold as published."""
     found = set()
     for a in readings:
         if a.get("count") == "unresolved":
@@ -383,6 +384,11 @@ def finding_categories(chunk: dict, readings: list[dict], work: dict | None) -> 
                 continue
             d = f.get("difference") if isinstance(f.get("difference"), dict) else {}
             feature, outcome = d.get("feature"), d.get("outcome")
+            if outcome == "resolved" and (d.get("partial") or (d.get("bridge_check") or {})
+                                          .get("state", "checked") != "checked"):
+                # Its resolution does not hold as published: a checked bridge not checked at
+                # export, or conditions it leaves open (`published_work._difference`).
+                outcome = "difference"
             if outcome == "open":
                 found.add("open-question")
             elif feature == "representation" and outcome in ("difference", "resolved"):

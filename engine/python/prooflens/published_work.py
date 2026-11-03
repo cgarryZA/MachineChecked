@@ -14,7 +14,9 @@ text, file and lines only when the source text is published, a Lean target's tex
 Lean is, and the auditor's prose (notes, arguments, questions, reasons, a counterexample's
 specialisation and reduction) only when reviews are; a record names the prose fields it leaves
 out (`withheld`), never their words. A difference shows its paper expression when
-the source text is published and its Lean expression when the Lean is. A cited fact
+the source text is published and its Lean expression when the Lean is; a checked bridge it is
+resolved by carries its check against the Lean project at export (`bridge_check`), and reads as
+resolving it only while that check passes. A cited fact
 inside a proof keeps its basis, "established inside this proof under this context", and its
 pins; its proposition and context are Lean text. Its currency, and that of a cited application
 or certificate, is checked against the Lean project the export was built from, asking Lean when
@@ -176,17 +178,33 @@ def _ref(ref: dict, pub) -> dict:
                       **({"quote": p.get("quote") or ""} if pub.source_text else {})}}
 
 
-def _difference(d: dict, pub) -> dict:
-    out = {k: d[k] for k in ("feature", "outcome", "hint") if d.get(k) is not None}
+# What a published resolution keeps: what it names and the pins of a checked bridge always, the
+# checked type and source file only with the Lean, the auditor's text and conditions only with the
+# reviews.
+RESOLUTION_LEAN = ("type", "file")
+RESOLUTION_PROSE = ("text", "conditions")
+
+
+def _difference(d: dict, pub, check: dict | None = None) -> dict:
+    """A difference as published, with whether a checked bridge it is resolved by is checked at
+    export (`check`, `estimates.resolution_check`; without it, it is not) and whether its
+    resolution leaves conditions open (`partial`; which ones only with the reviews)."""
+    from .estimates import difference_view
+    dv = difference_view(d, check)
+    out = {k: dv[k] for k in ("feature", "outcome", "hint", "partial") if dv.get(k) is not None}
     if pub.source_text:
         out["paper"] = d["paper"]
     if pub.lean and d.get("lean"):
         out["lean"] = d["lean"]
     if d.get("resolution"):
         out["resolution"] = {k: v for k, v in d["resolution"].items()
-                             if k != "text" or pub.reviews}
+                             if (k not in RESOLUTION_PROSE or pub.reviews)
+                             and (k not in RESOLUTION_LEAN or pub.lean)}
+    if dv.get("bridge_check"):
+        out["bridge_check"] = dv["bridge_check"]
     if pub.reviews:
-        out.update({k: d[k] for k in ("conditions", "transport", "why") if d.get(k)})
+        out.update({k: dv[k] for k in ("conditions", "transport", "why", "open_conditions")
+                    if dv.get(k)})
     return out
 
 
@@ -267,7 +285,8 @@ def public_record(r: dict, pub, currency: dict, in_force: set[str],
         if withheld:
             out["withheld"] = withheld
     if k == "finding" and r.get("difference"):
-        out["difference"] = _difference(r["difference"], pub)
+        out["difference"] = _difference(r["difference"], pub,
+                                        (currency.get(r["id"]) or {}).get("resolution"))
     if k == "counterexample":
         from . import estimates as est
         if pub.reviews:
@@ -320,8 +339,8 @@ def public_record(r: dict, pub, currency: dict, in_force: set[str],
 
 # What a published dependency keeps of an item (`dependencies.collect`): ids, roles and content
 # identities; a region's place only with the source text, a Lean target's text only with the Lean.
-DEP_FIELDS = ("dependency", "record", "via", "claim", "sha256", "requirement", "role", "origin",
-              "requirements", "relation", "theorem", "target", "target_fingerprint",
+DEP_FIELDS = ("dependency", "record", "via", "of", "claim", "sha256", "requirement", "role",
+              "origin", "requirements", "relation", "theorem", "target", "target_fingerprint",
               "source_sha256")
 UNKNOWN_FIELDS = ("dependency", "record", "claim", "requirement", "why")
 

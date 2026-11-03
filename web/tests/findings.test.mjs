@@ -6,7 +6,8 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { correspondenceFields, reviewFields, findingSets, placeFindings, findingView, targetRole, rowWords } from "../src/lib/findings.js";
+import { correspondenceFields, reviewFields, findingSets, placeFindings, findingView, targetRole, rowWords,
+  differenceOutcome, resolutionText } from "../src/lib/findings.js";
 import { comparisonInputs } from "../src/lib/comparison.js";
 import { readingWords } from "../src/lib/coverage.js";
 
@@ -133,6 +134,32 @@ assert.deepEqual(estViews.map((v) => v.difference?.outcome ?? null), ["differenc
   "only the input order differs");
 assert.deepEqual(estViews.map((v) => v.lean[0].role), ["an assumption", "an assumption", "part of the conclusion", "part of the conclusion"]);
 assert.equal(estViews[0].note, "Input bound uses derivatives through m+5; the paper uses m+4.");
+
+// -- a difference resolved by a checked bridge reads as resolved only while Lean checks it (#499)
+const bridged = (check, extra = {}) => ({ feature: "domain", paper: "every real x", lean: "0 < x", outcome: "resolved",
+  resolution: { by: "checked bridge", theorem: "Est.bridge", target: "Est.Spec", text: "the bridge restates it" },
+  bridge_check: check, ...extra });
+const notNow = bridged({ state: "unchecked", reasons: ["Lean finds no such theorem"] });
+assert.equal(differenceOutcome(notNow), "recorded as resolved; Lean does not check its bridge now");
+assert.equal(resolutionText(notNow), "recorded as resolved by a checked bridge; Lean does not check it now: Lean finds no such theorem");
+const outOfDate = bridged({ state: "stale", reasons: ["the target is not the version the auditor read"] });
+assert.equal(resolutionText(outOfDate), "recorded as resolved by a checked bridge; Lean does not check it now: the target is not the version the auditor read");
+const holds = bridged({ state: "checked", reasons: [] });
+assert.equal(differenceOutcome(holds), "resolved");
+assert.equal(resolutionText(holds), "resolved by checked bridge: the bridge restates it");
+// It resolves the conditions it names; the others stay open, also where their words are withheld.
+const part = bridged({ state: "checked", reasons: [] }, { conditions: ["x > 0", "x < 1"], open_conditions: ["x < 1"], partial: true });
+part.resolution = { ...part.resolution, conditions: ["x > 0"] };
+assert.equal(differenceOutcome(part), "resolved in part");
+assert.equal(resolutionText(part), "resolved by checked bridge for the condition x > 0: the bridge restates it; still open: the condition x < 1");
+assert.equal(resolutionText({ outcome: "resolved", resolution: { by: "argument" }, partial: true }), "resolved by argument; some of its conditions are still open");
+const bridgeReading = reading("ws-bridge", "A Auditor", {
+  requirements: [req("in", "assumption", "x is real")],
+  findings: [finding("f-bridge-res", "in", { difference: notNow, note: "The bridge restates the paper's domain." })] });
+const bridgeView = findingView(placeFindings(findingSets([bridgeReading], null, { who }), est).claim[0], est, "E:x");
+assert.equal(bridgeView.head, "A domain difference: recorded as resolved; Lean does not check its bridge now");
+assert.equal(bridgeView.difference.how, resolutionText(notNow));
+assert.ok(!/resolved by checked bridge/.test(JSON.stringify(bridgeView)), "never worded as resolved");
 
 // -- one coverage, three bases, three readings that stay distinct ------------------------------
 const basisReading = reading("ws-basis", "A Auditor", {

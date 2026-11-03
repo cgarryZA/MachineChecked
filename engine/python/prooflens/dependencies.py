@@ -21,6 +21,10 @@ A finding rests on:
 - its composition (`composition`: a digest of its steps, with their substitutions, of its
   identifications and of its obligations) and, for a finding recorded as a checked bridge, the
   bridge (`bridge`: the target's fingerprint and the passage Lean checked it against);
+- for a difference resolved by a checked bridge, that bridge (`bridge` with `of: resolution`:
+  the target's fingerprint and the passage Lean checked it against when it was recorded), checked
+  as the difference's resolution is (`estimates.resolution_check`): the finding's currency
+  carries that check (`resolution`);
 - the counterexamples it cites (`counterexample`).
 
 The evidence kinds of the finding (`kinds`) say which of these it uses: a statement comparison
@@ -45,6 +49,7 @@ import re
 
 PASSAGE, READING, CONTEXT, OBJECT = "passage", "reading", "context", "object"
 COMPOSITION, BRIDGE, COUNTEREXAMPLE = "composition", "bridge", "counterexample"
+RESOLUTION = "resolution"  # a bridge item's `of`: the checked bridge a difference is resolved by
 # The evidence kinds of a reference, by its key.
 EVIDENCE = {"decl": "declaration", "app": "application", "fact": "fact",
             "certificate": "certificate", "paper": "paper", "source": "source"}
@@ -551,6 +556,12 @@ def collect(f: dict, records: dict) -> dict:
         else:
             unknown.append({"dependency": BRIDGE, "why": "no bridge is recorded"
                             if comp is None else f"its composition {comp['id']} has no bridge"})
+    from .estimates import is_bridge
+    if is_bridge(f.get("difference")):
+        res = f["difference"]["resolution"]
+        items.append({"dependency": BRIDGE, "of": RESOLUTION,
+                      **{k: res[k] for k in ("theorem", "target", "target_fingerprint",
+                                             "source_sha256") if res.get(k)}})
     for p, cx in cxs:
         if cx is None:
             unknown.append({"dependency": COUNTEREXAMPLE, "record": p.get("id"),
@@ -642,7 +653,8 @@ def check(f: dict, records: dict, snap, root=None, cur: dict | None = None,
     `current`. `cur` holds the currency of the workspace's records (`workspace.currency`), for
     the counterexamples it cites. The dependencies of the kinds in `skip` are left out (the
     paper's, when a version map judges them: `reopen.py`); a bridge is then checked against the
-    Lean alone when `skip` holds the passage."""
+    Lean alone when `skip` holds the passage. For a difference resolved by a checked bridge, the
+    answer also carries that bridge's check (`resolution`, `estimates.resolution_check`)."""
     from . import composition as cp
     from . import requirements as rq
     from .estimates import counterexample_pin
@@ -681,6 +693,8 @@ def check(f: dict, records: dict, snap, root=None, cur: dict | None = None,
         elif dep == OBJECT:
             res = rq.alignment_currency(it, snap, root)
         elif dep == BRIDGE:
+            if it.get("of") == RESOLUTION:
+                continue  # checked from the finding's difference, below
             if not it.get("target_fingerprint") and not it.get("source_sha256"):
                 continue  # a finding's own bridge: unknown when recorded
             b = cp.bridge_currency(it, f["claim"], None if PASSAGE in skip else snap, root,
@@ -709,6 +723,20 @@ def check(f: dict, records: dict, snap, root=None, cur: dict | None = None,
         changes += res.get("changes") or []
         if res.get("state") == "unchecked":
             unknown.append(_as_unknown(it, res))
+    # A difference resolved by a checked bridge: its record is the finding's own, kept as it was
+    # recorded, so it is checked from the finding, whatever its stored dependencies hold.
+    from .estimates import resolution_check
+    bridge = resolution_check(f.get("difference"), f["claim"],
+                              None if PASSAGE in skip else snap, root, check_facts)
+    if bridge is not None and bridge["state"] != "checked":
+        what = (f"the bridge {bridge['theorem']} for {bridge['target']} the difference is "
+                "resolved by")
+        why = "; ".join(bridge["reasons"])
+        if bridge["state"] == "stale":
+            changes.append({"bridge": bridge["theorem"], "target": bridge["target"],
+                            "reason": f"{what} is out of date: {why}"})
+        else:
+            unknown.append({"dependency": BRIDGE, "why": f"Lean does not check {what} now: {why}"})
     seen, kept = set(), []
     for ch in changes:
         k = json.dumps(ch, sort_keys=True, ensure_ascii=False)
@@ -718,6 +746,8 @@ def check(f: dict, records: dict, snap, root=None, cur: dict | None = None,
     out = {"state": "stale" if kept else "unchecked" if unknown else "current", "changes": kept}
     if unknown:
         out["unknown"] = unknown
+    if bridge is not None:
+        out["resolution"] = bridge
     return out
 
 
@@ -746,7 +776,8 @@ def item_text(it: dict) -> str:
     if dep == COMPOSITION:
         return f"composition {it.get('record')}"
     if dep == BRIDGE:
-        return f"bridge {it.get('theorem')} for {it.get('target')}"
+        return f"bridge {it.get('theorem')} for {it.get('target')}" + \
+            (" (the difference's resolution)" if it.get("of") == RESOLUTION else "")
     if dep == COUNTEREXAMPLE:
         return f"counterexample {it.get('record')}"
     from .workspace import ref_text
