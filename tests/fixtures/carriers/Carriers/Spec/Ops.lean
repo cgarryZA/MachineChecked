@@ -12,6 +12,10 @@ def divNat : Prop := ∀ a b : Nat, a / b = a / b
 /-- Division on the number line, a field. -/
 def divField : Prop := ∀ x y : Real, x / y = x / y ∧ x⁻¹ = x⁻¹
 
+/-- Three divisions on the number line: one in a hypothesis, and two in the conclusion, under
+the witness it produces. -/
+def divThree : Prop := ∀ T N : Real, T / N = T → ∀ x : Real, ∃ y : Real, x / y = N / T
+
 /-- Division on the extended number line. -/
 def divExtended : Prop := ∀ x y : ENNReal, x / y = x / y
 

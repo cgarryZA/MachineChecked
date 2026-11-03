@@ -97,8 +97,14 @@ statement, with `operation`, its `type` (as Lean prints it; null when it could n
 `conditionally-complete-lattice`, `group`, `group-with-zero`, `one-element`, `unknown` when Lean
 finds none of those, or null when the rule does not depend on one), `state` (`applies`, `none`
 when the type gives the operation no exceptional case, or `unresolved`), `rule` (what the
-operation gives there, when it applies) and `at` (its positions in the proposition, the `id`s of
-the printed sub-terms). Where the rule needs a condition (a supremum or infimum in a
+operation gives there, when it applies), `at` (its positions in the proposition, the `id`s of
+the printed sub-terms) and `subterms`: for each position, `at`, `text` (the sub-term there as
+Lean prints it; null for a position past the first 512 of the statement) and, when the sub-term
+is under one, `within`, the nearest binder or hypothesis around it (`kind`: `forall`, `exists`,
+`fun`, `let`, `hypothesis` or `instance`; `part`: `scope` when the sub-term is under the
+variable, `type` when it is in the hypothesis's statement or the variable's type; `id`, the
+binder's identity; `name`, as the statement names it, `h1` for an unnamed hypothesis, or
+null). Where the rule needs a condition (a supremum or infimum in a
 conditionally complete type, an integral, `ENNReal.toReal`), the record also has `conditions`,
 each with `condition` (`bounded-above`, `bounded-below`, `nonempty-index`, `nonempty-set`,
 `integrable`, `finite`), `state` (`established`, `refuted`, `unresolved`), and for an
