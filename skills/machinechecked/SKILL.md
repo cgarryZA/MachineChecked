@@ -181,7 +181,9 @@ carries every step out on the toy example.
    checked by Lean when saved: it establishes that its theorem proves the target proposition
    exactly, and the target's agreement with the paper stays your reading.
 6. **Compare estimates and steps.** Record a `difference` (its feature, the paper's and Lean's
-   expressions, the outcome) on the requirement it affects, and a `counterexample` against one
+   expressions, the outcome) on the requirement it affects (a resolution by a checked bridge
+   names its theorem, target and the conditions it resolves; Lean checks it when saved, and it
+   reads as resolved only while Lean checks it), and a `counterexample` against one
    reading, with a Lean certificate as evidence when you have one. A printed proof step is a
    claim of its own (`compare "Equation (3)"`), with its own verdict, such as `false as
    printed`. `--query impact NAME` says whether each main result uses NAME (`--main NAME`

@@ -462,10 +462,18 @@ for every ε > 0: …". A difference from the Lean is a finding on the affected 
 `feature` is one of `domain`, `quantifier order`, `constant dependence`, `derivative order`,
 `norm`, `power`, `weight`, `index offset`, `additional assumption`, `lost case`, `stronger
 conclusion`, `representation`, `other`; `outcome` is `open`, `difference`, `resolved` (with a
-`resolution`: `common extension`, `checked bridge` with its `theorem`, `argument`, `inherited
-assumption` or `renaming`, and its `text`) or `no difference` (with `why`). A domain,
-representation or additional-assumption difference names the `transport` you inspected first (a
-common extension, a bridge, the full theorem), so that a change of representation is not
+`resolution`: `common extension`, `checked bridge`, `argument`, `inherited assumption` or
+`renaming`, and its `text`) or `no difference` (with `why`). A resolution may name the
+difference's `conditions` it resolves (`resolution.conditions`); the others stay open, and the
+difference reads as resolved in part. A checked bridge names its `theorem` and the `target`
+proposition its type states exactly (and, when the difference has conditions, the ones it
+resolves). Lean checks it when you record it, as a certificate is checked: a bridge Lean does
+not check is refused. The record keeps the checked type, the target's fingerprint and the claim's
+passage. It reads as resolving the difference only while Lean checks it now; once the target or
+the passage changes, or without the Lean project, it reads "recorded as resolved by a checked
+bridge; Lean does not check it now", with why, in `show`, the reader and a published audit. A
+domain, representation or additional-assumption difference names the `transport` you inspected
+first (a common extension, a bridge, the full theorem), so that a change of representation is not
 recorded as a defect. The reading lists the Lean hypotheses no requirement is aligned with as
 hints to inspect; a hypothesis aligned with a requirement that a standing assumption governs is
 shown as inherited from it.
@@ -562,9 +570,10 @@ change names the expansion as you read it and as the build prints it now (`compa
 expansion KEY` shows each). A finding is checked through what it rests on: the
 claim's passage; the requirement it names, with those it sits inside, the passages that govern
 them and their alignments; the evidence it cites, and that its composition and counterexamples
-cite; its composition; and, for a checked bridge, the bridge. A submitted finding records these
-parts with the version of each when you submit it (`dependencies`, with the kinds of evidence it
-uses: statement comparison, object correspondence, composition, proof route, checked bridge);
+cite; its composition; and, for a checked bridge (its basis, or its difference's resolution), the
+bridge. A submitted finding records these parts with the version of each when you submit it
+(`dependencies`, with the kinds of evidence it uses: statement comparison, object
+correspondence, composition, proof route, checked bridge);
 `show --json` gives them, a draft's as its records give them now. A finding is `stale` when one
 of its parts changed, and only then: an edit to a theorem's proof leaves a statement comparison
 of that theorem current and reopens a finding that cites a fact or an application inside that

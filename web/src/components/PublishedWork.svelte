@@ -1,6 +1,7 @@
 <script>
   import { loadWork } from "../lib/data.js";
   import { compositionView, findingCoverageView, recordedBasisText } from "../lib/coverage.js";
+  import { differenceOutcome, resolutionText } from "../lib/findings.js";
   import Composition from "./Composition.svelte";
   import { connectionText } from "../lib/connections.js";
   import { impactHead, impactView } from "../lib/impact.js";
@@ -75,12 +76,11 @@
     if (c) return { headline: compositionView({ coverage: f.coverage, basis: f.basis, bridge_check: c.bridge_check }).headline, lines: [] };
     return findingCoverageView({ ...f, refs: cited(rd, f).map((e) => e.ref?.decl).filter(Boolean) });
   };
-  const OUTCOME = { open: "not yet decided", difference: "a difference", resolved: "resolved", "no difference": "no difference" };
   const counterexamples = (rd, lid) => (rd.counterexamples || []).filter((c) => c.requirement === lid);
   function findingHead(f, cv) {
     if (cv?.headline) return cv.headline;
     if (f.verdict) return "The printed step: " + f.verdict;
-    if (f.difference) return `A ${f.difference.feature} difference: ${OUTCOME[f.difference.outcome]}`;
+    if (f.difference) return `A ${f.difference.feature} difference: ${differenceOutcome(f.difference)}`;
     if (f.impact) return impactHead(f.impact);
     return "No coverage given";
   }
@@ -93,7 +93,7 @@
       case "context": return `${where(it)} (${ROLE[it.role] || it.role} of ${it.requirement})`;
       case "object": return (it.lean || []).map(targetText).join("; ") + (it.relation ? ` (${it.relation})` : "");
       case "composition": return `composition ${it.record}`;
-      case "bridge": return `bridge ${it.theorem} for ${it.target}`;
+      case "bridge": return `bridge ${it.theorem} for ${it.target}` + (it.of === "resolution" ? " (the difference's resolution)" : "");
       case "counterexample": return `counterexample ${it.record}`;
       case "difference": return `the difference recorded in ${it.record}${it.claim ? " on " + it.claim : ""}`;
       default: return it.ref ? refText(it.ref) : `${it.dependency} ${it.record || ""}`.trim();
@@ -126,7 +126,7 @@
               <span class="faint">· {f.in_force ? "submitted" : "superseded"} {day(f.submitted_at)} by {f.created_by}{f.requirement ? ` · on ${f.requirement}` : ""}</span>
               {#if stale(f)}<span class="stale"> · its evidence {STALE}</span>{:else if f.currency?.state === "unchecked"}<span class="faint" data-currency="unchecked"> · not known to be current</span>{/if}</p>
             {#each cv?.lines || [] as line}<p class="small" data-line={line.label}><span class="faint">{line.label}:</span> {line.names?.join(", ") || ""}{line.names?.length && line.text ? ". " : ""}<span class="text">{line.text || ""}</span>{#if line.note} <span class="faint">{line.note}</span>{/if}</p>{/each}
-            {#if f.difference}{@const d = f.difference}<p class="small diff" data-feature={d.feature}>{#if d.paper}paper <code>{d.paper}</code>{/if}{#if d.lean}{d.paper ? "; " : ""}Lean <code>{d.lean}</code>{/if}{#if d.transport}<span class="faint">{` · transport inspected: ${d.transport}`}</span>{/if}{#if d.resolution}<span class="faint">{` · resolved by ${d.resolution.by}${d.resolution.text ? ": " + d.resolution.text : ""}`}</span>{/if}{#if d.why}<span class="faint">{` · ${d.why}`}</span>{/if}</p>{/if}
+            {#if f.difference}{@const d = f.difference}<p class="small diff" data-feature={d.feature}>{#if d.paper}paper <code>{d.paper}</code>{/if}{#if d.lean}{d.paper ? "; " : ""}Lean <code>{d.lean}</code>{/if}{#if d.transport}<span class="faint">{` · transport inspected: ${d.transport}`}</span>{/if}{#if d.resolution}<span class="faint" data-bridge={d.bridge_check?.state}>{` · ${resolutionText(d)}`}</span>{/if}{#if d.why}<span class="faint">{` · ${d.why}`}</span>{/if}</p>{/if}
             {#if !f.composition && recordedBasisText(f)}<p class="small faint" data-line="recorded">{recordedBasisText(f)}</p>{/if}
             {#if f.impact}{@const iv = impactView(f, rd.evidence)}<p class="small" data-impact={f.impact.outcome}><span class="faint">At</span> {iv.use}<span class="faint">, for {f.requirement}:</span> {iv.outcome} <span class="faint">· {iv.difference}</span></p>{#if iv.why}<p class="small text">{iv.why}</p>{/if}{/if}
             {#if f.note}<p class="small text">{f.note}</p>{/if}

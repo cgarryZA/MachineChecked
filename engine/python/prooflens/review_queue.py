@@ -471,12 +471,14 @@ def workspace_signals(units: list[dict], workspaces: list[dict], site=None, root
     date (`out of date`, `record_signals`); an open obligation of a composition, a requirement
     no step of it establishes, a finding that is unresolved, covers part of the claim or is not
     known to be current, a candidate or incomplete counterexample, an open question (`open
-    question`); a difference that is not resolved, a finding that the Lean states the claim
-    differently, an admissible counterexample (`difference`); a hypothesis of an aligned Lean
-    statement that no requirement is aligned with and no difference settles, a passage proposed
-    and not yet accepted, a counterexample of numeric samples only (`hint`). A difference
-    resolved or found to be none, and a hint a difference settles, give no words: the workspace
-    keeps their explanation. A definition takes no words from its claims' records. `site`, the
+    question`); a difference that is not resolved, or whose resolution does not hold now (a
+    checked bridge Lean does not check, conditions left open), a finding that the Lean states the
+    claim differently, an admissible counterexample (`difference`); a hypothesis of an aligned
+    Lean statement that no requirement is aligned with and no difference settles, a passage
+    proposed and not yet accepted, a counterexample of numeric samples only (`hint`). A
+    difference resolved or found to be none, and a hint a difference settles, give no words: the
+    workspace keeps their explanation. A definition takes no words from its claims' records.
+    `site`, the
     build's site data (`targets.Snapshot`), gives the statements of the hints and what the
     records are checked against, with `root`, the Lean project, for what Lean read before (no
     Lean runs); without it, only what the records say of themselves is read. Returns the signals
@@ -517,9 +519,17 @@ def workspace_signals(units: list[dict], workspaces: list[dict], site=None, root
                     add(cid, "open question", "a recorded finding leaves an open question")
                 elif r.get("coverage") == "partial":
                     add(cid, "open question", "a recorded finding covers part of the claim")
+                dv = est.difference_view(d, est.resolution_check(
+                    d, cid, site if hasattr(site, "chunk") else None, root)) \
+                    if d.get("outcome") == "resolved" else d
                 if d.get("outcome") in ("open", "difference"):
                     add(cid, "difference", f"a recorded difference ({d.get('feature')})"
                         + (", not yet decided" if d["outcome"] == "open" else ""))
+                elif d.get("outcome") == "resolved" and not est.settled(dv):
+                    # A resolution that does not hold now: a checked bridge Lean does not check,
+                    # or conditions it leaves open.
+                    add(cid, "difference", f"a recorded difference ({d.get('feature')}), "
+                        + est.outcome_text(dv))
                 elif r.get("coverage") == "changed":
                     add(cid, "difference", "a recorded finding says the Lean states it "
                         "differently")

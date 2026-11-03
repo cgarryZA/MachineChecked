@@ -771,6 +771,42 @@
                         },
                         "theorem": {
                           "type": "string"
+                        },
+                        "target": {
+                          "type": "string"
+                        },
+                        "module": {
+                          "type": "string"
+                        },
+                        "conditions": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "type": {
+                          "type": "string"
+                        },
+                        "file": {
+                          "type": "string"
+                        },
+                        "file_sha256": {
+                          "type": "string"
+                        },
+                        "axioms": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "target_fingerprint": {
+                          "type": "string"
+                        },
+                        "source_sha256": {
+                          "type": "string"
+                        },
+                        "checked_at": {
+                          "type": "string"
                         }
                       }
                     },
@@ -783,6 +819,37 @@
                         "binder": {
                           "type": "integer"
                         }
+                      }
+                    },
+                    "bridge_check": {
+                      "type": "object",
+                      "required": [
+                        "state",
+                        "reasons"
+                      ],
+                      "properties": {
+                        "state": {
+                          "enum": [
+                            "checked",
+                            "stale",
+                            "unchecked"
+                          ]
+                        },
+                        "reasons": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "partial": {
+                      "const": true
+                    },
+                    "open_conditions": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
                       }
                     }
                   }
@@ -1628,6 +1695,11 @@
         },
         "ref": {
           "type": "object"
+        },
+        "of": {
+          "enum": [
+            "resolution"
+          ]
         }
       }
     },

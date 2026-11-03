@@ -206,6 +206,33 @@ def test_out_of_date_records_counterexamples_and_proposed_passages(tmp_path):
     assert not any("Ex." in x["reason"] for x in out.values())
 
 
+def test_a_resolution_that_does_not_hold_now_is_a_difference(tmp_path):
+    """A resolution that leaves a condition open, and a checked bridge Lean does not check, keep
+    their difference in the informed order (#499)."""
+    work = write_site(tmp_path)
+    p = investigate(work)
+    e = ESTIMATE[0]
+    wsp.update(p, [put({"id": "f-part", "kind": "finding", "claim": e, "requirement": "r1",
+                        "difference": {"feature": "power", "paper": "p", "outcome": "resolved",
+                                       "conditions": ["a", "b"],
+                                       "resolution": {"by": "argument", "text": "t",
+                                                      "conditions": ["a"]}},
+                        "note": "n"})], build_of(work))
+    # A checked bridge Lean did not check, as a hand-edited workspace file can hold one.
+    ws = wsp.read(p)
+    ws["records"]["f-bridge"] = {**ws["records"]["f-part"], "id": "f-bridge", "difference": {
+        "feature": "domain", "paper": "p", "transport": "t", "outcome": "resolved",
+        "resolution": {"by": "checked bridge", "theorem": "Ex.b", "target": "Ex.B", "text": "t"}}}
+    with wsp._locked(p):
+        wsp._write(p, ws)
+    out = {u["id"]: u for u in session(work).open_units("informed")}
+    assert [s["text"] for s in signals_of(out[SPEC[e]], "difference")] == [
+        "a recorded difference (derivative order)",
+        "a recorded difference (power), resolved in part",
+        "a recorded difference (domain), recorded as resolved; Lean does not check its bridge now"]
+    assert not any("Ex." in x["reason"] for x in out.values())
+
+
 def test_record_signals_word_each_record_once_per_kind():
     """Two out-of-date requirements of one claim are counted, with what changed in each."""
     ws = {"records": {

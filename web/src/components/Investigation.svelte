@@ -4,6 +4,7 @@
   import { href } from "../lib/route.svelte.js";
   import { compositionView, findingCoverageView, recordedBasisText, readingWords } from "../lib/coverage.js";
   import { workspace, pinsIn, setPins, openInspection, tokenOf } from "../lib/inspect.svelte.js";
+  import { differenceOutcome, resolutionText } from "../lib/findings.js";
   import { mathPieces } from "../lib/comparison.js";
   import Composition from "./Composition.svelte";
   import { connectionText } from "../lib/connections.js";
@@ -74,11 +75,14 @@
   const alignments = $derived(Object.fromEntries((reading.alignments || []).map((a) => [a.id, a])));
 
   // Estimates (`estimates.py`): each requirement's printed and corrected readings with their
-  // counterexamples and certificates, the differences recorded on it, and computed hints.
-  const OUTCOME = { open: "not yet decided", difference: "a difference", resolved: "resolved", "no difference": "no difference" };
+  // counterexamples and certificates, the differences recorded on it (a resolution in the
+  // engine's words: `findings.differenceOutcome`, `findings.resolutionText`), and computed hints.
   const est = $derived(reading.estimates || { estimates: [], differences: [], resolved: [], hints: [], inherited: [] });
   const estimatesFor = (lid) => (est.estimates || []).filter((e) => e.requirement === lid);
   const differencesFor = (lid) => [...(est.differences || []), ...(est.resolved || [])].filter((d) => d.requirement === lid);
+  // The outcome of the difference that dismissed a hint, as the reading shows that difference now.
+  const settledOutcome = (h) => differenceOutcome([...(est.differences || []), ...(est.resolved || [])]
+    .find((d) => d.finding === h.settled_by) || h.settled);
   const changed = (x) => x?.currency?.state === "stale";
   // Why a record is not known to be current, in the engine's words: each part it rests on that
   // the build cannot check, once.
@@ -86,7 +90,7 @@
   function findingHead(f, cv) {
     if (cv?.headline) return cv.headline;
     if (f.verdict) return "The printed step: " + f.verdict;
-    if (f.difference) return `A ${f.difference.feature} difference: ${OUTCOME[f.difference.outcome]}`;
+    if (f.difference) return `A ${f.difference.feature} difference: ${differenceOutcome(f.difference)}`;
     if (f.impact) return impactHead(f.impact);
     return "No coverage given";
   }
@@ -428,7 +432,7 @@
                 {/each}
               {/each}
               {#each differencesFor(r.local_id) as d (d.finding)}
-                <p class="small diff" data-feature={d.feature} data-outcome={d.outcome}><span class="faint">{d.feature[0].toUpperCase() + d.feature.slice(1)}, {OUTCOME[d.outcome]}:</span> paper <code>{d.paper}</code>{#if d.lean}; Lean <code>{d.lean}</code>{/if}{#if d.transport}<span class="faint">{` · transport inspected: ${d.transport}`}</span>{/if}{#if d.resolution}<span class="faint">{` · resolved by ${d.resolution.by}: ${d.resolution.text}`}</span>{/if}{#if d.why}<span class="faint">{` · ${d.why}`}</span>{/if}</p>
+                <p class="small diff" data-feature={d.feature} data-outcome={d.outcome}><span class="faint">{d.feature[0].toUpperCase() + d.feature.slice(1)}, {differenceOutcome(d)}:</span> paper <code>{d.paper}</code>{#if d.lean}; Lean <code>{d.lean}</code>{/if}{#if d.transport}<span class="faint">{` · transport inspected: ${d.transport}`}</span>{/if}{#if d.resolution}<span class="faint" data-bridge={d.bridge_check?.state}>{` · ${resolutionText(d)}`}</span>{/if}{#if d.why}<span class="faint">{` · ${d.why}`}</span>{/if}</p>
               {/each}
               <p class="small"><button class="link" disabled={busy} onclick={() => suggestFor(r)}>Suggest nearby context</button></p>
             </div>
@@ -450,7 +454,7 @@
           {#if est.settled_hints?.length}
             <details class="dismissed"><summary class="faint small">Dismissed hints ({est.settled_hints.length})</summary>
               {#each est.settled_hints as h, i (i)}
-                <p class="small" data-hint-dismissed={h.kind}><span class="text">{h.text}</span> <span class="faint">Dismissed by {h.settled_by}{h.settled ? ` (${OUTCOME[h.settled.outcome] || h.settled.outcome}, ${h.settled.by})` : ""}{h.settled?.why ? ": " + h.settled.why : ""}</span></p>
+                <p class="small" data-hint-dismissed={h.kind}><span class="text">{h.text}</span> <span class="faint">Dismissed by {h.settled_by}{h.settled ? ` (${settledOutcome(h)}, ${h.settled.by})` : ""}{h.settled?.why ? ": " + h.settled.why : ""}</span></p>
               {/each}
             </details>
           {/if}

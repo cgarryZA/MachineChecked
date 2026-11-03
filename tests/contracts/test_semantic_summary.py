@@ -216,6 +216,26 @@ def test_finding_categories(summary):
     assert f["statements"]["input-restriction"] == 1 and f["proof_steps"]["printed-step"] == 1
 
 
+def test_a_resolution_that_does_not_hold_as_published_leaves_the_difference():
+    # A checked bridge not checked at export, and a resolution that leaves a condition open
+    # (#499); a bridge checked at export resolves its difference.
+    bridge = {"by": "checked bridge", "theorem": "X.f", "target": "X.F"}
+    work = {"P:f": [finding("f5", difference={"feature": "domain", "outcome": "resolved",
+                                              "resolution": bridge, "bridge_check": {
+                                                  "state": "unchecked", "reasons": ["r"]}})],
+            "P:b": [finding("f6", difference={"feature": "power", "outcome": "resolved",
+                                              "resolution": {"by": "argument"},
+                                              "partial": True})],
+            "P:j": [finding("f7", difference={"feature": "domain", "outcome": "resolved",
+                                              "resolution": bridge, "bridge_check": {
+                                                  "state": "checked", "reasons": []}})]}
+    index, chunks, works = records(work=work)
+    _, facts = semantic.summarise(index, chunks, works, author=AUDITOR)
+    assert facts["P:f"]["findings"] == ["input-restriction"]
+    assert "quantitative-difference" in facts["P:b"]["findings"]
+    assert facts["P:j"]["findings"] == []
+
+
 def test_formal_counts_are_kept_apart_and_no_status_changes():
     index, chunks, works = records()
     before = copy.deepcopy([(r["status_code"], r["status"], r["class"]) for r in index["claims"]])
