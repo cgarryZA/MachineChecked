@@ -604,9 +604,12 @@ a Lean expression (`conclusion`, `binder` or `at`) gives a computed hint in the 
 `estimates.hints` when the two differ in quantity (`kind` `offset`, `coefficient`, `power` or
 `terms`, with both texts, both normal forms, the variables matched and the definition the Lean
 expression stands in), or `not compared` with the reason (a variable no alignment or symbol link
-matches, a construct the TeX reader does not read: "unsupported: …"). A hint is a pointer, never
-a finding: dismiss it with a difference that names it, `"hint": {"alignment": ID, "kind":
-KIND}`. A counterexample
+matches, a construct the TeX reader does not read: "unsupported: …"). Variables aligned with Lean
+variables also give a `quantifier order` hint when the reading and the Lean statement choose them
+in a different order (`∃ C, ∀ n` against `∀ n, ∃ C`, with `dependence: {paper, lean}`), and a
+`quantifier` hint when one side produces a variable the other takes as given. A hint is a
+pointer, never a finding: dismiss it with a difference that names it, `"hint": {"alignment": ID,
+"kind": KIND}`. A counterexample
 (`counterexample`: a specialisation, its reduction and violation, its admissibility obligations)
 is read against its requirement's quantifiers, and a Lean certificate is evidence
 `{"certificate": {theorem, target, certifies}}` that Lean checks when it is recorded. A

@@ -1067,7 +1067,17 @@ coefficients; `lean.at` when it is an argument of the target); `variables` (each
 via}`: the alignment or symbol link that matched them); `conditions` (the divisors taken to be
 nonzero); and `definition` (`{name, parameter, expansion, expanded}`: the definition the Lean
 expression is an argument of, or is inside, with its expansion at these arguments). A rename and
-an equal form give none. `check --json` lists each claim's `hints` and `dismissed_hints`, each
+an equal form give none. The order of the claim's variables matched with a declaration's
+(`estimates.order_hints`) gives `quantifier order` when the paper lets a "there is" depend on a
+"for every" and the Lean's scope does not, or the other way round (with `dependence: {paper,
+lean}`, and `feature` `constant dependence` when the reading states the independence, else
+`quantifier order`), `quantifier` when one side produces a variable the other takes as given,
+and `not compared` for a variable the Lean binds inside a hypothesis, a negation, an
+alternative or an equivalence, or one of such a pair that nothing matches; `paper` is `{text,
+order}` (the variables in the reading's order), `lean` is `{text}`, and `target` is the
+variable (`{decl, var}`) whose alignment the hint belongs to. The Lean's order is read off the
+statement's tree (`symbols.scopes`: each binder's quantifier, `scope` and `after`, the variables
+it may depend on). `check --json` lists each claim's `hints` and `dismissed_hints`, each
 with the `workspace`, its auditor (`by`) and `mode`. Hints change no status and no review record;
 the semantic summary does not count them and a published audit does not carry them.
 

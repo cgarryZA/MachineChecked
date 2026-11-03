@@ -4835,6 +4835,14 @@ wsp.update(p, [
   put({"id": "a-m", "kind": "alignment", "requirements": ["m"], "lean": [{"decl": "Shape.jet_lower", "var": "n"}]}),
   put({"id": "a-h", "kind": "alignment", "requirements": ["m.h"], "expression": "m + 5", "lean": [{"decl": "Shape.jet_lower", "binder": "h"}]}),
   put({"id": "a-x", "kind": "alignment", "requirements": ["m.c"], "expression": "m + 4", "lean": [{"decl": "Shape.jet_lower", "binder": "h"}]})], s)
+# #502: one constant C before every n, aligned with Shape.bound_each, which chooses C after n.
+B = "P:thm:bound-once"
+putb = lambda r: {"op": "put", "record": {"claim": B, **r}}
+wsp.update(p, [
+  putb({"id": "rb-c", "kind": "requirement", "local_id": "c", "form": "there is", "binds": ["C"], "text": "a constant C"}),
+  putb({"id": "rb-n", "kind": "requirement", "local_id": "c.n", "parent": "c", "form": "for every", "binds": ["n"], "text": "for every n"}),
+  putb({"id": "ab-C", "kind": "alignment", "requirements": ["c"], "lean": [{"decl": "Shape.bound_each", "var": "C"}]}),
+  putb({"id": "ab-n", "kind": "alignment", "requirements": ["c.n"], "lean": [{"decl": "Shape.bound_each", "var": "n"}]})], s)
 print(json.dumps({"id": wsp.read(p)["id"]}))`, String(line));
   const { spawn } = await import("node:child_process");
   const py = spawn(process.env.PYTHON || "python3", [path.join(here, "fixtures", "workspace_server.py"), site, work]);
@@ -4899,6 +4907,22 @@ from prooflens import workspace as wsp
 f = next(r for r in ws["records"].values() if r["kind"] == "finding")
 wsp.update(p, [{"op": "delete", "id": f["id"], "base_rev": f["rev"]}])
 print("null")`);
+      });
+    }
+
+    // #502: a difference of quantifier order is a computed hint beside the witness's row.
+    for (const width of [1300, 390]) {
+      await check("a quantifier order hint is shown beside the witness's row", width, async (pg) => {
+        await pg.goto(`http://127.0.0.1:${port}/#/r/${SHAPE.release}/claim/${encodeURIComponent("P:thm:bound-once")}`);
+        await pg.locator("section.investigation").getByRole("button", { name: `Continue ${made.id}` }).click();
+        const at = pg.locator(".cmp.paired .aligned[data-alignment='ab-C']").first();
+        const h = at.locator(".hint[data-hint='quantifier order']");
+        await h.waitFor();
+        assert.match(words(await h.textContent()),
+          /^Computed hint a pointer to inspect, not a finding The paper chooses C before n, so C may not depend on n; in Shape\.bound_each, C is chosen after n and may depend on it, whatever its type mentions\. Paper there is C; for every n · Lean for every n; there is C$/);
+        assert.equal(await at.evaluate((e) => e.closest(".block")?.dataset.decl), "Shape.bound_each");
+        assert.equal(await pg.locator(".cmp.paired .aligned[data-alignment='ab-n'] .hint").count(), 0, "beside the witness only");
+        assert.ok(await pg.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), "no horizontal scroll");
       });
     }
 
