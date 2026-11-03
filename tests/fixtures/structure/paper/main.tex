@@ -149,4 +149,21 @@ A digit whose constructor index is $69$ has the value $69$.
 Half of $k + 2$ is less than $k + 2 + k$.
 \end{theorem}
 
+\begin{definition}\label{def:jets}\lean{Shape.SpaceJet}\lean{Shape.TimeJet}\lean{Shape.FullJet}\lean{Shape.supSpace}\lean{Shape.supTime}
+Let $D_{a,b}(t, x)$ be the derivative $\partial_t^a \partial_x^b u$ at time $t$ and point $x$.
+Then $J_x(D, k, C)$ says that $D_{0,b} \le C$ for every $b \le k$ (derivatives in space),
+$J_t(D, k, C)$ that $D_{a,0} \le C$ for every $a \le k$ (derivatives in time), and
+$J(D, k, C)$ that $D_{a,b} \le C$ for every $a + b \le k$ (all variables). The norm in space
+$M_x(u, t, N)$ is the largest $u(t, x)$ over $x \le N$, and the norm in time $M_t(u, x, N)$ the
+largest $u(s, x)$ over $s \le N$.
+\end{definition}
+
+\begin{theorem}\label{thm:jets}\lean{Shape.full_jet_split}
+If $J(D, k, C)$, then $J_x(D, k, C)$ and $J_t(D, k, C)$.
+\end{theorem}
+
+\begin{theorem}\label{thm:norms}\lean{Shape.norm_bounds}
+If $M_x(u, t, N) \le C$ and $M_t(u, x, N) \le C$, then both bounds hold.
+\end{theorem}
+
 \end{document}

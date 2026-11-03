@@ -696,6 +696,74 @@ def test_definitions_expand_at_their_arguments(tmp_path, toolchain, monkeypatch)
     assert "defined_by" not in decls[hidden + "half.match_1"]
 
 
+@needs_lean
+@needs_tex
+@pytest.mark.parametrize("toolchain", [None, "leanprover/lean4:v4.24.0"])
+def test_derivative_bounds_and_norms_stay_distinct(tmp_path, toolchain):
+    """Bounds on the derivatives in space, in time and in all variables, and norms in space and
+    in time, differ only in what they range over (#538): each application keeps its own
+    definition, expanded at its arguments to its own body, in the expansions and in the
+    readable statement, and a paper notation matched with one of them differs in its `head`
+    from Lean's application of another."""
+    from prooflens import expressions as ex
+    from prooflens.readable import readable
+    root = build_copy(tmp_path, toolchain)
+    view = build_view(root, root / "paper/main.tex", root / ".machinechecked", log=lambda m: None)
+    rec = {l["name"]: l["record"] for c in view["body"]["claims"] for l in c["links"]}
+    jets, norms = rec["Shape.full_jet_split"], rec["Shape.norm_bounds"]
+
+    def bodies(r):
+        """Each expansion of a statement once, by the definition it expands."""
+        seen, out = set(), {}
+        for pp in symbols.printed(r):
+            for x in (pp or {}).get("expansions") or []:
+                if x["id"] not in seen:
+                    seen.add(x["id"])
+                    assert x["checked"] and x["defined_by"] == "body"
+                    out.setdefault(x["name"], []).append(x["body"]["text"])
+        return out
+
+    assert bodies(jets) == {
+        "Shape.FullJet": ["∀ (a b : Nat), a + b ≤ k → ∀ (t x : Nat), D a b t x ≤ C"],
+        "Shape.SpaceJet": ["∀ (b : Nat), b ≤ k → ∀ (t x : Nat), D 0 b t x ≤ C"],
+        "Shape.TimeJet": ["∀ (a : Nat), a ≤ k → ∀ (t x : Nat), D a 0 t x ≤ C"]}
+    assert bodies(norms) == {
+        "Shape.supSpace": ["Shape.maxUpTo (u t) N"] * 2,
+        "Shape.supTime": ["Shape.maxUpTo (fun (s : Nat) => u s x) N"] * 2}
+    # The readable statement lists each definition once, with its own applications, and each
+    # row the definitions applied in it.
+    for r, names in ((jets, ["Shape.FullJet", "Shape.SpaceJet", "Shape.TimeJet"]),
+                     (norms, ["Shape.supSpace", "Shape.supTime"])):
+        rd = readable(r, r["name"])
+        assert [d["name"] for d in rd["definitions"]] == names
+    rows = readable(jets, "Shape.full_jet_split")["rows"]
+    [hyp] = [r for r in rows if r["k"] == "condition"]
+    [concl] = [r for r in rows if r["k"] == "and"]
+    assert [d["name"] for d in hyp["definitions"]] == ["Shape.FullJet"]
+    assert [[d["name"] for row in part for d in row["definitions"]] for part in concl["parts"]] \
+        == [["Shape.SpaceJet"], ["Shape.TimeJet"]]
+
+    # Read as mathematics, each application names its definition; the paper's notation matched
+    # with one of them is the same as Lean's application of it, and differs in its head from
+    # Lean's application of another.
+    space, time = (n["leaf"]["math"] for n in shape(jets)["args"])
+    assert (space["k"], space["name"], time["name"]) == \
+        ("apply", "Shape.SpaceJet", "Shape.TimeJet")
+    heads = {"J_x": "Shape.SpaceJet", "J_t": "Shape.TimeJet", "J": "Shape.FullJet"}
+    dkc, names = {"D": "v:0", "k": "v:1", "C": "v:2"}, {"v:0": "D", "v:1": "k", "v:2": "C"}
+    assert ex.compare("J_x(D, k, C)", space, dkc, names, heads)["outcome"] == "same"
+    res = ex.compare("J_t(D, k, C)", space, dkc, names, heads)
+    assert (res["kind"], res["heads"]) == (
+        "head", {"paper": {"notation": "J_t", "decl": "Shape.TimeJet"}, "lean": "Shape.SpaceJet"})
+    hs = norms["binders"][5]["type"]["math"]
+    assert (hs["k"], hs["args"][0]["name"]) == ("rel", "Shape.supSpace")
+    m = {"M_x": "Shape.supSpace", "M_t": "Shape.supTime"}
+    utn = {"u": "v:0", "t": "v:1", "x": "v:2", "N": "v:3"}
+    lean_names = {v: k for k, v in utn.items()}
+    assert ex.compare("M_x(u, t, N)", hs["args"][0], utn, lean_names, m)["outcome"] == "same"
+    assert ex.compare("M_t(u, x, N)", hs["args"][0], utn, lean_names, m)["kind"] == "head"
+
+
 def make_structure():
     """`web/tests/fixtures/make_structure.py`, which makes the reader's copy of this fixture's
     data."""
