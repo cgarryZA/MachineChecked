@@ -165,6 +165,16 @@ segments (outer before inner; none for a very large term), so that a reader can 
 sub-term; an application printed with notation (`x = y`, `∃ x, p`, `↑n`) has the application's
 identity. Each identity names one sub-term of the printed expression.
 
+Lean prints an application without its instance arguments, which a reader takes to be those
+instance resolution finds where the application stands. One that may not be is printed (#515):
+its application is printed with `@`, its explicit arguments, the instance arguments to show and
+`_` for its other implicit arguments (`@MeasureTheory.StronglyMeasurable _ _ _ m f` for Mathlib's
+`StronglyMeasurable[m] f`). An instance argument is left out only when resolution in its context
+finds it, up to unfolding instances, and finds no other one when a local instance it uses is left
+out: with two σ-algebras `mΩ` and `m` on `Ω` in scope, resolution finds the later one, `m`, but a
+reader cannot tell which is meant, so it is printed. An argument whose check fails is printed.
+This changes what is printed only, never a fingerprint.
+
 A statement record holds the whole proposition as one tree, `tree`. Its `binders` (the binders
 that open it, each `{role, name, id, type, binder, supplies}`, `role` one of `forall`,
 `hypothesis`, `instance`, `exists`) and its `conclusion` (the rest, printed whole) are read off the
@@ -241,7 +251,8 @@ with its `field`, `max`, `min`, `sup`, `inf`, `union`, `inter`, `sdiff`, `compl`
 `succ`, `card`; `args`, `in`); `num` (`value`, `in`), `top`, `bot`, `univ`, `empty`, `str`;
 `var` (a variable of the statement: `var`, its number, and `name`), `bound` (one bound inside the
 expression: `binder`, its binder's identity), `local`; `apply` (a named function or predicate
-written as an application: `name`, its explicit `args` in order, `class`), `app` (a function
+written as an application: `name`, its explicit `args` in order, `class`, and `instances`, the
+instance arguments a reader must see, printed as above), `app` (a function
 that is a variable, or a field, applied: `fn`, `args`), `field` (`of`, `field`, `structure`,
 `projection`, and `via`, the parent projections the printed field looks through), `coe` (a
 coercion: `kind` `coe`, `fun` or `sort`, `fn`, `of`, and for `coe` the types it goes `from` and
@@ -259,7 +270,9 @@ the measure-theoretic `prod_measure` (`left`, `right`), `volume` (`space`), `ae_
 `interval` (`kind`: `Icc`, `Ico`, …, `lo`, `hi`, `in`), `singleton`, `range`. A constant is
 recognised by its name, whatever library declares it. A constant with notation of its own that is
 not recognised, and anything else, is `lean`: the sub-term as exact Lean (`text`), as the reader
-shows it. At most 2000 nodes of one expression are read; a failure is a `lean` node with
+shows it. An application with instance arguments a reader must see is never read as the notion it
+states with the instances resolution finds: it is `apply` with its `instances`, or `lean` when its
+constant has notation of its own. At most 2000 nodes of one expression are read; a failure is a `lean` node with
 `error`. `math` is display only: no status, fingerprint or hash reads it.
 
 A clause's statement in the manifest, a link's statement in the zero-configuration view and a

@@ -2249,6 +2249,17 @@ await check("in the local reader a symbol is linked by choosing it and clicking 
     assert.ok(await st.locator("[data-readable] [data-k='coe']").count() > 0, "the coercion is drawn as one");
     assert.equal(await st.locator("[data-readable] .inner.within").count(), 1, "the quantified hypothesis shows its own structure");
 
+    // A σ-algebra m besides the instance mΩ: each application after m is bound names the one it
+    // is taken for (#515); before, f and g are measurable for the instance.
+    await pg.goto(origin + `/structure/#/r/${SHAPE.release}/read/P/${encodeURIComponent("P:thm:adapted")}`);
+    st = stmts.first();
+    await st.locator(".concl").waitFor();
+    const said = (await st.locator("[data-readable]").allTextContents()).join(" ").replace(/\s+/g, "");
+    for (const s of ["StronglyMeasurable(f)∧Measurable(g)", "StronglyMeasurable[m](f)", "Measurable[m](g)", "StronglyMeasurable[mΩ](g)"]) {
+      assert.ok(said.includes(s), s);
+    }
+    assert.match((await st.locator(".concl [data-readable]").textContent()).replace(/\s+/g, ""), /StronglyMeasurable\[m\]\(g\)/);
+
     // Notation not read as mathematics stays exact Lean.
     await pg.goto(origin + `/structure/#/r/${SHAPE.release}/read/P/${encodeURIComponent("P:thm:one-map")}`);
     st = stmts.first();

@@ -382,6 +382,46 @@ def test_definitions_are_exported_as_written(tmp_path, toolchain):
         {"definition": "Shape.Digit.val", "equations": v["equations"][64:]}
 
 
+@needs_lean
+@needs_tex
+@pytest.mark.parametrize("toolchain", [None, "leanprover/lean4:v4.24.0"])
+def test_instance_arguments_a_reader_must_see_are_printed(tmp_path, toolchain):
+    """Lean prints an application without its instance arguments, which a reader takes to be
+    those instance resolution finds. One that may not be is printed (#515): Mathlib's
+    `StronglyMeasurable[m] f` is `@StronglyMeasurable _ _ _ m f`, not `StronglyMeasurable f`,
+    which reads as measurability for the instance. With two σ-algebras `mΩ` and `m` on `Ω` in
+    scope, resolution finds the later one, `m`, so each application names its own; before `m` is
+    bound, the instance is the only one and stays implicit. The readable statement names it too."""
+    root = build_copy(tmp_path, toolchain)
+    rec = statement(root, "Shape.adapted")
+    names = [b["name"] for b in rec["binders"]]
+    assert names == ["Ω", "mΩ", "f", "g", "h1", "m", "h2", "h3", "h4"]
+    types = {b["name"]: b["type"] for b in rec["binders"]}
+    assert types["h1"]["text"] == "MeasureTheory.StronglyMeasurable f ∧ Measurable g"
+    assert types["h2"]["text"] == "@MeasureTheory.StronglyMeasurable _ _ _ m f"
+    assert types["h3"]["text"] == "@Measurable _ _ m _ g"
+    assert types["h4"]["text"] == "@MeasureTheory.StronglyMeasurable _ _ _ mΩ g"
+    assert rec["conclusion"]["text"] == "@MeasureTheory.StronglyMeasurable _ _ _ m g"
+    exact = " ".join(rec["exact"]["text"].split())
+    for h in ("h1", "h2", "h3", "h4"):
+        assert types[h]["text"] in exact, h
+    # Each σ-algebra printed is an occurrence of the statement's variable, which the reader follows.
+    m = names.index("m")
+    assert var_refs(types["h2"]) == [("m", m), ("f", 2)]
+    assert var_refs(types["h4"]) == [("mΩ", 1), ("g", 3)]
+    # Read as mathematics: the predicate applied to its function, with its σ-algebra.
+    math = types["h2"]["math"]
+    assert (math["k"], math["name"], [a["name"] for a in math["args"]]) == \
+        ("apply", "MeasureTheory.StronglyMeasurable", ["f"])
+    assert [(i["k"], i["var"]) for i in math["instances"]] == [("var", m)]
+    assert [i["var"] for i in types["h4"]["math"]["instances"]] == [1]
+    assert all("instances" not in a for a in types["h1"]["math"]["args"])
+    # The hypothesis stated before m is bound reads the same in its own tree.
+    [h1] = [n for n in spine(rec) if n["name"] == "h1"]
+    assert [a["leaf"]["text"] for a in h1["logic"]["args"]] == \
+        ["MeasureTheory.StronglyMeasurable f", "Measurable g"]
+
+
 def props(o, kind="proposition"):
     return [(p["field"], p["type"]["text"]) for p in o.get("properties", []) if p["kind"] == kind]
 

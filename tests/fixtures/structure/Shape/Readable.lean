@@ -4,9 +4,9 @@ import Shape.Analysis
 # Statements to read as mathematics
 
 Synthetic statements for the readable presentation of a statement: the two orders of a constant
-and a "for every", a linear isometry with representatives unique almost everywhere, and a
-statement with an alternative, two witnesses of one name, coercions and a quantified
-assumption.
+and a "for every", a linear isometry with representatives unique almost everywhere, a statement
+with an alternative, two witnesses of one name, coercions and a quantified assumption, and
+measurability for a σ-algebra other than the instance.
 -/
 
 namespace Shape
@@ -38,5 +38,15 @@ an assumption about every number up to `n`. -/
 theorem alternatives (n : Nat) (b : ℝ) (h : ∀ m : Nat, m ≤ n → (m : ℝ) ≤ b) :
     (∃ x : ℝ, (n : ℝ) < x) ∨ ∃ x : Nat, 2 * x = n :=
   Or.inl ⟨⟨n + 1⟩, Nat.lt_succ_self n⟩
+
+/-- Measurability for a σ-algebra `m` on `Ω` besides the instance `mΩ`: before `m` is bound, `f`
+and `g` are measurable for `mΩ`; after, each application names its σ-algebra (resolution would
+find `m`, the later one). -/
+def Adapted : Prop :=
+  ∀ {Ω : Type} [mΩ : MeasurableSpace Ω] (f g : Ω → ℝ), (StronglyMeasurable f ∧ Measurable g) →
+    ∀ m : MeasurableSpace Ω, StronglyMeasurable[m] f → Measurable[m] g →
+      StronglyMeasurable[mΩ] g → StronglyMeasurable[m] g
+
+theorem adapted : Adapted := fun _ _ _ _ _ _ _ => trivial
 
 end Shape

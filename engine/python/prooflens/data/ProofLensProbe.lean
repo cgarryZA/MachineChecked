@@ -407,25 +407,193 @@ def termsJson (terms : Array (Nat × Nat × String)) : Json := Id.run do
       out := out.push (Json.mkObj [("from", toJson a), ("to", toJson b), ("id", Json.str id)])
   return Json.arr (if out.size > 3000 then #[] else out)
 
+/-! ### Instance arguments a reader must see
+
+An application is printed without its instance arguments (`[MeasurableSpace α]`), which a reader
+takes to be those instance resolution finds where the application stands. One that may not be is
+printed (#515): its application is printed with `@`, its explicit arguments, the instance
+arguments to show and `_` for its other implicit arguments (`@StronglyMeasurable _ _ _ m f`). An
+instance argument is left out when resolution in its context finds it (up to unfolding
+instances), and finds no other one when a local instance it uses is left out: with two σ-algebras
+`mΩ` and `m` on `Ω` in scope, resolution finds `m`, the later one, but a reader cannot tell which
+is meant, so `m` is printed. An argument whose check fails, or that comes after the most checks
+of one expression, is printed; when the walk itself fails, every implicit argument of the
+expression is. Display only: fingerprints read the expression, not its printing. -/
+
+/-- An application whose instance arguments are not all left out: its position, its number of
+arguments, the instance arguments to print and the implicit arguments to print as `_`. -/
+structure ShownApp where
+  pos : SubExpr.Pos
+  args : Nat
+  shown : Array Nat
+  hidden : Array Nat
+  deriving Inhabited
+
+/-- The applications of an expression with instance arguments to print, by position in the
+expression; `failed` when the walk failed. -/
+structure Shown where
+  apps : Array ShownApp := #[]
+  failed : Bool := false
+  deriving Inhabited
+
+/-- At most this many nodes of one expression are walked, and this many instance arguments
+checked; the arguments after the last check are printed. -/
+def maxShownNodes : Nat := 20000
+def maxShownChecks : Nat := 2000
+
+structure ShownWalk where
+  out : IO.Ref (Array ShownApp)
+  nodes : IO.Ref Nat
+  checks : IO.Ref Nat
+  /-- Each check, by the local instances it was made with, the class and the argument. -/
+  cache : IO.Ref (Std.HashMap (Array Expr × Expr × Expr) Bool)
+
+/-- Whether instance resolution, in the current context, finds `a` for the class `ty` (up to
+unfolding instances), and finds no other instance when one of the local instances it uses is
+left out. -/
+def instanceFound (a ty : Expr) : MetaM Bool := do
+  let some r ← synthInstance? ty | return false
+  unless ← withTransparency .instances (isDefEq r a) do return false
+  for li in ← getLocalInstances do
+    unless r.containsFVar li.fvar.fvarId! do continue
+    let other ← withTheReader Meta.Context (fun ctx => { ctx with
+        localInstances := ctx.localInstances.filter (·.fvar != li.fvar) }) (synthInstance? ty)
+    if let some r' := other then
+      unless ← withTransparency .instances (isDefEq r' a) do return false
+  return true
+
+/-- Whether the instance argument `a` (of class `ty`) may be left out: `instanceFound`, false
+when the check fails or no check is left. -/
+def instanceLeftOut (w : ShownWalk) (a ty : Expr) : MetaM Bool := do
+  let key := ((← getLocalInstances).map (·.fvar), ty, a)
+  if let some b := (← w.cache.get)[key]? then return b
+  if (← w.checks.get) ≥ maxShownChecks then return false
+  w.checks.modify (· + 1)
+  let b ← tryCatchRuntimeEx (withCurrHeartbeats (instanceFound a ty)) fun _ => pure false
+  w.cache.modify (·.insert key b)
+  return b
+
+/-- The instance arguments of `f` applied to `args` to print, and its other implicit arguments. -/
+def instancesShown (w : ShownWalk) (f : Expr) (args : Array Expr) : MetaM (Array Nat × Array Nat) := do
+  let mut ty ← inferType f
+  let mut shown := #[]
+  let mut implicit := #[]
+  for h : i in [0:args.size] do
+    unless ty.isForall do ty ← whnf ty
+    let .forallE _ d b bi := ty | break
+    if bi.isInstImplicit then
+      if ← instanceLeftOut w args[i] d then implicit := implicit.push i
+      else shown := shown.push i
+    else if !bi.isExplicit then implicit := implicit.push i
+    ty := b.instantiate1 args[i]
+  return (shown, implicit)
+
+/-- Walk `e`, at position `pos`, recording the applications with instance arguments to print. -/
+partial def shownVisit (w : ShownWalk) (e : Expr) (pos : SubExpr.Pos) : MetaM Unit := do
+  if (← w.nodes.get) == 0 then return
+  w.nodes.modify (· - 1)
+  match e with
+  | .forallE n t b bi | .lam n t b bi =>
+    shownVisit w t pos.pushBindingDomain
+    withLocalDecl n bi t fun x => shownVisit w (b.instantiate1 x) pos.pushBindingBody
+  | .letE n t v b _ =>
+    shownVisit w t pos.pushLetVarType
+    shownVisit w v pos.pushLetValue
+    withLetDecl n t v fun x => shownVisit w (b.instantiate1 x) pos.pushLetBody
+  | .mdata _ b => shownVisit w b pos
+  | .proj _ _ b => shownVisit w b pos.pushProj
+  | .app .. =>
+    let f := e.getAppFn
+    let args := e.getAppArgs
+    shownVisit w f (pos.pushNaryFn args.size)
+    for h : i in [0:args.size] do
+      shownVisit w args[i] (pos.pushNaryArg args.size i)
+    let (shown, hidden) ← try instancesShown w f args catch _ => pure (#[], #[])
+    unless shown.isEmpty do
+      w.out.modify (·.push { pos, args := args.size, shown, hidden })
+  | _ => pure ()
+
+/-- The instance arguments of `e` a reader must see (`Shown`), in the current context. -/
+def instancesToShow (e : Expr) : MetaM Shown := do
+  let w : ShownWalk := { out := ← IO.mkRef #[], nodes := ← IO.mkRef maxShownNodes,
+                         checks := ← IO.mkRef 0, cache := ← IO.mkRef {} }
+  let ok ← tryCatchRuntimeEx (withCurrHeartbeats do shownVisit w e .root; return true)
+    fun _ => pure false
+  return { apps := ← w.out.get, failed := !ok }
+
+/-- The options that print the instance arguments `s` says: an application with some is printed
+explicitly, at each of its partial applications that holds one (a delaborator may print a part of
+an application), and its other implicit arguments are `_`. -/
+def Shown.options (s : Shown) : PrettyPrinter.Delaborator.OptionsPerPos := Id.run do
+  let mut o : PrettyPrinter.Delaborator.OptionsPerPos := {}
+  for a in s.apps do
+    let first := a.shown.foldl min a.args
+    let mut p := a.pos
+    for _ in [0:a.args - first] do
+      o := o.insertAt p `pp.explicit (.ofBool true)
+      p := p.pushAppFn
+    for i in a.hidden do
+      o := o.insertAt (a.pos.pushNaryArg a.args i) `pp.analysis.hole (.ofBool true)
+  return o
+
+/-- The part of `s` inside the sub-term at `p`, by positions in that sub-term. -/
+def Shown.under (s : Shown) (p : SubExpr.Pos) : Shown := Id.run do
+  let base := p.toArray
+  let mut apps := #[]
+  for a in s.apps do
+    let q := a.pos.toArray
+    if q.size ≥ base.size && q.extract 0 base.size == base then
+      apps := apps.push { a with pos := SubExpr.Pos.ofArray (q.extract base.size q.size) }
+  return { apps, failed := s.failed }
+
+/-- `s` with its positions in an expression standing at `root`. -/
+def Shown.at (s : Shown) (root : SubExpr.Pos) : Shown :=
+  { s with apps := s.apps.map fun a => { a with pos := root.append a.pos } }
+
+/-- The delaborator that prints the instance arguments `s` says. -/
+def Shown.delab (s : Shown) : PrettyPrinter.Delaborator.Delab :=
+  withTheReader PrettyPrinter.Delaborator.Context
+    (fun c => { c with optionsPerPos := s.options }) PrettyPrinter.Delaborator.delab
+
+/-- Runs `x` with every implicit argument printed when the walk of `s` failed. -/
+def Shown.fallback (s : Shown) (x : MetaM α) : MetaM α :=
+  if s.failed then withOptions (·.setBool `pp.explicit true) x else x
+
+/-- `e` printed as text, with the instance arguments `s` says. -/
+def ppShown (e : Expr) (s : Shown) : MetaM Format :=
+  s.fallback do
+    if s.apps.isEmpty then ppExpr e
+    else return (← PrettyPrinter.ppExprWithInfos e s.options).fmt
+
+/-- `e` printed as tagged code, with the instance arguments `s` says. -/
+def ppShownTagged (e : Expr) (s : Shown) : MetaM Widget.CodeWithInfos :=
+  s.fallback do
+    if s.apps.isEmpty then Widget.ppExprTagged e
+    else Widget.ppExprTagged e s.delab
+
 /-- The fields of a pretty-printed expression with navigable constants and binders; plain text
 if tagging fails, and a marker if printing fails, so that one large term cannot stop the probe.
-`root` is the position of `e` in the whole proposition (`id`), after the prefix `pfx`. -/
+`root` is the position of `e` in the whole proposition (`id`), after the prefix `pfx`. The
+instance arguments a reader must see are printed (`instancesToShow`, unless given as `shown`). -/
 def ppFields (e : Expr) (vars : Array FVarId := #[]) (root : SubExpr.Pos := .root)
-    (pfx : String := "") : MetaM (List (String × Json)) := do
+    (pfx : String := "") (shown : Option Shown := none) : MetaM (List (String × Json)) := do
+  let s ← match shown with
+    | some s => pure s
+    | none => instancesToShow e
   try
     -- The type of a bound variable is printed (`pp.funBinderTypes`): `∃ Φ : T, …` says what Φ
     -- is. The head of every application is tagged too (`pp.tagAppFns`), so that the function a
     -- term applies is a constant the reader can name. The text and the tagged code are printed
     -- with the same options.
     let typed := fun (o : Options) => o.setBool `pp.funBinderTypes true
-    let code ← withOptions (fun o => (typed o).setBool `pp.tagAppFns true) (Widget.ppExprTagged e)
-    let text := toString (← withOptions typed (ppExpr e))
+    let code ← withOptions (fun o => (typed o).setBool `pp.tagAppFns true) (ppShownTagged e s)
+    let text := toString (← withOptions typed (ppShown e s))
     let (segs, terms) := segments vars root pfx (tagFix e code (← getLCtx)) code [] #[] #[]
     return [("text", Json.str text), ("segments", Json.arr segs), ("terms", termsJson terms),
       ("id", Json.str (pfx ++ toString root))]
   catch _ =>
     try
-      return [("text", Json.str (toString (← ppExpr e)))]
+      return [("text", Json.str (toString (← ppShown e s)))]
     catch err =>
       return [("text", Json.str "(not printable)"),
         ("error", Json.str (toString (← err.toMessageData.toString)))]
@@ -484,9 +652,12 @@ isometries with their scalars, measures); and the measure-theoretic notions (alm
 equality almost everywhere, product measures, volume, integrals, a representative of an a.e.
 class, σ-algebras, measure spaces, σ-finite, finite and probability measures). A constant with
 notation of its own that is not recognised here stays exact Lean (`lean`, with its text), and so
-does anything else not recognised. Names are matched by value, so the probe needs no import of
-the library that declares them. The reader writes the words; this says what is there. Display
-only. -/
+does anything else not recognised. An application with instance arguments a reader must see
+(`instancesToShow`) is an application of a named function or predicate with those arguments
+(`instances`), or exact Lean that prints them when it has notation of its own: it is never read
+as the notion it states with the instances resolution finds. Names are matched by value, so the
+probe needs no import of the library that declares them. The reader writes the words; this says
+what is there. Display only. -/
 
 /-- At most this many nodes of one printed expression are read as mathematics; the rest of it
 stays exact Lean. -/
@@ -495,13 +666,25 @@ def maxMathNodes : Nat := 2000
 /-- What the reading of one expression carries: the statement's variables (`vars`, numbered as
 in `segments`), the variables bound inside the expression with the identity of their binder,
 the prefix of its identities, whether its nodes are sub-terms of the expression (`anchored`; a
-type Lean infers, such as the target of a coercion, is not) and the nodes it may still read. -/
+type Lean infers, such as the target of a coercion, is not), the nodes it may still read and the
+instance arguments to print (`shown`, by the positions the nodes stand at, and `shownAt`, the
+indices of those arguments at each). -/
 structure MathCtx where
   vars : Array FVarId
   bound : Array (FVarId × String) := #[]
   pfx : String
   anchored : Bool := true
   budget : IO.Ref Nat
+  shown : Shown := {}
+  shownAt : Std.HashMap Nat (Array Nat) := {}
+
+/-- `c` printing the instance arguments `s` says (by the positions the nodes stand at). -/
+def MathCtx.showing (c : MathCtx) (s : Shown) : MathCtx :=
+  { c with shown := s, shownAt := s.apps.foldl (fun m a => m.insert a.pos.asNat a.shown) {} }
+
+/-- Whether the application at `p` has instance arguments to print. -/
+def MathCtx.showsAt (c : MathCtx) (p : SubExpr.Pos) : Bool :=
+  c.shown.failed || c.shownAt.contains p.asNat
 
 /-- A node of kind `k` at the identity `id`, with its fields. -/
 def MathCtx.node (c : MathCtx) (k id : String) (fs : List (String × Json)) : Json :=
@@ -568,8 +751,9 @@ def mathBinders : List (Name × String × Nat × List String) :=
    (`MeasureTheory.lintegral, "lintegral", 1, ["measure"])]
 
 /-- The filter of "almost everywhere" for a measure (`MeasureTheory.ae μ`), with the measure and
-its position. -/
-def aeMeasure? (f : Expr) (pos : SubExpr.Pos) : Option (Expr × SubExpr.Pos) :=
+its position; none when it has instance arguments to print. -/
+def aeMeasure? (c : MathCtx) (f : Expr) (pos : SubExpr.Pos) : Option (Expr × SubExpr.Pos) :=
+  if c.showsAt pos then none else
   let f := f.consumeMData
   let n := f.getAppNumArgs
   match f.getAppFn with
@@ -600,8 +784,9 @@ def headPos : Nat → SubExpr.Pos → SubExpr.Pos
   | j + 1, p => headPos j p.pushAppFn
 
 /-- `s` with the parent projections around it removed (`s.toBase` is `s`), with its position and
-the projections removed, outermost first: the printed `s.path` names `s`. -/
-partial def peelParents (env : Environment) (s : Expr) (p : SubExpr.Pos) :
+the projections removed, outermost first: the printed `s.path` names `s`. A projection with
+instance arguments to print stays. -/
+partial def peelParents (c : MathCtx) (env : Environment) (s : Expr) (p : SubExpr.Pos) :
     Expr × SubExpr.Pos × Array String :=
   let s := s.consumeMData
   match s.getAppFn with
@@ -609,17 +794,18 @@ partial def peelParents (env : Environment) (s : Expr) (p : SubExpr.Pos) :
     match env.getProjectionFnInfo? q with
     | some info =>
       let k := s.getAppNumArgs
-      if !info.fromClass && k == info.numParams + 1 &&
+      if !info.fromClass && k == info.numParams + 1 && !c.showsAt p &&
           (getStructureParentInfo env q.getPrefix).any (·.projFn == q) then
-        let (s', p', via) := peelParents env (s.getArg! info.numParams) (p.pushNaryArg k info.numParams)
+        let (s', p', via) := peelParents c env (s.getArg! info.numParams) (p.pushNaryArg k info.numParams)
         (s', p', #[q.toString] ++ via)
       else (s, p, #[])
     | none => (s, p, #[])
   | _ => (s, p, #[])
 
-/-- A sub-term kept as exact Lean, with its text. -/
-def exactMath (c : MathCtx) (e : Expr) (id : String) : MetaM Json := do
-  let text ← try pure (toString (← ppExpr e)) catch _ => pure "(not printable)"
+/-- A sub-term (at `pos`) kept as exact Lean, with its text, which prints its instance
+arguments as `c` says. -/
+def exactMath (c : MathCtx) (e : Expr) (pos : SubExpr.Pos) (id : String) : MetaM Json := do
+  let text ← try pure (toString (← ppShown e (c.shown.under pos))) catch _ => pure "(not printable)"
   return c.node "lean" id [("text", Json.str (if text.length > 2000 then prefixOf text 2000 ++ " …" else text))]
 
 mutual
@@ -652,6 +838,7 @@ partial def mathOf (c : MathCtx) (e : Expr) (pos : SubExpr.Pos) : MetaM Json := 
   | .app .. =>
     let f := e.getAppFn
     let args := e.getAppArgs
+    if c.showsAt pos then return ← shownMath c e pos id
     match f.consumeMData with
     | .const n _ => constMath c e n args pos id
     | .fvar _ | .proj .. =>
@@ -660,7 +847,7 @@ partial def mathOf (c : MathCtx) (e : Expr) (pos : SubExpr.Pos) : MetaM Json := 
       for i in ← explicitArgs f args.size do
         out := out.push (← mathOf c args[i]! (pos.pushNaryArg args.size i))
       return c.node "app" id [("fn", fj), ("args", Json.arr out)]
-    | _ => exactMath c e id
+    | _ => exactMath c e pos id
   | .forallE n t b bi =>
     if ← isProp e then
       if !b.hasLooseBVars && (← isProp t) then
@@ -677,7 +864,26 @@ partial def mathOf (c : MathCtx) (e : Expr) (pos : SubExpr.Pos) : MetaM Json := 
     let field := ((getStructureFields env s)[i]?).map (·.toString) |>.getD (toString (i + 1))
     return c.node "field" id [("of", ← mathOf c b pos.pushProj), ("field", Json.str field),
       ("structure", Json.str s.toString)]
-  | _ => exactMath c e id
+  | _ => exactMath c e pos id
+
+/-- An application with instance arguments to print, at `pos`: of a named function or predicate
+without notation of its own, its explicit arguments and those instance arguments (`instances`);
+otherwise exact Lean, which prints them. -/
+partial def shownMath (c : MathCtx) (e : Expr) (pos : SubExpr.Pos) (id : String) : MetaM Json := do
+  let f := e.getAppFn
+  let args := e.getAppArgs
+  let some shown := c.shownAt[pos.asNat]? | exactMath c e pos id
+  let .const n _ := f.consumeMData | exactMath c e pos id
+  let env ← getEnv
+  if hasNotation env n then return ← exactMath c e pos id
+  let mut out := #[]
+  for i in ← explicitArgs f args.size do
+    out := out.push (← mathOf c args[i]! (pos.pushNaryArg args.size i))
+  let mut insts := #[]
+  for i in shown do
+    insts := insts.push (← mathOf c args[i]! (pos.pushNaryArg args.size i))
+  return c.node "apply" id [("name", Json.str n.toString), ("args", Json.arr out),
+    ("instances", Json.arr insts), ("class", toJson (isClass env n))]
 
 /-- A binder `n : t` over `b`, the binder at `pos` (a `∀`, or the `fun` of a "there is" or of a
 predicate), as the node of kind `k` at `id`, with `fs`. Its variable is bound for `b`. -/
@@ -701,7 +907,9 @@ partial def predMath (c : MathCtx) (k : String) (p : Expr) (pos : SubExpr.Pos) (
 
 /-- The type of `x` read as mathematics, not anchored: it is not a sub-term of the expression. -/
 partial def typeMath (c : MathCtx) (x : Expr) : MetaM Json := do
-  try mathOf { c with anchored := false } (← instantiateMVars (← inferType x)) .root
+  try
+    let t ← instantiateMVars (← inferType x)
+    mathOf (({ c with anchored := false } : MathCtx).showing (← instancesToShow t)) t .root
   catch _ => return Json.null
 
 /-- An application of the constant `n` to `args`. -/
@@ -740,7 +948,7 @@ partial def constMath (c : MathCtx) (e : Expr) (n : Name) (args : Array Expr) (p
       ("in", ← arg 0)]
   -- Almost everywhere, and other filters.
   if n == `Filter.EventuallyEq && k == 5 then
-    match aeMeasure? args[2]! (pos.pushNaryArg 5 2) with
+    match aeMeasure? c args[2]! (pos.pushNaryArg 5 2) with
     | some (μ, mp) =>
       return c.node "rel" id [("op", "ae_eq"), ("args", Json.arr #[← arg 3, ← arg 4]),
         ("measure", ← mathOf c μ mp)]
@@ -748,11 +956,11 @@ partial def constMath (c : MathCtx) (e : Expr) (n : Name) (args : Array Expr) (p
       return c.node "rel" id [("op", "eventually_eq"), ("args", Json.arr #[← arg 3, ← arg 4]),
         ("filter", ← arg 2)]
   if n == `Filter.Eventually && k == 3 then
-    let (w, by_) ← match aeMeasure? args[2]! (pos.pushNaryArg 3 2) with
+    let (w, by_) ← match aeMeasure? c args[2]! (pos.pushNaryArg 3 2) with
       | some (μ, mp) => do pure ("ae", ("measure", ← mathOf c μ mp))
       | none => do pure ("eventually", ("filter", ← arg 2))
     return ← predMath c w args[1]! (pos.pushNaryArg 3 1) id [by_]
-  if let some (μ, mp) := aeMeasure? e pos then
+  if let some (μ, mp) := aeMeasure? c e pos then
     return c.node "ae_filter" id [("measure", ← mathOf c μ mp)]
   -- Numbers.
   if n == `OfNat.ofNat && k == 3 then
@@ -785,7 +993,8 @@ partial def constMath (c : MathCtx) (e : Expr) (n : Name) (args : Array Expr) (p
     if let .lam _ _ b _ := args[1]!.consumeMData then
       let b := b.consumeMData
       if b.isAppOfArity `Membership.mem 5 && !(b.getArg! 3).hasLooseBVars &&
-          (b.getArg! 4).consumeMData == .bvar 0 then
+          (b.getArg! 4).consumeMData == .bvar 0 &&
+          !c.showsAt (pos.pushNaryArg 2 1).pushBindingBody then
         let sp := (pos.pushNaryArg 2 1).pushBindingBody.pushNaryArg 5 3
         return c.node "coe" id [("kind", "sort"), ("of", ← mathOf c (b.getArg! 3) sp)]
     return ← predMath c "subtype" args[1]! (pos.pushNaryArg 2 1) id []
@@ -802,7 +1011,7 @@ partial def constMath (c : MathCtx) (e : Expr) (n : Name) (args : Array Expr) (p
     if expl.size == 3 then
       let σ := args[expl[0]!]!.consumeMData
       let σp := pos.pushNaryArg k expl[0]!
-      let scalars ← if σ.isAppOf `RingHom.id && σ.getAppNumArgs ≥ 1 then do
+      let scalars ← if σ.isAppOf `RingHom.id && σ.getAppNumArgs ≥ 1 && !c.showsAt σp then do
           pure [("field", ← mathOf c σ.getAppArgs[0]! (σp.pushNaryArg σ.getAppNumArgs 0))]
         else do pure [("semilinear", ← mathOf c σ σp)]
       return c.node w id (scalars ++ [("domain", ← arg expl[1]!), ("codomain", ← arg expl[2]!)])
@@ -822,7 +1031,8 @@ partial def constMath (c : MathCtx) (e : Expr) (n : Name) (args : Array Expr) (p
     let xp := pos.pushNaryArg k i
     let (x, xp) := match x.getAppFn with
       | .const q _ =>
-        if (q == `Subtype.val || q == `MeasureTheory.Lp.toAEEqFun) && x.getAppNumArgs ≥ 1 then
+        if (q == `Subtype.val || q == `MeasureTheory.Lp.toAEEqFun) && x.getAppNumArgs ≥ 1 &&
+            !c.showsAt xp then
           (x.getArg! (x.getAppNumArgs - 1), xp.pushNaryArg x.getAppNumArgs (x.getAppNumArgs - 1))
         else (x, xp)
       | _ => (x, xp)
@@ -859,7 +1069,7 @@ partial def constMath (c : MathCtx) (e : Expr) (n : Name) (args : Array Expr) (p
   -- A field of an object (not of a class): `s.path`, through the parents it inherits from.
   if let some info := env.getProjectionFnInfo? n then
     if !info.fromClass && k > info.numParams then
-      let (s, sp, via) := peelParents env args[info.numParams]! (pos.pushNaryArg k info.numParams)
+      let (s, sp, via) := peelParents c env args[info.numParams]! (pos.pushNaryArg k info.numParams)
       let fid := c.pfx ++ toString (headPos (k - info.numParams - 1) pos)
       let field := match n with | .str _ s => s | _ => n.toString
       let fj := c.node "field" fid [("of", ← mathOf c s sp), ("field", Json.str field),
@@ -872,7 +1082,7 @@ partial def constMath (c : MathCtx) (e : Expr) (n : Name) (args : Array Expr) (p
       return c.node "app" id [("fn", fj), ("args", Json.arr rest)]
   -- A named function or predicate written as an application: its explicit arguments in order.
   -- One with notation of its own that is not read above stays exact Lean.
-  if hasNotation env n then return ← exactMath c e id
+  if hasNotation env n then return ← exactMath c e pos id
   let mut out := #[]
   for i in expl do out := out.push (← arg i)
   return c.node "apply" id [("name", Json.str n.toString), ("args", Json.arr out),
@@ -881,19 +1091,25 @@ partial def constMath (c : MathCtx) (e : Expr) (n : Name) (args : Array Expr) (p
 end
 
 /-- The `math` of a printed expression `e`, at `root` (identities prefixed `pfx`), the statement's
-variables numbered by `vars`. A failure, including running out of heartbeats, is a node of exact
+variables numbered by `vars`, the instance arguments to print `shown` (by positions in `e`;
+`instancesToShow` if none). A failure, including running out of heartbeats, is a node of exact
 Lean that records it. -/
-def mathField (e : Expr) (vars : Array FVarId) (root : SubExpr.Pos) (pfx : String) : MetaM Json := do
+def mathField (e : Expr) (vars : Array FVarId) (root : SubExpr.Pos) (pfx : String)
+    (shown : Option Shown := none) : MetaM Json := do
   let budget ← IO.mkRef maxMathNodes
-  let c : MathCtx := { vars, pfx, budget }
+  let s ← match shown with
+    | some s => pure s
+    | none => instancesToShow e
+  let c : MathCtx := ({ vars, pfx, budget } : MathCtx).showing (s.at root)
   tryCatchRuntimeEx (withCurrHeartbeats do mathOf c (← instantiateMVars e) root) fun err => do
     return Json.mkObj [("k", "lean"), ("id", Json.str (pfx ++ toString root)),
       ("error", Json.str s!"probe-error: {← err.toMessageData.toString}")]
 
 /-- A printed expression (`ppJson`) with its mathematics (`math`). -/
 def ppMathJson (e : Expr) (vars : Array FVarId := #[]) (root : SubExpr.Pos := .root)
-    (pfx : String := "") : MetaM Json :=
-  return Json.mkObj ((← ppFields e vars root pfx) ++ [("math", ← mathField e vars root pfx)])
+    (pfx : String := "") : MetaM Json := do
+  let s ← instancesToShow e
+  return Json.mkObj ((← ppFields e vars root pfx s) ++ [("math", ← mathField e vars root pfx s)])
 
 /-! ## A definition at its actual arguments
 
@@ -1018,7 +1234,8 @@ equation (`eqn`), the application its left side states is the one being expanded
 arguments and the right side are. -/
 partial def ppExpanded (inside : Name → Bool) (depth : Nat) (e : Expr) (vars : Array FVarId)
     (root : SubExpr.Pos) (pfx : String := "") (eqn : Bool := false) : MetaM Json := do
-  let fields := (← ppFields e vars root pfx) ++ [("math", ← mathField e vars root pfx)]
+  let s ← instancesToShow e
+  let fields := (← ppFields e vars root pfx s) ++ [("math", ← mathField e vars root pfx s)]
   if depth == 0 then return Json.mkObj fields
   let found ← IO.mkRef ((0, 0) : Nat × Nat)
   let out ← if eqn && e.isAppOfArity ``Eq 3 then do
@@ -1467,13 +1684,17 @@ partial def statementJson (inside : Name → Bool) (e : Expr) (acc : Array Opene
       -- The objects among the first `k` opening binders, by number.
       let objects := fun (k : Nat) => (List.range k).toArray.filter fun i => acc[i]!.data
       let (concl, vars') ← treeJson inside statementDepth vars e pos { after := objects acc.size }
-      -- Each hypothesis's own tree, its variables numbered after the conclusion's.
+      -- Each hypothesis's own tree, its variables numbered after the conclusion's. It is read
+      -- with the local instances of its scope: the binders after it are not instances there.
       let mut vs := vars'
       let mut logics : Array (List (String × Json)) := #[]
       for i in [:acc.size] do
         match acc[i]!.hyp with
         | some (t, tp) =>
-          let (l, vs') ← hypothesisTree inside vs t tp (objects i)
+          let later := (vars.extract (vars.size - acc.size + i) vars.size).map Expr.fvar
+          let (l, vs') ← withTheReader Meta.Context (fun ctx => { ctx with
+              localInstances := ctx.localInstances.filter (!later.contains ·.fvar) })
+            (hypothesisTree inside vs t tp (objects i))
           vs := vs'
           logics := logics.push l
         | none => logics := logics.push []
