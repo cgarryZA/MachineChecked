@@ -56,6 +56,8 @@ import hashlib
 import re
 from pathlib import Path
 
+from .layout import module_file
+
 KINDS = {"theorem": "theorem", "thm": "theorem", "lemma": "lemma", "lem": "lemma",
          "proposition": "proposition", "prop": "proposition", "corollary": "corollary",
          "cor": "corollary", "definition": "definition", "defn": "definition",
@@ -188,7 +190,7 @@ def module_doc_blocks(root: Path | None, modules) -> list[dict]:
     if root is None:
         return out
     for m in sorted(set(modules)):
-        rel = m.replace(".", "/") + ".lean"
+        rel = module_file(root, m)
         try:
             text = (root / rel).read_text(encoding="utf-8", errors="replace")
         except OSError:
@@ -214,7 +216,7 @@ def comment_blocks(root: Path | None, modules, index=()) -> list[dict]:
             spans.setdefault(d["module"], []).append(
                 (r["line"], r.get("end_line") or r["line"], d["name"]))
     for m in sorted(set(modules)):
-        rel = m.replace(".", "/") + ".lean"
+        rel = module_file(root, m)
         try:
             text = (root / rel).read_text(encoding="utf-8", errors="replace")
         except OSError:
@@ -372,11 +374,13 @@ def _context(text: str, start: int, end: int) -> tuple[str, int]:
             + ("…" if b < len(text) else "")), len(lead)
 
 
-def find_references(index: list[dict], blocks: list[dict], foreign=frozenset()) -> list[dict]:
+def find_references(index: list[dict], blocks: list[dict], foreign=frozenset(),
+                    root: Path | None = None) -> list[dict]:
     """Every reference to a numbered statement or section in the project's declaration
     docstrings, declaration names, module docstrings and comments (`blocks`: those of
     `module_doc_blocks` and `comment_blocks`), with its source, its context, where its text
-    starts in the context (`at`) and an id that no other reference has."""
+    starts in the context (`at`) and an id that no other reference has. `root`, the Lean
+    project, locates a declaration's file in its library's source folder (`layout`)."""
     out = []
     foreign = set(foreign)
     seen: dict[str, int] = {}
@@ -404,7 +408,7 @@ def find_references(index: list[dict], blocks: list[dict], foreign=frozenset()) 
         roots = {d["name"].split(".")[0], str(d.get("module") or "").split(".")[0]}
         mapped = ("its namespace is one the project maps to another paper"
                   if foreign & roots else None)
-        file = (d.get("module") or "").replace(".", "/") + ".lean" if d.get("module") else None
+        file = module_file(root, d["module"]) if d.get("module") else None
         line = (d.get("range") or {}).get("line")
         doc = d.get("doc") or ""
         for i, m in enumerate(REF.finditer(doc)):
@@ -483,15 +487,17 @@ def _norm_ref(s: str) -> str | None:
 
 def analyse(index: list[dict], claims: list[dict], inv: dict, blocks: list[dict] = (),
             foreign=frozenset(), retrieval=None, claim_text=None,
-            version_map: dict | None = None, refs: list[dict] | None = None) -> dict:
+            version_map: dict | None = None, refs: list[dict] | None = None,
+            root: Path | None = None) -> dict:
     """The references of the project to the paper, each with its status, and the project-level
     pattern. `retrieval` (a `retrieval.Retrieval` of `index`) and `claim_text` (a claim's
     printed statement) let an exact reference be compared with the content it cites.
     `version_map` (`{"source": …, "entries": [{"old": "Theorem 2.1", "new": ["Theorem 3.1"]}]}`)
     maps references of an earlier version of the paper to this one. `refs`, when given, are the
-    references to check (those `attribute` gives this paper), instead of all of the project's."""
+    references to check (those `attribute` gives this paper), instead of all of the project's.
+    `root` is the Lean project (`find_references`)."""
     if refs is None:
-        refs = find_references(index, list(blocks), foreign)
+        refs = find_references(index, list(blocks), foreign, root)
     st = inv["statements"]
     by_number: dict[str, list[tuple[str, str]]] = {}
     for (k, n) in st:

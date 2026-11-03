@@ -109,7 +109,10 @@ def declarations(text: str) -> tuple[set[str], set[str], set[str]]:
 def lean_files(roots: list[Path]):
     """Every `.lean` file under `roots` (the project, and the Lake packages it depends on),
     without version control and build output, with the module it is: its path relative to the
-    root or to its package's folder (`.lake/packages/<package>`)."""
+    source folder of its package (the root, or `.lake/packages/<package>`) that holds it
+    (`layout.module_of`)."""
+    from .layout import module_of, source_dirs
+    layouts: dict[Path, list] = {}
     for root in roots:
         if not root.is_dir():
             continue
@@ -118,10 +121,13 @@ def lean_files(roots: list[Path]):
             for f in files:
                 if f.endswith(".lean"):
                     path = Path(dirpath) / f
-                    parts = path.relative_to(root).with_suffix("").parts
-                    if parts[:2] == (".lake", "packages"):
-                        parts = parts[3:]
-                    yield path, ".".join(parts)
+                    parts = path.relative_to(root).parts
+                    pkg = root
+                    if parts[:2] == (".lake", "packages") and len(parts) > 3:
+                        pkg, parts = root.joinpath(*parts[:3]), parts[3:]
+                    if pkg not in layouts:
+                        layouts[pkg] = source_dirs(pkg)
+                    yield path, module_of(pkg, "/".join(parts), layouts[pkg])
 
 
 def source_roots(lean_root: Path) -> list[Path]:

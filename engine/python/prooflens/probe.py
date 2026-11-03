@@ -328,7 +328,8 @@ def lean_source(lean_root: Path, decl: dict) -> dict | None:
     module, rng = decl.get("module"), decl.get("range")
     if not module or not rng or not re.fullmatch(r"[\w.']+", module):
         return None
-    rel = module.replace(".", "/") + ".lean"
+    from .layout import module_file
+    rel = module_file(lean_root, module)
     path = lean_root / rel
     if not path.is_file():
         return None

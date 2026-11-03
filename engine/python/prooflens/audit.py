@@ -125,8 +125,9 @@ def source_path(lean_root: Path, module: str | None) -> str | None:
     project rather than in a dependency."""
     if not module or not re.fullmatch(r"[\w.']+", module):
         return None
+    from .layout import module_file
     sr = source_root(lean_root)
-    rel = module.replace(".", "/") + ".lean"
+    rel = module_file(lean_root, module)
     if sr is None or not (lean_root / rel).is_file():
         return None
     return sr[1] + rel
@@ -136,13 +137,23 @@ def source_info(lean_root: Path | None, roots: list[str], repository: str | None
                 private: bool = False) -> dict:
     """Where the reader's Lean source links point: the GitHub repository (given, else the
     project's `origin` remote), whether it is private (the reader then does not show its name;
-    the links still name it), the project's path inside it, and the top-level module names whose
-    files are the project's own."""
+    the links still name it), the path inside it of the folder that holds the modules
+    (`source_prefix`: the project's path joined with its libraries' source folder), and the
+    top-level module names whose files are the project's own and in that folder. When the
+    libraries keep their sources in different folders, the folder most of them use is given,
+    and the roots in the others get no source link."""
+    from collections import Counter
+    from .layout import library_dir
     if lean_root is None:
         return {}
     sr = source_root(lean_root)
+    dirs = {r: library_dir(lean_root, r.split(".")[0]) for r in roots}
+    present = {r: d for r, d in dirs.items()
+               if (lean_root / d / r).is_dir() or (lean_root / d / f"{r}.lean").is_file()}
+    counts = Counter(present.values())
+    common = min(counts, key=lambda d: (-counts[d], d != ".", d)) if counts else "."
+    prefix = None if sr is None else sr[1] + ("" if common == "." else common + "/")
     return {"repository": repository or github_repository(lean_root),
             "repository_private": bool(private),
-            "source_prefix": sr[1] if sr else None,
-            "source_roots": sorted(r for r in roots if (lean_root / r).is_dir()
-                                   or (lean_root / f"{r}.lean").is_file())}
+            "source_prefix": prefix,
+            "source_roots": sorted(r for r, d in present.items() if d == common)}
