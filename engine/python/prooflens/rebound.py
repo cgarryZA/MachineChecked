@@ -27,8 +27,8 @@ import tempfile
 from .repin import _names_of, _pin, statements, tex_files
 from .source_regions import (
     MACRO, SCHEMES, RegionError, advice_message, changed_line, definition_part, definitions,
-    location, pin, region_advice, same_revision, source_file, tex_sources, theorem_names,
-    unpinned_macros, write_plan,
+    held_passages, location, pin, pinned_elsewhere, region_advice, same_revision, source_file,
+    tex_sources, theorem_names, unpinned_macros, write_plan,
 )
 
 COMMENT = re.compile(r"(?<!\\)%.*")
@@ -229,7 +229,8 @@ def rebound_plan(inventory: dict, paper: str, root: Path, revision: str,
 
     Each record carries the advice a build gives at the new bounds: `advice`, where the region
     may not hold the claim's text, and `macros`, the macros its passages use that the
-    manuscript defines outside them, other than the `notation` macros."""
+    manuscript defines outside them, other than the `notation` macros and those whose
+    definitions another claim's pin holds (`pinned_elsewhere`, naming the claims)."""
     result = deepcopy(inventory)
     by_id = {c["id"]: c for c in result["claims"] if c["paper"] == paper}
     papers_pin = ((inventory.get("papers") or {}).get(paper) or {}).get("commit")
@@ -240,7 +241,7 @@ def rebound_plan(inventory: dict, paper: str, root: Path, revision: str,
                           "paper's revision (move the inventory with `machinechecked inventory "
                           "repin` first)")
     changes, seen, sources, files = [], set(), None, None
-    defs = theorems = None
+    defs = theorems = held = None
     for req in requests:
         cid = req["claim"]
         if cid not in by_id:
@@ -344,6 +345,12 @@ def rebound_plan(inventory: dict, paper: str, root: Path, revision: str,
             rec = new.main.record()
             entry["advice"] = [{**n, "message": advice_message(cid, rec, n)} for n in notes]
         macros = [m for m in unpinned_macros(new, defs) if m["macro"] not in notation]
+        if macros:
+            if held is None:
+                held = held_passages(inventory["claims"], paper, root)
+            elsewhere, macros = pinned_elsewhere(cid, macros, held, root, sources, defs)
+            if elsewhere:
+                entry["pinned_elsewhere"] = elsewhere
         if macros:
             entry["macros"] = macros
         stored = [{**p, "sha256": r.sha256, "line_sha256": r.line_sha256}

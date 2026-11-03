@@ -233,15 +233,51 @@ def _rule(c: str, o: dict) -> tuple[str, str | None]:
     return "applies", TOTALISED[c]
 
 
+def _binder_names(srec: dict) -> dict[str, str]:
+    """The name the statement record gives each of its binders, by the binder's identity: those
+    that open it (an unnamed hypothesis is `h1`, `h2`, …) and those inside its tree."""
+    out: dict[str, str] = {}
+
+    def walk(n):
+        if not isinstance(n, dict):
+            return
+        if n.get("id") is not None and n.get("name"):
+            out.setdefault(n["id"], n["name"])
+        walk(n.get("logic"))
+        for a in n.get("args") or []:
+            walk(a)
+    for b in srec.get("binders") or []:
+        if b.get("id") is not None and b.get("name"):
+            out[b["id"]] = b["name"]
+    walk(srec.get("tree"))
+    return out
+
+
+def _subterms(o: dict, names: dict[str, str]) -> list[dict]:
+    """The sub-term at each position of one recorded application (`at`, and `text` when the
+    probe printed it), with the binder or hypothesis around it (`within`), named as the
+    statement names it."""
+    out = []
+    for s in o.get("subterms") or []:
+        rec = {"at": s.get("at"), "text": s.get("text")}
+        w = s.get("within")
+        if isinstance(w, dict):
+            rec["within"] = {**w, "name": names.get(w.get("id")) or w.get("name")}
+        out.append(rec)
+    return out
+
+
 def occurrences(srec: dict, c: str) -> list[dict] | None:
     """The applications of the totalised operation `c` that the probe read in a statement, each
     with its type (`type`, its head constant `type_head`), the structure on it that decides the
-    rule (`structure`), the state of the rule there and the rule itself, and the positions of
-    the application in the proposition (`at`). None for an operation the probe does not read
-    by type, and for a record from before it read them."""
+    rule (`structure`), the state of the rule there and the rule itself, the positions of the
+    application in the proposition (`at`), and the sub-term at each with the binder or
+    hypothesis around it (`subterms`, when the probe printed them). None for an operation the
+    probe does not read by type, and for a record from before it read them."""
     ops = srec.get("order_ops")
     if not isinstance(ops, dict) or c not in READ_BY_TYPE:
         return None
+    names = _binder_names(srec)
     out = []
     for o in _occurrences(c, ops):
         state, rule = _rule(c, o)
@@ -250,6 +286,8 @@ def occurrences(srec: dict, c: str) -> list[dict] | None:
         rec = {"operation": c, "type": o.get("carrier") or None,
                "type_head": o.get("carrier_head") or None, "structure": structure,
                "state": state, "rule": rule, "at": list(o.get("at") or [])}
+        if o.get("subterms"):
+            rec["subterms"] = _subterms(o, names)
         if state == "applies" and o.get("conditions"):
             conds = [{k: d[k] for k in ("condition", "state", "by", "premise", "statement")
                       if k in d} for d in o["conditions"]]
@@ -1046,8 +1084,10 @@ class Assessor:
         (with the statement's as `statement_fingerprint`), and its id ends in `@` and that
         position. A dismissal naming `at` and an application's fingerprint dismisses that
         application only: the one at `at` when its fingerprint matches, otherwise the one
-        application with that fingerprint (it moved), and it lapses when the application at `at`
-        changes. A dismissal without `at` (the form before applications were read one by one)
+        application with that fingerprint (it moved). It lapses when the application at `at`
+        changes and it follows no application, and the warning at `at` is then marked
+        `dismissal_stale` unless a dismissal of its own matches it. A dismissal without `at`
+        (the form before applications were read one by one)
         dismisses every warning of its operation in the statement while the statement's
         fingerprint matches, and says so (`dismissed.form`: `statement`)."""
         fp = srec.get("fingerprint")
@@ -1063,7 +1103,11 @@ class Assessor:
             if d["at"] in same:
                 targets[(d["trigger"], d["at"])] = ("dismissed", d)
             elif len(same) == 1:
-                targets.setdefault((d["trigger"], same[0]), ("dismissed", d))
+                # It follows its application, which moved there: a lapsed dismissal given at that
+                # position does not override it, and its own old position is not marked stale.
+                if targets.get((d["trigger"], same[0]), ("stale",))[0] == "stale":
+                    targets[(d["trigger"], same[0])] = ("dismissed", d)
+                continue
             if d["at"] not in same and any(a == d["at"] for a, _ in here):
                 targets.setdefault((d["trigger"], d["at"]), ("stale", d))
         for i in items:
@@ -1094,27 +1138,32 @@ class Assessor:
                 f["dismissal_stale"] = True
 
     def add_warning(self, code, subj, name, rec, message, trigger, fingerprint=None,
-                    legacy_only=False, **extra):
+                    legacy_only=False, reported=(), **extra):
         """A warning, dismissed by a dismissal of its code, subject (`name`) and trigger whose
-        fingerprint is the subject's current one (`rec`'s), and marked `dismissal_stale` when
-        such a dismissal's fingerprint is another. The finding records `fingerprint` when given
-        (what a dismissal of it records) and `rec`'s otherwise. With `legacy_only`, only
-        dismissals without `at` are considered here, and one that applies is marked as naming
-        the whole statement (`form`: `statement`)."""
+        fingerprint is the subject's current one (`rec`'s). A warning no dismissal matches is
+        marked `dismissal_stale` when such a dismissal has another fingerprint that is not in
+        `reported`, the fingerprints of the other warnings of this code, subject and trigger
+        that the assessment reports: a dismissal of one of those is that warning's, not a
+        lapsed dismissal of this one. The finding records `fingerprint` when given (what a
+        dismissal of it records) and `rec`'s otherwise. With `legacy_only`, only dismissals
+        without `at` are considered here, and one that applies is marked as naming the whole
+        statement (`form`: `statement`)."""
         fp = rec.get("fingerprint")
         f = _finding("warning", code, subj, message, trigger=trigger,
                      fingerprint=fingerprint or fp,
                      signal="low" if trigger in LOW_SIGNAL else "normal", **extra)
-        for d in self.dismissals:
-            if d.get("code") == code and d.get("subject") == name and d.get("trigger") == trigger:
-                if "at" in d and (legacy_only or code == "totalised"):
-                    continue
-                if d.get("fingerprint") == fp:
-                    f["dismissed"] = {"rationale": d.get("rationale", ""), "by": d.get("by", "")}
-                    if legacy_only:
-                        f["dismissed"]["form"] = "statement"
-                else:
-                    f["dismissal_stale"] = True
+        same = [d for d in self.dismissals
+                if d.get("code") == code and d.get("subject") == name
+                and d.get("trigger") == trigger
+                and not ("at" in d and (legacy_only or code == "totalised"))]
+        hits = [d for d in same if d.get("fingerprint") == fp]
+        if hits:
+            f["dismissed"] = {"rationale": hits[-1].get("rationale", ""),
+                              "by": hits[-1].get("by", "")}
+            if legacy_only:
+                f["dismissed"]["form"] = "statement"
+        elif any(d.get("fingerprint") not in reported for d in same):
+            f["dismissal_stale"] = True
         self.findings.append(f)
 
     # -- claims ---------------------------------------------------------------------------
@@ -1342,18 +1391,23 @@ class Assessor:
             plain = [d for d in docs if d.get("kind", "none") == "none"]
             found = {id(d) for d in plain} - {id(d) for d in undeclared_doc_names(plain, lean_root)}
             docs = [d for d in docs if id(d) not in found]
-        for d in docs:
-            self.add_warning("module-doc-name", d["module"], d["module"],
-                             {"fingerprint": stale_doc_fingerprint(d)},
-                             stale_doc_message(d), d["name"])
+        # A name under two headings of one docstring is two warnings with two fingerprints; a
+        # dismissal of one is not a lapsed dismissal of the other.
+        fps = [stale_doc_fingerprint(d) for d in docs]
+        for d, fp in zip(docs, fps):
+            reported = {g for e, g in zip(docs, fps)
+                        if (e["module"], e["name"]) == (d["module"], d["name"])}
+            self.add_warning("module-doc-name", d["module"], d["module"], {"fingerprint": fp},
+                             stale_doc_message(d), d["name"], reported=reported)
             self.findings[-1].update(file=d["file"], line=d["line"])
 
     def review_citation_checks(self):
         """A warning for each name or path cited in backticks by the review files that nothing
-        resolves (`review_citations.py`), with its file and line; a violation when the
-        configuration says `review_citations_strict`. The warning never changes a status, and
-        an auditor can dismiss it (code `review-citation`, the review file as subject, the
-        token as trigger)."""
+        resolves (`review_citations.py`), one for each block of review text that cites it,
+        with its file and lines; a violation when the configuration says
+        `review_citations_strict`. The warning never changes a status, and an auditor can
+        dismiss it (code `review-citation`, the review file as subject, the token as trigger,
+        the block as `at`); a dismissal covers its block only (`review_citations.dismiss`)."""
         from . import review_citations as rc
         files = getattr(self.cfg, "reviews", None)
         root = getattr(self.cfg, "root", None)
@@ -1362,19 +1416,19 @@ class Assessor:
         cites = rc.citations(files, root, getattr(self.cfg, "review_citations_ignore", None))
         lean_root = getattr(self.cfg, "lean_root", None) or root
         bases = [root] + ([lean_root] if not lean_root.is_relative_to(root) else [])
-        seen = set()
-        for c in rc.unresolved(cites, self.lean.get("names"), bases):
-            if (c["file"], c["token"]) in seen:
-                continue
-            seen.add((c["file"], c["token"]))
-            if getattr(self.cfg, "review_citations_strict", False):
-                self.findings.append(_finding("violation", "review-citation", c["file"],
-                                              rc.message(c), trigger=c["token"],
-                                              file=c["file"], line=c["line"]))
-            else:
-                self.add_warning("review-citation", c["file"], c["file"],
-                                 {"fingerprint": rc.fingerprint(c)}, rc.message(c), c["token"])
-                self.findings[-1].update(file=c["file"], line=c["line"])
+        strict = getattr(self.cfg, "review_citations_strict", False)
+        warnings = []
+        for w in rc.blocks(rc.unresolved(cites, self.lean.get("names"), bases)):
+            f = _finding("violation" if strict else "warning", "review-citation", w["file"],
+                         rc.message(w), trigger=w["token"], file=w["file"], line=w["line"],
+                         lines=w["lines"], at=w["at"])
+            f["id"] += "@" + w["at"]
+            if not strict:
+                f.update(fingerprint=w["fingerprint"],
+                         signal="low" if w["token"] in LOW_SIGNAL else "normal")
+                warnings.append(f)
+            self.findings.append(f)
+        rc.dismiss(warnings, self.dismissals)
 
     # -- gates ----------------------------------------------------------------------------
 
@@ -1501,8 +1555,11 @@ class Assessor:
                             f"the source region at {c['location']} uses macros defined outside "
                             f"it ({where}); a change to those definitions does not change the "
                             "pin. Pin the definitions whose values are part of the claim "
-                            "(machinechecked inventory rebound --macro NAME), and list the "
+                            "(machinechecked inventory rebound --macro NAME). Listing a macro "
+                            "as notation reopens the readings of the passages that use it "
+                            "(machinechecked inventory notation --add NAME lists them); list the "
                             "notation in notation_macros", names)
+                    self.macros_pinned_elsewhere(c, region.get("pinned_elsewhere") or [])
                     continue
                 a = match_anchor(c, anchors)
                 if a is None:
@@ -1537,6 +1594,30 @@ class Assessor:
                              advice_message(claim["id"], region, a), a["kind"])
             if a.get("suggested"):
                 self.findings[-1]["suggested"] = a["suggested"]
+
+    def macros_pinned_elsewhere(self, claim: dict, macros: list[dict]):
+        """One warning per passage that uses macros whose definitions another claim's pin holds
+        (`source_regions.pinned_elsewhere`): a change to such a definition fails that claim's
+        source check, and reopens no reading of this passage. Its trigger is the set of macros;
+        its fingerprint covers the passage's pin and the digests of the definitions, so a
+        dismissal lapses when either changes."""
+        if not macros:
+            return
+        import hashlib
+        names = " ".join(m["macro"] for m in macros)
+        where = "; ".join(f"{m['macro']} at {', '.join(m['defined'])}, pinned by "
+                          f"{', '.join(m['claims'])}" for m in macros)
+        fingerprint = hashlib.sha256("".join(
+            [f"passage {claim.get('source_sha256')}\n"]
+            + [f"macro {m['macro']} {m['sha256']}\n" for m in macros]).encode()).hexdigest()
+        self.add_warning(
+            "source-macro-pinned-elsewhere", claim["id"], claim["id"],
+            {"fingerprint": fingerprint},
+            f"the source region at {claim['location']} uses macros whose definitions another "
+            f"claim pins ({where}); a change to those definitions fails that claim's source "
+            "check but reopens no reading of this passage. Pin them in this claim too "
+            "(machinechecked inventory rebound --macro NAME) for its readings to depend on "
+            "them", names)
 
 
 def unpinned_passages(inventory: dict, tex: dict | None) -> dict[str, str]:

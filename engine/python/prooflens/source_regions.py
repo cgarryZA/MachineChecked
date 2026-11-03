@@ -196,13 +196,107 @@ def _bare(line: str) -> bool:
     return not _STRUCTURE.sub("", _code(line)).strip()
 
 
+# A line that holds no sentence: only macro definitions, or a single command with its arguments
+# (`\includegraphics[...]{...}`, `\input{...}`, a wrapper macro of either). A command that
+# prints words or references inside a sentence is not one: alone on a line, it may be part of
+# the sentence around it.
+_NAME = r"\\(?:[A-Za-z@]+|.)"
+_DEFINITION_HEAD = re.compile(
+    r"\\(?:(?:re|provide)?newcommand|DeclareMathOperator|DeclareRobustCommand)\*?\s*"
+    r"(?:\{\s*" + _NAME + r"\s*\}|" + _NAME + r")"
+    r"|\\[gex]?def\s*" + _NAME + r"[^{]*"
+    r"|\\let\s*" + _NAME + r"\s*=?\s*(?:" + _NAME + r"|[^\\\s])")
+_COMMAND_LINE = re.compile(r"\\([A-Za-z@]+)\*?")
+_INLINE = frozenset({
+    "emph", "textbf", "textit", "textrm", "textsf", "texttt", "textsc", "textup", "textsl",
+    "textmd", "textnormal", "text", "mbox", "hbox", "underline", "ensuremath", "footnote",
+    "cite", "citet", "citep", "citealt", "citealp", "citeauthor", "citeyear", "parencite",
+    "textcite", "autocite", "footcite", "nocite", "ref", "eqref", "pageref", "autoref", "cref",
+    "Cref", "vref", "nameref", "url", "href", "hyperref", "hyperlink"})
+
+
+def _group(s: str, i: int) -> int:
+    """The index just past the braced or bracketed argument that opens at `s[i]`, or -1 when it
+    does not close on the line."""
+    close = "}" if s[i] == "{" else "]"
+    depth, j = 0, i
+    while j < len(s):
+        c = s[j]
+        if c == "\\":
+            j += 2
+            continue
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth < 0:
+                return -1
+        if depth == 0 and c == close and j > i:
+            return j + 1
+        j += 1
+    return -1
+
+
+def _arguments(s: str, i: int) -> tuple[int, int]:
+    """The index past the arguments that follow `i` on the line (braced or bracketed groups,
+    spaces between) and their number; the index is -1 when one does not close on the line."""
+    n = 0
+    while True:
+        j = i
+        while j < len(s) and s[j] in " \t":
+            j += 1
+        if j >= len(s) or s[j] not in "{[":
+            return i, n
+        i = _group(s, j)
+        if i < 0:
+            return -1, n
+        n += 1
+
+
+def _definitions_only(code: str) -> bool:
+    """Whether a line (without its comment) holds one or more macro definitions and nothing
+    else."""
+    i, n = 0, 0
+    while True:
+        while i < len(code) and code[i].isspace():
+            i += 1
+        if i >= len(code):
+            return n > 0
+        m = _DEFINITION_HEAD.match(code, i)
+        if not m:
+            return False
+        i = m.end()
+        if not m.group().startswith("\\let"):
+            i, k = _arguments(code, i)
+            if i < 0 or not k:
+                return False
+        n += 1
+
+
+def _command_only(code: str) -> bool:
+    """Whether a line (without its comment) holds a single command with its arguments and
+    nothing else, the command not one that prints words inside a sentence."""
+    s = code.strip()
+    m = _COMMAND_LINE.match(s)
+    if not m or m.group(1) in _INLINE:
+        return False
+    end, n = _arguments(s, m.end())
+    return n > 0 and end == len(s)
+
+
+def _boundary(code: str) -> bool:
+    """Whether a line (without its comment) is no part of a sentence that runs on past it: a
+    line of structure, of definitions, or of a single command."""
+    return bool(_BOUNDARY.search(code)) or _definitions_only(code) or _command_only(code)
+
+
 def _paragraph(lines: list[str], first: int, last: int) -> tuple[int, int]:
     """The paragraph around lines `first`..`last` (1-based): out to the nearest blank line or
-    line of structure on each side."""
+    line of structure, definitions or a single command on each side."""
     a, b = first, last
-    while a > 1 and not _blank(lines[a - 2]) and not _BOUNDARY.search(_code(lines[a - 2])):
+    while a > 1 and not _blank(lines[a - 2]) and not _boundary(_code(lines[a - 2])):
         a -= 1
-    while b < len(lines) and not _blank(lines[b]) and not _BOUNDARY.search(_code(lines[b])):
+    while b < len(lines) and not _blank(lines[b]) and not _boundary(_code(lines[b])):
         b += 1
     return a, b
 
@@ -211,7 +305,8 @@ def advice(lines: list[str], region: Region, theorems=()) -> list[dict]:
     """Where a line-located region may not hold the claim's text (#180): a region of only a
     label or heading (`label-only`, naming the paragraph that follows), a region that begins
     or ends inside a sentence (`starts-mid-sentence`, `ends-mid-sentence`, naming the
-    paragraph around it), one that runs into another section (`spans-section`), and one that
+    paragraph around it; a line of structure, of definitions or of a single command ends a
+    sentence), one that runs into another section (`spans-section`), and one that
     holds the `\\begin` or the `\\end` of a display, proof or theorem-like environment without
     the other (`cuts-environment`, naming the environments and the bounds that contain them
     whole or leave them out). `theorems` are the theorem-like environment names of the
@@ -248,13 +343,13 @@ def advice(lines: list[str], region: Region, theorems=()) -> list[dict]:
         out.append(cut)
     para = where(*_paragraph(lines, first, last))
     prev = lines[first - 2] if first > 1 else ""
-    if not _blank(prev) and not _BOUNDARY.search(_code(prev)) \
+    if not _blank(prev) and not _boundary(_code(prev)) \
             and not _ENDS.search(_code(prev).rstrip()):
         out.append({"kind": "starts-mid-sentence", "suggested": para})
     after = lines[last] if last < len(lines) else ""
     end = _code(body[-1]).rstrip()
-    if not _blank(after) and not _BOUNDARY.search(_code(after)) and \
-            not _BOUNDARY.search(end) and not _ENDS.search(end):
+    if not _blank(after) and not _boundary(_code(after)) and \
+            not _boundary(end) and not _ENDS.search(end):
         out.append({"kind": "ends-mid-sentence", "suggested": para})
     return out
 
@@ -512,15 +607,21 @@ def definition_part(files: dict[str, str], name: str, file: str | None = None,
                           + ", ".join(f"{f}:{ln}" for f, ln in where)
                           + "); name the one to pin as NAME@FILE:LINE")
     f, ln = where[0]
-    text = files[f]
-    offset = sum(len(x) + 1 for x in text.split("\n")[:ln - 1])
-    line_text = text.split("\n")[ln - 1]
-    m = next(m for m in DEFINITION.finditer(COMMENT_LINE.sub("", line_text))
-             if name in (m.group(1), m.group(2)))
-    end = _definition_end(text, offset + m.end())
-    end_line = text.count("\n", 0, end) + 1
+    _, (end_line, _) = _definition_extent(files[f], name, ln)
     return {"location": f"{f}:{ln}", **({"end_line": end_line} if end_line > ln else {}),
             "macro": name}
+
+
+def _definition_extent(text: str, name: str, ln: int) -> tuple[tuple[int, int], tuple[int, int]]:
+    """Where the definition of `name` that starts on line `ln` of `text` lies: the line and
+    column of its first character, and the line and column just past its body (1-based)."""
+    split = text.split("\n")
+    offset = sum(len(x) + 1 for x in split[:ln - 1])
+    m = next(m for m in DEFINITION.finditer(COMMENT_LINE.sub("", split[ln - 1]))
+             if name in (m.group(1), m.group(2)))
+    end = _definition_end(text, offset + m.end())
+    return (ln, m.start() + 1), (text.count("\n", 0, end) + 1,
+                                 end - (text.rfind("\n", 0, end) + 1) + 1)
 
 
 def _definition_end(text: str, i: int) -> int:
@@ -572,6 +673,66 @@ def unpinned_macros(p: Pin, defs: dict[str, list[tuple[str, int]]]) -> list[dict
     return out
 
 
+def held_passages(claims, paper: str, root: Path,
+                  pins: dict | None = None) -> list[tuple[str, Region]]:
+    """Every passage (its own, and each further one) of each claim of `paper` whose pin
+    matches the snapshot at `root`, with the claim: the text the source check holds fixed.
+    `pins` gives claims' pins already read, by claim id."""
+    out = []
+    for claim in claims:
+        if claim.get("paper") != paper or claim.get("source_hash_scheme") not in SCHEMES \
+                or not claim.get("source_sha256"):
+            continue
+        try:
+            if location(claim) is None:
+                continue
+            p = (pins or {}).get(claim["id"]) or pin(root, claim)
+        except (RegionError, OSError, UnicodeError):
+            continue
+        if p.scheme == claim["source_hash_scheme"] and p.sha256 == claim["source_sha256"]:
+            out += [(claim["id"], r) for r in (p.main, *(r for _, r in p.parts))]
+    return out
+
+
+def pinned_elsewhere(claim_id: str, macros: list[dict], held: list[tuple[str, Region]],
+                     root: Path, files: dict[str, str],
+                     defs: dict[str, list[tuple[str, int]]],
+                     known: dict | None = None) -> tuple[list[dict], list[dict]]:
+    """Of `macros` (`unpinned_macros` of the claim `claim_id`), those each of whose definitions
+    lies whole inside a passage that another claim's matching pin holds (`held_passages`), and
+    the others. Each of the first names the claims and carries the digest of the macro's
+    definitions (`sha256`, as `notation_digests` computes it); `known` keeps those digests
+    between calls on one snapshot."""
+    known = {} if known is None else known
+    held = [(cid, r) for cid, r in held if cid != claim_id]
+    if not held:
+        return [], macros
+    elsewhere, rest = [], []
+    for m in macros:
+        by = set()
+        for f, ln in defs.get(m["macro"]) or []:
+            try:
+                start, end = _definition_extent(files[f], m["macro"], ln)
+            except (KeyError, StopIteration):
+                by = set()
+                break
+            holders = {cid for cid, r in held if r.file == f
+                       and (r.start_line, r.start_column) <= start
+                       and end <= (r.end_line, r.end_column)}
+            if not holders:
+                by = set()
+                break
+            by |= holders
+        if by and m["macro"] not in known:
+            known[m["macro"]] = notation_digests(root, files, defs, [m["macro"]]).get(m["macro"])
+        digest = known.get(m["macro"]) if by else None
+        if digest:
+            elsewhere.append({**m, "claims": sorted(by), "sha256": digest["sha256"]})
+        else:
+            rest.append(m)
+    return elsewhere, rest
+
+
 NOTATION = "tex-notation-v1"
 
 
@@ -610,19 +771,29 @@ def collect(inventory: dict, paper: str, root: Path, notation=()) -> dict:
     """One record per claim, including extraction errors; shared start lines do not collide.
     A record also names the macros its passages use that the snapshot defines elsewhere and
     the pin leaves out: the listed notation macros (`notation`, each with the digest of its
-    definitions), and the others (`macros`). Names in `notation` are control sequences. A
-    record carries `advice` when its region may not hold the claim's text."""
+    definitions), those whose definitions another claim's matching pin holds
+    (`pinned_elsewhere`, naming the claims), and the others (`macros`). Names in `notation`
+    are control sequences. A record carries `advice` when its region may not hold the claim's
+    text."""
     out = {}
-    defs = files = None
+    defs = files = held = None
+    known: dict = {}
     listed = set(notation)
     digests: dict[str, dict] | None = None
+    pins: dict[str, Pin] = {}
+    for claim in inventory["claims"]:
+        try:
+            if claim["paper"] == paper and location(claim) is not None:
+                pins[claim["id"]] = pin(root, claim)
+        except (RegionError, OSError, UnicodeError):
+            continue
     for claim in inventory["claims"]:
         if claim["paper"] != paper:
             continue
         try:
             if location(claim) is None:
                 continue
-            p = pin(root, claim)
+            p = pins.get(claim["id"]) or pin(root, claim)
             rec = p.record()
             if defs is None:
                 files = tex_sources(root)
@@ -632,6 +803,13 @@ def collect(inventory: dict, paper: str, root: Path, notation=()) -> dict:
                 digests = notation_digests(root, files, defs, sorted(listed))
             hashed = [digests[m["macro"]] for m in outside if m["macro"] in (digests or {})]
             macros = [m for m in outside if m["macro"] not in (digests or {})]
+            if macros:
+                if held is None:
+                    held = held_passages(inventory["claims"], paper, root, pins)
+                elsewhere, macros = pinned_elsewhere(claim["id"], macros, held, root, files, defs,
+                                                     known)
+                if elsewhere:
+                    rec["pinned_elsewhere"] = elsewhere
             if macros:
                 rec["macros"] = macros
             if hashed:
