@@ -130,6 +130,18 @@ definitions whose values the claim states (`rebound --macro`, below), and dismis
 when the rest is notation whose definition is not part of the claim. The dismissal is tied to
 the passage's digest and to the macros named (its trigger), so it reopens when either changes.
 
+A macro whose every definition lies whole inside a passage that another claim pins (a claim
+located at `figs/values.tex:3` with `end_line` 5 pins the definitions on those lines), while
+that claim's pin matches the manuscript, is reported apart: the warning
+`source-macro-pinned-elsewhere`, one per passage, names each such macro, where it is defined
+and the claims that pin it. A change to such a definition fails the other claim's source check
+(`source-changed`), but reopens no reading of this passage: its readings depend on the value
+only when its own pin holds the definition (`rebound --macro`). The source evidence lists these
+macros under `pinned_elsewhere`, and the rebound plan as a build does. A dismissal of the warning
+is tied to the passage's digest, the digests of the definitions and the macros named, so it
+reopens when the value changes. A macro the other pin holds only in part, or whose pin no longer
+matches, keeps `source-macro-unpinned`.
+
 ### Notation macros
 
 List the paper's notation in `machinechecked.toml`, under `[project]` for every paper or under

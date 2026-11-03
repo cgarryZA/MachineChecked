@@ -512,15 +512,21 @@ def definition_part(files: dict[str, str], name: str, file: str | None = None,
                           + ", ".join(f"{f}:{ln}" for f, ln in where)
                           + "); name the one to pin as NAME@FILE:LINE")
     f, ln = where[0]
-    text = files[f]
-    offset = sum(len(x) + 1 for x in text.split("\n")[:ln - 1])
-    line_text = text.split("\n")[ln - 1]
-    m = next(m for m in DEFINITION.finditer(COMMENT_LINE.sub("", line_text))
-             if name in (m.group(1), m.group(2)))
-    end = _definition_end(text, offset + m.end())
-    end_line = text.count("\n", 0, end) + 1
+    _, (end_line, _) = _definition_extent(files[f], name, ln)
     return {"location": f"{f}:{ln}", **({"end_line": end_line} if end_line > ln else {}),
             "macro": name}
+
+
+def _definition_extent(text: str, name: str, ln: int) -> tuple[tuple[int, int], tuple[int, int]]:
+    """Where the definition of `name` that starts on line `ln` of `text` lies: the line and
+    column of its first character, and the line and column just past its body (1-based)."""
+    split = text.split("\n")
+    offset = sum(len(x) + 1 for x in split[:ln - 1])
+    m = next(m for m in DEFINITION.finditer(COMMENT_LINE.sub("", split[ln - 1]))
+             if name in (m.group(1), m.group(2)))
+    end = _definition_end(text, offset + m.end())
+    return (ln, m.start() + 1), (text.count("\n", 0, end) + 1,
+                                 end - (text.rfind("\n", 0, end) + 1) + 1)
 
 
 def _definition_end(text: str, i: int) -> int:
@@ -572,6 +578,60 @@ def unpinned_macros(p: Pin, defs: dict[str, list[tuple[str, int]]]) -> list[dict
     return out
 
 
+def held_passages(claims, paper: str, root: Path, pins: dict | None = None) -> list[tuple[str, Region]]:
+    """Every passage (its own, and each further one) of each claim of `paper` whose pin
+    matches the snapshot at `root`, with the claim: the text the source check holds fixed.
+    `pins` gives claims' pins already read, by claim id."""
+    out = []
+    for claim in claims:
+        if claim.get("paper") != paper or claim.get("source_hash_scheme") not in SCHEMES \
+                or not claim.get("source_sha256"):
+            continue
+        try:
+            if location(claim) is None:
+                continue
+            p = (pins or {}).get(claim["id"]) or pin(root, claim)
+        except (RegionError, OSError, UnicodeError):
+            continue
+        if p.scheme == claim["source_hash_scheme"] and p.sha256 == claim["source_sha256"]:
+            out += [(claim["id"], r) for r in (p.main, *(r for _, r in p.parts))]
+    return out
+
+
+def pinned_elsewhere(claim_id: str, macros: list[dict], held: list[tuple[str, Region]],
+                     root: Path, files: dict[str, str],
+                     defs: dict[str, list[tuple[str, int]]]) -> tuple[list[dict], list[dict]]:
+    """Of `macros` (`unpinned_macros` of the claim `claim_id`), those each of whose definitions
+    lies whole inside a passage that another claim's matching pin holds (`held_passages`), and
+    the others. Each of the first names the claims and carries the digest of the macro's
+    definitions (`sha256`, as `notation_digests` computes it)."""
+    held = [(cid, r) for cid, r in held if cid != claim_id]
+    if not held:
+        return [], macros
+    elsewhere, rest = [], []
+    for m in macros:
+        by = set()
+        for f, ln in defs.get(m["macro"]) or []:
+            try:
+                start, end = _definition_extent(files[f], m["macro"], ln)
+            except (KeyError, StopIteration):
+                by = set()
+                break
+            holders = {cid for cid, r in held if r.file == f
+                       and (r.start_line, r.start_column) <= start
+                       and end <= (r.end_line, r.end_column)}
+            if not holders:
+                by = set()
+                break
+            by |= holders
+        digest = notation_digests(root, files, defs, [m["macro"]]).get(m["macro"]) if by else None
+        if digest:
+            elsewhere.append({**m, "claims": sorted(by), "sha256": digest["sha256"]})
+        else:
+            rest.append(m)
+    return elsewhere, rest
+
+
 NOTATION = "tex-notation-v1"
 
 
@@ -610,19 +670,28 @@ def collect(inventory: dict, paper: str, root: Path, notation=()) -> dict:
     """One record per claim, including extraction errors; shared start lines do not collide.
     A record also names the macros its passages use that the snapshot defines elsewhere and
     the pin leaves out: the listed notation macros (`notation`, each with the digest of its
-    definitions), and the others (`macros`). Names in `notation` are control sequences. A
-    record carries `advice` when its region may not hold the claim's text."""
+    definitions), those whose definitions another claim's matching pin holds
+    (`pinned_elsewhere`, naming the claims), and the others (`macros`). Names in `notation`
+    are control sequences. A record carries `advice` when its region may not hold the claim's
+    text."""
     out = {}
-    defs = files = None
+    defs = files = held = None
     listed = set(notation)
     digests: dict[str, dict] | None = None
+    pins: dict[str, Pin] = {}
+    for claim in inventory["claims"]:
+        try:
+            if claim["paper"] == paper and location(claim) is not None:
+                pins[claim["id"]] = pin(root, claim)
+        except (RegionError, OSError, UnicodeError):
+            continue
     for claim in inventory["claims"]:
         if claim["paper"] != paper:
             continue
         try:
             if location(claim) is None:
                 continue
-            p = pin(root, claim)
+            p = pins.get(claim["id"]) or pin(root, claim)
             rec = p.record()
             if defs is None:
                 files = tex_sources(root)
@@ -632,6 +701,12 @@ def collect(inventory: dict, paper: str, root: Path, notation=()) -> dict:
                 digests = notation_digests(root, files, defs, sorted(listed))
             hashed = [digests[m["macro"]] for m in outside if m["macro"] in (digests or {})]
             macros = [m for m in outside if m["macro"] not in (digests or {})]
+            if macros:
+                if held is None:
+                    held = held_passages(inventory["claims"], paper, root, pins)
+                elsewhere, macros = pinned_elsewhere(claim["id"], macros, held, root, files, defs)
+                if elsewhere:
+                    rec["pinned_elsewhere"] = elsewhere
             if macros:
                 rec["macros"] = macros
             if hashed:

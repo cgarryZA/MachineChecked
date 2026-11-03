@@ -1503,6 +1503,7 @@ class Assessor:
                             "pin. Pin the definitions whose values are part of the claim "
                             "(machinechecked inventory rebound --macro NAME), and list the "
                             "notation in notation_macros", names)
+                    self.macros_pinned_elsewhere(c, region.get("pinned_elsewhere") or [])
                     continue
                 a = match_anchor(c, anchors)
                 if a is None:
@@ -1537,6 +1538,30 @@ class Assessor:
                              advice_message(claim["id"], region, a), a["kind"])
             if a.get("suggested"):
                 self.findings[-1]["suggested"] = a["suggested"]
+
+    def macros_pinned_elsewhere(self, claim: dict, macros: list[dict]):
+        """One warning per passage that uses macros whose definitions another claim's pin holds
+        (`source_regions.pinned_elsewhere`): a change to such a definition fails that claim's
+        source check, and reopens no reading of this passage. Its trigger is the set of macros;
+        its fingerprint covers the passage's pin and the digests of the definitions, so a
+        dismissal lapses when either changes."""
+        if not macros:
+            return
+        import hashlib
+        names = " ".join(m["macro"] for m in macros)
+        where = "; ".join(f"{m['macro']} at {', '.join(m['defined'])}, pinned by "
+                          f"{', '.join(m['claims'])}" for m in macros)
+        fingerprint = hashlib.sha256("".join(
+            [f"passage {claim.get('source_sha256')}\n"]
+            + [f"macro {m['macro']} {m['sha256']}\n" for m in macros]).encode()).hexdigest()
+        self.add_warning(
+            "source-macro-pinned-elsewhere", claim["id"], claim["id"],
+            {"fingerprint": fingerprint},
+            f"the source region at {claim['location']} uses macros whose definitions another "
+            f"claim pins ({where}); a change to those definitions fails that claim's source "
+            "check but reopens no reading of this passage. Pin them in this claim too "
+            "(machinechecked inventory rebound --macro NAME) for its readings to depend on "
+            "them", names)
 
 
 def unpinned_passages(inventory: dict, tex: dict | None) -> dict[str, str]:
