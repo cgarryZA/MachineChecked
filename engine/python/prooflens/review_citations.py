@@ -15,10 +15,19 @@ so is review text that records the removal of a declaration, which must name it 
 archived marker (`<!-- archived at … -->`), a removal record (a paragraph or list item that opens
 with a bold lead-in saying that something was removed or retired, `**Clauses removed.**`), and a
 name followed by such a note (`` `Foo.old` (removed at rev2) ``).
+
+A citation belongs to the block of review text that the next marker closes (#510), named `at` by
+that marker's kind, declaration and hash (`spec-review: Foo.spec <hash>`, the same for a retired
+marker; ` (2)` and on for a later marker with the same head in the file), or `end of file` when
+no marker follows. Each block that cites a token nothing resolves is one warning, with every line
+of the block that cites it. A dismissal names one block: it holds while the warning at its `at`
+has its `fingerprint`, which covers the lines that cite the token, so a new citation of the
+token in the block, or one in another block, is warned about again.
 """
 
 from __future__ import annotations
 
+import bisect
 import hashlib
 import os
 import re
@@ -73,9 +82,44 @@ def reviewer(m: re.Match) -> str | None:
     return dict(a.split("=", 1) for a in attrs.split() if "=" in a).get("by")
 
 
+END = "end of file"
+
+
+def markers(text: str) -> list[tuple[int, str, dict]]:
+    """The markers of a review file's text, in order: where each starts, the name of the block
+    of text it closes (`at`), and its declaration, line and whether it is retired. The name is the
+    marker's kind, declaration and hash, which retiring the marker or adding attributes to it
+    leaves as they are; a later marker with the same kind, declaration and hash in the file has
+    ` (2)`, ` (3)`, … after it."""
+    out, seen = [], {}
+    for m in ANY.finditer(text):
+        live = m.group(1) is not None
+        kind, name, h = m.group(1, 2, 3) if live else m.group(5, 6, 7)
+        head = f"{kind}-review: {name} {h}"
+        seen[head] = seen.get(head, 0) + 1
+        at = head if seen[head] == 1 else f"{head} ({seen[head]})"
+        out.append((m.start(), at, {"name": name, "retired": not live,
+                                    "line": text.count("\n", 0, m.start()) + 1}))
+    return out
+
+
+def without_markers(line: str) -> tuple[str, list[tuple[int, int]]]:
+    """The line with its markers removed, and for each marker removed, where it was in the
+    result and its length."""
+    parts, cuts, last, at = [], [], 0, 0
+    for m in ANY.finditer(line):
+        parts.append(line[last:m.start()])
+        at += m.start() - last
+        cuts.append((at, m.end() - m.start()))
+        last = m.end()
+    parts.append(line[last:])
+    return "".join(parts), cuts
+
+
 def citations(files: list[Path], root: Path, ignore: list[str] | None = None) -> list[dict]:
     """Every name and path cited in backticks by the review files `files`, with the file (as
-    relative to `root`) and line, in file order."""
+    relative to `root`), line and block (`at`, and the `marker` that closes it, None at the end
+    of the file), in file order."""
     pats = [re.compile(p) for p in (DEFAULT_IGNORE if ignore is None else ignore)]
     out = []
     for f in review_files(files):
@@ -89,10 +133,16 @@ def citations(files: list[Path], root: Path, ignore: list[str] | None = None) ->
         reviewers = {by for m in ANY.finditer(text) if (by := reviewer(m))}
         rel = f.resolve().relative_to(root.resolve()).as_posix() \
             if f.resolve().is_relative_to(root.resolve()) else f.name
+        marks = markers(text)
+        starts = [m[0] for m in marks]
+        lines = text.split("\n")
+        offsets = [0]
+        for line in lines:
+            offsets.append(offsets[-1] + len(line) + 1)
         # In a removal record: -1 when it is a paragraph, the indentation of its list item
         # when it is one, None outside.
         fence, removal = False, None
-        for i, line in enumerate(text.split("\n"), 1):
+        for i, line in enumerate(lines, 1):
             if line.lstrip().startswith(("```", "~~~")):
                 fence, removal = not fence, None
                 continue
@@ -107,14 +157,19 @@ def citations(files: list[Path], root: Path, ignore: list[str] | None = None) ->
                 removal = len(item.group(1)) if item else -1
             if removal is not None:
                 continue
-            bare = ANY.sub("", line)
+            bare, cuts = without_markers(line)
             for m in CODE.finditer(bare):
                 tok = m.group(1).strip()
                 kind = classify(tok)
                 if kind is None or tok in reviewers or any(p.search(tok) for p in pats) \
                         or NOTE.match(bare, m.end()):
                     continue
-                out.append({"file": rel, "line": i, "token": tok, "kind": kind})
+                # The first marker after the citation closes its block.
+                col = m.start() + sum(n for at, n in cuts if at <= m.start())
+                k = bisect.bisect_left(starts, offsets[i - 1] + col)
+                at, marker = (marks[k][1], marks[k][2]) if k < len(marks) else (END, None)
+                out.append({"file": rel, "line": i, "token": tok, "kind": kind, "at": at,
+                            "marker": marker, "text": line.strip()})
     return out
 
 
@@ -173,13 +228,83 @@ def unresolved(cites: list[dict], names: dict | None, roots: list[Path]) -> list
     return out
 
 
-def message(c: dict) -> str:
-    what = ("no declaration of the project, its dependencies or Lean" if c["kind"] == "name"
+def blocks(cites: list[dict]) -> list[dict]:
+    """One warning for each review file, token and block among `cites`, in the order of their
+    first citation: the first `line`, every line of the block that cites the token (`lines`),
+    and the `fingerprint` a dismissal of it records."""
+    out, by = [], {}
+    for c in cites:
+        key = (c["file"], c["token"], c["at"])
+        if key not in by:
+            by[key] = {**{k: c[k] for k in ("file", "token", "kind", "line", "at", "marker")},
+                       "lines": [], "texts": []}
+            out.append(by[key])
+        if c["line"] not in by[key]["lines"]:
+            by[key]["lines"].append(c["line"])
+            by[key]["texts"].append(c["text"])
+    for w in out:
+        w["fingerprint"] = fingerprint(w)
+    return out
+
+
+def message(w: dict) -> str:
+    what = ("no declaration of the project, its dependencies or Lean" if w["kind"] == "name"
             else "no file of the project")
-    return f"{c['file']}:{c['line']}: the review cites {c['token']}, which is {what}"
+    m = w["marker"]
+    block = "no marker follows" if m is None else \
+        f"before the {'retired ' if m['retired'] else ''}marker of {m['name']} at line {m['line']}"
+    lines = ", ".join(str(n) for n in w["lines"])
+    return f"{w['file']}:{lines} ({block}): the review cites {w['token']}, which is {what}"
 
 
-def fingerprint(c: dict) -> str:
-    """What a dismissal of a citation is tied to: the review file and the cited token."""
-    key = "\n".join((c["file"], c["token"]))
-    return "pl-cite-v1:" + hashlib.sha256(key.encode()).hexdigest()
+def fingerprint(w: dict) -> str:
+    """What a dismissal of a warning is tied to, with the warning's `at`: the review file, the
+    cited token and the text of each line of the block that cites it. Another citation of the
+    token in the block, or an edit of a line that cites it, changes it; moving the block does
+    not."""
+    key = "\n".join((w["file"], w["token"], *w["texts"]))
+    return "pl-cite-v2:" + hashlib.sha256(key.encode()).hexdigest()
+
+
+def file_fingerprint(file: str, token: str) -> str:
+    """The fingerprint of a dismissal written before dismissals named a block: the review file
+    and the cited token."""
+    return "pl-cite-v1:" + hashlib.sha256("\n".join((file, token)).encode()).hexdigest()
+
+
+def dismiss(found: list[dict], dismissals: list[dict]) -> None:
+    """Mark the citation warnings `found` (each with `subject`, `trigger`, `at` and
+    `fingerprint`, in file order) that a dismissal covers as `dismissed`, and those it no longer
+    covers as `dismissal_stale`.
+
+    A dismissal with `at` covers the warning at `at` while that warning has its fingerprint. When
+    the fingerprint differs, or the block is gone and exactly one warning of the token in the
+    file has the fingerprint (its marker changed), that warning is marked stale; no other is. A
+    dismissal without `at` (written before dismissals named a block) covers the first block that
+    cites the token in the file, where the warning it was given for was reported, while its
+    fingerprint is the file and token's (`dismissed.form`: `file`); every other block of the
+    token in the file, which it used to cover, is marked stale."""
+    groups: dict[tuple[str, str], list[dict]] = {}
+    for f in found:
+        groups.setdefault((f["subject"], f["trigger"]), []).append(f)
+    for (subj, tok), fs in groups.items():
+        ds = [d for d in dismissals if d.get("code") == "review-citation"
+              and d.get("subject") == subj and d.get("trigger") == tok]
+        named = [d for d in ds if "at" in d]
+        legacy = [d for d in ds if "at" not in d]
+        here = {f["at"] for f in fs}
+        for k, f in enumerate(fs):
+            hit = next((d for d in named if d["at"] == f["at"]
+                        and d.get("fingerprint") == f["fingerprint"]), None)
+            if hit is None and k == 0:
+                hit = next((d for d in legacy
+                            if d.get("fingerprint") == file_fingerprint(subj, tok)), None)
+            if hit is not None:
+                f["dismissed"] = {"rationale": hit.get("rationale", ""), "by": hit.get("by", "")}
+                if "at" not in hit:
+                    f["dismissed"]["form"] = "file"
+                continue
+            moved = sum(g["fingerprint"] == f["fingerprint"] for g in fs) == 1 and any(
+                d["at"] not in here and d.get("fingerprint") == f["fingerprint"] for d in named)
+            if legacy or moved or any(d["at"] == f["at"] for d in named):
+                f["dismissal_stale"] = True

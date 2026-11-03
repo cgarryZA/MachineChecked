@@ -1403,10 +1403,11 @@ class Assessor:
 
     def review_citation_checks(self):
         """A warning for each name or path cited in backticks by the review files that nothing
-        resolves (`review_citations.py`), with its file and line; a violation when the
-        configuration says `review_citations_strict`. The warning never changes a status, and
-        an auditor can dismiss it (code `review-citation`, the review file as subject, the
-        token as trigger)."""
+        resolves (`review_citations.py`), one for each block of review text that cites it,
+        with its file and lines; a violation when the configuration says
+        `review_citations_strict`. The warning never changes a status, and an auditor can
+        dismiss it (code `review-citation`, the review file as subject, the token as trigger,
+        the block as `at`); a dismissal covers its block only (`review_citations.dismiss`)."""
         from . import review_citations as rc
         files = getattr(self.cfg, "reviews", None)
         root = getattr(self.cfg, "root", None)
@@ -1415,19 +1416,19 @@ class Assessor:
         cites = rc.citations(files, root, getattr(self.cfg, "review_citations_ignore", None))
         lean_root = getattr(self.cfg, "lean_root", None) or root
         bases = [root] + ([lean_root] if not lean_root.is_relative_to(root) else [])
-        seen = set()
-        for c in rc.unresolved(cites, self.lean.get("names"), bases):
-            if (c["file"], c["token"]) in seen:
-                continue
-            seen.add((c["file"], c["token"]))
-            if getattr(self.cfg, "review_citations_strict", False):
-                self.findings.append(_finding("violation", "review-citation", c["file"],
-                                              rc.message(c), trigger=c["token"],
-                                              file=c["file"], line=c["line"]))
-            else:
-                self.add_warning("review-citation", c["file"], c["file"],
-                                 {"fingerprint": rc.fingerprint(c)}, rc.message(c), c["token"])
-                self.findings[-1].update(file=c["file"], line=c["line"])
+        strict = getattr(self.cfg, "review_citations_strict", False)
+        warnings = []
+        for w in rc.blocks(rc.unresolved(cites, self.lean.get("names"), bases)):
+            f = _finding("violation" if strict else "warning", "review-citation", w["file"],
+                         rc.message(w), trigger=w["token"], file=w["file"], line=w["line"],
+                         lines=w["lines"], at=w["at"])
+            f["id"] += "@" + w["at"]
+            if not strict:
+                f.update(fingerprint=w["fingerprint"],
+                         signal="low" if w["token"] in LOW_SIGNAL else "normal")
+                warnings.append(f)
+            self.findings.append(f)
+        rc.dismiss(warnings, self.dismissals)
 
     # -- gates ----------------------------------------------------------------------------
 

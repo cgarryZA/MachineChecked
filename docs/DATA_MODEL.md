@@ -123,6 +123,13 @@ A warning that a dismissal matches has `dismissed`, and is never also marked `di
 because of another dismissal of its code, subject and trigger; a warning that none matches has
 `dismissal_stale` when such a dismissal matches no warning the assessment reports (it lapsed),
 or, for one application, when the dismissal's `at` is its position and it follows no application.
+A dismissal of a review-citation warning has the warning's `at` (the block of review text
+that cites the token) and `fingerprint` (`pl-cite-v2:…`, over the lines of the block that
+cite it). The warning at its `at` has `dismissal_stale` when its fingerprint is another, and so
+does the one warning with its fingerprint when no block is at `at` (the block's marker changed).
+One without `at` (`pl-cite-v1:…`, over the file and token) covers the token's first block in the
+file only; the token's other blocks in the file, which it covered before dismissals named a
+block, have `dismissal_stale`.
 
 ## Evidence (`evidence.schema.json`), written by the engine
 
