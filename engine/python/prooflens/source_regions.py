@@ -578,7 +578,8 @@ def unpinned_macros(p: Pin, defs: dict[str, list[tuple[str, int]]]) -> list[dict
     return out
 
 
-def held_passages(claims, paper: str, root: Path, pins: dict | None = None) -> list[tuple[str, Region]]:
+def held_passages(claims, paper: str, root: Path,
+                  pins: dict | None = None) -> list[tuple[str, Region]]:
     """Every passage (its own, and each further one) of each claim of `paper` whose pin
     matches the snapshot at `root`, with the claim: the text the source check holds fixed.
     `pins` gives claims' pins already read, by claim id."""
@@ -600,11 +601,14 @@ def held_passages(claims, paper: str, root: Path, pins: dict | None = None) -> l
 
 def pinned_elsewhere(claim_id: str, macros: list[dict], held: list[tuple[str, Region]],
                      root: Path, files: dict[str, str],
-                     defs: dict[str, list[tuple[str, int]]]) -> tuple[list[dict], list[dict]]:
+                     defs: dict[str, list[tuple[str, int]]],
+                     known: dict | None = None) -> tuple[list[dict], list[dict]]:
     """Of `macros` (`unpinned_macros` of the claim `claim_id`), those each of whose definitions
     lies whole inside a passage that another claim's matching pin holds (`held_passages`), and
     the others. Each of the first names the claims and carries the digest of the macro's
-    definitions (`sha256`, as `notation_digests` computes it)."""
+    definitions (`sha256`, as `notation_digests` computes it); `known` keeps those digests
+    between calls on one snapshot."""
+    known = {} if known is None else known
     held = [(cid, r) for cid, r in held if cid != claim_id]
     if not held:
         return [], macros
@@ -624,7 +628,9 @@ def pinned_elsewhere(claim_id: str, macros: list[dict], held: list[tuple[str, Re
                 by = set()
                 break
             by |= holders
-        digest = notation_digests(root, files, defs, [m["macro"]]).get(m["macro"]) if by else None
+        if by and m["macro"] not in known:
+            known[m["macro"]] = notation_digests(root, files, defs, [m["macro"]]).get(m["macro"])
+        digest = known.get(m["macro"]) if by else None
         if digest:
             elsewhere.append({**m, "claims": sorted(by), "sha256": digest["sha256"]})
         else:
@@ -676,6 +682,7 @@ def collect(inventory: dict, paper: str, root: Path, notation=()) -> dict:
     text."""
     out = {}
     defs = files = held = None
+    known: dict = {}
     listed = set(notation)
     digests: dict[str, dict] | None = None
     pins: dict[str, Pin] = {}
@@ -704,7 +711,8 @@ def collect(inventory: dict, paper: str, root: Path, notation=()) -> dict:
             if macros:
                 if held is None:
                     held = held_passages(inventory["claims"], paper, root, pins)
-                elsewhere, macros = pinned_elsewhere(claim["id"], macros, held, root, files, defs)
+                elsewhere, macros = pinned_elsewhere(claim["id"], macros, held, root, files, defs,
+                                                     known)
                 if elsewhere:
                     rec["pinned_elsewhere"] = elsewhere
             if macros:
