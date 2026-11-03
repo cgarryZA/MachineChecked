@@ -31,6 +31,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from fractions import Fraction
 from pathlib import Path
 
 FEATURES = ("domain", "quantifier order", "constant dependence", "derivative order", "norm",
@@ -136,12 +137,24 @@ def difference_content(d) -> dict:
     elif d.get("why") not in (None, ""):
         raise _err("`why` belongs to a difference whose outcome is `no difference`")
     if d.get("hint") is not None:
-        h = d["hint"]
-        if not isinstance(h, dict) or not isinstance(h.get("decl"), str) or \
-                type(h.get("binder")) is not int:
-            raise _err("a hint is {decl, binder}, as the reading lists it")
-        out["hint"] = {"decl": h["decl"], "binder": h["binder"]}
+        out["hint"] = hint_ref(d["hint"])
     return out
+
+
+def hint_ref(h) -> dict:
+    """The computed hint a difference settles (`hint`): `{decl, binder}`, a hypothesis no
+    requirement is aligned with, or `{alignment, kind}`, a hint an alignment's paper expression
+    gives (`EXPRESSION_HINTS`), as the reading lists them."""
+    if isinstance(h, dict) and "alignment" in h:
+        if set(h) - {"alignment", "kind"} or not isinstance(h["alignment"], str) or \
+                h.get("kind") not in EXPRESSION_HINTS:
+            raise _err("a hint of an alignment is {alignment, kind}, `kind` one of "
+                       + ", ".join(EXPRESSION_HINTS) + ", as the reading lists it")
+        return {"alignment": h["alignment"], "kind": h["kind"]}
+    if not isinstance(h, dict) or not isinstance(h.get("decl"), str) or \
+            type(h.get("binder")) is not int:
+        raise _err("a hint is {decl, binder} or {alignment, kind}, as the reading lists it")
+    return {"decl": h["decl"], "binder": h["binder"]}
 
 
 # -- counterexamples -----------------------------------------------------------------------
@@ -272,6 +285,7 @@ def finding_fields(out: dict, rec: dict, ws: dict, cur: dict | None, repin: bool
         out["difference"] = difference_content(rec["difference"])
         if not out.get("requirement"):
             raise _err("a difference is attached to the requirement it affects (`requirement`)")
+        _hint_alignment(out, ws)
     if rec.get("verdict") not in (None, ""):
         out["verdict"] = _choice(rec["verdict"], tuple(STATE), "the verdict", False)
     cxs = rec.get("counterexamples")
@@ -286,6 +300,16 @@ def finding_fields(out: dict, rec: dict, ws: dict, cur: dict | None, repin: bool
                 raise _err(f"{c} is not a counterexample of {out['claim']} in this workspace")
             pins[c] = old[c] if c in old and not repin else counterexample_pin(r)
         out["counterexamples"] = [{"id": c, "sha256": s} for c, s in pins.items()]
+
+
+def _hint_alignment(out: dict, ws: dict) -> None:
+    """A difference that settles an alignment's hint names an alignment of its claim."""
+    aid = (out["difference"].get("hint") or {}).get("alignment")
+    if aid is None:
+        return
+    a = ws["records"].get(aid)
+    if not a or a.get("kind") != "alignment" or a.get("claim") != out["claim"]:
+        raise _err(f"{aid} is not an alignment of {out['claim']} in this workspace")
 
 
 # -- certificates ----------------------------------------------------------------------------
@@ -761,12 +785,47 @@ def specialisations(ob: dict) -> list[dict]:
 
 # -- hints -----------------------------------------------------------------------------------
 
+# The hints an alignment's paper expression gives (`expression_hints`), which a difference
+# settles by naming `{alignment, kind}`.
+EXPRESSION_HINTS = ("offset", "coefficient", "power", "terms", "not compared")
+
+
+def _settling(records: list[dict]) -> dict[tuple, dict]:
+    """The findings in force whose difference settles a hint (an outcome other than `open`), by
+    the hint they name: `(decl, binder)` or `(alignment, kind)`."""
+    later = {r.get("supersedes") for r in records if r.get("supersedes")}
+    out = {}
+    for f in records:
+        d = f.get("difference") or {}
+        h = d.get("hint") or {}
+        if f.get("kind") != "finding" or f["id"] in later or not h or \
+                d.get("outcome") not in ("no difference", "resolved", "difference"):
+            continue
+        out[(h["alignment"], h["kind"]) if "alignment" in h else (h["decl"], h["binder"])] = f
+    return out
+
+
+def _settled(f: dict | None) -> dict:
+    """What a hint settled by the finding `f` carries: the finding (`settled_by`) and, in
+    `settled`, its outcome, who recorded it and why."""
+    if f is None:
+        return {}
+    d = f["difference"]
+    why = d.get("why") or (d.get("resolution") or {}).get("text") or f.get("note") or \
+        OUTCOME_WORDS[d["outcome"]]
+    return {"settled_by": f["id"], "settled": {"finding": f["id"], "outcome": d["outcome"],
+                                               "why": why, "by": f.get("created_by")}}
+
+
 def hints(records: list[dict], snap, claim: str) -> tuple[list[dict], list[dict]]:
     """Computed pointers, from the claim's alignments: each hypothesis of an aligned Lean
     statement that no alignment associates with a requirement (an extra Lean hypothesis to
-    inspect, unless a difference finding dismissed or resolved it), and each hypothesis aligned
-    with a requirement that a standing assumption governs (inherited by the claim, not an extra
-    hypothesis). A hint is a pointer; it is never a finding."""
+    inspect), each aligned paper expression that differs in quantity from its Lean expression,
+    or that could not be compared (`expression_hints`); and each hypothesis aligned with a
+    requirement that a standing assumption governs (inherited by the claim, not an extra
+    hypothesis). A hint a difference finding in force dismissed or resolved carries that finding
+    and its reason (`settled_by`, `settled`). A hint is a pointer; it is never a finding, and it
+    changes no status."""
     from . import requirements as rq
     from . import symbols
     if snap is None:
@@ -781,12 +840,7 @@ def hints(records: list[dict], snap, claim: str) -> tuple[list[dict], list[dict]
             i = t.get("binder", t.get("var"))
             if isinstance(i, int):
                 seen.setdefault((t["decl"], i), []).extend(a.get("requirements") or [])
-    settled = {}
-    for f in records:
-        d = (f.get("difference") or {})
-        if f.get("kind") == "finding" and d.get("hint") and d.get("outcome") in (
-                "no difference", "resolved", "difference"):
-            settled[(d["hint"]["decl"], d["hint"]["binder"])] = f["id"]
+    settled = _settling(records)
     out, inherited = [], []
     for decl in decls:
         st = statements.get(decl)
@@ -812,8 +866,327 @@ def hints(records: list[dict], snap, claim: str) -> tuple[list[dict], list[dict]
                         "lean": lean, "basis": "computed hint",
                         "text": f"{decl} assumes {lean}; no requirement of this reading is "
                                 "aligned with it",
-                        **({"settled_by": settled[(decl, i)]} if (decl, i) in settled else {})})
+                        **_settled(settled.get((decl, i)))})
+    for h in expression_hints(records, snap, claim, statements):
+        out.append({**h, **_settled(settled.get((h["alignment"], h["kind"])))})
     return out, inherited
+
+
+def variable_pairs(records: list[dict], snap, claim: str,
+                   statements: dict[str, dict]) -> dict[str, dict[str, dict]]:
+    """Per declaration, the paper's variables matched with its variables: a requirement's
+    variable (`binds`) aligned with a Lean variable (`var`), and the claim's symbol links to a
+    variable that hold and take every occurrence of their symbol. An alignment of several
+    variables with several Lean variables matches those of the same name only. A paper variable
+    matched with two variables of one declaration is matched with neither (`ambiguous`).
+    `{decl: {name key: {lean, name, paper, via} | {ambiguous: [names]}}}`."""
+    from . import expressions as ex
+    from . import symbols
+    reqs = {r["local_id"]: r for r in records if r.get("kind") == "requirement"}
+    found: dict[str, dict[str, list[dict]]] = {}
+
+    def names_of(decl):
+        st = statements.get(decl)
+        return [(v or {}).get("name") for v in symbols.variables(st)] if st else []
+
+    def add(decl, paper, i, via):
+        names = names_of(decl)
+        found.setdefault(decl, {}).setdefault(ex.name_key(paper), []).append(
+            {"lean": f"v:{i}", "name": (names[i] if i < len(names) else None) or f"#{i}",
+             "paper": ex.name_key(paper), "via": via})
+
+    for a in sorted((r for r in records if r.get("kind") == "alignment"),
+                    key=lambda r: (r.get("created_at") or "", r["id"])):
+        binds = list(dict.fromkeys(b for lid in a.get("requirements") or []
+                                   for b in (reqs.get(lid) or {}).get("binds") or []))
+        by_decl: dict[str, list[int]] = {}
+        for t in a.get("lean") or []:
+            if type(t.get("var")) is int:
+                by_decl.setdefault(t["decl"], []).append(t["var"])
+        for decl, idx in by_decl.items():
+            idx = list(dict.fromkeys(idx))
+            if len(binds) == 1 and len(idx) == 1:
+                add(decl, binds[0], idx[0], f"alignment {a['id']}")
+                continue
+            names = names_of(decl)
+            for b in binds:
+                same = [i for i in idx if i < len(names) and
+                        ex.name_key(names[i] or "") == ex.name_key(b)]
+                if len(same) == 1:
+                    add(decl, b, same[0], f"alignment {a['id']}")
+    for ln in (snap.chunk(claim) or {}).get("symbols") or []:
+        t, sym = ln.get("lean") or {}, ln.get("symbol") or {}
+        if ln.get("stale") or type(t.get("var")) is not int or not sym.get("tex") or \
+                sym.get("occurrence", "all") != "all":
+            continue
+        add(t.get("decl"), sym["tex"], t["var"], f"symbol link by {ln.get('by')}")
+    out: dict[str, dict[str, dict]] = {}
+    for decl, by_name in found.items():
+        for k, cands in by_name.items():
+            if len({c["lean"] for c in cands}) == 1:
+                out.setdefault(decl, {})[k] = cands[0]
+            else:
+                out.setdefault(decl, {})[k] = {"ambiguous": list(dict.fromkeys(
+                    c["name"] for c in cands))}
+    return out
+
+
+def _lean_expression(st: dict, t: dict, part) -> tuple[dict | None, str | None, dict | None]:
+    """The mathematics, text and place (`symbols.math_context`) of the expression a Lean
+    target names: the conclusion, a variable's type (a hypothesis), or a sub-term (`at`)."""
+    from . import symbols
+    if t.get("conclusion"):
+        pp = st.get("conclusion") or {}
+        return pp.get("math"), symbols._text(pp), {"path": [], "printed": pp, "expansion": None}
+    if type(t.get("binder")) is int:
+        vs = symbols.variables(st)
+        pp = (vs[t["binder"]] or {}).get("type") if t["binder"] < len(vs) else None
+        if not isinstance(pp, dict):
+            return None, None, None
+        return pp.get("math"), symbols._text(pp), {"path": [], "printed": pp, "expansion": None}
+    if isinstance(t.get("at"), str):
+        c = symbols.math_context(st, t["at"], part)
+        return (c or {}).get("math"), symbols.term_by_id(st, t["at"], part), c
+    return None, None, None
+
+
+def _expanded(x: dict) -> str | None:
+    from . import symbols
+    if isinstance(x.get("body"), dict):
+        return symbols._text(x["body"])
+    q = next((q for q in x.get("equations") or [] if isinstance(q, dict)), None)
+    return symbols._text(q.get("equation") or q.get("statement")) if q else None
+
+
+def _definition(ctx: dict, app: dict | None, arg: dict | None, part) -> dict | None:
+    """The definition the compared Lean expression stands in: the one whose expansion it is
+    printed in, or the application `app` of a definition it is the argument `arg` of, with that
+    definition's parameter and its expansion at these arguments when the build holds it."""
+    from . import symbols
+    x = ctx.get("expansion")
+    if x is not None and app is None:
+        return {"name": x.get("name"), "expansion": x.get("id"),
+                **({"expanded": _expanded(x)} if _expanded(x) else {})}
+    if app is None:
+        return None
+    out = {"name": app.get("name")}
+    ref = next((e for e in (ctx.get("printed") or {}).get("expansions") or []
+                if isinstance(e, dict) and e.get("at") == app.get("id")), None)
+    if ref is not None and symbols._is_ref(ref):
+        ref = part(ref["key"]) if part is not None else None
+    if isinstance(ref, dict):
+        out["expansion"] = ref.get("id")
+        for p in ref.get("args") or []:
+            if isinstance(p, dict) and (p.get("value") or {}).get("id") == (arg or {}).get("id"):
+                out["parameter"] = p.get("name")
+        if _expanded(ref):
+            out["expanded"] = _expanded(ref)
+    return out
+
+
+def _unwrapped(text: str | None) -> str | None:
+    """`text` without one pair of brackets around all of it, as Lean prints an argument."""
+    if not text or not (text.startswith("(") and text.endswith(")")):
+        return text
+    depth = 0
+    for i, ch in enumerate(text):
+        depth += {"(": 1, ")": -1}.get(ch, 0)
+        if depth == 0 and i < len(text) - 1:
+            return text
+    return text[1:-1]
+
+
+def _identifiers(node) -> list[str]:
+    if not isinstance(node, dict):
+        return []
+    if node.get("k") == "local":
+        return [node["name"]]
+    return [n for a in node.get("args") or [] for n in _identifiers(a)]
+
+
+def _compare_target(expr: str, st: dict, t: dict, pairs: dict, part) -> dict:
+    """The comparison of the paper's `expr` with the Lean expression the target `t` names, with
+    the definition it stands in. An application of a definition, or a relation, is compared
+    through the one argument that has the paper's variables."""
+    from . import expressions as ex
+    from . import symbols
+    node, text, ctx = _lean_expression(st, t, part)
+    keys = {k: v["lean"] for k, v in pairs.items() if "lean" in v}
+    known = {v["lean"]: v["name"] for v in pairs.values() if "lean" in v}
+    out = {"lean_text": t.get("target") if text is None else text}
+    try:
+        used = _identifiers(ex.read_tex(expr))
+    except ex.Unsupported:
+        used = []
+    twice = [k for k in used if "ambiguous" in (pairs.get(k) or {})]
+    if twice:
+        return {**out, "outcome": "not compared",
+                "reason": f"the paper's {twice[0]} is aligned with more than one variable of "
+                          f"{t['decl']} ({', '.join(pairs[twice[0]]['ambiguous'])})"}
+    if node is None:
+        return {**out, "outcome": "not compared",
+                "reason": f"this build holds no reading of that part of {t['decl']} as "
+                          "mathematics"}
+    app = arg = None
+    path = [*((ctx or {}).get("path") or []), node]
+    if node.get("k") in ("apply", "rel"):
+        want = ex.paper_atoms(expr, keys)
+        if want is not None:
+            cands = [a for a in node.get("args") or [] if ex.lean_atoms(a, known) == want]
+            what = node.get("name") if node.get("k") == "apply" else "the relation"
+            if len(cands) != 1:
+                return {**out, "outcome": "not compared",
+                        "reason": ("no" if not cands else "more than one") + f" argument of {what} "
+                        "has exactly the paper expression's variables"}
+            node = cands[0]
+            path.append(node)
+            out["lean_text"] = symbols.term_by_id(st, node.get("id"), part) or out["lean_text"]
+            out["lean_at"] = node.get("id")
+    if ctx is not None and ctx.get("expansion") is None:
+        # The nearest application of a definition around the expression, with the argument it
+        # stands in.
+        for i in range(len(path) - 2, -1, -1):
+            if path[i].get("k") == "apply":
+                app, arg = path[i], path[i + 1]
+                break
+    res = ex.compare(expr, node, keys, known)
+    d = _definition(ctx or {}, app, arg, part)
+    return {**out, **res, **({"definition": d} if d else {})}
+
+
+def expression_hints(records: list[dict], snap, claim: str,
+                     statements: dict[str, dict]) -> list[dict]:
+    """A hint for each Lean target of an alignment that names its paper `expression` and an
+    expression of the Lean (the conclusion, a hypothesis or a sub-term), when the two differ in
+    quantity (`expressions.compare`: an `offset`, a `coefficient`, a `power`, other `terms`), or
+    when they could not be compared (`not compared`, with the reason: an identifier aligned with
+    no Lean variable, something the TeX reader does not read, a Lean operation that is not this
+    arithmetic, an alignment out of date). A rename through an alignment or a symbol link, and
+    an algebraically equal form, give none."""
+    from . import requirements as rq
+    aligns = sorted((a for a in records if a.get("kind") == "alignment" and a.get("expression")),
+                    key=lambda a: (a.get("created_at") or "", a["id"]))
+    if not aligns:
+        return []
+    pairs = variable_pairs(records, snap, claim, statements)
+    part = getattr(snap, "part", None)
+    out = []
+    for a in aligns:
+        cur = rq.alignment_currency(a, snap)
+        cur = rq.with_expression(cur, a, records, snap)
+        for t in a.get("lean") or []:
+            if not (t.get("conclusion") or type(t.get("binder")) is int
+                    or isinstance(t.get("at"), str)):
+                continue
+            st = statements.get(t["decl"])
+            if cur["state"] == "stale":
+                res = {"outcome": "not compared", "lean_text": t.get("target"),
+                       "reason": "the alignment is out of date: read it again and re-pin it"}
+            elif st is None:
+                res = {"outcome": "not compared", "lean_text": t.get("target"),
+                       "reason": f"this build holds no statement of {t['decl']} for {claim}"}
+            else:
+                res = _compare_target(a["expression"], st, t, pairs.get(t["decl"]) or {}, part)
+            if res["outcome"] == "same":
+                continue
+            out.append(_hint(a, t, res, pairs.get(t["decl"]) or {}))
+    return out
+
+
+def _aligned(spaces) -> list:
+    return [(p, ws) for p, ws in spaces
+            if any(isinstance(r, dict) and r.get("kind") == "alignment"
+                   for r in (ws.get("records") or {}).values())]
+
+
+def has_alignments(work_dir: Path | None) -> bool:
+    """Whether a workspace in `work_dir` records an alignment, which can give a hint."""
+    from . import workspace as wsp
+    return work_dir is not None and bool(_aligned(wsp.list_all(work_dir)))
+
+
+def workspace_hints(work_dir: Path | None, data: Path,
+                    sources: Path | None = None) -> dict[str, dict]:
+    """Per claim of the build whose site data is `data`, the computed hints the workspaces in
+    `work_dir` give (`hints`), each with the workspace, its auditor and its mode: those in
+    force (`hints`) and those a difference settles (`dismissed`). `sources` is the build's copy
+    of the papers' sources, which the passages are read in. Hints are pointers for the auditor;
+    nothing counts or publishes them."""
+    from . import workspace as wsp
+    from .targets import Snapshot, TargetError
+    spaces = _aligned(wsp.list_all(work_dir)) if work_dir is not None else []
+    if not spaces:
+        return {}
+    try:
+        snap = Snapshot(data)
+    except TargetError:
+        return {}
+    if sources is not None:
+        snap.sources_base = Path(sources)
+    claims = {c["id"] for c in snap.claims}
+    out: dict[str, dict] = {}
+    for _, ws in spaces:
+        recs = [r for r in ws["records"].values() if isinstance(r, dict)]
+        who = {"workspace": ws.get("id"), "by": (ws.get("reviewer") or {}).get("id"),
+               "mode": ws.get("mode")}
+        for cid in sorted({r.get("claim") for r in recs if r.get("kind") == "alignment"}
+                          & claims):
+            hs, _ = hints([r for r in recs if r.get("claim") == cid], snap, cid)
+            for h in hs:
+                out.setdefault(cid, {"hints": [], "dismissed": []})[
+                    "dismissed" if h.get("settled_by") else "hints"].append({**h, **who})
+    return out
+
+
+def _hint(a: dict, t: dict, res: dict, pairs: dict) -> dict:
+    from . import requirements as rq
+    kind = res.get("kind") or "not compared"
+    by_key = {v["lean"]: v for v in pairs.values() if "lean" in v}
+    variables = [{"paper": by_key[k]["paper"], "lean": by_key[k]["name"],
+                  "via": by_key[k]["via"]} for k in res.get("used") or [] if k in by_key]
+    paper, lean = a["expression"], _unwrapped(res.get("lean_text")) or rq.target_text(t)
+    d = res.get("definition") or {}
+    where = [t["decl"]]
+    if d.get("parameter"):
+        where.append(f"the argument {d['parameter']} of {d['name']}")
+    elif d.get("name"):
+        where.append(f"inside {d['name']}")
+    if d.get("expanded"):
+        where.append(f"which expands to {d['expanded']}")
+    renamed = [f"{v['paper']} as {v['lean']}" for v in variables if v["paper"] != v["lean"]]
+    context = f" ({'; '.join(renamed)}; " if renamed else " ("
+    context += "in " + ", ".join(where) + ")"
+    if kind == "offset":
+        diff = Fraction(res["difference"])
+        lead = (f"The paper's {paper} and Lean's {lean} differ by {abs(diff)}: Lean's is "
+                + ("larger" if diff > 0 else "smaller"))
+    elif kind == "coefficient":
+        lead = f"Lean's {lean} is {res['factor']} times the paper's {paper}"
+    elif kind == "power":
+        lead = (f"The paper's {paper} and Lean's {lean} have different powers: "
+                f"{res['paper_normal']} and {res['lean_normal']}")
+    elif kind == "terms":
+        lead = (f"The paper's {paper} and Lean's {lean} differ: {res['paper_normal']} and "
+                f"{res['lean_normal']}")
+    else:
+        lead = f"The paper's {paper} and Lean's {lean} are not compared: {res['reason']}"
+    target = {k: t[k] for k in ("decl", *rq.SUBTARGETS) if k in t}
+    return {"kind": kind, "basis": "computed hint", "alignment": a["id"],
+            "requirements": list(a.get("requirements") or []), "decl": t["decl"],
+            "target": target,
+            **({"feature": res["feature"]} if res.get("feature") else {}),
+            "paper": {"text": paper, **({"normal": res["paper_normal"]}
+                                        if res.get("paper_normal") else {})},
+            "lean": {"text": lean, **({"normal": res["lean_normal"]}
+                                      if res.get("lean_normal") else {}),
+                     **({"at": res["lean_at"]} if res.get("lean_at") else {})},
+            **({"difference": res["difference"]} if "difference" in res else {}),
+            **({"factor": res["factor"]} if "factor" in res else {}),
+            **({"conditions": res["conditions"]} if res.get("conditions") else {}),
+            **({"reason": res["reason"]} if kind == "not compared" else {}),
+            "variables": variables,
+            **({"definition": d} if d else {}),
+            "text": lead + context + "."}
 
 
 # -- the block a claim's reading shows ---------------------------------------------------------
@@ -1009,6 +1382,10 @@ def lines(block: dict) -> list[str]:
         out.append(f"  {d['feature']} on {d['requirement']}, {how}")
     for h in block.get("hints") or []:
         out.append(f"  hint: {h['text']}")
+    for h in block.get("settled_hints") or []:
+        s = h.get("settled") or {}
+        out.append(f"  hint dismissed by {h['settled_by']} ({OUTCOME_WORDS.get(s.get('outcome'))}"
+                   f", {s.get('by')}): {h['text']} Why: {s.get('why')}")
     for h in block.get("inherited") or []:
         out.append(f"  {h['decl']} assumes {h['lean']}: inherited from {h['from']} "
                    f"({h['requirement']})")

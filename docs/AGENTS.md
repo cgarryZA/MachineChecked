@@ -73,6 +73,13 @@ never added into a total or a percentage
 audit, a paper's `withheld` lists what its publication settings leave out, and a reading's
 `withheld` (`["question"]`) says its question's words are not published: report that as withheld,
 never as not assessed.
+In either mode, a claim has `hints` when an alignment of a workspace in the working directory
+gives one: a computed pointer where an aligned paper expression and its Lean expression differ
+in quantity, or could not be compared (`kind`, `feature`, `paper` and `lean` each with its exact
+`text` and `normal` form, `variables`, `definition`, `reason`, `text`), each with the
+`workspace`, its auditor (`by`) and `mode`; `dismissed_hints` are those a recorded difference
+settles, with `settled`. A hint is not a finding and not a status: report it as something to
+inspect, and never count it with the findings.
 
 In a project with a `machinechecked.toml` (the full assessment), the document also has
 `findings` (totals per tier, dismissed warnings left out) and `finding_details`: each finding
@@ -583,7 +590,15 @@ packet lists a supporting result with that object only (basis `theorem`, and in
 `interpretations.derivations`), never with another object of the same name or type. An argument that combines several results is a `composition`
 record ([Reviewing](REVIEWING.md#saved-investigations)); a step can cite an application from
 `compare --query uses` as `"ref": {"app": {"callee": NAME, "id": APP_ID}}`. Differences from the
-Lean are findings with a `difference` on the affected requirement; a counterexample
+Lean are findings with a `difference` on the affected requirement. An alignment that names the
+paper's `expression` (exactly as a passage governing it writes it: `"expression": "m + 4"`) with
+a Lean expression (`conclusion`, `binder` or `at`) gives a computed hint in the reading's
+`estimates.hints` when the two differ in quantity (`kind` `offset`, `coefficient`, `power` or
+`terms`, with both texts, both normal forms, the variables matched and the definition the Lean
+expression stands in), or `not compared` with the reason (a variable no alignment or symbol link
+matches, a construct the TeX reader does not read: "unsupported: …"). A hint is a pointer, never
+a finding: dismiss it with a difference that names it, `"hint": {"alignment": ID, "kind":
+KIND}`. A counterexample
 (`counterexample`: a specialisation, its reduction and violation, its admissibility obligations)
 is read against its requirement's quantifiers, and a Lean certificate is evidence
 `{"certificate": {theorem, target, certifies}}` that Lean checks when it is recorded. A
