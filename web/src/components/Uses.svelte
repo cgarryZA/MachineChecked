@@ -7,15 +7,21 @@
   // are the ones `machinechecked compare --query uses` prints (with `--in`, for one).
   // Inside a comparison its data come as the stage allows them (`comparison.usersSide`): an
   // independent stage's do not name the claims a declaration is linked to. An application opens
-  // as an inspection beside the comparison row, after the trail it was found in.
+  // as an inspection beside the comparison row, after the trail it was found in. Beside each
+  // application are the impacts the open investigation records at it (a finding's `impact`:
+  // what a recorded difference affects at that use), never at an independent stage.
   import { getContext } from "svelte";
   import { askUses, canEdit, loadUsers, siteIndex } from "../lib/data.js";
-  import { applications, openInspection, tokenOf } from "../lib/inspect.svelte.js";
+  import { applications, openInspection, tokenOf, workspace } from "../lib/inspect.svelte.js";
+  import { independent } from "../lib/comparison.js";
+  import { impactsAt } from "../lib/impact.js";
   import Application from "./Application.svelte";
   import { userName } from "../lib/names.js";
 
   let { name, module = null, onref = null, index = siteIndex } = $props();
-  const stage = getContext("comparison")?.users || ((e) => e);
+  const ctx = getContext("comparison");
+  const stage = ctx?.users || ((e) => e);
+  const impacts = (a) => (ctx && independent(ctx.mode) ? [] : impactsAt(workspace.view, name, a.id));
   let open = $state(false);
   let entry = $state(undefined);
   let doc = $state(null);
@@ -58,6 +64,9 @@
       {#each doc.applications as a (a.id)}
         <Application {a} callee={name} {module} {onref} {index}
           inspect={() => openInspection(tokenOf({ kind: "application", callee: name, id: a.id }), "top", { nested: true })} />
+        {#each impacts(a) as x (x.finding.id)}
+          <p class="small impact" data-impact={x.outcome} data-app={a.id}><strong>{x.head}</strong> <span class="faint">· for {x.finding.requirement} of {x.claim} · {x.difference} · {x.finding.created_by}{x.finding.currency?.state === "stale" ? " · what it rests on changed since" : ""}</span>{#if x.why}<br /><span class="text">{x.why}</span>{/if}</p>
+        {/each}
       {/each}
       {#if doc.applications_note}<p class="small faint">{doc.applications_note}</p>{/if}
       <p class="small faint">{doc.note}</p>
@@ -93,4 +102,6 @@
   .warn { color: var(--st-open); }
   .lbl { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--faint); margin: 8px 0 2px; }
   .small { font-size: 12px; }
+  .impact { margin: 2px 0 6px 12px; padding-left: 8px; border-left: 3px solid var(--accent); overflow-wrap: anywhere; }
+  .impact[data-impact="not sufficient"], .impact[data-impact="unresolved"] { border-left-color: var(--tier-warning); }
 </style>

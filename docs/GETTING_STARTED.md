@@ -173,7 +173,10 @@ NAME, direct or through other declarations, and with the applications of NAME at
 proof's path: their arguments, each premise with how it is supplied, and the result. Importing a
 module is not a use. A trace that reaches a module not built or not loaded reads *not traced*
 and names the module. The answer also lists the claims whose linked Lean uses NAME: a difference
-between NAME and the paper can matter only to these.
+between NAME and the paper can matter only to these. The trace is a fact about the Lean terms;
+whether a recorded difference matters at one of these applications is a reviewer's reading,
+recorded as an impact at that use ([What a difference affects at a use](REVIEWING.md#saved-investigations))
+and listed in the same answer, per application.
 
 The trace is a fact about the Lean terms of the build. *Formalized separately* describes the
 Lean: the declaration keeps its own correspondence review, and no status changes. Whether a

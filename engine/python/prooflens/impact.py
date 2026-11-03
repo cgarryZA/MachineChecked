@@ -25,10 +25,24 @@ no longer declared).
 
 A trace is a fact about the Lean terms of this build; whether a difference matters at a use
 takes a reviewer. The answer changes no status.
+
+What a recorded difference affects at one use is a finding of a workspace with an `impact`
+(`impact_content`): the difference finding it concerns (pinned to the version read), the use (an
+evidence record citing an application of the differing declaration), the requirement at that use
+(the finding's own `requirement`, of the claim whose Lean makes the application), the outcome
+(`OUTCOMES`) and the reviewer's explanation, with the evidence the finding cites. Each use has
+its own: an outcome recorded for one application says nothing of another. The finding goes stale
+when the application changes (a change to the caller's proof alone does it, while the
+difference, a comparison of statements, stays current), when the difference finding changes, is
+superseded or goes stale, or when the requirement changes. The impact answer lists the impacts
+recorded at the target's applications (`recorded`). An impact is the reviewer's attributed
+reading; it changes no status and erases no difference.
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
 from pathlib import Path
 
 SCHEMA = "machinechecked/impact@1"
@@ -319,6 +333,17 @@ def _resolution(doc: dict) -> str:
     return doc.get("reason") or st or "its uses are not known"
 
 
+def _recorded_for(site, name: str, root: Path) -> list[dict]:
+    """The impacts the workspaces of the build's working directory record at uses of `name`
+    (`recorded`); none when the build cannot be read as a workspace's build."""
+    from .targets import Snapshot, TargetError
+    try:
+        snap = Snapshot(site.data)
+    except TargetError:
+        return []
+    return recorded(site.data.parent.parent, snap, name, root)
+
+
 def impact(site, root: Path, target: str, main: list[str] | None = None, log=None,
            saved: dict | None = None) -> dict:
     """The impact document of `target` (a declaration name, or `Module:Name`) in the Lean project
@@ -421,6 +446,13 @@ def impact(site, root: Path, target: str, main: list[str] | None = None, log=Non
 
     traced = mains + [d for c in claims for d in c["declarations"]]
     sc = doc.get("scope") or {}
+    found = _recorded_for(site, tname, root)
+    for m in mains:
+        here = [r for r in found if r["use"]["id"] in (m.get("applications") or [])]
+        if here:
+            m["impacts"] = [{"finding": r["finding"], "workspace": r["workspace"],
+                             "application": r["use"]["id"], "outcome": r["outcome"]}
+                            for r in here]
     return {
         **head, "ok": True,
         "declaration": decl, "linked_to": claims_of.get(tname, []),
@@ -430,6 +462,7 @@ def impact(site, root: Path, target: str, main: list[str] | None = None, log=Non
         "applications": [apps[i] for i in cited],
         "applications_complete": doc.get("applications_complete"),
         "imports_without_use": doc.get("imports_without_use") or [],
+        "recorded": found, "applications_all": [a["id"] for a in doc.get("applications") or []],
         "locations": {n: where(n) for n in sorted(used_names) if g.module.get(n)},
         "scope": {"libraries": sc.get("libraries") or [], "modules": len(refs["built"]),
                   "unbuilt": refs["unbuilt"], "failed": failed,
@@ -555,6 +588,7 @@ def text(doc: dict) -> str:
                      + ", ".join(c["number"] or c["claim"] for c in groups["none"]))
     if doc["imports_without_use"]:
         lines.append("Imported without use by: " + ", ".join(doc["imports_without_use"]))
+    lines += recorded_lines(doc)
     sc = doc["scope"]
     if sc["unbuilt"] or sc["failed"] or sc["without_references"]:
         lines.append("Not searched: " + "; ".join(x for x in (
@@ -564,3 +598,221 @@ def text(doc: dict) -> str:
             if sc["without_references"] else "") if x))
     lines.append(doc["note"])
     return "\n".join(lines)
+
+
+# -- what a recorded difference affects at a use ------------------------------------------------
+
+OUTCOMES = ("sufficient for this use", "not sufficient", "a separate scope question",
+            "unresolved")
+IMPACT_KEYS = ("difference", "use", "outcome", "why")
+# What an impact keeps of the difference finding it concerns, as it was read.
+PIN_KEYS = ("finding", "claim", "requirement", "sha256", "feature", "paper", "lean", "outcome")
+DIFFERENCE = "difference"  # the dependency kind of the difference an impact concerns
+
+
+def _err(msg: str):
+    from .workspace import WorkspaceError
+    return WorkspaceError(msg)
+
+
+def difference_digest(d: dict) -> str:
+    """A digest of what a difference finding says: its claim, its requirement and its
+    difference."""
+    body = {k: d.get(k) for k in ("claim", "requirement", "difference")}
+    return "difference-v1:" + hashlib.sha256(json.dumps(
+        body, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+
+
+def superseded_by(records: dict, fid: str) -> str | None:
+    """The finding that supersedes `fid`, or None."""
+    return next((r["id"] for r in records.values() if r.get("supersedes") == fid), None)
+
+
+def _pin(d: dict) -> dict:
+    diff = d.get("difference") or {}
+    return {"finding": d["id"], "claim": d.get("claim"), "requirement": d.get("requirement"),
+            "sha256": difference_digest(d),
+            **{k: diff[k] for k in ("feature", "paper", "lean", "outcome") if diff.get(k)}}
+
+
+def linked_names(snap, claim: str) -> list[str]:
+    """The declarations the build links to `claim`: its links, locked statements and accepting
+    theorems."""
+    ch = snap.chunk(claim) if snap is not None else None
+    return claim_names(ch) if ch else []
+
+
+def impact_content(out: dict, imp, rec: dict, ws: dict, snap, cur: dict | None,
+                   repin: bool) -> None:
+    """The `impact` of a finding, checked: the difference finding it concerns (`difference`, an
+    id; kept with the version read until re-pinned), the use (`use`, an evidence record of the
+    finding's claim citing an application of a declaration the difference's claim is linked
+    to), the outcome at that use and the reviewer's explanation (`why`). The requirement at the
+    use is the finding's own `requirement`; the use joins the finding's evidence."""
+    from .workspace import _choice, _text
+    if not isinstance(imp, dict):
+        raise _err("an impact is {difference, use, outcome, why}")
+    extra = set(imp) - set(IMPACT_KEYS)
+    if extra:
+        raise _err(f"an impact has no field {', '.join(sorted(extra))}")
+    for k, what in (("coverage", "a coverage"), ("difference", "a difference"),
+                    ("verdict", "a verdict"), ("composition", "a composition")):
+        if rec.get(k) not in (None, ""):
+            raise _err(f"an impact is a finding of its own: it records what a difference "
+                       f"affects at one use, not {what}")
+    if not out.get("requirement"):
+        raise _err("an impact names the requirement at the use (`requirement`: a requirement "
+                   f"of {out['claim']}, the claim whose Lean makes the application)")
+    d = imp.get("difference")
+    fid = d.get("finding") if isinstance(d, dict) else d
+    if not isinstance(fid, str) or not fid.strip():
+        raise _err("an impact names the difference finding it concerns (`difference`)")
+    fid = fid.strip()
+    df = ws["records"].get(fid)
+    if not df or df.get("kind") != "finding" or not df.get("difference"):
+        raise _err(f"{fid} is not a finding of this workspace that records a difference")
+    if df.get("impact"):
+        raise _err(f"{fid} records an impact; name the finding that records the difference")
+    later = superseded_by(ws["records"], fid)
+    if later:
+        raise _err(f"{fid} is superseded by {later}; name the finding in force")
+    use = imp.get("use")
+    if not isinstance(use, str) or not use.strip():
+        raise _err("an impact names its use (`use`: an evidence record citing an application, "
+                   "as `compare --query uses` or `impact` gives it)")
+    use = use.strip()
+    u = ws["records"].get(use)
+    if not u or u.get("kind") != "evidence" or not (u.get("ref") or {}).get("app"):
+        raise _err(f"{use} is not an evidence record citing an application: a use is one "
+                   "application of the declaration (`ref`: {app: {callee, id}})")
+    if u["claim"] != out["claim"]:
+        raise _err(f"{use} is evidence for {u['claim']}, not {out['claim']}")
+    if u.get("role") == "rejected":
+        raise _err(f"{use} is a rejected candidate")
+    callee = u["ref"]["app"].get("callee")
+    names = linked_names(snap, df["claim"])
+    if names and callee not in names:
+        raise _err(f"{use} applies {callee}, but the difference {fid} is about the Lean of "
+                   f"{df['claim']} ({', '.join(names)}): an impact is recorded at a use of that "
+                   "Lean")
+    old = (cur or {}).get("impact") or {}
+    pin = dict(old["difference"]) if not repin and (old.get("difference") or {}).get(
+        "finding") == fid else _pin(df)
+    out["impact"] = {"difference": pin, "use": use,
+                     "outcome": _choice(imp.get("outcome"), OUTCOMES, "the outcome at this use",
+                                        False),
+                     "why": _text(imp.get("why"), "the reviewer's explanation (`why`)",
+                                  True).strip()}
+    out["evidence"] = list(dict.fromkeys([*(out.get("evidence") or []), use]))
+
+
+def difference_item(f: dict) -> dict:
+    """The dependency of an impact finding on the difference it concerns, as it pinned it."""
+    pin = (f.get("impact") or {}).get("difference") or {}
+    return {"dependency": DIFFERENCE, "record": pin.get("finding"), "claim": pin.get("claim"),
+            "requirement": pin.get("requirement"), "sha256": pin.get("sha256")}
+
+
+def difference_currency(it: dict, records: dict, snap, root=None, cur: dict | None = None,
+                        check_facts: bool = False) -> dict:
+    """Whether the difference an impact concerns is the one it read and still current: stale
+    when it is gone, superseded or changed, or when what it rests on changed; unchecked when its
+    own currency is not known."""
+    fid = it.get("record")
+    d = records.get(fid or "")
+    if not d or d.get("kind") != "finding" or not d.get("difference"):
+        return {"state": "stale", "changes": [{"finding": fid, "reason": (
+            f"the difference {fid} the impact concerns is no longer in this workspace")}]}
+    later = superseded_by(records, fid)
+    if later:
+        return {"state": "stale", "changes": [{"finding": fid, "now": later, "reason": (
+            f"the difference {fid} the impact concerns is superseded by {later}")}]}
+    if difference_digest(d) != it.get("sha256"):
+        return {"state": "stale", "changes": [{"finding": fid, "reason": (
+            f"the difference {fid} changed since the impact was recorded")}]}
+    res = (cur or {}).get(fid)
+    if res is None:
+        from .dependencies import check
+        res = check(d, records, snap, root, cur, check_facts)
+    if res.get("state") == "stale":
+        return {"state": "stale", "changes": [{"finding": fid, "reason": (
+            f"what the difference {fid} rests on changed")}] + list(res.get("changes") or [])}
+    if res.get("state") == "unchecked":
+        why = "; ".join(dict.fromkeys(u.get("why") for u in res.get("unknown") or []
+                                      if u.get("why"))) or res.get("reason")
+        return {"state": "unchecked", "changes": [],
+                "reason": f"the difference {fid} is not known to be current"
+                          + (f": {why}" if why else "")}
+    return {"state": "current", "changes": []}
+
+
+def impact_words(imp: dict) -> str:
+    """An impact's heading: its outcome at the use."""
+    return f"At a use: {imp.get('outcome')}"
+
+
+def difference_words(pin: dict) -> str:
+    """The difference an impact concerns, as it pinned it."""
+    out = f"the {pin.get('feature') or 'recorded'} difference {pin.get('finding')}"
+    where = " ".join(x for x in (pin.get("claim"), pin.get("requirement")) if x)
+    sides = "; ".join(x for x in ((f"paper {pin['paper']}" if pin.get("paper") else ""),
+                                  (f"Lean {pin['lean']}" if pin.get("lean") else "")) if x)
+    return out + (f" on {where}" if where else "") + (f" ({sides})" if sides else "")
+
+
+def recorded(work_dir: Path, snap, name: str, root: Path | None = None) -> list[dict]:
+    """The impacts the workspaces of `work_dir` record at uses of the declaration `name`, each
+    with its workspace and auditor, the use's application, the requirement at the use, the
+    outcome, the explanation, the difference it concerns and its currency."""
+    from . import workspace as wsp
+    out = []
+    for _, ws in wsp.list_all(work_dir):
+        if not any((r.get("impact") or {}).get("use") for r in ws["records"].values()):
+            continue
+        v = wsp.view(ws, snap, None, root)
+        for cid, c in v["claims"].items():
+            evidence = {e["id"]: e for e in c.get("evidence") or []}
+            reqs = {r.get("local_id"): r for r in (c.get("reading") or {}).get("requirements")
+                    or []}
+            for f in c.get("findings") or []:
+                imp = f.get("impact")
+                app = ((evidence.get((imp or {}).get("use")) or {}).get("ref") or {}).get("app")
+                if not imp or not app or app.get("callee") != name:
+                    continue
+                out.append({"finding": f["id"], "claim": cid, "workspace": ws["id"],
+                            "reviewer": v["reviewer"], "mode": v["mode"],
+                            "state": f.get("state"), "in_force": f.get("in_force"),
+                            "requirement": f.get("requirement"),
+                            "requirement_text": (reqs.get(f.get("requirement")) or {}).get(
+                                "text"),
+                            "outcome": imp["outcome"], "why": imp.get("why"),
+                            "use": {"evidence": imp["use"], "id": app.get("id"),
+                                    "caller": app.get("caller"), "callee": app.get("callee")},
+                            "difference": imp.get("difference"),
+                            "currency": (f.get("currency") or {}).get("state")})
+    return out
+
+
+def recorded_lines(doc: dict) -> list[str]:
+    """The impacts recorded at the target's uses, and its applications with none, for the
+    terminal."""
+    recs = doc.get("recorded") or []
+    if not recs and not doc.get("applications_all"):
+        return []
+    out = ["Recorded impacts at its uses (each is one reviewer's reading of one application):"]
+    for r in recs:
+        tag = r["currency"] + ("" if r.get("in_force", True) else ", superseded")
+        out.append(f"  {r['use']['id']} in {r['use']['caller']}: {r['outcome']}, for "
+                   f"{r['requirement']} of {r['claim']}"
+                   + (f" ({r['requirement_text']})" if r.get("requirement_text") else "")
+                   + f"  [{r['finding']}, {r['reviewer']}, {tag}]")
+        out.append(f"    {difference_words(r.get('difference') or {})}")
+        if r.get("why"):
+            out.append(f"    why: {r['why']}")
+    seen = {r["use"]["id"] for r in recs if r.get("in_force", True)}
+    none = [a for a in doc.get("applications_all") or [] if a not in seen]
+    if not recs:
+        out.append("  none")
+    if none:
+        out.append("  no impact recorded at: " + _ids_text(none))
+    return out

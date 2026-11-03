@@ -591,6 +591,12 @@ def _print_workspace(v: dict) -> None:
                   + f"  [{f['currency']['state']}]" + (f"  supersedes {f['supersedes']}: "
                                                      f"{f['reason']}" if f.get("supersedes")
                                                      else ""))
+            if f.get("impact"):
+                from .impact import difference_words
+                imp = f["impact"]
+                print(f"           at the use {imp['use']}: {imp['outcome']}; "
+                      f"{difference_words(imp.get('difference') or {})}")
+                print(f"           why: {imp.get('why')}")
             if f.get("question"):
                 print(f"           question: {f['question']}")
             if f.get("would_decide"):

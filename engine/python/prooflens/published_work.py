@@ -12,11 +12,12 @@ Each record keeps its author and times, its pins and its currency against the pu
 computed over the published records alone. The paper's `publish` settings apply: a passage's
 text, file and lines only when the source text is published, a Lean target's text only when the
 Lean is, and the auditor's prose (notes, arguments, questions, reasons, a counterexample's
-specialisation and reduction) only when reviews are; a record names the prose fields it leaves
-out (`withheld`), never their words. A difference shows its paper expression when
-the source text is published and its Lean expression when the Lean is; a checked bridge it is
-resolved by carries its check against the Lean project at export (`bridge_check`), and reads as
-resolving it only while that check passes. A cited fact
+specialisation and reduction, an impact's explanation) only when reviews are; a record names the
+prose fields it leaves out (`withheld`), never their words. A difference shows its paper
+expression when the source text is published and its Lean expression when the Lean is; so does
+the difference an impact at a use concerns, as the impact read it. A checked bridge a difference
+is resolved by carries its check against the Lean project at export (`bridge_check`), and reads
+as resolving it only while that check passes. A cited fact
 inside a proof keeps its basis, "established inside this proof under this context", and its
 pins; its proposition and context are Lean text. A connection between two objects keeps its
 relation, its ends and its support by identity and pins; the Lean text of its ends, its scope
@@ -347,7 +348,28 @@ def public_record(r: dict, pub, currency: dict, in_force: set[str],
         out["ref"] = _ref(r.get("ref") or {}, pub)
     elif k == "composition":
         out.update(_composition(r, pub, (compositions or {})[r["id"]]))
+    if k == "finding" and r.get("impact"):
+        _impact(out, r["impact"], pub)
     return out
+
+
+def _impact(out: dict, imp: dict, pub) -> None:
+    """A finding's impact at a use: the difference it concerns by its id, claim, requirement,
+    feature, outcome and pin always, the paper's expression with the source text and the Lean's
+    with the Lean; the use and the outcome always, and the reviewer's explanation with the
+    reviews (else named in `withheld`)."""
+    pin = imp.get("difference") or {}
+    d = {k: pin[k] for k in ("finding", "claim", "requirement", "sha256", "feature", "outcome")
+         if pin.get(k) is not None}
+    if pub.source_text and pin.get("paper"):
+        d["paper"] = pin["paper"]
+    if pub.lean and pin.get("lean"):
+        d["lean"] = pin["lean"]
+    out["impact"] = {"difference": d, "use": imp.get("use"), "outcome": imp.get("outcome")}
+    if pub.reviews and imp.get("why"):
+        out["impact"]["why"] = imp["why"]
+    elif imp.get("why"):
+        out["withheld"] = [*(out.get("withheld") or []), "impact.why"]
 
 
 # -- what a finding rests on, and what a revision of the paper reopens --------------------------

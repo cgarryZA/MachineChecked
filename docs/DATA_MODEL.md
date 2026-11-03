@@ -878,7 +878,17 @@ optional `clause` and `note`, `rev`, `created_at`/`created_by`, `updated_at`/`up
   while the bridge is checked and no condition is open), a `verdict` on a printed step (`holds as
   printed`, `holds, with a gap in the argument`, `false as printed`, `cannot determine`) and the
   `counterexamples` it rests on (pinned by digest); such a finding is submitted without a
-  coverage. `state` is `draft`
+  coverage. A finding may instead record an `impact`: what a recorded difference affects at one
+  use (`impact.py`), `{difference, use, outcome, why}`. `difference` names a finding of the
+  workspace that records a difference and is in force, and is kept as it was read (`{finding,
+  claim, requirement, sha256, feature, paper, lean, outcome}`, `sha256` a digest of its claim,
+  requirement and difference) until re-pinned; `use` is an evidence record of the finding's
+  claim citing an application (`app`) of a declaration the difference's claim is linked to, and
+  joins the finding's `evidence`; the requirement at that use is the finding's own `requirement`
+  (required); `outcome` is `sufficient for this use`, `not sufficient`, `a separate scope
+  question` or `unresolved`; `why` is the reviewer's explanation (required). Such a finding has
+  no coverage, difference or verdict of its own. Each use has its own impact: an outcome at one
+  application says nothing of another. `state` is `draft`
   or `submitted` (`submitted_at`). A submitted finding is never edited or deleted: a later
   finding names it in `supersedes`, with its `reason`, and both are kept. A finding records what
   it rests on when it is submitted (`dependencies`, below).
@@ -1050,6 +1060,7 @@ identity:
 | `composition` | the composition it rests on | `sha256`: a digest of its statement, steps (their evidence, requirements, substitutions and inferences), identifications, obligations, coverage and bridge pins |
 | `bridge` | for a finding recorded as a checked bridge: its composition's bridge, or its own; for a difference resolved by a checked bridge, that bridge (`of`: `resolution`) | `theorem`, `target`, and for a composition's or a resolution's, `target_fingerprint` and `source_sha256` |
 | `counterexample` | a counterexample it cites | `sha256` (the finding's pin of it) |
+| `difference` | for an impact, the difference finding it concerns | `record`, `claim`, `requirement`, `sha256` (the impact's pin of it) |
 
 `dependencies` is `{kinds, items, unknown, at}`: `kinds` the evidence kinds it uses
 (`statement comparison`: a declaration's statement or a certificate; `object correspondence`:
@@ -1062,7 +1073,10 @@ its composition. A submitted finding records `dependencies` when it is submitted
 one when it is recorded) and keeps them; `workspace show` gives a draft's as its records give
 them now. Against a build, each item is checked as its record would be (the passage against the
 claim's pin, a context passage and an alignment as above, evidence as above, a bridge as
-`bridge_check`, a counterexample against its pin and its own currency). The finding is `stale`
+`bridge_check`, a counterexample against its pin and its own currency, the difference an impact
+concerns against its pin, whether a later finding supersedes it, and its own currency, so that a
+change to the caller's proof reopens the impact through its use while the statement comparison
+stays current). The finding is `stale`
 when an item changed, or, for a submitted finding, when a record it rests on is not the version
 it recorded (edited, re-pinned, removed: the change names the record), so re-pinning evidence
 brings a draft up to date and leaves a submitted finding stale until it is superseded. Otherwise
@@ -1227,7 +1241,10 @@ the bridge is checked at export against the project's facts store; otherwise
 `reviewed_composition`, and a finding recorded as `checked_bridge` on it reads the same way. A
 finding recorded as `checked_bridge` without a composition reads as `reviewed_composition` (with
 `recorded_basis`, `basis_reason` and, for its own bridge, `bridge_check`) unless that bridge is
-checked at export. Without `reviews`, `note`,
+checked at export. A finding's `impact` keeps its use, its outcome and the difference it concerns
+by `finding`, `claim`, `requirement`, `sha256`, `feature` and `outcome`; the difference's `paper`
+expression only with `source_text`, its `lean` one only with `lean`, and the explanation `why`
+only with `reviews` (named `impact.why` in `withheld` otherwise). Without `reviews`, `note`,
 `argument`, `question`, `would_decide`, `reason` and `why_rejected` are left out. The export
 scans these files with the rest. A claim file larger than 2 MB is refused.
 

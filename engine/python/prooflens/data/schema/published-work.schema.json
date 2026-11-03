@@ -854,6 +854,69 @@
                     }
                   }
                 },
+                "impact": {
+                  "type": "object",
+                  "required": [
+                    "difference",
+                    "use",
+                    "outcome"
+                  ],
+                  "description": "What a recorded difference affects at one use (impact.py): the difference finding it concerns, as it read it; the use (an evidence id citing an application); the outcome at that use; the reviewer's explanation only with the reviews.",
+                  "properties": {
+                    "difference": {
+                      "type": "object",
+                      "required": [
+                        "finding"
+                      ],
+                      "properties": {
+                        "finding": {
+                          "type": "string"
+                        },
+                        "claim": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "requirement": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "sha256": {
+                          "type": "string"
+                        },
+                        "feature": {
+                          "type": "string"
+                        },
+                        "outcome": {
+                          "type": "string"
+                        },
+                        "paper": {
+                          "type": "string"
+                        },
+                        "lean": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "use": {
+                      "type": "string"
+                    },
+                    "outcome": {
+                      "enum": [
+                        "sufficient for this use",
+                        "not sufficient",
+                        "a separate scope question",
+                        "unresolved"
+                      ]
+                    },
+                    "why": {
+                      "type": "string"
+                    }
+                  }
+                },
                 "counterexamples": {
                   "type": "array",
                   "items": {
@@ -1602,6 +1665,7 @@
             "composition",
             "bridge",
             "counterexample",
+            "difference",
             "evidence"
           ]
         },

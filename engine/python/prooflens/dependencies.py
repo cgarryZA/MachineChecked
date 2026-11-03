@@ -27,7 +27,10 @@ A finding rests on:
   the target's fingerprint and the passage Lean checked it against when it was recorded), checked
   as the difference's resolution is (`estimates.resolution_check`): the finding's currency
   carries that check (`resolution`);
-- the counterexamples it cites (`counterexample`).
+- the counterexamples it cites (`counterexample`);
+- for an impact at a use, the difference finding it concerns (`difference`: as the impact read it,
+  `impact.py`), which reopens it when it is superseded, changes or goes stale; the use is
+  evidence it cites and the requirement at the use its own requirement.
 
 The evidence kinds of the finding (`kinds`) say which of these it uses: a statement comparison
 (a declaration's statement, or a certificate), an object correspondence (alignments,
@@ -51,6 +54,7 @@ import re
 
 PASSAGE, READING, CONTEXT, OBJECT = "passage", "reading", "context", "object"
 COMPOSITION, BRIDGE, COUNTEREXAMPLE = "composition", "bridge", "counterexample"
+DIFFERENCE = "difference"
 RESOLUTION = "resolution"  # a bridge item's `of`: the checked bridge a difference is resolved by
 # The evidence kinds of a reference, by its key.
 EVIDENCE = {"decl": "declaration", "app": "application", "fact": "fact",
@@ -79,6 +83,7 @@ COMPOSITION_FIELDS = ("statement", "steps", "identifications", "obligations", "c
 WORDS = {PASSAGE: "the passage", READING: "the requirement", CONTEXT: "the passage",
          OBJECT: "the alignment", COMPOSITION: "the composition",
          BRIDGE: "the composition's bridge", COUNTEREXAMPLE: "the counterexample",
+         DIFFERENCE: "the difference finding",
          **{v: "the evidence" for v in EVIDENCE.values()}}
 
 
@@ -577,6 +582,10 @@ def collect(f: dict, records: dict) -> dict:
                             "why": f"the counterexample {p.get('id')} is not in this workspace"})
         items.append({"dependency": COUNTEREXAMPLE, "record": p.get("id"),
                       "sha256": p.get("sha256")})
+    if f.get("impact"):
+        # The difference an impact concerns, as the impact pinned it (`impact.py`).
+        from .impact import difference_item
+        items.append(difference_item(f))
     return {"kinds": kinds(items, comp), "items": items, "unknown": unknown}
 
 
@@ -628,8 +637,9 @@ def drift(stored: dict, now: dict) -> list[dict]:
     out = []
     for it in stored.get("items") or []:
         rid = it.get("record")
-        if not rid or it["dependency"] == COUNTEREXAMPLE:
-            # A counterexample is pinned by the finding itself; it is checked below.
+        if not rid or it["dependency"] in (COUNTEREXAMPLE, DIFFERENCE):
+            # A counterexample, or the difference an impact concerns, is pinned by the finding
+            # itself; it is checked below.
             continue
         word = WORDS.get(it["dependency"], "the record")
         k = _key(it)
@@ -725,6 +735,9 @@ def check(f: dict, records: dict, snap, root=None, cur: dict | None = None,
                     "reason": "the counterexample changed since the finding cited it"}]}
             else:
                 res = cur.get(it["record"]) or {"state": "unchecked", "changes": []}
+        elif dep == DIFFERENCE:
+            from .impact import difference_currency
+            res = difference_currency(it, records, snap, root, cur, check_facts)
         elif dep in EVIDENCE.values():
             res = evidence_currency(it.get("ref") or {}, snap, root, check_facts)
         else:
@@ -789,6 +802,10 @@ def item_text(it: dict) -> str:
             (" (the difference's resolution)" if it.get("of") == RESOLUTION else "")
     if dep == COUNTEREXAMPLE:
         return f"counterexample {it.get('record')}"
+    if dep == DIFFERENCE:
+        return (f"the difference recorded in {it.get('record')}"
+                + (f" on {it.get('claim')} {it.get('requirement') or ''}".rstrip()
+                   if it.get("claim") else ""))
     from .workspace import ref_text
     text = ref_text(it.get("ref") or {})
     n = len((it.get("ref") or {}).get("closure") or {})
