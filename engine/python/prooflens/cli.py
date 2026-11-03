@@ -714,6 +714,8 @@ def _workspace_suggest(a, w: _Workspaces) -> None:
     from .requirements import suggestion_ops
     if w.snap is None:
         sys.exit("no build to read the paper from: run view or build first")
+    if a.counterexamples:
+        return _suggest_counterexamples(a, w)
     p = w.path()
     cid = w.snap.resolve_claim(a.claim)
     ops = suggestion_ops(wsp.read(p), w.snap, cid, a.requirement)
@@ -723,6 +725,37 @@ def _workspace_suggest(a, w: _Workspaces) -> None:
         return _print_json({"ok": True, "changed": [], "suggested": 0})
     ack = wsp.update(p, ops, w.snap, w.root, a.reviewer or None, a.op_id)
     _print_json({**ack, "suggested": len(ops)})
+
+
+def _suggest_counterexamples(a, w: _Workspaces) -> None:
+    """`workspace suggest --counterexamples`: the bounded search (`estimates.searches`) for one
+    requirement of a workspace that exists, printed as JSON. It writes nothing: a candidate is
+    recorded, if at all, by the auditor with `workspace update`."""
+    from . import estimates as est
+    from . import workspace as wsp
+    from .requirements import known_requirement
+    if a.apply:
+        raise wsp.WorkspaceError("a counterexample search only proposes candidates: record one "
+                                 "yourself with `workspace update` (--apply saves passages)")
+    budget = est.SEARCH_BUDGET if a.budget is None else a.budget
+    if not 1 <= budget <= est.SEARCH_BUDGET_MAX:
+        raise wsp.WorkspaceError(f"--budget is the number of checks a search makes: 1 to "
+                                 f"{est.SEARCH_BUDGET_MAX}")
+    if a.id:
+        ws = wsp.read(wsp.find(w.work, a.id))
+    else:
+        me = w.reviewer().get("id")
+        mine = [ws for _, ws in wsp.list_all(w.work) if (ws.get("reviewer") or {}).get("id") == me]
+        if len(mine) != 1:
+            raise wsp.WorkspaceError("name the workspace with --id" if mine else
+                                     "you have no workspace yet: the search reads the "
+                                     "requirements of one (--id)")
+        ws = mine[0]
+    cid = w.snap.resolve_claim(a.claim)
+    lid = known_requirement(ws, cid, a.requirement)
+    recs = [r for r in ws["records"].values() if isinstance(r, dict) and r.get("claim") == cid]
+    _print_json({"claim": cid, "workspace": ws["id"], "requirement": lid, "budget": budget,
+                 "searches": est.searches(recs, budget, lid), "note": est.SEARCH_NOTE})
 
 
 def _workspace_export(a, w: _Workspaces) -> None:
@@ -1552,6 +1585,17 @@ def cmd_serve(a):
     http.server.ThreadingHTTPServer(("127.0.0.1", a.port), handler).serve_forever()
 
 
+def _print_searches(results: list[dict], claim: str) -> None:
+    """The counterexample searches for a claim, for the terminal."""
+    from .estimates import search_lines
+    for s in results:
+        if s.get("workspace"):
+            print(f"{s['workspace']} ({s['mode']}), {s['reviewer']}:")
+        print("\n".join(search_lines(s)))
+    if not results:
+        print(f"no requirement of {claim} records a reduced obligation (`reduced`) to search")
+
+
 def cmd_compare(a):
     """`compare CLAIM`: a claim's comparison packet; `compare --query OP TARGET`: a targeted
     query (`compare.py`). Both read the last build and change nothing."""
@@ -1564,11 +1608,14 @@ def cmd_compare(a):
             out = cmp.query(site, op, target, a.limit, a.after, root,
                             log=lambda m: print(m, file=sys.stderr), match=a.match,
                             workspace=a.workspace, main=a.main,
-                            every_library=a.all_libraries, within=a.within)
+                            every_library=a.all_libraries, within=a.within, budget=a.budget)
             if a.json:
                 return _print_json(out)
             if not out["available"]:
                 print(out["reason"])
+                return
+            if op == "counterexamples":
+                _print_searches(out["results"], out["subject"]["claim"])
                 return
             if op == "uses":
                 from .uses import text
@@ -2025,7 +2072,9 @@ def _add_workspace(sub) -> None:
                         "show": "a workspace: evidence, findings and questions per claim",
                         "update": "apply operations (a JSON file, or - for standard input)",
                         "suggest": "propose the passages near a claim that may govern a "
-                                   "requirement (printed as operations, or saved with --apply)",
+                                   "requirement (printed as operations, or saved with --apply); "
+                                   "with --counterexamples, candidate counterexamples to its "
+                                   "reduced obligation",
                         "export": "write a workspace as one file",
                         "import": "bring in an exported workspace",
                         "main": "save the paper's main results, which `compare --query impact` "
@@ -2050,6 +2099,13 @@ def _add_workspace(sub) -> None:
                             help="the requirement's local id the passages are proposed for")
             sp.add_argument("--apply", action="store_true",
                             help="save the proposals (each stays a proposal until accepted)")
+            sp.add_argument("--counterexamples", action="store_true",
+                            help="instead of passages, search for candidate counterexamples to "
+                                 "the requirement's reduced obligation (as `compare --query "
+                                 "counterexamples`); nothing is saved")
+            sp.add_argument("--budget", type=int, metavar="N",
+                            help="with --counterexamples: the checks each search makes "
+                                 "(default 64)")
             sp.add_argument("--op-id", help="an identifier of this request")
         if name == "open":
             sp.add_argument("--mode", choices=["independent", "informed"],
@@ -2095,7 +2151,11 @@ def _add_compare(sub) -> None:
                     "connections CLAIM (the auditors' connections between objects), impact "
                     "NAME (how each main result uses it, and which claims' Lean uses it), "
                     "expansion KEY (a definition at the arguments of one application, by the "
-                    "key a statement gives it)")
+                    "key a statement gives it), counterexamples CLAIM (a bounded search for "
+                    "candidate counterexamples to the reduced obligations the auditors "
+                    "recorded; it records nothing)")
+    co.add_argument("--budget", type=int, metavar="N",
+                    help="with counterexamples: the checks each search makes (default 64)")
     co.add_argument("--in", dest="within", metavar="CALLER",
                     help="with uses: only the applications inside this declaration, or the one "
                     "application with this id (app:CALLER:N), each with every local of its "

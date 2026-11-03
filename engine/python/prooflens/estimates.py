@@ -981,6 +981,544 @@ def specialisations(ob: dict) -> list[dict]:
     return out
 
 
+# -- the counterexample search ---------------------------------------------------------------
+#
+# A bounded search for values of a reading's "for every" variables at which the reduced
+# obligation of its requirement (`reduced`: one relation between expressions of the reading's
+# variables, read by the TeX reader of `expressions.py`) fails for every choice of the reading's
+# constants. It tries each variable's domain endpoints, then points towards its limits, then
+# families in the constants chosen before it (`ε = C + k`, `ε = kC`), and checks each with exact
+# rational arithmetic. Each side is a quotient of polynomials in the constants; the sign of
+# their difference is shown for every value of the constants when, with each constant written
+# as its bound plus or minus a distance, every coefficient has that sign. A value is checked
+# against its variable's domain the same way. What the check cannot show is not proposed.
+#
+# A proposal is a candidate only: nothing records it, the reduction to this obligation and the
+# admissibility of the values stay the auditor's to check, and finding none establishes nothing.
+
+SEARCH_BUDGET = 64       # the exact checks a search makes unless asked for another number
+SEARCH_BUDGET_MAX = 4096
+FAMILY_STEPS = (1, 2, 3)
+SEARCH_RELATIONS = {"\\le": "≤", "\\leq": "≤", "\\leqslant": "≤", "≤": "≤", "<=": "≤",
+                    "\\ge": "≥", "\\geq": "≥", "\\geqslant": "≥", "≥": "≥", ">=": "≥",
+                    "<": "<", "\\lt": "<", ">": ">", "\\gt": ">", "=": "="}
+_RELATION = re.compile(r"\\(?:leqslant|geqslant|leq|geq|le|ge|lt|gt)(?![A-Za-z])"
+                       r"|<=|>=|≤|≥|<|>|=")
+_SUPERSCRIPT = {"⁰": "0", "¹": "1", "²": "2", "³": "3", "⁴": "4", "⁵": "5", "⁶": "6", "⁷": "7",
+                "⁸": "8", "⁹": "9"}
+_PUNCTUATION = set("+-/^_{}()[],'*")
+_SEARCH_OPS = ("add", "sub", "mul", "div", "neg", "pow")
+SEARCH_STANDING = ("a candidate from a bounded search: not recorded; the reduction to this "
+                   "obligation and the admissibility of its values are not checked")
+SEARCH_NOTE = ("A proposal is a candidate from a bounded search, checked with exact rational "
+               "arithmetic against the reduced obligation only. Nothing records it; recording "
+               "a counterexample, with its reduction and its admissibility, is the auditor's. "
+               "Finding no candidate establishes nothing about the estimate.")
+
+
+class _NotDefined(ValueError):
+    """An expression with no value at the values tried (a division by zero)."""
+
+
+def _rf(c) -> tuple[dict, dict]:
+    """A number as a quotient of polynomials."""
+    from . import expressions as ex
+    return ex._const(Fraction(c)), ex._const(1)
+
+
+def _rf_var(name: str) -> tuple[dict, dict]:
+    from . import expressions as ex
+    return ex._var(name), ex._const(1)
+
+
+def _rf_add(a, b):
+    from . import expressions as ex
+    return ex._add(ex._mul(a[0], b[1]), ex._mul(b[0], a[1])), ex._mul(a[1], b[1])
+
+
+def _rf_scale(a, c):
+    from . import expressions as ex
+    return ex._scale(a[0], Fraction(c)), a[1]
+
+
+def _rf_mul(a, b):
+    from . import expressions as ex
+    return ex._mul(a[0], b[0]), ex._mul(a[1], b[1])
+
+
+def _rf_inverse(a):
+    if not a[0]:
+        raise _NotDefined("a division by zero")
+    return a[1], a[0]
+
+
+def _rf_number(a) -> Fraction | None:
+    """The value of a quotient of polynomials with no variable left; None otherwise, or when
+    its denominator is zero."""
+    from . import expressions as ex
+    n, d = ex._constant(a[0]), ex._constant(a[1])
+    return None if n is None or not d else n / d
+
+
+def _rf_text(a, names: dict[str, str]) -> str:
+    """A quotient of polynomials as text, a constant denominator divided out."""
+    from . import expressions as ex
+    n, d = a
+    c = ex._constant(d)
+    if c:
+        return ex.fmt(ex._scale(n, 1 / c), names)
+    num, den = ex.fmt(n, names), ex.fmt(d, names)
+    return (f"({num})" if len(n) > 1 else num) + "/" + (f"({den})" if len(d) > 1 else den)
+
+
+def _evaluate(node: dict, env: dict) -> tuple[dict, dict]:
+    """A node of the TeX reader's tree as a quotient of polynomials, each identifier by its value
+    in `env` (name key -> a quotient of polynomials in the reading's constants)."""
+    k = node.get("k")
+    if k == "num":
+        return _rf(Fraction(str(node["value"])))
+    if k == "local":
+        return env[node["name"]]
+    op, args = node.get("op"), node.get("args") or []
+    if op in ("add", "sub"):
+        b = _evaluate(args[1], env)
+        return _rf_add(_evaluate(args[0], env), b if op == "add" else _rf_scale(b, -1))
+    if op == "neg":
+        return _rf_scale(_evaluate(args[0], env), -1)
+    if op == "mul":
+        return _rf_mul(_evaluate(args[0], env), _evaluate(args[1], env))
+    if op == "div":
+        return _rf_mul(_evaluate(args[0], env), _rf_inverse(_evaluate(args[1], env)))
+    if op == "pow":
+        base, e = _evaluate(args[0], env), int(_rf_number(_evaluate(args[1], env)))
+        out = _rf(1)
+        for _ in range(e):
+            out = _rf_mul(out, base)
+        return out
+    raise _NotDefined(f"{op} is not evaluated")
+
+
+def _identifiers_of(node) -> list[str]:
+    if not isinstance(node, dict):
+        return []
+    if node.get("k") == "local":
+        return [node["name"]]
+    return [n for a in node.get("args") or [] for n in _identifiers_of(a)]
+
+
+def _constructs(node: dict, names: set[str], out: list[str]) -> None:
+    """What the search does not evaluate in one side of a reduced obligation, each named."""
+    k = node.get("k")
+    if k == "local":
+        if node["name"] not in names:
+            out.append(f"{node.get('tex') or node['name']} is not a variable of this reading")
+        return
+    if k == "num":
+        return
+    op = node.get("op")
+    if op == "abs":
+        out.append("unsupported: |·| (an absolute value)")
+    elif op == "norm":
+        out.append("unsupported: ‖·‖ (a norm)")
+    elif op not in _SEARCH_OPS:
+        out.append(f"unsupported: {op or k}")
+    elif op == "pow":
+        e = node["args"][1]
+        if e.get("k") != "num" or not re.fullmatch(r"\d+", str(e.get("value"))) or \
+                int(e["value"]) > 32:
+            out.append("unsupported: a power whose exponent is not a whole number up to 32")
+    for a in node.get("args") or []:
+        _constructs(a, names, out)
+
+
+def read_reduced(text: str, names: set[str]) -> tuple[dict | None, list[str]]:
+    """The reduced obligation `text` (TeX, `2 \\le C/\\varepsilon`, or plain, `2 ≤ C/ε`) as one
+    relation between two expressions of the reading's variables (`names`: their name keys):
+    `{relation, left, right}`, each side the TeX reader's tree; or None with every construct the
+    search does not support, each named."""
+    from . import expressions as ex
+    s = text.replace("−", "-")
+    for sup, digit in _SUPERSCRIPT.items():
+        s = s.replace(sup, "^{" + digit + "}")
+    rels = _RELATION.findall(s)
+    if not rels:
+        return None, ["unsupported: no relation (≤, <, ≥, >, =) between two sides"]
+    if len(rels) > 1:
+        return None, ["unsupported: more than one relation ("
+                      + ", ".join(SEARCH_RELATIONS[r] for r in rels) + "): give one"]
+    known = ex.SPACING | ex.SIZES | ex.TIMES | ex.FRAC | ex.MINUS | set(ex.OPEN) | ex.CLOSE | \
+        ex.ABS | ex.NORM | set(ex.DECORATIONS) | _PUNCTUATION
+    problems, sides = [], []
+    for side in _RELATION.split(s):
+        for t in ex.TOKEN.findall(side):
+            if t in ex.ABS or t in ex.NORM:
+                problems.append("unsupported: " + ("|·| (an absolute value)" if t in ex.ABS
+                                                   else "‖·‖ (a norm)"))
+            elif t not in known and not t[0].isdigit() and not t.isalpha() and \
+                    not (t.startswith("\\") and t[1:] in ex.GREEK):
+                problems.append(f"unsupported: {t}")
+        try:
+            node = ex.read_tex(side)
+        except ex.Unsupported as e:
+            problems.append(str(e))
+            continue
+        _constructs(node, names, problems)
+        sides.append(node)
+    problems = list(dict.fromkeys(problems))
+    if problems:
+        return None, problems
+    return {"relation": SEARCH_RELATIONS[rels[0]], "left": sides[0], "right": sides[1]}, []
+
+
+def _search_bounds(var: str, domain: str | None) -> list[tuple[str, str, bool]] | None:
+    """The bounds a domain puts on `var` (as `bounds` reads them, the variable matched by its
+    name key and TeX relations read): [] for no domain, None for a domain of another shape."""
+    from . import expressions as ex
+    if not domain:
+        return []
+    d = domain
+    for tex, sym in (("\\leqslant", "≤"), ("\\geqslant", "≥"), ("\\leq", "≤"), ("\\geq", "≥"),
+                     ("\\le", "≤"), ("\\ge", "≥"), ("\\lt", "<"), ("\\gt", ">")):
+        d = d.replace(tex, sym)
+    parts = [p.strip() for p in COMPARISON.split(d)]
+    if len(parts) < 3:
+        return None
+    key = ex.name_key(var)
+    d = "".join(var if i % 2 == 0 and ex.name_key(p) == key else p for i, p in enumerate(parts))
+    return bounds(var, d) or None
+
+
+def _sign_everywhere(poly: dict, shifts: dict) -> str | None:
+    """`positive` or `nonnegative` when a polynomial in the constants has that sign for every
+    value of the constants in their domains, None when this check cannot show it: each constant
+    is written as its bound plus (above a lower bound) or minus (below an upper one) a distance
+    (`shifts`: name key -> (bound, +1 or -1, strict)), and every coefficient must be at least 0.
+    """
+    from . import expressions as ex
+    out = ex._const(0)
+    try:
+        for mono, c in poly.items():
+            term = ex._const(c)
+            for name, e in mono:
+                if name not in shifts:
+                    return None
+                b, side, _ = shifts[name]
+                term = ex._mul(term, ex._pow(ex._add(ex._const(b),
+                                                     ex._scale(ex._var(name), side)), e))
+            out = ex._add(out, term)
+    except ex.NotCompared:  # a polynomial too large to expand
+        return None
+    if any(c < 0 for c in out.values()):
+        return None
+    # A positive coefficient of a monomial in distances that are all strictly positive.
+    if out.get((), 0) > 0 or any(c > 0 and m and all(shifts[n][2] for n, _ in m)
+                                 for m, c in out.items()):
+        return "positive"
+    return "nonnegative"
+
+
+def _sign(a, shifts: dict) -> str | None:
+    """The sign `_sign_everywhere` shows for a quotient of polynomials, its denominator shown
+    to be of one sign first."""
+    from . import expressions as ex
+    n, d = a
+    if _sign_everywhere(d, shifts) == "positive":
+        return _sign_everywhere(n, shifts)
+    if _sign_everywhere(ex._scale(d, -1), shifts) == "positive":
+        return _sign_everywhere(ex._scale(n, -1), shifts)
+    return None
+
+
+def _at_least(got: str | None, need: str) -> bool:
+    return got == "positive" or (need == "nonnegative" and got == "nonnegative")
+
+
+def _bound_words(shift) -> str:
+    b, side, strict = shift
+    return (">" if strict else "≥") + f" {b}" if side == 1 else (("<" if strict else "≤") + f" {b}")
+
+
+def _candidates(e: dict, bnds: list, before: list[str], env: dict) -> list[tuple]:
+    """The values tried for one variable `e`, in order: the endpoints of its domain (stage 0),
+    points towards its limits (stage 1) and families in the constants chosen before it (stage
+    2), each `(stage, value, by)`, its value a quotient of polynomials in the constants."""
+    from . import expressions as ex
+    v, out = e["var"], []
+
+    def value(t):
+        try:
+            return _evaluate(ex.read_tex(t), env)
+        except (ex.Unsupported, KeyError, _NotDefined, TypeError):
+            return None
+    lower = [(value(t), t, s) for side, t, s in bnds if side == "lower"]
+    upper = [(value(t), t, s) for side, t, s in bnds if side == "upper"]
+    for val, t, strict in lower + upper:
+        if val is not None and not strict:
+            out.append((0, val, f"the endpoint {v} = {t}"))
+    for ends, sign, mark in ((lower, 1, "⁺"), (upper, -1, "⁻")):
+        for val, t, strict in ends:
+            if val is not None and strict:
+                out += [(1, _rf_add(val, _rf(Fraction(sign, j))), f"towards {v} → {t}{mark}")
+                        for j in (2, 4, 8)]
+    for ends, other, sign, mark in ((upper, lower, 1, "∞"), (lower, upper, -1, "−∞")):
+        if not ends:
+            base = other[0][0] if other and other[0][0] is not None else _rf(0)
+            out += [(1, _rf_add(base, _rf(sign * j)), f"towards {v} → {mark}")
+                    for j in (1, 2, 4, 8, 16)]
+    for c in before:
+        out += [(2, _rf_add(_rf_var(c), _rf(k)), f"a family in {c}") for k in FAMILY_STEPS]
+        out += [(2, _rf_scale(_rf_var(c), k), f"a family in {c}") for k in FAMILY_STEPS]
+    return out
+
+
+def _constant_samples(shifts: dict, consts: list[str]) -> list[dict]:
+    """Values of the constants to evaluate at, at and beyond each one's bound."""
+    import itertools
+    per = []
+    for c in consts:
+        if c in shifts:
+            b, side, strict = shifts[c]
+            per.append([b + side * Fraction(d) for d in (("1/2", 1, 10) if strict
+                                                         else (0, 1, 10))])
+        else:
+            per.append([Fraction(n) for n in (0, 1, -1, 10, -10)])
+    return [dict(zip(consts, vals)) for vals in itertools.islice(itertools.product(*per), 64)]
+
+
+def _at(a, values: dict) -> Fraction | None:
+    """The value of a quotient of polynomials at numeric values of its variables."""
+    def poly(p):
+        return sum((Fraction(c) * _prod(values[n] ** e for n, e in m) for m, c in p.items()),
+                   Fraction(0))
+    try:
+        d = poly(a[1])
+        return poly(a[0]) / d if d else None
+    except KeyError:
+        return None
+
+
+def _prod(xs) -> Fraction:
+    out = Fraction(1)
+    for x in xs:
+        out *= x
+    return out
+
+
+def _check(rel: dict, universal: list[dict], combo, env: dict, bnds: dict, shifts: dict,
+           names: dict, consts: list[str]) -> dict:
+    """One check: whether the values `combo` of the variables `universal` lie in their domains
+    and violate the reduced obligation `rel`, for every value of the constants."""
+    from . import expressions as ex
+    every = ", ".join(f"{names[c]} {_bound_words(shifts[c])}" for c in consts if c in shifts)
+    every = f" for every {every}" if every else ""
+    unbounded = [names[c] for c in consts if c not in shifts]
+    loose = f" ({', '.join(unbounded)} with no bound in this reading)" if unbounded else ""
+    domain = []
+    try:
+        for e, (_, val, _) in zip(universal, combo):
+            for side, t, strict in bnds[ex.name_key(e["var"])]:
+                b = _evaluate(ex.read_tex(t), env)
+                gap = _rf_add(val, _rf_scale(b, -1)) if side == "lower" else \
+                    _rf_add(b, _rf_scale(val, -1))
+                word = {("lower", True): ">", ("lower", False): "≥", ("upper", True): "<",
+                        ("upper", False): "≤"}[(side, strict)]
+                said = f"{e['var']} = {_rf_text(val, names)} {word} {t}"
+                if not _at_least(_sign(gap, shifts), "positive" if strict else "nonnegative"):
+                    return {"result": "domain not shown",
+                            "why": f"{said} is not shown{every}{loose}"}
+                domain.append(said + every)
+        left, right = _evaluate(rel["left"], env), _evaluate(rel["right"], env)
+        at = f"{_rf_text(left, names)} {rel['relation']} {_rf_text(right, names)}"
+        diff = _rf_add(left, _rf_scale(right, -1))
+    except KeyError as err:
+        return {"result": "not defined", "why": f"{err.args[0]} has no value here"}
+    except (_NotDefined, ex.Unsupported, ex.NotCompared) as err:
+        return {"result": "not defined", "why": str(err)}
+    if rel["relation"] in ("≥", ">"):
+        diff = _rf_scale(diff, -1)
+    need = "positive" if rel["relation"] in ("≤", "≥", "=") else "nonnegative"
+    shown = _at_least(_sign(diff, shifts), need)
+    if rel["relation"] == "=" and not shown:
+        diff = _rf_scale(diff, -1)
+        shown = _at_least(_sign(diff, shifts), need)
+    if shown:
+        what = {"≤": "left − right", "<": "left − right", "≥": "right − left",
+                ">": "right − left", "=": "the difference of the two sides"}[rel["relation"]]
+        return {"result": "violated", "at": at, "domain": domain,
+                "why": f"{what} = {_rf_text(diff, names)} {'>' if need == 'positive' else '≥'} "
+                       f"0{every}"}
+    for sample in _constant_samples(shifts, consts):
+        x = _at(diff, sample)
+        if x is not None and (x == 0 if rel["relation"] == "=" else
+                              not (x > 0 or (need == "nonnegative" and x == 0))):
+            where = ", ".join(f"{names[c]} = {s}" for c, s in sample.items())
+            return {"result": "not violated", "at": at,
+                    "why": f"not violated at {where}" if where else "not violated"}
+    return {"result": "not decided", "at": at, "why": "not shown to be violated" + every + loose}
+
+
+def search(records: list[dict], lid: str, corrections=(), budget: int = SEARCH_BUDGET) -> dict:
+    """A bounded search for counterexamples to the reading of requirement `lid` (the printed
+    reading, or the one with `corrections`): values of its "for every" variables, numbers or
+    families in the constants chosen before them, at which its reduced obligation fails for
+    every value of the reading's constants, each checked with exact rational arithmetic. It
+    makes at most `budget` checks and says when it ran out, names each construct it does not
+    support, and proposes the first value it finds as a candidate. Nothing is recorded, no
+    status changes, and finding none establishes nothing."""
+    import itertools
+    from . import expressions as ex
+    budget = max(1, min(int(budget), SEARCH_BUDGET_MAX))
+    out = {"requirement": lid, "corrections": list(corrections), "printed": not corrections,
+           "budget": {"checks": budget, "used": 0, "exhausted": False}, "proposals": [],
+           "attempts": [], "note": SEARCH_NOTE}
+    ob = obligation(records, lid, corrections)
+    if ob is None:
+        return {**out, "supported": False, "result": "not supported",
+                "unsupported": [f"{lid} is not a requirement of this claim in this workspace"]}
+    reqs = {r["local_id"]: r for r in records if r.get("kind") == "requirement"}
+    goal = ob["goal"]["requirement"]
+    text = (reqs.get(goal) or {}).get("reduced") or (reqs.get(lid) or {}).get("reduced")
+    out.update(reading=ob["text"], obligation_sha256=ob["sha256"],
+               order=[{k: e.get(k) for k in ("var", "quantifier", "domain")}
+                      for e in ob["order"]])
+    if not text:
+        return {**out, "supported": False, "result": "not supported", "reduced": None,
+                "unsupported": [f"{goal} records no reduced obligation (`reduced`), which is "
+                                "what the search reads"]}
+    keys = {ex.name_key(e["var"]): e for e in ob["order"]}
+    rel, problems = read_reduced(text, set(keys))
+    out["reduced"] = {"text": text, "from": goal, **({"relation": rel["relation"]} if rel else {})}
+    used = list(dict.fromkeys(k for n in ((rel["left"], rel["right"]) if rel else ())
+                              for k in _identifiers_of(n)))
+    consts = [k for k, e in keys.items() if e["quantifier"] == "there is"]
+    shifts, bnds = {}, {}
+    for k, e in keys.items():
+        b = _search_bounds(e["var"], e.get("domain"))
+        if e["quantifier"] == "there is":
+            for side, t, strict in b or []:
+                try:
+                    val = Fraction(t)
+                except ValueError:
+                    continue
+                if k not in shifts or side == "lower":
+                    shifts[k] = (val, 1 if side == "lower" else -1, strict)
+        elif k in used:
+            if b is None:
+                problems.append(f"the domain of {e['var']} ({e['domain']}) is not read: the "
+                                "search reads bounds such as 0 < ε ≤ 1")
+            elif not b:
+                problems.append(f"{e['var']} has no domain in this reading: the search does not "
+                                "choose its values")
+            bnds[k] = b or []
+    if problems:
+        return {**out, "supported": False, "result": "not supported",
+                "unsupported": list(dict.fromkeys(problems))}
+    universal = [e for k, e in keys.items() if e["quantifier"] == "for every" and k in used]
+    out.update(supported=True, unsupported=[],
+               unconstrained=[e["var"] for k, e in keys.items()
+                              if e["quantifier"] == "for every" and k not in used])
+    names = {k: e["var"] for k, e in keys.items()}
+    env0 = {c: _rf_var(c) for c in consts}
+    lists = [_candidates(e, bnds[ex.name_key(e["var"])],
+                         [c for c in map(ex.name_key, e["chosen_after"]) if c in consts
+                          and c in used], env0) for e in universal]
+    combos = sorted(itertools.islice(itertools.product(*lists), 20000),
+                    key=lambda cb: (max([x[0] for x in cb], default=0), [x[0] for x in cb]))
+    family = [names[c] for c in consts]
+    for combo in combos:
+        if out["budget"]["used"] >= budget:
+            out["budget"]["exhausted"] = True
+            break
+        out["budget"]["used"] += 1
+        assign = {e["var"]: _rf_text(x[1], names) for e, x in zip(universal, combo)}
+        env = {**env0, **{ex.name_key(e["var"]): x[1] for e, x in zip(universal, combo)}}
+        res = _check(rel, universal, combo, env, bnds, shifts, names, consts)
+        out["attempts"].append({"assign": assign, "by": [x[2] for x in combo], **res})
+        if res["result"] == "violated":
+            out["proposals"].append({
+                "form": "family" if family else "instance", "assign": assign,
+                "family": family, "by": [x[2] for x in combo], "reduced": res["at"],
+                "violation": res["why"], "domain": res["domain"],
+                "standing": "candidate", "standing_text": SEARCH_STANDING,
+                "open": [f"the reduction of {goal} to {text} is the auditor's: check that it "
+                         "holds at these values", "the values are rational: check that the "
+                         "reading allows them (an integer, a value of the variable's type)"]})
+            break
+    out["result"] = "proposed" if out["proposals"] else \
+        "budget exhausted" if out["budget"]["exhausted"] else "none found"
+    return out
+
+
+def searches(records: list[dict], budget: int = SEARCH_BUDGET,
+             requirement: str | None = None) -> list[dict]:
+    """The search for each requirement of a claim's records (`records`) that records a reduced
+    obligation, or for `requirement` alone: on its printed reading and on each reading with a
+    correction of a requirement it involves."""
+    reqs = {r["local_id"]: r for r in records if r.get("kind") == "requirement"}
+    lids = [requirement] if requirement else \
+        [lid for lid in sorted(reqs, key=_natural) if reqs[lid].get("reduced")
+         and reqs[lid].get("origin") != "correction"]
+    out = []
+    for lid in lids:
+        ob = obligation(records, lid)
+        involved = set(ob["involved"]) if ob else set()
+        readings = [()] + [(r["local_id"],) for r in sorted(reqs.values(),
+                                                            key=lambda r: _natural(r["local_id"]))
+                           if r.get("origin") == "correction" and r.get("corrects") in involved]
+        out += [search(records, lid, corr, budget) for corr in readings]
+    return out
+
+
+def search_query(work_dir: Path, claim: str, workspace: str | None = None,
+                 budget: int = SEARCH_BUDGET, requirement: str | None = None) -> list[dict]:
+    """The searches (`searches`) for `claim` in each workspace of `work_dir` (or the one
+    named), each with its workspace and auditor. It reads the workspaces and writes nothing."""
+    from . import workspace as wsp
+    out, found = [], False
+    for _, ws in wsp.list_all(work_dir):
+        if workspace and ws["id"] != workspace:
+            continue
+        found = True
+        recs = [r for r in ws["records"].values() if isinstance(r, dict)
+                and r.get("claim") == claim]
+        who = {"claim": claim, "workspace": ws["id"],
+               "reviewer": (ws.get("reviewer") or {}).get("id"), "mode": ws.get("mode")}
+        out += [{"id": f"{ws['id']}:{s['requirement']}"
+                 + "".join(f"+{c}" for c in s["corrections"]), **s, **who}
+                for s in searches(recs, budget, requirement)]
+    if workspace and not found:
+        raise wsp.WorkspaceError(f"no workspace {workspace} in {wsp.store(work_dir)}")
+    return out
+
+
+def search_lines(s: dict) -> list[str]:
+    """One search for the terminal."""
+    head = "printed reading" if s.get("printed") else \
+        f"reading with the correction {', '.join(s.get('corrections') or [])}"
+    out = [f"search on {s['requirement']}, {head}: {s.get('reading') or ''}"]
+    red = s.get("reduced") or {}
+    if red:
+        out.append(f"  reduced obligation ({red.get('from')}): {red['text']}")
+    for u in s.get("unsupported") or []:
+        out.append(f"  not supported: {u}")
+    b = s["budget"]
+    out.append(f"  budget: {b['used']} of {b['checks']} checks used"
+               + ("; exhausted before a candidate was found" if b["exhausted"] else ""))
+    for p in s["proposals"]:
+        vals = ", ".join(f"{v} = {x}" for v, x in p["assign"].items())
+        out.append(f"  candidate ({p['form']}): {vals}"
+                   + (f", for every {', '.join(p['family'])}" if p["family"] else ""))
+        out.append(f"    at these values: {p['reduced']}; {p['violation']}")
+        for d in p["domain"]:
+            out.append(f"    in the domain: {d}")
+        out.append(f"    {p['standing_text']}")
+    if s.get("supported") and not s["proposals"]:
+        out.append("  no candidate " + ("within the budget" if b["exhausted"] else
+                                        "among the values tried"))
+    out.append(f"  {s['note']}")
+    return out
+
+
 # -- hints -----------------------------------------------------------------------------------
 
 # The hints an alignment's paper expression gives (`expression_hints`), which a difference

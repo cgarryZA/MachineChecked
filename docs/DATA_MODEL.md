@@ -914,6 +914,9 @@ optional `clause` and `note`, `rev`, `created_at`/`created_by`, `updated_at`/`up
   (variables a constant or witness may not depend on: it is chosen before them), `depends_on`
   (variables a constant may depend on: it is chosen after them) and `origin`: `printed`,
   or `correction` with `corrects` naming the printed requirement, which stays as printed. A
+  requirement that does not bind variables may record its `reduced` obligation: the one
+  inequality it comes to under a specialisation the auditor chose (`2 \le C/\varepsilon`),
+  which the counterexample search reads (below); it is part of the reading's digest. A
   finding or a question may name a requirement in `requirement`.
 - **`counterexample`**: an auditor's counterexample to one reading of a requirement
   (`estimates.py`). `requirement`, optional `reading` (the corrections it is read with),
@@ -924,6 +927,18 @@ optional `clause` and `note`, `rev`, `created_at`/`created_by`, `updated_at`/`up
   (the reading: the order of its variables, their domains, the constants' dependence, the
   requirements' texts and the pins of the passages that govern them) and `evidence_pins`; a
   change to either makes it `stale` until it is re-pinned.
+- **The counterexample search** (`estimates.search`, `compare --query counterexamples` and
+  `workspace suggest --counterexamples`) writes no record. Each search is one reading of a
+  requirement with a `reduced` obligation: `requirement`, `corrections`, `printed`, `reading`
+  (its text), `order` (`{var, quantifier, domain}`), `obligation_sha256`, `reduced` (`{text,
+  from, relation}`), `supported` with `unsupported` (each construct it does not support, named),
+  `unconstrained` (the "for every" variables the obligation does not mention), `budget`
+  (`{checks, used, exhausted}`), `attempts` (each `{assign, by, result, why, at}`; `result`
+  `violated`, `not violated`, `not decided`, `domain not shown` or `not defined`), `proposals`
+  (at most one: `{form: family | instance, assign, family, by, reduced, violation, domain,
+  standing: candidate, standing_text, open}`), `result` (`proposed`, `none found`, `budget
+  exhausted`, `not supported`) and `note`. The query adds `id`, `claim`, `workspace`,
+  `reviewer` and `mode`.
 - **`fragment`**: a passage a requirement comes from. `requirement` (its local id), `role`
   (`statement`, `quantifier domain`, `constant dependence`, `standing assumption`,
   `definition`, `earlier choice`, `cited result`, `context`, `later use`, `proposed
