@@ -179,6 +179,10 @@
       "type": "string",
       "description": "The reverse references of the project's declarations (data/uses.json)."
     },
+    "main_use": {
+      "type": "string",
+      "description": "How the main results use each claim's links, in zero configuration (data/main-use.json, machinechecked/link-use@1, impact.link_uses)."
+    },
     "changes": {
       "type": "string",
       "description": "What changed since the release before this one, and the evidence it reopens (data/changes.json, prooflens/changes@1)."

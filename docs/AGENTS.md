@@ -42,6 +42,16 @@ be loaded in one session first); an ambiguous link
 detail after the link's status.
 `class` is only its coarse group for colouring (`proved`, `open`, `malformed`,
 `unspecified`), and the skill explains both.
+Without a `machinechecked.toml`, each link has `main_use`: for each main result (`main`), its
+`use` (`proof`, `definition body`, `statement` when in its statement only, `none`, `not traced`,
+or `itself`), the `answer` in words ("used by its proof, through 1 other declaration",
+"formalized separately: not used by this main result", "not traced: …" with the reason) and, for
+a use, `through` (how many declarations the shortest path passes) and `path`. The document's
+`main_use` gives the `selection` they are traced from (`basis` `suggested`, with its `rule`, or
+`saved`, with the `workspace`, `by`, `at`, `pins` and `problems`), its `scope` and whether it is
+`complete`; `available: false` with a `reason` when several workspaces save main results, and in
+a full assessment (#480). It is read from the references the build stored, without starting
+Lean, and changes no status.
 Without a `machinechecked.toml`, `warnings` lists names in module docstrings that the project
 and its dependencies do not declare (`kind` `module-doc-name`, with `file`, `line`, `name` and
 `message`; the message says when a short name reaches only a module or a namespace), and

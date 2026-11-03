@@ -148,7 +148,12 @@ def test_check_json_is_one_document_on_stdout(plain):
     assert c["Theorem 1"]["links"][0] == {"name": "Plain.odd_add_odd", "class": "proved",
                                           "status": "linked: Lean proof checked",
                                           "status_code": "link.checked",
-                                          "source": "paper"}
+                                          "source": "paper",
+                                          "main_use": [{"main": "Plain.odd_add_odd",
+                                                        "use": "itself",
+                                                        "answer": "this is the main result "
+                                                                  "itself"}]}
+    assert out["main_use"]["selection"]["basis"] == "suggested"
     assert c["Theorem 1"]["status_code"] == "link.checked"
     assert c["Theorem 2"]["status_code"] == "link.suggested"
     assert c["Theorem 2"]["status"] == "suggested link, not confirmed"

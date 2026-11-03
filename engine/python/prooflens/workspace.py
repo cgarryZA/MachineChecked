@@ -1501,7 +1501,9 @@ def api(work_dir: Path, data_dir: Path, root: Path | None = None) -> tuple[dict,
     `/api/workspace/export?id=`, `/api/workspace/revision?id=` (the findings the version maps
     it keeps reopen, `reopen.for_site`), `/api/main-results?id=` (the main results the workspace
     saves, or the suggestion, as `impact.workspace_selection` gives them, with this build's
-    release and project commit) and `/api/proof-facts?name=&match=&after=&in=` (a page
+    release and project commit), `/api/main-use` (how the main results use each link, traced
+    now from the stored references, `impact.site_link_uses`) and
+    `/api/proof-facts?name=&match=&after=&in=` (a page
     of the facts inside one proof, as `compare --query proof-facts` gives them); POST
     `/api/workspace` with `action`
     `open` (`reviewer`, `mode`, `id`), `update` (`id`, `ops`, `op_id`, `base` ignored), `import`
@@ -1598,9 +1600,15 @@ def api(work_dir: Path, data_dir: Path, root: Path | None = None) -> tuple[dict,
                 "build": {"release": src.get("release"),
                           "commit": (src.get("project") or {}).get("commit")}}
 
+    def main_use(q):
+        # Traced now, so that a selection saved since the build is the one it follows.
+        from .impact import site_link_uses
+        return site_link_uses(data_dir, root, work_dir)
+
     get = {"/api/workspaces": lambda q: {"workspaces": [summary(ws) for _, ws in
                                                         list_all(work_dir)]},
            "/api/main-results": main_results,
+           "/api/main-use": main_use,
            "/api/proof-facts": facts,
            "/api/workspace": one,
            "/api/workspace/revision": revision,

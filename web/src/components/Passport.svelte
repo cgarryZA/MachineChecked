@@ -1,7 +1,7 @@
 <script>
   import { claimLink, claimReference, issueUrl, reportsUrl } from "../lib/issue.js";
   import TexInline from "./TexInline.svelte";
-  import { loadClaim, saveLink, saveSymbol, shownClaim, auditOf } from "../lib/data.js";
+  import { loadClaim, saveLink, saveSymbol, shownClaim, auditOf, loadMainUse } from "../lib/data.js";
   import { project } from "../lib/project.svelte.js";
   import { counterpartViews } from "../lib/versions.js";
   import { href, withQuery } from "../lib/route.svelte.js";
@@ -21,6 +21,7 @@
   import ProofStep from "./ProofStep.svelte";
   import Investigation from "./Investigation.svelte";
   import ProofFacts from "./ProofFacts.svelte";
+  import LinkUse from "./LinkUse.svelte";
   import PublishedWork from "./PublishedWork.svelte";
   import { VERDICTS } from "../lib/review.js";
   import { occurrenceCount } from "../lib/symbolmarks.js";
@@ -66,6 +67,17 @@
       selAt = null; pickVar = null; pickSym = null; marking = null;
     }
     loadClaim(index, claimId).then((c) => { if (current) loaded = c; }).catch((e) => { if (current) error = String(e); });
+    return () => { current = false; };
+  });
+
+  // How the main results use each link (`impact.link_uses`), read once for the claim shown: under
+  // `view`, traced now; else as the build wrote it.
+  let mainUse = $state(null);
+  $effect(() => {
+    void [claimId, index.release];
+    let current = true;
+    mainUse = null;
+    loadMainUse(index, editable).then((d) => { if (current) mainUse = d; }).catch(() => {});
     return () => { current = false; };
   });
 
@@ -260,9 +272,10 @@
   {/if}
 {/snippet}
 
-<!-- Under each linked declaration: its status when the claim links several, and in the local
-     reader the facts of its proof and unlinking it. -->
+<!-- Under each linked declaration: how the main results use it, its status when the claim links
+     several, and in the local reader the facts of its proof and unlinking it. -->
 {#snippet linkTools(l, at, role)}
+  {#if role !== "route"}<LinkUse doc={mainUse} claimId={claim.id} name={l.name} />{/if}
   {#if role === "step"}
     <StatusChip record={l} small />
     {#if editable && simple}<button class="btn ghost" disabled={!!busy} onclick={() => act({ lean: claim.step.links.filter((x) => x.name !== l.name).map((x) => x.name) }, "link")}>Unlink</button>{/if}
