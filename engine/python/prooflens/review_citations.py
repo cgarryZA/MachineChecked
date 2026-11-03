@@ -10,7 +10,9 @@ backticked token that looks like a path (one with a file extension, or a folder 
 resolves when a file or folder of the project or of its Lake packages ends with it. What does not resolve is a finding of the `warning` tier (code
 `review-citation`), with its file and line; `review_citations_strict = true` makes it a
 violation. Fenced code blocks, the `Review by` lines promotion writes, reviewers' names and
-tokens matching `review_citations_ignore` (mathematical notation such as `x_i`) are skipped, and
+mathematical notation such as `x_i` are skipped (tokens matching `DEFAULT_IGNORE`, or the
+patterns of `review_citations_ignore`, which replace them: a warning about a token that a
+default pattern would skip says so, #514), and
 so is review text that records the removal of a declaration, which must name it (#270): an
 archived marker (`<!-- archived at … -->`), a removal record (a paragraph or list item that opens
 with a bold lead-in saying that something was removed or retired, `**Clauses removed.**`), and a
@@ -72,6 +74,15 @@ def classify(token: str) -> str | None:
     if ("_" in t or "." in t) and NAME.fullmatch(t):
         return "name"
     return None
+
+
+def replaced_default(token: str, ignore: list[str] | None) -> str:
+    """What a warning about `token` adds when the configured patterns `ignore` replace a default
+    notation pattern that would skip it, so that the warning says why the token is cited. Empty
+    otherwise."""
+    if ignore is None or not any(re.search(p, token) for p in DEFAULT_IGNORE):
+        return ""
+    return "; review_citations_ignore replaces the default notation patterns, which would skip it"
 
 
 def reviewer(m: re.Match) -> str | None:

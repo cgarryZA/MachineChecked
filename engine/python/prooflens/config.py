@@ -81,7 +81,8 @@ class Config:
     repository: str | None = None     # "owner/repo" of the Lean source, if not the git remote
     repository_private: bool = False  # the reader does not show the repository's name
     # Citations in review text (`review_citations.py`): patterns of backticked tokens that are
-    # notation, not names (None: the default), and whether an unresolved one is a violation.
+    # notation, not names, which replace the default ones (None: the defaults,
+    # `review_citations.DEFAULT_IGNORE`), and whether an unresolved one is a violation.
     review_citations_ignore: list[str] | None = None
     review_citations_strict: bool = False
     # Reviewers whose review markers count without review text before them (`assess.py`).

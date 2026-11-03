@@ -2,6 +2,7 @@
 nothing resolves are listed with their file and line. A warning never changes a status."""
 
 import json
+import re
 import shutil
 import subprocess
 from types import SimpleNamespace
@@ -12,7 +13,8 @@ from conftest import ROOT, build, findings, needs_lean, needs_tex, status
 from prooflens import config as cfgmod
 from prooflens.assess import Assessor
 from prooflens.probe import lean_session, parse_records
-from prooflens.review_citations import citations, classify, file_fingerprint, unresolved
+from prooflens.review_citations import (DEFAULT_IGNORE, citations, classify, file_fingerprint,
+                                        unresolved)
 
 REVIEW = """## A synthetic review
 
@@ -60,6 +62,51 @@ def test_notation_in_code_spans_is_not_cited(tmp_path):
     f = tmp_path / "reviews.md"
     f.write_text("`X'_T`, `μ.law`, `C.h`, `ab_n` and `x_i` are notation; `Foo.baz` is not.\n")
     assert [c["token"] for c in citations([f], tmp_path)] == ["Foo.baz"]
+
+
+def test_configured_patterns_replace_the_defaults_and_the_warning_says_so(tmp_path):
+    """#514: `review_citations_ignore` replaces the default notation patterns. A token that only
+    a default pattern would skip is warned about, and the warning says why."""
+    (tmp_path / "machinechecked.toml").write_text(
+        '[project]\nname = "p"\nlean_root = "."\nmodules = ["P"]\nscope_roots = ["P"]\n'
+        'spec_prefix = "P.Spec"\naccept_prefix = "P.Acc"\ninventory = "claims.json"\n'
+        'reviews = ["reviews.md"]\nreview_citations_ignore = ["^energy_t$"]\n')
+    cfg = cfgmod.load(tmp_path / "machinechecked.toml")
+    assert cfg.review_citations_ignore == ["^energy_t$"]
+    (tmp_path / "reviews.md").write_text("The reading uses `x_i` and `energy_t`.\n")
+    assert [c["token"] for c in citations(cfg.reviews, tmp_path)] == ["energy_t"]
+    assert [c["token"] for c in citations(cfg.reviews, tmp_path,
+                                          cfg.review_citations_ignore)] == ["x_i"]
+    lean = {"names": {"checked": ["x_i", "energy_t"], "unresolved": ["x_i", "energy_t"]},
+            "layering": []}
+    run = SimpleNamespace(statement_authors=[], papers=[], lean_root=None, root=tmp_path,
+                          reviews=cfg.reviews, review_citations_ignore=["^energy_t$"])
+    (f,) = [f for f in Assessor(run, {"claims": []}, lean, {}, [], []).run()["findings"]
+            if f["code"] == "review-citation"]
+    assert f["message"] == (
+        "reviews.md:1 (no marker follows): the review cites x_i, which is no declaration of the project, its "
+        "dependencies or Lean; review_citations_ignore replaces the default notation patterns, "
+        "which would skip it")
+    # Without the setting, the defaults skip `x_i` and `energy_t` is warned about, with no note;
+    # with the defaults copied into the setting, nothing is.
+    for ignore, warned in ((None, ["reviews.md:1 (no marker follows): the review cites "
+                                   "energy_t, which is no declaration of the project, its "
+                                   "dependencies or Lean"]),
+                           (DEFAULT_IGNORE + ["^energy_t$"], [])):
+        run.review_citations_ignore = ignore
+        assert [f["message"] for f in Assessor(run, {"claims": []}, lean, {}, [], []).run()[
+            "findings"] if f["code"] == "review-citation"] == warned
+
+
+def test_the_guide_prints_the_default_patterns_to_copy():
+    """#514: the guide's example of `review_citations_ignore` starts with the default patterns,
+    exactly as the engine has them."""
+    import tomllib
+    text = (ROOT / "docs" / "ASSURANCE.md").read_text()
+    (block,) = [b for b in re.findall(r"```toml\n(.*?)```", text, re.S)
+                if "review_citations_ignore" in b]
+    got = tomllib.loads(block)["project"]["review_citations_ignore"]
+    assert got[:len(DEFAULT_IGNORE)] == DEFAULT_IGNORE and len(got) > len(DEFAULT_IGNORE)
 
 
 # A synthetic re-pin (#270): its removal record and archived markers name the declarations that
