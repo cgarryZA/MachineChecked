@@ -7,7 +7,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { comparisonInputs, declSide, usersSide, statementRows, rowOfTarget, rowOfId, exactPart,
-         alignmentSource, alignedRows, pinScope, sameScope, paperSide, formalSide } from "../src/lib/comparison.js";
+         alignmentSource, alignedRows, pinScope, sameScope, paperSide, formalSide, pairingSources, rowHints,
+         mathPieces } from "../src/lib/comparison.js";
 import { propertyStanding } from "../src/lib/carried.js";
 import { spineOf } from "../src/lib/tree.js";
 
@@ -150,6 +151,42 @@ assert.deepEqual([...rows.at.keys()], ["Toy.IsEven::top", "Toy.PaperSpec.thm_eve
 assert.equal(rows.at.get("Toy.PaperSpec.thm_even_add::b:0")[0].alignment.id, "a2", "one alignment, several rows");
 assert.deepEqual(rows.elsewhere.map((a) => a.id), ["a3"]);
 assert.equal(alignmentSource({ alignments: [] }, { who: "x", from: "y" }), null);
+
+// #501: computed hints come with the open investigation's reading only, at the rows of their own
+// targets, and an independent stage pairs nothing, so it shows none.
+const jet = claim("structure", "P_thm_jet").links[0].statement;
+const hint = (kind, target, extra = {}) => ({ kind, alignment: "a-x", basis: "computed hint", target,
+  paper: { text: "m + 4", normal: "m + 4" }, lean: { text: "n + 5", normal: "n + 5" }, text: "SYNTHETIC-HINT", ...extra });
+const ownReading = {
+  requirements: [{ local_id: "m.c", fragments: { governing: [] } }],
+  alignments: [{ id: "a-x", requirements: ["m.c"], expression: "m + 4", relation: "corresponds",
+    lean: [{ decl: "Shape.jet_lower", binder: 4 }, { decl: "Shape.jet_lower", conclusion: true }] }],
+  estimates: { hints: [hint("offset", { decl: "Shape.jet_lower", binder: 4 })],
+    settled_hints: [hint("not compared", { decl: "Shape.jet_lower", conclusion: true },
+      { settled_by: "f-d", settled: { finding: "f-d", outcome: "no difference", why: "SYNTHETIC-WHY", by: "human:X" } })] } };
+const ownWs = { id: "ws-1", reviewer: "human:X", reading: ownReading };
+const who = () => "someone";
+for (const mode of ["read", "compare"]) assert.deepEqual(pairingSources(mode, [ownReading], ownWs, who), [], `${mode}: no pairing, no hint`);
+const [mine] = pairingSources("reading", [], ownWs, who);
+assert.equal(mine.from, "workspace");
+assert.equal(mine.alignments[0].expression, "m + 4");
+const jetRows = alignedRows(mine, { "Shape.jet_lower": jet });
+const atHyp = jetRows.at.get("Shape.jet_lower::b:4")[0], atConcl = jetRows.at.get("Shape.jet_lower::c")[0];
+assert.deepEqual(rowHints(atHyp).hints.map((h) => h.kind), ["offset"], "the hint at the row of its target");
+assert.deepEqual(rowHints(atHyp).dismissed, []);
+assert.deepEqual(rowHints(atConcl).hints, [], "not at another target's row");
+assert.deepEqual(rowHints(atConcl).dismissed.map((h) => h.settled.why), ["SYNTHETIC-WHY"], "a dismissed hint, apart");
+// A published reading carries no hint, even one with an estimates block.
+const [pub] = pairingSources("reading", [{ ...ownReading, estimates: undefined, reviewer: {} }], null, who);
+assert.deepEqual(pub.alignments[0].hints, []);
+
+// The mathematics a passage prints, each piece exactly as written, and each side of a relation.
+assert.deepEqual(mathPieces("If the first $m + 5$ differences of $f$, so are the first $m + 4$."), ["m + 5", "f", "m + 4"]);
+assert.deepEqual(mathPieces("There is $C$ with $n \\le C n^2 + n$ for every $n$."), ["C", "n \\le C n^2 + n", "n", "C n^2 + n"]);
+assert.deepEqual(mathPieces("\\begin{equation}\\label{eq:a}\n  |u| \\le \\left(a + b\\right),\n\\end{equation}"),
+  ["|u| \\le \\left(a + b\\right)", "|u|", "\\left(a + b\\right)"]);
+for (const t of ["If the first $m + 5$ differences.", "There is $C$ with $n \\le C n^2 + n$.", "\\begin{equation}\\label{eq:a}\n  |u| \\le \\left(a + b\\right),\n\\end{equation}"])
+  for (const p of mathPieces(t)) assert.ok(t.includes(p), `${p} occurs exactly in its passage`);
 
 // A pin belongs to one claim, project and build: another project or revision has its own pins.
 const a = pinScope({ release: "r1", evidence: "e1" }, "T:x", "o/a");

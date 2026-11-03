@@ -437,6 +437,17 @@ auditor whose alignment gives them. They change no status or review record, the 
 does not count them, a published audit does not carry them, and the stages of an independent
 review show none.
 
+In the reader, **Align with the Lean** offers the mathematics of the passages that govern the
+alignment (the inside of each `$…$` or display, and each side of a relation in it) to pick as
+the **Paper expression**, which you can then trim. When the comparison's rows follow your
+investigation, each hint is beside the row of its Lean target, marked **Computed hint**, a
+pointer to inspect and not a finding, with the paper's and the Lean's expressions as written and
+their normal forms. **Dismiss**, in the Investigation, asks for your reason and records it as a
+draft finding: a difference on the alignment's requirement with outcome `no difference` that
+names the hint. The hint is then listed under **Dismissed hints**, with who dismissed it and why,
+both in the Investigation and beside its row. Review's Compare stage pairs no rows with an
+investigation and shows no hint.
+
 A counterexample is a record of its own against one reading of a requirement:
 
 ```json
