@@ -10,8 +10,9 @@
 //            with their scope tree, carried properties and expansions, definitions with their
 //            equations and source. No association a person made (symbol links, workspace
 //            alignments, correspondence notes, reviews, findings, a proof step's route, the paper
-//            definition a declaration is linked to, the claims a declaration is linked to) and no
-//            review of a declaration is in it;
+//            definition a declaration is linked to, the claims a declaration is linked to), no
+//            connection between objects, recorded or computed, and no review of a declaration is
+//            in it;
 //   after    once the verdict is recorded: the records as the reader shows them;
 //   reading  the reader and the claim page: the claim as the engine wrote it.
 
@@ -98,6 +99,9 @@ export function comparisonInputs(mode, claims, { only = null, decls = [] } = {})
     definitions: mode === "read" ? [] : decls.map((d) => ({ name: d.name, key: d.key })),
     // What a person recorded about the claim: symbol links and the published workspace records.
     annotations: blind || !shown[0] ? null : { symbols: shown[0].symbols || [], work: shown[0].work || null },
+    // The connections between objects the build computed from Lean's terms (`computed_connections`
+    // of the claim record); the recorded ones are workspace records, read with the annotations.
+    connections: blind || !shown[0] ? null : { computed: shown[0].computed_connections || [] },
   };
 }
 
@@ -190,6 +194,19 @@ export function rowOfTarget(st, t) {
     return i >= 0 && i < binders.length ? rowOfBinder(rows, i) : null;
   }
   return null;
+}
+
+// The row of a variable bound inside the statement (after the binders that open it): the
+// conclusion's, or that of the hypothesis whose own tree binds it.
+export function innerRow(st, t) {
+  if (t.var == null || !/^\d+$/.test(String(t.var))) return null;
+  const i = Number(t.var);
+  const binds = (n) => !!n && typeof n === "object" && ((n.var === i && (n.op === "exists" || n.op === "forall"))
+    || (n.args || []).some(binds));
+  if (binds(conclusionOf(st))) return st.conclusion ? "c" : null;
+  const rows = statementRows(st);
+  const k = spineOf(st).findIndex((b) => binds(b.logic));
+  return k < 0 ? null : rows.find((r) => r.head === k || r.members.includes(k))?.key ?? null;
 }
 
 // An alignment source in one form: a published reading (`published_work.py`) or the reading of
