@@ -644,6 +644,12 @@ const RET = JSON.parse(fs.readFileSync(path.resolve(here, "../../tests/fixtures/
 fs.writeFileSync(path.join(root, "pfsearch", "data", "retrieval.json"), JSON.stringify(RET.index));
 fs.writeFileSync(path.join(root, "pfsearch", "data", "index.json"), JSON.stringify({ ...PF, editable: true, retrieval: "data/retrieval.json", index_scope: { left_out: ["Other"], modules: 2 } }));
 
+// `/pfpaged/` is the same local reader answering with the engine's pages of one fact each
+// (`compare --query proof-facts Facts.bound --limit 1 --after …`), by the cursor asked for.
+fs.cpSync(path.join(root, "prooffacts"), path.join(root, "pfpaged"), { recursive: true });
+fs.writeFileSync(path.join(root, "pfpaged", "data", "index.json"), JSON.stringify({ ...PF, editable: true }));
+const pfCursors = [];
+
 const types = { ".pdf": "application/pdf", ".html": "text/html", ".json": "application/json", ".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css", ".woff2": "font/woff2" };
 // `/toyedit/` is the toy reader as the local `view` serves it: its index says it may edit, and
 // symbol links it saves are captured here instead of written.
@@ -652,6 +658,13 @@ const server = http.createServer((req, res) => {
   let url = decodeURIComponent(req.url.split("?")[0]);
   if (url.startsWith("/pfedit/api/")) return proofFactsApi(url, req.url.split("?")[1] || "", req, res);
   if (url.startsWith("/pfsearch/api/")) return proofFactsApi("/pfedit/" + url.slice("/pfsearch/".length), req.url.split("?")[1] || "", req, res);
+  if (url === "/pfpaged/api/proof-facts") {
+    const q = new URLSearchParams(req.url.split("?")[1] || "");
+    pfCursors.push(q.get("after"));
+    res.writeHead(200, { "content-type": "application/json" });
+    return res.end(JSON.stringify(PF_FACTS.pages[q.get("name")][q.get("after") || ""]));
+  }
+  if (url.startsWith("/pfpaged/api/")) return proofFactsApi("/pfedit/" + url.slice("/pfpaged/".length), req.url.split("?")[1] || "", req, res);
   if (url === "/pfedit/data/index.json") {
     res.writeHead(200, { "content-type": "application/json" });
     return res.end(JSON.stringify({ ...PF, editable: true }));
@@ -3628,6 +3641,43 @@ for (const width of [1300, 390]) await check("the link picker searches by conten
   assert.match(await picker.locator("details.ref summary").textContent(), /∀ \(a b : ℝ\), 0 ≤ a → 0 ≤ b → \|a \+ b\| ≤ \|a\| \+ \|b\|/);
   assert.equal(pfPosted.length, sent, "a search records nothing");
   assert.ok(await pg.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), "no horizontal scroll");
+});
+
+// Lean reads the facts of a proof a page at a time: "Read more" asks for the page after the last
+// fact shown, until none remain. The pages together are the whole proof's facts, each with its
+// id and as the whole answer shows it, and a fact of a later page opens by its id.
+await check("the facts inside a proof are read a page at a time", 1300, async (pg) => {
+  await pg.goto(origin + `/pfpaged/#/r/${PF.release}/claim/${encodeURIComponent("P:lem:sharp")}`);
+  const panel = pg.locator("details.facts[data-decl='Facts.bound']");
+  await panel.locator("summary").click();
+  await panel.getByRole("button", { name: "Read the proof" }).click();
+  const shown = () => panel.locator(".fact[data-fact]").evaluateAll((es) => es.map((e) => e.dataset.fact));
+  const whole = PF_FACTS["Facts.bound"].results.map((f) => f.id);
+  assert.ok(whole.length > 2, "the whole proof has more than two facts");
+  await panel.locator(`.fact[data-fact='${whole[0]}']`).waitFor();
+  for (let n = 1; n < whole.length; n++) {
+    assert.deepEqual(await shown(), whole.slice(0, n));
+    assert.match((await panel.locator(".more").textContent()).replace(/\s+/g, " "), new RegExp(`${n} of ${whole.length} facts read`));
+    await panel.getByRole("button", { name: "Read more" }).click();
+    await panel.locator(`.fact[data-fact='${whole[n]}']`).waitFor();
+  }
+  assert.deepEqual(await shown(), whole);
+  assert.equal(await panel.getByRole("button", { name: "Read more" }).count(), 0, "no page remains");
+  assert.deepEqual(pfCursors.splice(0), [null, ...whole.slice(0, -1)]);
+  // The weakening, on the last page, names the local of the first page's fact that supplies it.
+  const weaken = (await panel.locator(".fact[data-kind=application]").textContent()).replace(/\s+/g, " ");
+  assert.match(weaken, /needs hx : x ≤ C \* h, supplied by strong/);
+  const strong = (await panel.locator(".fact[data-kind=have]").textContent()).replace(/\s+/g, " ");
+  assert.match(strong, new RegExp(`used by ${PF_FACTS["Facts.bound"].results.find((f) => f.name === "strong").used_by.join(", ")}`));
+
+  // An inspection of the last fact, opened afresh by its id, reads the page that starts with it.
+  const last = whole.at(-1);
+  await pg.goto(origin + `/pfpaged/#/r/${PF.release}/claim/${encodeURIComponent("P:lem:sharp")}?inspect=${encodeURIComponent(`fact:Facts.bound|${last}`)}`);
+  await pg.reload();
+  const inspected = pg.locator(`section.inspection[data-kind=fact] .fact[data-fact='${last}']`);
+  await inspected.waitFor();
+  assert.match(await inspected.textContent(), /Facts\.weaken/);
+  assert.deepEqual(pfCursors.splice(0), [whole.at(-2)]);
 });
 
 await check("a fact established in one case shows that case", 390, async (pg) => {

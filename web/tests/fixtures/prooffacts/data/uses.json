@@ -1,0 +1,1 @@
+{"by_name": {"Facts.weaken": [{"module": "Facts.Main", "users": [{"module": "Facts.Main", "name": "Facts.bound", "refs": ["proof"]}, {"module": "Facts.Main", "name": "Facts.bound_cases", "refs": ["proof"]}, {"module": "Facts.Main", "name": "Facts.nested", "refs": ["proof"]}]}]}, "schema": "machinechecked/uses-index@1"}

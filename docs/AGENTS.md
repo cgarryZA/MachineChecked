@@ -340,14 +340,21 @@ mention), the `cases` of the proof it lies in (a branch of a case split, a witne
 `obtain`), the `premises` of an applied theorem with the local that supplies each, `used_by`, its
 `source` line (`located` says how it was found) and its `ref`, the reference a workspace cites
 (without `--json`, each fact's position `at` and a `cite as evidence` line).
+Lean reads the facts a page at a time, 200 by default (`--limit N`); `retrieval.next` and
+`subject.page` say whether more remain, and `--after` with that `next` reads the next page.
+`--in AT` reads only the facts at or inside one position of the proof, such as an application's
+`at`: that application and the facts inside its arguments. A fact's `id` (`f12`) is its place
+among all the facts of the proof, so it is the same on every page and with `--in`, and each page
+reports a fact (its `used_by`, its source line) as the whole list does.
 `subject` holds the exported statement (`basis: "exported theorem"`), the proof's hash and what
-was inspected, `source_only` (a `have` or `show` of the source with no typed counterpart, for
-instance inside a lemma Lean generated, listed under `proof.auxiliary` and asked about by its own
-name), and `proof.complete: false` when the walk reached its limit (200,000 nodes, 200 facts). A
-fact's `basis` is always "established inside this proof under this context": it is not an
-exported theorem, and `--match` ranks facts by shared symbols without deciding that one bound
-gives another. Lean runs once per declaration; the answer is kept in the facts store, like
-`inspect`'s, and reused until the declaration's module or a module it imports changes.
+was inspected, the `page` (`before`, `count`, `total`, `more`, `next`), `source_only` (a `have`
+or `show` of the source with no typed counterpart, for instance inside a lemma Lean generated,
+listed under `proof.auxiliary` and asked about by its own name), and `proof.complete: false` when
+the walk reached its limit of 200,000 nodes. A fact's `basis` is always "established inside this
+proof under this context": it is not an exported theorem, and `--match` ranks the facts of the
+page by shared symbols without deciding that one bound gives another. Lean runs once per page;
+each page is kept in the facts store, like `inspect`'s answers, and reused until the
+declaration's module or a module it imports changes.
 `--query composition CLAIM` gives the compositions the workspaces record for the claim (one
 workspace's with `--workspace ID`), each as `workspace show` gives it: its steps, `basis`, `gaps`,
 `next_step` and `bridge_check`. They are prior interpretations (`subject.contains`). A query
@@ -374,9 +381,10 @@ absent:
   `unbuilt` and those that `failed` to load; `complete: false` says that some were not
   searched, so an `answer` of `not traced` (no use in the modules searched) leaves the others
   open. `applications_complete` says whether every application was read.
-- `proof-facts`: `subject.proof.complete: false` (with `cut`) when the walk reached its limit;
-  `auxiliary` lists the lemmas Lean generated for parts of the proof, each to be asked about by
-  its own name, and `not_inspected` what the walk does not read.
+- `proof-facts`: `retrieval.next` (and `subject.page.more`) when more facts remain after the
+  page, read with `--after`; `subject.proof.complete: false` (with `cut`) when the walk reached
+  its node limit; `auxiliary` lists the lemmas Lean generated for parts of the proof, each to be
+  asked about by its own name, and `not_inspected` what the walk does not read.
 - `inspect`: `closure.generated` counts the compiler-generated constants it followed without
   listing.
 

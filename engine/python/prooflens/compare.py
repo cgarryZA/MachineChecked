@@ -752,7 +752,9 @@ QUERIES = {
     "uses": "where a declaration is applied, and the source of each premise (with --in, inside "
             "one declaration or one application, with the context of each)",
     "proof-facts": "the typed facts inside a declaration's proof, each with its assumptions and "
-                   "cases (Lean reads the proof once; the answer is cached)",
+                   "cases, a page at a time (with --in, those at or inside one position of the "
+                   "proof, such as an application's; Lean reads each page once, and it is "
+                   "cached)",
     "composition": "the auditors' compositions for a claim: the steps, the results each rests "
                    "on, substitutions, identifications, obligations and any Lean bridge",
     "impact": "how each main result uses a declaration (the path from its proof or its "
@@ -803,8 +805,10 @@ def query(site: Site, op: str, target: str, limit: int | None = None, after: str
     operation the engine does not extract yet answers `available: false` with its owner.
     `search` with `every_library` searches every library of the project, also those the
     build's index leaves out.
-    `proof-facts` answers with the facts inside the target's proof (ranked against `match` when
-    given), and the declaration, locals, cases and source-only lines in `subject`.
+    `proof-facts` answers with one page of the facts inside the target's proof (ranked against
+    `match` when given): `limit` facts (200 by default) after the fact `after`, at or inside the
+    term position `within` (`--in`) when given; `subject` holds the declaration, locals, cases,
+    source-only lines and the page.
     `composition` answers with the compositions recorded for the target claim in the
     workspaces of the build's working directory (or in `workspace`): prior interpretations,
     which an independent review reads only after its verdict. `impact` traces the target from
@@ -815,8 +819,8 @@ def query(site: Site, op: str, target: str, limit: int | None = None, after: str
     context."""
     if op not in QUERIES:
         raise CompareError(f"no query {op!r}; the queries are: {', '.join(QUERIES)}", "bad-query")
-    if within and op != "uses":
-        raise CompareError("--in goes with the query uses", "bad-query")
+    if within and op not in ("uses", "proof-facts"):
+        raise CompareError("--in goes with the queries uses and proof-facts", "bad-query")
     out = {"schema": QUERY_SCHEMA, "op": op, "target": target, "limit": limit, "after": after,
            "context": site.snapshot()}
     if op in NOT_YET:
@@ -877,18 +881,33 @@ def query(site: Site, op: str, target: str, limit: int | None = None, after: str
     elif op == "proof-facts":
         if root is None:
             raise CompareError("`proof-facts` needs the Lean project", "no-project")
-        from .proof_facts import rank
-        doc = _proof_facts(root, target, log)
+        from .proof_facts import page_request, rank
+        for code, asked in (("bad-cursor", (after, None)), ("bad-position", (None, within))):
+            try:
+                page_request(*asked)
+            except ValueError as e:
+                raise CompareError(str(e), code) from None
+        if limit is not None and limit < 1:
+            raise CompareError("--limit is the number of facts a page holds: 1 or more",
+                               "bad-limit")
+        doc = _proof_facts(root, target, log, limit, after, within)
         results = rank(doc["facts"], match) if match else doc["facts"]
-        out["subject"] = {k: doc.get(k) for k in ("declaration", "proof", "locals", "scopes",
-                                                   "source_only", "note", "cache")}
+        out["subject"] = {k: doc.get(k) for k in ("declaration", "proof", "page", "locals",
+                                                   "scopes", "source_only", "note", "cache")}
         if match:
             out["match"] = {"query": match, "candidates": len(results),
                             "of": len(doc["facts"]),
-                            "note": "ranked by shared symbols; a candidate is not a claim that "
-                                    "one bound gives another"}
-        prov = ("Lean (the declaration's elaborated proof), kept in the facts store until a "
-                "module it was read from changes")
+                            "note": "ranked by shared symbols among the facts of this page; a "
+                                    "candidate is not a claim that one bound gives another"}
+        # Lean reads one page: the retrieval is the page's, whatever the ranking keeps of it.
+        pg = doc["page"]
+        return {**out, "available": True, "results": results,
+                "provenance": "Lean (the declaration's elaborated proof), kept in the facts store "
+                              "until a module it was read from changes",
+                "retrieval": {"total": pg["total"], "returned": len(results),
+                              "complete": not pg["more"] and not pg["before"], "after": after,
+                              "within": within, "before": pg["before"], "count": pg["count"],
+                              "next": pg["next"]}}
     else:
         if root is None:
             raise CompareError("`dependencies` needs the Lean project", "no-project")
@@ -1033,14 +1052,17 @@ def saved_main_results(site: Site, workspace: str | None, root: Path | None) -> 
     return {**s, "problems": wsp.main_results_problems(s, Snapshot(site.data), root)}
 
 
-def _proof_facts(root: Path, target: str, log) -> dict:
-    """The facts inside `target`'s proof, or the reason there are none, as a refusal. `target`
-    is a declaration name, optionally `Module:Name` when several modules declare the name."""
+def _proof_facts(root: Path, target: str, log, limit: int | None = None,
+                 after: str | None = None, within: str | None = None) -> dict:
+    """A page of the facts inside `target`'s proof (`limit` facts after the fact `after`, at or
+    inside the position `within`), or the reason there are none, as a refusal. `target` is a
+    declaration name, optionally `Module:Name` when several modules declare the name."""
     from .proof_facts import extract
     from .simple import ViewError
     module, _, name = target.rpartition(":") if ":" in target else (None, "", target)
     try:
-        doc = extract(root, name, module or None, log=log)
+        doc = extract(root, name, module or None, log=log,
+                      limits={"facts": limit} if limit else None, after=after, within=within)
     except ViewError as e:
         raise CompareError(str(e), "no-project") from None
     if not doc["ok"]:
@@ -1261,10 +1283,17 @@ def proof_facts_text(q: dict) -> str:
     out = [f"{d.get('name')}  ({d.get('kind')}, {d.get('file')}" + (f":{line}" if line else "")
            + f"; {d.get('basis')})", f"  statement: {_text(d.get('statement'))}"]
     m = q.get("match")
-    total = q["retrieval"]["total"]
-    out.append(f"  {total} fact(s) inside its proof" + (f" share symbols with {m['query']!r} "
-               f"(of {m['of']})" if m else "") + ", each established inside this proof under "
-               "its context:")
+    page = sub.get("page") or {}
+    total, before, count = (page.get("total", len(q["results"])), page.get("before") or 0,
+                            page.get("count", len(q["results"])))
+    inside = f" at or inside {page['within']} of" if page.get("within") else " inside"
+    span = (f"{total} fact(s)" if not (before or page.get("more")) else
+            f"fact {before + 1} of {total}" if count == 1 else
+            f"facts {before + 1}–{before + count} of {total}" if count else
+            f"no fact after {page.get('after')} (of {total})")
+    out.append((f"  {len(q['results'])} of {span}{inside} its proof share symbols with "
+                f"{m['query']!r}" if m else f"  {span}{inside} its proof")
+               + ", each established inside this proof under its context:")
     locals_ = {l["id"]: l for l in sub.get("locals") or []}
     for f in q["results"]:
         src = f.get("source") or {}
@@ -1309,7 +1338,8 @@ def proof_facts_text(q: dict) -> str:
         out.append("  not entered: " + ", ".join(proof["auxiliary"])
                    + " (lemmas Lean generated for parts of the proof; ask about each by name)")
     if q["retrieval"].get("next"):
-        out.append(f"  (more: --after {q['retrieval']['next']})")
+        out.append(f"  (more: --after {q['retrieval']['next']}"
+                   + (f" --in {page['within']}" if page.get("within") else "") + ")")
     out.append(f"  {sub.get('note')}")
     if (sub.get("cache") or {}).get("hit"):
         out.append("  (from the cache: no Lean input changed)")

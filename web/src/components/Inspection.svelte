@@ -57,7 +57,10 @@
     const key = item.decl + "|" + item.id, it = item, asked = token;
     if (facts.has(key)) { fact = facts.get(key); return; }
     if (!local) return;
-    proofFacts(it.decl).then((doc) => {
+    // A fact's id is its place among the facts of the proof (`f12`): the page that starts with it
+    // is the one after the fact before it.
+    const k = Number(/^f(\d+)$/.exec(it.id)?.[1] ?? 0);
+    proofFacts(it.decl, "", k > 0 ? `f${k - 1}` : null).then((doc) => {
       for (const f of doc.results || []) facts.set(it.decl + "|" + f.id, f);
       if (token !== asked) return;
       fact = facts.get(key) || null;
