@@ -297,7 +297,10 @@ theorem has **Facts inside the proof**: *Read the proof* asks Lean for the propo
 establishes along the way, each with the hypotheses it needs and the case of the proof it lies in,
 and each theorem the proof applies with the local that supplies each of its hypotheses (`compare
 --query proof-facts NAME` gives the same in a terminal, with the reference that cites each fact,
-as `compare --query uses` gives one for each application). *Cite in the investigation* saves a fact
+as `compare --query uses` gives one for each application). Lean reads the facts a page at a time;
+*Read more* adds the next page, and each fact keeps its number on every page. In a terminal,
+`--after` reads the next page and `--in AT` the facts inside one application, by its position
+`at`. *Cite in the investigation* saves a fact
 as evidence; it keeps its basis, established inside that proof under that context, so a finding
 resting on it records the coverage as your composition, not as direct coverage. A `have` the
 source states but the compiled proof does not keep is shown as source text only.

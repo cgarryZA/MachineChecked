@@ -6,7 +6,8 @@ its proof first establishes the sharper `x ≤ C * h` and weakens it with `Facts
 needs both sign conditions. `Facts.bound_unsigned` has no sign condition on `C`, so its proof
 stops at the sharper bound. `Facts.bound_cases` establishes the doubled bound in the case
 `0 ≤ h` only; `Facts.branches` and `Facts.witnesses` establish facts in two branches and for
-two witnesses; `Facts.above` is a definition whose proof Lean moved to a lemma of its own.
+two witnesses; `Facts.above` is a definition whose proof Lean moved to a lemma of its own;
+`Facts.nested` applies `Facts.weaken` twice, each with facts of its own inside its arguments.
 """
 
 import json
@@ -19,7 +20,7 @@ from conftest import ROOT, edit, needs_lean, needs_tex
 from prooflens import cli
 from prooflens import proof_facts as pf
 from prooflens import workspace as wsp
-from prooflens.simple import run_simple_probe
+from prooflens.simple import ViewError, run_simple_probe
 from prooflens.targets import Snapshot
 
 SRC = ROOT / "tests" / "fixtures" / "prooffacts"
@@ -139,8 +140,10 @@ def test_a_walk_cut_short_says_so_and_a_failed_request_fails_alone(built):
     doc = pf.extract(built, "Facts.witnesses", limits={"nodes": 10})
     assert not doc["proof"]["complete"] and doc["proof"]["cut"] == \
         ["the walk reached its node limit"]
+    # A full page is not a cut: the walk went through the proof, and more facts remain.
     doc = pf.extract(built, "Facts.witnesses", limits={"facts": 2})
-    assert len(doc["facts"]) == 2 and doc["proof"]["cut"] == ["the walk reached its fact limit"]
+    assert len(doc["facts"]) == 2 and doc["proof"]["complete"]
+    assert doc["page"]["more"] and doc["page"]["next"] == "f1" and doc["page"]["total"] == 5
     # A request that runs out of heartbeats emits an error record for itself; the session ends
     # with its other records.
     recs = run_simple_probe(built, ["Facts.Main"], ["Facts"],
@@ -152,6 +155,97 @@ def test_a_walk_cut_short_says_so_and_a_failed_request_fails_alone(built):
     assert all(r["errors"][0].startswith("probe-error") for r in out)
     bad = pf.extract(built, "Facts.bound", limits={"heartbeats": 1})
     assert bad["status"] == "probe error" and not bad["cache"]["hit"]
+
+
+def assembled(root, requests, extra=None):
+    """The `proof-facts` records of one Lean session, assembled as `extract` assembles them."""
+    recs = [r for r in run_simple_probe(root, ["Facts.Main"], ["Facts"], requests, extra=extra)
+            if r.get("record") == "proof-facts"]
+    assert len(recs) == len(requests) and not any(r.get("errors") for r in recs)
+    return [pf._assemble(r, root) for r in recs]
+
+
+def inside(f, at):
+    return f["at"] == at or f["at"].startswith(at + "/")
+
+
+PAGED = ["Facts.bound", "Facts.witnesses", "Facts.branches", "Facts.nested"]
+
+
+@needs_lean
+@pytest.mark.parametrize("toolchain", [None, "leanprover/lean4:v4.24.0"])
+def test_the_pages_together_are_the_whole_list_and_an_application_has_its_own(tmp_path,
+                                                                              toolchain):
+    root = project(tmp_path, toolchain)
+    whole = dict(zip(PAGED, assembled(root, [{"kind": "proof-facts", "name": n}
+                                             for n in PAGED])))
+    # Pages of one fact each, after every fact of the proof (and from the start), of the whole
+    # proof and of each application in it, asked for in one session.
+    asks = []
+    for n in PAGED:
+        cursors = [None] + [f["id"] for f in whole[n]["facts"]]
+        for within in [None] + [f["at"] for f in whole[n]["facts"] if f["kind"] == "application"]:
+            asks += [(n, within, a) for a in cursors]
+    pages = dict(zip(asks, assembled(root, [{"kind": "proof-facts", "name": n,
+                                             **pf.page_request(a, w)} for n, w, a in asks],
+                                     extra={"facts_items": 1})))
+
+    def read(name, within=None):
+        out, after = [], None
+        while True:
+            out.append(pages[(name, within, after)])
+            if not out[-1]["page"]["more"]:
+                return out
+            after = out[-1]["page"]["next"]
+
+    for n in PAGED:
+        w = whole[n]
+        assert w["facts"] and w["proof"]["complete"] and not w["page"]["more"]
+        got = read(n)
+        # Each fact keeps its id, its reference, its source line and the facts that use it or
+        # that it uses, on whichever page it comes.
+        assert [f for d in got for f in d["facts"]] == w["facts"]
+        assert [d["page"]["before"] for d in got] == list(range(len(w["facts"])))
+        assert {d["page"]["total"] for d in got} == {len(w["facts"])}
+        assert {l["id"]: l for d in got for l in d["locals"]} == {l["id"]: l for l in w["locals"]}
+        assert {s["id"]: s for d in got for s in d["scopes"]} == {s["id"]: s for s in w["scopes"]}
+        assert all(d["source_only"] == w["source_only"] for d in got)
+        for app in [f for f in w["facts"] if f["kind"] == "application"]:
+            mine = [f for d in read(n, app["at"]) for f in d["facts"]]
+            assert mine[0] == app and mine == [f for f in w["facts"] if inside(f, app["at"])]
+    # A fact used on a later page is still said to be used there.
+    strong, = [f for f in whole["Facts.bound"]["facts"] if f.get("name") == "strong"]
+    assert strong["used_by"] and strong["used_by"][-1] == whole["Facts.bound"]["facts"][-1]["id"]
+    # Each weakening of `Facts.nested` holds its own facts, and no other's.
+    apps = [f for f in whole["Facts.nested"]["facts"] if f["kind"] == "application"]
+    assert [[f.get("name") or f["head"] for d in read("Facts.nested", a["at"]) for f in d["facts"]]
+            for a in apps] == [["Facts.weaken", "inner"], ["Facts.weaken", "pos", "again"]]
+
+
+@needs_lean
+def test_a_page_is_asked_for_by_its_cursor_and_position_and_kept(built, monkeypatch):
+    first = pf.extract(built, "Facts.nested", limits={"facts": 2})
+    assert [f["id"] for f in first["facts"]] == ["f0", "f1"]
+    assert first["page"] == {"after": None, "within": None, "size": 2, "before": 0, "count": 2,
+                             "total": 5, "more": True, "next": "f1"}
+    rest = pf.extract(built, "Facts.nested", limits={"facts": 2}, after="f1")
+    assert [f["id"] for f in rest["facts"]] == ["f2", "f3"] and rest["page"]["next"] == "f3"
+    assert rest["proof"]["hash"] == first["proof"]["hash"]
+    # A fact cited from a later page is found again, among the facts at its position.
+    pos = rest["facts"][1]
+    doc, found = pf.locate(built, pos["ref"], limits={"facts": 2})
+    assert found == pos and doc["page"]["within"] == pos["at"]
+    # Each page is kept by its cursor and position: asking again runs no Lean, and a page not
+    # yet read is not in the store.
+    monkeypatch.setattr(pf, "probe_modules", lambda *a, **k: pytest.fail("ran Lean"))
+    assert pf.extract(built, "Facts.nested", limits={"facts": 2}, after="f1")["cache"]["hit"]
+    assert pf.extract(built, "Facts.nested", limits={"facts": 2}, within=pos["at"])["cache"]["hit"]
+    assert pf.extract(built, "Facts.nested", limits={"facts": 2}, after="f3",
+                      cached_only=True)["status"] == "not extracted"
+    with pytest.raises(ViewError, match="not a fact"):
+        pf.extract(built, "Facts.nested", after="3")
+    with pytest.raises(ViewError, match="not a position"):
+        pf.extract(built, "Facts.nested", within="1/0")
 
 
 @needs_lean
@@ -177,6 +271,18 @@ def test_compare_answers_proof_facts_and_a_citation_follows_the_proof(tmp_path, 
     text = capsys.readouterr().out
     assert "strong : x ≤ C * h" in text and "assuming hx : x + 1 ≤ C * h" in text
     assert "established inside this proof" in text
+    # A page at a time (`--limit`, `--after`), and the facts inside one application (`--in`).
+    cli.main(["compare", "--query", "proof-facts", "Facts.bound", "--limit", "2", "--json"])
+    page = json.loads(capsys.readouterr().out)
+    assert page["results"] == q["results"][:2] and page["retrieval"]["next"] == "f1"
+    assert page["retrieval"]["total"] == len(q["results"]) == 3
+    cli.main(["compare", "--query", "proof-facts", "Facts.bound", "--limit", "2", "--after", "f1"])
+    text = capsys.readouterr().out
+    assert "fact 3 of 3 inside its proof" in text and "Facts.weaken" in text
+    assert "(more:" not in text
+    weaken = next(f for f in q["results"] if f["kind"] == "application")
+    cli.main(["compare", "--query", "proof-facts", "Facts.bound", "--in", weaken["at"], "--json"])
+    assert json.loads(capsys.readouterr().out)["results"] == [weaken]
 
     # A finding cites the fact: the citation keeps its basis, and it is not direct coverage.
     snap = Snapshot(root / ".machinechecked" / "site" / "data")

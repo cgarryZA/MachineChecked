@@ -8,27 +8,37 @@
   // with the assumptions it needs and the cases it lies in: it is established inside this proof
   // under that context, never an exported theorem. A fact can be cited as evidence in the open
   // investigation; the citation keeps that basis. A fact opens as an inspection beside the
-  // comparison row `at`.
+  // comparison row `at`. Lean reads the facts a page at a time; "Read more" adds the next page.
   let { name, claim, onref = null, at = "top" } = $props();
 
-  let doc = $state(null);
+  let doc = $state(null);       // the first page's answer: the declaration, the proof, its source
+  let shown = $state([]);       // the facts of every page read, in order
+  let page = $state(null);      // the last page read
+  let asked = $state("");       // what the pages shown were ranked against
+  let localsRead = $state({});  // the locals of every page read
   let error = $state(null);
   let busy = $state(false);
   let match = $state("");
   let cited = $state({});
 
-  async function load() {
+  async function load(more = false) {
     busy = true; error = null;
     try {
-      doc = await proofFacts(name, match.trim());
-      for (const f of doc.results || []) facts.set(name + "|" + f.id, f);
+      const q = more ? asked : match.trim();
+      const d = await proofFacts(name, q, more ? page.next : null);
+      for (const f of d.results || []) facts.set(name + "|" + f.id, f);
+      const ls = Object.fromEntries((d.subject?.locals || []).map((l) => [l.id, l]));
+      if (more) { shown = [...shown, ...(d.results || [])]; localsRead = { ...localsRead, ...ls }; }
+      else { doc = d; shown = d.results || []; localsRead = ls; asked = q; }
+      page = d.retrieval;
     }
     catch (e) { error = String(e.message || e); }
     busy = false;
   }
 
   const sub = $derived(doc?.subject || {});
-  const locals = $derived(Object.fromEntries((sub.locals || []).map((l) => [l.id, l])));
+  const locals = $derived(localsRead);
+  const read = $derived(page ? (page.before ?? 0) + (page.count ?? shown.length) : 0);
   const hyps = (f) => (f.assumptions || []).filter((a) => a.role === "hypothesis");
   const label = (f) => f.kind === "application" ? f.head : f.name;
   const where = (f) => f.source?.line ? `${f.source.file}:${f.source.line}` : null;
@@ -51,12 +61,12 @@
   <summary>Facts inside the proof</summary>
   {#if !doc}
     <p class="small">Lean reads this declaration's proof and lists the propositions it establishes along the way, each with the assumptions it needs.</p>
-    <button class="act" disabled={busy} onclick={load}>{busy ? "Reading the proof…" : "Read the proof"}</button>
+    <button class="act" disabled={busy} onclick={() => load()}>{busy ? "Reading the proof…" : "Read the proof"}</button>
   {:else}
     <p class="small"><input class="q" bind:value={match} placeholder="a bound or symbol to look for" aria-label="Look for" onkeydown={(e) => e.key === "Enter" && load()} />
-      <button class="act" disabled={busy} onclick={load}>{match.trim() ? "Rank" : "Show all"}</button></p>
-    {#if doc.match}<p class="faint small">{doc.match.candidates} of {doc.match.of} facts share symbols with “{doc.match.query}”; read each fact to judge whether it gives what you need.</p>{/if}
-    {#each doc.results as f (f.id)}
+      <button class="act" disabled={busy} onclick={() => load()}>{match.trim() ? "Rank" : "Show all"}</button></p>
+    {#if doc.match}<p class="faint small">{shown.length} of the {read} facts read share symbols with “{doc.match.query}”; read each fact to judge whether it gives what you need.</p>{/if}
+    {#each shown as f (f.id)}
       <div class="fact" data-kind={f.kind} data-fact={f.id}>
         <p class="small"><span class="what">{f.what}</span>{#if label(f)} <code>{label(f)}</code>{/if}
           {#if where(f)}<span class="faint"> · {where(f)}{f.source.located === "the declaration only" ? " (its line is not known)" : ""}</span>{/if}</p>
@@ -69,7 +79,7 @@
           · {#if cited[f.id]}cited{:else}<button class="link" disabled={busy} onclick={() => cite(f)}>Cite in the investigation</button>{/if}</p>
       </div>
     {:else}
-      <p class="small muted">{doc.match ? "No fact of this proof shares a symbol with it." : "Lean keeps no typed fact in this proof's term."}</p>
+      <p class="small muted">{doc.match ? (page?.next ? "No fact read so far shares a symbol with it." : "No fact of this proof shares a symbol with it.") : "Lean keeps no typed fact in this proof's term."}</p>
     {/each}
     {#each sub.source_only || [] as o}
       <div class="fact" data-kind="source">
@@ -78,6 +88,8 @@
         <p class="small faint">{o.note}</p>
       </div>
     {/each}
+    {#if page?.next}<p class="small more"><span class="faint">{read} of {page.total} facts read.</span>
+      <button class="act" disabled={busy} onclick={() => load(true)}>{busy ? "Reading…" : "Read more"}</button></p>{/if}
     {#if sub.proof && !sub.proof.complete}<p class="small bad">Incomplete: {sub.proof.cut.join("; ")}.</p>{/if}
     {#if sub.proof?.auxiliary?.length}<p class="small faint">Not entered: {sub.proof.auxiliary.join(", ")}, lemmas Lean generated for parts of the proof.</p>{/if}
     <p class="small faint">{sub.note}</p>
