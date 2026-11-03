@@ -4743,6 +4743,163 @@ for (const width of [1300, 390]) {
   } finally { py.kill(); }
 }
 
+// #501: computed hints beside the aligned row, under the engine's own local server. The structure
+// fixture's Theorem 17 states `JetBound f S (n + 5) C → JetBound f S (n + 4) C`; the build's copy
+// of its source here writes the claim with m for the Lean's n. An investigation aligns m with n,
+// the assumption's m + 5 with the hypothesis (a rename: no hint), and the conclusion's m + 4 with
+// the hypothesis too (an index offset). The hint is a computed pointer, dismissed with a reason in
+// the Investigation, and review's Compare stage shows none.
+{
+  const base = path.join(root, "hintws");
+  const site = path.join(base, "site");
+  fs.cpSync(path.join(root, "structure"), site, { recursive: true });
+  const jetLine = "If the first $n + 5$ differences of $f$ are bounded by $C$ on $S$, so are the first $n + 4$.";
+  const paper = fs.readFileSync(path.join(here, "..", "..", "tests", "fixtures", "structure", "paper", "main.tex"), "utf8");
+  assert.ok(paper.includes(jetLine));
+  fs.mkdirSync(path.join(base, "sources", "P"), { recursive: true });
+  fs.writeFileSync(path.join(base, "sources", "P", "main.tex"), paper.replace(jetLine, jetLine.replaceAll("$n + ", "$m + ")));
+  const line = paper.split("\n").indexOf(jetLine) + 1;
+  const work = path.join(base, "work");
+  const engine = (code, ...args) => {
+    const r = spawnSync(process.env.PYTHON || "python3", ["-c", code, work, path.join(site, "data"), ...args], { encoding: "utf8" });
+    if (r.status !== 0) throw new Error(r.stderr);
+    return r.stdout.trim() ? JSON.parse(r.stdout) : null;
+  };
+  const made = engine(String.raw`
+import json, sys
+from pathlib import Path
+from prooflens import review_cli as rc
+from prooflens import workspace as wsp
+from prooflens.targets import Snapshot
+work, s, line = Path(sys.argv[1]), Snapshot(Path(sys.argv[2])), int(sys.argv[3])
+C = "P:thm:jet"
+p = wsp.open_for(work, rc.parse_reviewer("human:Hint-Auditor"), "informed", sources=s.sources())
+put = lambda r: {"op": "put", "record": {"claim": C, **r}}
+region = {"file": "main.tex", "start_line": line}
+wsp.update(p, [
+  put({"id": "r-m", "kind": "requirement", "local_id": "m", "form": "for every", "binds": ["m"], "text": "for every m"}),
+  put({"id": "r-h", "kind": "requirement", "local_id": "m.h", "parent": "m", "form": "assumption", "text": "the first m + 5 differences are bounded"}),
+  put({"id": "r-c", "kind": "requirement", "local_id": "m.c", "parent": "m", "form": "conclusion", "text": "so are the first m + 4"}),
+  put({"id": "p-h", "kind": "fragment", "requirement": "m.h", "role": "statement", "region": region}),
+  put({"id": "p-c", "kind": "fragment", "requirement": "m.c", "role": "statement", "region": region}),
+  put({"id": "a-m", "kind": "alignment", "requirements": ["m"], "lean": [{"decl": "Shape.jet_lower", "var": "n"}]}),
+  put({"id": "a-h", "kind": "alignment", "requirements": ["m.h"], "expression": "m + 5", "lean": [{"decl": "Shape.jet_lower", "binder": "h"}]}),
+  put({"id": "a-x", "kind": "alignment", "requirements": ["m.c"], "expression": "m + 4", "lean": [{"decl": "Shape.jet_lower", "binder": "h"}]})], s)
+print(json.dumps({"id": wsp.read(p)["id"]}))`, String(line));
+  const { spawn } = await import("node:child_process");
+  const py = spawn(process.env.PYTHON || "python3", [path.join(here, "fixtures", "workspace_server.py"), site, work]);
+  const port = await new Promise((ok, fail) => {
+    py.stdout.once("data", (d) => ok(String(d).trim()));
+    py.once("exit", (c) => fail(new Error("the workspace server stopped: " + c)));
+  });
+  const claimUrl = `http://127.0.0.1:${port}/#/r/${SHAPE.release}/claim/${encodeURIComponent("P:thm:jet")}`;
+  try {
+    for (const width of [1300, 390]) {
+      await check("a computed hint is shown beside its aligned row, and dismissed with a reason", width, async (pg) => {
+        await pg.goto(claimUrl);
+        const inv = pg.locator("section.investigation");
+        await inv.getByRole("button", { name: `Continue ${made.id}` }).click();
+        const cmp = pg.locator(".cmp.paired");
+        const offset = cmp.locator(".aligned[data-alignment='a-x']").first();
+        await offset.locator(".hint[data-hint='offset']").waitFor();
+        assert.match(words(await offset.locator(".hint").textContent()),
+          /^Computed hint a pointer to inspect, not a finding The paper's m \+ 4 and Lean's n \+ 5 differ by 1: Lean's is larger \(m as n; in Shape\.jet_lower, the argument k of Shape\.JetBound, which expands to ∀ \(j : Nat\), j ≤ n \+ 5 → ∀ \(x : Nat\), S x → f j x ≤ C\)\. Paper m \+ 4 · Lean n \+ 5$/);
+        assert.match(words(await offset.textContent()), /corresponds · the paper's m \+ 4 · /);
+        // Beside the hypothesis's row, with the paper's passage it comes from.
+        assert.equal(await offset.evaluate((e) => e.closest("[data-row]")?.dataset.row), "b:4");
+        assert.match(await offset.locator(".frag").first().textContent(), /so are the first \$m \+ 4\$/);
+        // A rename alone, m + 5 against n + 5, gives none.
+        const renamed = cmp.locator(".aligned[data-alignment='a-h']").first();
+        await renamed.waitFor();
+        assert.equal(await renamed.locator(".hint").count(), 0);
+        assert.match(words(await renamed.textContent()), /the paper's m \+ 5/);
+        // The Investigation lists it as a computed hint, with Dismiss.
+        const item = inv.locator("[data-hint-alignment='a-x']");
+        assert.match(words(await item.textContent()), /differ by 1.*\(computed hint: a pointer to inspect, not a finding\)/);
+        await item.getByRole("button", { name: "Dismiss", exact: true }).click();
+        await item.getByRole("textbox", { name: "Why dismiss it" }).fill("One more derivative is assumed; the claim is weaker as printed.");
+        await item.getByRole("button", { name: "Dismiss hint" }).click();
+        // Dismissed: apart, with its reason, in both places; the hint itself is gone.
+        await inv.locator("details.dismissed").waitFor();
+        await inv.locator("details.dismissed summary").click();
+        assert.match(words(await inv.locator("details.dismissed").textContent()),
+          /^Dismissed hints \(1\) The paper's m \+ 4 and Lean's n \+ 5 differ by 1.* Dismissed by f-\S+ \(no difference, human:Hint-Auditor\): One more derivative is assumed; the claim is weaker as printed\.$/);
+        assert.equal(await offset.locator(".hint").count(), 0);
+        await offset.locator("details.dismissed summary").click();
+        assert.match(words(await offset.locator("details.dismissed").textContent()),
+          /Dismissed by human:Hint-Auditor, no difference: One more derivative is assumed; the claim is weaker as printed\./);
+        const recorded = engine(String.raw`
+import json, sys
+from pathlib import Path
+from prooflens import workspace as wsp
+(p, ws), = wsp.list_all(Path(sys.argv[1]))
+f = next(r for r in ws["records"].values() if r["kind"] == "finding")
+print(json.dumps(f))`);
+        assert.deepEqual(recorded.difference, { feature: "index offset", paper: "m + 4", lean: "n + 5", outcome: "no difference",
+          why: "One more derivative is assumed; the claim is weaker as printed.", hint: { alignment: "a-x", kind: "offset" } });
+        assert.equal(recorded.state, "draft");
+        assert.ok(await pg.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), "no horizontal scroll");
+        if (process.env.SHOTS) await pg.screenshot({ path: path.join(process.env.SHOTS, `hints-${width}.png`), fullPage: true });
+        // The dismissal is removed again, for the next width.
+        engine(String.raw`
+import sys
+from pathlib import Path
+from prooflens import workspace as wsp
+(p, ws), = wsp.list_all(Path(sys.argv[1]))
+f = next(r for r in ws["records"].values() if r["kind"] == "finding")
+wsp.update(p, [{"op": "delete", "id": f["id"], "base_rev": f["rev"]}])
+print("null")`);
+      });
+    }
+
+    // The alignment form offers the passage's mathematics as the paper's expression.
+    await check("the alignment form offers the passage's mathematics as the paper expression", 1300, async (pg) => {
+      await pg.goto(claimUrl);
+      const inv = pg.locator("section.investigation");
+      await inv.getByRole("button", { name: `Continue ${made.id}` }).click();
+      const form = inv.locator("details.align");
+      await form.locator("summary").click();
+      await form.locator("[data-al-req='m.c']").check();
+      const pick = form.getByRole("combobox", { name: "Mathematics of the passage" });
+      assert.deepEqual(await pick.locator("option").allTextContents(), ["pick from the passage…", "m + 5", "f", "C", "S", "m + 4"]);
+      await pick.selectOption("m + 4");
+      assert.equal(await form.getByRole("textbox", { name: "Paper expression" }).inputValue(), "m + 4");
+      await form.getByRole("combobox", { name: "A whole declaration" }).selectOption("Shape.jet_lower");
+      await form.getByRole("button", { name: "Add", exact: true }).click();
+      await form.getByRole("button", { name: "Save alignment" }).click();
+      const req = inv.locator("[data-req='m.c']");
+      const saved = req.locator("[data-alignment]", { hasText: "Paper: m + 4 Lean: Shape.jet_lower ·" });
+      await saved.waitFor();
+      await saved.getByRole("button", { name: "Remove" }).click();
+      await saved.waitFor({ state: "detached" });
+    });
+
+    // Review's Compare stage pairs no rows with the investigation and shows no hint, though the
+    // investigation has one for this claim.
+    await check("review's Compare stage shows no computed hint", 1300, async (pg) => {
+      const who = "human:Boundary-reviewer";
+      engine(String.raw`
+import sys
+from pathlib import Path
+from prooflens import review_cli as rc
+s = rc.Session(Path(sys.argv[1]), rc.parse_reviewer(sys.argv[3]), data_dir=Path(sys.argv[2]))
+s.read("link:thm:jet")
+s.lock("link:thm:jet", "A synthetic reading, locked before the Lean was shown.")
+print("null")`, who);
+      await pg.goto(claimUrl);
+      await pg.evaluate((k) => localStorage.setItem(k, JSON.stringify({ reviewer: { kind: "human", name: "Boundary reviewer" } })), REVIEW_SHAPE);
+      await pg.goto(`http://127.0.0.1:${port}/#/r/${SHAPE.release}/review?claim=${encodeURIComponent("P:thm:jet")}`);
+      const unit = pg.locator(".review .unit");
+      await unit.locator(".locked", { hasText: "A synthetic reading, locked before the Lean was shown." }).waitFor();
+      const cmp = unit.locator(".cmp");
+      await cmp.locator(".stmt .readable").first().waitFor();
+      assert.equal(await cmp.getAttribute("data-mode"), "compare");
+      assert.equal(await cmp.locator(".hint, .aligned, details.dismissed").count(), 0);
+      assert.doesNotMatch(await cmp.textContent(), /Computed hint|differ by 1/);
+    });
+  } finally { py.kill(); }
+}
+
 await browser.close();
 server.close();
 fs.rmSync(root, { recursive: true, force: true });

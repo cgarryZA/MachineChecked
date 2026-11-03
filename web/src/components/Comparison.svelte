@@ -13,7 +13,7 @@
   import { withQuery } from "../lib/route.svelte.js";
   import { sourceUrl, sourceLabel, sourceTitle } from "../lib/issue.js";
   import { clauseNote } from "../lib/presentation.js";
-  import { declSide, usersSide, independent, statementRows, alignmentSource, alignedRows, targetText } from "../lib/comparison.js";
+  import { declSide, usersSide, independent, statementRows, pairingSources, alignedRows, targetText, rowHints } from "../lib/comparison.js";
   import { trail, anchor, openInspection, backTo, opener, pinsIn, pinOf, togglePin, tokenOf, itemOf,
            workspace } from "../lib/inspect.svelte.js";
   import { carriedOf } from "../lib/carried.js";
@@ -149,18 +149,11 @@
     return () => { current = false; };
   });
   const whoOf = (r) => r?.kind === "model" ? "the AI model " + (r.model || r.id) : (r?.name || r?.id || "an unnamed auditor");
-  const sources = $derived.by(() => {
-    if (blind) return [];
-    const out = [];
-    for (const rd of published) {
-      const s = alignmentSource(rd, { who: whoOf(rd.reviewer || {}), from: "published" });
-      if (s) out.push(s);
-    }
-    const own = workspace.view?.claims?.[main?.id]?.reading;
-    const mine = own && alignmentSource({ ...own, workspace: workspace.id }, { who: "your investigation (" + workspace.view.reviewer + ")", from: "workspace" });
-    if (mine) out.push(mine);
-    return out;
-  });
+  // An independent stage pairs nothing, so it shows no computed hint either.
+  const sources = $derived(pairingSources(mode, published,
+    workspace.view?.claims?.[main?.id]?.reading
+      ? { id: workspace.id, reviewer: workspace.view.reviewer, reading: workspace.view.claims[main.id].reading } : null,
+    whoOf));
   let rowsFrom = $state(null);
   const source = $derived(rowsFrom === "none" ? null : sources.find((s) => s.id === rowsFrom) || sources[0] || null);
   const paired = $derived(!!source);
@@ -351,6 +344,7 @@
 {#snippet alignedCell(key)}
   {#each cells.get(key) || [] as e (e.alignment.id)}
     {@const a = e.alignment}
+    {@const rh = rowHints(e)}
     <div class="aligned" data-alignment={a.id} class:stale={a.stale}>
       {#if e.first}
         {#each e.fresh as f (f.id)}
@@ -362,8 +356,23 @@
       {:else}
         <p class="small faint">The passages aligned above ({a.requirements.map((r) => r.local_id).join(", ") || "Lean only"}), also here.</p>
       {/if}
-      <p class="small faint">{a.relation}{e.targets.length > 1 || e.targets.some((t) => t.target) ? " · " + e.targets.map(targetText).join("; ") : ""} · recorded by {a.by}{#if a.stale}<span class="warn">{" · changed since it was recorded"}</span>{/if}</p>
+      <p class="small faint">{a.relation}{a.expression ? ` · the paper's ${a.expression}` : ""}{e.targets.length > 1 || e.targets.some((t) => t.target) ? " · " + e.targets.map(targetText).join("; ") : ""} · recorded by {a.by}{#if a.stale}<span class="warn">{" · changed since it was recorded"}</span>{/if}</p>
       {#if a.note}<p class="small text">{a.note}</p>{/if}
+      {#each rh.hints as h, i (i)}
+        <div class="hint" data-hint={h.kind}>
+          <p class="small"><span class="tag">Computed hint</span> <span class="faint">a pointer to inspect, not a finding</span></p>
+          <p class="small text">{h.text}</p>
+          <p class="small faint orig">Paper <code>{h.paper.text}</code>{#if h.paper.normal && h.paper.normal !== h.paper.text}{" (" + h.paper.normal + ")"}{/if} · Lean <code>{h.lean.text}</code>{#if h.lean.normal && h.lean.normal !== h.lean.text}{" (" + h.lean.normal + ")"}{/if}</p>
+        </div>
+      {/each}
+      {#if rh.dismissed.length}
+        <details class="dismissed">
+          <summary class="small faint">Dismissed hints ({rh.dismissed.length})</summary>
+          {#each rh.dismissed as h, i (i)}
+            <p class="small" data-hint-dismissed={h.kind}><span class="text">{h.text}</span> <span class="faint">Dismissed by {h.settled?.by || "an auditor"}, {h.settled?.outcome}: {h.settled?.why}</span></p>
+          {/each}
+        </details>
+      {/if}
     </div>
   {:else}
     <p class="small faint none">Not aligned with the paper in this reading.</p>
@@ -619,7 +628,7 @@
   }
   .linkby { margin: 4px 0 0; }
   .rows { margin: 0; display: flex; gap: 8px 12px; flex-wrap: wrap; align-items: baseline; }
-  .rows select { font: inherit; font-size: 13px; max-width: 100%; }
+  .rows select { font: inherit; font-size: 13px; max-width: 100%; min-width: 0; }
   .rows label { display: flex; gap: 6px; align-items: baseline; min-width: 0; max-width: 100%; }
   /* Paired rows: the aligned passages beside each row of the Lean; the paper first when narrow. */
   .crow { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; padding: 8px 0; border-top: 1px solid var(--border); }
@@ -633,6 +642,10 @@
   .aligned { margin: 0 0 8px; }
   .aligned p { margin: 2px 0; }
   .aligned.stale { opacity: 0.85; }
+  .hint { margin: 4px 0; padding: 2px 0 2px 8px; border-left: 2px dashed var(--tier-warning); }
+  .hint .tag { color: var(--tier-warning); font-weight: 600; }
+  .hint code, .dismissed code { overflow-wrap: anywhere; }
+  .dismissed > summary { cursor: pointer; }
   .form { font-style: italic; }
   .text { white-space: pre-wrap; }
   .warn { color: var(--tier-warning); }

@@ -4,6 +4,7 @@
   import { href } from "../lib/route.svelte.js";
   import { compositionView, findingCoverageView, recordedBasisText, readingWords } from "../lib/coverage.js";
   import { workspace, pinsIn, setPins, openInspection, tokenOf } from "../lib/inspect.svelte.js";
+  import { mathPieces } from "../lib/comparison.js";
   import Composition from "./Composition.svelte";
 
   // The auditor's saved investigation of this claim, under `machinechecked view`: its open
@@ -256,11 +257,33 @@
     alReqs = on ? [...alReqs, lid] : alReqs.filter((x) => x !== lid);
     alFrags = alFrags.filter((f) => alReqs.includes(passages[f]?.requirement));
   }
+  // The paper's expression an alignment concerns, picked from the mathematics of the passages
+  // that govern it (those ticked, else its requirements' governing passages) and editable; the
+  // engine checks that it occurs exactly in one of them.
+  let alExpr = $state("");
+  const governingOf = (lids, frags) => frags.length ? frags.map((f) => passages[f]).filter(Boolean)
+    : (reading.requirements || []).filter((r) => lids.includes(r.local_id)).flatMap((r) => r.fragments.governing);
+  const sourceOf = (f) => f.region?.text ?? (f.passage?.claim === claim.id ? claim.statement_tex : null);
+  const pieces = $derived([...new Set(governingOf(alReqs, alFrags).flatMap((f) => mathPieces(sourceOf(f))))]);
   async function addAlignment() {
     const ops = [{ op: "put", record: { id: newId("a"), kind: "alignment", claim: claim.id,
       requirements: alReqs, ...(alFrags.length ? { fragments: alFrags } : {}), relation: alRel,
-      lean: alTargets, ...(alNote.trim() ? { note: alNote } : {}) } }];
-    if (await run(ops)) { alReqs = []; alFrags = []; alTargets = []; alNote = ""; alRel = "corresponds"; }
+      lean: alTargets, ...(alExpr.trim() ? { expression: alExpr.trim() } : {}),
+      ...(alNote.trim() ? { note: alNote } : {}) } }];
+    if (await run(ops)) { alReqs = []; alFrags = []; alTargets = []; alNote = ""; alExpr = ""; alRel = "corresponds"; }
+  }
+
+  // A computed hint is dismissed by a difference that names it: a draft finding on its
+  // requirement, recorded as no difference, with the reason.
+  let dismissing = $state(null);
+  let dismissWhy = $state("");
+  const hintKey = (h) => h.alignment + "|" + h.kind + "|" + JSON.stringify(h.target || {});
+  async function dismiss(h) {
+    const ops = [{ op: "put", record: { id: newId("f"), kind: "finding", claim: claim.id,
+      requirement: h.requirements[0], note: dismissWhy,
+      difference: { feature: h.feature || "other", paper: h.paper.text, lean: h.lean.text,
+        outcome: "no difference", why: dismissWhy, hint: { alignment: h.alignment, kind: h.kind } } } }];
+    if (await run(ops)) { dismissing = null; dismissWhy = ""; }
   }
   const removeAlignment = (a) => run([{ op: "delete", id: a.id, base_rev: a.rev }]);
 
@@ -372,7 +395,7 @@
               {/if}
               {#each r.alignments as aid}
                 {@const a = alignments[aid]}
-                {#if a}<p class="small lean" data-alignment={a.id}>{#if a.fragments?.length}<span class="faint">On {onPassages(a)}:</span>{" "}{/if}<span class="faint">Lean:</span> {a.lean.map(targetText).join("; ")} <span class="faint">· {a.relation} · recorded by {a.created_by}</span>{#if a.note}{" "}<span class="text">{a.note}</span>{/if}{#if a.currency?.state === "stale"}<span class="stale">{" · " + ((a.currency.changes || []).some((c) => c.fragment) ? "a passage it names no longer governs the reading" : "the Lean changed since")}</span>{:else if a.currency?.state === "unchecked" && a.currency.reason}<span class="faint" data-unknown={a.id}> · not known to be current: {a.currency.reason}</span>{/if}
+                {#if a}<p class="small lean" data-alignment={a.id}>{#if a.fragments?.length}<span class="faint">On {onPassages(a)}:</span>{" "}{/if}{#if a.expression}<span class="faint">Paper:</span> <code>{a.expression}</code>{" "}{/if}<span class="faint">Lean:</span> {a.lean.map(targetText).join("; ")} <span class="faint">· {a.relation} · recorded by {a.created_by}</span>{#if a.note}{" "}<span class="text">{a.note}</span>{/if}{#if a.currency?.state === "stale"}<span class="stale">{" · " + ((a.currency.changes || []).some((c) => c.fragment) ? "a passage it names no longer governs the reading" : "the Lean changed since")}</span>{:else if a.currency?.state === "unchecked" && a.currency.reason}<span class="faint" data-unknown={a.id}> · not known to be current: {a.currency.reason}</span>{/if}
                   · <button class="link" disabled={busy} onclick={() => removeAlignment(a)}>Remove</button></p>{/if}
               {/each}
               {#each r.questions as q}<p class="small question">Question: {q}</p>{/each}
@@ -411,9 +434,21 @@
           {#each est.inherited || [] as h}
             <p class="small inherited" data-binder={h.binder}>{h.decl} assumes <code>{h.lean}</code>: inherited from {h.from} ({h.requirement})</p>
           {/each}
-          {#each est.hints || [] as h}
-            <p class="small hint" data-binder={h.binder}>{h.text} <span class="faint">(computed hint: inspect it)</span></p>
+          {#each est.hints || [] as h (h.alignment ? hintKey(h) : "b" + h.decl + h.binder)}
+            <div class="hint-item" data-hint={h.kind} data-hint-alignment={h.alignment}>
+              <p class="small hint" data-binder={h.binder}>{h.text} <span class="faint">(computed hint: a pointer to inspect, not a finding)</span>
+                {#if h.alignment}· <button class="link" disabled={busy} onclick={() => { dismissing = hintKey(h); dismissWhy = ""; }}>Dismiss</button>{/if}</p>
+              {#if dismissing === hintKey(h)}<p class="small"><input class="why" bind:value={dismissWhy} placeholder="Why it is no difference" aria-label="Why dismiss it" />
+                <button class="act" disabled={busy || !dismissWhy.trim()} onclick={() => dismiss(h)}>Dismiss hint</button></p>{/if}
+            </div>
           {/each}
+          {#if est.settled_hints?.length}
+            <details class="dismissed"><summary class="faint small">Dismissed hints ({est.settled_hints.length})</summary>
+              {#each est.settled_hints as h, i (i)}
+                <p class="small" data-hint-dismissed={h.kind}><span class="text">{h.text}</span> <span class="faint">Dismissed by {h.settled_by}{h.settled ? ` (${OUTCOME[h.settled.outcome] || h.settled.outcome}, ${h.settled.by})` : ""}{h.settled?.why ? ": " + h.settled.why : ""}</span></p>
+              {/each}
+            </details>
+          {/if}
           {#each reading.alignments.filter((a) => !a.requirements.length) as a (a.id)}
             <p class="small lean" data-alignment={a.id}><span class="faint">Lean only ({a.relation}):</span> {a.lean.map(targetText).join("; ")} <span class="faint">· recorded by {a.created_by}</span>{#if a.note} <span class="text">{a.note}</span>{/if}
               · <button class="link" disabled={busy} onclick={() => removeAlignment(a)}>Remove</button></p>
@@ -462,6 +497,10 @@
             <select bind:value={alDecl} aria-label="A whole declaration"><option value="">a whole declaration…</option>{#each leanNames as n}<option value={n}>{n}</option>{/each}</select>
             <button class="act" disabled={busy || !alDecl} onclick={() => { addTarget({ decl: alDecl }); alDecl = ""; }}>Add</button></p>
           {#each alTargets as t, i (t.decl + (t.at || ""))}<p class="small target" data-al-target={t.at || t.decl}><code>{t.decl}</code>{t.at ? ` (sub-term ${t.at})` : ""} <button class="link" onclick={() => (alTargets = alTargets.filter((_, j) => j !== i))}>Remove</button></p>{/each}
+          <p class="small"><label>Paper expression <input class="expr" bind:value={alExpr} placeholder="as the source writes it (optional)" aria-label="Paper expression" /></label>
+            {#if pieces.length}<select aria-label="Mathematics of the passage" value="" onchange={(e) => { if (e.currentTarget.value) alExpr = e.currentTarget.value; e.currentTarget.value = ""; }}>
+              <option value="">pick from the passage…</option>{#each pieces as p (p)}<option value={p}>{p}</option>{/each}</select>{/if}</p>
+          <p class="faint small">With an expression of the Lean, the engine compares the two and points out a difference in quantity: a computed hint, not a finding.</p>
           <p class="small"><label>Relation <select bind:value={alRel} aria-label="Relation">{#each RELATIONS as r}<option value={r}>{r}</option>{/each}</select></label></p>
           <textarea bind:value={alNote} rows="2" placeholder="What the correspondence rests on (optional)" aria-label="Alignment note"></textarea>
           <button class="act" disabled={busy || !alTargets.length || (!alReqs.length && alRel !== "additional assumption")} onclick={addAlignment}>Save alignment</button>
@@ -511,4 +550,7 @@
   .estimate { margin: 4px 0 4px 8px; padding-left: 6px; border-left: 2px solid var(--border); }
   .cx { margin: 4px 0; }
   .hint { color: var(--tier-warning); }
+  .hint-item p { margin: 2px 0; }
+  .expr { font: inherit; font-size: 13px; padding: 1px 6px; border: 1px solid var(--border); border-radius: 6px; width: 18em; max-width: 100%; }
+  .dismissed summary { cursor: pointer; }
 </style>

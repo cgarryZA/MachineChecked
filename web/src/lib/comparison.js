@@ -208,15 +208,76 @@ export function alignmentSource(rd, { who, from }) {
   for (const r of rd.requirements || []) {
     for (const f of r.fragments?.governing || []) { frags.set(f.id, f); govern(r.local_id, f); }
   }
+  // The computed hints of the open investigation's reading (`estimates.hints`); a published
+  // reading carries none.
+  const hintsOf = (list, id) => (list || []).filter((h) => h.alignment === id);
   const alignments = (rd.alignments || []).filter((a) => (a.lean || []).length).map((a) => ({
     id: a.id, relation: a.relation, note: a.note || null, by: a.created_by || null,
-    stale: a.currency?.state === "stale", lean: a.lean,
+    stale: a.currency?.state === "stale", lean: a.lean, expression: a.expression || null,
     requirements: (a.requirements || []).map((lid) => reqs.get(lid) || { local_id: lid, missing: true }),
     passages: a.fragments?.length
       ? a.fragments.map((id) => frags.get(id) || { id, missing: true })
       : (a.requirements || []).flatMap((lid) => governing.get(lid) || []),
+    hints: hintsOf(rd.estimates?.hints, a.id),
+    dismissed: hintsOf(rd.estimates?.settled_hints, a.id),
   }));
   return alignments.length ? { id: from + ":" + (rd.workspace || rd.id || ""), who, from, alignments } : null;
+}
+
+// The alignment sources a comparison may pair its rows with: none in an independent stage;
+// otherwise each published reading (`published`), then the reading of the investigation open in
+// this page (`own`: `{id, reviewer, reading}`), which alone carries computed hints.
+export function pairingSources(mode, published, own, whoOf) {
+  if (independent(mode)) return [];
+  const out = [];
+  for (const rd of published || []) {
+    const s = alignmentSource(rd, { who: whoOf(rd.reviewer || {}), from: "published" });
+    if (s) out.push(s);
+  }
+  const mine = own?.reading && alignmentSource({ ...own.reading, workspace: own.id },
+    { who: "your investigation (" + own.reviewer + ")", from: "workspace" });
+  if (mine) out.push(mine);
+  return out;
+}
+
+// Whether two Lean targets name the same part of the same declaration.
+const PARTS = ["var", "binder", "at", "conclusion"];
+export const sameTarget = (a, b) => !!a && !!b && a.decl === b.decl && PARTS.every((k) => (a[k] ?? null) === (b[k] ?? null));
+
+// The computed hints of an alignment drawn at one row (an entry of `alignedRows`): those of the
+// targets drawn there, in force (`hints`) and dismissed by a recorded difference (`dismissed`).
+export function rowHints(entry) {
+  const here = (h) => entry.targets.some((t) => sameTarget(h.target, t));
+  return { hints: (entry.alignment.hints || []).filter(here), dismissed: (entry.alignment.dismissed || []).filter(here) };
+}
+
+// The pieces of mathematics a passage's source prints, each exactly as the source writes it:
+// the inside of `$…$`, `\(…\)`, `\[…\]` and a display environment (less a leading `\label` and
+// closing punctuation), and each side of a relation in one. An alignment's paper expression
+// must occur exactly in a passage that governs it (`requirements.alignment_expression`).
+const MATH = /\$\$([\s\S]*?)\$\$|\$([^$]*?)\$|\\\(([\s\S]*?)\\\)|\\\[([\s\S]*?)\\\]|\\begin\{(equation|align|gather)\*?\}([\s\S]*?)\\end\{\5\*?\}/g;
+const RELATION = /\\leq?(?![A-Za-z])|\\geq?(?![A-Za-z])|\\neq(?![A-Za-z])|<|>|=/;
+export function mathPieces(text) {
+  const out = [];
+  const add = (s) => { const t = s.trim(); if (t && !out.includes(t)) out.push(t); };
+  for (const m of String(text || "").matchAll(MATH)) {
+    const inner = (m[1] ?? m[2] ?? m[3] ?? m[4] ?? m[6] ?? "").replace(/^\s*\\label\{[^{}]*\}/, "").replace(/[\s,.;]+$/, "");
+    add(inner);
+    // Each side of a relation, split where brackets are balanced.
+    let depth = 0, start = 0;
+    const parts = [];
+    for (let i = 0; i < inner.length; i++) {
+      const ch = inner[i];
+      if ("([{".includes(ch)) depth++;
+      else if (")]}".includes(ch)) depth--;
+      else if (depth === 0) {
+        const r = inner.slice(i).match(RELATION);
+        if (r && r.index === 0 && (ch !== "\\" || inner[i - 1] !== "\\")) { parts.push(inner.slice(start, i)); i += r[0].length - 1; start = i + 1; }
+      }
+    }
+    if (parts.length) { parts.push(inner.slice(start)); parts.forEach(add); }
+  }
+  return out;
 }
 
 // The rows of a comparison an alignment source fills: for each declaration shown (`statements`,
