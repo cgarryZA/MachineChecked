@@ -1359,7 +1359,8 @@ class Assessor:
         root = getattr(self.cfg, "root", None)
         if not files or root is None:
             return
-        cites = rc.citations(files, root, getattr(self.cfg, "review_citations_ignore", None))
+        ignore = getattr(self.cfg, "review_citations_ignore", None)
+        cites = rc.citations(files, root, ignore)
         lean_root = getattr(self.cfg, "lean_root", None) or root
         bases = [root] + ([lean_root] if not lean_root.is_relative_to(root) else [])
         seen = set()
@@ -1367,13 +1368,14 @@ class Assessor:
             if (c["file"], c["token"]) in seen:
                 continue
             seen.add((c["file"], c["token"]))
+            msg = rc.message(c) + rc.replaced_default(c["token"], ignore)
             if getattr(self.cfg, "review_citations_strict", False):
                 self.findings.append(_finding("violation", "review-citation", c["file"],
-                                              rc.message(c), trigger=c["token"],
+                                              msg, trigger=c["token"],
                                               file=c["file"], line=c["line"]))
             else:
                 self.add_warning("review-citation", c["file"], c["file"],
-                                 {"fingerprint": rc.fingerprint(c)}, rc.message(c), c["token"])
+                                 {"fingerprint": rc.fingerprint(c)}, msg, c["token"])
                 self.findings[-1].update(file=c["file"], line=c["line"])
 
     # -- gates ----------------------------------------------------------------------------
