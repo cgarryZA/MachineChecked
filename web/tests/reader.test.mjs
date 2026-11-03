@@ -20,6 +20,7 @@ import "./comparison.test.mjs";
 import "./findings.test.mjs";
 import "./connections.test.mjs";
 import "./impact.test.mjs";
+import "./linkuse.test.mjs";
 import "./names.test.mjs";
 import "./workfile.test.mjs";
 import { chromium } from "playwright";
@@ -196,6 +197,15 @@ fs.cpSync(path.join(root, "structure"), path.join(root, "private"), { recursive:
 fs.cpSync(reader, path.join(root, "uses"), { recursive: true });
 fs.cpSync(path.join(here, "fixtures", "uses", "data"), path.join(root, "uses", "data"), { recursive: true });
 const USES = JSON.parse(fs.readFileSync(path.join(here, "fixtures", "uses", "data", "index.json"), "utf8"));
+// #551: the reader data of tests/fixtures/mainuse (web/tests/fixtures/mainuse, make_mainuse.py):
+// how the suggested main result uses each link, as the build wrote it; `/mainuseedit/` is the same
+// reader as the local `view` serves it, answering `api/main-use` as it does once a workspace saves
+// other main results.
+fs.cpSync(reader, path.join(root, "mainuse"), { recursive: true });
+fs.cpSync(path.join(here, "fixtures", "mainuse", "data"), path.join(root, "mainuse", "data"), { recursive: true });
+const MAINUSE = JSON.parse(fs.readFileSync(path.join(here, "fixtures", "mainuse", "data", "index.json"), "utf8"));
+const MAINUSE_LIVE = fs.readFileSync(path.join(here, "fixtures", "mainuse", "api-main-use.json"), "utf8");
+const mainUseAsked = [];
 // The same claims with auditors' readings in the form the engine writes them (#138; see
 // tests/simple/test_coverage_basis.py): full by composition, full through a checked bridge, and
 // an unresolved question.
@@ -689,6 +699,17 @@ const server = http.createServer((req, res) => {
     return res.end(JSON.stringify({ ...PF, editable: true }));
   }
   if (url.startsWith("/pfedit/")) url = "/prooffacts/" + url.slice("/pfedit/".length);
+  if (url === "/mainuseedit/api/main-use") {
+    mainUseAsked.push(url);
+    res.writeHead(200, { "content-type": "application/json" });
+    return res.end(MAINUSE_LIVE);
+  }
+  if (url === "/mainuseedit/data/index.json") {
+    res.writeHead(200, { "content-type": "application/json" });
+    return res.end(JSON.stringify({ ...MAINUSE, editable: true }));
+  }
+  if (url.startsWith("/mainuseedit/api/")) { res.writeHead(404); return res.end("{}"); }
+  if (url.startsWith("/mainuseedit/")) url = "/mainuse/" + url.slice("/mainuseedit/".length);
   if (url === "/toyedit/api/symbol" && req.method === "POST") {
     let body = "";
     req.on("data", (c) => (body += c));
@@ -5042,6 +5063,38 @@ print("null")`, who);
       assert.doesNotMatch(await cmp.textContent(), /Computed hint|differ by 1/);
     });
   } finally { py.kill(); }
+}
+
+// #551: under each link, how each main result uses it, with where the main results come from:
+// the suggestion as the build traced it, or, under `view`, a selection saved since, traced now.
+for (const width of [1300, 390]) {
+  await check("each link says how the main results use it", width, async (pg) => {
+    const useOf = async (name) => {
+      const at = pg.locator(`.claim-view [data-link-use="${name}"]`);
+      return [words(await at.locator("p").textContent()), ...(await at.locator("li").allTextContents()).map(words)];
+    };
+    await pg.goto(origin + `/mainuse/#/r/${MAINUSE.release}/read/P/${encodeURIComponent("P:lem:bound")}`);
+    await pg.locator('.claim-view [data-link-use="MainUse.bound_variant"]').waitFor();
+    const basis = "How the main results use it (suggested: the declarations linked to the paper's theorems):";
+    // The variant the main proof uses, beside the paper-faithful statement it does not.
+    assert.deepEqual(await useOf("MainUse.bound_variant"), [basis, "MainUse.main_result: used by its proof, directly"]);
+    assert.deepEqual(await useOf("MainUse.bound_faithful"), [basis, "MainUse.main_result: formalized separately: not used by this main result"]);
+    assert.equal(await pg.locator('.claim-view .block[data-decl="MainUse.bound_variant"] [data-link-use] [data-use="proof"]').count(), 1, "under its own link");
+    await pg.goto(origin + `/mainuse/#/r/${MAINUSE.release}/read/P/${encodeURIComponent("P:lem:ten")}`);
+    await pg.locator('.claim-view [data-link-use="MainUse.le_ten"]').waitFor();
+    assert.deepEqual(await useOf("MainUse.le_ten"), [basis, "MainUse.main_result: used by its proof, through 1 other declaration (through MainUse.bound_variant)"]);
+    if (width < 500) assert.ok(await pg.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), "no sideways scroll");
+    // Under `view`, a selection saved since the build: traced now, and said whose it is.
+    mainUseAsked.length = 0;
+    await pg.goto(origin + `/mainuseedit/#/r/${MAINUSE.release}/read/P/${encodeURIComponent("P:lem:bound")}`);
+    await pg.locator('.claim-view [data-link-use="MainUse.bound_variant"] [data-main="MainUse.bound_faithful"]').waitFor();
+    assert.ok(mainUseAsked.length >= 1);
+    const [head, ...variant] = await useOf("MainUse.bound_variant");
+    assert.match(head, /^How the main results use it \(saved in workspace ws-\w+ by human:A-Auditor on \S+\):$/);
+    assert.deepEqual(variant, ["MainUse.bound_faithful: used by its proof, directly", "MainUse.bound_variant: this is the main result itself"]);
+    assert.deepEqual((await useOf("MainUse.bound_faithful")).slice(1),
+      ["MainUse.bound_faithful: this is the main result itself", "MainUse.bound_variant: formalized separately: not used by this main result"]);
+  });
 }
 
 await browser.close();

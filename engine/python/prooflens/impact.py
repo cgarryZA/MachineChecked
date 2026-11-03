@@ -302,6 +302,26 @@ def _answer(use: str, paths: dict, main: bool, kind: str | None,
     return f"not traced: {reason}"
 
 
+def _trace_use(g: Graph, name: str, target: str, dist: dict[str, int], blocked: set[str],
+               missing) -> tuple[str, dict, str | None]:
+    """How `name` uses `target` by the references of `g` (`dist`: `g.distances(target)`;
+    `blocked`: the declarations that reach one whose references are not recorded): `(use,
+    paths, reason)`. `use` is `itself`, a value kind (`proof`, ...), `statement`, `none`, or `not
+    traced` with the `reason` (`missing(n)` says why `n` has no recorded references)."""
+    if name == target:
+        return "itself", {}, None
+    if target in g.ambiguous:
+        return "not traced", {}, f"several modules declare {target}"
+    if not g.known(name):
+        return "not traced", {}, missing(name)
+    paths = g.trace(name, target, dist)
+    use = next((k for k in [*VALUE_KINDS, "statement"] if k in paths), None)
+    if use is None and name in blocked:
+        return "not traced", paths, "; ".join(f"it reaches {n}, and {missing(n)}"
+                                              for n in g.unknown_from(name))
+    return use or "none", paths, None
+
+
 def _not_traced(root: Path, g: Graph, name: str, refs: dict, failed: dict) -> str:
     """Why a declaration has no recorded references: the module whose source declares it is
     not built, could not be loaded, or has no recorded references."""
@@ -380,22 +400,7 @@ def impact(site, root: Path, target: str, main: list[str] | None = None, log=Non
 
     def answer(name: str, main_result: bool) -> dict:
         out = {"name": name}
-        if name == tname:
-            use, paths, reason = "itself", {}, None
-        elif tname in g.ambiguous:
-            use, paths, reason = "not traced", {}, f"several modules declare {tname}"
-        elif not g.known(name):
-            use, paths, reason = "not traced", {}, missing(name)
-        else:
-            paths = g.trace(name, tname, dist)
-            use = next((k for k in [*VALUE_KINDS, "statement"] if k in paths), None)
-            reason = None
-            if use is None and name in blocked:
-                use = "not traced"
-                reason = "; ".join(f"it reaches {n}, and {missing(n)}"
-                                   for n in g.unknown_from(name))
-            elif use is None:
-                use = "none"
+        use, paths, reason = _trace_use(g, name, tname, dist, blocked, missing)
         out.update(use=use, answer=_answer(use, paths, main_result, g.kind.get(name), reason))
         if paths:
             main_path = paths.get(use) or next(iter(paths.values()))
@@ -470,6 +475,169 @@ def impact(site, root: Path, target: str, main: list[str] | None = None, log=Non
         "complete": not any(d["use"] == "not traced" for d in traced),
         "cache": doc.get("cache"),
     }
+
+
+# -- each link, by the main results -----------------------------------------------------------
+
+LINK_USE_SCHEMA = "machinechecked/link-use@1"
+LINK_USE_NOTE = ("How each main result's Lean uses each link, by the references of Lean's "
+                 "elaborated terms the build stored: a use is a path of references, direct or "
+                 "through other declarations; importing a module is not a use; a trace that "
+                 "reaches a declaration whose references are not recorded reads not traced, "
+                 "never unused. It changes no status.")
+FULL_UNAVAILABLE = ("not available in a full assessment: its build records no reverse "
+                    "references (#480); `compare --query impact NAME` traces one declaration on "
+                    "request")
+MAIN_USE_FILE = "main-use.json"
+
+
+def unavailable(reason: str) -> dict:
+    return {"schema": LINK_USE_SCHEMA, "available": False, "reason": reason}
+
+
+class ViewClaims:
+    """The claims of a zero-configuration view (`simple.build_view`) as `selection` and
+    `link_uses` read a site's: each with its links, its kind and whether it is a proof step, for
+    `check`, which writes no site."""
+
+    def __init__(self, body: dict):
+        from .steps import is_step
+        self._commit = body.get("commit")
+        self.claims = [{"id": c["id"]} for c in body["claims"]]
+        self._chunks = {c["id"]: {"id": c["id"], "number": c.get("number"), "kind": c.get("kind"),
+                                  "links": [{"name": l["name"]} for l in c.get("links") or []],
+                                  "clauses": [], **({"step": True} if is_step(c) else {})}
+                        for c in body["claims"]}
+
+    def chunk(self, cid: str) -> dict | None:
+        return self._chunks.get(cid)
+
+    def snapshot(self) -> dict:
+        return {"project": {"commit": self._commit} if self._commit else {}}
+
+
+def link_uses(site, root: Path, saved: dict | None = None) -> dict:
+    """How each main result uses each link of each claim of `site` (a `compare.Site`, or
+    `ViewClaims`): `claims`, by claim and link, one entry per main result with its `use`
+    (`itself`, `proof`, `definition body`, `value`, `statement`, `none` or `not traced`), its
+    `answer` in words and, for a use, how many declarations the shortest path goes `through` and
+    the `path` itself. The main results are those `saved` in a workspace, with their problems,
+    else the suggestion (`selection`), whose basis the answer states. Every link is traced on one
+    graph of the references the facts store holds (`uses.reference_records`, read without
+    starting Lean)."""
+    from . import compare as cmp
+    from . import uses as us
+    sel = selection(site, None, cmp.linked_claims(site), saved)
+    refs = us.reference_records(root)
+    g = Graph(refs["records"])
+    blocked = g.reaching(g.unknown)
+    why: dict[str, str] = {}
+    dists: dict[str, dict[str, int]] = {}
+
+    def missing(n: str) -> str:
+        if n not in why:
+            why[n] = _not_traced(root, g, n, refs, {})
+        return why[n]
+
+    def one(main: str, link: str) -> dict:
+        if link not in dists:
+            dists[link] = {} if link in g.ambiguous else g.distances(link)
+        if main != link and link not in g.ambiguous and not g.known(link):
+            # Without the link's own record, its name may not be a declaration of the project's
+            # traced modules at all: a use of it is not looked for.
+            use, paths, reason = "not traced", {}, f"for {link}, {missing(link)}"
+        else:
+            use, paths, reason = _trace_use(g, main, link, dists[link], blocked, missing)
+        out = {"main": main, "use": use,
+               "answer": _answer(use, paths, True, g.kind.get(main), reason)}
+        p = paths.get(use)
+        if p:
+            out["through"] = len(p) - 1
+            out["path"] = [p[0]["from"], *(s["to"] for s in p)]
+        return out
+
+    mains = [e["name"] for e in sel["main_results"]]
+    claims: dict[str, dict[str, list[dict]]] = {}
+    for meta in site.claims:
+        ch = site.chunk(meta["id"]) or {}
+        names = list(dict.fromkeys(l["name"] for l in ch.get("links") or [] if l.get("name")))
+        if names:
+            claims[ch.get("id") or meta["id"]] = {n: [one(m, n) for m in mains] for n in names}
+    traced = [x for per in claims.values() for xs in per.values() for x in xs]
+    return {"schema": LINK_USE_SCHEMA, "available": True,
+            "selection": {**{k: v for k, v in sel.items() if k not in ("main_results", "edit")},
+                          "main_results": [{k: e[k] for k in ("name", "claims", "selected")}
+                                           for e in sel["main_results"]]},
+            "claims": claims,
+            "scope": {"modules": len(refs["built"]), "unbuilt": refs["unbuilt"],
+                      "without_references": refs["missing"], "declarations": len(g.module)},
+            "complete": not any(x["use"] == "not traced" for x in traced),
+            "note": LINK_USE_NOTE}
+
+
+def _saved_or_reason(work_dir: Path | None, data: Path | None, root: Path | None):
+    """The main results the workspaces of `work_dir` save, as `selection` takes them (with what
+    the build whose site data is `data` lacks of them; `data` None when there is no such site),
+    or None when none saves any; a string, the reason, when several do: selections are never
+    merged."""
+    if work_dir is None or not Path(work_dir).exists():
+        return None
+    from . import workspace as wsp
+    found = wsp.main_result_selections(Path(work_dir))
+    if len(found) > 1:
+        return ("several workspaces save main results ("
+                + ", ".join(f"{s['workspace']} by {s.get('by')}" for s in found)
+                + "): they are never merged; keep one with `machinechecked workspace main`, "
+                  "clearing the others with `--clear`")
+    if not found:
+        return None
+    (s,) = found
+    if data is None:
+        return s
+    from .targets import Snapshot
+    return {**s, "problems": wsp.main_results_problems(s, Snapshot(data), root)}
+
+
+def site_link_uses(data: Path, root: Path | None, work_dir: Path | None = None) -> dict:
+    """`link_uses` for the site data at `data`, traced from the main results the one workspace
+    of `work_dir` that saves any saves, else the suggestion. Not available in a full assessment,
+    without the Lean project, or when several workspaces save main results."""
+    from . import compare as cmp
+    site = cmp.Site(data)
+    if (site.index.get("mode") or "full") != "simple":
+        return unavailable(FULL_UNAVAILABLE)
+    if root is None:
+        return unavailable("no Lean project to read the stored references of")
+    saved = _saved_or_reason(work_dir, data, root)
+    if isinstance(saved, str):
+        return unavailable(saved)
+    return link_uses(site, root, saved)
+
+
+def view_link_uses(view: dict, root: Path, work_dir: Path | None = None) -> dict:
+    """`link_uses` for a zero-configuration view that `check` computed without writing its
+    site: from its claims (`ViewClaims`), or, when a workspace saves main results, from its site
+    written to a temporary directory, against which their problems are checked."""
+    saved = _saved_or_reason(work_dir, None, root)
+    if isinstance(saved, str):
+        return unavailable(saved)
+    if saved is None:
+        return link_uses(ViewClaims(view["body"]), root)
+    import tempfile
+    from .simple import write_view_site
+    with tempfile.TemporaryDirectory() as tmp:
+        site = Path(tmp) / "site"
+        write_view_site({**view, "pdf": None}, site, None, root)
+        return site_link_uses(site / "data", root, work_dir)
+
+
+def write_link_uses(data: Path, root: Path | None, work_dir: Path | None = None) -> dict:
+    """Write `site_link_uses` beside the site data at `data` (`data/main-use.json`, which the
+    reader's link panel reads)."""
+    from .util import write_json
+    doc = site_link_uses(data, root, work_dir)
+    write_json(data / MAIN_USE_FILE, doc, indent=None)
+    return doc
 
 
 # -- text ------------------------------------------------------------------------------------
