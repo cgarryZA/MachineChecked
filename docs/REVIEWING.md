@@ -292,6 +292,15 @@ the impact answer. A replaced selection is kept in the workspace's provenance. T
 review order puts the main results, and the units their Lean uses, ahead of the rest ([Review
 order](#review-order)). The selection changes no status.
 
+The reader's Overview has a **Main results** panel. Under `machinechecked view` it shows a
+workspace's saved selection (who saved it, when, the release and project commit it was checked
+against, and each entry's problem) or, when it saves none, the suggestion; you add a claim or a
+declaration by name, remove one, clear them or save the suggestion, each through the same
+`main-results` operation, and a name the engine refuses is shown with its reason as the engine
+gives it. An edit saves only over the selection shown: if it changed elsewhere meanwhile, the
+panel shows the new one and saves nothing. A published audit shows each workspace's selection
+read-only, with what its data cannot name counted.
+
 **What a difference affects at a use.** A difference between a lemma and its Lean can matter at
 one use and not at another: a fifth derivative where the paper prints four is harmless to a
 construction that needs only some finite number of derivatives, and not to a consumer that uses
@@ -404,6 +413,17 @@ CLAIM` lists them, and the informed comparison (`compare CLAIM --workspace ID`) 
 read and compare stages of an independent review do not. An export publishes the connections a
 submitted finding or its composition cites; their ends' Lean text, scope and conditions only with
 the Lean. A connection changes no status.
+
+In the reader, each connection is beside the row of each object it joins: the row where the
+statement binds the variable or holds the sub-term, or the declaration as a whole for a
+declaration, an application's argument or a fact's local. It reads with its relation, scope,
+conditions and support, and with its source: recorded by an auditor (a published reading or your
+investigation), or computed from Lean's terms (the claim record's `computed_connections`), marked
+apart. **Chain to another object** shows the fewest connections that join an object of the row to
+another object, each step as its source gives it; connections that have not changed are used
+first. A connection that changed since it was recorded is listed with the whole claim, with what
+changed, and never placed at a row, since the object it names may now be another. The read and
+compare stages of an independent review show none.
 
 **Requirements and the passages that govern them.** A claim's meaning can depend on sentences
 outside its display: "for every ε > 0" before an estimate, "with C independent of ε" after it, a

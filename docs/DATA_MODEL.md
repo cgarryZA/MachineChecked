@@ -176,6 +176,23 @@ segments (outer before inner; none for a very large term), so that a reader can 
 sub-term; an application printed with notation (`x = y`, `∃ x, p`, `↑n`) has the application's
 identity. Each identity names one sub-term of the printed expression.
 
+Lean prints an application without its instance arguments, which a reader takes to be those
+instance resolution finds where the application stands. In the statement of a specification or a
+link (its `exact` text, its binders' types, its tree, its conclusion, and the sub-terms of its
+totalisation warnings), one that may not be is printed (#515):
+its application is printed with `@`, its explicit arguments, the instance arguments to show and
+`_` for its other implicit arguments (`@MeasureTheory.StronglyMeasurable _ _ _ m f` for Mathlib's
+`StronglyMeasurable[m] f`). An instance argument is left out only when resolution in its context
+finds it, up to unfolding instances, and finds no other one when a local instance it uses is left
+out: with two σ-algebras `mΩ` and `m` on `Ω` in scope, resolution finds the later one, `m`, but a
+reader cannot tell which is meant, so it is printed. An argument built from instances alone
+(global ones, local ones, a class's parents), none of which another local instance of a related
+class about a common argument could replace, is what resolution finds, and is not searched for.
+One of a class Lean finds `Subsingleton` on (`Decidable p`) stays implicit: any two of its
+instances are equal. An argument whose check fails is printed. The statement is read once, each
+sub-term in the scope of the binders around it; a definition's value and equations, an expansion
+and the properties a type carries keep Lean's printing. This changes what is printed only, never a fingerprint.
+
 A statement record holds the whole proposition as one tree, `tree`. Its `binders` (the binders
 that open it, each `{role, name, id, type, binder, supplies}`, `role` one of `forall`,
 `hypothesis`, `instance`, `exists`) and its `conclusion` (the rest, printed whole) are read off the
@@ -252,7 +269,8 @@ with its `field`, `max`, `min`, `sup`, `inf`, `union`, `inter`, `sdiff`, `compl`
 `succ`, `card`; `args`, `in`); `num` (`value`, `in`), `top`, `bot`, `univ`, `empty`, `str`;
 `var` (a variable of the statement: `var`, its number, and `name`), `bound` (one bound inside the
 expression: `binder`, its binder's identity), `local`; `apply` (a named function or predicate
-written as an application: `name`, its explicit `args` in order, `class`), `app` (a function
+written as an application: `name`, its explicit `args` in order, `class`, and `instances`, the
+instance arguments a reader must see, printed as above), `app` (a function
 that is a variable, or a field, applied: `fn`, `args`), `field` (`of`, `field`, `structure`,
 `projection`, and `via`, the parent projections the printed field looks through), `coe` (a
 coercion: `kind` `coe`, `fun` or `sort`, `fn`, `of`, and for `coe` the types it goes `from` and
@@ -270,7 +288,9 @@ the measure-theoretic `prod_measure` (`left`, `right`), `volume` (`space`), `ae_
 `interval` (`kind`: `Icc`, `Ico`, …, `lo`, `hi`, `in`), `singleton`, `range`. A constant is
 recognised by its name, whatever library declares it. A constant with notation of its own that is
 not recognised, and anything else, is `lean`: the sub-term as exact Lean (`text`), as the reader
-shows it. At most 2000 nodes of one expression are read; a failure is a `lean` node with
+shows it. An application with instance arguments a reader must see is never read as the notion it
+states with the instances resolution finds: it is `apply` with its `instances`, or `lean` when its
+constant has notation of its own. At most 2000 nodes of one expression are read; a failure is a `lean` node with
 `error`. `math` is display only: no status, fingerprint or hash reads it.
 
 A clause's statement in the manifest, a link's statement in the zero-configuration view and a
@@ -532,10 +552,19 @@ A step's passport also has its printed text (`statement_tex`) and its context in
 it, kept to its first 20000 characters. A context cut there has `context_cut`: the `file`, the
 `line` holding the first character left out, the context's last line (`end_line`), and the
 characters `kept` of its `chars`. A parent's passport lists its steps (`steps`: id, number, unit, status, review state, linked
-and route names). In zero configuration the links file holds a step's links under its label
+and route names, and a selected passage's `passage`: `file`, `start_line`, `end_line`,
+`matches`). In zero configuration the links file holds a step's links under its label
 (`lean`, with `coverage`, `basis`, `note`, `by`) and its formal route under `route`
 (`{lean, note, by}`); a step whose only links are a formal route has the status
-`link.other-route`. An export keeps all of this, the Lean statements only when the Lean is
+`link.other-route`. A selected proof passage (`unit: proof-passage`, kind `passage`, numbered
+`Proof of <parent number>, <file>:<A>–<B>`) is an entry of its own under the key
+`<parent key>/passage-<n>`, whose `passage` is its pin: `file`, `start_line`, `end_line`,
+`parent` (the parent's key), `scheme` (`tex-region-v1`), `sha256` and `line_sha256` (the digests
+of its lines' text, whole and per line), `by` and `at`. Its passport's `step.passage` repeats the
+pin with `matches`, whether the lines hold that text now, and `moved_to` (`start_line`,
+`end_line`) when they do not and the file holds the text at one other place; `check --json`
+gives it as the claim's `passage`. A passage whose lines do not match has no `source_sha256`
+and no text, so no review of it is current. An export keeps all of this, the Lean statements only when the Lean is
 published, the reviewers' texts only when reviews are, the source text and location only when the
 source is.
 
@@ -1289,7 +1318,8 @@ list), `modules` (`{name: module}`, for a linked or route declaration whose name
 declare: the module meant, read as formalization.yaml's `module`), `rejected` (suggestions
 declined) with optional `rejected_reasons` (`{name: {reason, by, at}}`), the correspondence
 reading (`note`, `coverage`, `confidence`, `basis`, `refs`, `argument`, `bridge`, `question`,
-`would_decide`; see above), `by` and `at`. When the confirmed list changes, or the module of a
+`would_decide`; see above), `by` and `at`; a selected proof passage's entry also has `passage`
+(its pin, above). When the confirmed list changes, or the module of a
 linked name, the reading written for the old list moves to `earlier_notes` (with the list and
 modules it described), where it is kept and no longer shown. `machinechecked link` and the
 reader's buttons write it through the same checks (`authoring.py`), refusing a write when the

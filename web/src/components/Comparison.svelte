@@ -9,6 +9,7 @@
   import ExactLean from "./ExactLean.svelte";
   import Inspection from "./Inspection.svelte";
   import RowFindings from "./RowFindings.svelte";
+  import RowConnections from "./RowConnections.svelte";
   import { loadDecl, loadWork } from "../lib/data.js";
   import { withQuery } from "../lib/route.svelte.js";
   import { sourceUrl, sourceLabel, sourceTitle } from "../lib/issue.js";
@@ -18,6 +19,7 @@
            workspace } from "../lib/inspect.svelte.js";
   import { carriedOf } from "../lib/carried.js";
   import { findingSets, placeFindings, reviewFields } from "../lib/findings.js";
+  import { connectionEntries, placeConnections } from "../lib/connections.js";
   import { route } from "../lib/route.svelte.js";
 
   // One claim's comparison, Paper | Lean, shared by the reader, the claim page and the review
@@ -29,7 +31,9 @@
   //
   // Rows are paired with the paper when an alignment a person recorded is allowed and chosen:
   // each row then has the passages aligned with it beside it, with their author. Otherwise the
-  // paper's passage is beside the whole Lean.
+  // paper's passage is beside the whole Lean. Where allowed, each row also lists the connections
+  // between its objects and other objects, recorded and computed ones marked apart, with the chain
+  // from one object to another on request.
   //
   // A declaration, a carried property, a fact or application, or saved evidence opens beside the
   // row it was opened from, and the claim stays on the page; the trail is in the page's address,
@@ -181,6 +185,11 @@
     ? { ...workspace.view.claims[main.id], workspace: workspace.id, reviewer: workspace.view.reviewer } : null);
   const placed = $derived(placeFindings(findingSets(published, own, { blind, who: whoOf }), statements));
   const fields = $derived(blind ? new Map() : reviewFields(clauses));
+  // Connections between objects, where allowed: those the published readings and the open
+  // investigation record, and those the build computed from Lean's terms, each beside the rows of
+  // the objects it joins (lib/connections.js). An independent stage shows none.
+  const connEntries = $derived(blind ? [] : connectionEntries({ published, own, computed: inputs.connections?.computed || [], who: whoOf }));
+  const conns = $derived(placeConnections(connEntries, statements));
   const where = (f) => f.missing ? "a passage no longer kept"
     : f.passage ? (f.passage.claim === main?.id ? "this claim's passage" : `the passage of ${f.passage.claim}`)
     : f.region?.file ? `${f.region.file}:${f.region.start_line}${f.region.end_line && f.region.end_line !== f.region.start_line ? "–" + f.region.end_line : ""}`
@@ -363,7 +372,9 @@
 
 {#snippet findingsAt(key)}<RowFindings entries={placed.at.get(key) || []} notes={fields.get(key) || []} {statements} claimId={main?.id} paired={source?.id ?? null} at={key} />{/snippet}
 
-{#snippet afterRow(key, spec)}{@render findingsAt(spec + "::" + key)}{@render slot(spec + "::" + key)}{/snippet}
+{#snippet connectionsAt(key)}<RowConnections items={conns.at.get(key) || []} all={connEntries} at={key} />{/snippet}
+
+{#snippet afterRow(key, spec)}{@render findingsAt(spec + "::" + key)}{@render connectionsAt(spec + "::" + key)}{@render slot(spec + "::" + key)}{/snippet}
 
 <!-- A paired row's paper cell: the passages aligned with it, each with its requirement, its
      relation and its author. An alignment drawn at an earlier row is named, not repeated. -->
@@ -424,6 +435,7 @@
 {#snippet statementOf(spec, st, k)}
   {@render wholeRow(spec)}
   {@render findingsAt(spec + "::top")}
+  {@render connectionsAt(spec + "::top")}
   <Statement {st} {spec} compact exact readable={st.readable?.rows ? readableRow : null} paper={paired ? paperCell : null} after={afterRow}
     onref={(n, row) => open(n, spec + "::" + row)}
     onproperty={(p, o, how, row) => open(tokenOf({ kind: "property", spec, id: p.type?.id }), spec + "::" + row)}
@@ -457,6 +469,7 @@
         <div class="exact-pane"><Definition {d} {name} {key} view="exact" onref={(n) => open(n, name + "::top")} selId={selFor(name)} onselect={(id) => select(name, id)} /></div>
       </div>
       {@render findingsAt(name + "::top")}
+      {@render connectionsAt(name + "::top")}
       {@render slot(name + "::top")}
     </div>
   </div>
@@ -583,6 +596,7 @@
     </p>
   {/if}
   {#if placed.claim.length}<RowFindings entries={placed.claim} {statements} claimId={main?.id} claim />{/if}
+  {#if conns.claim.length || conns.elsewhere.length}<RowConnections claim items={[...conns.claim, ...conns.elsewhere].map((entry) => ({ entry, sides: [] }))} all={connEntries} at="claim" />{/if}
   {#if !paired}
     <div class="grid" class:single={!passages.length || (!formal && !defsOnly.length)}>
       {#if passages.length}

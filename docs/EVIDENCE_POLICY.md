@@ -12,7 +12,9 @@ A claim of a paper is in the inventory with a scope. Out-of-scope claims (`expos
 A scope decision is about formal coverage: `proof-step` says the step is outside the formal proof
 assessment, never that anyone read it. A proof step has its own links and its own review, shown
 beside it and never taken from, or given to, its enclosing result; a step no report covers is
-shown as not reviewed. Neither changes a status. A
+shown as not reviewed. Neither changes a status. A proof passage selected in zero configuration
+is pinned by its lines' text; while those lines hold other text, no review of it counts, until
+it is selected again. A
 `formal` claim has clauses; a `definition` claim has Lean definitions.
 
 A formal claim's status, from strongest to weakest:

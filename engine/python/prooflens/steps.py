@@ -272,7 +272,10 @@ def attach_parents(index_claims: list[dict], chunks: dict) -> None:
             **{k: c[k] for k in ("status_code", "status", "class")},
             "review": (st.get("review") or {}).get("state", "unreviewed"),
             "linked": [l["name"] for l in st.get("links") or []],
-            "route": [l["name"] for l in (st.get("route") or {}).get("links") or []]})
+            "route": [l["name"] for l in (st.get("route") or {}).get("links") or []],
+            **({"passage": {k: st["passage"].get(k) for k in ("file", "start_line", "end_line",
+                                                               "matches")}}
+               if isinstance(st.get("passage"), dict) else {})})
 
 
 def unit_counts(index_claims: list[dict]) -> dict[str, dict[str, dict[str, int]]]:
@@ -364,11 +367,25 @@ def context_lines(lines: list[str], step: dict) -> str:
     return "\n".join(lines[start - 1:k])
 
 
+def proof_parent(statements: list[dict], file: str, proof_line: int,
+                 ref: str | None) -> dict | None:
+    """The statement whose proof opens on `proof_line` of `file`: the one the proof's optional
+    argument names (`ref`, a label), else the last statement of the same file opening before the
+    proof; None when there is neither."""
+    if ref:
+        named = next((c for c in statements if c.get("label") == ref), None)
+        if named is not None:
+            return named
+    before = sorted((c for c in statements if c.get("location") == file and c.get("line")
+                     and c["line"] < proof_line), key=lambda c: c["line"])
+    return before[-1] if before else None
+
+
 def step_claims(pid: str, statements: list[dict], snap: Path, files: list[str],
                 numbers: dict[str, str]) -> list[dict]:
     """The proof equations of the source as claims (`unit: proof-equation`), each under the
-    statement whose proof holds it: the one the proof names, else the last statement of the same
-    file opening before the proof. A step with no such statement is left out."""
+    statement whose proof holds it (`proof_parent`). A step with no such statement is left
+    out."""
     from .source_regions import RegionError, extract
     out = []
     for f in files:
@@ -376,14 +393,8 @@ def step_claims(pid: str, statements: list[dict], snap: Path, files: list[str],
             lines = (snap / f).read_text(encoding="utf-8", errors="replace").split("\n")
         except OSError:
             continue
-        mine = sorted((c for c in statements if c.get("location") == f and c.get("line")),
-                      key=lambda c: c["line"])
         for st in find_proof_equations(lines, f, numbers):
-            parent = next((c for c in statements if st["proof_ref"]
-                           and c.get("label") == st["proof_ref"]), None)
-            if parent is None:
-                before = [c for c in mine if c["line"] < st["proof_line"]]
-                parent = before[-1] if before else None
+            parent = proof_parent(statements, f, st["proof_line"], st["proof_ref"])
             if parent is None:
                 continue
             claim = {"location": f"{f}:{st['line']}"}
@@ -404,6 +415,314 @@ def step_claims(pid: str, statements: list[dict], snap: Path, files: list[str],
                 "statement_tex": "\n".join(lines[st["line"] - 1:st["end_line"]]),
                 "context_tex": context_lines(lines, st)})
     return out
+
+
+# -- proof passages: lines of a proof selected as a step (zero configuration) -----------------
+#
+# A passage is selected by its lines (`machinechecked link CLAIM --passage FILE:A-B`, or in the
+# reader) and kept in the links file under a key of its own, with its parent's key and the pin
+# of its lines (`tex-region-v1`: the digest of the lines' text, and of each line). The pin never
+# moves by itself: when the lines no longer hold the text they were selected at, the passage
+# has no current text, so no review of it counts until it is selected again.
+
+PASSAGE_SPEC = re.compile(r"(?P<file>.+):(?P<a>\d+)(?:-(?P<b>\d+))?")
+PASSAGE_KEY = re.compile(r"(?P<parent>.+)/passage-(?P<n>\d+)")
+
+
+class PassageError(ValueError):
+    """A selection of a proof passage refused before anything was written."""
+
+
+def parse_passage(spec: str) -> tuple[str, int, int]:
+    """`FILE:A-B` (or `FILE:A`, one line) as (file, first line, last line)."""
+    m = PASSAGE_SPEC.fullmatch(str(spec or "").strip())
+    if not m:
+        raise PassageError(f"{spec!r}: give the passage as FILE:A-B, lines A to B of FILE")
+    a, b = int(m["a"]), int(m["b"] or m["a"])
+    if a < 1 or b < a:
+        raise PassageError(f"{spec!r}: lines A to B need 1 <= A <= B")
+    return m["file"], a, b
+
+
+def proofs(lines: list[str]) -> list[dict]:
+    """The proof environments of a source file, outside comments: the line each opens on
+    (`line`), the line it closes on (`end_line`), and the label its optional argument refers to
+    (`ref`, as in `\\begin{proof}[Proof of Theorem~\\ref{thm:x}]`). A proof left open is not
+    listed."""
+    out, open_ = [], []
+    for i, line in enumerate(lines, 1):
+        text = _uncomment(line)
+        for m in PROOF.finditer(text):
+            if m.group(1) == "begin":
+                rest = text[m.end():]
+                rm = REF.search(rest)
+                open_.append({"line": i, "ref": rm.group(1) if rm and rest.lstrip()
+                              .startswith("[") else None})
+            elif open_:
+                p = open_.pop()
+                out.append({"line": p["line"], "end_line": i, "ref": p["ref"]})
+    return sorted(out, key=lambda p: p["line"])
+
+
+def enclosing_proof(found: list[dict], a: int, b: int) -> dict | None:
+    """The innermost proof of `found` (`proofs`) whose body holds lines `a` to `b`: the lines
+    lie strictly between its opening and closing lines."""
+    inside = [p for p in found if p["line"] < a and b < p["end_line"]]
+    return max(inside, key=lambda p: p["line"]) if inside else None
+
+
+def _cut_environment(lines: list[str], a: int, b: int) -> str | None:
+    """Where lines `a` to `b` cut an environment, in words, or None when every environment
+    they open they also close."""
+    from .source_regions import RegionError, environments
+    text = "\n".join(lines[a - 1:b])
+    starts = [0]
+    for line in lines[a - 1:b]:
+        starts.append(starts[-1] + len(line) + 1)
+
+    def at(i: int) -> int:
+        return a + sum(1 for s in starts[1:] if s <= i)
+    stack: list[tuple[str, int]] = []
+    try:
+        for op, env, i, _ in environments(text, 0):
+            if op == "begin":
+                stack.append((env, at(i)))
+            elif stack and stack[-1][0] == env:
+                stack.pop()
+            else:
+                return f"it ends the {env} environment at line {at(i)} without its beginning"
+    except RegionError as e:
+        return str(e)
+    if stack:
+        env, line = stack[-1]
+        return f"it begins the {env} environment at line {line} without its end"
+    return None
+
+
+def overlaps(file: str, a: int, b: int, taken: list[dict]) -> list[dict]:
+    """The steps of `taken` (each with `file`, `start_line`, `end_line`) whose lines meet lines
+    `a` to `b` of `file`."""
+    return [t for t in taken if t.get("file") == file
+            and not (b < t["start_line"] or t["end_line"] < a)]
+
+
+def source_lines(root: Path, file: str) -> list[str]:
+    """The lines of a source file of the snapshot at `root`, as the steps read them."""
+    from .source_regions import source_file
+    return source_file(root, file).read_text(encoding="utf-8", errors="replace").split("\n")
+
+
+def select_passage(root: Path, file: str, a: int, b: int, statements: list[dict],
+                   taken: list[dict]) -> dict:
+    """Lines `a` to `b` of `file` in the snapshot at `root` as a proof passage, or
+    PassageError saying why not. The lines lie inside one proof, between its opening and closing
+    lines; they open and close the same environments; they hold text that is not a comment;
+    they meet no other proof step (`taken`, each with its `file`, `start_line`, `end_line` and
+    `id`); and the proof belongs to a statement (`proof_parent`, from `statements`). Returns
+    the passage's pin (`region_pin`), its parent and the line its proof opens on."""
+    from .source_regions import RegionError
+    try:
+        lines = source_lines(root, file)
+    except (OSError, RegionError):
+        raise PassageError(f"{file}: no such source file of the paper") from None
+    if b > len(lines):
+        raise PassageError(f"{file} has {len(lines)} lines; lines {a}-{b} are outside it")
+    found = proofs(lines)
+    proof = enclosing_proof(found, a, b)
+    if proof is None:
+        raise PassageError(f"lines {a}-{b} of {file} are not inside a proof: a passage is lines "
+                           "between a proof's \\begin{proof} and \\end{proof}")
+    for p in found:
+        if p is not proof and (a <= p["line"] <= b) != (a <= p["end_line"] <= b):
+            raise PassageError(f"lines {a}-{b} of {file} cut the proof at lines "
+                               f"{p['line']}-{p['end_line']}")
+    cut = _cut_environment(lines, a, b)
+    if cut:
+        raise PassageError(f"lines {a}-{b} of {file} do not hold whole environments: {cut}")
+    if not any(_uncomment(l).strip() for l in lines[a - 1:b]):
+        raise PassageError(f"lines {a}-{b} of {file} hold no text of the proof")
+    hit = overlaps(file, a, b, taken)
+    if hit:
+        raise PassageError(f"lines {a}-{b} of {file} overlap "
+                           + ", ".join(f"{t.get('number') or t['id']} (lines {t['start_line']}-"
+                                       f"{t['end_line']})" for t in hit)
+                           + ": a line of a proof belongs to one step")
+    parent = proof_parent(statements, file, proof["line"], proof["ref"])
+    if parent is None:
+        raise PassageError(f"the proof at line {proof['line']} of {file} follows no statement")
+    try:
+        pin, _ = region_pin(root, file, a, b)
+    except RegionError as e:
+        raise PassageError(f"lines {a}-{b} of {file}: {e}") from None
+    return {"pin": pin, "parent": parent, "proof_line": proof["line"]}
+
+
+def region_pin(root: Path, file: str, a: int, b: int) -> tuple[dict, str]:
+    """The pin of lines `a` to `b` of `file` in the snapshot at `root`, whole lines as
+    `source_regions.extract` reads an explicit span (`tex-region-v1`: the digest of their text,
+    and of each line), and their text. RegionError when they cannot be read."""
+    from .source_regions import SCHEME, extract
+    r = extract(root, {"location": f"{file}:{a}", "source_region": {"end_line": b}})
+    return {"file": file, "start_line": a, "end_line": b, "scheme": SCHEME,
+            "sha256": r.sha256, "line_sha256": r.line_sha256}, r.text
+
+
+def _lines(a: int, b: int) -> str:
+    return f"line {a}" if a == b else f"lines {a}-{b}"
+
+
+def _spec(file: str, a: int, b: int) -> str:
+    return f"{file}:{a}" if a == b else f"{file}:{a}-{b}"
+
+
+def passage_number(parent: dict | None, file: str, a: int, b: int) -> str:
+    """How a passage is named: its proof and its pinned lines. It ends in no bare number, so
+    a statement's number never resolves to it."""
+    where = f"{file}:{a}" + (f"–{b}" if b > a else "")
+    return f"Proof of {parent['number']}, {where}" if parent else f"Proof passage, {where}"
+
+
+def passage_key(parent_key: str, keys) -> str:
+    """The key of a new passage of the proof of `parent_key`: `<parent key>/passage-<n>`, with
+    `n` one more than any such key in `keys`."""
+    used = [int(m["n"]) for k in keys if (m := PASSAGE_KEY.fullmatch(str(k)))
+            and m["parent"] == parent_key]
+    return f"{parent_key}/passage-{max(used, default=0) + 1}"
+
+
+def stored_pin(entry: dict) -> dict | None:
+    """The pin of a links-file entry's passage, when it is a well-formed one."""
+    p = entry.get("passage") if isinstance(entry, dict) else None
+    if not isinstance(p, dict):
+        return None
+    ok = (isinstance(p.get("file"), str) and p["file"]
+          and all(type(p.get(k)) is int and p[k] >= 1 for k in ("start_line", "end_line"))
+          and p["start_line"] <= p["end_line"] and isinstance(p.get("sha256"), str))
+    return p if ok else None
+
+
+def moved_to(lines: list[str], pin: dict) -> dict | None:
+    """Where the text a passage was pinned at is now, when its lines hold it at exactly one
+    place of the file: the lines with the pinned digests, in order."""
+    want = pin.get("line_sha256")
+    if not isinstance(want, list) or not want:
+        return None
+    import hashlib
+    have = [hashlib.sha256(l.rstrip("\r").encode("utf-8")).hexdigest() for l in lines]
+    n = len(want)
+    at = [i + 1 for i in range(len(have) - n + 1) if have[i:i + n] == want]
+    return {"start_line": at[0], "end_line": at[0] + n - 1} if len(at) == 1 else None
+
+
+def step_region(c: dict) -> dict | None:
+    """The lines of a proof step claim (`file`, `start_line`, `end_line`), with its `id` and
+    `number`, from its location and region."""
+    path, _, line = str(c.get("location") or "").rpartition(":")
+    if not path or not line.isdigit():
+        return None
+    end = (c.get("source_region") or {}).get("end_line") or int(line)
+    return {"id": c.get("id"), "number": c.get("number"), "unit": c.get("unit"), "file": path,
+            "start_line": int(line), "end_line": int(end)}
+
+
+def passage_claims(pid: str, entries: dict, statements: list[dict], snap: Path,
+                   taken=()) -> tuple[list[dict], list[str]]:
+    """The selected passages of the links file (`entries`, the paper's entries by key) as
+    claims (`unit: proof-passage`), each under its recorded parent, and notes on any whose
+    lines no longer hold the text they were selected at, or that overlap another step
+    (`taken`, the other steps' `step_region`s). A passage whose lines changed has no current
+    text (`source_sha256` is None, and no text is shown), so no review of it counts; its
+    `passage` says where its text is now when the file holds it at one place."""
+    from .source_regions import RegionError
+    out, notes = [], []
+    texts: dict[str, list[str] | None] = {}
+    by_key = {c.get("key"): c for c in statements}
+    for key, entry in sorted(entries.items()):
+        pin = stored_pin(entry)
+        if pin is None:
+            if isinstance(entry, dict) and "passage" in entry:
+                notes.append(f"the passage {key} in the links file has no well-formed pin "
+                             "(file, start_line, end_line, sha256) and is not shown")
+            continue
+        file, a, b = pin["file"], pin["start_line"], pin["end_line"]
+        if file not in texts:
+            try:
+                texts[file] = source_lines(snap, file)
+            except (OSError, RegionError):
+                texts[file] = None
+        lines = texts[file]
+        parent = by_key.get(pin.get("parent"))
+        try:
+            now, text = region_pin(snap, file, a, b)
+        except (OSError, RegionError):
+            now, text = None, None
+        matches = bool(now) and now["sha256"] == pin["sha256"]
+        proof = enclosing_proof(proofs(lines), a, b) if matches and lines else None
+        where = {"file": file, "start_line": a, "end_line": b, "sha256": pin["sha256"],
+                 "scheme": pin.get("scheme") or "tex-region-v1", "matches": matches,
+                 **{k: pin[k] for k in ("by", "at") if isinstance(pin.get(k), str)}}
+        if not matches:
+            moved = moved_to(lines, pin) if lines is not None else None
+            if moved:
+                where["moved_to"] = moved
+            notes.append(f"the passage {key} no longer matches its pin: {_lines(a, b)} of "
+                         f"{file} do not hold the text it was selected at, so no review of it "
+                         "counts; "
+                         + (f"that text is now at {_lines(moved['start_line'], moved['end_line'])}"
+                            f"; select it there with `machinechecked link {key} --passage "
+                            f"{_spec(file, moved['start_line'], moved['end_line'])}`" if moved
+                            else f"select it again with `machinechecked link {key} --passage "
+                            f"{file}:A-B`"))
+        if pin.get("parent") and parent is None:
+            notes.append(f"the passage {key} belongs to {pin['parent']}, which this paper no "
+                         "longer has")
+        out.append({
+            "id": f"{pid}:{key}", "key": key, "paper": pid, "kind": "passage",
+            "number": passage_number(parent, file, a, b), "title": "", "label": None,
+            "location": f"{file}:{a}", "line": a,
+            "source_sha256": pin["sha256"] if matches else None,
+            "source_hash_scheme": where["scheme"], "source_region": {"end_line": b},
+            "scope": "proof-step",
+            "scope_note": f"a passage of the proof of {parent['number']}" if parent else
+            "a passage of a proof",
+            "scope_reviewed": True, "clauses": [], "tags": [],
+            "unit": "proof-passage", "parent": parent["id"] if parent else None,
+            "passage": where,
+            "statement_tex": text if matches else None,
+            "context_tex": context_lines(lines, {"proof_line": proof["line"], "line": a,
+                                                 "end_line": b}) if proof else None})
+    regions = [{"id": c["key"], "file": c["passage"]["file"],
+                "start_line": c["passage"]["start_line"], "end_line": c["passage"]["end_line"]}
+               for c in out]
+    for i, r in enumerate(regions):
+        for o in overlaps(r["file"], r["start_line"], r["end_line"],
+                          regions[i + 1:] + list(taken)):
+            notes.append(f"the passage {r['id']} overlaps {o.get('number') or o['id']}; "
+                         "select the passage again")
+    return out, notes
+
+
+def proof_view(lines_of, statements: list[dict], taken: list[dict], claim_id: str) -> dict:
+    """The proofs of the statement `claim_id`, as the reader's selection of a passage shows
+    them: each proof's file, its opening and closing lines and its lines' text, and the proof
+    steps already in them (`taken`). `lines_of(file)` gives a file's lines, or None."""
+    me = next((c for c in statements if c.get("id") == claim_id), None)
+    if me is None:
+        raise PassageError(f"{claim_id} is not a statement of the paper")
+    out = []
+    for file in sorted({c.get("location") for c in statements if c.get("location")}):
+        lines = lines_of(file)
+        if lines is None:
+            continue
+        for p in proofs(lines):
+            par = proof_parent(statements, file, p["line"], p["ref"])
+            if par is not None and par.get("id") == claim_id:
+                out.append({"file": file, "start_line": p["line"], "end_line": p["end_line"],
+                            "lines": lines[p["line"] - 1:p["end_line"]],
+                            "steps": [{k: t.get(k) for k in ("id", "number", "unit",
+                                                            "start_line", "end_line")}
+                                      for t in overlaps(file, p["line"], p["end_line"], taken)]})
+    return {"claim": claim_id, "proofs": out}
 
 
 # -- the full assessment ----------------------------------------------------------------------

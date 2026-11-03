@@ -186,7 +186,8 @@ carries every step out on the toy example.
    reads as resolved only while Lean checks it), and a `counterexample` against one
    reading, with a Lean certificate as evidence when you have one. A printed proof step is a
    claim of its own (`compare "Equation (3)"`), with its own verdict, such as `false as
-   printed`. `--query impact NAME` says whether each main result uses NAME (`--main NAME`
+   printed`; other lines of a proof become one with `link "Theorem 3" --passage
+   main.tex:31-32`. `--query impact NAME` says whether each main result uses NAME (`--main NAME`
    chooses them for one query; `workspace main NAME...` saves the user's choice in the
    workspace, with your name and the project commit) and lists the claims whose Lean uses it: a
    difference between NAME and the paper can matter only to those.

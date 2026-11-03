@@ -232,7 +232,15 @@ A proof step (`machinechecked compare "Equation (3)"`, or the review unit `step:
 claim of its own: its passage carries `step` (its parent and the question, whether the printed
 step holds) and `context` (the proof up to it and the sentence after it); from the compare stage
 its declarations have the role `establishes the step` or `formal route used instead`, and at the
-informed stage `interpretations.step` holds its correspondence, route and review.
+informed stage `interpretations.step` holds its correspondence, route and review. Other lines of
+a proof become a step with `machinechecked link "Theorem 3" --passage main.tex:31-32` (the result
+whose proof holds them, and the lines of the build's copy of the source; DECLs and `--route`
+link it as they link a claim); the result names the new passage (`claim.id`, such as
+`P:thm:square/passage-1`). A selection outside the proof, one that cuts an environment, or one
+that overlaps another step is refused with `ok: false`. In `check --json` a passage has `unit`
+`proof-passage`, its `parent` and its `passage` pin; `passage.matches: false` means its lines no
+longer hold the text it was selected at, so its review does not count (`moved_to` gives where
+that text is now, to select it again with `link KEY --passage FILE:A-B`).
 
 Targeted queries have one shape (`machinechecked/query@1`: `op`, `target`, `context`,
 `results`, `provenance`, `retrieval`):

@@ -440,9 +440,11 @@ def _view_simple(a):
         _simple_site(root, paper, a.web)
         return {"claim": change["claim"], "changed": change["changed"]}
 
-    serve(site, a.port, on_link, not a.no_browser,
-          api=_with_uses(api(root / cfgmod.work_dir_name(root), site / "data", root), root,
-                         site / "data"))
+    gets, posts = _with_uses(api(root / cfgmod.work_dir_name(root), site / "data", root), root,
+                             site / "data")
+    # The proofs of a statement, for the reader's selection of a passage.
+    gets = {**gets, "/api/proof": authoring.proof_route(site / "data")}
+    serve(site, a.port, on_link, not a.no_browser, api=(gets, posts))
 
 
 def _with_uses(api: tuple[dict, dict], root: Path, data: Path) -> tuple[dict, dict]:
@@ -491,7 +493,8 @@ def cmd_link(a):
                                 external=a.external, basis=a.basis, refs=a.refs,
                                 argument=argument, bridge=bridge, question=a.question,
                                 would_decide=a.would_decide,
-                                route=(a.decls or []) if a.route else None)
+                                route=(a.decls or []) if a.route else None,
+                                passage=a.passage)
         if not a.dry_run:
             authoring.write(root, change)
     except authoring.LinkError as e:
@@ -528,6 +531,8 @@ def cmd_link(a):
     elif a.dry_run:
         print(f"{c['id']} ({c['number']}) would become:\n"
               + json.dumps(change["after"], indent=1, ensure_ascii=False))
+    elif change["after"] is None and a.passage:
+        print(f"removed the passage {c['id']} from {authoring.simple.links_file(root).name}")
     else:
         print(f"recorded for {c['id']} ({c['number']}) in {authoring.simple.links_file(root).name}"
               "; `machinechecked view` or `build` shows it")
@@ -920,6 +925,8 @@ def _step_json(c: dict) -> dict:
     rv = review(c.get("step_reports", []), c.get("source_sha256"))
     return {"route": [{"name": l["name"], "status_code": l["status_code"], **_link_detail(l)}
                       for l in c.get("route_links", [])],
+            # A selected passage's pinned lines, and whether they still hold its text.
+            **({"passage": c["passage"]} if c.get("passage") else {}),
             "step_review": rv["state"],
             "finding": {"verdict": rv["finding"]["verdict"]["value"],
                         "reviewer": rv["finding"]["reviewer"]} if rv["finding"] else None}
@@ -1983,6 +1990,10 @@ def _add_link(sub) -> None:
     lk.add_argument("--add", action="store_true", help="add DECL to the confirmed list")
     lk.add_argument("--route", action="store_true", help="for a proof step: DECL is the "
                     "different formal route used instead of the printed step (none: clear it)")
+    lk.add_argument("--passage", metavar="FILE:A-B", help="select lines A to B of FILE inside "
+                    "the proof of CLAIM as a proof passage (the other options then apply to the "
+                    "passage); with a passage as CLAIM, pin it again at those lines; `none` "
+                    "removes the passage CLAIM")
     lk.add_argument("--reject", nargs="+", metavar="DECL", help="record suggestions as not this "
                     "claim's")
     lk.add_argument("--reason", help="why they are rejected")

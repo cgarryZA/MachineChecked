@@ -20,6 +20,7 @@ import "./comparison.test.mjs";
 import "./findings.test.mjs";
 import "./connections.test.mjs";
 import "./impact.test.mjs";
+import "./mainresults.test.mjs";
 import "./names.test.mjs";
 import "./workfile.test.mjs";
 import { chromium } from "playwright";
@@ -411,8 +412,23 @@ fs.writeFileSync(path.join(root, "toywork/data/work", workRow.file), JSON.string
 // #77: the toy audit with records people made about Theorem 2.1 (its symbol links, a
 // correspondence note, and a published reading that aligns passages of the paper with rows of the
 // Lean), with the review queue the engine builds for it: the reader draws them, independent
-// Compare is given none of them.
+// Compare is given none of them. #549: the reading also records connections between objects (as
+// `connections.public` publishes them with the Lean), and the claim carries connections computed
+// from Lean's terms (`computed_connections`).
 fs.cpSync(path.join(root, "toy"), path.join(root, "toycmp"), { recursive: true });
+const CONN = (() => {
+  const spec = "Toy.PaperSpec.thm_even_add", proof = "Toy.Acceptance.thm_even_add";
+  const fact = { decl: proof, at: "/1", name: "ha" }, app = { callee: "Toy.IsEven", caller: proof, id: "app:Toy.Acceptance.thm_even_add:0" };
+  const a = { decl: spec, var: 0, id: "/", name: "a", type: "Nat" }, b = { decl: spec, var: 1, id: "/1", name: "b", type: "Nat" };
+  const ev = (id, connection, currency = cur) => ({ id, kind: "evidence", claim: "T:thm:even-add", role: "supports", ref: { connection }, currency });
+  return {
+    recorded: [ev("e-wit", { relation: "equal", from: a, to: { fact, local: "a" }, conditions: ["SYNTHETIC-CONNECTION: as the proof introduces it"], support: [{ fact }] }),
+               ev("e-old", { relation: "shared witness", from: b, to: { fact, local: "b" } },
+                  { state: "stale", changes: [{ decl: spec, var: 1, reason: "Toy.PaperSpec.thm_even_add: variable 1 is now c : Nat, not b : Nat, the object the connection was recorded at" }] })],
+    computed: [{ relation: "equal", from: { fact, local: "a" }, to: { app, param: "n" }, support: [{ app }] },
+               { relation: "definitional", from: { decl: spec, at: "/1/1/1/1", target: "Toy.IsEven (a + b)" }, to: { fact, local: "h" },
+                 unfolds: [{ decl: "Toy.IsEven" }], conditions: ["SYNTHETIC-COMPUTED"] }] };
+})();
 {
   const row = TOY.claims.find((c) => c.id === "T:thm:even-add");
   const file = path.join(root, "toycmp/data/claims", row.file);
@@ -421,6 +437,7 @@ fs.cpSync(path.join(root, "toy"), path.join(root, "toycmp"), { recursive: true }
   rec.correspondence = { source: "confirmed", coverage: "full", basis: "direct", refs: [spec], note: "SYNTHETIC-NOTE: the author's reading of the sum.",
                          by: "A. Auditor", argument: null, bridge: null, question: null, would_decide: null, confidence: null };
   rec.work = "work/" + row.file;
+  rec.computed_connections = CONN.computed;
   fs.writeFileSync(file, JSON.stringify(rec));
   fs.mkdirSync(path.join(root, "toycmp/data/work"), { recursive: true });
   const req = (local_id, form, text) => ({ id: "q-" + local_id, kind: "requirement", claim: row.id, local_id, form, text, depth: 0, currency: cur });
@@ -438,7 +455,7 @@ fs.cpSync(path.join(root, "toy"), path.join(root, "toycmp"), { recursive: true }
       findings: [{ id: "f-sum", kind: "finding", claim: row.id, requirement: "sum", coverage: "full", basis: "direct", state: "submitted",
                    submitted_at: "2026-10-20T00:00:00Z", created_by: "human:A-Auditor", evidence: [], in_force: true, currency: cur,
                    note: "SYNTHETIC-FINDING: the conclusion is the paper's." }],
-      evidence: [], compositions: [] }] }));
+      evidence: CONN.recorded, compositions: [] }] }));
 }
 queueFor(path.join(root, "toycmp", "data"));
 
@@ -652,8 +669,21 @@ function proofFactsApi(url, query, req, res) {
     return;
   }
   if (url === "/pfedit/api/workspace") return json(PF_WS);
+  if (url === "/pfedit/api/proof") return json(PF_PROOF);
+  if (url === "/pfedit/api/link" && req.method === "POST") {
+    let body = "";
+    req.on("data", (c) => (body += c));
+    req.on("end", () => { pfLinked.push(JSON.parse(body)); json({ claim: { id: "P:lem:sharp/passage-1" }, changed: true }); });
+    return;
+  }
   res.writeHead(404); res.end();
 }
+// The proof of Lemma 1 as the local server gives it for the selection of a passage
+// (`authoring.proof_route`), with one step already selected in it; and the links it is sent.
+const PF_PROOF = { claim: "P:lem:sharp", proofs: [{ file: "main.tex", start_line: 20, end_line: 25,
+  lines: ["\\begin{proof}", "Since $C h \\ge x + 1$,", "we have $x \\le x + 1 \\le C h$.", "This is the bound.", "Nothing more is needed.", "\\end{proof}"],
+  steps: [{ id: "P:lem:sharp/passage-1", number: "Proof of Lemma 1, main.tex:24", unit: "proof-passage", start_line: 24, end_line: 24 }] }] };
+const pfLinked = [];
 
 // `/pfsearch/` is the same local reader with the synthetic content index of
 // tests/fixtures/retrieval (written by the engine), and a library its build leaves out: the
@@ -668,6 +698,57 @@ fs.writeFileSync(path.join(root, "pfsearch", "data", "index.json"), JSON.stringi
 fs.cpSync(path.join(root, "prooffacts"), path.join(root, "pfpaged"), { recursive: true });
 fs.writeFileSync(path.join(root, "pfpaged", "data", "index.json"), JSON.stringify({ ...PF, editable: true }));
 const pfCursors = [];
+
+// #550: the main results a workspace saves. `/toymain/` is the toy audit with one published
+// selection, as `published_work.main_results` writes it (with a claim the release no longer has,
+// and one of a paper it does not publish); `/mainedit/` is the toy reader as the local `view`
+// serves it, its workspace routes answered by the engine itself (`workspace.api`) over a working
+// directory of its own.
+const ENGINE_ROUTES = String.raw`
+import json, sys
+from pathlib import Path
+from urllib.parse import parse_qs
+from prooflens import workspace as wsp
+work, method, route, query = Path(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4]
+gets, posts = wsp.api(work, work / "site" / "data", None)
+table = gets if method == "GET" else posts
+if route not in table:
+    print(json.dumps([404, {"error": "not found"}]))
+    sys.exit()
+try:
+    out = table[route](parse_qs(query)) if method == "GET" else \
+        {"ok": True, **(table[route](json.loads(sys.stdin.read() or "{}")) or {})}
+    print(json.dumps([200, out]))
+except Exception as e:
+    print(json.dumps([409 if getattr(e, "conflicts", None) is not None else 400, {"error": str(e)}]))`;
+const engineRoute = (work, method, route, query = "", body = "") => {
+  const r = spawnSync(process.env.PYTHON || "python3", ["-c", ENGINE_ROUTES, work, method, route, query], { input: body, encoding: "utf8" });
+  if (r.status !== 0) throw new Error("the engine's local routes failed:\n" + r.stderr);
+  return JSON.parse(r.stdout);
+};
+const MAINWORK = path.join(root, "mainwork"), PUBWORK = path.join(root, "pubwork");
+for (const w of [MAINWORK, PUBWORK]) fs.cpSync(path.join(root, "toy", "data"), path.join(w, "site", "data"), { recursive: true });
+const MAIN_WS = engineRoute(MAINWORK, "POST", "/api/workspace", "", JSON.stringify({ action: "open", reviewer: "human:A-Auditor", mode: "informed" }))[1].id;
+const saveMain = (main) => engineRoute(MAINWORK, "POST", "/api/workspace", "", JSON.stringify({ action: "update", id: MAIN_WS, ops: [{ op: "main-results", main }] }));
+const PUBLISHED_MAIN = (() => {
+  const r = spawnSync(process.env.PYTHON || "python3", ["-c", String.raw`
+import json, sys
+from pathlib import Path
+from prooflens import published_work as pw, review_cli as rc, workspace as wsp
+from prooflens.targets import Snapshot
+work = Path(sys.argv[1])
+snap = Snapshot(work / "site" / "data")
+p = wsp.open_for(work, rc.parse_reviewer("human:A-Auditor"), "informed", sources=snap.sources())
+wsp.update(p, [{"op": wsp.MAIN_OP, "main": ["Theorem 2.5", "Toy.triangle"]}], snap, None)
+raw = json.loads(p.read_text())
+raw["main_results"]["selected"] += [{"claim": "T:thm:gone"}, {"claim": "Q:thm:other"}]
+p.write_text(json.dumps(raw))
+print(json.dumps(pw.main_results(work, snap)))`, PUBWORK], { encoding: "utf8" });
+  if (r.status !== 0) throw new Error("the engine could not publish the main results:\n" + r.stderr);
+  return JSON.parse(r.stdout);
+})();
+fs.cpSync(path.join(root, "toy"), path.join(root, "toymain"), { recursive: true });
+fs.writeFileSync(path.join(root, "toymain/data/index.json"), JSON.stringify({ ...TOY, main_results: PUBLISHED_MAIN }));
 
 const types = { ".pdf": "application/pdf", ".html": "text/html", ".json": "application/json", ".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css", ".woff2": "font/woff2" };
 // `/toyedit/` is the toy reader as the local `view` serves it: its index says it may edit, and
@@ -689,6 +770,21 @@ const server = http.createServer((req, res) => {
     return res.end(JSON.stringify({ ...PF, editable: true }));
   }
   if (url.startsWith("/pfedit/")) url = "/prooffacts/" + url.slice("/pfedit/".length);
+  if (url.startsWith("/mainedit/api/")) {
+    let body = "";
+    req.on("data", (c) => (body += c));
+    req.on("end", () => {
+      const [code, out] = engineRoute(MAINWORK, req.method, url.slice("/mainedit".length), req.url.split("?")[1] || "", body);
+      res.writeHead(code, { "content-type": "application/json" });
+      res.end(JSON.stringify(out));
+    });
+    return;
+  }
+  if (url === "/mainedit/data/index.json") {
+    res.writeHead(200, { "content-type": "application/json" });
+    return res.end(JSON.stringify({ ...TOY, editable: true }));
+  }
+  if (url.startsWith("/mainedit/")) url = "/toy/" + url.slice("/mainedit/".length);
   if (url === "/toyedit/api/symbol" && req.method === "POST") {
     let body = "";
     req.on("data", (c) => (body += c));
@@ -2250,6 +2346,17 @@ await check("in the local reader a symbol is linked by choosing it and clicking 
     assert.ok(await st.locator("[data-readable] [data-k='coe']").count() > 0, "the coercion is drawn as one");
     assert.equal(await st.locator("[data-readable] .inner.within").count(), 1, "the quantified hypothesis shows its own structure");
 
+    // A σ-algebra m besides the instance mΩ: each application after m is bound names the one it
+    // is taken for (#515); before, f and g are measurable for the instance.
+    await pg.goto(origin + `/structure/#/r/${SHAPE.release}/read/P/${encodeURIComponent("P:thm:adapted")}`);
+    st = stmts.first();
+    await st.locator(".concl").waitFor();
+    const said = (await st.locator("[data-readable]").allTextContents()).join(" ").replace(/\s+/g, "");
+    for (const s of ["StronglyMeasurable(f)∧Measurable(g)", "StronglyMeasurable[m](f)", "Measurable[m](g)", "StronglyMeasurable[mΩ](g)"]) {
+      assert.ok(said.includes(s), s);
+    }
+    assert.match((await st.locator(".concl [data-readable]").textContent()).replace(/\s+/g, ""), /StronglyMeasurable\[m\]\(g\)/);
+
     // Notation not read as mathematics stays exact Lean.
     await pg.goto(origin + `/structure/#/r/${SHAPE.release}/read/P/${encodeURIComponent("P:thm:one-map")}`);
     st = stmts.first();
@@ -2855,9 +2962,10 @@ await check("independent Compare is given the complete mathematics and no prior 
   await pg.waitForLoadState("networkidle");
   const html = await pg.evaluate(() => document.body.innerHTML);
   for (const absent of ["A-Referee", "A-Auditor", "SYNTHETIC-NOTE", "SYNTHETIC-PASSAGE", "SYNTHETIC-REQUIREMENT", "a.referee", "Paper · Definition",
-                        "SYNTHETIC-FINDING", "both quantifiers", "Correspondence"])
+                        "SYNTHETIC-FINDING", "both quantifiers", "Correspondence", "SYNTHETIC-CONNECTION", "SYNTHETIC-COMPUTED", "definitionally equal"])
     assert.ok(!html.includes(absent), `${absent} is not on the page`);
   assert.equal(await cmp.locator(".row-findings, [data-finding], [data-review-field]").count(), 0, "no finding or author's note in Compare");
+  assert.equal(await cmp.locator(".row-connections, [data-connection]").count(), 0, "no connection between objects, recorded or computed, in Compare");
   assert.deepEqual(fetched.filter((p) => p.includes("/data/work/")), [], "nor fetched");
   await insp.locator(".back").click();
   // After the verdict, the later stage shows what people recorded, attributed.
@@ -2868,7 +2976,53 @@ await check("independent Compare is given the complete mathematics and no prior 
   await cmp.locator(".paper [data-sym]").first().waitFor();
   await cmp.locator(".stmt [data-row='b:0'] .pcell .aligned").waitFor();
   await cmp.locator(".stmt [data-row='c'] [data-finding='f-sum']").waitFor();
+  await cmp.locator(".stmt [data-row='b:0'] .row-connections [data-origin='recorded']").waitFor();
+  await cmp.locator(".stmt [data-row='c'] .row-connections [data-origin='computed']").waitFor();
 });
+
+// #549: each object's connections beside its row, with relation, conditions and support, recorded
+// and computed ones marked apart; one that changed since it was recorded is never placed at a
+// row; the chain from one object to another on request.
+for (const width of [1300, 390]) {
+  await check("an object's connections are beside its row, and the chain on request", width, async (pg) => {
+    await pg.goto(origin + `/toycmp/#/r/${TOY.release}/read/T/${encodeURIComponent("T:thm:even-add")}`);
+    const cmp = pg.locator(".claim-view .cmp");
+    const rowA = cmp.locator(".stmt [data-row='b:0'] .row-connections");
+    await rowA.waitFor();
+    const conns = async (loc) => loc.locator("[data-connection]").evaluateAll((cs) => cs.map((c) => [c.dataset.origin, c.dataset.state || "", c.textContent.replace(/\s+/g, " ").trim()]));
+    assert.deepEqual(await conns(rowA), [["recorded", "current",
+      "Recorded a of Toy.PaperSpec.thm_even_add and a in the proof of Toy.Acceptance.thm_even_add are equal, when SYNTHETIC-CONNECTION: as the proof introduces it, by ha inside the proof of Toy.Acceptance.thm_even_add. Recorded by A Auditor"]]);
+    // The conclusion's sub-term, with the connection the build computed, marked apart.
+    assert.deepEqual(await conns(cmp.locator(".stmt [data-row='c'] .row-connections")), [["computed", "",
+      "Computed `Toy.IsEven (a + b)` in Toy.PaperSpec.thm_even_add and h in the proof of Toy.Acceptance.thm_even_add are definitionally equal, when SYNTHETIC-COMPUTED, unfolding Toy.IsEven. Computed from the Lean's terms"]]);
+    // The row of b, whose connection changed since it was recorded, has none: that one is with the
+    // whole claim, with what changed, and so is the one between objects of Lean not shown here.
+    assert.equal(await cmp.locator(".stmt [data-row='b:2'] .row-connections, .stmt [data-row='b:3'] .row-connections").count(), 0);
+    const whole = cmp.locator(".row-connections[data-connections-at='claim']");
+    const rest = await conns(whole);
+    assert.deepEqual(rest.map(([o, st]) => [o, st]), [["recorded", "stale"], ["computed", ""]]);
+    assert.match(rest[0][2], /b of Toy\.PaperSpec\.thm_even_add and b in the proof of Toy\.Acceptance\.thm_even_add are one witness\. Recorded by A Auditor · changed since it was recorded Changed: Toy\.PaperSpec\.thm_even_add: variable 1 is now c : Nat, not b : Nat.*Not placed at a row/);
+    assert.match(rest[1][2], /a in the proof of Toy\.Acceptance\.thm_even_add and n of Toy\.IsEven applied in Toy\.Acceptance\.thm_even_add are equal, by Toy\.IsEven applied in Toy\.Acceptance\.thm_even_add\. Computed from the Lean's terms Its objects are in Lean this comparison does not show/);
+    // The chain, on request: from a, through the recorded connection to the proof's a, then the
+    // computed one to the argument of Toy.IsEven.
+    assert.equal(await rowA.locator("[data-chain-step]").count(), 0, "only on request");
+    await rowA.locator("details.chain > summary").click();
+    assert.match(await rowA.locator(".pick").textContent(), /From a of Toy\.PaperSpec\.thm_even_add/);
+    const to = rowA.getByRole("combobox", { name: "Chain to" });
+    assert.deepEqual((await to.locator("option").allTextContents()).map((t) => t.trim()),
+      ["a in the proof of Toy.Acceptance.thm_even_add", "n of Toy.IsEven applied in Toy.Acceptance.thm_even_add"]);
+    await to.selectOption({ label: "n of Toy.IsEven applied in Toy.Acceptance.thm_even_add" });
+    const steps = rowA.locator("[data-chain-step]");
+    await pg.waitForFunction(() => document.querySelectorAll(".stmt [data-row='b:0'] [data-chain-step]").length === 2);
+    assert.deepEqual(await steps.evaluateAll((ls) => ls.map((l) => l.dataset.origin)), ["recorded", "computed"]);
+    assert.match(await steps.nth(0).textContent(), /^a of Toy\.PaperSpec\.thm_even_add and a in the proof of Toy\.Acceptance\.thm_even_add are equal, when SYNTHETIC-CONNECTION/);
+    assert.match(await steps.nth(1).textContent(), /are equal, by Toy\.IsEven applied in Toy\.Acceptance\.thm_even_add\. Computed from the Lean's terms$/);
+    assert.match(await rowA.locator(".chain").textContent(), /Its steps come from more than one record/);
+    if (width < 500) assert.ok(await pg.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), "no sideways scroll");
+    const [scroll, client] = await pg.locator(".claim-view").evaluate((v) => [v.scrollWidth, v.clientWidth]);
+    assert.ok(scroll <= client + 1, `the comparison stays inside the claim view (${scroll} > ${client})`);
+  });
+}
 
 // #74: findings at the paper and Lean clauses they explain, each through an alignment of its own
 // reading, attributed; what no alignment places stays on the whole claim. A proof step's finding
@@ -3458,6 +3612,50 @@ for (const width of [1300, 390]) {
     await pg.waitForFunction(() => decodeURIComponent(location.hash).endsWith("T:eq:bound-range"));
   });
 }
+
+// #544: a selected proof passage says which lines it was selected at; when they no longer hold
+// its text, it says so on its page and in its parent's list of steps, and where the text is now.
+await check("a proof passage whose lines changed says so, and where its text is now", 1300, async (pg) => {
+  const parentRow = TOY.claims.find((c) => c.id === "T:thm:bound");
+  const moved = { file: "toy.tex", start_line: 75, end_line: 78, sha256: "a".repeat(64), scheme: "tex-region-v1", matches: false, moved_to: { start_line: 77, end_line: 80 } };
+  await pg.route(`**/toy/data/claims/${stepRow.file}`, async (route) => {
+    const c = await (await route.fetch()).json();
+    route.fulfill({ json: { ...c, step: { ...c.step, unit: "proof-passage", passage: moved, review: { state: "stale", finding: null, reports: [] } } } });
+  });
+  await pg.route(`**/toy/data/claims/${parentRow.file}`, async (route) => {
+    const c = await (await route.fetch()).json();
+    route.fulfill({ json: { ...c, steps: c.steps.map((x) => x.id === "T:eq:bound-range" ? { ...x, unit: "proof-passage", review: "stale", passage: { file: "toy.tex", start_line: 75, end_line: 78, matches: false } } : x) } });
+  });
+  await toyClaim(pg, "T:eq:bound-range");
+  const finding = pg.locator(".claim-view .view .paper .finding");
+  assert.match(words(await finding.locator(".kind").textContent()), /^Passage of a proof of Theorem 2\.5, selected at toy\.tex:75–78$/);
+  assert.match(words(await finding.locator("[data-passage=changed]").textContent()), /no longer hold the text it was selected at, so no review of it counts until it is selected again; that text is now at toy\.tex:77–80\./);
+  assert.equal(await finding.getByRole("button").count(), 0, "a static copy offers no selection");
+  await toyClaim(pg, "T:thm:bound");
+  assert.match(words(await pg.locator(".claim-view .view .steps li").nth(1).textContent()), /its lines changed since it was selected/);
+});
+
+// #544: in the local reader, lines of a statement's proof are selected as a passage and sent as
+// `link --passage` sends them; a line of a step already selected cannot be chosen again.
+for (const width of [1300, 390]) await check("lines of a proof are selected as a passage in the local reader", width, async (pg) => {
+  await pg.goto(origin + `/pfedit/#/r/${PF.release}/claim/${encodeURIComponent("P:lem:sharp")}`);
+  const select = pg.locator("details.select");
+  await select.locator("summary").click();
+  const src = select.locator("ol.src");
+  await src.waitFor();
+  assert.equal(await src.locator("button.ln").count(), 6);
+  assert.ok(await src.locator("button[data-line='20']").isDisabled(), "the proof's opening line is not in a passage");
+  assert.ok(await src.locator("button[data-line='24']").isDisabled(), "a line of a selected step is taken");
+  assert.match(await src.locator("button[data-line='24']").textContent(), /Proof of Lemma 1, main\.tex:24/);
+  await src.locator("button[data-line='22']").click();
+  await src.locator("button[data-line='21']").click();
+  assert.equal(await src.locator("button.ln.on").count(), 2);
+  assert.match(words(await select.locator(".pick").textContent()), /^Lines 21–22 of main\.tex\./);
+  const sent = pfLinked.length;
+  await select.getByRole("button", { name: "Select as a proof passage" }).click();
+  assert.ok(await until(() => pfLinked.length > sent), "the selection is sent");
+  assert.deepEqual(pfLinked.at(-1), { key: "lem:sharp", passage: "main.tex:21-22" });
+});
 
 // A context the build holds only in part is drawn as partial, with where it was cut, in the step
 // view and on the review page; a whole context carries no such mark.
@@ -5063,6 +5261,80 @@ print("null")`, who);
       assert.doesNotMatch(await cmp.textContent(), /Computed hint|differ by 1/);
     });
   } finally { py.kill(); }
+}
+
+// #550: the main results each declaration's use is traced from, with who saved them, when, their
+// pins and their problems: read-only in a published audit; under `view`, added, removed and
+// cleared through the engine's `main-results` operation, its refusals shown in its words.
+const itemsOf = async (loc) => (await loc.locator("li").allTextContents()).map(words);
+for (const width of [1300, 390]) {
+  await check("a published audit's main results are shown, read-only", width, async (pg) => {
+    await pg.goto(origin + `/toymain/#/r/${TOY.release}/overview`);
+    const panel = pg.locator("section.mains");
+    const pub = panel.locator("[data-published]");
+    await pub.waitFor();
+    assert.match(words(await pub.locator("p").first().textContent()),
+      new RegExp(`^Saved in workspace ws-\\w+ by A Auditor \\(informed\\)\\. Saved by human:A-Auditor on \\S+, against release ${TOY.release}\\.$`));
+    assert.deepEqual(await itemsOf(pub), ["Theorem 2.5 (T:thm:bound) · stands for its linked Lean", "Toy.triangle · in Toy.Defs",
+      `T:thm:gone · no claim T:thm:gone in release ${TOY.release}`]);
+    assert.match(words(await pub.locator("[data-left-out]").textContent()), /^1 more not named: main results this published data cannot name/);
+    assert.equal(await panel.locator("input, select, button").count(), 0, "read-only");
+    if (width < 500) assert.ok(await pg.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), "no sideways scroll");
+    // The toy audit publishes none: no panel.
+    await pg.goto(origin + `/toy/#/r/${TOY.release}/overview`);
+    await pg.locator("main.coverage h1").waitFor();
+    assert.equal(await pg.locator("section.mains").count(), 0);
+  });
+
+  await check("under view the main results are edited through the engine, its refusals shown as it words them", width, async (pg) => {
+    saveMain([]);
+    await pg.goto(origin + `/mainedit/#/r/${TOY.release}/overview`);
+    const panel = pg.locator("section.mains");
+    await panel.locator("[data-suggested]").waitFor();
+    assert.equal(words(await panel.locator("[data-suggested]").textContent()),
+      "This workspace saves none; impact traces from the suggestion, the declarations linked to the paper's theorems.");
+    assert.deepEqual(await itemsOf(panel.locator(".entries")), ["Toy.Acceptance.thm_even_add · linked to Theorem 2.1 (T:thm:even-add)",
+      "Toy.Acceptance.thm_triangle · linked to Theorem 2.2 (T:thm:triangle)", "Toy.Acceptance.thm_bound · linked to Theorem 2.5 (T:thm:bound)"]);
+    const box = panel.getByRole("textbox", { name: "Main result to add" });
+    const add = panel.getByRole("button", { name: "Add", exact: true });
+    await box.fill("Theorem 2.5");
+    await add.click();
+    await panel.locator("[data-saved]").waitFor();
+    assert.match(words(await panel.locator("[data-saved]").textContent()), new RegExp(`^Saved by human:A-Auditor on \\S+, against release ${TOY.release}\\.$`));
+    assert.deepEqual(await itemsOf(panel.locator(".entries")), ["Theorem 2.5 (T:thm:bound) · its linked Lean: Toy.Acceptance.thm_bound Remove"]);
+    assert.equal(await box.inputValue(), "");
+    // A name the build cannot check is refused, in the engine's words, and nothing is saved.
+    await box.fill("No.Such.thing");
+    await add.click();
+    const alert = panel.getByRole("alert");
+    await alert.waitFor();
+    assert.equal(await alert.textContent(), `No.Such.thing is neither a claim of release ${TOY.release} nor a declaration of the project`);
+    assert.equal(await box.inputValue(), "No.Such.thing", "what was typed stays, to correct it");
+    assert.equal(await panel.locator(".entries li").count(), 1);
+    await box.fill("Toy.triangle");
+    await box.press("Enter");
+    await pg.waitForFunction(() => document.querySelectorAll("section.mains .entries li").length === 2);
+    assert.equal(await panel.getByRole("alert").count(), 0);
+    assert.deepEqual((await itemsOf(panel.locator(".entries")))[1], "Toy.triangle · in Toy.Defs Remove");
+    // Saved elsewhere meanwhile (a terminal): the reader saves nothing over it, and shows it.
+    saveMain(["Theorem 2.1"]);
+    await panel.getByRole("button", { name: "Remove Theorem 2.5 (T:thm:bound)" }).click();
+    await alert.waitFor();
+    assert.match(await alert.textContent(), /changed elsewhere .* Nothing was saved; they are shown now\.$/);
+    assert.deepEqual(await itemsOf(panel.locator(".entries")), ["Theorem 2.1 (T:thm:even-add) · its linked Lean: Toy.Acceptance.thm_even_add Remove"]);
+    assert.deepEqual(engineRoute(MAINWORK, "GET", "/api/main-results", "id=" + MAIN_WS)[1].selected, [{ claim: "T:thm:even-add" }]);
+    // Removing one saves the others; Clear removes them all, and the suggestion is traced again.
+    await box.fill("Toy.triangle");
+    await add.click();
+    await pg.waitForFunction(() => document.querySelectorAll("section.mains .entries li").length === 2);
+    await panel.getByRole("button", { name: "Remove Theorem 2.1 (T:thm:even-add)" }).click();
+    await pg.waitForFunction(() => document.querySelectorAll("section.mains .entries li").length === 1);
+    assert.deepEqual(engineRoute(MAINWORK, "GET", "/api/main-results", "id=" + MAIN_WS)[1].selected, [{ decl: "Toy.triangle", module: "Toy.Defs", build: "built" }]);
+    await panel.getByRole("button", { name: "Clear" }).click();
+    await panel.locator("[data-suggested]").waitFor();
+    assert.equal(engineRoute(MAINWORK, "GET", "/api/main-results", "id=" + MAIN_WS)[1].basis, "suggested");
+    if (width < 500) assert.ok(await pg.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), "no sideways scroll");
+  });
 }
 
 await browser.close();
