@@ -3,9 +3,11 @@
 
 Synthetic declarations under the names Mathlib gives them, each with the explicit arguments
 Mathlib's has, so that the probe reads a statement written with them as it reads one written
-with Mathlib's: real numbers, sets, σ-algebras, measures, almost everywhere, classes of functions
-equal almost everywhere and their representatives, square-integrable classes, Euclidean spaces
-and linear isometries. They model nothing beyond their shapes; the predicates hold trivially.
+with Mathlib's: real numbers, sets, topologies, σ-algebras, measurable and strongly measurable
+functions (with Mathlib's notation for a σ-algebra other than the instance), measures, almost
+everywhere, classes of functions equal almost everywhere and their representatives,
+square-integrable classes, Euclidean spaces and linear isometries. They model nothing beyond
+their shapes; the predicates hold trivially.
 -/
 
 universe u v w
@@ -55,6 +57,35 @@ class MeasurableSpace (α : Type u) where
 
 instance {α β : Type u} [MeasurableSpace α] [MeasurableSpace β] : MeasurableSpace (α × β) :=
   ⟨fun _ => True, trivial, fun _ _ => trivial⟩
+
+instance : MeasurableSpace Real := ⟨fun _ => True, trivial, fun _ _ => trivial⟩
+
+/-- A topology on `α`: the sets called open. -/
+class TopologicalSpace (α : Type u) where
+  /-- The open sets. -/
+  IsOpen : Set α → Prop
+
+instance : TopologicalSpace Real := ⟨fun _ => True⟩
+
+/-- `f` is measurable (a stand-in): the preimage of a measurable set is measurable. -/
+def Measurable {α : Type u} {β : Type v} [MeasurableSpace α] [MeasurableSpace β] (f : α → β) :
+    Prop :=
+  True
+
+namespace MeasureTheory
+
+/-- Measurability for the σ-algebra `m` on the domain. -/
+scoped notation "Measurable[" m "]" => @Measurable _ _ m _
+
+/-- `f` is strongly measurable (a stand-in): a limit of simple functions. -/
+def StronglyMeasurable {α : Type u} {β : Type v} [TopologicalSpace β] [MeasurableSpace α]
+    (f : α → β) : Prop :=
+  True
+
+/-- Strong measurability for the σ-algebra `m`. -/
+scoped notation "StronglyMeasurable[" m "]" => @MeasureTheory.StronglyMeasurable _ _ _ m
+
+end MeasureTheory
 
 /-- A filter on `α` (a stand-in). -/
 structure Filter (α : Type u) where

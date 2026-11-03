@@ -92,8 +92,11 @@ export function layout(m) {
       return { prec: APP, pieces: [m.op + "(", ...join(a, ", ", BIND), ")"] };
     }
     case "apply": {
-      if (!a.length) return { prec: ATOM, pieces: [{ ref: m.name, t: short(m.name) }] };
-      return { prec: APP, pieces: [{ ref: m.name, t: short(m.name) }, "(", ...join(a, ", ", BIND), ")"] };
+      // Instance arguments a reader must see follow the name in brackets, as Mathlib's notation
+      // writes them (`StronglyMeasurable[m](f)`).
+      const inst = m.instances?.length ? ["[", ...join(m.instances, ", ", BIND), "]"] : [];
+      if (!a.length) return { prec: ATOM, pieces: [{ ref: m.name, t: short(m.name) }, ...inst] };
+      return { prec: APP, pieces: [{ ref: m.name, t: short(m.name) }, ...inst, "(", ...join(a, ", ", BIND), ")"] };
     }
     case "app": return { prec: APP, pieces: [n(m.fn, APP), "(", ...join(a, ", ", BIND), ")"] };
     case "map_apply": return { prec: APP, pieces: [n(m.map, APP), "(", ...join(a, ", ", BIND), ")"] };
