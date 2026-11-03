@@ -1796,7 +1796,7 @@ def cmd_review_promote(a):
 
 
 INVENTORY = {"regions": "source_regions", "repin": "repin", "rebound": "rebound",
-             "retire": "retire"}
+             "retire": "retire", "notation": "notation_plan"}
 
 
 def cmd_inventory(a):
@@ -2191,7 +2191,8 @@ def _add_inventory(sub) -> None:
         description="regions: hash line pins as regions at the revision they were pinned at "
         "(docs/SOURCE_REGIONS.md); rebound: change the bounds of claims' regions there; repin: "
         "move the claims to a new revision of the paper; retire: remove the readings review markers "
-        "record of passages that no longer use their declaration. "
+        "record of passages that no longer use their declaration; notation: report the readings "
+        "a change to notation_macros would reopen (it writes nothing). "
         "Each prints a plan, and changes files only with --write; pass --help after the action "
         "for its options.")
     iv.add_argument("action", choices=sorted(INVENTORY))

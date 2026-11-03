@@ -64,7 +64,9 @@ passage of its own.
   is unchanged stands. When the passage uses notation macros the configuration lists
   (`notation_macros`), the digest also covers their definitions, so a changed definition
   reopens the reading too, and a reading that did not record them does not count
-  ([notation macros](SOURCE_REGIONS.md#notation-macros)). A definition's review in the closure of a statement must have read the
+  ([notation macros](SOURCE_REGIONS.md#notation-macros)): listing a macro reopens every
+  reading of a passage that uses it, and `machinechecked inventory notation` lists them before
+  the change. A definition's review in the closure of a statement must have read the
   current passage of every claim that names the definition, in one reading: readings of the
   passages made in separate reviews do not combine, and the finding names the marker that read
   each. A definition claim's review is the last marker at the definition's current hash that
