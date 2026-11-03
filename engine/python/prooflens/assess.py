@@ -1046,8 +1046,10 @@ class Assessor:
         (with the statement's as `statement_fingerprint`), and its id ends in `@` and that
         position. A dismissal naming `at` and an application's fingerprint dismisses that
         application only: the one at `at` when its fingerprint matches, otherwise the one
-        application with that fingerprint (it moved), and it lapses when the application at `at`
-        changes. A dismissal without `at` (the form before applications were read one by one)
+        application with that fingerprint (it moved). It lapses when the application at `at`
+        changes and it follows no application, and the warning at `at` is then marked
+        `dismissal_stale` unless a dismissal of its own matches it. A dismissal without `at`
+        (the form before applications were read one by one)
         dismisses every warning of its operation in the statement while the statement's
         fingerprint matches, and says so (`dismissed.form`: `statement`)."""
         fp = srec.get("fingerprint")
@@ -1063,7 +1065,11 @@ class Assessor:
             if d["at"] in same:
                 targets[(d["trigger"], d["at"])] = ("dismissed", d)
             elif len(same) == 1:
-                targets.setdefault((d["trigger"], same[0]), ("dismissed", d))
+                # It follows its application, which moved there: a lapsed dismissal given at that
+                # position does not override it, and its own old position is not marked stale.
+                if targets.get((d["trigger"], same[0]), ("stale",))[0] == "stale":
+                    targets[(d["trigger"], same[0])] = ("dismissed", d)
+                continue
             if d["at"] not in same and any(a == d["at"] for a, _ in here):
                 targets.setdefault((d["trigger"], d["at"]), ("stale", d))
         for i in items:
@@ -1094,27 +1100,32 @@ class Assessor:
                 f["dismissal_stale"] = True
 
     def add_warning(self, code, subj, name, rec, message, trigger, fingerprint=None,
-                    legacy_only=False, **extra):
+                    legacy_only=False, reported=(), **extra):
         """A warning, dismissed by a dismissal of its code, subject (`name`) and trigger whose
-        fingerprint is the subject's current one (`rec`'s), and marked `dismissal_stale` when
-        such a dismissal's fingerprint is another. The finding records `fingerprint` when given
-        (what a dismissal of it records) and `rec`'s otherwise. With `legacy_only`, only
-        dismissals without `at` are considered here, and one that applies is marked as naming
-        the whole statement (`form`: `statement`)."""
+        fingerprint is the subject's current one (`rec`'s). A warning no dismissal matches is
+        marked `dismissal_stale` when such a dismissal has another fingerprint that is not in
+        `reported`, the fingerprints of the other warnings of this code, subject and trigger
+        that the assessment reports: a dismissal of one of those is that warning's, not a
+        lapsed dismissal of this one. The finding records `fingerprint` when given (what a
+        dismissal of it records) and `rec`'s otherwise. With `legacy_only`, only dismissals
+        without `at` are considered here, and one that applies is marked as naming the whole
+        statement (`form`: `statement`)."""
         fp = rec.get("fingerprint")
         f = _finding("warning", code, subj, message, trigger=trigger,
                      fingerprint=fingerprint or fp,
                      signal="low" if trigger in LOW_SIGNAL else "normal", **extra)
-        for d in self.dismissals:
-            if d.get("code") == code and d.get("subject") == name and d.get("trigger") == trigger:
-                if "at" in d and (legacy_only or code == "totalised"):
-                    continue
-                if d.get("fingerprint") == fp:
-                    f["dismissed"] = {"rationale": d.get("rationale", ""), "by": d.get("by", "")}
-                    if legacy_only:
-                        f["dismissed"]["form"] = "statement"
-                else:
-                    f["dismissal_stale"] = True
+        same = [d for d in self.dismissals
+                if d.get("code") == code and d.get("subject") == name
+                and d.get("trigger") == trigger
+                and not ("at" in d and (legacy_only or code == "totalised"))]
+        hits = [d for d in same if d.get("fingerprint") == fp]
+        if hits:
+            f["dismissed"] = {"rationale": hits[-1].get("rationale", ""),
+                              "by": hits[-1].get("by", "")}
+            if legacy_only:
+                f["dismissed"]["form"] = "statement"
+        elif any(d.get("fingerprint") not in reported for d in same):
+            f["dismissal_stale"] = True
         self.findings.append(f)
 
     # -- claims ---------------------------------------------------------------------------
@@ -1342,10 +1353,14 @@ class Assessor:
             plain = [d for d in docs if d.get("kind", "none") == "none"]
             found = {id(d) for d in plain} - {id(d) for d in undeclared_doc_names(plain, lean_root)}
             docs = [d for d in docs if id(d) not in found]
-        for d in docs:
-            self.add_warning("module-doc-name", d["module"], d["module"],
-                             {"fingerprint": stale_doc_fingerprint(d)},
-                             stale_doc_message(d), d["name"])
+        # A name under two headings of one docstring is two warnings with two fingerprints; a
+        # dismissal of one is not a lapsed dismissal of the other.
+        fps = [stale_doc_fingerprint(d) for d in docs]
+        for d, fp in zip(docs, fps):
+            reported = {g for e, g in zip(docs, fps)
+                        if (e["module"], e["name"]) == (d["module"], d["name"])}
+            self.add_warning("module-doc-name", d["module"], d["module"], {"fingerprint": fp},
+                             stale_doc_message(d), d["name"], reported=reported)
             self.findings[-1].update(file=d["file"], line=d["line"])
 
     def review_citation_checks(self):
