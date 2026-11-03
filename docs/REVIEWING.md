@@ -448,6 +448,20 @@ auditor whose alignment gives them. They change no status or review record, the 
 does not count them, a published audit does not carry them, and the stages of an independent
 review show none.
 
+**Computed hints of quantifier order.** Once your requirements' variables are aligned with Lean
+variables (`binds` with a `var` target, or a symbol link), the reading compares the order in
+which each is chosen. The paper's order is your reading's, as the estimate shows it: a "there is"
+may depend on what is chosen before it, unless it is stated independent of it. The Lean's is the
+scope in its statement: a "there is" may depend on every variable bound around it, whatever its
+type mentions. A `quantifier order` hint points out `∃ C, ∀ n` against `∀ n, ∃ C` in either
+direction, and a domain chosen once before every stage against one chosen per stage (feature
+`constant dependence` when you stated the independence, else `quantifier order`); a
+`quantifier` hint points out a variable one side produces and the other takes as given. A
+variable the Lean binds inside a hypothesis, a negation or an alternative, and a variable of
+such a pair that no alignment matches, give `not compared`. Agreeing orders give none. Each hint
+is shown beside the row of the witness's alignment, and is dismissed as the others are
+(`"hint": {"alignment": ID, "kind": "quantifier order"}`).
+
 In the reader, **Align with the Lean** offers the mathematics of the passages that govern the
 alignment (the inside of each `$…$` or display, and each side of a relation in it) to pick as
 the **Paper expression**, which you can then trim. When the comparison's rows follow your

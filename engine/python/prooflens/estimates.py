@@ -337,12 +337,13 @@ def resolution_text(dv: dict) -> str | None:
 def hint_ref(h) -> dict:
     """The computed hint a difference settles (`hint`): `{decl, binder}`, a hypothesis no
     requirement is aligned with, or `{alignment, kind}`, a hint an alignment's paper expression
-    gives (`EXPRESSION_HINTS`), as the reading lists them."""
+    gives (`EXPRESSION_HINTS`) or the order of its variables (`ORDER_HINTS`), as the reading
+    lists them."""
     if isinstance(h, dict) and "alignment" in h:
         if set(h) - {"alignment", "kind"} or not isinstance(h["alignment"], str) or \
-                h.get("kind") not in EXPRESSION_HINTS:
+                h.get("kind") not in ALIGNMENT_HINTS:
             raise _err("a hint of an alignment is {alignment, kind}, `kind` one of "
-                       + ", ".join(EXPRESSION_HINTS) + ", as the reading lists it")
+                       + ", ".join(ALIGNMENT_HINTS) + ", as the reading lists it")
         return {"alignment": h["alignment"], "kind": h["kind"]}
     if not isinstance(h, dict) or not isinstance(h.get("decl"), str) or \
             type(h.get("binder")) is not int:
@@ -984,6 +985,9 @@ def specialisations(ob: dict) -> list[dict]:
 # The hints an alignment's paper expression gives (`expression_hints`), which a difference
 # settles by naming `{alignment, kind}`.
 EXPRESSION_HINTS = ("offset", "coefficient", "power", "terms", "not compared")
+# The hints the order of the claim's aligned variables gives (`order_hints`).
+ORDER_HINTS = ("quantifier order", "quantifier")
+ALIGNMENT_HINTS = (*EXPRESSION_HINTS, *ORDER_HINTS)
 
 
 def _settling(records: list[dict]) -> dict[tuple, dict]:
@@ -1063,7 +1067,8 @@ def hints(records: list[dict], snap, claim: str) -> tuple[list[dict], list[dict]
                         "text": f"{decl} assumes {lean}; no requirement of this reading is "
                                 "aligned with it",
                         **_settled(settled.get((decl, i)))})
-    for h in expression_hints(records, snap, claim, statements):
+    for h in [*expression_hints(records, snap, claim, statements),
+              *order_hints(records, snap, claim, statements)]:
         out.append({**h, **_settled(settled.get((h["alignment"], h["kind"])))})
     return out, inherited
 
@@ -1075,7 +1080,8 @@ def variable_pairs(records: list[dict], snap, claim: str,
     variable that hold and take every occurrence of their symbol. An alignment of several
     variables with several Lean variables matches those of the same name only. A paper variable
     matched with two variables of one declaration is matched with neither (`ambiguous`).
-    `{decl: {name key: {lean, name, paper, via} | {ambiguous: [names]}}}`."""
+    `{decl: {name key: {lean, name, paper, via, alignment} | {ambiguous: [names]}}}`, with
+    `alignment` the alignment that matched them (null for a symbol link)."""
     from . import expressions as ex
     from . import symbols
     reqs = {r["local_id"]: r for r in records if r.get("kind") == "requirement"}
@@ -1085,11 +1091,11 @@ def variable_pairs(records: list[dict], snap, claim: str,
         st = statements.get(decl)
         return [(v or {}).get("name") for v in symbols.variables(st)] if st else []
 
-    def add(decl, paper, i, via):
+    def add(decl, paper, i, via, aid=None):
         names = names_of(decl)
         found.setdefault(decl, {}).setdefault(ex.name_key(paper), []).append(
             {"lean": f"v:{i}", "name": (names[i] if i < len(names) else None) or f"#{i}",
-             "paper": ex.name_key(paper), "via": via})
+             "paper": ex.name_key(paper), "via": via, "alignment": aid})
 
     for a in sorted((r for r in records if r.get("kind") == "alignment"),
                     key=lambda r: (r.get("created_at") or "", r["id"])):
@@ -1102,14 +1108,14 @@ def variable_pairs(records: list[dict], snap, claim: str,
         for decl, idx in by_decl.items():
             idx = list(dict.fromkeys(idx))
             if len(binds) == 1 and len(idx) == 1:
-                add(decl, binds[0], idx[0], f"alignment {a['id']}")
+                add(decl, binds[0], idx[0], f"alignment {a['id']}", a["id"])
                 continue
             names = names_of(decl)
             for b in binds:
                 same = [i for i in idx if i < len(names) and
                         ex.name_key(names[i] or "") == ex.name_key(b)]
                 if len(same) == 1:
-                    add(decl, b, same[0], f"alignment {a['id']}")
+                    add(decl, b, same[0], f"alignment {a['id']}", a["id"])
     for ln in (snap.chunk(claim) or {}).get("symbols") or []:
         t, sym = ln.get("lean") or {}, ln.get("symbol") or {}
         if ln.get("stale") or type(t.get("var")) is not int or not sym.get("tex") or \
@@ -1286,6 +1292,147 @@ def expression_hints(records: list[dict], snap, claim: str,
             if res["outcome"] == "same":
                 continue
             out.append(_hint(a, t, res, pairs.get(t["decl"]) or {}))
+    return out
+
+
+CHOOSES = {"for every": "takes {v} as given (for every {v})",
+           "there is": "produces {v} (there is {v})"}
+LEAN_CHOOSES = {"given": "takes {v} as given (for every {v})",
+                "produced": "produces {v} (there is {v})"}
+SCOPE_WORDS = {"assumed": "inside a hypothesis or a premise", "denied": "inside a negation",
+               "alternative": "inside one alternative", "equivalent": "inside an equivalence"}
+
+
+def order_hints(records: list[dict], snap, claim: str,
+                statements: dict[str, dict]) -> list[dict]:
+    """Hints from the order in which the claim's aligned variables are chosen. The paper's order
+    is each reading's (`obligation`, for every requirement with nothing inside it): a constant or
+    witness (`there is`) may depend on the variables chosen before it, unless it is stated
+    independent of them. The Lean's is the scope in its statement's tree (`symbols.scopes`): a
+    "there is" may depend on every variable bound around it, whatever its type mentions. For each
+    paper variable matched with a Lean variable (`variable_pairs`): a `quantifier` hint when one
+    side produces it and the other takes it as given; for each "there is" and "for every" both
+    matched, a `quantifier order` hint when the paper lets the one depend on the other and the
+    Lean does not, or the other way round (`∃ C ∀ n` against `∀ n ∃ C`; a domain chosen once
+    before every stage against one chosen per stage). A variable the Lean binds inside a
+    hypothesis, a negation, an alternative or an equivalence, and a variable of such a pair that
+    is matched with none, give `not compared`. Agreeing orders give none."""
+    from . import expressions as ex
+    from . import symbols
+    reqs = [r for r in records if r.get("kind") == "requirement"]
+    pairs = variable_pairs(records, snap, claim, statements)
+    if not reqs or not pairs:
+        return []
+    inner = {r.get("parent") for r in reqs}
+    orders = [o["order"] for o in (obligation(records, r["local_id"]) for r in
+                                   sorted(reqs, key=lambda r: _natural(r["local_id"]))
+                                   if r["local_id"] not in inner and r.get("origin") != "correction")
+              if o and o["order"]]
+    out, seen = [], set()
+    for decl in sorted(pairs):
+        st = statements.get(decl)
+        if not st:
+            continue
+        sc, m = symbols.scopes(st), pairs[decl]
+
+        def lean(e):
+            p = m.get(ex.name_key(e["var"]))
+            return p if p and "lean" in p else None
+
+        def said(x):
+            """A Lean variable as the Lean binds it."""
+            p = lean(x)
+            s = sc.get(int(p["lean"][2:])) if p else None
+            if not s:
+                return "(aligned with none)" if p is None else p["name"]
+            return ("there is " if s["scope"] == "produced" else "for every " if
+                    s["scope"] == "given" else "") + p["name"]
+
+        def hint(kind, xs, text, lean_text, **more):
+            """A hint about the paper variables `xs` (in the paper's order) of one reading."""
+            key = (kind, decl, *(x["var"] for x in xs))
+            if key in seen:
+                return
+            seen.add(key)
+            ps = [lean(x) for x in xs]
+            on = next(p for p in ps if p)
+            aid = next((p["alignment"] for p in ps if p and p.get("alignment")), None)
+            out.append({"kind": kind, "basis": "computed hint", "alignment": aid,
+                        "requirements": list(dict.fromkeys(r for x in xs
+                                                           for r in x["requirements"])),
+                        "decl": decl, "target": {"decl": decl, "var": int(on["lean"][2:])},
+                        "paper": {"text": "; ".join(f"{x['quantifier']} {x['var']}" for x in xs),
+                                  "order": [x["var"] for x in xs]},
+                        "lean": {"text": lean_text},
+                        "variables": [{"paper": p["paper"], "lean": p["name"], "via": p["via"]}
+                                      for p in ps if p],
+                        **more, "text": text})
+
+        def comparable(e):
+            """The number of the Lean variable of the paper's `e` when the order can be compared:
+            matched, and bound by a "for every" or a "there is" with the paper's quantifier that
+            stands outside every hypothesis, negation, alternative and equivalence."""
+            p = lean(e)
+            s = sc.get(int(p["lean"][2:])) if p else None
+            if s is None:
+                return None
+            if s["scope"] not in ("given", "produced"):
+                where = f"{decl} binds {p['name']} {SCOPE_WORDS.get(s['scope'], s['scope'])}"
+                hint("not compared", [e], f"The paper's {e['var']} and Lean's {p['name']} are "
+                     f"not compared: {where}.", p["name"], reason=where)
+                return None
+            if (e["quantifier"] == "there is") != (s["scope"] == "produced"):
+                hint("quantifier", [e],
+                     f"The paper {CHOOSES[e['quantifier']].format(v=e['var'])}; {decl} "
+                     f"{LEAN_CHOOSES[s['scope']].format(v=p['name'])}.", said(e),
+                     feature="quantifier order")
+                return None
+            return int(p["lean"][2:])
+
+        for order in orders:
+            for i, a in enumerate(order):
+                comparable(a)
+                for b in order[i + 1:]:
+                    if a["quantifier"] == b["quantifier"]:
+                        continue
+                    e, u = (a, b) if a["quantifier"] == "there is" else (b, a)
+                    unmatched = [x for x in (e, u) if lean(x) is None]
+                    if len(unmatched) == 1:
+                        x = unmatched[0]
+                        why = (f"the paper's {x['var']} is aligned with "
+                               + ("more than one variable" if m.get(ex.name_key(x["var"]))
+                                  else "no variable") + f" of {decl}")
+                        hint("not compared", [a, b], f"The order of the paper's {a['var']} and "
+                             f"{b['var']} is not compared with {decl}: {why}.",
+                             "; ".join(said(x) for x in (a, b)), reason=why)
+                        continue
+                    if unmatched:
+                        continue
+                    ie, iu = comparable(e), comparable(u)
+                    if ie is None or iu is None:
+                        continue
+                    paper_dep = u["var"] in (e.get("may_depend_on") or [])
+                    lean_dep = iu in sc[ie]["after"]
+                    if paper_dep == lean_dep:
+                        continue
+                    ne, nu = lean(e)["name"], lean(u)["name"]
+                    stated = u["var"] in (e.get("independent_of") or [])
+                    if paper_dep:
+                        text = (f"The paper chooses {e['var']} after {u['var']}, so {e['var']} "
+                                f"may depend on {u['var']}; in {decl}, {ne} is chosen before "
+                                f"{nu} and may not depend on it: Lean's {ne} is one for every "
+                                f"{nu}.")
+                    else:
+                        text = (f"The paper chooses {e['var']} before {u['var']}, so "
+                                f"{e['var']} may not depend on {u['var']}"
+                                + (" (stated independent of it)" if stated else "")
+                                + f"; in {decl}, {ne} is chosen after {nu} and may depend on "
+                                "it, whatever its type mentions.")
+                    hint("quantifier order", [u, e] if paper_dep else [e, u], text,
+                         f"for every {nu}; there is {ne}" if lean_dep
+                         else f"there is {ne}; for every {nu}",
+                         feature="constant dependence" if stated else "quantifier order",
+                         dependence={"paper": paper_dep, "lean": lean_dep})
     return out
 
 

@@ -143,6 +143,39 @@ def variables(spec: dict) -> list[dict]:
     return out
 
 
+DECIDED = {"not": "denied", "or": "alternative", "iff": "equivalent"}
+
+
+def scopes(spec: dict) -> dict[int, dict]:
+    """Each variable a "for every" or "there is" of the statement's tree binds, by number: its
+    quantifier (`op`), how it stands (`scope`: `given` for a "for every" outside every
+    hypothesis, premise, negation, alternative and equivalence, `produced` for such a "there
+    is"; otherwise `assumed`, `denied`, `alternative` or `equivalent`), its `name`, and the
+    variables bound around it (`after`, by number: what it may depend on, whatever its type
+    mentions). A record of an earlier probe without them has them read off the tree's nesting."""
+    out: dict[int, dict] = {}
+
+    def walk(n, around: list[int], decided: str | None):
+        if not isinstance(n, dict):
+            return
+        op, v = n.get("op"), n.get("var")
+        args = n.get("args") or []
+        if op in ("forall", "exists") and isinstance(v, int):
+            after = n.get("after")
+            out.setdefault(v, {"op": op, "name": n.get("name"),
+                               "scope": n.get("scope") or decided
+                               or ("produced" if op == "exists" else "given"),
+                               "after": list(after) if isinstance(after, list) else list(around)})
+            around = [*around, v]
+        # What a hypothesis states, and the premise of an implication, is assumed.
+        walk(n.get("logic"), around, decided or "assumed")
+        for k, a in enumerate(args):
+            here = decided or DECIDED.get(op) or ("assumed" if op == "implies" and k == 0 else None)
+            walk(a, around, here)
+    walk(tree(spec), [], None)
+    return out
+
+
 def _term_pp(spec: dict, where: str) -> dict | None:
     """The pretty-printed term a sub-term's place names: `b:<i>` a binder's type, `x:<i>` the
     type of the i-th variable (one bound inside the conclusion included), `c` the conclusion,
