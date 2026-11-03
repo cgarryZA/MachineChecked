@@ -1499,8 +1499,10 @@ def api(work_dir: Path, data_dir: Path, root: Path | None = None) -> tuple[dict,
     """The routes `machinechecked view`'s local server answers for the reader: GET
     `/api/workspaces` (the list), `/api/workspace?id=&claim=` (one, as `view` gives it) and
     `/api/workspace/export?id=`, `/api/workspace/revision?id=` (the findings the version maps
-    it keeps reopen, `reopen.for_site`), `/api/main-use` (how the main results use each link,
-    traced now from the stored references, `impact.site_link_uses`), and
+    it keeps reopen, `reopen.for_site`), `/api/main-results?id=` (the main results the workspace
+    saves, or the suggestion, as `impact.workspace_selection` gives them, with this build's
+    release and project commit), `/api/main-use` (how the main results use each link, traced
+    now from the stored references, `impact.site_link_uses`) and
     `/api/proof-facts?name=&match=&after=&in=` (a page
     of the facts inside one proof, as `compare --query proof-facts` gives them); POST
     `/api/workspace` with `action`
@@ -1583,6 +1585,21 @@ def api(work_dir: Path, data_dir: Path, root: Path | None = None) -> tuple[dict,
         ws, s = read(find(work_dir, (q.get("id") or [""])[0])), snap()
         return for_site(ws, s, root, work_dir, view=view(ws, s, None, root))
 
+    def main_results(q):
+        # What `compare --query impact` traces from for this workspace: its saved main results
+        # or the suggestion; the reader edits them with the `main-results` operation.
+        from .compare import Site
+        from .impact import workspace_selection
+        s = snap()
+        if s is None:
+            raise WorkspaceError("main results are checked against a build: run `machinechecked "
+                                 "view` or `build` first")
+        ws = read(find(work_dir, (q.get("id") or [""])[0]))
+        src = s.sources()
+        return {**workspace_selection(Site(data_dir), ws, root),
+                "build": {"release": src.get("release"),
+                          "commit": (src.get("project") or {}).get("commit")}}
+
     def main_use(q):
         # Traced now, so that a selection saved since the build is the one it follows.
         from .impact import site_link_uses
@@ -1590,6 +1607,7 @@ def api(work_dir: Path, data_dir: Path, root: Path | None = None) -> tuple[dict,
 
     get = {"/api/workspaces": lambda q: {"workspaces": [summary(ws) for _, ws in
                                                         list_all(work_dir)]},
+           "/api/main-results": main_results,
            "/api/main-use": main_use,
            "/api/proof-facts": facts,
            "/api/workspace": one,

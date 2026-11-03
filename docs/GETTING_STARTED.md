@@ -165,8 +165,8 @@ reads one declaration's applications with their contexts.
 NAME from each main result of the paper. The main results are the declarations linked to the
 paper's theorems, shown as a suggestion. `machinechecked workspace main "Theorem 1" [NAME...]`
 saves your own choice in your workspace (a claim, for its linked declarations, or a declaration),
-and the answer then says whose choice it traces from and the project commit it was saved
-against; `--main` chooses them for one query. Each main result has its own answer: *used
+as does the **Main results** panel of the reader's Overview under `machinechecked view`, and the
+answer then says whose choice it traces from and the project commit it was saved against; `--main` chooses them for one query. Each main result has its own answer: *used
 by its proof*, *in its statement only*, *formalized separately: not used by this main result*,
 or *not traced*. A use comes with the shortest path of Lean references from the main result to
 NAME, direct or through other declarations, and with the applications of NAME at the end of a
