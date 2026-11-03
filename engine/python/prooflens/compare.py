@@ -535,8 +535,8 @@ def _withheld(stage: str) -> list[dict]:
         out.append({"section": "lean", "reason": "the Lean is shown after the reading is locked"})
     if stage in ("read", "compare"):
         out.append({"section": "interpretations", "reason": "correspondence notes, reviews, "
-                    "symbol links, statuses and recorded requirements are shown after the "
-                    "verdict"})
+                    "symbol links, statuses, recorded requirements and connections between "
+                    "objects are shown after the verdict"})
     return out
 
 
@@ -571,7 +571,8 @@ def claim_packet(site: Site, claim: str, stage: str = "informed", limit: int | N
     """The comparison packet of one claim: its passage, its linked declarations (and, from
     the compare stage, unconfirmed suggestions as candidates) and the definitions they use.
     `reading` is a workspace's reading of the claim (`requirements.reading`, with that
-    workspace's `compositions`), included at the informed stage only."""
+    workspace's `compositions` and `connections`, `workspace_reading`), included at the informed
+    stage only."""
     cid = site.resolve_claim(claim)
     ch = site.chunk(cid)
     if ch is None:
@@ -608,11 +609,36 @@ def claim_packet(site: Site, claim: str, stage: str = "informed", limit: int | N
         if reading is not None:
             reading = dict(reading)
             out["interpretations"]["compositions"] = reading.pop("compositions", [])
+            out["interpretations"]["connections"] = reading.pop("connections", [])
             out["interpretations"]["derivations"] = reading.pop("derivations", [])
             out["interpretations"]["requirements"] = reading
         sections.append("interpretations")
     out["retrieval"] = _retrieval(stage, sections, page)
     return out
+
+
+def workspace_reading(site: Site, work: Path, wid: str, claim: str,
+                      root: Path | None = None) -> dict:
+    """A workspace's reading of a claim, as `claim_packet` takes it: its requirements, witnesses,
+    alignments and questions, its compositions, its connections between objects and the
+    results it cites for objects, each as `workspace show` gives them."""
+    from . import workspace as wsp
+    from .connections import records
+    from .objects import derivations
+    from .targets import Snapshot
+    cid = site.resolve_claim(claim)
+    try:
+        ws = wsp.read(wsp.find(work, wid))
+    except wsp.WorkspaceError as e:
+        raise CompareError(str(e), "unknown-workspace") from None
+    v = wsp.view(ws, Snapshot(work / "site" / "data"), cid, root)
+    c = v["claims"].get(cid) or {}
+    return {"workspace": ws["id"], "reviewer": v["reviewer"], "mode": v["mode"],
+            **(c.get("reading") or {"requirements": [], "witnesses": [], "alignments": [],
+                                    "questions": []}),
+            "compositions": c.get("compositions") or [],
+            "connections": records(c.get("evidence")),
+            "derivations": derivations(c.get("evidence"))}
 
 
 def unit_packet(site: Site, unit: dict, stage: str) -> dict:
@@ -755,6 +781,8 @@ QUERIES = {
                    "cases (Lean reads the proof once; the answer is cached)",
     "composition": "the auditors' compositions for a claim: the steps, the results each rests "
                    "on, substitutions, identifications, obligations and any Lean bridge",
+    "connections": "the auditors' connections between objects for a claim: each relation with "
+                   "its ends, scope, conditions and support, and whether it is current",
     "impact": "how each main result uses a declaration (the path from its proof or its "
               "statement, and the applications at the end), and which claims' Lean uses it",
     "expansion": "a definition at the arguments of one application, by the key a statement, a "
@@ -874,6 +902,22 @@ def query(site: Site, op: str, target: str, limit: int | None = None, after: str
                                   "no status"}
         prov = ("the workspaces of the working directory; a bridge's check from the facts store "
                 "(`workspace show` asks Lean again)")
+    elif op == "connections":
+        from . import connections as cn
+        from .targets import Snapshot, TargetError
+        from .workspace import WorkspaceError
+        cid = site.resolve_claim(target)
+        try:
+            results = cn.query(site.data.parent.parent, Snapshot(site.data), cid, root,
+                               workspace)
+        except (WorkspaceError, TargetError) as e:
+            raise CompareError(str(e), "unknown-workspace") from None
+        out["subject"] = {"claim": cid, "contains": ["prior interpretations"],
+                          "note": "a connection is an auditor's record of how two objects are "
+                                  "related, resting on the support it names; it changes no "
+                                  "status"}
+        prov = ("the workspaces of the working directory; each connection checked against the "
+                "build (applications and facts from the facts store)")
     elif op == "proof-facts":
         if root is None:
             raise CompareError("`proof-facts` needs the Lean project", "no-project")
@@ -1329,6 +1373,11 @@ def packet_text(pk: dict) -> str:
         from .composition import lines as composition_lines
         out.append("\n".join(["Compositions recorded in that workspace"]
                               + [x for c in comps for x in composition_lines(c)]))
+    conns = (pk.get("interpretations") or {}).get("connections") or []
+    if conns:
+        from .connections import lines as connection_lines
+        out.append("\n".join(["Connections between objects recorded in that workspace"]
+                              + [x for c in conns for x in connection_lines(c)]))
     if pk["paper"].get("note"):
         out.insert(0, pk["paper"]["note"])
     lean = pk.get("lean")

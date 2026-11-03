@@ -18,6 +18,7 @@ import "./coverage.test.mjs";
 import "./retrieval.test.mjs";
 import "./comparison.test.mjs";
 import "./findings.test.mjs";
+import "./connections.test.mjs";
 import "./names.test.mjs";
 import "./workfile.test.mjs";
 import { chromium } from "playwright";

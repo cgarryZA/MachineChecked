@@ -16,7 +16,10 @@ specialisation and reduction) only when reviews are; a record names the prose fi
 out (`withheld`), never their words. A difference shows its paper expression when
 the source text is published and its Lean expression when the Lean is. A cited fact
 inside a proof keeps its basis, "established inside this proof under this context", and its
-pins; its proposition and context are Lean text. Its currency, and that of a cited application
+pins; its proposition and context are Lean text. A connection between two objects keeps its
+relation, its ends and its support by identity and pins; the Lean text of its ends, its scope
+(domain, filter, equivalence, field, preserved property) and its conditions only when the Lean is
+published. Its currency, and that of a cited application
 or certificate, is checked against the Lean project the export was built from, asking Lean when
 the facts store has no answer; it is `unchecked` without that project or when Lean could not
 look (a module not built, a failed request). A composition keeps its structure
@@ -132,6 +135,13 @@ def _changes(changes: list[dict], pub) -> list[dict]:
             c.pop("now", None)
             c["reason"] = (f"{c.get('decl')}: the sub-term {c['at']} is not the expression it "
                            "was recorded with")
+        elif not pub.lean and c.get("var") is not None and c.get("decl"):
+            # A connection's end at a binder the build numbers otherwise: its name and type are
+            # Lean text.
+            c.pop("was", None)
+            c.pop("now", None)
+            c["reason"] = (f"{c['decl']}: variable {c['var']} is not the object the connection "
+                           "was recorded at")
         out.append(c)
     return out
 
@@ -144,6 +154,11 @@ FACT_LEAN = ("type", "assumptions", "variables", "cases", "source")
 
 
 def _ref(ref: dict, pub) -> dict:
+    if "connection" in ref:
+        # A connection: its relation, ends and support by identity and pins always; the Lean
+        # text of its ends, its scope and its conditions only when the Lean is published.
+        from .connections import public
+        return {"connection": public(ref["connection"], pub, _ref)}
     if "fact" in ref:
         # A fact inside a proof: where it is and its pins always, its basis always (it is not an
         # exported theorem), its proposition and context only when the Lean is published.
@@ -215,7 +230,7 @@ def _composition(r: dict, pub, view: dict) -> dict:
         idents.append(x)
     obls = []
     for o in r.get("obligations") or []:
-        x = {k: o[k] for k in ("id", "kind", "state", "by") if o.get(k)}
+        x = {k: o[k] for k in ("id", "kind", "state", "by", "connection") if o.get(k)}
         if pub.reviews:
             x.update({k: o[k] for k in ("text", "note") if o.get(k)})
         obls.append(x)
@@ -339,6 +354,9 @@ def _dep_ref(ref: dict, pub) -> dict:
     if "certificate" in ref:
         return {"certificate": {k: v for k, v in (ref["certificate"] or {}).items()
                                 if pub.lean or k not in CERT_LEAN}}
+    if "connection" in ref:
+        from .connections import public
+        return {"connection": public(ref["connection"] or {}, pub, _ref)}
     return json.loads(json.dumps(ref))
 
 

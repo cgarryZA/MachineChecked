@@ -5,6 +5,7 @@
   import { compositionView, findingCoverageView, recordedBasisText, readingWords } from "../lib/coverage.js";
   import { workspace, pinsIn, setPins, openInspection, tokenOf } from "../lib/inspect.svelte.js";
   import Composition from "./Composition.svelte";
+  import { connectionText } from "../lib/connections.js";
 
   // The auditor's saved investigation of this claim, under `machinechecked view`: its open
   // questions, findings and evidence, saved by the engine in the project's working directory, and
@@ -278,6 +279,7 @@
   }
 
   function refText(r) {
+    if (r.connection) return connectionText(r.connection);
     if (r.certificate) return `${r.certificate.theorem}, certificate for ${r.certificate.target}`;
     if (r.fact) return `${r.fact.name || r.fact.head || "a fact"} : ${r.fact.type}, inside the proof of ${r.fact.decl}`;
     if (r.app) return `${r.app.callee} applied in ${r.app.caller}`;

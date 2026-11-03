@@ -5,10 +5,15 @@ A composition is an ordered argument. Each step says what it establishes and res
 records of the workspace (a declaration, an application of a declaration as `compare --query
 uses` gives it, or a fact inside a proof) or on earlier steps; it records the substitutions it
 makes (the actual arguments given to a result's variables) and any inference of the auditor's
-own. Identifications say which objects of different steps are the same, and how that is known.
+own. Identifications say which objects of different steps are the same, and how that is known;
+one can rest on connections between the objects (`connections.py`), whose relation must fit it.
 Obligations are what the argument still needs (compatible witness choices, a local-to-global
 step, an equality transport, a constant's allowed dependence, a genericity condition), each open
-or discharged by named steps or evidence. Citing a declaration discharges nothing by itself.
+or discharged by named steps or evidence. Citing a declaration discharges nothing by itself. An
+identification of two objects as the same (or equal) through a connection that holds only on a
+domain, along a filter or between classes leaves a `local to global` (or `equality transport`)
+obligation naming that connection: the service adds it, open, when the auditor has not, and such
+connections alone never discharge it.
 
 A composition records a coverage (the links file's words). Its basis is computed, never written:
 `reviewed_composition`, the auditor's argument, which Lean has not checked; or `checked_bridge`
@@ -78,7 +83,9 @@ def _fields(d, allowed: tuple, what: str) -> dict:
     return d
 
 
-def _support(ws: dict, claim: str, eid: str, what: str) -> None:
+def _support(ws: dict, claim: str, eid: str, what: str, connections: bool = False) -> None:
+    """`eid` is evidence a step (or, with `connections`, an identification or a discharge, which
+    may also rest on a connection between objects) can rest on."""
     r = ws["records"].get(eid)
     if not r or r.get("kind") != "evidence":
         raise _err(f"{what}: {eid} is not an evidence record of this workspace")
@@ -86,7 +93,12 @@ def _support(ws: dict, claim: str, eid: str, what: str) -> None:
         raise _err(f"{what}: {eid} is evidence for {r['claim']}, not {claim}")
     if r.get("role") == "rejected":
         raise _err(f"{what}: {eid} is a rejected candidate")
-    if not any(k in (r.get("ref") or {}) for k in SUPPORT):
+    ref = r.get("ref") or {}
+    if "connection" in ref and not connections:
+        raise _err(f"{what}: {eid} is a connection between objects; a step rests on a "
+                   "declaration, an application of one, or a fact inside a proof, and a "
+                   "connection is cited by an identification")
+    if not any(k in ref for k in SUPPORT + (("connection",) if connections else ())):
         raise _err(f"{what}: {eid} cites a passage or a source line; a step rests on a "
                    "declaration, an application of one, or a fact inside a proof")
 
@@ -138,6 +150,7 @@ def full_refusal(g: dict) -> str | None:
 
 def content(out: dict, rec: dict, ws: dict, snap, root, cur: dict | None, repin: bool) -> dict:
     """The fields of a composition record, checked; `out` holds the common ones."""
+    from . import connections as cn
     from . import requirements as rq
     from . import simple
     claim = out["claim"]
@@ -213,7 +226,7 @@ def content(out: dict, rec: dict, ws: dict, snap, root, cur: dict | None, repin:
                 stack.extend(after_of.get(x, ()))
         return False
 
-    idents = []
+    idents, leaves = [], []
     for k, it in enumerate(rec.get("identifications") or []):
         what = f"identification {k + 1}"
         _fields(it, ("left", "right", "relation", "how", "evidence", "note"), what)
@@ -231,7 +244,8 @@ def content(out: dict, rec: dict, ws: dict, snap, root, cur: dict | None, repin:
              "how": _choice(it.get("how"), HOW, f"how {what} is known (`how`)", False)}
         ev = _ids(it.get("evidence"), f"{what}'s `evidence`")
         for e in ev:
-            _support(ws, claim, e, what)
+            _support(ws, claim, e, what, connections=True)
+        leaves += cn.identification(x, {e: ws["records"][e] for e in ev}, what)
         if x["how"] == "evidence" and not ev:
             raise _err(f"{what} is known by evidence: name it (`evidence`)")
         if x["how"] == "retained witness" and not follows(ends[1]["step"], ends[0]["step"]):
@@ -247,7 +261,8 @@ def content(out: dict, rec: dict, ws: dict, snap, root, cur: dict | None, repin:
         out["identifications"] = idents
     obls, oids = [], set()
     for k, o in enumerate(rec.get("obligations") or []):
-        _fields(o, ("id", "kind", "text", "state", "by", "note"), f"obligation {k + 1}")
+        _fields(o, ("id", "kind", "text", "state", "by", "note", "connection"),
+                f"obligation {k + 1}")
         oid = _text(o.get("id") or f"o{k + 1}", "an obligation's id", True).strip()
         if not STEP_ID.fullmatch(oid) or oid in oids:
             raise _err(f"{oid!r} is not a new obligation id")
@@ -265,16 +280,39 @@ def content(out: dict, rec: dict, ws: dict, snap, root, cur: dict | None, repin:
                     raise _err(f"{oid} is discharged by {s}, which is not a step")
             ev = _ids(by.get("evidence"), f"{oid}'s `by.evidence`")
             for e in ev:
-                _support(ws, claim, e, f"obligation {oid}")
+                _support(ws, claim, e, f"obligation {oid}", connections=True)
             by = {**({"steps": st} if st else {}), **({"evidence": ev} if ev else {})}
         if x["state"] == "discharged" and not by:
             raise _err(f"obligation {oid} is discharged: name the steps or evidence that "
                        "discharge it (`by`)")
+        if o.get("connection") not in (None, ""):
+            cid = _text(o["connection"], f"the connection {oid} comes from", True).strip()
+            _support(ws, claim, cid, f"obligation {oid}", connections=True)
+            if "connection" not in (ws["records"][cid].get("ref") or {}):
+                raise _err(f"obligation {oid} comes from {cid}, which is not a connection")
+            x["connection"] = cid
+            if x["state"] == "discharged" and not (by or {}).get("steps") and \
+                    cn.partial_only((by or {}).get("evidence") or [], ws["records"]):
+                raise _err(f"obligation {oid}: a connection that holds only on a domain, along a "
+                           "filter or between classes does not discharge the step from there to "
+                           "everywhere; name the steps or evidence that do")
         if by:
             x["by"] = by
         if o.get("note") not in (None, ""):
             x["note"] = _text(o["note"], f"{oid}'s note")
         obls.append(x)
+    named = {(o["kind"], o.get("connection")) for o in obls}
+    for kind, cid, text in leaves:
+        # An identification that uses a partial relation outright leaves this obligation.
+        if (kind, cid) in named:
+            continue
+        n = len(obls) + 1
+        while f"o{n}" in oids:
+            n += 1
+        oids.add(f"o{n}")
+        named.add((kind, cid))
+        obls.append({"id": f"o{n}", "kind": kind, "text": text, "state": "open",
+                     "connection": cid})
     if obls:
         out["obligations"] = obls
     out["evidence"] = list(dict.fromkeys(
@@ -545,7 +583,10 @@ def lines(c: dict) -> list[str]:
     for o in c.get("obligations") or []:
         by = o.get("by") or {}
         out.append(f"    obligation {o['id']} ({OBLIGATION_WORDS[o['kind']]}), {o['state']}: "
-                   f"{o['text']}" + (" — discharged by " + ", ".join(
+                   f"{o['text']}"
+                   + (f" (left by the connection {o['connection']})" if o.get("connection")
+                      else "")
+                   + (" — discharged by " + ", ".join(
                        (by.get("steps") or []) + (by.get("evidence") or [])) if by else ""))
     g = c["gaps"]
     if g["uncovered"]:

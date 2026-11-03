@@ -7,6 +7,7 @@
   import { proofFacts } from "../lib/workspace.js";
   import { itemOf, facts, applications, workspace } from "../lib/inspect.svelte.js";
   import { propertyStanding } from "../lib/carried.js";
+  import { connectionText } from "../lib/connections.js";
   import { independent, usersSide } from "../lib/comparison.js";
 
   // One inspection beside a comparison row: a declaration, a property carried by an object's
@@ -177,6 +178,9 @@
           {#if onref}<p class="small"><button class="link" onclick={() => onref(r.app.callee)}>Open {short(r.app.callee)}</button> · <button class="link" onclick={() => onref(r.app.caller)}>Open {short(r.app.caller)}</button></p>{/if}
         {:else if r.certificate}
           <p class="small"><code>{r.certificate.theorem}</code>, a certificate for <code>{r.certificate.target}</code>.</p>
+        {:else if r.connection}
+          <p class="small" data-connection>{connectionText(r.connection)}.</p>
+          {#each evidence.currency?.changes || [] as ch}<p class="small faint">{ch.reason}</p>{/each}
         {:else if r.source}
           <p class="small">{r.source.file}{r.source.line ? ":" + r.source.line : ""}</p>
         {:else}
