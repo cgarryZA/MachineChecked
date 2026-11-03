@@ -40,7 +40,8 @@ def test_declarations_track_namespaces_and_skip_comments():
     assert names == {"Base.Extra.lemma_x", "Base.Extra.helper", "Base.Extra.instShow",
                      "Other.rooted", "Base.Data"}
     assert entered == {"Base", "Base.Extra"}
-    assert opened == {"Base"}
+    # An `open … in` opens its namespaces for one command, and they count (#513).
+    assert opened == {"Base", "Base.Extra", "Other"}
 
 
 def cite(token):
