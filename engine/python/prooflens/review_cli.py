@@ -482,7 +482,7 @@ class Session:
             raise ReviewError(f"{uid} is already reported by {self.reviewer['id']}", "reported")
         d = self.draft(u)
         if d is None:
-            self.work["drafts"][uid] = d = {"stage": "read", "reading": ""}
+            self.work["drafts"][uid] = d = new_draft(u)
             self._save(uid)
         elif d["stage"] != "read" and not self.informed:
             raise ReviewError(f"{uid}: the reading is already locked", "order")
@@ -507,7 +507,7 @@ class Session:
             if self.reported(u):
                 raise ReviewError(f"{u['id']} is already reported by {self.reviewer['id']}",
                                   "reported")
-            self.work["drafts"][u["id"]] = d = {"stage": "read", "reading": ""}
+            self.work["drafts"][u["id"]] = d = new_draft(u)
         return d
 
     def lock(self, uid: str, reading: str) -> None:
@@ -887,6 +887,23 @@ DRAFT_KIND = {"faithful with representation choices": "explanatory note",
               "cannot determine": "unresolved question"}
 UNRESOLVED_BODY = ("The reviewer could not determine whether the Lean statement says what the "
                    "paper says; this is an open question.")
+
+
+def draft_target(u: dict) -> dict | None:
+    """What a draft of a proof step's unit records of the step it is about: its kind of unit,
+    its claim and its parent (`id`, `number`), so that the draft says so wherever the workspace
+    is read. None for any other unit."""
+    if u.get("kind") != "step":
+        return None
+    par = u.get("parent") or {}
+    return {"unit": u.get("unit"), "claim": ((u.get("claims") or [{}])[0]).get("id"),
+            "parent": {k: par.get(k) for k in ("id", "number")} if par else None}
+
+
+def new_draft(u: dict) -> dict:
+    """A unit's draft as step 1 begins it."""
+    target = draft_target(u)
+    return {"stage": "read", "reading": "", **({"target": target} if target else {})}
 
 
 def issue_draft(u: dict, verdict: str, detail: str, cor: dict | None = None) -> dict | None:

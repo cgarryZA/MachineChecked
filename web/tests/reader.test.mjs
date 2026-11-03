@@ -2476,6 +2476,27 @@ for (const width of [1300, 390]) {
   });
 }
 
+// #545: a paper page keeps an audit's proof step as a step: its parent lists it under the page's
+// id, and the step names its parent by the page's id, with its own review.
+await check("a published proof step keeps its kind, parent and review on a paper page", 1300, async (pg) => {
+  const STEPPED = JSON.parse(fs.readFileSync(path.join(root, "stepped/data/index.json")));
+  const step = STEPPED.claims.find((c) => c.by_project?.["synthetic/alpha"]?.audit?.claim === "T:eq:one");
+  assert.equal(step.by_project["synthetic/alpha"].unit, "proof-equation");
+  assert.equal(step.by_project["synthetic/alpha"].parent, "P:theorem-1");
+  await pg.goto(origin + "/stepped/#/r/paper/read/P/P%3Atheorem-1");
+  const row = pg.locator(".claim-view .view .steps li");
+  await row.waitFor();
+  assert.match(words(await row.textContent()), /Equation \(1\).*false as printed/);
+  await row.locator("a").click();
+  await pg.waitForFunction((id) => decodeURIComponent(location.hash).endsWith(id), step.id);
+  const finding = pg.locator(".claim-view .view .paper .finding");
+  await finding.waitFor();
+  assert.equal(await finding.getAttribute("data-review"), "false");
+  assert.match(words(await finding.locator(".kind").textContent()), /^Equation in a proof of Theorem 1/);
+  await finding.locator(".kind a").click();
+  await pg.waitForFunction(() => decodeURIComponent(location.hash).endsWith("P:theorem-1"));
+});
+
 for (const width of [1300, 390]) {
   await check("the changes since the earlier release name what changed and what is due for review", width, async (pg) => {
     await pg.goto(origin + "/toy/" + `#/r/${TOY.release}/changes`);

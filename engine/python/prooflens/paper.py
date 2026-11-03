@@ -359,6 +359,10 @@ def write_paper_site(site: Path, paper: dict, claims: list[dict],
     if claim_maps and not offered:
         raise ValueError("claim maps relate versions: give `versions` and `version`")
     related = counterparts(claim_maps or [], version, [v["id"] for v in offered or []])
+    # The page's id of each audit entry, by project and the audit's own id: a proof step names
+    # its parent by the audit's id.
+    page_ids = {(r, a["claim"]): f"P:{c['key']}" for c in claims
+                for r, a in (c.get("audit") or {}).items() if a.get("claim")}
     index_claims, chunks = [], {}
     for c in claims:
         cid = f"P:{c['key']}"
@@ -392,6 +396,13 @@ def write_paper_site(site: Path, paper: dict, claims: list[dict],
                     {k: cl["evidence"][k] for k in ("formal", "review") if k in cl.get("evidence", {})}
                     for cl in rec.get("clauses", [])]
                 index_by_project[r].update({k: rec.get(k) for k in ("scope", "kind", "title", "heading")})
+                if (rec.get("unit") or "statement") != "statement":
+                    # A proof step keeps its kind, its parent (by the page's id) and its own
+                    # review, as the audit gives them.
+                    index_by_project[r].update(
+                        unit=rec["unit"], parent=page_ids.get((r, rec.get("parent"))),
+                        step_review=((rec.get("step") or {}).get("review") or {})
+                        .get("state", "unreviewed"))
                 index_by_project[r]["anchor"] = au.get("audit_anchor") if au.get("same_pdf") else mf.index_anchor(anchor, "approximate")
         index_claims.append({**common, "by_project": index_by_project, "anchor": mf.index_anchor(anchor, "approximate"),
                              "counts": {}, "file": fname, "linked": len(c["links"]),

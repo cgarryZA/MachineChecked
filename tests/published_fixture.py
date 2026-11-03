@@ -122,6 +122,96 @@ def with_work(data, cid='T:one'):
     return data
 
 
+STEP = 'T:eq:one'
+STEP_TARGET = {'unit': 'proof-equation', 'parent': {'id': 'T:one', 'number': 'Theorem 1'},
+               'scope': 'proof-step',
+               'source': {'location': 'main.tex:40', 'region': {'end_line': 42}, 'sha256': 's' * 64}}
+
+
+def with_step(data):
+    """`data` with Equation (1), a step of the proof of Theorem 1, as an audit publishes it: its
+    own review (false as printed), its parent's list of steps, and an auditor's finding and
+    counterexample on it, each pinning the step (`pins.target`)."""
+    data = copy.deepcopy(data)
+    idx = data['data/index.json']
+    report = {'reviewer': {'id': 'human:A-Referee', 'kind': 'human', 'name': 'A Referee'},
+              'verdict': {'group': 'problem', 'value': 'false as printed',
+                          'detail': 'It fails at k = 0.'},
+              'state': 'false', 'reading': 'n <= k n^2 for every k >= 0.',
+              'comparison': 'k = 0, n = 1 gives 1 <= 0.', 'locked_at': '2026-01-01T00:00:00Z',
+              'submitted_at': '2026-01-01T00:01:00Z', 'source_sha256': 's' * 64,
+              'release': idx['release'], 'project_commit': 'a' * 40, 'current': True}
+    step = {'schema': mf.SCHEMA, 'release': idx['release'], 'id': STEP, 'paper': 'T',
+            'number': 'Equation (1)', 'kind': 'equation', 'scope': 'proof-step',
+            'scope_reviewed': True, 'scope_note': 'a step of the proof of Theorem 1',
+            **fields('scope.proof-step'), 'anchor': None, 'statement_tex': 'n \\le k n^2',
+            'source_matches': None, 'source_evidence': {'state': 'pass', 'placement': 'approximate'},
+            'blockers': [], 'findings': [], 'decls': {}, 'clauses': [],
+            'unit': 'proof-equation', 'parent': 'T:one',
+            'step': {'unit': 'proof-equation', 'parent': {'id': 'T:one', 'number': 'Theorem 1'},
+                     'source': STEP_TARGET['source'], 'links': [], 'correspondence': None,
+                     'route': None, 'review': {'state': 'false', 'finding': report,
+                                               'reports': [report]}}}
+    fname = mf.claim_file(STEP)
+    data['data/claims/' + fname] = step
+    one = data['data/claims/' + mf.claim_file('T:one')]
+    one['steps'] = [{'id': STEP, 'number': 'Equation (1)', 'unit': 'proof-equation', 'file': fname,
+                     **fields('scope.proof-step'), 'review': 'false', 'linked': [], 'route': []}]
+    idx['claims'].append({'id': STEP, 'paper': 'T', 'number': 'Equation (1)', 'scope': 'proof-step',
+                          'kind': 'equation', **fields('scope.proof-step'), 'counts': {},
+                          'anchor': None, 'file': fname, 'unit': 'proof-equation',
+                          'parent': 'T:one', 'step_review': 'false'})
+    cur = {'state': 'current', 'changes': []}
+    pins = {'release': idx['release'], 'statement_sha256': 's' * 64, 'target': STEP_TARGET}
+    reading = {'workspace': 'ws-000000000001', 'mode': 'informed',
+               'reviewer': {'id': 'human:A-Auditor', 'kind': 'human', 'name': 'A Auditor',
+                            'identity': 'self-declared'},
+               'requirements': [{'id': 'q9', 'kind': 'requirement', 'claim': STEP,
+                                 'local_id': 'n.k.1', 'form': 'conclusion', 'text': 'n ≤ k n²',
+                                 'depth': 0, 'pins': pins, 'created_by': 'human:A-Auditor',
+                                 'currency': cur}],
+               'fragments': [], 'alignments': [],
+               'findings': [{'id': 'f-step', 'kind': 'finding', 'claim': STEP,
+                             'requirement': 'n.k.1', 'verdict': 'false as printed',
+                             'counterexamples': [{'id': 'x-zero', 'sha256': 'x' * 64}],
+                             'state': 'submitted', 'submitted_at': '2026-01-01T00:02:00Z',
+                             'evidence': [], 'in_force': True, 'pins': pins,
+                             'note': 'It fails at k = 0, n = 1.',
+                             'created_by': 'human:A-Auditor', 'currency': cur}],
+               'evidence': [{'id': 'e-refutes', 'kind': 'evidence', 'claim': STEP,
+                             'role': 'supports', 'pins': pins,
+                             'ref': {'certificate': {'theorem': 'Synthetic.at_one_false',
+                                                     'target': 'Synthetic.at_one',
+                                                     'certifies': 'refutes', 'result': 'checked',
+                                                     'reasons': []}},
+                             'currency': cur}],
+               'counterexamples': [{'id': 'x-zero', 'kind': 'counterexample', 'claim': STEP,
+                                    'requirement': 'n.k.1', 'evidence': ['e-refutes'],
+                                    'pins': pins, 'created_by': 'human:A-Auditor',
+                                    'currency': cur, 'reading_text': 'n ≤ k n²',
+                                    'analysis': {'form': 'instance', 'decisive': True,
+                                                 'standing': 'admissible counterexample',
+                                                 'standing_text': 'an admissible counterexample '
+                                                                  'to this reading',
+                                                 'shows': 'n = 1, k = 0 reduces the reading to '
+                                                          '1 ≤ 0, which fails.',
+                                                 'problems': []}}]}
+    data['data/work/' + fname] = {'schema': 'prooflens/published-work@1',
+                                  'release': idx['release'], 'claim': STEP, 'readings': [reading]}
+    step['work'] = 'work/' + fname
+    return data
+
+
+def stepped(path, reader=None):
+    """A paper page whose audit has a proof step of Theorem 1, which the page's headings do not
+    give: the page lists it as the audit's entry, under Theorem 1."""
+    audit = snapshot(with_step(files()))
+    claims = [{'key': 'theorem-1', 'number': 'Theorem 1', 'kind': 'theorem', 'links': [],
+               'anchor': {'begin': [1, 0, 220], 'end': [1, 0, 260]}}]
+    apply_audits(claims, {REPO: audit}, 'f' * 64)
+    return write_paper_site(path, PAPER, claims, [595.28, 841.89], None, reader, {REPO: audit}), audit
+
+
 def fetcher(data):
     def fetch(url, limit):
         value = data[url.removeprefix(BASE)]
@@ -234,3 +324,4 @@ if __name__ == '__main__':
     combined(root / 'combined-beta', Path(sys.argv[2]), {REPO: 2, BETA: 50})
     combined(root / 'combined-unranked', Path(sys.argv[2]), None)
     matched(root / 'matched', Path(sys.argv[2]))
+    stepped(root / 'stepped', Path(sys.argv[2]))

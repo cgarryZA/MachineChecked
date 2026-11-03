@@ -32,11 +32,15 @@
     return r.submitted_at ? ", " + r.submitted_at.slice(0, 10) : r.file ? " (" + r.file + (r.line ? ":" + r.line : "") + ")" : "";
   }
   const reviewHref = $derived(index.review_queue ? withQuery(href(index.release, "review"), { claim: claim.id }) : null);
+  // On a paper page a step and its parent are named by the audit's ids; the page lists each
+  // under its own id (the row whose audit entry it is).
+  const pageId = (id) => (!index.projects ? id
+    : index.claims.find((c) => c.by_project?.[claim.evidence_from]?.audit?.claim === id)?.id || id);
 </script>
 
 {#if part === "finding" && st}
   <div class="finding" data-review={rv.state}>
-    <p class="small kind">{UNIT[st.unit] || "Proof step"}{#if st.parent}{" of "}<a href={href(index.release, "read", claim.paper, st.parent.id)}>{st.parent.number || st.parent.id}</a>{/if}</p>
+    <p class="small kind">{UNIT[st.unit] || "Proof step"}{#if st.parent}{" of "}<a href={href(index.release, "read", claim.paper, pageId(st.parent.id))}>{st.parent.number || st.parent.id}</a>{/if}</p>
     <p class="word"><strong>{evidenceView("step", rv).word}</strong>{#if rv.finding?.verdict?.detail || rv.finding?.text}<span class="pre">{" — " + (rv.finding.verdict.detail || rv.finding.text)}</span>{/if}</p>
     {#if rv.finding}
       <p class="faint small">Review of the printed step by {who(rv.finding)}{when(rv.finding)}. The status of {st.parent?.number || "the enclosing result"} is assessed separately.</p>
@@ -72,7 +76,7 @@
     <ul>
       {#each claim.steps as s (s.id)}
         <li data-review={s.review}>
-          <a href={href(index.release, "read", claim.paper, s.id)}>{s.number || s.id}</a>
+          <a href={href(index.release, "read", claim.paper, pageId(s.id))}>{s.number || s.id}</a>
           <span class="small">{evidenceView("step", { state: s.review }).word}</span>
           <span class="faint small">{s.linked.length ? "Lean: " + s.linked.join(", ") : s.route.length ? "formal route: " + s.route.join(", ") : "no Lean linked"}</span>
         </li>
