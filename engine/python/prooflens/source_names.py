@@ -24,6 +24,9 @@ DECL = re.compile(
     r"(?:\([^)]*\)\s+)?"  # an instance's priority
     r"([^\s:({\[⦃]+)")
 
+# A word that can continue an `open` command's list of namespaces.
+OPEN_NAME = re.compile(r"(?:[A-Za-z0-9_.'!?]|[^\x00-\x7f])+")
+
 
 def strip_comments(text: str) -> str:
     """`text` with its comments (`--`, and nested `/- … -/`, docstrings included) blanked, its
@@ -52,25 +55,34 @@ def strip_comments(text: str) -> str:
 
 def declarations(text: str) -> tuple[set[str], set[str], set[str]]:
     """The full names a Lean file declares, the namespaces it enters, tracking `namespace`,
-    `section`, `mutual` and `end`, and the namespaces its `open` commands name (an `open … in`,
-    which opens for one command, left out)."""
+    `section`, `mutual` and `end`, and the namespaces its `open` commands name, an `open … in`
+    (which opens for one command) included. A line indented beyond an `open` that holds only
+    names continues it, as Lean reads it."""
     names: set[str] = set()
     entered: set[str] = set()
     opened: set[str] = set()
     stack: list[list[str]] = []
+    open_col = None  # the indentation of an `open` whose namespaces may go on to the next line
     for line in strip_comments(text).splitlines():
         s = line.strip()
         words = s.split()
         if not words:
             continue
+        col = len(line) - len(line.lstrip())
+        if open_col is not None and col > open_col and all(OPEN_NAME.fullmatch(w)
+                                                           for w in words):
+            words = ["open", *words]
+        else:
+            open_col = col if words[0] == "open" else None
         if words[0] == "namespace" and len(words) > 1:
             for part in words[1].split("."):
                 stack.append([part])
                 entered.add(".".join(p for e in stack for p in e))
             continue
-        if words[0] == "open" and "in" not in words:
+        if words[0] == "open":
             for w in words[1:]:
-                if w in ("hiding", "renaming") or w.startswith("("):
+                if w in ("hiding", "renaming", "in") or w.startswith("("):
+                    open_col = None
                     break
                 if w != "scoped":
                     opened.add(w)

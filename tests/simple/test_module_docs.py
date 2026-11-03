@@ -240,3 +240,85 @@ def test_the_toy_example_names_only_what_its_modules_resolve(tmp_path, monkeypat
     assert view["body"]["module_docs"] == []
     assert not any("module docstrings" in n for n in view["body"]["notes"])
     assert probed and all(stale_doc_names(records) == [] for records in probed)
+
+
+# The example of #513: a module whose namespace holds a namespace (`Lib.Main.Foo`) or a module
+# (`Lib.Main.Qux`) of the short name its docstring gives, which the module's own `open` makes a
+# declaration. The namespaces are opened in each way Lean allows: on the `open` line
+# (`Lib.Core`), on a line that continues it (`Lib.Wide`), and for one command (`Lib.Once`).
+OPENS = {
+    "Lib.lean": "import Lib.Defs\nimport Lib.Main\n",
+    "Lib/Defs.lean": ("namespace Lib.Core\ndef Foo : Prop := True\nend Lib.Core\n\n"
+                      "namespace Lib.Wide\ndef Baz : Prop := True\nend Lib.Wide\n\n"
+                      "namespace Lib.Once\ndef Qux : Prop := True\nend Lib.Once\n"),
+    "Lib/Main/Qux.lean": "namespace Lib.Main\ntheorem helper : True := True.intro\nend Lib.Main\n",
+    "Lib/Main.lean": '''import Lib.Defs
+import Lib.Main.Qux
+
+/-!
+# Main
+The results are stated for `Foo`, `Baz` and `Qux`.
+
+## Main results
+
+* `Gone` — a result that is gone.
+-/
+namespace Lib.Main
+open Lib.Core
+  Lib.Wide
+theorem Foo.trivial : Foo := True.intro   -- creates the namespace Lib.Main.Foo
+theorem Baz.trivial : Baz := True.intro   -- creates the namespace Lib.Main.Baz
+
+open Lib.Once in
+theorem qux_holds : Qux := True.intro
+end Lib.Main
+''',
+}
+
+
+@needs_lean
+@pytest.mark.parametrize("toolchain", [None, "leanprover/lean4:v4.24.0"])
+def test_a_name_the_modules_open_makes_a_declaration_is_not_listed(tmp_path, toolchain):
+    """A docstring's short name is resolved with every namespace its module opens, as Lean
+    resolves it there: on the `open` line, on a line that continues the `open`, and through an
+    `open … in`; a namespace or a module of the same short name in the module's own namespace
+    does not make it a warning (#513). A name that resolves to nothing is still listed."""
+    from prooflens.probe import MODDOCS, lean_session, parse_records
+    root = tmp_path / "lib"
+    root.mkdir()
+    (root / "lakefile.toml").write_text('name = "lib"\ndefaultTargets = ["Lib"]\n\n'
+                                        '[[lean_lib]]\nname = "Lib"\n')
+    (root / "lean-toolchain").write_text((toolchain or (SRC / "lean-toolchain").read_text()
+                                          .strip()) + "\n")
+    if toolchain and subprocess.run(["elan", "toolchain", "list"], capture_output=True,
+                                    text=True).stdout.find(toolchain) < 0:
+        pytest.skip(f"{toolchain} is not installed")
+    for name, text in OPENS.items():
+        (root / name).parent.mkdir(parents=True, exist_ok=True)
+        (root / name).write_text(text)
+    subprocess.run(["lake", "build"], cwd=root, check=True, capture_output=True, timeout=900)
+    query = {"scope_roots": ["Lib"], "spec_prefix": "Lib.Spec", "accept_prefix": "Lib.Acceptance",
+             "allowed_axioms": ["propext", "Classical.choice", "Quot.sound"],
+             "requests": [MODDOCS]}
+    res = lean_session(root, ["Lib"], query, parse_records, work=root / ".work")
+    assert not {r["name"] for r in res["moddocs"]} & {"Foo", "Baz", "Qux"}
+    assert {"Lib.Core", "Lib.Wide", "Lib.Once"} <= set(
+        next(r for r in res["moddocs"] if r["name"] == "Gone")["scopes"])
+    found = stale_doc_names(res["moddocs"], root)
+    assert [(d["file"], d["name"], d["kind"]) for d in found] == [
+        ("Lib/Main.lean", "Gone", "none")]
+
+
+def test_the_sources_are_read_with_every_namespace_a_file_opens():
+    """The namespaces a source file opens, for a name the probe's environment lacks: an `open`
+    over several lines and an `open … in` count, a hidden or renamed name does not."""
+    from prooflens.source_names import declarations
+    text = ("namespace Lib.Main\nopen Lib.Core\n  Lib.Wide Lib.Far\n"
+            "theorem t : True := trivial\n  -- a comment\n"
+            "open Lib.Once in\ntheorem u : True := trivial\n"
+            "open Lib.Some hiding x\n  y\nopen Lib.Exp (a\n  b)\nend Lib.Main\n")
+    _, entered, opened = declarations(text)
+    assert entered == {"Lib", "Lib.Main"}
+    assert {"Lib.Core", "Lib.Wide", "Lib.Far", "Lib.Once", "Lib.Some"} <= opened
+    # A name hidden on the next line, or listed explicitly, is not a namespace.
+    assert not {"y", "b", "b)", "t", "u"} & opened
