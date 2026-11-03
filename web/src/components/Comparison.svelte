@@ -240,20 +240,46 @@
   // it. It is reached once for each claim and address.
   let reached = null;
   let reachedDecl = $state(null);
+  const blockOf = (decl) => root?.querySelector(`[data-spec="${CSS.escape(decl)}"]`) ||
+    root?.querySelector(`[data-decl="${CSS.escape(decl)}"]`) ||
+    [...(root?.querySelectorAll("[data-defs]") || [])].find((e) => e.dataset.defs.split(" ").includes(decl));
   $effect(() => {
     const at = route.at, claim = main?.id;
     void [clauses.length, formal?.links?.length, step?.links?.length];  // drawn again when they load
     if (!at || trail().length || !root || !claim || reached === claim + "|" + at) return;
     const decl = at.endsWith("::top") ? at.slice(0, -"::top".length) : at;
-    const el = root.querySelector(`[data-spec="${CSS.escape(decl)}"]`) ||
-      root.querySelector(`[data-decl="${CSS.escape(decl)}"]`) ||
-      [...root.querySelectorAll("[data-defs]")].find((e) => e.dataset.defs.split(" ").includes(decl));
-    if (!el) return;
+    if (!blockOf(decl)) return;
     reached = claim + "|" + at;
     reachedDecl = decl;
-    tick().then(() => el.scrollIntoView({ block: "start" }));
+    tick().then(() => holdAtTop(decl));
   });
   const marked = (...names) => (reachedDecl && names.includes(reachedDecl) ? "" : null);
+
+  // The block reached stays at the top while the comparison settles: what arrives after it is
+  // drawn (the published readings, which pair the rows and draw the block again; declarations;
+  // typeset mathematics) changes the layout above it. It is let go when the reader scrolls, types
+  // or clicks, opens an inspection or leaves the claim, and after `HOLD_MS`.
+  const HOLD_MS = 10000;
+  let release = null;
+  function holdAtTop(decl) {
+    release?.();
+    if (!root) return;
+    const put = () => blockOf(decl)?.scrollIntoView({ block: "start" });
+    put();
+    const watch = new ResizeObserver(put);
+    watch.observe(root);
+    const inputs = ["wheel", "touchstart", "keydown", "pointerdown"];
+    const timer = setTimeout(() => release?.(), HOLD_MS);
+    release = () => {
+      watch.disconnect();
+      clearTimeout(timer);
+      for (const t of inputs) removeEventListener(t, release, true);
+      release = null;
+    };
+    for (const t of inputs) addEventListener(t, release, true);
+  }
+  $effect(() => { if (trail().length) release?.(); });
+  $effect(() => { void main?.id; return () => release?.(); });
 
   // Opening and closing an inspection keeps the reader's place: an inspection opens in view with
   // the row it concerns above it, and the scroll position and the element it was opened from come
@@ -644,7 +670,7 @@
   .aligned.stale { opacity: 0.85; }
   .hint { margin: 4px 0; padding: 2px 0 2px 8px; border-left: 2px dashed var(--tier-warning); }
   .hint .tag { color: var(--tier-warning); font-weight: 600; }
-  .hint code, .dismissed code { overflow-wrap: anywhere; }
+  .hint code { overflow-wrap: anywhere; }
   .dismissed > summary { cursor: pointer; }
   .form { font-style: italic; }
   .text { white-space: pre-wrap; }

@@ -829,6 +829,25 @@ const comesIntoView = async (pg, id) => {
   await frames(pg, 2);
   return pg.evaluate(bandInView, id);
 };
+// Whether the comparison's block of declaration `spec` is at the top of the part of its scroller
+// in view (its top in the upper third), where a link to it (`?at=<spec>::top`) puts it.
+const blockAtTop = (spec) => {
+  const b = document.querySelector(`.cmp [data-spec="${CSS.escape(spec)}"]`);
+  if (!b) return false;
+  let s = b.parentElement;
+  while (s && !["auto", "scroll"].includes(getComputedStyle(s).overflowY)) s = s.parentElement;
+  const v = s ? s.getBoundingClientRect() : { top: 0, bottom: innerHeight };
+  const top = Math.max(v.top, 0), bottom = Math.min(v.bottom, innerHeight);
+  const t = b.getBoundingClientRect().top;
+  return t >= top - 1 && t <= top + (bottom - top) / 3;
+};
+// The block comes to the top within a bounded time, and is still there once the frames after it
+// are drawn.
+const comesToTop = async (pg, spec) => {
+  if (!(await pg.waitForFunction(blockAtTop, spec, { timeout: 10000 }).then(() => true, () => false))) return false;
+  await frames(pg, 2);
+  return pg.evaluate(blockAtTop, spec);
+};
 
 // #465: the reader has two views. A paper opens on its PDF, with its contents where they are open
 // and its formalisations closed; choosing a claim in the PDF or the contents opens its comparison
@@ -3508,7 +3527,9 @@ for (const width of [1300, 390]) {
     await pg.waitForFunction(() => /\/read\/T\/T%3Aprop%3Apred\?at=Toy\.PaperSpec\.prop_pred_pos%3A%3Atop$/.test(location.hash));
     const block = pg.locator('.cmp [data-spec="Toy.PaperSpec.prop_pred_pos"]');
     await block.and(pg.locator("[data-reached]")).waitFor();
-    assert.equal(await block.evaluate((e) => { const r = e.getBoundingClientRect(); return r.top < window.innerHeight && r.bottom > 0; }), true, "the part's block is in view");
+    // The published readings arrive after the block is drawn and pair the rows, which draws it
+    // again lower down: it is at the top of the view once the comparison has settled.
+    assert.ok(await comesToTop(pg, "Toy.PaperSpec.prop_pred_pos"), "the part's block is at the top of the view");
     assert.equal(await pg.locator(".cmp [data-reached]").count(), 1, "one block is marked");
     // Another workspace's part reading: a requirement at the conclusion of Theorem 2.5.
     await pg.goto(origin + `/toyfindsem/#/r/${TOY.release}/overview?set=${encodeURIComponent("workspace:ws-a00000000001")}&clause=full`);
