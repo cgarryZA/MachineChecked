@@ -1516,7 +1516,9 @@ class Assessor:
                             f"the source region at {c['location']} uses macros defined outside "
                             f"it ({where}); a change to those definitions does not change the "
                             "pin. Pin the definitions whose values are part of the claim "
-                            "(machinechecked inventory rebound --macro NAME), and list the "
+                            "(machinechecked inventory rebound --macro NAME). Listing a macro "
+                            "as notation reopens the readings of the passages that use it "
+                            "(machinechecked inventory notation --add NAME lists them); list the "
                             "notation in notation_macros", names)
                     continue
                 a = match_anchor(c, anchors)

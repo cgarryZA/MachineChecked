@@ -167,6 +167,31 @@ the reading did not record the definitions of the notation its passage uses
 defines elsewhere and the list leaves out still gets the one dismissible warning per passage.
 Without `notation_macros`, a reading records the pin itself, as before.
 
+Listing a macro therefore reopens every review whose reading of a passage that uses it
+recorded the pin alone, although neither the passage nor the definition changed; leaving a
+listed macro out reopens, the same way, the readings that recorded its definitions. See the
+cost before changing the list:
+
+```sh
+machinechecked inventory notation --add E            # list \E
+machinechecked inventory notation --remove R --paper P
+```
+
+The plan reads the latest release (build first, with the list as configured) and the paper as
+the configuration gives it, and prints, for the list with the macros added and left out:
+
+| Field | What |
+|---|---|
+| `passages` | the claims whose reading digest changes, with the listed macros their passage uses now and with the new list |
+| `reopened` | each review marker that would no longer count: its file, line, reviewer and declaration, and per review the passages it read and why it would be pending (`source-notation-unrecorded` for a reading that recorded the pin alone, `source-changed` for one that recorded a definition left out) |
+| `restored` | each marker that would count again (a reading that recorded the pin alone, when the macro is left out) |
+| `statuses` | each claim whose status would change, now and with the new list |
+
+It writes nothing and records no reading. A reopened review is renewed by a new reading of the
+passage with its notation, promoted as any other (`review promote`): a marker is never moved
+to the new digest without one. Leaving a macro unlisted and dismissing its
+`source-macro-unpinned` warning keeps the readings as they are.
+
 ## Replacing a legacy opening-line hash
 
 Do this while the configuration still names the **original frozen paper revision**:
