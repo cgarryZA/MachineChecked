@@ -473,11 +473,12 @@ def _unrecorded(name: str, snap: Snapshot, declares: list[str]) -> None:
 def _known(snap: Snapshot, root: Path, built: list[str]) -> list[dict]:
     """The declarations a full assessment's build can name without an index: those its shared
     store records, and those the sources of the built modules `built` declare."""
+    from .layout import module_file
     from .simple import declared_names
     names = set(snap.store_fingerprints())
     for m in built:
         try:
-            names |= declared_names((root / (m.replace(".", "/") + ".lean"))
+            names |= declared_names((root / module_file(root, m))
                                     .read_text(encoding="utf-8", errors="replace"))
         except OSError:
             continue

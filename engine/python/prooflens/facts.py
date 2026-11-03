@@ -124,6 +124,7 @@ class Store:
         with self._mutex:
             if module in self._own:
                 return self._own[module]
+        from .layout import module_file
         rel = Path(*module.split("."))
         out = None
         for r in self.roots:
@@ -138,7 +139,7 @@ class Store:
                 if not any(f.name == stem for f in built):
                     continue
                 h = hashlib.sha256()
-                h.update(f"source:{_file_digest(r / rel.with_suffix('.lean'))}\n".encode())
+                h.update(f"source:{_file_digest(r / module_file(r, module))}\n".encode())
                 for f in built:
                     st = f.stat()
                     h.update(f"{f.name}:{st.st_size}:{st.st_mtime_ns}\n".encode())

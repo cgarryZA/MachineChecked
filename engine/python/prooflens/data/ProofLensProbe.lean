@@ -2616,17 +2616,38 @@ there. -/
 def withScope (ns : Name) (opens : List OpenDecl) (x : MetaM α) : MetaM α :=
   withTheReader Core.Context (fun c => { c with currNamespace := ns, openDecls := opens }) x
 
+/-- The words of each line of a source file that holds any, its comments and strings blanked out
+and the modifiers before a command dropped. A line indented beyond an `open` command that holds
+only names and the command's own words continues the command, as Lean reads it, and is joined
+to it. -/
+def sourceLines (src : String) : Array (List String) := Id.run do
+  let mut out : Array (List String) := #[]
+  let mut openCol : Option Nat := none
+  for l in splitChars '\n' (stripComments #[] 0 false false src.toList).toList do
+    let ws := (words l).dropWhile (fun w => w ∈ ["noncomputable", "public", "private"]
+      || "@[".toList.isPrefixOf w.toList)
+    if ws.isEmpty then continue
+    let col := (l.takeWhile Char.isWhitespace).length
+    if let some c := openCol then
+      let ok := fun (w : String) =>
+        w ∈ ["(", ")", "hiding", "renaming", "→", "->", "in", "scoped"] || nameLike w.toList
+      if col > c && ws.all ok then
+        out := out.pop.push (out.back! ++ ws)
+        continue
+    openCol := if ws.head? == some "open" then some col else none
+    out := out.push ws
+  return out
+
 /-- The namespaces a source file enters (`namespace`) and what its `open` commands open,
-each resolved where the command stands. An `open … in` opens for one command only and is left
-out; every other `open` is kept to the end of the file, as a docstring at the top of a file
-names what the file goes on to open. -/
+each resolved where the command stands. Every `open` is kept to the end of the file, as a
+docstring at the top of a file names what the file goes on to open; an `open … in`, which
+opens for one command, counts too, but a later `open` is not resolved through it. -/
 def fileScopes (src : String) : MetaM (Array Name × List OpenDecl) := do
   let mut stack : Array Name := #[]
   let mut spaces : Array Name := #[]
   let mut opens : List OpenDecl := []
-  for l in splitChars '\n' (stripComments #[] 0 false false src.toList).toList do
-    let ws := (words l).dropWhile (fun w => w ∈ ["noncomputable", "public", "private"]
-      || "@[".toList.isPrefixOf w.toList)
+  let mut once : List OpenDecl := []
+  for ws in sourceLines src do
     let cur := stack.back?.getD .anonymous
     match ws with
     | "namespace" :: n :: _ =>
@@ -2639,9 +2660,8 @@ def fileScopes (src : String) : MetaM (Array Name × List OpenDecl) := do
     | "end" :: rest =>
       let k := match rest with | n :: _ => max 1 n.toName.components.length | [] => 1
       stack := stack.extract 0 (stack.size - k)
-    | "open" :: rest =>
-      if rest.contains "in" then continue
-      let rest := rest.filter (· != "scoped")
+    | "open" :: all =>
+      let rest := (all.takeWhile (· != "in")).filter (· != "scoped")
       let resolve := fun (n : String) => do
         try withScope cur opens (resolveNamespaceCore n.toName (allowEmpty := true))
         catch _ => pure []
@@ -2669,9 +2689,10 @@ def fileScopes (src : String) : MetaM (Array Name × List OpenDecl) := do
           last ← resolve w
           i := i + 1
       added := last.map (.simple · []) ++ added
-      opens := opens ++ added.reverse
+      if all.contains "in" then once := once ++ added.reverse
+      else opens := opens ++ added.reverse
     | _ => pure ()
-  return (spaces, opens)
+  return (spaces, opens ++ once)
 
 /-- Every backticked name in the docstrings of the modules of `roots` that resolves to no
 constant: its module, its line, the heading it is under, whether it begins a list item, and
@@ -2696,11 +2717,17 @@ def moduleDocRecords (h : IO.FS.Handle) (roots : Array Name) : MetaM Unit := do
       while !p.isAnonymous do
         unless spaces.contains p do spaces := spaces.push p
         p := p.getPrefix
-    -- The source is read from the project the probe runs in; a module whose file is elsewhere
-    -- (a dependency's) is resolved with the namespaces it declares into only.
-    let file : System.FilePath := mod.components.foldl (fun p c => p / c.toString) "."
-    let (entered, opens) ← try fileScopes (← IO.FS.readFile (file.addExtension "lean"))
-      catch _ => pure (#[], [])
+    -- The source is read from the project the probe runs in: at the module's place in its
+    -- folder, else in a source folder Lake gives (`LEAN_SRC_PATH`, which holds each library's
+    -- `srcDir`). A module whose file is found in neither is resolved with the namespaces it
+    -- declares into only.
+    let rel := (System.mkFilePath (mod.components.map (·.toString))).addExtension "lean"
+    let dirs := ("." : System.FilePath) ::
+      ((← IO.getEnv "LEAN_SRC_PATH").map System.SearchPath.parse |>.getD [])
+    let file? ← dirs.findM? fun d => (d / rel).pathExists
+    let (entered, opens) ← match file? with
+      | some d => try fileScopes (← IO.FS.readFile (d / rel)) catch _ => pure (#[], [])
+      | none => pure (#[], [])
     for ns in entered do
       unless spaces.contains ns do spaces := spaces.push ns
     let scopes := #[Name.anonymous] ++ spaces

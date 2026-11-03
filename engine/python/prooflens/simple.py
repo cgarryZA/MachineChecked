@@ -23,6 +23,7 @@ from .config import STANDARD_AXIOMS, Config, Paper, Publish
 from .review_sources import marker_safe, report_digests
 from .probe import ProbeError, by_library, fingerprint, lean_session, lean_source, lib_names
 from .sources import acquire
+from .layout import library_files, module_file
 from .moddocs import stale_doc_names
 from . import numbering as nb
 from .tex import DEFAULT_ENVS, TexError, anchors_for, theorem_envs
@@ -60,22 +61,17 @@ def find_lake_root(start: Path) -> Path | None:
 
 def built_modules(root: Path, libs: list[str]) -> tuple[list[str], list[str]]:
     """(built, unbuilt) modules of the project's libraries: a module is built when Lake has
-    written its `.olean`. Modules are found from the source tree, so modules outside the import
-    graph of a library's root are found too."""
+    written its `.olean`. Modules are found from the source tree, in each library's source
+    folder (`layout.library_files`), so modules outside the import graph of a library's root
+    are found too."""
     olean = root / ".lake" / "build" / "lib" / "lean"
     if not olean.exists():
         olean = root / ".lake" / "build" / "lib"
     built, unbuilt = [], []
     for lib in libs:
-        base = lib.split(".")[0]
-        sources = [root / f"{base}.lean"] + sorted((root / base).rglob("*.lean")) \
-            if (root / base).is_dir() else [root / f"{base}.lean"]
-        for src in sources:
-            if not src.exists():
-                continue
-            mod = ".".join(src.relative_to(root).with_suffix("").parts)
-            (built if (olean / src.relative_to(root).with_suffix(".olean")).exists()
-             else unbuilt).append(mod)
+        for _, rel in library_files(root, lib):
+            mod = ".".join(rel.with_suffix("").parts)
+            (built if (olean / rel.with_suffix(".olean")).exists() else unbuilt).append(mod)
     return built, unbuilt
 
 
@@ -189,7 +185,7 @@ class SuggestContext:
         self.module_docs: dict[str, str] = {}
         if root is not None:
             for m in sorted({d.get("module") for d in index if d.get("module")}):
-                p = root / (m.replace(".", "/") + ".lean")
+                p = root / module_file(root, m)
                 try:
                     text = p.read_text(encoding="utf-8", errors="replace")
                 except OSError:
@@ -1005,7 +1001,7 @@ def declaring_modules(root: Path, modules: list[str], name: str) -> list[str]:
     checked."""
     out = []
     for m in modules:
-        p = root / (m.replace(".", "/") + ".lean")
+        p = root / module_file(root, m)
         try:
             if p.is_file() and name in declared_names(p.read_text(encoding="utf-8", errors="replace")):
                 out.append(m)
@@ -1227,8 +1223,8 @@ def index_scope(root: Path, libs: list[str], built: list[str], foreign: set[str]
     texts: dict[str, str | None] = {}
     for m in built:
         try:
-            texts[m] = (root / (m.replace(".", "/") + ".lean")).read_text(encoding="utf-8",
-                                                                          errors="replace")
+            texts[m] = (root / module_file(root, m)).read_text(encoding="utf-8",
+                                                               errors="replace")
         except OSError:
             texts[m] = None
     if any(t is not None and MAKES_COMMANDS.search(t) for t in texts.values()):
@@ -1250,7 +1246,7 @@ def sources_declare(root: Path, modules: list[str]) -> set[str]:
     out: set[str] = set()
     for m in modules:
         try:
-            out |= declared_names((root / (m.replace(".", "/") + ".lean"))
+            out |= declared_names((root / module_file(root, m))
                                   .read_text(encoding="utf-8", errors="replace"))
         except OSError:
             continue
@@ -2147,7 +2143,7 @@ def paper_numbering(root: Path, index: list[dict], claims: list[dict], tex: dict
                        nb.sections_from_aux(aux) if aux is not None else None)
     modules = {d.get("module") for d in index if d.get("module")}
     blocks = nb.module_doc_blocks(root, modules) + nb.comment_blocks(root, modules, index)
-    return nb.analyse(index, claims, inv, blocks, foreign, retrieval, claim_text)
+    return nb.analyse(index, claims, inv, blocks, foreign, retrieval, claim_text, root=root)
 
 
 def claim_references(c: dict, numbering: dict | None) -> list[dict]:

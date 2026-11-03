@@ -1413,14 +1413,16 @@ class Assessor:
         root = getattr(self.cfg, "root", None)
         if not files or root is None:
             return
-        cites = rc.citations(files, root, getattr(self.cfg, "review_citations_ignore", None))
+        ignore = getattr(self.cfg, "review_citations_ignore", None)
+        cites = rc.citations(files, root, ignore)
         lean_root = getattr(self.cfg, "lean_root", None) or root
         bases = [root] + ([lean_root] if not lean_root.is_relative_to(root) else [])
         strict = getattr(self.cfg, "review_citations_strict", False)
         warnings = []
         for w in rc.blocks(rc.unresolved(cites, self.lean.get("names"), bases)):
             f = _finding("violation" if strict else "warning", "review-citation", w["file"],
-                         rc.message(w), trigger=w["token"], file=w["file"], line=w["line"],
+                         rc.message(w) + rc.replaced_default(w["token"], ignore),
+                         trigger=w["token"], file=w["file"], line=w["line"],
                          lines=w["lines"], at=w["at"])
             f["id"] += "@" + w["at"]
             if not strict:

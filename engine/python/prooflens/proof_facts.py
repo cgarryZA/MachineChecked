@@ -67,7 +67,8 @@ SOURCE_STEP = re.compile(r"^\s*(?:·\s*)?(have|haveI|suffices|show)\b\s*([^\s:=]
 
 
 def _source(root: Path, module: str, rng: dict | None) -> tuple[str, list[tuple[int, str]]]:
-    file = module.replace(".", "/") + ".lean"
+    from .layout import module_file
+    file = module_file(root, module)
     if not rng:
         return file, []
     try:

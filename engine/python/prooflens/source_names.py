@@ -24,6 +24,9 @@ DECL = re.compile(
     r"(?:\([^)]*\)\s+)?"  # an instance's priority
     r"([^\s:({\[⦃]+)")
 
+# A word that can continue an `open` command's list of namespaces.
+OPEN_NAME = re.compile(r"(?:[A-Za-z0-9_.'!?]|[^\x00-\x7f])+")
+
 
 def strip_comments(text: str) -> str:
     """`text` with its comments (`--`, and nested `/- … -/`, docstrings included) blanked, its
@@ -52,25 +55,34 @@ def strip_comments(text: str) -> str:
 
 def declarations(text: str) -> tuple[set[str], set[str], set[str]]:
     """The full names a Lean file declares, the namespaces it enters, tracking `namespace`,
-    `section`, `mutual` and `end`, and the namespaces its `open` commands name (an `open … in`,
-    which opens for one command, left out)."""
+    `section`, `mutual` and `end`, and the namespaces its `open` commands name, an `open … in`
+    (which opens for one command) included. A line indented beyond an `open` that holds only
+    names continues it, as Lean reads it."""
     names: set[str] = set()
     entered: set[str] = set()
     opened: set[str] = set()
     stack: list[list[str]] = []
+    open_col = None  # the indentation of an `open` whose namespaces may go on to the next line
     for line in strip_comments(text).splitlines():
         s = line.strip()
         words = s.split()
         if not words:
             continue
+        col = len(line) - len(line.lstrip())
+        if open_col is not None and col > open_col and all(OPEN_NAME.fullmatch(w)
+                                                           for w in words):
+            words = ["open", *words]
+        else:
+            open_col = col if words[0] == "open" else None
         if words[0] == "namespace" and len(words) > 1:
             for part in words[1].split("."):
                 stack.append([part])
                 entered.add(".".join(p for e in stack for p in e))
             continue
-        if words[0] == "open" and "in" not in words:
+        if words[0] == "open":
             for w in words[1:]:
-                if w in ("hiding", "renaming") or w.startswith("("):
+                if w in ("hiding", "renaming", "in") or w.startswith("("):
+                    open_col = None
                     break
                 if w != "scoped":
                     opened.add(w)
@@ -97,7 +109,10 @@ def declarations(text: str) -> tuple[set[str], set[str], set[str]]:
 def lean_files(roots: list[Path]):
     """Every `.lean` file under `roots` (the project, and the Lake packages it depends on),
     without version control and build output, with the module it is: its path relative to the
-    root or to its package's folder (`.lake/packages/<package>`)."""
+    source folder of its package (the root, or `.lake/packages/<package>`) that holds it
+    (`layout.module_of`)."""
+    from .layout import module_of, source_dirs
+    layouts: dict[Path, list] = {}
     for root in roots:
         if not root.is_dir():
             continue
@@ -106,10 +121,13 @@ def lean_files(roots: list[Path]):
             for f in files:
                 if f.endswith(".lean"):
                     path = Path(dirpath) / f
-                    parts = path.relative_to(root).with_suffix("").parts
-                    if parts[:2] == (".lake", "packages"):
-                        parts = parts[3:]
-                    yield path, ".".join(parts)
+                    parts = path.relative_to(root).parts
+                    pkg = root
+                    if parts[:2] == (".lake", "packages") and len(parts) > 3:
+                        pkg, parts = root.joinpath(*parts[:3]), parts[3:]
+                    if pkg not in layouts:
+                        layouts[pkg] = source_dirs(pkg)
+                    yield path, module_of(pkg, "/".join(parts), layouts[pkg])
 
 
 def source_roots(lean_root: Path) -> list[Path]:
