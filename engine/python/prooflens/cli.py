@@ -299,21 +299,36 @@ def _simple_site(root: Path, paper: Path, web: str | None, reuse_lean: bool = Fa
 
 
 def _check_summary(view: dict, root: Path) -> tuple[dict, dict]:
-    """The semantic summary `check` gives in zero configuration, and each claim's facts: those
-    of the site this view would write (`semantic.of_view`), with the findings in force of the
-    working directory's workspaces checked against that site's data, which is written to a
-    temporary directory for the purpose when there are any (`check` writes no site)."""
+    """The semantic summary `check` gives in zero configuration, and each claim's facts
+    (`_check_workspaces`)."""
+    summary, facts, _ = _check_workspaces(view, root)
+    return summary, facts
+
+
+def _check_workspaces(view: dict, root: Path) -> tuple[dict, dict, dict]:
+    """The semantic summary `check` gives in zero configuration, each claim's facts, and each
+    claim's computed hints: the facts of the site this view would write (`semantic.of_view`),
+    with the findings in force of the working directory's workspaces checked against that
+    site's data, and the hints their alignments give there (`estimates.workspace_hints`, which
+    the summary does not count). The site is written to a temporary directory for the purpose
+    when there are any (`check` writes no site)."""
+    from . import estimates as est
     from . import semantic
     work = root / cfgmod.work_dir_name(root)
-    found = None
-    if semantic.has_findings(work):
+    found, hints = None, {}
+    want_found, want_hints = semantic.has_findings(work), est.has_alignments(work)
+    if want_found or want_hints:
         import tempfile
         from .simple import write_view_site
         with tempfile.TemporaryDirectory() as tmp:
             site = Path(tmp) / "site"
             write_view_site({**view, "pdf": None}, site, None, root)
-            found = semantic.workspace_findings(work, site / "data", root)
-    return semantic.of_view(view["body"], root, found)
+            if want_found:
+                found = semantic.workspace_findings(work, site / "data", root)
+            if want_hints:
+                hints = est.workspace_hints(work, site / "data", work / "sources")
+    summary, facts = semantic.of_view(view["body"], root, found)
+    return summary, facts, hints
 
 
 def _print_simple(body, summary: dict | None = None):
@@ -979,6 +994,18 @@ def _check_json(a):
         sys.exit(1)
 
 
+def _with_hints(claims: list[dict], hints: dict[str, dict]) -> None:
+    """Each claim's computed hints from the working directory's workspaces, attributed to the
+    workspace and auditor whose alignment gives them (`hints`), and those a difference
+    dismissed (`dismissed_hints`): present only when there are some. Pointers, not statuses."""
+    for c in claims:
+        h = hints.get(c["id"]) or {}
+        if h.get("hints"):
+            c["hints"] = h["hints"]
+        if h.get("dismissed"):
+            c["dismissed_hints"] = h["dismissed"]
+
+
 def _check_full_json(a) -> tuple[dict, list[dict], bool]:
     """`check --json` with a machinechecked.toml: the document's fields, its claims, and whether
     the assessment found a violation."""
@@ -994,6 +1021,8 @@ def _check_full_json(a) -> tuple[dict, list[dict], bool]:
     facts = {c["id"]: c.get("semantic") for c in idx["claims"]}
     for c in claims:
         c["semantic"] = facts.get(c["id"])
+    from .estimates import workspace_hints
+    _with_hints(claims, workspace_hints(cfg.out_dir, res["site"] / "data"))
     out = {"mode": "full", "release": idx["release"],
            "project": idx.get("project", {}).get("commit"),
            "semantic": idx.get("semantic"),
@@ -1040,9 +1069,10 @@ def _check_simple_json(a) -> tuple[dict, list[dict], bool]:
                "unit": c.get("unit", "statement"), "parent": c.get("parent"),
                **(_step_json(c) if c.get("unit") else {})}
               for c in body["claims"]]
-    summary, facts = _check_summary(view, root)
+    summary, facts, hints = _check_workspaces(view, root)
     for c in claims:
         c["semantic"] = facts.get(c["id"])
+    _with_hints(claims, hints)
     num = body.get("numbering") or {"references": [], "pattern": None}
     out = {"mode": "simple", "paper": body["paper"], "title": body["title"],
            "release": view_release(body), "commit": body.get("commit"),

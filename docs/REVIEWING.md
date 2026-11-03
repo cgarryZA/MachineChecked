@@ -443,6 +443,37 @@ recorded as a defect. The reading lists the Lean hypotheses no requirement is al
 hints to inspect; a hypothesis aligned with a requirement that a standing assumption governs is
 shown as inherited from it.
 
+**Computed hints of quantity.** An alignment may name the paper's `expression`, exactly as the
+source writes it in a passage that governs the alignment (a passage it names, or an accepted
+passage of its requirements); the alignment goes out of date when no such passage prints it any
+more. With a Lean target that is an expression (the conclusion, a hypothesis or a sub-term,
+inside a definition expanded at its arguments too), the reading compares the two:
+
+```json
+{"op": "put", "record": {"kind": "alignment", "claim": "Theorem 17", "requirements": ["m.h"],
+ "expression": "m + 4", "lean": [{"decl": "Example.jet_lower", "binder": "h"}]}}
+```
+
+Both are put in one normal form, a polynomial with rational coefficients (a quotient by a monomial
+is a negative power; an absolute value or a norm is a variable of its own), and a difference is a
+hint: an `offset` (feature `index offset`: `m + 4` against `JetBound f S (n + 5) C`, naming the
+definition, the argument the expression stands in and its expansion), a `coefficient` (`weight`:
+`2(a + b)` against `a + b`), a `power` or other `terms`. The paper's variables are matched with
+the Lean's only through an alignment of a requirement's variable (`binds`) with a Lean variable
+(`var`) and through symbol links, so a rename gives no hint, and neither does an equal form
+(`2(a + b)` against `2a + 2b`); a variable matched with none gives `not compared`, never a
+difference. A bounded TeX reader reads the paper's side (`+`, `-`, `\cdot`, `/`, juxtaposition,
+`\frac`, `^`, numerals, identifiers with sub- or superscripts, brackets of any size, `|·|` and
+`\|·\|`). Anything else, and a Lean operation that is not this arithmetic (a subtraction in ℕ,
+cut off at 0, or a division in ℕ or ℤ), is `not compared`, with the reason and both exact texts.
+A hint is a pointer to inspect: record what you conclude as a difference, and dismiss a hint by
+naming it in that difference (`"hint": {"alignment": ID, "kind": KIND}`); the reading then lists
+it apart, with your outcome and reason. Hints show in `workspace show`, in `compare CLAIM
+--workspace ID` at the informed stage, and in `check --json`, attributed to the workspace and
+auditor whose alignment gives them. They change no status or review record, the semantic summary
+does not count them, a published audit does not carry them, and the stages of an independent
+review show none.
+
 A counterexample is a record of its own against one reading of a requirement:
 
 ```json
