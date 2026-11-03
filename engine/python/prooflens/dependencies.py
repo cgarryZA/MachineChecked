@@ -16,17 +16,19 @@ A finding rests on:
   digest, and the expansions of definitions it prints, by their keys with the fingerprint of the
   definition each expands: a changed definition it expands reopens it, naming the expansion as
   recorded and as the build prints it now), an application of one
-  (`application`), a fact inside a proof (`fact`), a certificate (`certificate`), a passage of
-  the paper (`paper`) or a source line (`source`, which records no version of its text);
+  (`application`), a fact inside a proof (`fact`), a certificate (`certificate`), a connection
+  between two objects (`connection`: its ends, relation, scope and support, each with its own
+  pins), a passage of the paper (`paper`) or a source line (`source`, which records no version
+  of its text);
 - its composition (`composition`: a digest of its steps, with their substitutions, of its
   identifications and of its obligations) and, for a finding recorded as a checked bridge, the
   bridge (`bridge`: the target's fingerprint and the passage Lean checked it against);
 - the counterexamples it cites (`counterexample`).
 
 The evidence kinds of the finding (`kinds`) say which of these it uses: a statement comparison
-(a declaration's statement, or a certificate), an object correspondence (alignments, or a
-composition's identifications), a composition, a proof route (applications or facts inside a
-proof) and a checked bridge.
+(a declaration's statement, or a certificate), an object correspondence (alignments,
+connections, or a composition's identifications), a composition, a proof route (applications or
+facts inside a proof) and a checked bridge.
 
 A submitted finding records its dependencies when it is submitted and keeps them; a draft's are
 read from the records it cites whenever it is shown, so a draft follows its records as they are
@@ -47,7 +49,8 @@ PASSAGE, READING, CONTEXT, OBJECT = "passage", "reading", "context", "object"
 COMPOSITION, BRIDGE, COUNTEREXAMPLE = "composition", "bridge", "counterexample"
 # The evidence kinds of a reference, by its key.
 EVIDENCE = {"decl": "declaration", "app": "application", "fact": "fact",
-            "certificate": "certificate", "paper": "paper", "source": "source"}
+            "certificate": "certificate", "connection": "connection", "paper": "paper",
+            "source": "source"}
 KINDS = ("statement comparison", "object correspondence", "composition", "proof route",
          "checked bridge")
 
@@ -387,6 +390,9 @@ def evidence_currency(ref: dict, snap, root, check_facts: bool = False) -> dict:
         return app_currency(root, ref["app"], check_facts)
     if "decl" in ref:
         return decl_currency(ref, snap, root)
+    if "connection" in ref:
+        from .connections import currency as connection_currency
+        return connection_currency(ref["connection"], snap, root, check_facts)
     if "paper" in ref:
         return paper_currency(ref["paper"], snap)
     return {"state": "unchecked", "changes": [],
@@ -400,6 +406,9 @@ def ref_pins(ref: dict) -> dict:
     ref = ref or {}
     if "decl" in ref:
         return {k: ref[k] for k in REF_PINS["decl"] if ref.get(k) is not None}
+    if "connection" in ref:
+        # A connection is pinned as a whole: its ends, relation, scope and support.
+        return {"connection": json.loads(json.dumps(ref["connection"]))}
     for k in ("app", "fact", "certificate", "paper", "source"):
         if k in ref:
             v = ref[k] or {}
@@ -566,7 +575,7 @@ def kinds(items: list[dict], comp: dict | None = None) -> list[str]:
     out = []
     if deps & {"declaration", "certificate"}:
         out.append("statement comparison")
-    if OBJECT in deps or (comp or {}).get("identifications"):
+    if OBJECT in deps or "connection" in deps or (comp or {}).get("identifications"):
         out.append("object correspondence")
     if COMPOSITION in deps:
         out.append("composition")

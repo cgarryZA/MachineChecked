@@ -823,7 +823,32 @@ optional `clause` and `note`, `rev`, `created_at`/`created_by`, `updated_at`/`up
   `reasons`); it is `stale` once its source file, its checked type, its target or the result
   changes. Each of these three is `unchecked`, never `stale`, while Lean cannot look: its
   module is not built or could not be loaded, the request failed, or, for an application not
-  found, a module was not searched. `role` is `candidate` (the default), `supports`,
+  found, a module was not searched. `{connection: {from, to, relation, ...}}` is a connection
+  between two objects of Lean results (`connections.py`). Each end is a variable of a
+  declaration's statement (`{decl, var}`, by number or name, pinned to the binder's `id`,
+  `name`, `type` and `op`), a sub-term of it (`{decl, at}`, pinned to its `target` text), a
+  declaration as a whole (`{decl}`), an application's argument (`{app, param}`, with its
+  `value`) or a local of a fact inside a proof (`{fact, local}`, with its `local_text`); a
+  declaration end keeps the pins of a cited declaration. `relation` is `definitional`,
+  `projection` (with its `field`), `equal`, `equal on a domain` (with its `domain`), `eventually
+  equal` (with the filter it holds `along`), `equal as classes` (with what it is taken `modulo`,
+  its measure or domain included), `restriction` (with its `domain`), `coercion`,
+  `transformation` (with the property it `preserves`) or `shared witness`. `conditions` lists
+  when it holds, in words. `support` lists the Lean results that state it (`{decl}`, `{app}`,
+  `{fact}`, pinned as evidence is); every relation but `definitional`, `projection`, `coercion`
+  and `shared witness` needs one, and a `definitional` connection names the definitions that
+  `unfolds` (its reduction context). A type or a definition is refused as support, and so is a
+  declaration both ends' statements use: a shared type or dependency relates nothing. A
+  `shared witness` joins two witnesses of one binder of one result without further support;
+  between separate existence results it is refused unless a support other than those results,
+  and not one both their proofs use (by the facts store's references), relates them. Ends are
+  compared by declaration and binder identity, never by name. A connection is `stale` when an
+  end, a support or an unfolded definition changed, or an end's binder or sub-term is not the one
+  it was recorded at (the change says which; the end is never moved to the new one), and
+  `unchecked` when a part cannot be checked; each connection is checked on its own pins. A
+  connection written again without `repin` keeps the pins it was recorded at; a re-pin that
+  names a recorded binder (`id`) or sub-term text (`target`) the build no longer has is refused.
+  `role` is `candidate` (the default), `supports`,
   `context` or `rejected` (with `why_rejected`). A candidate is a candidate until the auditor
   gives it another role.
 - **`finding`**: `coverage` (the links file's words: `full`, `partial`, `changed`, `related`,
@@ -908,13 +933,22 @@ optional `clause` and `note`, `rev`, `created_at`/`created_by`, `updated_at`/`up
   those inside them), the evidence it rests on (a `decl`, `app` or `fact` reference that is not
   rejected) and the earlier steps it follows from (one of them at least), the substitutions it
   makes (`{variable, value, in}`, `in` an evidence id of the step) and any inference of the
-  auditor's own. `identifications` (`{left: {step, object}, right: {step, object}, relation,
-  how}`; `relation` is `same object`, `equal`, `restriction`, `coercion` or `other`; `how` is
-  `retained witness`, when the right step follows from the left, `evidence`, with the
-  `evidence` that shows it, or `definition`). `obligations` (`{id, kind, text, state, by}`;
-  `kind` is `compatible witnesses`, `local to global`, `equality transport`, `constant
-  dependence`, `genericity`, `side condition` or `other`; `state` is `open` or `discharged`, with
-  `by: {steps, evidence}`). `evidence` is computed: every evidence id it uses. Optional
+  auditor's own. A step does not rest on a connection. `identifications` (`{left: {step,
+  object}, right: {step, object}, relation, how}`; `relation` is `same object`, `equal`,
+  `restriction`, `coercion` or `other`; `how` is `retained witness`, when the right step follows
+  from the left, `evidence`, with the `evidence` that shows it, connections included, or
+  `definition`). A cited connection's relation must fit the identification's (`same object` and
+  `equal` take a shared witness, a definitional, projection or equal connection, or a partial
+  one; `restriction` an equality on a domain, an eventual equality or a restriction; `coercion`
+  a coercion; `other` any). `obligations` (`{id, kind, text, state, by, connection}`; `kind` is
+  `compatible witnesses`, `local to global`, `equality transport`, `constant dependence`,
+  `genericity`, `side condition` or `other`; `state` is `open` or `discharged`, with `by: {steps,
+  evidence}`; `connection` the connection it comes from). An identification as `same object` or
+  `equal` through a connection that holds on a domain, along a filter or as a restriction leaves
+  a `local to global` obligation, and through an equality of classes an `equality transport`
+  obligation, naming that connection: the service adds it, open, when the composition does not
+  record one, and refuses to discharge it with such connections alone. `evidence` is computed:
+  every evidence id it uses. Optional
   `statement` (the combined statement, in words) and `coverage`; `full` is refused while a
   printed requirement of the claim is established by no step, an obligation is open, or the
   claim has no requirements recorded. The basis is never written: `workspace show` gives it as
@@ -1006,14 +1040,14 @@ identity:
 | `reading` | a requirement it rests on: the one it names, or its counterexamples concern, with those it sits inside, and each that a step of its composition establishes, with those inside it | `requirement`, `sha256` (`reading_sha256`) |
 | `context` | a passage governing one of those requirements (accepted, not a later use) | `requirement`, `role`, `origin`, and `region` (its location, `sha256`, `line_sha256`) or `passage` (`claim`, `sha256`) |
 | `object` | an alignment of one of those requirements | `requirements`, `relation`, `lean` (each target's place, `target` text, `fingerprint`, `digest`, `closure`) |
-| `declaration`, `application`, `fact`, `certificate`, `paper`, `source` | evidence it cites, or that its composition or counterexamples cite | `role` and `ref`: the reference's identifying fields and pins (a declaration's `closure` and `expansions` included) |
+| `declaration`, `application`, `fact`, `certificate`, `connection`, `paper`, `source` | evidence it cites, or that its composition or counterexamples cite | `role` and `ref`: the reference's identifying fields and pins (a declaration's `closure` and `expansions` included; a connection whole, with its ends, scope and support) |
 | `composition` | the composition it rests on | `sha256`: a digest of its statement, steps (their evidence, requirements, substitutions and inferences), identifications, obligations, coverage and bridge pins |
 | `bridge` | for a finding recorded as a checked bridge: its composition's bridge, or its own | `theorem`, `target`, and for a composition's, `target_fingerprint` and `source_sha256` |
 | `counterexample` | a counterexample it cites | `sha256` (the finding's pin of it) |
 
 `dependencies` is `{kinds, items, unknown, at}`: `kinds` the evidence kinds it uses
 (`statement comparison`: a declaration's statement or a certificate; `object correspondence`:
-alignments or a composition's identifications; `composition`; `proof route`: applications or
+alignments, connections or a composition's identifications; `composition`; `proof route`: applications or
 facts inside a proof; `checked bridge`), and `unknown` the parts that cannot be identified, each
 with `why` (a finding recorded without a build, whose passage version is not known; a finding's
 own bridge, which records no version of its target or of the passage; a record it names that the
@@ -1174,8 +1208,13 @@ Lean project the release was built from, as `workspace show` checks it (asking L
 facts store has no answer); it is published as `unchecked` when there is no such project (no Lean
 was built, or a Lean input changed since the build), or when Lean could not look (the module is
 not built or could not be loaded, the request failed). An `app` reference keeps its arguments,
-premises and result only with `lean`. A composition keeps its steps' ids, requirements, evidence and order, its
-identifications' steps and how they are known, and its obligations' kinds, states and discharges;
+premises and result only with `lean`. A `connection` reference keeps its relation, its ends
+(declaration, variable number and binder id, sub-term id, application or fact and its pins,
+parameter or local) and its support and unfolded definitions by their pins; the ends' names,
+types and texts, its scope (`domain`, `along`, `modulo`, `field`, `preserves`) and its
+`conditions` only with `lean`. A composition keeps its steps' ids, requirements, evidence and order, its
+identifications' steps and how they are known, and its obligations' kinds, states, discharges
+and the connections they come from;
 its objects and substitutions only with `lean`; its statement, what each step establishes, the
 inferences, obligation texts and notes only with `reviews`. Its basis is `checked_bridge` only when
 the bridge is checked at export against the project's facts store; otherwise

@@ -14,6 +14,7 @@
 import { alignmentSource, rowOfTarget, statementRows } from "./comparison.js";
 import { spineOf, conclusionOf } from "./tree.js";
 import { compositionView, findingCoverageView, recordedBasisText } from "./coverage.js";
+import { connectionText } from "./connections.js";
 
 // -- correspondence fields of a review --------------------------------------------------------
 
@@ -263,6 +264,7 @@ function whereOf(f, claimId) {
 
 // A piece of evidence in words, as the published reading names it.
 export function refText(r) {
+  if (r?.connection) return connectionText(r.connection);
   if (r?.app) return `${r.app.callee} applied in ${r.app.caller || "a proof"}${r.app.result ? ", giving " + r.app.result : ""}`;
   if (r?.certificate) {
     const c = r.certificate;
