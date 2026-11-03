@@ -39,6 +39,9 @@ FRAGMENT_ORIGINS = ("printed", "inferred", "correction")
 FRAGMENT_STATES = ("proposed", "accepted", "removed")
 RELATIONS = ("corresponds", "additional assumption", "changed", "alternative representation")
 LOCAL_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,39}")
+# A requirement's reduced obligation: the inequality it comes to under a specialisation the
+# auditor chose, which the counterexample search reads (`estimates.search`).
+REDUCED_CHARS = 400
 FRAGMENT_LINES = 60
 
 # The words a reading of a fragment's role or a witness's scope shows.
@@ -150,6 +153,13 @@ def requirement_content(out: dict, rec: dict, ws: dict, rid: str | None) -> dict
         if both:
             raise _err(f"a constant cannot both depend on and be independent of "
                        f"{', '.join(sorted(both))}")
+    if rec.get("reduced") not in (None, ""):
+        if out["form"] in BINDING_FORMS:
+            raise _err("a reduced obligation (`reduced`) belongs to the requirement a reading "
+                       "ends in, not to one that binds variables")
+        out["reduced"] = _text(rec["reduced"], "the reduced obligation (`reduced`)").strip()
+        if len(out["reduced"]) > REDUCED_CHARS:
+            raise _err(f"a reduced obligation is at most {REDUCED_CHARS} characters")
     if out["origin"] == "correction":
         if rec.get("corrects") in (None, ""):
             raise _err("a requirement added by a correction names the printed requirement it "
@@ -711,7 +721,7 @@ def reading_digest(req: dict, fragments: list[dict]) -> str:
     the fragments that govern it (not later uses, proposals or removed ones)."""
     body = {k: req.get(k) for k in ("form", "text", "binds", "independent_of", "origin",
                                     "parent", "corrects")}
-    for k in ("domain", "depends_on"):
+    for k in ("domain", "depends_on", "reduced"):
         if req.get(k):
             body[k] = req[k]
     body["fragments"] = sorted([fr["role"], fr["origin"], _pin(fr)] for fr in fragments
@@ -1047,6 +1057,8 @@ def lines(rd: dict) -> list[str]:
         if r["currency"]["state"] == "stale":
             head += "  [stale]"
         out.append(head)
+        if r.get("reduced"):
+            out.append(f"{pad}  reduced obligation: {r['reduced']}")
         for f in r["fragments"]["governing"]:
             out.append(f"{pad}  from {where_text(f)} ({ROLE_WORDS[f['role']]}, {f['origin']}"
                        + (f", applies to {f['scope']}" if f.get("scope") else "")

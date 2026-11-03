@@ -378,7 +378,15 @@ workspace's with `--workspace ID`), each as `workspace show` gives it: its steps
 `next_step` and `bridge_check`. They are prior interpretations (`subject.contains`).
 `--query connections CLAIM` gives the connections between objects the workspaces record for the
 claim (one workspace's with `--workspace ID`), each the evidence record as `workspace show` gives
-it, with its `currency`; they are prior interpretations too. A query
+it, with its `currency`; they are prior interpretations too.
+`--query counterexamples CLAIM` (and `workspace suggest --claim C --requirement ID
+--counterexamples` for one requirement) runs a bounded search on each reading of a requirement
+that records a `reduced` obligation (`"reduced": "2 \\le C/\\varepsilon"`): domain endpoints,
+then limits, then families in the constants chosen before each variable (`ε = C + 1`), each
+checked with exact rational arithmetic for every value of the constants. Each result gives
+`proposals` (candidates only, `standing: "candidate"`), its `attempts`, `budget` (`checks`,
+`used`, `exhausted`; `--budget N`) and `unsupported` (each construct named). It records
+nothing, changes no status, and a search that finds nothing establishes nothing. A query
 kind whose extraction is not built yet, or that this build cannot answer, gives `available:
 false` with its `reason`, which names the issue that owns it when there is one. An error is `{"ok": false, "error":
 {kind, message, candidates}}` with exit 1 (exit 2, kind `no-build`, when there is no build to
