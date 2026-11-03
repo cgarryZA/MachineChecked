@@ -931,7 +931,7 @@ NO_MODULES = ("--fix-modules: only a project with a machinechecked.toml lists `m
               "zero configuration reads every built module")
 
 
-FINDING_KEYS = ("id", "tier", "code", "subject", "message", "trigger", "file", "line",
+FINDING_KEYS = ("id", "tier", "code", "subject", "message", "trigger", "file", "line", "lines",
                 "fingerprint", "at", "dismissed", "dismissal_stale", "resolved", "occurrences",
                 "occurrences_complete")
 
@@ -1167,6 +1167,13 @@ def _build_full(a, site: str | None = None, refresh: bool = False, fix_modules: 
         print(f"note: {len(whole)} totalisation warning(s) are dismissed by a dismissal of the "
               "operation in the whole statement, which holds until the statement changes; a "
               "dismissal with the warning's `at` and `fingerprint` names one application")
+    by_file = [f for f in details if f["code"] == "review-citation"
+               and (f.get("dismissed") or {}).get("form") == "file"]
+    if by_file:
+        print(f"note: {len(by_file)} review-citation warning(s) are dismissed by a dismissal "
+              "without `at`, which covers the first block of review text citing the token in "
+              "its file and no other; a dismissal with the warning's `at` and `fingerprint` "
+              "names one block")
     rg = _replay_guard(cfg, res["evidence"])
     if rg and rg["message"]:
         print(f"note: independent replay: {rg['message']}")

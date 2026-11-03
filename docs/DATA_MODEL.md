@@ -119,6 +119,10 @@ Dismissals of warnings (`dismissals.json`):
 totalisation warning about one application also has `at` (the warning's `at`), and its
 `fingerprint` is the application's (`pl-occ-v1:…`); without `at` it names the operation in the
 whole proposition and its `fingerprint` is the proposition's ([ASSURANCE.md](ASSURANCE.md)).
+A dismissal of a review-citation warning has the warning's `at` (the block of review text
+that cites the token) and `fingerprint` (`pl-cite-v2:…`, over the lines of the block that
+cite it); one without `at` (`pl-cite-v1:…`, over the file and token) covers the token's first
+block in the file only.
 
 ## Evidence (`evidence.schema.json`), written by the engine
 

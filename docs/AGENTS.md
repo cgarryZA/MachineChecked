@@ -87,8 +87,11 @@ with its `tier` (`violation`, `obligation`, `warning`), `code`, `subject` (the c
 for example `T:thm:bound#0`), `message`, and `dismissed` (who and why) when a warning was
 dismissed. A warning with code `module-doc-name` is a name a module docstring lists that nothing
 declares: its `subject` is the module, its `trigger` the name, and it has `file` and `line`.
-A warning with code `review-citation` is a name or file that review text cites and nothing
-resolves: its `subject` is the review file, its `trigger` the token, with `file` and `line`.
+A warning with code `review-citation` is a name or file that a block of review text cites and
+nothing resolves: its `subject` is the review file, its `trigger` the token, `at` the block
+(the marker that closes it, or `end of file`), `line` the first line and `lines` every line
+of the block that cites it, with `file`; a dismissal of it gives its `at` and `fingerprint`
+and covers that block only.
 A warning with code `totalised` names the operation in `trigger`. For a supremum, an infimum, a
 division, an inverse, an integral, a sum, a root, a logarithm, a derivative or a conditional
 expectation, or `ENNReal.toReal`, it also has `occurrences`: each application of that operation the probe read in the
