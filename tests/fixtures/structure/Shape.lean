@@ -4,3 +4,4 @@ import Shape.Scope
 import Shape.Types
 import Shape.Analysis
 import Shape.Readable
+import Shape.Jets

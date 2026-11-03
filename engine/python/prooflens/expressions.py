@@ -4,9 +4,14 @@ Lean's.
 The paper's side is read by a bounded TeX reader: sums and differences, products (`\\cdot`,
 `\\times`, `*` or juxtaposition), quotients (`/`, `\\frac`), powers, numerals, identifiers (a
 letter or a Greek letter, with a subscript, primes or a `*`), brackets of any size, `|·|` and
-`\\|·\\|`. It gives the probe's `math` vocabulary (`op`, `num`, and `local` for an identifier).
-Anything else is refused as "unsupported: …"; the comparison then keeps both exact texts and
-compares nothing.
+`\\|·\\|`, and a notation the caller matches with a Lean definition applied to its arguments
+(`J_x(D, k, C)`). It gives the probe's `math` vocabulary (`op`, `num`, `local` for an
+identifier, `apply` for a notation applied). Anything else is refused as "unsupported: …"; the
+comparison then keeps both exact texts and compares nothing.
+
+A notation applied is compared with Lean's application of a definition: when the paper's
+notation is matched with another definition than the one Lean applies, the two differ in their
+`head`; when it is the same definition, the arguments are compared in order.
 
 Both sides are put in one normal form: a polynomial with rational coefficients, in which a
 quotient by a monomial is a negative power and each absolute value or norm is a variable of its
@@ -87,10 +92,11 @@ def _strip_math(tex: str) -> str:
 
 
 class _Reader:
-    def __init__(self, tex: str):
+    def __init__(self, tex: str, heads: frozenset = frozenset()):
         self.toks = [t for t in TOKEN.findall(_strip_math(tex)) if t not in SPACING]
         self.i = 0
         self.nodes = 0
+        self.heads = heads
 
     def peek(self, k: int = 0) -> str | None:
         j = self.i + k
@@ -271,18 +277,39 @@ class _Reader:
             den = self.argument()
             return self.op("div", num, den)
         if (len(t) == 1 and t.isalpha()) or (t.startswith("\\") and t[1:] in GREEK):
-            return self.identifier(t)
+            node = self.identifier(t)
+            if node["name"] in self.heads and self.delim() == "(":
+                return self.application(node)
+            return node
         raise Unsupported(f"unsupported: {t}")
 
+    def application(self, head: dict) -> dict:
+        """A notation the caller matches with a definition, applied to its arguments:
+        `J_x(D, k, C)`."""
+        self.take_delim()
+        args = []
+        while True:
+            args.append(self.expr(frozenset({",", ")"})))
+            d = self.delim()
+            if d == ",":
+                self.take()
+            elif d == ")":
+                self.take_delim()
+                return self.node(k="apply", name=head["name"], tex=head["tex"], args=args)
+            else:
+                raise Unsupported("unsupported: brackets that do not match")
 
-def read_tex(tex: str) -> dict:
+
+def read_tex(tex: str, heads=frozenset()) -> dict:
     """The expression `tex` (TeX, as the paper's source writes it) as mathematics, in the probe's
-    `math` vocabulary. Raises `Unsupported` for anything outside the reader's grammar."""
+    `math` vocabulary. An identifier among `heads` (name keys) followed by a bracket is that
+    notation applied (`apply`). Raises `Unsupported` for anything outside the reader's
+    grammar."""
     if not isinstance(tex, str) or not tex.strip():
         raise Unsupported("unsupported: an empty expression")
     if len(tex) > MAX_CHARS:
         raise Unsupported(f"unsupported: an expression longer than {MAX_CHARS} characters")
-    r = _Reader(tex)
+    r = _Reader(tex, frozenset(heads))
     if not r.toks:
         raise Unsupported("unsupported: an empty expression")
     node = r.expr(frozenset())
@@ -495,9 +522,11 @@ def fmt(p: Poly, names: dict[str, str]) -> str:
 
 # -- the comparison ---------------------------------------------------------------------------
 
-KINDS = ("offset", "coefficient", "power", "terms")
+KINDS = ("offset", "coefficient", "power", "terms", "head")
+# A different definition says nothing about which feature differs (the variables differentiated,
+# a norm, a domain): the auditor names it.
 FEATURE = {"offset": "index offset", "coefficient": "weight", "power": "power",
-           "terms": "other"}
+           "terms": "other", "head": "other"}
 
 
 def atoms(p: Poly) -> set[str]:
@@ -549,17 +578,28 @@ def classify(paper: Poly, lean: Poly) -> dict | None:
 
 
 def compare(paper_tex: str, lean: dict | None, pairs: dict[str, str],
-            known: dict[str, str]) -> dict:
+            known: dict[str, str], heads: dict | None = None) -> dict:
     """Compare the paper's expression `paper_tex` with Lean's `lean` (its `math`), the paper's
     identifiers matched with Lean's variables through `pairs` (name key -> Lean key; `known`
-    gives each Lean key's name). `outcome` is `same`, `differs` (with the `kind` of difference,
-    its `feature` and the `difference` or `factor`), or `not compared` (with the `reason`); each
-    side's normal form (`paper_normal`, `lean_normal`), the divisors taken to be nonzero
-    (`conditions`) and the Lean variables matched (`used`)."""
+    gives each Lean key's name) and its notations with Lean's definitions through `heads` (name
+    key -> definition, or a list of the definitions an ambiguous notation is matched with).
+    `outcome` is `same`, `differs` (with the `kind` of difference, its `feature` and the
+    `difference` or `factor`; for a notation applied, `head` with `heads`, or the difference of
+    the one argument that differs, with its index `argument`), or `not compared` (with the
+    `reason`); each side's normal form (`paper_normal`, `lean_normal`), the divisors taken to be
+    nonzero (`conditions`) and the Lean variables matched (`used`)."""
+    heads = heads or {}
     try:
-        node = read_tex(paper_tex)
+        node = read_tex(paper_tex, frozenset(heads))
     except Unsupported as e:
         return {"outcome": "not compared", "reason": str(e)}
+    return _compare_node(node, lean, pairs, known, heads)
+
+
+def _compare_node(node: dict, lean: dict | None, pairs: dict[str, str], known: dict[str, str],
+                  heads: dict) -> dict:
+    if node.get("k") == "apply":
+        return _compare_application(node, lean, pairs, known, heads)
     try:
         p, pn = normal_paper(node, pairs)
         if lean is None:
@@ -574,6 +614,73 @@ def compare(paper_tex: str, lean: dict | None, pairs: dict[str, str],
     if how is None:
         return {"outcome": "same", **out}
     return {"outcome": "differs", **how, "feature": FEATURE[how["kind"]], **out}
+
+
+def _compare_application(node: dict, lean: dict | None, pairs: dict[str, str],
+                         known: dict[str, str], heads: dict) -> dict:
+    """The paper's notation applied (`node`) against Lean's application of a definition: a
+    `head` difference when the notation is matched with another definition; with the same one,
+    the arguments compared in order, and the one that differs gives the difference
+    (`argument`: its index and both normal forms)."""
+    head = heads.get(node["name"])
+    if isinstance(head, (list, tuple)):
+        return {"outcome": "not compared",
+                "reason": f"the paper's {node['tex']} is aligned with more than one declaration "
+                          f"({', '.join(head)})"}
+    if not isinstance(lean, dict):
+        return {"outcome": "not compared",
+                "reason": "Lean's expression is not read as mathematics in this build"}
+    if lean.get("k") != "apply":
+        return {"outcome": "not compared",
+                "reason": f"the paper's expression applies {node['tex']}, and Lean's is not an "
+                          "application of a definition"}
+    pair = {"paper": {"notation": node["tex"], "decl": head}, "lean": lean.get("name")}
+    if lean.get("name") != head:
+        return {"outcome": "differs", "kind": "head", "feature": FEATURE["head"], "heads": pair,
+                "conditions": [], "used": []}
+    pa, la = node.get("args") or [], lean.get("args") or []
+    if len(pa) != len(la):
+        return {"outcome": "not compared", "heads": pair,
+                "reason": f"the paper applies {node['tex']} to {len(pa)} argument(s), and Lean "
+                          f"applies {head} to {len(la)}"}
+    results, diffs = [], []
+    for i, (p, q) in enumerate(zip(pa, la)):
+        r = _compare_node(p, q, pairs, known, heads)
+        if r["outcome"] == "not compared":
+            return {"outcome": "not compared", "heads": pair,
+                    "reason": f"argument {i + 1} of {head}: {r['reason']}"}
+        results.append(r)
+        if r["outcome"] == "differs":
+            diffs.append(i)
+    out = {"heads": pair,
+           "paper_normal": f"{node['tex']}({', '.join(r.get('paper_normal') or '…' for r in results)})",
+           "lean_normal": f"{head}({', '.join(r.get('lean_normal') or '…' for r in results)})",
+           "conditions": list(dict.fromkeys(c for r in results for c in r.get("conditions") or [])),
+           "used": list(dict.fromkeys(u for r in results for u in r.get("used") or []))}
+    if not diffs:
+        return {"outcome": "same", **out}
+    if len(diffs) > 1:
+        return {"outcome": "differs", "kind": "terms", "feature": FEATURE["terms"],
+                "arguments": diffs, **out}
+    i = diffs[0]
+    r = results[i]
+    return {"outcome": "differs", "kind": r["kind"], "feature": r["feature"],
+            **{k: r[k] for k in ("difference", "factor") if k in r}, **out,
+            "argument": {"index": i, "paper_normal": r.get("paper_normal"),
+                         "lean_normal": r.get("lean_normal"),
+                         **({"heads": r["heads"]} if r.get("heads") else {})}}
+
+
+def paper_head(paper_tex: str, heads: dict) -> str | None:
+    """The notation the paper's expression applies (its name key), when the whole expression is
+    a notation of `heads` applied; None otherwise."""
+    if not heads:
+        return None
+    try:
+        node = read_tex(paper_tex, frozenset(heads))
+    except Unsupported:
+        return None
+    return node["name"] if node.get("k") == "apply" else None
 
 
 def paper_atoms(paper_tex: str, pairs: dict[str, str]) -> set[str] | None:

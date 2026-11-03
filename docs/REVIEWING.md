@@ -512,6 +512,14 @@ difference. A bounded TeX reader reads the paper's side (`+`, `-`, `\cdot`, `/`,
 `\frac`, `^`, numerals, identifiers with sub- or superscripts, brackets of any size, `|·|` and
 `\|·\|`). Anything else, and a Lean operation that is not this arithmetic (a subtraction in ℕ,
 cut off at 0, or a division in ℕ or ℤ), is `not compared`, with the reason and both exact texts.
+A paper notation for a definition is matched with the Lean's through an alignment of the notation
+alone (`"expression": "J_t"`) with the whole declaration (`"lean": [{"decl":
+"Example.TimeJet"}]`). The notation applied (`J_t(D, k, C)`) is then compared with the Lean's
+application of a definition, or with the side of a relation that is one: another definition
+gives a `head` hint (`J_t(D, k, C)` against `SpaceJet D k C`, the bound on the derivatives in time
+against the one in space, or a norm in time against a norm in space), and the same definition
+compares the arguments in order (`J_x(D, k + 1, C)` against `SpaceJet D k C` is an `offset` in
+the argument `k`). A notation aligned with two declarations, or with none, is `not compared`.
 A hint is a pointer to inspect: record what you conclude as a difference, and dismiss a hint by
 naming it in that difference (`"hint": {"alignment": ID, "kind": KIND}`); the reading then lists
 it apart, with your outcome and reason. Hints show in `workspace show`, in `compare CLAIM
