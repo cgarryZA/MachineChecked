@@ -23,13 +23,25 @@
     return r.decl || id;
   }
   const side = (e) => (e.object ? `${e.object} of ${e.step}` : `an object of ${e.step}`);
+
+  // What changed in one part of the composition since it was recorded (`composition.currency`:
+  // a step's, an identification's or an obligation's), in words; null while it is current.
+  function changedText(cur) {
+    if (!cur || cur.state === "current") return null;
+    if (cur.state === "unchecked") return "not known to be current" + (cur.follows?.length ? `; follows step ${cur.follows.join(", ")}, which is not current` : "");
+    const what = (cur.changes || []).map((ch) => ch.evidence ? refText(ch.evidence) + " changed"
+      : ch.requirement ? `the reading of ${ch.requirement} changed` : "its input changed");
+    if (cur.follows?.length) what.push(`it follows step ${cur.follows.join(", ")}, which is not current`);
+    return "changed since: " + [...new Set(what)].join("; ");
+  }
+  const affects = $derived(c.currency?.affects || []);
 </script>
 
 {#if v}
   <div class="composition" data-composition={c.id} data-basis={v.basis} data-tone={v.tone}>
     <p class="small"><strong>{v.headline}</strong>
       <span class="faint">· composition {c.id}{c.created_by ? ` · ${c.created_by}` : ""}</span>
-      {#if c.currency?.state === "stale"}<span class="stale"> · a result it uses changed since</span>{/if}</p>
+      {#if c.currency?.state === "stale"}<span class="stale" data-affects={affects.join(" ")}> · {affects.length ? `a change since affects ${affects.length === 1 ? "step" : "steps"} ${affects.join(", ")}` : c.currency.claim?.length ? "the claim's passage changed since" : "a result it uses changed since"}</span>{/if}</p>
     {#if c.statement}<p class="small text">{c.statement}</p>{/if}
     <ol class="steps">
       {#each c.steps || [] as s (s.id)}
@@ -38,17 +50,18 @@
           <span class="faint">· from {[...(s.uses || []).map(refText), ...(s.after || []).map((a) => "step " + a)].join("; ")}{s.requirements?.length ? ` · establishes ${s.requirements.join(", ")}` : ""}</span>
           {#if s.substitutions?.length}<span class="faint"> · with</span> <code>{s.substitutions.map((x) => `${x.variable} := ${x.value}`).join(", ")}</code>{/if}
           {#if s.inference}<br /><span class="faint">The auditor's inference:</span> <span class="text">{s.inference}</span>{/if}
+          {#if changedText(c.currency?.steps?.[s.id])}<br /><span class={c.currency.steps[s.id].state === "stale" ? "stale" : "faint"} data-step-currency={c.currency.steps[s.id].state}>{changedText(c.currency.steps[s.id])}</span>{/if}
         </li>
       {/each}
     </ol>
-    {#each c.identifications || [] as x}
-      <p class="small" data-identification><span class="faint">{x.relation === "same object" ? "Same object" : "Identified"}:</span> {side(x.left)} and {side(x.right)} <span class="faint">({x.relation}; {x.how}{x.evidence?.length ? ": " + x.evidence.map(refText).join("; ") : ""})</span></p>
+    {#each c.identifications || [] as x, k}
+      <p class="small" data-identification><span class="faint">{x.relation === "same object" ? "Same object" : "Identified"}:</span> {side(x.left)} and {side(x.right)} <span class="faint">({x.relation}; {x.how}{x.evidence?.length ? ": " + x.evidence.map(refText).join("; ") : ""})</span>{#if changedText(c.currency?.identifications?.[k])}<span class="stale"> · {changedText(c.currency.identifications[k])}</span>{/if}</p>
     {/each}
     {#each c.obligations || [] as o (o.id)}
       <p class="small" data-obligation={o.id} data-state={o.state}><span class={o.state === "open" ? "open" : "faint"}>{o.state === "open" ? "Open" : "Discharged"}: {OBLIGATION[o.kind] || o.kind}</span>
         {#if o.text}<span class="text">{o.text}</span>{/if}
         {#if o.connection}<span class="faint"> · left by the connection {refText(o.connection)}</span>{/if}
-        {#if o.by}<span class="faint"> · by {[...(o.by.steps || []).map((s) => "step " + s), ...(o.by.evidence || []).map(refText)].join("; ")}</span>{/if}</p>
+        {#if o.by}<span class="faint"> · by {[...(o.by.steps || []).map((s) => "step " + s), ...(o.by.evidence || []).map(refText)].join("; ")}</span>{/if}{#if changedText(c.currency?.obligations?.[o.id])}<span class="stale"> · {changedText(c.currency.obligations[o.id])}</span>{/if}</p>
     {/each}
     {#if v.uncovered.length}<p class="small open">No step establishes {v.uncovered.join(", ")}.</p>{/if}
     {#if c.bridge}

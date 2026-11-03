@@ -368,6 +368,15 @@ changes either way. A finding with basis `checked_bridge` reads so while it rest
 composition and the check holds; any other reads as your composition, saying what it was recorded
 as and why, in `workspace show`, the reader and an export.
 
+When a result a composition uses changes, the composition is **stale**, and it says which steps
+the change affects: the step that uses the changed evidence or establishes a changed requirement,
+with what changed (`[stale: e-bound: Ex.inverse_bound changed]` in `workspace show`, **changed
+since** in the reader), and every step that follows from it (`follows step s2, which is not
+current`). A step that does not rest on the change stays current, so only the affected steps
+need reading again. An identification or a discharged obligation whose evidence changed is
+marked the same way, and a change to the claim's own passage concerns the whole composition. A
+step whose evidence the build cannot check reads **not known to be current**.
+
 **Connections between objects.** When one result's object is another's (the profile a
 preparation returns and the correction consumes, a function equal to another on the horizon, the
 class of a function), record how, exactly, as a `connection` evidence reference. Its ends are

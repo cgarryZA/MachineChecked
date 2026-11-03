@@ -230,3 +230,90 @@ def test_a_changed_result_makes_the_composition_and_its_finding_stale(tmp_path):
     f, = v["claims"][CLAIM]["findings"]
     assert c["currency"]["state"] == "stale" and f["currency"]["state"] == "stale"
     assert {ch.get("decl") for ch in c["currency"]["changes"]} == {"Ex.inverse_bound"}
+
+
+# Independent steps, a step that follows from both, and an identification and obligations that
+# rest on evidence of their own (#546).
+PARTS = {
+    "id": "c-parts", "kind": "composition", "claim": CLAIM, "coverage": "partial",
+    "steps": [
+        {"id": "s1", "establishes": "the main result", "uses": ["e-main"]},
+        {"id": "s2", "establishes": "the bound", "uses": ["e-bound"], "requirements": ["r1.2"]},
+        {"id": "s3", "establishes": "the bound for the main result's object",
+         "after": ["s1", "s2"]},
+        {"id": "s4", "establishes": "a consequence of the main result alone", "after": ["s1"]},
+        {"id": "s5", "establishes": "an inverse solves the equation", "uses": ["e-exists"]}],
+    "identifications": [{"left": {"step": "s1", "object": "u"},
+                         "right": {"step": "s2", "object": "v"}, "how": "evidence",
+                         "evidence": ["e-bound"]}],
+    "obligations": [{"id": "o1", "kind": "side condition", "text": "the main result applies",
+                     "state": "discharged", "by": {"evidence": ["e-main"]}},
+                    {"id": "o2", "kind": "constant dependence", "text": "the bound's constant",
+                     "state": "discharged", "by": {"evidence": ["e-bound"]}}]}
+
+
+def test_a_stale_composition_names_the_steps_a_change_affects(tmp_path):
+    work, snap, p = setup(tmp_path)
+    wsp.update(p, [put({"id": "e-main", "kind": "evidence", "claim": CLAIM, "role": "supports",
+                        "ref": {"decl": "Ex.main"}}), put(PARTS)], snap)
+    c, = wsp.view(wsp.read(p), snap)["claims"][CLAIM]["compositions"]
+    cur = c["currency"]
+    assert cur["state"] == "current" and cur["affects"] == []
+    assert {s: x["state"] for s, x in cur["steps"].items()} == {
+        "s1": "current", "s2": "current", "s3": "current", "s4": "current", "s5": "unchecked"}
+    # A step whose evidence the build cannot check is not called current.
+    assert cur["steps"]["s5"]["unchecked"] == ["e-exists"]
+    assert "s5: an inverse solves the equation  (from e-exists)  [not known to be current " \
+           "(e-exists not checked)]" in "\n".join(cp.lines(c))
+
+    # The bound changes: the step that uses it, and the one that follows from it, are stale;
+    # the others stay current, and the composition names the steps it affects.
+    make_build(work, fp_bound="fp:bound-2", release="v-2")
+    c, = wsp.view(wsp.read(p), Snapshot(work / "site" / "data"))["claims"][CLAIM]["compositions"]
+    cur = c["currency"]
+    assert cur["state"] == "stale" and cur["affects"] == ["s2", "s3"]
+    steps = cur["steps"]
+    assert {s: x["state"] for s, x in steps.items()} == {
+        "s1": "current", "s2": "stale", "s3": "stale", "s4": "current", "s5": "unchecked"}
+    assert [(ch["evidence"], ch["decl"]) for ch in steps["s2"]["changes"]] == [
+        ("e-bound", "Ex.inverse_bound")]
+    assert steps["s3"] == {"state": "stale", "changes": [], "follows": ["s2"]}
+    assert [x["state"] for x in cur["identifications"]] == ["stale"]
+    assert {o: x["state"] for o, x in cur["obligations"].items()} == {"o1": "current",
+                                                                       "o2": "stale"}
+    assert cur["claim"] == []
+    text = "\n".join(cp.lines(c))
+    assert "composition c-parts: part of the claim, by an argument combining Lean results  " \
+           "[stale: steps s2, s3]" in text
+    assert "s2: the bound  (from e-bound; establishes r1.2)  [stale: e-bound: " \
+           "Ex.inverse_bound changed]" in text
+    assert "s3: the bound for the main result's object  (from step s1, step s2)  " \
+           "[stale: follows step s2, which is not current]" in text
+    assert "s1: the main result  (from e-main)\n" in text
+    assert "obligation o2 (a constant's allowed dependence), discharged: the bound's constant " \
+           "— discharged by e-bound  [stale: e-bound: Ex.inverse_bound changed]" in text
+
+    # The claim's printed text changes: that concerns the composition as a whole, not a step.
+    make_build(work, sha_bound="s-bound-2", release="v-3")
+    c, = wsp.view(wsp.read(p), Snapshot(work / "site" / "data"))["claims"][CLAIM]["compositions"]
+    cur = c["currency"]
+    assert cur["state"] == "stale" and cur["affects"] == []
+    assert [ch["now"] for ch in cur["claim"]] == ["s-bound-2"]
+    assert "changed since it was recorded: the passage of P:lem:bound changed" in \
+        "\n".join(cp.lines(c))
+
+    # A published composition carries which parts each change affects.
+    make_build(work, fp_bound="fp:bound-2", release="v-2")
+    wsp.update(p, [put({"id": "f-parts", "kind": "finding", "claim": CLAIM,
+                        "coverage": "partial", "basis": "reviewed_composition",
+                        "composition": "c-parts", "note": "n"}),
+                   {"op": "submit", "id": "f-parts", "base_rev": 1}],
+               Snapshot(work / "site" / "data"))
+    rd, = pw.readings(work, Snapshot(work / "site" / "data"), lambda cid: CLOSED,
+                      {CLAIM})[CLAIM]
+    pc, = rd["compositions"]
+    assert pc["currency"]["affects"] == ["s2", "s3"]
+    assert pc["currency"]["steps"]["s3"]["follows"] == ["s2"]
+    assert pc["currency"]["obligations"]["o2"]["state"] == "stale"
+    validate({"schema": pw.SCHEMA, "release": "v-2", "claim": CLAIM, "readings": [rd]},
+             "published-work")

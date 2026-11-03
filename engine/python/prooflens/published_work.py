@@ -275,6 +275,19 @@ def _composition(r: dict, pub, view: dict) -> dict:
     return out
 
 
+def composition_parts(cur: dict, pub) -> dict:
+    """Which parts of a composition a change affects (`composition.currency`): each step's,
+    identification's and obligation's currency, the steps affected and the changes of the
+    claim's text, each change as `pub` allows (`_changes`)."""
+    def part(x: dict) -> dict:
+        return {**x, "changes": _changes(x.get("changes") or [], pub)}
+    return {"steps": {sid: part(x) for sid, x in (cur.get("steps") or {}).items()},
+            "affects": list(cur.get("affects") or []),
+            "identifications": [part(x) for x in cur.get("identifications") or []],
+            "obligations": {oid: part(x) for oid, x in (cur.get("obligations") or {}).items()},
+            "claim": _changes(cur.get("claim") or [], pub)}
+
+
 def withheld_prose(r: dict) -> list[str]:
     """The fields of the auditor's prose a record has, which an export that does not publish
     reviews leaves out: named, never quoted, so that a reader can say what is withheld."""
@@ -318,6 +331,8 @@ def public_record(r: dict, pub, currency: dict, in_force: set[str],
     cur = currency.get(r["id"]) or {"state": "unchecked", "changes": []}
     out["currency"] = {"state": cur["state"],
                        "changes": _changes(cur.get("changes") or [], pub)}
+    if k == "composition" and "steps" in cur:
+        out["currency"].update(composition_parts(cur, pub))
     if k == "fragment":
         if r.get("region"):
             out["region"] = _region(r["region"], pub.source_text)
