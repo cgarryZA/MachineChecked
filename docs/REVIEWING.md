@@ -405,6 +405,17 @@ read and compare stages of an independent review do not. An export publishes the
 submitted finding or its composition cites; their ends' Lean text, scope and conditions only with
 the Lean. A connection changes no status.
 
+In the reader, each connection is beside the row of each object it joins: the row where the
+statement binds the variable or holds the sub-term, or the declaration as a whole for a
+declaration, an application's argument or a fact's local. It reads with its relation, scope,
+conditions and support, and with its source: recorded by an auditor (a published reading or your
+investigation), or computed from Lean's terms (the claim record's `computed_connections`), marked
+apart. **Chain to another object** shows the fewest connections that join an object of the row to
+another object, each step as its source gives it; connections that have not changed are used
+first. A connection that changed since it was recorded is listed with the whole claim, with what
+changed, and never placed at a row, since the object it names may now be another. The read and
+compare stages of an independent review show none.
+
 **Requirements and the passages that govern them.** A claim's meaning can depend on sentences
 outside its display: "for every ε > 0" before an estimate, "with C independent of ε" after it, a
 standing assumption at the start of a section. Break the claim into requirements, each with the

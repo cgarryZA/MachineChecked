@@ -133,6 +133,16 @@ Let $\mu$ and $\nu$ be $\sigma$-finite measures and $\Phi \colon L^2(\mu \otimes
 If $m \le b$ for every $m \le n$, then some real $x$ exceeds $n$, or $n = 2x$ for some $x$.
 \end{theorem}
 
+\begin{theorem}\label{thm:adapted}\lean{Shape.adapted}
+Let $m$ be a $\sigma$-algebra on $\Omega$ besides the given one. If $f$ is strongly measurable and
+$g$ is measurable for $m$, and $g$ is strongly measurable for the given one, then $g$ is strongly
+measurable for $m$.
+\end{theorem}
+
+\begin{theorem}\label{thm:decided}\lean{Shape.decided}
+For every $n$, the number that is $0$ when $n = 0$ and $n$ otherwise is at most $n$.
+\end{theorem}
+
 \begin{definition}\label{def:digit}\lean{Shape.Digit.val}
 The value of the digit $d_i$ is $i$, for $i = 0, \dots, 69$.
 \end{definition}
