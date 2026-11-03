@@ -48,6 +48,16 @@ a review responsibility.
 | `spans-section` | a heading (`\part` to `\subparagraph`, `\appendix`) occurs after the region's first line |
 | `cuts-environment` | the region holds the `\begin` or the `\end` of a display (`equation`, `align`, …), a `proof` or a theorem-like environment (one declared with `\newtheorem`) without the other; the environments are named, with the bounds that contain them whole and, when some of the region's text remains, the bounds that leave them out |
 
+For the sentence advice and the paragraphs it names, a paragraph ends at a blank line, a line of
+LaTeX structure (`\begin`, `\end`, `\item`, `\label`, a heading), a line that holds only macro
+definitions (`\newcommand`, `\renewcommand`, `\providecommand`, `\DeclareMathOperator`, `\def`,
+`\gdef`, `\let`; one or several), and a line that holds a single command with its arguments
+(`\includegraphics[width=0.6\linewidth]{figs/rate.pdf}`, `\input{figs/rate-figure}`, a wrapper
+macro of either). A region of a file of definitions, a caption pinned from its `\caption{`
+line and a section's prose after an `\input` line therefore get no sentence advice. A command
+that prints words or a reference inside a sentence (`\emph`, `\textbf`, `\cite`, `\ref`,
+`\eqref`, `\footnote`, …) alone on a line is read as part of the sentence around it.
+
 A region pinned at a label line gives no protection: a change of the paragraph it is about
 reopens nothing. Pin the paragraph instead, from its first line with an explicit end:
 
