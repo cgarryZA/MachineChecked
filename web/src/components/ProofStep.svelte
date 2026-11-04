@@ -32,6 +32,10 @@
     return r.submitted_at ? ", " + r.submitted_at.slice(0, 10) : r.file ? " (" + r.file + (r.line ? ":" + r.line : "") + ")" : "";
   }
   const reviewHref = $derived(index.review_queue ? withQuery(href(index.release, "review"), { claim: claim.id }) : null);
+  // On a paper page a step and its parent are named by the audit's ids; the page lists each
+  // under its own id (the row whose audit entry it is).
+  const pageId = (id) => (!index.projects ? id
+    : index.claims.find((c) => c.by_project?.[claim.evidence_from]?.audit?.claim === id)?.id || id);
 
   // A selected passage's pinned lines, as `FILE:A-B` (one line: `FILE:A`).
   const span = (p) => p.file + ":" + p.start_line + (p.end_line > p.start_line ? "\u2013" + p.end_line : "");
@@ -60,7 +64,7 @@
 
 {#if part === "finding" && st}
   <div class="finding" data-review={rv.state}>
-    <p class="small kind">{UNIT[st.unit] || "Proof step"}{#if st.parent}{" of "}<a href={href(index.release, "read", claim.paper, st.parent.id)}>{st.parent.number || st.parent.id}</a>{/if}{#if st.passage}{", selected at "}<code>{span(st.passage)}</code>{/if}</p>
+    <p class="small kind">{UNIT[st.unit] || "Proof step"}{#if st.parent}{" of "}<a href={href(index.release, "read", claim.paper, pageId(st.parent.id))}>{st.parent.number || st.parent.id}</a>{/if}{#if st.passage}{", selected at "}<code>{span(st.passage)}</code>{/if}</p>
     {#if st.passage && !st.passage.matches}
       <p class="small changed" data-passage="changed">Its lines no longer hold the text it was selected at, so no review of it counts until it is selected again{#if st.passage.moved_to}{"; that text is now at "}<code>{span({ file: st.passage.file, ...st.passage.moved_to })}</code>{/if}.
         {#if editable && st.passage.moved_to}<button class="btn ghost" disabled={busy} onclick={() => onpassage(spec(st.passage.file, st.passage.moved_to.start_line, st.passage.moved_to.end_line))}>Select it there</button>{/if}</p>
@@ -101,7 +105,7 @@
     <ul>
       {#each claim.steps as s (s.id)}
         <li data-review={s.review}>
-          <a href={href(index.release, "read", claim.paper, s.id)}>{s.number || s.id}</a>
+          <a href={href(index.release, "read", claim.paper, pageId(s.id))}>{s.number || s.id}</a>
           <span class="small">{evidenceView("step", { state: s.review }).word}</span>
           <span class="faint small">{s.linked.length ? "Lean: " + s.linked.join(", ") : s.route.length ? "formal route: " + s.route.join(", ") : "no Lean linked"}</span>
           {#if s.passage && !s.passage.matches}<span class="small changed">its lines changed since it was selected</span>{/if}

@@ -773,6 +773,15 @@ formal coverage only; it is never a reading of the step, so a step with no repor
 are unchanged by it. An issue draft names the step and its proof (“Equation (3) in the proof of
 Theorem 2.5: false as printed”).
 
+Work on a step says it is about the step wherever it goes. A workspace record on a step (a
+finding, a counterexample, its evidence) pins the step with its text: its kind, its parent, its
+scope and its source (`pins.target`), and a review draft of its unit records the step it was begun
+on (`target`). A workspace file keeps them as they are; `workspace import` into another working
+directory keeps them too, and lists under `problems` any whose step is there another kind of
+unit, a step of another result, or not a review unit of that build, without moving it to another
+step. A published audit carries them with the accepted records, and a paper page lists the audit's
+step under its parent, with its kind and its own review.
+
 ## Review records and identity
 
 The reviewer supplies their name or model identity, and the report records it as **self-declared**.

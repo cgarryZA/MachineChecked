@@ -589,10 +589,16 @@ def _composition_basis(out: dict, cid, basis, ws: dict) -> None:
 
 
 def _pins(claim: str, snap) -> dict:
+    """What a record pins of its claim: the release, the claim's source digest and, for a
+    proof step, the step itself (`steps.target_of`: its kind, parent, scope and source), so that
+    the record says what it is about wherever it is read."""
     if snap is None:
         return {}
+    from .steps import target_of
     ch = snap.chunk(claim) or {}
-    return {"release": snap.index.get("release"), "statement_sha256": ch.get("source_sha256")}
+    target = target_of(ch)
+    return {"release": snap.index.get("release"), "statement_sha256": ch.get("source_sha256"),
+            **({"target": target} if target else {})}
 
 
 # -- the update service --------------------------------------------------------------------
@@ -1359,6 +1365,38 @@ def export(path: Path) -> dict:
     return out
 
 
+def target_problems(ws: dict, snap) -> list[dict]:
+    """The records and review drafts of `ws` about a proof step (`pins.target`, a draft's
+    `target`) whose step this build has otherwise: another kind of unit, another parent or
+    another scope (`steps.target_differences`), or no such review unit. They stay as they were
+    recorded; nothing is moved to another step."""
+    from .steps import target_differences, target_of
+    out = []
+    for r in (ws.get("records") or {}).values():
+        pinned = (r.get("pins") or {}).get("target")
+        ch = snap.chunk(r.get("claim") or "")
+        if pinned and ch is not None:
+            for why in target_differences(pinned, target_of(ch)):
+                out.append({"record": r.get("id"), "problem": f"{r.get('claim')}: {why}"})
+    try:
+        units = {u["id"] for u in json.loads((snap.data / "review-queue.json")
+                                             .read_text(encoding="utf-8"))["units"]}
+    except (OSError, ValueError, KeyError, TypeError):
+        units = None
+    for uid, d in sorted(((ws.get("review") or {}).get("drafts") or {}).items()):
+        t = d.get("target") if isinstance(d, dict) else None
+        if not t:
+            continue
+        if units is not None and uid not in units:
+            out.append({"record": f"draft {uid}", "problem": f"{uid} is not a review unit of "
+                        f"release {snap.index.get('release')}"})
+            continue
+        now = target_of(snap.chunk(t.get("claim") or ""))
+        for why in target_differences({**t, "scope": (now or {}).get("scope")}, now):
+            out.append({"record": f"draft {uid}", "problem": f"{t.get('claim')}: {why}"})
+    return out
+
+
 def import_(work_dir: Path, data: dict, snap=None, by: str | None = None,
             source: str | None = None, replace_drafts: bool = False,
             dry_run: bool = False) -> dict:
@@ -1397,6 +1435,7 @@ def import_(work_dir: Path, data: dict, snap=None, by: str | None = None,
             if e not in ws_in["records"]:
                 problems.append({"record": r.get("id"), "problem": f"evidence {e} is missing"})
     if snap is not None:
+        problems += target_problems(ws_in, snap)
         problems += [{"record": "main_results", "problem": p["problem"]}
                      for p in main_results_problems(ws_in.get("main_results"), snap)]
     if "version_maps" in ws_in:

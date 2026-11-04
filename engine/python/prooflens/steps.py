@@ -200,6 +200,39 @@ def parent_ref(parent: dict | None) -> dict | None:
     return {k: parent.get(k) for k in ("id", "number", "heading", "title", "file")}
 
 
+def target_of(chunk: dict | None) -> dict | None:
+    """What a record about a proof step pins of its target (a claim record with a `step`
+    block, as a build shows it): its kind of unit, its parent (`id`, `number`), its scope and
+    its exact source (`location`, `region`, `sha256`). None for a claim that is no proof
+    step."""
+    st = (chunk or {}).get("step")
+    if not isinstance(st, dict):
+        return None
+    par = st.get("parent") or {}
+    src = st.get("source") or {}
+    return {"unit": st.get("unit"),
+            "parent": {k: par.get(k) for k in ("id", "number")} if par else None,
+            "scope": chunk.get("scope"),
+            "source": {k: src.get(k) for k in ("location", "region", "sha256")}}
+
+
+def target_differences(pinned: dict, now: dict | None) -> list[str]:
+    """How the proof step a record pinned (`target_of`, as recorded) differs from the claim of
+    the same id in another build (`now`, its `target_of`), in words: its kind, its parent or
+    its scope. A change of its text is the record's currency, not listed here."""
+    if now is None:
+        return ["it is no proof step in this build"]
+    out = []
+    if pinned.get("unit") != now.get("unit"):
+        out.append(f"it was recorded on a {pinned.get('unit')} and is a {now.get('unit')} here")
+    was, is_ = (pinned.get("parent") or {}).get("id"), (now.get("parent") or {}).get("id")
+    if was != is_:
+        out.append(f"it was a step of {was} and is a step of {is_} here")
+    if pinned.get("scope") != now.get("scope"):
+        out.append(f"its scope was {pinned.get('scope')} and is {now.get('scope')} here")
+    return out
+
+
 def block(claim: dict, parent: dict | None, links: list[dict], route: list[dict],
           corr: dict | None, rnote: dict | None, reviewed: dict,
           unit: str | None = None) -> dict:

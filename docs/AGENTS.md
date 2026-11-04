@@ -603,7 +603,9 @@ versions. Repeat a request with its `op_id` after a lost answer: it changes noth
 with several workspaces in the project (the review protocol's independent one and an informed
 one, say) names one with `--id`; `workspace list` gives their ids. `show --json` gives every
 record with its `currency` (`current`, `stale` with the `changes`, or `unchecked`) and the
-`resume` point. Each finding has its `dependencies`: the parts it rests on, each with its
+`resume` point. A record on a proof step pins the step (`pins.target`: its `unit`, `parent`,
+`scope` and `source`), and `workspace import` lists under `problems` a record or a review
+draft whose step the build it is imported into has otherwise. Each finding has its `dependencies`: the parts it rests on, each with its
 version (the passage, the requirements and passages of its reading, alignments, cited
 declarations with the definitions their statements use, applications, facts, the composition,
 the bridge), and `kinds`, the evidence kinds it uses. A submitted finding records them when it is

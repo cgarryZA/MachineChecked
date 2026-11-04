@@ -574,7 +574,11 @@ state they formalise it (`projects`, as `owner/repo`), and the statements found 
 with its links (each naming its `repository`) and, per project, the status that project's links
 give it (`by_project`). Without an audit nothing has run Lean, so a linked statement reads
 "linked: Lean not checked here (no audit published)" (class `declared`). No statement text is
-written.
+written. An audit's proof step, which the page's headings do not give, is listed as the audit's
+entry; its row's `by_project[repo]` keeps its `unit`, its `scope`, its `parent` (the page's id of
+the result whose proof holds it) and its own review (`step_review`), and its record is the
+audit's, whole. The reader opens the steps a parent lists, and a step's parent, by the page's
+ids.
 
 The site may give each audit of the registry entry its semantic summary (`semantic` on the
 audit, as machinechecked.org reads and checks it from that audit's own index): `state`
@@ -825,7 +829,7 @@ its drafts, reports and exposure, and every other field of an imported file kept
 | `records` | evidence, findings and questions, by record id (below) |
 | `resume` | where to continue: `claim`, `clause`, `question`, `pinned` references, `at`, `by`; kept apart from the evidence. The reader's pins are `{token, at, ident, label, release, repo}`: the inspection (a declaration's name, or `property:`, `fact:`, `application:`, `evidence:` with its identity), the comparison row it is beside, the identity of what it shows, and the release and project it was made on; the reader reopens a pin only on that release and project, for the same object |
 | `main_results` | the paper's main results as the auditor chose them (`workspace main`), which `compare --query impact` traces from: `selected` (each `{claim}`, standing for the claim's linked Lean, or `{decl, module, build}`, a project declaration), `by`, `at`, and `pins` (`release`, project `commit` and `repository` of the build they were checked against); absent until chosen |
-| `review` | the review protocol's `drafts` by unit id (`stage`: `read`, `compare` or `author`; the reading and, once locked, `locked_at`, `revealed_by` and `source_sha256`; `shown_fingerprint`, the Lean last shown; the comparison, `checklist`, verdict and `correspondence`, with `decided_at` and `lean`, the Lean pins the verdict was recorded against; `author_shown_at`; and what was typed so far) and submitted `reports` (`prooflens/review-report@1`). A step saves its unit's draft only while the saved draft is the one it read, so the review page and a terminal can work in one workspace |
+| `review` | the review protocol's `drafts` by unit id (`stage`: `read`, `compare` or `author`; the reading and, once locked, `locked_at`, `revealed_by` and `source_sha256`; `shown_fingerprint`, the Lean last shown; the comparison, `checklist`, verdict and `correspondence`, with `decided_at` and `lean`, the Lean pins the verdict was recorded against; `author_shown_at`; and what was typed so far; a proof step's draft also has `target`, the step it was begun on: `unit`, `claim` and `parent` (`id`, `number`)) and submitted `reports` (`prooflens/review-report@1`). A step saves its unit's draft only while the saved draft is the one it read, so the review page and a terminal can work in one workspace |
 | `version_maps` | the version maps the auditor keeps (`changes --map --workspace ID --save`): each the map without `references`, with `kept_at` and `kept_by`; one per paper and pair of releases; absent until one is kept |
 | `conflicts` | refused edits, each with the saved record (`current`) and the proposal (`proposed`); for a review draft an import did not apply (`id` `draft UNIT`), the draft kept and the file's, and for one it replaced when asked (`how` `import, replaced`), the file's and the one replaced |
 | `provenance` | upgrades, mode changes, imports and replaced main results (`was`), with time and person |
@@ -833,7 +837,10 @@ its drafts, reports and exposure, and every other field of an imported file kept
 
 Every record has `id`, `kind`, `claim` (a claim id, resolved from a key or a number when written),
 optional `clause` and `note`, `rev`, `created_at`/`created_by`, `updated_at`/`updated_by`, and
-`pins` (`release`, `statement_sha256`: the claim's printed-text hash when written).
+`pins` (`release`, `statement_sha256`: the claim's printed-text hash when written; for a proof
+step also `target`, the step itself: its `unit`, its `parent` (`id`, `number`), its `scope` and
+its `source` (`location`, `region`, `sha256`), so that the record says what it is about wherever
+it is read).
 
 - **`evidence`**: `ref` is one of `{decl, module, build, fingerprint, digest}` (a declaration of
   the selected build; `build` is `built`, `unbuilt`, `not loaded` or `external`; a `module` given
@@ -1195,7 +1202,9 @@ version maps it lacks) and keeps a record, main results or a version map both ho
 versions as it is, listing the other under `conflicts`; a version map of another form is left
 out and reported. A kept map judges the findings without the manuscripts, so the findings it
 reopens travel with the workspace. References the current build cannot resolve, main results included, are reported as
-`problems`. A published audit carries the accepted records, what its submitted findings rest
+`problems`; so is a record whose pinned proof step (`pins.target`) is here another kind of unit,
+a step of another result or of another scope, and a draft whose step (`target`) is so or is no
+review unit of this build. They stay as recorded: nothing is moved to another step. A published audit carries the accepted records, what its submitted findings rest
 on, the version maps it keeps and the main results of every workspace in the working directory,
 below; the workspace itself stays local.
 
