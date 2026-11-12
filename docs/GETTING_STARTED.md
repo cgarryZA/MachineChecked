@@ -178,6 +178,18 @@ whether a recorded difference matters at one of these applications is a reviewer
 recorded as an impact at that use ([What a difference affects at a use](REVIEWING.md#saved-investigations))
 and listed in the same answer, per application.
 
+**How the main results use each link.** In zero configuration, `machinechecked check --json` and
+the reader say the same for every link at once: under each linked declaration, for each main
+result, *used by its proof* (directly, or through so many other declarations, which the reader
+names), *in its statement only*, *formalized separately: not used by this main result*, or *not
+traced* with the reason. The answer names the main results it traces from: the suggestion, or
+the selection your workspace saves, with who saved it and when. A paper's lemma linked both to a
+faithful statement and to the variant the main proof applies shows which one the proof uses. It
+is read from the references the build stored, on one graph for the whole check, so a repeated
+check starts no Lean; under `machinechecked view` the reader traces it again when it opens a
+claim, so a selection you saved since the build is the one it follows. A full assessment says it
+is not available: its build records no reverse references.
+
 The trace is a fact about the Lean terms of the build. *Formalized separately* describes the
 Lean: the declaration keeps its own correspondence review, and no status changes. Whether a
 difference matters at a use (say the lemma's Lean needs one more derivative than the paper

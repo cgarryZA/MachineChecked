@@ -2258,8 +2258,10 @@ def write_view_site(view: dict, site: Path, web_dist: Path | None,
     """The site of a view: the same app as the full reader, in its simple mode, with its audit
     descriptor (`audit.json`). `root` is the Lean project, for the descriptor's repository;
     `work_dir`, the working directory, whose workspaces' findings in force the semantic summary
-    counts (`pipeline.with_workspace_findings`)."""
+    counts (`pipeline.with_workspace_findings`) and whose saved main results each link's use is
+    traced from (`impact.write_link_uses`)."""
     from . import manifest as mf
+    from .impact import MAIN_USE_FILE, write_link_uses
     body = view["body"]
     eid = content_id(body)
     release = view_release(body)
@@ -2351,6 +2353,7 @@ def write_view_site(view: dict, site: Path, web_dist: Path | None,
              "findings": {"total": {}, "general": []}, "gates": {}, "claims": index_claims,
              "search": "data/search.json", "lean_index": "data/lean-index.json",
              **({"uses": "data/uses.json"} if view.get("uses") else {}),
+             **({"main_use": "data/" + MAIN_USE_FILE} if root is not None else {}),
              "retrieval": "data/retrieval.json" if view.get("retrieval") is not None else None,
              "numbering": (body.get("numbering") or {}).get("pattern"),
              **({"index_scope": body["index_scope"]} if body.get("index_scope") else {}),
@@ -2363,6 +2366,9 @@ def write_view_site(view: dict, site: Path, web_dist: Path | None,
                                        claims=index["claims"]),
                   work_dir=work_dir, root=root)
     index["review_queue"] = "data/review-queue.json"
+    if root is not None:
+        # How the main results use each link, from the stored references (no Lean runs).
+        write_link_uses(site / "data", root, work_dir)
     from . import audit
     key = body.get("paper") or ""
     write_json(site / audit.NAME, audit.descriptor(

@@ -212,7 +212,8 @@ def test_check_names_the_module_behind_each_unchecked_state(tmp_path, monkeypatc
     claim = next(c for c in doc["claims"] if c["number"] == number)
     assert claim["links"] == [{"name": name, "status": STATUSES[code]["label"],
                                "status_code": code, "class": "unspecified",
-                               "status_detail": detail, "source": "formalization.yaml"}]
+                               "status_detail": detail, "source": "formalization.yaml",
+                               "main_use": []}]
     # The detail adds to the status: the claim's status is the link's, unchanged.
     assert (claim["status_code"], claim["status"]) == (code, STATUSES[code]["label"])
 

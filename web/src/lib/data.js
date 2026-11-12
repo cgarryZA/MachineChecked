@@ -309,6 +309,20 @@ export async function loadUsers(index, name, module) {
   return mine;
 }
 
+// How the main results use each claim's links (`impact.link_uses`, machinechecked/link-use@1):
+// under `machinechecked view` (`live`), traced now from the stored references, so that a main
+// result saved since the build is the one followed; else as the build wrote it
+// (`data/main-use.json`). Null when the build holds none (a full assessment).
+export async function loadMainUse(index, live = false) {
+  if (live) {
+    try {
+      const r = await fetch("api/main-use", { cache: "no-store" });
+      if (r.ok) return await r.json();
+    } catch { /* not this server: the build's answer below */ }
+  }
+  return index?.main_use ? getJson(index.main_use) : null;
+}
+
 // Where a declaration is used, with each application's arguments and the source of each premise,
 // from `machinechecked view`'s local server: the document `compare --query uses` gives. `within`
 // (`--in`) is one declaration, or one application by its id, read with its whole context.

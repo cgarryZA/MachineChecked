@@ -1,0 +1,121 @@
+{
+ "schema": "machinechecked/link-use@1",
+ "available": true,
+ "selection": {
+  "basis": "saved",
+  "workspace": "ws-715e68a84081",
+  "reviewer": "human:A-Auditor",
+  "by": "human:A-Auditor",
+  "at": "2026-11-03T12:55:51Z",
+  "pins": {
+   "release": "v-942212421c04"
+  },
+  "selected": [
+   {
+    "claim": "P:lem:bound"
+   }
+  ],
+  "problems": [],
+  "unlinked_claims": [],
+  "main_results": [
+   {
+    "name": "MainUse.bound_faithful",
+    "claims": [
+     "P:lem:bound"
+    ],
+    "selected": [
+     "P:lem:bound"
+    ]
+   },
+   {
+    "name": "MainUse.bound_variant",
+    "claims": [
+     "P:lem:bound"
+    ],
+    "selected": [
+     "P:lem:bound"
+    ]
+   }
+  ]
+ },
+ "claims": {
+  "P:lem:ten": {
+   "MainUse.le_ten": [
+    {
+     "main": "MainUse.bound_faithful",
+     "use": "proof",
+     "answer": "used by its proof, through 1 other declaration",
+     "through": 1,
+     "path": [
+      "MainUse.bound_faithful",
+      "MainUse.bound_variant",
+      "MainUse.le_ten"
+     ]
+    },
+    {
+     "main": "MainUse.bound_variant",
+     "use": "proof",
+     "answer": "used by its proof, directly",
+     "through": 0,
+     "path": [
+      "MainUse.bound_variant",
+      "MainUse.le_ten"
+     ]
+    }
+   ]
+  },
+  "P:lem:bound": {
+   "MainUse.bound_faithful": [
+    {
+     "main": "MainUse.bound_faithful",
+     "use": "itself",
+     "answer": "this is the main result itself"
+    },
+    {
+     "main": "MainUse.bound_variant",
+     "use": "none",
+     "answer": "formalized separately: not used by this main result"
+    }
+   ],
+   "MainUse.bound_variant": [
+    {
+     "main": "MainUse.bound_faithful",
+     "use": "proof",
+     "answer": "used by its proof, directly",
+     "through": 0,
+     "path": [
+      "MainUse.bound_faithful",
+      "MainUse.bound_variant"
+     ]
+    },
+    {
+     "main": "MainUse.bound_variant",
+     "use": "itself",
+     "answer": "this is the main result itself"
+    }
+   ]
+  },
+  "P:thm:main": {
+   "MainUse.main_result": [
+    {
+     "main": "MainUse.bound_faithful",
+     "use": "none",
+     "answer": "formalized separately: not used by this main result"
+    },
+    {
+     "main": "MainUse.bound_variant",
+     "use": "none",
+     "answer": "formalized separately: not used by this main result"
+    }
+   ]
+  }
+ },
+ "scope": {
+  "modules": 3,
+  "unbuilt": [],
+  "without_references": [],
+  "declarations": 4
+ },
+ "complete": true,
+ "note": "How each main result's Lean uses each link, by the references of Lean's elaborated terms the build stored: a use is a path of references, direct or through other declarations; importing a module is not a use; a trace that reaches a declaration whose references are not recorded reads not traced, never unused. It changes no status."
+}

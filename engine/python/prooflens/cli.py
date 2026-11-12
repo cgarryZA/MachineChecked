@@ -1019,6 +1019,20 @@ def _with_hints(claims: list[dict], hints: dict[str, dict]) -> None:
             c["dismissed_hints"] = h["dismissed"]
 
 
+def _with_main_use(claims: list[dict], view: dict, root: Path) -> dict:
+    """Each link's `main_use`: how each main result uses it (`impact.view_link_uses`, from the
+    stored references; no Lean runs). Returns the selection it was traced from, its scope and
+    whether it is complete, or why it is not available."""
+    from .impact import view_link_uses
+    doc = view_link_uses(view, root, root / cfgmod.work_dir_name(root))
+    per = doc.get("claims") or {}
+    for c in claims:
+        for l in c["links"]:
+            if doc["available"]:
+                l["main_use"] = (per.get(c["id"]) or {}).get(l["name"], [])
+    return {k: v for k, v in doc.items() if k != "claims"}
+
+
 def _check_full_json(a) -> tuple[dict, list[dict], bool]:
     """`check --json` with a machinechecked.toml: the document's fields, its claims, and whether
     the assessment found a violation."""
@@ -1036,9 +1050,11 @@ def _check_full_json(a) -> tuple[dict, list[dict], bool]:
         c["semantic"] = facts.get(c["id"])
     from .estimates import workspace_hints
     _with_hints(claims, workspace_hints(cfg.out_dir, res["site"] / "data"))
+    from .impact import FULL_UNAVAILABLE, unavailable
     out = {"mode": "full", "release": idx["release"],
            "project": idx.get("project", {}).get("commit"),
            "semantic": idx.get("semantic"),
+           "main_use": unavailable(FULL_UNAVAILABLE),
            "findings": idx["findings"]["total"],
            "finding_details": _finding_details(cfg, res["evidence"]),
            "replay": _replay_guard(cfg, res["evidence"]),
@@ -1086,10 +1102,12 @@ def _check_simple_json(a) -> tuple[dict, list[dict], bool]:
     for c in claims:
         c["semantic"] = facts.get(c["id"])
     _with_hints(claims, hints)
+    main_use = _with_main_use(claims, view, root)
     num = body.get("numbering") or {"references": [], "pattern": None}
     out = {"mode": "simple", "paper": body["paper"], "title": body["title"],
            "release": view_release(body), "commit": body.get("commit"),
            "semantic": summary,
+           "main_use": main_use,
            "modules": {"built": body["project"]["built"],
                        "not_built": body["project"]["unbuilt"]},
            "notes": body["notes"],
