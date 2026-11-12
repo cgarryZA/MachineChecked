@@ -582,6 +582,23 @@ them, or the certificate, makes it `stale`, and so the finding that cites it
 (`"counterexamples": [ID]`). A refuted printed step is a finding on the step, with `"verdict":
 "false as printed"`; its enclosing result keeps its own evidence and status.
 
+**Searching for a counterexample.** Record the inequality a requirement comes to under the
+specialisation you chose on the requirement that ends its reading, as its reduced obligation
+(`"reduced": "2 \\le C/\\varepsilon"`, TeX or plain text). Then `machinechecked compare --query
+counterexamples CLAIM` (or `workspace suggest --claim CLAIM --requirement ID --counterexamples`)
+runs a bounded search on each reading of it, the printed one and each corrected one. It tries
+each "for every" variable at the endpoints of its domain, then towards its limits (`ε → 0⁺`,
+`ε → ∞`), then as families in the constants chosen before it (`ε = C + k`, `ε = kC`). It checks
+each with exact rational arithmetic: the values must lie in the domain and violate the obligation
+for every value of the constants within their domains. With `2 ≤ C/ε`, `C ≥ 0` chosen before
+`ε > 0`, it proposes `ε = C + 1`: `2 − C/(C + 1) = (C + 2)/(C + 1) > 0` for every `C ≥ 0`. A
+reading with no constant gets an instance (`n = 1, k = 0` for `n ≤ k n²`). Each search reports
+its budget (`--budget N` checks, 64 by default), says when it ran out, and names each construct
+it does not support (a sum, an absolute value, a variable the reading does not choose, a domain
+it cannot read). A proposal is a candidate only. Nothing records it: record a counterexample
+yourself, with its admissibility. It never says that an estimate holds, it changes no status,
+and finding no candidate establishes nothing.
+
 When a declaration that evidence cites changes (its statement, a definition's equations, or a
 definition its statement uses), `show` marks that evidence `stale`; a quoted passage of the paper
 is stale once the claim's passage changes. Evidence also records each definition its statement

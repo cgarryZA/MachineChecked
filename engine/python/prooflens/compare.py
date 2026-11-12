@@ -790,6 +790,11 @@ QUERIES = {
     "expansion": "a definition at the arguments of one application, by the key a statement, a "
                  "body or another expansion gives it (`expansions[].key`): the arguments by "
                  "parameter, and the body or the equations that apply there",
+    "counterexamples": "a bounded search, on request, for counterexamples to the auditors' "
+                       "readings of a claim: for each requirement with a reduced obligation, "
+                       "values of its \"for every\" variables (numbers, or families in the "
+                       "constants chosen before them) checked with exact rational arithmetic; "
+                       "candidates only, with the budget used and what is not supported",
 }
 # Queries the engine does not answer yet, by owner issue.
 NOT_YET: dict[str, str] = {}
@@ -828,9 +833,13 @@ def mark_claims(doc: dict, claims: dict[str, list[str]]) -> dict:
 def query(site: Site, op: str, target: str, limit: int | None = None, after: str | None = None,
           root: Path | None = None, log=None, match: str | None = None,
           workspace: str | None = None, main: list[str] | None = None,
-          every_library: bool = False, within: str | None = None) -> dict:
+          every_library: bool = False, within: str | None = None,
+          budget: int | None = None) -> dict:
     """One targeted query: `{op, context, target, results, provenance, retrieval}`. An
     operation the engine does not extract yet answers `available: false` with its owner.
+    `counterexamples` runs the bounded search (`estimates.search`) on the readings of the target
+    claim in the workspaces of the build's working directory (or in `workspace`), with `budget`
+    checks for each reading: candidates only, which it records nowhere.
     `search` with `every_library` searches every library of the project, also those the
     build's index leaves out.
     `proof-facts` answers with one page of the facts inside the target's proof (ranked against
@@ -849,6 +858,8 @@ def query(site: Site, op: str, target: str, limit: int | None = None, after: str
         raise CompareError(f"no query {op!r}; the queries are: {', '.join(QUERIES)}", "bad-query")
     if within and op not in ("uses", "proof-facts"):
         raise CompareError("--in goes with the queries uses and proof-facts", "bad-query")
+    if budget is not None and op != "counterexamples":
+        raise CompareError("--budget goes with the query counterexamples", "bad-query")
     out = {"schema": QUERY_SCHEMA, "op": op, "target": target, "limit": limit, "after": after,
            "context": site.snapshot()}
     if op in NOT_YET:
@@ -922,6 +933,22 @@ def query(site: Site, op: str, target: str, limit: int | None = None, after: str
                                   "status"}
         prov = ("the workspaces of the working directory; each connection checked against the "
                 "build (applications and facts from the facts store)")
+    elif op == "counterexamples":
+        from . import estimates as est
+        from .workspace import WorkspaceError
+        if budget is not None and not 1 <= budget <= est.SEARCH_BUDGET_MAX:
+            raise CompareError(f"--budget is the number of checks a search makes: 1 to "
+                               f"{est.SEARCH_BUDGET_MAX}", "bad-budget")
+        cid = site.resolve_claim(target)
+        try:
+            results = est.search_query(site.data.parent.parent, cid, workspace,
+                                       budget or est.SEARCH_BUDGET)
+        except WorkspaceError as e:
+            raise CompareError(str(e), "unknown-workspace") from None
+        out["subject"] = {"claim": cid, "contains": ["prior interpretations"],
+                          "budget": budget or est.SEARCH_BUDGET, "note": est.SEARCH_NOTE}
+        prov = ("the workspaces' readings of the claim, each reduced obligation checked with "
+                "exact rational arithmetic; no Lean runs and nothing is recorded")
     elif op == "proof-facts":
         if root is None:
             raise CompareError("`proof-facts` needs the Lean project", "no-project")
