@@ -1161,7 +1161,17 @@ coefficients; `lean.at` when it is an argument of the target); `variables` (each
 via}`: the alignment or symbol link that matched them); `conditions` (the divisors taken to be
 nonzero); and `definition` (`{name, parameter, expansion, expanded}`: the definition the Lean
 expression is an argument of, or is inside, with its expansion at these arguments). A rename and
-an equal form give none. The order of the claim's variables matched with a declaration's
+an equal form give none. A paper notation is matched with a declaration by an alignment that
+corresponds its `expression`, one identifier, with the whole declaration
+(`estimates.notation_pairs`; a notation aligned with two declarations is `ambiguous` and matches
+neither, and an alignment out of date matches nothing). The notation applied (`J_t(D, k, C)`) is
+compared with Lean's application of a definition (or the one side of a relation that is one):
+`kind` `head` (feature `other`) when the notation is matched with another definition, with
+`heads` (`{paper: {notation, decl}, lean}`) and `definition` Lean's, expanded at its arguments;
+with the same definition, the arguments are compared in order, and the one that differs gives
+the hint its kind, with `argument` (`{index, paper_normal, lean_normal, at}`) and `definition`
+naming the parameter (`terms`, with `arguments`, when several differ). The order of the claim's
+variables matched with a declaration's
 (`estimates.order_hints`) gives `quantifier order` when the paper lets a "there is" depend on a
 "for every" and the Lean's scope does not, or the other way round (with `dependence: {paper,
 lean}`, and `feature` `constant dependence` when the reading states the independence, else

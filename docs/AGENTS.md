@@ -641,7 +641,10 @@ a Lean expression (`conclusion`, `binder` or `at`) gives a computed hint in the 
 `estimates.hints` when the two differ in quantity (`kind` `offset`, `coefficient`, `power` or
 `terms`, with both texts, both normal forms, the variables matched and the definition the Lean
 expression stands in), or `not compared` with the reason (a variable no alignment or symbol link
-matches, a construct the TeX reader does not read: "unsupported: …"). Variables aligned with Lean
+matches, a construct the TeX reader does not read: "unsupported: …"). An alignment of a paper
+notation alone (`"expression": "J_t"`) with a whole declaration matches the two; the notation
+applied (`J_t(D, k, C)`) against Lean's application of another definition gives `kind` `head`,
+with `heads`, and against the same one compares the arguments. Variables aligned with Lean
 variables also give a `quantifier order` hint when the reading and the Lean statement choose them
 in a different order (`∃ C, ∀ n` against `∀ n, ∃ C`, with `dependence: {paper, lean}`), and a
 `quantifier` hint when one side produces a variable the other takes as given. A hint is a

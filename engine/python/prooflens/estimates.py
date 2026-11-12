@@ -985,7 +985,7 @@ def specialisations(ob: dict) -> list[dict]:
 
 # The hints an alignment's paper expression gives (`expression_hints`), which a difference
 # settles by naming `{alignment, kind}`.
-EXPRESSION_HINTS = ("offset", "coefficient", "power", "terms", "not compared")
+EXPRESSION_HINTS = ("offset", "coefficient", "power", "terms", "head", "not compared")
 # The hints the order of the claim's aligned variables gives (`order_hints`).
 ORDER_HINTS = ("quantifier order", "quantifier")
 ALIGNMENT_HINTS = (*EXPRESSION_HINTS, *ORDER_HINTS)
@@ -1134,6 +1134,39 @@ def variable_pairs(records: list[dict], snap, claim: str,
     return out
 
 
+def notation_pairs(records: list[dict], snap) -> dict[str, dict]:
+    """The paper's notations matched with Lean declarations: an alignment that corresponds the
+    paper `expression` of one identifier (`J_x`, as the TeX reader reads it) with a whole
+    declaration says that this notation is that declaration. A notation matched with two
+    declarations is matched with neither (`ambiguous`), and an alignment out of date matches
+    nothing. `{name key: {decl, notation, alignment} | {ambiguous: [decls]}}`."""
+    from . import expressions as ex
+    from . import requirements as rq
+    found: dict[str, list[dict]] = {}
+    for a in sorted((r for r in records if r.get("kind") == "alignment" and r.get("expression")
+                     and r.get("relation", "corresponds") == "corresponds"),
+                    key=lambda r: (r.get("created_at") or "", r["id"])):
+        try:
+            node = ex.read_tex(a["expression"])
+        except ex.Unsupported:
+            continue
+        whole = [t for t in a.get("lean") or []
+                 if not any(t.get(k) not in (None, False) for k in rq.SUBTARGETS)]
+        if node.get("k") != "local" or not whole:
+            continue
+        cur = rq.with_expression(rq.alignment_currency(a, snap), a, records, snap)
+        if cur["state"] == "stale":
+            continue
+        for t in whole:
+            found.setdefault(node["name"], []).append(
+                {"decl": t["decl"], "notation": a["expression"], "alignment": a["id"]})
+    out: dict[str, dict] = {}
+    for k, cands in found.items():
+        decls = sorted({c["decl"] for c in cands})
+        out[k] = cands[0] if len(decls) == 1 else {"ambiguous": decls}
+    return out
+
+
 def _lean_expression(st: dict, t: dict, part) -> tuple[dict | None, str | None, dict | None]:
     """The mathematics, text and place (`symbols.math_context`) of the expression a Lean
     target names: the conclusion, a variable's type (a hypothesis), or a sub-term (`at`)."""
@@ -1207,18 +1240,23 @@ def _identifiers(node) -> list[str]:
     return [n for a in node.get("args") or [] for n in _identifiers(a)]
 
 
-def _compare_target(expr: str, st: dict, t: dict, pairs: dict, part) -> dict:
+def _compare_target(expr: str, st: dict, t: dict, pairs: dict, part,
+                    notations: dict | None = None) -> dict:
     """The comparison of the paper's `expr` with the Lean expression the target `t` names, with
     the definition it stands in. An application of a definition, or a relation, is compared
-    through the one argument that has the paper's variables."""
+    through the one argument that has the paper's variables. A paper expression that applies a
+    notation matched with a definition (`notations`, from `notation_pairs`) is compared with
+    Lean's application of a definition, or the one side of a relation that is one."""
     from . import expressions as ex
     from . import symbols
     node, text, ctx = _lean_expression(st, t, part)
     keys = {k: v["lean"] for k, v in pairs.items() if "lean" in v}
     known = {v["lean"]: v["name"] for v in pairs.values() if "lean" in v}
+    heads = {k: v["ambiguous"] if "ambiguous" in v else v["decl"]
+             for k, v in (notations or {}).items()}
     out = {"lean_text": t.get("target") if text is None else text}
     try:
-        used = _identifiers(ex.read_tex(expr))
+        used = _identifiers(ex.read_tex(expr, frozenset(heads)))
     except ex.Unsupported:
         used = []
     twice = [k for k in used if "ambiguous" in (pairs.get(k) or {})]
@@ -1232,6 +1270,9 @@ def _compare_target(expr: str, st: dict, t: dict, pairs: dict, part) -> dict:
                           "mathematics"}
     app = arg = None
     path = [*((ctx or {}).get("path") or []), node]
+    head = ex.paper_head(expr, heads)
+    if head is not None:
+        return _compare_heads(expr, st, t, node, ctx, out, keys, known, heads, part)
     if node.get("k") in ("apply", "rel"):
         want = ex.paper_atoms(expr, keys)
         if want is not None:
@@ -1252,8 +1293,36 @@ def _compare_target(expr: str, st: dict, t: dict, pairs: dict, part) -> dict:
             if path[i].get("k") == "apply":
                 app, arg = path[i], path[i + 1]
                 break
-    res = ex.compare(expr, node, keys, known)
+    res = ex.compare(expr, node, keys, known, heads)
     d = _definition(ctx or {}, app, arg, part)
+    return {**out, **res, **({"definition": d} if d else {})}
+
+
+def _compare_heads(expr: str, st: dict, t: dict, node: dict, ctx, out: dict, keys: dict,
+                   known: dict, heads: dict, part) -> dict:
+    """A paper expression that applies a notation, compared with Lean's application of a
+    definition: the Lean expression itself, or the one side of a relation that applies one. The
+    definition shown is Lean's, expanded at its arguments; for a difference in one argument,
+    with the parameter that argument stands in."""
+    from . import expressions as ex
+    from . import symbols
+    if node.get("k") == "rel":
+        sides = [a for a in node.get("args") or [] if isinstance(a, dict) and a.get("k") == "apply"]
+        if len(sides) != 1:
+            return {**out, "outcome": "not compared",
+                    "reason": ("no side" if not sides else "both sides") + " of the relation "
+                    "applies a definition"}
+        node = sides[0]
+        out["lean_text"] = symbols.term_by_id(st, node.get("id"), part) or out["lean_text"]
+        out["lean_at"] = node.get("id")
+    res = ex.compare(expr, node, keys, known, heads)
+    if res["outcome"] == "not compared" or node.get("k") != "apply":
+        return {**out, **res}
+    arg = None
+    if isinstance(res.get("argument"), dict):
+        arg = (node.get("args") or [])[res["argument"]["index"]]
+        res = {**res, "argument": {**res["argument"], "at": arg.get("id")}}
+    d = _definition({**(ctx or {}), "expansion": None}, node, arg, part)
     return {**out, **res, **({"definition": d} if d else {})}
 
 
@@ -1272,6 +1341,7 @@ def expression_hints(records: list[dict], snap, claim: str,
     if not aligns:
         return []
     pairs = variable_pairs(records, snap, claim, statements)
+    notations = notation_pairs(records, snap)
     part = getattr(snap, "part", None)
     out = []
     for a in aligns:
@@ -1289,7 +1359,8 @@ def expression_hints(records: list[dict], snap, claim: str,
                 res = {"outcome": "not compared", "lean_text": t.get("target"),
                        "reason": f"this build holds no statement of {t['decl']} for {claim}"}
             else:
-                res = _compare_target(a["expression"], st, t, pairs.get(t["decl"]) or {}, part)
+                res = _compare_target(a["expression"], st, t, pairs.get(t["decl"]) or {}, part,
+                                      notations)
             if res["outcome"] == "same":
                 continue
             out.append(_hint(a, t, res, pairs.get(t["decl"]) or {}))
@@ -1491,16 +1562,41 @@ def _hint(a: dict, t: dict, res: dict, pairs: dict) -> dict:
     paper, lean = a["expression"], _unwrapped(res.get("lean_text")) or rq.target_text(t)
     d = res.get("definition") or {}
     where = [t["decl"]]
-    if d.get("parameter"):
-        where.append(f"the argument {d['parameter']} of {d['name']}")
-    elif d.get("name"):
-        where.append(f"inside {d['name']}")
-    if d.get("expanded"):
-        where.append(f"which expands to {d['expanded']}")
+    if kind == "head" and d.get("name"):
+        if d.get("expanded"):
+            where.append(f"where {d['name']} expands to {d['expanded']}")
+    else:
+        if d.get("parameter"):
+            where.append(f"the argument {d['parameter']} of {d['name']}")
+        elif d.get("name"):
+            where.append(f"inside {d['name']}")
+        if d.get("expanded"):
+            where.append(f"which expands to {d['expanded']}")
     renamed = [f"{v['paper']} as {v['lean']}" for v in variables if v["paper"] != v["lean"]]
     context = f" ({'; '.join(renamed)}; " if renamed else " ("
     context += "in " + ", ".join(where) + ")"
-    if kind == "offset":
+    # A difference in one argument of the same definition is said of that argument.
+    arg = res.get("argument") if isinstance(res.get("argument"), dict) else None
+    heads = (arg or {}).get("heads") or res.get("heads") or {}
+    if arg and kind != "head":
+        pa, la = arg["paper_normal"], arg["lean_normal"]
+        if kind == "offset":
+            diff = Fraction(res["difference"])
+            how = (f"the paper's {pa} and Lean's {la} differ by {abs(diff)}: Lean's is "
+                   + ("larger" if diff > 0 else "smaller"))
+        elif kind == "coefficient":
+            how = f"Lean's {la} is {res['factor']} times the paper's {pa}"
+        elif kind == "power":
+            how = f"the paper's {pa} and Lean's {la} have different powers"
+        else:
+            how = f"the paper's {pa} and Lean's {la} differ"
+        lead = (f"The paper's {paper} and Lean's {lean} apply the same definition, and in one "
+                f"argument {how}")
+    elif kind == "head":
+        lead = (f"The paper's {paper} and Lean's {lean} apply different definitions: the paper's "
+                f"{heads['paper']['notation']} is aligned with {heads['paper']['decl']}, and "
+                f"Lean applies {heads['lean']}")
+    elif kind == "offset":
         diff = Fraction(res["difference"])
         lead = (f"The paper's {paper} and Lean's {lean} differ by {abs(diff)}: Lean's is "
                 + ("larger" if diff > 0 else "smaller"))
@@ -1526,6 +1622,8 @@ def _hint(a: dict, t: dict, res: dict, pairs: dict) -> dict:
                      **({"at": res["lean_at"]} if res.get("lean_at") else {})},
             **({"difference": res["difference"]} if "difference" in res else {}),
             **({"factor": res["factor"]} if "factor" in res else {}),
+            **({"heads": res["heads"]} if res.get("heads") else {}),
+            **({"argument": res["argument"]} if arg else {}),
             **({"conditions": res["conditions"]} if res.get("conditions") else {}),
             **({"reason": res["reason"]} if kind == "not compared" else {}),
             "variables": variables,
