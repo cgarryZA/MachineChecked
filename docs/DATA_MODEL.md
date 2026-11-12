@@ -1017,7 +1017,18 @@ optional `clause` and `note`, `rev`, `created_at`/`created_by`, `updated_at`/`up
   target and the definitions its statement uses) and `source_sha256` (the claim's passage).
   `bridge_check` says whether it is `checked`, `stale` (the target or the passage changed since)
   or `unchecked` (not read since the Lean last changed; `workspace show` asks Lean). A composition
-  a submitted finding rests on is not edited: record a new one and supersede the finding.
+  a submitted finding rests on is not edited: record a new one and supersede the finding. Its
+  `currency` is `stale` when evidence it uses, a requirement a step establishes or the claim's
+  printed text changed (`changes`, all of them), and says which part each change affects:
+  `steps`, by step id, each `{state, changes, follows, unchecked}` (`stale` when evidence it
+  uses or a requirement it establishes changed, each change naming its `evidence` or
+  `requirement`, or when it follows from a step that is not current, `follows`; `unchecked` when
+  the build cannot check evidence it uses, `unchecked`, or it follows from such a step; else
+  `current`); `affects`, the stale steps in order; `identifications` (in order) and `obligations`
+  (by id), each `{state, changes}`, stale when evidence it cites changed; and `claim`, the
+  changes of the claim's printed text, which concern the composition as a whole. A change to
+  one step's evidence leaves the steps that do not follow from it current. A published
+  composition carries the same, each change as the publication settings allow.
 
 An update is a list of operations applied together or not at all: `put` (create, or replace a
 record's content, given `base_rev`, the revision it was read at), `delete` (a draft or an unused

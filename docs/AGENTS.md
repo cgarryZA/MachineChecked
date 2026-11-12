@@ -627,7 +627,10 @@ name when only one object has it); the record pins the object's binder, and the 
 packet lists a supporting result with that object only (basis `theorem`, and in
 `interpretations.derivations`), never with another object of the same name or type. An argument that combines several results is a `composition`
 record ([Reviewing](REVIEWING.md#saved-investigations)); a step can cite an application from
-`compare --query uses` as `"ref": {"app": {"callee": NAME, "id": APP_ID}}`. How one result's
+`compare --query uses` as `"ref": {"app": {"callee": NAME, "id": APP_ID}}`. A stale
+composition's `currency` names the steps a change affects (`affects`), with each step's own
+`state` and changes (`steps`, a step that follows from a stale one listing it in `follows`);
+read again only those steps. How one result's
 object is related to another's is evidence `{"connection": {from, to, relation, ...}}`, with its
 scope, `conditions` and `support` ([Reviewing](REVIEWING.md#saved-investigations), [data
 model](DATA_MODEL.md#workspace-prooflensworkspace1-written-by-the-reader-and-the-command-line));

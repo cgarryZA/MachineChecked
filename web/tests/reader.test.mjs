@@ -2717,6 +2717,29 @@ await check("a direct audit shows its published readings beside an unchanged sta
   assert.doesNotMatch(await work.textContent(), /in one Lean statement/);
 });
 
+// #546: a stale composition names the step a change affects and what changed in it; the other
+// steps, and an obligation whose evidence is unchanged, stay current.
+await check("a stale composition names the step a change affects", 1300, async (pg) => {
+  await pg.route(`**/toywork/data/work/${workRow.file}`, async (route) => {
+    const w = await (await route.fetch()).json();
+    const c1 = w.readings[0].compositions[0];
+    const change = { app: "app:Toy.synthetic:0", reason: "the application is not the one recorded", evidence: "e-2" };
+    c1.currency = { state: "stale", changes: [change], affects: ["s2"],
+      steps: { s1: cur, s2: { state: "stale", changes: [change] } }, identifications: [], obligations: { o1: cur }, claim: [] };
+    route.fulfill({ json: w });
+  });
+  await pg.goto(origin + "/toywork/?audit=" + encodeURIComponent(origin + "/toywork/") + `#/r/${TOY.release}/read/T/T%3Adef%3Aeven`);
+  const c1 = pg.locator(".claim-view .published-work [data-composition='c-1']");
+  await c1.waitFor();
+  assert.equal(await c1.locator("[data-affects]").getAttribute("data-affects"), "s2");
+  assert.match(words(await c1.locator("[data-affects]").textContent()), /a change since affects step s2$/);
+  assert.equal(await c1.locator("[data-step='s1'] [data-step-currency]").count(), 0, "a step whose evidence is unchanged stays current");
+  assert.equal(await c1.locator("[data-step='s2'] [data-step-currency]").getAttribute("data-step-currency"), "stale");
+  assert.equal(words(await c1.locator("[data-step='s2'] [data-step-currency]").textContent()),
+    "changed since: Toy.even_add applied in Toy.synthetic changed");
+  assert.doesNotMatch(await c1.locator("[data-obligation='o1']").textContent(), /changed since/);
+});
+
 for (const width of [1440, 1000, 390, 320]) {
   await check("comparison keeps all three representations and long assumptions visible", width, async (pg) => {
     await pg.goto(origin + `/long-statement/#/r/${TOY.release}/read/T/T%3Athm%3Aeven-add?compare=1`);
