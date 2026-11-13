@@ -92,6 +92,34 @@ again and repeat the step). With `--json`, a refused step prints `{"ok": false, 
 "message"}}`, with `kind` one of `order`, `unknown-unit`, `stale`, `conflict`, `reported`,
 `invalid`, `workspace` and `no-build`, and exits 2.
 
+**A unit whose Lean another unit shows.** Step 2 of a statement shows the Lean of the
+definitions it uses, and those definitions may be units of their own. `read` and `show` of the
+statement name the units it will show (or has shown) whose reading you have not locked yet: lock
+those readings first if you will review them. `lock` says at once when the unit's Lean or author's
+review was already shown to you (by another unit's step 2, or in an informed workspace): the
+reading is still recorded, the report lists what you had seen, and `review promote` refuses it
+unless the maintainer passes `--allow-revealed`.
+
+**A unit you have reported.** `show` of a unit you have reported shows the Lean you reviewed,
+with the time of the report; `lock` refuses a new reading of it (a reading made after seeing the
+Lean would not be blind). A unit whose Lean changed since your report is a new review.
+
+**Resuming after an interruption.** `review status` lists each draft at its step with the times
+of the steps it has taken: the reading locked, the Lean shown, the verdict recorded, the
+author's review shown. With `--json`, `progress` gives them per draft (`locked_at`, `shown`,
+`shown_at`, `decided_at`, `author_shown_at`). To resume a batch:
+
+- a draft at step `read` has no locked reading: read the unit again and lock a reading;
+- a draft at step `compare` whose Lean was not shown (`shown` false): run `show`; one whose Lean
+  was shown may run `show` again (it shows the same Lean, and records nothing new) before
+  `decide`;
+- a draft at step `author`: the verdict is recorded and cannot be changed in independent review;
+  run `author`, if its time is not recorded, then `submit`;
+- a unit with no draft that `status` no longer lists as open is reported: `export` writes it.
+
+Never write a second reading of a unit whose Lean you have seen: the report would claim a blind
+reading it did not have.
+
 `read` gives every passage of the unit in full: a statement stated in several places, or a
 definition used by many claims, is read in all of them. Each passage says where it is, where its
 text comes from (the LaTeX source, or text extracted from the PDF) and whether its position is

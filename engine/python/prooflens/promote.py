@@ -356,13 +356,26 @@ def plan(cfg: Config, reports: list[dict], accept_same_family: bool = False,
     return out
 
 
+def already_promoted(cfg: Config, r: dict, cur: dict) -> bool:
+    """Whether the marker promoting `r` is already in one of the project's review files, as after
+    a promotion of the same report: promoting it again would write the marker a second time."""
+    mk = marker(r, cur, report_source(r))
+    return any(mk in f.read_text(encoding="utf-8") for f in review_files(cfg.reviews)
+               if f.is_file())
+
+
 def apply(cfg: Config, accepted: list[tuple[dict, dict]]) -> list[dict]:
-    """Archive each report and write its marker."""
+    """Archive each report and write its marker. A report whose marker is already written
+    (`already_promoted`) is left as it is, and listed with `already` set."""
     reviews, _ = load_reviews(cfg.reviews, cfg.ai_reviewers, cfg.root)
     rdir = reports_dir(cfg)
     rdir.mkdir(parents=True, exist_ok=True)
     done = []
     for r, cur in accepted:
+        if already_promoted(cfg, r, cur):
+            done.append({"name": marker_name(r), "marker": marker(r, cur, report_source(r)),
+                         "already": True})
+            continue
         stem = re.sub(r"[^\w.-]+", "_", f"{marker_name(r)}--{r['reviewer']['id']}--"
                       f"{r['submitted_at']}")
         (rdir / f"{stem}.json").write_text(json.dumps(r, indent=1, ensure_ascii=False) + "\n",

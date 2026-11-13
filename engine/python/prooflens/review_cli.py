@@ -334,8 +334,36 @@ class Session:
         return u.get("fingerprint") or json.dumps(u.get("fingerprints") or {}, sort_keys=True)
 
     def reported(self, u: dict) -> bool:
-        return any(r["unit"]["id"] == u["id"] and _pinned(r) == self._fp(u)
-                   for r in self.work["reports"])
+        return self.report_of(u) is not None
+
+    def report_of(self, u: dict) -> dict | None:
+        """This reviewer's report of `u`'s current Lean, if they have submitted one."""
+        return next((r for r in reversed(self.work["reports"])
+                     if r["unit"]["id"] == u["id"] and _pinned(r) == self._fp(u)), None)
+
+    def would_reveal(self, u: dict) -> list[str]:
+        """The other units whose Lean step 2 of `u` shows and whose reading this reviewer has
+        not locked yet: if they review those units afterwards, those readings will not be blind."""
+        out = []
+        for i in ((u.get("reveals") or {}).get("lean") or []):
+            other = self.units.get(i)
+            if i == u["id"] or other is None or other.get("state") == "reviewed" \
+                    or self.reported(other):
+                continue
+            d = self.work["drafts"].get(i)
+            if d is None or d.get("stage") == "read":
+                out.append(i)
+        return out
+
+    def progress(self) -> list[dict]:
+        """Each draft's step and when each step was taken, for resuming after an interruption:
+        whether the Lean was shown (`shown`, with its time when it was recorded) tells whether a
+        reading may still be locked blind."""
+        return [{"unit": uid, "step": d.get("stage"), "locked_at": d.get("locked_at"),
+                 "shown": bool(d.get("shown_fingerprint") or d.get("shown_at")),
+                 "shown_at": d.get("shown_at"), "decided_at": d.get("decided_at"),
+                 "author_shown_at": d.get("author_shown_at")}
+                for uid, d in self.work["drafts"].items()]
 
     def open_units(self, order: str = "priority") -> list[dict]:
         """The units left to review, in the order asked (`review_queue.ORDERS`): the queue's
@@ -494,9 +522,13 @@ class Session:
         warn = ("\n\nNOTE: you have already seen " + " and ".join(
             f"the {s['what']} of this unit (in {s['unit']})" for s in seen)
             + ". Your reading will not be blind, and the report will say so.") if seen else ""
+        reveals = self.would_reveal(u)
+        if reveals:
+            warn += "\n\n" + reveals_note(reveals, "Step 2 of this unit (`review show`) will show")
         if as_json:
             return {**self.packet(u, "read"), "review": {"step": "read", "mode": self.mode,
-                                                         "seen_before": seen}}
+                                                         "seen_before": seen,
+                                                         "reveals": reveals}}
         return self.paper_text(u) + warn
 
     def _started(self, u: dict) -> dict:
@@ -510,11 +542,12 @@ class Session:
             self.work["drafts"][u["id"]] = d = {"stage": "read", "reading": ""}
         return d
 
-    def lock(self, uid: str, reading: str) -> None:
+    def lock(self, uid: str, reading: str) -> list[dict]:
         """Step 1's record: the reviewer's reading of the paper, with the digests of the
         passages read and what they had already seen. Independent review locks it before the
         Lean is shown. An informed session records it when the reviewer gives it, until the
-        verdict; it is not blind, and the report says so."""
+        verdict; it is not blind, and the report says so. Returns what the reviewer had already
+        seen of the unit (`revealed_by`), so that they are told at once."""
         u = self.unit(uid)
         if self.informed:
             d = self._started(u)
@@ -522,31 +555,54 @@ class Session:
                 raise ReviewError(f"{uid}: the verdict is recorded; the reading it was made with "
                                   "is kept", "order")
         else:
+            r = self.report_of(u) if self.draft(u) is None else None
+            if r is not None:
+                raise ReviewError(f"{uid} is already reported by {self.reviewer['id']} (submitted "
+                                  f"{r.get('submitted_at')}): its reading is the one in that "
+                                  "report, and a new one would not be blind", "reported")
             d = self.draft(u, "read")
         if len(reading.strip()) < 20:
             raise ReviewError("the reading is too short to record (20 characters at least)",
                               "invalid")
         # The passages read are those of this queue's release: the report pins their digests.
-        d.update(reading=reading, revealed_by=self.revealed_by(u), locked_at=now(),
+        seen = self.revealed_by(u)
+        d.update(reading=reading, revealed_by=seen, locked_at=now(),
                  source_sha256=u.get("source_sha256"), stage="compare")
         self._save(uid)
+        return seen
 
     def show(self, uid: str, as_json: bool = False) -> str | dict:
         """Step 2: the unit's Lean, after the lock in independent review. The draft records the
-        version shown, so that a verdict is recorded against the Lean that was shown."""
+        version shown, so that a verdict is recorded against the Lean that was shown. A unit
+        this reviewer has reported is shown as it was reviewed: its Lean was seen already."""
         u = self.unit(uid)
         d = self._started(u) if self.informed else self.draft(u)
+        if d is None and not self.informed:
+            r = self.report_of(u)
+            if r is not None:
+                note = (f"{uid} is reported (submitted {r.get('submitted_at')}, verdict "
+                        f"{(r.get('verdict') or {}).get('value')}); this is the Lean you reviewed. "
+                        "`review export` writes your reports.")
+                if as_json:
+                    return {**self.packet(u, "compare"),
+                            "review": {"step": "reported", "mode": self.mode,
+                                       "submitted_at": r.get("submitted_at")}}
+                return note + "\n\n" + self.lean_text(u)
         if d is None or (d["stage"] == "read" and not self.informed):
             raise ReviewError(f"{uid}: lock your reading first (`review lock`); the Lean is shown "
                               "only after it", "order")
+        reveals = self.would_reveal(u)
         shown = {"stage": "compare" if d["stage"] == "read" else d["stage"],
                  "shown_fingerprint": self._fp(u)}
-        if any(d.get(k) != v for k, v in shown.items()):
+        if any(d.get(k) != v for k, v in shown.items()) or "shown_at" not in d:
             d.update(shown)
+            d.setdefault("shown_at", now())
             self._save(uid)
         if as_json:
-            return {**self.packet(u, "compare"), "review": {"step": "compare", "mode": self.mode}}
-        return self.lean_text(u)
+            return {**self.packet(u, "compare"), "review": {"step": "compare", "mode": self.mode,
+                                                            "reveals": reveals}}
+        return (reveals_note(reveals, "This shows") + self.lean_text(u)) if reveals \
+            else self.lean_text(u)
 
     def decide(self, uid: str, verdict: str, comparison: str, detail: str = "",
                witness: str = "", coverage: dict | None = None, checklist: dict | None = None,
@@ -727,6 +783,14 @@ class Session:
         return out
 
 
+def reveals_note(units: list[str], lead: str) -> str:
+    """The warning that a step shows the Lean of other units still to be read blind."""
+    return (f"NOTE: {lead} the Lean of {', '.join(units)} as well, whose reading you have not "
+            "locked. Lock those readings first if you will review them: a reading locked after "
+            "seeing their Lean is not blind, and promotion refuses it unless the maintainer "
+            "accepts it.\n\n")
+
+
 def check_checklist(given) -> dict:
     """The comparison's checklist as a report keeps it: each item marked matches, differs or
     unsure (an unmarked item is left out)."""
@@ -847,7 +911,7 @@ def api(work_dir: Path, data_dir: Path) -> tuple[dict, dict]:
         elif action == "edit":
             s.edit(uid, req.get("stage") or "", req.get("fields") or {})
         elif action == "lock":
-            s.lock(uid, req.get("reading") or "")
+            out["seen_before"] = s.lock(uid, req.get("reading") or "")
         elif action == "decide":
             s.decide(uid, req.get("verdict") or "", req.get("comparison") or "",
                      req.get("detail") or "", req.get("witness") or "", req.get("coverage"),
