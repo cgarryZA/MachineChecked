@@ -1060,8 +1060,13 @@ def _check_full_json(a) -> tuple[dict, list[dict], bool]:
            "replay": _replay_guard(cfg, res["evidence"]),
            **({"modules_added": added} if added is not None else {})}
     num = (res.get("content") or {}).get("numbering")
+    # Rows of the readings ledger whose declarations changed since they were read (`ledger.py`).
+    from .ledger import stale_rows
+    ledger = stale_rows(cfg, res.get("content"))
+    if ledger:
+        out["warnings"] = ledger
     if num is not None:
-        out["warnings"] = _reference_warnings(num)
+        out["warnings"] = _reference_warnings(num) + ledger
         out["numbering"] = num
         # With several papers, each paper's references and warnings by themselves.
         if num.get("papers"):
@@ -1185,6 +1190,10 @@ def _build_full(a, site: str | None = None, refresh: bool = False, fix_modules: 
             print(f"  warning  {f['message']}")
     # The Lean's references to the paper's numbers that disagree with it (`numbering.py`).
     for w in _reference_warnings((res.get("content") or {}).get("numbering")):
+        print(f"  warning  {w['message']}")
+    # Rows of the readings ledger whose declarations changed since they were read (`ledger.py`).
+    from .ledger import stale_rows
+    for w in stale_rows(cfg, res.get("content")):
         print(f"  warning  {w['message']}")
     if idx["findings"]["total"].get("warning"):
         print("  (warnings: see `check --json` or the reader)")

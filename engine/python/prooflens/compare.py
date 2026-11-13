@@ -668,8 +668,13 @@ def unit_packet(site: Site, unit: dict, stage: str) -> dict:
     out = _head(site, stage, {"unit": unit["id"], "stage": stage})
     # The unit's declaration names are Lean: not part of the read stage.
     keys = ("id", "kind", "unit", "parent", "papers") if stage == "read" else \
-        ("id", "kind", "unit", "parent", "name", "lean", "route", "papers")
+        ("id", "kind", "unit", "parent", "name", "lean", "route", "papers", "correction")
     out["unit"] = {k: unit.get(k) for k in keys if unit.get(k) is not None}
+    if out["unit"].get("correction") and stage != "informed":
+        # Which printed clause it corrects is the inventory's; the reason given for it is the
+        # author's, shown with the author's review.
+        out["unit"]["correction"] = {k: v for k, v in out["unit"]["correction"].items()
+                                     if k != "reason"}
     missing = [c["id"] for c, ch in zip(unit.get("claims") or [], chunks) if ch is None]
     chunks = [ch for ch in chunks if ch is not None]
     out["claims"] = [_claim_ref(ch) for ch in chunks]
@@ -1476,6 +1481,14 @@ def packet_text(pk: dict) -> str:
                               + [x for c in conns for x in connection_lines(c)]))
     if pk["paper"].get("note"):
         out.insert(0, pk["paper"]["note"])
+    cor = (pk.get("unit") or {}).get("correction")
+    if cor:
+        what = "a correction of" if cor["relation"] == "corrects" else "a special case of"
+        out.append(f"This proposition is {what} the printed clause “{cor['of']}”"
+                   + (f": {cor['reason']}" if cor.get("reason") else "")
+                   + ". Compare it with the passage and that correction; if it is the printed "
+                   "claim with exactly that correction, the verdict is 'faithful to the "
+                   "correction'.")
     lean = pk.get("lean")
     if lean is not None:
         for d in lean["declarations"]:

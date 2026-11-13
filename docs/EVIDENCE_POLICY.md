@@ -36,11 +36,13 @@ A formal claim's status, from strongest to weakest:
 None of the statuses between `refuted as printed` and `formal: open` is a proof of the printed
 claim, so none is accepted: they say what is proved beside it. A refutation whose counterexample
 lies outside the paper's standing assumptions (`refute_scope`) refutes the formal proposition
-only; the printed claim reads open, with the reason under its status. It refutes the printed
-claim only when every standing assumption the clause declares (`standing_assumptions`) has a class
-lemma declared proved whose theorem passes the proof checks; a lemma that holds only up to an
-identity not proved in Lean, a lemma that fails a check, or an assumption with no lemma keeps it
-scoped. The readings a refutation is declared to cover or not to cover (`refutation_covers`,
+only; the printed claim reads open, with the reason under its status. Its class lemmas (a theorem
+that the counterexample meets each standing assumption the clause declares,
+`standing_assumptions`) are recorded, their theorems checked as proofs, and shown, but they change
+no status: nothing checks that a lemma's statement says what its assumption needs, and the list of
+assumptions is the author's own. When every declared assumption has a proved lemma, the reason
+under the status says so, and that the refutation still reads as outside the paper's assumptions
+until the lemmas' statements are independently reviewed. The readings a refutation is declared to cover or not to cover (`refutation_covers`,
 `refutation_does_not_cover`) are shown and their theorems checked, and change no status. A reason
 under a status is display only and changes nothing assessed.
 

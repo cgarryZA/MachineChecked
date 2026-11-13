@@ -1,8 +1,8 @@
 """The scope of a refutation (#653): the readings its counterexample is declared to cover and not
 to cover, each covering theorem checked as a proof is; and, for a refutation scoped outside the
 paper's standing assumptions, class lemmas showing the counterexample meets each assumption.
-Only a proved lemma for every declared assumption makes it refute the printed claim; a lemma
-holding up to an unproved identity, a failing one or none keeps it scoped."""
+Class lemmas are display only: whatever they say, the refutation stays scoped, since nothing
+checks that a lemma's statement says what its assumption needs."""
 
 import json
 
@@ -70,6 +70,8 @@ def test_the_scope_is_shown_under_the_label():
         "the counterexample refuting “main” and the paper's standing assumptions: complete: "
         "proved by Toy.c; usual: holds only up to an identity not proved in Lean: a 0-1 law; "
         "bounded: not addressed"]
+    every = refutation_scope({**scoped, "class_lemmas": scoped["class_lemmas"][:1]})
+    assert len(every) == 2 and "still reads as outside the paper's assumptions" in every[1]
     assert "no standing assumption" in refutation_scope({**scoped, "class_lemmas": []})[0]
 
 
@@ -105,10 +107,10 @@ def _clause_of(body, cid, name):
     return c, next(cl for cl in c["clauses"] if cl["name"] == name)
 
 
-def test_class_lemmas_decide_whether_a_refutation_answers_the_printed_claim(toy):
+def test_class_lemmas_never_change_the_status_of_a_scoped_refutation(toy):
     """The toy's refuted Proposition 2.3, its refutation scoped outside two declared standing
-    assumptions: scoped while one holds only up to an identity, refuted as printed once both
-    have proved class lemmas."""
+    assumptions: scoped while one holds only up to an identity, and still scoped once both
+    have proved class lemmas, with a line under the status saying so."""
     p = toy / "claims.json"
     inv = json.loads(p.read_text(encoding="utf-8"))
     claim = next(c for c in inv["claims"] if c["label"] == "prop:pred")
@@ -142,5 +144,10 @@ def test_class_lemmas_decide_whether_a_refutation_answers_the_printed_claim(toy)
     p.write_text(json.dumps(inv), encoding="utf-8")
     index, body, _ = build(toy)
     c, got = _clause_of(body, claim["id"], cl["name"])
-    assert got["state"] == "refuted"
-    assert c["status_code"].startswith("formal.refuted")
+    # Every assumption has a proved lemma, and the refutation still reads as scoped: a lemma's
+    # statement is not checked against its assumption.
+    assert [l["state"] for l in got["class_lemmas"]] == ["proved", "proved"]
+    assert got["state"] == "refuted-outside"
+    assert c["status_code"].startswith("formal.open")
+    assert any("until the lemmas' statements are independently reviewed" in r
+               for r in c["status_reason"])

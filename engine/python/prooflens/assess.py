@@ -71,6 +71,11 @@ def refutation_scope(c: dict) -> list[str]:
             out.append(f"the counterexample refuting “{name}” and the paper's standing "
                        "assumptions: " + "; ".join(f"{l['assumption']}: {words[l['state']](l)}"
                                                     for l in lemmas))
+            if all(l["state"] == "proved" for l in lemmas):
+                out.append(f"every declared standing assumption has a proved class lemma for the "
+                           f"counterexample refuting “{name}”; the refutation still reads as "
+                           "outside the paper's assumptions until the lemmas' statements are "
+                           "independently reviewed")
         else:
             out.append(f"no standing assumption of the paper is shown to hold for the "
                        f"counterexample refuting “{name}”")
@@ -1114,11 +1119,11 @@ class Assessor:
                                               f"{thm}: {e}"))
         res["refutation_covers"] = [self._scope_theorem(subj, "refutation-cover", r)
                                     for r in cl.get("refutation_covers") or []]
-        closed = False
+        # Class lemmas are recorded and their theorems checked, but change no status: nothing
+        # checks that a lemma's statement says the counterexample meets its assumption, and the
+        # assumptions are the author's own list.
         if cl.get("refute_scope") == OUTSIDE:
             res["class_lemmas"] = self.class_lemmas(subj, cl)
-            closed = bool(res["class_lemmas"]) and \
-                all(l["state"] == "proved" for l in res["class_lemmas"])
         # What the author expects of a clause (#650): its missing proof is the open obligation,
         # and a proof of the other kind contradicts it.
         exp = cl.get("expect")
@@ -1134,11 +1139,11 @@ class Assessor:
                    else "proved, but its proposition is refuted")
                 + ": correct the expectation, or look at the proof"))
         # A refutation whose counterexample lies outside the paper's standing assumptions
-        # refutes the formal proposition only, never the printed claim, until a proved class
-        # lemma shows the counterexample meets each standing assumption the clause declares.
+        # refutes the formal proposition only, never the printed claim, whatever its class
+        # lemmas say.
         res["state"] = ("proved" if res.get("accept_ok") else
                         "refuted-outside" if res.get("refute_ok")
-                        and cl.get("refute_scope") == OUTSIDE and not closed else
+                        and cl.get("refute_scope") == OUTSIDE else
                         "refuted" if res.get("refute_ok") else
                         "open" if spec else
                         "stated" if cl.get("defs") else "unspecified")
@@ -1191,7 +1196,8 @@ class Assessor:
         standing assumption the clause declares, saying what its class lemmas show of the
         counterexample. `proved` needs a lemma declared `proved` whose theorem passes the proof
         checks; a lemma that holds only up to an unproved identity stays `up-to-identity`, and
-        an assumption with no lemma is `not-addressed`. Never rounded up."""
+        an assumption with no lemma is `not-addressed`. Display only: the clause's state does
+        not depend on it."""
         rank = {"proved": 0, "up-to-identity": 1, "failed": 2, "not-addressed": 3}
         out = []
         for a in dict.fromkeys(cl.get("standing_assumptions") or []):

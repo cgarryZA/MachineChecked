@@ -48,7 +48,8 @@ from . import review_sources
 from .config import Config
 from .reviews import history, load_reviews, review_files
 
-ACCEPTABLE = {"faithful", "faithful with representation choices", "broader"}
+ACCEPTABLE = {"faithful", "faithful with representation choices", "broader",
+              "faithful to the correction"}
 NEEDS_DETAIL = {"faithful with representation choices", "broader"}
 # A review of a printed step records a finding; an open question is not one.
 STEP_ACCEPTABLE = {"holds as printed", "holds, with a gap in the argument", "false as printed"}
@@ -147,6 +148,9 @@ def check_report(r: dict, body: dict, cfg: Config, accept_same_family: bool,
         if pid in papers and papers[pid].get("revision") != revn:
             why.append(f"paper {pid} is at another revision than the one reviewed")
     v = r["verdict"]["value"]
+    if v == "faithful to the correction" and not corrects_a_clause(body, u):
+        why.append("verdict 'faithful to the correction' applies only to the proposition of a "
+                   "clause that corrects, or is a special case of, a printed clause")
     if v == "cannot determine":
         why.append("verdict 'cannot determine' is not one that is recorded as a review: it "
                    "leaves an open question, and no defect")
@@ -179,6 +183,14 @@ def check_report(r: dict, body: dict, cfg: Config, accept_same_family: bool,
     if not re.fullmatch(r"\S+", rid):
         why.append(f"reviewer id {rid!r} has spaces")
     return why
+
+
+def corrects_a_clause(body: dict, u: dict) -> bool:
+    """Whether the unit's proposition is, in the evidence `body`, that of a clause that corrects
+    (`corrects`) or is a special case of (`restricts`) a printed clause."""
+    return u.get("kind") == "spec" and any(
+        cl.get("spec") == u.get("name") and (cl.get("corrects") or cl.get("restricts"))
+        for c in (body.get("inventory") or {}).get("claims", []) for cl in c.get("clauses", []))
 
 
 def coverage_refusals(r: dict) -> list[str]:

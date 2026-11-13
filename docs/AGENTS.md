@@ -125,7 +125,10 @@ the whole statement rather than one application); `dismissal_stale` marks one wh
 longer applies. The site data and `export` carry the same fields.
 When the configuration has one paper and the project is built, the document
 also has `warnings` with the `paper-reference` warnings and `numbering`, as in zero
-configuration; with several papers they are absent. Report the violations and obligations by
+configuration; with several papers they are absent. When the configuration names a
+`readings_ledger`, `warnings` also lists its stale rows (`kind` `readings-ledger`, with `row`,
+`read_at`, `missing`, `changed`, `new` and `message`; docs/ASSURANCE.md): each asks for a fresh
+reading of the row and changes no status. Report the violations and obligations by
 subject and message; they are what blocks a claim from being accepted. `replay` is null when no Comparator replay counts; otherwise it
 gives the record's `guard` (`guarded`, `unguarded`, or `unrecorded` for an older record), the
 number of proofs `replayed`, and a `message` when they were not shown to run under the sandbox
