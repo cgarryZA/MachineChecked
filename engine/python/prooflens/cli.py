@@ -1043,6 +1043,56 @@ def _finding_details(cfg, eid: str) -> list[dict]:
             for f in sorted(found, key=lambda f: (order.get(f.get("tier"), 3), f.get("id", "")))]
 
 
+def _evidence_decls(cfg, eid: str) -> dict:
+    """The declaration records of the full assessment's evidence, by name."""
+    from . import evidence as ev
+    return (ev.load(cfg.out_dir, eid)["body"].get("lean") or {}).get("decls") or {}
+
+
+def _obligation_lines(details: list[dict], decls: dict) -> list[str]:
+    """The violations and obligations not dismissed, one per line. The obligation to review a
+    definition is listed once, with the claims (and clauses) that need it, not once per claim;
+    a structure's constructor and projections, which its one review covers, are listed with it
+    (`review_queue.structure_members`)."""
+    from .review_queue import structure_members
+    out: list[str] = []
+    groups: dict[str, dict] = {}
+    members: dict[str, set] = {}
+
+    def owner(n: str) -> str:
+        s = n.rpartition(".")[0]
+        if s not in members:
+            members[s] = {m["name"] for m in structure_members(s, decls)} if s in decls else set()
+        return s if n in members[s] else n
+
+    for f in details:
+        if f["tier"] not in ("violation", "obligation") or f.get("dismissed"):
+            continue
+        if f["code"] != "def-review" or not f.get("trigger"):
+            out.append(f"  {f['tier']}  {f['subject']}: {f['message']}")
+            continue
+        n = f["trigger"]
+        g = groups.get(owner(n))
+        if g is None:
+            g = groups[owner(n)] = {"message": f["message"], "about": n, "names": [],
+                                    "subjects": []}
+            out.append(g)
+        if n == owner(n) and g["about"] != n:
+            g["message"], g["about"] = f["message"], n
+        g["names"] += [n] if n not in g["names"] else []
+        g["subjects"] += [f["subject"]] if f["subject"] not in g["subjects"] else []
+    lines = []
+    for x in out:
+        if isinstance(x, str):
+            lines.append(x)
+            continue
+        rest = [n for n in x["names"] if n != x["about"]]
+        with_ = f"; in the same review unit: {', '.join(rest)}" if rest else ""
+        lines.append(f"  obligation  {x['message']}{with_} (needed by {len(x['subjects'])}: "
+                     f"{', '.join(x['subjects'])})")
+    return lines
+
+
 def _witness_lists(cfg, eid: str) -> dict[str, dict]:
     """Per claim of the full assessment: the unreviewed declarations only its witnesses use
     (`witness_defs`, with the clause), and for a definition claim the witness-only declarations
@@ -1517,11 +1567,11 @@ def _print_full_report(cfg, res) -> None:
     from .semantic import text
     for line in text(idx.get("semantic")):
         print(line)
-    # Violations and obligations, one per line: they are few, and they block acceptance.
+    # Violations and obligations, one per line: they are few, and they block acceptance. A
+    # definition's review is one obligation, with the claims that need it.
     details = _finding_details(cfg, res["evidence"])
-    for f in details:
-        if f["tier"] in ("violation", "obligation") and not f.get("dismissed"):
-            print(f"  {f['tier']}  {f['subject']}: {f['message']}")
+    for line in _obligation_lines(details, _evidence_decls(cfg, res["evidence"])):
+        print(line)
     # Names in module docstrings that nothing declares, names or files review text cites that
     # nothing resolves (with file and line), the unreviewed declarations only witnesses use, and
     # the theorems that deny the proposition of a clause without a refutation.
@@ -2080,12 +2130,13 @@ def _lock(s, uid: str, reading: str) -> tuple[str, list[dict]]:
 
 
 def _decide(s, uid: str, verdict, comparison: str, detail: str, witness: str, coverage,
-            basis, argument: str, bridge, would_decide: str) -> str:
-    """Record a verdict (`Session.decide`): what the command says."""
+            basis, argument: str, bridge, would_decide: str, members: dict | None = None) -> str:
+    """Record a verdict (`Session.decide`): what the command says. `members` is a structure's
+    unit's separate verdicts on constants it covers (`review_cli.member_verdicts`)."""
     s.decide(uid, verdict, comparison, detail, witness,
              {"coverage": coverage, "basis": basis, "argument": argument,
               "bridge": dict(zip(("theorem", "target"), bridge)) if bridge else None,
-              "would_decide": would_decide})
+              "would_decide": would_decide}, members=members)
     return f"verdict recorded; `review author {uid}` shows the author's review"
 
 
@@ -2114,7 +2165,9 @@ def _review_decide(a, s) -> None:
     _positional(a, "unit", "verdict", "comparison")
     print(_decide(s, a.unit, a.verdict, _text_arg(a.comparison), _text_arg(a.detail),
                   _text_arg(a.witness), a.coverage, a.basis, _text_arg(a.argument), a.bridge,
-                  _text_arg(a.would_decide)))
+                  _text_arg(a.would_decide),
+                  {name: {"verdict": v, "detail": _text_arg(f)}
+                   for name, v, f in getattr(a, "member", None) or []} or None))
 
 
 def _review_submit(a, s) -> None:
@@ -2129,7 +2182,7 @@ MANIFEST_FIELDS = {
     "lock": {"reading": True},
     "decide": {"verdict": False, "comparison": True, "detail": True, "witness": True,
                "coverage": False, "basis": False, "argument": True, "bridge": False,
-               "would_decide": True},
+               "would_decide": True, "members": False},
     "submit": {"disagreements": True},
 }
 MANIFEST_REQUIRED = {"lock": ("reading",), "decide": ("verdict", "comparison"),
@@ -2183,7 +2236,8 @@ def _manifest_step(action: str, s, uid: str, f: dict) -> tuple[str, dict]:
     if action == "decide":
         return _decide(s, uid, f["verdict"], f["comparison"], f.get("detail", ""),
                        f.get("witness", ""), f.get("coverage"), f.get("basis"),
-                       f.get("argument", ""), f.get("bridge"), f.get("would_decide", "")), {}
+                       f.get("argument", ""), f.get("bridge"), f.get("would_decide", ""),
+                       f.get("members")), {}
     said, r = _submit(s, uid, f["disagreements"])
     return said, {"verdict": r["verdict"]["value"]}
 
@@ -2294,8 +2348,11 @@ def cmd_review_promote(a):
             print(f"ALREADY  {head}\n           already promoted: its marker is written, and "
                   "nothing is written for it again")
         else:
-            print(f"OK       {head}\n           "
-                  f"{pr.marker(r, cur, pr.report_source(r))}")
+            print(f"OK       {head}")
+            for _, mk in pr.markers(r, cur):
+                print(f"           {mk}")
+            for n, v in sorted((cur.get("left_out") or {}).items()):
+                print(f"           no marker for {n}: separate verdict {v['value']}")
             ok.append((r, cur))
     if not ok:
         sys.exit("nothing to promote" + (": every report given is already promoted"
@@ -2303,7 +2360,8 @@ def cmd_review_promote(a):
     if not a.yes:
         if not sys.stdin.isatty():
             sys.exit("pass --yes to write the markers without a prompt")
-        if input(f"Write {len(ok)} marker(s) and archive the report(s)? [y/N] ").strip().lower() \
+        count = sum(len(pr.markers(r, cur)) for r, cur in ok)
+        if input(f"Write {count} marker(s) and archive {len(ok)} report(s)? [y/N] ").strip().lower() \
                 not in ("y", "yes"):
             sys.exit("nothing written")
     done = pr.apply(cfg, ok)
@@ -2513,6 +2571,11 @@ def _add_review(sub) -> None:
                                  "exactly TARGET")
             sp.add_argument("--would-decide", help="a file holding what would decide an "
                             "unresolved coverage")
+            sp.add_argument("--member", nargs=3, action="append",
+                            metavar=("NAME", "VERDICT", "DETAIL"),
+                            help="for a structure's unit: a separate verdict on one of the "
+                                 "constructor or projections it covers, with a file holding its "
+                                 "detail, or -; the unit's verdict holds for the rest")
         if name == "export":
             sp.add_argument("--out", required=True)
         if name in ("next", "status", "read", "show", "author"):

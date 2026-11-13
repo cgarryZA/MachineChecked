@@ -90,7 +90,10 @@ project's `machinechecked-reviews/` folder.
 A review report (`prooflens/review-report@1`) pins the same digests as `pins.source_sha256`
 (claim id to digest), taken when the reading is locked; `review promote` refuses a report whose
 digests are missing or differ from the current ones. Its Lean pins (`fingerprint`,
-`fingerprints`, `legacy_hash`) are those of the unit when the verdict was recorded. Its `mode`
+`fingerprints`, `legacy_hash`) are those of the unit when the verdict was recorded. A report on
+a structure's unit lists the structure and the constructor and projections it covers in
+`unit.lean`, pins each one's fingerprint in `pins.fingerprints`, and records any separate verdict
+on one of them in `verdict.members` (name to `{group, value, detail}`). Its `mode`
 is `independent` (the three steps, each locked) or `informed` (made in an informed workspace: no
 step is locked, `reading.text` is empty and `reading.locked_at` null when the reviewer recorded
 no reading, and `reading.revealed_by` lists the workspace's exposure); a report without `mode`

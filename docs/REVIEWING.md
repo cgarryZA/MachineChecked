@@ -793,6 +793,34 @@ change no status, and promotion writes the same marker with them or without them
 
 A review can start before a theorem is proved, once its formal statement exists. The queue lists the claims that still await one.
 
+## Structures
+
+A structure is one review unit with the constants Lean generates for it: its constructor, the
+projections of the fields it declares and the projections to its parents. Their content is the
+structure's fields as written, so they have no units of their own (`def:Pair` covers `Pair.mk`,
+`Pair.x` and `Pair.y`; a field it inherits belongs to its parent's unit). The unit lists the
+constants it covers (`lean` and `members` in the queue) and the claims that use any of them; it
+is reviewed once all of them have a current review. Step 2 shows the structure's fields with
+their names, types and docstrings, and `show --json` carries its authored source
+(`lean_source`), as for a definition. A unit of its own for one of them, from a queue before
+this, is the structure's: having reached its step 2 counts as having seen the structure's Lean.
+
+One reading and one verdict review them all. A field can still be given a separate verdict,
+recorded with the verdict (`verdict.members` in the report):
+
+```sh
+machinechecked review decide def:Pair faithful comparison.md --member Pair.y narrower y-detail.md
+```
+
+Promotion archives the one report as one record and writes a `def-review` marker for each
+constant it covers, each in the form the acceptance checker reads and after its own `Review by`
+line linking that record, after that constant's last marker. Each must still be one of the
+structure's, at the version the report pinned. A constant whose separate verdict is not one
+recorded as a review gets no marker and stays unreviewed; the report's text block (`review
+reports`) lists the constants covered and each separate verdict. In `check`, the obligation to review a
+definition is listed once, with the claims that need it, and a structure's with its constructor
+and projections.
+
 ## Proof steps
 
 An equation or passage inside a printed proof has its own unit in the queue (`step:<claim id>`),
