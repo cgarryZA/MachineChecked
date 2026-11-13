@@ -284,6 +284,25 @@ ambiguous, a proposal marked as one, or none for a removed claim
 keeps the map in a workspace (`changes --map --workspace ID --save`), `check`, the claim page and
 `compare` show that counterpart on every build of the later revision, and say who kept the map.
 
+When the docstrings also cite another version's numbers on purpose (`Remark 3.1 (Remark 3.3 of
+the journal version)`), declare that version's numbering: a name, the phrase that qualifies its
+numbers, and a map from the paper's numbers to that version's. In a full assessment it goes under
+the paper in `machinechecked.toml` ([ASSURANCE.md](ASSURANCE.md#configure-the-project)); with
+zero configuration, in `machinechecked.links.json` under the paper's key:
+
+```json
+"numberings": {"paper/main.tex": [{"name": "journal", "qualifier": "of the journal version",
+                                   "map": {"Proposition 2": "Proposition 5"}}]}
+```
+
+A number followed by that phrase is checked against the map, never against the paper read: it
+agrees when the map gives it; it is flagged when the number of the paper just before it in the
+same sentence (`Proposition 2` in `Proposition 2 (Proposition 6 of the journal version)`) is not
+the statement the map pairs it with, even when the paper read happens to have a statement with
+that number; and it is not checked when the map does not give it, unless the map says it is
+complete (`"complete": true`), when it is flagged. A number without the phrase is checked
+against the paper read, as before. The map changes no status.
+
 A suggestion's cited number rests on the docstring's reference to it. A number of another work
 (`Theorem 2.1 of [Gauss]`), a section, or the start of a longer number (`Theorem 2.1.3`) is
 no lead to the claim. The number's reason lists the references it rests on and calls the
