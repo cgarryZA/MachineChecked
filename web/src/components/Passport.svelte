@@ -328,6 +328,7 @@
   <section class="details">
     <h2>Audit details</h2>
     <StatusChip record={claim} />
+    {#if claim.status_reason?.length}<ul class="small status-reason">{#each claim.status_reason as r}<li><TexInline text={r} /></li>{/each}</ul>{/if}
     {#if claim.audit?.author}<p class="small">Audit by {claim.audit.author}</p>{/if}
     {#if claim.audit?.detail}<p class="small">{claim.audit.detail}</p>{/if}
     <p class="faint small"><code>{claim.id}</code>{#if index.papers.length > 1} · paper {claim.paper}{/if}</p>

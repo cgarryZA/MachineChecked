@@ -80,6 +80,12 @@ audit whose terms allow it carries its pinned PDF.
   its own links (the Lean that establishes it, or the different formal route used instead) and
   its own review, apart from its enclosing result. A `proof-step` scope decision is about formal
   coverage only, never a reading of the step.
+- **What is proved beside a printed claim is said apart from it** (#639, #653, #656, #684): a
+  proved correction (`corrects`) or special case (`restricts`) of an open printed clause, or a
+  refutation by a counterexample outside the paper's standing assumptions (`refute_scope`), gives
+  a status of its own with a short label and the reason shown under it. Such a claim is never
+  accepted and never counted with accepted or with open-and-unproved claims; a refutation outside
+  the paper's assumptions is recorded as evidence and never reads "refuted as printed".
 - **Provenance is shown, never upgraded.** A Markdown marker is self-declared; a review by an
   author of the statements is never independent; human or AI review is recorded.
 - **Links are pinned to a release** (`#/r/<release>/…`): an older link shows a banner, never newer

@@ -32,6 +32,33 @@ from .reviews import Review, history
 from .source_regions import SCHEMES as SOURCE_SCHEMES, changed_line, matches as source_matches
 
 OUT_OF_SCOPE = {"expository", "literature", "empirical", "proof-step", "part-of", "duplicate"}
+# A refutation's scope (`refute_scope`) when its counterexample lies outside the paper's standing
+# assumptions: it refutes the formal proposition, in a wider class than the paper's, and never
+# the printed claim.
+OUTSIDE = "outside-standing-assumptions"
+
+
+def status_reason(clauses: list[dict]) -> list[str]:
+    """Why a claim's status is what it is, in a line per reason, for the reader to show under
+    the label: a refutation that holds only outside the paper's standing assumptions, a proved
+    correction or special case of a printed clause, and how many clauses are proved when some are
+    open. Display only; empty when the label says it all."""
+    out = []
+    for c in clauses:
+        why = f": {c['reason']}" if c.get("reason") else ""
+        if c.get("state") == "refuted-outside":
+            out.append(f"“{c['name']}” is refuted only by a counterexample outside the paper's "
+                       f"standing assumptions{why}")
+        elif c.get("accept_ok") and c.get("restricts"):
+            out.append(f"“{c['name']}” is a special case of “{c['restricts']}”, which is not "
+                       f"refuted{why}")
+        elif c.get("accept_ok") and c.get("corrects") and why:
+            out.append(f"“{c['name']}” corrects “{c['corrects']}”{why}")
+    originals = [c for c in clauses if not c.get("corrects") and not c.get("restricts")]
+    proved = [c for c in clauses if c.get("accept_ok")]
+    if proved and len(clauses) > 1 and any(not c.get("accept_ok") for c in originals)             and not any(c.get("state") == "refuted" for c in originals):
+        out.append(f"{len(proved)} of {len(clauses)} clauses proved")
+    return out
 
 # Constants whose value outside the intended domain is a junk value; a statement that uses one
 # may be weaker or different from the printed claim unless the domain is constrained.
@@ -917,6 +944,8 @@ class Assessor:
         spec = cl.get("spec")
         res = {"name": cl.get("name", "main"), "spec": spec, "accept": cl.get("accept"),
                "refute": cl.get("refute"), "corrects": cl.get("corrects"),
+               "restricts": cl.get("restricts"), "refute_scope": cl.get("refute_scope"),
+               "reason": cl.get("reason"),
                "witness": cl.get("witness"), "defs": cl.get("defs", []),
                "regimes": cl.get("regimes", []), "checks": {}}
         if self.lean is None:
@@ -1015,7 +1044,11 @@ class Assessor:
                 self.findings.append(_finding("violation", f"{kind}-" + e.split("=")[0], subj,
                                               self.not_found(thm) if e == "missing" else
                                               f"{thm}: {e}"))
+        # A refutation whose counterexample lies outside the paper's standing assumptions
+        # refutes the formal proposition only, never the printed claim.
         res["state"] = ("proved" if res.get("accept_ok") else
+                        "refuted-outside" if res.get("refute_ok")
+                        and cl.get("refute_scope") == OUTSIDE else
                         "refuted" if res.get("refute_ok") else
                         "open" if spec else
                         "stated" if cl.get("defs") else "unspecified")
@@ -1187,11 +1220,11 @@ class Assessor:
                     else "definition.reviewed")
         if not clauses:
             return "formal.unspecified"
-        originals = [c for c in clauses if not c.get("corrects")]
+        originals = [c for c in clauses if not c.get("corrects") and not c.get("restricts")]
         if not originals:
             return "formal.malformed"
-        refuted = [c for c in originals if c.get("refute_ok")]
-        rest = [c for c in originals if not c.get("refute_ok")]
+        refuted = [c for c in originals if c.get("refute_ok") and c["state"] == "refuted"]
+        rest = [c for c in originals if c not in refuted]
         rest_proved = all(c.get("accept_ok") for c in rest)
         if refuted:
             fixed = all(any(k.get("accept_ok") for k in clauses if k.get("corrects") == c["name"])
@@ -1204,6 +1237,25 @@ class Assessor:
             return ("formal.author-reviewed"
                     if any(c["review"] == "author-reviewed" for c in rest)
                     else "formal.accepted")
+        # Some printed clause is open (or refuted only outside the paper's assumptions). A
+        # proved correction or special case of each open one is said so, apart: the printed
+        # claim stays open, and its review level is that of those clauses.
+        open_ = [c for c in rest if not c.get("accept_ok")]
+        cover = {}
+        for c in open_:
+            for k in clauses:
+                if k.get("accept_ok") and c["name"] in (k.get("corrects"), k.get("restricts")):
+                    cover.setdefault(c["name"], []).append(k)
+        if open_ and all(c["name"] in cover for c in open_):
+            ks = [k for c in open_ for k in cover[c["name"]]]
+            kind = "corrected" if any(k.get("corrects") for k in ks) else "restricted"
+            if any(k["review"] not in ("reviewed", "author-reviewed") for k in ks):
+                return f"formal.open.{kind}"
+            return (f"formal.open.{kind}.author-reviewed"
+                    if any(k["review"] == "author-reviewed" for k in ks)
+                    else f"formal.open.{kind}.reviewed")
+        if any(c.get("accept_ok") for c in clauses):
+            return "formal.open.partial"
         return "formal.open"
 
     @staticmethod
@@ -1243,6 +1295,10 @@ class Assessor:
                     else "the proposition has no proof yet", c)
             elif st == "refuted":
                 add("the printed statement is false: a theorem proves its negation", c)
+            elif st == "refuted-outside":
+                add("a theorem proves the negation of the formal proposition, by a counterexample "
+                    "outside the paper's standing assumptions: the printed statement is not "
+                    "shown false", c)
             if c.get("spec") and c.get("spec_review"):
                 srs = c["spec_review"]["state"]
                 if srs == "author-reviewed":
@@ -1337,9 +1393,12 @@ class Assessor:
     def run(self) -> dict:
         claims = []
         for c in self.inv["claims"]:
+            self.clause_relation_checks(c)
             clauses = [self.clause(c, cl, k) for k, cl in enumerate(c.get("clauses", []))]
             state = fields(self.claim_code(c, clauses))
+            why = status_reason(clauses)
             claims.append({"id": c["id"], **state, "clauses": clauses,
+                           **({"status_reason": why} if why else {}),
                            "blockers": self.blockers(c, clauses), **self.step_review(c)})
         self.inventory_checks()
         self.bare_marker_checks()
@@ -1470,7 +1529,7 @@ class Assessor:
                 if r["status_code"] != "formal.accepted":
                     reasons.append(f"{r['id']}: {r['status']}")
                 for c in r["clauses"]:
-                    if c.get("refute_ok"):
+                    if c.get("refute_ok") and c.get("state") == "refuted":
                         reasons.append(f"{r['id']}: printed clause refuted, unresolved in the "
                                        f"manuscript: {c['name']}")
                     if c.get("witness") and not c.get("witness_ok"):
@@ -1510,6 +1569,36 @@ class Assessor:
         return out
 
     # -- inventory against the compiled paper ---------------------------------------------
+
+    def clause_relation_checks(self, claim: dict) -> None:
+        """A correction (`corrects`) or a special case (`restricts`) names an original clause of
+        its claim, not both; a refutation's scope (`refute_scope`) is given with a refutation,
+        and is `outside-standing-assumptions`."""
+        cls = claim.get("clauses", [])
+        originals = {cl.get("name") for cl in cls if not cl.get("corrects")
+                     and not cl.get("restricts")}
+        for k, cl in enumerate(cls):
+            subj = f"{claim['id']}#{k}"
+            if cl.get("corrects") and cl.get("restricts"):
+                self.findings.append(_finding(
+                    "violation", "clause-relation", subj,
+                    f"clause {cl.get('name')!r} both corrects and restricts a clause: a correction "
+                    "says the printed clause is wrong, a special case that it is believed true"))
+            for rel in ("corrects", "restricts"):
+                if cl.get(rel) and cl[rel] not in originals:
+                    self.findings.append(_finding(
+                        "violation", "clause-relation", subj,
+                        f"clause {cl.get('name')!r} {rel} {cl[rel]!r}, which is not an original "
+                        "clause of this claim"))
+            if cl.get("refute_scope") and not cl.get("refute"):
+                self.findings.append(_finding(
+                    "violation", "clause-relation", subj,
+                    f"clause {cl.get('name')!r} gives a refutation's scope but no refutation"))
+            elif cl.get("refute_scope") not in (None, OUTSIDE):
+                self.findings.append(_finding(
+                    "violation", "clause-relation", subj,
+                    f"clause {cl.get('name')!r}: refute_scope {cl['refute_scope']!r} is not "
+                    f"{OUTSIDE!r}"))
 
     def inventory_checks(self):
         """Check coverage against the detected paper statements, and LaTeX source pins."""

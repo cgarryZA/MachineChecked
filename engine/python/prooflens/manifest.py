@@ -293,6 +293,8 @@ def build(evidence: dict, release: str, display: dict | None = None
             **({"source_parts": t["part_text"][c["id"]]}
                if (t.get("part_text") or {}).get(c["id"]) else {}),
             "blockers": [shown_names(b, clause_tex) for b in a.get("blockers", [])],
+            **({"status_reason": [shown_names(b, clause_tex) for b in a["status_reason"]]}
+               if a.get("status_reason") else {}),
             "clauses": clauses, "decls": decls, "findings": fs,
             "symbols": symbol_links(display, c["id"], statement, lean,
                                     (t.get("excerpts") or {}).get(c["id"])),

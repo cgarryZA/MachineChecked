@@ -51,8 +51,9 @@ def test_a_proposition_in_a_module_the_probe_does_not_load(toy):
     edit(toy / "claims.json", '"Toy.IsEven"', '"Toy.IsEven", "Toy.no_such_definition"')
     index, body, cfg = build(toy)
 
-    # A clause the probe cannot see is open, so the claim is open.
-    assert status(index, "T:thm:triangle") == "formal: open"
+    # A clause the probe cannot see is open, so the claim is open; its other clause is proved,
+    # which the status says apart (#656).
+    assert status(index, "T:thm:triangle") == "formal: open; some clauses proved"
     f = findings(body, "spec-missing", "T:thm:triangle")
     assert [x["message"] for x in f] == [
         "proposition Toy.PaperSpec.extra_bound: not found by the probe; it is declared in "

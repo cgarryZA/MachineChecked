@@ -375,7 +375,8 @@ def _clause(cl: dict) -> dict:
     return {"id": f"decl:{cl.get('spec')}", "name": cl.get("spec"), "clause": cl.get("name"),
             "label": cl.get("label"), "role": "locked statement",
             "accept": cl.get("accept"), "refute": cl.get("refute"),
-            "corrects": cl.get("corrects"), "witness": cl.get("witness"),
+            "corrects": cl.get("corrects"), "restricts": cl.get("restricts"),
+            "witness": cl.get("witness"),
             "statement": _statement(cl.get("statement")),
             "proofs": {k: {x: v.get(x) for x in ("name", "module", "range", "axioms", "sorry",
                                                   "errors") if x in v}
