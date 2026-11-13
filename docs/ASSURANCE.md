@@ -174,6 +174,15 @@ review_citations_ignore = [
 
 `review_citations_ignore = []` skips no notation.
 
+A ledger of readings kept beside the inventory (notes such as "path continuity of `Toy.proc` is not proved") can be tied to the declarations it is about, so that a note does not go on saying something is missing after it has been added. `readings_ledger = "audit/readings.json"` under `[project]` names a JSON file holding a list of rows, or an object with a `rows` list; a row is
+
+```json
+{"id": "R1", "text": "path continuity of `Toy.proc` is not proved",
+ "declarations": ["Toy.proc"], "namespaces": ["Toy"], "read_at": "abc1234"}
+```
+
+where `declarations` are the Lean names the row is about, `namespaces` (optional) further namespaces whose new declarations concern it (each named declaration's own namespace is one already), and `read_at` the Git revision of the Lean project at which the row was last read. `check` and `build` compare each row with the Lean project's working tree and warn (`kind` `readings-ledger` in `check --json`'s `warnings`, with `row`, `read_at`, `missing`, `changed`, `new` and `message`) about a row when a named declaration's lines differ from those at `read_at` (`changed`), when one of its namespaces has a declaration that its file did not declare at `read_at` (`new`, each with its statement as Lean prints it, so the reader sees exactly what was added: a bound on second moments of increments is not continuity), or when no built module declares a named name (`missing`). A row without `read_at`, or with a revision the repository does not have, is reported as such, and so is a ledger that cannot be read or a project that is not in a Git repository. The warning asks for a fresh reading: the auditor reads the row again and records the new revision in `read_at`. It never accepts, rewrites or dismisses a row, and it changes no status. Declarations are those of the index of the built modules, so a name of a dependency counts as missing; a declaration's lines run from its first line (its docstring) to the next declaration of its file.
+
 `reassess` re-evaluates current reviews and dismissals against compatible stored evidence; when nothing changed, it names the release it read again, as a repeated build does. `export` assembles only explicitly permitted public fields and scans the result for private-content leakage.
 
 With several papers in one configuration, `export --paper ID` exports one of them: its claims, the declarations they depend on, and their reviews. The export is then also scanned for what belongs to the other papers alone (their claim ids, the declarations only they use and their Lean text, their reviews, and their manuscripts unless published), except a paper whose source and Lean the configuration publishes in full.
