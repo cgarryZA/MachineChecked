@@ -1831,6 +1831,17 @@ def cmd_review_promote(a):
             sys.exit(r.returncode)
 
 
+def cmd_review_reports(a):
+    """Write the archived reports (`promote.reports_dir`) as the protocol's text blocks; they
+    are made from the records, and can be deleted and written again."""
+    from . import promote as pr
+    cfg = _load_full(a)
+    done = pr.write_texts(cfg, Path(a.out) if a.out else None)
+    if not done:
+        sys.exit(f"machinechecked: no promoted reports in {pr.reports_dir(cfg)}")
+    print(f"wrote {len(done)} report(s) as text to {done[0].parent}")
+
+
 INVENTORY = {"regions": "source_regions", "repin": "repin", "rebound": "rebound",
              "retire": "retire", "notation": "notation_plan"}
 
@@ -1959,6 +1970,12 @@ def _add_review(sub) -> None:
                     help="accept a report whose reviewer had seen the unit's Lean or author's "
                          "review before writing their reading")
     pm.set_defaults(func=cmd_review_promote)
+    rp = rvs.add_parser("reports", help="write the promoted reports as readable text "
+                                        "(generated from their records; maintainer)")
+    _config_option(rp)
+    rp.add_argument("--out", help="the directory to write into (default: reports/ in the "
+                                  "project's output directory)")
+    rp.set_defaults(func=cmd_review_reports)
     for name, (_, help_) in REVIEW_STEPS.items():
         sp = rvs.add_parser(name, help=help_)
         if name not in ("next", "status", "export"):

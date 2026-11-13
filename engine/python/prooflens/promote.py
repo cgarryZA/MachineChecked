@@ -29,12 +29,19 @@ was made at, and match the manuscript; its verdict must be holds as printed, hol
 (with the argument), or false as printed (with the failing case). Its marker is
 `<!-- step-review: CLAIM SOURCE-SHA256 verdict=holds|gap|false by=REVIEWER -->`.
 
-For each report it accepts, it archives the report (JSON and the protocol's text block) and
-writes `<!-- spec-review: NAME HASH by=REVIEWER source=CLAIM@DIGEST... -->` (or `def-review`,
+For each report it accepts, it archives the report as one record (`reports/<stem>.json` beside
+the review files: the report as exported, which holds every pin the marker binds) and writes
+a line ``Review by REVIEWER: VERDICT (report `reports/<stem>.json`).`` and
+`<!-- spec-review: NAME HASH by=REVIEWER source=CLAIM@DIGEST... -->` (or `def-review`,
 `step-review`; no `source` when no claim's passage is read) after the declaration's (or step's)
 last marker, in the exact form the acceptance checker reads, then assesses the stored evidence
 again. A promoted marker records the reviewer the report names; who they are is as the report
 states it.
+
+The protocol's text block of an archived report is not kept: `write_texts` (`review reports`)
+writes it from the record, into the output directory. A line that version 0.1.25 or earlier
+wrote links the block it kept beside the record, `reports/<stem>.md`; its record is the one of
+the same stem, and the block can be deleted.
 """
 
 from __future__ import annotations
@@ -275,9 +282,13 @@ def marker(r: dict, cur: dict, source: dict[str, str] | None = None) -> str:
             f"by={r['reviewer']['id']}{attr} -->")
 
 
-def report_text(r: dict, cur: dict) -> str:
-    """The report as the protocol's text block."""
+def report_text(r: dict, cur: dict | None = None) -> str:
+    """The report as the protocol's text block. The hashes it prints are the current
+    declaration's or step's (`cur`); without `cur`, the report's own pins, which promotion
+    checked are the current ones, so the block of an archived report is the one its promotion
+    would print."""
     u, p, rv = r["unit"], r["pins"], r["reviewer"]
+    cur = cur or pinned(r)
     ms = "; ".join(f"{k} {v}" for k, v in (p.get("manuscripts") or {}).items()) or "—"
     return "\n".join([
         f"### {', '.join(u['claims']) or u['id']}: {u['name']}",
@@ -297,6 +308,14 @@ def report_text(r: dict, cur: dict) -> str:
         *_coverage_lines(r),
         f"Disagreements with the author's review (shown {r['author_review']['shown_at']}): "
         f"{r['author_review'].get('disagreements') or 'none'}", ""])
+
+
+def pinned(r: dict) -> dict:
+    """The hashes a report pinned, in the form of the current record they were checked against:
+    a step's source hash, a declaration's legacy hash."""
+    p = r["pins"]
+    return {"source_sha256": (p.get("fingerprints") or {}).get("source"),
+            "legacy_hash": p.get("legacy_hash")}
 
 
 def _coverage_lines(r: dict) -> list[str]:
@@ -338,9 +357,36 @@ def insert_after(path: Path, line: int | None, lines: list[str]):
 
 
 def reports_dir(cfg: Config) -> Path:
+    """Where promoted reports are archived: `reports/` in the first review directory, else
+    beside the first review file."""
     first = next((p for p in cfg.reviews if p.is_dir()), cfg.reviews[0].parent if cfg.reviews
                  else cfg.root)
     return first / "reports"
+
+
+def text_dir(cfg: Config) -> Path:
+    """Where `review reports` writes the archived reports as text by default: in the project's
+    output directory, which is generated and not kept with the reviews."""
+    return cfg.out_dir / "reports"
+
+
+def write_texts(cfg: Config, out: Path | None = None) -> list[Path]:
+    """Write each archived report (`reports_dir`, `<stem>.json`) as the protocol's text block,
+    `<stem>.md` in `out` (default `text_dir`). The text is made from the record alone, so it can
+    be deleted and written again; an archived file that is not a review report is skipped."""
+    out = Path(out) if out else text_dir(cfg)
+    rdir, done = reports_dir(cfg), []
+    for f in sorted(rdir.glob("*.json")) if rdir.is_dir() else []:
+        try:
+            r = json.loads(f.read_text(encoding="utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            continue
+        if not isinstance(r, dict) or r.get("schema") != "prooflens/review-report@1":
+            continue
+        out.mkdir(parents=True, exist_ok=True)
+        (out / f"{f.stem}.md").write_text(report_text(r), encoding="utf-8")
+        done.append(out / f"{f.stem}.md")
+    return done
 
 
 def plan(cfg: Config, reports: list[dict], accept_same_family: bool = False,
@@ -377,8 +423,9 @@ def already_promoted(cfg: Config, r: dict, cur: dict) -> bool:
 
 
 def apply(cfg: Config, accepted: list[tuple[dict, dict]]) -> list[dict]:
-    """Archive each report and write its marker. A report whose marker is already written
-    (`already_promoted`) is left as it is, and listed with `already` set."""
+    """Archive each report (its one record, `<stem>.json`) and write its marker, after a line
+    linking the record. A report whose marker is already written (`already_promoted`) is left
+    as it is, and listed with `already` set."""
     reviews, _ = load_reviews(cfg.reviews, cfg.ai_reviewers, cfg.root)
     rdir = reports_dir(cfg)
     rdir.mkdir(parents=True, exist_ok=True)
@@ -392,9 +439,8 @@ def apply(cfg: Config, accepted: list[tuple[dict, dict]]) -> list[dict]:
                       f"{r['submitted_at']}")
         (rdir / f"{stem}.json").write_text(json.dumps(r, indent=1, ensure_ascii=False) + "\n",
                                            encoding="utf-8")
-        (rdir / f"{stem}.md").write_text(report_text(r, cur), encoding="utf-8")
         path, line = target_file(cfg, r, reviews)
-        rel = Path(rdir / f"{stem}.md").resolve()
+        rel = Path(rdir / f"{stem}.json").resolve()
         try:
             rel = rel.relative_to(path.parent.resolve())
         except ValueError:
