@@ -84,3 +84,27 @@ def test_clause_relations_are_checked():
     assert any("'gone', which is not an original clause" in m for m in msgs)
     assert any("scope but no refutation" in m for m in msgs)
     assert any("'somewhere' is not" in m for m in msgs)
+
+
+def test_a_refuted_variant_is_not_refuted_as_printed():
+    """#655: the clause refuted is a second printing; the clause "as printed" is open."""
+    c = code(clause("as printed"), clause("second edition", "refuted"))
+    assert c == "formal.variant-refuted.open"
+    assert fields(c)["status"] == "a printed variant refuted; other clauses open"
+    assert status_reason([clause("as printed"), clause("second edition", "refuted")]) == [
+        "“second edition” refuted; “as printed” open"]
+    # Without a clause named "as printed", the first original states the claim as printed.
+    assert code(clause("first", "refuted"), clause("second")) == "formal.refuted.open"
+
+
+def test_a_clause_says_what_it_is_expected_to_be():
+    """#650: an expectation is shown under the status until a proof settles it."""
+    why = status_reason([clause(expect="refute", expect_reason="C cannot be uniform in W"),
+                         clause("other", expect="undecided")])
+    assert why == ["“main” is expected to be refuted: C cannot be uniform in W",
+                   "“other”: whether it holds is undecided"]
+    assert status_reason([clause(state="refuted", expect="refute")]) == []
+    a = Assessor.__new__(Assessor)
+    a.findings = []
+    a.clause_relation_checks({"id": "T:thm:1", "clauses": [{"name": "main", "expect": "maybe"}]})
+    assert [f["code"] for f in a.findings] == ["clause-relation"]
