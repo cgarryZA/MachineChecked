@@ -44,6 +44,27 @@ work is kept in your workspace in the project's working directory (`review-work/
 In zero configuration, export into `machinechecked-reviews/` to publish the reports with the
 audit.
 
+**Many units at once.** `lock`, `decide` and `submit` take `--manifest FILE` (or `-` for
+standard input) instead of a unit and its texts: a JSON list of entries, each with `unit` and that
+step's fields. `lock` takes `reading`; `decide` takes `verdict`, `comparison`, and optionally
+`detail`, `witness`, `coverage`, `basis`, `argument`, `bridge` (`[THEOREM, TARGET]`) and
+`would_decide`; `submit` takes `disagreements`. A text is given inline (`"comparison": "..."`) or
+as a file (`"comparison_file": "cmp.md"`, relative to the manifest's directory), never both; a
+field the step does not take refuses the entry. Each entry is the same step as the single
+command, with the same refusals: every unit still needs its own `read` before its lock, and its
+`author` before its report.
+
+```json
+[{"unit": "link:thm:odd-add", "verdict": "faithful", "comparison_file": "odd-add.md",
+  "coverage": "full", "basis": "direct"},
+ {"unit": "link:thm:σ-bound", "verdict": "broader", "comparison": "...", "detail_file": "σ.md"}]
+```
+
+The command prints one line per entry (`UNIT: what was recorded`, or `UNIT: refused (KIND):
+why`); a refused entry does not stop the others, and the command then exits 2. With `--json` it
+prints one document, `{"schema": "machinechecked/review-manifest@1", "ok", "entries": [{"entry",
+"unit", "ok", "message" | "error": {"kind", "message"}}]}`.
+
 **One review, in the browser or the terminal.** Under `machinechecked view`, the review page
 keeps your work in the same workspace and makes each step through the same checks: the drafts,
 the locked readings, the verdicts, the reports and what you had seen are those `machinechecked

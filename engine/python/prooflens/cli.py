@@ -2059,32 +2059,168 @@ def _review_text(a, s) -> None:
     _print_json(out) if a.json else print(out)
 
 
-def _review_lock(a, s) -> None:
-    seen = s.lock(a.unit, _text_arg(a.text))
-    print(f"reading recorded (not blind: the session is informed); `review show {a.unit}` "
-          "shows the Lean" if s.informed else
-          f"reading locked; `review show {a.unit}` shows the Lean")
+def _lock(s, uid: str, reading: str) -> tuple[str, list[dict]]:
+    """Lock a reading (`Session.lock`): what the command says, and what the reviewer had
+    already seen of the unit, which is also warned of on standard error."""
+    seen = s.lock(uid, reading)
     if seen and not s.informed:
         print("warning: this reading is not blind: you had already seen "
-              + "; ".join(f"the {x['what']} of {a.unit} (shown by {x['unit']})" for x in seen)
+              + "; ".join(f"the {x['what']} of {uid} (shown by {x['unit']})" for x in seen)
               + ". The report will say so, and promotion refuses it unless the maintainer "
               "passes --allow-revealed.", file=sys.stderr)
+    return (f"reading recorded (not blind: the session is informed); `review show {uid}` "
+            "shows the Lean" if s.informed else
+            f"reading locked; `review show {uid}` shows the Lean"), seen
+
+
+def _decide(s, uid: str, verdict, comparison: str, detail: str, witness: str, coverage,
+            basis, argument: str, bridge, would_decide: str) -> str:
+    """Record a verdict (`Session.decide`): what the command says."""
+    s.decide(uid, verdict, comparison, detail, witness,
+             {"coverage": coverage, "basis": basis, "argument": argument,
+              "bridge": dict(zip(("theorem", "target"), bridge)) if bridge else None,
+              "would_decide": would_decide})
+    return f"verdict recorded; `review author {uid}` shows the author's review"
+
+
+def _submit(s, uid: str, disagreements: str) -> tuple[str, dict]:
+    """Submit the report (`Session.submit`): what the command says, and the report."""
+    r = s.submit(uid, disagreements.strip())
+    return (f"report recorded: {r['unit']['id']}, {r['verdict']['value']}; "
+            "`review export --out FILE` writes your reports for the maintainer"), r
+
+
+def _positional(a, *names: str) -> None:
+    """A step run without --manifest needs its positional arguments."""
+    from .review_cli import ReviewError
+    missing = [n.upper() for n in names if getattr(a, n, None) is None]
+    if missing:
+        raise ReviewError(f"review {a.action} needs {' and '.join(missing)}, or --manifest FILE",
+                          "invalid")
+
+
+def _review_lock(a, s) -> None:
+    _positional(a, "unit", "text")
+    print(_lock(s, a.unit, _text_arg(a.text))[0])
 
 
 def _review_decide(a, s) -> None:
-    s.decide(a.unit, a.verdict, _text_arg(a.comparison), _text_arg(a.detail),
-             _text_arg(a.witness),
-             {"coverage": a.coverage, "basis": a.basis,
-              "argument": _text_arg(a.argument),
-              "bridge": dict(zip(("theorem", "target"), a.bridge)) if a.bridge else None,
-              "would_decide": _text_arg(a.would_decide)})
-    print(f"verdict recorded; `review author {a.unit}` shows the author's review")
+    _positional(a, "unit", "verdict", "comparison")
+    print(_decide(s, a.unit, a.verdict, _text_arg(a.comparison), _text_arg(a.detail),
+                  _text_arg(a.witness), a.coverage, a.basis, _text_arg(a.argument), a.bridge,
+                  _text_arg(a.would_decide)))
 
 
 def _review_submit(a, s) -> None:
-    r = s.submit(a.unit, _text_arg(a.text).strip())
-    print(f"report recorded: {r['unit']['id']}, {r['verdict']['value']}; "
-          "`review export --out FILE` writes your reports for the maintainer")
+    _positional(a, "unit", "text")
+    print(_submit(s, a.unit, _text_arg(a.text))[0])
+
+
+# The fields of a manifest entry for each step (`review lock|decide|submit --manifest`), besides
+# `unit`: True for a text, which the entry gives inline (`comparison`) or as a file
+# (`comparison_file`, relative to the manifest's directory); False for a word or a value.
+MANIFEST_FIELDS = {
+    "lock": {"reading": True},
+    "decide": {"verdict": False, "comparison": True, "detail": True, "witness": True,
+               "coverage": False, "basis": False, "argument": True, "bridge": False,
+               "would_decide": True},
+    "submit": {"disagreements": True},
+}
+MANIFEST_REQUIRED = {"lock": ("reading",), "decide": ("verdict", "comparison"),
+                     "submit": ("disagreements",)}
+
+
+def _manifest_entry(action: str, e, base: Path) -> tuple[str, dict]:
+    """A manifest entry's unit and fields, with its files read. Refused as `invalid` when it is
+    not an object with a unit, names a field the step does not take, gives a text both inline
+    and as a file, or lacks a field the step needs."""
+    from .review_cli import ReviewError
+    if not isinstance(e, dict) or not isinstance(e.get("unit"), str) or not e["unit"]:
+        raise ReviewError("an entry is an object with a `unit`", "invalid")
+    fields = MANIFEST_FIELDS[action]
+    known = {"unit", *fields, *(f"{k}_file" for k, text in fields.items() if text)}
+    extra = sorted(set(e) - known)
+    if extra:
+        raise ReviewError(f"review {action} takes no field {', '.join(extra)} (it takes "
+                          + ", ".join(sorted(known - {"unit"})) + ")", "invalid")
+    out = {}
+    for k, text in fields.items():
+        if text and f"{k}_file" in e:
+            if k in e:
+                raise ReviewError(f"give {k} or {k}_file, not both", "invalid")
+            if not isinstance(e[f"{k}_file"], str):
+                raise ReviewError(f"{k}_file is a file name", "invalid")
+            out[k] = (base / e[f"{k}_file"]).read_text(encoding="utf-8")
+        elif k in e:
+            if text and not isinstance(e[k], str):
+                raise ReviewError(f"{k} is a text (or give {k}_file)", "invalid")
+            out[k] = e[k]
+    need = [k for k in MANIFEST_REQUIRED[action] if k not in out]
+    if need:
+        raise ReviewError(f"review {action} needs {', '.join(need)}", "invalid")
+    b = out.get("bridge")
+    if b is not None:
+        if isinstance(b, dict):
+            b = [b.get("theorem"), b.get("target")]
+        if not (isinstance(b, list) and len(b) == 2 and all(isinstance(x, str) for x in b)):
+            raise ReviewError('bridge is [THEOREM, TARGET] or {"theorem", "target"}', "invalid")
+        out["bridge"] = b
+    return e["unit"], out
+
+
+def _manifest_step(action: str, s, uid: str, f: dict) -> tuple[str, dict]:
+    """One manifest entry's step, through the same `Session` method as the single command:
+    what it says, and what the result adds to the entry's JSON."""
+    if action == "lock":
+        said, seen = _lock(s, uid, f["reading"])
+        return said, {"revealed_by": seen}
+    if action == "decide":
+        return _decide(s, uid, f["verdict"], f["comparison"], f.get("detail", ""),
+                       f.get("witness", ""), f.get("coverage"), f.get("basis"),
+                       f.get("argument", ""), f.get("bridge"), f.get("would_decide", "")), {}
+    said, r = _submit(s, uid, f["disagreements"])
+    return said, {"verdict": r["verdict"]["value"]}
+
+
+def _review_manifest(a, session) -> None:
+    """`review lock|decide|submit --manifest FILE`: the step for each entry of the JSON list in
+    FILE, in order, each in a session of its own as a separate command would be, with the same
+    refusals. A refused entry is reported and the others are still taken; the command then
+    exits 2."""
+    from . import review_cli as rc
+    if any(getattr(a, n, None) is not None for n in ("unit", "text", "verdict", "comparison")):
+        raise rc.ReviewError("give --manifest or the step's arguments, not both", "invalid")
+    try:
+        entries = json.loads(_text_arg(a.manifest))
+    except json.JSONDecodeError as e:
+        raise rc.ReviewError(f"the manifest is not JSON: {e}", "invalid") from None
+    if not isinstance(entries, list):
+        raise rc.ReviewError("the manifest is a JSON list of entries", "invalid")
+    base = Path.cwd() if a.manifest == "-" else Path(a.manifest).resolve().parent
+    results = []
+    for i, e in enumerate(entries):
+        uid = e.get("unit") if isinstance(e, dict) else None
+        try:
+            uid, f = _manifest_entry(a.action, e, base)
+            said, extra = _manifest_step(a.action, session(), uid, f)
+            results.append({"entry": i, "unit": uid, "ok": True, "message": said, **extra})
+        except rc.ReviewError as err:
+            results.append({"entry": i, "unit": uid, "ok": False, "error": err.to_json()})
+        except OSError as err:
+            results.append({"entry": i, "unit": uid, "ok": False,
+                            "error": {"kind": "invalid", "message": str(err)}})
+    ok = all(r["ok"] for r in results)
+    if a.json:
+        _print_json({"schema": "machinechecked/review-manifest@1", "action": a.action,
+                     "ok": ok, "entries": results})
+    else:
+        for r in results:
+            print(f"{r['unit'] if isinstance(r['unit'], str) else '(entry %d)' % r['entry']}: "
+                  + (r["message"] if r["ok"] else
+                     f"refused ({r['error']['kind']}): {r['error']['message']}"))
+        print(f"{sum(r['ok'] for r in results)} of {len(results)} entries taken")
+    if not ok:
+        sys.exit(2)
 
 
 def _review_export(a, s) -> None:
@@ -2111,9 +2247,12 @@ def cmd_review_step(a):
     from . import review_cli as rc
     work, root = _built_work(a)
     try:
-        s = rc.Session(work, rc.parse_reviewer(a.reviewer, a.same_family), a.workspace, a.mode,
-                       root=root)
-        REVIEW_STEPS[a.action][0](a, s)
+        def session():
+            return rc.Session(work, rc.parse_reviewer(a.reviewer, a.same_family), a.workspace,
+                              a.mode, root=root)
+        if getattr(a, "manifest", None):
+            return _review_manifest(a, session)
+        REVIEW_STEPS[a.action][0](a, session())
     except rc.ReviewError as e:
         if a.json:
             _print_json({"schema": "machinechecked/review-error@1", "ok": False,
@@ -2336,13 +2475,25 @@ def _add_review(sub) -> None:
     rp.set_defaults(func=cmd_review_reports)
     for name, (_, help_) in REVIEW_STEPS.items():
         sp = rvs.add_parser(name, help=help_)
+        many = name in MANIFEST_FIELDS
         if name not in ("next", "status", "export"):
-            sp.add_argument("unit", help="a unit id of the queue, e.g. spec:Foo.thm_bar")
+            sp.add_argument("unit", **({"nargs": "?"} if many else {}),
+                            help="a unit id of the queue, e.g. spec:Foo.thm_bar")
         if name in ("lock", "submit"):
-            sp.add_argument("text", help="a file holding your text, or - to read it from standard input")
+            sp.add_argument("text", nargs="?",
+                            help="a file holding your text, or - to read it from standard input")
         if name == "decide":
-            sp.add_argument("verdict")
-            sp.add_argument("comparison", help="a file holding your comparison, or -")
+            sp.add_argument("verdict", nargs="?")
+            sp.add_argument("comparison", nargs="?", help="a file holding your comparison, or -")
+        if many:
+            sp.add_argument("--manifest", metavar="FILE",
+                            help="take this step for every entry of FILE (or - for standard "
+                                 "input), a JSON list of objects with `unit` and the step's "
+                                 "fields, each text inline or as NAME_file (see REVIEWING.md); "
+                                 "UNIT and the texts are then not given")
+            sp.add_argument("--json", action="store_true",
+                            help="with --manifest: print every entry's result as one JSON "
+                                 "document")
             sp.add_argument("--detail", help="a file holding what the verdict needs said")
             sp.add_argument("--witness", help="a file holding your note on the witness")
             sp.add_argument("--coverage", help="how far the unit's Lean states the claim, agreeing "
