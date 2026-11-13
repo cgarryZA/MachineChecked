@@ -1670,6 +1670,7 @@ def _review_status(a, s) -> None:
                      "release": s.index["release"], "mode": s.queue.get("mode"),
                      "workspace": here, "reports": len(s.work["reports"]),
                      "drafts": {i: d["stage"] for i, d in s.work["drafts"].items()},
+                     "progress": s.progress(),
                      "order": {"by": a.order, **({"queue": s.queue["order"]}
                                                  if s.queue.get("order") else {}),
                                **({"informed": s.order_record} if s.order_record else {})},
@@ -1680,8 +1681,13 @@ def _review_status(a, s) -> None:
     if here["id"]:
         print(f"  workspace {here['id']} ({here['mode']}"
               + ("; your readings here are not blind" if s.informed else "") + ")")
-    for uid, d in s.work["drafts"].items():
-        print(f"  {uid}: at step '{d['stage']}'")
+    for p in s.progress():
+        steps = (("locked", "locked_at"), ("Lean shown", "shown_at"), ("verdict", "decided_at"),
+                 ("author's review shown", "author_shown_at"))
+        times = [f"{what} {p[k]}" for what, k in steps if p.get(k)]
+        if p["shown"] and not p.get("shown_at"):
+            times.append("Lean shown")
+        print(f"  {p['unit']}: at step '{p['step']}'" + (f" ({'; '.join(times)})" if times else ""))
     for name, sig in [*((s.queue.get("order") or {}).get("signals") or {}).items(),
                       *(s.order_record or {}).items()]:
         if sig.get("state") != "read":
@@ -1695,10 +1701,15 @@ def _review_text(a, s) -> None:
 
 
 def _review_lock(a, s) -> None:
-    s.lock(a.unit, _text_arg(a.text))
+    seen = s.lock(a.unit, _text_arg(a.text))
     print(f"reading recorded (not blind: the session is informed); `review show {a.unit}` "
           "shows the Lean" if s.informed else
           f"reading locked; `review show {a.unit}` shows the Lean")
+    if seen and not s.informed:
+        print("warning: this reading is not blind: you had already seen "
+              + "; ".join(f"the {x['what']} of {a.unit} (shown by {x['unit']})" for x in seen)
+              + ". The report will say so, and promotion refuses it unless the maintainer "
+              "passes --allow-revealed.", file=sys.stderr)
 
 
 def _review_decide(a, s) -> None:
@@ -1775,12 +1786,16 @@ def cmd_review_promote(a):
             print(f"REFUSED  {head}")
             for w in why:
                 print(f"           - {w}")
+        elif pr.already_promoted(cfg, r, cur):
+            print(f"ALREADY  {head}\n           already promoted: its marker is written, and "
+                  "nothing is written for it again")
         else:
             print(f"OK       {head}\n           "
                   f"{pr.marker(r, cur, pr.report_source(r))}")
             ok.append((r, cur))
     if not ok:
-        sys.exit("nothing to promote")
+        sys.exit("nothing to promote" + (": every report given is already promoted"
+                                         if steps and all(not why for _, _, why in steps) else ""))
     if not a.yes:
         if not sys.stdin.isatty():
             sys.exit("pass --yes to write the markers without a prompt")
@@ -1789,7 +1804,10 @@ def cmd_review_promote(a):
             sys.exit("nothing written")
     done = pr.apply(cfg, ok)
     for d in done:
-        print(f"wrote {d['marker']} to {d['file']}")
+        print(f"already promoted: {d['name']}" if d.get("already") else
+              f"wrote {d['marker']} to {d['file']}")
+    if all(d.get("already") for d in done):
+        return
     old = {c["id"]: c["status"] for c in pr.latest_record(cfg)["body"]["assessment"]["claims"]}
     res = reassess(cfg, _web_dist(None))
     for c in res["index"]["claims"]:
