@@ -93,6 +93,9 @@ class Config:
     # Whether the declarations only witnesses use need a review like the definitions of the
     # propositions (`assess.witness_defs`); otherwise they are listed as advice.
     require_witness_def_reviews: bool = False
+    # The auditor's ledger of readings, whose rows name declarations and the revision they were
+    # read at (`ledger.py`); `check` lists the rows those declarations' changes made stale.
+    readings_ledger: Path | None = None
 
     @property
     def root(self) -> Path:
@@ -199,6 +202,8 @@ def load(path: str | Path) -> Config:
         bare_markers_by=_names(proj, "bare_markers_by", str(path)) or [],
         inhabited_classes=_names(proj, "inhabited_classes", str(path)),
         require_witness_def_reviews=_flag(proj, "require_witness_def_reviews", str(path)),
+        readings_ledger=(base / proj["readings_ledger"]).resolve()
+        if "readings_ledger" in proj else None,
     )
 
 
