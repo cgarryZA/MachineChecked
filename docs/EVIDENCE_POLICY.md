@@ -25,6 +25,7 @@ A formal claim's status, from strongest to weakest:
 | `formal: proved, author-reviewed` | as accepted, with author provenance for at least one required review |
 | `formal: proved, review pending` | proved, but some review is missing or stale |
 | `refuted as printed[; corrected statement proved][; other clauses open]` | a theorem proves the negation of the printed claim |
+| `a printed variant refuted[; corrected statement proved][; other clauses open]` | a theorem proves the negation of an original clause other than the one stating the claim as printed (a second printing, say) |
 | `formal: open as printed; corrected statement proved[, review pending / , author-reviewed / and reviewed]` | a printed clause is open (or refuted only outside the paper's standing assumptions), and a proposition that corrects it is proved; the review level is the correction's |
 | `formal: open as printed; special case proved[, …]` | a printed clause believed true is open, and a special case of it is proved; the printed claim is not refuted |
 | `formal: open; some clauses proved` | some clauses are proved, and a printed clause with nothing proved for it is open |

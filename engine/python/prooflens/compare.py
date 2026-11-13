@@ -535,9 +535,13 @@ def _informed(ch: dict) -> dict:
             "symbols": ch.get("symbols") or [],
             "clause_reviews": [{"clause": cl.get("name"), "spec": cl.get("spec"),
                                 "spec_review": cl.get("spec_review"),
-                                "def_reviews": cl.get("def_reviews")}
+                                "def_reviews": cl.get("def_reviews"),
+                                # What the author expects of the clause, and why (#650).
+                                **{k: cl[k] for k in ("expect", "expect_reason", "reason")
+                                   if cl.get(k)}}
                                for cl in ch.get("clauses") or []],
             "assessment": {k: ch.get(k) for k in ("status", "status_code", "class", "blockers",
+                                                   "status_reason",
                                                    "findings", "scope", "scope_note",
                                                    "source_evidence", "source_matches")},
             **({"step": {k: (ch["step"] or {}).get(k) for k in ("correspondence", "route",

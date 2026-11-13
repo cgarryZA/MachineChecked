@@ -57,6 +57,10 @@ colour. The frontend never recomputes acceptance from the evidence dimensions.
 | `formal.refuted.open` | refuted as printed; other clauses open | `refuted` |
 | `formal.refuted.corrected` | refuted as printed; corrected statement proved | `refuted` |
 | `formal.refuted.corrected.open` | refuted as printed; corrected statement proved; other clauses open | `refuted` |
+| `formal.variant-refuted` | a printed variant refuted | `refuted` |
+| `formal.variant-refuted.open` | a printed variant refuted; other clauses open | `refuted` |
+| `formal.variant-refuted.corrected` | a printed variant refuted; corrected statement proved | `refuted` |
+| `formal.variant-refuted.corrected.open` | a printed variant refuted; corrected statement proved; other clauses open | `refuted` |
 | `scope.expository` | out of scope: expository | `out-of-scope` |
 | `scope.literature` | out of scope: literature | `out-of-scope` |
 | `scope.empirical` | out of scope: empirical | `out-of-scope` |

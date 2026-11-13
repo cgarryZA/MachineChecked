@@ -46,12 +46,37 @@ CORRECTION_KINDS = {
 }
 
 
+EXPECTS = ("accept", "refute", "undecided")
+
+
+def main_clause(originals: list[dict]) -> dict | None:
+    """The clause that states the claim as printed: the original named "as printed", else the
+    first original."""
+    return next((c for c in originals if c.get("name") == "as printed"),
+                originals[0] if originals else None)
+
+
 def status_reason(clauses: list[dict]) -> list[str]:
     """Why a claim's status is what it is, in a line per reason, for the reader to show under
     the label: a refutation that holds only outside the paper's standing assumptions, a proved
     correction (with its kind) or special case of a printed clause, and how many clauses are
     proved when some are open. Display only; empty when the label says it all."""
     out = []
+    originals = [c for c in clauses if not c.get("corrects") and not c.get("restricts")]
+    main = main_clause(originals)
+    refuted = [c for c in originals if c.get("state") == "refuted"]
+    if refuted and main not in refuted:
+        out.append("; ".join(f"“{c['name']}” refuted" for c in refuted)
+                   + f"; “{main['name']}” " + ("proved" if main.get("accept_ok") else "open"))
+    for c in clauses:
+        settled = c.get("accept_ok") or c.get("refute_ok")
+        if c.get("expect") in ("accept", "refute") and not settled:
+            out.append(f"“{c['name']}” is expected to be "
+                       + ("refuted" if c["expect"] == "refute" else "proved")
+                       + (f": {c['expect_reason']}" if c.get("expect_reason") else ""))
+        elif c.get("expect") == "undecided" and not settled:
+            out.append(f"“{c['name']}”: whether it holds is undecided"
+                       + (f": {c['expect_reason']}" if c.get("expect_reason") else ""))
     for c in clauses:
         why = f": {c['reason']}" if c.get("reason") else ""
         if c.get("state") == "refuted-outside":
@@ -64,7 +89,6 @@ def status_reason(clauses: list[dict]) -> list[str]:
             how = CORRECTION_KINDS.get(c.get("kind"))
             out.append(f"“{c['name']}” corrects “{c['corrects']}”"
                        + (f" {how}" if how else "") + why)
-    originals = [c for c in clauses if not c.get("corrects") and not c.get("restricts")]
     proved = [c for c in clauses if c.get("accept_ok")]
     if proved and len(clauses) > 1 and any(not c.get("accept_ok") for c in originals)             and not any(c.get("state") == "refuted" for c in originals):
         out.append(f"{len(proved)} of {len(clauses)} clauses proved")
@@ -956,6 +980,7 @@ class Assessor:
                "refute": cl.get("refute"), "corrects": cl.get("corrects"),
                "restricts": cl.get("restricts"), "refute_scope": cl.get("refute_scope"),
                "kind": cl.get("kind"), "reason": cl.get("reason"),
+               "expect": cl.get("expect"), "expect_reason": cl.get("expect_reason"),
                "witness": cl.get("witness"), "defs": cl.get("defs", []),
                "regimes": cl.get("regimes", []), "checks": {}}
         if self.lean is None:
@@ -1056,6 +1081,20 @@ class Assessor:
                                               f"{thm}: {e}"))
         # A refutation whose counterexample lies outside the paper's standing assumptions
         # refutes the formal proposition only, never the printed claim.
+        # What the author expects of a clause (#650): its missing proof is the open obligation,
+        # and a proof of the other kind contradicts it.
+        exp = cl.get("expect")
+        if exp == "refute" and not res.get("refute_ok") and not res.get("accept_ok"):
+            self.findings.append(_finding(
+                "obligation", "expected-refutation", subj,
+                f"clause {res['name']!r} is expected to be refuted; no refutation is recorded"))
+        if (exp == "refute" and res.get("accept_ok")) or (exp == "accept" and res.get("refute_ok")):
+            self.findings.append(_finding(
+                "warning", "expectation-contradicted", subj,
+                f"clause {res['name']!r} is expected to be "
+                + ("refuted, but its proposition is proved" if exp == "refute"
+                   else "proved, but its proposition is refuted")
+                + ": correct the expectation, or look at the proof"))
         res["state"] = ("proved" if res.get("accept_ok") else
                         "refuted-outside" if res.get("refute_ok")
                         and cl.get("refute_scope") == OUTSIDE else
@@ -1239,7 +1278,10 @@ class Assessor:
         if refuted:
             fixed = all(any(k.get("accept_ok") for k in clauses if k.get("corrects") == c["name"])
                         for c in refuted)
-            return ("formal.refuted" + (".corrected" if fixed else "")
+            # "Refuted as printed" only when the refuted clause is the printed one (#655).
+            head = ("formal.refuted" if main_clause(originals) in refuted
+                    else "formal.variant-refuted")
+            return (head + (".corrected" if fixed else "")
                     + ("" if rest_proved else ".open"))
         if rest_proved:
             if not all(c["review"] in ("reviewed", "author-reviewed") for c in rest):
@@ -1294,6 +1336,8 @@ class Assessor:
 
         defs: dict[str, str] = {}
         shadowed: dict[str, dict] = {}
+        main = main_clause([c for c in clauses if not c.get("corrects")
+                            and not c.get("restricts")])
         for c in clauses:
             st = c["state"]
             if st == "unspecified":
@@ -1304,7 +1348,9 @@ class Assessor:
                 add("its proof fails a check: " + ", ".join(failed) if failed
                     else "the proposition has no proof yet", c)
             elif st == "refuted":
-                add("the printed statement is false: a theorem proves its negation", c)
+                add("the printed statement is false: a theorem proves its negation"
+                    if c is main else
+                    "a printed variant is false: a theorem proves its negation", c)
             elif st == "refuted-outside":
                 add("a theorem proves the negation of the formal proposition, by a counterexample "
                     "outside the paper's standing assumptions: the printed statement is not "
@@ -1355,7 +1401,7 @@ class Assessor:
                 out.append(reason)
             elif len(names) == n:
                 out.append(f"{reason} (all {n} clauses)")
-            elif reason.startswith("the printed statement is false") or len(names) <= 2:
+            elif reason.startswith(("the printed statement is false", "a printed variant"))                     or len(names) <= 2:
                 out.append(f"{reason}: " + "; ".join(f"“{x}”" for x in names))
             else:
                 out.append(f"{reason} ({len(names)} of {n} clauses)")
@@ -1610,6 +1656,11 @@ class Assessor:
                     "violation", "clause-relation", subj,
                     f"clause {cl.get('name')!r}: kind {cl['kind']!r} is not one of "
                     + ", ".join(map(repr, CORRECTION_KINDS))))
+            if cl.get("expect") not in (None, *EXPECTS):
+                self.findings.append(_finding(
+                    "violation", "clause-relation", subj,
+                    f"clause {cl.get('name')!r}: expect {cl['expect']!r} is not one of "
+                    + ", ".join(EXPECTS)))
             if cl.get("refute_scope") and not cl.get("refute"):
                 self.findings.append(_finding(
                     "violation", "clause-relation", subj,
