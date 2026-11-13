@@ -396,6 +396,12 @@ def _definition(rec: dict, stage: str, site: Site | None = None) -> dict:
                    "any expansion by its key"}
     out.update(_says(rec, site))
     out.update(_made_of(rec))
+    # A structure, an inductive or an axiom has no body, but its authored source is read the
+    # same way: a structure's fields as written, with their docstrings.
+    if "lean_source" not in out and rec.get("lean_source") is not None:
+        out["lean_source"] = rec["lean_source"]
+    if out.get("structure") and site is not None:
+        out["structure"] = _with_field_docs(out["structure"], site)
     if stage == "informed" and rec.get("review") is not None:
         out["review"] = rec["review"]
     return out
@@ -443,6 +449,17 @@ def _made_of(rec: dict) -> dict:
     return out
 
 
+def _with_field_docs(view: dict, site: Site) -> dict:
+    """A structure view (`objects.structure_view`) with each field's docstring (`doc`), read
+    from the record of the field's projection, where the build holds one with a docstring."""
+    store = site.store()
+    fields = []
+    for f in view.get("fields") or []:
+        doc = (store.get(f.get("projection") or "") or {}).get("doc")
+        fields.append({**f, "doc": doc} if doc and "doc" not in f else f)
+    return {**view, "fields": fields}
+
+
 def _expansions(site: Site, parts: list) -> list[dict]:
     """The expansions `parts` (a packet's declarations and definitions) refer to by key, in the
     order they occur: each a definition at the arguments of one application in a statement or a
@@ -471,12 +488,15 @@ def _expansions(site: Site, parts: list) -> list[dict]:
 
 
 def _definitions(site: Site, ch_list: list[dict], names: list[str], stage: str,
-                 owners: tuple = ()) -> list[dict]:
+                 owners: tuple = (), covered: dict | None = None) -> list[dict]:
     """The records of `names` (each statement's closure), in order, each with the constants
     Lean generated for it; then every project constant those records use (in a type, a value, a
     binder's or a field's type), transitively, that `names` left out, each with the definition
     it was reached through (`reached_through`). So a reviewer, who cannot open the sources, is
-    shown every constant the Lean they compare mentions."""
+    shown every constant the Lean they compare mentions. `covered` names the constants a
+    structure's unit reviews with it (its constructor and projections), each with its
+    structure, which they are listed as generated for."""
+    covered = covered or {}
     store = site.store()
     keys = {}
     for ch in ch_list:
@@ -503,8 +523,8 @@ def _definitions(site: Site, ch_list: list[dict], names: list[str], stage: str,
                             "reason": "this build holds no record of it"})
             continue
         d = _definition(rec, stage, site)
-        d["generated_for"] = next((m for m in [*owners, *names]
-                                   if m != n and site.generated(n, m)), None)
+        d["generated_for"] = covered.get(n) or next((m for m in [*owners, *names]
+                                                     if m != n and site.generated(n, m)), None)
         if via is not None:
             d["reached_through"] = via
         out.append(d)
@@ -698,7 +718,10 @@ def unit_packet(site: Site, unit: dict, stage: str) -> dict:
             if rec:
                 decls.append({**_definition(rec, stage, site),
                               "role": "definition under review"})
-                names = sorted(m for m in site.store() if site.generated(m, rec["name"]))
+                # A structure's unit covers its constructor and projections: listed first.
+                covered = [n for n in unit.get("lean") or [] if n != rec["name"]]
+                names = covered + sorted(m for m in site.store()
+                                         if site.generated(m, rec["name"]) and m not in covered)
                 names += [n for n in rec.get("uses") or [] if n not in names]
         _with_objects(decls)
         for d in decls:
@@ -710,7 +733,9 @@ def unit_packet(site: Site, unit: dict, stage: str) -> dict:
             extra.append({"what": f"the Lean of {unit['id']}", "owner": None,
                           "reason": "this build holds no statement for it"})
         defs = _definitions(site, chunks, names, stage,
-                            (unit["name"],) if unit["kind"] == "def" else ())
+                            (unit["name"],) if unit["kind"] == "def" else (),
+                            {n: unit["name"] for n in unit.get("lean") or []
+                             if unit["kind"] == "def" and n != unit["name"]})
         out["lean"] = {"declarations": decls, "definitions": defs,
                        "expansions": _expansions(site, [decls, defs])}
         page = {"total": len(defs), "returned": len(defs), "complete": True, "after": None,
@@ -1441,6 +1466,8 @@ def definitions_text(pk: dict) -> str:
                 x = fields.get(f) or {}
                 kind = "" if x.get("kind") == "proposition" else " (data)"
                 lines.append(f"  field {f} : {_text(x.get('type'))}{kind}")
+                if x.get("doc"):
+                    lines.append("    doc: " + " ".join(x["doc"].split()))
             if view.get("fields_omitted"):
                 lines.append(f"  ({view['fields_omitted']} further field(s) are not listed)")
         elif d.get("value"):

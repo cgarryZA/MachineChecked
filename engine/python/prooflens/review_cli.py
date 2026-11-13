@@ -211,6 +211,43 @@ def correspondence(u: dict, verdict, given) -> tuple[dict | None, list[str]]:
     return out, why
 
 
+def member_verdicts(u: dict, given) -> tuple[dict, list[str]]:
+    """The separate verdicts a review of a structure's unit records on some of the constants it
+    covers (its constructor or a projection), as the report records them under the verdict
+    (`verdict.members`, `{name: {group, value, detail}}`), and what is wrong with `given`
+    (`{name: {verdict, detail}}`): each name one the unit covers other than the structure, each
+    verdict one of the protocol's, with its detail unless it is "faithful". The unit's own
+    verdict holds for every constant without one. Empty when nothing is given."""
+    if not given:
+        return {}, []
+    if not isinstance(given, dict):
+        return {}, ["the separate verdicts are {name: {verdict, detail}}"]
+    covered = [m["name"] for m in u.get("members") or []]
+    out, why = {}, []
+    for name, v in given.items():
+        v = v if isinstance(v, dict) else {"verdict": v}
+        value = v.get("verdict", v.get("value"))
+        detail = v.get("detail") or ""
+        if name not in covered:
+            why.append(f"{name} is not a constructor or projection that {u.get('id')} covers"
+                       + (f" ({', '.join(covered)})" if covered else ""))
+            continue
+        group = next((g for g, vs in VERDICTS.items() if value in vs), None)
+        if group is None or value in REFUTE_ONLY:
+            why.append(f"the verdict on {name}, {value!r}, is not one of: "
+                       + ", ".join(x for vs in VERDICTS.values() for x in vs
+                                   if x not in REFUTE_ONLY))
+            continue
+        if not isinstance(detail, str):
+            why.append(f"the detail of the verdict on {name} is not text")
+            continue
+        if value != "faithful" and not detail.strip():
+            why.append(f"the verdict {value!r} on {name} needs its detail")
+            continue
+        out[name] = {"group": group, "value": value, "detail": detail.strip()}
+    return out, why
+
+
 def parse_reviewer(who: str, same_family: str = "unknown") -> dict:
     """`human:NAME` or `llm:MODEL`, as the protocol writes reviewer ids."""
     m = re.fullmatch(r"(human|llm):(\S+)", who or "")
@@ -254,6 +291,10 @@ class Session:
         self.index = self.site.index
         self.queue = json.loads((self.data / "review-queue.json").read_text(encoding="utf-8"))
         self.units = {u["id"]: u for u in self.queue["units"]}
+        # The constants a structure's unit covers (its constructor and projections), by the id
+        # a unit of their own would have: they are reviewed in the structure's unit.
+        self.member_of = {"def:" + m["name"]: u["id"] for u in self.queue["units"]
+                          for m in u.get("members") or []}
         self.reviewer = reviewer
         if mode is not None and mode not in wsp.MODES:
             raise ReviewError(f"mode {mode!r} is not one of: {', '.join(wsp.MODES)}", "invalid")
@@ -323,8 +364,12 @@ class Session:
 
     def unit(self, uid: str) -> dict:
         u = self.units.get(uid)
+        if u is None and uid in self.member_of:
+            raise ReviewError(f"{uid} is reviewed with its structure, in unit "
+                              f"{self.member_of[uid]}: one reading and one verdict cover the "
+                              "structure, its constructor and its projections", "unknown-unit")
         if u is None:
-            kept = " (your draft of it is kept)" if uid in (self.work.get("drafts") or {}) else ""
+            kept =" (your draft of it is kept)" if uid in (self.work.get("drafts") or {}) else ""
             raise ReviewError(f"no unit {uid} in the queue of release {self.queue['release']}"
                               f"{kept}: `review status` lists the units", "unknown-unit")
         return u
@@ -439,8 +484,9 @@ class Session:
         workspace they have worked in records they had seen of u's claims (an informed
         investigation has seen the Lean and the interpretations of every claim), and the units
         whose step 2 or 3 they reached, here or in another workspace of theirs, whose material
-        includes u's Lean or u's author review. With `before`, only what was recorded by that
-        time; a record without its time counts."""
+        includes u's Lean or u's author review; for a structure's unit, those of its constructor
+        and projections reviewed as units of their own count as its own. With `before`, only
+        what was recorded by that time; a record without its time counts."""
         def by(t) -> bool:
             if before is None or not t:
                 return True
@@ -464,10 +510,20 @@ class Session:
                     if what in ("Lean", "author's review"):
                         add(f"workspace {ws['id']} ({e.get('how')})", what)
         mine = [ws for ws in others if self.is_reviewer((ws.get("reviewer") or {}).get("id"))]
+        # A structure's constructor and projections are the structure's unit: work on one of
+        # them as a unit of its own (in a queue before they were reviewed together) showed its
+        # Lean, as an earlier draft of this unit would have.
+        members = {"def:" + m["name"]: m.get("fingerprint") for m in u.get("members") or []}
         for ws in [self.workspace, *mine]:
             own = ws is self.workspace
             for i, lean, author, pinned in _passes(ws.get("review") or {}, by):
                 unit = i if own else f"{i} (workspace {ws['id']})"
+                if i in members:
+                    if pinned in (None, members[i]):
+                        for what, ok in (("Lean", lean), ("author's review", author)):
+                            if ok:
+                                add(unit, what)
+                    continue
                 if i == u["id"]:
                     # Here the unit's draft is this review. Another workspace's draft of it, or
                     # its report of the same Lean, is this reviewer's earlier sight of it; a
@@ -613,12 +669,14 @@ class Session:
 
     def decide(self, uid: str, verdict: str, comparison: str, detail: str = "",
                witness: str = "", coverage: dict | None = None, checklist: dict | None = None,
-               shown: str | dict | None = None) -> None:
+               shown: str | dict | None = None, members: dict | None = None) -> None:
         """Step 2's record: the verdict, the comparison and, with them, the reviewer's coverage
         (`correspondence`) and checklist, all before the author's review is shown (in an
         informed session, until the report is submitted). The Lean the verdict is about is the
         version shown (`shown`, the unit's fingerprint as the reviewer's page drew it, or as
-        `show` recorded it): refused as stale when the build has changed it since."""
+        `show` recorded it): refused as stale when the build has changed it since. For a
+        structure's unit, `members` records a separate verdict on one of the constants it covers
+        (`{name: {verdict, detail}}`, `member_verdicts`): the unit's verdict holds for the rest."""
         u = self.unit(uid)
         if self.informed:
             d = self._started(u)
@@ -649,6 +707,13 @@ class Session:
         cor, why = correspondence(u, verdict, coverage)
         if why:
             raise ReviewError("; ".join(why), "invalid")
+        apart, why = member_verdicts(u, members)
+        if why:
+            raise ReviewError("; ".join(why), "invalid")
+        if apart:
+            d["members"] = apart
+        else:
+            d.pop("members", None)
         d.update(group=group, verdict=verdict, detail=detail or "", comparison=comparison,
                  witness=witness or "", checklist=checklist, correspondence=cor,
                  decided_at=now(), stage="author",
@@ -761,6 +826,7 @@ class Session:
             "comparison": cmp_.get("text") or "", "witness": cmp_.get("witness") or "",
             "checklist": cmp_.get("checklist") or {}, "decided_at": cmp_.get("decided_at"),
             "group": v.get("group"), "verdict": v.get("value"), "detail": v.get("detail") or "",
+            **({"members": v["members"]} if v.get("members") else {}),
             "correspondence": r.get("correspondence"),
             "lean": {k: pins.get(k) for k in ("fingerprint", "fingerprints", "legacy_hash")},
             "author_shown_at": a.get("shown_at"), "disagreements": a.get("disagreements") or ""}
@@ -922,7 +988,7 @@ def api(work_dir: Path, data_dir: Path) -> tuple[dict, dict]:
         elif action == "decide":
             s.decide(uid, req.get("verdict") or "", req.get("comparison") or "",
                      req.get("detail") or "", req.get("witness") or "", req.get("coverage"),
-                     req.get("checklist"), req.get("shown"))
+                     req.get("checklist"), req.get("shown"), req.get("members"))
             if req.get("show_author"):
                 s.author(uid)
         elif action == "author":
@@ -1023,7 +1089,9 @@ def report(index: dict, u: dict, d: dict, reviewer: dict, disagreements: str,
                     "revealed_by": d.get("revealed_by") or []},
         "comparison": {"text": d["comparison"], "witness": d.get("witness") or "",
                        "checklist": d.get("checklist") or {}, "decided_at": d["decided_at"]},
-        "verdict": {"group": d["group"], "value": d["verdict"], "detail": d.get("detail") or ""},
+        "verdict": {"group": d["group"], "value": d["verdict"], "detail": d.get("detail") or "",
+                    # A structure's unit: the separate verdicts on constants it covers.
+                    **({"members": d["members"]} if d.get("members") else {})},
         # Recorded with the verdict; None when the reviewer recorded no coverage.
         "correspondence": d.get("correspondence"),
         "author_review": {"shown_at": d.get("author_shown_at"), "disagreements": disagreements},
