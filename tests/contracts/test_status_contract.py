@@ -55,6 +55,11 @@ def test_all_assessor_codes_have_one_presentation_and_copy_cannot_change_them(mo
             ["reviewed", "author-reviewed", "pending"]):
         cases.append(("formal", [printed, clause(review=review, name="fixed", **{rel: "main"})]))
     cases.append(("formal", [clause("open"), clause(name="other")]))
+    # A refuted variant beside the clause "as printed" (#655).
+    for fixed, rest in itertools.product([False, True], repeat=2):
+        cases.append(("formal", [clause("proved" if not rest else "open", name="as printed"),
+                                 clause("refuted", name="second edition")]
+                      + ([clause(name="fix", corrects="second edition")] if fixed else [])))
     before = [Assessor.claim_code({"scope": scope}, cls) for scope, cls in cases]
     assert set(before) == {c for c in STATUSES if c.split('.')[0] in {"formal", "definition", "scope"}}
     for code in before:

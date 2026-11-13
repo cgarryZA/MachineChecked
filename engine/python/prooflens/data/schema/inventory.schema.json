@@ -84,6 +84,8 @@
         "restricts": {"type": ["string", "null"]},
         "refute_scope": {"enum": ["outside-standing-assumptions", null]},
         "reason": {"type": "string"},
+        "expect": {"enum": ["accept", "refute", "undecided", null]},
+        "expect_reason": {"type": "string"},
         "witness": {"type": ["string", "null"]},
         "defs": {"type": "array", "items": {"type": "string"}},
         "regimes": {"type": "array", "items": {
