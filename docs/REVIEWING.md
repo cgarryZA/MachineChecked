@@ -727,6 +727,7 @@ theorem it is a step of.
 | Faithful | All material assumptions and conclusions match |
 | Faithful with representation choices | Why each representation difference is harmless |
 | Broader | The instantiation that recovers the printed claim |
+| Faithful to the correction | Nothing more: offered only for a correction or a special case of a printed clause, it says the proposition is the printed claim with exactly the correction its clause records (shown with the Lean, beside the passage) |
 | Narrower | Extra hypotheses or cases excluded by Lean |
 | Mismatched | What the Lean statement actually establishes |
 | Vacuous | Why hypotheses fail to hold, or a witness is inadequate |
