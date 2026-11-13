@@ -354,7 +354,7 @@
           <dl class="proof">
             {#each Object.entries(cl.proofs) as [kind, p]}
               {#if p}
-                <dt>{kind === "refute" ? "Refutation" : "Proof"}</dt>
+                <dt>{kind === "refute" ? "Refutation" : kind === "accept_from" ? `Proof assuming ${(p.assumes || []).join(", ")}` : "Proof"}</dt>
                 <dd><code>{p.name}</code> <span class="faint">— axioms: {p.axioms.length ? p.axioms.join(", ") : "none"}</span></dd>
               {/if}
             {/each}

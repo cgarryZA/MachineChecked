@@ -60,7 +60,7 @@ def requests_from_inventory(inv: dict) -> list[dict]:
     reqs, seen = [], set()
 
     def add(r):
-        key = (r["kind"], r["name"], r.get("spec"))
+        key = (r["kind"], r["name"], r.get("spec"), tuple(r.get("assumes") or ()))
         if key not in seen:
             seen.add(key)
             reqs.append(r)
@@ -75,6 +75,10 @@ def requests_from_inventory(inv: dict) -> list[dict]:
                     add({"kind": "accept", "name": cl["accept"], "spec": cl["spec"]})
                 if cl.get("refute"):
                     add({"kind": "refute", "name": cl["refute"], "spec": cl["spec"]})
+                af = accept_from(cl)
+                if af:
+                    add({"kind": "accept-from", "name": af["theorem"], "spec": cl["spec"],
+                         "assumes": af["assumes"]})
             for w in [cl.get("witness")] + [r.get("witness") for r in cl.get("regimes", [])]:
                 if w:
                     add({"kind": "witness", "name": w})
@@ -84,6 +88,22 @@ def requests_from_inventory(inv: dict) -> list[dict]:
             for n in lean_names(c) + route_names(c):
                 add({"kind": "link", "name": n})
     return reqs
+
+
+def accept_from(cl: dict) -> dict | None:
+    """A clause's `accept_from` (a theorem proving its proposition from the propositions it
+    assumes), when it names a theorem and at least one assumed proposition."""
+    af = cl.get("accept_from")
+    if isinstance(af, dict) and af.get("theorem") and af.get("assumes"):
+        return {"theorem": af["theorem"], "assumes": list(af["assumes"])}
+    return None
+
+
+def proof_key(kind: str, name: str, spec: str | None, assumes=None) -> str:
+    """The key of a proof record in `proofs`: its kind, theorem and proposition, and for an
+    `accept-from` record the propositions it assumes."""
+    key = f"{kind}:{name}:{spec or ''}"
+    return key + ":" + ",".join(assumes or []) if kind == "accept-from" else key
 
 
 # The request for the names in the project's module docstrings that nothing declares.
@@ -453,10 +473,11 @@ def parse_records(lines) -> dict:
                 rec["decl"] = d
                 res["decls"].setdefault(d["name"], d)
             res.setdefault("links", {})[rec["name"]] = rec
-        elif kind in ("accept", "refute", "witness"):
+        elif kind in ("accept", "refute", "witness", "accept-from"):
             rec = dict(rec)
             rec["kind"] = rec.pop("record")
-            res["proofs"][f"{rec['kind']}:{rec['name']}:{rec.get('spec') or ''}"] = rec
+            res["proofs"][proof_key(rec["kind"], rec["name"], rec.get("spec"),
+                                    rec.get("assumes"))] = rec
         elif kind == "moddoc":
             res["moddocs"].append({k: rec[k] for k in ("module", "line", "name", "heading",
                                                        "item_lead", "kind", "full", "scopes")

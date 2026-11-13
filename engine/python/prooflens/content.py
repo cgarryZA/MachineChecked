@@ -71,6 +71,8 @@ def claim_declarations(c: dict, defs: bool = True) -> set[str]:
         names |= {n for n in (cl.get("spec"), cl.get("accept"), cl.get("refute"),
                               cl.get("witness"), *(cl.get("defs") or [] if defs else ()))
                   if n}
+        if isinstance(cl.get("accept_from"), dict) and cl["accept_from"].get("theorem"):
+            names.add(cl["accept_from"]["theorem"])
     return names
 
 

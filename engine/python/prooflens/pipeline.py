@@ -15,7 +15,8 @@ from . import manifest as mf
 from . import review_queue as rq
 from .assess import Assessor, line_location
 from .config import Config, ConfigError
-from .probe import FINGERPRINT_VERSION, MODDOCS, probe_query, requests_from_inventory, run_probe
+from .probe import (FINGERPRINT_VERSION, MODDOCS, probe_query, proof_key,
+                    requests_from_inventory, run_probe)
 from .reviews import load_dismissals, load_reviews
 from .review_sources import carried
 from .schemas import validate
@@ -378,8 +379,9 @@ def _reuse_stage(lean: dict, prov: dict, want: tuple[str, str, str, dict],
                if (r["kind"] == "spec" and r["name"] not in lean.get("specs", {}))
                or (r["kind"] == "decl" and r["name"] not in lean.get("defs", {}))
                or (r["kind"] == "link" and r["name"] not in lean.get("links", {}))
-               or (r["kind"] in ("accept", "refute", "witness") and
-                   f"{r['kind']}:{r['name']}:{r.get('spec') or ''}" not in lean.get("proofs", {}))]
+               or (r["kind"] in ("accept", "refute", "witness", "accept-from") and
+                   proof_key(r["kind"], r["name"], r.get("spec"), r.get("assumes"))
+                   not in lean.get("proofs", {}))]
     if missing:
         return 7, (f"the stored Lean results do not cover {', '.join(missing[:5])}"
                    + (", …" if len(missing) > 5 else ""))

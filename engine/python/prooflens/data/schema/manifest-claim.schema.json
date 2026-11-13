@@ -106,6 +106,7 @@
               "proved",
               "refuted",
               "refuted-outside",
+              "proved-assuming",
               "malformed",
               "stated"
             ]
@@ -131,6 +132,7 @@
                       "proved",
                       "refuted",
                       "refuted-outside",
+                      "proved-assuming",
                       "open",
                       "unspecified",
                       "unchecked",
@@ -322,6 +324,7 @@
         "formal.review-pending",
         "formal.open",
         "formal.open.partial",
+        "formal.proved-assuming",
         "formal.open.corrected",
         "formal.open.corrected.author-reviewed",
         "formal.open.corrected.reviewed",

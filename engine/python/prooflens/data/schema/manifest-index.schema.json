@@ -130,6 +130,7 @@
               "formal.review-pending",
               "formal.open",
               "formal.open.partial",
+              "formal.proved-assuming",
               "formal.open.corrected",
               "formal.open.corrected.author-reviewed",
               "formal.open.corrected.reviewed",

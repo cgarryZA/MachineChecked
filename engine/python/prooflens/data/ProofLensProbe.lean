@@ -42,6 +42,8 @@ structure Request where
   of the whole proof if none. -/
   facts_after : Option Nat := none
   facts_within : Option String := none
+  /-- For `accept-from`: the propositions the theorem assumes, in order. -/
+  assumes : Option (Array String) := none
   deriving FromJson, Inhabited
 
 structure Query where
@@ -2500,11 +2502,44 @@ def levelsMatch (ls : List Level) (params : List Name) : Bool :=
   ps.length == ls.length && ps.eraseDups.length == ps.length && ps.length == params.length
     && params.all ps.contains
 
-/-- `accept`: the type is exactly the specification; `refute`: exactly its negation; `witness`:
-any theorem of the acceptance layer, with the project declarations in the closure of its type
-with its proofs erased (the instance it exhibits lives in them). -/
+/-- `e` is the constant `n`, at any universe levels. -/
+def isConstOf (e : Expr) (n : Name) : Bool :=
+  match e with
+  | .const c _ => c == n
+  | _ => false
+
+/-- `e` is the conjunction `A₁ ∧ … ∧ Aₙ` of the named propositions in order, nested to the
+right as `∧` is written. -/
+def conjOf (e : Expr) : List Name → Bool
+  | [] => false
+  | [a] => isConstOf e a
+  | a :: rest => match e with
+    | .app (.app (.const ``And []) l) r => isConstOf l a && conjOf r rest
+    | _ => false
+
+/-- `ty` is exactly `A₁ → … → Aₙ → S` or `A₁ ∧ … ∧ Aₙ → S`, for the assumed propositions
+`assumes` in order and the specification `s`, with no dependent arrow. -/
+def assumingType (ty : Expr) (assumes : List Name) (s : Name) (params : List Name) : Bool :=
+  !assumes.isEmpty && (curried ty assumes || match ty with
+    | .forallE _ d b _ => !b.hasLooseBVars && conjOf d assumes && concl b
+    | _ => false)
+where
+  concl (e : Expr) : Bool := match e with
+    | .const c ls => c == s && levelsMatch ls params
+    | _ => false
+  curried (e : Expr) : List Name → Bool
+    | [] => concl e
+    | a :: rest => match e with
+      | .forallE _ d b _ => !b.hasLooseBVars && isConstOf d a && curried b rest
+      | _ => false
+
+/-- `accept`: the type is exactly the specification; `refute`: exactly its negation;
+`accept-from`: exactly the specification assuming the propositions `assumes` (`assumingType`);
+`witness`: any theorem of the acceptance layer, with the project declarations in the closure of
+its type with its proofs erased (the instance it exhibits lives in them). -/
 def proofRecord (h : IO.FS.Handle) (q : Query) (inside : Name → Bool) (seen : IO.Ref NameSet)
-    (kind : String) (thm : Name) (spec : Option Name) : MetaM Unit := do
+    (kind : String) (thm : Name) (spec : Option Name) (assumes : List Name := []) :
+    MetaM Unit := do
   let env ← getEnv
   let some ci := env.find? thm
     | emit h (Json.mkObj [("record", kind), ("name", thm.toString), ("errors", toJson #["missing"])])
@@ -2523,6 +2558,9 @@ def proofRecord (h : IO.FS.Handle) (q : Query) (inside : Name → Bool) (seen : 
     | .forallE _ (.const c _) (.const ``False []) _ =>
       unless c == s do errs := errs.push "type-not-negated-spec"
     | _ => errs := errs.push "type-not-negated-spec"
+  | "accept-from", some s =>
+    unless assumingType ci.type assumes s ci.levelParams do
+      errs := errs.push "type-not-assuming-spec"
   | _, _ => pure ()
   let axs ← collectAxioms thm
   let bad := disallowed (q.allowed_axioms.map (·.toName)) axs
@@ -2540,7 +2578,9 @@ def proofRecord (h : IO.FS.Handle) (q : Query) (inside : Name → Bool) (seen : 
     ("errors", toJson errs), ("axioms", toJson (axs.map toString)),
     ("type", ty), ("module", (moduleOf env thm).toString), ("range", ← rangeJson thm),
     ("sorry", toJson (axs.contains ``sorryAx))]
-  emit h (Json.mkObj (fields ++ closure))
+  let assumed : List (String × Json) := if kind == "accept-from" then
+      [("assumes", toJson (assumes.map toString))] else []
+  emit h (Json.mkObj (fields ++ assumed ++ closure))
 
 /-- The project constants (`roots`) among `cs` that a reader looks for, other than `self`. -/
 def projectNamesJson (roots : Array Name) (env : Environment) (self : Name) (cs : Array Name) :
@@ -3865,6 +3905,9 @@ open ProofLensProbe in
         | "spec" => specRecord h q inside seen r.name.toName
         | "accept" | "refute" =>
           proofRecord h q inside seen r.kind r.name.toName (r.spec.map (·.toName))
+        | "accept-from" =>
+          proofRecord h q inside seen r.kind r.name.toName (r.spec.map (·.toName))
+            ((r.assumes.getD #[]).toList.map (·.toName))
         | "witness" => proofRecord h q inside seen "witness" r.name.toName none
         | "index" => do indexRecords h roots; moduleDocRecords h roots
         | "moddocs" => moduleDocRecords h roots
@@ -3890,9 +3933,14 @@ open ProofLensProbe in
         | "apps" => appsRecords h roots used r.name.toName r.callers
         | _ => pure ())
         (fun err => do
-          emit h (Json.mkObj [("record", if r.kind == "decl" then "defclosure" else r.kind),
+          let assumed : List (String × Json) := match r.assumes with
+            | some a => [("assumes", toJson a)]
+            | none => []
+          let base : List (String × Json) :=
+            [("record", if r.kind == "decl" then "defclosure" else r.kind),
             ("name", r.name), ("spec", match r.spec with | some x => Json.str x | none => Json.null),
-            ("errors", toJson #[s!"probe-error: {← err.toMessageData.toString}"])]))
+            ("errors", toJson #[s!"probe-error: {← err.toMessageData.toString}"])]
+          emit h (Json.mkObj (base ++ assumed)))
     -- Every record reaches the file before `done` says how many bytes precede it, so a
     -- reader can tell a complete output from one cut short. A write that fails (a full disk)
     -- raises here or in `emit`, and the session ends with an error.

@@ -55,6 +55,8 @@ def test_all_assessor_codes_have_one_presentation_and_copy_cannot_change_them(mo
             ["reviewed", "author-reviewed", "pending"]):
         cases.append(("formal", [printed, clause(review=review, name="fixed", **{rel: "main"})]))
     cases.append(("formal", [clause("open"), clause(name="other")]))
+    # Proved from a proposition not yet proved (`accept_from`).
+    cases.append(("formal", [clause("proved-assuming")]))
     before = [Assessor.claim_code({"scope": scope}, cls) for scope, cls in cases]
     assert set(before) == {c for c in STATUSES if c.split('.')[0] in {"formal", "definition", "scope"}}
     for code in before:

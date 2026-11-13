@@ -54,6 +54,8 @@ def claim_names(chunk: dict) -> set[str]:
     names = set(chunk.get("decls", {}))
     for cl in chunk.get("clauses", []):
         names |= {cl[k] for k in ("spec", "accept", "refute", "witness") if cl.get(k)}
+        if cl.get("accept_from"):
+            names.add(cl["accept_from"]["theorem"])
         names |= set(cl.get("defs") or [])
         names |= {r["witness"] for r in cl.get("regimes", []) if r.get("witness")}
     return names
@@ -136,8 +138,8 @@ def public_claim(chunk: dict, pub) -> dict:
                           (["file", "line"] if pub.source_text else [])) if a else None
     clauses = []
     for cl in chunk["clauses"]:
-        c = _pick(cl, ["name", "spec", "accept", "refute", "corrects", "restricts", "refute_scope",
-                       "reason", "witness", "defs", "state",
+        c = _pick(cl, ["name", "spec", "accept", "refute", "accept_from", "assumes", "corrects",
+                       "restricts", "refute_scope", "reason", "witness", "defs", "state",
                        "review", "checks", "evidence"])
         c["regimes"] = [_pick(r, ["name", "description", "witness", "discharged"] +
                               (["type"] if pub.lean else [])) for r in cl.get("regimes", [])]

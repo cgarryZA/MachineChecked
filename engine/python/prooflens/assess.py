@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import re
 
+from .probe import accept_from, proof_key
 from .status import fields
 
 from . import review_sources
@@ -38,11 +39,20 @@ OUT_OF_SCOPE = {"expository", "literature", "empirical", "proof-step", "part-of"
 OUTSIDE = "outside-standing-assumptions"
 
 
+def _assumed(a: dict) -> str:
+    """An assumed proposition as a status reason names it: with the claims that state it, or
+    saying that none does."""
+    where = (", stated by " + ", ".join(a["claims"]) if a.get("claims") else
+             ", which no claim states")
+    return f"{a['spec']} ({where[2:]})"
+
+
 def status_reason(clauses: list[dict]) -> list[str]:
     """Why a claim's status is what it is, in a line per reason, for the reader to show under
     the label: a refutation that holds only outside the paper's standing assumptions, a proved
-    correction or special case of a printed clause, and how many clauses are proved when some are
-    open. Display only; empty when the label says it all."""
+    correction or special case of a printed clause, the propositions a clause is proved
+    assuming (or proved from), and how many clauses are proved when some are open. Display
+    only; empty when the label says it all."""
     out = []
     for c in clauses:
         why = f": {c['reason']}" if c.get("reason") else ""
@@ -54,6 +64,14 @@ def status_reason(clauses: list[dict]) -> list[str]:
                        f"refuted{why}")
         elif c.get("accept_ok") and c.get("corrects") and why:
             out.append(f"“{c['name']}” corrects “{c['corrects']}”{why}")
+        if c.get("state") == "proved-assuming":
+            out.append(f"“{c['name']}” is proved assuming "
+                       + ", ".join(_assumed(a) for a in c.get("assumes", []) if not a["proved"])
+                       + ", not yet proved")
+        elif c.get("state") == "proved" and c.get("assumes") and not (
+                c.get("checks", {}).get("accept") or {}).get("ok"):
+            out.append(f"“{c['name']}” is proved from "
+                       + ", ".join(_assumed(a) for a in c["assumes"]) + ", each proved")
     originals = [c for c in clauses if not c.get("corrects") and not c.get("restricts")]
     proved = [c for c in clauses if c.get("accept_ok")]
     if proved and len(clauses) > 1 and any(not c.get("accept_ok") for c in originals)             and not any(c.get("state") == "refuted" for c in originals):
@@ -948,6 +966,9 @@ class Assessor:
                "reason": cl.get("reason"),
                "witness": cl.get("witness"), "defs": cl.get("defs", []),
                "regimes": cl.get("regimes", []), "checks": {}}
+        af = accept_from(cl)
+        if af:
+            res["accept_from"] = af
         if self.lean is None:
             res.update(state="unchecked", review="unknown")
             return res
@@ -1044,12 +1065,31 @@ class Assessor:
                 self.findings.append(_finding("violation", f"{kind}-" + e.split("=")[0], subj,
                                               self.not_found(thm) if e == "missing" else
                                               f"{thm}: {e}"))
+        # A proof of the proposition from other propositions (`accept_from`): its type is
+        # exactly the proposition assuming them. It proves the clause only once each of them is
+        # proved (`assumption_checks`).
+        if af and spec:
+            thm = af["theorem"]
+            p = self.lean["proofs"].get(proof_key("accept-from", thm, spec, af["assumes"]))
+            perrs = (p or {}).get("errors", ["missing"])
+            res["checks"]["accept_from"] = {"ok": not perrs, "errors": perrs,
+                                            "axioms": (p or {}).get("axioms", []),
+                                            "sorry": (p or {}).get("sorry", False),
+                                            "assumes": af["assumes"]}
+            res["accept_from_ok"] = not perrs
+            if not res.get("accept_ok") and not res.get("refute_ok"):
+                res["checks"]["replay"] = self.replay(thm)
+            for e in perrs:
+                self.findings.append(_finding("violation", "accept-from-" + e.split("=")[0], subj,
+                                              self.not_found(thm) if e == "missing" else
+                                              f"{thm}: {e}"))
         # A refutation whose counterexample lies outside the paper's standing assumptions
         # refutes the formal proposition only, never the printed claim.
         res["state"] = ("proved" if res.get("accept_ok") else
                         "refuted-outside" if res.get("refute_ok")
                         and cl.get("refute_scope") == OUTSIDE else
                         "refuted" if res.get("refute_ok") else
+                        "proved-assuming" if res.get("accept_from_ok") else
                         "open" if spec else
                         "stated" if cl.get("defs") else "unspecified")
 
@@ -1254,6 +1294,10 @@ class Assessor:
             return (f"formal.open.{kind}.author-reviewed"
                     if any(k["review"] == "author-reviewed" for k in ks)
                     else f"formal.open.{kind}.reviewed")
+        # Every open printed clause is proved from propositions not yet proved: still not a
+        # proof of the claim.
+        if open_ and all(c["state"] == "proved-assuming" for c in open_):
+            return "formal.proved-assuming"
         if any(c.get("accept_ok") for c in clauses):
             return "formal.open.partial"
         return "formal.open"
@@ -1288,8 +1332,11 @@ class Assessor:
             st = c["state"]
             if st == "unspecified":
                 add("no Lean proposition has been written", c)
+            elif st == "proved-assuming":
+                add("it is proved assuming results not yet proved: "
+                    + ", ".join(a["spec"] for a in c.get("assumes", []) if not a["proved"]), c)
             elif st == "open":
-                failed = [e for k in ("accept", "refute") if c["checks"].get(k)
+                failed = [e for k in ("accept", "refute", "accept_from") if c["checks"].get(k)
                           and not c["checks"][k]["ok"] for e in c["checks"][k]["errors"]]
                 add("its proof fails a check: " + ", ".join(failed) if failed
                     else "the proposition has no proof yet", c)
@@ -1391,10 +1438,13 @@ class Assessor:
         return {"step_review": marker_review(marks, claim["id"], sha, self.authors)}
 
     def run(self) -> dict:
-        claims = []
+        rows = []
         for c in self.inv["claims"]:
             self.clause_relation_checks(c)
-            clauses = [self.clause(c, cl, k) for k, cl in enumerate(c.get("clauses", []))]
+            rows.append((c, [self.clause(c, cl, k) for k, cl in enumerate(c.get("clauses", []))]))
+        self.assumption_checks(rows)
+        claims = []
+        for c, clauses in rows:
             state = fields(self.claim_code(c, clauses))
             why = status_reason(clauses)
             claims.append({"id": c["id"], **state, "clauses": clauses,
@@ -1415,6 +1465,65 @@ class Assessor:
             # What `check --fix-modules` adds to `modules`; configuration advice, not a status.
             out["unlisted_modules"] = dict(sorted(self.unlisted_declarers.items()))
         return out
+
+    def assumption_checks(self, rows: list[tuple[dict, list[dict]]]) -> None:
+        """Clauses proved from other propositions (`accept_from`, state `proved-assuming`). Such
+        a clause is proved once every proposition it assumes is the proposition of a proved
+        clause (proved outright, or in turn from proved propositions): the proofs compose, and
+        each passed its own checks. Until then it stays `proved-assuming`. Each records, per
+        assumed proposition, the claims whose clauses state it and whether it is proved
+        (`assumes`). A cycle of such clauses (a proposition assumed, through others, by a proof
+        of itself) is a violation; it proves none of them."""
+        stating: dict[str, list[tuple[str, dict]]] = {}
+        for claim, cls in rows:
+            for c in cls:
+                if c.get("spec"):
+                    stating.setdefault(c["spec"], []).append((claim["id"], c))
+        pending = [(claim, k, c) for claim, cls in rows for k, c in enumerate(cls)
+                   if c["state"] == "proved-assuming"]
+        if not pending:
+            return
+        edges: dict[str, set[str]] = {}
+        for _, _, c in pending:
+            edges.setdefault(c["spec"], set()).update(c["accept_from"]["assumes"])
+
+        def path_back(start: str) -> list[str] | None:
+            # A chain of assumptions from `start` back to itself, if there is one.
+            stack, seen = [(a, [start, a]) for a in sorted(edges.get(start, ()))], set()
+            while stack:
+                n, path = stack.pop()
+                if n == start:
+                    return path
+                if n in seen:
+                    continue
+                seen.add(n)
+                stack += [(a, path + [a]) for a in sorted(edges.get(n, ()))]
+            return None
+
+        for claim, k, c in pending:
+            loop = path_back(c["spec"])
+            if loop:
+                self.findings.append(_finding(
+                    "violation", "accept-from-cycle", f"{claim['id']}#{k}",
+                    f"clause {c['name']!r}: its proof assumes propositions that are proved only "
+                    f"by assuming it ({' → '.join(loop)}), so no proof of it is complete",
+                    trigger=c["accept_from"]["theorem"]))
+
+        def proved(spec: str) -> bool:
+            return any(o["state"] == "proved" for _, o in stating.get(spec, []))
+
+        changed = True
+        while changed:
+            changed = False
+            for _, _, c in pending:
+                if c["state"] == "proved-assuming" and all(
+                        proved(a) for a in c["accept_from"]["assumes"]):
+                    # `accept_ok` says that a proof of the proposition checks: here, the
+                    # composition of this proof with those of the propositions it assumes.
+                    c["state"], c["accept_ok"], changed = "proved", True, True
+        for _, _, c in pending:
+            c["assumes"] = [{"spec": a, "claims": sorted({i for i, _ in stating.get(a, [])}),
+                             "proved": proved(a)} for a in c["accept_from"]["assumes"]]
 
     def bare_marker_checks(self):
         """An obligation for each declaration whose last review marker has no review text
@@ -1534,7 +1643,10 @@ class Assessor:
                                        f"manuscript: {c['name']}")
                     if c.get("witness") and not c.get("witness_ok"):
                         reasons.append(f"{r['id']}: witness fails: {c['name']}")
-            names = sorted({c["accept"] for r in rows for c in r["clauses"] if c.get("accept")})
+            names = sorted({c["accept"] for r in rows for c in r["clauses"] if c.get("accept")}
+                           | {c["accept_from"]["theorem"] for r in rows for c in r["clauses"]
+                              if c.get("accept_from") and c.get("accept_ok")
+                              and not (c["checks"].get("accept") or {}).get("ok")})
             comparator = bool(names) and all(self.replay(n)["state"] == "pass" for n in names)
             if not comparator:
                 reasons.append("comparator: no successful kernel replay covering every proof "
@@ -1590,6 +1702,11 @@ class Assessor:
                         "violation", "clause-relation", subj,
                         f"clause {cl.get('name')!r} {rel} {cl[rel]!r}, which is not an original "
                         "clause of this claim"))
+            if "accept_from" in cl and not (cl.get("spec") and accept_from(cl)):
+                self.findings.append(_finding(
+                    "violation", "clause-relation", subj,
+                    f"clause {cl.get('name')!r}: accept_from needs the clause's proposition "
+                    "(spec), a theorem and at least one assumed proposition"))
             if cl.get("refute_scope") and not cl.get("refute"):
                 self.findings.append(_finding(
                     "violation", "clause-relation", subj,
