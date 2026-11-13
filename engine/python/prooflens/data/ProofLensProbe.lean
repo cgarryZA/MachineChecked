@@ -1961,11 +1961,16 @@ def emitClosure (h : IO.FS.Handle) (inside : Name → Bool) (root : Name) (used 
     unless inside n do continue
     let some c := env.find? n | continue
     members := members.push n.toString
-    -- Each member has its own heartbeat budget: a closure can hold thousands.
+    -- A member already emitted (by this closure or another) needs only the constants it uses,
+    -- to follow; its record is written once. Each record has its own heartbeat budget: a
+    -- closure can hold thousands.
+    if (← seen.get).contains n then
+      let (_, _, more) ← withCurrHeartbeats (constPrint c)
+      stack := stack ++ more
+      continue
     let (j, more) ← withCurrHeartbeats (declRecord inside n c)
-    unless (← seen.get).contains n do
-      seen.modify (·.insert n)
-      emit h j
+    seen.modify (·.insert n)
+    emit h j
     stack := stack ++ more
   return members.qsort (· < ·)
 
