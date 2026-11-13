@@ -27,6 +27,7 @@ machinechecked review next                          # the next unit to review, a
 machinechecked review read UNIT                     # step 1: the paper's statement only
 machinechecked review lock UNIT reading.md          # locks your reading
 machinechecked review show UNIT                     # step 2 (refused before lock): the Lean
+machinechecked review show UNIT --definitions       # step 2: only the definitions it uses, compactly
 machinechecked review decide UNIT VERDICT comparison.md [--detail detail.md] [--coverage C ...]
 machinechecked review author UNIT                   # step 3 (refused before decide)
 machinechecked review submit UNIT disagreements.md  # finishes the report
@@ -133,6 +134,14 @@ that step shows, in the form of `machinechecked compare` (below). `read` holds t
 `show` adds the Lean (complete statements, binders, the definitions they use, Lean's checks);
 `author` adds what has been recorded about the correspondence: the author's review, notes,
 earlier reports, symbol links and statuses.
+
+`show --definitions` prints only the definitions the unit's Lean uses, for reading line by
+line: each once, with its docstring, its signature, and its body, equations or fields (one per
+line, with their full types); the constants Lean generates for one (a constructor, projections,
+equation lemmas) are named under it. It is the text of `lean.definitions` in `show --json`. Both
+list every constant of the project the listed definitions use, transitively, including those
+only in a binder's or a field's type: each one a statement does not use directly says which
+definition uses it, so the meaning of every name in the Lean is in the protocol.
 
 **Informed investigation.** Outside the three steps, `machinechecked compare CLAIM` gives a
 claim's passage, its linked statements, its definitions and everything recorded about it, and

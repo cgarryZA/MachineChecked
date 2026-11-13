@@ -571,10 +571,12 @@ class Session:
         self._save(uid)
         return seen
 
-    def show(self, uid: str, as_json: bool = False) -> str | dict:
+    def show(self, uid: str, as_json: bool = False, definitions: bool = False) -> str | dict:
         """Step 2: the unit's Lean, after the lock in independent review. The draft records the
         version shown, so that a verdict is recorded against the Lean that was shown. A unit
-        this reviewer has reported is shown as it was reviewed: its Lean was seen already."""
+        this reviewer has reported is shown as it was reviewed: its Lean was seen already. With
+        `definitions`, only the definitions it uses, as a compact listing
+        (`compare.definitions_text`)."""
         u = self.unit(uid)
         d = self._started(u) if self.informed else self.draft(u)
         if d is None and not self.informed:
@@ -587,7 +589,7 @@ class Session:
                     return {**self.packet(u, "compare"),
                             "review": {"step": "reported", "mode": self.mode,
                                        "submitted_at": r.get("submitted_at")}}
-                return note + "\n\n" + self.lean_text(u)
+                return note + "\n\n" + self._lean_or_definitions(u, definitions)
         if d is None or (d["stage"] == "read" and not self.informed):
             raise ReviewError(f"{uid}: lock your reading first (`review lock`); the Lean is shown "
                               "only after it", "order")
@@ -601,7 +603,12 @@ class Session:
         if as_json:
             return {**self.packet(u, "compare"), "review": {"step": "compare", "mode": self.mode,
                                                             "reveals": reveals}}
-        return (reveals_note(reveals, "This shows") + self.lean_text(u)) if reveals \
+        text = self._lean_or_definitions(u, definitions)
+        return (reveals_note(reveals, "This shows") + text) if reveals else text
+
+    def _lean_or_definitions(self, u: dict, definitions: bool) -> str:
+        """Step 2's text: the unit's Lean, or only the definitions it uses (`definitions`)."""
+        return cmp.definitions_text(self.packet(u, "compare")) if definitions \
             else self.lean_text(u)
 
     def decide(self, uid: str, verdict: str, comparison: str, detail: str = "",
