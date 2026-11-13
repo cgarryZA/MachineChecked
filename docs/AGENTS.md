@@ -500,6 +500,12 @@ machinechecked review export --out machinechecked-reviews/my-reviews.json
 `decide` records the coverage and its basis with the verdict, both optional
 ([Coverage with the verdict](REVIEWING.md#coverage-with-the-verdict)).
 
+For many units, `review lock`, `decide` and `submit` take `--manifest FILE --json`: a JSON list of
+`{"unit", ...the step's fields}`, each text inline or as `NAME_file`, applied entry by entry with
+the same refusals, and answered with one document listing each entry's result
+(*Many units at once* in [REVIEWING.md](REVIEWING.md)). Each unit still needs its own `read`
+before the lock and `author` before the report.
+
 Run `compare` on a claim only after its review, or say in the reading that you had: its default
 stage shows the Lean and what others recorded. The steps are saved in your workspace
 (`review-work/`, below); record an informed `compare` there before reviewing the same claim with
