@@ -20,6 +20,8 @@ export const VERDICTS = {
       detail: "List the representation choices, and say why each is harmless." },
     { value: "broader", label: "Broader; implies the printed claim",
       detail: "State the instantiation that gives the printed claim." },
+    { value: "faithful to the correction", label: "Faithful to the correction",
+      correctionOnly: true },
   ],
   problem: [
     { value: "narrower", label: "Narrower",

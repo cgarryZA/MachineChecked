@@ -55,11 +55,15 @@ ORDER_EXPOSURE = "interpretation-informed review order"
 
 # The verdicts of the protocol, by group, as on the review page (`web/src/lib/review.js`).
 VERDICTS = {
-    "matches": ["faithful", "faithful with representation choices", "broader"],
+    "matches": ["faithful", "faithful with representation choices", "broader",
+                "faithful to the correction"],
     "problem": ["narrower", "mismatched", "vacuous", "refutation not valid"],
     "cannot": ["cannot determine"],
 }
 REFUTE_ONLY = {"refutation not valid"}
+# A correction (or special case) of a printed clause states the printed claim with the
+# correction: reviewed against the printed passage, its honest verdict is this one (#639).
+CORRECTION_ONLY = {"faithful to the correction"}
 # A proof step is reviewed as printed: does it hold? (`steps.VERDICTS`)
 from .steps import VERDICTS as STEP_VERDICTS
 
@@ -233,10 +237,11 @@ def member_verdicts(u: dict, given) -> tuple[dict, list[str]]:
                        + (f" ({', '.join(covered)})" if covered else ""))
             continue
         group = next((g for g, vs in VERDICTS.items() if value in vs), None)
-        if group is None or value in REFUTE_ONLY:
+        # A constructor or projection has no refutation and corrects no clause.
+        if group is None or value in REFUTE_ONLY | CORRECTION_ONLY:
             why.append(f"the verdict on {name}, {value!r}, is not one of: "
                        + ", ".join(x for vs in VERDICTS.values() for x in vs
-                                   if x not in REFUTE_ONLY))
+                                   if x not in REFUTE_ONLY | CORRECTION_ONLY))
             continue
         if not isinstance(detail, str):
             why.append(f"the detail of the verdict on {name} is not text")
@@ -689,7 +694,10 @@ class Session:
                               + ", ".join(v for vs in table.values() for v in vs), "invalid")
         if verdict in REFUTE_ONLY and not u.get("refute"):
             raise ReviewError(f"{verdict!r} applies only to a unit with a refutation", "invalid")
-        if verdict not in ("faithful", "holds as printed") and not (detail or "").strip():
+        if verdict in CORRECTION_ONLY and not u.get("correction"):
+            raise ReviewError(f"{verdict!r} applies only to a correction or a special case of a "
+                              "printed clause", "invalid")
+        if verdict not in ("faithful", "holds as printed", *CORRECTION_ONLY)                 and not (detail or "").strip():
             raise ReviewError(f"verdict {verdict!r} needs --detail", "invalid")
         if not (comparison or "").strip():
             raise ReviewError("the comparison is empty", "invalid")

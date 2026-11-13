@@ -883,33 +883,123 @@ def _build_simple(a):
 
 
 def cmd_check(a):
+    full = _assurance_config(a)
+    if a.fix_modules and not full:
+        sys.exit(NO_MODULES)
+    if a.changed and not full:
+        sys.exit(NO_CHANGED)
     if a.json:
         return _check_json(a)
-    if _assurance_config(a):
-        # The full assessment's check is its build, which exits 1 on a violation.
-        return _build_full(a, fix_modules=a.fix_modules, fail_on_violation=True)
-    if a.fix_modules:
-        sys.exit(NO_MODULES)
+    if full:
+        return _check_full(a)
     _check_simple(a)
 
 
 def _check_simple(a):
-    """`check` in zero configuration: exit 1 if a linked declaration is missing or not proved."""
+    """`check` in zero configuration: exit 1 if a linked declaration is missing or not proved.
+    With --claim, those claims' links and reviews instead of the summary; with --json-out, the
+    `check --json` document too, from the same view."""
     root, paper = _simple_target(a)
     view = _simple_view(root, paper)
-    _print_simple(view["body"], _check_summary(view, root)[0])
+    picked = _picked(a, view["body"]["claims"], _view_release(view))
+    if picked is None:
+        _print_simple(view["body"], _check_summary(view, root)[0])
+    else:
+        by_id = {c["id"]: c for c in view["body"]["claims"]}
+        print("\n\n".join("\n".join(_simple_claim_lines(by_id[cid])) for cid in picked))
     bad = [(c["number"], l) for c in view["body"]["claims"]
            for l in c["links"] if l["class"] != "proved"]
+    if a.json_out:
+        out, claims, failed = _check_simple_json(a, root, view)
+        _write_check_doc(a.json_out, out, _only(claims, picked), failed,
+                         **({"selected": picked} if picked is not None else {}))
+    # The exit status is the whole check's, so every failing link is named, shown or not.
     for number, l in bad:
         print(f"FAIL {number} -> {l['name']}: {l['status']}"
               + (f". {l['status_detail']}" if l.get("status_detail") else ""))
     if bad:
         sys.exit(1)
+    if picked is not None:
+        return
     n = sum(len(c["links"]) for c in view["body"]["claims"])
     if not n:
         print("no claim is linked yet: confirm links in `machinechecked view`")
         return
     print(f"Lean checked all {n} linked declaration(s)")
+
+
+def _simple_claim_lines(c: dict) -> list[str]:
+    """One claim of a zero-configuration view, for `check --claim`: its status, each linked
+    declaration with its status, and its reviews."""
+    head = f"{c['id']}  {c.get('number') or ''}".rstrip()
+    out = [head + (f" ({c['title']})" if c.get("title") else ""), f"  status: {c['status']}"]
+    for l in c["links"]:
+        out.append(f"  link {l['name']}: {l['status']}"
+                   + (f". {l['status_detail']}" if l.get("status_detail") else ""))
+    if not c["links"]:
+        out.append("  no declaration is linked to it")
+    for r in c.get("reviews", []):
+        out.append(f"  review by {r['reviewer']}: {r['verdict']['value']}"
+                   + ("" if r["current"] else " (not current)"))
+    return out
+
+
+def _view_release(view: dict) -> str | None:
+    """The release a zero-configuration view names, for messages."""
+    from .simple import view_release
+    return view_release(view["body"])
+
+
+NO_CHANGED = ("--changed: only a project with a machinechecked.toml keeps releases to compare; "
+              "zero configuration has none")
+
+
+def _picked(a, claims: list[dict], release: str | None) -> list[str] | None:
+    """The ids of the claims `--claim` names (each an id, a key or a printed number, as
+    `compare` takes them; several may be given, or separated by commas), in the order given;
+    None without --claim. A name that is not one claim's stops the command, with the nearest
+    claims."""
+    if not getattr(a, "claim", None):
+        return None
+    from . import compare as cmp
+    out = []
+    for q in (q.strip() for given in a.claim for q in given.split(",")):
+        if not q:
+            continue
+        try:
+            cid = cmp.resolve_claim(claims, q, release)
+        except cmp.CompareError as e:
+            sys.exit(f"--claim: {e}" + (f" (did you mean: {', '.join(map(str, e.candidates))})"
+                                         if e.candidates else ""))
+        if cid not in out:
+            out.append(cid)
+    return out
+
+
+def _only(claims: list[dict], ids: list[str] | None) -> list[dict]:
+    """The claims of `ids`, in that order; all of them when `ids` is None."""
+    if ids is None:
+        return claims
+    by_id = {c["id"]: c for c in claims}
+    return [by_id[i] for i in ids if i in by_id]
+
+
+def _check_doc(out: dict, claims: list[dict], failed: bool, **extra) -> dict:
+    """The `check --json` document (`machinechecked/check@1`) of these fields and claims."""
+    summary = {}
+    for c in claims:
+        summary[c["status"]] = summary.get(c["status"], 0) + 1
+    return {"schema": "machinechecked/check@1", "version": tool_version(), **out, **extra,
+            "summary": summary, "claims": claims, "ok": not failed, "note": CHECK_NOTE}
+
+
+def _write_check_doc(path: str, out: dict, claims: list[dict], failed: bool, **extra) -> None:
+    """Write the `check --json` document to `path` (`--json-out`), as --json prints it."""
+    dest = Path(path)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(json.dumps(_check_doc(out, claims, failed, **extra), indent=1,
+                               ensure_ascii=True) + "\n", encoding="utf-8")
+    print(f"wrote {dest}", file=sys.stderr)
 
 
 def _link_detail(l: dict) -> dict:
@@ -940,7 +1030,7 @@ NO_MODULES = ("--fix-modules: only a project with a machinechecked.toml lists `m
 
 FINDING_KEYS = ("id", "tier", "code", "subject", "message", "trigger", "file", "line", "lines",
                 "fingerprint", "at", "dismissed", "dismissal_stale", "resolved", "occurrences",
-                "occurrences_complete")
+                "occurrences_complete", "fix", "declaration")
 
 
 def _finding_details(cfg, eid: str) -> list[dict]:
@@ -1037,24 +1127,277 @@ def _reference_warnings(num: dict | None) -> list[dict]:
 
 
 def _check_json(a):
-    """`check --json`: every claim with its status and links, as one JSON document on stdout
-    (progress goes to stderr). Exit 1 if a linked declaration is missing or not proved."""
+    """`check --json`: every claim with its status and links (with --claim or --changed, those
+    claims, each with its full view), as one JSON document on stdout (progress goes to stderr);
+    with --json-out, the same document is written there too. Exit 1 if a linked declaration is
+    missing or not proved (with a machinechecked.toml: on a violation)."""
     import contextlib
+    extra = {}
     with contextlib.redirect_stdout(sys.stderr):
         if _assurance_config(a):
-            out, claims, failed = _check_full_json(a)
+            out, claims, failed, extra = _check_full_selected(a, *_check_full_run(a))
         else:
-            if a.fix_modules:
-                sys.exit(NO_MODULES)
-            out, claims, failed = _check_simple_json(a)
-    summary = {}
-    for c in claims:
-        summary[c["status"]] = summary.get(c["status"], 0) + 1
-    _print_json({"schema": "machinechecked/check@1", "version": tool_version(), **out,
-                 "summary": summary, "claims": claims, "ok": not failed, "note": CHECK_NOTE},
-                ensure_ascii=True)
+            root, paper = _simple_target(a)
+            view = _simple_view(root, paper)
+            out, claims, failed = _check_simple_json(a, root, view)
+            picked = _picked(a, view["body"]["claims"], _view_release(view))
+            claims = _only(claims, picked)
+            if picked is not None:
+                extra = {"selected": picked}
+    if a.json_out:
+        _write_check_doc(a.json_out, out, claims, failed, **extra)
+    _print_json(_check_doc(out, claims, failed, **extra), ensure_ascii=True)
     if failed:
         sys.exit(1)
+
+
+def _check_full_run(a):
+    """The assessment `check` reports with a machinechecked.toml: the stored one of the release
+    a full build made from exactly the project's present inputs (`pipeline.unchanged_release`:
+    the configuration, inventory, reviews, dismissals, replay record, display files, paper
+    sources, Lean inputs, probe and engine are all as they were), with the site written again
+    from it; else a new build. Returns the configuration, the build, the modules added (None
+    without --fix-modules) and whether the stored assessment was reused."""
+    from . import pipeline
+    cfg = _load_full(a)
+    if not a.fix_modules:
+        rel = pipeline.unchanged_release(cfg)
+        if rel is not None:
+            from . import evidence as ev
+            print(f"check: nothing the assessment reads has changed since release "
+                  f"{rel['release']}; reporting its stored assessment (`machinechecked build` "
+                  "assesses again)")
+            # Recorded as a build that reproduced the release, as a new build would have.
+            ev.record_release(cfg.out_dir, rel["release"], rel["evidence"])
+            return cfg, pipeline.rebuild_site(cfg, _web_dist(a.web), rel["release"]), None, True
+    cfg, res, added = _assess(a, cfg, a.fix_modules)
+    return cfg, res, added, False
+
+
+def _check_full(a):
+    """`check` without --json, with a machinechecked.toml: the summary `build` prints (or, with
+    --claim or --changed, those claims' views), and with --json-out the `check --json` document
+    of the same run. Exit 1 on a violation."""
+    cfg, res, added, reused = _check_full_run(a)
+    out, claims, failed, extra = _check_full_selected(a, cfg, res, added, reused)
+    if "selected" not in extra:
+        _print_full_report(cfg, res)
+    else:
+        if a.changed and extra.get("changed_since") is None:
+            print("--changed: there is no earlier release to compare with; every claim is shown")
+        elif a.changed and not claims:
+            print(f"no claim's status or obligations changed since release "
+                  f"{extra['changed_since']}")
+        if claims:
+            print("\n\n".join("\n".join(_claim_view_lines(c)) for c in claims))
+        if failed:
+            # The exit status is the whole check's: say so when the violation is elsewhere.
+            print(f"note: the check found {res['index']['findings']['total']['violation']} "
+                  "violation(s) in the project; `machinechecked check` lists them")
+    if a.json_out:
+        _write_check_doc(a.json_out, out, claims, failed, **extra)
+    if failed:
+        sys.exit(1)
+
+
+def _claim_signature(body: dict, cid: str) -> str | None:
+    """What `--changed` compares of claim `cid` in the evidence `body`: its status, its
+    blockers, each clause's state and review, and its open findings; None when the body has no
+    such claim."""
+    c = next((c for c in body["assessment"]["claims"] if c["id"] == cid), None)
+    if c is None:
+        return None
+    found = sorted((f.get("tier"), f.get("code"), f.get("subject"), f.get("message"))
+                   for f in body["assessment"]["findings"] if _open(f)
+                   and str(f.get("subject", "")).split("#")[0] == cid)
+    return json.dumps([c["status_code"], c.get("blockers", []),
+                       [(cl.get("name"), cl.get("state"), cl.get("review"))
+                        for cl in c.get("clauses") or []], found], default=str)
+
+
+def _open(f: dict) -> bool:
+    """Whether a finding is in force: neither dismissed nor resolved."""
+    return not f.get("dismissed") and not f.get("resolved")
+
+
+def _changed_claims(cfg, res) -> tuple[str | None, dict[str, dict | None]]:
+    """The release before this run's (`changes.previous_release`), and each claim whose status,
+    blockers, clauses or open findings differ there, with its status in that release (None for
+    a claim it did not have). No earlier release: (None, {})."""
+    from . import changes
+    from . import evidence as ev
+    since = changes.previous_release(cfg.out_dir, res["release"])
+    if since is None:
+        return None, {}
+    try:
+        old = ev.load(cfg.out_dir, ev.release(cfg.out_dir, since)["evidence"])["body"]
+    except ev.EvidenceError as e:
+        sys.exit(f"--changed: {e}")
+    new = ev.load(cfg.out_dir, res["evidence"])["body"]
+    before = {c["id"]: c for c in old["assessment"]["claims"]}
+    out = {}
+    for c in new["assessment"]["claims"]:
+        if _claim_signature(new, c["id"]) != _claim_signature(old, c["id"]):
+            b = before.get(c["id"])
+            out[c["id"]] = {"release": since, "status": b["status"],
+                            "status_code": b["status_code"]} if b else None
+    return since, out
+
+
+def _clause_establishes(cl: dict) -> str:
+    """What a clause's Lean establishes, in words, from the state the assessment gave it."""
+    st = cl.get("state")
+    if st == "proved":
+        rel = (f", a corrected form of “{cl['corrects']}”" if cl.get("corrects") else
+               f", a special case of “{cl['restricts']}”" if cl.get("restricts") else "")
+        return f"a Lean theorem proves its proposition{rel}"
+    return {"refuted": "a Lean theorem proves the negation of its proposition: the printed "
+                       "statement is false",
+            "refuted-outside": "a Lean theorem proves the negation of its proposition by a "
+                               "counterexample outside the paper's standing assumptions: the "
+                               "printed statement is not shown false",
+            "open": "nothing yet: no proof of its proposition passes its checks",
+            "unspecified": "nothing: no Lean proposition is written for it",
+            "stated": "the Lean definitions it names (a definition is reviewed, not proved)",
+            "unchecked": "not known: the Lean project was not checked in this build"}.get(
+        st, f"state {st}")
+
+
+def _claim_views(cfg, res, ids: list[str]) -> list[dict]:
+    """The view `check --claim` gives of each claim of `ids`, from the build `res`: its passage,
+    its status with the reasons and blockers the assessment gave, each clause (its proposition,
+    proof or refutation, witness, what it establishes, its review and its own blockers), the
+    findings in force that concern it or a declaration it names, and the review units that
+    concern it. Display only: every status word is the one the assessment stored."""
+    from . import evidence as ev
+    from .assess import Assessor
+    from .compare import Site
+    body = ev.load(cfg.out_dir, res["evidence"])["body"]
+    inv = {c["id"]: c for c in body["inventory"]["claims"]}
+    assessed = {c["id"]: c for c in body["assessment"]["claims"]}
+    listed = {c["id"]: c for c in res["index"]["claims"]}
+    data = Path(res["site"]) / "data"
+    site = Site(data)
+    try:
+        units = json.loads((data / "review-queue.json").read_text(encoding="utf-8"))["units"]
+    except (OSError, ValueError, KeyError):
+        units = []
+    judge = Assessor(cfg, body["inventory"], body.get("lean"), body.get("tex"), [], [])
+    order = {"violation": 0, "obligation": 1, "warning": 2}
+    out = []
+    for cid in ids:
+        c, ic, lc = assessed[cid], inv.get(cid, {}), listed.get(cid, {})
+        clauses = c.get("clauses") or []
+        own = judge.clause_blockers(ic, clauses) if ic else [[] for _ in clauses]
+        names = {cid}
+        for cl in clauses:
+            names.update(x for x in (cl.get("spec"), cl.get("accept"), cl.get("refute"),
+                                     cl.get("witness")) if x)
+            names.update(cl.get("defs") or [])
+            names.update(cl.get("def_reviews") or {})
+        found = sorted((f for f in body["assessment"]["findings"] if _open(f)
+                        and str(f.get("subject", "")).split("#")[0] in names),
+                       key=lambda f: (order.get(f.get("tier"), 3), f.get("id", "")))
+        anchor = (site.chunk(cid) or {}).get("anchor") or {}
+        placed = lc.get("anchor") or {}
+        passage = {"file": anchor.get("file") or ic.get("location"), "line": anchor.get("line"),
+                   "page": placed.get("page"), "placement": placed.get("kind"),
+                   "label": anchor.get("label") or ic.get("label"),
+                   "source_sha256": ic.get("source_sha256")}
+        out.append({
+            "id": cid, "kind": ic.get("kind"), "scope": ic.get("scope"),
+            "passage": passage, "status_reason": c.get("status_reason", []),
+            "blockers": c.get("blockers", []),
+            "clauses": [{"name": cl.get("name"), "proposition": cl.get("spec"),
+                         "proof": cl.get("accept"), "refutation": cl.get("refute"),
+                         "witness": cl.get("witness"),
+                         **({"definitions": cl["defs"]} if cl.get("defs") else {}),
+                         **({"corrects": cl["corrects"]} if cl.get("corrects") else {}),
+                         **({"restricts": cl["restricts"]} if cl.get("restricts") else {}),
+                         "state": cl.get("state"), "establishes": _clause_establishes(cl),
+                         "review": cl.get("review"), "blocked_by": mine}
+                        for cl, mine in zip(clauses, own)],
+            "findings": [{k: f[k] for k in FINDING_KEYS if k in f} for f in found],
+            "review_units": [{"id": u.get("id"), "kind": u.get("kind"), "name": u.get("name"),
+                              "state": u.get("state")}
+                             for u in units
+                             if any(x.get("id") == cid for x in u.get("claims") or [])]})
+    return out
+
+
+def _claim_view_lines(v: dict) -> list[str]:
+    """`check --claim`'s text of one claim's view (`_claim_views`)."""
+    head = f"{v['id']}  {v.get('number') or ''}".rstrip()
+    out = [head + (f" ({v['title']})" if v.get("title") else "")]
+    if "was" in v:
+        out.append(f"  was: {v['was']['status']} (release {v['was']['release']})"
+                   if v["was"] else "  new since the release before")
+    out.append(f"  status: {v['status']}")
+    out += [f"    {r}" for r in v.get("status_reason") or []]
+    p = v["passage"]
+    where = ", ".join(x for x in (p.get("file"), f"line {p['line']}" if p.get("line") else None,
+                                  f"page {p['page']}" if p.get("page") else None) if x)
+    out.append(f"  passage: {where or 'not located'}"
+               + (f" (placed: {p['placement']})" if p.get("placement") else
+                  " (not placed in the PDF)"))
+    for cl in v["clauses"]:
+        rel = (f" (corrects “{cl['corrects']}”)" if cl.get("corrects") else
+               f" (special case of “{cl['restricts']}”)" if cl.get("restricts") else "")
+        out.append(f"  clause “{cl['name']}”{rel}: {cl['state']}")
+        for key, word in (("proposition", "proposition"), ("proof", "proof"),
+                          ("refutation", "refutation"), ("witness", "witness")):
+            if cl.get(key):
+                out.append(f"    {word}: {cl[key]}")
+        if cl.get("definitions"):
+            out.append(f"    definitions: {', '.join(cl['definitions'])}")
+        out.append(f"    establishes: {cl['establishes']}")
+        if cl.get("review"):
+            out.append(f"    review: {cl['review']}")
+        if cl["blocked_by"]:
+            out.append("    blocked by: " + "; ".join(cl["blocked_by"]))
+    if not v["clauses"] and v.get("scope") == "formal":
+        out.append("  no clause: no Lean proposition is written for it")
+    if v["blockers"]:
+        out.append("  not accepted because:")
+        out += [f"    {b}" for b in v["blockers"]]
+    if v["findings"]:
+        out.append("  findings in force:")
+        out += [f"    {f['tier']}  {f['subject']}: {f['message']}" for f in v["findings"]]
+    if v["review_units"]:
+        out.append("  review units:")
+        out += [f"    {u['id']}: {u['state']}" for u in v["review_units"]]
+    return out
+
+
+def _check_full_selected(a, cfg, res, added, reused) -> tuple[dict, list[dict], bool, dict]:
+    """`check --json`'s fields and claims for this run (`_check_full_json`), with whether it
+    found a violation and the document's extra fields. With --claim or --changed, only those
+    claims, each with its view (`_claim_views`), and only their finding details; the extra
+    fields are then `selected` and, with --changed, `changed_since` (the release compared
+    with)."""
+    out, claims, failed = _check_full_json(a, cfg, res, added)
+    out["reused"] = reused
+    extra: dict = {}
+    picked = _picked(a, res["index"]["claims"], res["release"])
+    was = None
+    if a.changed:
+        since, was = _changed_claims(cfg, res)
+        extra["changed_since"] = since
+        if since is not None:
+            changed = [c["id"] for c in res["index"]["claims"] if c["id"] in was]
+            picked = changed if picked is None else [i for i in picked if i in was]
+        else:
+            was = None
+            picked = picked if picked is not None else [c["id"] for c in res["index"]["claims"]]
+    if picked is None:
+        return out, claims, failed, extra
+    extra["selected"] = picked
+    views = {v["id"]: v for v in _claim_views(cfg, res, picked)}
+    claims = [{**c, **views[c["id"]], **({"was": was[c["id"]]} if was is not None else {})}
+              for c in _only(claims, picked)]
+    keep = {f["id"] for v in views.values() for f in v["findings"]}
+    out["finding_details"] = [f for f in out["finding_details"] if f.get("id") in keep]
+    return out, claims, failed, extra
 
 
 def _with_hints(claims: list[dict], hints: dict[str, dict]) -> None:
@@ -1069,10 +1412,10 @@ def _with_hints(claims: list[dict], hints: dict[str, dict]) -> None:
             c["dismissed_hints"] = h["dismissed"]
 
 
-def _check_full_json(a) -> tuple[dict, list[dict], bool]:
-    """`check --json` with a machinechecked.toml: the document's fields, its claims, and whether
-    the assessment found a violation."""
-    cfg, res, added = _assess(a, _load_full(a), a.fix_modules)
+def _check_full_json(a, cfg, res, added) -> tuple[dict, list[dict], bool]:
+    """`check --json` with a machinechecked.toml, for the build `res` of `cfg` (with the modules
+    `added` by --fix-modules): the document's fields, its claims, and whether the assessment
+    found a violation."""
     idx = res["index"]
     wit = _witness_lists(cfg, res["evidence"])
     claims = [{"id": c["id"], "paper": c["paper"], "number": c.get("number"),
@@ -1094,8 +1437,13 @@ def _check_full_json(a) -> tuple[dict, list[dict], bool]:
            "replay": _replay_guard(cfg, res["evidence"]),
            **({"modules_added": added} if added is not None else {})}
     num = (res.get("content") or {}).get("numbering")
+    # Rows of the readings ledger whose declarations changed since they were read (`ledger.py`).
+    from .ledger import stale_rows
+    ledger = stale_rows(cfg, res.get("content"))
+    if ledger:
+        out["warnings"] = ledger
     if num is not None:
-        out["warnings"] = _reference_warnings(num)
+        out["warnings"] = _reference_warnings(num) + ledger
         out["numbering"] = num
         # With several papers, each paper's references and warnings by themselves.
         if num.get("papers"):
@@ -1106,13 +1454,12 @@ def _check_full_json(a) -> tuple[dict, list[dict], bool]:
     return out, claims, bool(idx["findings"]["total"].get("violation"))
 
 
-def _check_simple_json(a) -> tuple[dict, list[dict], bool]:
-    """`check --json` in zero configuration: the document's fields, its claims, and whether a
-    linked declaration is missing or not proved."""
+def _check_simple_json(a, root: Path, view: dict) -> tuple[dict, list[dict], bool]:
+    """`check --json` in zero configuration, for the view `view` of the project at `root`: the
+    document's fields, its claims, and whether a linked declaration is missing or not
+    proved."""
     from .moddocs import stale_doc_message
     from .simple import view_release
-    root, paper = _simple_target(a)
-    view = _simple_view(root, paper)
     body = view["body"]
     claims = [{"id": c["id"], "number": c["number"], "title": c["title"],
                "status": c["status"], "status_code": c["status_code"], "class": c["class"],
@@ -1192,6 +1539,24 @@ def _build_full(a, site: str | None = None, refresh: bool = False, fix_modules: 
     if refresh:
         _forget_indexes(cfg)
     cfg, res, _ = _assess(a, cfg, fix_modules, **settings)
+    _print_full_report(cfg, res)
+    if dest is not None:
+        # The site to publish is the audit's public export: what the configuration publishes,
+        # scanned for private material, as `export --out` writes it.
+        from .export import ExportError, export
+        try:
+            out = export(cfg, dest, res["release"], _web_dist(a.web))
+        except ExportError as e:
+            sys.exit(str(e))
+        print(f"wrote the audit to {out['out']}: publish this directory as it is "
+              "(audit.json describes it)")
+    if fail_on_violation and res["index"]["findings"]["total"].get("violation"):
+        sys.exit(1)
+
+
+def _print_full_report(cfg, res) -> None:
+    """What `build` and `check` print of a full assessment: each paper's statuses, the
+    findings, the semantic summary, and what blocks acceptance."""
     idx = res["index"]
     for pid, s in idx["summary"].items():
         print(f"paper {pid}:")
@@ -1208,14 +1573,24 @@ def _build_full(a, site: str | None = None, refresh: bool = False, fix_modules: 
     for line in _obligation_lines(details, _evidence_decls(cfg, res["evidence"])):
         print(line)
     # Names in module docstrings that nothing declares, names or files review text cites that
-    # nothing resolves (with file and line), and the unreviewed declarations only witnesses use.
+    # nothing resolves (with file and line), the unreviewed declarations only witnesses use, and
+    # the theorems that deny the proposition of a clause without a refutation.
     for f in details:
-        if f["code"] in ("module-doc-name", "review-citation", "witness-def-review") \
+        if f["code"] in ("module-doc-name", "review-citation", "witness-def-review",
+                         "unrecorded-refutation") \
                 and f["tier"] == "warning" \
                 and not f.get("dismissed"):
             print(f"  warning  {f['message']}")
+            if f.get("fix"):
+                # The inventory field that records it, to add to the clause.
+                print(f"           add to the clause in the inventory: "
+                      f"{json.dumps(f['fix'], ensure_ascii=False)[1:-1]}")
     # The Lean's references to the paper's numbers that disagree with it (`numbering.py`).
     for w in _reference_warnings((res.get("content") or {}).get("numbering")):
+        print(f"  warning  {w['message']}")
+    # Rows of the readings ledger whose declarations changed since they were read (`ledger.py`).
+    from .ledger import stale_rows
+    for w in stale_rows(cfg, res.get("content")):
         print(f"  warning  {w['message']}")
     if idx["findings"]["total"].get("warning"):
         print("  (warnings: see `check --json` or the reader)")
@@ -1234,18 +1609,6 @@ def _build_full(a, site: str | None = None, refresh: bool = False, fix_modules: 
     rg = _replay_guard(cfg, res["evidence"])
     if rg and rg["message"]:
         print(f"note: independent replay: {rg['message']}")
-    if dest is not None:
-        # The site to publish is the audit's public export: what the configuration publishes,
-        # scanned for private material, as `export --out` writes it.
-        from .export import ExportError, export
-        try:
-            out = export(cfg, dest, res["release"], _web_dist(a.web))
-        except ExportError as e:
-            sys.exit(str(e))
-        print(f"wrote the audit to {out['out']}: publish this directory as it is "
-              "(audit.json describes it)")
-    if fail_on_violation and idx["findings"]["total"].get("violation"):
-        sys.exit(1)
 
 
 def _fix_modules(cfg, res, rebuild):
@@ -1752,34 +2115,172 @@ def _review_text(a, s) -> None:
     _print_json(out) if a.json else print(out)
 
 
-def _review_lock(a, s) -> None:
-    seen = s.lock(a.unit, _text_arg(a.text))
-    print(f"reading recorded (not blind: the session is informed); `review show {a.unit}` "
-          "shows the Lean" if s.informed else
-          f"reading locked; `review show {a.unit}` shows the Lean")
+def _lock(s, uid: str, reading: str) -> tuple[str, list[dict]]:
+    """Lock a reading (`Session.lock`): what the command says, and what the reviewer had
+    already seen of the unit, which is also warned of on standard error."""
+    seen = s.lock(uid, reading)
     if seen and not s.informed:
         print("warning: this reading is not blind: you had already seen "
-              + "; ".join(f"the {x['what']} of {a.unit} (shown by {x['unit']})" for x in seen)
+              + "; ".join(f"the {x['what']} of {uid} (shown by {x['unit']})" for x in seen)
               + ". The report will say so, and promotion refuses it unless the maintainer "
               "passes --allow-revealed.", file=sys.stderr)
+    return (f"reading recorded (not blind: the session is informed); `review show {uid}` "
+            "shows the Lean" if s.informed else
+            f"reading locked; `review show {uid}` shows the Lean"), seen
+
+
+def _decide(s, uid: str, verdict, comparison: str, detail: str, witness: str, coverage,
+            basis, argument: str, bridge, would_decide: str, members: dict | None = None) -> str:
+    """Record a verdict (`Session.decide`): what the command says. `members` is a structure's
+    unit's separate verdicts on constants it covers (`review_cli.member_verdicts`)."""
+    s.decide(uid, verdict, comparison, detail, witness,
+             {"coverage": coverage, "basis": basis, "argument": argument,
+              "bridge": dict(zip(("theorem", "target"), bridge)) if bridge else None,
+              "would_decide": would_decide}, members=members)
+    return f"verdict recorded; `review author {uid}` shows the author's review"
+
+
+def _submit(s, uid: str, disagreements: str) -> tuple[str, dict]:
+    """Submit the report (`Session.submit`): what the command says, and the report."""
+    r = s.submit(uid, disagreements.strip())
+    return (f"report recorded: {r['unit']['id']}, {r['verdict']['value']}; "
+            "`review export --out FILE` writes your reports for the maintainer"), r
+
+
+def _positional(a, *names: str) -> None:
+    """A step run without --manifest needs its positional arguments."""
+    from .review_cli import ReviewError
+    missing = [n.upper() for n in names if getattr(a, n, None) is None]
+    if missing:
+        raise ReviewError(f"review {a.action} needs {' and '.join(missing)}, or --manifest FILE",
+                          "invalid")
+
+
+def _review_lock(a, s) -> None:
+    _positional(a, "unit", "text")
+    print(_lock(s, a.unit, _text_arg(a.text))[0])
 
 
 def _review_decide(a, s) -> None:
-    s.decide(a.unit, a.verdict, _text_arg(a.comparison), _text_arg(a.detail),
-             _text_arg(a.witness),
-             {"coverage": a.coverage, "basis": a.basis,
-              "argument": _text_arg(a.argument),
-              "bridge": dict(zip(("theorem", "target"), a.bridge)) if a.bridge else None,
-              "would_decide": _text_arg(a.would_decide)},
-             members={name: {"verdict": v, "detail": _text_arg(f)}
-                      for name, v, f in a.member or []} or None)
-    print(f"verdict recorded; `review author {a.unit}` shows the author's review")
+    _positional(a, "unit", "verdict", "comparison")
+    print(_decide(s, a.unit, a.verdict, _text_arg(a.comparison), _text_arg(a.detail),
+                  _text_arg(a.witness), a.coverage, a.basis, _text_arg(a.argument), a.bridge,
+                  _text_arg(a.would_decide),
+                  {name: {"verdict": v, "detail": _text_arg(f)}
+                   for name, v, f in getattr(a, "member", None) or []} or None))
 
 
 def _review_submit(a, s) -> None:
-    r = s.submit(a.unit, _text_arg(a.text).strip())
-    print(f"report recorded: {r['unit']['id']}, {r['verdict']['value']}; "
-          "`review export --out FILE` writes your reports for the maintainer")
+    _positional(a, "unit", "text")
+    print(_submit(s, a.unit, _text_arg(a.text))[0])
+
+
+# The fields of a manifest entry for each step (`review lock|decide|submit --manifest`), besides
+# `unit`: True for a text, which the entry gives inline (`comparison`) or as a file
+# (`comparison_file`, relative to the manifest's directory); False for a word or a value.
+MANIFEST_FIELDS = {
+    "lock": {"reading": True},
+    "decide": {"verdict": False, "comparison": True, "detail": True, "witness": True,
+               "coverage": False, "basis": False, "argument": True, "bridge": False,
+               "would_decide": True, "members": False},
+    "submit": {"disagreements": True},
+}
+MANIFEST_REQUIRED = {"lock": ("reading",), "decide": ("verdict", "comparison"),
+                     "submit": ("disagreements",)}
+
+
+def _manifest_entry(action: str, e, base: Path) -> tuple[str, dict]:
+    """A manifest entry's unit and fields, with its files read. Refused as `invalid` when it is
+    not an object with a unit, names a field the step does not take, gives a text both inline
+    and as a file, or lacks a field the step needs."""
+    from .review_cli import ReviewError
+    if not isinstance(e, dict) or not isinstance(e.get("unit"), str) or not e["unit"]:
+        raise ReviewError("an entry is an object with a `unit`", "invalid")
+    fields = MANIFEST_FIELDS[action]
+    known = {"unit", *fields, *(f"{k}_file" for k, text in fields.items() if text)}
+    extra = sorted(set(e) - known)
+    if extra:
+        raise ReviewError(f"review {action} takes no field {', '.join(extra)} (it takes "
+                          + ", ".join(sorted(known - {"unit"})) + ")", "invalid")
+    out = {}
+    for k, text in fields.items():
+        if text and f"{k}_file" in e:
+            if k in e:
+                raise ReviewError(f"give {k} or {k}_file, not both", "invalid")
+            if not isinstance(e[f"{k}_file"], str):
+                raise ReviewError(f"{k}_file is a file name", "invalid")
+            out[k] = (base / e[f"{k}_file"]).read_text(encoding="utf-8")
+        elif k in e:
+            if text and not isinstance(e[k], str):
+                raise ReviewError(f"{k} is a text (or give {k}_file)", "invalid")
+            out[k] = e[k]
+    need = [k for k in MANIFEST_REQUIRED[action] if k not in out]
+    if need:
+        raise ReviewError(f"review {action} needs {', '.join(need)}", "invalid")
+    b = out.get("bridge")
+    if b is not None:
+        if isinstance(b, dict):
+            b = [b.get("theorem"), b.get("target")]
+        if not (isinstance(b, list) and len(b) == 2 and all(isinstance(x, str) for x in b)):
+            raise ReviewError('bridge is [THEOREM, TARGET] or {"theorem", "target"}', "invalid")
+        out["bridge"] = b
+    return e["unit"], out
+
+
+def _manifest_step(action: str, s, uid: str, f: dict) -> tuple[str, dict]:
+    """One manifest entry's step, through the same `Session` method as the single command:
+    what it says, and what the result adds to the entry's JSON."""
+    if action == "lock":
+        said, seen = _lock(s, uid, f["reading"])
+        return said, {"revealed_by": seen}
+    if action == "decide":
+        return _decide(s, uid, f["verdict"], f["comparison"], f.get("detail", ""),
+                       f.get("witness", ""), f.get("coverage"), f.get("basis"),
+                       f.get("argument", ""), f.get("bridge"), f.get("would_decide", ""),
+                       f.get("members")), {}
+    said, r = _submit(s, uid, f["disagreements"])
+    return said, {"verdict": r["verdict"]["value"]}
+
+
+def _review_manifest(a, session) -> None:
+    """`review lock|decide|submit --manifest FILE`: the step for each entry of the JSON list in
+    FILE, in order, each in a session of its own as a separate command would be, with the same
+    refusals. A refused entry is reported and the others are still taken; the command then
+    exits 2."""
+    from . import review_cli as rc
+    if any(getattr(a, n, None) is not None for n in ("unit", "text", "verdict", "comparison")):
+        raise rc.ReviewError("give --manifest or the step's arguments, not both", "invalid")
+    try:
+        entries = json.loads(_text_arg(a.manifest))
+    except json.JSONDecodeError as e:
+        raise rc.ReviewError(f"the manifest is not JSON: {e}", "invalid") from None
+    if not isinstance(entries, list):
+        raise rc.ReviewError("the manifest is a JSON list of entries", "invalid")
+    base = Path.cwd() if a.manifest == "-" else Path(a.manifest).resolve().parent
+    results = []
+    for i, e in enumerate(entries):
+        uid = e.get("unit") if isinstance(e, dict) else None
+        try:
+            uid, f = _manifest_entry(a.action, e, base)
+            said, extra = _manifest_step(a.action, session(), uid, f)
+            results.append({"entry": i, "unit": uid, "ok": True, "message": said, **extra})
+        except rc.ReviewError as err:
+            results.append({"entry": i, "unit": uid, "ok": False, "error": err.to_json()})
+        except OSError as err:
+            results.append({"entry": i, "unit": uid, "ok": False,
+                            "error": {"kind": "invalid", "message": str(err)}})
+    ok = all(r["ok"] for r in results)
+    if a.json:
+        _print_json({"schema": "machinechecked/review-manifest@1", "action": a.action,
+                     "ok": ok, "entries": results})
+    else:
+        for r in results:
+            print(f"{r['unit'] if isinstance(r['unit'], str) else '(entry %d)' % r['entry']}: "
+                  + (r["message"] if r["ok"] else
+                     f"refused ({r['error']['kind']}): {r['error']['message']}"))
+        print(f"{sum(r['ok'] for r in results)} of {len(results)} entries taken")
+    if not ok:
+        sys.exit(2)
 
 
 def _review_export(a, s) -> None:
@@ -1806,9 +2307,12 @@ def cmd_review_step(a):
     from . import review_cli as rc
     work, root = _built_work(a)
     try:
-        s = rc.Session(work, rc.parse_reviewer(a.reviewer, a.same_family), a.workspace, a.mode,
-                       root=root)
-        REVIEW_STEPS[a.action][0](a, s)
+        def session():
+            return rc.Session(work, rc.parse_reviewer(a.reviewer, a.same_family), a.workspace,
+                              a.mode, root=root)
+        if getattr(a, "manifest", None):
+            return _review_manifest(a, session)
+        REVIEW_STEPS[a.action][0](a, session())
     except rc.ReviewError as e:
         if a.json:
             _print_json({"schema": "machinechecked/review-error@1", "ok": False,
@@ -1876,6 +2380,17 @@ def cmd_review_promote(a):
         r = subprocess.run(shlex.split(cfg.review_check), cwd=cfg.root)
         if r.returncode:
             sys.exit(r.returncode)
+
+
+def cmd_review_reports(a):
+    """Write the archived reports (`promote.reports_dir`) as the protocol's text blocks; they
+    are made from the records, and can be deleted and written again."""
+    from . import promote as pr
+    cfg = _load_full(a)
+    done = pr.write_texts(cfg, Path(a.out) if a.out else None)
+    if not done:
+        sys.exit(f"machinechecked: no promoted reports in {pr.reports_dir(cfg)}")
+    print(f"wrote {len(done)} report(s) as text to {done[0].parent}")
 
 
 INVENTORY = {"regions": "source_regions", "repin": "repin", "rebound": "rebound",
@@ -1984,6 +2499,16 @@ def _add_check(sub) -> None:
     k.add_argument("paper", nargs="?", help=PAPER_HELP)
     k.add_argument("--json", action="store_true",
                    help="print every claim's status and links as JSON (for scripts and agents)")
+    k.add_argument("--claim", action="append", metavar="CLAIM",
+                   help="show only this claim (its id, key or printed number; repeat it, or "
+                        "separate several by commas): its passage, each clause's proposition, "
+                        "proof, witness, what it establishes and what blocks it, the open "
+                        "findings and the review units that concern it")
+    k.add_argument("--changed", action="store_true",
+                   help="with a machinechecked.toml: show, as --claim does, each claim whose "
+                        "status, clauses or open findings differ from the release before")
+    k.add_argument("--json-out", metavar="FILE",
+                   help="also write the --json document to FILE, from the same run")
     k.add_argument("--fix-modules", action="store_true",
                    help="with a machinechecked.toml: add to `modules` each project module that "
                         "declares a proposition, proof, witness or definition the claims name "
@@ -2006,15 +2531,33 @@ def _add_review(sub) -> None:
                     help="accept a report whose reviewer had seen the unit's Lean or author's "
                          "review before writing their reading")
     pm.set_defaults(func=cmd_review_promote)
+    rp = rvs.add_parser("reports", help="write the promoted reports as readable text "
+                                        "(generated from their records; maintainer)")
+    _config_option(rp)
+    rp.add_argument("--out", help="the directory to write into (default: reports/ in the "
+                                  "project's output directory)")
+    rp.set_defaults(func=cmd_review_reports)
     for name, (_, help_) in REVIEW_STEPS.items():
         sp = rvs.add_parser(name, help=help_)
+        many = name in MANIFEST_FIELDS
         if name not in ("next", "status", "export"):
-            sp.add_argument("unit", help="a unit id of the queue, e.g. spec:Foo.thm_bar")
+            sp.add_argument("unit", **({"nargs": "?"} if many else {}),
+                            help="a unit id of the queue, e.g. spec:Foo.thm_bar")
         if name in ("lock", "submit"):
-            sp.add_argument("text", help="a file holding your text, or - to read it from standard input")
+            sp.add_argument("text", nargs="?",
+                            help="a file holding your text, or - to read it from standard input")
         if name == "decide":
-            sp.add_argument("verdict")
-            sp.add_argument("comparison", help="a file holding your comparison, or -")
+            sp.add_argument("verdict", nargs="?")
+            sp.add_argument("comparison", nargs="?", help="a file holding your comparison, or -")
+        if many:
+            sp.add_argument("--manifest", metavar="FILE",
+                            help="take this step for every entry of FILE (or - for standard "
+                                 "input), a JSON list of objects with `unit` and the step's "
+                                 "fields, each text inline or as NAME_file (see REVIEWING.md); "
+                                 "UNIT and the texts are then not given")
+            sp.add_argument("--json", action="store_true",
+                            help="with --manifest: print every entry's result as one JSON "
+                                 "document")
             sp.add_argument("--detail", help="a file holding what the verdict needs said")
             sp.add_argument("--witness", help="a file holding your note on the witness")
             sp.add_argument("--coverage", help="how far the unit's Lean states the claim, agreeing "

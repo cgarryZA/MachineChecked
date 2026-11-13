@@ -84,3 +84,62 @@ def test_clause_relations_are_checked():
     assert any("'gone', which is not an original clause" in m for m in msgs)
     assert any("scope but no refutation" in m for m in msgs)
     assert any("'somewhere' is not" in m for m in msgs)
+
+
+@pytest.mark.parametrize("kind", ["added-hypothesis", "partial", "negation"])
+def test_a_correction_kind_never_changes_the_status(kind):
+    for printed in ("open", "refuted", "refuted-outside"):
+        plain = code(clause(state=printed), clause("fixed", "proved", corrects="main"))
+        assert code(clause(state=printed),
+                    clause("fixed", "proved", corrects="main", kind=kind)) == plain
+
+
+def test_a_correction_kind_is_shown_in_the_reason():
+    why = status_reason([clause(state="refuted"),
+                         clause("fixed", "proved", corrects="main", kind="negation")])
+    assert len(why) == 1 and why[0].startswith("“fixed” corrects “main” with its true part and "
+                                               "the negation of its false part")
+    assert "for every instance" in why[0] and "not a narrowing" in why[0]
+    assert status_reason([clause(), clause("fixed", "proved", corrects="main",
+                                           kind="added-hypothesis", reason="adds 0 < x")])[0] == \
+        "“fixed” corrects “main” with an added hypothesis: adds 0 < x"
+    # An unproved correction says nothing.
+    assert status_reason([clause(), clause("fixed", corrects="main", kind="partial")]) == []
+
+
+def test_a_correction_kind_is_checked():
+    a = Assessor.__new__(Assessor)
+    a.findings = []
+    a.clause_relation_checks({"id": "T:thm:1", "clauses": [
+        {"name": "main"},
+        {"name": "ok", "corrects": "main", "kind": "negation"},
+        {"name": "alone", "kind": "partial"},
+        {"name": "odd", "corrects": "main", "kind": "weaker"}]})
+    msgs = [f["message"] for f in a.findings]
+    assert len(msgs) == 2
+    assert any("'alone' gives a correction's kind but corrects no clause" in m for m in msgs)
+    assert any("kind 'weaker' is not one of" in m for m in msgs)
+
+
+def test_a_refuted_variant_is_not_refuted_as_printed():
+    """#655: the clause refuted is a second printing; the clause "as printed" is open."""
+    c = code(clause("as printed"), clause("second edition", "refuted"))
+    assert c == "formal.variant-refuted.open"
+    assert fields(c)["status"] == "a printed variant refuted; other clauses open"
+    assert status_reason([clause("as printed"), clause("second edition", "refuted")]) == [
+        "“second edition” refuted; “as printed” open"]
+    # Without a clause named "as printed", the first original states the claim as printed.
+    assert code(clause("first", "refuted"), clause("second")) == "formal.refuted.open"
+
+
+def test_a_clause_says_what_it_is_expected_to_be():
+    """#650: an expectation is shown under the status until a proof settles it."""
+    why = status_reason([clause(expect="refute", expect_reason="C cannot be uniform in W"),
+                         clause("other", expect="undecided")])
+    assert why == ["“main” is expected to be refuted: C cannot be uniform in W",
+                   "“other”: whether it holds is undecided"]
+    assert status_reason([clause(state="refuted", expect="refute")]) == []
+    a = Assessor.__new__(Assessor)
+    a.findings = []
+    a.clause_relation_checks({"id": "T:thm:1", "clauses": [{"name": "main", "expect": "maybe"}]})
+    assert [f["code"] for f in a.findings] == ["clause-relation"]

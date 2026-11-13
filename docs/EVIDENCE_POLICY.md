@@ -25,6 +25,7 @@ A formal claim's status, from strongest to weakest:
 | `formal: proved, author-reviewed` | as accepted, with author provenance for at least one required review |
 | `formal: proved, review pending` | proved, but some review is missing or stale |
 | `refuted as printed[; corrected statement proved][; other clauses open]` | a theorem proves the negation of the printed claim |
+| `a printed variant refuted[; corrected statement proved][; other clauses open]` | a theorem proves the negation of an original clause other than the one stating the claim as printed (a second printing, say) |
 | `formal: open as printed; corrected statement proved[, review pending / , author-reviewed / and reviewed]` | a printed clause is open (or refuted only outside the paper's standing assumptions), and a proposition that corrects it is proved; the review level is the correction's |
 | `formal: open as printed; special case proved[, …]` | a printed clause believed true is open, and a special case of it is proved; the printed claim is not refuted |
 | `formal: open; some clauses proved` | some clauses are proved, and a printed clause with nothing proved for it is open |
@@ -35,8 +36,9 @@ A formal claim's status, from strongest to weakest:
 None of the statuses between `refuted as printed` and `formal: open` is a proof of the printed
 claim, so none is accepted: they say what is proved beside it. A refutation whose counterexample
 lies outside the paper's standing assumptions (`refute_scope`) refutes the formal proposition
-only; the printed claim reads open, with the reason under its status. A reason under a status is
-display only and changes nothing assessed.
+only; the printed claim reads open, with the reason under its status. A correction's `kind`
+(`added-hypothesis`, `partial`, `negation`) is shown beside it and in the reason; a reason under a
+status, and a kind, are display only and change nothing assessed.
 
 A proof that fails a check (wrong type, disallowed axiom,
 `sorry`, missing declaration) does not count, so its clause is open; the failure is a violation

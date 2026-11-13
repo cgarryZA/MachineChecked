@@ -190,6 +190,26 @@
       "class": "refuted",
       "explanation": "Lean proves the negation of an original formal proposition. A correcting proposition is proved. Other original clauses remain open."
     },
+    "formal.variant-refuted": {
+      "label": "a printed variant refuted",
+      "class": "refuted",
+      "explanation": "Lean proves the negation of an original clause other than the one that states the claim as printed; that clause is proved."
+    },
+    "formal.variant-refuted.open": {
+      "label": "a printed variant refuted; other clauses open",
+      "class": "refuted",
+      "explanation": "Lean proves the negation of an original clause other than the one that states the claim as printed. The claim as printed, or another original clause, is open."
+    },
+    "formal.variant-refuted.corrected": {
+      "label": "a printed variant refuted; corrected statement proved",
+      "class": "refuted",
+      "explanation": "Lean proves the negation of an original clause other than the one that states the claim as printed, and a proposition correcting it is proved."
+    },
+    "formal.variant-refuted.corrected.open": {
+      "label": "a printed variant refuted; corrected statement proved; other clauses open",
+      "class": "refuted",
+      "explanation": "Lean proves the negation of an original clause other than the one that states the claim as printed, and a proposition correcting it is proved. The claim as printed, or another original clause, is open."
+    },
     "scope.expository": {
       "label": "out of scope: expository",
       "class": "out-of-scope",

@@ -110,7 +110,8 @@ def several(papers, tex: dict, inv_claims: list[dict], auxes: dict, full: list[d
     for p in papers:
         claims, invs[p.id] = paper_inventory(p.id, tex, inv_claims, auxes)
         per[p.id] = nb.analyse(full, claims, invs[p.id], retrieval=retrieval,
-                               claim_text=claim_text, refs=mine[p.id])
+                               claim_text=claim_text, refs=mine[p.id],
+                               numberings=getattr(p, "numberings", ()))
         note = nb.drift_note(per[p.id]["pattern"], per[p.id]["references"], suggestions=False)
         if note:
             notes.append(f"paper {p.id}: {note}")
@@ -161,7 +162,7 @@ def build(cfg, tex: dict, inv_claims: list[dict], auxes: dict, lake: str = "lake
         claims, inv = paper_inventory(paper.id, tex, inv_claims, auxes)
         foreign = fz.foreign_roots(fy, paper.title) if fy and "error" not in fy else set()
         numbering = nb.analyse(full, claims, inv, blocks, foreign, retrieval, claim_text,
-                               root=root)
+                               root=root, numberings=paper.numberings)
         note = nb.drift_note(numbering["pattern"], numbering["references"],
                             suggestions=False)
         if note:

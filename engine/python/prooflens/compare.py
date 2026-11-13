@@ -78,6 +78,25 @@ def _generated(name: str, owner: str) -> bool:
     return bool(rest) and all(GENERATED.fullmatch(c) for c in rest.split("."))
 
 
+def resolve_claim(claims: list[dict], query: str, release: str | None) -> str:
+    """The id of the one claim of `claims` (of release `release`) that `query` names: its id,
+    its key within the paper (`thm:main`) or its printed number (`Theorem 2.1`)."""
+    q = str(query or "").strip()
+    if any(c["id"] == q for c in claims):
+        return q
+    norm = lambda s: re.sub(r"\s+", " ", str(s or "")).strip().lower()
+    for match in (lambda c: c["id"].split(":", 1)[-1] == q,
+                  lambda c: norm(c.get("number")) == norm(q)):
+        found = [c["id"] for c in claims if match(c)]
+        if len(found) == 1:
+            return found[0]
+        if found:
+            raise CompareError(f"{q!r} names {len(found)} claims; give its id", "ambiguous",
+                               found)
+    near = difflib.get_close_matches(q, [c["id"] for c in claims], n=5, cutoff=0.3)
+    raise CompareError(f"no claim {q!r} in release {release}", "unknown-claim", near)
+
+
 class Site:
     """The claims, declaration records and review queue of one build's site data."""
 
@@ -117,21 +136,7 @@ class Site:
     def resolve_claim(self, query: str) -> str:
         """The id of the claim `query` names: its id, its key within the paper (`thm:main`) or
         its printed number (`Theorem 2.1`)."""
-        q = str(query or "").strip()
-        if q in self._by_id:
-            return q
-        norm = lambda s: re.sub(r"\s+", " ", str(s or "")).strip().lower()
-        for match in (lambda c: c["id"].split(":", 1)[-1] == q,
-                      lambda c: norm(c.get("number")) == norm(q)):
-            found = [c["id"] for c in self.claims if match(c)]
-            if len(found) == 1:
-                return found[0]
-            if found:
-                raise CompareError(f"{q!r} names {len(found)} claims; give its id", "ambiguous",
-                                   found)
-        near = difflib.get_close_matches(q, [c["id"] for c in self.claims], n=5, cutoff=0.3)
-        raise CompareError(f"no claim {q!r} in release {self.index.get('release')}",
-                           "unknown-claim", near)
+        return resolve_claim(self.claims, query, self.index.get("release"))
 
     def store(self) -> dict[str, dict]:
         """Every declaration record of the build, by name."""
@@ -376,6 +381,7 @@ def _clause(cl: dict) -> dict:
             "label": cl.get("label"), "role": "locked statement",
             "accept": cl.get("accept"), "refute": cl.get("refute"),
             "corrects": cl.get("corrects"), "restricts": cl.get("restricts"),
+            "kind": cl.get("kind"),
             "witness": cl.get("witness"),
             "statement": _statement(cl.get("statement")),
             "proofs": {k: {x: v.get(x) for x in ("name", "module", "range", "axioms", "sorry",
@@ -554,9 +560,13 @@ def _informed(ch: dict) -> dict:
             "symbols": ch.get("symbols") or [],
             "clause_reviews": [{"clause": cl.get("name"), "spec": cl.get("spec"),
                                 "spec_review": cl.get("spec_review"),
-                                "def_reviews": cl.get("def_reviews")}
+                                "def_reviews": cl.get("def_reviews"),
+                                # What the author expects of the clause, and why (#650).
+                                **{k: cl[k] for k in ("expect", "expect_reason", "reason")
+                                   if cl.get(k)}}
                                for cl in ch.get("clauses") or []],
             "assessment": {k: ch.get(k) for k in ("status", "status_code", "class", "blockers",
+                                                   "status_reason",
                                                    "findings", "scope", "scope_note",
                                                    "source_evidence", "source_matches")},
             **({"step": {k: (ch["step"] or {}).get(k) for k in ("correspondence", "route",
@@ -684,8 +694,13 @@ def unit_packet(site: Site, unit: dict, stage: str) -> dict:
     out = _head(site, stage, {"unit": unit["id"], "stage": stage})
     # The unit's declaration names are Lean: not part of the read stage.
     keys = ("id", "kind", "unit", "parent", "papers") if stage == "read" else \
-        ("id", "kind", "unit", "parent", "name", "lean", "route", "papers")
+        ("id", "kind", "unit", "parent", "name", "lean", "route", "papers", "correction")
     out["unit"] = {k: unit.get(k) for k in keys if unit.get(k) is not None}
+    if out["unit"].get("correction") and stage != "informed":
+        # Which printed clause it corrects is the inventory's; the reason given for it is the
+        # author's, shown with the author's review.
+        out["unit"]["correction"] = {k: v for k, v in out["unit"]["correction"].items()
+                                     if k != "reason"}
     missing = [c["id"] for c, ch in zip(unit.get("claims") or [], chunks) if ch is None]
     chunks = [ch for ch in chunks if ch is not None]
     out["claims"] = [_claim_ref(ch) for ch in chunks]
@@ -1498,6 +1513,14 @@ def packet_text(pk: dict) -> str:
                               + [x for c in conns for x in connection_lines(c)]))
     if pk["paper"].get("note"):
         out.insert(0, pk["paper"]["note"])
+    cor = (pk.get("unit") or {}).get("correction")
+    if cor:
+        what = "a correction of" if cor["relation"] == "corrects" else "a special case of"
+        out.append(f"This proposition is {what} the printed clause “{cor['of']}”"
+                   + (f": {cor['reason']}" if cor.get("reason") else "")
+                   + ". Compare it with the passage and that correction; if it is the printed "
+                   "claim with exactly that correction, the verdict is 'faithful to the "
+                   "correction'.")
     lean = pk.get("lean")
     if lean is not None:
         for d in lean["declarations"]:

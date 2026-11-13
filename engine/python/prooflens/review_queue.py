@@ -237,6 +237,12 @@ def assurance_queue(index: dict, chunks: dict, store: dict, authors: list[str]) 
             u["claims"].append({"id": c["id"], "number": c["number"], "title": c["title"],
                                 "file": c["file"], "status": c["status"]})
             u["clauses"].append(cl["name"])
+            # A correction or special case of a printed clause is reviewed against the printed
+            # passage with the correction it claims (`faithful to the correction`).
+            for rel in ("corrects", "restricts"):
+                if cl.get(rel):
+                    u["correction"] = {"relation": rel, "of": cl[rel],
+                                       "reason": cl.get("reason")}
             u["effort"] = round(_effort_spec(st, u["unreviewed"]), 2)
     units = list(specs.values())
     for u in units:

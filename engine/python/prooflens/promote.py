@@ -29,8 +29,10 @@ was made at, and match the manuscript; its verdict must be holds as printed, hol
 (with the argument), or false as printed (with the failing case). Its marker is
 `<!-- step-review: CLAIM SOURCE-SHA256 verdict=holds|gap|false by=REVIEWER -->`.
 
-For each report it accepts, it archives the report (JSON and the protocol's text block) and
-writes `<!-- spec-review: NAME HASH by=REVIEWER source=CLAIM@DIGEST... -->` (or `def-review`,
+For each report it accepts, it archives the report as one record (`reports/<stem>.json` beside
+the review files: the report as exported, which holds every pin the marker binds) and writes
+a line ``Review by REVIEWER: VERDICT (report `reports/<stem>.json`).`` and
+`<!-- spec-review: NAME HASH by=REVIEWER source=CLAIM@DIGEST... -->` (or `def-review`,
 `step-review`; no `source` when no claim's passage is read) after the declaration's (or step's)
 last marker, in the exact form the acceptance checker reads, then assesses the stored evidence
 again. A promoted marker records the reviewer the report names; who they are is as the report
@@ -39,10 +41,15 @@ states it.
 A report on a structure's unit is one reading and one verdict for the structure and the
 constants Lean generates for it that the unit lists (`unit.lean`: its constructor and
 projections). Each must still be one of those, at the fingerprint the report pinned for it. The
-report is archived once, and a `def-review` marker is written for each of them, so that the
-acceptance checker, which reads one marker per declaration, finds each reviewed. A separate
-verdict on one of them (`verdict.members`) that is not one recorded as a review leaves that one
-without a marker.
+report is archived once, as one record, and a `def-review` marker is written for each of them,
+each after its own `Review by` line linking that record, so that the acceptance checker, which
+reads one marker per declaration, finds each reviewed. A separate verdict on one of them
+(`verdict.members`) that is not one recorded as a review leaves that one without a marker.
+
+The protocol's text block of an archived report is not kept: `write_texts` (`review reports`)
+writes it from the record, into the output directory. A line that version 0.1.25 or earlier
+wrote links the block it kept beside the record, `reports/<stem>.md`; its record is the one of
+the same stem, and the block can be deleted.
 """
 
 from __future__ import annotations
@@ -56,7 +63,8 @@ from . import review_sources
 from .config import Config
 from .reviews import history, load_reviews, review_files
 
-ACCEPTABLE = {"faithful", "faithful with representation choices", "broader"}
+ACCEPTABLE = {"faithful", "faithful with representation choices", "broader",
+              "faithful to the correction"}
 NEEDS_DETAIL = {"faithful with representation choices", "broader"}
 # A review of a printed step records a finding; an open question is not one.
 STEP_ACCEPTABLE = {"holds as printed", "holds, with a gap in the argument", "false as printed"}
@@ -155,6 +163,9 @@ def check_report(r: dict, body: dict, cfg: Config, accept_same_family: bool,
         if pid in papers and papers[pid].get("revision") != revn:
             why.append(f"paper {pid} is at another revision than the one reviewed")
     v = r["verdict"]["value"]
+    if v == "faithful to the correction" and not corrects_a_clause(body, u):
+        why.append("verdict 'faithful to the correction' applies only to the proposition of a "
+                   "clause that corrects, or is a special case of, a printed clause")
     if v == "cannot determine":
         why.append("verdict 'cannot determine' is not one that is recorded as a review: it "
                    "leaves an open question, and no defect")
@@ -225,6 +236,14 @@ def covers(r: dict, body: dict) -> tuple[list[str], dict, list[str]]:
     why += [f"the separate verdicts: {b}" for b in bad]
     out = {n: v for n, v in apart.items() if v["value"] not in ACCEPTABLE}
     return [u.get("name")] + [n for n in names if n not in out], out, why
+
+
+def corrects_a_clause(body: dict, u: dict) -> bool:
+    """Whether the unit's proposition is, in the evidence `body`, that of a clause that corrects
+    (`corrects`) or is a special case of (`restricts`) a printed clause."""
+    return u.get("kind") == "spec" and any(
+        cl.get("spec") == u.get("name") and (cl.get("corrects") or cl.get("restricts"))
+        for c in (body.get("inventory") or {}).get("claims", []) for cl in c.get("clauses", []))
 
 
 def coverage_refusals(r: dict) -> list[str]:
@@ -353,9 +372,13 @@ def with_covers(r: dict, cur: dict | None, body: dict) -> dict | None:
     return {**cur, "covers": cov, "left_out": out}
 
 
-def report_text(r: dict, cur: dict) -> str:
-    """The report as the protocol's text block."""
+def report_text(r: dict, cur: dict | None = None) -> str:
+    """The report as the protocol's text block. The hashes it prints are the current
+    declaration's or step's (`cur`); without `cur`, the report's own pins, which promotion
+    checked are the current ones, so the block of an archived report is the one its promotion
+    would print."""
     u, p, rv = r["unit"], r["pins"], r["reviewer"]
+    cur = cur or pinned(r)
     ms = "; ".join(f"{k} {v}" for k, v in (p.get("manuscripts") or {}).items()) or "—"
     return "\n".join([
         f"### {', '.join(u['claims']) or u['id']}: {u['name']}",
@@ -372,24 +395,37 @@ def report_text(r: dict, cur: dict) -> str:
         f"Witness: {r['comparison'].get('witness') or '—'}",
         f"Verdict: {r['verdict']['value']}"
         + (f" — {r['verdict']['detail']}" if r['verdict'].get('detail') else ""),
-        *_covers_lines(r, cur),
+        *_covers_lines(r),
         *_coverage_lines(r),
         f"Disagreements with the author's review (shown {r['author_review']['shown_at']}): "
         f"{r['author_review'].get('disagreements') or 'none'}", ""])
 
 
-def _covers_lines(r: dict, cur: dict) -> list[str]:
-    """The text block's lines for a structure's unit: the declarations the review covers, and
-    each separate verdict on one of them; none for any other unit."""
-    if not cur.get("covers"):
+def _covers_lines(r: dict) -> list[str]:
+    """The text block's lines for a report on a structure's unit, read from the report alone:
+    the declarations the review covers (`unit.lean`), and each separate verdict on one of them,
+    noting those that leave it without a marker; none for any other unit."""
+    u = r.get("unit") or {}
+    sep = (r.get("verdict") or {}).get("members") or {}
+    names = list(u.get("lean") or []) if u.get("kind") == "def" else []
+    if len(names) < 2 and not sep:
         return []
-    out = ["Covers: " + ", ".join(c["name"] for c in cur["covers"])]
-    for n, v in sorted(((r.get("verdict") or {}).get("members") or {}).items()):
+    out = ["Covers: " + ", ".join(n for n in names
+                                  if (sep.get(n) or {}).get("value", "faithful") in ACCEPTABLE)]
+    for n, v in sorted(sep.items()):
         out.append(f"Separate verdict on {n}: {v.get('value')}"
                    + (f" — {v['detail']}" if v.get("detail") else "")
-                   + (" (no marker is written for it)" if n in (cur.get("left_out") or {})
+                   + (" (no marker is written for it)" if v.get("value") not in ACCEPTABLE
                       else ""))
     return out
+
+
+def pinned(r: dict) -> dict:
+    """The hashes a report pinned, in the form of the current record they were checked against:
+    a step's source hash, a declaration's legacy hash."""
+    p = r["pins"]
+    return {"source_sha256": (p.get("fingerprints") or {}).get("source"),
+            "legacy_hash": p.get("legacy_hash")}
 
 
 def _coverage_lines(r: dict) -> list[str]:
@@ -431,9 +467,36 @@ def insert_after(path: Path, line: int | None, lines: list[str]):
 
 
 def reports_dir(cfg: Config) -> Path:
+    """Where promoted reports are archived: `reports/` in the first review directory, else
+    beside the first review file."""
     first = next((p for p in cfg.reviews if p.is_dir()), cfg.reviews[0].parent if cfg.reviews
                  else cfg.root)
     return first / "reports"
+
+
+def text_dir(cfg: Config) -> Path:
+    """Where `review reports` writes the archived reports as text by default: in the project's
+    output directory, which is generated and not kept with the reviews."""
+    return cfg.out_dir / "reports"
+
+
+def write_texts(cfg: Config, out: Path | None = None) -> list[Path]:
+    """Write each archived report (`reports_dir`, `<stem>.json`) as the protocol's text block,
+    `<stem>.md` in `out` (default `text_dir`). The text is made from the record alone, so it can
+    be deleted and written again; an archived file that is not a review report is skipped."""
+    out = Path(out) if out else text_dir(cfg)
+    rdir, done = reports_dir(cfg), []
+    for f in sorted(rdir.glob("*.json")) if rdir.is_dir() else []:
+        try:
+            r = json.loads(f.read_text(encoding="utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            continue
+        if not isinstance(r, dict) or r.get("schema") != "prooflens/review-report@1":
+            continue
+        out.mkdir(parents=True, exist_ok=True)
+        (out / f"{f.stem}.md").write_text(report_text(r), encoding="utf-8")
+        done.append(out / f"{f.stem}.md")
+    return done
 
 
 def plan(cfg: Config, reports: list[dict], accept_same_family: bool = False,
@@ -470,10 +533,11 @@ def already_promoted(cfg: Config, r: dict, cur: dict) -> bool:
 
 
 def apply(cfg: Config, accepted: list[tuple[dict, dict]]) -> list[dict]:
-    """Archive each report once and write its markers (one per declaration it covers,
-    `markers`), each after that declaration's last marker, else after the report's previous
-    marker, else where `target_file` says. A report whose markers are already written
-    (`already_promoted`) is left as it is, and listed with `already` set."""
+    """Archive each report once (its one record, `<stem>.json`) and write its markers (one per
+    declaration it covers, `markers`), each after a line linking the record: after that
+    declaration's last marker, else after the report's previous marker, else where
+    `target_file` says. A report whose markers are already written (`already_promoted`) is left
+    as it is, and listed with `already` set."""
     reviews, _ = load_reviews(cfg.reviews, cfg.ai_reviewers, cfg.root)
     rdir = reports_dir(cfg)
     rdir.mkdir(parents=True, exist_ok=True)
@@ -487,7 +551,6 @@ def apply(cfg: Config, accepted: list[tuple[dict, dict]]) -> list[dict]:
                       f"{r['submitted_at']}")
         (rdir / f"{stem}.json").write_text(json.dumps(r, indent=1, ensure_ascii=False) + "\n",
                                            encoding="utf-8")
-        (rdir / f"{stem}.md").write_text(report_text(r, cur), encoding="utf-8")
         prev = None
         for n, mk in mks:
             hist = history(reviews, r["unit"]["kind"], n)
@@ -497,7 +560,7 @@ def apply(cfg: Config, accepted: list[tuple[dict, dict]]) -> list[dict]:
                 path, line = (cfg.root / hist[-1].file).resolve(), hist[-1].line
             else:
                 path, line = prev
-            rel = Path(rdir / f"{stem}.md").resolve()
+            rel = Path(rdir / f"{stem}.json").resolve()
             try:
                 rel = rel.relative_to(path.parent.resolve())
             except ValueError:

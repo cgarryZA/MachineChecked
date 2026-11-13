@@ -61,8 +61,8 @@ def test_a_structure_is_reviewed_and_promoted_as_one_unit(toy):
     text = (toy / "reviews/definitions.md").read_text(encoding="utf-8")
     assert {m.group(2) for m in CHECKER.finditer(text) if m.group(4) == WHO} == {S, MK, X, Y}
     # One canonical record covering the four, not four archives.
+    assert len(list((toy / "reviews/reports").iterdir())) == 1
     assert len(list((toy / "reviews/reports").glob("*.json"))) == 1
-    assert len(list((toy / "reviews/reports").glob("*.md"))) == 1
 
     res = reassess(cfg, log=lambda *a: None)
     claim = next(c for c in json.loads(

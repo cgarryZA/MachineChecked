@@ -171,16 +171,18 @@ def test_one_report_writes_a_marker_for_each_declaration_and_one_archive(tmp_pat
     text = (tmp_path / "reviews" / "definitions.md").read_text(encoding="utf-8")
     found = {m.group(2): m.group(3) for m in CHECKER.finditer(text) if m.group(4) == WHO}
     assert found == {n: hexes(n) for n in (S, MK, X, Y)}
-    # One canonical record: one report (JSON and its text block) covering the four.
-    archive = sorted(p.name for p in (tmp_path / "reviews" / "reports").iterdir())
-    assert len(archive) == 2 and archive[0].endswith(".json") and archive[1].endswith(".md")
-    block = (tmp_path / "reviews" / "reports" / archive[1]).read_text(encoding="utf-8")
-    assert f"Covers: {S}, {MK}, {X}, {Y}" in block
-    # Each marker records a reading (its `Review by` line), as the assessment requires.
+    # One canonical record: one archived report covering the four.
+    (record,) = (tmp_path / "reviews" / "reports").iterdir()
+    assert record.suffix == ".json"
+    assert json.loads(record.read_text(encoding="utf-8"))["unit"]["lean"] == [S, MK, X, Y]
+    assert f"Covers: {S}, {MK}, {X}, {Y}" in pr.report_text(r)
+    # Each marker records a reading (its `Review by` line, linking the record), as the
+    # assessment requires.
     reviews, _ = load_reviews(cfg.reviews, [], tmp_path)
     mine = {x.name: x.text for x in reviews if x.by == WHO}
-    assert set(mine) == {S, MK, X, Y} and all(t.startswith(f"Review by {WHO}: faithful")
-                                              for t in mine.values())
+    assert set(mine) == {S, MK, X, Y} and all(
+        t.startswith(f"Review by {WHO}: faithful") and f"reports/{record.name}`" in t
+        for t in mine.values())
     assert pr.already_promoted(cfg, r, cur)
     again = pr.apply(cfg, [(r, cur)])
     assert all(d["already"] for d in again)
@@ -207,11 +209,14 @@ def test_a_separate_verdict_on_one_field_leaves_it_without_a_marker(tmp_path):
     assert set(cur["left_out"]) == {Y}
     text = (tmp_path / "reviews" / "definitions.md").read_text(encoding="utf-8")
     assert Y not in {m.group(2) for m in CHECKER.finditer(text)}
-    (md,) = (tmp_path / "reviews" / "reports").glob("*.md")
-    block = md.read_text(encoding="utf-8")
+    (record,) = (tmp_path / "reviews" / "reports").iterdir()
+    stored = json.loads(record.read_text(encoding="utf-8"))
     # The disagreement is recorded once, in the one report; the reading is not copied.
-    assert f"Separate verdict on {Y}: narrower — y is bounded by 10" in block
-    assert block.count(READING) == 1
+    assert stored["verdict"]["members"][Y]["value"] == "narrower"
+    assert record.read_text(encoding="utf-8").count(READING) == 1
+    block = pr.report_text(stored)
+    assert f"Separate verdict on {Y}: narrower — y is bounded by 10 in the paper (no marker" \
+        in block and f"Covers: {S}, {MK}, {X}\n" in block
 
 
 def test_promotion_refuses_a_member_it_cannot_check(tmp_path):
