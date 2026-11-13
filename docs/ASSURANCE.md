@@ -46,6 +46,21 @@ Sources can also be a pinned Git revision (`source = { git = "owner/repo", rev =
 - **A published version**: `published = "arXiv:2601.01234v1"` (or an arXiv source). It is labelled "arXiv v1". The inventory is pinned to it by its identifier: `"papers": {"T": {"commit": "2601.01234v1"}}`, or a claim's `"commit"`.
 - **An unpublished manuscript**: `version = "manuscript"` with the manuscript's commit as the source's `rev` (`source = { git = "owner/manuscript", rev = "<commit>" }`; a folder in the project may state its `rev`, checked against the folder's history when it is a repository of its own). It is labelled "Latest manuscript (commit abc1234)", never with a version number, even when `published` names the paper's earlier arXiv version. The inventory is pinned to that commit.
 
+**Another version's numbering.** When the version read numbers its statements differently from a version the Lean's docstrings also cite (a preprint read, a journal version cited), declare that version's numbering under its paper:
+
+```toml
+[[paper.numbering]]
+name = "journal"
+qualifier = "of the journal version"   # or qualifiers = ["of the journal version", "of the published version"]
+identifier = "doi:10.0000/example"     # optional
+complete = false                       # true when the map lists every numbered statement
+[paper.numbering.map]                  # this version's number = that version's number
+"Proposition 2" = "Proposition 5"
+"Lemma 1" = "Lemma 7"
+```
+
+A citation followed by the qualifier (`Lemma 1 (Lemma 7 of the journal version)`) is then checked against the map, not against the version read ([Paper numbers in the Lean](GETTING_STARTED.md#paper-numbers-in-the-lean)). The map is the project's assertion: it changes no status.
+
 `build` refuses an audit whose inventory is pinned to another version than the one it declares (for example `published` says arXiv v1 while the claims are pinned to a later manuscript commit), before Lean runs. A paper that declares no version is described by its source's commit when the inventory agrees, and by nothing otherwise. To publish an audit of each version, see [Publish an audit of each paper version](GETTING_STARTED.md#publish-an-audit-of-each-paper-version).
 
 With multiple root TeX files, specify `root`. Without LaTeX, MachineChecked falls back to the paper's PDF and labels the weaker source evidence.

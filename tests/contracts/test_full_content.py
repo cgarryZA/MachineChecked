@@ -209,3 +209,43 @@ def test_two_papers_check_each_reference_against_its_paper(toy, monkeypatch, cap
     chunk = json.loads((data / "claims" / next(
         c["file"] for c in index["claims"] if c["id"] == "U:thm:bound")).read_text())
     assert bound["id"] in [r["id"] for r in chunk["references"]]
+
+
+@needs_lean
+@needs_tex
+def test_a_declared_numbering_of_another_version_checks_its_qualified_citations(toy, monkeypatch,
+                                                                                capsys):
+    # The toy's journal version numbers the bound Theorem 2.4 and keeps Theorem 2.1 (#640). A
+    # citation qualified as the journal's is checked against the declared map: the bound's
+    # Theorem 2.4, a remark in the paper read, is no longer a warning, and Theorem 2.2, which
+    # the paper read has, is flagged because the map gives Theorem 2.1 as the journal's 2.1.
+    with open(toy / "machinechecked.toml", "a") as f:
+        f.write('\n[[paper.numbering]]\nname = "journal"\nqualifier = "of the journal version"\n'
+                'identifier = "doi:10.0000/toy"\n'
+                '[paper.numbering.map]\n"Theorem 2.5" = "Theorem 2.4"\n'
+                '"Theorem 2.1" = "Theorem 2.1"\n')
+    spec = toy / "lean" / "Toy" / "PaperSpec.lean"
+    edit(spec, "/-- Theorem 2.4: one constant",
+         "/-- Theorem 2.5 (Theorem 2.4 of the journal version): one constant")
+    edit(spec, "/-- Theorem 2.1: the sum",
+         "/-- Theorem 2.1 (Theorem 2.2 of the journal version): the sum")
+    res, cfg, _ = run(toy)
+    assert cfg.papers[0].numberings[0]["map"] == {"Theorem 2.5": "Theorem 2.4",
+                                                  "Theorem 2.1": "Theorem 2.1"}
+    refs = {(o["source"]["declaration"], o["reference"]): o
+            for o in res["content"]["numbering"]["references"]
+            if o["source"]["where"] == "docstring" and o.get("version")}
+    bound = refs[("Toy.PaperSpec.thm_bound", "Theorem 2.4")]
+    assert bound["status"] == "exact" and bound["paper"]["claims"] == ["T:thm:bound"]
+    wrong = refs[("Toy.PaperSpec.thm_even_add", "Theorem 2.2")]
+    assert wrong["status"] == "mismatch" and wrong["paper"]["claims"] == ["T:thm:even-add"]
+
+    monkeypatch.chdir(toy)
+    capsys.readouterr()
+    try:
+        cli.main(["check", "--json"])
+    except SystemExit:
+        pass
+    doc = json.loads(capsys.readouterr().out)
+    ids = {w["id"] for w in doc["warnings"] if w["kind"] == "paper-reference"}
+    assert wrong["id"] in ids and bound["id"] not in ids

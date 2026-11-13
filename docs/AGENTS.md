@@ -52,9 +52,12 @@ they do not change the exit code. `numbering` holds every such reference
 (`numbering.references`: `reference`, its exact `text` and `context`, its `source` with
 declaration, module, file, line and `where` it is (`docstring`, `name`, `module docstring` or
 `comment`; a comment's declaration is null when it is on none), its `role` (`statement` or
-`cited`), and `status`: `exact`, `other-kind`, `absent`, `unchecked` or `other-source`;
-`stale_lead` and `content.closer` when an exact reference's declaration reads closer to
-another statement) and the project-level `pattern` (counts by status, `places`: the
+`cited`), and `status`: `exact`, `other-kind`, `absent`, `unchecked`, `other-source` or
+`mismatch`; `stale_lead` and `content.closer` when an exact reference's declaration reads
+closer to another statement; `version` (`name`, `qualifier`, `identifier`) when the reference
+is qualified as a number of another version whose declared numbering it is checked against,
+`mismatch` meaning that the map pairs it with another statement than the one cited beside it)
+and the project-level `pattern` (counts by status, `places`: the
 declarations and modules holding disagreeing references, `drift`, `examples` (reference ids),
 and whether the paper's numbering is complete). Each suggestion has `reasons`: `signal`
 (`content`, `uses`, `number`, `lexical`, `structure`) and `text`; a `number` reason has
