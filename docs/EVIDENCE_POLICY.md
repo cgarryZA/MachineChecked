@@ -36,8 +36,9 @@ A formal claim's status, from strongest to weakest:
 None of the statuses between `refuted as printed` and `formal: open` is a proof of the printed
 claim, so none is accepted: they say what is proved beside it. A refutation whose counterexample
 lies outside the paper's standing assumptions (`refute_scope`) refutes the formal proposition
-only; the printed claim reads open, with the reason under its status. A reason under a status is
-display only and changes nothing assessed.
+only; the printed claim reads open, with the reason under its status. A correction's `kind`
+(`added-hypothesis`, `partial`, `negation`) is shown beside it and in the reason; a reason under a
+status, and a kind, are display only and change nothing assessed.
 
 A proof that fails a check (wrong type, disallowed axiom,
 `sorry`, missing declaration) does not count, so its clause is open; the failure is a violation

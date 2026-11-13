@@ -83,6 +83,7 @@
         "corrects": {"type": ["string", "null"]},
         "restricts": {"type": ["string", "null"]},
         "refute_scope": {"enum": ["outside-standing-assumptions", null]},
+        "kind": {"enum": ["added-hypothesis", "partial", "negation", null]},
         "reason": {"type": "string"},
         "expect": {"enum": ["accept", "refute", "undecided", null]},
         "expect_reason": {"type": "string"},

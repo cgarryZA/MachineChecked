@@ -36,6 +36,14 @@ OUT_OF_SCOPE = {"expository", "literature", "empirical", "proof-step", "part-of"
 # assumptions: it refutes the formal proposition, in a wider class than the paper's, and never
 # the printed claim.
 OUTSIDE = "outside-standing-assumptions"
+# What a correcting clause (`corrects`) does to the printed clause (`kind`), in the words shown
+# beside it. Display only: no kind changes a status.
+CORRECTION_KINDS = {
+    "added-hypothesis": "with an added hypothesis",
+    "partial": "by proving part of it",
+    "negation": "with its true part and the negation of its false part, which fails for every "
+                "instance, not only for one counterexample: not a narrowing of the printed claim",
+}
 
 
 EXPECTS = ("accept", "refute", "undecided")
@@ -51,8 +59,8 @@ def main_clause(originals: list[dict]) -> dict | None:
 def status_reason(clauses: list[dict]) -> list[str]:
     """Why a claim's status is what it is, in a line per reason, for the reader to show under
     the label: a refutation that holds only outside the paper's standing assumptions, a proved
-    correction or special case of a printed clause, and how many clauses are proved when some are
-    open. Display only; empty when the label says it all."""
+    correction (with its kind) or special case of a printed clause, and how many clauses are
+    proved when some are open. Display only; empty when the label says it all."""
     out = []
     originals = [c for c in clauses if not c.get("corrects") and not c.get("restricts")]
     main = main_clause(originals)
@@ -77,8 +85,10 @@ def status_reason(clauses: list[dict]) -> list[str]:
         elif c.get("accept_ok") and c.get("restricts"):
             out.append(f"“{c['name']}” is a special case of “{c['restricts']}”, which is not "
                        f"refuted{why}")
-        elif c.get("accept_ok") and c.get("corrects") and why:
-            out.append(f"“{c['name']}” corrects “{c['corrects']}”{why}")
+        elif c.get("accept_ok") and c.get("corrects") and (why or c.get("kind")):
+            how = CORRECTION_KINDS.get(c.get("kind"))
+            out.append(f"“{c['name']}” corrects “{c['corrects']}”"
+                       + (f" {how}" if how else "") + why)
     proved = [c for c in clauses if c.get("accept_ok")]
     if proved and len(clauses) > 1 and any(not c.get("accept_ok") for c in originals)             and not any(c.get("state") == "refuted" for c in originals):
         out.append(f"{len(proved)} of {len(clauses)} clauses proved")
@@ -969,8 +979,8 @@ class Assessor:
         res = {"name": cl.get("name", "main"), "spec": spec, "accept": cl.get("accept"),
                "refute": cl.get("refute"), "corrects": cl.get("corrects"),
                "restricts": cl.get("restricts"), "refute_scope": cl.get("refute_scope"),
-               "reason": cl.get("reason"), "expect": cl.get("expect"),
-               "expect_reason": cl.get("expect_reason"),
+               "kind": cl.get("kind"), "reason": cl.get("reason"),
+               "expect": cl.get("expect"), "expect_reason": cl.get("expect_reason"),
                "witness": cl.get("witness"), "defs": cl.get("defs", []),
                "regimes": cl.get("regimes", []), "checks": {}}
         if self.lean is None:
@@ -1618,7 +1628,8 @@ class Assessor:
 
     def clause_relation_checks(self, claim: dict) -> None:
         """A correction (`corrects`) or a special case (`restricts`) names an original clause of
-        its claim, not both; a refutation's scope (`refute_scope`) is given with a refutation,
+        its claim, not both; a correction's `kind` is one of CORRECTION_KINDS and comes with
+        `corrects`; a refutation's scope (`refute_scope`) is given with a refutation,
         and is `outside-standing-assumptions`."""
         cls = claim.get("clauses", [])
         originals = {cl.get("name") for cl in cls if not cl.get("corrects")
@@ -1636,6 +1647,15 @@ class Assessor:
                         "violation", "clause-relation", subj,
                         f"clause {cl.get('name')!r} {rel} {cl[rel]!r}, which is not an original "
                         "clause of this claim"))
+            if cl.get("kind") and not cl.get("corrects"):
+                self.findings.append(_finding(
+                    "violation", "clause-relation", subj,
+                    f"clause {cl.get('name')!r} gives a correction's kind but corrects no clause"))
+            elif cl.get("kind") and cl["kind"] not in CORRECTION_KINDS:
+                self.findings.append(_finding(
+                    "violation", "clause-relation", subj,
+                    f"clause {cl.get('name')!r}: kind {cl['kind']!r} is not one of "
+                    + ", ".join(map(repr, CORRECTION_KINDS))))
             if cl.get("expect") not in (None, *EXPECTS):
                 self.findings.append(_finding(
                     "violation", "clause-relation", subj,
