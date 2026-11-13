@@ -75,6 +75,11 @@ def requests_from_inventory(inv: dict) -> list[dict]:
                     add({"kind": "accept", "name": cl["accept"], "spec": cl["spec"]})
                 if cl.get("refute"):
                     add({"kind": "refute", "name": cl["refute"], "spec": cl["spec"]})
+            # The theorems attached to a refutation's scope (a covered reading, a class lemma)
+            # are checked as proofs of no particular proposition.
+            for e in (cl.get("refutation_covers") or []) + (cl.get("class_lemmas") or []):
+                if e.get("theorem"):
+                    add({"kind": "accept", "name": e["theorem"]})
             for w in [cl.get("witness")] + [r.get("witness") for r in cl.get("regimes", [])]:
                 if w:
                     add({"kind": "witness", "name": w})

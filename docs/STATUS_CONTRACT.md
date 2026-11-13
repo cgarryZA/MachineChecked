@@ -79,7 +79,8 @@ observed `detail`/`errors`. Its required dimensions are `formal`, `review`, `rep
 mechanical checks. Their complete state vocabularies are in `statuses.json` and the claim schema.
 
 - `formal` reports the assessor's clause state, including proved, refuted, refuted-outside (a
-  refutation by a counterexample outside the paper's standing assumptions), open and stated.
+  refutation by a counterexample outside the paper's standing assumptions, until a proved class
+  lemma shows the counterexample meets each declared standing assumption), open and stated.
   Definitions use the `stated` state.
 - `review` reports correspondence review independently of proof. The original `spec_review`
   and `def_reviews` retain individual stale/current reviews and self-declared provenance.

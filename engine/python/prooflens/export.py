@@ -138,7 +138,14 @@ def public_claim(chunk: dict, pub) -> dict:
     for cl in chunk["clauses"]:
         c = _pick(cl, ["name", "spec", "accept", "refute", "corrects", "restricts", "refute_scope",
                        "reason", "expect", "expect_reason", "witness", "defs", "state",
-                       "review", "checks", "evidence"])
+                       "review", "checks", "evidence", "refutation_does_not_cover",
+                       "standing_assumptions"])
+        # The theorems attached to a refutation's scope, with their Lean types only when the
+        # Lean is published.
+        for k in ("refutation_covers", "class_lemmas"):
+            if cl.get(k):
+                c[k] = [_pick(e, ["move", "assumption", "theorem", "identity", "state"] +
+                              (["type"] if pub.lean else [])) for e in cl[k]]
         c["regimes"] = [_pick(r, ["name", "description", "witness", "discharged"] +
                               (["type"] if pub.lean else [])) for r in cl.get("regimes", [])]
         if pub.lean and cl.get("statement"):
