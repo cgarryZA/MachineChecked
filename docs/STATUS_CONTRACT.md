@@ -3,7 +3,8 @@
 The assessor selects `status_code`; the reader never classifies a label. The exact code is
 carried through the assessment, manifest index, claim record, search index, CLI JSON and public
 export. Simple links select their code where the probe or module resolver observes the result.
-`status` and `class` are derived snapshots for CLI consumers, not inputs to browser logic.
+`status` and `class` are derived snapshots for CLI consumers, not inputs to browser logic. A
+claim may carry `status_reason`, a line per reason shown under its label (display only).
 
 The class `caution` (drawn in the reader's warning colour) marks a status that needs attention
 without being a failure: `link.other-route`, a proof step whose linked Lean reaches the enclosing
@@ -23,6 +24,13 @@ colour. The frontend never recomputes acceptance from the evidence dimensions.
 | `formal.author-reviewed` | formal: proved, author-reviewed | `proved` |
 | `formal.review-pending` | formal: proved, review pending | `proved` |
 | `formal.open` | formal: open | `open` |
+| `formal.open.partial` | formal: open; some clauses proved | `open` |
+| `formal.open.corrected` | formal: open as printed; corrected statement proved, review pending | `open` |
+| `formal.open.corrected.author-reviewed` | formal: open as printed; corrected statement proved, author-reviewed | `open` |
+| `formal.open.corrected.reviewed` | formal: open as printed; corrected statement proved and reviewed | `open` |
+| `formal.open.restricted` | formal: open as printed; special case proved, review pending | `open` |
+| `formal.open.restricted.author-reviewed` | formal: open as printed; special case proved, author-reviewed | `open` |
+| `formal.open.restricted.reviewed` | formal: open as printed; special case proved and reviewed | `open` |
 | `formal.unspecified` | formal: unspecified | `unspecified` |
 | `formal.malformed` | formal: malformed | `malformed` |
 | `formal.unchecked` | formal: unchecked | `unspecified` |
@@ -66,7 +74,8 @@ observed `detail`/`errors`. Its required dimensions are `formal`, `review`, `rep
 `locked-statement`, `exact-statement`, `axioms`, `witness` and `regimes` expose the existing
 mechanical checks. Their complete state vocabularies are in `statuses.json` and the claim schema.
 
-- `formal` reports the assessor's clause state, including proved, refuted, open and stated.
+- `formal` reports the assessor's clause state, including proved, refuted, refuted-outside (a
+  refutation by a counterexample outside the paper's standing assumptions), open and stated.
   Definitions use the `stated` state.
 - `review` reports correspondence review independently of proof. The original `spec_review`
   and `def_reviews` retain individual stale/current reviews and self-declared provenance.

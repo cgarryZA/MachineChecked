@@ -105,6 +105,7 @@
               "open",
               "proved",
               "refuted",
+              "refuted-outside",
               "malformed",
               "stated"
             ]
@@ -129,6 +130,7 @@
                     "enum": [
                       "proved",
                       "refuted",
+                      "refuted-outside",
                       "open",
                       "unspecified",
                       "unchecked",
@@ -304,6 +306,13 @@
         "type": "string"
       }
     },
+    "status_reason": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Why the status is what it is, a line per reason, shown under the label (display only)"
+    },
     "status_code": {
       "type": "string",
       "enum": [
@@ -312,6 +321,13 @@
         "formal.author-reviewed",
         "formal.review-pending",
         "formal.open",
+        "formal.open.partial",
+        "formal.open.corrected",
+        "formal.open.corrected.author-reviewed",
+        "formal.open.corrected.reviewed",
+        "formal.open.restricted",
+        "formal.open.restricted.author-reviewed",
+        "formal.open.restricted.reviewed",
         "formal.unspecified",
         "formal.malformed",
         "formal.unchecked",

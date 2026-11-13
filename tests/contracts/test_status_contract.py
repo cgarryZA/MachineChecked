@@ -47,6 +47,14 @@ def test_all_assessor_codes_have_one_presentation_and_copy_cannot_change_them(mo
     for fixed, rest in itertools.product([False, True], repeat=2):
         cases.append(("formal", [clause("refuted")] + ([clause(corrects="main")] if fixed else [])
                       + ([clause("open", name="other")] if rest else [])))
+    # A printed clause open, or refuted only outside the paper's assumptions, with a proved
+    # correction or special case at each review level; and some clauses proved, others open.
+    outside = {"state": "refuted-outside", "refute_ok": True}
+    for printed, rel, review in itertools.product(
+            [clause("open"), clause(**outside)], ["corrects", "restricts"],
+            ["reviewed", "author-reviewed", "pending"]):
+        cases.append(("formal", [printed, clause(review=review, name="fixed", **{rel: "main"})]))
+    cases.append(("formal", [clause("open"), clause(name="other")]))
     before = [Assessor.claim_code({"scope": scope}, cls) for scope, cls in cases]
     assert set(before) == {c for c in STATUSES if c.split('.')[0] in {"formal", "definition", "scope"}}
     for code in before:

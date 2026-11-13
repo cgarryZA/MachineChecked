@@ -118,6 +118,8 @@ def public_claim(chunk: dict, pub) -> dict:
     out = _pick(chunk, ["schema", "release", "id", "paper", "number", "title", "kind", "scope",
                         "scope_note", "scope_reviewed", "status", "status_code", "class", "source_matches", "source_evidence",
                         "source_sha256", "blockers"])
+    if chunk.get("status_reason"):
+        out["status_reason"] = chunk["status_reason"]
     out["location"] = chunk.get("location") if pub.source_text else None
     out["statement_tex"] = chunk.get("statement_tex") if pub.source_text else None
     out["context_tex"] = chunk.get("context_tex") if pub.source_text else None
@@ -134,7 +136,8 @@ def public_claim(chunk: dict, pub) -> dict:
                           (["file", "line"] if pub.source_text else [])) if a else None
     clauses = []
     for cl in chunk["clauses"]:
-        c = _pick(cl, ["name", "spec", "accept", "refute", "corrects", "witness", "defs", "state",
+        c = _pick(cl, ["name", "spec", "accept", "refute", "corrects", "restricts", "refute_scope",
+                       "reason", "witness", "defs", "state",
                        "review", "checks", "evidence"])
         c["regimes"] = [_pick(r, ["name", "description", "witness", "discharged"] +
                               (["type"] if pub.lean else [])) for r in cl.get("regimes", [])]

@@ -25,6 +25,41 @@
       "class": "open",
       "explanation": "A formal proposition exists, but a required proof is missing or fails a check."
     },
+    "formal.open.partial": {
+      "label": "formal: open; some clauses proved",
+      "class": "open",
+      "explanation": "Some clauses are proved and at least one original clause is open. What counts as established is unchanged: the claim is open."
+    },
+    "formal.open.corrected": {
+      "label": "formal: open as printed; corrected statement proved, review pending",
+      "class": "open",
+      "explanation": "An original clause is open, or refuted only outside the paper's standing assumptions; a proposition that corrects it is proved, and its review is pending. The printed claim is not established."
+    },
+    "formal.open.corrected.author-reviewed": {
+      "label": "formal: open as printed; corrected statement proved, author-reviewed",
+      "class": "open",
+      "explanation": "An original clause is open, or refuted only outside the paper's standing assumptions; a proposition that corrects it is proved and reviewed only by the author of the statements. The printed claim is not established."
+    },
+    "formal.open.corrected.reviewed": {
+      "label": "formal: open as printed; corrected statement proved and reviewed",
+      "class": "open",
+      "explanation": "An original clause is open, or refuted only outside the paper's standing assumptions; a proposition that corrects it is proved and independently reviewed. The printed claim is not established."
+    },
+    "formal.open.restricted": {
+      "label": "formal: open as printed; special case proved, review pending",
+      "class": "open",
+      "explanation": "An original clause, believed true, is open; a special case of it is proved, and its review is pending. The printed claim is open, not refuted."
+    },
+    "formal.open.restricted.author-reviewed": {
+      "label": "formal: open as printed; special case proved, author-reviewed",
+      "class": "open",
+      "explanation": "An original clause, believed true, is open; a special case of it is proved and reviewed only by the author of the statements. The printed claim is open, not refuted."
+    },
+    "formal.open.restricted.reviewed": {
+      "label": "formal: open as printed; special case proved and reviewed",
+      "class": "open",
+      "explanation": "An original clause, believed true, is open; a special case of it is proved and independently reviewed. The printed claim is open, not refuted."
+    },
     "formal.unspecified": {
       "label": "formal: unspecified",
       "class": "unspecified",
@@ -232,6 +267,10 @@
         "malformed": {
           "label": "malformed",
           "explanation": "The formal claim is malformed."
+        },
+        "refuted-outside": {
+          "label": "refuted outside the paper's assumptions",
+          "explanation": "Lean proves the negation of this formal proposition by a counterexample outside the paper's standing assumptions: the formal proposition is wider than the printed claim, which is not shown false."
         }
       }
     },
