@@ -1696,6 +1696,8 @@ def _review_status(a, s) -> None:
 
 def _review_text(a, s) -> None:
     """`review read`, `show` and `author`: what that step of the protocol shows of a unit."""
+    if a.action == "show" and getattr(a, "definitions", False) and not a.json:
+        return print(s.show(a.unit, definitions=True))
     out = getattr(s, a.action)(a.unit, a.json)
     _print_json(out) if a.json else print(out)
 
@@ -1975,6 +1977,10 @@ def _add_review(sub) -> None:
         if name in ("next", "status", "read", "show", "author"):
             sp.add_argument("--json", action="store_true",
                             help="print one JSON document holding only what this step shows")
+        if name == "show":
+            sp.add_argument("--definitions", action="store_true",
+                            help="print only the definitions the unit's Lean uses, each once, "
+                                 "with its docstring, signature and body or fields")
         else:
             sp.set_defaults(json=False)
         if name in ("next", "status"):
