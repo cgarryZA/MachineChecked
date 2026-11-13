@@ -179,7 +179,9 @@ identity. Each identity names one sub-term of the printed expression.
 Lean prints an application without its instance arguments, which a reader takes to be those
 instance resolution finds where the application stands. In the statement of a specification or a
 link (its `exact` text, its binders' types, its tree, its conclusion, and the sub-terms of its
-totalisation warnings), one that may not be is printed (#515):
+totalisation warnings), and in a declaration of the project that its author wrote (its
+`signature`, a definition's `value`, `params`, `body` and `result`, a structure's parameters and
+fields), one that may not be is printed (#515, #607):
 its application is printed with `@`, its explicit arguments, the instance arguments to show and
 `_` for its other implicit arguments (`@MeasureTheory.StronglyMeasurable _ _ _ m f` for Mathlib's
 `StronglyMeasurable[m] f`). An instance argument is left out only when resolution in its context
@@ -187,11 +189,13 @@ finds it, up to unfolding instances, and finds no other one when a local instanc
 out: with two σ-algebras `mΩ` and `m` on `Ω` in scope, resolution finds the later one, `m`, but a
 reader cannot tell which is meant, so it is printed. An argument built from instances alone
 (global ones, local ones, a class's parents), none of which another local instance of a related
-class about a common argument could replace, is what resolution finds, and is not searched for.
+class about a common argument could replace, is what resolution finds, and is not searched for;
+a local family of instances applied to arguments (`F i`, with `F : ℕ → MeasurableSpace Ω`) is
+searched for, and is printed unless resolution finds it.
 One of a class Lean finds `Subsingleton` on (`Decidable p`) stays implicit: any two of its
-instances are equal. An argument whose check fails is printed. The statement is read once, each
-sub-term in the scope of the binders around it; a definition's value and equations, an expansion
-and the properties a type carries keep Lean's printing. This changes what is printed only, never a fingerprint.
+instances are equal. An argument whose check fails is printed. Each expression is read once, each
+sub-term in the scope of the binders around it; a definition's equations, an expansion, the
+properties a type carries and Lean's generated helpers keep Lean's printing. This changes what is printed only, never a fingerprint.
 
 A statement record holds the whole proposition as one tree, `tree`. Its `binders` (the binders
 that open it, each `{role, name, id, type, binder, supplies}`, `role` one of `forall`,
