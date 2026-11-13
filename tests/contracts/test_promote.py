@@ -128,10 +128,13 @@ def test_promotion_end_to_end(toy, tmp_path):
         f" source=T:thm:triangle@{pins['T:thm:triangle']}"
     assert found["Toy.triangle"][2] == f" source=T:def:even@{pins['T:def:even']}"
     assert found["Toy.triangle._f"][2] == "" and found["Toy.triangle.match_1"][2] == ""
-    # The report is kept beside the markers, in full and as the protocol's text block.
+    # The report is kept beside the markers as one record; its text block is written on request,
+    # from the record, into the output directory.
     reports = list((toy / "reviews/reports").glob("*.json"))
-    assert len(reports) == 4 and len(list((toy / "reviews/reports").glob("*.md"))) == 4
-    blocks = [p.read_text() for p in (toy / "reviews/reports").glob("*.md")]
+    assert len(reports) == 4 and not list((toy / "reviews/reports").glob("*.md"))
+    texts = pr.write_texts(cfg)
+    assert len(texts) == 4 and all(t.parent == cfg.out_dir / "reports" for t in texts)
+    blocks = [p.read_text() for p in texts]
     assert sum("Coverage (recorded with the verdict): every clause, in one Lean statement" in b
                for b in blocks) == 1
     assert sum("Coverage" in b for b in blocks) == 1
@@ -242,3 +245,105 @@ def test_a_directory_of_reports_stands_for_its_json_files(toy, tmp_path, capsys)
     assert e.value.code == 2 and "Traceback" not in err
     assert err.strip() == (f"machinechecked: {tmp_path / 'empty'} is a directory with no report "
                            "files (*.json) in it")
+
+
+def promote_all(cfg, reports):
+    """Promote `reports`, which must all be accepted. Returns, by the stem of each new record,
+    the text block its promotion would have written."""
+    steps = pr.plan(cfg, reports)
+    assert all(not why for _, _, why in steps), [why for _, _, why in steps]
+    before = set(pr.reports_dir(cfg).glob("*.json"))
+    pr.apply(cfg, [(r, cur) for r, cur, _ in steps])
+    new = sorted(set(pr.reports_dir(cfg).glob("*.json")) - before)
+    assert len(new) == len(reports)
+    out = {}
+    for f in new:
+        rec = json.loads(f.read_text(encoding="utf-8"))
+        out[f.stem] = next(pr.report_text(r, cur) for r, cur, _ in steps if r == rec)
+    return out
+
+
+def statuses(cfg):
+    res = reassess(cfg, log=lambda *a: None)
+    return {c["id"]: c["status"] for c in res["index"]["claims"]}
+
+
+def queue_states(cfg):
+    return {u["name"]: (u["state"], [a["text"].startswith("Review by")
+                                     for a in u["author_review"]])
+            for u in queue(cfg)["units"]}
+
+
+@needs_lean
+@needs_tex
+def test_one_record_per_promoted_report(toy, tmp_path):
+    """#700: promotion keeps one record per report, and links it; the text block is written
+    from the record on request, the same as at promotion, and again after it is deleted. A
+    project whose lines link the text blocks an earlier promotion wrote has the same assessment,
+    with the blocks or without them; a re-review of a changed declaration adds a record."""
+    index, _, cfg = build(toy)
+    units = {u["name"]: u for u in queue(cfg)["units"]}
+    names = ["Toy.PaperSpec.thm_triangle", "Toy.triangle", "Toy.triangle._f",
+             "Toy.triangle.match_1"]
+    blocks = promote_all(cfg, [report(index, units[n]) for n in names])
+    rdir = toy / "reviews/reports"
+    assert sorted(p.suffix for p in rdir.iterdir()) == [".json"] * 4
+    files = (toy / "reviews/T.md", toy / "reviews/definitions.md")
+    text = "".join(f.read_text() for f in files)
+    for stem in blocks:
+        assert f"(report `reports/{stem}.json`)." in text
+    assert not re.search(r"\(report `[^`]*\.md`\)\.", text)
+
+    # The text blocks, from the records: those promotion would have written, and the same again
+    # after they are deleted.
+    out = tmp_path / "text"
+    written = pr.write_texts(cfg, out)
+    assert {p.stem: p.read_text(encoding="utf-8") for p in written} == blocks
+    for p in written:
+        p.unlink()
+    assert {p.stem: p.read_text(encoding="utf-8") for p in pr.write_texts(cfg, out)} == blocks
+    from prooflens import cli
+    cli.main(["review", "reports", "-c", str(toy / "machinechecked.toml")])
+    assert {p.stem: p.read_text(encoding="utf-8")
+            for p in (cfg.out_dir / "reports").glob("*.md")} == blocks
+
+    now = statuses(cfg)
+    assert now["T:thm:triangle"] == "formal: accepted"
+    seen = queue_states(cfg)
+
+    # As an earlier promotion left a project: lines linking `<stem>.md`, and the blocks beside
+    # the records. The assessment and the queue are the same, and again once the blocks are
+    # deleted.
+    for f in files:
+        f.write_text(re.sub(r"(\(report `[^`]*)\.json(`\)\.)", r"\1.md\2", f.read_text()))
+    assert len(re.findall(r"\(report `reports/[^`]*\.md`\)\.",
+                          "".join(f.read_text() for f in files))) == 4
+    for stem, b in blocks.items():
+        (rdir / f"{stem}.md").write_text(b, encoding="utf-8")
+    assert statuses(cfg) == now and queue_states(cfg) == seen
+    for stem in blocks:
+        (rdir / f"{stem}.md").unlink()
+    assert statuses(cfg) == now and queue_states(cfg) == seen
+    assert {p.stem for p in pr.write_texts(cfg, out)} == set(blocks)
+
+    # A changed declaration is reviewed again: its new report is a record of its own, beside
+    # the first, and its block prints the new hash.
+    edit(toy / "lean/Toy/Defs.lean", "| n + 1 => triangle n + (n + 1)",
+         "| n + 1 => (n + 1) + triangle n")
+    index, _, cfg = build(toy)
+    assert index and statuses(cfg)["T:thm:triangle"] != "formal: accepted"
+    q = {u["name"]: u for u in queue(cfg)["units"]}
+    changed = [n for n in names if q[n]["state"] == "stale"]
+    assert changed
+    later = ["2026-02-01T10:00:00Z", "2026-02-01T10:05:00Z", "2026-02-01T10:05:00Z",
+             "2026-02-01T10:06:00Z"]
+    again = promote_all(cfg, [report(index, q[n], times=later) for n in changed])
+    assert len(list(rdir.glob("*.json"))) == 4 + len(changed) and not list(rdir.glob("*.md"))
+    assert statuses(cfg)["T:thm:triangle"] == "formal: accepted"
+    texts = {p.stem: p.read_text(encoding="utf-8") for p in pr.write_texts(cfg, out)}
+    assert texts == {**blocks, **again}
+    for n in changed:
+        new = next(s for s in again if s.startswith(n + "--"))
+        old = next(s for s in blocks if s.startswith(n + "--"))
+        assert f"hash {q[n]['legacy_hash']}" in texts[new]
+        assert f"hash {q[n]['legacy_hash']}" not in texts[old]

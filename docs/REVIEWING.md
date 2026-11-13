@@ -863,4 +863,15 @@ Promotion checks that the manuscript, the passages read (their digests, pinned w
 Promotion records the maintainer’s decision for the reviewed proposition or definition. The marker it writes records the digests of the paper passages read, so a later change to that text reopens the review. A passage the manuscript no longer matches reads as unread until it is pinned again, and promotion refuses a report on it (see [Evidence policy](EVIDENCE_POLICY.md#a-review-is-a-reading-of-a-text), which also says how markers written before the digests were recorded are read, and how to add the digests to them).
 Acceptance also requires the claim’s proofs and all other required checks.
 
+For each report it accepts, promotion keeps one record: the report as exported, in `reports/STEM.json` beside the review files (`STEM` is the unit, the reviewer and the time of the report). The record holds the locked reading, the comparison and verdict, the coverage, the reviewer, the time of each stage and the pins the marker is checked against. The line promotion writes before the marker, ``Review by REVIEWER: VERDICT (report `reports/STEM.json`).``, links it. A later review of the same unit, after its statement changed, is another record beside the first, and the earlier one stays. To read the reports as text, in the protocol's form, write them from the records:
+
+```sh
+machinechecked review reports              # into reports/ in the output directory (.machinechecked/)
+machinechecked review reports --out DIR    # or into DIR
+```
+
+The text is generated: it can be deleted, and the command writes it again, the same.
+
+Promotion in version 0.1.25 and earlier also wrote that text as `reports/STEM.md` beside the record, and its line links the `.md` file. Such a project keeps working as it is: the line is read the same either way, and the assessment, `check` and the reader do not read the `.md` files. They can be deleted safely, keeping the `.json` file of each; the record of a link `reports/STEM.md` is `reports/STEM.json`, and `machinechecked review reports --out reviews/reports` (the directory that holds them) writes the text files back where the links name them.
+
 For details of the acceptance states, see [Evidence policy](EVIDENCE_POLICY.md). For the required configuration and review-marker format, see [Full assessment](ASSURANCE.md).
