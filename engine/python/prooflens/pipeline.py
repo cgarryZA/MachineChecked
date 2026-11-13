@@ -15,7 +15,8 @@ from . import manifest as mf
 from . import review_queue as rq
 from .assess import Assessor, line_location
 from .config import Config, ConfigError
-from .probe import FINGERPRINT_VERSION, MODDOCS, probe_query, requests_from_inventory, run_probe
+from .probe import (FINGERPRINT_VERSION, MODDOCS, negations_request, probe_query,
+                    requests_from_inventory, run_probe)
 from .reviews import load_dismissals, load_reviews
 from .review_sources import carried
 from .schemas import validate
@@ -109,8 +110,10 @@ def build(cfg: Config, release: str | None = None, skip_lean: bool = False,
         from .review_citations import citations, names_request
         cited = names_request(citations(cfg.reviews, cfg.root,
                                         getattr(cfg, "review_citations_ignore", None)))
+        negs = negations_request(inv)
         lean = run_probe(cfg, requests_from_inventory(inv) + [MODDOCS]
-                         + ([cited] if cited else []), lake=lake, build=lean_build)
+                         + ([cited] if cited else []) + ([negs] if negs else []),
+                         lake=lake, build=lean_build)
 
     tex, papers_prov, pdfs, auxes = {}, {}, {}, {}
     display = load_display(cfg)

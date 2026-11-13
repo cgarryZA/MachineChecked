@@ -1030,7 +1030,7 @@ NO_MODULES = ("--fix-modules: only a project with a machinechecked.toml lists `m
 
 FINDING_KEYS = ("id", "tier", "code", "subject", "message", "trigger", "file", "line", "lines",
                 "fingerprint", "at", "dismissed", "dismissal_stale", "resolved", "occurrences",
-                "occurrences_complete")
+                "occurrences_complete", "fix", "declaration")
 
 
 def _finding_details(cfg, eid: str) -> list[dict]:
@@ -1523,12 +1523,18 @@ def _print_full_report(cfg, res) -> None:
         if f["tier"] in ("violation", "obligation") and not f.get("dismissed"):
             print(f"  {f['tier']}  {f['subject']}: {f['message']}")
     # Names in module docstrings that nothing declares, names or files review text cites that
-    # nothing resolves (with file and line), and the unreviewed declarations only witnesses use.
+    # nothing resolves (with file and line), the unreviewed declarations only witnesses use, and
+    # the theorems that deny the proposition of a clause without a refutation.
     for f in details:
-        if f["code"] in ("module-doc-name", "review-citation", "witness-def-review") \
+        if f["code"] in ("module-doc-name", "review-citation", "witness-def-review",
+                         "unrecorded-refutation") \
                 and f["tier"] == "warning" \
                 and not f.get("dismissed"):
             print(f"  warning  {f['message']}")
+            if f.get("fix"):
+                # The inventory field that records it, to add to the clause.
+                print(f"           add to the clause in the inventory: "
+                      f"{json.dumps(f['fix'], ensure_ascii=False)[1:-1]}")
     # The Lean's references to the paper's numbers that disagree with it (`numbering.py`).
     for w in _reference_warnings((res.get("content") or {}).get("numbering")):
         print(f"  warning  {w['message']}")

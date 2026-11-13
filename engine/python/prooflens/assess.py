@@ -1474,6 +1474,7 @@ class Assessor:
                     f"the specification module {v['module']} imports {v['imports']}"))
             self.module_doc_checks()
             self.review_citation_checks()
+            self.unrecorded_refutation_checks()
         gates = self.gates(claims)
         out = {"claims": claims, "findings": self.findings, "gates": gates}
         if self.unlisted_declarers:
@@ -1524,6 +1525,41 @@ class Assessor:
             self.add_warning("module-doc-name", d["module"], d["module"], {"fingerprint": fp},
                              stale_doc_message(d), d["name"], reported=reported)
             self.findings[-1].update(file=d["file"], line=d["line"])
+
+    def unrecorded_refutation_checks(self):
+        """A warning for each theorem of the project whose type is `¬ S` or `S → False`, where
+        S is the proposition of a clause that names no refutation (`refute`): the Lean may
+        refute the clause while the inventory leaves it open. The warning carries the inventory
+        field that would record it (`fix`). It never changes a status: the refutation counts
+        only once the inventory names it and its checks pass. An auditor can dismiss it (code
+        `unrecorded-refutation`, the clause as subject, the theorem as trigger)."""
+        neg = self.lean.get("negations")
+        if not neg:
+            return
+        for e in neg.get("errors", []):
+            self.findings.append(_finding(
+                "warning", "unrecorded-refutation", "lean",
+                f"the search for theorems that deny a clause's proposition failed: {e}",
+                trigger="probe-error"))
+        by_spec: dict[str, list[dict]] = {}
+        for f in neg.get("found", []):
+            by_spec.setdefault(f["spec"], []).append(f)
+        for c in self.inv["claims"]:
+            for k, cl in enumerate(c.get("clauses", [])):
+                spec = cl.get("spec")
+                if not spec or cl.get("refute"):
+                    continue
+                for f in by_spec.get(spec, []):
+                    form = f"¬ {spec}" if f.get("form") == "not" else f"{spec} → False"
+                    rec = self.lean["decls"].get(f["name"]) or {}
+                    self.add_warning(
+                        "unrecorded-refutation", f"{c['id']}#{k}", f"{c['id']}#{k}",
+                        {"fingerprint": rec.get("fingerprint") or f"{spec}:{f['name']}"},
+                        f"declaration {f['name']} has type {form}; {spec} is the proposition "
+                        f"of clause {cl.get('name', 'main')!r} of {c['id']}, which has no "
+                        "`refute`",
+                        f["name"], fix={"refute": f["name"]}, declaration=f["name"],
+                        module=f.get("module"))
 
     def review_citation_checks(self):
         """A warning for each name or path cited in backticks by the review files that nothing
