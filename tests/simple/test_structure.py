@@ -751,6 +751,32 @@ def make_structure():
     return mod
 
 
+def test_the_readers_copy_ignores_what_the_tex_build_decides(tmp_path):
+    """#705: two copies made with different TeX builds (another PDF, coordinates shifted, another
+    release) compare equal; a changed declaration record, or a claim moved to another page, does
+    not."""
+    import json
+    make = make_structure()
+
+    def write(d, pdf, y, release, value, page=1):
+        (d / "papers").mkdir(parents=True)
+        (d / "decls").mkdir()
+        (d / "papers" / "P.pdf").write_bytes(pdf)
+        (d / "index.json").write_text(json.dumps({
+            "created": release, "release": release, "evidence": release * 2,
+            "papers": [{"id": "P", "pdf_sha256": release * 3}],
+            "claims": [{"id": "P:thm:a", "anchor": {"page": page, "y0": y, "line": 4}}]}))
+        (d / "decls" / "k.json").write_text(json.dumps({"name": "T.f", "value": {"text": value}}))
+
+    write(tmp_path / "a" / "data", b"%PDF tex live", 102.37, "v-1", "f x")
+    write(tmp_path / "b" / "data", b"%PDF miktex", 102.25, "v-2", "f x")
+    assert make.differences(tmp_path / "a" / "data", tmp_path / "b" / "data") == []
+    write(tmp_path / "c" / "data", b"%PDF miktex", 102.25, "v-2", "@f _ x")
+    assert make.differences(tmp_path / "a" / "data", tmp_path / "c" / "data") ==         ["decls/k.json: differs"]
+    write(tmp_path / "d" / "data", b"%PDF miktex", 102.25, "v-2", "f x", page=2)
+    assert make.differences(tmp_path / "a" / "data", tmp_path / "d" / "data") == ["index.json: differs"]
+
+
 @needs_lean
 @needs_tex
 def test_the_readers_copy_of_the_data_is_current(tmp_path):
@@ -765,3 +791,55 @@ def test_the_readers_copy_of_the_data_is_current(tmp_path):
     make.write_data(work, made)
     assert make.differences(made, make.OUT) == [], \
         "run `python3 web/tests/fixtures/make_structure.py` and commit web/tests/fixtures/structure"
+
+
+SEQ_LEAN = '''
+
+namespace Shape
+
+open MeasureTheory
+
+/-- A sequence adapted to a filtration: each term measurable for its own σ-algebra. -/
+structure AdaptedSeq {Ω : Type} (F : Nat → MeasurableSpace Ω) (U : Nat → Ω → ℝ) : Prop where
+  adapted : ∀ i, StronglyMeasurable[F i] (U i)
+
+/-- The same condition as a definition. -/
+def adaptedSeq {Ω : Type} (F : Nat → MeasurableSpace Ω) (U : Nat → Ω → ℝ) : Prop :=
+  ∀ i, StronglyMeasurable[F i] (U i)
+
+/-- The same structure measurable for the instance only: it must read differently. -/
+structure PlainSeq {Ω : Type} [MeasurableSpace Ω] (U : Nat → Ω → ℝ) : Prop where
+  adapted : ∀ i, StronglyMeasurable (U i)
+
+theorem seq_adapted {Ω : Type} [MeasurableSpace Ω] (F : Nat → MeasurableSpace Ω)
+    (U : Nat → Ω → ℝ) (h : AdaptedSeq F U) (h' : PlainSeq U) : adaptedSeq F U :=
+  h.adapted
+
+end Shape
+'''
+
+@needs_lean
+def test_a_definition_and_a_structure_print_the_sigma_algebra_they_pass(tmp_path):
+    """#607: a σ-algebra passed explicitly from a family (`F i`, with `F : Nat → MeasurableSpace
+    Ω`) is not one Lean would find, so it is printed: in a definition's value and body, in a
+    structure's field, and in a statement. A structure measurable for the instance reads
+    without one. The probe's records are read directly (no paper is needed)."""
+    root = tmp_path / "structure"
+    shutil.copytree(SRC, root)
+    readable = root / "Shape" / "Readable.lean"
+    readable.write_text(readable.read_text(encoding="utf-8") + SEQ_LEAN, encoding="utf-8")
+    subprocess.run(["lake", "build"], cwd=root, check=True, capture_output=True, timeout=900)
+    work = tmp_path / "work"
+    work.mkdir()
+    recs, failed = simple.probe_modules(root, ["Shape.Readable"], ["Shape"],
+                                        [{"kind": "link", "name": "Shape.seq_adapted"}],
+                                        log=lambda m: None, work=work)
+    assert not failed, failed
+    decls = {r["name"]: r for r in recs if r.get("record") == "decl"}
+    want = "@MeasureTheory.StronglyMeasurable _ _ _ (F i) (U i)"
+    d = decls["Shape.adaptedSeq"]
+    assert want in d["value"]["text"] and d["body"]["text"] == f"∀ (i : Nat), {want}"
+    [field] = decls["Shape.AdaptedSeq"]["structure"]["fields"]
+    assert field["type"]["text"] == f"∀ (i : Nat), {want}"
+    [plain] = decls["Shape.PlainSeq"]["structure"]["fields"]
+    assert plain["type"]["text"] == "∀ (i : Nat), MeasureTheory.StronglyMeasurable (U i)"
