@@ -1434,6 +1434,15 @@ class Assessor:
             out.append("its definitions are not independently reviewed")
         return list(dict.fromkeys(out))
 
+    def clause_blockers(self, claim: dict, clauses: list[dict]) -> list[list[str]]:
+        """Each clause's own reasons for not being accepted, as `blockers` gives them for that
+        clause alone (the claim's own reasons, such as an unreviewed scope, are the claim's).
+        Display only: the claim's status and blockers are computed from all its clauses."""
+        if claim["scope"] in OUT_OF_SCOPE:
+            return [[] for _ in clauses]
+        alone = {**claim, "scope_reviewed": True}
+        return [self.blockers(alone, [c]) for c in clauses]
+
     def step_review(self, claim: dict) -> dict:
         """A proof step's own review, from its `step-review` markers: recorded beside its status,
         never an input to it (`steps.py`)."""

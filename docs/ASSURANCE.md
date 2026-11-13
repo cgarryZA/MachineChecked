@@ -152,6 +152,24 @@ machinechecked changes
 
 `build --site DIR` builds and then writes the same export to `DIR` in one step (as the reusable audit workflow does); it refuses a directory that is the project or holds anything but a previous site.
 
+`check` reports the stored assessment, without building or probing again, when nothing a full build reads has changed since one made a release: the configuration, the inventory, the review and dismissal files, the replay record, the display, symbol and anchor files, each paper's source (a folder's files, or a git source's commit), every Lean input, the Lean project's commit, the probe and MachineChecked itself. It says so on its first line, names the release, and answers in seconds; when any of them changed, when a paper is read from arXiv or a remote branch, or when the probe failed on a request in that build, it builds as `build` does. `build` always assesses again.
+
+`check --claim CLAIM` shows one claim (its id, its key such as `thm:main`, or its printed number such as `"Theorem 2.5"`, as `compare` takes them; repeat the option or separate several by commas) instead of the summary: its passage (file, line, page and how it is placed in the PDF), its status with the reasons and blockers the assessment gave, each clause with its proposition, proof or refutation and witness, what its Lean establishes, its review and its own blockers, the findings in force that concern the claim or a declaration it names, and its review units with their state:
+
+```
+T:thm:bound  Theorem 2.5 (Uniform bound)
+  status: formal: proved, review pending
+  passage: toy.tex, line 65, page 1 (placed: exact)
+  clause “statement”: proved
+    proposition: Toy.PaperSpec.thm_bound
+    proof: Toy.Acceptance.thm_bound
+    establishes: a Lean theorem proves its proposition
+    review: pending
+    blocked by: the proposition has no review; …
+```
+
+A clause's own blockers are the claim's computed for that clause alone, so a claim whose corrected clause is proved says why it is still open (the printed clause has no proof, say). `check --changed` shows the same view of each claim whose status, blockers, clauses or findings in force differ from the release before (`was:` gives its status there). `--json-out FILE` writes the `check --json` document to `FILE` from the same run, beside the text; with `--claim` or `--changed` the document holds only those claims, each with its view, and only their finding details. The exit status is the whole check's, whichever claims are shown. None of this changes what is assessed.
+
 `build --reuse-lean` takes its probe records from the newest stored release made from the same Lean inputs, by the same probe and with the same probe settings (`modules`, `scope_roots`, the layer prefixes and `allowed_axioms`), and read by the same version of MachineChecked, whichever releases came after it; when no release has records that answer every request of the inventory, it stops and names what differs. Without `--reuse-lean`, every build asks Lean for its probe records afresh. `build --refresh` also discards the module indexes and load failures kept in the Lean facts store, so whatever the build reads from that store is extracted again.
 
 `symbol add` links a symbol of a claim's printed statement to a variable (or a binder's type) of its Lean statement, under your name; the reader marks it in the claim's text and highlights each side from the other. A link is an assertion, pinned to the statement and the text and shown as stale when either changes; no status reads it (docs/SYMBOL_LINKS.md).

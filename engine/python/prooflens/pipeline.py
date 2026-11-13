@@ -69,6 +69,9 @@ def build(cfg: Config, release: str | None = None, skip_lean: bool = False,
           skip_tex: bool = False, lake: str = "lake", web_dist: Path | None = None,
           lean_build: bool = True, reuse_lean: bool = False, log=print) -> dict:
     prepare_work_dir(cfg.out_dir)
+    # What this build reads, taken before it reads it: an edit made while it runs leaves the
+    # recorded digest unlike the inputs, so `check` assesses them again.
+    inputs = check_inputs_digest(cfg) if not (skip_lean or skip_tex) and lean_build else None
     inv = read_json(cfg.inventory)
     validate_inventory(inv)
     reviews, review_hashes = load_reviews(cfg.reviews, cfg.ai_reviewers, cfg.root)
@@ -217,6 +220,9 @@ def build(cfg: Config, release: str | None = None, skip_lean: bool = False,
     content_mod.save(cfg.out_dir, eid, found)
     rel = release or f"r-{eid[:12]}"
     ev.record_release(cfg.out_dir, rel, eid)
+    # A probe that failed on a request (out of memory, say) may succeed when run again: such a
+    # build is not one `check` reports again in place of building.
+    record_check_inputs(cfg, None if probe_failed(lean) else inputs, rel, eid)
     record = ev.load(cfg.out_dir, eid)
     index, chunks, store = mf.build(record, rel, display)
     index.update(issues=cfg.issues, site_url=cfg.site_url, author=cfg.author)
@@ -416,6 +422,140 @@ def inventory_changed(cfg: Config, body: dict) -> str | None:
     return None
 
 
+CHECK_INPUTS = "check-inputs.json"  # under the work directory's `build`
+
+
+def engine_digest() -> str:
+    """SHA-256 over this engine's own files (its Python sources and data): a changed engine may
+    assess the same inputs differently, whatever its version number says."""
+    import hashlib
+    h = hashlib.sha256()
+    base = Path(str(resources.files("prooflens")))
+    for f in sorted(base.rglob("*")):
+        if f.is_file() and (f.suffix == ".py" or "data" in f.relative_to(base).parts):
+            h.update(f"{f.relative_to(base).as_posix()}\n".encode())
+            h.update(hashlib.sha256(f.read_bytes()).digest())
+    return h.hexdigest()
+
+
+def _tree_digest(base: Path, skip: Path | None = None) -> str:
+    """SHA-256 over the names and content of the files under `base`, as a snapshot of it copies
+    them (`sources.acquire`): without the directories it leaves out and LaTeX's own outputs."""
+    import hashlib
+    from .sources import SKIP
+    h = hashlib.sha256()
+    for top, dirs, files in os.walk(base):
+        dirs[:] = sorted(d for d in dirs if d not in SKIP
+                         and not (skip is not None and Path(top, d) == skip))
+        for name in sorted(files):
+            if name.endswith((".aux", ".log", ".fls")):
+                continue
+            f = Path(top, name)
+            h.update(f"{f.relative_to(base).as_posix()}\n".encode())
+            h.update(hashlib.sha256(f.read_bytes()).digest())
+    return h.hexdigest()
+
+
+def _paper_digest(cfg: Config, paper) -> str | None:
+    """What a paper's source is, for `check_inputs_digest`: the content of a folder, or the
+    commit of a git source (resolved in a local repository; a remote one only when `rev` is a
+    full commit). None when it cannot be told without fetching (an arXiv source, a remote
+    branch name): such a paper is read again on every check."""
+    import re
+    import subprocess
+    src = paper.source
+    if "path" in src:
+        base = (cfg.root / src["path"]).resolve()
+        return "path " + _tree_digest(base, cfg.out_dir.resolve()) if base.is_dir() else None
+    if "git" in src:
+        rev, local = str(src.get("rev") or ""), (cfg.root / src["git"]).resolve()
+        if local.is_dir():
+            r = subprocess.run(["git", "-C", str(local), "rev-parse", "--verify",
+                                f"{rev}^{{commit}}"], capture_output=True, text=True)
+            return f"git {r.stdout.strip()} {src.get('subdir')}" if r.returncode == 0 else None
+        if re.fullmatch(r"[0-9a-f]{40}", rev):
+            return f"git {rev} {src.get('subdir')}"
+    return None
+
+
+def check_inputs_digest(cfg: Config) -> str | None:
+    """SHA-256 over everything a full build reads to assess (the configuration, the inventory,
+    the review and dismissal files, the replay record, the display files, each paper's source,
+    every Lean input, the project's commit, the probe and this engine), or None when a paper's
+    source cannot be told without fetching it. Two builds with the same digest assess the same
+    inputs, so the second would store the evidence the first stored."""
+    from .reviews import review_files
+    parts = {"engine": engine_digest(), "version": tool_version(), "probe": probe_digest(),
+             "settings": probe_settings_digest(cfg), "lean": lean_inputs_digest(cfg),
+             "commit": git_head(cfg.lean_root), "papers": {}}
+    files = [cfg.path, cfg.inventory, cfg.dismissals, cfg.comparator_log, cfg.display,
+             cfg.symbols, cfg.root / "anchors.json"] + review_files(cfg.reviews)
+    parts["files"] = {str(f): sha256_file(f) if f.is_file() else None
+                      for f in files if f is not None}
+    for paper in cfg.papers:
+        d = _paper_digest(cfg, paper)
+        if d is None:
+            return None
+        parts["papers"][paper.id] = d
+    return sha256_text(canonical_json(parts))
+
+
+KEPT_CHECK_INPUTS = 20  # the newest builds whose inputs are kept
+
+
+def _check_inputs(cfg: Config) -> list[dict]:
+    """The recorded builds' inputs (`record_check_inputs`), newest first."""
+    try:
+        rows = read_json(cfg.out_dir / "build" / CHECK_INPUTS).get("builds")
+    except (OSError, ValueError, AttributeError):
+        return []
+    return [r for r in rows or [] if isinstance(r, dict)]
+
+
+def probe_failed(lean: dict | None) -> bool:
+    """Whether the probe records `lean` hold a request the probe failed on (`probe-error`)."""
+    for kind in ("specs", "defs", "links", "proofs"):
+        for rec in ((lean or {}).get(kind) or {}).values():
+            if isinstance(rec, dict) and any(str(e).startswith("probe-error")
+                                             for e in rec.get("errors") or []):
+                return True
+    return False
+
+
+def record_check_inputs(cfg: Config, digest: str | None, release: str, eid: str) -> None:
+    """Record that release `release` (evidence `eid`) was built from the inputs `digest`
+    names, for `unchanged_release`; nothing when there is no digest."""
+    if digest is None:
+        return
+    rows = [{"digest": digest, "release": release, "evidence": eid}]
+    rows += [r for r in _check_inputs(cfg) if r.get("digest") != digest]
+    path = cfg.out_dir / "build" / CHECK_INPUTS
+    path.parent.mkdir(parents=True, exist_ok=True)
+    write_json(path, {"builds": rows[:KEPT_CHECK_INPUTS]})
+
+
+def unchanged_release(cfg: Config) -> dict | None:
+    """The stored release (`{release, evidence}`) a full build made from exactly the inputs
+    the project has now (`check_inputs_digest`), when its evidence is still on disk and the
+    release still names it; None otherwise. Its assessment is the one a new build would
+    store."""
+    rows = _check_inputs(cfg)
+    if not rows:
+        return None
+    digest = check_inputs_digest(cfg)
+    rec = next((r for r in rows if digest is not None and r.get("digest") == digest), None)
+    if rec is None:
+        return None
+    try:
+        named = ev.release(cfg.out_dir, rec["release"])
+    except (OSError, ValueError, KeyError, TypeError, ev.EvidenceError):
+        return None
+    if named.get("evidence") != rec.get("evidence") \
+            or not (cfg.out_dir / "evidence" / f"{rec['evidence']}.json").exists():
+        return None
+    return {"release": rec["release"], "evidence": rec["evidence"]}
+
+
 def reassess(cfg: Config, web_dist: Path | None = None, release: str | None = None,
              log=print) -> dict:
     """Assess the latest release's evidence (`evidence.latest`) again with the current rules and
@@ -505,7 +645,8 @@ def rebuild_site(cfg: Config, web_dist: Path | None = None, release: str | None 
                   rq.prioritise(rq.assurance_queue(index, chunks, store, cfg.statement_authors),
                                 changes, claims=index["claims"]),
                   changes=changes, content=found, work_dir=cfg.out_dir, root=cfg.lean_root)
-    return {"release": rel["release"], "site": site, "index": index, "content": found}
+    return {"release": rel["release"], "evidence": rel["evidence"], "site": site,
+            "index": index, "content": found}
 
 
 def release_changes(cfg: Config, release: str, notes: list | None = None) -> dict | None:

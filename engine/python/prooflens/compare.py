@@ -78,6 +78,25 @@ def _generated(name: str, owner: str) -> bool:
     return bool(rest) and all(GENERATED.fullmatch(c) for c in rest.split("."))
 
 
+def resolve_claim(claims: list[dict], query: str, release: str | None) -> str:
+    """The id of the one claim of `claims` (of release `release`) that `query` names: its id,
+    its key within the paper (`thm:main`) or its printed number (`Theorem 2.1`)."""
+    q = str(query or "").strip()
+    if any(c["id"] == q for c in claims):
+        return q
+    norm = lambda s: re.sub(r"\s+", " ", str(s or "")).strip().lower()
+    for match in (lambda c: c["id"].split(":", 1)[-1] == q,
+                  lambda c: norm(c.get("number")) == norm(q)):
+        found = [c["id"] for c in claims if match(c)]
+        if len(found) == 1:
+            return found[0]
+        if found:
+            raise CompareError(f"{q!r} names {len(found)} claims; give its id", "ambiguous",
+                               found)
+    near = difflib.get_close_matches(q, [c["id"] for c in claims], n=5, cutoff=0.3)
+    raise CompareError(f"no claim {q!r} in release {release}", "unknown-claim", near)
+
+
 class Site:
     """The claims, declaration records and review queue of one build's site data."""
 
@@ -117,21 +136,7 @@ class Site:
     def resolve_claim(self, query: str) -> str:
         """The id of the claim `query` names: its id, its key within the paper (`thm:main`) or
         its printed number (`Theorem 2.1`)."""
-        q = str(query or "").strip()
-        if q in self._by_id:
-            return q
-        norm = lambda s: re.sub(r"\s+", " ", str(s or "")).strip().lower()
-        for match in (lambda c: c["id"].split(":", 1)[-1] == q,
-                      lambda c: norm(c.get("number")) == norm(q)):
-            found = [c["id"] for c in self.claims if match(c)]
-            if len(found) == 1:
-                return found[0]
-            if found:
-                raise CompareError(f"{q!r} names {len(found)} claims; give its id", "ambiguous",
-                                   found)
-        near = difflib.get_close_matches(q, [c["id"] for c in self.claims], n=5, cutoff=0.3)
-        raise CompareError(f"no claim {q!r} in release {self.index.get('release')}",
-                           "unknown-claim", near)
+        return resolve_claim(self.claims, query, self.index.get("release"))
 
     def store(self) -> dict[str, dict]:
         """Every declaration record of the build, by name."""

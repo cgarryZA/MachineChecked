@@ -81,6 +81,20 @@ in quantity, or could not be compared (`kind`, `feature`, `paper` and `lean` eac
 settles, with `settled`. A hint is not a finding and not a status: report it as something to
 inspect, and never count it with the findings.
 
+`check --json --claim CLAIM` (the claim's id, key or printed number; repeat it or separate several
+by commas) gives only those claims, under `selected`. In a project with a `machinechecked.toml`
+each then also has `passage` (`file`, `line`, `page`, `placement`, `label`, `source_sha256`),
+`status_reason`, `blockers`, `clauses` (each with `name`, `proposition`, `proof`, `refutation`,
+`witness`, `corrects` or `restricts`, `state`, `establishes` in words, `review` and its own
+`blocked_by`), `findings` (those in force that concern it or a declaration it names) and
+`review_units` (`id`, `kind`, `name`, `state`); `finding_details` is cut to those findings.
+`--changed` selects the claims whose status, blockers, clauses or findings in force differ from
+the release before (`changed_since`; each has `was`, its status there, or null for a new claim).
+`--json-out FILE` writes the same document to `FILE`, also without `--json`, so one run gives
+the text report and the JSON. `reused` is true when nothing the assessment reads changed since
+a build made `release`, and the check reported that release's stored assessment without
+assessing again. The exit status is the whole check's, whichever claims are selected.
+
 In a project with a `machinechecked.toml` (the full assessment), the document also has
 `findings` (totals per tier, dismissed warnings left out) and `finding_details`: each finding
 with its `tier` (`violation`, `obligation`, `warning`), `code`, `subject` (the claim or clause,
