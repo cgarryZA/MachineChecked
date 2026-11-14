@@ -193,7 +193,16 @@ export function revealedIn(work, units, u, before = null) {
   ];
   const out = work.drafts?.[u.id]?.reader_exposure ? [{ unit: u.id, what: "Lean" }] : [];
   out.push(...exposureOf(work, u, before));
+  // A structure's constructor and projections are its unit: work on one of them as a unit of its
+  // own (in a queue before they were reviewed together) showed the structure's Lean.
+  const members = new Set((u.members || []).map((m) => "def:" + m.name));
   for (const p of passed) {
+    if (members.has(p.id)) {
+      for (const [what, ok] of [["Lean", p.lean], ["author's review", p.author]]) {
+        if (ok && !out.some((o) => o.unit === p.id && o.what === what)) out.push({ unit: p.id, what });
+      }
+      continue;
+    }
     const r = p.id !== u.id && byId[p.id]?.reveals;
     if (!r) continue;
     for (const [what, ok, key] of [["Lean", p.lean, "lean"], ["author's review", p.author, "author"]]) {

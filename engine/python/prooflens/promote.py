@@ -29,12 +29,27 @@ was made at, and match the manuscript; its verdict must be holds as printed, hol
 (with the argument), or false as printed (with the failing case). Its marker is
 `<!-- step-review: CLAIM SOURCE-SHA256 verdict=holds|gap|false by=REVIEWER -->`.
 
-For each report it accepts, it archives the report (JSON and the protocol's text block) and
-writes `<!-- spec-review: NAME HASH by=REVIEWER source=CLAIM@DIGEST... -->` (or `def-review`,
+For each report it accepts, it archives the report as one record (`reports/<stem>.json` beside
+the review files: the report as exported, which holds every pin the marker binds) and writes
+a line ``Review by REVIEWER: VERDICT (report `reports/<stem>.json`).`` and
+`<!-- spec-review: NAME HASH by=REVIEWER source=CLAIM@DIGEST... -->` (or `def-review`,
 `step-review`; no `source` when no claim's passage is read) after the declaration's (or step's)
 last marker, in the exact form the acceptance checker reads, then assesses the stored evidence
 again. A promoted marker records the reviewer the report names; who they are is as the report
 states it.
+
+A report on a structure's unit is one reading and one verdict for the structure and the
+constants Lean generates for it that the unit lists (`unit.lean`: its constructor and
+projections). Each must still be one of those, at the fingerprint the report pinned for it. The
+report is archived once, as one record, and a `def-review` marker is written for each of them,
+each after its own `Review by` line linking that record, so that the acceptance checker, which
+reads one marker per declaration, finds each reviewed. A separate verdict on one of them
+(`verdict.members`) that is not one recorded as a review leaves that one without a marker.
+
+The protocol's text block of an archived report is not kept: `write_texts` (`review reports`)
+writes it from the record, into the output directory. A line that version 0.1.25 or earlier
+wrote links the block it kept beside the record, `reports/<stem>.md`; its record is the one of
+the same stem, and the block can be deleted.
 """
 
 from __future__ import annotations
@@ -182,7 +197,45 @@ def check_report(r: dict, body: dict, cfg: Config, accept_same_family: bool,
                    "(pass --allow-revealed to accept it)")
     if not re.fullmatch(r"\S+", rid):
         why.append(f"reviewer id {rid!r} has spaces")
+    why += covers(r, body)[2]
     return why
+
+
+def covers(r: dict, body: dict) -> tuple[list[str], dict, list[str]]:
+    """The declarations a report's markers are written for, the constants it leaves out, and why
+    its list of them cannot be promoted. A report on a structure's unit reviewed the constants
+    Lean generates for it with it (`unit.lean`, after the structure: its constructor and
+    projections, `review_queue.structure_members`); each must be one of those in the current
+    evidence, at the fingerprint the report pinned for it (`pins.fingerprints`). One the reviewer
+    gave a separate verdict on (`verdict.members`) that is not one recorded as a review is left
+    out, with that verdict: it gets no marker. Any other report covers its own declaration."""
+    from .review_cli import member_verdicts
+    from .review_queue import structure_members
+    u = r.get("unit") or {}
+    sep = (r.get("verdict") or {}).get("members") or {}
+    names = [n for n in u.get("lean") or [] if n != u.get("name")] \
+        if u.get("kind") == "def" else []
+    if not names and not sep:
+        return [marker_name(r)], {}, []
+    decls = (body.get("lean") or {}).get("decls") or {}
+    allowed = {m["name"] for m in structure_members(u.get("name"), decls)}
+    pinned = (r.get("pins") or {}).get("fingerprints") or {}
+    why = []
+    for n in names:
+        if n not in allowed:
+            why.append(f"{n} is not a constructor or projection of {u.get('name')} in the "
+                       "current evidence")
+            continue
+        if pinned.get(n) != decls[n].get("fingerprint"):
+            why.append(f"{n}, reviewed with {u.get('name')}, changed since the review "
+                       "(fingerprint differs)")
+        if not HEX32.match(decls[n].get("legacy_hash") or ""):
+            why.append(f"the legacy hash of {n} is not one a marker records")
+    apart, bad = member_verdicts({"id": u.get("id"), "members": [{"name": n} for n in names]},
+                                 sep)
+    why += [f"the separate verdicts: {b}" for b in bad]
+    out = {n: v for n, v in apart.items() if v["value"] not in ACCEPTABLE}
+    return [u.get("name")] + [n for n in names if n not in out], out, why
 
 
 def corrects_a_clause(body: dict, u: dict) -> bool:
@@ -249,7 +302,13 @@ def expected_source(body: dict, unit: dict, cur: dict | None = None) -> dict[str
     if unit.get("kind") == "step":
         return {cur["id"]: cur["source_sha256"]} if cur and cur.get("source_sha256") else {}
     inv = {"claims": (body.get("inventory") or {}).get("claims", [])}
-    return review_sources.digests(inv, unit.get("kind"), unit.get("name"), body.get("tex"))
+    out = review_sources.digests(inv, unit.get("kind"), unit.get("name"), body.get("tex"))
+    # A structure's unit reads the passages of every constant it covers.
+    if unit.get("kind") == "def":
+        for n in unit.get("lean") or []:
+            if n != unit.get("name"):
+                out.update(review_sources.digests(inv, "def", n, body.get("tex")))
+    return out
 
 
 def report_source(r: dict) -> dict[str, str] | None:
@@ -275,9 +334,51 @@ def marker(r: dict, cur: dict, source: dict[str, str] | None = None) -> str:
             f"by={r['reviewer']['id']}{attr} -->")
 
 
-def report_text(r: dict, cur: dict) -> str:
-    """The report as the protocol's text block."""
+def markers(r: dict, cur: dict) -> list[tuple[str, str]]:
+    """Each declaration a promoted report records a review of, with its marker: the unit's own
+    (`marker`), or for a structure's unit one per declaration it covers (`cur["covers"]`, which
+    `plan` adds), each with the digests of the passages of its own claims that the report read."""
+    if not cur.get("covers"):
+        return [(marker_name(r), marker(r, cur, report_source(r)))]
+    out = []
+    for c in cur["covers"]:
+        attr = review_sources.attribute(c["source"])
+        attr = " " + attr if attr else ""
+        out.append((c["name"], f"<!-- def-review: {c['name']} {c['legacy_hash']} "
+                               f"by={r['reviewer']['id']}{attr} -->"))
+    return out
+
+
+def with_covers(r: dict, cur: dict | None, body: dict) -> dict | None:
+    """`cur` (the current record of a report's declaration) with, for a report on a structure's
+    unit, the declarations its markers are written for (`covers`: name, legacy hash and the
+    digests of the passages of its claims the report read) and those it leaves out by a separate
+    verdict (`left_out`)."""
+    u = r.get("unit") or {}
+    if cur is None or u.get("kind") != "def":
+        return cur
+    names, out, _ = covers(r, body)
+    if names == [u.get("name")] and not out:
+        return cur
+    decls = (body.get("lean") or {}).get("decls") or {}
+    read = report_source(r) or {}
+    inv = {"claims": (body.get("inventory") or {}).get("claims", [])}
+    cov = []
+    for n in names:
+        rec = cur if n == u.get("name") else decls.get(n) or {}
+        want = review_sources.digests(inv, "def", n, body.get("tex"))
+        cov.append({"name": n, "legacy_hash": rec.get("legacy_hash"),
+                    "source": {c: d for c, d in read.items() if c in want}})
+    return {**cur, "covers": cov, "left_out": out}
+
+
+def report_text(r: dict, cur: dict | None = None) -> str:
+    """The report as the protocol's text block. The hashes it prints are the current
+    declaration's or step's (`cur`); without `cur`, the report's own pins, which promotion
+    checked are the current ones, so the block of an archived report is the one its promotion
+    would print."""
     u, p, rv = r["unit"], r["pins"], r["reviewer"]
+    cur = cur or pinned(r)
     ms = "; ".join(f"{k} {v}" for k, v in (p.get("manuscripts") or {}).items()) or "—"
     return "\n".join([
         f"### {', '.join(u['claims']) or u['id']}: {u['name']}",
@@ -294,9 +395,37 @@ def report_text(r: dict, cur: dict) -> str:
         f"Witness: {r['comparison'].get('witness') or '—'}",
         f"Verdict: {r['verdict']['value']}"
         + (f" — {r['verdict']['detail']}" if r['verdict'].get('detail') else ""),
+        *_covers_lines(r),
         *_coverage_lines(r),
         f"Disagreements with the author's review (shown {r['author_review']['shown_at']}): "
         f"{r['author_review'].get('disagreements') or 'none'}", ""])
+
+
+def _covers_lines(r: dict) -> list[str]:
+    """The text block's lines for a report on a structure's unit, read from the report alone:
+    the declarations the review covers (`unit.lean`), and each separate verdict on one of them,
+    noting those that leave it without a marker; none for any other unit."""
+    u = r.get("unit") or {}
+    sep = (r.get("verdict") or {}).get("members") or {}
+    names = list(u.get("lean") or []) if u.get("kind") == "def" else []
+    if len(names) < 2 and not sep:
+        return []
+    out = ["Covers: " + ", ".join(n for n in names
+                                  if (sep.get(n) or {}).get("value", "faithful") in ACCEPTABLE)]
+    for n, v in sorted(sep.items()):
+        out.append(f"Separate verdict on {n}: {v.get('value')}"
+                   + (f" — {v['detail']}" if v.get("detail") else "")
+                   + (" (no marker is written for it)" if v.get("value") not in ACCEPTABLE
+                      else ""))
+    return out
+
+
+def pinned(r: dict) -> dict:
+    """The hashes a report pinned, in the form of the current record they were checked against:
+    a step's source hash, a declaration's legacy hash."""
+    p = r["pins"]
+    return {"source_sha256": (p.get("fingerprints") or {}).get("source"),
+            "legacy_hash": p.get("legacy_hash")}
 
 
 def _coverage_lines(r: dict) -> list[str]:
@@ -338,9 +467,36 @@ def insert_after(path: Path, line: int | None, lines: list[str]):
 
 
 def reports_dir(cfg: Config) -> Path:
+    """Where promoted reports are archived: `reports/` in the first review directory, else
+    beside the first review file."""
     first = next((p for p in cfg.reviews if p.is_dir()), cfg.reviews[0].parent if cfg.reviews
                  else cfg.root)
     return first / "reports"
+
+
+def text_dir(cfg: Config) -> Path:
+    """Where `review reports` writes the archived reports as text by default: in the project's
+    output directory, which is generated and not kept with the reviews."""
+    return cfg.out_dir / "reports"
+
+
+def write_texts(cfg: Config, out: Path | None = None) -> list[Path]:
+    """Write each archived report (`reports_dir`, `<stem>.json`) as the protocol's text block,
+    `<stem>.md` in `out` (default `text_dir`). The text is made from the record alone, so it can
+    be deleted and written again; an archived file that is not a review report is skipped."""
+    out = Path(out) if out else text_dir(cfg)
+    rdir, done = reports_dir(cfg), []
+    for f in sorted(rdir.glob("*.json")) if rdir.is_dir() else []:
+        try:
+            r = json.loads(f.read_text(encoding="utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            continue
+        if not isinstance(r, dict) or r.get("schema") != "prooflens/review-report@1":
+            continue
+        out.mkdir(parents=True, exist_ok=True)
+        (out / f"{f.stem}.md").write_text(report_text(r), encoding="utf-8")
+        done.append(out / f"{f.stem}.md")
+    return done
 
 
 def plan(cfg: Config, reports: list[dict], accept_same_family: bool = False,
@@ -364,44 +520,56 @@ def plan(cfg: Config, reports: list[dict], accept_same_family: bool = False,
         cur = step_claim(body, u) if u.get("kind") == "step" else \
             (lean.get("specs" if u.get("kind") == "spec" else "decls", {}) or {}).get(
                 u.get("name"))
-        out.append((r, cur, check_report(r, body, cfg, accept_same_family, allow_revealed)))
+        out.append((r, with_covers(r, cur, body),
+                    check_report(r, body, cfg, accept_same_family, allow_revealed)))
     return out
 
 
 def already_promoted(cfg: Config, r: dict, cur: dict) -> bool:
-    """Whether the marker promoting `r` is already in one of the project's review files, as after
-    a promotion of the same report: promoting it again would write the marker a second time."""
-    mk = marker(r, cur, report_source(r))
-    return any(mk in f.read_text(encoding="utf-8") for f in review_files(cfg.reviews)
-               if f.is_file())
+    """Whether the markers promoting `r` are already in the project's review files, as after a
+    promotion of the same report: promoting it again would write them a second time."""
+    texts = [f.read_text(encoding="utf-8") for f in review_files(cfg.reviews) if f.is_file()]
+    return all(any(mk in t for t in texts) for _, mk in markers(r, cur))
 
 
 def apply(cfg: Config, accepted: list[tuple[dict, dict]]) -> list[dict]:
-    """Archive each report and write its marker. A report whose marker is already written
-    (`already_promoted`) is left as it is, and listed with `already` set."""
+    """Archive each report once (its one record, `<stem>.json`) and write its markers (one per
+    declaration it covers, `markers`), each after a line linking the record: after that
+    declaration's last marker, else after the report's previous marker, else where
+    `target_file` says. A report whose markers are already written (`already_promoted`) is left
+    as it is, and listed with `already` set."""
     reviews, _ = load_reviews(cfg.reviews, cfg.ai_reviewers, cfg.root)
     rdir = reports_dir(cfg)
     rdir.mkdir(parents=True, exist_ok=True)
     done = []
     for r, cur in accepted:
+        mks = markers(r, cur)
         if already_promoted(cfg, r, cur):
-            done.append({"name": marker_name(r), "marker": marker(r, cur, report_source(r)),
-                         "already": True})
+            done += [{"name": n, "marker": mk, "already": True} for n, mk in mks]
             continue
         stem = re.sub(r"[^\w.-]+", "_", f"{marker_name(r)}--{r['reviewer']['id']}--"
                       f"{r['submitted_at']}")
         (rdir / f"{stem}.json").write_text(json.dumps(r, indent=1, ensure_ascii=False) + "\n",
                                            encoding="utf-8")
-        (rdir / f"{stem}.md").write_text(report_text(r, cur), encoding="utf-8")
-        path, line = target_file(cfg, r, reviews)
-        rel = Path(rdir / f"{stem}.md").resolve()
-        try:
-            rel = rel.relative_to(path.parent.resolve())
-        except ValueError:
-            pass
-        mk = marker(r, cur, report_source(r))
-        insert_after(path, line, [f"Review by {r['reviewer']['id']}: {r['verdict']['value']} "
-                                  f"(report `{rel.as_posix()}`).", mk])
-        reviews, _ = load_reviews(cfg.reviews, cfg.ai_reviewers, cfg.root)
-        done.append({"name": marker_name(r), "file": str(path), "marker": mk})
+        prev = None
+        for n, mk in mks:
+            hist = history(reviews, r["unit"]["kind"], n)
+            if n == marker_name(r):
+                path, line = target_file(cfg, r, reviews)
+            elif hist:
+                path, line = (cfg.root / hist[-1].file).resolve(), hist[-1].line
+            else:
+                path, line = prev
+            rel = Path(rdir / f"{stem}.json").resolve()
+            try:
+                rel = rel.relative_to(path.parent.resolve())
+            except ValueError:
+                pass
+            with_ = "" if n == marker_name(r) else f", with {marker_name(r)}"
+            insert_after(path, line, [f"Review by {r['reviewer']['id']}: {r['verdict']['value']}"
+                                      f"{with_} (report `{rel.as_posix()}`).", mk])
+            reviews, _ = load_reviews(cfg.reviews, cfg.ai_reviewers, cfg.root)
+            last = history(reviews, r["unit"]["kind"], n)[-1]
+            prev = ((cfg.root / last.file).resolve(), last.line)
+            done.append({"name": n, "file": str(path), "marker": mk})
     return done

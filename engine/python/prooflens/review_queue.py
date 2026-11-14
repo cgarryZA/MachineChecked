@@ -7,7 +7,9 @@ or not any Lean is linked to it). Each unit carries the fingerprints it would be
 digests of the paper passages a review of it reads, by claim (`source_sha256`,
 `review_sources.py`), its current review state, the author's review (shown to the reviewer only
 after their own verdict) and why it sits where it does in the order. A unit is reviewed once per
-fingerprint, however many claims depend on it.
+fingerprint, however many claims depend on it. A structure's unit covers the constants Lean
+generates for it (its constructor and projections, `members`): their content is its fields as
+written, so one reading and one verdict review them all, and promotion writes a marker for each.
 
 The order is a suggestion: less effort first, with a preference for units that many claims depend
 on. Reviewing a definition settles that definition only; no claim is approved by it. Once the
@@ -120,12 +122,104 @@ def reveal_order(units: list[dict]) -> list[dict]:
     return out
 
 
+# How a unit's state is read from those of the declarations it covers: the least advanced one.
+STATE_RANK = {"pending": 0, "stale": 1, "author-reviewed": 2, "reviewed": 3}
+
+
+def structure_members(name: str, decls: dict) -> list[dict]:
+    """The constants Lean generates for the structure (or class) `name` that `decls` (records by
+    name) holds: its constructor, the projections to its parents and the projections of the
+    fields it declares, each `{name, role}` (a projection with its `field`, a parent projection
+    with its `parent`), in that order. Their content is the structure's: its fields as written.
+    Empty when `name` is not a structure as the probe records one (`structure`). A field it
+    inherits is projected by its parent's constant, which belongs to the parent."""
+    st = (decls.get(name) or {}).get("structure")
+    if not isinstance(st, dict):
+        return []
+    out: list[dict] = []
+
+    def own(q) -> bool:
+        return bool(q) and q in decls and q.rpartition(".")[0] == name and \
+            all(m["name"] != q for m in out)
+
+    for n in sorted(n for n in decls if n.startswith(name + ".")):
+        if (decls[n] or {}).get("kind") == "ctor" and own(n):
+            out.append({"name": n, "role": "constructor"})
+    for p in st.get("parents") or []:
+        if own(p.get("projection")):
+            out.append({"name": p["projection"], "role": "parent projection",
+                        "parent": p.get("structure")})
+    for f in st.get("fields") or []:
+        if (f.get("declared_in") == name or not f.get("inherited")) and own(f.get("projection")):
+            out.append({"name": f["projection"], "role": "projection", "field": f.get("field")})
+    return out
+
+
+def member_owners(by_name: dict) -> dict[str, list[dict]]:
+    """For each structure of `by_name` (records by name, each with its review state or None)
+    that has a review state, its generated constants that have one (`structure_members`):
+    `{structure: [member]}`. Those are reviewed in the structure's unit."""
+    out = {}
+    for name, rec in by_name.items():
+        if rec.get("review") is None:
+            continue
+        ms = [m for m in structure_members(name, by_name)
+              if (by_name.get(m["name"]) or {}).get("review") is not None]
+        if ms:
+            out[name] = ms
+    return out
+
+
+def _def_unit(name: str, rec: dict, members: list[dict], by_name: dict, keys: dict,
+              used_by: dict, paper_of: dict) -> dict:
+    """The unit of one definition. For a structure it covers the constants Lean generates for it
+    (`members`) as well: their names (`lean`, the structure first) and fingerprints
+    (`fingerprints`), the claims that use any of them, the passages a review of any of them
+    reads, and the least advanced of their review states."""
+    names = [name] + [m["name"] for m in members]
+    recs = [by_name[n] for n in names]
+    users = sorted({i for n in names for i in used_by.get(n, ())})
+    effort = round(_effort_def(rec) + len(members) / 4, 2)
+    sources: dict[str, str] = {}
+    author = _author_text(rec["review"])
+    for r in recs:
+        sources.update(r["review"].get("source_sha256") or {})
+    for r in recs[1:]:
+        # One section closed by the markers of several of them is one author's review.
+        author += [a for a in _author_text(r["review"])
+                   if not any((a["file"], a["text"]) == (b["file"], b["text"]) for b in author)]
+    unit = {
+        "id": "def:" + name, "kind": "def", "name": name, "key": keys.get(name),
+        "paper": None, "papers": sorted({paper_of[i] for i in users}),
+        "section": rec.get("module", "").rsplit(".", 1)[0] or "—",
+        "claims": [{"id": i} for i in users], "legacy_hash": rec.get("legacy_hash"),
+        "fingerprint": rec.get("fingerprint"),
+        "source_sha256": sources,
+        "state": min((r["review"]["state"] for r in recs), key=lambda s: STATE_RANK.get(s, 0)),
+        "author_review": author, "effort": effort,
+        "reason": f"{_size(effort)} definition; used by {len(users)} claim(s)"}
+    if members:
+        unit["lean"] = names
+        unit["fingerprints"] = {n: r.get("fingerprint") for n, r in zip(names, recs)}
+        unit["members"] = [{**m, "key": keys.get(m["name"]),
+                            "legacy_hash": by_name[m["name"]].get("legacy_hash"),
+                            "fingerprint": by_name[m["name"]].get("fingerprint"),
+                            "state": by_name[m["name"]]["review"]["state"]} for m in members]
+        unit["reason"] = (f"{_size(effort)} structure, reviewed with its constructor and "
+                          f"projections; used by {len(users)} claim(s)")
+    return unit
+
+
 def assurance_queue(index: dict, chunks: dict, store: dict, authors: list[str]) -> dict:
     """The queue of a full assessment: every locked proposition with a statement, and every
-    definition in their closures."""
+    definition in their closures. A structure is one unit with the constants Lean generates for
+    it (its constructor and projections, `structure_members`), which have no unit of their
+    own: one reading and one verdict cover them all."""
     paper_of = {c["id"]: c["paper"] for c in index["claims"]}
     by_name = {r["name"]: r for r in store.values()}
     keys = {r["name"]: k for k, r in store.items()}
+    members = member_owners(by_name)
+    owner = {m["name"]: s for s, ms in members.items() for m in ms}
     used_by: dict[str, set] = {}
     specs: dict[str, dict] = {}
     unspecified = []
@@ -149,8 +243,10 @@ def assurance_queue(index: dict, chunks: dict, store: dict, authors: list[str]) 
                 "author_review": _author_text(cl.get("spec_review")),
                 "witness": cl.get("witness"), "refute": cl.get("refute"),
                 "closure": list(st.get("closure") or []),
-                "unreviewed": sum(1 for r in (cl.get("def_reviews") or {}).values()
-                                  if r["state"] != "reviewed"),
+                # Each definition once: a structure's constructor and projections are its own.
+                "unreviewed": len({owner.get(n, n) for n, r in
+                                   (cl.get("def_reviews") or {}).items()
+                                   if r["state"] != "reviewed"}),
                 "effort": 0.0})
             u["claims"].append({"id": c["id"], "number": c["number"], "title": c["title"],
                                 "file": c["file"], "status": c["status"]})
@@ -173,26 +269,19 @@ def assurance_queue(index: dict, chunks: dict, store: dict, authors: list[str]) 
                        + (f"; its meaning uses {u['unreviewed']} definition(s) not yet "
                           "independently reviewed" if u["unreviewed"] else ""))
     for name, rec in sorted(by_name.items()):
-        if rec.get("review") is None:
+        if rec.get("review") is None or name in owner:
             continue
-        users = sorted(used_by.get(name, ()))
-        effort = round(_effort_def(rec), 2)
-        units.append({
-            "id": "def:" + name, "kind": "def", "name": name, "key": keys.get(name),
-            "paper": None, "papers": sorted({paper_of[i] for i in users}),
-            "section": rec.get("module", "").rsplit(".", 1)[0] or "—",
-            "claims": [{"id": i} for i in users], "legacy_hash": rec.get("legacy_hash"),
-            "fingerprint": rec.get("fingerprint"),
-            "source_sha256": rec["review"].get("source_sha256") or {},
-            "state": rec["review"]["state"],
-            "author_review": _author_text(rec["review"]), "effort": effort,
-            "reason": f"{_size(effort)} definition; used by {len(users)} claim(s)"})
+        units.append(_def_unit(name, rec, members.get(name, []), by_name, keys, used_by,
+                               paper_of))
     for u in units:
         u["order"] = round(u["effort"] - math.log2(1 + len(u["claims"])), 3)
     ids = {u["id"] for u in units}
     shared = _author_groups(units)
     for u in units:
-        u["reveals"] = {"lean": sorted({"def:" + n for n in u.pop("closure", [])} & ids - {u["id"]}),
+        # A statement that uses a structure's constructor or projection shows the structure's
+        # unit: their Lean is the structure's.
+        u["reveals"] = {"lean": sorted({"def:" + owner.get(n, n) for n in u.pop("closure", [])}
+                                       & ids - {u["id"]}),
                         "author": sorted(shared.get(u["id"], []))}
     units.sort(key=lambda u: (u["state"] == "reviewed", u["order"], u["id"]))
     units = reveal_order([u for u in units if u["state"] != "reviewed"]) + \

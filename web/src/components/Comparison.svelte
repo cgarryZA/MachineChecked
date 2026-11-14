@@ -121,6 +121,14 @@
     }
   });
 
+  // What a correcting clause does to the printed one, as its inventory records it (`kind`), in the
+  // engine's words (assess.CORRECTION_KINDS). A label beside the clause; it changes no status.
+  const CORRECTION_KIND = {
+    "added-hypothesis": "with an added hypothesis",
+    partial: "by proving part of it",
+    negation: "with its true part and the negation of its false part (the false part fails for every instance; not a narrowing)",
+  };
+
   // What a correcting clause changes, read off the two Lean statements as they are shown: the
   // hypotheses one has and the other lacks, and whether the conclusion is the same text. It
   // describes the statements; it is not a judgement of either.
@@ -514,7 +522,7 @@
   {:else}
     {#each clauses as cl, k (k)}
       <div class="block" class:refuted={cl.state === "refuted"} data-spec={cl.spec} data-defs={cl.defs?.length ? cl.defs.join(" ") : null} data-reached={marked(cl.spec, ...(cl.defs || []))}>
-        {#if clauses.length > 1}<p class="cname"><TexInline text={cl.label || cl.name} />{#if cl.corrects}<span class="faint">&nbsp;— corrects “<TexInline text={cl.corrects_label || cl.corrects} />”</span>{/if}</p>{/if}
+        {#if clauses.length > 1}<p class="cname"><TexInline text={cl.label || cl.name} />{#if cl.corrects}<span class="faint">&nbsp;— corrects “<TexInline text={cl.corrects_label || cl.corrects} />”{#if CORRECTION_KIND[cl.kind]} {CORRECTION_KIND[cl.kind]}{/if}</span>{/if}</p>{/if}
         {#if clauseNote(cl, clauses.length)}<p class="verdict">{clauseNote(cl, clauses.length)}</p>{/if}
         {#if changes(cl)}
           {@const d = changes(cl)}

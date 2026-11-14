@@ -36,6 +36,15 @@ OUT_OF_SCOPE = {"expository", "literature", "empirical", "proof-step", "part-of"
 # assumptions: it refutes the formal proposition, in a wider class than the paper's, and never
 # the printed claim.
 OUTSIDE = "outside-standing-assumptions"
+# What a correcting clause (`corrects`) does to the printed clause (`kind`), in the words shown
+# beside it. Display only: no kind changes a status.
+CORRECTION_KINDS = {
+    "added-hypothesis": "with an added hypothesis",
+    "partial": "by proving part of it",
+    "negation": "with its true part and the negation of its false part, which fails for every "
+                "instance, not only for one counterexample: not a narrowing of the printed claim",
+}
+
 # What a class lemma says of a scoped refutation's counterexample and one standing assumption:
 # proved for it, holding only up to an identity not proved in Lean, or not addressed.
 CLASS_STATES = ("proved", "up-to-identity", "not-addressed")
@@ -95,9 +104,9 @@ def main_clause(originals: list[dict]) -> dict | None:
 def status_reason(clauses: list[dict]) -> list[str]:
     """Why a claim's status is what it is, in a line per reason, for the reader to show under
     the label: a refutation that holds only outside the paper's standing assumptions, the scope of
-    a refutation (`refutation_scope`), a proved correction or special case of a printed clause,
-    and how many clauses are proved when some are open. Display only; empty when the label says
-    it all."""
+    a refutation (`refutation_scope`), a proved correction (with its kind) or special case of a
+    printed clause, and how many clauses are proved when some are open. Display only; empty when
+    the label says it all."""
     out = []
     originals = [c for c in clauses if not c.get("corrects") and not c.get("restricts")]
     main = main_clause(originals)
@@ -122,8 +131,10 @@ def status_reason(clauses: list[dict]) -> list[str]:
         elif c.get("accept_ok") and c.get("restricts"):
             out.append(f"“{c['name']}” is a special case of “{c['restricts']}”, which is not "
                        f"refuted{why}")
-        elif c.get("accept_ok") and c.get("corrects") and why:
-            out.append(f"“{c['name']}” corrects “{c['corrects']}”{why}")
+        elif c.get("accept_ok") and c.get("corrects") and (why or c.get("kind")):
+            how = CORRECTION_KINDS.get(c.get("kind"))
+            out.append(f"“{c['name']}” corrects “{c['corrects']}”"
+                       + (f" {how}" if how else "") + why)
         out += refutation_scope(c)
     proved = [c for c in clauses if c.get("accept_ok")]
     if proved and len(clauses) > 1 and any(not c.get("accept_ok") for c in originals)             and not any(c.get("state") == "refuted" for c in originals):
@@ -1015,8 +1026,8 @@ class Assessor:
         res = {"name": cl.get("name", "main"), "spec": spec, "accept": cl.get("accept"),
                "refute": cl.get("refute"), "corrects": cl.get("corrects"),
                "restricts": cl.get("restricts"), "refute_scope": cl.get("refute_scope"),
-               "reason": cl.get("reason"), "expect": cl.get("expect"),
-               "expect_reason": cl.get("expect_reason"),
+               "kind": cl.get("kind"), "reason": cl.get("reason"),
+               "expect": cl.get("expect"), "expect_reason": cl.get("expect_reason"),
                "refutation_does_not_cover": list(cl.get("refutation_does_not_cover") or []),
                "standing_assumptions": list(cl.get("standing_assumptions") or []),
                "witness": cl.get("witness"), "defs": cl.get("defs", []),
@@ -1528,6 +1539,15 @@ class Assessor:
             out.append("its definitions are not independently reviewed")
         return list(dict.fromkeys(out))
 
+    def clause_blockers(self, claim: dict, clauses: list[dict]) -> list[list[str]]:
+        """Each clause's own reasons for not being accepted, as `blockers` gives them for that
+        clause alone (the claim's own reasons, such as an unreviewed scope, are the claim's).
+        Display only: the claim's status and blockers are computed from all its clauses."""
+        if claim["scope"] in OUT_OF_SCOPE:
+            return [[] for _ in clauses]
+        alone = {**claim, "scope_reviewed": True}
+        return [self.blockers(alone, [c]) for c in clauses]
+
     def step_review(self, claim: dict) -> dict:
         """A proof step's own review, from its `step-review` markers: recorded beside its status,
         never an input to it (`steps.py`)."""
@@ -1559,6 +1579,7 @@ class Assessor:
                     f"the specification module {v['module']} imports {v['imports']}"))
             self.module_doc_checks()
             self.review_citation_checks()
+            self.unrecorded_refutation_checks()
         gates = self.gates(claims)
         out = {"claims": claims, "findings": self.findings, "gates": gates}
         if self.unlisted_declarers:
@@ -1609,6 +1630,41 @@ class Assessor:
             self.add_warning("module-doc-name", d["module"], d["module"], {"fingerprint": fp},
                              stale_doc_message(d), d["name"], reported=reported)
             self.findings[-1].update(file=d["file"], line=d["line"])
+
+    def unrecorded_refutation_checks(self):
+        """A warning for each theorem of the project whose type is `¬ S` or `S → False`, where
+        S is the proposition of a clause that names no refutation (`refute`): the Lean may
+        refute the clause while the inventory leaves it open. The warning carries the inventory
+        field that would record it (`fix`). It never changes a status: the refutation counts
+        only once the inventory names it and its checks pass. An auditor can dismiss it (code
+        `unrecorded-refutation`, the clause as subject, the theorem as trigger)."""
+        neg = self.lean.get("negations")
+        if not neg:
+            return
+        for e in neg.get("errors", []):
+            self.findings.append(_finding(
+                "warning", "unrecorded-refutation", "lean",
+                f"the search for theorems that deny a clause's proposition failed: {e}",
+                trigger="probe-error"))
+        by_spec: dict[str, list[dict]] = {}
+        for f in neg.get("found", []):
+            by_spec.setdefault(f["spec"], []).append(f)
+        for c in self.inv["claims"]:
+            for k, cl in enumerate(c.get("clauses", [])):
+                spec = cl.get("spec")
+                if not spec or cl.get("refute"):
+                    continue
+                for f in by_spec.get(spec, []):
+                    form = f"¬ {spec}" if f.get("form") == "not" else f"{spec} → False"
+                    rec = self.lean["decls"].get(f["name"]) or {}
+                    self.add_warning(
+                        "unrecorded-refutation", f"{c['id']}#{k}", f"{c['id']}#{k}",
+                        {"fingerprint": rec.get("fingerprint") or f"{spec}:{f['name']}"},
+                        f"declaration {f['name']} has type {form}; {spec} is the proposition "
+                        f"of clause {cl.get('name', 'main')!r} of {c['id']}, which has no "
+                        "`refute`",
+                        f["name"], fix={"refute": f["name"]}, declaration=f["name"],
+                        module=f.get("module"))
 
     def review_citation_checks(self):
         """A warning for each name or path cited in backticks by the review files that nothing
@@ -1722,8 +1778,9 @@ class Assessor:
 
     def clause_relation_checks(self, claim: dict) -> None:
         """A correction (`corrects`) or a special case (`restricts`) names an original clause of
-        its claim, not both; a refutation's scope (`refute_scope`) is given with a refutation,
-        and is `outside-standing-assumptions`; the readings a refutation covers are given with a
+        its claim, not both; a correction's `kind` is one of CORRECTION_KINDS and comes with
+        `corrects`; a refutation's scope (`refute_scope`) is given with a refutation, and is
+        `outside-standing-assumptions`; the readings a refutation covers are given with a
         refutation, and standing assumptions and class lemmas with a scoped one, each lemma
         naming a declared assumption, a known state, and the theorem or identity it needs."""
         cls = claim.get("clauses", [])
@@ -1742,6 +1799,15 @@ class Assessor:
                         "violation", "clause-relation", subj,
                         f"clause {cl.get('name')!r} {rel} {cl[rel]!r}, which is not an original "
                         "clause of this claim"))
+            if cl.get("kind") and not cl.get("corrects"):
+                self.findings.append(_finding(
+                    "violation", "clause-relation", subj,
+                    f"clause {cl.get('name')!r} gives a correction's kind but corrects no clause"))
+            elif cl.get("kind") and cl["kind"] not in CORRECTION_KINDS:
+                self.findings.append(_finding(
+                    "violation", "clause-relation", subj,
+                    f"clause {cl.get('name')!r}: kind {cl['kind']!r} is not one of "
+                    + ", ".join(map(repr, CORRECTION_KINDS))))
             if cl.get("expect") not in (None, *EXPECTS):
                 self.findings.append(_finding(
                     "violation", "clause-relation", subj,

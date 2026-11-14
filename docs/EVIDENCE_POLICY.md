@@ -42,9 +42,11 @@ that the counterexample meets each standing assumption the clause declares,
 no status: nothing checks that a lemma's statement says what its assumption needs, and the list of
 assumptions is the author's own. When every declared assumption has a proved lemma, the reason
 under the status says so, and that the refutation still reads as outside the paper's assumptions
-until the lemmas' statements are independently reviewed. The readings a refutation is declared to cover or not to cover (`refutation_covers`,
-`refutation_does_not_cover`) are shown and their theorems checked, and change no status. A reason
-under a status is display only and changes nothing assessed.
+until the lemmas' statements are independently reviewed. The readings a refutation is declared to
+cover or not to cover (`refutation_covers`, `refutation_does_not_cover`) are shown and their
+theorems checked, and change no status. A correction's `kind` (`added-hypothesis`, `partial`,
+`negation`) is shown beside it and in the reason; a reason under a status, and a kind, are display
+only and change nothing assessed.
 
 A proof that fails a check (wrong type, disallowed axiom,
 `sorry`, missing declaration) does not count, so its clause is open; the failure is a violation
@@ -52,7 +54,9 @@ and fails the paper's consistency check.
 
 Every definition in the closure of a proposition needs its own review, including the auxiliary
 declarations Lean generates (`match_1`, `_f`): they are part of the definition's meaning. A
-closure is taken with the proofs in each statement and definition erased, a witness's as a
+structure's constructor and projections each need a current review too; one review of the
+structure's unit records them all, with a marker for each ([Structures](REVIEWING.md#structures)).
+A closure is taken with the proofs in each statement and definition erased, a witness's as a
 proposition's. A declaration that only a witness's statement uses needs no review; it is listed
 while it has none, and a project can require its review (`require_witness_def_reviews`), which
 can only hold a status back. A proof (a declaration whose type is a proposition: a theorem, a

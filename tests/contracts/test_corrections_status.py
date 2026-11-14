@@ -86,6 +86,41 @@ def test_clause_relations_are_checked():
     assert any("'somewhere' is not" in m for m in msgs)
 
 
+@pytest.mark.parametrize("kind", ["added-hypothesis", "partial", "negation"])
+def test_a_correction_kind_never_changes_the_status(kind):
+    for printed in ("open", "refuted", "refuted-outside"):
+        plain = code(clause(state=printed), clause("fixed", "proved", corrects="main"))
+        assert code(clause(state=printed),
+                    clause("fixed", "proved", corrects="main", kind=kind)) == plain
+
+
+def test_a_correction_kind_is_shown_in_the_reason():
+    why = status_reason([clause(state="refuted"),
+                         clause("fixed", "proved", corrects="main", kind="negation")])
+    assert len(why) == 1 and why[0].startswith("“fixed” corrects “main” with its true part and "
+                                               "the negation of its false part")
+    assert "for every instance" in why[0] and "not a narrowing" in why[0]
+    assert status_reason([clause(), clause("fixed", "proved", corrects="main",
+                                           kind="added-hypothesis", reason="adds 0 < x")])[0] == \
+        "“fixed” corrects “main” with an added hypothesis: adds 0 < x"
+    # An unproved correction says nothing.
+    assert status_reason([clause(), clause("fixed", corrects="main", kind="partial")]) == []
+
+
+def test_a_correction_kind_is_checked():
+    a = Assessor.__new__(Assessor)
+    a.findings = []
+    a.clause_relation_checks({"id": "T:thm:1", "clauses": [
+        {"name": "main"},
+        {"name": "ok", "corrects": "main", "kind": "negation"},
+        {"name": "alone", "kind": "partial"},
+        {"name": "odd", "corrects": "main", "kind": "weaker"}]})
+    msgs = [f["message"] for f in a.findings]
+    assert len(msgs) == 2
+    assert any("'alone' gives a correction's kind but corrects no clause" in m for m in msgs)
+    assert any("kind 'weaker' is not one of" in m for m in msgs)
+
+
 def test_a_refuted_variant_is_not_refuted_as_printed():
     """#655: the clause refuted is a second printing; the clause "as printed" is open."""
     c = code(clause("as printed"), clause("second edition", "refuted"))
