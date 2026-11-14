@@ -13,6 +13,7 @@ from collections import Counter
 from . import steps
 from .readable import readable
 from .assess import line_location, match_anchor, unread
+from .probe import proof_key
 from .source_regions import matches as source_matches
 from .util import content_id, sha256_text
 from .status import fields, STATUSES, source_evidence
@@ -53,7 +54,7 @@ def clause_evidence(cl: dict, anchor: dict | None, mode: str | None, src_ok: boo
                     paper: dict | None = None) -> dict:
     """The rungs of the evidence ladder of one clause, each with its own state."""
     ch = cl.get("checks", {})
-    proof = ch.get("accept") or ch.get("refute")
+    proof = ch.get("accept") or ch.get("refute") or ch.get("accept_from")
     rungs = [{"dimension": "formal", "state": cl["state"]}]
     if cl["state"] != "unchecked" and not (cl.get("defs") and not cl.get("spec")):
         spec = ch.get("spec")
@@ -69,7 +70,10 @@ def clause_evidence(cl: dict, anchor: dict | None, mode: str | None, src_ok: boo
                           "state": "pass" if not type_errs and not proof["sorry"] else "fail",
                           "detail": ("a theorem has exactly the negation as its type"
                                      if ch.get("refute") else
-                                     "a theorem has exactly this proposition as its type")
+                                     "a theorem has exactly this proposition as its type"
+                                     if ch.get("accept") else
+                                     "a theorem has exactly this proposition, assuming "
+                                     + ", ".join(proof.get("assumes") or []) + ", as its type")
                                     if not type_errs and not proof["sorry"] else
                                     "the exact-type or proof-completeness check failed",
                           "errors": proof["errors"]})
@@ -228,6 +232,10 @@ def build(evidence: dict, release: str, display: dict | None = None
             for kind in ("accept", "refute"):
                 if cl.get(kind):
                     proofs[kind] = lean.get("proofs", {}).get(f"{kind}:{cl[kind]}:{cl['spec']}")
+            af = cl.get("accept_from")
+            if af and cl.get("spec"):
+                proofs["accept_from"] = lean.get("proofs", {}).get(
+                    proof_key("accept-from", af["theorem"], cl["spec"], af["assumes"]))
             wit = lean.get("proofs", {}).get(f"witness:{cl.get('witness')}:") \
                 if cl.get("witness") else None
             clauses.append({**cl, "label": clause_tex.get(cl["name"], cl["name"]),
