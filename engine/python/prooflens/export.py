@@ -139,7 +139,8 @@ def public_claim(chunk: dict, pub) -> dict:
     clauses = []
     for cl in chunk["clauses"]:
         c = _pick(cl, ["name", "spec", "accept", "refute", "accept_from", "assumes", "corrects",
-                       "restricts", "refute_scope", "reason", "witness", "defs", "state",
+                       "restricts", "refute_scope", "kind", "reason", "expect", "expect_reason", "witness", "defs",
+                       "state",
                        "review", "checks", "evidence"])
         c["regimes"] = [_pick(r, ["name", "description", "witness", "discharged"] +
                               (["type"] if pub.lean else [])) for r in cl.get("regimes", [])]

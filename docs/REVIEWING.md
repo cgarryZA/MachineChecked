@@ -44,6 +44,27 @@ work is kept in your workspace in the project's working directory (`review-work/
 In zero configuration, export into `machinechecked-reviews/` to publish the reports with the
 audit.
 
+**Many units at once.** `lock`, `decide` and `submit` take `--manifest FILE` (or `-` for
+standard input) instead of a unit and its texts: a JSON list of entries, each with `unit` and that
+step's fields. `lock` takes `reading`; `decide` takes `verdict`, `comparison`, and optionally
+`detail`, `witness`, `coverage`, `basis`, `argument`, `bridge` (`[THEOREM, TARGET]`) and
+`would_decide`; `submit` takes `disagreements`. A text is given inline (`"comparison": "..."`) or
+as a file (`"comparison_file": "cmp.md"`, relative to the manifest's directory), never both; a
+field the step does not take refuses the entry. Each entry is the same step as the single
+command, with the same refusals: every unit still needs its own `read` before its lock, and its
+`author` before its report.
+
+```json
+[{"unit": "link:thm:odd-add", "verdict": "faithful", "comparison_file": "odd-add.md",
+  "coverage": "full", "basis": "direct"},
+ {"unit": "link:thm:σ-bound", "verdict": "broader", "comparison": "...", "detail_file": "σ.md"}]
+```
+
+The command prints one line per entry (`UNIT: what was recorded`, or `UNIT: refused (KIND):
+why`); a refused entry does not stop the others, and the command then exits 2. With `--json` it
+prints one document, `{"schema": "machinechecked/review-manifest@1", "ok", "entries": [{"entry",
+"unit", "ok", "message" | "error": {"kind", "message"}}]}`.
+
 **One review, in the browser or the terminal.** Under `machinechecked view`, the review page
 keeps your work in the same workspace and makes each step through the same checks: the drafts,
 the locked readings, the verdicts, the reports and what you had seen are those `machinechecked
@@ -727,6 +748,7 @@ theorem it is a step of.
 | Faithful | All material assumptions and conclusions match |
 | Faithful with representation choices | Why each representation difference is harmless |
 | Broader | The instantiation that recovers the printed claim |
+| Faithful to the correction | Nothing more: offered only for a correction or a special case of a printed clause, it says the proposition is the printed claim with exactly the correction its clause records (shown with the Lean, beside the passage) |
 | Narrower | Extra hypotheses or cases excluded by Lean |
 | Mismatched | What the Lean statement actually establishes |
 | Vacuous | Why hypotheses fail to hold, or a witness is inadequate |
@@ -770,6 +792,34 @@ A review of a proof step records whether the step holds, and no coverage. Covera
 change no status, and promotion writes the same marker with them or without them.
 
 A review can start before a theorem is proved, once its formal statement exists. The queue lists the claims that still await one.
+
+## Structures
+
+A structure is one review unit with the constants Lean generates for it: its constructor, the
+projections of the fields it declares and the projections to its parents. Their content is the
+structure's fields as written, so they have no units of their own (`def:Pair` covers `Pair.mk`,
+`Pair.x` and `Pair.y`; a field it inherits belongs to its parent's unit). The unit lists the
+constants it covers (`lean` and `members` in the queue) and the claims that use any of them; it
+is reviewed once all of them have a current review. Step 2 shows the structure's fields with
+their names, types and docstrings, and `show --json` carries its authored source
+(`lean_source`), as for a definition. A unit of its own for one of them, from a queue before
+this, is the structure's: having reached its step 2 counts as having seen the structure's Lean.
+
+One reading and one verdict review them all. A field can still be given a separate verdict,
+recorded with the verdict (`verdict.members` in the report):
+
+```sh
+machinechecked review decide def:Pair faithful comparison.md --member Pair.y narrower y-detail.md
+```
+
+Promotion archives the one report as one record and writes a `def-review` marker for each
+constant it covers, each in the form the acceptance checker reads and after its own `Review by`
+line linking that record, after that constant's last marker. Each must still be one of the
+structure's, at the version the report pinned. A constant whose separate verdict is not one
+recorded as a review gets no marker and stays unreviewed; the report's text block (`review
+reports`) lists the constants covered and each separate verdict. In `check`, the obligation to review a
+definition is listed once, with the claims that need it, and a structure's with its constructor
+and projections.
 
 ## Proof steps
 
@@ -862,5 +912,16 @@ Promotion checks that the manuscript, the passages read (their digests, pinned w
 
 Promotion records the maintainer’s decision for the reviewed proposition or definition. The marker it writes records the digests of the paper passages read, so a later change to that text reopens the review. A passage the manuscript no longer matches reads as unread until it is pinned again, and promotion refuses a report on it (see [Evidence policy](EVIDENCE_POLICY.md#a-review-is-a-reading-of-a-text), which also says how markers written before the digests were recorded are read, and how to add the digests to them).
 Acceptance also requires the claim’s proofs and all other required checks.
+
+For each report it accepts, promotion keeps one record: the report as exported, in `reports/STEM.json` beside the review files (`STEM` is the unit, the reviewer and the time of the report). The record holds the locked reading, the comparison and verdict, the coverage, the reviewer, the time of each stage and the pins the marker is checked against. The line promotion writes before the marker, ``Review by REVIEWER: VERDICT (report `reports/STEM.json`).``, links it. A later review of the same unit, after its statement changed, is another record beside the first, and the earlier one stays. To read the reports as text, in the protocol's form, write them from the records:
+
+```sh
+machinechecked review reports              # into reports/ in the output directory (.machinechecked/)
+machinechecked review reports --out DIR    # or into DIR
+```
+
+The text is generated: it can be deleted, and the command writes it again, the same.
+
+Promotion in version 0.1.25 and earlier also wrote that text as `reports/STEM.md` beside the record, and its line links the `.md` file. Such a project keeps working as it is: the line is read the same either way, and the assessment, `check` and the reader do not read the `.md` files. They can be deleted safely, keeping the `.json` file of each; the record of a link `reports/STEM.md` is `reports/STEM.json`, and `machinechecked review reports --out reviews/reports` (the directory that holds them) writes the text files back where the links name them.
 
 For details of the acceptance states, see [Evidence policy](EVIDENCE_POLICY.md). For the required configuration and review-marker format, see [Full assessment](ASSURANCE.md).

@@ -20,6 +20,8 @@ export const VERDICTS = {
       detail: "List the representation choices, and say why each is harmless." },
     { value: "broader", label: "Broader; implies the printed claim",
       detail: "State the instantiation that gives the printed claim." },
+    { value: "faithful to the correction", label: "Faithful to the correction",
+      correctionOnly: true },
   ],
   problem: [
     { value: "narrower", label: "Narrower",
@@ -191,7 +193,16 @@ export function revealedIn(work, units, u, before = null) {
   ];
   const out = work.drafts?.[u.id]?.reader_exposure ? [{ unit: u.id, what: "Lean" }] : [];
   out.push(...exposureOf(work, u, before));
+  // A structure's constructor and projections are its unit: work on one of them as a unit of its
+  // own (in a queue before they were reviewed together) showed the structure's Lean.
+  const members = new Set((u.members || []).map((m) => "def:" + m.name));
   for (const p of passed) {
+    if (members.has(p.id)) {
+      for (const [what, ok] of [["Lean", p.lean], ["author's review", p.author]]) {
+        if (ok && !out.some((o) => o.unit === p.id && o.what === what)) out.push({ unit: p.id, what });
+      }
+      continue;
+    }
     const r = p.id !== u.id && byId[p.id]?.reveals;
     if (!r) continue;
     for (const [what, ok, key] of [["Lean", p.lean, "lean"], ["author's review", p.author, "author"]]) {

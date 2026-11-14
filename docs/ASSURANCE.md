@@ -46,6 +46,21 @@ Sources can also be a pinned Git revision (`source = { git = "owner/repo", rev =
 - **A published version**: `published = "arXiv:2601.01234v1"` (or an arXiv source). It is labelled "arXiv v1". The inventory is pinned to it by its identifier: `"papers": {"T": {"commit": "2601.01234v1"}}`, or a claim's `"commit"`.
 - **An unpublished manuscript**: `version = "manuscript"` with the manuscript's commit as the source's `rev` (`source = { git = "owner/manuscript", rev = "<commit>" }`; a folder in the project may state its `rev`, checked against the folder's history when it is a repository of its own). It is labelled "Latest manuscript (commit abc1234)", never with a version number, even when `published` names the paper's earlier arXiv version. The inventory is pinned to that commit.
 
+**Another version's numbering.** When the version read numbers its statements differently from a version the Lean's docstrings also cite (a preprint read, a journal version cited), declare that version's numbering under its paper:
+
+```toml
+[[paper.numbering]]
+name = "journal"
+qualifier = "of the journal version"   # or qualifiers = ["of the journal version", "of the published version"]
+identifier = "doi:10.0000/example"     # optional
+complete = false                       # true when the map lists every numbered statement
+[paper.numbering.map]                  # this version's number = that version's number
+"Proposition 2" = "Proposition 5"
+"Lemma 1" = "Lemma 7"
+```
+
+A citation followed by the qualifier (`Lemma 1 (Lemma 7 of the journal version)`) is then checked against the map, not against the version read ([Paper numbers in the Lean](GETTING_STARTED.md#paper-numbers-in-the-lean)). The map is the project's assertion: it changes no status.
+
 `build` refuses an audit whose inventory is pinned to another version than the one it declares (for example `published` says arXiv v1 while the claims are pinned to a later manuscript commit), before Lean runs. A paper that declares no version is described by its source's commit when the inventory agrees, and by nothing otherwise. To publish an audit of each version, see [Publish an audit of each paper version](GETTING_STARTED.md#publish-an-audit-of-each-paper-version).
 
 With multiple root TeX files, specify `root`. Without LaTeX, MachineChecked falls back to the paper's PDF and labels the weaker source evidence.
@@ -86,7 +101,7 @@ The claim inventory lists each printed claim, its pinned source, scope and claus
 
 This is one claim entry inside `claims.json`. The acceptance theorem must have the specification’s **exact closed proposition** as its type.
 
-Other clause fields include `refute` (a proof of the printed proposition's negation), `accept_from` (a proof from other propositions, below), `corrects` (which original clause a correction addresses), and `defs` for a definition claim.
+Other clause fields include `refute` (a proof of the printed proposition's negation), `accept_from` (a proof from other propositions, below), `corrects` (which original clause a correction addresses, with its `kind`), and `defs` for a definition claim.
 
 **Corrections, special cases and refutations of a wider statement.** A clause other than the printed ones says how it relates to a printed clause, and a refutation says how far it reaches:
 
@@ -95,9 +110,11 @@ Other clause fields include `refute` (a proof of the printed proposition's negat
 | `corrects: "as printed"` | the printed clause is false (or believed false), and this clause is the printed claim with the correction: an added hypothesis, the true part with the false part negated, and so on | while the printed clause is open: `formal: open as printed; corrected statement proved, …`; once it is refuted as printed: `refuted as printed; corrected statement proved` |
 | `restricts: "as printed"` | the printed claim is believed true, and only a special case is proved (an added hypothesis whose other cases are argued to hold vacuously, say) | `formal: open as printed; special case proved, …`: the printed claim is open, never refuted |
 | `refute_scope: "outside-standing-assumptions"`, with `refute` | the counterexample lies outside the paper's standing assumptions (a filtration that is not complete, coefficients that are not measurable): it refutes the formal proposition, which is wider than the printed claim | the clause reads `refuted outside the paper's assumptions`, and the claim stays open as printed; it never reads `refuted as printed` |
+| `kind`, with `corrects` | what the correction does: `added-hypothesis` (the printed claim under an extra hypothesis), `partial` (part of the printed claim, the rest left open), or `negation` (for a printed "P and Q" with Q false: P, and not Q). A `negation` refutes the false part for every instance, not by one counterexample, and is not a narrowing of the printed claim | the same status as without it; the kind is shown beside the clause in the reader (`corrects "as printed" with an added hypothesis`, …) and in the reason under the claim's status |
 | `reason` | one line saying what a correction or special case adds, or which assumption a counterexample breaks | shown under the claim's status, with the clause's name |
+| `expect: "refute"` (or `"accept"`, `"undecided"`), with `expect_reason` | what the author expects of a clause before its proof exists, and why: a printed clause believed false, one believed true, or one not yet decided | shown under the status until a proof settles it; with `"refute"`, the missing refutation is listed as the clause's open obligation; a proof of the other kind is a warning (`expectation-contradicted`). It changes no status, and a reviewer sees it only after the verdict |
 
-The review level after "proved" (`review pending`, `author-reviewed`, `reviewed`) is that of the correcting or special-case clauses. None of these statuses is `accepted`, and none passes the release gate: the printed claim is not established. A claim with some clauses proved and another original clause open, with nothing proved for it, reads `formal: open; some clauses proved`, and the reason under it says how many. `check` counts each status on its own line. A correction and a special case name an original clause of their claim, never both, and a refutation's scope comes with a refutation: `check` reports a violation otherwise.
+The review level after "proved" (`review pending`, `author-reviewed`, `reviewed`) is that of the correcting or special-case clauses. A refuted clause other than the one that states the claim as printed (the clause named `as printed`, else the first original) reads `a printed variant refuted[; …]`, with which clause under the status, never `refuted as printed`. None of these statuses is `accepted`, and none passes the release gate: the printed claim is not established. A claim with some clauses proved and another original clause open, with nothing proved for it, reads `formal: open; some clauses proved`, and the reason under it says how many. `check` counts each status on its own line. A correction and a special case name an original clause of their claim, never both, a refutation's scope comes with a refutation, and a `kind` comes with `corrects` and is one of the three above: `check` reports a violation otherwise. A kind never changes a status: a `negation` proved beside an open printed clause still reads `formal: open as printed; corrected statement proved, …`, and the printed clause reads `refuted as printed` only when its own `refute` is proved.
 
 A proposition with hypotheses and no `witness` (a theorem that meets them) carries a `witness` obligation, which names the hypotheses that need it. Instances of standard classes over the proposition's own variables (`[MeasurableSpace Ω]`, `[IsProbabilityMeasure P]`, `[InnerProductSpace ℝ F]`, `[NeZero N]`) have canonical instances, so a proposition whose only hypotheses are such instances gets a low-signal warning instead (code `witness-instances`), which lists the classes and can be dismissed like any warning. An instance of `Fact`, of a class of the project, or of a class applied to anything but a variable bound before it or a number system (`[NeZero 0]`) still needs a witness. `inhabited_classes` under `[project]` replaces the built-in list of classes treated as inhabited (`assess.INHABITED_CLASSES`); `inhabited_classes = []` raises the obligation for every instance. Neither finding changes a status.
 
@@ -108,6 +125,8 @@ For a supremum or infimum in a conditionally complete type (the reals), a Bochne
 A warning about one application has its first position in the proposition (`at`) and a `fingerprint` of the application in its scope: the application itself, the variables it depends on and the hypotheses about them, its type and the structure Lean finds on it, and the fingerprints of the project's declarations it uses. A dismissal of it records both (`code` `totalised`, the proposition as `subject`, the operation as `trigger`, `at`, `fingerprint`, `rationale`, `by`) and dismisses that application only: a justified use of one supremum does not silence another in the same statement. It lapses when that application's type, structure, variables, hypotheses or declarations change, and holds when another part of the statement changes; when an edit moves the application, the dismissal follows the one application with its fingerprint, and a new application at its old position is open, not marked as having a dismissal that no longer applies. A dismissal without `at`, the form written before applications were read one by one, dismisses every warning of its operation in the proposition while the proposition's fingerprint is unchanged, and the warning says it is of that form (`dismissed.form`: `statement`; `check` counts them). The other warnings (a subtraction, an operation the probe does not read by type, evidence from before the record, applications a walk too large to finish did not reach) are one per operation in the proposition, dismissed as before.
 
 A witness is only as good as the declarations that choose its instance. When a witness's statement uses a project declaration that no proposition's closure includes and no definition claim maps (an `abbrev` holding the paper's example values, say), `check` lists it while it has no current `def-review` (a warning, code `witness-def-review`, subject the declaration, trigger the witnesses; a dismissal lapses when the declaration changes), `check --json` gives the list under each claim (`witness_defs`), and the claim's audit details show it. A proof (a declaration whose type is a proposition: a theorem, a `_proof_1` Lean generates, a `Prop`-valued instance) carries no data and is not listed, nor is a declaration that only a proof inside the statement uses (the closure, like a proposition's, is taken with the proofs erased: `pick ⟨1, one_lt_bound⟩` reaches `pick`, not the `bound` that only the theorem `one_lt_bound` names), nor the tactic script Lean stores for a tactic default (`pos : 0 < val := by decide` makes `Pos.pos._autoParam`), which gives only a proof; such a script needs no review in a proposition's closure either. A definition claim's audit details list the witness-only declarations whose type or body uses a definition it maps, as candidates for its mapping (`witness_candidates`). The list changes no status. `require_witness_def_reviews = true` under `[project]` asks a review of each such declaration, as of the definitions a proposition depends on: until it has one, the claim reads review pending.
+
+A refutation counts only when the inventory names it. When a theorem of the project has type `¬ S` or `S → False`, where `S` is the proposition of a clause with no `refute`, `check` warns (code `unrecorded-refutation`, subject the clause, trigger the theorem): "declaration X has type ¬ S; S is the proposition of clause C of the claim, which has no `refute`", and prints the field to add to the clause (`"refute": "X"`, also under `fix` in `check --json`). Only the shape of the type is compared, with nothing unfolded: a theorem stated about an abbreviation of `S` is not found. The search is one pass over the project's theorems. The warning changes no status: the clause stays open until the inventory names the refutation and its checks pass.
 
 **A proof from another claim.** A printed proof often derives one claim from another of the same paper. A clause records such a proof with `accept_from`, naming the theorem and the propositions it assumes:
 
@@ -136,7 +155,7 @@ For definitions use `def-review`. The hash records the declaration version revie
 
 A marker records a reading, so one with no review text before it (a heading followed only by markers, as when markers are copied without their reviews) counts as no review: the declaration reads as not reviewed, its claim as review pending, and `build` lists each such marker with its file and line (an obligation, code `review-without-reading`). `bare_markers_by = ["reviewer"]` under `[project]` lets the markers of the reviewers it names count without text.
 
-The Review queue exports reports. The maintainer evaluates those reports before invoking `machinechecked review promote FILE.json`; promotion writes each acceptance marker after the declaration's last marker, preceded by a line ``Review by REVIEWER: VERDICT (report `FILE`).``. That line is the text of the reviewer's marker; every other marker of the section, including one added later, keeps the section's text. The maintainer may also request further review.
+The Review queue exports reports. The maintainer evaluates those reports before invoking `machinechecked review promote FILE.json`; promotion writes each acceptance marker after the declaration's last marker, preceded by a line ``Review by REVIEWER: VERDICT (report `reports/STEM.json`).``, which links the report's record, archived in `reports/` beside the review files ([Maintainer acceptance](REVIEWING.md#maintainer-acceptance)). That line is the text of the reviewer's marker; every other marker of the section, including one added later, keeps the section's text. The maintainer may also request further review.
 
 ## Run checks and generate a site
 
@@ -158,6 +177,24 @@ machinechecked changes
 ```
 
 `build --site DIR` builds and then writes the same export to `DIR` in one step (as the reusable audit workflow does); it refuses a directory that is the project or holds anything but a previous site.
+
+`check` reports the stored assessment, without building or probing again, when nothing a full build reads has changed since one made a release: the configuration, the inventory, the review and dismissal files, the replay record, the display, symbol and anchor files, each paper's source (a folder's files, or a git source's commit), every Lean input, the Lean project's commit, the probe and MachineChecked itself. It says so on its first line, names the release, and answers in seconds; when any of them changed, when a paper is read from arXiv or a remote branch, or when the probe failed on a request in that build, it builds as `build` does. `build` always assesses again.
+
+`check --claim CLAIM` shows one claim (its id, its key such as `thm:main`, or its printed number such as `"Theorem 2.5"`, as `compare` takes them; repeat the option or separate several by commas) instead of the summary: its passage (file, line, page and how it is placed in the PDF), its status with the reasons and blockers the assessment gave, each clause with its proposition, proof or refutation and witness, what its Lean establishes, its review and its own blockers, the findings in force that concern the claim or a declaration it names, and its review units with their state:
+
+```
+T:thm:bound  Theorem 2.5 (Uniform bound)
+  status: formal: proved, review pending
+  passage: toy.tex, line 65, page 1 (placed: exact)
+  clause “statement”: proved
+    proposition: Toy.PaperSpec.thm_bound
+    proof: Toy.Acceptance.thm_bound
+    establishes: a Lean theorem proves its proposition
+    review: pending
+    blocked by: the proposition has no review; …
+```
+
+A clause's own blockers are the claim's computed for that clause alone, so a claim whose corrected clause is proved says why it is still open (the printed clause has no proof, say). `check --changed` shows the same view of each claim whose status, blockers, clauses or findings in force differ from the release before (`was:` gives its status there). `--json-out FILE` writes the `check --json` document to `FILE` from the same run, beside the text; with `--claim` or `--changed` the document holds only those claims, each with its view, and only their finding details. The exit status is the whole check's, whichever claims are shown. None of this changes what is assessed.
 
 `build --reuse-lean` takes its probe records from the newest stored release made from the same Lean inputs, by the same probe and with the same probe settings (`modules`, `scope_roots`, the layer prefixes and `allowed_axioms`), and read by the same version of MachineChecked, whichever releases came after it; when no release has records that answer every request of the inventory, it stops and names what differs. Without `--reuse-lean`, every build asks Lean for its probe records afresh. `build --refresh` also discards the module indexes and load failures kept in the Lean facts store, so whatever the build reads from that store is extracted again.
 
@@ -181,6 +218,15 @@ review_citations_ignore = [
 ```
 
 `review_citations_ignore = []` skips no notation.
+
+A ledger of readings kept beside the inventory (notes such as "path continuity of `Toy.proc` is not proved") can be tied to the declarations it is about, so that a note does not go on saying something is missing after it has been added. `readings_ledger = "audit/readings.json"` under `[project]` names a JSON file holding a list of rows, or an object with a `rows` list; a row is
+
+```json
+{"id": "R1", "text": "path continuity of `Toy.proc` is not proved",
+ "declarations": ["Toy.proc"], "namespaces": ["Toy"], "read_at": "abc1234"}
+```
+
+where `declarations` are the Lean names the row is about, `namespaces` (optional) further namespaces whose new declarations concern it (each named declaration's own namespace is one already), and `read_at` the Git revision of the Lean project at which the row was last read. `check` and `build` compare each row with the Lean project's working tree and warn (`kind` `readings-ledger` in `check --json`'s `warnings`, with `row`, `read_at`, `missing`, `changed`, `new` and `message`) about a row when a named declaration's lines differ from those at `read_at` (`changed`), when one of its namespaces has a declaration that its file did not declare at `read_at` (`new`, each with its statement as Lean prints it, so the reader sees exactly what was added: a bound on second moments of increments is not continuity), or when no built module declares a named name (`missing`). A row without `read_at`, or with a revision the repository does not have, is reported as such, and so is a ledger that cannot be read or a project that is not in a Git repository. The warning asks for a fresh reading: the auditor reads the row again and records the new revision in `read_at`. It never accepts, rewrites or dismisses a row, and it changes no status. Declarations are those of the index of the built modules, so a name of a dependency counts as missing; a declaration's lines run from its first line (its docstring) to the next declaration of its file.
 
 `reassess` re-evaluates current reviews and dismissals against compatible stored evidence; when nothing changed, it names the release it read again, as a repeated build does. `export` assembles only explicitly permitted public fields and scans the result for private-content leakage.
 

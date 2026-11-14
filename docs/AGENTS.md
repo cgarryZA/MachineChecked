@@ -52,9 +52,12 @@ they do not change the exit code. `numbering` holds every such reference
 (`numbering.references`: `reference`, its exact `text` and `context`, its `source` with
 declaration, module, file, line and `where` it is (`docstring`, `name`, `module docstring` or
 `comment`; a comment's declaration is null when it is on none), its `role` (`statement` or
-`cited`), and `status`: `exact`, `other-kind`, `absent`, `unchecked` or `other-source`;
-`stale_lead` and `content.closer` when an exact reference's declaration reads closer to
-another statement) and the project-level `pattern` (counts by status, `places`: the
+`cited`), and `status`: `exact`, `other-kind`, `absent`, `unchecked`, `other-source` or
+`mismatch`; `stale_lead` and `content.closer` when an exact reference's declaration reads
+closer to another statement; `version` (`name`, `qualifier`, `identifier`) when the reference
+is qualified as a number of another version whose declared numbering it is checked against,
+`mismatch` meaning that the map pairs it with another statement than the one cited beside it)
+and the project-level `pattern` (counts by status, `places`: the
 declarations and modules holding disagreeing references, `drift`, `examples` (reference ids),
 and whether the paper's numbering is complete). Each suggestion has `reasons`: `signal`
 (`content`, `uses`, `number`, `lexical`, `structure`) and `text`; a `number` reason has
@@ -80,6 +83,20 @@ in quantity, or could not be compared (`kind`, `feature`, `paper` and `lean` eac
 `workspace`, its auditor (`by`) and `mode`; `dismissed_hints` are those a recorded difference
 settles, with `settled`. A hint is not a finding and not a status: report it as something to
 inspect, and never count it with the findings.
+
+`check --json --claim CLAIM` (the claim's id, key or printed number; repeat it or separate several
+by commas) gives only those claims, under `selected`. In a project with a `machinechecked.toml`
+each then also has `passage` (`file`, `line`, `page`, `placement`, `label`, `source_sha256`),
+`status_reason`, `blockers`, `clauses` (each with `name`, `proposition`, `proof`, `refutation`,
+`witness`, `corrects` or `restricts`, `state`, `establishes` in words, `review` and its own
+`blocked_by`), `findings` (those in force that concern it or a declaration it names) and
+`review_units` (`id`, `kind`, `name`, `state`); `finding_details` is cut to those findings.
+`--changed` selects the claims whose status, blockers, clauses or findings in force differ from
+the release before (`changed_since`; each has `was`, its status there, or null for a new claim).
+`--json-out FILE` writes the same document to `FILE`, also without `--json`, so one run gives
+the text report and the JSON. `reused` is true when nothing the assessment reads changed since
+a build made `release`, and the check reported that release's stored assessment without
+assessing again. The exit status is the whole check's, whichever claims are selected.
 
 In a project with a `machinechecked.toml` (the full assessment), the document also has
 `findings` (totals per tier, dismissed warnings left out) and `finding_details`: each finding
@@ -125,7 +142,10 @@ the whole statement rather than one application); `dismissal_stale` marks one wh
 longer applies. The site data and `export` carry the same fields.
 When the configuration has one paper and the project is built, the document
 also has `warnings` with the `paper-reference` warnings and `numbering`, as in zero
-configuration; with several papers they are absent. Report the violations and obligations by
+configuration; with several papers they are absent. When the configuration names a
+`readings_ledger`, `warnings` also lists its stale rows (`kind` `readings-ledger`, with `row`,
+`read_at`, `missing`, `changed`, `new` and `message`; docs/ASSURANCE.md): each asks for a fresh
+reading of the row and changes no status. Report the violations and obligations by
 subject and message; they are what blocks a claim from being accepted. `replay` is null when no Comparator replay counts; otherwise it
 gives the record's `guard` (`guarded`, `unguarded`, or `unrecorded` for an older record), the
 number of proofs `replayed`, and a `message` when they were not shown to run under the sandbox
@@ -499,6 +519,12 @@ machinechecked review export --out machinechecked-reviews/my-reviews.json
 
 `decide` records the coverage and its basis with the verdict, both optional
 ([Coverage with the verdict](REVIEWING.md#coverage-with-the-verdict)).
+
+For many units, `review lock`, `decide` and `submit` take `--manifest FILE --json`: a JSON list of
+`{"unit", ...the step's fields}`, each text inline or as `NAME_file`, applied entry by entry with
+the same refusals, and answered with one document listing each entry's result
+(*Many units at once* in [REVIEWING.md](REVIEWING.md)). Each unit still needs its own `read`
+before the lock and `author` before the report.
 
 Run `compare` on a claim only after its review, or say in the reading that you had: its default
 stage shows the Lean and what others recorded. The steps are saved in your workspace

@@ -75,6 +75,12 @@ violations and obligations by subject; `findings` holds only their totals. A vio
 `machinechecked check --fix-modules` lists a module is a declaration whose module is missing from
 `modules`: with the user's agreement, run `check --json --fix-modules`, which edits
 `machinechecked.toml`, checks again and lists the modules it added in `modules_added`.
+`check --json --claim CLAIM` (id, key or printed number) gives only that claim, with its passage,
+each clause's proposition, proof, witness, what it establishes and its own `blocked_by`, its
+findings in force and its review units; `--changed` gives the claims that changed since the
+release before. When nothing changed since the last build, `check` reports that release's stored
+assessment in seconds (`reused` is true). `--json-out FILE` writes the document beside the text
+report from one run.
 
 ## Typical tasks
 

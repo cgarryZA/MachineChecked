@@ -551,6 +551,10 @@
           <p class="small">Used by:
             {#each current.claims as c, i}{i ? ", " : ""}<a href={href(index.release, "read", c.id.split(":")[0], c.id)} target="_blank" rel="noopener">{c.id}</a>{/each}
           </p>
+          {#if current.members?.length && draft.stage !== "read"}
+            <!-- Lean names: shown once the reading is locked. -->
+            <p class="small">One review covers the structure and what Lean generates for it: {current.members.map((m) => `${m.name} (${m.role})`).join(", ")}.</p>
+          {/if}
         {:else}
           {#if claims[0]?.step}<p class="small">A step of the proof of {claims[0].step.parent?.number || claims[0].step.parent?.id || "its result"}. Is it valid as printed? Judge the step on its own.</p>{/if}
           {#if claims.length < current.claims.length}
@@ -585,6 +589,7 @@
 
           {#if draft.stage === "compare"}
             <h3 id="comparison-label">Comparison</h3>
+            {#if current.correction}<p class="small correction-note">This proposition is {current.correction.relation === "restricts" ? "a special case of" : "a correction of"} the printed clause “{current.correction.of}”. Compare it with the passage and that correction: if it is the printed claim with exactly that correction, the verdict is <em>Faithful to the correction</em>.</p>{/if}
             <ul class="checklist" aria-label="What to compare">
               {#each CHECKLIST[current.kind === "def" ? "def" : current.kind === "step" ? "step" : "statement"] as it (it.key)}
                 <li>
@@ -609,7 +614,7 @@
             </div>
             {#if draft.group}
               <fieldset class="verdicts"><legend>Verdict</legend>
-                {#each (verdicts[draft.group] || []).filter((v) => !v.refuteOnly || current.refute) as v}
+                {#each (verdicts[draft.group] || []).filter((v) => (!v.refuteOnly || current.refute) && (!v.correctionOnly || current.correction)) as v}
                   <label><input type="radio" bind:group={draft.verdict} value={v.value} onchange={persist} /> {v.label}</label>
                 {/each}
               </fieldset>

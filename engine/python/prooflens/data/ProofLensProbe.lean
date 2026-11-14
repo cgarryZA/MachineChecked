@@ -3496,6 +3496,47 @@ def refsRecords (h : IO.FS.Handle) (roots : Array Name) (cache : UsedCache) : Me
       ("kind", kindOf ci), ("user_facing", toJson (userFacing n)),
       ("value_kind", valueKind ci), ("statement", inside st), ("value", inside va)])
 
+/-- The constant a type denies and the form of the denial, when the type is `¬ S` or
+`S → False` with `S` a constant; nothing is unfolded. -/
+def deniedConst (ty : Expr) : Option (Name × String) :=
+  let ty := ty.consumeMData
+  if ty.isAppOfArity ``Not 1 then
+    match ty.appArg!.consumeMData with
+    | .const s _ => some (s, "not")
+    | _ => none
+  else match ty with
+    | .forallE _ d b _ =>
+      match d.consumeMData, b.consumeMData with
+      | .const s _, .const f _ => if f == ``False then some (s, "implies-false") else none
+      | _, _ => none
+    | _ => none
+
+/-- For the propositions `specs` (those of clauses without a refutation), a `negation` record
+for each theorem of the project whose type is `¬ S` or `S → False` with `S` one of them, then
+a `negations` record with the number of theorems searched. It is one pass over the project's
+constants that compares the shape of each theorem's type, so its cost does not grow with the
+number of propositions. -/
+def negationRecords (h : IO.FS.Handle) (roots : Array Name) (specs : Array String) :
+    MetaM Unit := do
+  let env ← getEnv
+  let wanted : NameSet := specs.foldl (fun s n => s.insert n.toName) {}
+  let mut searched := 0
+  let mut found := 0
+  unless wanted.isEmpty do
+    for n in ← projectConstants roots do
+      let some (.thmInfo ti) := env.find? n | continue
+      unless userFacing n do continue
+      searched := searched + 1
+      let ty ← if ti.type.hasMVar then instantiateMVars ti.type else pure ti.type
+      let some (s, form) := deniedConst ty | continue
+      unless wanted.contains s do continue
+      found := found + 1
+      emit h (Json.mkObj [("record", "negation"), ("name", n.toString), ("spec", s.toString),
+        ("form", Json.str form), ("module", (moduleOf env n).toString),
+        ("range", ← rangeJson n)])
+  emit h (Json.mkObj [("record", "negations"), ("searched", toJson searched),
+    ("found", toJson found), ("errors", Json.arr #[])])
+
 /-- A binder around an occurrence inside a value: a `fun` (one of the declaration's own
 parameters when it is one of the value's leading binders), a `let`, a `have` (a `fun` applied
 to the proof of its premise) or a `∀`. Its type and value have loose bound variables for the
@@ -3930,6 +3971,7 @@ open ProofLensProbe in
             emit h (Json.mkObj [("record", "defclosure"), ("name", r.name),
               ("errors", toJson #["missing"])])
         | "refs" => refsRecords h roots used
+        | "negations" => negationRecords h roots (r.names.getD #[])
         | "apps" => appsRecords h roots used r.name.toName r.callers
         | _ => pure ())
         (fun err => do
