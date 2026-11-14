@@ -46,6 +46,51 @@ CORRECTION_KINDS = {
                 "instance, not only for one counterexample: not a narrowing of the printed claim",
 }
 
+# What a class lemma says of a scoped refutation's counterexample and one standing assumption:
+# proved for it, holding only up to an identity not proved in Lean, or not addressed.
+CLASS_STATES = ("proved", "up-to-identity", "not-addressed")
+
+
+def refutation_scope(c: dict) -> list[str]:
+    """The scope of a clause's checked refutation, in a line per kind: the readings (quantifier
+    moves) its counterexample is declared to cover and not to cover, and, for a refutation
+    scoped outside the paper's standing assumptions, what is shown of each assumption. Display
+    only; the clause's state is computed in `Assessor.clause`."""
+    if not c.get("refute_ok"):
+        return []
+    out, name = [], c["name"]
+    covers, nots = c.get("refutation_covers") or [], c.get("refutation_does_not_cover") or []
+    if covers or nots:
+        parts = []
+        if covers:
+            parts.append("also covers " + "; ".join(
+                r["move"] + {"proved": f" (proved by {r.get('theorem')})",
+                             "failed": f" (its theorem {r.get('theorem')} fails a check)"}.get(
+                    r["state"], " (declared, no theorem)") for r in covers))
+        if nots:
+            parts.append("does not cover " + "; ".join(nots))
+        out.append(f"the refutation of “{name}” " + ", and ".join(parts))
+    lemmas = c.get("class_lemmas") or []
+    if c.get("refute_scope") == OUTSIDE:
+        words = {"proved": lambda l: f"proved by {l['theorem']}",
+                 "up-to-identity": lambda l: "holds only up to an identity not proved in Lean"
+                                             + (f": {l['identity']}" if l.get("identity") else ""),
+                 "failed": lambda l: f"its theorem {l['theorem']} fails a check",
+                 "not-addressed": lambda l: "not addressed"}
+        if lemmas:
+            out.append(f"the counterexample refuting “{name}” and the paper's standing "
+                       "assumptions: " + "; ".join(f"{l['assumption']}: {words[l['state']](l)}"
+                                                    for l in lemmas))
+            if all(l["state"] == "proved" for l in lemmas):
+                out.append(f"every declared standing assumption has a proved class lemma for the "
+                           f"counterexample refuting “{name}”; the refutation still reads as "
+                           "outside the paper's assumptions until the lemmas' statements are "
+                           "independently reviewed")
+        else:
+            out.append(f"no standing assumption of the paper is shown to hold for the "
+                       f"counterexample refuting “{name}”")
+    return out
+
 
 EXPECTS = ("accept", "refute", "undecided")
 
@@ -67,10 +112,10 @@ def _assumed(a: dict) -> str:
 
 def status_reason(clauses: list[dict]) -> list[str]:
     """Why a claim's status is what it is, in a line per reason, for the reader to show under
-    the label: a refutation that holds only outside the paper's standing assumptions, a proved
-    correction (with its kind) or special case of a printed clause, the propositions a clause
-    is proved assuming (or proved from), and how many clauses are proved when some are open.
-    Display only; empty when the label says it all."""
+    the label: a refutation that holds only outside the paper's standing assumptions, the scope of
+    a refutation (`refutation_scope`), a proved correction (with its kind) or special case of a
+    printed clause, the propositions a clause is proved assuming (or proved from), and how many
+    clauses are proved when some are open. Display only; empty when the label says it all."""
     out = []
     originals = [c for c in clauses if not c.get("corrects") and not c.get("restricts")]
     main = main_clause(originals)
@@ -107,6 +152,7 @@ def status_reason(clauses: list[dict]) -> list[str]:
                 c.get("checks", {}).get("accept") or {}).get("ok"):
             out.append(f"“{c['name']}” is proved from "
                        + ", ".join(_assumed(a) for a in c["assumes"]) + ", each proved")
+        out += refutation_scope(c)
     proved = [c for c in clauses if c.get("accept_ok")]
     if proved and len(clauses) > 1 and any(not c.get("accept_ok") for c in originals)             and not any(c.get("state") == "refuted" for c in originals):
         out.append(f"{len(proved)} of {len(clauses)} clauses proved")
@@ -999,6 +1045,8 @@ class Assessor:
                "restricts": cl.get("restricts"), "refute_scope": cl.get("refute_scope"),
                "kind": cl.get("kind"), "reason": cl.get("reason"),
                "expect": cl.get("expect"), "expect_reason": cl.get("expect_reason"),
+               "refutation_does_not_cover": list(cl.get("refutation_does_not_cover") or []),
+               "standing_assumptions": list(cl.get("standing_assumptions") or []),
                "witness": cl.get("witness"), "defs": cl.get("defs", []),
                "regimes": cl.get("regimes", []), "checks": {}}
         af = accept_from(cl)
@@ -1118,8 +1166,13 @@ class Assessor:
                 self.findings.append(_finding("violation", "accept-from-" + e.split("=")[0], subj,
                                               self.not_found(thm) if e == "missing" else
                                               f"{thm}: {e}"))
-        # A refutation whose counterexample lies outside the paper's standing assumptions
-        # refutes the formal proposition only, never the printed claim.
+        res["refutation_covers"] = [self._scope_theorem(subj, "refutation-cover", r)
+                                    for r in cl.get("refutation_covers") or []]
+        # Class lemmas are recorded and their theorems checked, but change no status: nothing
+        # checks that a lemma's statement says the counterexample meets its assumption, and the
+        # assumptions are the author's own list.
+        if cl.get("refute_scope") == OUTSIDE:
+            res["class_lemmas"] = self.class_lemmas(subj, cl)
         # What the author expects of a clause (#650): its missing proof is the open obligation,
         # and a proof of the other kind contradicts it.
         exp = cl.get("expect")
@@ -1134,6 +1187,9 @@ class Assessor:
                 + ("refuted, but its proposition is proved" if exp == "refute"
                    else "proved, but its proposition is refuted")
                 + ": correct the expectation, or look at the proof"))
+        # A refutation whose counterexample lies outside the paper's standing assumptions
+        # refutes the formal proposition only, never the printed claim, whatever its class
+        # lemmas say.
         res["state"] = ("proved" if res.get("accept_ok") else
                         "refuted-outside" if res.get("refute_ok")
                         and cl.get("refute_scope") == OUTSIDE else
@@ -1163,6 +1219,54 @@ class Assessor:
                     trigger=r.get("name", "")))
         res["regimes"] = regs
         return res
+
+    def _scope_theorem(self, subj: str, code: str, entry: dict) -> dict:
+        """A theorem attached to a refutation's scope (a covered reading, a class lemma), checked
+        as a proof is: it exists, is a theorem in the accept layer and uses only the allowed
+        axioms. Its type is recorded for the reviewer, not compared with anything. The entry
+        comes back with `state` `proved`, `failed` (a violation is raised) or `declared` (no
+        theorem named), and the theorem's `type` and `axioms` when it was found."""
+        out = dict(entry)
+        thm = entry.get("theorem")
+        if not thm:
+            out["state"] = "declared"
+            return out
+        p = self._proof("accept", thm, None)
+        errs = (p or {}).get("errors", ["missing"])
+        out.update(state="failed" if errs else "proved", errors=errs,
+                   type=(p or {}).get("type"), axioms=(p or {}).get("axioms", []))
+        for e in errs:
+            self.findings.append(_finding("violation", code, subj,
+                                          self.not_found(thm) if e == "missing" else
+                                          f"{thm}: {e}", trigger=thm))
+        return out
+
+    def class_lemmas(self, subj: str, cl: dict) -> list[dict]:
+        """For a refutation scoped outside the paper's standing assumptions: one entry per
+        standing assumption the clause declares, saying what its class lemmas show of the
+        counterexample. `proved` needs a lemma declared `proved` whose theorem passes the proof
+        checks; a lemma that holds only up to an unproved identity stays `up-to-identity`, and
+        an assumption with no lemma is `not-addressed`. Display only: the clause's state does
+        not depend on it."""
+        rank = {"proved": 0, "up-to-identity": 1, "failed": 2, "not-addressed": 3}
+        out = []
+        for a in dict.fromkeys(cl.get("standing_assumptions") or []):
+            best = {"assumption": a, "theorem": None, "state": "not-addressed"}
+            for l in cl.get("class_lemmas") or []:
+                if l.get("assumption") != a:
+                    continue
+                said = l.get("state") or ("proved" if l.get("theorem") else "not-addressed")
+                chk = self._scope_theorem(subj, "class-lemma", l)
+                state = ("failed" if chk["state"] == "failed" else
+                         "proved" if said == "proved" and chk["state"] == "proved" else
+                         "up-to-identity" if said == "up-to-identity" else "not-addressed")
+                e = {**{k: chk.get(k) for k in ("assumption", "theorem", "identity", "type",
+                                                "axioms") if chk.get(k) is not None},
+                     "state": state}
+                if rank[state] < rank[best["state"]]:
+                    best = e
+            out.append(best)
+        return out
 
     def witness_check(self, subj: str, spec: str, srec: dict) -> None:
         """The witness a proposition without one needs. A hypothesis, or an instance of a class
@@ -1786,8 +1890,10 @@ class Assessor:
     def clause_relation_checks(self, claim: dict) -> None:
         """A correction (`corrects`) or a special case (`restricts`) names an original clause of
         its claim, not both; a correction's `kind` is one of CORRECTION_KINDS and comes with
-        `corrects`; a refutation's scope (`refute_scope`) is given with a refutation,
-        and is `outside-standing-assumptions`."""
+        `corrects`; a refutation's scope (`refute_scope`) is given with a refutation, and is
+        `outside-standing-assumptions`; the readings a refutation covers are given with a
+        refutation, and standing assumptions and class lemmas with a scoped one, each lemma
+        naming a declared assumption, a known state, and the theorem or identity it needs."""
         cls = claim.get("clauses", [])
         originals = {cl.get("name") for cl in cls if not cl.get("corrects")
                      and not cl.get("restricts")}
@@ -1832,6 +1938,33 @@ class Assessor:
                     "violation", "clause-relation", subj,
                     f"clause {cl.get('name')!r}: refute_scope {cl['refute_scope']!r} is not "
                     f"{OUTSIDE!r}"))
+            if (cl.get("refutation_covers") or cl.get("refutation_does_not_cover")) \
+                    and not cl.get("refute"):
+                self.findings.append(_finding(
+                    "violation", "clause-relation", subj,
+                    f"clause {cl.get('name')!r} lists the readings a refutation covers but has "
+                    "no refutation"))
+            if (cl.get("class_lemmas") or cl.get("standing_assumptions")) \
+                    and cl.get("refute_scope") != OUTSIDE:
+                self.findings.append(_finding(
+                    "violation", "clause-relation", subj,
+                    f"clause {cl.get('name')!r} gives standing assumptions or class lemmas "
+                    f"without refute_scope {OUTSIDE!r}"))
+            declared = set(cl.get("standing_assumptions") or [])
+            for l in cl.get("class_lemmas") or []:
+                a, st = l.get("assumption"), l.get("state")
+                why = (f"names {a!r}, which is not one of its standing_assumptions"
+                       if a not in declared else
+                       f"has state {st!r}, which is not one of {', '.join(CLASS_STATES)}"
+                       if st is not None and st not in CLASS_STATES else
+                       "is declared proved but names no theorem"
+                       if st == "proved" and not l.get("theorem") else
+                       "holds up to an identity it does not name"
+                       if st == "up-to-identity" and not l.get("identity") else None)
+                if why:
+                    self.findings.append(_finding(
+                        "violation", "clause-relation", subj,
+                        f"clause {cl.get('name')!r}: a class lemma {why}"))
 
     def inventory_checks(self):
         """Check coverage against the detected paper statements, and LaTeX source pins."""

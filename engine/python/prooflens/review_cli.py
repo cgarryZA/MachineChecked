@@ -759,7 +759,16 @@ class Session:
             if text:
                 out.append(f"Reading of the correspondence of {c['id']}"
                            + (f" by {note['by']}" if note.get("by") else "") + f"\n{text}")
+        out += self._refutation_scope(u)
         return "\n\n".join(out) or "No review by the author is recorded for this unit."
+
+    def _refutation_scope(self, u: dict) -> list[str]:
+        """The author's account of the scope of a proposition's refutation, for step 3: the
+        readings its counterexample is declared to cover and not to cover, and what the class
+        lemmas show of each standing assumption, with the statement of each theorem named
+        (`review_queue.refutation_scope_text`). Authored, so shown only after the verdict."""
+        return [f"Scope of the refutation of {s['claim']}, as its author records it\n"
+                + "\n".join(s["lines"]) for s in u.get("refutation_scope") or []]
 
     def submit(self, uid: str, disagreements: str) -> dict:
         """The report, from the draft. Independent review submits after the author's review was

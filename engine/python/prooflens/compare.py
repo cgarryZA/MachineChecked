@@ -758,6 +758,7 @@ def unit_packet(site: Site, unit: dict, stage: str) -> dict:
         sections.append("lean")
     if stage == "informed":
         out["interpretations"] = {"author_review": unit.get("author_review") or [],
+                                  "refutation_scope": unit.get("refutation_scope") or [],
                                   "claims": [_informed(ch) for ch in chunks]}
         sections.append("interpretations")
     out["retrieval"] = _retrieval(stage, sections, page, extra)

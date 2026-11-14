@@ -93,6 +93,18 @@
         "reason": {"type": "string"},
         "expect": {"enum": ["accept", "refute", "undecided", null]},
         "expect_reason": {"type": "string"},
+        "refutation_covers": {"type": "array", "items": {
+          "type": "object", "required": ["move"],
+          "properties": {"move": {"type": "string", "minLength": 1},
+                         "theorem": {"type": ["string", "null"]}}}},
+        "refutation_does_not_cover": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "standing_assumptions": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "class_lemmas": {"type": "array", "items": {
+          "type": "object", "required": ["assumption"],
+          "properties": {"assumption": {"type": "string"},
+                         "theorem": {"type": ["string", "null"]},
+                         "state": {"enum": ["proved", "up-to-identity", "not-addressed"]},
+                         "identity": {"type": "string"}}}},
         "witness": {"type": ["string", "null"]},
         "defs": {"type": "array", "items": {"type": "string"}},
         "regimes": {"type": "array", "items": {

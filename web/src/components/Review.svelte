@@ -677,6 +677,10 @@
               {:else}
                 <p class="faint">No review by the author is recorded for this unit.</p>
               {/each}
+              {#each current.refutation_scope || [] as s}
+                <p class="lbl">Scope of the refutation of {s.claim}, as its author records it</p>
+                <pre class="author">{s.lines.join("\n")}</pre>
+              {/each}
             {/if}
             <label for="author-response">Response to the author’s review</label>
             <textarea id="author-response" rows="3" bind:value={draft.disagreements} oninput={persist} placeholder="Where you disagree with the author's review, or where it claims more than the Lean shows (or “none”). Your verdict stays as recorded."></textarea>

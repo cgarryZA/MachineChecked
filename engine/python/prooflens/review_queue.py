@@ -68,6 +68,20 @@ def _author_text(review: dict | None) -> list[dict]:
              "line": r.get("line")} for r in (review or {}).get("current", [])]
 
 
+def refutation_scope_text(cl: dict) -> list[str]:
+    """The author's account of the scope of a clause's refutation, for the author's step of a
+    review: the readings its counterexample is declared to cover and not to cover, what the
+    class lemmas show of each standing assumption, and the statement of each theorem named."""
+    from .assess import refutation_scope
+    lines = refutation_scope(cl)
+    for e in (cl.get("refutation_covers") or []) + (cl.get("class_lemmas") or []):
+        t = e.get("type")
+        t = t.get("text") if isinstance(t, dict) else t
+        if e.get("theorem") and t:
+            lines.append(f"{e['theorem']} : {t}")
+    return lines
+
+
 def _author_groups(units: list[dict]) -> dict[str, list[str]]:
     """For each unit, the other units whose author review is the same review (same file and
     text): one section closed by several markers."""
@@ -237,6 +251,11 @@ def assurance_queue(index: dict, chunks: dict, store: dict, authors: list[str]) 
             u["claims"].append({"id": c["id"], "number": c["number"], "title": c["title"],
                                 "file": c["file"], "status": c["status"]})
             u["clauses"].append(cl["name"])
+            scope = refutation_scope_text(cl)
+            if scope:
+                # Authored, like the author's review: shown only after the verdict.
+                u.setdefault("refutation_scope", []).append(
+                    {"claim": c["id"], "lines": scope})
             # A correction or special case of a printed clause is reviewed against the printed
             # passage with the correction it claims (`faithful to the correction`).
             for rel in ("corrects", "restricts"):

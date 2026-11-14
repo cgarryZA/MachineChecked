@@ -37,9 +37,17 @@ A formal claim's status, from strongest to weakest:
 None of the statuses between `refuted as printed` and `formal: open` is a proof of the printed
 claim, so none is accepted: they say what is proved beside it. A refutation whose counterexample
 lies outside the paper's standing assumptions (`refute_scope`) refutes the formal proposition
-only; the printed claim reads open, with the reason under its status. A correction's `kind`
-(`added-hypothesis`, `partial`, `negation`) is shown beside it and in the reason; a reason under a
-status, and a kind, are display only and change nothing assessed.
+only; the printed claim reads open, with the reason under its status. Its class lemmas (a theorem
+that the counterexample meets each standing assumption the clause declares,
+`standing_assumptions`) are recorded, their theorems checked as proofs, and shown, but they change
+no status: nothing checks that a lemma's statement says what its assumption needs, and the list of
+assumptions is the author's own. When every declared assumption has a proved lemma, the reason
+under the status says so, and that the refutation still reads as outside the paper's assumptions
+until the lemmas' statements are independently reviewed. The readings a refutation is declared to
+cover or not to cover (`refutation_covers`, `refutation_does_not_cover`) are shown and their
+theorems checked, and change no status. A correction's `kind` (`added-hypothesis`, `partial`,
+`negation`) is shown beside it and in the reason; a reason under a status, and a kind, are display
+only and change nothing assessed.
 
 A proof from other propositions composes with their proofs: the clause it proves is proved only
 when each proposition it assumes is proved, outright or in turn from proved propositions, and

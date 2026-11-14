@@ -1109,6 +1109,20 @@ def _witness_lists(cfg, eid: str) -> dict[str, dict]:
     return out
 
 
+def _assessed_claims(cfg, eid: str) -> list[dict]:
+    from . import evidence as ev
+    return ev.load(cfg.out_dir, eid)["body"]["assessment"]["claims"]
+
+
+def _refutation_scopes(cfg, eid: str) -> list[tuple[str, str]]:
+    """The scope of each checked refutation of the full assessment (`assess.refutation_scope`),
+    by claim: the readings it is declared to cover and not to cover, and what its class lemmas
+    show of the paper's standing assumptions."""
+    from .assess import refutation_scope
+    return [(c["id"], line) for c in _assessed_claims(cfg, eid)
+            for cl in c.get("clauses") or [] for line in refutation_scope(cl)]
+
+
 def _replay_guard(cfg, eid: str) -> dict | None:
     from . import evidence as ev
     from .replay import guard_summary
@@ -1418,10 +1432,12 @@ def _check_full_json(a, cfg, res, added) -> tuple[dict, list[dict], bool]:
     found a violation."""
     idx = res["index"]
     wit = _witness_lists(cfg, res["evidence"])
+    why = {c["id"]: c.get("status_reason") for c in _assessed_claims(cfg, res["evidence"])}
     claims = [{"id": c["id"], "paper": c["paper"], "number": c.get("number"),
                "title": c.get("title"), "status": c["status"], "status_code": c["status_code"], "class": c["class"],
                "unit": c.get("unit", "statement"), "parent": c.get("parent"),
                **({"step_review": c["step_review"]} if "step_review" in c else {}),
+               **({"status_reason": why[c["id"]]} if why.get(c["id"]) else {}),
                **wit.get(c["id"], {})}
               for c in idx["claims"]]
     facts = {c["id"]: c.get("semantic") for c in idx["claims"]}
@@ -1572,6 +1588,9 @@ def _print_full_report(cfg, res) -> None:
     details = _finding_details(cfg, res["evidence"])
     for line in _obligation_lines(details, _evidence_decls(cfg, res["evidence"])):
         print(line)
+    # What each refutation is declared to cover, and what is shown of the standing assumptions.
+    for cid, line in _refutation_scopes(cfg, res["evidence"]):
+        print(f"  refutation  {cid}: {line}")
     # Names in module docstrings that nothing declares, names or files review text cites that
     # nothing resolves (with file and line), the unreviewed declarations only witnesses use, and
     # the theorems that deny the proposition of a clause without a refutation.

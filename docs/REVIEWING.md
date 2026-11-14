@@ -39,7 +39,10 @@ The commands work in both kinds of project. With a `machinechecked.toml` they re
 assessment's queue; in any other Lean project they review the zero-configuration queue of the
 last `machinechecked view` or `machinechecked build`, one unit per linked claim
 (`link:<claim key>`). Each step refuses to run before the one it follows and is timestamped; the
-reports are in the form the reader exports, and `review promote` checks them the same way. The
+reports are in the form the reader exports, and `review promote` checks them the same way. For a
+refuted proposition, step 3 also shows the author's account of the refutation's scope: the
+readings its counterexample is declared to cover and not to cover, and the class lemmas for the
+paper's standing assumptions, each with its theorem's statement. The
 work is kept in your workspace in the project's working directory (`review-work/`; see below).
 In zero configuration, export into `machinechecked-reviews/` to publish the reports with the
 audit.
