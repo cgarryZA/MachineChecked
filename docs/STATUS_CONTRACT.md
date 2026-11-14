@@ -25,6 +25,7 @@ colour. The frontend never recomputes acceptance from the evidence dimensions.
 | `formal.review-pending` | formal: proved, review pending | `proved` |
 | `formal.open` | formal: open | `open` |
 | `formal.open.partial` | formal: open; some clauses proved | `open` |
+| `formal.proved-assuming` | formal: proved assuming results not yet proved | `open` |
 | `formal.open.corrected` | formal: open as printed; corrected statement proved, review pending | `open` |
 | `formal.open.corrected.author-reviewed` | formal: open as printed; corrected statement proved, author-reviewed | `open` |
 | `formal.open.corrected.reviewed` | formal: open as printed; corrected statement proved and reviewed | `open` |
@@ -79,7 +80,8 @@ observed `detail`/`errors`. Its required dimensions are `formal`, `review`, `rep
 mechanical checks. Their complete state vocabularies are in `statuses.json` and the claim schema.
 
 - `formal` reports the assessor's clause state, including proved, refuted, refuted-outside (a
-  refutation by a counterexample outside the paper's standing assumptions), open and stated.
+  refutation by a counterexample outside the paper's standing assumptions), proved-assuming (a
+  proof from propositions not yet proved, `accept_from`; never proved), open and stated.
   Definitions use the `stated` state.
 - `review` reports correspondence review independently of proof. The original `spec_review`
   and `def_reviews` retain individual stale/current reviews and self-declared provenance.

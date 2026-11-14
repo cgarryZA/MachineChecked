@@ -30,6 +30,11 @@
       "class": "open",
       "explanation": "Some clauses are proved and at least one original clause is open. What counts as established is unchanged: the claim is open."
     },
+    "formal.proved-assuming": {
+      "label": "formal: proved assuming results not yet proved",
+      "class": "open",
+      "explanation": "A theorem proves the formal proposition from other propositions, named under the status, and at least one of them is not yet proved. The claim is not established; it is proved once each proposition it assumes is."
+    },
     "formal.open.corrected": {
       "label": "formal: open as printed; corrected statement proved, review pending",
       "class": "open",
@@ -291,6 +296,10 @@
         "refuted-outside": {
           "label": "refuted outside the paper's assumptions",
           "explanation": "Lean proves the negation of this formal proposition by a counterexample outside the paper's standing assumptions: the formal proposition is wider than the printed claim, which is not shown false."
+        },
+        "proved-assuming": {
+          "label": "proved assuming",
+          "explanation": "A theorem proves this formal proposition from other propositions, at least one of which is not yet proved."
         }
       }
     },

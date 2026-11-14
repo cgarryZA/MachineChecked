@@ -28,6 +28,7 @@ A formal claim's status, from strongest to weakest:
 | `a printed variant refuted[; corrected statement proved][; other clauses open]` | a theorem proves the negation of an original clause other than the one stating the claim as printed (a second printing, say) |
 | `formal: open as printed; corrected statement proved[, review pending / , author-reviewed / and reviewed]` | a printed clause is open (or refuted only outside the paper's standing assumptions), and a proposition that corrects it is proved; the review level is the correction's |
 | `formal: open as printed; special case proved[, …]` | a printed clause believed true is open, and a special case of it is proved; the printed claim is not refuted |
+| `formal: proved assuming results not yet proved` | every open printed clause has a theorem whose type is exactly its proposition assuming other propositions (`accept_from`), and at least one of those is not proved; the clause becomes proved once each is the proposition of a proved clause |
 | `formal: open; some clauses proved` | some clauses are proved, and a printed clause with nothing proved for it is open |
 | `formal: open` | a proposition is written, a proof is missing |
 | `formal: unspecified` | no proposition is written yet |
@@ -39,6 +40,11 @@ lies outside the paper's standing assumptions (`refute_scope`) refutes the forma
 only; the printed claim reads open, with the reason under its status. A correction's `kind`
 (`added-hypothesis`, `partial`, `negation`) is shown beside it and in the reason; a reason under a
 status, and a kind, are display only and change nothing assessed.
+
+A proof from other propositions composes with their proofs: the clause it proves is proved only
+when each proposition it assumes is proved, outright or in turn from proved propositions, and
+each proof involved has passed its own checks. A cycle of such proofs proves nothing and is a
+violation.
 
 A proof that fails a check (wrong type, disallowed axiom,
 `sorry`, missing declaration) does not count, so its clause is open; the failure is a violation
