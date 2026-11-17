@@ -90,11 +90,62 @@ project's `machinechecked-reviews/` folder.
 A review report (`prooflens/review-report@1`) pins the same digests as `pins.source_sha256`
 (claim id to digest), taken when the reading is locked; `review promote` refuses a report whose
 digests are missing or differ from the current ones. Its Lean pins (`fingerprint`,
-`fingerprints`, `legacy_hash`) are those of the unit when the verdict was recorded. Its `mode`
+`fingerprints`, `legacy_hash`) are those of the unit when the verdict was recorded. A report on
+a structure's unit lists the structure and the constructor and projections it covers in
+`unit.lean`, pins each one's fingerprint in `pins.fingerprints`, and records any separate verdict
+on one of them in `verdict.members` (name to `{group, value, detail}`). Its `mode`
 is `independent` (the three steps, each locked) or `informed` (made in an informed workspace: no
 step is locked, `reading.text` is empty and `reading.locked_at` null when the reviewer recorded
 no reading, and `reading.revealed_by` lists the workspace's exposure); a report without `mode`
-was made before it was recorded, by the independent steps.
+was made before it was recorded, by the independent steps. A report made against a review
+snapshot has `evidence`: `{"kind": "snapshot", "manifest_sha256", "schema", "release",
+"evidence_id", "project", "papers", "created_at", "tool"}`, the digest of the snapshot's manifest
+and what the manifest names (below); a report made from a build of the reviewer's working
+directory has none. `review promote` checks either kind by the same rules.
+
+A review snapshot (`prooflens/review-snapshot@1`, or `@2` without a paper's text, below; written
+by `review pack`) is a directory or a
+zip archive of one: `data/`, the files of a build's site data the review steps read
+(`index.json`, `review-queue.json`, `uses.json` when present, `claims/`, `decls/`,
+`expansions/`, and `papers/` with `--pdf`; each JSON file with the same value, written with no
+space after a separator), and `machinechecked-snapshot.json`, its manifest:
+`schema`, `created_at`, `tool` (`{name, version}`), `sources` (`release`, `project` with its
+`name`, `commit` and `repository`, and `papers`, each with its `id`, `title`, `revision` and
+`pdf_sha256`), `evidence_id` (the build's evidence record), `mode`, `pdf`, `contains` (the
+counts `review pack` prints), `left_out` (what came from the author's workspaces and was left
+out: the index's `semantic` summary, and each claim reference's `current` that a kept version
+map gives) and `files` (each path under `data/` to its SHA-256). A reviewer's step refuses a
+snapshot that lacks a file the manifest lists, holds one it does not list, has a file whose
+digest differs, or whose index is not the build the manifest names.
+
+The snapshot a project keeps is the directory `[review] snapshot` names in `machinechecked.toml`
+(relative to the project's root, inside it, not a `.zip`), else `review-snapshot/` at the
+project's root. `review pack` without `--out` writes it, and `build` writes it again when it is
+configured or the directory is there. A directory that already holds a complete snapshot of the
+same material is left unchanged: the same files, with the same `schema`, `mode`, `pdf`,
+`left_out` and `paper_text` (below), each file the same apart from what names the build. That is its release, evidence record and
+project commit wherever they are given (with the manuscript version the commit names, for a
+paper kept in the project), the index's `created` and the project's `dirty`, and the earlier
+release the review queue's order compared the build with (`order.signals.changes.from`). Its
+manifest then names the release it was written for, whose review material the later build holds
+too. The review steps without `--snapshot` read it when the project has no build of its own.
+
+A snapshot of a full assessment has `paper_text` in its manifest, for each paper: `{"included":
+true, "because": "published" | "asked" | "pdf"}` (its `publish.source_text`, `--with-paper-text`,
+or a paper read from its PDF), or, when its text is left out, `{"included": false, "source",
+"files"}`, with `source` one of `{"kind": "arxiv", "arxiv"}`, `{"kind": "path", "path"}` (the
+paper's folder in the project) and `{"kind": "git", "revision"}`, and `files` each file of the
+source a passage comes from with its SHA-256. A snapshot that leaves out a paper's text has the
+schema `prooflens/review-snapshot@2`. Its claim records of that paper hold `null` for each text of
+the source (`statement_tex`, `context_tex`, `anchor.statement`, each `source_parts[].text`) and
+for `excerpt`, and `data/paper-sources.json` (`prooflens/paper-sources@1`) says where each text
+is: `claims` maps a claim record (`claims/….json`) to a list of `{at, paper, file, bytes, form,
+sha256}`, with `at` the field's path in the record, `bytes` (`[start, end]`) the range of the file,
+`form` how the text is made of those bytes read as UTF-8 (`text`, its line endings read as
+newlines; `whitespace`, also each run of white space one space and none at the ends) and `sha256`
+the digest of the text. A reviewer's step checks every file and every text against its digest,
+then reads a copy of the site data with each text in place, in `resolved/` of the reviewer's
+working directory; the paper's source is kept in its `sources/`.
 
 A report's `correspondence` is the coverage its reviewer recorded with the verdict (at
 `comparison.decided_at`), or `null`; an older report has none, and its coverage is not recorded.
@@ -184,7 +235,9 @@ identity. Each identity names one sub-term of the printed expression.
 Lean prints an application without its instance arguments, which a reader takes to be those
 instance resolution finds where the application stands. In the statement of a specification or a
 link (its `exact` text, its binders' types, its tree, its conclusion, and the sub-terms of its
-totalisation warnings), one that may not be is printed (#515):
+totalisation warnings), and in a declaration of the project that its author wrote (its
+`signature`, a definition's `value`, `params`, `body` and `result`, a structure's parameters and
+fields), one that may not be is printed (#515, #607):
 its application is printed with `@`, its explicit arguments, the instance arguments to show and
 `_` for its other implicit arguments (`@MeasureTheory.StronglyMeasurable _ _ _ m f` for Mathlib's
 `StronglyMeasurable[m] f`). An instance argument is left out only when resolution in its context
@@ -192,11 +245,13 @@ finds it, up to unfolding instances, and finds no other one when a local instanc
 out: with two σ-algebras `mΩ` and `m` on `Ω` in scope, resolution finds the later one, `m`, but a
 reader cannot tell which is meant, so it is printed. An argument built from instances alone
 (global ones, local ones, a class's parents), none of which another local instance of a related
-class about a common argument could replace, is what resolution finds, and is not searched for.
+class about a common argument could replace, is what resolution finds, and is not searched for;
+a local family of instances applied to arguments (`F i`, with `F : ℕ → MeasurableSpace Ω`) is
+searched for, and is printed unless resolution finds it.
 One of a class Lean finds `Subsingleton` on (`Decidable p`) stays implicit: any two of its
-instances are equal. An argument whose check fails is printed. The statement is read once, each
-sub-term in the scope of the binders around it; a definition's value and equations, an expansion
-and the properties a type carries keep Lean's printing. This changes what is printed only, never a fingerprint.
+instances are equal. An argument whose check fails is printed. Each expression is read once, each
+sub-term in the scope of the binders around it; a definition's equations, an expansion, the
+properties a type carries and Lean's generated helpers keep Lean's printing. This changes what is printed only, never a fingerprint.
 
 A statement record holds the whole proposition as one tree, `tree`. Its `binders` (the binders
 that open it, each `{role, name, id, type, binder, supplies}`, `role` one of `forall`,

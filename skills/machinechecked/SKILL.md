@@ -75,6 +75,12 @@ violations and obligations by subject; `findings` holds only their totals. A vio
 `machinechecked check --fix-modules` lists a module is a declaration whose module is missing from
 `modules`: with the user's agreement, run `check --json --fix-modules`, which edits
 `machinechecked.toml`, checks again and lists the modules it added in `modules_added`.
+`check --json --claim CLAIM` (id, key or printed number) gives only that claim, with its passage,
+each clause's proposition, proof, witness, what it establishes and its own `blocked_by`, its
+findings in force and its review units; `--changed` gives the claims that changed since the
+release before. When nothing changed since the last build, `check` reports that release's stored
+assessment in seconds (`reused` is true). `--json-out FILE` writes the document beside the text
+report from one run.
 
 ## Typical tasks
 
@@ -88,7 +94,10 @@ violations and obligations by subject; `findings` holds only their totals. A vio
   hypotheses, quantifiers, definitions and conclusion. `compare --query definition NAME` and
   `compare --query mentions NAME` answer the next question. Present it as your reading, for
   the user to judge; `machinechecked review` (or the reader's Review page) records a review
-  with source revisions and reviewer attribution, and shows the paper before the Lean.
+  with source revisions and reviewer attribution, and shows the paper before the Lean. A clone
+  of a project that keeps its review snapshot (`review-snapshot/`) is reviewed with the same
+  `machinechecked review` steps, with no Lean and no build; a snapshot given as a file (a `.zip`
+  that `review pack` wrote) with `machinechecked review … --snapshot FILE`.
 - **Where is a paper statement proved, and what does a proof rest on?** `machinechecked
   inspect NAME --dependencies --json` prints the declaration's statement, axioms and source,
   what its statement mentions and, separately, what its proof uses, and every declaration of

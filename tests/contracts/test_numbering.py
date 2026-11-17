@@ -690,3 +690,123 @@ def test_formalization_rows_name_their_papers_declarations():
     assert fz.paper_names(fy, "Odd squares") == {"PA.odd_sq"}
     assert fz.paper_names(fy, "Triangle bounds") == {"PB.bound", "PB.aux"}
     assert fz.paper_names({"sources": [{"title": "One"}]}, "One") == set()
+
+
+# A paper audited in its preprint, whose journal version numbers some statements otherwise:
+# the preprint's Proposition 2 is the journal's Proposition 5, its Lemma 1 the journal's Lemma 7.
+PREPRINT = [{"id": "P:l1", "kind": "lemma", "number": "Lemma 1", "scope": "formal",
+             "statement": "Every even square is even."},
+            {"id": "P:p2", "kind": "proposition", "number": "Proposition 2", "scope": "formal",
+             "statement": "The sequence is stable."},
+            {"id": "P:p5", "kind": "proposition", "number": "Proposition 5", "scope": "formal",
+             "statement": "The solution continues."}]
+PREPRINT_INV = nb.inventory(PREPRINT, True)
+JOURNAL = nb.read_numberings(
+    [{"name": "journal", "qualifiers": ["of the journal version", "of the published version"],
+      "identifier": "doi:10.0000/example", "map": {"Lemma 1": "Lemma 7",
+                                                    "Proposition 2": "Proposition 5",
+                                                    "Prop. 5": "Proposition 6"}}],
+    "paper P")
+
+
+def by_text(out):
+    return {(o["source"]["declaration"], o["reference"], bool(o.get("version"))): o
+            for o in out["references"]}
+
+
+def test_a_citation_of_the_journal_numbering_is_checked_against_its_map_not_the_preprint():
+    index = [decl("P.a", "Lemma 1 (Lemma 7 of the published version): even squares."),
+             decl("P.b", "Proposition 2 of the preprint, Proposition 5 of the journal version."),
+             decl("P.c", "Remark 3.1 (Remark 3.3 of the journal version)."),
+             decl("P.d", "Lemma 7: even squares.")]
+    out = nb.analyse(index, PREPRINT, PREPRINT_INV, numberings=JOURNAL)
+    r = by_text(out)
+    # The false warning: the preprint has no Lemma 7, and the citation is the journal's.
+    a = r[("P.a", "Lemma 7", True)]
+    assert a["status"] == "exact" and a["paper"] == {"claims": ["P:l1"], "reference": "Lemma 1"}
+    assert a["version"] == {"name": "journal", "qualifier": "of the published version",
+                            "identifier": "doi:10.0000/example"}
+    assert r[("P.a", "Lemma 1", False)]["status"] == "exact"
+    # The journal's Proposition 5 is the preprint's Proposition 2, not its Proposition 5.
+    b = r[("P.b", "Proposition 5", True)]
+    assert b["status"] == "exact" and b["paper"]["claims"] == ["P:p2"]
+    assert "of the journal version" in b["message"]
+    # A number the map does not give is not checked against the preprint either.
+    c = r[("P.c", "Remark 3.3", True)]
+    assert c["status"] == "unchecked" and "does not give Remark 3.3" in c["detail"]
+    # An unqualified citation is checked against the preprint as before.
+    assert r[("P.d", "Lemma 7", False)]["status"] == "absent"
+    assert r[("P.c", "Remark 3.1", False)]["status"] == "absent"
+    assert not any(nb.suspect(o) for o in out["references"]
+                   if o["source"]["declaration"] in ("P.a", "P.b"))
+
+
+def test_a_journal_number_naming_another_preprint_statement_is_flagged_when_wrong():
+    # The preprint has a Proposition 5, so without the map this citation passes silently; the
+    # map gives the preprint's Proposition 2 as the journal's Proposition 5, not 6.
+    index = [decl("P.a", "Proposition 2 (Proposition 6 of the journal version): stability."),
+             decl("P.b", "Proposition 2 (Proposition 5 of the journal version): stability."),
+             decl("P.c", "Proposition 5 (Proposition 5 of the journal version): continuation."),
+             decl("P.d", "Remark 3.1 (Lemma 7 of the journal version).")]
+    out = nb.analyse(index, PREPRINT, PREPRINT_INV, numberings=JOURNAL)
+    r = by_text(out)
+    # The preprint's Proposition 5 is the journal's Proposition 6.
+    same = r[("P.c", "Proposition 5", True)]
+    assert same["status"] == "mismatch" and same["paper"]["claims"] == ["P:p5"]
+    assert same["detail"] == ("the journal numbering declared for this paper gives Proposition 5 "
+                              "as Proposition 6, not Proposition 5")
+    # The map does not give the preprint's Remark 3.1, and gives the journal's Lemma 7 as the
+    # preprint's Lemma 1.
+    other = r[("P.d", "Lemma 7", True)]
+    assert other["status"] == "mismatch"
+    assert other["detail"] == ("the journal numbering declared for this paper gives Lemma 7 as "
+                               "this version's Lemma 1, not Remark 3.1")
+    bad = r[("P.a", "Proposition 6", True)]
+    assert bad["status"] == "mismatch" and nb.suspect(bad)
+    assert bad["detail"] == ("the journal numbering declared for this paper gives Proposition 2 "
+                             "as Proposition 5, not Proposition 6")
+    assert bad["message"].startswith("the docstring of P.a (P/Main.lean:1) cites Proposition 6 "
+                                     "of the journal version: ")
+    assert r[("P.b", "Proposition 5", True)]["status"] == "exact"
+    assert out["pattern"]["mismatch"] == 3 and out["pattern"]["checked"] == 8
+    # Without the declaration, the journal's number reads as the preprint's Proposition 5.
+    plain = by_text(nb.analyse(index, PREPRINT, PREPRINT_INV))
+    assert plain[("P.b", "Proposition 5", False)]["paper"]["claims"] == ["P:p5"]
+
+
+def test_a_complete_map_refutes_a_number_it_does_not_give():
+    complete = nb.read_numberings([{"name": "journal", "qualifier": "of the journal version",
+                                    "complete": True, "map": {"Lemma 1": "Lemma 7"}}], "paper P")
+    out = nb.analyse([decl("P.a", "See Lemma 8 of the journal version.")], PREPRINT,
+                     PREPRINT_INV, numberings=complete)
+    o = out["references"][0]
+    assert o["status"] == "absent" and o["detail"] == ("the journal numbering declared for this "
+                                                       "paper has no Lemma 8")
+
+
+def test_a_numbering_declaration_that_cannot_be_read_is_refused():
+    import pytest
+    for bad in ([{"name": "journal", "map": {"Lemma 1": "Lemma 7"}}],
+                [{"name": "journal", "qualifier": "of the journal version", "map": {}}],
+                [{"name": "journal", "qualifier": "of the journal version",
+                  "map": {"Lemma one": "Lemma 7"}}],
+                {"name": "journal"}):
+        with pytest.raises(ValueError):
+            nb.read_numberings(bad, "paper P")
+    assert nb.read_numberings(None, "paper P") == []
+
+
+def test_zero_configuration_reads_a_papers_numberings_from_the_links_file(tmp_path):
+    import json
+    from prooflens import simple
+    good = [{"name": "journal", "qualifier": "of the journal version",
+             "map": {"Lemma 1": "Lemma 7"}}]
+    (tmp_path / simple.LINKS).write_text(json.dumps(
+        {"version": 1, "papers": {}, "numberings": {"main.tex": good,
+                                                    "other.tex": [{"name": "x"}]}}))
+    notes = []
+    (v,) = simple.paper_numberings(tmp_path, "main.tex", notes)
+    assert v["map"] == {"Lemma 1": "Lemma 7"} and not notes
+    assert simple.paper_numberings(tmp_path, "other.tex", notes) == []
+    assert len(notes) == 1 and "needs a qualifier" in notes[0]
+    assert simple.paper_numberings(tmp_path, "none.tex", notes) == []

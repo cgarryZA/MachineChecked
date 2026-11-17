@@ -126,7 +126,7 @@ const clone = (v) => JSON.parse(JSON.stringify(v ?? null));
 // as seen (`workspace.TAKEN` and `CARRIED`).
 const TAKEN = [
   ["locked_at", ["reading", "locked_at", "revealed_by", "source_sha256"], "its reading was locked differently here"],
-  ["decided_at", ["group", "verdict", "detail", "comparison", "witness", "checklist", "correspondence", "decided_at", "lean"],
+  ["decided_at", ["group", "verdict", "detail", "comparison", "witness", "checklist", "correspondence", "members", "decided_at", "lean"],
    "its verdict was recorded differently here"],
   ["author_shown_at", ["author_shown_at"], "the author's review was shown at another time here"],
 ];

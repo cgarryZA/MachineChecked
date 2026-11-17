@@ -2083,7 +2083,8 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
             # Content search and the paper's numbers read the complete records.
             from .retrieval import Retrieval
             retrieval = Retrieval.build(full)
-            numbering = paper_numbering(root, full, claims, tex, aux, foreign, retrieval)
+            numbering = paper_numbering(root, full, claims, tex, aux, foreign, retrieval,
+                                        paper_numberings(root, paper_key, notes))
             note = nb.drift_note(numbering["pattern"], numbering["references"])
             if note:
                 notes.append(note)
@@ -2199,11 +2200,25 @@ def failed_modules(modules: list[str], failed: dict[str, str], root: Path) -> st
     return ", ".join(shown) + ("…" if len(modules) > 5 else "")
 
 
+def paper_numberings(root: Path, paper_key: str, notes: list[str]) -> list[dict]:
+    """The numberings of other versions of the paper that the links file declares for it
+    (`"numberings": {paper key: [...]}`, read as `numbering.read_numberings` reads a full
+    assessment's `[[paper.numbering]]`); a declaration that cannot be read is left out, with a
+    note."""
+    raw = (load_links(root).get("numberings") or {}).get(paper_key)
+    try:
+        return nb.read_numberings(raw, f"{LINKS}, numberings of {paper_key}")
+    except ValueError as e:
+        notes.append(f"{e}; that declaration is not used")
+        return []
+
+
 def paper_numbering(root: Path, index: list[dict], claims: list[dict], tex: dict,
-                    aux: Path | None, foreign, retrieval) -> dict:
+                    aux: Path | None, foreign, retrieval, numberings=()) -> dict:
     """The project's references to the paper's numbers, checked against the paper read here
-    (`numbering.analyse`). The numbering is complete when the paper's LaTeX compiled; a PDF's
-    statements are found by their headings, so some may be missed."""
+    (`numbering.analyse`), and those qualified as another version's against that version's
+    declared map (`numberings`). The numbering is complete when the paper's LaTeX compiled; a
+    PDF's statements are found by their headings, so some may be missed."""
     if tex.get("mode") == "latex" and claims:
         complete, reason = True, ""
     elif tex.get("mode") == "pdf" and claims:
@@ -2215,7 +2230,8 @@ def paper_numbering(root: Path, index: list[dict], claims: list[dict], tex: dict
                        nb.sections_from_aux(aux) if aux is not None else None)
     modules = {d.get("module") for d in index if d.get("module")}
     blocks = nb.module_doc_blocks(root, modules) + nb.comment_blocks(root, modules, index)
-    return nb.analyse(index, claims, inv, blocks, foreign, retrieval, claim_text, root=root)
+    return nb.analyse(index, claims, inv, blocks, foreign, retrieval, claim_text, root=root,
+                      numberings=numberings)
 
 
 def claim_references(c: dict, numbering: dict | None) -> list[dict]:

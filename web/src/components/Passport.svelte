@@ -328,6 +328,7 @@
   <section class="details">
     <h2>Audit details</h2>
     <StatusChip record={claim} />
+    {#if claim.status_reason?.length}<ul class="small status-reason">{#each claim.status_reason as r}<li><TexInline text={r} /></li>{/each}</ul>{/if}
     {#if claim.audit?.author}<p class="small">Audit by {claim.audit.author}</p>{/if}
     {#if claim.audit?.detail}<p class="small">{claim.audit.detail}</p>{/if}
     <p class="faint small"><code>{claim.id}</code>{#if index.papers.length > 1} · paper {claim.paper}{/if}</p>
@@ -353,7 +354,7 @@
           <dl class="proof">
             {#each Object.entries(cl.proofs) as [kind, p]}
               {#if p}
-                <dt>{kind === "refute" ? "Refutation" : "Proof"}</dt>
+                <dt>{kind === "refute" ? "Refutation" : kind === "accept_from" ? `Proof assuming ${(p.assumes || []).join(", ")}` : "Proof"}</dt>
                 <dd><code>{p.name}</code> <span class="faint">— axioms: {p.axioms.length ? p.axioms.join(", ") : "none"}</span></dd>
               {/if}
             {/each}

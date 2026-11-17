@@ -284,6 +284,25 @@ ambiguous, a proposal marked as one, or none for a removed claim
 keeps the map in a workspace (`changes --map --workspace ID --save`), `check`, the claim page and
 `compare` show that counterpart on every build of the later revision, and say who kept the map.
 
+When the docstrings also cite another version's numbers on purpose (`Remark 3.1 (Remark 3.3 of
+the journal version)`), declare that version's numbering: a name, the phrase that qualifies its
+numbers, and a map from the paper's numbers to that version's. In a full assessment it goes under
+the paper in `machinechecked.toml` ([ASSURANCE.md](ASSURANCE.md#configure-the-project)); with
+zero configuration, in `machinechecked.links.json` under the paper's key:
+
+```json
+"numberings": {"paper/main.tex": [{"name": "journal", "qualifier": "of the journal version",
+                                   "map": {"Proposition 2": "Proposition 5"}}]}
+```
+
+A number followed by that phrase is checked against the map, never against the paper read: it
+agrees when the map gives it; it is flagged when the number of the paper just before it in the
+same sentence (`Proposition 2` in `Proposition 2 (Proposition 6 of the journal version)`) is not
+the statement the map pairs it with, even when the paper read happens to have a statement with
+that number; and it is not checked when the map does not give it, unless the map says it is
+complete (`"complete": true`), when it is flagged. A number without the phrase is checked
+against the paper read, as before. The map changes no status.
+
 A suggestion's cited number rests on the docstring's reference to it. A number of another work
 (`Theorem 2.1 of [Gauss]`), a section, or the start of a longer number (`Theorem 2.1.3`) is
 no lead to the claim. The number's reason lists the references it rests on and calls the
@@ -564,6 +583,11 @@ machinechecked check
 ```
 
 The command exits with an error when a linked declaration is missing or unproved.
+`check --claim "Theorem 2"` (or the claim's id or key) shows only that claim: its status, each
+linked declaration with its status, and its reviews (the exit status is still the whole
+check's). `check --json-out FILE` also writes the `check --json` document to `FILE` from the
+same run. With a `machinechecked.toml`, `--claim` shows each clause and what blocks it, and
+`--changed` the claims a change affected ([Assurance](ASSURANCE.md#run-checks-and-generate-a-site)).
 
 It also warns, with the file and line, about each name a module docstring lists that the project and its dependencies do not declare: a dotted name such as `Widget.foo_le_bar`, or the name a list item begins with under a "Main …" heading. A deleted or renamed declaration often leaves such a name behind. Names resolve as in Lean, through the namespaces the file enters and opens. A module or namespace written in full (`Example.Shapes.Widget`) is accepted; a shorter name that reaches only a module or a namespace gets its own warning. A declaration or module of the same library counts even when the project does not import it. A name Lean generates (a projection, a constructor, a derived instance) counts when a built module holds it, in a library the paper's index leaves out too. The reader's banner lists them too. A warning does not change the exit code.
 

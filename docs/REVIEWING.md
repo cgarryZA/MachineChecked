@@ -27,6 +27,7 @@ machinechecked review next                          # the next unit to review, a
 machinechecked review read UNIT                     # step 1: the paper's statement only
 machinechecked review lock UNIT reading.md          # locks your reading
 machinechecked review show UNIT                     # step 2 (refused before lock): the Lean
+machinechecked review show UNIT --definitions       # step 2: only the definitions it uses, compactly
 machinechecked review decide UNIT VERDICT comparison.md [--detail detail.md] [--coverage C ...]
 machinechecked review author UNIT                   # step 3 (refused before decide)
 machinechecked review submit UNIT disagreements.md  # finishes the report
@@ -38,10 +39,34 @@ The commands work in both kinds of project. With a `machinechecked.toml` they re
 assessment's queue; in any other Lean project they review the zero-configuration queue of the
 last `machinechecked view` or `machinechecked build`, one unit per linked claim
 (`link:<claim key>`). Each step refuses to run before the one it follows and is timestamped; the
-reports are in the form the reader exports, and `review promote` checks them the same way. The
+reports are in the form the reader exports, and `review promote` checks them the same way. For a
+refuted proposition, step 3 also shows the author's account of the refutation's scope: the
+readings its counterexample is declared to cover and not to cover, and the class lemmas for the
+paper's standing assumptions, each with its theorem's statement. The
 work is kept in your workspace in the project's working directory (`review-work/`; see below).
 In zero configuration, export into `machinechecked-reviews/` to publish the reports with the
 audit.
+
+**Many units at once.** `lock`, `decide` and `submit` take `--manifest FILE` (or `-` for
+standard input) instead of a unit and its texts: a JSON list of entries, each with `unit` and that
+step's fields. `lock` takes `reading`; `decide` takes `verdict`, `comparison`, and optionally
+`detail`, `witness`, `coverage`, `basis`, `argument`, `bridge` (`[THEOREM, TARGET]`) and
+`would_decide`; `submit` takes `disagreements`. A text is given inline (`"comparison": "..."`) or
+as a file (`"comparison_file": "cmp.md"`, relative to the manifest's directory), never both; a
+field the step does not take refuses the entry. Each entry is the same step as the single
+command, with the same refusals: every unit still needs its own `read` before its lock, and its
+`author` before its report.
+
+```json
+[{"unit": "link:thm:odd-add", "verdict": "faithful", "comparison_file": "odd-add.md",
+  "coverage": "full", "basis": "direct"},
+ {"unit": "link:thm:σ-bound", "verdict": "broader", "comparison": "...", "detail_file": "σ.md"}]
+```
+
+The command prints one line per entry (`UNIT: what was recorded`, or `UNIT: refused (KIND):
+why`); a refused entry does not stop the others, and the command then exits 2. With `--json` it
+prints one document, `{"schema": "machinechecked/review-manifest@1", "ok", "entries": [{"entry",
+"unit", "ok", "message" | "error": {"kind", "message"}}]}`.
 
 **One review, in the browser or the terminal.** Under `machinechecked view`, the review page
 keeps your work in the same workspace and makes each step through the same checks: the drafts,
@@ -90,7 +115,36 @@ the unit's Lean since it was shown to you (look at it again, then record the ver
 another window or terminal changed the unit's draft meanwhile (nothing is saved; look at it
 again and repeat the step). With `--json`, a refused step prints `{"ok": false, "error": {"kind",
 "message"}}`, with `kind` one of `order`, `unknown-unit`, `stale`, `conflict`, `reported`,
-`invalid`, `workspace` and `no-build`, and exits 2.
+`invalid`, `workspace`, `no-build`, `snapshot` and `paper-source` ([Reviewing a project you did
+not build](#reviewing-a-project-you-did-not-build)), and exits 2.
+
+**A unit whose Lean another unit shows.** Step 2 of a statement shows the Lean of the
+definitions it uses, and those definitions may be units of their own. `read` and `show` of the
+statement name the units it will show (or has shown) whose reading you have not locked yet: lock
+those readings first if you will review them. `lock` says at once when the unit's Lean or author's
+review was already shown to you (by another unit's step 2, or in an informed workspace): the
+reading is still recorded, the report lists what you had seen, and `review promote` refuses it
+unless the maintainer passes `--allow-revealed`.
+
+**A unit you have reported.** `show` of a unit you have reported shows the Lean you reviewed,
+with the time of the report; `lock` refuses a new reading of it (a reading made after seeing the
+Lean would not be blind). A unit whose Lean changed since your report is a new review.
+
+**Resuming after an interruption.** `review status` lists each draft at its step with the times
+of the steps it has taken: the reading locked, the Lean shown, the verdict recorded, the
+author's review shown. With `--json`, `progress` gives them per draft (`locked_at`, `shown`,
+`shown_at`, `decided_at`, `author_shown_at`). To resume a batch:
+
+- a draft at step `read` has no locked reading: read the unit again and lock a reading;
+- a draft at step `compare` whose Lean was not shown (`shown` false): run `show`; one whose Lean
+  was shown may run `show` again (it shows the same Lean, and records nothing new) before
+  `decide`;
+- a draft at step `author`: the verdict is recorded and cannot be changed in independent review;
+  run `author`, if its time is not recorded, then `submit`;
+- a unit with no draft that `status` no longer lists as open is reported: `export` writes it.
+
+Never write a second reading of a unit whose Lean you have seen: the report would claim a blind
+reading it did not have.
 
 `read` gives every passage of the unit in full: a statement stated in several places, or a
 definition used by many claims, is read in all of them. Each passage says where it is, where its
@@ -105,6 +159,14 @@ that step shows, in the form of `machinechecked compare` (below). `read` holds t
 `show` adds the Lean (complete statements, binders, the definitions they use, Lean's checks);
 `author` adds what has been recorded about the correspondence: the author's review, notes,
 earlier reports, symbol links and statuses.
+
+`show --definitions` prints only the definitions the unit's Lean uses, for reading line by
+line: each once, with its docstring, its signature, and its body, equations or fields (one per
+line, with their full types); the constants Lean generates for one (a constructor, projections,
+equation lemmas) are named under it. It is the text of `lean.definitions` in `show --json`. Both
+list every constant of the project the listed definitions use, transitively, including those
+only in a binder's or a field's type: each one a statement does not use directly says which
+definition uses it, so the meaning of every name in the Lean is in the protocol.
 
 **Informed investigation.** Outside the three steps, `machinechecked compare CLAIM` gives a
 claim's passage, its linked statements, its definitions and everything recorded about it, and
@@ -131,6 +193,148 @@ workspace's exposure in `reading.revealed_by`, so it counts as informed, never i
 `review promote` applies its usual rules: a report with no reading, or with steps out of order,
 is refused; one with a reading recorded before its verdict, and the author's review shown after
 it, is refused as not blind unless the maintainer passes `--allow-revealed`.
+
+## Reviewing a project you did not build
+
+A review compares the paper's passages with the Lean as the project's build recorded it, so a
+reviewer needs that record and no Lean, Lake or TeX. The project's author packs it as a review
+snapshot. A project that keeps its snapshot in its repository is reviewed from a clone with the
+usual commands; a snapshot sent as a file is reviewed with `--snapshot`.
+
+**The author.** After `machinechecked view` or `machinechecked build` (with `-c` for a full
+assessment, as for the other review commands):
+
+```sh
+machinechecked review pack                              # the snapshot the project keeps
+machinechecked review pack --out review-snapshot.zip    # a file to send; --pdf adds the PDF
+```
+
+The snapshot holds the files of the last build's site data that the review steps read: the index,
+the review queue, every claim record (the paper's passages), every declaration record (the Lean
+statements and definitions), the stored expansions and, when the build has them, the reverse
+references the informed order reads. Its manifest, `machinechecked-snapshot.json`, names the
+release, the project's commit and repository, each paper's revision and PDF checksum and the
+tool's version, with the SHA-256 of every file. `pack` prints what the snapshot holds, and
+`--out DIR` writes it as a directory instead.
+
+Your workspaces stay with you: no draft, report in progress or record of what anyone had seen is
+packed, and neither are the two parts of the site data that come from your workspaces (the
+semantic summary's count of their findings, and the counterparts of paper numbers their version
+maps give). The PDF is packed only with `--pdf`. The rest is yours to publish: the paper's
+passages as the build read them (its LaTeX source, or the text extracted from its PDF), the Lean,
+and your reviews, which step 3 shows. Share the snapshot where those may go. A paper whose
+`publish.source_text` is false has its text left out
+([below](#a-paper-whose-text-may-not-be-redistributed)).
+
+**Keeping the snapshot in the repository.** `review pack` with no `--out` writes the snapshot
+the project keeps: the directory that `[review] snapshot` names in `machinechecked.toml`
+(relative to the project's root, and inside it), else `review-snapshot/` at the project's root
+(the configuration's directory, or the Lean project in zero configuration). Commit it where
+its contents may be published.
+
+```toml
+[review]
+snapshot = "review-snapshot"
+```
+
+`machinechecked build` then writes it again after each build, with the PDF when the snapshot
+holds one. While the review material is unchanged, it leaves the snapshot as it is, although each
+commit gives the build a new release, evidence record and time: the committed snapshot changes
+only when what a reviewer reads changes, and it names the release it was written for. `build`
+writes a snapshot only for a project that keeps one, configured or as a `review-snapshot/`
+directory (an empty one starts it); a `review-snapshot/` that holds other files is left as it is.
+
+Send a snapshot file to the reviewer, or attach it to a release of the project.
+
+**The reviewer, in a clone.** Clone the repository and take the steps with no flag:
+
+```sh
+export MACHINECHECKED_REVIEWER=human:NAME
+machinechecked review next
+machinechecked review read UNIT                     # step 1: the paper only
+machinechecked review lock UNIT ../reading.md
+machinechecked review show UNIT                     # step 2: the Lean
+machinechecked review decide UNIT VERDICT ../comparison.md
+machinechecked review author UNIT                   # step 3: the author's review
+machinechecked review submit UNIT ../disagreements.md
+machinechecked review export --out ../reports.json
+```
+
+With no build in the clone, each step reviews the snapshot the project keeps, checked as below,
+and says so in one line on standard error. Reading `machinechecked.toml` needs no Lean: nothing is
+built. Your work is kept in `.machinechecked-review/` at the project's root, which Git ignores
+(`--review-dir DIR` names another). A project with a build of its own is reviewed from that
+build, and each step says that it did not use the snapshot.
+
+**The reviewer, with a snapshot file.** In a directory of your own, with the snapshot and your
+texts:
+
+```sh
+export MACHINECHECKED_REVIEWER=human:NAME
+machinechecked review next --snapshot review-snapshot.zip
+machinechecked review read UNIT --snapshot review-snapshot.zip       # step 1: the paper only
+machinechecked review lock UNIT reading.md --snapshot review-snapshot.zip
+machinechecked review show UNIT --snapshot review-snapshot.zip       # step 2: the Lean
+machinechecked review decide UNIT VERDICT comparison.md --snapshot review-snapshot.zip
+machinechecked review author UNIT --snapshot review-snapshot.zip     # step 3: the author's review
+machinechecked review submit UNIT disagreements.md --snapshot review-snapshot.zip
+machinechecked review export --out reports.json --snapshot review-snapshot.zip
+```
+
+Every step takes `--snapshot FILE`, a zip or a directory that `review pack` wrote, `status` and
+`--manifest` included, and the tool keeps the steps, the locks and the refusals as in a review of
+your own build. It reads no `machinechecked.toml` and no Lean project, and runs no Lean, Lake or
+TeX. Your work is kept in `.machinechecked-review/` in the current directory (`--review-dir DIR`
+names another), which Git ignores; a zip is extracted there, never beside it. The snapshot stays
+as its author wrote it: a working directory inside it, or one that is a build's working
+directory, is refused. Send `reports.json` to the maintainer.
+
+Before each step the tool checks the snapshot, sent or kept, against its manifest: the
+manifest's format, and every file with its digest. A file missing, changed or not in the
+manifest, or a manifest of another format, refuses the step with kind `snapshot`, naming the
+file; nothing is rebuilt. These digests catch an incomplete or inconsistent copy. They do not
+authenticate the author, since whoever holds the files can write a new manifest; the check that
+counts is the maintainer's.
+
+**The reports.** A report made against a snapshot records what it was reviewed against, beside
+its usual pins: `evidence`, `{"kind": "snapshot", "manifest_sha256", "release", "evidence_id",
+"project", "papers", "created_at", "tool"}`. It was reviewed against supplied evidence, and
+nothing was compiled or replayed for it. `review promote` checks it by the usual rules against the
+maintainer's own release ([Maintainer acceptance](#maintainer-acceptance)), and its plan says
+"reviewed against supplied evidence". The times a report records give the order in which the
+steps were taken in the tool.
+
+### A paper whose text may not be redistributed
+
+When a paper's `publish.source_text` is false, `review pack` and `build` leave the text of its
+source out of the snapshot. For each text the review steps show (a printed statement, a proof
+step's context in its proof, each further passage and notation definition of a pin), the
+snapshot records the file within the source, the byte range and the SHA-256 of the text. Its
+manifest names the source (the arXiv record, the paper's folder in the project, or the commit of
+its Git repository) with the SHA-256 of each file a passage comes from. The snapshot keeps where
+each passage is (its file, line and page), which the public export leaves out under the same
+setting. The typeset excerpts, which only the reader shows, are left out.
+
+Before it writes anything, `pack` scans the snapshot against the paper's source as the public
+export is scanned. A snapshot that still holds a line of the source (a docstring or a review
+that quotes the paper, say) is not written, and the refusal names the file and field.
+`--with-paper-text` keeps the text, for a snapshot you hand over privately; the snapshot the
+project keeps always follows `publish.source_text`. A paper read only from its PDF keeps its
+text, and `pack` says so. Zero configuration has no `publish` setting: its snapshot keeps the
+text, as its published site does.
+
+The reviewer's first step obtains the paper's source the way `build` does, and runs no TeX:
+
+- for an arXiv source, a download into the reviewer's working directory, kept for later steps;
+- in a clone of the project, the paper's folder there;
+- otherwise, or instead, the copy given with `--paper-source [PAPER=]FILE`: the source's folder,
+  or the file arXiv serves (`https://arxiv.org/e-print/ID`). It is kept for later steps.
+
+Every file and every passage is checked against its digest before anything is shown, and the
+steps then show exactly what a snapshot with the text shows. A source that cannot be obtained,
+or that differs from the one the author built, refuses the step with kind `paper-source` and
+says how to give it; nothing is shown. The snapshot does not name a Git source's repository,
+which may be private: its reviewer gives the source with `--paper-source`.
 
 ## Review order
 
@@ -690,6 +894,7 @@ theorem it is a step of.
 | Faithful | All material assumptions and conclusions match |
 | Faithful with representation choices | Why each representation difference is harmless |
 | Broader | The instantiation that recovers the printed claim |
+| Faithful to the correction | Nothing more: offered only for a correction or a special case of a printed clause, it says the proposition is the printed claim with exactly the correction its clause records (shown with the Lean, beside the passage) |
 | Narrower | Extra hypotheses or cases excluded by Lean |
 | Mismatched | What the Lean statement actually establishes |
 | Vacuous | Why hypotheses fail to hold, or a witness is inadequate |
@@ -733,6 +938,34 @@ A review of a proof step records whether the step holds, and no coverage. Covera
 change no status, and promotion writes the same marker with them or without them.
 
 A review can start before a theorem is proved, once its formal statement exists. The queue lists the claims that still await one.
+
+## Structures
+
+A structure is one review unit with the constants Lean generates for it: its constructor, the
+projections of the fields it declares and the projections to its parents. Their content is the
+structure's fields as written, so they have no units of their own (`def:Pair` covers `Pair.mk`,
+`Pair.x` and `Pair.y`; a field it inherits belongs to its parent's unit). The unit lists the
+constants it covers (`lean` and `members` in the queue) and the claims that use any of them; it
+is reviewed once all of them have a current review. Step 2 shows the structure's fields with
+their names, types and docstrings, and `show --json` carries its authored source
+(`lean_source`), as for a definition. A unit of its own for one of them, from a queue before
+this, is the structure's: having reached its step 2 counts as having seen the structure's Lean.
+
+One reading and one verdict review them all. A field can still be given a separate verdict,
+recorded with the verdict (`verdict.members` in the report):
+
+```sh
+machinechecked review decide def:Pair faithful comparison.md --member Pair.y narrower y-detail.md
+```
+
+Promotion archives the one report as one record and writes a `def-review` marker for each
+constant it covers, each in the form the acceptance checker reads and after its own `Review by`
+line linking that record, after that constant's last marker. Each must still be one of the
+structure's, at the version the report pinned. A constant whose separate verdict is not one
+recorded as a review gets no marker and stays unreviewed; the report's text block (`review
+reports`) lists the constants covered and each separate verdict. In `check`, the obligation to review a
+definition is listed once, with the claims that need it, and a structure's with its constructor
+and projections.
 
 ## Proof steps
 
@@ -821,9 +1054,20 @@ machinechecked review promote machinechecked-reviews-....json
 
 A directory of reports may be given instead of the files: it stands for the `*.json` files directly in it, in name order.
 
-Promotion checks that the manuscript, the passages read (their digests, pinned when the reading was locked) and the formal statements still match the review pins, that the review stages were recorded in the required order, and that the verdict is eligible. An open question stays open: a report whose verdict is *Cannot determine*, or whose coverage is unresolved, records neither a review nor a defect, and promotion refuses it, as it refuses a coverage the protocol does not write. It displays the planned changes, with each report's coverage, and requires the maintainer's decision. Model-family and author restrictions still apply. A report whose reading was not blind is refused unless the maintainer passes `--allow-revealed`.
+Promotion checks that the manuscript, the passages read (their digests, pinned when the reading was locked) and the formal statements still match the review pins, that the review stages were recorded in the required order, and that the verdict is eligible. An open question stays open: a report whose verdict is *Cannot determine*, or whose coverage is unresolved, records neither a review nor a defect, and promotion refuses it, as it refuses a coverage the protocol does not write. It displays the planned changes, with each report's coverage, and requires the maintainer's decision. Model-family and author restrictions still apply. A report whose reading was not blind is refused unless the maintainer passes `--allow-revealed`. A report made against a review snapshot is checked by the same rules, against the maintainer's release; the plan says it was reviewed against supplied evidence and names the snapshot ([Reviewing a project you did not build](#reviewing-a-project-you-did-not-build)).
 
 Promotion records the maintainer’s decision for the reviewed proposition or definition. The marker it writes records the digests of the paper passages read, so a later change to that text reopens the review. A passage the manuscript no longer matches reads as unread until it is pinned again, and promotion refuses a report on it (see [Evidence policy](EVIDENCE_POLICY.md#a-review-is-a-reading-of-a-text), which also says how markers written before the digests were recorded are read, and how to add the digests to them).
 Acceptance also requires the claim’s proofs and all other required checks.
+
+For each report it accepts, promotion keeps one record: the report as exported, in `reports/STEM.json` beside the review files (`STEM` is the unit, the reviewer and the time of the report). The record holds the locked reading, the comparison and verdict, the coverage, the reviewer, the time of each stage and the pins the marker is checked against. The line promotion writes before the marker, ``Review by REVIEWER: VERDICT (report `reports/STEM.json`).``, links it. A later review of the same unit, after its statement changed, is another record beside the first, and the earlier one stays. To read the reports as text, in the protocol's form, write them from the records:
+
+```sh
+machinechecked review reports              # into reports/ in the output directory (.machinechecked/)
+machinechecked review reports --out DIR    # or into DIR
+```
+
+The text is generated: it can be deleted, and the command writes it again, the same.
+
+Promotion in version 0.1.25 and earlier also wrote that text as `reports/STEM.md` beside the record, and its line links the `.md` file. Such a project keeps working as it is: the line is read the same either way, and the assessment, `check` and the reader do not read the `.md` files. They can be deleted safely, keeping the `.json` file of each; the record of a link `reports/STEM.md` is `reports/STEM.json`, and `machinechecked review reports --out reviews/reports` (the directory that holds them) writes the text files back where the links name them.
 
 For details of the acceptance states, see [Evidence policy](EVIDENCE_POLICY.md). For the required configuration and review-marker format, see [Full assessment](ASSURANCE.md).

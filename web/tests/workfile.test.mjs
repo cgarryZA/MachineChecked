@@ -183,3 +183,10 @@ assert.ok(!sameReviewer("human:Ada", "human:Bob") && !sameReviewer(null, "human:
                    "spec:A's Lean was shown after that");
   assert.deepEqual(revealedIn(work, shows, shows[1], "2025-12-31T00:00:00Z"), []);
 }
+
+// A structure's unit: a projection's Lean seen as a unit of its own is the structure's Lean seen.
+{
+  const pair = { id: "def:Toy.Pair", claims: [{ id: "T:thm:a" }], members: [{ name: "Toy.Pair.x", role: "projection" }] };
+  const work = { drafts: { "def:Toy.Pair.x": { stage: "compare", locked_at: "2026-01-02T00:00:00Z" } }, reports: [], exposure: [] };
+  assert.deepEqual(revealedIn(work, [pair], pair), [{ unit: "def:Toy.Pair.x", what: "Lean" }]);
+}

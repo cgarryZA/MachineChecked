@@ -121,9 +121,7 @@ ARXIV_VERSIONED = re.compile(r"(?:arxiv:)?([a-z-]+(?:\.[A-Z]{2})?/\d{7}|\d{4}\.\
 def _arxiv(paper: Paper, dest: Path) -> str:
     """Unpack the source arXiv serves for a versioned record (`2601.01234v2`) into `dest`, and
     return the record. The download is kept beside the snapshots (`.arxiv/`), so a later build,
-    offline included, reads that copy. arXiv serves a gzipped tar, a single gzipped file (one
-    `.tex`), or, for a submission without source, the PDF."""
-    import gzip
+    offline included, reads that copy (`unpack_eprint`)."""
     m = ARXIV_VERSIONED.fullmatch(str(paper.source["arxiv"]).strip())
     if not m:
         raise SourceError(f"paper {paper.id}: an arXiv source needs its version, as in "
@@ -143,7 +141,14 @@ def _arxiv(paper: Paper, dest: Path) -> str:
             raise SourceError(f"paper {paper.id}: arXiv {rid}'s source is over 500 MB")
         cached.parent.mkdir(parents=True, exist_ok=True)
         cached.write_bytes(data)
-    data = cached.read_bytes()
+    unpack_eprint(cached.read_bytes(), dest)
+    return rid
+
+
+def unpack_eprint(data: bytes, dest: Path) -> None:
+    """Unpack a paper's source as arXiv serves it into `dest`: a gzipped tar, a single gzipped
+    file (one `.tex`), or, for a submission without source, the PDF."""
+    import gzip
     if data[:2] == b"\x1f\x8b":
         data = gzip.decompress(data)
     if data.startswith(b"%PDF"):
@@ -154,7 +159,6 @@ def _arxiv(paper: Paper, dest: Path) -> str:
                 t.extractall(dest, filter="data")
         except tarfile.ReadError:
             (dest / "main.tex").write_bytes(data)  # a single-file submission
-    return rid
 
 
 def acquire(cfg: Config, paper: Paper, dest: Path) -> Snapshot:

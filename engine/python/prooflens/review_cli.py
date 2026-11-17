@@ -32,6 +32,11 @@ above. An informed session has already seen the Lean and the prior interpretatio
 claim (its workspace records that when it is opened): any step may be shown at any time, a
 reading is recorded only when the reviewer gives one, and the report lists what was seen, so
 `review promote` treats it as not blind.
+
+A reviewer who did not build the project reviews its author's review snapshot
+(`review_snapshot.py`, `--snapshot`): the session reads the snapshot's site data, keeps the work
+in a working directory of the reviewer's own, and each report records what it was reviewed
+against (`evidence`).
 """
 
 from __future__ import annotations
@@ -55,11 +60,15 @@ ORDER_EXPOSURE = "interpretation-informed review order"
 
 # The verdicts of the protocol, by group, as on the review page (`web/src/lib/review.js`).
 VERDICTS = {
-    "matches": ["faithful", "faithful with representation choices", "broader"],
+    "matches": ["faithful", "faithful with representation choices", "broader",
+                "faithful to the correction"],
     "problem": ["narrower", "mismatched", "vacuous", "refutation not valid"],
     "cannot": ["cannot determine"],
 }
 REFUTE_ONLY = {"refutation not valid"}
+# A correction (or special case) of a printed clause states the printed claim with the
+# correction: reviewed against the printed passage, its honest verdict is this one (#639).
+CORRECTION_ONLY = {"faithful to the correction"}
 # A proof step is reviewed as printed: does it hold? (`steps.VERDICTS`)
 from .steps import VERDICTS as STEP_VERDICTS
 
@@ -72,10 +81,12 @@ COVERAGE_FOR = {"matches": ("full", "partial"), "problem": ("partial", "changed"
 
 
 class ReviewError(RuntimeError):
-    """A step refused, with what to do instead. `kind` says why: `no-build`, `unknown-unit`,
-    `order` (a step before the one it follows), `reported`, `invalid`, `stale` (the build
-    changed since the material was shown), `conflict` (the draft changed meanwhile; `conflicts`
-    holds it as saved) or `workspace`."""
+    """A step refused, with what to do instead. `kind` says why: `no-build`, `snapshot` (a
+    review snapshot that is incomplete, inconsistent or of another format), `paper-source` (the
+    source of a paper whose text the snapshot leaves out, not obtained or not the one it was
+    made from), `unknown-unit`, `order` (a step before the one it follows), `reported`,
+    `invalid`, `stale` (the build changed since the material was shown), `conflict` (the draft
+    changed meanwhile; `conflicts` holds it as saved) or `workspace`."""
 
     def __init__(self, message: str, kind: str = "refused", conflicts: list | None = None):
         super().__init__(message)
@@ -95,6 +106,13 @@ EDITABLE = {"read": ("reading",),
                         "coverage", "basis", "argument", "bridge", "would_decide"),
             "author": ("disagreements",)}
 MARKS = ("matches", "differs", "unsure")
+
+# Why there is nothing to review here, and the two ways to have something: a review of a
+# project the reviewer did not build reads its author's snapshot, which needs no Lean.
+NO_BUILD = ("no review queue here. To review a project you did not build, get its author's "
+            "review snapshot (`machinechecked review pack`) and pass it with --snapshot FILE: "
+            "that needs no Lean. To review your own project, run `machinechecked view` or "
+            "`machinechecked build` first")
 
 
 def now() -> str:
@@ -211,6 +229,44 @@ def correspondence(u: dict, verdict, given) -> tuple[dict | None, list[str]]:
     return out, why
 
 
+def member_verdicts(u: dict, given) -> tuple[dict, list[str]]:
+    """The separate verdicts a review of a structure's unit records on some of the constants it
+    covers (its constructor or a projection), as the report records them under the verdict
+    (`verdict.members`, `{name: {group, value, detail}}`), and what is wrong with `given`
+    (`{name: {verdict, detail}}`): each name one the unit covers other than the structure, each
+    verdict one of the protocol's, with its detail unless it is "faithful". The unit's own
+    verdict holds for every constant without one. Empty when nothing is given."""
+    if not given:
+        return {}, []
+    if not isinstance(given, dict):
+        return {}, ["the separate verdicts are {name: {verdict, detail}}"]
+    covered = [m["name"] for m in u.get("members") or []]
+    out, why = {}, []
+    for name, v in given.items():
+        v = v if isinstance(v, dict) else {"verdict": v}
+        value = v.get("verdict", v.get("value"))
+        detail = v.get("detail") or ""
+        if name not in covered:
+            why.append(f"{name} is not a constructor or projection that {u.get('id')} covers"
+                       + (f" ({', '.join(covered)})" if covered else ""))
+            continue
+        group = next((g for g, vs in VERDICTS.items() if value in vs), None)
+        # A constructor or projection has no refutation and corrects no clause.
+        if group is None or value in REFUTE_ONLY | CORRECTION_ONLY:
+            why.append(f"the verdict on {name}, {value!r}, is not one of: "
+                       + ", ".join(x for vs in VERDICTS.values() for x in vs
+                                   if x not in REFUTE_ONLY | CORRECTION_ONLY))
+            continue
+        if not isinstance(detail, str):
+            why.append(f"the detail of the verdict on {name} is not text")
+            continue
+        if value != "faithful" and not detail.strip():
+            why.append(f"the verdict {value!r} on {name} needs its detail")
+            continue
+        out[name] = {"group": group, "value": value, "detail": detail.strip()}
+    return out, why
+
+
 def parse_reviewer(who: str, same_family: str = "unknown") -> dict:
     """`human:NAME` or `llm:MODEL`, as the protocol writes reviewer ids."""
     m = re.fullmatch(r"(human|llm):(\S+)", who or "")
@@ -235,25 +291,33 @@ class Session:
     reviewer's own), else the reviewer's workspace of the `mode` given (opened if there is
     none), else the reviewer's first workspace (`review-work/<reviewer>.json`). The session's
     mode is its workspace's; it is chosen when the workspace is opened, and only a `mode`
-    operation of the workspace changes it, keeping what was seen."""
+    operation of the workspace changes it, keeping what was seen.
+
+    `evidence` says what the site data is when it is not a build of this working directory:
+    the provenance of a review snapshot (`review_snapshot.provenance`), which each report
+    records."""
 
     def __init__(self, target: Config | Path, reviewer: dict, workspace: str | None = None,
                  mode: str | None = None, data_dir: Path | None = None,
-                 root: Path | None = None):
+                 root: Path | None = None, evidence: dict | None = None):
         work = Path(getattr(target, "out_dir", target))
         self.work_dir = work
         # The Lean project: what Lean read of it before tells whether a workspace's records are
         # current, for the informed order (no Lean runs).
         self.root = Path(root) if root else None
         self.order_record: dict | None = None
+        self.evidence = evidence
         self.data = Path(data_dir) if data_dir else work / "site" / "data"
         if not (self.data / "review-queue.json").exists():
-            raise ReviewError("no review queue: run `machinechecked view` or `machinechecked "
-                              "build` first", "no-build")
+            raise ReviewError(NO_BUILD, "no-build")
         self.site = cmp.Site(self.data)
         self.index = self.site.index
         self.queue = json.loads((self.data / "review-queue.json").read_text(encoding="utf-8"))
         self.units = {u["id"]: u for u in self.queue["units"]}
+        # The constants a structure's unit covers (its constructor and projections), by the id
+        # a unit of their own would have: they are reviewed in the structure's unit.
+        self.member_of = {"def:" + m["name"]: u["id"] for u in self.queue["units"]
+                          for m in u.get("members") or []}
         self.reviewer = reviewer
         if mode is not None and mode not in wsp.MODES:
             raise ReviewError(f"mode {mode!r} is not one of: {', '.join(wsp.MODES)}", "invalid")
@@ -323,8 +387,12 @@ class Session:
 
     def unit(self, uid: str) -> dict:
         u = self.units.get(uid)
+        if u is None and uid in self.member_of:
+            raise ReviewError(f"{uid} is reviewed with its structure, in unit "
+                              f"{self.member_of[uid]}: one reading and one verdict cover the "
+                              "structure, its constructor and its projections", "unknown-unit")
         if u is None:
-            kept = " (your draft of it is kept)" if uid in (self.work.get("drafts") or {}) else ""
+            kept =" (your draft of it is kept)" if uid in (self.work.get("drafts") or {}) else ""
             raise ReviewError(f"no unit {uid} in the queue of release {self.queue['release']}"
                               f"{kept}: `review status` lists the units", "unknown-unit")
         return u
@@ -334,8 +402,36 @@ class Session:
         return u.get("fingerprint") or json.dumps(u.get("fingerprints") or {}, sort_keys=True)
 
     def reported(self, u: dict) -> bool:
-        return any(r["unit"]["id"] == u["id"] and _pinned(r) == self._fp(u)
-                   for r in self.work["reports"])
+        return self.report_of(u) is not None
+
+    def report_of(self, u: dict) -> dict | None:
+        """This reviewer's report of `u`'s current Lean, if they have submitted one."""
+        return next((r for r in reversed(self.work["reports"])
+                     if r["unit"]["id"] == u["id"] and _pinned(r) == self._fp(u)), None)
+
+    def would_reveal(self, u: dict) -> list[str]:
+        """The other units whose Lean step 2 of `u` shows and whose reading this reviewer has
+        not locked yet: if they review those units afterwards, those readings will not be blind."""
+        out = []
+        for i in ((u.get("reveals") or {}).get("lean") or []):
+            other = self.units.get(i)
+            if i == u["id"] or other is None or other.get("state") == "reviewed" \
+                    or self.reported(other):
+                continue
+            d = self.work["drafts"].get(i)
+            if d is None or d.get("stage") == "read":
+                out.append(i)
+        return out
+
+    def progress(self) -> list[dict]:
+        """Each draft's step and when each step was taken, for resuming after an interruption:
+        whether the Lean was shown (`shown`, with its time when it was recorded) tells whether a
+        reading may still be locked blind."""
+        return [{"unit": uid, "step": d.get("stage"), "locked_at": d.get("locked_at"),
+                 "shown": bool(d.get("shown_fingerprint") or d.get("shown_at")),
+                 "shown_at": d.get("shown_at"), "decided_at": d.get("decided_at"),
+                 "author_shown_at": d.get("author_shown_at")}
+                for uid, d in self.work["drafts"].items()]
 
     def open_units(self, order: str = "priority") -> list[dict]:
         """The units left to review, in the order asked (`review_queue.ORDERS`): the queue's
@@ -411,8 +507,9 @@ class Session:
         workspace they have worked in records they had seen of u's claims (an informed
         investigation has seen the Lean and the interpretations of every claim), and the units
         whose step 2 or 3 they reached, here or in another workspace of theirs, whose material
-        includes u's Lean or u's author review. With `before`, only what was recorded by that
-        time; a record without its time counts."""
+        includes u's Lean or u's author review; for a structure's unit, those of its constructor
+        and projections reviewed as units of their own count as its own. With `before`, only
+        what was recorded by that time; a record without its time counts."""
         def by(t) -> bool:
             if before is None or not t:
                 return True
@@ -436,10 +533,20 @@ class Session:
                     if what in ("Lean", "author's review"):
                         add(f"workspace {ws['id']} ({e.get('how')})", what)
         mine = [ws for ws in others if self.is_reviewer((ws.get("reviewer") or {}).get("id"))]
+        # A structure's constructor and projections are the structure's unit: work on one of
+        # them as a unit of its own (in a queue before they were reviewed together) showed its
+        # Lean, as an earlier draft of this unit would have.
+        members = {"def:" + m["name"]: m.get("fingerprint") for m in u.get("members") or []}
         for ws in [self.workspace, *mine]:
             own = ws is self.workspace
             for i, lean, author, pinned in _passes(ws.get("review") or {}, by):
                 unit = i if own else f"{i} (workspace {ws['id']})"
+                if i in members:
+                    if pinned in (None, members[i]):
+                        for what, ok in (("Lean", lean), ("author's review", author)):
+                            if ok:
+                                add(unit, what)
+                    continue
                 if i == u["id"]:
                     # Here the unit's draft is this review. Another workspace's draft of it, or
                     # its report of the same Lean, is this reviewer's earlier sight of it; a
@@ -494,9 +601,13 @@ class Session:
         warn = ("\n\nNOTE: you have already seen " + " and ".join(
             f"the {s['what']} of this unit (in {s['unit']})" for s in seen)
             + ". Your reading will not be blind, and the report will say so.") if seen else ""
+        reveals = self.would_reveal(u)
+        if reveals:
+            warn += "\n\n" + reveals_note(reveals, "Step 2 of this unit (`review show`) will show")
         if as_json:
             return {**self.packet(u, "read"), "review": {"step": "read", "mode": self.mode,
-                                                         "seen_before": seen}}
+                                                         "seen_before": seen,
+                                                         "reveals": reveals}}
         return self.paper_text(u) + warn
 
     def _started(self, u: dict) -> dict:
@@ -510,11 +621,12 @@ class Session:
             self.work["drafts"][u["id"]] = d = {"stage": "read", "reading": ""}
         return d
 
-    def lock(self, uid: str, reading: str) -> None:
+    def lock(self, uid: str, reading: str) -> list[dict]:
         """Step 1's record: the reviewer's reading of the paper, with the digests of the
         passages read and what they had already seen. Independent review locks it before the
         Lean is shown. An informed session records it when the reviewer gives it, until the
-        verdict; it is not blind, and the report says so."""
+        verdict; it is not blind, and the report says so. Returns what the reviewer had already
+        seen of the unit (`revealed_by`), so that they are told at once."""
         u = self.unit(uid)
         if self.informed:
             d = self._started(u)
@@ -522,40 +634,72 @@ class Session:
                 raise ReviewError(f"{uid}: the verdict is recorded; the reading it was made with "
                                   "is kept", "order")
         else:
+            r = self.report_of(u) if self.draft(u) is None else None
+            if r is not None:
+                raise ReviewError(f"{uid} is already reported by {self.reviewer['id']} (submitted "
+                                  f"{r.get('submitted_at')}): its reading is the one in that "
+                                  "report, and a new one would not be blind", "reported")
             d = self.draft(u, "read")
         if len(reading.strip()) < 20:
             raise ReviewError("the reading is too short to record (20 characters at least)",
                               "invalid")
         # The passages read are those of this queue's release: the report pins their digests.
-        d.update(reading=reading, revealed_by=self.revealed_by(u), locked_at=now(),
+        seen = self.revealed_by(u)
+        d.update(reading=reading, revealed_by=seen, locked_at=now(),
                  source_sha256=u.get("source_sha256"), stage="compare")
         self._save(uid)
+        return seen
 
-    def show(self, uid: str, as_json: bool = False) -> str | dict:
+    def show(self, uid: str, as_json: bool = False, definitions: bool = False) -> str | dict:
         """Step 2: the unit's Lean, after the lock in independent review. The draft records the
-        version shown, so that a verdict is recorded against the Lean that was shown."""
+        version shown, so that a verdict is recorded against the Lean that was shown. A unit
+        this reviewer has reported is shown as it was reviewed: its Lean was seen already. With
+        `definitions`, only the definitions it uses, as a compact listing
+        (`compare.definitions_text`)."""
         u = self.unit(uid)
         d = self._started(u) if self.informed else self.draft(u)
+        if d is None and not self.informed:
+            r = self.report_of(u)
+            if r is not None:
+                note = (f"{uid} is reported (submitted {r.get('submitted_at')}, verdict "
+                        f"{(r.get('verdict') or {}).get('value')}); this is the Lean you reviewed. "
+                        "`review export` writes your reports.")
+                if as_json:
+                    return {**self.packet(u, "compare"),
+                            "review": {"step": "reported", "mode": self.mode,
+                                       "submitted_at": r.get("submitted_at")}}
+                return note + "\n\n" + self._lean_or_definitions(u, definitions)
         if d is None or (d["stage"] == "read" and not self.informed):
             raise ReviewError(f"{uid}: lock your reading first (`review lock`); the Lean is shown "
                               "only after it", "order")
+        reveals = self.would_reveal(u)
         shown = {"stage": "compare" if d["stage"] == "read" else d["stage"],
                  "shown_fingerprint": self._fp(u)}
-        if any(d.get(k) != v for k, v in shown.items()):
+        if any(d.get(k) != v for k, v in shown.items()) or "shown_at" not in d:
             d.update(shown)
+            d.setdefault("shown_at", now())
             self._save(uid)
         if as_json:
-            return {**self.packet(u, "compare"), "review": {"step": "compare", "mode": self.mode}}
-        return self.lean_text(u)
+            return {**self.packet(u, "compare"), "review": {"step": "compare", "mode": self.mode,
+                                                            "reveals": reveals}}
+        text = self._lean_or_definitions(u, definitions)
+        return (reveals_note(reveals, "This shows") + text) if reveals else text
+
+    def _lean_or_definitions(self, u: dict, definitions: bool) -> str:
+        """Step 2's text: the unit's Lean, or only the definitions it uses (`definitions`)."""
+        return cmp.definitions_text(self.packet(u, "compare")) if definitions \
+            else self.lean_text(u)
 
     def decide(self, uid: str, verdict: str, comparison: str, detail: str = "",
                witness: str = "", coverage: dict | None = None, checklist: dict | None = None,
-               shown: str | dict | None = None) -> None:
+               shown: str | dict | None = None, members: dict | None = None) -> None:
         """Step 2's record: the verdict, the comparison and, with them, the reviewer's coverage
         (`correspondence`) and checklist, all before the author's review is shown (in an
         informed session, until the report is submitted). The Lean the verdict is about is the
         version shown (`shown`, the unit's fingerprint as the reviewer's page drew it, or as
-        `show` recorded it): refused as stale when the build has changed it since."""
+        `show` recorded it): refused as stale when the build has changed it since. For a
+        structure's unit, `members` records a separate verdict on one of the constants it covers
+        (`{name: {verdict, detail}}`, `member_verdicts`): the unit's verdict holds for the rest."""
         u = self.unit(uid)
         if self.informed:
             d = self._started(u)
@@ -568,7 +712,10 @@ class Session:
                               + ", ".join(v for vs in table.values() for v in vs), "invalid")
         if verdict in REFUTE_ONLY and not u.get("refute"):
             raise ReviewError(f"{verdict!r} applies only to a unit with a refutation", "invalid")
-        if verdict not in ("faithful", "holds as printed") and not (detail or "").strip():
+        if verdict in CORRECTION_ONLY and not u.get("correction"):
+            raise ReviewError(f"{verdict!r} applies only to a correction or a special case of a "
+                              "printed clause", "invalid")
+        if verdict not in ("faithful", "holds as printed", *CORRECTION_ONLY)                 and not (detail or "").strip():
             raise ReviewError(f"verdict {verdict!r} needs --detail", "invalid")
         if not (comparison or "").strip():
             raise ReviewError("the comparison is empty", "invalid")
@@ -586,6 +733,13 @@ class Session:
         cor, why = correspondence(u, verdict, coverage)
         if why:
             raise ReviewError("; ".join(why), "invalid")
+        apart, why = member_verdicts(u, members)
+        if why:
+            raise ReviewError("; ".join(why), "invalid")
+        if apart:
+            d["members"] = apart
+        else:
+            d.pop("members", None)
         d.update(group=group, verdict=verdict, detail=detail or "", comparison=comparison,
                  witness=witness or "", checklist=checklist, correspondence=cor,
                  decided_at=now(), stage="author",
@@ -623,7 +777,16 @@ class Session:
             if text:
                 out.append(f"Reading of the correspondence of {c['id']}"
                            + (f" by {note['by']}" if note.get("by") else "") + f"\n{text}")
+        out += self._refutation_scope(u)
         return "\n\n".join(out) or "No review by the author is recorded for this unit."
+
+    def _refutation_scope(self, u: dict) -> list[str]:
+        """The author's account of the scope of a proposition's refutation, for step 3: the
+        readings its counterexample is declared to cover and not to cover, and what the class
+        lemmas show of each standing assumption, with the statement of each theorem named
+        (`review_queue.refutation_scope_text`). Authored, so shown only after the verdict."""
+        return [f"Scope of the refutation of {s['claim']}, as its author records it\n"
+                + "\n".join(s["lines"]) for s in u.get("refutation_scope") or []]
 
     def submit(self, uid: str, disagreements: str) -> dict:
         """The report, from the draft. Independent review submits after the author's review was
@@ -644,7 +807,8 @@ class Session:
         seen = list(d.get("revealed_by") or [])
         seen += [s for s in self.revealed_by(u, before=d.get("locked_at")) if s not in seen]
         d["revealed_by"] = seen
-        r = report(self.index, u, d, self.reviewer, disagreements or "none", self.mode)
+        r = report(self.index, u, d, self.reviewer, disagreements or "none", self.mode,
+                   self.evidence)
         self.work["reports"].append(r)
         del self.work["drafts"][uid]
         self._save(uid, add=r)
@@ -698,6 +862,7 @@ class Session:
             "comparison": cmp_.get("text") or "", "witness": cmp_.get("witness") or "",
             "checklist": cmp_.get("checklist") or {}, "decided_at": cmp_.get("decided_at"),
             "group": v.get("group"), "verdict": v.get("value"), "detail": v.get("detail") or "",
+            **({"members": v["members"]} if v.get("members") else {}),
             "correspondence": r.get("correspondence"),
             "lean": {k: pins.get(k) for k in ("fingerprint", "fingerprints", "legacy_hash")},
             "author_shown_at": a.get("shown_at"), "disagreements": a.get("disagreements") or ""}
@@ -721,10 +886,19 @@ class Session:
         body = {"schema": REPORTS_SCHEMA, "project": (self.index.get("project") or {}).get("name"),
                 "release": self.index["release"], "exported_at": now(),
                 "workspace": {"id": self.workspace["id"], "mode": self.mode},
+                **({"evidence": self.evidence} if self.evidence else {}),
                 "reports": self.work["reports"]}
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(body, indent=2, ensure_ascii=False), encoding="utf-8")
         return out
+
+
+def reveals_note(units: list[str], lead: str) -> str:
+    """The warning that a step shows the Lean of other units still to be read blind."""
+    return (f"NOTE: {lead} the Lean of {', '.join(units)} as well, whose reading you have not "
+            "locked. Lock those readings first if you will review them: a reading locked after "
+            "seeing their Lean is not blind, and promotion refuses it unless the maintainer "
+            "accepts it.\n\n")
 
 
 def check_checklist(given) -> dict:
@@ -803,8 +977,7 @@ def order_route(work_dir: Path, data_dir: Path, root: Path | None = None):
                               "priority and document orders are in data/review-queue.json")
         path = data_dir / "review-queue.json"
         if not path.exists():
-            raise ReviewError("no review queue: run `machinechecked view` or `machinechecked "
-                              "build` first")
+            raise ReviewError(NO_BUILD, "no-build")
         queue = json.loads(path.read_text(encoding="utf-8"))
         units, drawn, record = informed_order(
             [u for u in queue["units"] if u["state"] != "reviewed"], work_dir, data_dir, root,
@@ -847,11 +1020,11 @@ def api(work_dir: Path, data_dir: Path) -> tuple[dict, dict]:
         elif action == "edit":
             s.edit(uid, req.get("stage") or "", req.get("fields") or {})
         elif action == "lock":
-            s.lock(uid, req.get("reading") or "")
+            out["seen_before"] = s.lock(uid, req.get("reading") or "")
         elif action == "decide":
             s.decide(uid, req.get("verdict") or "", req.get("comparison") or "",
                      req.get("detail") or "", req.get("witness") or "", req.get("coverage"),
-                     req.get("checklist"), req.get("shown"))
+                     req.get("checklist"), req.get("shown"), req.get("members"))
             if req.get("show_author"):
                 s.author(uid)
         elif action == "author":
@@ -926,11 +1099,13 @@ def step_issue_draft(u: dict, verdict: str, detail: str) -> dict | None:
 
 
 def report(index: dict, u: dict, d: dict, reviewer: dict, disagreements: str,
-           mode: str = "independent") -> dict:
+           mode: str = "independent", evidence: dict | None = None) -> dict:
     """The report, in the form the reader's review page exports (`buildReport`). It pins the Lean
     the verdict was recorded against (the draft's `lean`), and its `mode` is the session's: an
     informed report keeps the reading only when the reviewer recorded one, with its time, and
-    never a lock it did not have."""
+    never a lock it did not have. A report made against a review snapshot records it
+    (`evidence`: its manifest's digest and pins); one made from a build of the working directory
+    has none."""
     revs = {p["id"]: p.get("revision") for p in index.get("papers", [])}
     lean = d.get("lean") or {k: u.get(k) for k in ("fingerprint", "fingerprints", "legacy_hash")}
     return {
@@ -952,11 +1127,14 @@ def report(index: dict, u: dict, d: dict, reviewer: dict, disagreements: str,
                     "revealed_by": d.get("revealed_by") or []},
         "comparison": {"text": d["comparison"], "witness": d.get("witness") or "",
                        "checklist": d.get("checklist") or {}, "decided_at": d["decided_at"]},
-        "verdict": {"group": d["group"], "value": d["verdict"], "detail": d.get("detail") or ""},
+        "verdict": {"group": d["group"], "value": d["verdict"], "detail": d.get("detail") or "",
+                    # A structure's unit: the separate verdicts on constants it covers.
+                    **({"members": d["members"]} if d.get("members") else {})},
         # Recorded with the verdict; None when the reviewer recorded no coverage.
         "correspondence": d.get("correspondence"),
         "author_review": {"shown_at": d.get("author_shown_at"), "disagreements": disagreements},
         "submitted_at": now(),
         "issue_draft": issue_draft(u, d["verdict"], d.get("detail") or "",
                                    d.get("correspondence")),
+        **({"evidence": evidence} if evidence else {}),
     }

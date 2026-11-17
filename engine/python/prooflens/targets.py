@@ -96,8 +96,12 @@ class Snapshot:
         self.data = Path(data_dir)
         p = self.data / "index.json"
         if not p.exists():
-            raise TargetError("no build to resolve against: run `machinechecked view` or "
-                              "`machinechecked build` first", kind="no-build")
+            raise TargetError("no build to resolve against. To review a project you did not "
+                              "build, get its author's review snapshot (`machinechecked review "
+                              "pack`) and pass it to `machinechecked review` with --snapshot "
+                              "FILE: that needs no Lean. For your own project, run "
+                              "`machinechecked view` or `machinechecked build` first",
+                              kind="no-build")
         self.index = json.loads(p.read_text(encoding="utf-8"))
         self.claims = list(self.index.get("claims") or [])
         self._by_id = {c["id"]: c for c in self.claims}

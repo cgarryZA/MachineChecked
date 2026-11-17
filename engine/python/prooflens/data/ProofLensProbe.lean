@@ -42,6 +42,8 @@ structure Request where
   of the whole proof if none. -/
   facts_after : Option Nat := none
   facts_within : Option String := none
+  /-- For `accept-from`: the propositions the theorem assumes, in order. -/
+  assumes : Option (Array String) := none
   deriving FromJson, Inhabited
 
 structure Query where
@@ -521,7 +523,11 @@ where
     if ← competed w a c ty then return false
     let env ← getEnv
     match a.getAppFn.consumeMData with
-    | .fvar _ => return (← getLocalInstances).any (·.fvar == a.getAppFn.consumeMData)
+    -- A local instance itself. Applied to arguments (a family `F : ℕ → MeasurableSpace Ω` at
+    -- `i`), it is what resolution finds only if resolution finds those arguments too, which
+    -- `instanceFound` decides.
+    | .fvar _ => return a.getAppNumArgs == 0
+        && (← getLocalInstances).any (·.fvar == a.getAppFn.consumeMData)
     | .proj _ _ b => return a.getAppNumArgs == 0 && (← plainInstance w b (← inferType b))
     | .const n _ =>
       -- A constructor of a class takes its parents and fields explicitly: each must be an
@@ -1212,8 +1218,9 @@ def mathField (e : Expr) (vars : Array FVarId) (root : SubExpr.Pos) (pfx : Strin
 
 /-- A printed expression (`ppJson`) with its mathematics (`math`). -/
 def ppMathJson (e : Expr) (vars : Array FVarId := #[]) (root : SubExpr.Pos := .root)
-    (pfx : String := "") : MetaM Json :=
-  return Json.mkObj ((← ppFields e vars root pfx) ++ [("math", ← mathField e vars root pfx)])
+    (pfx : String := "") (shown : Option Shown := none) : MetaM Json :=
+  return Json.mkObj ((← ppFields e vars root pfx shown)
+    ++ [("math", ← mathField e vars root pfx shown)])
 
 /-! ## A definition at its actual arguments
 
@@ -1316,21 +1323,22 @@ them, each printed with positions rooted at the value, so that the body's sub-te
 identities they have in `value`. Unless `bind`, the parameters are not numbered among the
 variables `vars` (an expansion's parameters are not variables of the statement). The body's
 applications of the project's definitions are expanded to `depth` (`ppExpanded`); in an
-equation (`eqn`), not the application its left side states. -/
+equation (`eqn`), not the application its left side states. The instance arguments `whole` says
+(those of the value, `instancesToShow`, by positions in it) are printed. -/
 partial def paramsAndBody (e : Expr) (acc : Array Json := #[]) (vars : Array FVarId := #[])
     (pos : SubExpr.Pos := .root) (pfx : String := "") (lambdas : Bool := true) (bind : Bool := true)
-    (inside : Name → Bool := fun _ => false) (depth : Nat := 0) (eqn : Bool := false) :
-    MetaM (Array Json × Json) := do
+    (inside : Name → Bool := fun _ => false) (depth : Nat := 0) (eqn : Bool := false)
+    (whole : Option Shown := none) : MetaM (Array Json × Json) := do
   match e, lambdas with
   | .lam n t b bi, true | .forallE n t b bi, false =>
-    let tj ← ppMathJson t vars pos.pushBindingDomain pfx
+    let tj ← ppMathJson t vars pos.pushBindingDomain pfx (Shown.part whole pos.pushBindingDomain)
     withLocalDecl n bi t fun x => do
       let j := Json.mkObj [("name", binderName n), ("binder", binderStr bi),
         ("id", Json.str (pfx ++ toString pos)), ("type", tj),
         ("proposition", toJson (← isProp t))]
       paramsAndBody (b.instantiate1 x) (acc.push j) (if bind then vars.push x.fvarId! else vars)
-        pos.pushBindingBody pfx lambdas bind inside depth eqn
-  | _, _ => return (acc, ← ppExpanded inside depth e vars pos pfx eqn)
+        pos.pushBindingBody pfx lambdas bind inside depth eqn whole
+  | _, _ => return (acc, ← ppExpanded inside depth e vars pos pfx eqn (Shown.part whole pos))
 
 /-- The fields of a printed expression (`ppFields`), with the expansions of the applications of
 the project's definitions inside it (`expansions`) when `depth` is positive. When `e` is an
@@ -1503,8 +1511,8 @@ from (the structure that declares it, the parent projections that lead there fro
 and the field's projection, module and range), the variables among `vars` its statement
 mentions (`depends`, by number) and the reason it holds of `x` (`basis`). Returns whether the
 field is a proposition. -/
-def fieldJson (x : Expr) (S f : Name) (vars : Array FVarId) (pfx basis : String) :
-    MetaM (Json × Bool) := do
+def fieldJson (x : Expr) (S f : Name) (vars : Array FVarId) (pfx basis : String)
+    (showInstances : Bool := false) : MetaM (Json × Bool) := do
   let env ← getEnv
   let p ← mkProjection x f
   let t ← instantiateMVars (← inferType p)
@@ -1527,7 +1535,8 @@ def fieldJson (x : Expr) (S f : Name) (vars : Array FVarId) (pfx basis : String)
     ("range", ← match proj with | some q => rangeJson q | none => pure Json.null),
     ("term", Json.str (toString (← ppExpr p))),
     ("depends", toJson deps),
-    ("type", ← ppMathJson t vars .root s!"{pfx}{f}:")]
+    ("type", ← ppMathJson t vars .root s!"{pfx}{f}:"
+      (← if showInstances then some <$> instancesToShow t else pure none))]
   return (j, prop)
 
 /-- The fields carried by the type of `x` (`properties`), each with its statement specialised to
@@ -1572,6 +1581,9 @@ def structureFields (n : Name) : MetaM (List (String × Json)) := do
   unless isStructure env n do return []
   let act : MetaM (List (String × Json)) := withCurrHeartbeats do
     let ci ← getConstInfo n
+    -- The instance arguments a reader must see, in the parameters' types and in each field's
+    -- (an explicit σ-algebra, say: `Measurable[m] f` is not `Measurable f`).
+    let whole ← instancesToShow ci.type
     forallTelescope ci.type fun xs _ => do
       let mut params : Array Json := #[]
       let mut pos := SubExpr.Pos.root
@@ -1579,7 +1591,8 @@ def structureFields (n : Name) : MetaM (List (String × Json)) := do
         let d ← xs[i]!.fvarId!.getDecl
         params := params.push (Json.mkObj [("name", Json.str (binderName d.userName)),
           ("binder", Json.str (binderStr d.binderInfo)), ("id", Json.str ("type:" ++ toString pos)),
-          ("type", ← ppJson d.type ((xs.extract 0 i).map (·.fvarId!)) pos.pushBindingDomain "type:"),
+          ("type", Json.mkObj (← ppFields d.type ((xs.extract 0 i).map (·.fvarId!))
+            pos.pushBindingDomain "type:" (Shown.part (some whole) pos.pushBindingDomain))),
           ("proposition", toJson (← isProp d.type))])
         pos := pos.pushBindingBody
       let parents := (getStructureParentInfo env n).map fun p => Json.mkObj [
@@ -1591,7 +1604,7 @@ def structureFields (n : Name) : MetaM (List (String × Json)) := do
         let fields := getStructureFieldsFlattened env n (includeSubobjectFields := false)
         let mut out : Array Json := #[]
         for f in fields.toList.take maxFields do
-          out := out.push (← fieldJson s n f vars "self#" "type").1
+          out := out.push (← fieldJson s n f vars "self#" "type" (showInstances := true)).1
         return [("structure", Json.mkObj [("class", toJson (isClass env n)),
           ("params", Json.arr params), ("parents", Json.arr parents),
           ("fields", Json.arr out), ("fields_omitted", toJson (fields.size - out.size))])]
@@ -1853,7 +1866,8 @@ def equationsJson (n : Name) : MetaM (Option (Array Name × Array Json)) := do
 its parameters, body and the body's type (`result`), its equations, or the error that stopped their extraction. A
 definition by recursion or with several equations is presented by its equations. The
 extraction has its own heartbeat budget, and a failure is recorded here and stops nothing else. -/
-def definitionFields (inside : Name → Bool) (n : Name) (type value : Expr) : MetaM (List (String × Json)) := do
+def definitionFields (inside : Name → Bool) (n : Name) (type value : Expr)
+    (typeShown valueShown : Option Shown := none) : MetaM (List (String × Json)) := do
   let act : MetaM (List (String × Json)) := withCurrHeartbeats do
     let eqns ← equationsJson n
     let recursive ← isRecursiveDefinition n
@@ -1867,12 +1881,12 @@ def definitionFields (inside : Name → Bool) (n : Name) (type value : Expr) : M
       | none => [("equations", Json.null)]
     if byEqns then
       return [("defined_by", Json.str "equations")] ++ eqFields
-    let (params, body) ← paramsAndBody value (inside := inside) (depth := 1)
+    let (params, body) ← paramsAndBody value (inside := inside) (depth := 1) (whole := valueShown)
     -- The type of the body: the definition's type under its parameters, prefixed `type:` (its
     -- positions are in the type, not in the value).
     let result ← forallBoundedTelescope type (some params.size) fun xs r => do
       let pos := xs.foldl (fun p _ => p.pushBindingBody) SubExpr.Pos.root
-      ppJson r (xs.map (·.fvarId!)) pos "type:"
+      return Json.mkObj (← ppFields r (xs.map (·.fvarId!)) pos "type:" (Shown.part typeShown pos))
     return [("defined_by", Json.str "body"), ("params", Json.arr params), ("body", body),
       ("result", result)] ++ eqFields
   tryCatchRuntimeEx act fun err => do
@@ -1892,12 +1906,19 @@ def listedUses (inside : Name → Bool) (used : Array Name) : Json :=
 def declRecord (inside : Name → Bool) (n : Name) (ci : ConstantInfo) : MetaM (Json × Array Name) := do
   let env ← getEnv
   let (lh, c, used) ← constPrint ci
-  let sig ← ppJson ci.type
+  -- The instance arguments a reader must see (`instancesToShow`) in what a reader looks for: the
+  -- type and value of a declaration its author wrote, not of a helper Lean generates.
+  let typeShown ← if userFacing n then some <$> instancesToShow ci.type else pure none
+  let sig := Json.mkObj (← ppFields ci.type (shown := Shown.part typeShown .root))
   -- Whether the type is a proposition: the declaration is a proof (a theorem, a proof Lean
   -- generates, a `Prop`-valued instance) and carries no data. Unknown when Lean cannot tell.
   let prop ← tryCatchRuntimeEx (some <$> isProp ci.type) fun _ => pure none
+  let valueShown ← match ci, prop with
+    | .defnInfo d, some false => if userFacing n then some <$> instancesToShow d.value else pure none
+    | _, _ => pure none
   let value ← match ci, prop with
-    | .defnInfo d, some false => ppJson d.value
+    | .defnInfo d, some false =>
+      pure (Json.mkObj (← ppFields d.value (shown := Shown.part valueShown .root)))
     | _, _ => pure Json.null
   -- Whether the declaration is the tactic script Lean stores for a tactic default (`:= by tac`
   -- in a binder or a structure field: an auto-parameter, such as `Pos.pos._autoParam`): an
@@ -1910,7 +1931,7 @@ def declRecord (inside : Name → Bool) (n : Name) (ci : ConstantInfo) : MetaM (
   -- an instance, not a proposition such as a locked statement).
   let defn ← match ci with
     | .defnInfo d =>
-      if value != Json.null && userFacing n && !(← isInstance n) then definitionFields inside n ci.type d.value
+      if value != Json.null && userFacing n && !(← isInstance n) then definitionFields inside n ci.type d.value typeShown valueShown
       else pure []
     | _ => pure []
   -- What a structure is made of, and what a construction's value carries.
@@ -1942,11 +1963,16 @@ def emitClosure (h : IO.FS.Handle) (inside : Name → Bool) (root : Name) (used 
     unless inside n do continue
     let some c := env.find? n | continue
     members := members.push n.toString
-    -- Each member has its own heartbeat budget: a closure can hold thousands.
+    -- A member already emitted (by this closure or another) needs only the constants it uses,
+    -- to follow; its record is written once. Each record has its own heartbeat budget: a
+    -- closure can hold thousands.
+    if (← seen.get).contains n then
+      let (_, _, more) ← withCurrHeartbeats (constPrint c)
+      stack := stack ++ more
+      continue
     let (j, more) ← withCurrHeartbeats (declRecord inside n c)
-    unless (← seen.get).contains n do
-      seen.modify (·.insert n)
-      emit h j
+    seen.modify (·.insert n)
+    emit h j
     stack := stack ++ more
   return members.qsort (· < ·)
 
@@ -2476,11 +2502,44 @@ def levelsMatch (ls : List Level) (params : List Name) : Bool :=
   ps.length == ls.length && ps.eraseDups.length == ps.length && ps.length == params.length
     && params.all ps.contains
 
-/-- `accept`: the type is exactly the specification; `refute`: exactly its negation; `witness`:
-any theorem of the acceptance layer, with the project declarations in the closure of its type
-with its proofs erased (the instance it exhibits lives in them). -/
+/-- `e` is the constant `n`, at any universe levels. -/
+def isConstOf (e : Expr) (n : Name) : Bool :=
+  match e with
+  | .const c _ => c == n
+  | _ => false
+
+/-- `e` is the conjunction `A₁ ∧ … ∧ Aₙ` of the named propositions in order, nested to the
+right as `∧` is written. -/
+def conjOf (e : Expr) : List Name → Bool
+  | [] => false
+  | [a] => isConstOf e a
+  | a :: rest => match e with
+    | .app (.app (.const ``And []) l) r => isConstOf l a && conjOf r rest
+    | _ => false
+
+/-- `ty` is exactly `A₁ → … → Aₙ → S` or `A₁ ∧ … ∧ Aₙ → S`, for the assumed propositions
+`assumes` in order and the specification `s`, with no dependent arrow. -/
+def assumingType (ty : Expr) (assumes : List Name) (s : Name) (params : List Name) : Bool :=
+  !assumes.isEmpty && (curried ty assumes || match ty with
+    | .forallE _ d b _ => !b.hasLooseBVars && conjOf d assumes && concl b
+    | _ => false)
+where
+  concl (e : Expr) : Bool := match e with
+    | .const c ls => c == s && levelsMatch ls params
+    | _ => false
+  curried (e : Expr) : List Name → Bool
+    | [] => concl e
+    | a :: rest => match e with
+      | .forallE _ d b _ => !b.hasLooseBVars && isConstOf d a && curried b rest
+      | _ => false
+
+/-- `accept`: the type is exactly the specification; `refute`: exactly its negation;
+`accept-from`: exactly the specification assuming the propositions `assumes` (`assumingType`);
+`witness`: any theorem of the acceptance layer, with the project declarations in the closure of
+its type with its proofs erased (the instance it exhibits lives in them). -/
 def proofRecord (h : IO.FS.Handle) (q : Query) (inside : Name → Bool) (seen : IO.Ref NameSet)
-    (kind : String) (thm : Name) (spec : Option Name) : MetaM Unit := do
+    (kind : String) (thm : Name) (spec : Option Name) (assumes : List Name := []) :
+    MetaM Unit := do
   let env ← getEnv
   let some ci := env.find? thm
     | emit h (Json.mkObj [("record", kind), ("name", thm.toString), ("errors", toJson #["missing"])])
@@ -2499,6 +2558,9 @@ def proofRecord (h : IO.FS.Handle) (q : Query) (inside : Name → Bool) (seen : 
     | .forallE _ (.const c _) (.const ``False []) _ =>
       unless c == s do errs := errs.push "type-not-negated-spec"
     | _ => errs := errs.push "type-not-negated-spec"
+  | "accept-from", some s =>
+    unless assumingType ci.type assumes s ci.levelParams do
+      errs := errs.push "type-not-assuming-spec"
   | _, _ => pure ()
   let axs ← collectAxioms thm
   let bad := disallowed (q.allowed_axioms.map (·.toName)) axs
@@ -2516,7 +2578,9 @@ def proofRecord (h : IO.FS.Handle) (q : Query) (inside : Name → Bool) (seen : 
     ("errors", toJson errs), ("axioms", toJson (axs.map toString)),
     ("type", ty), ("module", (moduleOf env thm).toString), ("range", ← rangeJson thm),
     ("sorry", toJson (axs.contains ``sorryAx))]
-  emit h (Json.mkObj (fields ++ closure))
+  let assumed : List (String × Json) := if kind == "accept-from" then
+      [("assumes", toJson (assumes.map toString))] else []
+  emit h (Json.mkObj (fields ++ assumed ++ closure))
 
 /-- The project constants (`roots`) among `cs` that a reader looks for, other than `self`. -/
 def projectNamesJson (roots : Array Name) (env : Environment) (self : Name) (cs : Array Name) :
@@ -3432,6 +3496,47 @@ def refsRecords (h : IO.FS.Handle) (roots : Array Name) (cache : UsedCache) : Me
       ("kind", kindOf ci), ("user_facing", toJson (userFacing n)),
       ("value_kind", valueKind ci), ("statement", inside st), ("value", inside va)])
 
+/-- The constant a type denies and the form of the denial, when the type is `¬ S` or
+`S → False` with `S` a constant; nothing is unfolded. -/
+def deniedConst (ty : Expr) : Option (Name × String) :=
+  let ty := ty.consumeMData
+  if ty.isAppOfArity ``Not 1 then
+    match ty.appArg!.consumeMData with
+    | .const s _ => some (s, "not")
+    | _ => none
+  else match ty with
+    | .forallE _ d b _ =>
+      match d.consumeMData, b.consumeMData with
+      | .const s _, .const f _ => if f == ``False then some (s, "implies-false") else none
+      | _, _ => none
+    | _ => none
+
+/-- For the propositions `specs` (those of clauses without a refutation), a `negation` record
+for each theorem of the project whose type is `¬ S` or `S → False` with `S` one of them, then
+a `negations` record with the number of theorems searched. It is one pass over the project's
+constants that compares the shape of each theorem's type, so its cost does not grow with the
+number of propositions. -/
+def negationRecords (h : IO.FS.Handle) (roots : Array Name) (specs : Array String) :
+    MetaM Unit := do
+  let env ← getEnv
+  let wanted : NameSet := specs.foldl (fun s n => s.insert n.toName) {}
+  let mut searched := 0
+  let mut found := 0
+  unless wanted.isEmpty do
+    for n in ← projectConstants roots do
+      let some (.thmInfo ti) := env.find? n | continue
+      unless userFacing n do continue
+      searched := searched + 1
+      let ty ← if ti.type.hasMVar then instantiateMVars ti.type else pure ti.type
+      let some (s, form) := deniedConst ty | continue
+      unless wanted.contains s do continue
+      found := found + 1
+      emit h (Json.mkObj [("record", "negation"), ("name", n.toString), ("spec", s.toString),
+        ("form", Json.str form), ("module", (moduleOf env n).toString),
+        ("range", ← rangeJson n)])
+  emit h (Json.mkObj [("record", "negations"), ("searched", toJson searched),
+    ("found", toJson found), ("errors", Json.arr #[])])
+
 /-- A binder around an occurrence inside a value: a `fun` (one of the declaration's own
 parameters when it is one of the value's leading binders), a `let`, a `have` (a `fun` applied
 to the proof of its premise) or a `∀`. Its type and value have loose bound variables for the
@@ -3841,6 +3946,9 @@ open ProofLensProbe in
         | "spec" => specRecord h q inside seen r.name.toName
         | "accept" | "refute" =>
           proofRecord h q inside seen r.kind r.name.toName (r.spec.map (·.toName))
+        | "accept-from" =>
+          proofRecord h q inside seen r.kind r.name.toName (r.spec.map (·.toName))
+            ((r.assumes.getD #[]).toList.map (·.toName))
         | "witness" => proofRecord h q inside seen "witness" r.name.toName none
         | "index" => do indexRecords h roots; moduleDocRecords h roots
         | "moddocs" => moduleDocRecords h roots
@@ -3863,12 +3971,18 @@ open ProofLensProbe in
             emit h (Json.mkObj [("record", "defclosure"), ("name", r.name),
               ("errors", toJson #["missing"])])
         | "refs" => refsRecords h roots used
+        | "negations" => negationRecords h roots (r.names.getD #[])
         | "apps" => appsRecords h roots used r.name.toName r.callers
         | _ => pure ())
         (fun err => do
-          emit h (Json.mkObj [("record", if r.kind == "decl" then "defclosure" else r.kind),
+          let assumed : List (String × Json) := match r.assumes with
+            | some a => [("assumes", toJson a)]
+            | none => []
+          let base : List (String × Json) :=
+            [("record", if r.kind == "decl" then "defclosure" else r.kind),
             ("name", r.name), ("spec", match r.spec with | some x => Json.str x | none => Json.null),
-            ("errors", toJson #[s!"probe-error: {← err.toMessageData.toString}"])]))
+            ("errors", toJson #[s!"probe-error: {← err.toMessageData.toString}"])]
+          emit h (Json.mkObj (base ++ assumed)))
     -- Every record reaches the file before `done` says how many bytes precede it, so a
     -- reader can tell a complete output from one cut short. A write that fails (a full disk)
     -- raises here or in `emit`, and the session ends with an error.

@@ -81,6 +81,8 @@ def claim_names(chunk: dict) -> set[str]:
     names = set(chunk.get("decls", {}))
     for cl in chunk.get("clauses", []):
         names |= {cl[k] for k in ("spec", "accept", "refute", "witness") if cl.get(k)}
+        if cl.get("accept_from"):
+            names.add(cl["accept_from"]["theorem"])
         names |= set(cl.get("defs") or [])
         names |= {r["witness"] for r in cl.get("regimes", []) if r.get("witness")}
     return names
@@ -145,6 +147,8 @@ def public_claim(chunk: dict, pub) -> dict:
     out = _pick(chunk, ["schema", "release", "id", "paper", "number", "title", "kind", "scope",
                         "scope_note", "scope_reviewed", "status", "status_code", "class", "source_matches", "source_evidence",
                         "source_sha256", "blockers"])
+    if chunk.get("status_reason"):
+        out["status_reason"] = chunk["status_reason"]
     out["location"] = chunk.get("location") if pub.source_text else None
     out["statement_tex"] = chunk.get("statement_tex") if pub.source_text else None
     out["context_tex"] = chunk.get("context_tex") if pub.source_text else None
@@ -161,12 +165,20 @@ def public_claim(chunk: dict, pub) -> dict:
                           (["file", "line"] if pub.source_text else [])) if a else None
     clauses = []
     for cl in chunk["clauses"]:
-        c = _pick(cl, ["name", "spec", "accept", "refute", "corrects", "witness", "defs", "state",
-                       "review", "checks", "evidence"])
+        c = _pick(cl, ["name", "spec", "accept", "refute", "accept_from", "assumes", "corrects",
+                       "restricts", "refute_scope", "kind", "reason", "expect", "expect_reason",
+                       "witness", "defs", "state", "review", "checks", "evidence",
+                       "refutation_does_not_cover", "standing_assumptions"])
         if not pub.lean and c.get("checks"):
             # A witness's check carries the statement it proves.
             c["checks"] = {k: ({x: y for x, y in v.items() if x != "type"}
                                if isinstance(v, dict) else v) for k, v in c["checks"].items()}
+        # The theorems attached to a refutation's scope, with their Lean types only when the
+        # Lean is published.
+        for k in ("refutation_covers", "class_lemmas"):
+            if cl.get(k):
+                c[k] = [_pick(e, ["move", "assumption", "theorem", "identity", "state"] +
+                              (["type"] if pub.lean else [])) for e in cl[k]]
         c["regimes"] = [_pick(r, ["name", "description", "witness", "discharged"] +
                               (["type"] if pub.lean else [])) for r in cl.get("regimes", [])]
         if pub.lean and cl.get("statement"):
@@ -300,8 +312,14 @@ def scan(out: Path, texts: list[Path], hashes: set[str],
                 except json.JSONDecodeError:
                     pass
             found = None
+            # Every string of the file in one, so that a line absent from all of them, the usual
+            # case, is ruled out by one search; a line with the separator is looked for in each.
+            joined = "\0".join(v for _, v in fields)
             for s, src in lines.items():
-                where = next((path for path, v in fields if s in v), None)
+                if "\0" in s or s in joined:
+                    where = next((path for path, v in fields if s in v), None)
+                else:
+                    where = None
                 if where is not None or s in text:
                     found = f"a line of {src.name}" + (f" (in {where})" if where else "")
                     break

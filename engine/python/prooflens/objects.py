@@ -364,7 +364,9 @@ def structure_lines(rec: dict) -> list[str]:
         def show(f):
             x = fields.get(f) or {}
             kind = "" if x.get("kind") == "proposition" else " (data)"
-            return f"{f} : {symbols._text(x.get('type'))}{kind}"
+            # A field's docstring, when the packet read it from the field's projection.
+            doc = f" — {' '.join(x['doc'].split())}" if x.get("doc") else ""
+            return f"{f} : {symbols._text(x.get('type'))}{kind}{doc}"
         for g in view["inherits"]:
             out.append(f"  inherits from {g['parent']}: " + "; ".join(show(f) for f in g["fields"]))
         if view["declares"]:

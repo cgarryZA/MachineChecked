@@ -3,7 +3,8 @@
 The assessor selects `status_code`; the reader never classifies a label. The exact code is
 carried through the assessment, manifest index, claim record, search index, CLI JSON and public
 export. Simple links select their code where the probe or module resolver observes the result.
-`status` and `class` are derived snapshots for CLI consumers, not inputs to browser logic.
+`status` and `class` are derived snapshots for CLI consumers, not inputs to browser logic. A
+claim may carry `status_reason`, a line per reason shown under its label (display only).
 
 The class `caution` (drawn in the reader's warning colour) marks a status that needs attention
 without being a failure: `link.other-route`, a proof step whose linked Lean reaches the enclosing
@@ -23,6 +24,14 @@ colour. The frontend never recomputes acceptance from the evidence dimensions.
 | `formal.author-reviewed` | formal: proved, author-reviewed | `proved` |
 | `formal.review-pending` | formal: proved, review pending | `proved` |
 | `formal.open` | formal: open | `open` |
+| `formal.open.partial` | formal: open; some clauses proved | `open` |
+| `formal.proved-assuming` | formal: proved assuming results not yet proved | `open` |
+| `formal.open.corrected` | formal: open as printed; corrected statement proved, review pending | `open` |
+| `formal.open.corrected.author-reviewed` | formal: open as printed; corrected statement proved, author-reviewed | `open` |
+| `formal.open.corrected.reviewed` | formal: open as printed; corrected statement proved and reviewed | `open` |
+| `formal.open.restricted` | formal: open as printed; special case proved, review pending | `open` |
+| `formal.open.restricted.author-reviewed` | formal: open as printed; special case proved, author-reviewed | `open` |
+| `formal.open.restricted.reviewed` | formal: open as printed; special case proved and reviewed | `open` |
 | `formal.unspecified` | formal: unspecified | `unspecified` |
 | `formal.malformed` | formal: malformed | `malformed` |
 | `formal.unchecked` | formal: unchecked | `unspecified` |
@@ -49,6 +58,10 @@ colour. The frontend never recomputes acceptance from the evidence dimensions.
 | `formal.refuted.open` | refuted as printed; other clauses open | `refuted` |
 | `formal.refuted.corrected` | refuted as printed; corrected statement proved | `refuted` |
 | `formal.refuted.corrected.open` | refuted as printed; corrected statement proved; other clauses open | `refuted` |
+| `formal.variant-refuted` | a printed variant refuted | `refuted` |
+| `formal.variant-refuted.open` | a printed variant refuted; other clauses open | `refuted` |
+| `formal.variant-refuted.corrected` | a printed variant refuted; corrected statement proved | `refuted` |
+| `formal.variant-refuted.corrected.open` | a printed variant refuted; corrected statement proved; other clauses open | `refuted` |
 | `scope.expository` | out of scope: expository | `out-of-scope` |
 | `scope.literature` | out of scope: literature | `out-of-scope` |
 | `scope.empirical` | out of scope: empirical | `out-of-scope` |
@@ -66,7 +79,10 @@ observed `detail`/`errors`. Its required dimensions are `formal`, `review`, `rep
 `locked-statement`, `exact-statement`, `axioms`, `witness` and `regimes` expose the existing
 mechanical checks. Their complete state vocabularies are in `statuses.json` and the claim schema.
 
-- `formal` reports the assessor's clause state, including proved, refuted, open and stated.
+- `formal` reports the assessor's clause state, including proved, refuted, refuted-outside (a
+  refutation by a counterexample outside the paper's standing assumptions, whatever its class
+  lemmas say), proved-assuming (a proof from propositions not yet proved, `accept_from`; never
+  proved), open and stated.
   Definitions use the `stated` state.
 - `review` reports correspondence review independently of proof. The original `spec_review`
   and `def_reviews` retain individual stale/current reviews and self-declared provenance.

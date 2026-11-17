@@ -60,7 +60,7 @@ def requests_from_inventory(inv: dict) -> list[dict]:
     reqs, seen = [], set()
 
     def add(r):
-        key = (r["kind"], r["name"], r.get("spec"))
+        key = (r["kind"], r["name"], r.get("spec"), tuple(r.get("assumes") or ()))
         if key not in seen:
             seen.add(key)
             reqs.append(r)
@@ -75,6 +75,15 @@ def requests_from_inventory(inv: dict) -> list[dict]:
                     add({"kind": "accept", "name": cl["accept"], "spec": cl["spec"]})
                 if cl.get("refute"):
                     add({"kind": "refute", "name": cl["refute"], "spec": cl["spec"]})
+                af = accept_from(cl)
+                if af:
+                    add({"kind": "accept-from", "name": af["theorem"], "spec": cl["spec"],
+                         "assumes": af["assumes"]})
+            # The theorems attached to a refutation's scope (a covered reading, a class lemma)
+            # are checked as proofs of no particular proposition.
+            for e in (cl.get("refutation_covers") or []) + (cl.get("class_lemmas") or []):
+                if e.get("theorem"):
+                    add({"kind": "accept", "name": e["theorem"]})
             for w in [cl.get("witness")] + [r.get("witness") for r in cl.get("regimes", [])]:
                 if w:
                     add({"kind": "witness", "name": w})
@@ -86,8 +95,33 @@ def requests_from_inventory(inv: dict) -> list[dict]:
     return reqs
 
 
+def accept_from(cl: dict) -> dict | None:
+    """A clause's `accept_from` (a theorem proving its proposition from the propositions it
+    assumes), when it names a theorem and at least one assumed proposition."""
+    af = cl.get("accept_from")
+    if isinstance(af, dict) and af.get("theorem") and af.get("assumes"):
+        return {"theorem": af["theorem"], "assumes": list(af["assumes"])}
+    return None
+
+
+def proof_key(kind: str, name: str, spec: str | None, assumes=None) -> str:
+    """The key of a proof record in `proofs`: its kind, theorem and proposition, and for an
+    `accept-from` record the propositions it assumes."""
+    key = f"{kind}:{name}:{spec or ''}"
+    return key + ":" + ",".join(assumes or []) if kind == "accept-from" else key
+
+
 # The request for the names in the project's module docstrings that nothing declares.
 MODDOCS = {"kind": "moddocs", "name": ""}
+
+
+def negations_request(inv: dict) -> dict | None:
+    """The request for the theorems of the project whose type is `¬ S` or `S → False`, for the
+    propositions S of the clauses that name no refutation; None when every clause with a
+    proposition names one. The probe answers it in one pass over the project's theorems."""
+    specs = sorted({cl["spec"] for c in inv["claims"] for cl in c.get("clauses", [])
+                    if cl.get("spec") and not cl.get("refute")})
+    return {"kind": "negations", "name": "", "names": specs} if specs else None
 
 
 def fingerprint(canon: str) -> str:
@@ -373,6 +407,13 @@ def merge_records(parts: list[tuple[str, dict]]) -> dict:
            "defs": {}, "moddocs": [], "complete": all(r["complete"] for _, r in parts)}
     if any("links" in r for _, r in parts):
         res["links"] = {}
+    negs = [r["negations"] for _, r in parts if "negations" in r]
+    if negs:
+        # Each session searches its own library's theorems; one found by two is listed once.
+        found = {json.dumps(f, sort_keys=True): f for n in negs for f in n["found"]}
+        res["negations"] = {"found": list(found.values()),
+                            "errors": [e for n in negs for e in n["errors"]],
+                            "searched": sum(n.get("searched") or 0 for n in negs)}
     named = [r["names"] for _, r in parts if "names" in r]
     if named:
         # A name resolved in any library's session is resolved.
@@ -453,10 +494,11 @@ def parse_records(lines) -> dict:
                 rec["decl"] = d
                 res["decls"].setdefault(d["name"], d)
             res.setdefault("links", {})[rec["name"]] = rec
-        elif kind in ("accept", "refute", "witness"):
+        elif kind in ("accept", "refute", "witness", "accept-from"):
             rec = dict(rec)
             rec["kind"] = rec.pop("record")
-            res["proofs"][f"{rec['kind']}:{rec['name']}:{rec.get('spec') or ''}"] = rec
+            res["proofs"][proof_key(rec["kind"], rec["name"], rec.get("spec"),
+                                    rec.get("assumes"))] = rec
         elif kind == "moddoc":
             res["moddocs"].append({k: rec[k] for k in ("module", "line", "name", "heading",
                                                        "item_lead", "kind", "full", "scopes")
@@ -465,6 +507,14 @@ def parse_records(lines) -> dict:
             # Names cited in review text: those checked, and those nothing resolves.
             res["names"] = {"checked": rec.get("checked", []),
                             "unresolved": rec.get("unresolved", [])}
+        elif kind == "negation":
+            # A theorem whose type denies the proposition of a clause without a refutation.
+            res.setdefault("negations", {"found": [], "errors": []})["found"].append(
+                {k: rec[k] for k in ("name", "spec", "form", "module", "range") if k in rec})
+        elif kind == "negations":
+            neg = res.setdefault("negations", {"found": [], "errors": []})
+            neg["searched"] = rec.get("searched")
+            neg["errors"] = rec.get("errors", [])
         elif kind == "done":
             res["complete"] = True
     if not res["complete"]:

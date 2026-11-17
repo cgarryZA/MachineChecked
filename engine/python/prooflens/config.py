@@ -7,6 +7,8 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .numbering import read_numberings
+
 STANDARD_AXIOMS = ["propext", "Classical.choice", "Quot.sound"]
 
 
@@ -48,6 +50,10 @@ class Paper:
     # A paper whose source is a PDF: the PDF's SHA-256, pinned by the configuration. The release
     # gate accepts a PDF as source evidence only when it is pinned and matches (EVIDENCE_POLICY).
     pdf_sha256: str | None = None
+    # The numberings of other versions of the paper (`[[paper.numbering]]`): a citation
+    # qualified as one of theirs is checked against its map (`numbering.read_numberings`).
+    # Descriptive only: no status uses it.
+    numberings: list[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -93,6 +99,12 @@ class Config:
     # Whether the declarations only witnesses use need a review like the definitions of the
     # propositions (`assess.witness_defs`); otherwise they are listed as advice.
     require_witness_def_reviews: bool = False
+    # The auditor's ledger of readings, whose rows name declarations and the revision they were
+    # read at (`ledger.py`); `check` lists the rows those declarations' changes made stale.
+    readings_ledger: Path | None = None
+    # The directory, inside the project, its review snapshot is kept in (`[review] snapshot`),
+    # which `build` keeps current (`review_snapshot.project_path`); None when not set.
+    review_snapshot: Path | None = None
 
     @property
     def root(self) -> Path:
@@ -155,11 +167,15 @@ def load(path: str | Path) -> Config:
         if p.get("version") not in (None, "published", "manuscript"):
             raise ConfigError(f"paper {p.get('id')}: version must be \"published\" or "
                               f"\"manuscript\", not {p.get('version')!r}")
+        try:
+            numberings = read_numberings(p.get("numbering"), f"paper {p.get('id')}")
+        except ValueError as e:
+            raise ConfigError(str(e)) from None
         papers.append(Paper(
             id=_req(p, "id", "paper"), title=p.get("title", p["id"]), source=src,
             root=p.get("root"), pdf=p.get("pdf"), pdf_sha256=p.get("pdf_sha256"), commit=src.get("rev"), envs=p.get("envs"),
             publish=Publish(**p.get("publish", {})), published=p.get("published"),
-            published_note=p.get("note"), version=p.get("version"),
+            published_note=p.get("note"), version=p.get("version"), numberings=numberings,
             notation_macros=list(dict.fromkeys(notation + _macros(p, f"paper {p['id']}")))))
     return Config(
         path=path,
@@ -199,7 +215,28 @@ def load(path: str | Path) -> Config:
         bare_markers_by=_names(proj, "bare_markers_by", str(path)) or [],
         inhabited_classes=_names(proj, "inhabited_classes", str(path)),
         require_witness_def_reviews=_flag(proj, "require_witness_def_reviews", str(path)),
+        readings_ledger=(base / proj["readings_ledger"]).resolve()
+        if "readings_ledger" in proj else None,
+        review_snapshot=_snapshot_dir(raw.get("review", {}), base, str(path)),
     )
+
+
+def _snapshot_dir(review: dict, base: Path, where: str) -> Path | None:
+    """`[review] snapshot`: a directory relative to the project's root, inside it, that is not
+    the root itself (None when it is not set)."""
+    if "snapshot" not in review:
+        return None
+    v = review["snapshot"]
+    if not isinstance(v, str) or not v.strip() or Path(v).is_absolute():
+        raise ConfigError(f"{where}: [review] snapshot must be a directory relative to the "
+                          "project's root")
+    p, root = (base / v).resolve(), base.resolve()
+    if p == root or not p.is_relative_to(root):
+        raise ConfigError(f"{where}: [review] snapshot must be a directory inside the project, "
+                          f"not {v!r}")
+    if p.suffix.lower() == ".zip":
+        raise ConfigError(f"{where}: [review] snapshot is a directory, not a .zip archive")
+    return p
 
 
 # The `[project]` header, and the line that opens its `modules` array (`check --fix-modules`).

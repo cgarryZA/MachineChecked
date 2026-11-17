@@ -40,6 +40,14 @@ never read as a version change. An explicit map between
 two versions of the paper resolves a renumbered reference when it names one current statement,
 and keeps every candidate when it names several.
 
+A paper may declare the numbering of another version of it (`read_numberings`): a name, the
+phrase that qualifies a citation of that version (`of the journal version`), and a map from this
+version's numbers to that version's. A reference followed by that phrase (`Remark 3.1 (Remark
+3.3 of the journal version)`) is checked against the map, never against this version's
+numbering: `exact` when the map gives it, `mismatch` when the reference to this version just
+before it in the same sentence (`Remark 3.1`) is not the statement the map pairs it with,
+`absent` when the map, declared complete, does not give it, and `unchecked` otherwise.
+
 With several papers in one configuration, each reference is attributed to one paper
 (`attribute`) and checked against that paper's numbering; one that cannot be attributed is
 `unchecked`, with the reason (`combine` gathers the papers' references and patterns).
@@ -485,17 +493,147 @@ def _norm_ref(s: str) -> str | None:
     return printed(canonical(m.group(1)), m.group(3)) if m else None
 
 
+def read_numberings(raw, where: str) -> list[dict]:
+    """A paper's declared numberings of other versions of it, from its configuration: a list
+    of tables, each with a `name`, a `qualifier` (or several, `qualifiers`), an optional
+    `identifier` of that version (a DOI), `complete` (whether the map lists every numbered
+    statement) and a `map` from this version's numbers to that version's (`"Proposition 2" =
+    "Proposition 5"`). Numbers are kept as `printed` gives them. Raises ValueError on a table
+    it cannot read."""
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise ValueError(f"{where}: numbering must be a list of tables ([[paper.numbering]])")
+    out = []
+    for i, v in enumerate(raw):
+        at = f"{where}: numbering {i + 1}"
+        if not isinstance(v, dict) or not isinstance(v.get("name"), str) or not v["name"]:
+            raise ValueError(f"{at} needs a name")
+        qs = v.get("qualifiers", v.get("qualifier"))
+        qs = [qs] if isinstance(qs, str) else qs
+        if not isinstance(qs, list) or not qs or not all(isinstance(q, str) and q.strip()
+                                                         for q in qs):
+            raise ValueError(f"{at} ({v['name']}) needs a qualifier, the phrase that follows "
+                             "a number of that version (\"of the journal version\")")
+        m = v.get("map")
+        if not isinstance(m, dict) or not m:
+            raise ValueError(f"{at} ({v['name']}) needs a map from this version's numbers to "
+                             "that version's")
+        mapped = {}
+        for a, b in m.items():
+            na = _norm_ref(str(a))
+            nb_ = _norm_ref(b) if isinstance(b, str) else None
+            if not na or not nb_:
+                raise ValueError(f"{at} ({v['name']}): cannot read {a!r} = {b!r} as two "
+                                 "statement numbers (\"Proposition 2\" = \"Proposition 5\")")
+            mapped[na] = nb_
+        out.append({"name": v["name"], "qualifiers": [" ".join(q.split()) for q in qs],
+                    "identifier": v.get("identifier"), "complete": bool(v.get("complete")),
+                    "map": mapped})
+    return out
+
+
+# What may come between two numbers read as one statement's in two versions (`Remark 3.1
+# (Remark 3.3 …`, `Proposition 2 of the preprint, Proposition 5 …`): at most this many
+# characters, with no sentence end.
+_PAIR_GAP = 40
+_SENTENCE_END = re.compile(r"[.;!?](?:\s|$)")
+
+
+def _qualifier(after: str, numberings: list[dict]) -> tuple[dict, str] | None:
+    """The declared numbering, and its phrase, that the text just after a number names."""
+    for v in numberings:
+        for q in v["qualifiers"]:
+            words = r"\s+".join(re.escape(w) for w in q.split())
+            if re.match(rf"[\s~]*,?\s*{words}(?!\w)", after, re.I):
+                return v, q
+    return None
+
+
+def qualified(o: dict, numberings: list[dict]) -> tuple[dict, str, str | None] | None:
+    """For a reference written in prose and followed by a declared numbering's phrase, that
+    numbering, the phrase and the reference to this version just before it in the same
+    sentence (`Proposition 2` in `Proposition 2 of the preprint, Proposition 5 of the journal
+    version`), when there is one; None for any other reference."""
+    if not numberings or o["source"].get("where") == "name":
+        return None
+    ctx, at = o.get("context") or "", o.get("at") or 0
+    m = REF.match(ctx, at)
+    if not m:
+        return None
+    hit = _qualifier(ctx[m.end():], numberings)
+    if not hit:
+        return None
+    before = list(REF.finditer(ctx[:at]))
+    paired = None
+    if before:
+        p = before[-1]
+        gap = ctx[p.end():at]
+        if len(gap) <= _PAIR_GAP and not _SENTENCE_END.search(gap) \
+                and not _qualifier(gap, numberings) and not _cited_after(ctx[p.end():]):
+            paired = printed(canonical(p.group(1)), p.group(3))
+    return hit[0], hit[1], paired
+
+
+def _check_version(o: dict, v: dict, phrase: str, paired: str | None, inv: dict) -> None:
+    """The status of a reference qualified as a number of another version (`qualified`),
+    checked against that version's declared map, not this version's numbering."""
+    st, name, y = inv["statements"], v["name"], o["reference"]
+    o["version"] = {"name": name, "qualifier": phrase,
+                    **({"identifier": v["identifier"]} if v.get("identifier") else {})}
+    o.pop("readings", None)
+    whose = f"the {name} numbering declared for this paper"
+
+    def ours(refs):
+        ids = []
+        for r in refs:
+            k, n = r.rsplit(" ", 1)
+            ids += st.get((canonical(k), n), [])
+        return ids
+
+    if paired and paired in v["map"] and v["map"][paired] != y:
+        o["status"] = "mismatch"
+        o["paper"] = {"claims": ours([paired]), "reference": paired}
+        o["detail"] = f"{whose} gives {paired} as {v['map'][paired]}, not {y}"
+        return
+    sources = [a for a, b in v["map"].items() if b == y]
+    if paired and sources and paired not in sources:
+        o["status"] = "mismatch"
+        o["paper"] = {"claims": ours([paired]), "reference": paired}
+        o["detail"] = (f"{whose} gives {y} as this version's {' and '.join(sources)}, "
+                       f"not {paired}")
+        return
+    if sources:
+        ids = ours(sources)
+        o["paper"] = {"claims": ids, "reference": ", ".join(sources)}
+        if ids or not inv["complete"]:
+            o["status"] = "exact"
+            o["detail"] = f"{whose} gives it as this version's {' and '.join(sources)}"
+        else:
+            o["status"] = "absent"
+            o["detail"] = (f"{whose} gives it as {' and '.join(sources)}, which this version of "
+                           "the paper does not have")
+    elif v["complete"]:
+        o["status"] = "absent"
+        o["detail"] = f"{whose} has no {y}"
+    else:
+        o["status"] = "unchecked"
+        o["detail"] = f"{whose} does not give {y}"
+
+
 def analyse(index: list[dict], claims: list[dict], inv: dict, blocks: list[dict] = (),
             foreign=frozenset(), retrieval=None, claim_text=None,
             version_map: dict | None = None, refs: list[dict] | None = None,
-            root: Path | None = None) -> dict:
+            root: Path | None = None, numberings: list[dict] = ()) -> dict:
     """The references of the project to the paper, each with its status, and the project-level
     pattern. `retrieval` (a `retrieval.Retrieval` of `index`) and `claim_text` (a claim's
     printed statement) let an exact reference be compared with the content it cites.
     `version_map` (`{"source": …, "entries": [{"old": "Theorem 2.1", "new": ["Theorem 3.1"]}]}`)
     maps references of an earlier version of the paper to this one. `refs`, when given, are the
     references to check (those `attribute` gives this paper), instead of all of the project's.
-    `root` is the Lean project (`find_references`)."""
+    `root` is the Lean project (`find_references`). `numberings` are the paper's declared
+    numberings of other versions (`read_numberings`): a reference qualified as one of theirs is
+    checked against its map (`qualified`)."""
     if refs is None:
         refs = find_references(index, list(blocks), foreign, root)
     st = inv["statements"]
@@ -503,8 +641,13 @@ def analyse(index: list[dict], claims: list[dict], inv: dict, blocks: list[dict]
     for (k, n) in st:
         by_number.setdefault(n, []).append((k, n))
     claim_by_id = {c["id"]: c for c in claims}
+    numberings = list(numberings or ())
     for o in refs:
         if o.get("status"):
+            continue
+        q = qualified(o, numberings)
+        if q:
+            _check_version(o, q[0], q[1], q[2], inv)
             continue
         if o.get("readings"):
             _check_readings(o, inv, by_number)
@@ -662,7 +805,7 @@ def _apply_map(refs, version_map, st):
     for o in refs:
         if o["status"] not in ("absent", "other-kind") and not o.get("stale_lead"):
             continue
-        if o["reference"] not in targets:
+        if o["reference"] not in targets or o.get("version"):
             continue
         new = targets[o["reference"]]
         why = {"matches": matches[o["reference"]]} if o["reference"] in matches else {}
@@ -690,7 +833,7 @@ def resolve(refs: list[dict], version_map: dict, statements: dict) -> list[dict]
 
 
 def suspect(o: dict) -> bool:
-    return o.get("status") in ("absent", "other-kind") or bool(o.get("stale_lead"))
+    return o.get("status") in ("absent", "other-kind", "mismatch") or bool(o.get("stale_lead"))
 
 
 def place(o: dict) -> tuple:
@@ -706,7 +849,7 @@ def pattern(refs: list[dict], inv: dict) -> dict:
     of those checked, in at least `DRIFT_PLACES` declarations or modules (`places`). The
     examples are the first disagreeing reference of each place, then the others."""
     count = lambda f: sum(1 for o in refs if f(o))
-    checked = [o for o in refs if o["status"] in ("exact", "other-kind", "absent")]
+    checked = [o for o in refs if o["status"] in ("exact", "other-kind", "absent", "mismatch")]
     bad = [o for o in refs if suspect(o)]
     places = {place(o) for o in bad}
     drift = len(bad) >= DRIFT_MIN and len(bad) >= DRIFT_SHARE * max(1, len(checked)) \
@@ -723,6 +866,7 @@ def pattern(refs: list[dict], inv: dict) -> dict:
             "reads_elsewhere": count(lambda o: o.get("stale_lead")),
             "other_kind": count(lambda o: o["status"] == "other-kind"),
             "absent": count(lambda o: o["status"] == "absent"),
+            "mismatch": count(lambda o: o["status"] == "mismatch"),
             "unchecked": count(lambda o: o["status"] == "unchecked"),
             "other_source": count(lambda o: o["status"] == "other-source"),
             "drift": drift, "examples": [o["id"] for o in examples[:5]],
@@ -746,7 +890,8 @@ def where(o: dict) -> str:
 def message(o: dict) -> str:
     """One line for the terminal."""
     of = f" of paper {o['attributed']}" if o.get("attributed") else ""
-    out = f"{where(o)} cites {o['reference']}{of}: {o['detail']}"
+    ver = f" {o['version']['qualifier']}" if o.get("version") else ""
+    out = f"{where(o)} cites {o['reference']}{ver}{of}: {o['detail']}"
     cur = o.get("current")
     if cur:
         whose, many = map_words(cur.get("source"))
@@ -781,13 +926,16 @@ def drift_note(p: dict, refs: list[dict], suggestions: bool = True) -> str | Non
     parts = [f"{p['absent']} cite numbers this version does not have" if p["absent"] else "",
              f"{p['other_kind']} name another kind of statement" if p["other_kind"] else "",
              f"{p['reads_elsewhere']} read closer to another statement" if p["reads_elsewhere"]
-             else ""]
+             else "",
+             f"{p['mismatch']} disagree with a declared numbering of another version"
+             if p.get("mismatch") else ""]
     by_id = {o["id"]: o for o in refs}
     bad = [by_id[i] for i in p["examples"] if i in by_id]
     ex = "; ".join(f"{o['reference']} in {where(o)}" for o in bad[:3])
     places = f", in {p['places']} declarations or modules" if p.get("places") else ""
     return (f"the Lean's references to the paper appear to follow another version of it: "
-            f"{p['absent'] + p['other_kind'] + p['reads_elsewhere']} of the {p['checked']} "
+            f"{p['absent'] + p['other_kind'] + p['reads_elsewhere'] + p.get('mismatch', 0)} "
+            f"of the {p['checked']} "
             f"references checked disagree with this version ({', '.join(x for x in parts if x)})"
             f"{places}, for example {ex}."
             + (" Suggestions rank statement content above these numbers, and label each cited "

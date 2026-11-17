@@ -78,6 +78,25 @@ def _generated(name: str, owner: str) -> bool:
     return bool(rest) and all(GENERATED.fullmatch(c) for c in rest.split("."))
 
 
+def resolve_claim(claims: list[dict], query: str, release: str | None) -> str:
+    """The id of the one claim of `claims` (of release `release`) that `query` names: its id,
+    its key within the paper (`thm:main`) or its printed number (`Theorem 2.1`)."""
+    q = str(query or "").strip()
+    if any(c["id"] == q for c in claims):
+        return q
+    norm = lambda s: re.sub(r"\s+", " ", str(s or "")).strip().lower()
+    for match in (lambda c: c["id"].split(":", 1)[-1] == q,
+                  lambda c: norm(c.get("number")) == norm(q)):
+        found = [c["id"] for c in claims if match(c)]
+        if len(found) == 1:
+            return found[0]
+        if found:
+            raise CompareError(f"{q!r} names {len(found)} claims; give its id", "ambiguous",
+                               found)
+    near = difflib.get_close_matches(q, [c["id"] for c in claims], n=5, cutoff=0.3)
+    raise CompareError(f"no claim {q!r} in release {release}", "unknown-claim", near)
+
+
 class Site:
     """The claims, declaration records and review queue of one build's site data."""
 
@@ -117,21 +136,7 @@ class Site:
     def resolve_claim(self, query: str) -> str:
         """The id of the claim `query` names: its id, its key within the paper (`thm:main`) or
         its printed number (`Theorem 2.1`)."""
-        q = str(query or "").strip()
-        if q in self._by_id:
-            return q
-        norm = lambda s: re.sub(r"\s+", " ", str(s or "")).strip().lower()
-        for match in (lambda c: c["id"].split(":", 1)[-1] == q,
-                      lambda c: norm(c.get("number")) == norm(q)):
-            found = [c["id"] for c in self.claims if match(c)]
-            if len(found) == 1:
-                return found[0]
-            if found:
-                raise CompareError(f"{q!r} names {len(found)} claims; give its id", "ambiguous",
-                                   found)
-        near = difflib.get_close_matches(q, [c["id"] for c in self.claims], n=5, cutoff=0.3)
-        raise CompareError(f"no claim {q!r} in release {self.index.get('release')}",
-                           "unknown-claim", near)
+        return resolve_claim(self.claims, query, self.index.get("release"))
 
     def store(self) -> dict[str, dict]:
         """Every declaration record of the build, by name."""
@@ -375,7 +380,9 @@ def _clause(cl: dict) -> dict:
     return {"id": f"decl:{cl.get('spec')}", "name": cl.get("spec"), "clause": cl.get("name"),
             "label": cl.get("label"), "role": "locked statement",
             "accept": cl.get("accept"), "refute": cl.get("refute"),
-            "corrects": cl.get("corrects"), "witness": cl.get("witness"),
+            "corrects": cl.get("corrects"), "restricts": cl.get("restricts"),
+            "kind": cl.get("kind"),
+            "witness": cl.get("witness"),
             "statement": _statement(cl.get("statement")),
             "proofs": {k: {x: v.get(x) for x in ("name", "module", "range", "axioms", "sorry",
                                                   "errors") if x in v}
@@ -395,6 +402,12 @@ def _definition(rec: dict, stage: str, site: Site | None = None) -> dict:
                    "any expansion by its key"}
     out.update(_says(rec, site))
     out.update(_made_of(rec))
+    # A structure, an inductive or an axiom has no body, but its authored source is read the
+    # same way: a structure's fields as written, with their docstrings.
+    if "lean_source" not in out and rec.get("lean_source") is not None:
+        out["lean_source"] = rec["lean_source"]
+    if out.get("structure") and site is not None:
+        out["structure"] = _with_field_docs(out["structure"], site)
     if stage == "informed" and rec.get("review") is not None:
         out["review"] = rec["review"]
     return out
@@ -442,6 +455,17 @@ def _made_of(rec: dict) -> dict:
     return out
 
 
+def _with_field_docs(view: dict, site: Site) -> dict:
+    """A structure view (`objects.structure_view`) with each field's docstring (`doc`), read
+    from the record of the field's projection, where the build holds one with a docstring."""
+    store = site.store()
+    fields = []
+    for f in view.get("fields") or []:
+        doc = (store.get(f.get("projection") or "") or {}).get("doc")
+        fields.append({**f, "doc": doc} if doc and "doc" not in f else f)
+    return {**view, "fields": fields}
+
+
 def _expansions(site: Site, parts: list) -> list[dict]:
     """The expansions `parts` (a packet's declarations and definitions) refer to by key, in the
     order they occur: each a definition at the arguments of one application in a statement or a
@@ -470,30 +494,47 @@ def _expansions(site: Site, parts: list) -> list[dict]:
 
 
 def _definitions(site: Site, ch_list: list[dict], names: list[str], stage: str,
-                 owners: tuple = ()) -> list[dict]:
+                 owners: tuple = (), covered: dict | None = None) -> list[dict]:
     """The records of `names` (each statement's closure), in order, each with the constants
-    Lean generated for it."""
+    Lean generated for it; then every project constant those records use (in a type, a value, a
+    binder's or a field's type), transitively, that `names` left out, each with the definition
+    it was reached through (`reached_through`). So a reviewer, who cannot open the sources, is
+    shown every constant the Lean they compare mentions. `covered` names the constants a
+    structure's unit reviews with it (its constructor and projections), each with its
+    structure, which they are listed as generated for."""
+    covered = covered or {}
     store = site.store()
     keys = {}
     for ch in ch_list:
         keys.update(ch.get("decls") or {})
-    out, seen = [], set()
-    for n in names:
-        if n in seen:
-            continue
-        seen.add(n)
+
+    def record(n):
         rec = store.get(n)
         if rec is None and n in keys:
             p = site.data / "decls" / f"{keys[n]}.json"
             rec = json.loads(p.read_text(encoding="utf-8")) if p.exists() else None
+        return rec
+
+    out, seen = [], set()
+    todo = [(n, None) for n in names]
+    while todo:
+        n, via = todo.pop(0)
+        if n in seen:
+            continue
+        seen.add(n)
+        rec = record(n)
         if rec is None:
-            out.append({"id": f"def:{n}", "name": n, "available": False,
-                        "reason": "this build holds no record of it"})
+            if via is None:
+                out.append({"id": f"def:{n}", "name": n, "available": False,
+                            "reason": "this build holds no record of it"})
             continue
         d = _definition(rec, stage, site)
-        d["generated_for"] = next((m for m in [*owners, *names]
-                                   if m != n and site.generated(n, m)), None)
+        d["generated_for"] = covered.get(n) or next((m for m in [*owners, *names]
+                                                     if m != n and site.generated(n, m)), None)
+        if via is not None:
+            d["reached_through"] = via
         out.append(d)
+        todo += [(u, n) for u in rec.get("uses") or [] if u not in seen]
     return out
 
 
@@ -519,9 +560,13 @@ def _informed(ch: dict) -> dict:
             "symbols": ch.get("symbols") or [],
             "clause_reviews": [{"clause": cl.get("name"), "spec": cl.get("spec"),
                                 "spec_review": cl.get("spec_review"),
-                                "def_reviews": cl.get("def_reviews")}
+                                "def_reviews": cl.get("def_reviews"),
+                                # What the author expects of the clause, and why (#650).
+                                **{k: cl[k] for k in ("expect", "expect_reason", "reason")
+                                   if cl.get(k)}}
                                for cl in ch.get("clauses") or []],
             "assessment": {k: ch.get(k) for k in ("status", "status_code", "class", "blockers",
+                                                   "status_reason",
                                                    "findings", "scope", "scope_note",
                                                    "source_evidence", "source_matches")},
             **({"step": {k: (ch["step"] or {}).get(k) for k in ("correspondence", "route",
@@ -649,8 +694,13 @@ def unit_packet(site: Site, unit: dict, stage: str) -> dict:
     out = _head(site, stage, {"unit": unit["id"], "stage": stage})
     # The unit's declaration names are Lean: not part of the read stage.
     keys = ("id", "kind", "unit", "parent", "papers") if stage == "read" else \
-        ("id", "kind", "unit", "parent", "name", "lean", "route", "papers")
+        ("id", "kind", "unit", "parent", "name", "lean", "route", "papers", "correction")
     out["unit"] = {k: unit.get(k) for k in keys if unit.get(k) is not None}
+    if out["unit"].get("correction") and stage != "informed":
+        # Which printed clause it corrects is the inventory's; the reason given for it is the
+        # author's, shown with the author's review.
+        out["unit"]["correction"] = {k: v for k, v in out["unit"]["correction"].items()
+                                     if k != "reason"}
     missing = [c["id"] for c, ch in zip(unit.get("claims") or [], chunks) if ch is None]
     chunks = [ch for ch in chunks if ch is not None]
     out["claims"] = [_claim_ref(ch) for ch in chunks]
@@ -683,7 +733,10 @@ def unit_packet(site: Site, unit: dict, stage: str) -> dict:
             if rec:
                 decls.append({**_definition(rec, stage, site),
                               "role": "definition under review"})
-                names = sorted(m for m in site.store() if site.generated(m, rec["name"]))
+                # A structure's unit covers its constructor and projections: listed first.
+                covered = [n for n in unit.get("lean") or [] if n != rec["name"]]
+                names = covered + sorted(m for m in site.store()
+                                         if site.generated(m, rec["name"]) and m not in covered)
                 names += [n for n in rec.get("uses") or [] if n not in names]
         _with_objects(decls)
         for d in decls:
@@ -695,7 +748,9 @@ def unit_packet(site: Site, unit: dict, stage: str) -> dict:
             extra.append({"what": f"the Lean of {unit['id']}", "owner": None,
                           "reason": "this build holds no statement for it"})
         defs = _definitions(site, chunks, names, stage,
-                            (unit["name"],) if unit["kind"] == "def" else ())
+                            (unit["name"],) if unit["kind"] == "def" else (),
+                            {n: unit["name"] for n in unit.get("lean") or []
+                             if unit["kind"] == "def" and n != unit["name"]})
         out["lean"] = {"declarations": decls, "definitions": defs,
                        "expansions": _expansions(site, [decls, defs])}
         page = {"total": len(defs), "returned": len(defs), "complete": True, "after": None,
@@ -703,6 +758,7 @@ def unit_packet(site: Site, unit: dict, stage: str) -> dict:
         sections.append("lean")
     if stage == "informed":
         out["interpretations"] = {"author_review": unit.get("author_review") or [],
+                                  "refutation_scope": unit.get("refutation_scope") or [],
                                   "claims": [_informed(ch) for ch in chunks]}
         sections.append("interpretations")
     out["retrieval"] = _retrieval(stage, sections, page, extra)
@@ -1390,6 +1446,54 @@ def proof_facts_text(q: dict) -> str:
     return "\n".join(out)
 
 
+def definitions_text(pk: dict) -> str:
+    """The definitions a packet's Lean uses, for a reviewer reading line by line: each once, with
+    its docstring, its signature, and its body, equations or fields (one per line, with their
+    full types). It is the text of `lean.definitions` in the JSON, nothing more or less; the
+    constants Lean generates for a definition (its constructor, its projections, its equation
+    lemmas) are listed under it by name."""
+    from .objects import structure_view
+    defs = (pk.get("lean") or {}).get("definitions") or []
+    under: dict[str, list[str]] = {}
+    for d in defs:
+        if d.get("generated_for"):
+            under.setdefault(d["generated_for"], []).append(d["name"])
+    out = []
+    for d in defs:
+        if d.get("generated_for"):
+            continue
+        if d.get("available") is False:
+            out.append(f"{d['name']}: ({d['reason']})")
+            continue
+        head = f"{d['name']}  ({d.get('kind')}; unit {d['id']})"
+        if d.get("reached_through"):
+            head += f", used by {d['reached_through']}"
+        lines = [head]
+        if d.get("doc"):
+            lines += ["  doc: " + " ".join(d["doc"].split())]
+        lines.append(f"  type: {d.get('signature')}")
+        says = says_lines(d)
+        view = structure_view(d)
+        if says:
+            lines += says
+        elif view:
+            fields = {f.get("field"): f for f in view.get("fields") or []}
+            for f in [x for g in view["inherits"] for x in g["fields"]] + view["declares"]:
+                x = fields.get(f) or {}
+                kind = "" if x.get("kind") == "proposition" else " (data)"
+                lines.append(f"  field {f} : {_text(x.get('type'))}{kind}")
+                if x.get("doc"):
+                    lines.append("    doc: " + " ".join(x["doc"].split()))
+            if view.get("fields_omitted"):
+                lines.append(f"  ({view['fields_omitted']} further field(s) are not listed)")
+        elif d.get("value"):
+            lines.append(f"  value: {d['value']}")
+        if under.get(d["name"]):
+            lines.append("  generated by Lean: " + ", ".join(under[d["name"]]))
+        out.append("\n".join(lines))
+    return "\n\n".join(out) or "(the Lean shown uses no definition of the project)"
+
+
 def packet_text(pk: dict) -> str:
     """A packet for the terminal."""
     out = [passage_text(p) for p in pk["paper"]["passages"]]
@@ -1410,6 +1514,14 @@ def packet_text(pk: dict) -> str:
                               + [x for c in conns for x in connection_lines(c)]))
     if pk["paper"].get("note"):
         out.insert(0, pk["paper"]["note"])
+    cor = (pk.get("unit") or {}).get("correction")
+    if cor:
+        what = "a correction of" if cor["relation"] == "corrects" else "a special case of"
+        out.append(f"This proposition is {what} the printed clause “{cor['of']}”"
+                   + (f": {cor['reason']}" if cor.get("reason") else "")
+                   + ". Compare it with the passage and that correction; if it is the printed "
+                   "claim with exactly that correction, the verdict is 'faithful to the "
+                   "correction'.")
     lean = pk.get("lean")
     if lean is not None:
         for d in lean["declarations"]:

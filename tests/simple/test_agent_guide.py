@@ -698,6 +698,59 @@ def _recorded(sh, r):
     assert a["lean"][0]["target"] == "Plain.oddSum n = n * n"
 
 
+def _to_plain(sh):
+    sh.cwd = sh.tmp / "plain"
+
+
+def _to_reviewer(sh):
+    """The reviewer's own directory, holding the author's snapshot and the reviewer's texts, and
+    nothing of the project."""
+    rev = sh.tmp / "reviewer"
+    rev.mkdir()
+    shutil.move(sh.cwd / "review-snapshot.zip", rev / "review-snapshot.zip")
+    for name in ("reading.md", "comparison.md", "none.md"):
+        shutil.copy(sh.cwd / name, rev / name)
+    sh.cwd = rev
+
+
+def _to_clone(sh):
+    """A clone of the project: its committed files and the snapshot it keeps, with no build
+    and no built Lean; the reviewer's texts are beside it."""
+    texts = ("reading.md", "comparison.md", "none.md")
+    clone = sh.tmp / "clone"
+    shutil.copytree(sh.cwd, clone, symlinks=True,
+                    ignore=shutil.ignore_patterns(".machinechecked", ".lake", "note.md", *texts))
+    for name in texts:
+        shutil.copy(sh.cwd / name, sh.tmp / name)
+    sh.cwd = clone
+
+
+def _next_from_clone(sh, r):
+    _next(sh, r)
+    assert "reviewing the project's review snapshot review-snapshot/" in r.err
+
+
+def _exported_from_clone(sh, r):
+    (rep,) = json.loads((sh.tmp / "my-reviews.json").read_text(encoding="utf-8"))["reports"]
+    assert rep["unit"]["id"] == "link:thm:odd-add"
+    assert rep["reviewer"]["id"] == "llm:REVIEWER"
+    assert rep["evidence"]["kind"] == "snapshot"
+    assert not (sh.cwd / ".machinechecked").exists()
+    assert (sh.cwd / ".machinechecked-review").is_dir()
+
+
+def _exported_from_snapshot(sh, r):
+    body = sh.json("my-reviews.json")
+    (rep,) = body["reports"]
+    assert rep["unit"]["id"] == "link:thm:odd-add"
+    assert rep["reviewer"]["id"] == "llm:REVIEWER"
+    assert rep["evidence"]["kind"] == "snapshot" and rep["evidence"]["release"]
+    assert rep["correspondence"] == {"coverage": "full", "basis": "direct"}
+    assert sorted(p.name for p in sh.cwd.iterdir()) == [
+        ".machinechecked-review", "comparison.md", "my-reviews.json", "none.md", "reading.md",
+        "review-snapshot.zip"]
+
+
 PLAIN_STEPS = [
     Do(_plain_copy),
     Run("machinechecked check --json", check=_plain_check),
@@ -722,6 +775,37 @@ PLAIN_STEPS = [
     Run("machinechecked workspace open --mode informed --as llm:MODEL"),
     Run('"op_id": "req-1"'),
     Run("machinechecked workspace show --json", check=_recorded),
+    # Reviewing a project you did not build: the snapshot the project keeps, reviewed in a
+    # clone of it; then the author's snapshot file, reviewed elsewhere.
+    Do(_to_plain),
+    Run("machinechecked review pack"),
+    Do(_to_clone),
+    Run("export MACHINECHECKED_REVIEWER=llm:REVIEWER"),
+    Run("machinechecked review next --json", check=_next_from_clone),
+    Run("machinechecked review read link:thm:odd-add --json", check=_paper_only),
+    Run("machinechecked review lock link:thm:odd-add ../reading.md"),
+    Run("machinechecked review show link:thm:odd-add --json", check=_and_the_lean),
+    Run("machinechecked review decide link:thm:odd-add faithful ../comparison.md --coverage full "
+        "--basis direct"),
+    Run("machinechecked review author link:thm:odd-add"),
+    Run("machinechecked review submit link:thm:odd-add ../none.md"),
+    Run("machinechecked review export --out ../my-reviews.json", check=_exported_from_clone),
+    Do(_to_plain),
+    Run("machinechecked review pack --out review-snapshot.zip"),
+    Do(_to_reviewer),
+    Run("export MACHINECHECKED_REVIEWER=llm:REVIEWER"),
+    Run("machinechecked review next --snapshot review-snapshot.zip --json", check=_next),
+    Run("machinechecked review read link:thm:odd-add --snapshot review-snapshot.zip --json",
+        check=_paper_only),
+    Run("machinechecked review lock link:thm:odd-add reading.md --snapshot review-snapshot.zip"),
+    Run("machinechecked review show link:thm:odd-add --snapshot review-snapshot.zip --json",
+        check=_and_the_lean),
+    Run("machinechecked review decide link:thm:odd-add faithful comparison.md --coverage full "
+        "--basis direct --snapshot review-snapshot.zip"),
+    Run("machinechecked review author link:thm:odd-add --snapshot review-snapshot.zip"),
+    Run("machinechecked review submit link:thm:odd-add none.md --snapshot review-snapshot.zip"),
+    Run("machinechecked review export --out my-reviews.json --snapshot review-snapshot.zip",
+        check=_exported_from_snapshot),
 ]
 
 

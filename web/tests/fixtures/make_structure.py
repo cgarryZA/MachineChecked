@@ -1,5 +1,6 @@
 """Regenerate web/tests/fixtures/structure/data: the reader data the engine writes for the
-synthetic project tests/fixtures/structure (zero configuration). Needs elan and TeX Live.
+synthetic project tests/fixtures/structure (zero configuration). Needs elan and a TeX
+distribution with latexmk (any: what the TeX build decides is not compared).
 
     python3 web/tests/fixtures/make_structure.py
 
@@ -44,14 +45,40 @@ def write_data(work: Path, out: Path) -> None:
     shutil.copytree(site / "data", out)
 
 
+# What depends on the TeX installation that compiled the paper, not on the fixture or the engine:
+# the PDF's bytes (its banner names the TeX build), its hash, the coordinates of the anchors on its
+# pages, and the release and evidence ids made from them. Compared, it would tie the copy to one
+# TeX build.
+TEX_MADE = ("pdf_sha256", "release", "evidence")
+
+
+def _without_tex(v, in_anchor: bool = False):
+    """`v` with what the TeX installation decides replaced by a placeholder: the values of the
+    keys `TEX_MADE`, and the coordinates (numbers that are not whole) inside an anchor. An
+    anchor's page, line and label stay compared."""
+    if isinstance(v, dict):
+        return {k: "<tex>" if k in TEX_MADE and isinstance(x, str)
+                else _without_tex(x, in_anchor or k == "anchor") for k, x in v.items()}
+    if isinstance(v, list):
+        return [_without_tex(x, in_anchor) for x in v]
+    if in_anchor and isinstance(v, float):
+        return "<coordinate>"
+    return v
+
+
 def _comparable(p: Path) -> bytes:
-    """A file's content, without the time of the build that wrote it (the index's `created`)."""
+    """A file's content as the check compares it: without the time of the build that wrote it
+    (the index's `created`) or what the TeX installation decides (`_without_tex`); a PDF is
+    compared by its presence only."""
+    if p.suffix == ".pdf":
+        return b""
     data = p.read_bytes()
+    if p.suffix != ".json":
+        return data
+    v = json.loads(data)
     if p.name == "index.json" and p.parent.name == "data":
-        index = json.loads(data)
-        index.pop("created", None)
-        return json.dumps(index, sort_keys=True).encode()
-    return data
+        v.pop("created", None)
+    return json.dumps(_without_tex(v), sort_keys=True).encode()
 
 
 def differences(made: Path, committed: Path) -> list[str]:

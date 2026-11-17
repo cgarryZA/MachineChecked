@@ -25,9 +25,34 @@ A formal claim's status, from strongest to weakest:
 | `formal: proved, author-reviewed` | as accepted, with author provenance for at least one required review |
 | `formal: proved, review pending` | proved, but some review is missing or stale |
 | `refuted as printed[; corrected statement proved][; other clauses open]` | a theorem proves the negation of the printed claim |
+| `a printed variant refuted[; corrected statement proved][; other clauses open]` | a theorem proves the negation of an original clause other than the one stating the claim as printed (a second printing, say) |
+| `formal: open as printed; corrected statement proved[, review pending / , author-reviewed / and reviewed]` | a printed clause is open (or refuted only outside the paper's standing assumptions), and a proposition that corrects it is proved; the review level is the correction's |
+| `formal: open as printed; special case proved[, …]` | a printed clause believed true is open, and a special case of it is proved; the printed claim is not refuted |
+| `formal: proved assuming results not yet proved` | every open printed clause has a theorem whose type is exactly its proposition assuming other propositions (`accept_from`), and at least one of those is not proved; the clause becomes proved once each is the proposition of a proved clause |
+| `formal: open; some clauses proved` | some clauses are proved, and a printed clause with nothing proved for it is open |
 | `formal: open` | a proposition is written, a proof is missing |
 | `formal: unspecified` | no proposition is written yet |
 | `formal: malformed` | the inventory gives corrections but no original clause |
+
+None of the statuses between `refuted as printed` and `formal: open` is a proof of the printed
+claim, so none is accepted: they say what is proved beside it. A refutation whose counterexample
+lies outside the paper's standing assumptions (`refute_scope`) refutes the formal proposition
+only; the printed claim reads open, with the reason under its status. Its class lemmas (a theorem
+that the counterexample meets each standing assumption the clause declares,
+`standing_assumptions`) are recorded, their theorems checked as proofs, and shown, but they change
+no status: nothing checks that a lemma's statement says what its assumption needs, and the list of
+assumptions is the author's own. When every declared assumption has a proved lemma, the reason
+under the status says so, and that the refutation still reads as outside the paper's assumptions
+until the lemmas' statements are independently reviewed. The readings a refutation is declared to
+cover or not to cover (`refutation_covers`, `refutation_does_not_cover`) are shown and their
+theorems checked, and change no status. A correction's `kind` (`added-hypothesis`, `partial`,
+`negation`) is shown beside it and in the reason; a reason under a status, and a kind, are display
+only and change nothing assessed.
+
+A proof from other propositions composes with their proofs: the clause it proves is proved only
+when each proposition it assumes is proved, outright or in turn from proved propositions, and
+each proof involved has passed its own checks. A cycle of such proofs proves nothing and is a
+violation.
 
 A proof that fails a check (wrong type, disallowed axiom,
 `sorry`, missing declaration) does not count, so its clause is open; the failure is a violation
@@ -35,7 +60,9 @@ and fails the paper's consistency check.
 
 Every definition in the closure of a proposition needs its own review, including the auxiliary
 declarations Lean generates (`match_1`, `_f`): they are part of the definition's meaning. A
-closure is taken with the proofs in each statement and definition erased, a witness's as a
+structure's constructor and projections each need a current review too; one review of the
+structure's unit records them all, with a marker for each ([Structures](REVIEWING.md#structures)).
+A closure is taken with the proofs in each statement and definition erased, a witness's as a
 proposition's. A declaration that only a witness's statement uses needs no review; it is listed
 while it has none, and a project can require its review (`require_witness_def_reviews`), which
 can only hold a status back. A proof (a declaration whose type is a proposition: a theorem, a
