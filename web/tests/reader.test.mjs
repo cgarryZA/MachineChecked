@@ -2780,6 +2780,35 @@ await check("the reader, the claim page and review's Compare draw one comparison
   }
 });
 
+// #758: before the verdict, review's Compare shows nothing of the outcome the author gives a
+// locked statement: no theorem that proves, refutes or witnesses it, no name of its clause, no
+// state. A correction says which printed clause it corrects, by its place, and every statement is
+// offered the verdict that a refutation of it would not be valid. After the verdict, the author's
+// account names them.
+await check("review's Compare withholds the outcome the author gives a statement until the verdict", 1300, async (pg) => {
+  const cases = [["spec:Toy.PaperSpec.prop_pred", "clause 1 of T:prop:pred, “as printed”: refuted\n  refutation: Toy.Acceptance.prop_pred"],
+                 ["spec:Toy.PaperSpec.prop_pred_pos", "clause 2 of T:prop:pred, “corrected: positive n”: proved\n  corrects clause 1, “as printed”"]];
+  for (const [unit, account] of cases) {
+    const cmp = await compareStage(pg, "review-order", TOY.release, REVIEW_KEY, unit, "T:prop:pred");
+    await cmp.locator(".stmt .readable").first().waitFor();
+    const card = pg.locator(".review .unit");
+    const text = await card.textContent();
+    for (const absent of ["Toy.Acceptance", "“as printed”", "positive n", "refuted"])
+      assert.ok(!text.includes(absent), `${unit}: ${absent} is not shown before the verdict`);
+    if (unit.endsWith("_pos")) assert.match(await card.locator(".correction-note").textContent(), /This proposition is a correction of the printed clause 1 of T:prop:pred\./);
+    else assert.equal(await card.locator(".correction-note").count(), 0);
+    assert.equal(await pg.getByRole("textbox", { name: "Witness comparison", exact: true }).count(), 1, `${unit}: whether a witness is given is not shown`);
+    await pg.getByRole("textbox", { name: "Comparison", exact: true }).fill("A synthetic comparison.");
+    await pg.getByRole("button", { name: "There's a problem", exact: true }).click();
+    assert.equal(await pg.getByRole("radio", { name: "Refutation not valid", exact: true }).count(), 1, `${unit}: offered whether or not it is refuted`);
+    await pg.getByRole("button", { name: "Matches the paper", exact: true }).click();
+    await pg.getByRole("radio", { name: "Faithful", exact: true }).check();
+    await pg.getByRole("button", { name: "Record verdict and show the author's review" }).click();
+    await pg.locator(".review .account").first().waitFor();
+    assert.ok((await pg.locator(".review .account").first().textContent()).startsWith(account), `${unit}: the author's account after the verdict`);
+  }
+});
+
 await check("a definition claim shows both its definitions in the reader, on its page and in review's Compare", 1300, async (pg) => {
   const defs = async (cmp) => {
     await cmp.locator(".defn.readable[data-decl='Toy.triangle'] .eq").first().waitFor();

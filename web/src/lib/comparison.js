@@ -11,8 +11,9 @@
 //            equations and source. No association a person made (symbol links, workspace
 //            alignments, correspondence notes, reviews, findings, a proof step's route, the paper
 //            definition a declaration is linked to, the claims a declaration is linked to), no
-//            connection between objects, recorded or computed, and no review of a declaration is
-//            in it;
+//            connection between objects, recorded or computed, no review of a declaration, and
+//            nothing of the outcome the author gives a locked statement (its clause's name, the
+//            theorems that prove, refute or witness it) is in it;
 //   after    once the verdict is recorded: the records as the reader shows them;
 //   reading  the reader and the claim page: the claim as the engine wrote it.
 
@@ -37,16 +38,18 @@ export function paperSide(c) {
 // The Lean side of a claim record as Lean gives it: the clauses' statements and definitions, a
 // zero-configuration claim's linked declarations, a proof step's linked declarations, and the
 // keys of the declarations their statements use (to load them). `only` keeps the declarations a
-// review unit is about.
-const CLAUSE = ["name", "label", "spec", "statement", "defs", "witness"];
+// review unit is about. A clause is named by its place among the claim's clauses: its own name,
+// and the theorems that prove, refute or witness it, are the outcome its author gives it, shown
+// after the verdict (as the engine's `compare._clause` withholds them).
+const CLAUSE = ["spec", "statement", "defs"];
 const LINK = ["name", "kind", "statement", "definition", "path", "range", "module", "repository"];
 export function formalSide(c, only = null) {
   if (!c) return null;
   const keep = (n) => !only || only.includes(n);
   const out = { id: c.id, mode: c.mode, decls: { ...(c.decls || {}) } };
   if (c.clauses) {
-    out.clauses = c.clauses.filter((cl) => keep(cl.spec) || (cl.defs || []).some(keep))
-      .map((cl) => ({ ...pick(cl, CLAUSE), ...(cl.witness_record?.type ? { witness_record: { type: cl.witness_record.type } } : {}) }));
+    out.clauses = c.clauses.map((cl, k) => ({ ...pick(cl, CLAUSE), name: "clause " + (k + 1) }))
+      .filter((cl) => keep(cl.spec) || (cl.defs || []).some(keep));
   }
   if (c.links) out.links = c.links.filter((l) => keep(l.name)).map((l) => pick(l, LINK));
   if (c.step) {

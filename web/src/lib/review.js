@@ -29,8 +29,9 @@ export const VERDICTS = {
     { value: "mismatched", label: "Mismatched", detail: "Say what it states instead." },
     { value: "vacuous", label: "Vacuous",
       detail: "Say why the hypotheses cannot be met, or why the witness does not meet them." },
-    { value: "refutation not valid", label: "Refutation not valid", refuteOnly: true,
-      detail: "Say how the refuted proposition is stronger than the printed claim." },
+    // Offered for every locked proposition: whether one is refuted is shown after the verdict.
+    { value: "refutation not valid", label: "Refutation not valid", statementOnly: true,
+      detail: "Say how the proposition is stronger than the printed claim, so that a refutation of it would not refute the printed claim." },
   ],
   cannot: [
     { value: "cannot determine", label: "Cannot determine",

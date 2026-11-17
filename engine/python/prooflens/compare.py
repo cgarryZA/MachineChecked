@@ -375,19 +375,38 @@ def _step_decls(ch: dict) -> list[dict]:
         [_link(l, "formal route used instead") for l in (st.get("route") or {}).get("links") or []]
 
 
-def _clause(cl: dict) -> dict:
+def _clause(cl: dict, stage: str = "informed", claim: str | None = None,
+            clauses: list | None = None) -> dict:
+    """A locked statement of `claim` (whose clauses are `clauses`), named neutrally by its place
+    among them (`position`), with its complete statement and the check of the proposition itself.
+    A declared correction or special case of a printed clause says which, by that clause's place
+    (`correction`). The rest is the outcome the author gives it, shown at the informed stage only,
+    after the verdict: the author's name for the clause (`clause`, `label`), the theorems that
+    prove, refute or witness it (`accept`, `refute`, `witness`, `proofs`, and their checks in
+    `lean`), and the printed clause and kind of a correction by the author's names."""
+    from .review_queue import clause_position
+    clauses = clauses or []
+    checks = cl.get("checks")
+    out = {"id": f"decl:{cl.get('spec')}", "name": cl.get("spec"), "role": "locked statement",
+           "position": clause_position(claim, clauses, cl) if claim else None,
+           "statement": _statement(cl.get("statement")),
+           "lean": checks if stage == "informed" else
+           {k: v for k, v in (checks or {}).items() if k == "spec"}}
+    rel = next((r for r in ("corrects", "restricts") if cl.get(r)), None)
+    if rel:
+        out["correction"] = {"relation": rel, "of_clause": clause_position(claim, clauses, cl[rel])
+                             if claim else None}
+    if stage != "informed":
+        return out
     proofs = cl.get("proofs") or {}
-    return {"id": f"decl:{cl.get('spec')}", "name": cl.get("spec"), "clause": cl.get("name"),
-            "label": cl.get("label"), "role": "locked statement",
-            "accept": cl.get("accept"), "refute": cl.get("refute"),
-            "corrects": cl.get("corrects"), "restricts": cl.get("restricts"),
-            "kind": cl.get("kind"),
-            "witness": cl.get("witness"),
-            "statement": _statement(cl.get("statement")),
-            "proofs": {k: {x: v.get(x) for x in ("name", "module", "range", "axioms", "sorry",
-                                                  "errors") if x in v}
-                       for k, v in proofs.items() if isinstance(v, dict)},
-            "lean": cl.get("checks")}
+    out.update({"clause": cl.get("name"), "label": cl.get("label"),
+                "accept": cl.get("accept"), "refute": cl.get("refute"),
+                "corrects": cl.get("corrects"), "restricts": cl.get("restricts"),
+                "kind": cl.get("kind"), "witness": cl.get("witness"),
+                "proofs": {k: {x: v.get(x) for x in ("name", "module", "range", "axioms", "sorry",
+                                                      "errors") if x in v}
+                           for k, v in proofs.items() if isinstance(v, dict)}})
+    return out
 
 
 def _definition(rec: dict, stage: str, site: Site | None = None) -> dict:
@@ -574,7 +593,15 @@ def _informed(ch: dict) -> dict:
                if ch.get("step") else {})}
 
 
-def _withheld(stage: str) -> list[dict]:
+# What a packet with locked statements leaves out before the verdict, besides the
+# interpretations: the outcome the author gives each statement (`_clause`).
+OUTCOME = {"section": "outcome", "reason": "the theorems the author gives to prove, refute or "
+           "witness each locked statement, the author's names for its clauses, the kind and "
+           "reason of a correction, and the state each clause is assessed in are shown after the "
+           "verdict; a clause is named by its place among its claim's clauses"}
+
+
+def _withheld(stage: str, outcome: bool = False) -> list[dict]:
     out = []
     if stage == "read":
         out.append({"section": "lean", "reason": "the Lean is shown after the reading is locked"})
@@ -582,6 +609,8 @@ def _withheld(stage: str) -> list[dict]:
         out.append({"section": "interpretations", "reason": "correspondence notes, reviews, "
                     "symbol links, statuses, recorded requirements and connections between "
                     "objects are shown after the verdict"})
+        if outcome:
+            out.append(dict(OUTCOME))
     return out
 
 
@@ -604,8 +633,11 @@ ON_REQUEST = [{"what": "where each declaration is used, each application's argum
                        "uses it", "query": "impact"}]
 
 
-def _retrieval(stage: str, sections: list[str], page: dict | None, extra: list | None = None):
-    return {"included": sections, "withheld": _withheld(stage),
+def _retrieval(stage: str, sections: list[str], page: dict | None, extra: list | None = None,
+               outcome: bool = False):
+    """What a packet holds and leaves out; `outcome` when it has locked statements, whose
+    outcome the stage may withhold."""
+    return {"included": sections, "withheld": _withheld(stage, outcome),
             "unavailable": ([] if stage == "read" else NOT_EXTRACTED) + (extra or []),
             "on_request": [] if stage == "read" else ON_REQUEST,
             "definitions": page}
@@ -630,7 +662,8 @@ def claim_packet(site: Site, claim: str, stage: str = "informed", limit: int | N
     if stage != "read":
         decls = _step_decls(ch) if ch.get("step") else \
             [_link(l, "link") for l in ch.get("links") or []]
-        decls += [_clause(cl) for cl in ch.get("clauses") or [] if cl.get("statement")]
+        decls += [_clause(cl, stage, ch["id"], ch.get("clauses")) for cl in ch.get("clauses") or []
+                  if cl.get("statement")]
         # Results an auditor cited for objects are prior interpretations: informed stage only.
         derived = ((reading or {}).get("derivations") or []) if stage == "informed" else []
         _with_objects(decls, derived)
@@ -658,7 +691,8 @@ def claim_packet(site: Site, claim: str, stage: str = "informed", limit: int | N
             out["interpretations"]["derivations"] = reading.pop("derivations", [])
             out["interpretations"]["requirements"] = reading
         sections.append("interpretations")
-    out["retrieval"] = _retrieval(stage, sections, page)
+    out["retrieval"] = _retrieval(stage, sections, page, outcome=any(
+        cl.get("statement") for cl in ch.get("clauses") or []))
     return out
 
 
@@ -696,11 +730,13 @@ def unit_packet(site: Site, unit: dict, stage: str) -> dict:
     keys = ("id", "kind", "unit", "parent", "papers") if stage == "read" else \
         ("id", "kind", "unit", "parent", "name", "lean", "route", "papers", "correction")
     out["unit"] = {k: unit.get(k) for k in keys if unit.get(k) is not None}
-    if out["unit"].get("correction") and stage != "informed":
-        # Which printed clause it corrects is the inventory's; the reason given for it is the
-        # author's, shown with the author's review.
-        out["unit"]["correction"] = {k: v for k, v in out["unit"]["correction"].items()
-                                     if k != "reason"}
+    if out["unit"].get("correction"):
+        # That it corrects a printed clause is the inventory's, and which one is given by its
+        # place among its claim's clauses. The clause's name and the reason given for the
+        # correction are the author's, shown with the author's review.
+        cor = out["unit"]["correction"]
+        out["unit"]["correction"] = dict(cor) if stage == "informed" else \
+            {"relation": cor.get("relation"), "of_clause": cor.get("of_clause")}
     missing = [c["id"] for c, ch in zip(unit.get("claims") or [], chunks) if ch is None]
     chunks = [ch for ch in chunks if ch is not None]
     out["claims"] = [_claim_ref(ch) for ch in chunks]
@@ -724,10 +760,16 @@ def unit_packet(site: Site, unit: dict, stage: str) -> dict:
                     if l["name"] in want and not any(d["name"] == l["name"] for d in decls):
                         decls.append(_link(l, "link"))
         elif unit["kind"] == "spec":
-            cl = next((x for ch in chunks for x in ch.get("clauses") or []
-                       if x.get("spec") == unit["name"]), None)
-            if cl:
-                decls.append(_clause(cl))
+            found = next(((ch, x) for ch in chunks for x in ch.get("clauses") or []
+                          if x.get("spec") == unit["name"]), None)
+            if found:
+                d = _clause(found[1], stage, found[0]["id"], found[0].get("clauses"))
+                decls.append(d)
+                cor = out["unit"].get("correction")
+                if cor and not cor.get("of_clause") and (d.get("correction") or {}).get(
+                        "of_clause"):
+                    # A queue written before it named the printed clause by its place.
+                    cor["of_clause"] = d["correction"]["of_clause"]
         else:
             rec = site.store().get(unit["name"])
             if rec:
@@ -758,11 +800,22 @@ def unit_packet(site: Site, unit: dict, stage: str) -> dict:
         sections.append("lean")
     if stage == "informed":
         out["interpretations"] = {"author_review": unit.get("author_review") or [],
+                                  "account": unit_account(unit, chunks),
                                   "refutation_scope": unit.get("refutation_scope") or [],
                                   "claims": [_informed(ch) for ch in chunks]}
         sections.append("interpretations")
-    out["retrieval"] = _retrieval(stage, sections, page, extra)
+    out["retrieval"] = _retrieval(stage, sections, page, extra, outcome=unit["kind"] == "spec")
     return out
+
+
+def unit_account(unit: dict, chunks: list[dict]) -> list[dict]:
+    """The author's account of each clause a locked proposition's unit states, one per claim
+    (`review_queue.clause_account`), read from the claims' records: shown after the verdict."""
+    from .review_queue import clause_account
+    if unit.get("kind") != "spec":
+        return []
+    return [{"claim": ch["id"], "lines": clause_account(ch["id"], cl, ch.get("clauses") or [])}
+            for ch in chunks for cl in ch.get("clauses") or [] if cl.get("spec") == unit["name"]]
 
 
 # -- targeted queries --------------------------------------------------------------------------
@@ -1517,11 +1570,17 @@ def packet_text(pk: dict) -> str:
     cor = (pk.get("unit") or {}).get("correction")
     if cor:
         what = "a correction of" if cor["relation"] == "corrects" else "a special case of"
-        out.append(f"This proposition is {what} the printed clause “{cor['of']}”"
+        # Before the verdict the printed clause is named by its place (`unit_packet`).
+        of = cor.get("of_clause")
+        which = (f"“{cor['of']}”" if cor.get("of") else
+                 f"{of['clause']} of {of['claim']}" if of else "of its claim")
+        out.append(f"This proposition is {what} the printed clause {which}"
                    + (f": {cor['reason']}" if cor.get("reason") else "")
-                   + ". Compare it with the passage and that correction; if it is the printed "
-                   "claim with exactly that correction, the verdict is 'faithful to the "
-                   "correction'.")
+                   + ". Compare it with the passage: if it is the printed claim with a "
+                   "correction, and otherwise as printed, the verdict is 'faithful to the "
+                   "correction'" + ("." if cor.get("of") else
+                                    "; the correction its author declares is shown after your "
+                                    "verdict."))
     lean = pk.get("lean")
     if lean is not None:
         for d in lean["declarations"]:

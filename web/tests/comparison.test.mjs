@@ -52,7 +52,13 @@ for (const k of ["symbols", "correspondence", "reviews", "findings", "work", "st
   assert.ok(!(k in compare.passages[0]), `the paper side has no ${k}`);
 }
 const cl = compare.formal.clauses[0];
-assert.deepEqual(Object.keys(cl).sort(), ["defs", "name", "spec", "statement", "witness", "witness_record"]);
+// Named by its place, without the author's name for it or the theorems that prove or witness
+// it: the outcome its author gives it is shown after the verdict.
+assert.deepEqual(Object.keys(cl).sort(), ["defs", "name", "spec", "statement"]);
+assert.equal(cl.name, "clause 1");
+for (const absent of [evenAdd.clauses[0].accept, evenAdd.clauses[0].witness]) {
+  assert.ok(absent && !JSON.stringify(compare.formal).includes(absent), `${absent} is not in Compare's Lean`);
+}
 assert.deepEqual(cl.statement, evenAdd.clauses[0].statement, "the statement is complete, as Lean gave it");
 assert.deepEqual(compare.formal.decls, evenAdd.decls, "its declarations can be loaded");
 // The reader's own view keeps the records, attributed, for the reader and the later stage.

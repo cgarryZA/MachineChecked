@@ -5,8 +5,10 @@ the zero-configuration view a confirmed link between a claim and a declaration (
 both, a proof step (`step`: an equation or passage of a printed proof, reviewed as printed whether
 or not any Lean is linked to it). Each unit carries the fingerprints it would be reviewed at, the
 digests of the paper passages a review of it reads, by claim (`source_sha256`,
-`review_sources.py`), its current review state, the author's review (shown to the reviewer only
-after their own verdict) and why it sits where it does in the order. A unit is reviewed once per
+`review_sources.py`), its current review state, the author's review and, for a locked
+proposition, the author's account of each clause it states (`account`: the clause's name, the
+theorems that prove, refute or witness it and its state; all shown to the reviewer only after
+their own verdict) and why it sits where it does in the order. A unit is reviewed once per
 fingerprint, however many claims depend on it. A structure's unit covers the constants Lean
 generates for it (its constructor and projections, `members`): their content is its fields as
 written, so one reading and one verdict review them all, and promotion writes a marker for each.
@@ -79,6 +81,62 @@ def refutation_scope_text(cl: dict) -> list[str]:
         t = t.get("text") if isinstance(t, dict) else t
         if e.get("theorem") and t:
             lines.append(f"{e['theorem']} : {t}")
+    return lines
+
+
+def clause_position(claim: str, clauses: list[dict], clause: dict | str | None) -> dict | None:
+    """A clause of `claim` named neutrally, by its place among the claim's clauses (`clauses`, in
+    the inventory's order): `{claim, clause}`, the clause counted from 1. `clause` is the clause
+    record itself, or its name. None when it is not one of them. A reviewer is given this before
+    the verdict, in place of the author's name for the clause, which can say what the author
+    concluded of it."""
+    for k, x in enumerate(clauses or [], start=1):
+        if x is clause or (isinstance(clause, str) and x.get("name") == clause):
+            return {"claim": claim, "clause": k}
+    return None
+
+
+# What a clause's proofs are called in its account, by the inventory's field.
+ROUTES = (("accept", "proof"), ("refute", "refutation"), ("witness", "witness"))
+EXPECTS = {"accept": "proved", "refute": "refuted", "undecided": "undecided"}
+
+
+def clause_account(claim: str, cl: dict, clauses: list[dict]) -> list[str]:
+    """The author's account of a clause of `claim` (`clauses` are the claim's), for the author's
+    step of a review: its place and the author's name for it, the state the assessment gave it,
+    the printed clause it corrects or restricts (with the kind and reason given), the theorems
+    named to prove, refute or witness its proposition (and any whose check fails), and what the
+    author expects of it. Before the verdict a reviewer is shown none of this (#758). Display
+    only: the state is the one the assessment stored."""
+    from .assess import CORRECTION_KINDS
+    pos = clause_position(claim, clauses, cl) or {"claim": claim, "clause": None}
+    head = (f"clause {pos['clause']} of {claim}" if pos["clause"] else f"a clause of {claim}")
+    lines = [f"{head}, “{cl.get('name')}”: {cl.get('state') or 'not assessed'}"]
+    for rel, what in (("corrects", "corrects"), ("restricts", "is a special case of")):
+        if cl.get(rel):
+            of = clause_position(claim, clauses, cl[rel])
+            how = CORRECTION_KINDS.get(cl.get("kind")) if rel == "corrects" else None
+            lines.append(f"  {what} " + (f"clause {of['clause']}, " if of else "")
+                         + f"“{cl[rel]}”" + (f", {how}" if how else ""))
+    if cl.get("reason"):
+        lines.append(f"  the reason given: {cl['reason']}")
+    checks = cl.get("checks") or {}
+
+    def failing(kind: str) -> str:
+        c = checks.get(kind)
+        return (f" (fails its check: {', '.join(c.get('errors') or [])})"
+                if isinstance(c, dict) and c.get("ok") is False else "")
+
+    for key, word in ROUTES:
+        if cl.get(key):
+            lines.append(f"  {word}: {cl[key]}{failing(key)}")
+    af = cl.get("accept_from")
+    if isinstance(af, dict) and af.get("theorem"):
+        lines.append(f"  proof assuming {', '.join(af.get('assumes') or [])}: {af['theorem']}"
+                     + failing("accept_from"))
+    if cl.get("expect") in EXPECTS:
+        lines.append(f"  the author expects it to be {EXPECTS[cl['expect']]}"
+                     + (f": {cl['expect_reason']}" if cl.get("expect_reason") else ""))
     return lines
 
 
@@ -256,11 +314,18 @@ def assurance_queue(index: dict, chunks: dict, store: dict, authors: list[str]) 
                 # Authored, like the author's review: shown only after the verdict.
                 u.setdefault("refutation_scope", []).append(
                     {"claim": c["id"], "lines": scope})
+            # The clause's name, its proofs and its state: the outcome the author gives the
+            # proposition, shown only after the verdict.
+            u.setdefault("account", []).append(
+                {"claim": c["id"], "lines": clause_account(c["id"], cl, ch.get("clauses", []))})
             # A correction or special case of a printed clause is reviewed against the printed
-            # passage with the correction it claims (`faithful to the correction`).
+            # passage with the correction it claims (`faithful to the correction`). Before the
+            # verdict the printed clause is named by its place (`of_clause`), not by its name.
             for rel in ("corrects", "restricts"):
                 if cl.get(rel):
                     u["correction"] = {"relation": rel, "of": cl[rel],
+                                       "of_clause": clause_position(
+                                           c["id"], ch.get("clauses", []), cl[rel]),
                                        "reason": cl.get("reason")}
             u["effort"] = round(_effort_spec(st, u["unreviewed"]), 2)
     units = list(specs.values())
