@@ -540,7 +540,7 @@ seen ([Informed investigation](REVIEWING.md#one-claim-at-a-time)). With `--json`
 prints `{"ok": false, "error": {"kind", "message"}}` and exits 2: `order` (a step before the one it
 follows), `unknown-unit`, `stale` (the build changed the unit's Lean since `show`: run `show`
 again), `conflict` (the draft changed meanwhile: read it again with `status`), `reported`,
-`invalid`, `workspace` or `no-build`.
+`invalid`, `workspace`, `no-build` or `snapshot` (below).
 
 `review next` and `review status` take `--order` ([Review order](REVIEWING.md#review-order)):
 `priority` (the default), `document` (the paper's order), or `informed`, which also ranks the
@@ -576,6 +576,39 @@ The workspaces' records are prior interpretations. Asking for the `informed` ord
 your workspace that you have seen them, for the claims it drew on (`workspace show`: "had seen:
 prior interpretations of P:thm:bound (interpretation-informed review order, …)"). A later
 reading of those claims is then not blind, and its report says so.
+
+### Reviewing a project you did not build
+
+An agent reviewer needs the project's review snapshot and no Lean, Lake, TeX or checkout of the
+project ([REVIEWING.md](REVIEWING.md#reviewing-a-project-you-did-not-build)). The author writes it
+after a build and sends it, or attaches it to a release:
+
+```sh
+machinechecked review pack --out review-snapshot.zip
+```
+
+The reviewer works in a directory of its own, with the snapshot and its texts, and passes
+`--snapshot` to every step:
+
+```sh
+export MACHINECHECKED_REVIEWER=llm:REVIEWER
+machinechecked review next --snapshot review-snapshot.zip --json
+machinechecked review read link:thm:odd-add --snapshot review-snapshot.zip --json
+machinechecked review lock link:thm:odd-add reading.md --snapshot review-snapshot.zip
+machinechecked review show link:thm:odd-add --snapshot review-snapshot.zip --json
+machinechecked review decide link:thm:odd-add faithful comparison.md --coverage full --basis direct --snapshot review-snapshot.zip
+machinechecked review author link:thm:odd-add --snapshot review-snapshot.zip
+machinechecked review submit link:thm:odd-add none.md --snapshot review-snapshot.zip
+machinechecked review export --out my-reviews.json --snapshot review-snapshot.zip
+```
+
+The steps, their locks and their refusals are those above. The work is kept in
+`.machinechecked-review/` of the current directory (`--review-dir DIR` names another), and a zip
+is extracted there. Before each step the snapshot is checked against its manifest; an incomplete
+or inconsistent one refuses the step with kind `snapshot`, naming the file, and nothing is built.
+Each report records the snapshot it was reviewed against (`evidence`, with the manifest's
+`manifest_sha256` and the release, commit and paper revisions), and the maintainer's `review
+promote` checks it against their own release.
 
 ### Recording links and findings
 

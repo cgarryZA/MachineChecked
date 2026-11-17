@@ -32,6 +32,11 @@ above. An informed session has already seen the Lean and the prior interpretatio
 claim (its workspace records that when it is opened): any step may be shown at any time, a
 reading is recorded only when the reviewer gives one, and the report lists what was seen, so
 `review promote` treats it as not blind.
+
+A reviewer who did not build the project reviews its author's review snapshot
+(`review_snapshot.py`, `--snapshot`): the session reads the snapshot's site data, keeps the work
+in a working directory of the reviewer's own, and each report records what it was reviewed
+against (`evidence`).
 """
 
 from __future__ import annotations
@@ -76,7 +81,8 @@ COVERAGE_FOR = {"matches": ("full", "partial"), "problem": ("partial", "changed"
 
 
 class ReviewError(RuntimeError):
-    """A step refused, with what to do instead. `kind` says why: `no-build`, `unknown-unit`,
+    """A step refused, with what to do instead. `kind` says why: `no-build`, `snapshot` (a
+    review snapshot that is incomplete, inconsistent or of another format), `unknown-unit`,
     `order` (a step before the one it follows), `reported`, `invalid`, `stale` (the build
     changed since the material was shown), `conflict` (the draft changed meanwhile; `conflicts`
     holds it as saved) or `workspace`."""
@@ -99,6 +105,13 @@ EDITABLE = {"read": ("reading",),
                         "coverage", "basis", "argument", "bridge", "would_decide"),
             "author": ("disagreements",)}
 MARKS = ("matches", "differs", "unsure")
+
+# Why there is nothing to review here, and the two ways to have something: a review of a
+# project the reviewer did not build reads its author's snapshot, which needs no Lean.
+NO_BUILD = ("no review queue here. To review a project you did not build, get its author's "
+            "review snapshot (`machinechecked review pack`) and pass it with --snapshot FILE: "
+            "that needs no Lean. To review your own project, run `machinechecked view` or "
+            "`machinechecked build` first")
 
 
 def now() -> str:
@@ -277,21 +290,25 @@ class Session:
     reviewer's own), else the reviewer's workspace of the `mode` given (opened if there is
     none), else the reviewer's first workspace (`review-work/<reviewer>.json`). The session's
     mode is its workspace's; it is chosen when the workspace is opened, and only a `mode`
-    operation of the workspace changes it, keeping what was seen."""
+    operation of the workspace changes it, keeping what was seen.
+
+    `evidence` says what the site data is when it is not a build of this working directory:
+    the provenance of a review snapshot (`review_snapshot.provenance`), which each report
+    records."""
 
     def __init__(self, target: Config | Path, reviewer: dict, workspace: str | None = None,
                  mode: str | None = None, data_dir: Path | None = None,
-                 root: Path | None = None):
+                 root: Path | None = None, evidence: dict | None = None):
         work = Path(getattr(target, "out_dir", target))
         self.work_dir = work
         # The Lean project: what Lean read of it before tells whether a workspace's records are
         # current, for the informed order (no Lean runs).
         self.root = Path(root) if root else None
         self.order_record: dict | None = None
+        self.evidence = evidence
         self.data = Path(data_dir) if data_dir else work / "site" / "data"
         if not (self.data / "review-queue.json").exists():
-            raise ReviewError("no review queue: run `machinechecked view` or `machinechecked "
-                              "build` first", "no-build")
+            raise ReviewError(NO_BUILD, "no-build")
         self.site = cmp.Site(self.data)
         self.index = self.site.index
         self.queue = json.loads((self.data / "review-queue.json").read_text(encoding="utf-8"))
@@ -789,7 +806,8 @@ class Session:
         seen = list(d.get("revealed_by") or [])
         seen += [s for s in self.revealed_by(u, before=d.get("locked_at")) if s not in seen]
         d["revealed_by"] = seen
-        r = report(self.index, u, d, self.reviewer, disagreements or "none", self.mode)
+        r = report(self.index, u, d, self.reviewer, disagreements or "none", self.mode,
+                   self.evidence)
         self.work["reports"].append(r)
         del self.work["drafts"][uid]
         self._save(uid, add=r)
@@ -867,6 +885,7 @@ class Session:
         body = {"schema": REPORTS_SCHEMA, "project": (self.index.get("project") or {}).get("name"),
                 "release": self.index["release"], "exported_at": now(),
                 "workspace": {"id": self.workspace["id"], "mode": self.mode},
+                **({"evidence": self.evidence} if self.evidence else {}),
                 "reports": self.work["reports"]}
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(body, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -957,8 +976,7 @@ def order_route(work_dir: Path, data_dir: Path, root: Path | None = None):
                               "priority and document orders are in data/review-queue.json")
         path = data_dir / "review-queue.json"
         if not path.exists():
-            raise ReviewError("no review queue: run `machinechecked view` or `machinechecked "
-                              "build` first")
+            raise ReviewError(NO_BUILD, "no-build")
         queue = json.loads(path.read_text(encoding="utf-8"))
         units, drawn, record = informed_order(
             [u for u in queue["units"] if u["state"] != "reviewed"], work_dir, data_dir, root,
@@ -1080,11 +1098,13 @@ def step_issue_draft(u: dict, verdict: str, detail: str) -> dict | None:
 
 
 def report(index: dict, u: dict, d: dict, reviewer: dict, disagreements: str,
-           mode: str = "independent") -> dict:
+           mode: str = "independent", evidence: dict | None = None) -> dict:
     """The report, in the form the reader's review page exports (`buildReport`). It pins the Lean
     the verdict was recorded against (the draft's `lean`), and its `mode` is the session's: an
     informed report keeps the reading only when the reviewer recorded one, with its time, and
-    never a lock it did not have."""
+    never a lock it did not have. A report made against a review snapshot records it
+    (`evidence`: its manifest's digest and pins); one made from a build of the working directory
+    has none."""
     revs = {p["id"]: p.get("revision") for p in index.get("papers", [])}
     lean = d.get("lean") or {k: u.get(k) for k in ("fingerprint", "fingerprints", "legacy_hash")}
     return {
@@ -1115,4 +1135,5 @@ def report(index: dict, u: dict, d: dict, reviewer: dict, disagreements: str,
         "submitted_at": now(),
         "issue_draft": issue_draft(u, d["verdict"], d.get("detail") or "",
                                    d.get("correspondence")),
+        **({"evidence": evidence} if evidence else {}),
     }

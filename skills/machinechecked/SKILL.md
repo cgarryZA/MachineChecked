@@ -94,7 +94,9 @@ report from one run.
   hypotheses, quantifiers, definitions and conclusion. `compare --query definition NAME` and
   `compare --query mentions NAME` answer the next question. Present it as your reading, for
   the user to judge; `machinechecked review` (or the reader's Review page) records a review
-  with source revisions and reviewer attribution, and shows the paper before the Lean.
+  with source revisions and reviewer attribution, and shows the paper before the Lean. A project
+  given as its author's review snapshot (a `.zip` that `review pack` wrote) is reviewed with
+  `machinechecked review … --snapshot FILE`, with no Lean and no build.
 - **Where is a paper statement proved, and what does a proof rest on?** `machinechecked
   inspect NAME --dependencies --json` prints the declaration's statement, axioms and source,
   what its statement mentions and, separately, what its proof uses, and every declaration of
