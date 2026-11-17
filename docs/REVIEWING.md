@@ -198,13 +198,15 @@ it, is refused as not blind unless the maintainer passes `--allow-revealed`.
 
 A review compares the paper's passages with the Lean as the project's build recorded it, so a
 reviewer needs that record and no Lean, Lake or TeX. The project's author packs it as a review
-snapshot; the reviewer receives it and takes the usual steps against it.
+snapshot. A project that keeps its snapshot in its repository is reviewed from a clone with the
+usual commands; a snapshot sent as a file is reviewed with `--snapshot`.
 
 **The author.** After `machinechecked view` or `machinechecked build` (with `-c` for a full
 assessment, as for the other review commands):
 
 ```sh
-machinechecked review pack --out review-snapshot.zip    # --pdf adds the paper's PDF
+machinechecked review pack                              # the snapshot the project keeps
+machinechecked review pack --out review-snapshot.zip    # a file to send; --pdf adds the PDF
 ```
 
 The snapshot holds the files of the last build's site data that the review steps read: the index,
@@ -222,10 +224,48 @@ maps give). The PDF is packed only with `--pdf`. The rest is yours to publish: t
 passages as the build read them (its LaTeX source, or the text extracted from its PDF), the Lean,
 and your reviews, which step 3 shows. Share the snapshot where those may go.
 
-Send the snapshot to the reviewer, or attach it to a release of the project. Committing it to
-the repository also works; it is generated, so the repository does not need it.
+**Keeping the snapshot in the repository.** `review pack` with no `--out` writes the snapshot
+the project keeps: the directory that `[review] snapshot` names in `machinechecked.toml`
+(relative to the project's root, and inside it), else `review-snapshot/` at the project's root
+(the configuration's directory, or the Lean project in zero configuration). Commit it where
+the paper's passages may be published.
 
-**The reviewer.** In a directory of your own, with the snapshot and your texts:
+```toml
+[review]
+snapshot = "review-snapshot"
+```
+
+`machinechecked build` then writes it again after each build, with the PDF when the snapshot
+holds one. While the review material is unchanged, it leaves the snapshot as it is, although each
+commit gives the build a new release, evidence record and time: the committed snapshot changes
+only when what a reviewer reads changes, and it names the release it was written for. `build`
+writes a snapshot only for a project that keeps one, configured or as a `review-snapshot/`
+directory (an empty one starts it); a `review-snapshot/` that holds other files is left as it is.
+
+Send a snapshot file to the reviewer, or attach it to a release of the project.
+
+**The reviewer, in a clone.** Clone the repository and take the steps with no flag:
+
+```sh
+export MACHINECHECKED_REVIEWER=human:NAME
+machinechecked review next
+machinechecked review read UNIT                     # step 1: the paper only
+machinechecked review lock UNIT ../reading.md
+machinechecked review show UNIT                     # step 2: the Lean
+machinechecked review decide UNIT VERDICT ../comparison.md
+machinechecked review author UNIT                   # step 3: the author's review
+machinechecked review submit UNIT ../disagreements.md
+machinechecked review export --out ../reports.json
+```
+
+With no build in the clone, each step reviews the snapshot the project keeps, checked as below,
+and says so in one line on standard error. Reading `machinechecked.toml` needs no Lean: nothing is
+built. Your work is kept in `.machinechecked-review/` at the project's root, which Git ignores
+(`--review-dir DIR` names another). A project with a build of its own is reviewed from that
+build, and each step says that it did not use the snapshot.
+
+**The reviewer, with a snapshot file.** In a directory of your own, with the snapshot and your
+texts:
 
 ```sh
 export MACHINECHECKED_REVIEWER=human:NAME
@@ -247,11 +287,12 @@ names another), which Git ignores; a zip is extracted there, never beside it. Th
 as its author wrote it: a working directory inside it, or one that is a build's working
 directory, is refused. Send `reports.json` to the maintainer.
 
-Before each step the tool checks the snapshot against its manifest: the manifest's format, and
-every file with its digest. A file missing, changed or not in the manifest, or a manifest of
-another format, refuses the step with kind `snapshot`, naming the file; nothing is rebuilt. These
-digests catch an incomplete or inconsistent copy. They do not authenticate the author, since
-whoever holds the files can write a new manifest; the check that counts is the maintainer's.
+Before each step the tool checks the snapshot, sent or kept, against its manifest: the
+manifest's format, and every file with its digest. A file missing, changed or not in the
+manifest, or a manifest of another format, refuses the step with kind `snapshot`, naming the
+file; nothing is rebuilt. These digests catch an incomplete or inconsistent copy. They do not
+authenticate the author, since whoever holds the files can write a new manifest; the check that
+counts is the maintainer's.
 
 **The reports.** A report made against a snapshot records what it was reviewed against, beside
 its usual pins: `evidence`, `{"kind": "snapshot", "manifest_sha256", "release", "evidence_id",

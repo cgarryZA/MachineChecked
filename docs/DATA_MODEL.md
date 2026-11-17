@@ -106,7 +106,8 @@ directory has none. `review promote` checks either kind by the same rules.
 A review snapshot (`prooflens/review-snapshot@1`, written by `review pack`) is a directory or a
 zip archive of one: `data/`, the files of a build's site data the review steps read
 (`index.json`, `review-queue.json`, `uses.json` when present, `claims/`, `decls/`,
-`expansions/`, and `papers/` with `--pdf`), and `machinechecked-snapshot.json`, its manifest:
+`expansions/`, and `papers/` with `--pdf`; each JSON file with the same value, written with no
+space after a separator), and `machinechecked-snapshot.json`, its manifest:
 `schema`, `created_at`, `tool` (`{name, version}`), `sources` (`release`, `project` with its
 `name`, `commit` and `repository`, and `papers`, each with its `id`, `title`, `revision` and
 `pdf_sha256`), `evidence_id` (the build's evidence record), `mode`, `pdf`, `contains` (the
@@ -115,6 +116,16 @@ out: the index's `semantic` summary, and each claim reference's `current` that a
 map gives) and `files` (each path under `data/` to its SHA-256). A reviewer's step refuses a
 snapshot that lacks a file the manifest lists, holds one it does not list, has a file whose
 digest differs, or whose index is not the build the manifest names.
+
+The snapshot a project keeps is the directory `[review] snapshot` names in `machinechecked.toml`
+(relative to the project's root, inside it, not a `.zip`), else `review-snapshot/` at the
+project's root. `review pack` without `--out` writes it, and `build` writes it again when it is
+configured or the directory is there. A directory that already holds a complete snapshot of the
+same material is left unchanged: the same files, with the same `mode`, `pdf` and `left_out`,
+each file the same apart from the build's names (a `release` or `evidence` value anywhere, and
+the index's `created` and the project's `commit` and `dirty`). Its manifest then names the release
+it was written for, whose review material the later build holds too. The review steps without
+`--snapshot` read it when the project has no build of its own.
 
 A report's `correspondence` is the coverage its reviewer recorded with the verdict (at
 `comparison.decided_at`), or `null`; an older report has none, and its coverage is not recorded.

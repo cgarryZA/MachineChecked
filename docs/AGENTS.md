@@ -579,15 +579,41 @@ reading of those claims is then not blind, and its report says so.
 
 ### Reviewing a project you did not build
 
-An agent reviewer needs the project's review snapshot and no Lean, Lake, TeX or checkout of the
-project ([REVIEWING.md](REVIEWING.md#reviewing-a-project-you-did-not-build)). The author writes it
-after a build and sends it, or attaches it to a release:
+An agent reviewer needs the project's review snapshot and no Lean, Lake or TeX
+([REVIEWING.md](REVIEWING.md#reviewing-a-project-you-did-not-build)). A project can keep it in
+its repository. Its author writes it once, after a build, and commits `review-snapshot/` (or the
+directory `[review] snapshot` names); `machinechecked build` keeps it current:
+
+```sh
+machinechecked review pack
+```
+
+The agent clones the repository and takes the steps from the clone, with no flag:
+
+```sh
+export MACHINECHECKED_REVIEWER=llm:REVIEWER
+machinechecked review next --json            # {"unit": {"id": "link:thm:odd-add", ...}}
+machinechecked review read link:thm:odd-add --json    # the paper only
+machinechecked review lock link:thm:odd-add ../reading.md
+machinechecked review show link:thm:odd-add --json    # and the Lean
+machinechecked review decide link:thm:odd-add faithful ../comparison.md --coverage full --basis direct
+machinechecked review author link:thm:odd-add          # what was recorded before
+machinechecked review submit link:thm:odd-add ../none.md
+machinechecked review export --out ../my-reviews.json
+```
+
+With no build in the clone, each step reads the snapshot the project keeps and says so in one
+line on standard error; standard output holds only the step's answer. A clone with a build of its
+own is reviewed from that build, and the line says so. The work is kept in
+`.machinechecked-review/` at the project's root.
+
+An author can also send the snapshot, or attach it to a release:
 
 ```sh
 machinechecked review pack --out review-snapshot.zip
 ```
 
-The reviewer works in a directory of its own, with the snapshot and its texts, and passes
+The reviewer then works in a directory of its own, with the snapshot and its texts, and passes
 `--snapshot` to every step:
 
 ```sh
@@ -604,8 +630,9 @@ machinechecked review export --out my-reviews.json --snapshot review-snapshot.zi
 
 The steps, their locks and their refusals are those above. The work is kept in
 `.machinechecked-review/` of the current directory (`--review-dir DIR` names another), and a zip
-is extracted there. Before each step the snapshot is checked against its manifest; an incomplete
-or inconsistent one refuses the step with kind `snapshot`, naming the file, and nothing is built.
+is extracted there. Before each step the snapshot, kept or sent, is checked against its
+manifest; an incomplete or inconsistent one refuses the step with kind `snapshot`, naming the
+file, and nothing is built.
 Each report records the snapshot it was reviewed against (`evidence`, with the manifest's
 `manifest_sha256` and the release, commit and paper revisions), and the maintainer's `review
 promote` checks it against their own release.
