@@ -1,0 +1,20 @@
+{
+ "note": "What the detail of each verdict says, as the reader's review page asks for it (web/src/lib/review.js needsDetail) and the command line requires it (review_cli.detail_asked, and `review decide --help`): every verdict of a statement or definition, and of a proof step, with null for one that needs no detail.",
+ "statement": {
+  "faithful": null,
+  "faithful with representation choices": "List the representation choices, and say why each is harmless.",
+  "broader": "State the instantiation that gives the printed claim.",
+  "faithful to the correction": null,
+  "narrower": "Say exactly how: which hypothesis is added, which case is lost.",
+  "mismatched": "Say what it states instead.",
+  "vacuous": "Say why the hypotheses cannot be met, or why the witness does not meet them.",
+  "refutation not valid": "Say how the refuted proposition is stronger than the printed claim.",
+  "cannot determine": "State the open question, and what would decide it."
+ },
+ "step": {
+  "holds as printed": null,
+  "holds, with a gap in the argument": "Give the argument the printed proof leaves out.",
+  "false as printed": "Give the counterexample or the failing case, and what would repair the step.",
+  "cannot determine": "Say what would decide it."
+ }
+}
