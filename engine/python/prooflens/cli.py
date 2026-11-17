@@ -2333,17 +2333,18 @@ REVIEW_STEPS = {
 
 def _review_project(a) -> tuple[Path, Path, Path, Path, bool]:
     """The project here, for the review commands and the snapshot it keeps: the working
-    directory of its build, its Lean project, its root (the configuration's directory, or the
-    Lean project in zero configuration), the review snapshot it keeps (`[review] snapshot`, else
-    `review-snapshot/` at its root: `review_snapshot.project_path`) and whether its configuration
-    names that. Only the configuration is read: nothing is built or run."""
+    directory of its build and its Lean project (`_built_work`), its root (the configuration's
+    directory, or the Lean project in zero configuration), the review snapshot it keeps
+    (`[review] snapshot`, else `review-snapshot/` at its root: `review_snapshot.project_path`)
+    and whether its configuration names that. Only the configuration is read: nothing is built
+    or run."""
     from .review_snapshot import project_path
+    work, lean = _built_work(a)
     if _assurance_config(a):
         cfg = _load_full(a)
-        return (cfg.out_dir, cfg.lean_root, cfg.root,
-                project_path(cfg.root, cfg.review_snapshot), cfg.review_snapshot is not None)
-    root = _lean_root()
-    return root / cfgmod.work_dir_name(root), root, root, project_path(root), False
+        return (work, lean, cfg.root, project_path(cfg.root, cfg.review_snapshot),
+                cfg.review_snapshot is not None)
+    return work, lean, lean, project_path(lean), False
 
 
 def _shown(p: Path) -> str:
