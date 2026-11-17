@@ -540,7 +540,7 @@ seen ([Informed investigation](REVIEWING.md#one-claim-at-a-time)). With `--json`
 prints `{"ok": false, "error": {"kind", "message"}}` and exits 2: `order` (a step before the one it
 follows), `unknown-unit`, `stale` (the build changed the unit's Lean since `show`: run `show`
 again), `conflict` (the draft changed meanwhile: read it again with `status`), `reported`,
-`invalid`, `workspace`, `no-build` or `snapshot` (below).
+`invalid`, `workspace`, `no-build`, `snapshot` or `paper-source` (below).
 
 `review next` and `review status` take `--order` ([Review order](REVIEWING.md#review-order)):
 `priority` (the default), `document` (the paper's order), or `informed`, which also ranks the
@@ -636,6 +636,16 @@ file, and nothing is built.
 Each report records the snapshot it was reviewed against (`evidence`, with the manifest's
 `manifest_sha256` and the release, commit and paper revisions), and the maintainer's `review
 promote` checks it against their own release.
+
+A snapshot of a paper whose `publish.source_text` is false holds where each passage is in the
+paper's source, not its text
+([REVIEWING.md](REVIEWING.md#a-paper-whose-text-may-not-be-redistributed)). The first step reads
+the passages from the source: an arXiv download kept in `.machinechecked-review/`, the paper's
+folder in a clone of the project, or the copy given with `--paper-source [PAPER=]FILE` (a folder,
+or the file arXiv serves). It checks every file and passage against its digest before showing
+anything, and says on standard error where the text came from; the documents are then those of
+a snapshot with the text. A source that cannot be obtained, or that differs, refuses the step
+with kind `paper-source`, and the message says what to give.
 
 ### Recording links and findings
 

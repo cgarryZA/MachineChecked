@@ -2355,17 +2355,27 @@ def _shown(p: Path) -> str:
         return p.as_posix() + "/"
 
 
-def _open_snapshot(snapshot: Path, work: Path) -> tuple[Path, dict]:
+def _open_snapshot(snapshot: Path, work: Path, a, root: Path | None) -> tuple[Path, dict]:
     """The snapshot's site data and provenance, checked (`review_snapshot.open_snapshot`), with
-    the reviewer's working directory `work` made; a refusal is the step's, of kind `snapshot`."""
+    the reviewer's working directory `work` made; a refusal is the step's, of kind `snapshot`.
+    A paper's text the snapshot leaves out is read from the paper's source
+    (`snapshot_text.with_text`: --paper-source, or the project's folder at `root`); a source that
+    cannot be obtained, or that differs, refuses the step with kind `paper-source`."""
     from . import review_cli as rc
     from . import review_snapshot as rs
+    from . import snapshot_text as st
     try:
         rs.check_work_dir(work, snapshot)
         data, evidence = rs.open_snapshot(snapshot, work)
         rs.prepare_work_dir(work)
     except rs.SnapshotError as e:
         raise rc.ReviewError(str(e), "snapshot") from None
+    try:
+        data, said = st.with_text(data, work, getattr(a, "paper_source", None), root)
+    except st.PaperSourceError as e:
+        raise rc.ReviewError(str(e), "paper-source") from None
+    for line in said:
+        print(f"note: {line}", file=sys.stderr)
     return data, evidence
 
 
@@ -2385,7 +2395,7 @@ def _review_target(a) -> tuple[Path, Path | None, Path | None, dict | None]:
             raise rc.ReviewError("--snapshot reviews the snapshot alone, with no configuration: "
                                  "leave out -c", "invalid")
         work = Path(a.review_dir or rs.REVIEW_DIR).resolve()
-        data, evidence = _open_snapshot(Path(a.snapshot), work)
+        data, evidence = _open_snapshot(Path(a.snapshot), work, a, None)
         return work, data, None, evidence
     no_dir = rc.ReviewError("--review-dir is the working directory of a review of a snapshot: "
                             "give --snapshot FILE too", "invalid")
@@ -2406,6 +2416,10 @@ def _review_target(a) -> tuple[Path, Path | None, Path | None, dict | None]:
             "--review-dir is the working directory of a review of a snapshot, and the review "
             "here is of this project's own build: leave out --review-dir, or give --snapshot "
             "FILE", "invalid")
+    if built and getattr(a, "paper_source", None):
+        raise rc.ReviewError("--paper-source is for a review of a snapshot that leaves out the "
+                             "paper's text, and the review here is of this project's own "
+                             "build, which holds it: leave out --paper-source", "invalid")
     if built and kept:
         try:
             rel = json.loads(queue.read_text(encoding="utf-8")).get("release")
@@ -2418,7 +2432,7 @@ def _review_target(a) -> tuple[Path, Path | None, Path | None, dict | None]:
         # Without a build or a snapshot, the session says there is nothing to review.
         return work, None, root, None
     rwork = Path(a.review_dir).resolve() if getattr(a, "review_dir", None) else top / rs.REVIEW_DIR
-    data, evidence = _open_snapshot(snap, rwork)
+    data, evidence = _open_snapshot(snap, rwork, a, top)
     print(f"note: reviewing the project's review snapshot {_shown(snap)} (release "
           f"{evidence.get('release')}), as there is no build here; your work is kept in "
           f"{_shown(rwork)}", file=sys.stderr)
@@ -2454,8 +2468,13 @@ def cmd_review_pack(a):
     from . import review_snapshot as rs
     work, _, top, snap, _ = _review_project(a)
     out = Path(a.out) if a.out else snap
+    if a.with_paper_text and out.resolve() == snap.resolve():
+        sys.exit("machinechecked: --with-paper-text is for a snapshot you hand over privately, "
+                 f"and {_shown(snap)} is the snapshot the project keeps, which follows each "
+                 "paper's publish.source_text: give --out FILE")
     try:
-        m = rs.pack(work / "site" / "data", out, pdf=a.pdf, tool=tool_version())
+        m = rs.pack(work / "site" / "data", out, pdf=a.pdf, tool=tool_version(),
+                    **_paper_text(a, work, a.with_paper_text))
     except rs.SnapshotError as e:
         sys.exit(f"machinechecked: {e}")
     # The path a reviewer gives from the project's root, or the one given here when it is
@@ -2465,6 +2484,43 @@ def cmd_review_pack(a):
     except ValueError:
         given = str(out)
     print(rs.summary_text(m, kept_here=out.resolve() == snap.resolve(), given=given))
+
+
+def _paper_text(a, work: Path, with_text: bool = False) -> dict:
+    """What a snapshot of the full assessment here does with each paper's text (`pack`'s
+    `without` and `kept_text`): left out when its `publish.source_text` is false, with the build's
+    copy of its source and what names that source; kept when it is published, when the paper is
+    read from its PDF, or with `with_text`. In zero configuration every paper's text is kept, as
+    its published site keeps it."""
+    if not _assurance_config(a):
+        return {}
+    from .sources import ARXIV_VERSIONED
+    cfg = _load_full(a)
+    try:
+        index = json.loads((work / "site" / "data" / "index.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}  # no build: `pack` says so
+    built = {p.get("id"): p for p in index.get("papers") or []}
+    without, kept = {}, {}
+    for p in cfg.papers:
+        if with_text:
+            kept[p.id] = "asked"
+        elif p.publish.source_text:
+            kept[p.id] = "published"
+        elif (built.get(p.id) or {}).get("mode") == "pdf":
+            kept[p.id] = "pdf"
+        else:
+            src = p.source
+            if "arxiv" in src:
+                m = ARXIV_VERSIONED.fullmatch(str(src["arxiv"]).strip())
+                spec = {"kind": "arxiv", "arxiv": m.group(1) + m.group(2) if m else src["arxiv"]}
+            elif "path" in src:
+                spec = {"kind": "path", "path": str(src["path"])}
+            else:
+                # The repository is not named: it may be private.
+                spec = {"kind": "git", "revision": (built.get(p.id) or {}).get("revision")}
+            without[p.id] = {"dir": cfg.out_dir / "sources" / p.id, "source": spec}
+    return {"without": without, "kept_text": kept}
 
 
 def _refresh_snapshot(a) -> None:
@@ -2482,7 +2538,8 @@ def _refresh_snapshot(a) -> None:
               file=sys.stderr)
         return
     try:
-        m = rs.pack(work / "site" / "data", snap, pdf=rs.packed_pdf(snap), tool=tool_version())
+        m = rs.pack(work / "site" / "data", snap, pdf=rs.packed_pdf(snap), tool=tool_version(),
+                    **_paper_text(a, work))
     except rs.SnapshotError as e:
         sys.exit(f"machinechecked: the review snapshot {_shown(snap)} was not written: {e}")
     print(rs.refresh_line(m, _shown(snap)))
@@ -2708,6 +2765,10 @@ def _add_review(sub) -> None:
                          "snapshot` or review-snapshot/ at its root)")
     pk.add_argument("--pdf", action="store_true",
                     help="include the paper's PDF (left out by default)")
+    pk.add_argument("--with-paper-text", action="store_true",
+                    help="keep the text of every paper's source, also of a paper whose "
+                         "publish.source_text is false (for a snapshot you hand over "
+                         "privately; not for the snapshot the project keeps)")
     _config_option(pk)
     pk.set_defaults(func=cmd_review_pack)
     rp = rvs.add_parser("reports", help="write the promoted reports as readable text "
@@ -2788,6 +2849,11 @@ def _add_review(sub) -> None:
                              "directory) instead of a build here; needs no Lean. Without it, "
                              "a project with no build here is reviewed from the snapshot it "
                              "keeps (review-snapshot/), if any")
+        sp.add_argument("--paper-source", action="append", metavar="[PAPER=]FILE",
+                        help="for a snapshot that leaves out a paper's text: that paper's "
+                             "source (its folder, or the file arXiv serves), from which each "
+                             "passage is read and checked; kept in your working directory for "
+                             "the later steps")
         sp.add_argument("--review-dir", metavar="DIR",
                         help="for a review of a snapshot: the directory your work is kept in "
                              f"(default: {REVIEW_DIR}/ here, or at the root of the project "

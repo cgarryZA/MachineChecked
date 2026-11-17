@@ -115,8 +115,8 @@ the unit's Lean since it was shown to you (look at it again, then record the ver
 another window or terminal changed the unit's draft meanwhile (nothing is saved; look at it
 again and repeat the step). With `--json`, a refused step prints `{"ok": false, "error": {"kind",
 "message"}}`, with `kind` one of `order`, `unknown-unit`, `stale`, `conflict`, `reported`,
-`invalid`, `workspace`, `no-build` and `snapshot` ([Reviewing a project you did not
-build](#reviewing-a-project-you-did-not-build)), and exits 2.
+`invalid`, `workspace`, `no-build`, `snapshot` and `paper-source` ([Reviewing a project you did
+not build](#reviewing-a-project-you-did-not-build)), and exits 2.
 
 **A unit whose Lean another unit shows.** Step 2 of a statement shows the Lean of the
 definitions it uses, and those definitions may be units of their own. `read` and `show` of the
@@ -222,13 +222,15 @@ packed, and neither are the two parts of the site data that come from your works
 semantic summary's count of their findings, and the counterparts of paper numbers their version
 maps give). The PDF is packed only with `--pdf`. The rest is yours to publish: the paper's
 passages as the build read them (its LaTeX source, or the text extracted from its PDF), the Lean,
-and your reviews, which step 3 shows. Share the snapshot where those may go.
+and your reviews, which step 3 shows. Share the snapshot where those may go. A paper whose
+`publish.source_text` is false has its text left out
+([below](#a-paper-whose-text-may-not-be-redistributed)).
 
 **Keeping the snapshot in the repository.** `review pack` with no `--out` writes the snapshot
 the project keeps: the directory that `[review] snapshot` names in `machinechecked.toml`
 (relative to the project's root, and inside it), else `review-snapshot/` at the project's root
 (the configuration's directory, or the Lean project in zero configuration). Commit it where
-the paper's passages may be published.
+its contents may be published.
 
 ```toml
 [review]
@@ -301,6 +303,38 @@ nothing was compiled or replayed for it. `review promote` checks it by the usual
 maintainer's own release ([Maintainer acceptance](#maintainer-acceptance)), and its plan says
 "reviewed against supplied evidence". The times a report records give the order in which the
 steps were taken in the tool.
+
+### A paper whose text may not be redistributed
+
+When a paper's `publish.source_text` is false, `review pack` and `build` leave the text of its
+source out of the snapshot. For each text the review steps show (a printed statement, a proof
+step's context in its proof, each further passage and notation definition of a pin), the
+snapshot records the file within the source, the byte range and the SHA-256 of the text. Its
+manifest names the source (the arXiv record, the paper's folder in the project, or the commit of
+its Git repository) with the SHA-256 of each file a passage comes from. The snapshot keeps where
+each passage is (its file, line and page), which the public export leaves out under the same
+setting. The typeset excerpts, which only the reader shows, are left out.
+
+Before it writes anything, `pack` scans the snapshot against the paper's source as the public
+export is scanned. A snapshot that still holds a line of the source (a docstring or a review
+that quotes the paper, say) is not written, and the refusal names the file and field.
+`--with-paper-text` keeps the text, for a snapshot you hand over privately; the snapshot the
+project keeps always follows `publish.source_text`. A paper read only from its PDF keeps its
+text, and `pack` says so. Zero configuration has no `publish` setting: its snapshot keeps the
+text, as its published site does.
+
+The reviewer's first step obtains the paper's source the way `build` does, and runs no TeX:
+
+- for an arXiv source, a download into the reviewer's working directory, kept for later steps;
+- in a clone of the project, the paper's folder there;
+- otherwise, or instead, the copy given with `--paper-source [PAPER=]FILE`: the source's folder,
+  or the file arXiv serves (`https://arxiv.org/e-print/ID`). It is kept for later steps.
+
+Every file and every passage is checked against its digest before anything is shown, and the
+steps then show exactly what a snapshot with the text shows. A source that cannot be obtained,
+or that differs from the one the author built, refuses the step with kind `paper-source` and
+says how to give it; nothing is shown. The snapshot does not name a Git source's repository,
+which may be private: its reviewer gives the source with `--paper-source`.
 
 ## Review order
 
