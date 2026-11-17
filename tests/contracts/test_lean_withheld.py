@@ -6,11 +6,33 @@ the rule's type, the sub-terms nor the premises that establish the conditions.""
 
 import json
 
+import jsonschema
+
 from conftest import build, edit, findings, needs_lean, needs_tex
 from prooflens import config as cfgmod
+from prooflens.assess import OUTSIDE
 from prooflens.export import export, public_claim
+from prooflens.schemas import schema, validate
 
 L = "lean/Toy/"
+
+# Theorems that a clause's refutation scope and proof name, each with a type the build prints: a
+# reading the refutation also covers and a class lemma for its counterexample (#653), and
+# Corollary 2.5 proved assuming Theorem 2.2 (#658).
+SCOPED = """
+/-- At `n = 0` the printed inequality fails. -/
+theorem prop_pred_at_zero : ¬ (0 - 1 < 0 / 1) := by decide
+
+/-- The counterexample is a natural number. -/
+theorem prop_pred_zero_nat : (0 : Nat) ≤ 0 + 0 := by decide
+
+theorem cor_of_triangle : PaperSpec.thm_triangle → PaperSpec.cor_even_triangle := by
+  intro h n
+  have e := h (4 * n)
+  have m : 4 * n * (4 * n + 1) = 4 * (n * (4 * n + 1)) := Nat.mul_assoc 4 n (4 * n + 1)
+  exact ⟨n * (4 * n + 1), by omega⟩
+
+end Toy.Acceptance"""
 
 # Stand-ins for an order library, declared at the root as a larger project's library declares
 # them: a supremum, the range of a family, a bound and a number line where a supremum needs one.
@@ -104,6 +126,20 @@ def test_an_export_without_the_lean_quotes_none_of_it(toy, tmp_path):
          "    n - 1 < n / 1 ∧ iSup f = iSup f")
     edit(toy / L / "Acceptance.lean", "  have := h 0\n  omega",
          "  have := (h 0 (fun _ => default) ⟨default, fun _ _ => trivial⟩).1\n  omega")
+    # Its refutation gains a scope, and Corollary 2.5 a proof assuming Theorem 2.2.
+    edit(toy / L / "Acceptance.lean", "end Toy.Acceptance", SCOPED)
+    inv = json.loads((toy / "claims.json").read_text(encoding="utf-8"))
+    by_id = {c["id"]: c for c in inv["claims"]}
+    by_id["T:prop:pred"]["clauses"][0].update(
+        refute_scope=OUTSIDE, standing_assumptions=["natural numbers"],
+        refutation_covers=[{"move": "n chosen first",
+                            "theorem": "Toy.Acceptance.prop_pred_at_zero"}],
+        class_lemmas=[{"assumption": "natural numbers",
+                       "theorem": "Toy.Acceptance.prop_pred_zero_nat"}])
+    by_id["T:cor:even-triangle"]["clauses"][0]["accept_from"] = {
+        "theorem": "Toy.Acceptance.cor_of_triangle", "assumes": ["Toy.PaperSpec.thm_triangle"]}
+    (toy / "claims.json").write_text(json.dumps(inv, indent=1, ensure_ascii=False),
+                                     encoding="utf-8")
     edit(toy / "machinechecked.toml", "publish = { pdf = true, source_text = true, lean = true",
          "publish = { pdf = true, source_text = false, lean = false")
     index, body, cfg = build(toy)
@@ -116,6 +152,15 @@ def test_an_export_without_the_lean_quotes_none_of_it(toy, tmp_path):
         ("established", "premise", "BddAbove (Set.range f)")
     printed = printed_lean(cfg.out_dir / "site" / "data")
     assert {"BddAbove (Set.range f)", "n - 1 < n / 1"} <= printed and len(printed) > 20
+    # So do the refutation's scope and the proof from Theorem 2.2: their theorems' types.
+    site = cfg.out_dir / "site" / "data" / "claims"
+    files = {c["id"]: c["file"] for c in index["claims"]}
+    scope = json.loads((site / files["T:prop:pred"]).read_text())["clauses"][0]
+    cor = json.loads((site / files["T:cor:even-triangle"]).read_text())["clauses"][0]
+    assert [(e["state"], e["type"]["text"] in printed)
+            for e in scope["refutation_covers"] + scope["class_lemmas"]] == [("proved", True)] * 2
+    assert cor["checks"]["accept_from"]["ok"] and cor["proofs"]["accept_from"]["type"]["text"] \
+        in printed
 
     # The export quotes none of what the build printed, anywhere.
     export(cfgmod.load(toy / "machinechecked.toml"), tmp_path / "public")
@@ -125,11 +170,22 @@ def test_an_export_without_the_lean_quotes_none_of_it(toy, tmp_path):
              for p in printed if p in text and p not in inventory]
     assert leaks == []
 
-    # The warnings are there, saying what they can without the Lean.
+    # Each published claim has the form a reader of published audits checks (`published.py`).
     data = tmp_path / "public" / "data"
     idx = json.loads((data / "index.json").read_text())
-    c = next(c for c in idx["claims"] if c["id"] == "T:prop:pred")
-    chunk = json.loads((data / "claims" / c["file"]).read_text())
+    shown = {c["id"]: json.loads((data / "claims" / c["file"]).read_text())
+             for c in idx["claims"]}
+    for c in shown.values():
+        validate(c, "manifest-claim")
+
+    # The refutation's scope keeps its readings, its lemmas and their states.
+    public_scope = shown["T:prop:pred"]["clauses"][0]
+    assert [(e.get("move") or e.get("assumption"), e["state"], "type" in e)
+            for e in public_scope["refutation_covers"] + public_scope["class_lemmas"]] == \
+        [("n chosen first", "proved", False), ("natural numbers", "proved", False)]
+
+    # The warnings are there, saying what they can without the Lean.
+    chunk = shown["T:prop:pred"]
     (g,) = [g for g in chunk["findings"] if g["id"] == sup["id"]]
     [o] = g["occurrences"]
     assert {k: o[k] for k in ("operation", "structure", "state")} == \
@@ -152,8 +208,8 @@ def test_a_warning_recorded_before_its_withheld_form_keeps_no_lean():
            "conditions": [{"condition": "bounded-above", "state": "established", "by": "premise",
                            "premise": "h", "statement": "BddAbove (Set.range F)"}]}
     f = {"id": "totalised:C#0:HDiv.hDiv@/1", "tier": "warning", "code": "totalised",
-         "trigger": "HDiv.hDiv", "message": "division in Fin n → Real: x / 0 = 0 (…)",
-         "occurrences": [occ]}
+         "subject": "C#0", "trigger": "HDiv.hDiv",
+         "message": "division in Fin n → Real: x / 0 = 0 (…)", "occurrences": [occ]}
     chunk = {"clauses": [], "findings": [f]}
     shown = public_claim(chunk, Publish(lean=True))["findings"][0]
     assert shown["occurrences"] == [occ] and shown["message"] == f["message"]
@@ -163,3 +219,33 @@ def test_a_warning_recorded_before_its_withheld_form_keeps_no_lean():
         assert lean not in text, lean
     [o] = hidden["occurrences"]
     assert o["state"] == "applies" and o["conditions"][0]["state"] == "established"
+    for x in (shown, hidden):
+        jsonschema.validate(x, finding_schema())
+
+
+def finding_schema():
+    """The published form of a finding (`manifest-claim`'s `finding`)."""
+    s = schema("manifest-claim")
+    return {"$schema": s["$schema"], "$defs": s["$defs"], "$ref": "#/$defs/finding"}
+
+
+def test_a_warning_without_the_lean_publishes_its_withheld_form():
+    """Without the Lean, a totalisation warning publishes the message and applications the
+    assessment stated without quoting it, in the form a reader of published audits checks
+    (`published.py`): an application without its type is still a published application."""
+    from prooflens.config import Publish
+    occ = {"operation": "HDiv.hDiv", "type": "Fin n → Real", "type_head": "Real",
+           "structure": "group-with-zero", "state": "applies",
+           "rule": "division in Fin n → Real: x / 0 = 0", "at": ["/1"],
+           "subterms": [{"at": "/1", "text": "T / N"}]}
+    held = {"operation": "HDiv.hDiv", "type_head": "Real", "structure": "group-with-zero",
+            "state": "applies", "rule": "division in a group with zero: x / 0 = 0", "at": ["/1"]}
+    f = {"id": "totalised:C#0:HDiv.hDiv@/1", "tier": "warning", "code": "totalised",
+         "subject": "C#0", "trigger": "HDiv.hDiv",
+         "message": "division in Fin n → Real: x / 0 = 0 (…)", "occurrences": [occ],
+         "withheld": {"message": "division in a group with zero: x / 0 = 0 (…)",
+                      "occurrences": [held]}}
+    hidden = public_claim({"clauses": [], "findings": [f]}, Publish(lean=False))["findings"][0]
+    assert hidden["message"] == f["withheld"]["message"] and hidden["occurrences"] == [held]
+    assert "withheld" not in hidden
+    jsonschema.validate(hidden, finding_schema())

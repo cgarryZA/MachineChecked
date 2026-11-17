@@ -173,8 +173,8 @@ whole proposition and its `fingerprint` is the proposition's ([ASSURANCE.md](ASS
 A finding whose message or applications quote the Lean (a totalisation warning, the `witness`
 obligation) also has `withheld`: its `message` and `occurrences` as the assessment states them
 without quoting the Lean (types described, not printed; no sub-terms or premises), which an
-export without the Lean publishes in their place
-([publication policy](PUBLICATION_POLICY.md)).
+export without the Lean publishes in their place: there an application has no `type` or
+`subterms`, and a condition no `statement` ([publication policy](PUBLICATION_POLICY.md)).
 A warning that a dismissal matches has `dismissed`, and is never also marked `dismissal_stale`
 because of another dismissal of its code, subject and trigger; a warning that none matches has
 `dismissal_stale` when such a dismissal matches no warning the assessment reports (it lapsed),

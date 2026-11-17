@@ -1588,6 +1588,35 @@ for (const width of [1300, 390]) {
     assert.ok(box && box.x >= 0 && box.x + box.width <= width, "on screen");
   });
 }
+// An export without the Lean publishes a warning's application without its type, its conditions
+// without the statements that establish them, and a dismissal without its rationale (#559).
+await check("a warning from an export without the Lean says what it does not publish", 1300, async (pg) => {
+  await pg.route("**/toy/data/claims/*prop_pred*", async (route) => {
+    const response = await route.fetch();
+    const json = await response.json();
+    json.findings = json.findings.map((f) => f.subject.endsWith("#0") ? { ...f, resolved: false, at: "/1/0/1",
+      dismissed: { by: "auditor", rationale: "" }, occurrences: [
+        { operation: f.trigger, type_head: "Real", structure: "conditionally-complete-lattice", state: "applies",
+          rule: "a supremum in ℝ is 0 when the set is unbounded or empty", at: ["/1/0/1"], condition_state: "established",
+          conditions: [
+            { condition: "bounded-above", state: "established", by: "premise", premise: "hf" },
+            { condition: "bounded-above", state: "established", by: "premise", premise: "" },
+            { condition: "nonempty-index", state: "established", by: "type" }] }] } : f);
+    route.fulfill({ response, json });
+  });
+  await toyClaim(pg, "T:prop:pred");
+  await pg.locator(".claim-view .view .chipbtn").click();
+  await pg.locator(".claim-view details.warning summary").click();
+  const item = pg.locator(".claim-view [data-finding='totalised:T:prop:pred#0:instSubNat']");
+  assert.match(words(await item.locator(".occ > li").first().textContent()),
+    /^in a type this audit does not publish, a conditionally complete lattice: a supremum in ℝ/);
+  const conds = await item.locator(".conds li").allTextContents();
+  assert.deepEqual(conds.map(words), [
+    "needs bounded above: established by the premise hf",
+    "needs bounded above: established by a premise",
+    "needs a nonempty index type: established (by an instance Lean finds on its type)"]);
+  assert.equal(words(await item.locator(".dz").textContent()), "dismissed by auditor");
+});
 await check("a theorem of the toy paper is typeset with its equation number", 1300, async (pg) => {
   await toyClaim(pg, "T:thm:triangle");
   const ex = pg.locator(".claim-view .view .paper .excerpt");

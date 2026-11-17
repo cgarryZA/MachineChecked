@@ -86,11 +86,11 @@
               {#if f.occurrences?.length}
                 <ul class="occ">
                   {#each f.occurrences as o, i (i)}
-                    <li data-state={o.state}>{#if o.subterms?.length}<span class="subs">{#each o.subterms as s, k (k)}{#if k}; {/if}<code class="sub" data-at={s.at}>{s.text ?? "not printed"}</code>{#if s.within}{" "}{near(s.within)}{/if}{/each}</span>,{" "}{/if}<span class="ty">in <code>{o.type || "a type not read"}</code>{#if STRUCTURE[o.structure]}, {STRUCTURE[o.structure]}{/if}</span>: {outcome(o)}
+                    <li data-state={o.state}>{#if o.subterms?.length}<span class="subs">{#each o.subterms as s, k (k)}{#if k}; {/if}<code class="sub" data-at={s.at}>{s.text ?? "not printed"}</code>{#if s.within}{" "}{near(s.within)}{/if}{/each}</span>,{" "}{/if}<span class="ty">in {#if "type" in o}<code>{o.type || "a type not read"}</code>{:else}a type this audit does not publish{/if}{#if STRUCTURE[o.structure]}, {STRUCTURE[o.structure]}{/if}</span>: {outcome(o)}
                       {#if o.conditions?.length}
                         <ul class="conds">
                           {#each o.conditions as c, j (j)}
-                            <li data-cond={c.state}>needs {CONDITION[c.condition] ?? c.condition}: {c.state}{#if c.by === "premise"}{" "}by the premise <code>{c.premise ? `${c.premise} : ` : ""}{c.statement}</code>{:else if c.by === "type"}{" "}({c.statement}){/if}</li>
+                            <li data-cond={c.state}>needs {CONDITION[c.condition] ?? c.condition}: {c.state}{#if c.by === "premise" && "statement" in c}{" "}by the premise <code>{c.premise ? `${c.premise} : ` : ""}{c.statement}</code>{:else if c.by === "premise"}{" "}by {#if c.premise}the premise <code>{c.premise}</code>{:else}a premise{/if}{:else if c.by === "type" && "statement" in c}{" "}({c.statement}){:else if c.by === "type"}{" "}(by an instance Lean finds on its type){/if}</li>
                           {/each}
                         </ul>
                       {/if}

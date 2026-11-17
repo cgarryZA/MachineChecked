@@ -439,10 +439,8 @@
       "type": "object",
       "required": [
         "operation",
-        "type",
         "structure",
         "state",
-        "rule",
         "at"
       ],
       "properties": {
@@ -453,7 +451,8 @@
           "type": [
             "string",
             "null"
-          ]
+          ],
+          "description": "The type the operation is applied in, as Lean prints it; null when it was not read. Absent from an export that does not publish the Lean"
         },
         "type_head": {
           "type": [
@@ -483,7 +482,8 @@
           "type": [
             "string",
             "null"
-          ]
+          ],
+          "description": "The rule where it applies. Absent from an export that does not publish the Lean when the evidence predates the rule's form without it"
         },
         "at": {
           "type": "array",
@@ -530,7 +530,7 @@
               },
               "statement": {
                 "type": "string",
-                "description": "The premise as Lean prints it, or the property of the types that gives the condition"
+                "description": "The premise as Lean prints it, or the property of the types that gives the condition. Absent from an export that does not publish the Lean"
               }
             }
           }
