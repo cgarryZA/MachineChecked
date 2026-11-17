@@ -1526,9 +1526,13 @@ def _forget_indexes(cfg) -> None:
 
 
 def cmd_build(a):
+    """`build`, then the review snapshot the project keeps, if it keeps one
+    (`_refresh_snapshot`)."""
     if not _assurance_config(a):
-        return _build_simple(a)
+        _build_simple(a)
+        return _refresh_snapshot(a)
     _build_full(a, site=a.site, refresh=a.refresh, fail_on_violation=a.fail_on_violation,
+                then=lambda: _refresh_snapshot(a),
                 release=a.release, skip_lean=a.skip_lean, skip_tex=a.skip_tex, lake=a.lake,
                 lean_build=not a.no_lean_build, reuse_lean=a.reuse_lean)
 
@@ -1546,10 +1550,11 @@ def _assess(a, cfg, fix_modules: bool = False, **settings):
 
 
 def _build_full(a, site: str | None = None, refresh: bool = False, fix_modules: bool = False,
-                fail_on_violation: bool = False, **settings):
+                fail_on_violation: bool = False, then=None, **settings):
     """`build`, and `check` without --json, with a machinechecked.toml: build and assess
     (`_assess`), print each paper's statuses and what blocks acceptance, and with `site` write
-    the audit's public export there. With `fail_on_violation`, exit 1 on a violation."""
+    the audit's public export there; then `then()`, when given. With `fail_on_violation`, exit
+    1 on a violation."""
     cfg = _load_full(a)
     dest = _site_dest(site, cfg.root) if site else None
     if refresh:
@@ -1566,6 +1571,8 @@ def _build_full(a, site: str | None = None, refresh: bool = False, fix_modules: 
             sys.exit(str(e))
         print(f"wrote the audit to {out['out']}: publish this directory as it is "
               "(audit.json describes it)")
+    if then is not None:
+        then()
     if fail_on_violation and res["index"]["findings"]["total"].get("violation"):
         sys.exit(1)
 
@@ -2324,38 +2331,99 @@ REVIEW_STEPS = {
 }
 
 
+def _review_project(a) -> tuple[Path, Path, Path, Path, bool]:
+    """The project here, for the review commands and the snapshot it keeps: the working
+    directory of its build and its Lean project (`_built_work`), its root (the configuration's
+    directory, or the Lean project in zero configuration), the review snapshot it keeps
+    (`[review] snapshot`, else `review-snapshot/` at its root: `review_snapshot.project_path`)
+    and whether its configuration names that. Only the configuration is read: nothing is built
+    or run."""
+    from .review_snapshot import project_path
+    work, lean = _built_work(a)
+    if _assurance_config(a):
+        cfg = _load_full(a)
+        return (work, lean, cfg.root, project_path(cfg.root, cfg.review_snapshot),
+                cfg.review_snapshot is not None)
+    return work, lean, lean, project_path(lean), False
+
+
+def _shown(p: Path) -> str:
+    """A directory as a command names it: relative to the current directory when inside it."""
+    p = Path(p).resolve()
+    try:
+        return p.relative_to(Path.cwd().resolve()).as_posix() + "/"
+    except ValueError:
+        return p.as_posix() + "/"
+
+
+def _open_snapshot(snapshot: Path, work: Path) -> tuple[Path, dict]:
+    """The snapshot's site data and provenance, checked (`review_snapshot.open_snapshot`), with
+    the reviewer's working directory `work` made; a refusal is the step's, of kind `snapshot`."""
+    from . import review_cli as rc
+    from . import review_snapshot as rs
+    try:
+        rs.check_work_dir(work, snapshot)
+        data, evidence = rs.open_snapshot(snapshot, work)
+        rs.prepare_work_dir(work)
+    except rs.SnapshotError as e:
+        raise rc.ReviewError(str(e), "snapshot") from None
+    return data, evidence
+
+
 def _review_target(a) -> tuple[Path, Path | None, Path | None, dict | None]:
     """Where a review step works: the working directory, the site data (None: the working
     directory's own), the Lean project and, for a review snapshot, its provenance. With
     --snapshot, the snapshot checked against its manifest and a working directory of the
     reviewer's own (`review_snapshot`); no configuration or Lean project is read. Otherwise the
-    last build of the project here (`_built_work`)."""
+    last build of the project here (`_review_project`) when there is one, else the review
+    snapshot the project keeps, checked as with --snapshot, with the reviewer's working
+    directory at the project's root. Standard error says which, when the project keeps a
+    snapshot."""
     from . import review_cli as rc
     from . import review_snapshot as rs
-    if not getattr(a, "snapshot", None):
-        if getattr(a, "review_dir", None):
-            raise rc.ReviewError("--review-dir is the working directory of a review of a "
-                                 "snapshot: give --snapshot FILE too", "invalid")
-        try:
-            work, root = _built_work(a)
-        except SystemExit as e:
-            # No project here: the command cannot run, and a snapshot, which needs no project,
-            # is the way to review one built elsewhere.
-            if e.code == NO_PROJECT:
-                sys.exit(f"machinechecked: {rc.NO_BUILD}")
-            raise
-        return work, None, root, None
-    if getattr(a, "config", None):
-        raise rc.ReviewError("--snapshot reviews the snapshot alone, with no configuration: "
-                             "leave out -c", "invalid")
-    work = Path(a.review_dir or rs.REVIEW_DIR).resolve()
+    if getattr(a, "snapshot", None):
+        if getattr(a, "config", None):
+            raise rc.ReviewError("--snapshot reviews the snapshot alone, with no configuration: "
+                                 "leave out -c", "invalid")
+        work = Path(a.review_dir or rs.REVIEW_DIR).resolve()
+        data, evidence = _open_snapshot(Path(a.snapshot), work)
+        return work, data, None, evidence
+    no_dir = rc.ReviewError("--review-dir is the working directory of a review of a snapshot: "
+                            "give --snapshot FILE too", "invalid")
     try:
-        rs.check_work_dir(work, Path(a.snapshot))
-        data, evidence = rs.open_snapshot(Path(a.snapshot), work)
-        rs.prepare_work_dir(work)
-    except rs.SnapshotError as e:
-        raise rc.ReviewError(str(e), "snapshot") from None
-    return work, data, None, evidence
+        work, root, top, snap, _ = _review_project(a)
+    except SystemExit as e:
+        # No project here: the command cannot run, and a snapshot, which needs no project,
+        # is the way to review one built elsewhere.
+        if e.code == NO_PROJECT:
+            if getattr(a, "review_dir", None):
+                raise no_dir from None
+            sys.exit(f"machinechecked: {rc.NO_BUILD}")
+        raise
+    queue = work / "site" / "data" / "review-queue.json"
+    built, kept = queue.is_file(), rs.kept(snap)
+    if getattr(a, "review_dir", None) and (built or not kept):
+        raise no_dir if not built else rc.ReviewError(
+            "--review-dir is the working directory of a review of a snapshot, and the review "
+            "here is of this project's own build: leave out --review-dir, or give --snapshot "
+            "FILE", "invalid")
+    if built and kept:
+        try:
+            rel = json.loads(queue.read_text(encoding="utf-8")).get("release")
+        except (OSError, ValueError, AttributeError):
+            rel = None
+        print(f"note: reviewing this project's build ({_shown(work)}"
+              + (f", release {rel}" if rel else "")
+              + f"), not its review snapshot {_shown(snap)}", file=sys.stderr)
+    if built or not kept:
+        # Without a build or a snapshot, the session says there is nothing to review.
+        return work, None, root, None
+    rwork = Path(a.review_dir).resolve() if getattr(a, "review_dir", None) else top / rs.REVIEW_DIR
+    data, evidence = _open_snapshot(snap, rwork)
+    print(f"note: reviewing the project's review snapshot {_shown(snap)} (release "
+          f"{evidence.get('release')}), as there is no build here; your work is kept in "
+          f"{_shown(rwork)}", file=sys.stderr)
+    return rwork, data, None, evidence
 
 
 def cmd_review_step(a):
@@ -2382,14 +2450,43 @@ def cmd_review_step(a):
 
 def cmd_review_pack(a):
     """Write a review snapshot of the last build (`review_snapshot.pack`), for a reviewer who
-    did not build the project, and say what it holds."""
+    did not build the project, and say what it holds: to --out, else to the snapshot the project
+    keeps (`_review_project`)."""
     from . import review_snapshot as rs
-    work, _ = _built_work(a)
+    work, _, top, snap, _ = _review_project(a)
+    out = Path(a.out) if a.out else snap
     try:
-        m = rs.pack(work / "site" / "data", Path(a.out), pdf=a.pdf, tool=tool_version())
+        m = rs.pack(work / "site" / "data", out, pdf=a.pdf, tool=tool_version())
     except rs.SnapshotError as e:
         sys.exit(f"machinechecked: {e}")
-    print(rs.summary_text(m))
+    # The path a reviewer gives from the project's root, or the one given here when it is
+    # outside the project.
+    try:
+        given = out.resolve().relative_to(top.resolve()).as_posix()
+    except ValueError:
+        given = str(out)
+    print(rs.summary_text(m, kept_here=out.resolve() == snap.resolve(), given=given))
+
+
+def _refresh_snapshot(a) -> None:
+    """After a build, the review snapshot the project keeps (`_review_project`), written again
+    through `review pack` when the configuration names it or its directory is there (empty, or
+    holding a snapshot), with the PDFs when the one there holds them; a snapshot that holds the
+    build's review material already is left as it is. Nothing is written for a project that
+    keeps none. A configured snapshot that cannot be written stops the command."""
+    from . import review_snapshot as rs
+    work, _, _, snap, configured = _review_project(a)
+    if not configured and not snap.is_dir():
+        return
+    if not configured and not rs.kept(snap) and any(snap.iterdir()):
+        print(f"note: {_shown(snap)} holds no review snapshot: the build left it as it is",
+              file=sys.stderr)
+        return
+    try:
+        m = rs.pack(work / "site" / "data", snap, pdf=rs.packed_pdf(snap), tool=tool_version())
+    except rs.SnapshotError as e:
+        sys.exit(f"machinechecked: the review snapshot {_shown(snap)} was not written: {e}")
+    print(rs.refresh_line(m, _shown(snap)))
 
 
 def cmd_review_promote(a):
@@ -2606,9 +2703,10 @@ def _add_review(sub) -> None:
     pm.set_defaults(func=cmd_review_promote)
     pk = rvs.add_parser("pack", help="write a review snapshot of the last build, for a reviewer "
                                      "who did not build the project and has no Lean (author)")
-    pk.add_argument("--out", required=True, metavar="FILE",
+    pk.add_argument("--out", metavar="FILE",
                     help="the snapshot: a .zip file to send or attach to a release, or a "
-                         "directory")
+                         "directory (default: the snapshot the project keeps, `[review] "
+                         "snapshot` or review-snapshot/ at its root)")
     pk.add_argument("--pdf", action="store_true",
                     help="include the paper's PDF (left out by default)")
     _config_option(pk)
@@ -2688,10 +2786,13 @@ def _add_review(sub) -> None:
                              "interpretations, so no step is locked and the report says so")
         sp.add_argument("--snapshot", metavar="FILE",
                         help="review the author's review snapshot (`review pack`: a .zip or a "
-                             "directory) instead of a build here; needs no Lean")
+                             "directory) instead of a build here; needs no Lean. Without it, "
+                             "a project with no build here is reviewed from the snapshot it "
+                             "keeps (review-snapshot/), if any")
         sp.add_argument("--review-dir", metavar="DIR",
-                        help="with --snapshot: the directory your work is kept in (default: "
-                             f"{REVIEW_DIR}/ here)")
+                        help="for a review of a snapshot: the directory your work is kept in "
+                             f"(default: {REVIEW_DIR}/ here, or at the root of the project "
+                             "whose snapshot it is)")
         _config_option(sp)
         sp.set_defaults(func=cmd_review_step)
 

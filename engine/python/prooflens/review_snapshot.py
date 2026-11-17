@@ -21,6 +21,13 @@ maintainer's side: `review promote` checks each report against the maintainer's 
 A snapshot is a directory or a zip archive of one. A zip is checked and then extracted into the
 reviewer's working directory (`snapshots/<digest>/`), never beside the archive. Nothing here runs
 Lean or TeX.
+
+A project can keep its snapshot in its repository (`project_path`: `[review] snapshot`, else
+`review-snapshot/` at its root), so that a reviewer who clones it reviews with the plain
+commands. `build` writes it again after each build, and leaves it as it is while it holds the
+build's review material (`_unchanged`): the release, evidence, commit and times that name each
+build change with every commit, and a snapshot committed with the project would otherwise never
+be current.
 """
 
 from __future__ import annotations
@@ -38,8 +45,14 @@ from pathlib import Path, PurePosixPath
 SCHEMA = "prooflens/review-snapshot@1"
 MANIFEST = "machinechecked-snapshot.json"
 DATA = "data"
-# The reviewer's working directory when none is given (`--review-dir`), in the current directory.
+# The reviewer's working directory when none is given (`--review-dir`), in the current directory
+# (at the project's root, for the snapshot a project keeps).
 REVIEW_DIR = ".machinechecked-review"
+# The directory a project keeps its review snapshot in, at its root, when its configuration names
+# none (`[review] snapshot`).
+PROJECT_DIR = "review-snapshot"
+INDEX = f"{DATA}/index.json"
+QUEUE = f"{DATA}/review-queue.json"
 # The files of the site data the review steps read (`review_cli.Session`,
 # `compare.unit_packet`, `review_cli.informed_order`): the index, the review queue and the
 # reverse references the informed order reads; and every claim record, declaration record and
@@ -61,8 +74,21 @@ def _sha256(b: bytes) -> str:
 
 
 def _json_bytes(obj) -> bytes:
-    """`obj` as the site data writes JSON (`util.write_json` without indentation)."""
-    return (json.dumps(obj, ensure_ascii=False, sort_keys=True) + "\n").encode("utf-8")
+    """`obj` as a snapshot holds JSON: its keys in the order read (`util.write_json` sorts
+    them), with no space after a separator, which keeps a snapshot kept in a repository about a
+    tenth smaller than the site data."""
+    return (json.dumps(obj, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
+
+
+def _compact(files: dict[str, bytes]) -> None:
+    """Each JSON file of `files` (in place) as `_json_bytes` writes it: the same value, read
+    back identically."""
+    for name, b in files.items():
+        if name.endswith(".json"):
+            try:
+                files[name] = _json_bytes(json.loads(b))
+            except ValueError:
+                pass
 
 
 # -- packing -----------------------------------------------------------------------------------
@@ -137,10 +163,32 @@ def contents(files: dict[str, bytes]) -> dict:
             "files": len(files), "bytes": sum(len(b) for b in files.values())}
 
 
+def project_path(root: Path, configured: Path | None = None) -> Path:
+    """The review snapshot a project keeps: the directory its configuration names (`[review]
+    snapshot`), else `review-snapshot/` at its root."""
+    return Path(configured) if configured else Path(root) / PROJECT_DIR
+
+
+def kept(path: Path) -> bool:
+    """Whether `path` is a directory holding a review snapshot (its manifest)."""
+    return Path(path).is_dir() and (Path(path) / MANIFEST).is_file()
+
+
+def packed_pdf(path: Path) -> bool:
+    """Whether the snapshot directory at `path` holds the papers' PDFs, as its manifest says;
+    False when it holds no readable manifest."""
+    try:
+        return json.loads((Path(path) / MANIFEST).read_text(encoding="utf-8")).get("pdf") is True
+    except (OSError, ValueError, AttributeError):
+        return False
+
+
 def pack(data: Path, out: Path, pdf: bool = False, tool: str = "unknown") -> dict:
     """Write the review snapshot of the site data `data` to `out`: a zip archive when `out` ends
     in `.zip`, else a directory (new, empty, or a snapshot written before, which it replaces).
-    Returns the manifest, with `out` and its `digest`."""
+    Returns the manifest, with `out` and its `digest`. A directory that holds this build's review
+    material already (`_unchanged`) is left as it is, and the manifest returned is its own, with
+    `unchanged` and the release of this build (`built`)."""
     from .targets import Snapshot
     data, out = Path(data), Path(out)
     if not (data / "index.json").is_file():
@@ -160,6 +208,7 @@ def pack(data: Path, out: Path, pdf: bool = False, tool: str = "unknown") -> dic
                             "snapshot: give a new name")
     files = _selected(data, pdf)
     left_out = _without_workspace_content(files)
+    _compact(files)
     index = json.loads(files[f"{DATA}/index.json"])
     manifest = {
         "schema": SCHEMA,
@@ -173,6 +222,10 @@ def pack(data: Path, out: Path, pdf: bool = False, tool: str = "unknown") -> dic
         "left_out": left_out,
         "files": {n: _sha256(b) for n, b in sorted(files.items())},
     }
+    if not zipped and kept(out):
+        same = _unchanged(out, manifest, files)
+        if same is not None:
+            return same
     raw = (json.dumps(manifest, indent=1, ensure_ascii=False, sort_keys=True) + "\n") \
         .encode("utf-8")
     if zipped:
@@ -214,16 +267,113 @@ def _write_dir(out: Path, raw: bytes, files: dict[str, bytes]) -> None:
     (out / MANIFEST).write_bytes(raw)
 
 
-def summary_text(m: dict) -> str:
-    """What `review pack` says it wrote (`m`, the manifest `pack` returns)."""
+def _build_names(index: dict) -> tuple:
+    """What names a build in its index: its release, its evidence record and the project's
+    commit."""
+    return (index.get("release"), index.get("evidence"),
+            (index.get("project") or {}).get("commit"))
+
+
+def _renamed(obj, names: dict):
+    """`obj` with every string that is a key of `names` replaced by its value."""
+    if isinstance(obj, str):
+        return names.get(obj, obj)
+    if isinstance(obj, list):
+        return [_renamed(x, names) for x in obj]
+    if isinstance(obj, dict):
+        return {k: _renamed(v, names) for k, v in obj.items()}
+    return obj
+
+
+def _unnamed(name: str, obj):
+    """The file `name` of a snapshot (`obj`, as read) without what names its build beside the
+    release, evidence and commit: the time the index was made, whether the tree had uncommitted
+    changes, and the earlier release the review queue's order compared the build with."""
+    if name == INDEX and isinstance(obj, dict):
+        obj.pop("created", None)
+        if isinstance(obj.get("project"), dict):
+            obj["project"].pop("dirty", None)
+    if name == QUEUE and isinstance(obj, dict):
+        changes = ((obj.get("order") or {}).get("signals") or {}).get("changes")
+        if isinstance(changes, dict):
+            changes.pop("from", None)
+    return obj
+
+
+def _same_material(new: dict[str, bytes], old: dict[str, bytes]) -> bool:
+    """Whether the files `new` of a build hold what the files `old` of an earlier one hold, apart
+    from what names each build: its release, evidence record and project commit, wherever they
+    are given (a paper kept in the project's repository has the project's commit), and
+    `_unnamed`. Anything else that differs, or a file that cannot be read, is a difference."""
+    try:
+        ni, oi = json.loads(new[INDEX]), json.loads(old[INDEX])
+    except (KeyError, ValueError):
+        return False
+    swap = {}
+    for a, b in zip(_build_names(ni), _build_names(oi)):
+        if a != b:
+            if not (isinstance(a, str) and isinstance(b, str)):
+                return False
+            swap[a] = b
+    commits = (_build_names(ni)[2], _build_names(oi)[2])
+    if commits[0] != commits[1]:
+        # A paper that is a file of the project is the manuscript at the project's commit, named
+        # by that commit (`versions.manuscript_record`).
+        from .versions import manuscript_record
+        a, b = (manuscript_record(c) for c in commits)
+        swap.update({a[k]: b[k] for k in ("id", "label")})
+    for name, b in new.items():
+        if b == old.get(name):
+            continue
+        if name not in old or not name.endswith(".json"):
+            return False
+        try:
+            x, y = _renamed(json.loads(b), swap), json.loads(old[name])
+        except ValueError:
+            return False
+        if _unnamed(name, x) != _unnamed(name, y):
+            return False
+    return set(new) == set(old)
+
+
+def _unchanged(out: Path, manifest: dict, files: dict[str, bytes]) -> dict | None:
+    """The snapshot written at `out` before, when it is complete and holds this build's review
+    material (`_same_material`, with the same PDFs and the same parts left out): its manifest,
+    with `out`, `digest`, `unchanged` and the release of this build (`built`). None when it must
+    be written again."""
+    raw = (out / MANIFEST).read_bytes()
+    try:
+        old = _manifest(raw, str(out))
+        _check_dir(out, old, str(out))
+        _check_sources(out / DATA, old, str(out))
+    except SnapshotError:
+        return None
+    if set(old["files"]) != set(files) or any(old.get(k) != manifest[k]
+                                              for k in ("mode", "pdf", "left_out")):
+        return None
+    if not _same_material(files, {n: (out / n).read_bytes() for n in files}):
+        return None
+    return {**old, "out": str(out), "digest": _sha256(raw), "unchanged": True,
+            "built": manifest["sources"].get("release")}
+
+
+def summary_text(m: dict, kept_here: bool = False, given: str | None = None) -> str:
+    """What `review pack` says it wrote (`m`, the manifest `pack` returns); `kept_here` when it is
+    the snapshot the project keeps (`project_path`), which the review steps find without a flag;
+    `given`, the path a reviewer passes with --snapshot (by default the one written)."""
     c, src = m["contains"], m["sources"]
     proj = src.get("project") or {}
     papers = "; ".join(f"paper {p.get('id')}" + (f" at revision {p['revision']}"
                                                   if p.get("revision") else "")
                        for p in src.get("papers") or [])
-    lines = [f"wrote the review snapshot {m['out']}: release {src.get('release')}"
+    head = (f"the review snapshot {m['out']} is current, as written for release "
+            f"{src.get('release')}" if m.get("unchanged") else
+            f"wrote the review snapshot {m['out']}: release {src.get('release')}")
+    lines = [head
              + (f", project commit {proj['commit']}" if proj.get("commit") else "")
-             + (f"; {papers}" if papers else ""),
+             + (f"; {papers}" if papers else "")
+             + (f"; this build, release {m['built']}, holds the same review material"
+                if m.get("unchanged") and m.get("built") != src.get("release") else ""),
              f"  {c['units']} review unit(s), {c['open_units']} of them open",
              f"  the paper's passages of {c['claims']} claim(s)",
              f"  {c['declarations']} Lean declaration record(s): statements and definitions",
@@ -234,9 +384,25 @@ def summary_text(m: dict) -> str:
         lines.append(f"  left out: {what}")
     lines += [f"Manifest digest {m['digest']}.",
               "Its contents are yours to publish: share it where the paper's text and your "
-              "reviews may go. A reviewer opens it with `machinechecked review next --snapshot "
-              f"{Path(m['out']).name}`, without Lean."]
+              "reviews may go. "
+              + ("Commit it with the project: a reviewer who clones the repository reviews it "
+                 "with `machinechecked review next`, without Lean, and `machinechecked build` "
+                 "keeps it current." if kept_here else
+                 "A reviewer opens it with `machinechecked review next --snapshot "
+                 f"{given or m['out']}`, without Lean.")]
     return "\n".join(lines)
+
+
+def refresh_line(m: dict, shown: str) -> str:
+    """What `build` says of the snapshot the project keeps (`m`, the manifest `pack` returned;
+    `shown`, its path as the command shows it)."""
+    rel = m["sources"].get("release")
+    if not m.get("unchanged"):
+        return (f"wrote the review snapshot {shown} (release {rel}): commit it with the project "
+                "for reviewers who clone the repository")
+    return (f"the review snapshot {shown} is current (release {rel}"
+            + (f"; this build, release {m['built']}, holds the same review material"
+               if m.get("built") != rel else "") + ")")
 
 
 # -- reading -----------------------------------------------------------------------------------

@@ -26,6 +26,8 @@ notation_macros = ["R", "E"]  # optional: notation whose definitions readings re
 
 [review]
 check = "python3 tools/check.py"  # optional post-promotion check
+snapshot = "review-snapshot"      # optional: the review snapshot build keeps, for reviewers
+                                  # who clone the repository (REVIEWING.md)
 
 [[paper]]
 id = "A"
