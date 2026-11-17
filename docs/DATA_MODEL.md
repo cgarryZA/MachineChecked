@@ -122,8 +122,8 @@ The snapshot a project keeps is the directory `[review] snapshot` names in `mach
 (relative to the project's root, inside it, not a `.zip`), else `review-snapshot/` at the
 project's root. `review pack` without `--out` writes it, and `build` writes it again when it is
 configured or the directory is there. A directory that already holds a complete snapshot of the
-same material is left unchanged: the same files, with the same `mode`, `pdf` and `left_out`,
-each file the same apart from what names the build. That is its release, evidence record and
+same material is left unchanged: the same files, with the same `schema`, `mode`, `pdf`,
+`left_out` and `paper_text` (below), each file the same apart from what names the build. That is its release, evidence record and
 project commit wherever they are given (with the manuscript version the commit names, for a
 paper kept in the project), the index's `created` and the project's `dirty`, and the earlier
 release the review queue's order compared the build with (`order.signals.changes.from`). Its
