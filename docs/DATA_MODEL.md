@@ -103,7 +103,8 @@ snapshot has `evidence`: `{"kind": "snapshot", "manifest_sha256", "schema", "rel
 and what the manifest names (below); a report made from a build of the reviewer's working
 directory has none. `review promote` checks either kind by the same rules.
 
-A review snapshot (`prooflens/review-snapshot@1`, written by `review pack`) is a directory or a
+A review snapshot (`prooflens/review-snapshot@1`, or `@2` without a paper's text, below; written
+by `review pack`) is a directory or a
 zip archive of one: `data/`, the files of a build's site data the review steps read
 (`index.json`, `review-queue.json`, `uses.json` when present, `claims/`, `decls/`,
 `expansions/`, and `papers/` with `--pdf`; each JSON file with the same value, written with no
@@ -121,13 +122,30 @@ The snapshot a project keeps is the directory `[review] snapshot` names in `mach
 (relative to the project's root, inside it, not a `.zip`), else `review-snapshot/` at the
 project's root. `review pack` without `--out` writes it, and `build` writes it again when it is
 configured or the directory is there. A directory that already holds a complete snapshot of the
-same material is left unchanged: the same files, with the same `mode`, `pdf` and `left_out`,
-each file the same apart from what names the build. That is its release, evidence record and
+same material is left unchanged: the same files, with the same `schema`, `mode`, `pdf`,
+`left_out` and `paper_text` (below), each file the same apart from what names the build. That is its release, evidence record and
 project commit wherever they are given (with the manuscript version the commit names, for a
 paper kept in the project), the index's `created` and the project's `dirty`, and the earlier
 release the review queue's order compared the build with (`order.signals.changes.from`). Its
 manifest then names the release it was written for, whose review material the later build holds
 too. The review steps without `--snapshot` read it when the project has no build of its own.
+
+A snapshot of a full assessment has `paper_text` in its manifest, for each paper: `{"included":
+true, "because": "published" | "asked" | "pdf"}` (its `publish.source_text`, `--with-paper-text`,
+or a paper read from its PDF), or, when its text is left out, `{"included": false, "source",
+"files"}`, with `source` one of `{"kind": "arxiv", "arxiv"}`, `{"kind": "path", "path"}` (the
+paper's folder in the project) and `{"kind": "git", "revision"}`, and `files` each file of the
+source a passage comes from with its SHA-256. A snapshot that leaves out a paper's text has the
+schema `prooflens/review-snapshot@2`. Its claim records of that paper hold `null` for each text of
+the source (`statement_tex`, `context_tex`, `anchor.statement`, each `source_parts[].text`) and
+for `excerpt`, and `data/paper-sources.json` (`prooflens/paper-sources@1`) says where each text
+is: `claims` maps a claim record (`claims/….json`) to a list of `{at, paper, file, bytes, form,
+sha256}`, with `at` the field's path in the record, `bytes` (`[start, end]`) the range of the file,
+`form` how the text is made of those bytes read as UTF-8 (`text`, its line endings read as
+newlines; `whitespace`, also each run of white space one space and none at the ends) and `sha256`
+the digest of the text. A reviewer's step checks every file and every text against its digest,
+then reads a copy of the site data with each text in place, in `resolved/` of the reviewer's
+working directory; the paper's source is kept in its `sources/`.
 
 A report's `correspondence` is the coverage its reviewer recorded with the verdict (at
 `comparison.decided_at`), or `null`; an older report has none, and its coverage is not recorded.

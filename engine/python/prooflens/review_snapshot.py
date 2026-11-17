@@ -43,6 +43,10 @@ import zipfile
 from pathlib import Path, PurePosixPath
 
 SCHEMA = "prooflens/review-snapshot@1"
+# A snapshot that leaves out the text of a paper's source (`snapshot_text`): a version that does
+# not read it again from the source cannot read it.
+SCHEMA_WITHOUT_TEXT = "prooflens/review-snapshot@2"
+SCHEMAS = (SCHEMA, SCHEMA_WITHOUT_TEXT)
 MANIFEST = "machinechecked-snapshot.json"
 DATA = "data"
 # The reviewer's working directory when none is given (`--review-dir`), in the current directory
@@ -63,6 +67,10 @@ PAPERS = "papers"
 HEX64 = re.compile(r"[0-9a-f]{64}")
 # How many of a check's problems a refusal names.
 SHOWN = 10
+# Why a paper of a configuration keeps its text in a snapshot (the manifest's `paper_text`).
+KEPT = {"published": "its source text is published (publish.source_text)",
+        "asked": "as asked (--with-paper-text): hand this snapshot over privately",
+        "pdf": "it is read from its PDF, whose text has no source to read it again from"}
 
 
 class SnapshotError(RuntimeError):
@@ -183,12 +191,16 @@ def packed_pdf(path: Path) -> bool:
         return False
 
 
-def pack(data: Path, out: Path, pdf: bool = False, tool: str = "unknown") -> dict:
+def pack(data: Path, out: Path, pdf: bool = False, tool: str = "unknown",
+         without: dict[str, dict] | None = None, kept_text: dict[str, str] | None = None) -> dict:
     """Write the review snapshot of the site data `data` to `out`: a zip archive when `out` ends
     in `.zip`, else a directory (new, empty, or a snapshot written before, which it replaces).
-    Returns the manifest, with `out` and its `digest`. A directory that holds this build's review
-    material already (`_unchanged`) is left as it is, and the manifest returned is its own, with
-    `unchanged` and the release of this build (`built`)."""
+    The text of the sources of the papers `without` names (`snapshot_text.leave_out`) is left
+    out, and the snapshot is scanned for it (`snapshot_text.scan`); `kept_text` says why each
+    other paper of a configuration keeps its text (`KEPT`). Returns the manifest, with `out` and
+    its `digest`. A directory that holds this build's review material already (`_unchanged`) is
+    left as it is, and the manifest returned is its own, with `unchanged` and the release of
+    this build (`built`)."""
     from .targets import Snapshot
     data, out = Path(data), Path(out)
     if not (data / "index.json").is_file():
@@ -209,9 +221,24 @@ def pack(data: Path, out: Path, pdf: bool = False, tool: str = "unknown") -> dic
     files = _selected(data, pdf)
     left_out = _without_workspace_content(files)
     _compact(files)
+    paper_text = {pid: {"included": True, "because": why} for pid, why in (kept_text or {}).items()}
+    if without:
+        from . import snapshot_text as st
+        entries, said = st.leave_out(files, without)
+        paper_text.update(entries)
+        left_out += said
+        leaks = st.scan(files, without)
+        if leaks:
+            raise SnapshotError(
+                f"the snapshot would hold text of the source of paper(s) "
+                f"{', '.join(sorted(without))}, which their configuration keeps private "
+                "(publish.source_text = false): " + "; ".join(leaks[:SHOWN])
+                + (f"; and {len(leaks) - SHOWN} more" if len(leaks) > SHOWN else "")
+                + ". Nothing was written: remove the quotation from the project's file it comes "
+                  "from, or give --with-paper-text for a snapshot you hand over privately")
     index = json.loads(files[f"{DATA}/index.json"])
     manifest = {
-        "schema": SCHEMA,
+        "schema": SCHEMA_WITHOUT_TEXT if without else SCHEMA,
         "created_at": _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "tool": {"name": "machinechecked", "version": tool},
         "sources": Snapshot(data).sources(),
@@ -220,6 +247,7 @@ def pack(data: Path, out: Path, pdf: bool = False, tool: str = "unknown") -> dic
         "pdf": bool(pdf),
         "contains": contents(files),
         "left_out": left_out,
+        **({"paper_text": dict(sorted(paper_text.items()))} if paper_text else {}),
         "files": {n: _sha256(b) for n, b in sorted(files.items())},
     }
     if not zipped and kept(out):
@@ -348,8 +376,8 @@ def _unchanged(out: Path, manifest: dict, files: dict[str, bytes]) -> dict | Non
         _check_sources(out / DATA, old, str(out))
     except SnapshotError:
         return None
-    if set(old["files"]) != set(files) or any(old.get(k) != manifest[k]
-                                              for k in ("mode", "pdf", "left_out")):
+    if set(old["files"]) != set(files) or any(old.get(k) != manifest.get(k) for k in
+                                              ("schema", "mode", "pdf", "left_out", "paper_text")):
         return None
     if not _same_material(files, {n: (out / n).read_bytes() for n in files}):
         return None
@@ -366,6 +394,9 @@ def summary_text(m: dict, kept_here: bool = False, given: str | None = None) -> 
     papers = "; ".join(f"paper {p.get('id')}" + (f" at revision {p['revision']}"
                                                   if p.get("revision") else "")
                        for p in src.get("papers") or [])
+    from .snapshot_text import source_name
+    texts = m.get("paper_text") or {}
+    none = bool(texts) and all(e.get("included") is False for e in texts.values())
     head = (f"the review snapshot {m['out']} is current, as written for release "
             f"{src.get('release')}" if m.get("unchanged") else
             f"wrote the review snapshot {m['out']}: release {src.get('release')}")
@@ -375,16 +406,25 @@ def summary_text(m: dict, kept_here: bool = False, given: str | None = None) -> 
              + (f"; this build, release {m['built']}, holds the same review material"
                 if m.get("unchanged") and m.get("built") != src.get("release") else ""),
              f"  {c['units']} review unit(s), {c['open_units']} of them open",
-             f"  the paper's passages of {c['claims']} claim(s)",
+             f"  where the paper's passages of {c['claims']} claim(s) are in its source" if none
+             else f"  the paper's passages of {c['claims']} claim(s)",
              f"  {c['declarations']} Lean declaration record(s): statements and definitions",
              f"  {c['author_reviews']} review(s) by the author, shown at step 3",
              "  the paper's PDF" if c["pdfs"] else
              "  no PDF of the paper (`--pdf` includes it)"]
+    for pid, e in sorted(texts.items()):
+        if e.get("included") is False:
+            lines.append(f"  paper {pid}: its text left out; a reviewer reads each passage from "
+                         f"{source_name(e.get('source') or {})}, checked against its SHA-256")
+        elif e.get("because") in ("asked", "pdf"):
+            lines.append(f"  paper {pid}: its text kept, {KEPT[e['because']]}")
     for what in m.get("left_out") or []:
         lines.append(f"  left out: {what}")
     lines += [f"Manifest digest {m['digest']}.",
-              "Its contents are yours to publish: share it where the paper's text and your "
-              "reviews may go. "
+              ("It holds no text of the paper's source: share it where your Lean and reviews "
+               "may go. " if none else
+               "Its contents are yours to publish: share it where the paper's text and your "
+               "reviews may go. ")
               + ("Commit it with the project: a reviewer who clones the repository reviews it "
                  "with `machinechecked review next`, without Lean, and `machinechecked build` "
                  "keeps it current." if kept_here else
@@ -396,13 +436,17 @@ def summary_text(m: dict, kept_here: bool = False, given: str | None = None) -> 
 def refresh_line(m: dict, shown: str) -> str:
     """What `build` says of the snapshot the project keeps (`m`, the manifest `pack` returned;
     `shown`, its path as the command shows it)."""
+    from .snapshot_text import left_out
     rel = m["sources"].get("release")
+    out = sorted(left_out(m))
+    without = (f"; the text of paper {', '.join(out)} is left out, for the reviewer to read "
+               "from its source" if out else "")
     if not m.get("unchanged"):
-        return (f"wrote the review snapshot {shown} (release {rel}): commit it with the project "
-                "for reviewers who clone the repository")
+        return (f"wrote the review snapshot {shown} (release {rel}{without}): commit it with the "
+                "project for reviewers who clone the repository")
     return (f"the review snapshot {shown} is current (release {rel}"
             + (f"; this build, release {m['built']}, holds the same review material"
-               if m.get("built") != rel else "") + ")")
+               if m.get("built") != rel else "") + without + ")")
 
 
 # -- reading -----------------------------------------------------------------------------------
@@ -423,11 +467,11 @@ def _manifest(raw: bytes, where: str) -> dict:
         m = json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, ValueError) as e:
         raise SnapshotError(f"{where}: the snapshot's manifest is not JSON ({e})") from None
-    if not isinstance(m, dict) or m.get("schema") != SCHEMA:
+    if not isinstance(m, dict) or m.get("schema") not in SCHEMAS:
         schema = m.get("schema") if isinstance(m, dict) else None
         raise SnapshotError(f"{where} is not a review snapshot this version reads (schema "
-                            f"{schema!r}, not {SCHEMA}): ask its author for one written by "
-                            "`machinechecked review pack`")
+                            f"{schema!r}, not {' or '.join(SCHEMAS)}): ask its author for one "
+                            "written by `machinechecked review pack`")
     files = m.get("files")
     if not isinstance(files, dict) or not files or not all(
             _name_ok(k) and isinstance(v, str) and HEX64.fullmatch(v) for k, v in files.items()):
@@ -438,6 +482,11 @@ def _manifest(raw: bytes, where: str) -> dict:
             raise SnapshotError(f"{where}: the manifest lists no {need}")
     if not isinstance(m.get("sources"), dict):
         raise SnapshotError(f"{where}: the manifest does not say what the snapshot is (sources)")
+    if m["schema"] == SCHEMA_WITHOUT_TEXT:
+        from .snapshot_text import REFS, left_out
+        if REFS not in files or not left_out(m):
+            raise SnapshotError(f"{where}: the manifest leaves out the paper's text without "
+                                f"saying where it is ({REFS}, paper_text)")
     return m
 
 
@@ -498,7 +547,7 @@ def provenance(m: dict, raw: bytes) -> dict:
     """What a report made against the snapshot records it was reviewed against (`evidence`):
     the manifest's digest and the snapshot's pins."""
     src = m["sources"]
-    return {"kind": "snapshot", "manifest_sha256": _sha256(raw), "schema": SCHEMA,
+    return {"kind": "snapshot", "manifest_sha256": _sha256(raw), "schema": m.get("schema"),
             "created_at": m.get("created_at"), "tool": m.get("tool"),
             "release": src.get("release"), "evidence_id": m.get("evidence_id"),
             "project": src.get("project") or {}, "papers": src.get("papers") or []}

@@ -275,8 +275,14 @@ def scan(out: Path, texts: list[Path], hashes: set[str],
                 except json.JSONDecodeError:
                     pass
             found = None
+            # Every string of the file in one, so that a line absent from all of them, the usual
+            # case, is ruled out by one search; a line with the separator is looked for in each.
+            joined = "\0".join(v for _, v in fields)
             for s, src in lines.items():
-                where = next((path for path, v in fields if s in v), None)
+                if "\0" in s or s in joined:
+                    where = next((path for path, v in fields if s in v), None)
+                else:
+                    where = None
                 if where is not None or s in text:
                     found = f"a line of {src.name}" + (f" (in {where})" if where else "")
                     break

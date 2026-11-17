@@ -82,10 +82,11 @@ COVERAGE_FOR = {"matches": ("full", "partial"), "problem": ("partial", "changed"
 
 class ReviewError(RuntimeError):
     """A step refused, with what to do instead. `kind` says why: `no-build`, `snapshot` (a
-    review snapshot that is incomplete, inconsistent or of another format), `unknown-unit`,
-    `order` (a step before the one it follows), `reported`, `invalid`, `stale` (the build
-    changed since the material was shown), `conflict` (the draft changed meanwhile; `conflicts`
-    holds it as saved) or `workspace`."""
+    review snapshot that is incomplete, inconsistent or of another format), `paper-source` (the
+    source of a paper whose text the snapshot leaves out, not obtained or not the one it was
+    made from), `unknown-unit`, `order` (a step before the one it follows), `reported`,
+    `invalid`, `stale` (the build changed since the material was shown), `conflict` (the draft
+    changed meanwhile; `conflicts` holds it as saved) or `workspace`."""
 
     def __init__(self, message: str, kind: str = "refused", conflicts: list | None = None):
         super().__init__(message)

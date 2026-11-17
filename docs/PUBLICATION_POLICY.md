@@ -12,7 +12,10 @@
 
 1. **Everything defaults to private.** A paper's `publish` table must say explicitly
    `pdf = true`, `source_text = true`, `lean = true` or `reviews = true`. With
-   `source_text = false`, the export carries no manuscript text, file paths or source locations.
+   `source_text = false`, the export carries no manuscript text, file paths or source locations,
+   and a review snapshot carries no manuscript text: it says where each passage is, for the
+   reviewer to read from the paper's source
+   ([Reviewing](REVIEWING.md#a-paper-whose-text-may-not-be-redistributed)).
    With `lean = false`, it carries no Lean statements or declaration bodies. With
    `reviews = false`, it carries reviewers and states but not review texts.
    The auditors' accepted workspace records, what each submitted finding rests on, and the
