@@ -97,7 +97,24 @@ on one of them in `verdict.members` (name to `{group, value, detail}`). Its `mod
 is `independent` (the three steps, each locked) or `informed` (made in an informed workspace: no
 step is locked, `reading.text` is empty and `reading.locked_at` null when the reviewer recorded
 no reading, and `reading.revealed_by` lists the workspace's exposure); a report without `mode`
-was made before it was recorded, by the independent steps.
+was made before it was recorded, by the independent steps. A report made against a review
+snapshot has `evidence`: `{"kind": "snapshot", "manifest_sha256", "schema", "release",
+"evidence_id", "project", "papers", "created_at", "tool"}`, the digest of the snapshot's manifest
+and what the manifest names (below); a report made from a build of the reviewer's working
+directory has none. `review promote` checks either kind by the same rules.
+
+A review snapshot (`prooflens/review-snapshot@1`, written by `review pack`) is a directory or a
+zip archive of one: `data/`, the files of a build's site data the review steps read
+(`index.json`, `review-queue.json`, `uses.json` when present, `claims/`, `decls/`,
+`expansions/`, and `papers/` with `--pdf`), and `machinechecked-snapshot.json`, its manifest:
+`schema`, `created_at`, `tool` (`{name, version}`), `sources` (`release`, `project` with its
+`name`, `commit` and `repository`, and `papers`, each with its `id`, `title`, `revision` and
+`pdf_sha256`), `evidence_id` (the build's evidence record), `mode`, `pdf`, `contains` (the
+counts `review pack` prints), `left_out` (what came from the author's workspaces and was left
+out: the index's `semantic` summary, and each claim reference's `current` that a kept version
+map gives) and `files` (each path under `data/` to its SHA-256). A reviewer's step refuses a
+snapshot that lacks a file the manifest lists, holds one it does not list, has a file whose
+digest differs, or whose index is not the build the manifest names.
 
 A report's `correspondence` is the coverage its reviewer recorded with the verdict (at
 `comparison.decided_at`), or `null`; an older report has none, and its coverage is not recorded.

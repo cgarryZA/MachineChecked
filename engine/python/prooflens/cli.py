@@ -2106,10 +2106,14 @@ def _review_status(a, s) -> None:
                      "order": {"by": a.order, **({"queue": s.queue["order"]}
                                                  if s.queue.get("order") else {}),
                                **({"informed": s.order_record} if s.order_record else {})},
+                     **({"evidence": s.evidence} if s.evidence else {}),
                      "open": [u["id"] for u in units]})
         return
     print(f"{len(s.work['reports'])} report(s), {len(s.work['drafts'])} in progress, "
           f"{len(units)} unit(s) left to review (release {s.index['release']})")
+    if s.evidence:
+        print(f"  the review snapshot {s.evidence['manifest_sha256']}; your work is kept in "
+              f"{s.work_dir}")
     if here["id"]:
         print(f"  workspace {here['id']} ({here['mode']}"
               + ("; your readings here are not blind" if s.informed else "") + ")")
@@ -2320,15 +2324,50 @@ REVIEW_STEPS = {
 }
 
 
+def _review_target(a) -> tuple[Path, Path | None, Path | None, dict | None]:
+    """Where a review step works: the working directory, the site data (None: the working
+    directory's own), the Lean project and, for a review snapshot, its provenance. With
+    --snapshot, the snapshot checked against its manifest and a working directory of the
+    reviewer's own (`review_snapshot`); no configuration or Lean project is read. Otherwise the
+    last build of the project here (`_built_work`)."""
+    from . import review_cli as rc
+    from . import review_snapshot as rs
+    if not getattr(a, "snapshot", None):
+        if getattr(a, "review_dir", None):
+            raise rc.ReviewError("--review-dir is the working directory of a review of a "
+                                 "snapshot: give --snapshot FILE too", "invalid")
+        try:
+            work, root = _built_work(a)
+        except SystemExit as e:
+            # No project here: the command cannot run, and a snapshot, which needs no project,
+            # is the way to review one built elsewhere.
+            if e.code == NO_PROJECT:
+                sys.exit(f"machinechecked: {rc.NO_BUILD}")
+            raise
+        return work, None, root, None
+    if getattr(a, "config", None):
+        raise rc.ReviewError("--snapshot reviews the snapshot alone, with no configuration: "
+                             "leave out -c", "invalid")
+    work = Path(a.review_dir or rs.REVIEW_DIR).resolve()
+    try:
+        rs.check_work_dir(work, Path(a.snapshot))
+        data, evidence = rs.open_snapshot(Path(a.snapshot), work)
+        rs.prepare_work_dir(work)
+    except rs.SnapshotError as e:
+        raise rc.ReviewError(str(e), "snapshot") from None
+    return work, data, None, evidence
+
+
 def cmd_review_step(a):
     """One step of the review protocol, in the reviewer's session (`review_cli.Session`). A step
     that could not be taken exits 2; with --json, it also prints the refusal as a document."""
     from . import review_cli as rc
-    work, root = _built_work(a)
     try:
+        work, data, root, evidence = _review_target(a)
+
         def session():
             return rc.Session(work, rc.parse_reviewer(a.reviewer, a.same_family), a.workspace,
-                              a.mode, root=root)
+                              a.mode, data_dir=data, root=root, evidence=evidence)
         if getattr(a, "manifest", None):
             return _review_manifest(a, session)
         REVIEW_STEPS[a.action][0](a, session())
@@ -2339,6 +2378,18 @@ def cmd_review_step(a):
         sys.exit(f"machinechecked: {e}")
     except OSError as e:
         sys.exit(f"machinechecked: {e}")
+
+
+def cmd_review_pack(a):
+    """Write a review snapshot of the last build (`review_snapshot.pack`), for a reviewer who
+    did not build the project, and say what it holds."""
+    from . import review_snapshot as rs
+    work, _ = _built_work(a)
+    try:
+        m = rs.pack(work / "site" / "data", Path(a.out), pdf=a.pdf, tool=tool_version())
+    except rs.SnapshotError as e:
+        sys.exit(f"machinechecked: {e}")
+    print(rs.summary_text(m))
 
 
 def cmd_review_promote(a):
@@ -2359,6 +2410,8 @@ def cmd_review_promote(a):
                f"{r.get('verdict', {}).get('value')}"
         if pr.coverage_text(r):
             head += f"; coverage: {pr.coverage_text(r)}"
+        if pr.evidence_text(r):
+            head += f"\n           {pr.evidence_text(r)}"
         if why:
             print(f"REFUSED  {head}")
             for w in why:
@@ -2538,6 +2591,7 @@ def _add_check(sub) -> None:
 
 
 def _add_review(sub) -> None:
+    from .review_snapshot import REVIEW_DIR
     rv = _command(sub, "review")
     rvs = rv.add_subparsers(dest="action", required=True)
     pm = rvs.add_parser("promote", help="turn review reports into review markers (maintainer)")
@@ -2550,6 +2604,15 @@ def _add_review(sub) -> None:
                     help="accept a report whose reviewer had seen the unit's Lean or author's "
                          "review before writing their reading")
     pm.set_defaults(func=cmd_review_promote)
+    pk = rvs.add_parser("pack", help="write a review snapshot of the last build, for a reviewer "
+                                     "who did not build the project and has no Lean (author)")
+    pk.add_argument("--out", required=True, metavar="FILE",
+                    help="the snapshot: a .zip file to send or attach to a release, or a "
+                         "directory")
+    pk.add_argument("--pdf", action="store_true",
+                    help="include the paper's PDF (left out by default)")
+    _config_option(pk)
+    pk.set_defaults(func=cmd_review_pack)
     rp = rvs.add_parser("reports", help="write the promoted reports as readable text "
                                         "(generated from their records; maintainer)")
     _config_option(rp)
@@ -2623,6 +2686,12 @@ def _add_review(sub) -> None:
                         help="review in your workspace of this mode, opening one if you have "
                              "none; informed: you have seen the Lean and earlier "
                              "interpretations, so no step is locked and the report says so")
+        sp.add_argument("--snapshot", metavar="FILE",
+                        help="review the author's review snapshot (`review pack`: a .zip or a "
+                             "directory) instead of a build here; needs no Lean")
+        sp.add_argument("--review-dir", metavar="DIR",
+                        help="with --snapshot: the directory your work is kept in (default: "
+                             f"{REVIEW_DIR}/ here)")
         _config_option(sp)
         sp.set_defaults(func=cmd_review_step)
 

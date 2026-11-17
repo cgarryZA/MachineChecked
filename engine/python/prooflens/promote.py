@@ -23,6 +23,10 @@ it now is, or that the acceptance rules cannot count as an independent review:
   reviewer's work (their workspaces, or a static copy's browser); neither can see what they read
   elsewhere.
 
+A report made against a review snapshot the project's author packed (its `evidence`,
+`review_snapshot.py`) is checked by exactly these rules, against the maintainer's own release; the
+plan and the text block say it was reviewed against supplied evidence.
+
 A report on a proof step (unit `step:<claim id>`) is checked the same way, against the step's
 source text instead of a declaration: the step's pinned source hash must be the one the report
 was made at, and match the manuscript; its verdict must be holds as printed, holds with a gap
@@ -284,6 +288,18 @@ def coverage_text(r: dict) -> str | None:
     return out
 
 
+def evidence_text(r: dict) -> str | None:
+    """What a report was reviewed against, in words, when it was not a build of the reviewer's
+    own: the review snapshot its project's author packed (`review_snapshot`), by its manifest's
+    digest and release. None for any other report. Promotion checks such a report against the
+    maintainer's release exactly as any other."""
+    e = r.get("evidence")
+    if not isinstance(e, dict) or e.get("kind") != "snapshot":
+        return None
+    return (f"reviewed against supplied evidence: the review snapshot "
+            f"{e.get('manifest_sha256')} of release {e.get('release')}")
+
+
 def step_claim(body: dict, u: dict) -> dict | None:
     """The inventory entry of the proof step a step unit reviews, if it is one."""
     from .steps import is_step
@@ -386,6 +402,7 @@ def report_text(r: dict, cur: dict | None = None) -> str:
         + (f"source {cur['source_sha256']}" if u["kind"] == "step" else
            f"hash {cur['legacy_hash']} ({p.get('fingerprint')}); source "
            f"{review_sources.attribute(p.get('source_sha256') or {}) or '—'}"),
+        *([f"Evidence: {evidence_text(r)}"] if evidence_text(r) else []),
         f"Reviewer: {rv['id']} ({rv['kind']}{', ' + rv['model'] if rv.get('model') else ''}, "
         f"self-declared); {r['submitted_at']}; same model family as the author: "
         f"{rv.get('same_family_as_author')}",
