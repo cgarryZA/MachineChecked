@@ -780,8 +780,9 @@ are those the auditor read; a bridge Lean does not check counts as `reviewed_com
 claim's reading says it was recorded as a checked bridge (`recorded_basis`); a links-file bridge
 whose target or passage changed counts as `stale`. In a full assessment a statement's review is
 read from its clauses' review states (`independent` only when every clause is `reviewed`,
-`stale` when one is pending and a review it needs is stale), in zero configuration from each
-reviewer's latest report: `independent` when a current one records that nothing of the Lean or
+`stale` when one is pending and a review it needs is stale; a clause that names no proposition,
+or in a definition claim no definition either, is pending: it has nothing to review), in zero
+configuration from each reviewer's latest report: `independent` when a current one records that nothing of the Lean or
 the author's review was shown before its reading was locked (`reading.revealed_by`), `informed`
 when the current ones do not. The finding kinds read: an `unresolved` reading, a *cannot
 determine* report, an `undetermined` step and a difference still `open` (open questions); a
