@@ -27,9 +27,11 @@ import json
 import re
 from pathlib import Path
 
+# `reading choice`: the reading an auditor chooses for a definition the paper leaves open
+# (`reading_choice.py`).
 FORMS = ("statement", "object", "assumption", "conclusion", "condition", "for every",
          "there is", "and", "or", "not", "implies", "constant dependence", "definition",
-         "other")
+         "other", "reading choice")
 BINDING_FORMS = ("for every", "there is", "constant dependence")
 ORIGINS = ("printed", "correction")
 FRAGMENT_ROLES = ("statement", "quantifier domain", "constant dependence",
@@ -160,6 +162,16 @@ def requirement_content(out: dict, rec: dict, ws: dict, rid: str | None) -> dict
         out["corrects"] = known_requirement(ws, out["claim"], rec["corrects"], "`corrects`")
         if out["corrects"] == lid:
             raise _err("a correction is a requirement of its own, beside the printed one")
+    if out["form"] == "reading choice":
+        from .reading_choice import ChoiceError, content
+        try:
+            content(out, rec)
+        except ChoiceError as e:
+            raise _err(str(e)) from None
+    else:
+        for k in ("readings", "chosen", "reason", "equivalence"):
+            if rec.get(k) not in (None, "", []):
+                raise _err(f"`{k}` belongs to a requirement of form `reading choice`")
     return out
 
 
@@ -711,7 +723,7 @@ def reading_digest(req: dict, fragments: list[dict]) -> str:
     the fragments that govern it (not later uses, proposals or removed ones)."""
     body = {k: req.get(k) for k in ("form", "text", "binds", "independent_of", "origin",
                                     "parent", "corrects")}
-    for k in ("domain", "depends_on"):
+    for k in ("domain", "depends_on", "reading_choices", "readings", "chosen"):
         if req.get(k):
             body[k] = req[k]
     body["fragments"] = sorted([fr["role"], fr["origin"], _pin(fr)] for fr in fragments
@@ -1047,6 +1059,12 @@ def lines(rd: dict) -> list[str]:
         if r["currency"]["state"] == "stale":
             head += "  [stale]"
         out.append(head)
+        if r.get("form") == "reading choice":
+            chosen = next((x["text"] for x in r.get("readings") or []
+                           if x["id"] == r.get("chosen")), "")
+            out.append(f"{pad}  chosen: {r.get('chosen')}, {chosen}. Reason: {r.get('reason')}")
+        for c in r.get("cites") or []:
+            out.append(f"{pad}  {c['line']}")
         for f in r["fragments"]["governing"]:
             out.append(f"{pad}  from {where_text(f)} ({ROLE_WORDS[f['role']]}, {f['origin']}"
                        + (f", applies to {f['scope']}" if f.get("scope") else "")
