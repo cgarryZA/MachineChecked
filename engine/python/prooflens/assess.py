@@ -253,6 +253,10 @@ DIVISION_BY_HEAD = {
     ("HDiv.hDiv", "Int"): "division in ℤ rounds and n / 0 = 0",
     ("HDiv.hDiv", "ENNReal"): "division in ℝ≥0∞: x / 0 = ∞ when x ≠ 0, 0 / 0 = 0 and ∞ / ∞ = 0",
     ("Inv.inv", "ENNReal"): "inverse in ℝ≥0∞: 0⁻¹ = ∞ and ∞⁻¹ = 0",
+    # Mathlib's inverse of a square matrix is the nonsingular inverse
+    # (`Matrix.nonsing_inv_apply_not_isUnit`).
+    ("Inv.inv", "Matrix"): "inverse of a square matrix: A⁻¹ = 0 when det A is not a unit; check "
+                           "that the statement uses only invertible matrices",
 }
 
 # Operations with no exceptional case in some types: the Bochner integral of a function into a
