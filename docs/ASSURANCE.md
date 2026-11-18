@@ -28,6 +28,8 @@ notation_macros = ["R", "E"]  # optional: notation whose definitions readings re
 check = "python3 tools/check.py"  # optional post-promotion check
 snapshot = "review-snapshot"      # optional: the review snapshot build keeps, for reviewers
                                   # who clone the repository (REVIEWING.md)
+promote = { spec = "reviews/statements.md" }  # optional: where promotion writes a first marker
+                                              # (Record reviews, below)
 
 [[paper]]
 id = "A"
@@ -160,6 +162,26 @@ For definitions use `def-review`. The hash records the declaration version revie
 A marker records a reading, so one with no review text before it (a heading followed only by markers, as when markers are copied without their reviews) counts as no review: the declaration reads as not reviewed, its claim as review pending, and `build` lists each such marker with its file and line (an obligation, code `review-without-reading`). `bare_markers_by = ["reviewer"]` under `[project]` lets the markers of the reviewers it names count without text.
 
 The Review queue exports reports. The maintainer evaluates those reports before invoking `machinechecked review promote FILE.json`; promotion writes each acceptance marker after the declaration's last marker, preceded by a line ``Review by REVIEWER: VERDICT (report `reports/STEM.json`).``, which links the report's record, archived in `reports/` beside the review files ([Maintainer acceptance](REVIEWING.md#maintainer-acceptance)). That line is the text of the reviewer's marker; every other marker of the section, including one added later, keeps the section's text. The maintainer may also request further review.
+
+**Where a first marker goes.** A declaration or proof step with no marker yet gets its first one at the end of a review file:
+
+1. the file `[review.promote]` names for the marker's kind: `spec` for a proposition, `def` for a definition, `step` for a proof step;
+2. else the review file named `definitions.md` (a definition) or `<paper id>.md` (a proposition or a proof step, of its first paper);
+3. else the last review file `reviews` lists.
+
+So with `reviews = ["reviews/statements.md", "reviews/definitions.md"]` and no setting, a proposition's first marker goes at the end of `definitions.md`. To keep them apart, name the files:
+
+```toml
+[project]
+reviews = ["reviews/statements.md", "reviews/definitions.md", "reviews/steps.md"]
+
+[review.promote]
+spec = "reviews/statements.md"    # a proposition's first marker (spec-review)
+def = "reviews/definitions.md"    # a definition's (def-review)
+step = "reviews/steps.md"         # a proof step's (step-review)
+```
+
+Each file is one `reviews` lists, or a `.md` file directly in a directory it lists, so that the assessment reads the markers written there; the configuration is refused otherwise. A file not written yet is created. The constructor and projections of a structure's unit that have no marker yet follow the structure's marker. `review promote` prints each marker with its file and place before it asks.
 
 ## Run checks and generate a site
 

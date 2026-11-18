@@ -2582,6 +2582,20 @@ def _refresh_snapshot(a) -> None:
     print(rs.refresh_line(m, _shown(snap)))
 
 
+def _promote_places(cfg, r: dict, cur: dict) -> None:
+    """`review promote`'s plan for one report it accepts: each marker it would write, with the
+    file (relative to the project's root when inside it) and the place (`promote.places`)."""
+    from . import promote as pr
+    try:
+        where = pr.places(cfg, r, cur)
+    except pr.PromoteError as e:
+        sys.exit(f"machinechecked: {e}")
+    for p in where:
+        f = p["file"]
+        shown = f.relative_to(cfg.root).as_posix() if f.is_relative_to(cfg.root) else str(f)
+        print(f"           {p['marker']}\n             to {shown}, {p['how']}")
+
+
 def cmd_review_promote(a):
     import shlex
     import subprocess
@@ -2611,8 +2625,7 @@ def cmd_review_promote(a):
                   "nothing is written for it again")
         else:
             print(f"OK       {head}")
-            for _, mk in pr.markers(r, cur):
-                print(f"           {mk}")
+            _promote_places(cfg, r, cur)
             for n, v in sorted((cur.get("left_out") or {}).items()):
                 print(f"           no marker for {n}: separate verdict {v['value']}")
             ok.append((r, cur))
