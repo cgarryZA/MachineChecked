@@ -61,7 +61,10 @@ is qualified as a number of another version whose declared numbering it is check
 `mismatch` meaning that the map pairs it with another statement than the one cited beside it)
 and the project-level `pattern` (counts by status, `places`: the
 declarations and modules holding disagreeing references, `drift`, `examples` (reference ids),
-and whether the paper's numbering is complete). Each suggestion has `reasons`: `signal`
+and whether the paper's numbering is complete; `inventory.statements` counts the paper's
+numbered statements whose number is digits or an appendix letter and digits, `Lemma 2.1` or
+`Lemma B.1`, each kind and number once, so equations, proof steps and statements named by a
+letter alone, `Theorem A`, are not counted). Each suggestion has `reasons`: `signal`
 (`content`, `uses`, `number`, `lexical`, `structure`) and `text`; a `number` reason has
 `basis` "a lead" or "a possibly stale lead", and `references`: the ids of the references in
 `numbering` it rests on.
@@ -104,7 +107,9 @@ In a project with a `machinechecked.toml` (the full assessment), the document al
 `findings` (totals per tier, dismissed warnings left out) and `finding_details`: each finding
 with its `tier` (`violation`, `obligation`, `warning`), `code`, `subject` (the claim or clause,
 for example `T:thm:bound#0`), `message`, and `dismissed` (who and why) when a warning was
-dismissed. A warning with code `module-doc-name` is a name a module docstring lists that nothing
+dismissed. `same_family_accepted` lists the current reviews by a model reviewer the maintainer
+accepted over promotion's same-family rule (`target`, `name`, `by`, and `family`: `yes` or
+`unknown`, the reviewer's declaration). A warning with code `module-doc-name` is a name a module docstring lists that nothing
 declares: its `subject` is the module, its `trigger` the name, and it has `file` and `line`.
 A warning with code `review-citation` is a name or file that a block of review text cites and
 nothing resolves: its `subject` is the review file, its `trigger` the token, `at` the block
@@ -226,6 +231,13 @@ prints one JSON document (`machinechecked/compare@1`) for one claim, read from t
   witness it (`accept`, `refute`, `witness`, `proofs`, with their checks in `lean`), and the
   corrected clause and kind by the author's names (`corrects`, `restricts`, `kind`); the read
   and compare stages leave these out and list `outcome` in `retrieval.withheld`.
+  From the compare stage a locked statement also has `totalised`, when Lean totalises an
+  operation in it: one entry per totalisation warning of the assessment, with `operation`,
+  `message` (what Lean gives the operation outside its domain), and, for an application read
+  one by one, its `type`, `at` and `subterms` (the sub-term at each position, with the binder
+  or hypothesis around it). Every warning is listed, dismissed or not; a dismissal, the
+  conditions the engine finds supplied and the warning's state are in the claim's findings,
+  shown at the informed stage.
   `lean.candidates` are suggestions
   nobody has confirmed, with their reasons. `lean.definitions` are the definitions the
   statements use, with their type and value and what each says (`defined_by`: its `params`,
@@ -541,6 +553,12 @@ belongs to, and the statements that cite it or use a term it defines (`cited_by`
 `why`). It is read from the build's copy of the paper's source and is context, not the pinned
 passage: the reading records only the passages ([REVIEWING.md](REVIEWING.md)).
 
+For a proof step, `review read --json` gives `unit.lean_linked` (Lean is linked as establishing
+the step) and `unit.route_linked` (a different formal route used instead is recorded), which name
+no declaration; `review status --json` gives the same for each proof step left to review
+(`steps`). A step with neither is judged on the mathematics alone: lock the reading, then
+`review decide` with the argument you checked as the comparison.
+
 **Difficult cases.** Where a verdict is easy to get wrong, the review guide works an example
 through ([Difficult cases](REVIEWING.md#difficult-cases)); the review page lists the same at
 step 2, and `review decide --help` names them. They are optional, and add no field: put what
@@ -610,7 +628,11 @@ requirement, alignment or counterexample), `open question`, `difference` and `hi
 result`, with its `use` (`itself`, `proof`, `definition` or `statement`); `proof use` when
 another claim's proof uses its Lean. Its `tier` is the strongest signal other than `main result`
 and `proof use`, or null. `reason` puts them in words, naming claims and never the Lean.
-`status --json` gives the `open` units in that order and `order`: the order asked (`by`), the
+`next --json` and `status --json` give the `reviewer`: its `id`, `kind`, `same_family_as_author`
+and `same_family_rule` (`applies` to a model reviewer declared of the statements' author's family
+or of unknown family, whose reports promotion refuses unless the maintainer accepts them
+explicitly; `does not apply` otherwise); without `--json`, `next` says it once on standard error
+and `status` on a line of its own. `status --json` gives the `open` units in that order and `order`: the order asked (`by`), the
 queue's own record (`queue`, with each signal's `state`, `read` or `not available` with `why`)
 and, for the informed order, what it read (`informed`: the `workspaces`, and the `main result`
 trace). On the toy example, with Theorem 2.5 linked and saved as the paper's main result, and an

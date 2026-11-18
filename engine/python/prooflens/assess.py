@@ -27,6 +27,7 @@ import re
 
 from .probe import accept_from, proof_key
 from .status import fields
+from .tex import env_number, printed_number
 
 from . import review_sources
 from .reviews import Review, history
@@ -717,6 +718,11 @@ class Assessor:
             # The marker the state rests on, and the passages whose reading it counts for here.
             out["rests_on"] = {"file": record.file, "line": record.line, "by": record.by,
                                "passages": sorted(need)}
+            if record.accepted_family:
+                # A model reviewer the maintainer accepted over the same-family rule, with its
+                # declaration: shown beside the review; no status depends on it.
+                out["accepted_family"] = out["rests_on"]["accepted_family"] = \
+                    record.accepted_family
         if why:
             out["why"] = why
             if source_claim:
@@ -2105,6 +2111,12 @@ class Assessor:
                             f"{c.get('number', c['id'])} is not found in the compiled paper"))
                     continue
                 matched.add(a["id"])
+                if c.get("number") == env_number(a) != printed_number(a):
+                    # Matched in the form an earlier version gave numbers; it still matches.
+                    self.findings.append(_finding(
+                        "warning", "inventory-number-form", c["id"],
+                        f"{c['id']} is numbered {c['number']!r}, after its environment's name; "
+                        f"the paper prints {printed_number(a)!r}: number it as printed"))
                 if c["id"] in self.unpinned():
                     self.findings.append(_finding(
                         "violation", "source-changed", c["id"], self.unpinned()[c["id"]]))
@@ -2112,7 +2124,7 @@ class Assessor:
                 if a["id"] not in matched:
                     self.findings.append(_finding(
                         "violation", "inventory-gap", f"{pid}:{gap_key(a)}",
-                        f"{a['env'].capitalize()} {a.get('number')} ({a['file']}:{a['line']}) "
+                        f"{printed_number(a)} ({a['file']}:{a['line']}) "
                         f"is in the paper but not in the inventory"))
 
     def pin_missing(self, claim: dict, region: dict | None = None,
@@ -2249,6 +2261,6 @@ def match_anchor(claim: dict, anchors: list[dict]) -> dict | None:
         if lab and (lab == claim.get("label") or lab == cid or f"{pid}:{lab}" == cid):
             return a
     for a in anchors:
-        if a.get("number") and claim.get("number") == f"{a['env'].capitalize()} {a['number']}":
+        if a.get("number") and claim.get("number") in (printed_number(a), env_number(a)):
             return a
     return None

@@ -943,9 +943,13 @@ def _simple_claim_lines(c: dict) -> list[str]:
                    + (f". {l['status_detail']}" if l.get("status_detail") else ""))
     if not c["links"]:
         out.append("  no declaration is linked to it")
+    from .review_cli import FAMILY, family_of
     for r in c.get("reviews", []):
-        out.append(f"  review by {r['reviewer']}: {r['verdict']['value']}"
-                   + ("" if r["current"] else " (not current)"))
+        rv = r["reviewer"] if isinstance(r["reviewer"], dict) else {"id": r["reviewer"]}
+        fam = family_of(rv)
+        out.append(f"  review by {rv.get('id')}"
+                   + (f" ({FAMILY[fam]}, self-declared)" if fam else "")
+                   + f": {r['verdict']['value']}" + ("" if r["current"] else " (not current)"))
     for r in c.get("uncounted_reviews", []):
         to = (r["changed_judgement"].get("verdict") or {}).get("value")
         out.append(f"  review by {r['reviewer'].get('id')}: {r['verdict']['value']}, changed "
@@ -1050,6 +1054,31 @@ def _finding_details(cfg, eid: str) -> list[dict]:
     order = {"violation": 0, "obligation": 1, "warning": 2}
     return [{k: f[k] for k in FINDING_KEYS if k in f}
             for f in sorted(found, key=lambda f: (order.get(f.get("tier"), 3), f.get("id", "")))]
+
+
+def _family_accepted(cfg, eid: str) -> list[dict]:
+    """The current reviews of the full assessment's evidence by a model reviewer the maintainer
+    accepted over the same-family rule (`reviews.Review.accepted_family`), each once: what was
+    reviewed (`target`, `name`), by whom, and the reviewer's declared family (`yes` or
+    `unknown`)."""
+    from . import evidence as ev
+    out: list[dict] = []
+
+    def add(target, name, by, family):
+        e = {"target": target, "name": name, "by": by, "family": family}
+        if family and e not in out:
+            out.append(e)
+    for c in ev.load(cfg.out_dir, eid)["body"]["assessment"]["claims"]:
+        for cl in c.get("clauses") or []:
+            sr = cl.get("spec_review") or {}
+            add("spec", cl.get("spec"), (sr.get("rests_on") or {}).get("by"),
+                sr.get("accepted_family"))
+            for n, r in (cl.get("def_reviews") or {}).items():
+                add("def", n, ((r or {}).get("rests_on") or {}).get("by"),
+                    (r or {}).get("accepted_family"))
+        rv = (((c.get("step_review") or {}).get("finding") or {}).get("reviewer") or {})
+        add("step", c.get("id"), rv.get("id"), rv.get("accepted_family"))
+    return out
 
 
 def _evidence_decls(cfg, eid: str) -> dict:
@@ -1400,6 +1429,7 @@ def _check_full_selected(a, cfg, res, added, reused) -> tuple[dict, list[dict], 
     with)."""
     out, claims, failed = _check_full_json(a, cfg, res, added)
     out["reused"] = reused
+    out["same_family_accepted"] = _family_accepted(cfg, res["evidence"])
     extra: dict = {}
     picked = _picked(a, res["index"]["claims"], res["release"])
     was = None
@@ -1504,6 +1534,9 @@ def _check_simple_json(a, root: Path, view: dict) -> tuple[dict, list[dict], boo
                                for x in c.get("suggestions", [])],
                "references": [o["id"] for o in c.get("references", [])],
                "unit": c.get("unit", "statement"), "parent": c.get("parent"),
+               # A step whose proof's statement is not certain names the candidates.
+               **({"parent_candidates": c["parent_candidates"]}
+                  if c.get("parent_candidates") else {}),
                **(_step_json(c) if c.get("unit") else {})}
               for c in body["claims"]]
     summary, facts, hints = _check_workspaces(view, root)
@@ -1602,6 +1635,14 @@ def _print_full_report(cfg, res) -> None:
     from .semantic import text
     for line in text(idx.get("semantic")):
         print(line)
+    accepted = _family_accepted(cfg, res["evidence"])
+    if accepted:
+        from .review_cli import FAMILY
+        print(f"note: {len(accepted)} current review(s) by a model reviewer the maintainer "
+              "accepted over the same-family rule: the statuses count each as a review, and "
+              "the summary counts them apart from independent reviews: "
+              + "; ".join(f"{e['name']} by {e['by']} ({FAMILY[e['family']]})"
+                          for e in accepted))
     # Violations and obligations, one per line: they are few, and they block acceptance. A
     # definition's review is one obligation, with the claims that need it.
     details = _finding_details(cfg, res["evidence"])
@@ -2098,19 +2139,33 @@ def _review_here(s) -> dict:
     return {"id": s.workspace["id"] if s.path.exists() else None, "mode": s.mode}
 
 
+def _review_reviewer(s) -> dict:
+    """The session's reviewer as `review next` and `status` give it in JSON: the declaration of
+    a model reviewer's family, and whether promotion's same-family rule applies."""
+    from .review_cli import same_family_rule
+    rv = s.reviewer
+    return {"id": rv["id"], "kind": rv["kind"],
+            "same_family_as_author": rv.get("same_family_as_author"),
+            "same_family_rule": "applies" if same_family_rule(rv) else "does not apply"}
+
+
 def _review_next(a, s) -> None:
+    from .review_cli import family_note
     here = _review_here(s)
     u = next(iter(s.open_units(a.order)), None)
     if a.json:
         _print_json({"schema": "machinechecked/review-next@1",
                      "release": s.index["release"], "mode": s.queue.get("mode"),
-                     "workspace": here, "order": a.order,
+                     "workspace": here, "order": a.order, "reviewer": _review_reviewer(s),
                      "unit": u and {k: u.get(k) for k in ("id", "kind", "reason", "priority")}})
         return
     print(f"{u['id']}  ({u['reason']})" if u else "nothing left to review")
     for sig in ((u or {}).get("priority") or {}).get("signals") or []:
         for q in sig.get("questions") or []:
             print(f"  question: {q}")
+    # Once, apart from the unit line that scripts read.
+    if family_note(s.reviewer):
+        print(f"note: {family_note(s.reviewer)}", file=sys.stderr)
 
 
 def _review_status(a, s) -> None:
@@ -2119,14 +2174,15 @@ def _review_status(a, s) -> None:
     if a.json:
         _print_json({"schema": "machinechecked/review-status@1",
                      "release": s.index["release"], "mode": s.queue.get("mode"),
-                     "workspace": here, "reports": len(s.work["reports"]),
+                     "workspace": here, "reviewer": _review_reviewer(s),
+                     "reports": len(s.work["reports"]),
                      "drafts": {i: d["stage"] for i, d in s.work["drafts"].items()},
                      "progress": s.progress(),
                      "order": {"by": a.order, **({"queue": s.queue["order"]}
                                                  if s.queue.get("order") else {}),
                                **({"informed": s.order_record} if s.order_record else {})},
                      **({"evidence": s.evidence} if s.evidence else {}),
-                     "open": [u["id"] for u in units]})
+                     "open": [u["id"] for u in units], "steps": _status_steps(s, units)})
         return
     print(f"{len(s.work['reports'])} report(s), {len(s.work['drafts'])} in progress, "
           f"{len(units)} unit(s) left to review (release {s.index['release']})")
@@ -2136,6 +2192,9 @@ def _review_status(a, s) -> None:
     if here["id"]:
         print(f"  workspace {here['id']} ({here['mode']}"
               + ("; your readings here are not blind" if s.informed else "") + ")")
+    from .review_cli import family_note
+    if family_note(s.reviewer):
+        print(f"  {family_note(s.reviewer)}")
     for p in s.progress():
         steps = (("locked", "locked_at"), ("Lean shown", "shown_at"), ("verdict", "decided_at"),
                  ("author's review shown", "author_shown_at"))
@@ -2147,12 +2206,36 @@ def _review_status(a, s) -> None:
                       *(s.order_record or {}).items()]:
         if sig.get("state") != "read":
             print(f"  order: {name} {sig['state']}: {sig.get('why')}")
+    steps = _status_steps(s, units)
+    if steps:
+        linked = sum(x["lean_linked"] for x in steps)
+        print(f"  proof steps left to review: {len(steps)}, {linked} with Lean linked as "
+              "establishing them (a step with none is judged on the mathematics alone)")
+        for x in steps:
+            print(f"    {x['unit']}: " + ("Lean linked" if x["lean_linked"] else
+                                          "no Lean linked, a different formal route recorded"
+                                          if x["route_linked"] else "no Lean linked"))
+
+
+def _status_steps(s, units: list[dict]) -> list[dict]:
+    """The proof-step units among `units`, each with whether Lean is linked to it
+    (`compare.step_lean`): booleans that name no declaration (#740)."""
+    from . import compare as cmp
+    out = []
+    for u in units:
+        ch = s.site.chunk((u.get("claims") or [{}])[0].get("id")) if u["kind"] == "step" else None
+        if ch is not None:
+            out.append({"unit": u["id"], **cmp.step_lean(ch)})
+    return out
 
 
 def _review_text(a, s) -> None:
     """`review read`, `show` and `author`: what that step of the protocol shows of a unit."""
     if a.action == "show" and getattr(a, "definitions", False) and not a.json:
         return print(s.show(a.unit, definitions=True))
+    if a.action == "read" and getattr(a, "with_units", None):
+        out = s.read_together([a.unit, *a.with_units], a.json, getattr(a, "context", False))
+        return _print_json(out) if a.json else print(out)
     out = s.read(a.unit, a.json, context=True) if a.action == "read" and \
         getattr(a, "context", False) else getattr(s, a.action)(a.unit, a.json)
     _print_json(out) if a.json else print(out)
@@ -2170,6 +2253,22 @@ def _lock(s, uid: str, reading: str) -> tuple[str, list[dict]]:
     return (f"reading recorded (not blind: the session is informed); `review show {uid}` "
             "shows the Lean" if s.informed else
             f"reading locked; `review show {uid}` shows the Lean"), seen
+
+
+def _lock_together(s, uids: list[str], reading: str) -> tuple[str, dict[str, list[dict]]]:
+    """Lock one reading for several definitions read from the same passages
+    (`Session.lock_together`): what the command says, and what the reviewer had already seen
+    of each unit, which is also warned of on standard error."""
+    seen = s.lock_together(uids, reading)
+    for uid, got in seen.items():
+        if got and not s.informed:
+            print(f"warning: the reading of {uid} is not blind: you had already seen "
+                  + "; ".join(f"the {x['what']} of {uid} (shown by {x['unit']})" for x in got)
+                  + ". Its report will say so, and promotion refuses it unless the maintainer "
+                  "passes --allow-revealed.", file=sys.stderr)
+    from .review_cli import and_list
+    return (f"reading {'recorded' if s.informed else 'locked'} for {and_list(uids)}; `review show "
+            "UNIT` shows each one's Lean, and each takes its own verdict"), seen
 
 
 def _decide(s, uid: str, verdict, comparison: str, detail: str, witness: str, coverage,
@@ -2238,7 +2337,9 @@ def _review_one(a, s, action: str, f: dict) -> None:
 
 def _review_lock(a, s) -> None:
     _positional(a, "unit", "text")
-    _review_one(a, s, "lock", {"reading": _review_file(a.text)})
+    _review_one(a, s, "lock", {"reading": _review_file(a.text),
+                               **({"with": a.with_units} if getattr(a, "with_units", None)
+                                  else {})})
 
 
 def _review_decide(a, s) -> None:
@@ -2267,7 +2368,7 @@ def _review_submit(a, s) -> None:
 # `unit`: True for a text, which the entry gives inline (`comparison`) or as a file
 # (`comparison_file`, relative to the manifest's directory); False for a word or a value.
 MANIFEST_FIELDS = {
-    "lock": {"reading": True},
+    "lock": {"reading": True, "with": False},
     "decide": {"verdict": False, "comparison": True, "detail": True, "witness": True,
                "coverage": False, "basis": False, "argument": True, "bridge": False,
                "would_decide": True, "members": False},
@@ -2318,6 +2419,11 @@ def _manifest_entry(action: str, e, base: Path) -> tuple[str, dict]:
         if not (isinstance(b, list) and len(b) == 2 and all(isinstance(x, str) for x in b)):
             raise ReviewError('bridge is [THEOREM, TARGET] or {"theorem", "target"}', "invalid")
         out["bridge"] = b
+    w = out.get("with")
+    if w is not None and not (isinstance(w, list) and w and all(isinstance(x, str) and x
+                                                                for x in w)):
+        raise ReviewError("with is a list of the units whose reading is locked with this one",
+                          "invalid")
     return e["unit"], out
 
 
@@ -2326,6 +2432,11 @@ def _manifest_step(action: str, s, uid: str, f: dict) -> tuple[str, dict]:
     method: what it says, and what its JSON result holds besides: the unit's step now (`compare`
     after a lock, `author` after a verdict, `submitted` after the report) and what the step
     recorded, with its time."""
+    if action == "lock" and f.get("with"):
+        said, seen = _lock_together(s, [uid, *f["with"]], f["reading"])
+        d = s.work["drafts"][uid]
+        return said, {"step": d["stage"], "locked_at": d["locked_at"], "revealed_by": seen[uid],
+                      "locked_with": [{"unit": i, "revealed_by": seen[i]} for i in f["with"]]}
     if action == "lock":
         said, seen = _lock(s, uid, f["reading"])
         d = s.work["drafts"][uid]
@@ -2355,7 +2466,8 @@ def _review_manifest(a, session) -> None:
     exits 2."""
     from . import review_cli as rc
     if any(getattr(a, n, None) is not None for n in ("unit", "text", "verdict", "comparison",
-                                                       *DECIDE_OPTIONS, *SUBMIT_OPTIONS)):
+                                                       "with_units", *DECIDE_OPTIONS,
+                                                       *SUBMIT_OPTIONS)):
         raise rc.ReviewError("give --manifest or the step's arguments, not both", "invalid")
     try:
         entries = json.loads(_review_file(a.manifest))
@@ -2666,6 +2778,11 @@ def cmd_review_promote(a):
                   "nothing is written for it again")
         else:
             print(f"OK       {head}")
+            if pr.family_accepted(r):
+                from .review_cli import FAMILY, family_of
+                print(f"           accepted over the same-family rule: the reviewer is "
+                      f"{FAMILY[family_of(r['reviewer'])]} (self-declared); its record and its "
+                      "`Review by` line say so")
             _promote_places(cfg, r, cur)
             for n, v in sorted((cur.get("left_out") or {}).items()):
                 print(f"           no marker for {n}: separate verdict {v['value']}")
@@ -3020,6 +3137,11 @@ def _add_review(sub) -> None:
                                  "of its source: its section, the paragraphs before and after, "
                                  "its labels' printed numbers, the statements it cites or that "
                                  "cite it (context, not the passage read)")
+        if name in ("read", "lock"):
+            sp.add_argument("--with", dest="with_units", action="append", metavar="UNIT",
+                            help="another definition read from exactly the same passages: "
+                                 "read them once, and lock one reading for all of them "
+                                 "(repeat for each); each still takes its own verdict")
         if name == "show":
             sp.add_argument("--definitions", action="store_true",
                             help="print only the definitions the unit's Lean uses, each once, "

@@ -212,8 +212,10 @@ def test_a_marker_left_as_source_none_is_repaired_from_the_history(tmp_path, cap
     With `--markers`, each is listed; where the review file's history shows the readings it
     had, `--write` makes of it what this version makes of a marker with them. Where it does
     not, or where a reading it had applies again, the marker is left for the maintainer."""
+    # X:defs no longer names X.d (a claim the inventory no longer has is #566's case).
     root = project(tmp_path, [claim("X:old", A), claim("X:new", B, "X.foo"),
-                              claim("X:back", B, "X.baz"), claim("X:n", C, "X.never")],
+                              claim("X:back", B, "X.baz"), claim("X:n", C, "X.never"),
+                              claim("X:defs", C)],
                    markers_with("", "", "", "", ""))
     git(root, "init", "-q")
     # The readings as they were made, then as an earlier `retire` left them.

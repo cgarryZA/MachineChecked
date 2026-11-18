@@ -26,7 +26,7 @@ from .sources import acquire
 from .layout import library_files, module_file
 from .moddocs import stale_doc_names
 from . import numbering as nb
-from .tex import DEFAULT_ENVS, TexError, anchors_for, theorem_envs
+from .tex import DEFAULT_ENVS, TexError, anchors_for, printed_number, theorem_envs
 from . import formalization as fz
 from . import steps
 from .util import content_id, git_head, prepare_work_dir, read_json, sha256_file, write_json
@@ -122,7 +122,7 @@ def claims_from_anchors(pid: str, anchors: list[dict], snap: Path) -> list[dict]
                 pass
         claims.append({
             "id": f"{pid}:{key}", "key": key, "paper": pid, "kind": env,
-            "number": f"{env.capitalize()} {num}" if num else env.capitalize(), "title": title,
+            "number": printed_number(a), "title": title,
             "label": a.get("label"), "location": a["file"], "line": a.get("line"),
             "source_sha256": a["source_sha256"], "statement": a.get("statement") or "",
             "scope": "definition" if env in DEFINITION_ENVS else "formal",
@@ -133,12 +133,14 @@ def claims_from_anchors(pid: str, anchors: list[dict], snap: Path) -> list[dict]
 STEPS_VERSION = "steps-1"
 
 
-def proof_steps(pid: str, anchors: list[dict], snap: Path, numbers: dict[str, str]) -> list[dict]:
+def proof_steps(pid: str, anchors: list[dict], snap: Path, numbers: dict[str, str],
+                notes: list[str] | None = None) -> list[dict]:
     """The numbered equations inside the paper's proofs, as claims of their own
-    (`steps.step_claims`), each under the statement whose proof holds it."""
+    (`steps.step_claims`), each under the statement whose proof holds it; the numbered displays
+    left out are said in `notes`."""
     statements = claims_from_anchors(pid, anchors, snap)
     files = sorted({a["file"] for a in anchors if a.get("file")})
-    return steps.step_claims(pid, statements, snap, files, numbers)
+    return steps.step_claims(pid, statements, snap, files, numbers, notes)
 
 
 def with_passages(claims: list[dict], pid: str, entries: dict, snap: Path, work: Path,
@@ -1983,7 +1985,7 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
             pdf = t["pdf"]
             aux = Path(t["pdf"]).parent / (Path(snap.root).stem + ".aux")
             claims = claims_from_anchors(paper.id, anchors, snap.dir)
-            for c in proof_steps(paper.id, anchors, snap.dir, t["numbers"]):
+            for c in proof_steps(paper.id, anchors, snap.dir, t["numbers"], notes):
                 c["line_anchor"] = t["step_anchors"].get(c["location"])
                 claims.append(c)
             compiled = {**t, "digest": digest}
@@ -2353,6 +2355,8 @@ def write_view_site(view: dict, site: Path, web_dist: Path | None,
             "id": c["id"], "paper": c["paper"], "number": c["number"], "title": c["title"],
             "heading": c["title"] or None, "kind": c["kind"], "scope": c["scope"],
             "unit": steps.unit_of(c), "parent": c.get("parent"),
+            **({"parent_candidates": c["parent_candidates"]} if c.get("parent_candidates")
+               else {}),
             **fields(c["status_code"], c.get("status_detail")),
             "anchor": mf.index_anchor(anchor, akind),
             "counts": {}, "file": fname, "linked": len(c["links"]),
@@ -2391,7 +2395,9 @@ def write_view_site(view: dict, site: Path, web_dist: Path | None,
                                  [_link_view(l, root) for l in c.get("route_links", [])],
                                  c.get("correspondence"), c.get("route_note"),
                                  steps.review(c.get("step_reports", []), c["source_sha256"]),
-                                 proposed=c.get("proposed")))
+                                 proposed=c.get("proposed"),
+                                 candidates=[_parent_row(by_id.get(x))
+                                             for x in c.get("parent_candidates") or []]))
             if c.get("passage"):
                 # A selected passage's pin, and whether its lines still hold its text.
                 chunks[fname]["step"]["passage"] = c["passage"]

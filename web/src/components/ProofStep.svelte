@@ -3,6 +3,7 @@
   import { evidenceView } from "../lib/presentation.js";
   import { href, withQuery } from "../lib/route.svelte.js";
   import { STEP_VERDICTS } from "../lib/review.js";
+  import { familyOf, familyWords, acceptedFamilyWords } from "../lib/semantic.js";
   import { readingWords } from "../lib/coverage.js";
   import { loadProposal } from "../lib/data.js";
 
@@ -24,8 +25,12 @@
   const LABEL = Object.fromEntries(Object.values(STEP_VERDICTS).flat().map((v) => [v.value, v.label]));
   function who(r) {
     const x = r.reviewer || {};
+    // A report gives a model's declared family; a promoted review, the family of a model the
+    // maintainer accepted over the same-family rule.
+    const fam = familyOf(x);
     return (x.kind === "model" ? "the AI model " + (x.model || x.id) : (x.name || x.id))
       + (x.identity === "self-declared" ? " (self-declared)" : "")
+      + (x.accepted_family ? ", " + acceptedFamilyWords(x.accepted_family) : fam ? ", " + familyWords(fam) : "")
       + (x.author ? ", an author of the statements" : "");
   }
   // When a review was made: its date, or where its marker is recorded.
@@ -70,7 +75,7 @@
 
 {#if part === "finding" && st}
   <div class="finding" data-review={rv.state}>
-    <p class="small kind">{UNIT[st.unit] || "Proof step"}{#if st.parent}{" of "}<a href={href(index.release, "read", claim.paper, st.parent.id)}>{st.parent.number || st.parent.id}</a>{/if}{#if st.passage}{", selected at "}<code>{span(st.passage)}</code>{/if}</p>
+    <p class="small kind">{UNIT[st.unit] || "Proof step"}{#if st.parent}{" of "}<a href={href(index.release, "read", claim.paper, st.parent.id)}>{st.parent.number || st.parent.id}</a>{:else if st.parent_candidates?.length}<span data-parent="uncertain">{" whose statement is not certain: "}{#each st.parent_candidates as c, i (c.id)}{i ? " or " : ""}<a href={href(index.release, "read", claim.paper, c.id)}>{c.number || c.id}</a>{/each}</span>{/if}{#if st.passage}{", selected at "}<code>{span(st.passage)}</code>{/if}</p>
     {#if st.passage && !st.passage.matches}
       <p class="small changed" data-passage="changed">Its lines no longer hold the text it was selected at, so no review of it counts until it is selected again{#if st.passage.moved_to}{"; that text is now at "}<code>{span({ file: st.passage.file, ...st.passage.moved_to })}</code>{/if}.
         {#if editable && st.passage.moved_to}<button class="btn ghost" disabled={busy} onclick={() => onpassage(spec(st.passage.file, st.passage.moved_to.start_line, st.passage.moved_to.end_line))}>Select it there</button>{/if}</p>

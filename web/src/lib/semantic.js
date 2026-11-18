@@ -207,3 +207,21 @@ export function withheldText(paper) {
 export function questionWithheld(reading) {
   return Array.isArray(reading?.withheld) && reading.withheld.includes("question");
 }
+
+// A model reviewer's declared family relative to the statements' author (`same_family_as_author`),
+// in the engine's words (`review_cli.FAMILY`): three answers, kept apart; any other value reads as
+// unknown, never as either known answer. Null for a person.
+export function familyOf(reviewer) {
+  if (reviewer?.kind !== "model") return null;
+  return own(vocabulary.family, reviewer.same_family_as_author) ? reviewer.same_family_as_author : "unknown";
+}
+
+export function familyWords(family) {
+  return family ? (own(vocabulary.family, family) || vocabulary.family.unknown).label : "";
+}
+
+// A review the maintainer accepted over promotion's same-family rule (`accepted_family` of a review
+// record: `yes` or `unknown`), in words.
+export function acceptedFamilyWords(family) {
+  return family ? familyWords(family) + ", accepted by the maintainer over the same-family rule" : "";
+}
