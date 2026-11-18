@@ -166,6 +166,11 @@ def build(cfg: Config, release: str | None = None, skip_lean: bool = False,
             if t is not None:
                 tex[paper.id]["regions"] = collect_source_regions(
                     inv, paper.id, snap.dir, getattr(paper, "notation_macros", ()))
+                # The numbered environment each claim located by line lies in (display only).
+                from .tex import enclosing
+                tex[paper.id]["enclosing"] = enclosing(
+                    inv["claims"], paper.id, snap.dir, tex[paper.id].get("anchors") or [],
+                    tex[paper.id]["regions"])
                 # The passages of pins that list several, in order (display only).
                 parts = part_texts(inv, paper.id, snap.dir)
                 if parts:
