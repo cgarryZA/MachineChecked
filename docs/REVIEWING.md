@@ -14,7 +14,7 @@ Each review has three stages:
 
 **2. Compare with Lean.** The page shows the comparison the reader shows: the paper's passage beside the unit's Lean in rows, each row's exact Lean beside it when there is room, the complete exact statement, and its definitions; a definition, a property of an object or another reference opens below its row with the passage and the statement still on the page. Inspect the elaborated Lean proposition, relevant definitions, quantifier order and whether its hypotheses can be met. This step is given the paper and the Lean as Lean gives them, and nothing a person recorded about the claim: no symbol link, alignment or pairing of rows, correspondence note, review (of the statement or of its definitions), finding, the route a proof step's author names, or the paper definition a declaration is linked to. They are left out of what the page loads and draws, not hidden on it, and after the verdict the page shows them. The outcome the author gives a locked statement is left out the same way: the theorems named to prove, refute or witness it, the author's name for its clause, the kind and reason of a correction, and the state the assessment gives the clause. A clause is named by its place among its claim's clauses (*clause 2 of T:prop:pred*); a correction or special case of a printed clause says so, naming that clause by its place. So *Refutation not valid* and the witness comparison are offered for every locked statement. A short checklist names what to compare (the setting, each hypothesis, quantifiers and their order, the definitions relied on, the conclusion, constants, and any result or axiom taken as an assumption; for a definition, the object, its parameters and its conventions at edge cases); marking each item *matches*, *differs* or *unsure* is optional and is kept in the report. Record how it compares with the paper. The review protocol has eight precise verdicts, grouped in the interface under *Matches*, *Problem* and *Cannot determine*. With the verdict you may record the coverage and its basis ([below](#coverage-with-the-verdict)).
 
-**3. Read the author's review.** Only after recording your verdict does the queue show the existing author review, and the comparison what people recorded about the claim (its symbol links, published alignments, each finding at the rows it explains, and the `Correspondence:` field of a review of the proposition). For a locked statement it also shows the author's account of each clause it states: the clause's place and name, its state, the printed clause a correction corrects with the kind and reason given, and the theorems named to prove, refute or witness it (*refutation: Toy.Acceptance.prop_pred*). Record disagreements alongside your initial interpretation.
+**3. Read the author's review.** Only after recording your verdict does the queue show the existing author review, and the comparison what people recorded about the claim (its symbol links, published alignments, each finding at the rows it explains, and the `Correspondence:` field of a review of the proposition). For a locked statement it also shows the author's account of each clause it states: the clause's place and name, its state, the printed clause a correction corrects with the kind and reason given, and the theorems named to prove, refute or witness it (*refutation: Toy.Acceptance.prop_pred*). Record disagreements alongside your initial interpretation. If the author's account changes your judgement, say so in the same step: tick **My judgement changed after reading the author's review** (`submit --judgement-changed why.md`), give why, and, if you would now give another verdict, that verdict with its detail. Your blind verdict stays in the report as it was recorded, beside the later judgement, each with its time. Promotion never promotes such a report, and a published audit does not count it ([Maintainer acceptance](#maintainer-acceptance), [Publishing reports with an audit](#publishing-reports-with-an-audit)).
 
 The report records the steps completed in this reader. The queue offers changed evidence first
 and says why each unit comes where it does; **Order** chooses the paper's order or the informed
@@ -32,6 +32,8 @@ machinechecked review show UNIT --definitions       # step 2: only the definitio
 machinechecked review decide UNIT VERDICT comparison.md [--detail detail.md] [--coverage C ...]
 machinechecked review author UNIT                   # step 3 (refused before decide)
 machinechecked review submit UNIT disagreements.md  # finishes the report
+machinechecked review submit UNIT disagreements.md --judgement-changed why.md \
+  [--revised-verdict VERDICT --revised-detail detail.md]  # your judgement changed after step 3
 machinechecked review status
 machinechecked review export --out reports.json     # for the maintainer
 ```
@@ -54,7 +56,8 @@ audit.
 standard input) instead of a unit and its texts: a JSON list of entries, each with `unit` and that
 step's fields. `lock` takes `reading`; `decide` takes `verdict`, `comparison`, and optionally
 `detail`, `witness`, `coverage`, `basis`, `argument`, `bridge` (`[THEOREM, TARGET]`) and
-`would_decide`; `submit` takes `disagreements`. A text is given inline (`"comparison": "..."`) or
+`would_decide`; `submit` takes `disagreements`, and optionally `judgement_changed`,
+`revised_verdict` and `revised_detail`. A text is given inline (`"comparison": "..."`) or
 as a file (`"comparison_file": "cmp.md"`, relative to the manifest's directory), never both; a
 field the step does not take refuses the entry. Each entry is the same step as the single
 command, with the same refusals: every unit still needs its own `read` before its lock, and its
@@ -79,7 +82,8 @@ document: `{"schema": "machinechecked/review-step@1", "action", "ok": true, "uni
 recorded: `locked_at` and `revealed_by` (what you had already seen of the unit's Lean or author's
 review) for `lock`; `verdict`, `group`, `decided_at`, `correspondence` (the coverage and its basis,
 or null) and a structure's separate verdicts (`members`) for `decide`; `verdict`, `group`,
-`submitted_at` and the report's `revealed_by` for `submit`. `message` is the line the command
+`submitted_at`, the report's `revealed_by` and its `changed_judgement` (or null) for `submit`.
+`message` is the line the command
 prints without `--json`. A refused step prints the refusal below, and so does a text file that
 cannot be read (`invalid`).
 
@@ -1153,6 +1157,11 @@ the reviewer was shown; otherwise it reads as the reviewer's composition, saying
 recorded as and why. Reports are shown as their reviewers wrote them and change no status;
 `check --json` lists them per claim, with their coverage.
 
+A report whose reviewer changed their judgement after the author's account is not counted: it
+adds no coverage and no **Reviews by** reading, and the claim reads as it would without it. The
+claim's audit details list it under **Reports not counted**, with the blind verdict and the
+later judgement, each with its date, and `check --json` lists it under `reviews_not_counted`.
+
 The Overview and the audit's [semantic summary](DATA_MODEL.md#semantic-summary-prooflenssemantic-summary1-derived)
 count each reviewer's latest report of each statement as a set of readings of its own (**Reviews
 by** the reviewer): its coverage, its basis, and whether it is current. A report that records no
@@ -1174,7 +1183,7 @@ machinechecked review promote machinechecked-reviews-....json
 
 A directory of reports may be given instead of the files: it stands for the `*.json` files directly in it, in name order.
 
-Promotion checks that the manuscript, the passages read (their digests, pinned when the reading was locked) and the formal statements still match the review pins, that the review stages were recorded in the required order, and that the verdict is eligible. An open question stays open: a report whose verdict is *Cannot determine*, or whose coverage is unresolved, records neither a review nor a defect, and promotion refuses it, as it refuses a coverage the protocol does not write. It displays the planned changes, with each report's coverage and each marker's file and place (a first marker's file is the one `[review.promote]` names, or follows the rule in [Record reviews](ASSURANCE.md#record-reviews)), and requires the maintainer's decision. Model-family and author restrictions still apply. A report whose reading was not blind is refused unless the maintainer passes `--allow-revealed`. A report made against a review snapshot is checked by the same rules, against the maintainer's release; the plan says it was reviewed against supplied evidence and names the snapshot ([Reviewing a project you did not build](#reviewing-a-project-you-did-not-build)).
+Promotion checks that the manuscript, the passages read (their digests, pinned when the reading was locked) and the formal statements still match the review pins, that the review stages were recorded in the required order, and that the verdict is eligible. An open question stays open: a report whose verdict is *Cannot determine*, or whose coverage is unresolved, records neither a review nor a defect, and promotion refuses it, as it refuses a coverage the protocol does not write. It displays the planned changes, with each report's coverage and each marker's file and place (a first marker's file is the one `[review.promote]` names, or follows the rule in [Record reviews](ASSURANCE.md#record-reviews)), and requires the maintainer's decision. Model-family and author restrictions still apply. A report whose reading was not blind is refused unless the maintainer passes `--allow-revealed`. A report whose reviewer changed their judgement after the author's review is always refused: the plan shows its blind verdict and the later judgement, each with its time and the reason, and no option accepts it. Ask for a fresh independent review, or record the later judgement as an informed review (`--mode informed`), which promotion accepts only with `--allow-revealed`. A report made against a review snapshot is checked by the same rules, against the maintainer's release; the plan says it was reviewed against supplied evidence and names the snapshot ([Reviewing a project you did not build](#reviewing-a-project-you-did-not-build)).
 
 Promotion records the maintainer’s decision for the reviewed proposition or definition. The marker it writes records the digests of the paper passages read, so a later change to that text reopens the review. A passage the manuscript no longer matches reads as unread until it is pinned again, and promotion refuses a report on it (see [Evidence policy](EVIDENCE_POLICY.md#a-review-is-a-reading-of-a-text), which also says how markers written before the digests were recorded are read, and how to add the digests to them).
 Acceptance also requires the claim’s proofs and all other required checks.

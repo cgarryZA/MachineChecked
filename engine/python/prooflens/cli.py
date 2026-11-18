@@ -946,6 +946,10 @@ def _simple_claim_lines(c: dict) -> list[str]:
     for r in c.get("reviews", []):
         out.append(f"  review by {r['reviewer']}: {r['verdict']['value']}"
                    + ("" if r["current"] else " (not current)"))
+    for r in c.get("uncounted_reviews", []):
+        to = (r["changed_judgement"].get("verdict") or {}).get("value")
+        out.append(f"  review by {r['reviewer'].get('id')}: {r['verdict']['value']}, changed "
+                   f"after the author's account" + (f" to {to}" if to else "") + ": not counted")
     return out
 
 
@@ -1493,6 +1497,8 @@ def _check_simple_json(a, root: Path, view: dict) -> tuple[dict, list[dict], boo
                             "submitted_at": r["submitted_at"], "current": r["current"],
                             **({"why": r["why"]} if r.get("why") else {})}
                            for r in c.get("reviews", [])],
+               **({"reviews_not_counted": c["uncounted_reviews"]}
+                  if c.get("uncounted_reviews") else {}),
                "suggestions": [{"name": x["name"], "why": x.get("why"),
                                 "reasons": x.get("reasons", [])}
                                for x in c.get("suggestions", [])],
@@ -2177,11 +2183,27 @@ def _decide(s, uid: str, verdict, comparison: str, detail: str, witness: str, co
     return f"verdict recorded; `review author {uid}` shows the author's review"
 
 
-def _submit(s, uid: str, disagreements: str) -> tuple[str, dict]:
-    """Submit the report (`Session.submit`): what the command says, and the report."""
-    r = s.submit(uid, disagreements.strip())
+def _submit(s, uid: str, disagreements: str, changed: dict | None = None) -> tuple[str, dict]:
+    """Submit the report (`Session.submit`, with a judgement changed after the author's review,
+    `changed`): what the command says, and the report."""
+    r = s.submit(uid, disagreements.strip(), changed)
+    cj = r.get("changed_judgement")
+    if cj:
+        to = f" to {cj['verdict']['value']}" if cj.get("verdict") else ""
+        return (f"report recorded: {r['unit']['id']}, {r['verdict']['value']} before the "
+                f"author's review, your judgement changed after it{to}: the report keeps both, "
+                "and `review promote` does not promote it; `review export --out FILE` writes "
+                "your reports for the maintainer"), r
     return (f"report recorded: {r['unit']['id']}, {r['verdict']['value']}; "
             "`review export --out FILE` writes your reports for the maintainer"), r
+
+
+def _changed(reason, verdict, detail) -> dict | None:
+    """A changed judgement as `Session.submit` takes it, or None when none is given (the draft's
+    stands)."""
+    if reason is None and verdict is None and detail is None:
+        return None
+    return {"reason": reason or "", "verdict": verdict, "detail": detail or ""}
 
 
 def _positional(a, *names: str) -> None:
@@ -2232,7 +2254,13 @@ def _review_decide(a, s) -> None:
 
 def _review_submit(a, s) -> None:
     _positional(a, "unit", "text")
-    _review_one(a, s, "submit", {"disagreements": _review_file(a.text)})
+    _review_one(a, s, "submit", {
+        "disagreements": _review_file(a.text),
+        **({"judgement_changed": _review_file(a.judgement_changed)}
+           if getattr(a, "judgement_changed", None) else {}),
+        **({"revised_verdict": a.revised_verdict} if getattr(a, "revised_verdict", None) else {}),
+        **({"revised_detail": _review_file(a.revised_detail)}
+           if getattr(a, "revised_detail", None) else {})})
 
 
 # The fields of a manifest entry for each step (`review lock|decide|submit --manifest`), besides
@@ -2243,13 +2271,16 @@ MANIFEST_FIELDS = {
     "decide": {"verdict": False, "comparison": True, "detail": True, "witness": True,
                "coverage": False, "basis": False, "argument": True, "bridge": False,
                "would_decide": True, "members": False},
-    "submit": {"disagreements": True},
+    "submit": {"disagreements": True, "judgement_changed": True, "revised_verdict": False,
+               "revised_detail": True},
 }
 MANIFEST_REQUIRED = {"lock": ("reading",), "decide": ("verdict", "comparison"),
                      "submit": ("disagreements",)}
 # The options only `review decide` takes (`_decide_options`), as `argparse` names them.
 DECIDE_OPTIONS = ("detail", "witness", "coverage", "basis", "argument", "bridge", "would_decide",
                   "member")
+# And those only `review submit` takes (`_submit_options`).
+SUBMIT_OPTIONS = ("judgement_changed", "revised_verdict", "revised_detail")
 
 
 def _manifest_entry(action: str, e, base: Path) -> tuple[str, dict]:
@@ -2308,10 +2339,13 @@ def _manifest_step(action: str, s, uid: str, f: dict) -> tuple[str, dict]:
         return said, {"step": d["stage"], "verdict": d["verdict"], "group": d["group"],
                       "decided_at": d["decided_at"], "correspondence": d["correspondence"],
                       **({"members": d["members"]} if d.get("members") else {})}
-    said, r = _submit(s, uid, f["disagreements"])
+    said, r = _submit(s, uid, f["disagreements"],
+                      _changed(f.get("judgement_changed"), f.get("revised_verdict"),
+                               f.get("revised_detail")))
     return said, {"step": "submitted", "verdict": r["verdict"]["value"],
                   "group": r["verdict"]["group"], "submitted_at": r["submitted_at"],
-                  "revealed_by": r["reading"]["revealed_by"]}
+                  "revealed_by": r["reading"]["revealed_by"],
+                  "changed_judgement": r.get("changed_judgement")}
 
 
 def _review_manifest(a, session) -> None:
@@ -2321,7 +2355,7 @@ def _review_manifest(a, session) -> None:
     exits 2."""
     from . import review_cli as rc
     if any(getattr(a, n, None) is not None for n in ("unit", "text", "verdict", "comparison",
-                                                       *DECIDE_OPTIONS)):
+                                                       *DECIDE_OPTIONS, *SUBMIT_OPTIONS)):
         raise rc.ReviewError("give --manifest or the step's arguments, not both", "invalid")
     try:
         entries = json.loads(_review_file(a.manifest))
@@ -2901,6 +2935,20 @@ def _decide_options(sp) -> None:
                          "unit's verdict holds for the rest")
 
 
+def _submit_options(sp) -> None:
+    """The options of `review submit` (`SUBMIT_OPTIONS`): a judgement changed after the author's
+    review, kept in the report beside the blind verdict."""
+    sp.add_argument("--judgement-changed", metavar="FILE",
+                    help="your judgement changed after reading the author's review: a file "
+                         "holding why, or -. The report keeps it beside your verdict, which "
+                         "stays as recorded, and `review promote` does not promote the report")
+    sp.add_argument("--revised-verdict", metavar="VERDICT",
+                    help="with --judgement-changed: the verdict you would give now, if another")
+    sp.add_argument("--revised-detail", metavar="FILE",
+                    help="with --revised-verdict: a file holding what that verdict needs said "
+                         "(`review decide --help` lists which verdicts need it)")
+
+
 def _add_review(sub) -> None:
     from .review_snapshot import REVIEW_DIR
     rv = _command(sub, "review")
@@ -2959,6 +3007,8 @@ def _add_review(sub) -> None:
                                  "entry's result); a refusal too")
         if name == "decide":
             _decide_options(sp)
+        if name == "submit":
+            _submit_options(sp)
         if name == "export":
             sp.add_argument("--out", required=True)
         if name in ("next", "status", "read", "show", "author"):
