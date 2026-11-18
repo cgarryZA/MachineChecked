@@ -255,7 +255,12 @@ def covers(r: dict, body: dict) -> tuple[list[str], dict, list[str]]:
 
 def corrects_a_clause(body: dict, u: dict) -> bool:
     """Whether the unit's proposition is, in the evidence `body`, that of a clause that corrects
-    (`corrects`) or is a special case of (`restricts`) a printed clause."""
+    (`corrects`) or is a special case of (`restricts`) a printed clause; or the unit's definition
+    is one only such clauses use."""
+    if u.get("kind") == "def":
+        # A definition only a correction uses, in the current evidence (#617).
+        from .manifest import introduced_by_correction
+        return u.get("name") in introduced_by_correction(body)
     return u.get("kind") == "spec" and any(
         cl.get("spec") == u.get("name") and (cl.get("corrects") or cl.get("restricts"))
         for c in (body.get("inventory") or {}).get("claims", []) for cl in c.get("clauses", []))

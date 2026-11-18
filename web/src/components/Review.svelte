@@ -406,7 +406,7 @@
     persist();
   }
   const revisedVerdicts = $derived(current ? Object.values(current.kind === "step" ? STEP_VERDICTS : VERDICTS).flat()
-    .filter((v) => v.value !== draft?.verdict && (!v.refuteOnly || current.refute) && (!v.correctionOnly || current.correction)) : []);
+    .filter((v) => v.value !== draft?.verdict && (!v.refuteOnly || current.refute) && (!v.correctionOnly || current.correction || current.introduced_by?.length)) : []);
   const revisedDetail = $derived(draft?.changed?.verdict ? needsDetail(draft.changed.verdict, current?.kind) : null);
   // Ticked, the box asks for the reason even before anything is typed.
   const changedProblems = $derived(!draft?.changed ? [] : (() => {
@@ -622,6 +622,8 @@
           {#if draft.stage === "compare"}
             <h3 id="comparison-label">Comparison</h3>
             <!-- The printed clause by its place: its name, and the correction's kind and reason, are the author's, shown after the verdict. -->
+            <!-- A definition only a correction uses (#617): the correcting clause by its place. -->
+            {#each current.introduced_by || [] as e}<p class="small correction-note" data-introduced={e.clause}>Only clause {e.clause} of {e.claim}, which {e.relation === "restricts" ? "is a special case of" : "corrects"} clause {e.of_clause}, uses this definition: the formalisation introduced it, and the paper's passages do not define it. If it is what the correction needs, the verdict is <em>Faithful to the correction</em>, which says nothing of what the paper printed.</p>{/each}
             {#if current.correction}<p class="small correction-note">This proposition is {current.correction.relation === "restricts" ? "a special case of" : "a correction of"} the printed clause {current.correction.of_clause ? `${current.correction.of_clause.clause} of ${current.correction.of_clause.claim}` : "of its claim"}. Compare it with the passage: if it is the printed claim with a correction, and otherwise as printed, the verdict is <em>Faithful to the correction</em>; the correction its author declares is shown after your verdict.</p>{/if}
             <ul class="checklist" aria-label="What to compare">
               {#each CHECKLIST[current.kind === "def" ? "def" : current.kind === "step" ? "step" : "statement"] as it (it.key)}
@@ -655,7 +657,7 @@
             </div>
             {#if draft.group}
               <fieldset class="verdicts"><legend>Verdict</legend>
-                {#each (verdicts[draft.group] || []).filter((v) => (!v.statementOnly || current.kind === "spec") && (!v.correctionOnly || current.correction)) as v}
+                {#each (verdicts[draft.group] || []).filter((v) => (!v.statementOnly || current.kind === "spec") && (!v.correctionOnly || current.correction || current.introduced_by?.length)) as v}
                   <label><input type="radio" bind:group={draft.verdict} value={v.value} onchange={persist} /> {v.label}</label>
                 {/each}
               </fieldset>

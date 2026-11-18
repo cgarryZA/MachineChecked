@@ -493,10 +493,43 @@ def expansion_keys(obj) -> set[str]:
 
 
 def decl_records(body: dict, lean: dict) -> dict[str, dict]:
-    """Every declaration once, with its current review."""
+    """Every declaration once, with its current review, and, for a definition only a correction
+    uses, the clauses that introduce it (`introduced_by_correction`)."""
     reviews: dict[str, dict] = {}
     for c in body["assessment"]["claims"]:
         for cl in c["clauses"]:
             for n, r in (cl.get("def_reviews") or {}).items():
                 reviews.setdefault(n, r)
-    return {n: {**d, "review": reviews.get(n)} for n, d in lean.get("decls", {}).items()}
+    intro = introduced_by_correction(body)
+    return {n: {**d, "review": reviews.get(n),
+                **({"introduced_by_correction": intro[n]} if n in intro else {})}
+            for n, d in lean.get("decls", {}).items()}
+
+
+def introduced_by_correction(body: dict) -> dict[str, list[dict]]:
+    """The definitions only a correction uses (#617): each declaration that the proposition of
+    a clause correcting (`corrects`) or restricting (`restricts`) a printed clause uses (its
+    `closure`), and that no other clause's proposition uses or maps as a definition (`defs`),
+    with those clauses, each named by its place (`clause`) with the printed clause's place
+    (`of_clause`) and the `relation`. The formalisation introduced such a definition: a review
+    of it can establish that it is what the correction needs, never that the paper printed
+    it."""
+    from .review_queue import clause_position
+    specs = (body.get("lean") or {}).get("specs") or {}
+    users: dict[str, list[dict]] = {}
+    printed: set[str] = set()
+    for c in (body.get("inventory") or {}).get("claims", []):
+        cls = c.get("clauses") or []
+        for cl in cls:
+            uses = set(((specs.get(cl.get("spec") or "") or {}).get("closure")) or [])
+            rel = next((r for r in ("corrects", "restricts") if cl.get(r)), None)
+            if rel is None:
+                printed |= uses | set(cl.get("defs") or [])
+                continue
+            at = (clause_position(c["id"], cls, cl) or {}).get("clause")
+            of = (clause_position(c["id"], cls, cl[rel]) or {}).get("clause")
+            for n in sorted(uses):
+                e = {"claim": c["id"], "clause": at, "of_clause": of, "relation": rel}
+                if e not in users.setdefault(n, []):
+                    users[n].append(e)
+    return {n: v for n, v in users.items() if n not in printed}

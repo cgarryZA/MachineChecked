@@ -282,6 +282,10 @@ def _def_unit(name: str, rec: dict, members: list[dict], by_name: dict, keys: di
         "state": min((r["review"]["state"] for r in recs), key=lambda s: STATE_RANK.get(s, 0)),
         "author_review": author, "effort": effort,
         "reason": f"{_size(effort)} definition; used by {len(users)} claim(s)"}
+    if rec.get("introduced_by_correction"):
+        # Only a correction uses it (`manifest.introduced_by_correction`): compared, from step 2,
+        # with the correcting proposition, named by its place (#617).
+        unit["introduced_by"] = rec["introduced_by_correction"]
     if members:
         unit["lean"] = names
         unit["fingerprints"] = {n: r.get("fingerprint") for n, r in zip(names, recs)}

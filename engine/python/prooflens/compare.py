@@ -793,7 +793,8 @@ def unit_packet(site: Site, unit: dict, stage: str) -> dict:
     out = _head(site, stage, {"unit": unit["id"], "stage": stage})
     # The unit's declaration names are Lean: not part of the read stage.
     keys = ("id", "kind", "unit", "parent", "papers") if stage == "read" else \
-        ("id", "kind", "unit", "parent", "name", "lean", "route", "papers", "correction")
+        ("id", "kind", "unit", "parent", "name", "lean", "route", "papers", "correction",
+         "introduced_by")
     out["unit"] = {k: unit.get(k) for k in keys if unit.get(k) is not None}
     if out["unit"].get("correction"):
         # That it corrects a printed clause is the inventory's, and which one is given by its
@@ -848,6 +849,15 @@ def unit_packet(site: Site, unit: dict, stage: str) -> dict:
                 names = covered + sorted(m for m in site.store()
                                          if site.generated(m, rec["name"]) and m not in covered)
                 names += [n for n in rec.get("uses") or [] if n not in names]
+            # A definition only a correction uses (#617) is compared with the correcting
+            # proposition, named by its place; its wording is the author's, after the verdict.
+            for e in unit.get("introduced_by") or []:
+                ch = site.chunk(e.get("claim")) or {}
+                cls = ch.get("clauses") or []
+                k = e.get("clause")
+                if k and 0 < k <= len(cls) and cls[k - 1].get("statement"):
+                    decls.append({**_clause(cls[k - 1], stage, ch["id"], cls),
+                                  "role": "correction that uses it"})
         _with_objects(decls)
         for d in decls:
             names += [n for n in (d.get("statement") or {}).get("closure") or []
@@ -876,7 +886,10 @@ def unit_packet(site: Site, unit: dict, stage: str) -> dict:
                                       if chunks else None} if unit["kind"] == "step" else {}),
                                   "claims": [_informed(ch) for ch in chunks]}
         sections.append("interpretations")
-    out["retrieval"] = _retrieval(stage, sections, page, extra, outcome=unit["kind"] == "spec")
+    # A definition only a correction uses withholds the correcting clause's outcome from step 2;
+    # step 1 says nothing of it, so that it reads as any definition's (#617).
+    out["retrieval"] = _retrieval(stage, sections, page, extra, outcome=unit["kind"] == "spec" or (
+        stage == "compare" and bool(unit.get("introduced_by"))))
     return out
 
 
@@ -1678,6 +1691,14 @@ def packet_text(pk: dict) -> str:
                               + [x for c in conns for x in connection_lines(c)]))
     if pk["paper"].get("note"):
         out.insert(0, pk["paper"]["note"])
+    for e in (pk.get("unit") or {}).get("introduced_by") or []:
+        out.append(f"Only clause {e.get('clause')} of {e.get('claim')}, which "
+                   + ("corrects" if e.get("relation") == "corrects" else "is a special case of")
+                   + f" clause {e.get('of_clause')}, uses this definition: the formalisation "
+                   "introduced it, and the passages above do not define it. Compare it with what "
+                   "that proposition (below) requires of it: if it is what the correction needs, "
+                   "the verdict is 'faithful to the correction', which says nothing of what the "
+                   "paper printed.")
     cor = (pk.get("unit") or {}).get("correction")
     if cor:
         what = "a correction of" if cor["relation"] == "corrects" else "a special case of"
@@ -1697,7 +1718,10 @@ def packet_text(pk: dict) -> str:
         for d in lean["declarations"]:
             head = {"establishes the step": "Lean linked as establishing this step:\n",
                     "formal route used instead": "The different formal route used instead "
-                    "(it does not state the step):\n"}.get(d.get("role"), "")
+                    "(it does not state the step):\n",
+                    "correction that uses it": "The correcting proposition that uses it, "
+                    "clause " + str((d.get("position") or {}).get("clause")) + " of "
+                    + str((d.get("position") or {}).get("claim")) + ":\n"}.get(d.get("role"), "")
             out.append(head + "\n".join(statement_lines(d) + totalisation_lines(d)))
         for d in lean.get("candidates") or []:
             out.append("candidate (not confirmed): " + "\n".join(statement_lines(d)))
