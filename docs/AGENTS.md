@@ -574,6 +574,13 @@ applied entry by entry with the same refusals, and answered with one document li
 entry's result, with the same fields (*Many units at once* in [REVIEWING.md](REVIEWING.md)). Each
 unit still needs its own `read` before the lock and `author` before the report.
 
+If the author's account changes your judgement, `submit` records it beside your blind verdict,
+which stays as recorded: `--judgement-changed why.md`, and `--revised-verdict VERDICT` with
+`--revised-detail detail.md` if you would now give another verdict (`judgement_changed`,
+`revised_verdict`, `revised_detail` in a manifest). The result's `changed_judgement` holds it.
+`review promote` never promotes such a report, and a published audit does not count it: for a
+review that counts, take a fresh independent review, or an informed one (`--mode informed`).
+
 Run `compare` on a claim only after its review, or say in the reading that you had: its default
 stage shows the Lean and what others recorded. The steps are saved in your workspace
 (`review-work/`, below); record an informed `compare` there before reviewing the same claim with

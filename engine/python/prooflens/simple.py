@@ -632,6 +632,32 @@ def _text(x) -> str:
     return x[:REVIEW_TEXT_CHARS] if isinstance(x, str) else ""
 
 
+def counted(reports: list[dict]) -> tuple[list[dict], list[dict]]:
+    """The reports that count for a claim, and those that do not: a report whose reviewer
+    changed their judgement after the author's review (`changed_judgement`) adds no coverage and
+    no reviewer's reading, and the claim reads as it would without it (#665)."""
+    return ([r for r in reports if not r.get("changed_judgement")],
+            [r for r in reports if r.get("changed_judgement")])
+
+
+def uncounted_view(r: dict) -> dict:
+    """A report that is not counted (`counted`), as the claim's details list it: its reviewer,
+    its blind verdict and when it was recorded, and the judgement changed after the author's
+    review, with its reason and when it was recorded."""
+    rv, v = r.get("reviewer") or {}, r.get("verdict") or {}
+    cj = r.get("changed_judgement") if isinstance(r.get("changed_judgement"), dict) else {}
+    nv = cj.get("verdict") if isinstance(cj.get("verdict"), dict) else None
+    return {"reviewer": {k: rv.get(k) for k in ("id", "kind", "name", "model", "identity")},
+            "verdict": {"value": v.get("value"), "detail": _text(v.get("detail"))},
+            "decided_at": (r.get("comparison") or {}).get("decided_at"),
+            "changed_judgement": {
+                "reason": _text(cj.get("reason")), "recorded_at": cj.get("recorded_at"),
+                "verdict": {"value": nv.get("value"), "detail": _text(nv.get("detail"))}
+                if nv else None},
+            "submitted_at": r.get("submitted_at"),
+            "why": "the reviewer changed their judgement after the author's account: not counted"}
+
+
 def review_view(r: dict, links: list[dict], claim: dict) -> dict:
     """A report as the reader shows it, and whether it is current: it read the claim's passage
     as the paper now prints it (the digest it pinned is the claim's `source_sha256`) and
@@ -2141,7 +2167,8 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
                 {"source": "formalization.yaml",
                  "note": " ".join(c.get("declared_route_notes") or [])[:NOTE_CHARS], "by": None}
                 if c.get("declared_route") else None)
-            c["step_reports"] = reports.get(steps.unit_id(c["id"]), [])
+            c["step_reports"], changed = counted(reports.get(steps.unit_id(c["id"]), []))
+            c["uncounted_reviews"] = [uncounted_view(r) for r in changed]
         for s in c.get("suggestions", []):
             found = [r for r in linkrecs.get(s["name"], []) if "missing" not in r.get("errors", [])]
             s["record"] = found[0] if len({((r.get("decl") or {}).get("module")) for r in found}) == 1 else None
@@ -2157,7 +2184,10 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
         cor = correspondence(c, entry, bridge)
         c["correspondence"] = cor if c["links"] or (cor or {}).get("coverage") == "unresolved" \
             else None
-        c["reviews"] = [review_view(r, c["links"], c) for r in reports.get("link:" + c["key"], [])]
+        kept, changed = counted(reports.get("link:" + c["key"], []))
+        c["reviews"] = [review_view(r, c["links"], c) for r in kept]
+        c["uncounted_reviews"] = c.get("uncounted_reviews", []) + [uncounted_view(r)
+                                                                  for r in changed]
         c["references"] = claim_references(c, numbering)
         if c["links"]:
             worst = max(c["links"], key=lambda l: ["proved", "unspecified", "open", "malformed"]
@@ -2326,6 +2356,8 @@ def write_view_site(view: dict, site: Path, web_dist: Path | None,
             "blockers": [],
             "links": [_link_view(l, root) for l in c["links"]],
             "correspondence": c.get("correspondence"), "reviews": c.get("reviews", []),
+            **({"uncounted_reviews": c["uncounted_reviews"]} if c.get("uncounted_reviews")
+               else {}),
             "suggestions": [_link_view(s, root) for s in c.get("suggestions", [])],
             "clauses": [], "decls": {n: keys[n] for n in sorted(names) if n in keys},
             "findings": [], "references": c.get("references", []),

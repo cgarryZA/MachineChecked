@@ -342,6 +342,19 @@
         {#if l.status_detail}<p class="small">{l.status_detail}</p>{/if}
         <p class="faint small">{l.source === "paper" ? "Linked by a \\lean{…} tag in the paper's source" : l.source === "formalization.yaml" ? "Declared in the project's formalization.yaml" + (index.formalization?.review_status ? ` · project review: “${index.formalization.review_status}”` : "") : "Linked in the reader (machinechecked.links.json)"}{#if l.repository} · {l.repository}{/if}{#if l.module} · {l.module}{l.range ? ":" + l.range.line : ""}{/if}</p>
       {/each}
+      {#if claim.uncounted_reviews?.length}
+        <!-- A report whose reviewer changed their judgement after the author's account (#665). -->
+        <h3>Reports not counted ({claim.uncounted_reviews.length})</h3>
+        <p class="faint small">The reviewer changed their judgement after the author's account, so the report adds no coverage and no reviewer's reading: the claim reads as it would without it.</p>
+        {#each claim.uncounted_reviews as r}
+          {@const nv = r.changed_judgement?.verdict}
+          <div class="small uncounted">
+            <p><strong>{VERDICT_LABEL[r.verdict.value] || r.verdict.value}</strong> before the author's account, by {reviewer(r)}, {(r.decided_at || "").slice(0, 10)}; changed after it{#if nv}{" to "}<strong>{VERDICT_LABEL[nv.value] || nv.value}</strong>{/if}, {(r.changed_judgement?.recorded_at || "").slice(0, 10)}.</p>
+            {#if nv?.detail}<p class="pre">{nv.detail}</p>{/if}
+            <p class="pre">{r.changed_judgement?.reason}</p>
+          </div>
+        {/each}
+      {/if}
     {:else}
       {#if claim.blockers?.length}
         <h3>Checks and evidence</h3>
@@ -544,6 +557,8 @@
   .review { border-left: 3px solid var(--border); padding: 4px 0 4px 10px; margin-top: 8px; }
   .review[data-verdict="narrower"], .review[data-verdict="mismatched"], .review[data-verdict="vacuous"], .review[data-verdict="cannot determine"] { border-left-color: var(--tier-warning); }
   .review summary { cursor: pointer; }
+  .uncounted { border-left: 3px solid var(--tier-warning); padding: 2px 0 2px 10px; margin: 6px 0; }
+  .uncounted p { margin: 2px 0; }
   .pre { white-space: pre-wrap; overflow-wrap: anywhere; }
   .coverage { border-left: 3px solid var(--border); padding: 4px 0 4px 10px; margin-top: 8px; }
   .coverage p { margin: 2px 0; }
