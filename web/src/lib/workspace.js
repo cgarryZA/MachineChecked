@@ -21,7 +21,13 @@ async function call(path, body) {
   return out;
 }
 
-export const listWorkspaces = () => call("api/workspaces");
+// The workspaces of the working directory. An answer that lists none (one cut short, or not
+// this server's) is an error, never an empty list read as `undefined`.
+export const listWorkspaces = async () => {
+  const out = await call("api/workspaces");
+  if (!Array.isArray(out?.workspaces)) throw new Error("The engine's list of workspaces could not be read.");
+  return out;
+};
 
 export const openWorkspace = (reviewer, mode, id) =>
   call("api/workspace", { action: "open", reviewer, mode, id });
