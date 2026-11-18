@@ -132,6 +132,23 @@ def symbol_links(display: dict | None, cid: str, tex: str | None, lean: dict,
     return out
 
 
+def part_number(claim: dict, t: dict, inventory: list[dict]) -> str:
+    """The number a claim the inventory gives none, located by its lines inside a numbered
+    environment (`t["enclosing"]`), is named by: the environment's printed number and the
+    claim's place among the inventory's claims in it, in the order of the source ("Remark 3
+    (part 2)"). Empty when it lies in none. Display only."""
+    inside = t.get("enclosing") or {}
+    aid = inside.get(claim["id"])
+    anchor = next((a for a in t.get("anchors") or [] if a.get("id") == aid), None)
+    if anchor is None:
+        return ""
+    from .tex import printed_number
+    regions = t.get("regions") or {}
+    parts = sorted((c for c in inventory if inside.get(c["id"]) == aid),
+                   key=lambda c: ((regions.get(c["id"]) or {}).get("start_line") or 0, c["id"]))
+    return f"{printed_number(anchor)} (part {[c['id'] for c in parts].index(claim['id']) + 1})"
+
+
 def own_part(cid: str, anchor: dict | None, t: dict) -> dict | None:
     """The part of the printed passage that a claim located by its lines states, when the
     passage shown is longer: the claim's own pinned region (`t["regions"]`, its text from
@@ -224,7 +241,7 @@ def build(evidence: dict, release: str, display: dict | None = None
         # own description is kept as `title` and shown only as such.
         heading = (anchor or {}).get("title") if (anchor or {}).get("kind") == "exact" else None
         over = shown.get(c["id"], {})
-        number = over.get("number") or c.get("number", "")
+        number = over.get("number") or c.get("number", "") or part_number(c, t, inv)
         description = over["title_tex"] if "title_tex" in over else c.get("title", "")
         fs = by_subject.get(c["id"], [])
         counts = Counter(f["tier"] for f in fs if not (f.get("dismissed") or f.get("resolved")))
