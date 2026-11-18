@@ -316,7 +316,7 @@
     if (draft.coverage && !(COVERAGE_FOR[g] || []).includes(draft.coverage)) draft.coverage = null;
     persist();
   }
-  const detailWanted = $derived(draft?.verdict ? needsDetail(draft.verdict) : null);
+  const detailWanted = $derived(draft?.verdict ? needsDetail(draft.verdict, current?.kind) : null);
   // The reviewer's coverage, recorded with the verdict, for a statement or a definition (a proof
   // step's review records whether the step holds).
   const coverageChoices = $derived(COVERAGE_CHOICES.filter((c) => (COVERAGE_FOR[draft?.group] || []).includes(c.value)));

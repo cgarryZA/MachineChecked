@@ -68,7 +68,19 @@ command, with the same refusals: every unit still needs its own `read` before it
 The command prints one line per entry (`UNIT: what was recorded`, or `UNIT: refused (KIND):
 why`); a refused entry does not stop the others, and the command then exits 2. With `--json` it
 prints one document, `{"schema": "machinechecked/review-manifest@1", "ok", "entries": [{"entry",
-"unit", "ok", "message" | "error": {"kind", "message"}}]}`.
+"unit", "ok", "message" | "error": {"kind", "message"}}]}`; an entry taken also holds the fields
+of its step's result, below.
+
+**Results as data.** `lock`, `decide` and `submit` of one unit take `--json` too, and print one
+document: `{"schema": "machinechecked/review-step@1", "action", "ok": true, "unit", "message",
+"step", ..., "workspace": {"id", "mode"}}`. `step` is the unit's step now (`compare` after a lock,
+`author` after a verdict, `submitted` after the report), and the other fields say what the step
+recorded: `locked_at` and `revealed_by` (what you had already seen of the unit's Lean or author's
+review) for `lock`; `verdict`, `group`, `decided_at`, `correspondence` (the coverage and its basis,
+or null) and a structure's separate verdicts (`members`) for `decide`; `verdict`, `group`,
+`submitted_at` and the report's `revealed_by` for `submit`. `message` is the line the command
+prints without `--json`. A refused step prints the refusal below, and so does a text file that
+cannot be read (`invalid`).
 
 **One review, in the browser or the terminal.** Under `machinechecked view`, the review page
 keeps your work in the same workspace and makes each step through the same checks: the drafts,
@@ -897,17 +909,23 @@ theorem it is a step of.
 
 ## What a verdict means
 
-| Verdict | What the reviewer must explain |
+| Verdict | What its detail explains |
 |---|---|
-| Faithful | All material assumptions and conclusions match |
+| Faithful | No detail: the comparison shows that all material assumptions and conclusions match |
 | Faithful with representation choices | Why each representation difference is harmless |
 | Broader | The instantiation that recovers the printed claim |
-| Faithful to the correction | Nothing more: offered only for a correction or a special case of a printed clause (shown with the Lean, beside the passage, naming the printed clause by its place), it says the proposition is the printed claim with a correction, and otherwise as printed; the correction its author declares is shown after the verdict |
+| Faithful to the correction | No detail: offered only for a correction or a special case of a printed clause (shown with the Lean, beside the passage, naming the printed clause by its place), it says the proposition is the printed claim with a correction, and otherwise as printed; the correction its author declares is shown after the verdict |
 | Narrower | Extra hypotheses or cases excluded by Lean |
 | Mismatched | What the Lean statement actually establishes |
 | Vacuous | Why hypotheses fail to hold, or a witness is inadequate |
 | Refutation not valid | How the proposition is stronger than the printed claim, so that a refutation of it would not refute the printed claim; offered for every locked statement, since whether one is refuted is shown after the verdict |
 | Cannot determine | The open question, and what evidence would settle it |
+
+The comparison says how the Lean compares with the paper, item by item; the detail says what the
+verdict itself needs. Every verdict needs a detail except *Faithful* and *Faithful to the
+correction*, and `decide` refuses one without it. The review page asks for it under the verdict,
+and `machinechecked review decide --help` lists each verdict with the same question (`--detail`,
+or `detail` in a manifest).
 
 A saved report carries an issue draft for the maintainer: an explanatory note for representation
 choices or a broader statement, a defect for a problem verdict, and an open question for *Cannot
@@ -986,9 +1004,9 @@ its constants and its conclusion. A context longer than 20000 characters is kept
 reader marks it **(cut)**, says where it was cut and how much it shows, and the rest is read in
 the paper. Its verdicts are its own:
 
-| Verdict | What the reviewer must explain |
+| Verdict | What its detail explains |
 |---|---|
-| Holds as printed | Nothing more |
+| Holds as printed | No detail |
 | Holds, with a gap in the argument | The argument the printed proof leaves out |
 | False as printed | The counterexample or the failing case, and what would repair the step |
 | Cannot determine | What would decide it |

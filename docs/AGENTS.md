@@ -518,22 +518,29 @@ export MACHINECHECKED_REVIEWER=llm:MODEL
 machinechecked build
 machinechecked review next --json            # {"unit": {"id": "link:thm:odd-add", ...}}
 machinechecked review read link:thm:odd-add --json    # the paper only
-machinechecked review lock link:thm:odd-add reading.md
+machinechecked review lock link:thm:odd-add reading.md --json    # {"step": "compare", "revealed_by": [], ...}
 machinechecked review show link:thm:odd-add --json    # and the Lean
-machinechecked review decide link:thm:odd-add faithful comparison.md --coverage full --basis direct
+machinechecked review decide link:thm:odd-add faithful comparison.md --coverage full --basis direct --json
 machinechecked review author link:thm:odd-add          # what was recorded before
-machinechecked review submit link:thm:odd-add none.md
+machinechecked review submit link:thm:odd-add none.md --json
 machinechecked review export --out machinechecked-reviews/my-reviews.json
 ```
 
 `decide` records the coverage and its basis with the verdict, both optional
-([Coverage with the verdict](REVIEWING.md#coverage-with-the-verdict)).
+([Coverage with the verdict](REVIEWING.md#coverage-with-the-verdict)). Every verdict needs
+`--detail` except `faithful`, `faithful to the correction` and, for a proof step, `holds as
+printed`; `review decide --help` lists each verdict with what its detail says, as the review page
+asks it.
 
-For many units, `review lock`, `decide` and `submit` take `--manifest FILE --json`: a JSON list of
-`{"unit", ...the step's fields}`, each text inline or as `NAME_file`, applied entry by entry with
-the same refusals, and answered with one document listing each entry's result
-(*Many units at once* in [REVIEWING.md](REVIEWING.md)). Each unit still needs its own `read`
-before the lock and `author` before the report.
+With `--json`, `lock`, `decide` and `submit` print one document (`machinechecked/review-step@1`)
+saying what was recorded: the unit's `step` now (`compare`, `author`, `submitted`), with
+`locked_at` and `revealed_by` (what you had already seen of the unit) after a lock, the `verdict`,
+`group`, `decided_at` and `correspondence` after a verdict, and the `verdict`, `submitted_at` and
+the report's `revealed_by` after the report. For many units, the same steps take `--manifest FILE
+--json`: a JSON list of `{"unit", ...the step's fields}`, each text inline or as `NAME_file`,
+applied entry by entry with the same refusals, and answered with one document listing each
+entry's result, with the same fields (*Many units at once* in [REVIEWING.md](REVIEWING.md)). Each
+unit still needs its own `read` before the lock and `author` before the report.
 
 Run `compare` on a claim only after its review, or say in the reading that you had: its default
 stage shows the Lean and what others recorded. The steps are saved in your workspace

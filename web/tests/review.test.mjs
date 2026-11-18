@@ -9,9 +9,17 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { issueDraft, buildReport, orderedUnits, recordExposure, exposureOf, holdsBack, ORDER_SEEN,
          ORDER_EXPOSURE, reportCorrespondence, draftCoverage, draftFromReport, undoReport,
-         questionsOf } from "../src/lib/review.js";
+         questionsOf, needsDetail, VERDICTS, STEP_VERDICTS } from "../src/lib/review.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
+// What the detail of each verdict says, or null when it needs none: the same, verdict for
+// verdict, as the command line requires (tests/fixtures/review/verdict-details.json, which
+// tests/contracts/test_review_step_json.py checks against `review_cli.detail_asked`).
+const DETAILS = JSON.parse(fs.readFileSync(path.resolve(here, "../../tests/fixtures/review/verdict-details.json"), "utf8"));
+for (const [kind, table, asked] of [["spec", VERDICTS, DETAILS.statement], ["step", STEP_VERDICTS, DETAILS.step]]) {
+  assert.deepEqual(Object.values(table).flat().map((v) => v.value).sort(), Object.keys(asked).sort(), kind);
+  for (const [verdict, detail] of Object.entries(asked)) assert.equal(needsDetail(verdict, kind), detail, `${kind}: ${verdict}`);
+}
 const DRAFTS = JSON.parse(fs.readFileSync(path.resolve(here, "../../tests/fixtures/review/issue-drafts.json"), "utf8"));
 // The coverage a report records beside its verdict, or refuses: the same, case for case, as the
 // command line's (tests/fixtures/review/report-coverage.json, which

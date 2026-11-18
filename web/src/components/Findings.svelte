@@ -86,11 +86,11 @@
               {#if f.occurrences?.length}
                 <ul class="occ">
                   {#each f.occurrences as o, i (i)}
-                    <li data-state={o.state}>{#if o.subterms?.length}<span class="subs">{#each o.subterms as s, k (k)}{#if k}; {/if}<code class="sub" data-at={s.at}>{s.text ?? "not printed"}</code>{#if s.within}{" "}{near(s.within)}{/if}{/each}</span>,{" "}{/if}<span class="ty">in <code>{o.type || "a type not read"}</code>{#if STRUCTURE[o.structure]}, {STRUCTURE[o.structure]}{/if}</span>: {outcome(o)}
+                    <li data-state={o.state}>{#if o.subterms?.length}<span class="subs">{#each o.subterms as s, k (k)}{#if k}; {/if}<code class="sub" data-at={s.at}>{s.text ?? "not printed"}</code>{#if s.within}{" "}{near(s.within)}{/if}{/each}</span>,{" "}{/if}<span class="ty">in {#if "type" in o}<code>{o.type || "a type not read"}</code>{:else}a type this audit does not publish{/if}{#if STRUCTURE[o.structure]}, {STRUCTURE[o.structure]}{/if}</span>: {outcome(o)}
                       {#if o.conditions?.length}
                         <ul class="conds">
                           {#each o.conditions as c, j (j)}
-                            <li data-cond={c.state}>needs {CONDITION[c.condition] ?? c.condition}: {c.state}{#if c.by === "premise"}{" "}by the premise <code>{c.premise ? `${c.premise} : ` : ""}{c.statement}</code>{:else if c.by === "type"}{" "}({c.statement}){/if}</li>
+                            <li data-cond={c.state}>needs {CONDITION[c.condition] ?? c.condition}: {c.state}{#if c.by === "premise" && "statement" in c}{" "}by the premise <code>{c.premise ? `${c.premise} : ` : ""}{c.statement}</code>{:else if c.by === "premise"}{" "}by {#if c.premise}the premise <code>{c.premise}</code>{:else}a premise{/if}{:else if c.by === "type" && "statement" in c}{" "}({c.statement}){:else if c.by === "type"}{" "}(by an instance Lean finds on its type){/if}</li>
                           {/each}
                         </ul>
                       {/if}
@@ -101,7 +101,7 @@
                 {#if onshow && shown(f).length}<button class="show" onclick={() => onshow(f)}>Show in the statement</button>{/if}
               {/if}
               {#if f.resolved}<span class="dz">resolved: the statement supplies every condition the rule needs here</span>{/if}
-              {#if f.dismissed}<span class="dz">dismissed by {f.dismissed.by}: “{f.dismissed.rationale}”{#if f.dismissed.form === "statement"} (a dismissal of the operation in the whole statement: it holds until the statement changes){/if}</span>
+              {#if f.dismissed}<span class="dz">dismissed by {f.dismissed.by}{#if f.dismissed.rationale}: “{f.dismissed.rationale}”{/if}{#if f.dismissed.form === "statement"} (a dismissal of the operation in the whole statement: it holds until the statement changes){/if}</span>
               {:else if f.dismissal_stale}<span class="dz">an earlier dismissal no longer applies: {f.at ? "this application changed" : "the statement changed"}</span>{/if}
             </li>
           {/each}

@@ -671,6 +671,28 @@ def _and_the_lean(sh, r):
     assert [x["name"] for x in d["lean"]["declarations"]] == ["Plain.odd_add_odd"]
 
 
+def _step(r, action: str, step: str) -> dict:
+    d = r.json()
+    assert (d["schema"], d["action"], d["ok"], d["unit"], d["step"]) == (
+        "machinechecked/review-step@1", action, True, "link:thm:odd-add", step)
+    return d
+
+
+def _locked(sh, r):
+    assert _step(r, "lock", "compare")["revealed_by"] == []
+
+
+def _decided(sh, r):
+    d = _step(r, "decide", "author")
+    assert (d["verdict"], d["correspondence"]) == ("faithful", {"coverage": "full",
+                                                                "basis": "direct"})
+
+
+def _submitted(sh, r):
+    d = _step(r, "submit", "submitted")
+    assert (d["verdict"], d["revealed_by"]) == ("faithful", [])
+
+
 def _exported(sh, r):
     body = json.loads((sh.cwd / "machinechecked-reviews" / "my-reviews.json")
                       .read_text(encoding="utf-8"))
@@ -760,12 +782,12 @@ PLAIN_STEPS = [
     Do(_record_copy),
     Run("machinechecked review next --json", check=_next),
     Run("machinechecked review read link:thm:odd-add --json", check=_paper_only),
-    Run("machinechecked review lock link:thm:odd-add reading.md"),
+    Run("machinechecked review lock link:thm:odd-add reading.md --json", check=_locked),
     Run("machinechecked review show link:thm:odd-add --json", check=_and_the_lean),
     Run("machinechecked review decide link:thm:odd-add faithful comparison.md --coverage full "
-        "--basis direct"),
+        "--basis direct --json", check=_decided),
     Run("machinechecked review author link:thm:odd-add"),
-    Run("machinechecked review submit link:thm:odd-add none.md"),
+    Run("machinechecked review submit link:thm:odd-add none.md --json", check=_submitted),
     Run("machinechecked review export --out machinechecked-reviews/my-reviews.json",
         check=_exported),
     # Recording links and findings.
