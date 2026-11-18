@@ -550,6 +550,9 @@ export function buildReport({ index, unit, draft, reviewer }) {
     // Recorded with the verdict (`reportCorrespondence`); null when the reviewer recorded no coverage.
     correspondence: draft.correspondence ?? null,
     author_review: { shown_at: draft.author_shown_at, disagreements: draft.disagreements || "none" },
+    // What the verdict means for the claim, as the build records it: a theorem named as refuting
+    // the proposition (`review_cli.report`, #685).
+    ...(unit.refuted_by?.length ? { refuted_by: unit.refuted_by } : {}),
     // A judgement changed after the author's review: beside the blind verdict, never in it.
     ...(changed ? { changed_judgement: changed } : {}),
     submitted_at: now(),

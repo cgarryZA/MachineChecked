@@ -45,6 +45,12 @@ used instead:
 `reviewed_composition`, `checked_bridge`). A step with no `lean` keeps only an `unresolved`
 coverage, whose open question may be whether any Lean states the step, and no basis.
 `route.lean` lists declarations that reach the parent by another argument. The probe checks both (as `link` records, `lean.links` in the evidence).
+A step's entry may also record the verdict its author proposes, `proposed`: `{verdict, note,
+theorem, by}`, with `verdict` one of the step verdicts and `theorem` a Lean name that is the
+author's and not checked by Lean. The links file takes the same field under the step's label. The
+site writes it to `data/proposals/<claim file>` (`machinechecked/step-proposal@1`: `{claim, unit,
+proposed}`), never into the claim record, so that a review page fetches it only after its
+verdict ([Proof steps](REVIEWING.md#proof-steps)).
 None of these fields is an input to a status: a step's status is its scope decision's, and its
 review is its own (below).
 
@@ -97,7 +103,10 @@ on one of them in `verdict.members` (name to `{group, value, detail}`). A report
 reviewer changed their judgement after the author's review keeps the blind `verdict` as it was
 recorded and, beside it, `changed_judgement`: `{reason, verdict, recorded_at}`, with `verdict`
 the revised one (`{group, value, detail}`) or null; `review promote` never promotes it, and in
-zero configuration it is not counted. Its `mode`
+zero configuration it is not counted. A report on a proposition that a clause of its claim
+refutes records `refuted_by`, as the build gave it when the report was submitted: each
+`{claim, clause, theorem, checked, line}`, the clause by its place and `line` the sentence step 3
+shows; it changes nothing promotion checks. Its `mode`
 is `independent` (the three steps, each locked) or `informed` (made in an informed workspace: no
 step is locked, `reading.text` is empty and `reading.locked_at` null when the reviewer recorded
 no reading, and `reading.revealed_by` lists the workspace's exposure); a report without `mode`

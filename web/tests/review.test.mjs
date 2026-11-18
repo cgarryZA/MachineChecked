@@ -45,6 +45,15 @@ for (const c of COVER.cases) {
   assert.equal(problems.length > 0, !!c.refused, `${c.name}: ${problems.join("; ")}`);
   if (!c.refused) assert.deepEqual(correspondence, c.correspondence, c.name);
 }
+// A report carries what the build records of a theorem refuting its proposition, as the engine's
+// does (#685); a unit with none, nothing.
+{
+  const refuted_by = [{ claim: "T:prop:pred", clause: 1, theorem: "Toy.Acceptance.prop_pred", checked: true, line: "This proposition is refuted by …" }];
+  const base = { index: { release: "v1", papers: [] }, reviewer: { kind: "person", name: "A" },
+                 draft: { reading: "r".repeat(20), locked_at: "t0", comparison: "c", decided_at: "t1", group: "matches", verdict: "faithful", author_shown_at: "t2" } };
+  assert.deepEqual(buildReport({ ...base, unit: { ...DRAFTS.unit, kind: "spec", refuted_by } }).refuted_by, refuted_by);
+  assert.equal("refuted_by" in buildReport({ ...base, unit: { ...DRAFTS.unit, kind: "spec" } }), false);
+}
 // The page records only the fields of the coverage and basis chosen.
 assert.deepEqual(draftCoverage({ coverage: "full", basis: "direct", argument: "left from before", would_decide: "x",
                                  bridge: { theorem: "A", target: "B" } }),

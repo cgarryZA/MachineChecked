@@ -60,9 +60,9 @@ QUEUE = f"{DATA}/review-queue.json"
 # The files of the site data the review steps read (`review_cli.Session`,
 # `compare.unit_packet`, `review_cli.informed_order`): the index, the review queue and the
 # reverse references the informed order reads; and every claim record, declaration record and
-# stored expansion.
+# stored expansion, and each proof step's proposed verdict, which step 3 shows.
 FILES = ("index.json", "review-queue.json", "uses.json")
-DIRS = ("claims", "decls", "expansions")
+DIRS = ("claims", "decls", "expansions", "proposals")
 PAPERS = "papers"
 HEX64 = re.compile(r"[0-9a-f]{64}")
 # How many of a check's problems a refusal names.
