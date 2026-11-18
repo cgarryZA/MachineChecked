@@ -1255,6 +1255,9 @@ def passage_text(p: dict) -> str:
                 f" ({par.get('id') or 'no parent recorded'}). {p['step']['question']}\n" + body)
         if p.get("context"):
             body += "\nIts context in the proof:\n" + p["context"]
+    if p.get("surroundings"):
+        from .passage_context import lines_of
+        body += "\n" + "\n".join(lines_of(p["surroundings"]))
     return body
 
 

@@ -2147,7 +2147,8 @@ def _review_text(a, s) -> None:
     """`review read`, `show` and `author`: what that step of the protocol shows of a unit."""
     if a.action == "show" and getattr(a, "definitions", False) and not a.json:
         return print(s.show(a.unit, definitions=True))
-    out = getattr(s, a.action)(a.unit, a.json)
+    out = s.read(a.unit, a.json, context=True) if a.action == "read" and \
+        getattr(a, "context", False) else getattr(s, a.action)(a.unit, a.json)
     _print_json(out) if a.json else print(out)
 
 
@@ -2963,6 +2964,12 @@ def _add_review(sub) -> None:
         if name in ("next", "status", "read", "show", "author"):
             sp.add_argument("--json", action="store_true",
                             help="print one JSON document holding only what this step shows")
+        if name == "read":
+            sp.add_argument("--context", action="store_true",
+                            help="also give the paper around each passage, from the build's copy "
+                                 "of its source: its section, the paragraphs before and after, "
+                                 "its labels' printed numbers, the statements it cites or that "
+                                 "cite it (context, not the passage read)")
         if name == "show":
             sp.add_argument("--definitions", action="store_true",
                             help="print only the definitions the unit's Lean uses, each once, "
