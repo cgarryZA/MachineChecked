@@ -2231,8 +2231,13 @@ def _status_steps(s, units: list[dict]) -> list[dict]:
 
 def _review_text(a, s) -> None:
     """`review read`, `show` and `author`: what that step of the protocol shows of a unit."""
+    if a.action == "show" and getattr(a, "fold", False) and \
+            not (getattr(a, "definitions", False) and not a.json):
+        from .review_cli import ReviewError
+        raise ReviewError("--fold folds the listing of `review show UNIT --definitions`, in text",
+                          "invalid")
     if a.action == "show" and getattr(a, "definitions", False) and not a.json:
-        return print(s.show(a.unit, definitions=True))
+        return print(s.show(a.unit, definitions=True, fold=getattr(a, "fold", False)))
     if a.action == "read" and getattr(a, "with_units", None):
         out = s.read_together([a.unit, *a.with_units], a.json, getattr(a, "context", False))
         return _print_json(out) if a.json else print(out)
@@ -3143,6 +3148,10 @@ def _add_review(sub) -> None:
                                  "read them once, and lock one reading for all of them "
                                  "(repeat for each); each still takes its own verdict")
         if name == "show":
+            sp.add_argument("--fold", action="store_true",
+                            help="with --definitions: one line for each definition already shown "
+                                 "to you, unchanged, with another unit of your workspace (a "
+                                 "display only; it records nothing as read or reviewed)")
             sp.add_argument("--definitions", action="store_true",
                             help="print only the definitions the unit's Lean uses, each once, "
                                  "with its docstring, signature and body or fields")
