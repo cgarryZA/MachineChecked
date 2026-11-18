@@ -55,6 +55,8 @@ import re
 PASSAGE, READING, CONTEXT, OBJECT = "passage", "reading", "context", "object"
 COMPOSITION, BRIDGE, COUNTEREXAMPLE = "composition", "bridge", "counterexample"
 DIFFERENCE = "difference"
+# A reading choice of a definition the finding or its requirements cite (`reading_choice.py`).
+CHOICE = "reading choice"
 RESOLUTION = "resolution"  # a bridge item's `of`: the checked bridge a difference is resolved by
 # The evidence kinds of a reference, by its key.
 EVIDENCE = {"decl": "declaration", "app": "application", "fact": "fact",
@@ -83,7 +85,7 @@ COMPOSITION_FIELDS = ("statement", "steps", "identifications", "obligations", "c
 WORDS = {PASSAGE: "the passage", READING: "the requirement", CONTEXT: "the passage",
          OBJECT: "the alignment", COMPOSITION: "the composition",
          BRIDGE: "the composition's bridge", COUNTEREXAMPLE: "the counterexample",
-         DIFFERENCE: "the difference finding",
+         DIFFERENCE: "the difference finding", CHOICE: "the reading choice",
          **{v: "the evidence" for v in EVIDENCE.values()}}
 
 
@@ -508,6 +510,12 @@ def collect(f: dict, records: dict) -> dict:
     reqs, missing = _requirements(f, records, named, established)
     unknown += missing
     lids = {r["local_id"] for r in reqs}
+    # The reading choices it cites, and those its requirements cite: a changed choice makes it
+    # due for review (`reading_choice.items`).
+    from .reading_choice import items as choice_items
+    chosen, gone = choice_items(f, records, reqs)
+    items += chosen
+    unknown += gone
     claim_recs = [r for r in records.values() if r.get("claim") == f["claim"]]
     for r in reqs:
         frags = [x for x in claim_recs if x.get("kind") == "fragment"
@@ -691,7 +699,7 @@ def check(f: dict, records: dict, snap, root=None, cur: dict | None = None,
                                    "be told apart: supersede it to record them"})
     for it in deps.get("items") or []:
         dep = it["dependency"]
-        if dep in (READING, COMPOSITION) or dep in skip:
+        if dep in (READING, COMPOSITION, CHOICE) or dep in skip:
             continue  # what the auditor wrote: an edit is a drift, above
         if dep == PASSAGE:
             if snap is None:
@@ -802,6 +810,8 @@ def item_text(it: dict) -> str:
             (" (the difference's resolution)" if it.get("of") == RESOLUTION else "")
     if dep == COUNTEREXAMPLE:
         return f"counterexample {it.get('record')}"
+    if dep == CHOICE:
+        return f"reading choice {it.get('choice')} of {it.get('claim')}"
     if dep == DIFFERENCE:
         return (f"the difference recorded in {it.get('record')}"
                 + (f" on {it.get('claim')} {it.get('requirement') or ''}".rstrip()

@@ -17,6 +17,7 @@ from prooflens import compare as cmp
 from prooflens import review_cli as rc
 from prooflens import review_queue as rq
 from prooflens import review_snapshot as rs
+from prooflens import workspace as wsp
 from test_compare import seg, statement, write_site
 
 SPEC = "Syn.PaperSpec.p"
@@ -30,7 +31,12 @@ REASON = "AUTHOR-REASON: the printed claim fails at n = 0."
 EXPECTED = "AUTHOR-EXPECTATION: the counterexample is n = 0."
 MARKER = "AUTHOR-MARKER: the proposition states the claim as printed."
 # What steps 1 and 2 never show, and step 3 does.
-OUTCOME = (REFUTE, ACCEPT, WITNESS, PRINTED, FIXED, REASON, EXPECTED, MARKER)
+# An auditor's reading choice for a definition Proposition 1 depends on (#597): a prior
+# interpretation, shown at step 3.
+CHOSEN = "AUDITOR-CHOICE: P is read for every n, with no exception."
+CHOICE_REASON = "AUDITOR-REASON: the paper's later use needs every n."
+OUTCOME = (REFUTE, ACCEPT, WITNESS, PRINTED, FIXED, REASON, EXPECTED, MARKER, CHOSEN,
+           CHOICE_REASON)
 UNIT, FIXED_UNIT = f"spec:{SPEC}", f"spec:{FIXED_SPEC}"
 WHO = ["--as", "human:Blind-Referee"]
 TEXTS = {"reading.md": "For every natural number n the synthetic property holds, with no "
@@ -97,6 +103,20 @@ def write_spec_site(tmp: Path) -> Path:
         "Let $P$ be the synthetic property of natural numbers.", "", "", "", "", "",
         ch["anchor"]["statement"], "", "The case $n = 0$ is discussed in the next section.",
         "\\end{document}", ""]))
+    # Another auditor's informed workspace: a reading choice of the definition of P, which a
+    # requirement of Proposition 1 cites.
+    auditor = rc.parse_reviewer("human:An-Auditor")
+    ws = wsp.open_for(data.parent.parent, auditor, "informed")
+    wsp.update(ws, [
+        {"op": "put", "record": {"kind": "requirement", "claim": "S:def:p", "local_id": "p",
+                                 "form": "reading choice", "text": "what P means",
+                                 "readings": [{"id": "every", "text": CHOSEN},
+                                              {"id": "most", "text": "for all large n"}],
+                                 "chosen": "every", "reason": CHOICE_REASON}},
+        {"op": "put", "record": {"kind": "requirement", "claim": "S:prop:p", "local_id": "r1",
+                                 "form": "conclusion", "text": "P(n) for every n",
+                                 "reading_choices": [{"claim": "S:def:p", "choice": "p"}]}}],
+        None, None, auditor["id"])
     return data
 
 
@@ -190,6 +210,12 @@ def test_the_outcome_is_withheld_until_the_verdict_on_every_surface(surface, cap
         (acc,) = after["interpretations"]["account"]
         text = step(capsys, "author", uid, *snap).out
         assert MARKER in text and "The author's account of this proposition, for S:prop:p" in text
+        # The auditor's reading choice, where the project's own workspaces are at hand.
+        has_work = bool(list(wsp.list_all(Path(".machinechecked")))) if not snap else False
+        # The project's own build keeps the workspace; a snapshot holds no workspace.
+        assert has_work == (not snap and Path(".machinechecked").is_dir())
+        assert (CHOICE_REASON in text) == has_work
+        assert bool(after["interpretations"]["reading_choices"]) == has_work
         if uid == UNIT:
             assert (d["clause"], d["refute"], d["accept"]) == (PRINTED, REFUTE, None)
             assert acc["lines"] == [f"clause 1 of S:prop:p, “{PRINTED}”: refuted",

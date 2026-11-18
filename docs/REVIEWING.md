@@ -26,11 +26,13 @@ order instead ([Review order](#review-order)).
 machinechecked review next                          # the next unit to review, and why
 machinechecked review read UNIT                     # step 1: the paper's statement only
 machinechecked review read UNIT --context           # and the paper around it, as context
+machinechecked review read UNIT --full              # a definition: its uses in full too
 machinechecked review lock UNIT reading.md          # locks your reading
 machinechecked review read UNIT --with UNIT2        # definitions of one passage: read it once
 machinechecked review lock UNIT reading.md --with UNIT2   # one reading locked for them all
 machinechecked review show UNIT                     # step 2 (refused before lock): the Lean
 machinechecked review show UNIT --definitions       # step 2: only the definitions it uses, compactly
+machinechecked review show UNIT --definitions --fold  # and one line for each already shown to you
 machinechecked review decide UNIT VERDICT comparison.md [--detail detail.md] [--coverage C ...]
 machinechecked review author UNIT                   # step 3 (refused before decide)
 machinechecked review submit UNIT disagreements.md  # finishes the report
@@ -54,7 +56,25 @@ the hypotheses supply the operation's conditions, and any dismissal of the warni
 step 3. For a
 refuted proposition, step 3 also shows the author's account of the refutation's scope: the
 readings its counterexample is declared to cover and not to cover, and the class lemmas for the
-paper's standing assumptions, each with its theorem's statement. The
+paper's standing assumptions, each with its theorem's statement.
+
+**An account the author keeps in a readings ledger.** A project whose configuration names a
+readings ledger (`readings_ledger`, [ASSURANCE.md](ASSURANCE.md)) has its account of a
+declaration there already: step 3 shows each row whose `declarations` name one of the unit's
+declarations exactly, with its source (`file#id`), the revision it was read at and the digest
+of the row, and the report records what was shown (`author_review.accounts`: each row's
+`source` and `sha256`). A unit no row names says so; nothing is matched by namespace, title or
+text, and the author enters nothing twice. A row such as
+
+```json
+{"id": "R4", "text": "The bound needs the constant before ε, as the paper's Remark 2 says.",
+ "declarations": ["Example.PaperSpec.thm_bound"], "read_at": "4f2c9e1"}
+```
+
+is shown at step 3 of `spec:Example.PaperSpec.thm_bound`, and never at steps 1 and 2. A review
+snapshot carries no configuration, so a review of one shows no ledger.
+
+The
 work is kept in your workspace in the project's working directory (`review-work/`; see below).
 In zero configuration, export into `machinechecked-reviews/` to publish the reports with the
 audit.
@@ -226,6 +246,14 @@ and statuses) and the outcome: each locked statement's `clause` and `label` (the
 name for it), `accept`, `refute`, `witness` and `proofs`, `corrects` or `restricts` and `kind`,
 and `interpretations.account`, the author's account in the lines step 3 prints.
 
+A definition unit reads every passage of every claim that names the definition. Each passage
+has a role (`role` in `--json`): `defines` for the definition's own claim, the definition the
+inventory maps to it (a clause listing it in `defs`), and `uses` for a claim that only names it.
+The defining passages come first, in full; the uses follow, each abbreviated to its first 300
+characters in the text of step 1 (`review read UNIT --full` prints them in full, and `--json`
+gives each whole). With no definition claim mapped to it, every passage reads as a use, and step
+1 says so.
+
 `show --definitions` prints only the definitions the unit's Lean uses, for reading line by
 line: each once, with its docstring, its signature, and its body, equations or fields (one per
 line, with their full types); the constants Lean generates for one (a constructor, projections,
@@ -233,6 +261,16 @@ equation lemmas) are named under it. It is the text of `lean.definitions` in `sh
 list every constant of the project the listed definitions use, transitively, including those
 only in a binder's or a field's type: each one a statement does not use directly says which
 definition uses it, so the meaning of every name in the Lean is in the protocol.
+
+When several units use the same definitions, `show --definitions --fold` gives one line for each
+definition already shown to you unchanged with another unit of your workspace ("shown to you with
+link:thm:a, unchanged since"), and prints in full each one never shown to you, or changed since
+(it says with which unit you saw it before). Each draft and report records the definitions its
+step 2 showed, at their fingerprints (`shown_definitions`), and the fold reads them: a unit's
+own earlier showing folds nothing, and a definition shown on the review page of a static copy,
+which keeps no such record, is printed in full. `show --definitions` without `--fold` lists
+every definition in full. Folding is a display only: it records no definition as read, reviewed
+or accepted, and changes nothing in your workspace.
 
 **Informed investigation.** Outside the three steps, `machinechecked compare CLAIM` gives a
 claim's passage, its linked statements, its definitions and everything recorded about it, and
@@ -549,6 +587,41 @@ changed it meanwhile, nothing is written and both versions are returned (and kep
 changes nothing. A finding is a draft until `{"op": "submit", "id", "base_rev"}`; a submitted
 finding is never edited, but `{"op": "supersede", "id", "base_rev", "reason", "record"}` records a
 later one with its reason, and both remain.
+
+**A definition's reading.** When the paper leaves a definition open (its "bounded" may mean
+uniformly or eventually bounded), record the reading you choose once, on the definition's claim,
+as a requirement of the form `reading choice`: the readings (each an `id` and its `text`), the one
+`chosen` and the `reason`, and optionally the Lean declaration that states two of the readings
+agree (`equivalence`: `theorem` and the two `readings`), which need not exist yet:
+
+```json
+{"op": "put", "record": {"kind": "requirement", "claim": "Definition 2.1", "local_id": "bounded",
+  "form": "reading choice", "text": "what bounded means",
+  "readings": [{"id": "uniform", "text": "bounded uniformly in time"},
+               {"id": "eventual", "text": "bounded for all large times"}],
+  "chosen": "uniform", "reason": "Lemma 3.2 uses the bound at every time.",
+  "equivalence": {"theorem": "Example.uniform_iff_eventual", "readings": ["uniform", "eventual"]}}}
+```
+
+A claim depends on the choice only where one of its requirements or findings cites it:
+`"reading_choices": [{"claim": "Definition 2.1", "choice": "bounded"}]`. `workspace show`, its
+JSON (`reading_choices`, and `cites` on each citing requirement and finding) and the reader's
+Investigation section show the choice on the definition and on each claim that depends on it,
+with the link. A finding rests on each choice it cites and on those its requirements cite: when the
+choice changes (its readings or the one chosen; its reason alone changes nothing), a submitted
+finding is due for review, and it is never rewritten.
+
+The equivalence is shown with its declaration's exact statement, and reads *pending NAME* until
+the declaration is in the build, a theorem, proved, with only the allowed axioms, then
+*discharged by NAME*. `check` asks Lean (`workspace show` and the reader use what Lean last
+answered), and lists each choice with its equivalence and the claims that depend on it (in
+`--json`, `reading_choices`). A discharged equivalence moves no verdict from one reading to the
+other: what it justifies is what its statement proves.
+
+The choice is a prior interpretation. The read and compare steps of independent review never
+show it; `review author` shows the choices the working directory's workspaces record on the
+unit's claims, or that the unit's claims cite, with the counterexamples recorded on the
+requirements that cite them (`interpretations.reading_choices` in `--json`).
 
 **Main results.** `workspace main NAME...` saves which claims (each standing for its linked Lean)
 and declarations are the paper's main results (in an update file: `{"op": "main-results", "main":
