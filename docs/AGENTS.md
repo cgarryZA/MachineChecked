@@ -551,6 +551,9 @@ machinechecked review export --out machinechecked-reviews/my-reviews.json
 printed`; `review decide --help` lists each verdict with what its detail says, as the review page
 asks it.
 
+For a definition unit, each passage of `review read --json` has a `role`: `defines` (the
+definition's own claim, mapped to it in the inventory) or `uses`, the defining passages first.
+
 `review read UNIT --context --json` gives each passage with the paper around it, as
 `surroundings`: its sections, the paragraphs before and after it, its labels' printed numbers,
 the statements it cites (with their passages), for a proof step the statement whose proof it

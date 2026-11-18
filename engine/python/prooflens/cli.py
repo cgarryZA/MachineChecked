@@ -2283,8 +2283,11 @@ def _review_text(a, s) -> None:
     if a.action == "read" and getattr(a, "with_units", None):
         out = s.read_together([a.unit, *a.with_units], a.json, getattr(a, "context", False))
         return _print_json(out) if a.json else print(out)
-    out = s.read(a.unit, a.json, context=True) if a.action == "read" and \
-        getattr(a, "context", False) else getattr(s, a.action)(a.unit, a.json)
+    if a.action == "read":
+        out = s.read(a.unit, a.json, context=getattr(a, "context", False),
+                     full=getattr(a, "full", False))
+        return _print_json(out) if a.json else print(out)
+    out = getattr(s, a.action)(a.unit, a.json)
     _print_json(out) if a.json else print(out)
 
 
@@ -3179,6 +3182,9 @@ def _add_review(sub) -> None:
             sp.add_argument("--json", action="store_true",
                             help="print one JSON document holding only what this step shows")
         if name == "read":
+            sp.add_argument("--full", action="store_true",
+                            help="for a definition, print in full the passages that only use it "
+                                 "(abbreviated by default, after those that define it)")
             sp.add_argument("--context", action="store_true",
                             help="also give the paper around each passage, from the build's copy "
                                  "of its source: its section, the paragraphs before and after, "

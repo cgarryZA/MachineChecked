@@ -26,6 +26,7 @@ order instead ([Review order](#review-order)).
 machinechecked review next                          # the next unit to review, and why
 machinechecked review read UNIT                     # step 1: the paper's statement only
 machinechecked review read UNIT --context           # and the paper around it, as context
+machinechecked review read UNIT --full              # a definition: its uses in full too
 machinechecked review lock UNIT reading.md          # locks your reading
 machinechecked review read UNIT --with UNIT2        # definitions of one passage: read it once
 machinechecked review lock UNIT reading.md --with UNIT2   # one reading locked for them all
@@ -226,6 +227,14 @@ recorded about the correspondence (the author's review, notes, earlier reports, 
 and statuses) and the outcome: each locked statement's `clause` and `label` (the author's
 name for it), `accept`, `refute`, `witness` and `proofs`, `corrects` or `restricts` and `kind`,
 and `interpretations.account`, the author's account in the lines step 3 prints.
+
+A definition unit reads every passage of every claim that names the definition. Each passage
+has a role (`role` in `--json`): `defines` for the definition's own claim, the definition the
+inventory maps to it (a clause listing it in `defs`), and `uses` for a claim that only names it.
+The defining passages come first, in full; the uses follow, each abbreviated to its first 300
+characters in the text of step 1 (`review read UNIT --full` prints them in full, and `--json`
+gives each whole). With no definition claim mapped to it, every passage reads as a use, and step
+1 says so.
 
 `show --definitions` prints only the definitions the unit's Lean uses, for reading line by
 line: each once, with its docstring, its signature, and its body, equations or fields (one per
