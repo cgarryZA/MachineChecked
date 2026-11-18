@@ -885,6 +885,8 @@ class Session:
                            + (f" by {note['by']}" if note.get("by") else "") + f"\n{text}")
         out = out or ["No review by the author is recorded for this unit."]
         out += self._account(u) + self._refutation_scope(u)
+        # What the verdict just recorded means for the claim (#685).
+        out += [r.get("line") or rq.refutation_line(r) for r in u.get("refuted_by") or []]
         return "\n\n".join(out)
 
     def _account(self, u: dict) -> list[str]:
@@ -1289,6 +1291,9 @@ def report(index: dict, u: dict, d: dict, reviewer: dict, disagreements: str,
         # Recorded with the verdict; None when the reviewer recorded no coverage.
         "correspondence": d.get("correspondence"),
         "author_review": {"shown_at": d.get("author_shown_at"), "disagreements": disagreements},
+        # What the verdict means for the claim, as the build records it: a theorem named as
+        # refuting the proposition (#685).
+        **({"refuted_by": u["refuted_by"]} if u.get("refuted_by") else {}),
         # A judgement changed after the author's review: beside the blind verdict, never in it.
         **({"changed_judgement": changed_record(u, d["changed"])}
            if isinstance(d.get("changed"), dict) and d["changed"].get("reason") else {}),

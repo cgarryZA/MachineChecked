@@ -2855,6 +2855,10 @@ await check("review's Compare withholds the outcome the author gives a statement
     await pg.getByRole("button", { name: "Record verdict and show the author's review" }).click();
     await pg.locator(".review .account").first().waitFor();
     assert.ok((await pg.locator(".review .account").first().textContent()).startsWith(account), `${unit}: the author's account after the verdict`);
+    // #685: what the verdict means for the claim, when a clause refutes the proposition.
+    const refuted = pg.locator(".review .refuted-line");
+    if (unit.endsWith("_pos")) assert.equal(await refuted.count(), 0, `${unit}: no clause refutes it`);
+    else assert.equal(await refuted.textContent(), "This proposition is refuted by Toy.Acceptance.prop_pred: Lean checks that it proves the negation, so no proof of the proposition can follow.");
   }
 });
 
