@@ -74,6 +74,9 @@ from .reviews import history, load_reviews, review_files
 ACCEPTABLE = {"faithful", "faithful with representation choices", "broader",
               "faithful to the correction"}
 NEEDS_DETAIL = {"faithful with representation choices", "broader"}
+# A verdict that a proof of the proposition carries to the printed claim but a refutation does
+# not: the printed claim can hold while a more general proposition fails.
+NOT_FOR_A_REFUTATION = {"broader"}
 # A review of a printed step records a finding; an open question is not one.
 STEP_ACCEPTABLE = {"holds as printed", "holds, with a gap in the argument", "false as printed"}
 STEP_NEEDS_DETAIL = {"holds, with a gap in the argument", "false as printed"}
@@ -174,6 +177,7 @@ def check_report(r: dict, body: dict, cfg: Config, accept_same_family: bool,
     if v == "faithful to the correction" and not corrects_a_clause(body, u):
         why.append("verdict 'faithful to the correction' applies only to the proposition of a "
                    "clause that corrects, or is a special case of, a printed clause")
+    why += refutation_refusals(body, u, v)
     if v == "cannot determine":
         why.append("verdict 'cannot determine' is not one that is recorded as a review: it "
                    "leaves an open question, and no defect")
@@ -253,6 +257,30 @@ def corrects_a_clause(body: dict, u: dict) -> bool:
     return u.get("kind") == "spec" and any(
         cl.get("spec") == u.get("name") and (cl.get("corrects") or cl.get("restricts"))
         for c in (body.get("inventory") or {}).get("claims", []) for cl in c.get("clauses", []))
+
+
+def refutation_refusals(body: dict, u: dict, verdict: str) -> list[str]:
+    """Why `verdict` cannot be recorded for the unit's proposition when a clause of the
+    inventory in `body` refutes it as printed: a verdict a refutation does not carry to the
+    printed claim (`NOT_FOR_A_REFUTATION`) would let the refutation read as reviewed. A
+    refutation declared to lie outside the paper's standing assumptions refutes the formal
+    proposition only, never the printed claim, so such a verdict agrees with it."""
+    from .assess import OUTSIDE
+    if u.get("kind") != "spec" or verdict not in NOT_FOR_A_REFUTATION:
+        return []
+    refuting = [f"{c['id']} (clause {cl.get('name', 'main')!r})"
+                for c in (body.get("inventory") or {}).get("claims", [])
+                for cl in c.get("clauses") or []
+                if cl.get("spec") == u.get("name") and cl.get("refute")
+                and cl.get("refute_scope") != OUTSIDE]
+    if not refuting:
+        return []
+    return [f"verdict {verdict!r} says the proposition is more general than the printed claim, "
+            "so a refutation of it does not refute the printed claim; it is refuted by "
+            + ", ".join(refuting) + ". A review of a refuted proposition is recorded only with a "
+            "verdict that carries the refutation to the printed claim (faithful, or faithful "
+            "with representation choices); otherwise the clause should declare its refutation "
+            f"outside the paper's standing assumptions (refute_scope {OUTSIDE!r})"]
 
 
 def refuted_lines(r: dict) -> list[str]:
