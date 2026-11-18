@@ -6,6 +6,9 @@ data file of the site in `window.__PROOFLENS__` (keyed by the path the app would
 PDFs, base64, in `window.__PROOFLENS_PDF__`. The data scripts come first, so they are defined
 before the app (a deferred module) runs.
 
+It leaves out the authors' proposed verdicts on proof steps (`data/proposals/`): a review page
+fetches one only after its reviewer's verdict, and a bundle holds every file from the start.
+
 The content index of every project declaration (`data/retrieval.json`) is carried only up to
 `CONTENT_LIMIT` bytes: a larger one would make the file slow to open, so the bundle leaves it
 out, its reader searches by name, and the result says so (`omitted`).
@@ -52,16 +55,25 @@ def bundle(site: Path, out: Path, title: str | None = None,
     css = _inline_css((site / css_href.group(1)).read_text(encoding="utf-8"), assets)
     worker = next(assets.glob("pdf.worker*.mjs"), None)
 
-    data, omitted = {}, []
+    data, omitted, left_out = {}, [], set()
     for f in sorted((site / "data").rglob("*.json")):
         key = str(f.relative_to(site))
+        if key.startswith("data/proposals/"):
+            # A step's proposed verdict, which no client may hold before the reviewer's own
+            # verdict: a bundle holds every file it carries from the start, so it carries none.
+            if "proposals" not in left_out:
+                left_out.add("proposals")
+                omitted.append("the authors' proposed verdicts on proof steps, which a review "
+                               "shows only after the reviewer's verdict")
+            continue
         if key == "data/retrieval.json" and f.stat().st_size > content_limit:
+            left_out.add("retrieval")
             omitted.append(f"the content index ({f.stat().st_size / 1e6:.1f} MB, over the "
                            f"bundle's limit of {content_limit / 1e6:.0f} MB): the bundle's "
                            "search finds claims and declarations by name")
             continue
         data[key] = json.loads(f.read_text(encoding="utf-8"))
-    if omitted and isinstance(data.get("data/index.json"), dict):
+    if "retrieval" in left_out and isinstance(data.get("data/index.json"), dict):
         data["data/index.json"] = {k: v for k, v in data["data/index.json"].items()
                                    if k != "retrieval"}
     pdfs = {str(f.relative_to(site)): base64.b64encode(f.read_bytes()).decode()

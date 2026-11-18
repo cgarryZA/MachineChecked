@@ -294,6 +294,11 @@ fs.writeFileSync(path.join(root, "review-step/data/review-queue.json"), JSON.str
   route: ["Toy.Acceptance.thm_bound"], fingerprints: { source: stepChunk.source_sha256 },
   parent: { id: "T:thm:bound", number: "Theorem 2.5" }, state: "pending", reason: "Proof step of Theorem 2.5; no Lean is linked to it",
   claims: [{ id: "T:eq:bound-range" }], papers: ["T"], paper: "T", section: "2", author_review: [] }] }));
+// The step's author's proposed verdict, written apart from its record as the engine writes it
+// (`steps.split_proposals`, #678).
+const PROPOSAL = { verdict: "false as printed", note: "AUTHOR-PROPOSAL: the step fails for k = 0.", theorem: "Toy.Acceptance.bound_range_counterexample", by: "A. Author", source: "inventory" };
+fs.mkdirSync(path.join(root, "review-step/data/proposals"), { recursive: true });
+fs.writeFileSync(path.join(root, "review-step/data/proposals", stepRow.file), JSON.stringify({ schema: "machinechecked/step-proposal@1", claim: "T:eq:bound-range", unit: "step:T:eq:bound-range", proposed: PROPOSAL }));
 
 // The toy example's review queue as the engine builds it from the audit's data, with the paper's
 // order (#128): `queueFor(DATA)` writes it beside the data and names it in the index.
@@ -3666,6 +3671,17 @@ await check("a declaration lists its users; a static copy names the command for 
 }
 
 
+await check("a proof step's own page shows its author's proposal, which is not its review", 390, async (pg) => {
+  await pg.goto(origin + `/review-step/#/r/${TOY.release}/read/T/${encodeURIComponent("T:eq:bound-range")}`);
+  const box = pg.locator(".claim-view .view .paper .finding .proposal");
+  await box.waitFor();
+  const text = (await box.textContent()).replace(/\s+/g, " ").trim();
+  assert.match(text, /^The author proposes: False as printed — AUTHOR-PROPOSAL: the step fails for k = 0\./);
+  assert.match(text, /It names Toy\.Acceptance\.bound_range_counterexample, the author's and not checked by Lean here\. A proposal is not a review: it changes neither the step's review nor Theorem 2\.5's status\./);
+  // The step's own review reads as it did without it.
+  assert.equal(await pg.locator(".claim-view .view .paper .finding").getAttribute("data-review"), "false");
+});
+
 for (const width of [1300, 390]) {
   await check("a proof step shows its own finding beside the equation, apart from its parent", width, async (pg) => {
     await toyClaim(pg, "T:eq:bound-range");
@@ -3918,6 +3934,9 @@ await check("the overview counts findings in force that are current and due for 
 });
 
 await check("a proof step with no Lean link is reviewed as printed and reported as a step", 390, async (pg) => {
+  // #678: the author's proposal is fetched only once the verdict is recorded.
+  const asked = [];
+  pg.on("request", (r) => { if (r.url().includes("/data/proposals/")) asked.push(r.url()); });
   await pg.goto(origin + `/review-step/#/r/${TOY.release}/review?claim=T%3Aeq%3Abound-range`);
   await pg.getByRole("textbox", { name: "Your name" }).fill("Synthetic reviewer");
   await pg.getByRole("button", { name: "Start", exact: true }).click();
@@ -3931,8 +3950,15 @@ await check("a proof step with no Lean link is reviewed as printed and reported 
   await pg.getByRole("radio", { name: "False as printed", exact: true }).check();
   await pg.locator("#verdict-detail").fill("Fails at k = 0, n = 1; holds for k >= 1.");
   assert.equal(await pg.locator(".review .cover").count(), 0, "a step's review records no coverage");
+  assert.deepEqual(asked, [], "no proposal is fetched before the verdict");
+  assert.ok(!(await pg.content()).includes(PROPOSAL.note), "nor shown");
   assert.equal(await pg.locator(".review details.difficult").count(), 0, "the difficult cases compare Lean with the paper");
   await pg.getByRole("button", { name: "Record verdict and show the author's review" }).click();
+  // After it, step 3 shows the proposal beside the author's review; it is not the review.
+  const proposal = pg.locator(".review .proposal");
+  await proposal.waitFor();
+  assert.match((await proposal.textContent()).replace(/\s+/g, " "), /The author's proposed verdict on this step, by A\. Author False as printed — AUTHOR-PROPOSAL: the step fails for k = 0\. It names Toy\.Acceptance\.bound_range_counterexample \(the author's; Lean does not check it here\)\. A proposal completes no review/);
+  assert.equal(asked.length, 1, "fetched once, after the verdict");
   await pg.getByRole("button", { name: "Save report", exact: true }).click();
   await pg.getByRole("button", { name: "Export reports (1 new)", exact: true }).waitFor();
   const report = await pg.evaluate(() => JSON.parse(localStorage.getItem("prooflens-review:toy-paper")).reports[0]);
@@ -3942,6 +3968,7 @@ await check("a proof step with no Lean link is reviewed as printed and reported 
   assert.deepEqual(report.unit.parent, { id: "T:thm:bound", number: "Theorem 2.5" });
   assert.equal(report.pins.fingerprints.source, stepChunk.source_sha256);
   assert.equal(report.verdict.value, "false as printed");
+  assert.ok(!JSON.stringify(report).includes(PROPOSAL.note), "the proposal is not part of the report");
   assert.equal(report.correspondence, null);
   assert.equal(report.issue_draft.title, "Equation (3) in the proof of Theorem 2.5: false as printed");
 });

@@ -1,5 +1,6 @@
 <script>
   import { untrack } from "svelte";
+  import { loadProposal } from "../lib/data.js";
   import { loadQueue, loadClaim, canEdit, askReviewOrder, reviewWork, reviewStep, reviewInWorkspace } from "../lib/data.js";
   import { href, route, go, withQuery } from "../lib/route.svelte.js";
   import { VERDICTS, GROUPS, CHECKLIST, MARKS, STEP_VERDICTS, STEP_GROUPS, loadWork, saveWork, now, reviewerId,
@@ -385,6 +386,16 @@
     lastIssue = r.issue_draft;
     persist();
   }
+  // A proof step's author's proposed verdict: asked for only once the verdict is recorded, so the
+  // page holds none before it (#678).
+  let proposal = $state(null);
+  $effect(() => {
+    const u = current, d = draft;
+    proposal = null;
+    if (!u || u.kind !== "step" || d?.stage !== "author" || (served && !d.author_shown_at)) return;
+    loadProposal(index, u.claims[0]?.id).then((p) => { if (current === u) proposal = p; });
+  });
+  const STEP_LABEL = Object.fromEntries(Object.values(STEP_VERDICTS).flat().map((v) => [v.value, v.label]));
   // A judgement changed after the author's review (`changedJudgement`): kept beside the verdict.
   function toggleChanged() {
     draft.changed = draft.changed ? null : { reason: "", verdict: null, detail: "" };
@@ -715,6 +726,14 @@
                 <p class="lbl">Scope of the refutation of {s.claim}, as its author records it</p>
                 <pre class="author">{s.lines.join("\n")}</pre>
               {/each}
+              {#if proposal}
+                <div class="proposal" data-verdict={proposal.verdict}>
+                  <p class="lbl">The author's proposed verdict on this step{proposal.by ? ", by " + proposal.by : ""}</p>
+                  <p><strong>{STEP_LABEL[proposal.verdict] || proposal.verdict}</strong>{#if proposal.note}<span class="pre">{" — " + proposal.note}</span>{/if}</p>
+                  {#if proposal.theorem}<p class="small">It names <code>{proposal.theorem}</code> (the author's; Lean does not check it here).</p>{/if}
+                  <p class="faint small">A proposal completes no review: your verdict is the review. A different conclusion goes in your response below.</p>
+                </div>
+              {/if}
               {#each current.refuted_by || [] as r}
                 <!-- What the verdict just recorded means for the claim (#685). -->
                 <p class="refuted-line" data-checked={r.checked}>{r.line}</p>
@@ -792,6 +811,8 @@
   .checklist { list-style: none; padding: 0; margin: 6px 0; }
   .difficult { margin: 4px 0 8px; }
   .changed-toggle { display: block; margin: 8px 0 4px; }
+  .proposal { border-left: 3px solid var(--accent); padding: 2px 0 2px 10px; margin: 8px 0; }
+  .proposal p { margin: 2px 0; }
   .refuted-line { border-left: 3px solid var(--tier-warning); padding: 2px 0 2px 10px; margin: 8px 0; }
   .changed { border-left: 3px solid var(--tier-warning); padding: 2px 0 2px 10px; margin: 4px 0 8px; }
   .difficult ul { margin: 6px 0; padding-left: 18px; }

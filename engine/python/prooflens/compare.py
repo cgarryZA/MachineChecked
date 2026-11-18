@@ -221,6 +221,18 @@ class Site:
                    nb.inventory(claims, True)["statements"])
         return refs
 
+    def proposal(self, cid: str) -> dict | None:
+        """The verdict the author proposes for proof step `cid` (`steps.proposal`), kept apart
+        from its record (`data/proposals/<file>`); None when there is none. For the informed
+        stage only: the read and compare stages never read it."""
+        meta = self._by_id.get(cid)
+        p = self.data / "proposals" / meta["file"] if meta else None
+        try:
+            rec = json.loads(p.read_text(encoding="utf-8")) if p and p.is_file() else None
+        except ValueError:
+            return None
+        return rec.get("proposed") if isinstance(rec, dict) else None
+
     def part(self, key: str) -> dict | None:
         """A part stored on its own under its key (`data/expansions/<key>.json`,
         `manifest.split_expansions`): a definition expanded at an application, or a page of a
@@ -693,6 +705,8 @@ def claim_packet(site: Site, claim: str, stage: str = "informed", limit: int | N
                                    "no declaration is linked to this claim")
     if stage == "informed":
         out["interpretations"] = _informed(ch)
+        if ch.get("step"):
+            out["interpretations"]["proposed"] = site.proposal(ch["id"])
         if reading is not None:
             reading = dict(reading)
             out["interpretations"]["compositions"] = reading.pop("compositions", [])
@@ -812,6 +826,9 @@ def unit_packet(site: Site, unit: dict, stage: str) -> dict:
                                   "account": unit_account(unit, chunks),
                                   "refutation_scope": unit.get("refutation_scope") or [],
                                   "refuted_by": unit.get("refuted_by") or [],
+                                  # A proof step's author's proposed verdict (#678).
+                                  **({"proposed": site.proposal(chunks[0]["id"])
+                                      if chunks else None} if unit["kind"] == "step" else {}),
                                   "claims": [_informed(ch) for ch in chunks]}
         sections.append("interpretations")
     out["retrieval"] = _retrieval(stage, sections, page, extra, outcome=unit["kind"] == "spec")
