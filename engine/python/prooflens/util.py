@@ -41,6 +41,13 @@ def norm_ws(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+def strip_comments(text: str) -> str:
+    """LaTeX source without its comments: each `%` that is not escaped, to the end of its line.
+    Done before the lines are joined (`norm_ws`): once joined, a comment would run on over the
+    printed text after it."""
+    return "\n".join(re.sub(r"(?<!\\)%.*", "", line) for line in text.split("\n"))
+
+
 def run(cmd: list[str], cwd: str | Path, env: dict | None = None, timeout: int = 3600):
     return subprocess.run(cmd, cwd=cwd, env=env, capture_output=True, text=True,
                           timeout=timeout)

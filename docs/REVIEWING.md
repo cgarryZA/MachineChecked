@@ -56,7 +56,25 @@ the hypotheses supply the operation's conditions, and any dismissal of the warni
 step 3. For a
 refuted proposition, step 3 also shows the author's account of the refutation's scope: the
 readings its counterexample is declared to cover and not to cover, and the class lemmas for the
-paper's standing assumptions, each with its theorem's statement. The
+paper's standing assumptions, each with its theorem's statement.
+
+**An account the author keeps in a readings ledger.** A project whose configuration names a
+readings ledger (`readings_ledger`, [ASSURANCE.md](ASSURANCE.md)) has its account of a
+declaration there already: step 3 shows each row whose `declarations` name one of the unit's
+declarations exactly, with its source (`file#id`), the revision it was read at and the digest
+of the row, and the report records what was shown (`author_review.accounts`: each row's
+`source` and `sha256`). A unit no row names says so; nothing is matched by namespace, title or
+text, and the author enters nothing twice. A row such as
+
+```json
+{"id": "R4", "text": "The bound needs the constant before ε, as the paper's Remark 2 says.",
+ "declarations": ["Example.PaperSpec.thm_bound"], "read_at": "4f2c9e1"}
+```
+
+is shown at step 3 of `spec:Example.PaperSpec.thm_bound`, and never at steps 1 and 2. A review
+snapshot carries no configuration, so a review of one shows no ledger.
+
+The
 work is kept in your workspace in the project's working directory (`review-work/`; see below).
 In zero configuration, export into `machinechecked-reviews/` to publish the reports with the
 audit.
@@ -1017,12 +1035,26 @@ theorem it is a step of.
 | Faithful | No detail: the comparison shows that all material assumptions and conclusions match |
 | Faithful with representation choices | Why each representation difference is harmless |
 | Broader | The instantiation that recovers the printed claim |
-| Faithful to the correction | No detail: offered only for a correction or a special case of a printed clause (shown with the Lean, beside the passage, naming the printed clause by its place), it says the proposition is the printed claim with a correction, and otherwise as printed; the correction its author declares is shown after the verdict |
+| Faithful to the correction | No detail: offered only for a correction or a special case of a printed clause (shown with the Lean, beside the passage, naming the printed clause by its place), it says the proposition is the printed claim with a correction, and otherwise as printed; the correction its author declares is shown after the verdict. Offered too for a definition only a correction uses (below): it says the definition is what the correction needs |
 | Narrower | Extra hypotheses or cases excluded by Lean |
 | Mismatched | What the Lean statement actually establishes |
 | Vacuous | Why hypotheses fail to hold, or a witness is inadequate |
 | Refutation not valid | How the proposition is stronger than the printed claim, so that a refutation of it would not refute the printed claim; offered for every locked statement, since whether one is refuted is shown after the verdict |
 | Cannot determine | The open question, and what evidence would settle it |
+
+**A definition only a correction uses.** A correction can need a definition the paper never
+prints: an extra measurability predicate that makes a corrected theorem valid, say. When only
+clauses that correct or restrict a printed clause use a definition (no printed clause's
+proposition uses it, and no definition claim maps it), the formalisation introduced it. Step 1
+reads the printed passages of the claims that name it, as for any definition, and says nothing of
+the correction. Step 2 says which clause uses it, by its place ("Only clause 2 of S:prop:p, which
+corrects clause 1, uses this definition"), and shows that clause's proposition beside the
+definition; the correction's wording and reason are the author's, shown after the verdict.
+Compare the definition with what that proposition requires of it: if it is what the correction
+needs, the verdict is *Faithful to the correction*. That verdict certifies nothing the paper
+printed, and promotion accepts it only while the current evidence still shows the definition
+used only by a correction. The reader says so on the declaration: "Introduced by the
+formalisation".
 
 The comparison says how the Lean compares with the paper, item by item; the detail says what the
 verdict itself needs. Every verdict needs a detail except *Faithful* and *Faithful to the

@@ -404,6 +404,12 @@ assumption, `premise` inside the premise of an implication, `denied`, `alternati
 definition applied to it (by its expansion), and `theorem` for a result a workspace's evidence
 cites for that object (`object: {decl, var, id, name, type}`, pinned to the binder's identity).
 
+A declaration record of a definition only a correction uses has `introduced_by_correction`
+(`manifest.introduced_by_correction`): the clauses that use it, each `{claim, clause, of_clause,
+relation}` (the correcting clause and the printed clause by their places, and `corrects` or
+`restricts`). Its review unit in the queue has the same as `introduced_by`, which steps 2 and 3
+show and step 1 does not.
+
 A declaration record of a definition of data or of a predicate (not a proposition, an instance or
 a generated helper) also says what the definition says. `defined_by` is `body` or `equations`.
 With `body`: `params` (the leading `fun` binders of its value, each `{name, binder, id, type,

@@ -278,6 +278,16 @@ fs.cpSync(path.join(root, "toy"), path.join(root, "toyfamily"), { recursive: tru
   fs.writeFileSync(f, JSON.stringify(chunk));
 }
 
+// A definition only a correction uses, as the build records it on the declaration (#617).
+fs.cpSync(path.join(root, "toy"), path.join(root, "toyintro"), { recursive: true });
+for (const f of fs.readdirSync(path.join(root, "toyintro", "data", "decls"))) {
+  const file = path.join(root, "toyintro", "data", "decls", f);
+  const rec = JSON.parse(fs.readFileSync(file, "utf8"));
+  if (rec.name !== "Toy.IsEven") continue;
+  rec.introduced_by_correction = [{ claim: "T:prop:pred", clause: 2, of_clause: 1, relation: "corrects" }];
+  fs.writeFileSync(file, JSON.stringify(rec));
+}
+
 // Synthetic display excerpts as the engine writes them (fixtures/make_excerpt.py).
 const excerpts = spawnSync(process.env.PYTHON || "python3", [path.join(here, "fixtures", "make_excerpt.py")], { encoding: "utf8" });
 if (excerpts.status !== 0) throw new Error(excerpts.stderr);
@@ -1837,6 +1847,19 @@ for (const width of [1300, 390]) {
     assert.ok(!(await insp.locator(":scope > :not(details)").allTextContents()).join(" ").includes("a.referee"));
     await extra.locator("summary").click();
     assert.match(await extra.textContent(), /a\.referee/);
+  });
+
+  await check("a definition only a correction uses says the formalisation introduced it", width, async (pg) => {
+    await pg.goto(origin + `/toyintro/#/r/${TOY.release}/read/T/${encodeURIComponent("T:thm:even-add")}`);
+    await pg.waitForSelector(".claim-view h1");
+    await pg.locator(".claim-view .lean .r", { hasText: "IsEven" }).first().click();
+    const insp = pg.locator(".claim-view .decl.inspector");
+    await insp.waitFor();
+    await insp.locator("details.extra summary").click();
+    const note = insp.locator(".introduced");
+    await note.waitFor();
+    assert.equal((await note.textContent()).replace(/\s+/g, " ").trim(),
+      "Introduced by the formalisation: only clause 2 of T:prop:pred, which corrects clause 1, uses it. A review of it can say it is what the correction needs, never that the paper printed it.");
   });
 
   await check("the menu holds the occasional actions", width, async (pg) => {

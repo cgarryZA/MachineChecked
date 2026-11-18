@@ -103,6 +103,8 @@
     {#if index && moduleSourceUrl(index, d.module, d.range?.line)} · <a href={moduleSourceUrl(index, d.module, d.range?.line)} target="_blank" rel="noopener" title={sourceTitle(index)}>{sourceLabel(index)}</a>{/if}</p>
   {#if d.doc}<p class="lbl">docstring</p><p class="doc">{d.doc}</p>{/if}
   {#if d.review}<p class="lbl">review: <span class={"rv rv-" + d.review.state} title={evidenceView("review", d.review).detail}>{evidenceView("review", d.review).word}</span></p>{/if}
+  <!-- A definition only a correction uses (#617): the formalisation's, never the paper's. -->
+  {#each d.introduced_by_correction || [] as e}<p class="small introduced" data-introduced={e.claim}>Introduced by the formalisation: only clause {e.clause} of {e.claim}, which {e.relation === "restricts" ? "is a special case of" : "corrects"} clause {e.of_clause}, uses it. A review of it can say it is what the correction needs, never that the paper printed it.</p>{/each}
   {#each d.review?.current || [] as r}
     <p class="lbl">{r.by}{r.kind === "ai" ? " (AI)" : r.kind === "human" ? " (human)" : ""} · {r.provenance}{r.accepted_family ? " · " + acceptedFamilyWords(r.accepted_family) : ""}</p>
     {#if r.text}<pre class="rtext">{r.text}</pre>{/if}
