@@ -47,8 +47,10 @@ and its dependencies do not declare (`kind` `module-doc-name`, with `file`, `lin
 `message`; the message says when a short name reaches only a module or a namespace), and
 references to the paper's numbers that disagree with the paper read here
 (`kind` `paper-reference`, with `file`, `line`, `reference`, `status`, `id` and `message`;
-each reference has its own `id`, a second copy of the same text in one place included);
-they do not change the exit code. `numbering` holds every such reference
+each reference has its own `id`, a second copy of the same text in one place included), and a
+PDF in which no numbered statement heading was recognised (`kind` `pdf-no-statements`, with
+`message`; `notes` says the same, and `claims` is empty because nothing was found, not because
+the paper has nothing to check); they do not change the exit code. `numbering` holds every such reference
 (`numbering.references`: `reference`, its exact `text` and `context`, its `source` with
 declaration, module, file, line and `where` it is (`docstring`, `name`, `module docstring` or
 `comment`; a comment's declaration is null when it is on none), its `role` (`statement` or
@@ -531,6 +533,13 @@ machinechecked review export --out machinechecked-reviews/my-reviews.json
 `--detail` except `faithful`, `faithful to the correction` and, for a proof step, `holds as
 printed`; `review decide --help` lists each verdict with what its detail says, as the review page
 asks it.
+
+`review read UNIT --context --json` gives each passage with the paper around it, as
+`surroundings`: its sections, the paragraphs before and after it, its labels' printed numbers,
+the statements it cites (with their passages), for a proof step the statement whose proof it
+belongs to, and the statements that cite it or use a term it defines (`cited_by`, each with
+`why`). It is read from the build's copy of the paper's source and is context, not the pinned
+passage: the reading records only the passages ([REVIEWING.md](REVIEWING.md)).
 
 **Difficult cases.** Where a verdict is easy to get wrong, the review guide works an example
 through ([Difficult cases](REVIEWING.md#difficult-cases)); the review page lists the same at

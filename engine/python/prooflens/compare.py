@@ -303,6 +303,15 @@ def passage(ch: dict, stage: str) -> dict:
         text = re.sub(r"[ \t]{2,}", " ", LEAN_TAGS.sub("", text)).strip()
         removed.append("the paper's \\lean{...} tags, which name Lean declarations")
     out.update(available=True, text=text, quality=quality, complete=complete)
+    own = ch.get("states")
+    if isinstance(own, dict) and isinstance(own.get("text"), str):
+        # A claim cut from a longer passage: the lines it states, which its pin holds; the
+        # rest of the passage is its context.
+        part = own["text"]
+        if stage == "read" and LEAN_TAGS.search(part):
+            part = re.sub(r"[ \t]{2,}", " ", LEAN_TAGS.sub("", part)).strip()
+        out["states"] = {**{k: own.get(k) for k in ("file", "start_line", "end_line")},
+                         "text": part}
     if parts:
         if stage == "read":
             for part in parts:
@@ -1241,6 +1250,13 @@ def passage_text(p: dict) -> str:
     how = p["quality"] + (", approximate position" if src.get("position") == "approximate"
                           else "")
     body = f"{head}\n{p['text']}\n  ({how}" + (f"; {where}" if where else "") + ")"
+    own = p.get("states")
+    if own:
+        lines = (f"lines {own['start_line']}-{own['end_line']}"
+                 if own.get("end_line") != own.get("start_line") else f"line {own['start_line']}")
+        body = (f"{head}\nThis unit states {lines} of {own['file']}, the part its pin holds:\n"
+                f"{own['text']}\nThe whole passage it is part of, as context:\n{p['text']}\n"
+                f"  ({how}" + (f"; {where}" if where else "") + ")")
     if not p.get("complete"):
         body += f"\n  INCOMPLETE: {p['reason']}"
     for k, part in enumerate(p.get("parts") or [], start=1):
@@ -1255,6 +1271,9 @@ def passage_text(p: dict) -> str:
                 f" ({par.get('id') or 'no parent recorded'}). {p['step']['question']}\n" + body)
         if p.get("context"):
             body += "\nIts context in the proof:\n" + p["context"]
+    if p.get("surroundings"):
+        from .passage_context import lines_of
+        body += "\n" + "\n".join(lines_of(p["surroundings"]))
     return body
 
 

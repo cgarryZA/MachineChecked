@@ -15,7 +15,7 @@ from .readable import readable
 from .assess import line_location, match_anchor, unread
 from .probe import proof_key
 from .source_regions import matches as source_matches
-from .util import content_id, sha256_text
+from .util import content_id, norm_ws, sha256_text
 from .status import fields, STATUSES, source_evidence
 
 SCHEMA = "prooflens/manifest@1"
@@ -125,6 +125,24 @@ def symbol_links(display: dict | None, cid: str, tex: str | None, lean: dict,
         out.append({"symbol": ln.get("symbol") or {}, "lean": target, "by": ln.get("by"),
                     "stale": bool(why), "stale_because": why})
     return out
+
+
+def own_part(cid: str, anchor: dict | None, t: dict) -> dict | None:
+    """The part of the printed passage that a claim located by its lines states, when the
+    passage shown is longer: the claim's own pinned region (`t["regions"]`, its text from
+    `t["region_text"]`) when the anchor it shares gives a passage the region does not hold
+    whole, as when two claims are cut from one remark. Read from the inventory's pin alone,
+    never from the clauses, so a review may show it before the reading is locked. Display
+    only."""
+    text = (t.get("region_text") or {}).get(cid)
+    reg = (t.get("regions") or {}).get(cid) or {}
+    shown = (anchor or {}).get("statement")
+    if not text or not shown or reg.get("error") or not reg.get("file"):
+        return None
+    if norm_ws(shown) in norm_ws(text):
+        return None
+    return {"file": reg["file"], "start_line": reg["start_line"], "end_line": reg["end_line"],
+            "text": text}
 
 
 def build(evidence: dict, release: str, display: dict | None = None
@@ -308,6 +326,9 @@ def build(evidence: dict, release: str, display: dict | None = None
                                     (t.get("excerpts") or {}).get(c["id"])),
             "unit": unit, "parent": c.get("parent"),
             **({"step": step} if step else {})}
+        part = own_part(c["id"], anchor, t)
+        if part:
+            chunks[fname]["states"] = part
         if step and (t.get("step_text") or {}).get(c["id"]):
             # A proof step's printed text and its context in the proof, from the snapshot,
             # with where the context was cut when it was.

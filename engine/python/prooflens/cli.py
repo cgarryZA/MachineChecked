@@ -337,8 +337,13 @@ def _print_simple(body, summary: dict | None = None):
     from .moddocs import stale_doc_message
     from .semantic import text
     from .simple import view_summary
+    # A warning about the paper is also one of its notes: it is printed once, as a warning.
+    warned = [w["message"] for w in body.get("paper_warnings") or []]
     for n in body.get("notes", []):
-        print(f"note: {n}")
+        if n not in warned:
+            print(f"note: {n}")
+    for w in warned:
+        print(f"warning: {w}")
     for d in body.get("module_docs", []):
         print(f"warning: {stale_doc_message(d)}")
     from . import numbering as nb
@@ -1506,9 +1511,10 @@ def _check_simple_json(a, root: Path, view: dict) -> tuple[dict, list[dict], boo
            "modules": {"built": body["project"]["built"],
                        "not_built": body["project"]["unbuilt"]},
            "notes": body["notes"],
-           "warnings": [{"kind": "module-doc-name", "file": d["file"], "line": d["line"],
-                         "name": d["name"], "message": stale_doc_message(d)}
-                        for d in body.get("module_docs", [])]
+           "warnings": list(body.get("paper_warnings") or [])
+           + [{"kind": "module-doc-name", "file": d["file"], "line": d["line"],
+               "name": d["name"], "message": stale_doc_message(d)}
+              for d in body.get("module_docs", [])]
            + _reference_warnings(num),
            "numbering": num}
     return out, claims, any(l["class"] != "proved" for c in claims for l in c["links"])
@@ -2141,7 +2147,8 @@ def _review_text(a, s) -> None:
     """`review read`, `show` and `author`: what that step of the protocol shows of a unit."""
     if a.action == "show" and getattr(a, "definitions", False) and not a.json:
         return print(s.show(a.unit, definitions=True))
-    out = getattr(s, a.action)(a.unit, a.json)
+    out = s.read(a.unit, a.json, context=True) if a.action == "read" and \
+        getattr(a, "context", False) else getattr(s, a.action)(a.unit, a.json)
     _print_json(out) if a.json else print(out)
 
 
@@ -2957,6 +2964,12 @@ def _add_review(sub) -> None:
         if name in ("next", "status", "read", "show", "author"):
             sp.add_argument("--json", action="store_true",
                             help="print one JSON document holding only what this step shows")
+        if name == "read":
+            sp.add_argument("--context", action="store_true",
+                            help="also give the paper around each passage, from the build's copy "
+                                 "of its source: its section, the paragraphs before and after, "
+                                 "its labels' printed numbers, the statements it cites or that "
+                                 "cite it (context, not the passage read)")
         if name == "show":
             sp.add_argument("--definitions", action="store_true",
                             help="print only the definitions the unit's Lean uses, each once, "

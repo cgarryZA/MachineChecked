@@ -25,6 +25,7 @@ order instead ([Review order](#review-order)).
 ```sh
 machinechecked review next                          # the next unit to review, and why
 machinechecked review read UNIT                     # step 1: the paper's statement only
+machinechecked review read UNIT --context           # and the paper around it, as context
 machinechecked review lock UNIT reading.md          # locks your reading
 machinechecked review show UNIT                     # step 2 (refused before lock): the Lean
 machinechecked review show UNIT --definitions       # step 2: only the definitions it uses, compactly
@@ -166,7 +167,24 @@ text comes from (the LaTeX source, or text extracted from the PDF) and whether i
 exact or approximate (approximate for a PDF's statements and for proof steps located by their
 line). A passage the build does not hold is marked UNAVAILABLE with its source reference, and
 PDF text cut by the extraction is marked INCOMPLETE: read those in the paper. The paper's
-`\lean{...}` tags are removed from the reading, since they name declarations.
+`\lean{...}` tags are removed from the reading, since they name declarations. A claim cut from a
+longer passage (one display of a remark, one sentence of a paragraph) is marked: `read` prints
+first the lines the unit states, its own pinned region, then the whole passage as context (in
+JSON, `states`: its `file`, `start_line`, `end_line` and `text`). The mark is the claim's pin
+alone, never a clause's name.
+
+`read UNIT --context` gives each passage with the paper around it, read from the build's copy of
+the paper's source: the headings of the sections that enclose it, the paragraph just before it
+and the one just after (each kept to 12 lines), the labels inside it with the numbers the
+compiled paper prints for them (from the build's `.aux` file), the numbered statements it cites
+(`\ref` and its kin) with their passages, for a proof step the statement whose proof it belongs
+to, and the numbered statements that cite one of its labels or, for a definition, use a term it
+sets in `\emph` (each with its number and lines). Those last are found by the label a statement
+cites or the word it prints, so a use in other words is not listed. The context is the paper's
+alone, shown before the lock like the passage, and marked as context: it is not the unit's
+pinned text, and the reading records only the passages. With `--json`, each passage holds it as
+`surroundings`. A review of a snapshot has no copy of the paper's source, and says so: read the
+context in the paper.
 
 `next`, `status`, `read`, `show` and `author` take `--json`: one document holding only what
 that step shows, in the form of `machinechecked compare` (below). `read` holds the paper;
@@ -1071,7 +1089,9 @@ and projections.
 
 An equation or passage inside a printed proof has its own unit in the queue (`step:<claim id>`),
 whether or not any Lean is linked to it. Its question is whether the printed step holds, in its
-context: step 1 shows the step and the proof up to it and the sentence after it; step 2 shows the
+context: step 1 shows the step and the proof up to it and the sentence after it (a step outside
+any proof environment has no proof to show: `read --context` adds the paragraph before it, the
+statement it belongs to and the statements it cites); step 2 shows the
 Lean linked as establishing it and the formal route used instead, if any. The checklist covers
 what the proof has fixed before the step, its premises, the ranges and order of its quantifiers,
 its constants and its conclusion. A context longer than 20000 characters is kept in part: the
