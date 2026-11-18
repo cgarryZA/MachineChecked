@@ -34,6 +34,38 @@
         "null"
       ]
     },
+    "states": {
+      "description": "Display only: for a claim located by line whose printed statement is a longer passage it shares, the claim's own pinned region (`manifest.own_part`), which the review steps show as the part the unit states.",
+      "type": [
+        "object",
+        "null"
+      ],
+      "required": [
+        "file",
+        "start_line",
+        "end_line",
+        "text"
+      ],
+      "properties": {
+        "file": {
+          "type": "string"
+        },
+        "start_line": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "end_line": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "text": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
     "excerpt": {
       "description": "Display only: the passage the reader typesets from the pinned LaTeX source, or the reasons it cannot (docs/SOURCE_REGIONS.md). Its fingerprint is separate from source_sha256.",
       "type": [

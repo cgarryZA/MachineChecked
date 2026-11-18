@@ -3,7 +3,8 @@
 When a paper's `publish.source_text` is false, `review pack` leaves the text of its source out of
 the snapshot (`leave_out`). Each text the review steps show that comes from the paper's source (a
 claim's printed statement and its anchor's copy of it, a proof step's context in the proof, each
-further passage or notation definition of its pin: `FIELDS`) is replaced by null, and
+further passage or notation definition of its pin, the part of a longer passage a claim states:
+`FIELDS`, `PARTS`, `OWN`) is replaced by null, and
 `data/paper-sources.json` records where it is: the file within the source, the byte range, how
 the text is formed from those bytes (`FORMS`) and the SHA-256 of the text. The manifest names each
 such paper's source (its arXiv record, its folder in the project, or the commit of its
@@ -38,6 +39,8 @@ REFS_SCHEMA = "prooflens/paper-sources@1"
 # (`compare.passage`); `source_parts` holds one text per passage of a pin.
 FIELDS = (("statement_tex",), ("context_tex",), ("anchor", "statement"))
 PARTS = "source_parts"
+# The part of a longer passage that a claim states, its own pinned lines (`manifest.own_part`).
+OWN = "states"
 # What only the reader shows, left out: the passage as typeset.
 DISPLAY_ONLY = ("excerpt",)
 # How a text is formed from the bytes of its range, read as UTF-8: as the build reads a source
@@ -180,6 +183,8 @@ def leave_out(files: dict[str, bytes], papers: dict[str, dict]) -> tuple[dict, l
         places = [(at, _where(ch)) for at in FIELDS]
         places += [((PARTS, i, "text"), _where(ch, part))
                    for i, part in enumerate(ch.get(PARTS) or []) if isinstance(part, dict)]
+        if isinstance(ch.get(OWN), dict):
+            places.append(((OWN, "text"), _where(ch, ch[OWN])))
         for at, where in places:
             obj = ch
             for k in at[:-1]:

@@ -137,7 +137,8 @@ or a paper read from its PDF), or, when its text is left out, `{"included": fals
 paper's folder in the project) and `{"kind": "git", "revision"}`, and `files` each file of the
 source a passage comes from with its SHA-256. A snapshot that leaves out a paper's text has the
 schema `prooflens/review-snapshot@2`. Its claim records of that paper hold `null` for each text of
-the source (`statement_tex`, `context_tex`, `anchor.statement`, each `source_parts[].text`) and
+the source (`statement_tex`, `context_tex`, `anchor.statement`, each `source_parts[].text`,
+`states.text`) and
 for `excerpt`, and `data/paper-sources.json` (`prooflens/paper-sources@1`) says where each text
 is: `claims` maps a claim record (`claims/….json`) to a list of `{at, paper, file, bytes, form,
 sha256}`, with `at` the field's path in the record, `bytes` (`[start, end]`) the range of the file,
@@ -571,7 +572,10 @@ findings counts, and the [semantic summary](#semantic-summary-prooflenssemantic-
 ([below](#published-workspace-records-prooflenspublished-work1-written-by-the-export)). `data/claims/<file>.json` holds one passport: the printed statement
 (`statement_tex`: a statement environment's body, or the pinned passage of a claim located by
 line, each read from the source file that holds it, also when the main file `\input`s or
-`\include`s its sections; and its display `excerpt`, when the paper publishes its source text), each
+`\include`s its sections; and its display `excerpt`, when the paper publishes its source text),
+for a claim located by line whose statement is a longer passage it shares (one display of a
+remark), `states`: its own pinned region (`file`, `start_line`, `end_line`, `text`; review packets
+only, not published), each
 clause's unfolded statement, proofs, witness, regimes, reviews and structured `evidence`, the
 declarations of its closure, and its findings. A clause also lists `witness_defs`, the
 declarations only its witnesses use that carry data (proofs and the tactic scripts of tactic
