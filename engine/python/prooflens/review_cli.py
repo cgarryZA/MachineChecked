@@ -1178,7 +1178,7 @@ class Session:
                 out.append(f"Reading of the correspondence of {c['id']}"
                            + (f" by {note['by']}" if note.get("by") else "") + f"\n{text}")
         out = out or ["No review by the author is recorded for this unit."]
-        out += self._account(u) + self._refutation_scope(u)
+        out += self._account(u) + self._refutation_scope(u) + self._digest_lines(u)
         # The author's account in the readings ledger (#627).
         if ledger is not None:
             out.append(ledger_text(ledger))
@@ -1190,6 +1190,15 @@ class Session:
             out += [proposal_text(p) for p in [self.site.proposal(c["id"])
                                                for c in u.get("claims") or []] if p]
         return "\n\n".join(out)
+
+    def _digest_lines(self, u: dict) -> list[str]:
+        """The digests of a passage that differ, said apart (#672): the passage read is pinned
+        at one in this build, and the report records another, which also covers the definitions
+        of the notation macros the passage uses. Nothing when they are the same."""
+        chunks = [ch for ch in (self.site.chunk(c["id"]) for c in u.get("claims") or []) if ch]
+        return [f"Digests of {d['claim']}: the passage read is pinned at {d['passage']} in this "
+                f"build; the report records {d['recorded']}, {d['covers']}. Both are of this "
+                "build's text." for d in cmp.passage_digests(u, chunks) if not d["same"]]
 
     def ledger_accounts(self, u: dict) -> dict | None:
         """The rows of the project's readings ledger (`ledger.py`) that name one of `u`'s
