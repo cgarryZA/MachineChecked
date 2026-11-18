@@ -159,7 +159,7 @@ Each clause reports a result for every evidence dimension.
 | kernel replay | yes | a structured Comparator record (`comparator_log`: JSON with the full project `commit` and the exact names of the `replayed` theorems, as `machinechecked replay` writes it) covers this proof for this commit, or for an ancestor of it with no Lean input changed since; without one the rung is `not run`, never `failed`; a record of another commit, of a run that did not pass, of a tree with uncommitted Lean changes, or of another Lean version or set of Lake dependencies (when it names them), or a text log, is `unverified`; a replay made without Comparator's sandbox guard still passes, and the rung says "replayed without the sandbox guard" (or "sandbox guard not recorded" for a record that does not state its conditions) |
 | witness | yes, for the theorem; the fit to the paper is reviewed | a proposition with hypotheses has a theorem meeting them (not needed for a clause whose refutation checks: a proof of ¬S exhibits an instance meeting S's hypotheses) |
 | regimes | yes, for the theorems; the fit is reviewed | each regime the paper intends to cover has its witness |
-| review | no | the proposition and its definitions have current reviews of their current Lean and paper text; `author` if only by an author |
+| review | no | the proposition and its definitions have current reviews of their current Lean and paper text; `author` if only by an author; a clause with no proposition (a definition claim's, with no definition either) has nothing to review and stays `pending` |
 | source | yes | the claim was located in the compiled paper and its source hash matches the inventory; `pdf-only` if there is no LaTeX |
 
 ## What each check establishes

@@ -1122,7 +1122,11 @@ class Assessor:
                     "obligation", "def-review", subj,
                     f"the definition {n} has no current review" + self._stale_note(d),
                     trigger=n, **self._stale_fields(d)))
-        if any(s in ("pending", "stale") for s in states):
+        # A review compares a Lean statement with the paper: a clause that names no proposition
+        # (in a definition claim, no proposition and no definition) has nothing to review, so it
+        # is never reviewed.
+        stated = bool(spec) or (claim.get("scope") == "definition" and bool(cl.get("defs")))
+        if not stated or any(s in ("pending", "stale") for s in states):
             res["review"] = "pending"
         elif any(s == "author-reviewed" for s in states):
             res["review"] = "author-reviewed"
