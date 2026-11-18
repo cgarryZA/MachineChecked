@@ -542,5 +542,9 @@
     "guarded": "under the sandbox guard",
     "unguarded": "replayed without the sandbox guard",
     "unrecorded": "sandbox guard not recorded"
+  },
+  "accepted_family": {
+    "yes": "by a model of the statements' author's family, accepted over the same-family rule",
+    "unknown": "by a model of unknown family, accepted over the same-family rule"
   }
 }

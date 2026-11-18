@@ -104,7 +104,9 @@ In a project with a `machinechecked.toml` (the full assessment), the document al
 `findings` (totals per tier, dismissed warnings left out) and `finding_details`: each finding
 with its `tier` (`violation`, `obligation`, `warning`), `code`, `subject` (the claim or clause,
 for example `T:thm:bound#0`), `message`, and `dismissed` (who and why) when a warning was
-dismissed. A warning with code `module-doc-name` is a name a module docstring lists that nothing
+dismissed. `same_family_accepted` lists the current reviews by a model reviewer the maintainer
+accepted over promotion's same-family rule (`target`, `name`, `by`, and `family`: `yes` or
+`unknown`, the reviewer's declaration). A warning with code `module-doc-name` is a name a module docstring lists that nothing
 declares: its `subject` is the module, its `trigger` the name, and it has `file` and `line`.
 A warning with code `review-citation` is a name or file that a block of review text cites and
 nothing resolves: its `subject` is the review file, its `trigger` the token, `at` the block
@@ -617,7 +619,11 @@ requirement, alignment or counterexample), `open question`, `difference` and `hi
 result`, with its `use` (`itself`, `proof`, `definition` or `statement`); `proof use` when
 another claim's proof uses its Lean. Its `tier` is the strongest signal other than `main result`
 and `proof use`, or null. `reason` puts them in words, naming claims and never the Lean.
-`status --json` gives the `open` units in that order and `order`: the order asked (`by`), the
+`next --json` and `status --json` give the `reviewer`: its `id`, `kind`, `same_family_as_author`
+and `same_family_rule` (`applies` to a model reviewer declared of the statements' author's family
+or of unknown family, whose reports promotion refuses unless the maintainer accepts them
+explicitly; `does not apply` otherwise); without `--json`, `next` says it once on standard error
+and `status` on a line of its own. `status --json` gives the `open` units in that order and `order`: the order asked (`by`), the
 queue's own record (`queue`, with each signal's `state`, `read` or `not available` with `why`)
 and, for the informed order, what it read (`informed`: the `workspaces`, and the `main result`
 trace). On the toy example, with Theorem 2.5 linked and saved as the paper's main result, and an

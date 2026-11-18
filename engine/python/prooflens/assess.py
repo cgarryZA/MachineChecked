@@ -717,6 +717,11 @@ class Assessor:
             # The marker the state rests on, and the passages whose reading it counts for here.
             out["rests_on"] = {"file": record.file, "line": record.line, "by": record.by,
                                "passages": sorted(need)}
+            if record.accepted_family:
+                # A model reviewer the maintainer accepted over the same-family rule, with its
+                # declaration: shown beside the review; no status depends on it.
+                out["accepted_family"] = out["rests_on"]["accepted_family"] = \
+                    record.accepted_family
         if why:
             out["why"] = why
             if source_claim:

@@ -46,12 +46,19 @@
     "stale": {"label": "out of date", "explanation": "Pinned to another text of the claim or other Lean."}
   },
   "review": {
-    "independent": {"label": "Current, independent", "explanation": "A current review by a reviewer who did not write the statements and had not seen the Lean or the author's review before the reading."},
+    "independent": {"label": "Current, independent", "explanation": "A current review by a reviewer who did not write the statements and had not seen the Lean or the author's review before the reading: a person, or a model declared of a different family from the statements' author."},
+    "same_family": {"label": "Current, by a model of the author's family", "explanation": "A current review that would be independent but for its reviewer: a model declared of the same family as the statements' author, whose report the maintainer accepted over the same-family rule, or which zero configuration counts as it is."},
+    "unknown_family": {"label": "Current, by a model of unknown family", "explanation": "A current review that would be independent but for its reviewer: a model whose family relative to the statements' author is not known, whose report the maintainer accepted over the same-family rule, or which zero configuration counts as it is. It is not read as either the same family or a different one."},
     "author": {"label": "Current, by an author", "explanation": "Current reviews, at least one with author provenance."},
     "informed": {"label": "Current, informed", "explanation": "A current review whose reviewer had seen the Lean or the author's review before the reading, or does not record it."},
     "stale": {"label": "Out of date", "explanation": "No current review; a recorded review was made for another text or other Lean."},
     "unchecked": {"label": "Not checked", "explanation": "Reviews are recorded, and this build could not check whether they are current."},
     "none": {"label": "Not reviewed", "explanation": "No current review of everything the claim needs is recorded."}
+  },
+  "family": {
+    "yes": {"label": "a model of the same family as the statements' author"},
+    "no": {"label": "a model of a different family from the statements' author"},
+    "unknown": {"label": "a model of unknown family"}
   },
   "step_review": {
     "holds": {"label": "Holds as printed"},

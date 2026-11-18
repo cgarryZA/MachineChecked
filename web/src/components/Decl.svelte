@@ -1,6 +1,7 @@
 <script>
   import { getContext } from "svelte";
   import { evidenceView } from "../lib/presentation.js";
+  import { acceptedFamilyWords } from "../lib/semantic.js";
   import { loadDecl, siteIndex } from "../lib/data.js";
   import { moduleSourceUrl, sourceLabel, sourceTitle } from "../lib/issue.js";
   import LeanText from "./LeanText.svelte";
@@ -86,7 +87,7 @@
       {/if}
       {#if d.review?.current?.length}
         {#each d.review.current as r}
-          <p class="lbl">review · {r.by}{r.kind === "ai" ? " (AI)" : r.kind === "human" ? " (human)" : ""} · {r.provenance}</p>
+          <p class="lbl">review · {r.by}{r.kind === "ai" ? " (AI)" : r.kind === "human" ? " (human)" : ""} · {r.provenance}{r.accepted_family ? " · " + acceptedFamilyWords(r.accepted_family) : ""}</p>
           {#if r.text}<pre class="rtext">{r.text}</pre>{/if}
         {/each}
       {:else if d.review}
@@ -103,7 +104,7 @@
   {#if d.doc}<p class="lbl">docstring</p><p class="doc">{d.doc}</p>{/if}
   {#if d.review}<p class="lbl">review: <span class={"rv rv-" + d.review.state} title={evidenceView("review", d.review).detail}>{evidenceView("review", d.review).word}</span></p>{/if}
   {#each d.review?.current || [] as r}
-    <p class="lbl">{r.by}{r.kind === "ai" ? " (AI)" : r.kind === "human" ? " (human)" : ""} · {r.provenance}</p>
+    <p class="lbl">{r.by}{r.kind === "ai" ? " (AI)" : r.kind === "human" ? " (human)" : ""} · {r.provenance}{r.accepted_family ? " · " + acceptedFamilyWords(r.accepted_family) : ""}</p>
     {#if r.text}<pre class="rtext">{r.text}</pre>{/if}
   {/each}
   {#if d.fingerprint}<p class="fp faint" title={d.legacy_hash ? "legacy " + d.legacy_hash : ""}>{d.fingerprint.slice(0, 24)}…</p>{/if}

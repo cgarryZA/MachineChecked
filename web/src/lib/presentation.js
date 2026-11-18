@@ -37,6 +37,8 @@ export function evidenceView(dimension, fact) {
     extras.push(own(vocabulary.placement, fact?.placement));
   }
   if (dimension === "replay") extras.push(own(vocabulary.replay_guard, fact?.guard));
+  // A review resting on a model reviewer the maintainer accepted over the same-family rule.
+  if (dimension === "review") extras.push(own(vocabulary.accepted_family, fact?.accepted_family));
   const word = [row.label, ...extras.filter(Boolean)].join(" · ");
   const detail = [row.explanation, fact?.detail, ...(fact?.errors || [])].filter(Boolean).join(" ");
   return { label: dim?.label || "Unknown evidence", word, detail, state: state ? fact.state : "unknown" };
@@ -56,7 +58,7 @@ export function clauseNote(clause, count) {
 export function evidenceFacts(record) {
   const rows = record?.clauses?.map((c) => c.evidence) || record?.evidence_summary || [];
   return ["formal", "review"].flatMap((dimension) => {
-    const facts = [...new Map(rows.filter((r) => r?.[dimension]).map((r) => [r[dimension].state, evidenceView(dimension, r[dimension])])).values()];
+    const facts = [...new Map(rows.filter((r) => r?.[dimension]).map((r) => [r[dimension].state + "\u0000" + (r[dimension].accepted_family || ""), evidenceView(dimension, r[dimension])])).values()];
     return facts.length ? [{ dimension, label: dimension === "formal" ? "Proof" : "Review", word: facts.map((f) => f.word).join(" · "), detail: facts.map((f) => f.detail).join(" ") }] : [];
   });
 }
