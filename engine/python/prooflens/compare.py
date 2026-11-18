@@ -1589,12 +1589,16 @@ def proof_facts_text(q: dict) -> str:
     return "\n".join(out)
 
 
-def definitions_text(pk: dict) -> str:
+def definitions_text(pk: dict, folded: dict[str, str] | None = None,
+                     changed: dict[str, str] | None = None) -> str:
     """The definitions a packet's Lean uses, for a reviewer reading line by line: each once, with
     its docstring, its signature, and its body, equations or fields (one per line, with their
     full types). It is the text of `lean.definitions` in the JSON, nothing more or less; the
     constants Lean generates for a definition (its constructor, its projections, its equation
-    lemmas) are listed under it by name."""
+    lemmas) are listed under it by name. A definition in `folded` (by name, the unit it was shown
+    with, unchanged) is one line naming that unit; one in `changed` is in full, saying it changed
+    since it was shown with that unit."""
+    folded, changed = folded or {}, changed or {}
     from .objects import structure_view
     defs = (pk.get("lean") or {}).get("definitions") or []
     under: dict[str, list[str]] = {}
@@ -1611,6 +1615,11 @@ def definitions_text(pk: dict) -> str:
         head = f"{d['name']}  ({d.get('kind')}; unit {d['id']})"
         if d.get("reached_through"):
             head += f", used by {d['reached_through']}"
+        if d["name"] in folded:
+            out.append(f"{head}: shown to you with {folded[d['name']]}, unchanged since")
+            continue
+        if d["name"] in changed:
+            head += f"; changed since it was shown to you with {changed[d['name']]}"
         lines = [head]
         if d.get("doc"):
             lines += ["  doc: " + " ".join(d["doc"].split())]
