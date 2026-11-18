@@ -115,6 +115,44 @@ def correspondence(entry: dict, source: str) -> dict | None:
             "note": note, "by": entry["by"] if isinstance(entry.get("by"), str) else None}
 
 
+# Where an author's proposed verdict on a step is kept apart from the claim records, so that no
+# client receives it before the reviewer's own verdict (`split_proposals`, #678).
+PROPOSALS = "proposals"
+PROPOSAL_SCHEMA = "machinechecked/step-proposal@1"
+
+
+def proposal(entry: dict, source: str) -> dict | None:
+    """The verdict an author proposes for a printed step (`proposed` of its entry in the
+    inventory or the links file): one of the step verdicts (`VERDICTS`), with a note and,
+    optionally, the Lean theorem the author says it rests on, proving the step or refuting it,
+    which is the author's and not checked by Lean here. None when the entry proposes none, or
+    not one of the step verdicts. It is shown only after the reviewer's own verdict, and it
+    neither completes a review nor changes a status."""
+    p = entry.get("proposed")
+    if not isinstance(p, dict) or p.get("verdict") not in [v for vs in VERDICTS.values()
+                                                          for v in vs]:
+        return None
+    th = p.get("theorem")
+    return {"verdict": p["verdict"], "note": _str(p.get("note")),
+            "theorem": th.strip() if isinstance(th, str) and th.strip() else None,
+            "by": p["by"] if isinstance(p.get("by"), str) else None, "source": source}
+
+
+def split_proposals(chunks: dict[str, dict]) -> tuple[dict[str, dict], dict[str, dict]]:
+    """The claim records `chunks` (by file name) without their steps' proposals, and each
+    proposal as a file of its own (`data/proposals/<file>`, `PROPOSAL_SCHEMA`), which the review
+    page fetches only at its step 3 and the claim page on its own."""
+    out, files = {}, {}
+    for name, ch in chunks.items():
+        st = ch.get("step")
+        if isinstance(st, dict) and st.get("proposed"):
+            files[name] = {"schema": PROPOSAL_SCHEMA, "claim": ch.get("id"),
+                           "unit": "step:" + str(ch.get("id")), "proposed": st["proposed"]}
+            ch = {**ch, "step": {k: v for k, v in st.items() if k != "proposed"}}
+        out[name] = ch
+    return out, files
+
+
 def route_note(entry: dict, source: str) -> dict | None:
     r = entry.get("route")
     if not isinstance(r, dict) or not route_names(entry):
@@ -202,10 +240,14 @@ def parent_ref(parent: dict | None) -> dict | None:
 
 def block(claim: dict, parent: dict | None, links: list[dict], route: list[dict],
           corr: dict | None, rnote: dict | None, reviewed: dict,
-          unit: str | None = None) -> dict:
-    """What a claim record says about a proof step: its kind, its parent, the Lean that
-    establishes it, the formal route used instead, and its own review."""
+          unit: str | None = None, proposed: dict | None = None, candidates=()) -> dict:
+    """What a claim record says about a proof step: its kind, its parent (or, when it is not
+    certain which statement its proof proves, the `candidates`), the Lean that establishes it,
+    the formal route used instead, and its own review; and the verdict its author proposes
+    (`proposal`), which the site writes apart (`split_proposals`)."""
     return {"unit": unit or unit_of(claim), "parent": parent_ref(parent),
+            **({"parent_candidates": [parent_ref(c) for c in candidates if c]}
+               if candidates else {}),
             "source": {"location": claim.get("location"),
                        "region": claim.get("source_region"),
                        "sha256": claim.get("source_sha256")},
@@ -213,7 +255,7 @@ def block(claim: dict, parent: dict | None, links: list[dict], route: list[dict]
             "route": {"links": route, "note": (rnote or {}).get("note", ""),
                       "by": (rnote or {}).get("by"), "source": (rnote or {}).get("source")}
             if route else None,
-            "review": reviewed}
+            "review": reviewed, **({"proposed": proposed} if proposed else {})}
 
 
 def attach_parents(index_claims: list[dict], chunks: dict) -> None:
@@ -257,15 +299,43 @@ def unit_counts(index_claims: list[dict]) -> dict[str, dict[str, dict[str, int]]
 
 # -- finding proof steps in a LaTeX source (zero configuration) -------------------------------
 
-DISPLAY = re.compile(r"\\begin\{(equation|align|gather|multline|eqnarray|flalign|alignat)\}")
+DISPLAY_ENVS = ("equation", "align", "gather", "multline", "eqnarray", "flalign", "alignat")
+DISPLAY = re.compile(r"\\begin\{(" + "|".join(DISPLAY_ENVS) + r")\}")
+# Environments that number each row: a display of several labelled rows is a step per row.
+ROW_ENVS = {"align", "gather", "eqnarray", "flalign", "alignat"}
+# A macro defined as the opening or closing of a display (`\def\beq{\begin{equation}}`).
+DISPLAY_MACRO = re.compile(
+    r"\\(?:def|(?:re|provide)?newcommand\*?)\s*\{?\\([A-Za-z@]+)\}?\s*\{\s*\\(begin|end)\{("
+    + "|".join(DISPLAY_ENVS) + r")\}\s*\}")
 PROOF = re.compile(r"\\(begin|end)\{proof\}")
 LABEL = re.compile(r"\\label\{([^}]*)\}")
 REF = re.compile(r"\\(?:ref|eqref|cref|Cref|autoref)\{([^}]*)\}")
 CONTEXT_LINES = 40
+# A proof's title naming a statement by its printed number ("Proof of Theorem 2.1").
+PROOF_OF = re.compile(r"\bproof\s+of\s+([A-Za-z]+)\s*~?\s*"
+                      r"([A-Z]?\d+(?:\.\d+)*[a-z]?|[A-Z](?:\.\d+)+)", re.I)
+# Kinds of statement often printed without a proof of their own, between a result and its proof:
+# an unnamed proof after one is not attached by its place alone (`resolve_parent`). They can
+# have proofs of their own too.
+ASIDE_KINDS = {"remark", "example", "note", "notes", "observation", "exercise", "convention"}
 
 
 def _uncomment(line: str) -> str:
     return re.sub(r"(?<!\\)%.*", "", line)
+
+
+def _proof_title(rest: str) -> str | None:
+    """The optional argument of a `\\begin{proof}` whose text after the command is `rest`
+    (`[Proof of Theorem~\\ref{thm:x}]`), or None."""
+    rest = rest.lstrip()
+    if not rest.startswith("["):
+        return None
+    depth = 0
+    for i, ch in enumerate(rest):
+        depth += {"{": 1, "}": -1}.get(ch, 0)
+        if ch == "]" and depth == 0:
+            return rest[1:i]
+    return None
 
 
 def aux_numbers(aux_text: str) -> dict[str, str]:
@@ -276,12 +346,97 @@ def aux_numbers(aux_text: str) -> dict[str, str]:
     return out
 
 
-def find_proof_equations(lines: list[str], file: str, numbers: dict[str, str]) -> list[dict]:
+def display_macros(texts) -> dict[str, tuple[str, str]]:
+    """The macros the source `texts` define as the opening or the closing of a display
+    environment, by name: `(begin|end, environment)`."""
+    out = {}
+    for t in texts:
+        for m in DISPLAY_MACRO.finditer(_uncomment_all(t)):
+            out.setdefault(m.group(1), (m.group(2), m.group(3)))
+    return out
+
+
+def _uncomment_all(text: str) -> str:
+    return "\n".join(_uncomment(l) for l in text.split("\n"))
+
+
+def _opening(text: str, macros: dict[str, tuple[str, str]]):
+    """The first display opened in `text`, as `(environment, start, end, by_macro)`, or None."""
+    found = []
+    d = DISPLAY.search(text)
+    if d:
+        found.append((d.start(), d.group(1), d.end(), False))
+    for name, (op, env) in macros.items():
+        if op == "begin":
+            m = re.search(r"\\" + re.escape(name) + r"(?![A-Za-z@])", text)
+            if m:
+                found.append((m.start(), env, m.end(), True))
+    if not found:
+        return None
+    start, env, end, by_macro = min(found)
+    return env, start, end, by_macro
+
+
+def _closing(env: str, macros: dict[str, tuple[str, str]]) -> re.Pattern:
+    names = [re.escape(n) for n, (op, e) in macros.items() if op == "end" and e == env]
+    return re.compile(r"\\end\{" + env + r"\}"
+                      + "".join(r"|\\" + n + r"(?![A-Za-z@])" for n in names))
+
+
+def _rows(text: str, first_line: int) -> list[dict]:
+    """The rows of a display's body `text` (which starts on line `first_line`): the parts
+    between the row breaks (`\\\\`) outside braces and inner environments, each with the lines
+    it spans (`line`, `end_line`, from its first to its last character that is not a space)
+    and its labels."""
+    rows, depth, inner, start, k = [], 0, 0, 0, 0
+    while k < len(text):
+        ch = text[k]
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+        elif text.startswith("\\begin{", k):
+            inner += 1
+        elif text.startswith("\\end{", k):
+            inner -= 1
+        if text.startswith("\\\\", k) and depth == 0 and inner == 0:
+            rows.append((start, k + 2))
+            start = k = k + 2
+            continue
+        k += 2 if ch == "\\" else 1
+    rows.append((start, len(text)))
+    out = []
+    for a, b in rows:
+        part = text[a:b]
+        if not part.strip():
+            continue
+        lead = a + len(part) - len(part.lstrip())
+        tail = a + len(part.rstrip())
+        out.append({"line": first_line + text.count("\n", 0, lead),
+                    "end_line": first_line + text.count("\n", 0, max(lead, tail - 1)),
+                    "labels": LABEL.findall(part)})
+    return out
+
+
+def find_proof_equations(lines: list[str], file: str, numbers: dict[str, str],
+                         macros: dict[str, tuple[str, str]] | None = None,
+                         left: list[dict] | None = None) -> list[dict]:
     """The numbered, labelled displays inside the proofs of one source file: each with its
     label, printed number, opening line, the line its proof opens on, and the label the proof's
-    optional argument refers to (`\\begin{proof}[Proof of Theorem~\\ref{thm:x}]`). A display
-    with several labels, or whose label has no number, is left out: it has no single identity."""
-    out, proof, ref = [], None, None
+    optional argument refers to (`\\begin{proof}[Proof of Theorem~\\ref{thm:x}]`). A display is
+    opened by its environment or by a macro defined as its opening (`macros`,
+    `display_macros`). A display with one label is one step. A display of several labelled
+    rows (`ROW_ENVS`) is a step per labelled, numbered row, with the row's lines (`rows`). Each
+    numbered display, or row, left out (several labels, a label with no number, a row on the
+    line of another) is added to `left`, with its label, its line and why."""
+    macros = macros or {}
+    out, proof, ref, title = [], None, None, None
+
+    def skip(labels, line, reason):
+        if left is not None and labels:
+            left.append({"label": ", ".join(labels), "file": file, "line": line,
+                         "reason": reason})
+
     i = 0
     while i < len(lines):
         text = _uncomment(lines[i])
@@ -290,22 +445,53 @@ def find_proof_equations(lines: list[str], file: str, numbers: dict[str, str]) -
                 proof = i + 1
                 rm = REF.search(text[m.end():])
                 ref = rm.group(1) if rm and text[m.end():].lstrip().startswith("[") else None
+                title = _proof_title(text[m.end():])
             else:
-                proof, ref = None, None
-        d = DISPLAY.search(text)
+                proof, ref, title = None, None, None
+        d = _opening(text, macros)
         if proof is not None and d:
-            end = re.compile(r"\\end\{" + d.group(1) + r"\}")
-            j, labels = i, []
+            env, _, opened, by_macro = d
+            end = _closing(env, macros)
+            j, labels, body_text, closed_at = i, [], [], None
             while j < len(lines):
                 body = _uncomment(lines[j])
-                labels += LABEL.findall(body[d.end():] if j == i else body)
-                if end.search(body[d.end():] if j == i else body):
+                part = body[opened:] if j == i else body
+                e = end.search(part)
+                body_text.append(part[:e.start()] if e else part)
+                labels += LABEL.findall(part[:e.start()] if e else part)
+                if e:
+                    closed_at = j
                     break
                 j += 1
+            where = {"file": file, "proof_line": proof, "proof_ref": ref, "proof_title": title}
+            if closed_at is None:
+                i = j + 1
+                continue
             if len(labels) == 1 and labels[0] in numbers:
-                out.append({"label": labels[0], "number": numbers[labels[0]], "file": file,
-                            "line": i + 1, "end_line": j + 1, "proof_line": proof,
-                            "proof_ref": ref})
+                out.append({"label": labels[0], "number": numbers[labels[0]], "line": i + 1,
+                            "end_line": j + 1, **where,
+                            **({"env": env, "explicit": True} if by_macro else {})})
+            elif len(labels) > 1 and env in ROW_ENVS:
+                rows = _rows("\n".join(body_text), i + 1)
+                for r in rows:
+                    shared = [x for x in rows if x is not r and x["labels"]
+                              and not (x["end_line"] < r["line"] or r["end_line"] < x["line"])]
+                    if len(r["labels"]) > 1:
+                        skip(r["labels"], r["line"], "the row has several labels")
+                    elif r["labels"] and r["labels"][0] not in numbers:
+                        skip(r["labels"], r["line"], "its label has no printed number")
+                    elif r["labels"] and shared:
+                        skip(r["labels"], r["line"], "its row shares a line with another "
+                                                     "labelled row, so it has no lines of its own")
+                    elif r["labels"]:
+                        out.append({"label": r["labels"][0], "number": numbers[r["labels"][0]],
+                                    "line": r["line"], "end_line": r["end_line"], **where,
+                                    "env": env, "explicit": True, "row": True})
+            elif len(labels) > 1:
+                skip(labels, i + 1, f"it is one {env} display, with one number, and it has "
+                                    "several labels")
+            else:
+                skip(labels, i + 1, "its label has no printed number")
             i = j + 1
             continue
         i += 1
@@ -334,37 +520,79 @@ def context_lines(lines: list[str], step: dict) -> str:
     return "\n".join(lines[start - 1:k])
 
 
-def proof_parent(statements: list[dict], file: str, proof_line: int,
-                 ref: str | None) -> dict | None:
-    """The statement whose proof opens on `proof_line` of `file`: the one the proof's optional
-    argument names (`ref`, a label), else the last statement of the same file opening before the
-    proof; None when there is neither."""
+def _kind(c: dict) -> str:
+    """A statement's kind: its own, else the first word of its printed number."""
+    return (c.get("kind") or (c.get("number") or "").split(" ")[0]).lower()
+
+
+def resolve_parent(statements: list[dict], file: str, proof_line: int, ref: str | None,
+                   title: str | None = None, proof_lines=()) -> tuple[dict | None, list[dict]]:
+    """The statement whose proof opens on `proof_line` of `file`, and the candidates when that
+    is not certain. A proof whose optional argument names a statement, by its label (`ref`) or
+    by its printed number (`title`: "Proof of Theorem 2.1"), proves that one. Otherwise it
+    proves the last statement of the same file opening before it, unless that statement is an
+    aside (`ASIDE_KINDS`: a remark, an example) and the last statement before the asides is not
+    proved yet (no proof of `proof_lines` opens between it and this one): either may then be
+    the one proved, and the parent is None, with that statement and the asides as candidates.
+    `(None, [])` when no statement precedes the proof."""
     if ref:
         named = next((c for c in statements if c.get("label") == ref), None)
         if named is not None:
-            return named
+            return named, []
+    m = PROOF_OF.search(title or "")
+    if m:
+        number = f"{m.group(1)} {m.group(2)}".lower()
+        named = [c for c in statements if (c.get("number") or "").lower() == number]
+        if len(named) == 1:
+            return named[0], []
     before = sorted((c for c in statements if c.get("location") == file and c.get("line")
                      and c["line"] < proof_line), key=lambda c: c["line"])
-    return before[-1] if before else None
+    if not before:
+        return None, []
+    asides = []
+    while before and _kind(before[-1]) in ASIDE_KINDS:
+        asides.insert(0, before.pop())
+    if not asides or not before:
+        return (asides or before)[-1], []
+    result = before[-1]
+    if any(result["line"] < p < proof_line for p in proof_lines):
+        # The result has its proof already: this one is the aside's own.
+        return asides[-1], []
+    return None, [result, *asides]
+
+
+def proof_parent(statements: list[dict], file: str, proof_line: int, ref: str | None,
+                 title: str | None = None, proof_lines=()) -> dict | None:
+    """The statement whose proof opens on `proof_line` of `file` (`resolve_parent`); None when
+    none precedes it or it is not certain which one it proves."""
+    return resolve_parent(statements, file, proof_line, ref, title, proof_lines)[0]
 
 
 def step_claims(pid: str, statements: list[dict], snap: Path, files: list[str],
-                numbers: dict[str, str]) -> list[dict]:
+                numbers: dict[str, str], notes: list[str] | None = None) -> list[dict]:
     """The proof equations of the source as claims (`unit: proof-equation`), each under the
-    statement whose proof holds it (`proof_parent`). A step with no such statement is left
-    out."""
-    from .source_regions import RegionError, extract
+    statement whose proof holds it (`resolve_parent`). A step with no such statement is left
+    out. A step that is a row of a display, or a display opened by a macro, is pinned by its
+    own lines. Each numbered display of a proof left out (`find_proof_equations`) is said in
+    `notes`, with its label, its place and why."""
+    from .source_regions import RegionError, extract, tex_sources
     out = []
+    macros = display_macros(tex_sources(snap).values())
     for f in files:
         try:
             lines = (snap / f).read_text(encoding="utf-8", errors="replace").split("\n")
         except OSError:
             continue
-        for st in find_proof_equations(lines, f, numbers):
-            parent = proof_parent(statements, f, st["proof_line"], st["proof_ref"])
-            if parent is None:
+        opened = [p["line"] for p in proofs(lines)]
+        left: list[dict] = []
+        for st in find_proof_equations(lines, f, numbers, macros, left):
+            parent, candidates = resolve_parent(statements, f, st["proof_line"], st["proof_ref"],
+                                                st.get("proof_title"), opened)
+            if parent is None and not candidates:
                 continue
             claim = {"location": f"{f}:{st['line']}"}
+            if st.get("explicit"):
+                claim["source_region"] = {"end_line": st["end_line"]}
             try:
                 region = extract(snap, claim).record()
             except (RegionError, OSError, UnicodeError):
@@ -376,12 +604,31 @@ def step_claims(pid: str, statements: list[dict], snap: Path, files: list[str],
                 "location": claim["location"], "line": st["line"],
                 "source_sha256": region["sha256"], "source_hash_scheme": region["scheme"],
                 "source_region": {"end_line": region["end_line"]},
-                "scope": "proof-step", "scope_note": f"a step of the proof of {parent['number']}",
+                "scope": "proof-step",
+                "scope_note": f"a step of the proof of {parent['number']}" if parent else
+                "a step of a proof whose statement is not certain: "
+                + " or ".join(c["number"] for c in candidates),
                 "scope_reviewed": True, "clauses": [], "tags": [],
-                "unit": "proof-equation", "parent": parent["id"],
-                "statement_tex": "\n".join(lines[st["line"] - 1:st["end_line"]]),
+                "unit": "proof-equation", "parent": parent["id"] if parent else None,
+                **({"parent_candidates": [c["id"] for c in candidates]} if candidates else {}),
+                "statement_tex": _display_tex(lines, st, macros),
                 "context_tex": context_lines(lines, st)})
+        if notes is not None:
+            notes += [f"{x['file']}:{x['line']}: the numbered display {x['label']} in a proof is "
+                      f"not listed as a step: {x['reason']}" for x in left]
     return out
+
+
+def _display_tex(lines: list[str], st: dict, macros: dict[str, tuple[str, str]]) -> str:
+    """The text of a step's display, as the reader typesets it: a row inside its environment,
+    and a display's macros written out (display only; the pin holds the source's lines)."""
+    text = "\n".join(lines[st["line"] - 1:st["end_line"]])
+    if st.get("row"):
+        return f"\\begin{{{st['env']}}}\n{text}\n\\end{{{st['env']}}}"
+    for name, (op, env) in macros.items():
+        text = re.sub(r"\\" + re.escape(name) + r"(?![A-Za-z@])",
+                      lambda _: f"\\{op}{{{env}}}", text)
+    return text
 
 
 # -- proof passages: lines of a proof selected as a step (zero configuration) -----------------
@@ -424,10 +671,11 @@ def proofs(lines: list[str]) -> list[dict]:
                 rest = text[m.end():]
                 rm = REF.search(rest)
                 open_.append({"line": i, "ref": rm.group(1) if rm and rest.lstrip()
-                              .startswith("[") else None})
+                              .startswith("[") else None, "title": _proof_title(rest)})
             elif open_:
                 p = open_.pop()
-                out.append({"line": p["line"], "end_line": i, "ref": p["ref"]})
+                out.append({"line": p["line"], "end_line": i, "ref": p["ref"],
+                            "title": p["title"]})
     return sorted(out, key=lambda p: p["line"])
 
 
@@ -514,7 +762,13 @@ def select_passage(root: Path, file: str, a: int, b: int, statements: list[dict]
                            + ", ".join(f"{t.get('number') or t['id']} (lines {t['start_line']}-"
                                        f"{t['end_line']})" for t in hit)
                            + ": a line of a proof belongs to one step")
-    parent = proof_parent(statements, file, proof["line"], proof["ref"])
+    parent, candidates = resolve_parent(statements, file, proof["line"], proof["ref"],
+                                        proof.get("title"), [p["line"] for p in found])
+    if candidates:
+        raise PassageError(f"the proof at line {proof['line']} of {file} may prove "
+                           + " or ".join(c.get("number") or c["id"] for c in candidates)
+                           + ": it names no statement and follows an aside, so the statement "
+                           "its passages belong to is not certain")
     if parent is None:
         raise PassageError(f"the proof at line {proof['line']} of {file} follows no statement")
     try:
@@ -716,7 +970,8 @@ def full_block(claim: dict, parent: dict | None, lean: dict, reviewed: dict | No
     route = [view(n) for n in route_names(claim)]
     return block(claim, parent, links, route, correspondence(claim, "inventory"),
                  route_note(claim, "inventory"),
-                 reviewed or {"state": "unreviewed", "finding": None, "reports": []}, unit), names
+                 reviewed or {"state": "unreviewed", "finding": None, "reports": []}, unit,
+                 proposal(claim, "inventory")), names
 
 
 def cut_text(text: str, file: str, first_line: int) -> tuple[str, dict | None]:

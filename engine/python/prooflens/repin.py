@@ -388,6 +388,84 @@ def _pin(old_pin: str | None, old_rev: str, new_rev: str) -> str:
     return prefix + new_rev
 
 
+# A word of a string that may be a revision: letters and digits, with dots inside (an arXiv
+# identifier such as 2601.01234v1).
+WORD = re.compile(r"[0-9A-Za-z]+(?:\.[0-9A-Za-z]+)*")
+URL = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://[^\s]*")
+# A file named by the revision in a URL's path: an arXiv PDF, a source archive.
+NAMED = re.compile(r"(.+?)(\.(?:pdf|tex|zip|tgz|tar\.gz|tar))")
+
+
+def _is_revision(text: str, old_rev: str) -> bool:
+    return bool(text) and same_revision(text.removeprefix("arxiv:"), old_rev)
+
+
+def _retarget_url(url: str, old_rev: str, new_rev: str) -> str:
+    """`url` with each path segment or query value that is the revision `old_rev` (or a file
+    named by it, `NAMED`) made `new_rev`, in the old one's form (`_pin`)."""
+    from urllib.parse import urlsplit, urlunsplit
+
+    def one(part: str) -> str:
+        m = NAMED.fullmatch(part)
+        stem, ext = (m.group(1), m.group(2)) if m and _is_revision(m.group(1), old_rev) else \
+            (part, "")
+        return _pin(stem, old_rev, new_rev) + ext if _is_revision(stem, old_rev) else part
+
+    u = urlsplit(url)
+    path = "/".join(one(seg) for seg in u.path.split("/"))
+    query = "&".join("=".join([k, one(v)]) if sep else k
+                     for k, sep, v in (q.partition("=") for q in u.query.split("&"))) \
+        if u.query else u.query
+    if (path, query) == (u.path, u.query):
+        return url
+    return urlunsplit((u.scheme, u.netloc, path, query, u.fragment))
+
+
+def retarget_entry(entry: dict, old_rev: str, new_rev: str) -> tuple[list[dict], list[dict]]:
+    """Point the fields of a paper's inventory entry other than `commit` that name the
+    revision `old_rev` at `new_rev`, in place: a value that is the revision, and a URL whose
+    path segment or query value is (a link to the tree, a file or the arXiv page of that
+    revision). Returns the changes (`field`, `from`, `to`) and the fields left as they were
+    that name the revision as a word of other text, for the author to inspect (`field`,
+    `value`): such text is not read, and a word that only resembles the revision is not one."""
+    changes, inspect = [], []
+    # Run again at the revision it records, nothing names an earlier one.
+    moving = not same_revision(new_rev.removeprefix("arxiv:"), old_rev)
+
+    def walk(value, where: str):
+        if isinstance(value, dict):
+            return {k: walk(v, f"{where}.{k}" if where else k) for k, v in value.items()}
+        if isinstance(value, list):
+            return [walk(v, f"{where}[{i}]") for i, v in enumerate(value)]
+        if not isinstance(value, str):
+            return value
+        if _is_revision(value, old_rev):
+            new = _pin(value, old_rev, new_rev)
+        elif URL.fullmatch(value):
+            new = _retarget_url(value, old_rev, new_rev)
+        else:
+            new = value
+        if new != value:
+            changes.append({"field": where, "from": value, "to": new})
+        elif moving and any(_is_revision(w, old_rev) for w in WORD.findall(value)):
+            inspect.append({"field": where, "value": value,
+                            "reason": "it names the earlier revision in a form this command "
+                                      "does not read; it is left as it is"})
+        return new
+
+    for k in [k for k in entry if k != "commit"]:
+        entry[k] = walk(entry[k], k)
+    return changes, inspect
+
+
+def entry_report(before: dict, after: dict, changes: list[dict],
+                 inspect: list[dict]) -> dict:
+    """What a repin does to a paper's inventory entry, for the plan: its `commit`, from and to,
+    the other fields it points at the new revision, and those to inspect."""
+    return {"commit": {"from": before.get("commit"), "to": after.get("commit")},
+            "fields": changes, "inspect": inspect}
+
+
 def _bounds(region) -> dict:
     return {"file": region.file, "start_line": region.start_line, "end_line": region.end_line,
             "start_column": region.start_column, "end_column": region.end_column}
@@ -729,6 +807,9 @@ def repin_plan(inventory: dict, paper: str, old_root: Path, new_root: Path, old_
     if pins and pins.get("commit") and same_revision(
             str(pins["commit"]).removeprefix("arxiv:"), old_rev):
         pins["commit"] = _pin(pins["commit"], old_rev, new_rev)
+    # The entry's other fields that name the revision: a link to the old tree would go on
+    # pointing readers, and tools, at the old text.
+    fields, inspect = retarget_entry(pins, old_rev, new_rev) if pins else ([], [])
     old_labels = {n for text in old_files.values() for n, _ in labels(text)}
     new = sorted({(f"{f}:{ln}", n) for f, text in new_files.items()
                   for n, ln in labels(text) if n not in old_labels})
@@ -744,7 +825,9 @@ def repin_plan(inventory: dict, paper: str, old_root: Path, new_root: Path, old_
               "advice": [e["claim"] for e in entries if e.get("advice")],
               "proposed": [e["claim"] for e in entries
                            if (e.get("proposed") or {}).get("diff") is not None],
-              "notes": notes}
+              "notes": notes,
+              "paper_entry": entry_report((inventory.get("papers") or {}).get(paper) or {},
+                                          pins or {}, fields, inspect)}
     return result, report
 
 
@@ -1072,6 +1155,7 @@ def main(argv=None) -> int:
                 # A folder has no revision of its own: the inventory records the one it holds.
                 pins = result.setdefault("papers", {}).setdefault(paper.id, {})
                 pins["commit"] = _pin(pins.get("commit") or old_rev, old_rev, new_rev)
+                report["paper_entry"]["commit"]["to"] = pins["commit"]
             before_display = display = new_display = None
             if cfg.display and cfg.display.exists():
                 before_display = cfg.display.read_bytes()

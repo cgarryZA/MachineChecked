@@ -443,3 +443,26 @@ def test_a_proof_passage_in_zero_configuration(plain, capsys, tmp_path):
     code, out = link(capsys, "P:thm:square/passage-2", "--passage", "none")
     assert code == 0 and out["after"] is None
     assert "thm:square/passage-2" not in _simple.load_links(plain)["papers"][PAPERP]
+
+
+@needs_lean
+@needs_tex
+def test_a_step_s_proposed_verdict_is_written_apart_from_its_record(proj, tmp_path):
+    """#678: the verdict a step's author proposes in the links file is written to its own file of
+    the site, not into the claim record a review page loads at every step, and the review queue
+    holds none of it."""
+    from prooflens.simple import load_links
+    links = load_links(proj)
+    note = "The step needs k >= 1; at k = 0 it reads n <= 0."
+    links.setdefault("papers", {}).setdefault(PAPER, {})["eq:bound-range"] = {
+        "proposed": {"verdict": "false as printed", "note": note, "by": "human:A-Author"}}
+    (proj / "machinechecked.links.json").write_text(json.dumps(links))
+    site = tmp_path / "site"
+    write_view_site(view(proj), site, None, proj)
+    name = claim_file("P:eq:bound-range")
+    rec = json.loads((site / "data" / "proposals" / name).read_text())
+    assert rec["proposed"] == {"verdict": "false as printed", "note": note, "theorem": None,
+                               "by": "human:A-Author", "source": "confirmed"}
+    for f in [site / "data" / "claims" / name, site / "data" / "review-queue.json",
+              site / "data" / "index.json"]:
+        assert note not in f.read_text(), f.name

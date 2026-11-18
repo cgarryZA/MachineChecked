@@ -4,6 +4,7 @@
   import { href, withQuery } from "../lib/route.svelte.js";
   import { STEP_VERDICTS } from "../lib/review.js";
   import { readingWords } from "../lib/coverage.js";
+  import { loadProposal } from "../lib/data.js";
 
   // A proof step (an equation or passage of a printed proof) as a target of its own. `part`
   // chooses what is drawn: its own review beside the printed step ("finding"), what was recorded
@@ -32,6 +33,15 @@
     return r.submitted_at ? ", " + r.submitted_at.slice(0, 10) : r.file ? " (" + r.file + (r.line ? ":" + r.line : "") + ")" : "";
   }
   const reviewHref = $derived(index.review_queue ? withQuery(href(index.release, "review"), { claim: claim.id }) : null);
+  // The verdict the step's author proposes, kept apart from the claim record (#678): fetched here,
+  // on the step's own page, never by a review before its verdict.
+  let proposal = $state(null);
+  $effect(() => {
+    const id = claim.id;
+    proposal = null;
+    if (part !== "finding" || !st) return;
+    loadProposal(index, id).then((p) => { if (claim.id === id) proposal = p; });
+  });
 
   // A selected passage's pinned lines, as `FILE:A-B` (one line: `FILE:A`).
   const span = (p) => p.file + ":" + p.start_line + (p.end_line > p.start_line ? "\u2013" + p.end_line : "");
@@ -60,7 +70,7 @@
 
 {#if part === "finding" && st}
   <div class="finding" data-review={rv.state}>
-    <p class="small kind">{UNIT[st.unit] || "Proof step"}{#if st.parent}{" of "}<a href={href(index.release, "read", claim.paper, st.parent.id)}>{st.parent.number || st.parent.id}</a>{/if}{#if st.passage}{", selected at "}<code>{span(st.passage)}</code>{/if}</p>
+    <p class="small kind">{UNIT[st.unit] || "Proof step"}{#if st.parent}{" of "}<a href={href(index.release, "read", claim.paper, st.parent.id)}>{st.parent.number || st.parent.id}</a>{:else if st.parent_candidates?.length}<span data-parent="uncertain">{" whose statement is not certain: "}{#each st.parent_candidates as c, i (c.id)}{i ? " or " : ""}<a href={href(index.release, "read", claim.paper, c.id)}>{c.number || c.id}</a>{/each}</span>{/if}{#if st.passage}{", selected at "}<code>{span(st.passage)}</code>{/if}</p>
     {#if st.passage && !st.passage.matches}
       <p class="small changed" data-passage="changed">Its lines no longer hold the text it was selected at, so no review of it counts until it is selected again{#if st.passage.moved_to}{"; that text is now at "}<code>{span({ file: st.passage.file, ...st.passage.moved_to })}</code>{/if}.
         {#if editable && st.passage.moved_to}<button class="btn ghost" disabled={busy} onclick={() => onpassage(spec(st.passage.file, st.passage.moved_to.start_line, st.passage.moved_to.end_line))}>Select it there</button>{/if}</p>
@@ -79,6 +89,12 @@
         {#if r.reading}<details><summary class="faint small">The reading, locked {r.locked_at}</summary><p class="small pre">{r.reading}</p></details>{/if}
       </details>
     {/each}
+    {#if proposal}
+      <div class="proposal" data-verdict={proposal.verdict}>
+        <p class="small"><strong>The author proposes: {LABEL[proposal.verdict] || proposal.verdict}</strong>{#if proposal.note}<span class="pre">{" — " + proposal.note}</span>{/if}</p>
+        <p class="faint small">{proposal.by ? "By " + proposal.by + ". " : ""}{#if proposal.theorem}It names <code>{proposal.theorem}</code>, the author's and not checked by Lean here.{" "}{/if}A proposal is not a review: it changes neither the step's review nor {st.parent?.number || "the enclosing result"}'s status.</p>
+      </div>
+    {/if}
     {#if reviewHref}<p class="small"><a href={reviewHref}>Review this step</a></p>{/if}
     {#if editable && st.passage}<p class="small"><button class="btn ghost" disabled={busy} onclick={() => onpassage("none")}>Remove this passage</button></p>{/if}
   </div>
@@ -143,6 +159,7 @@
   .finding[data-review="false"], .finding[data-review="undetermined"], .finding[data-review="stale"] { border-left-color: var(--tier-warning); }
   .finding[data-review="holds"], .finding[data-review="gap"] { border-left-color: var(--st-proved); }
   .finding p { margin: 2px 0; }
+  .proposal { border-left: 3px solid var(--accent); padding: 2px 0 2px 10px; margin: 6px 0; }
   .kind { color: var(--muted); }
   .word { font-size: 14px; }
   .pre { white-space: pre-wrap; overflow-wrap: anywhere; }

@@ -14,7 +14,7 @@ Each review has three stages:
 
 **2. Compare with Lean.** The page shows the comparison the reader shows: the paper's passage beside the unit's Lean in rows, each row's exact Lean beside it when there is room, the complete exact statement, and its definitions; a definition, a property of an object or another reference opens below its row with the passage and the statement still on the page. Inspect the elaborated Lean proposition, relevant definitions, quantifier order and whether its hypotheses can be met. This step is given the paper and the Lean as Lean gives them, and nothing a person recorded about the claim: no symbol link, alignment or pairing of rows, correspondence note, review (of the statement or of its definitions), finding, the route a proof step's author names, or the paper definition a declaration is linked to. They are left out of what the page loads and draws, not hidden on it, and after the verdict the page shows them. The outcome the author gives a locked statement is left out the same way: the theorems named to prove, refute or witness it, the author's name for its clause, the kind and reason of a correction, and the state the assessment gives the clause. A clause is named by its place among its claim's clauses (*clause 2 of T:prop:pred*); a correction or special case of a printed clause says so, naming that clause by its place. So *Refutation not valid* and the witness comparison are offered for every locked statement. A short checklist names what to compare (the setting, each hypothesis, quantifiers and their order, the definitions relied on, the conclusion, constants, and any result or axiom taken as an assumption; for a definition, the object, its parameters and its conventions at edge cases); marking each item *matches*, *differs* or *unsure* is optional and is kept in the report. Record how it compares with the paper. The review protocol has eight precise verdicts, grouped in the interface under *Matches*, *Problem* and *Cannot determine*. With the verdict you may record the coverage and its basis ([below](#coverage-with-the-verdict)).
 
-**3. Read the author's review.** Only after recording your verdict does the queue show the existing author review, and the comparison what people recorded about the claim (its symbol links, published alignments, each finding at the rows it explains, and the `Correspondence:` field of a review of the proposition). For a locked statement it also shows the author's account of each clause it states: the clause's place and name, its state, the printed clause a correction corrects with the kind and reason given, and the theorems named to prove, refute or witness it (*refutation: Toy.Acceptance.prop_pred*). Record disagreements alongside your initial interpretation. If the author's account changes your judgement, say so in the same step: tick **My judgement changed after reading the author's review** (`submit --judgement-changed why.md`), give why, and, if you would now give another verdict, that verdict with its detail. Your blind verdict stays in the report as it was recorded, beside the later judgement, each with its time. Promotion never promotes such a report, and a published audit does not count it ([Maintainer acceptance](#maintainer-acceptance), [Publishing reports with an audit](#publishing-reports-with-an-audit)).
+**3. Read the author's review.** Only after recording your verdict does the queue show the existing author review, and the comparison what people recorded about the claim (its symbol links, published alignments, each finding at the rows it explains, and the `Correspondence:` field of a review of the proposition). For a locked statement it also shows the author's account of each clause it states: the clause's place and name, its state, the printed clause a correction corrects with the kind and reason given, and the theorems named to prove, refute or witness it (*refutation: Toy.Acceptance.prop_pred*). When a clause refutes the proposition you just judged, it says what that means for the claim, in one line: *This proposition is refuted by Toy.Acceptance.prop_pred: Lean checks that it proves the negation, so no proof of the proposition can follow* (or that Lean does not check the refutation). The exported report records it as `refuted_by`, and its text block as a `Refuted:` line. Record disagreements alongside your initial interpretation. If the author's account changes your judgement, say so in the same step: tick **My judgement changed after reading the author's review** (`submit --judgement-changed why.md`), give why, and, if you would now give another verdict, that verdict with its detail. Your blind verdict stays in the report as it was recorded, beside the later judgement, each with its time. Promotion never promotes such a report, and a published audit does not count it ([Maintainer acceptance](#maintainer-acceptance), [Publishing reports with an audit](#publishing-reports-with-an-audit)).
 
 The report records the steps completed in this reader. The queue offers changed evidence first
 and says why each unit comes where it does; **Order** chooses the paper's order or the informed
@@ -27,6 +27,8 @@ machinechecked review next                          # the next unit to review, a
 machinechecked review read UNIT                     # step 1: the paper's statement only
 machinechecked review read UNIT --context           # and the paper around it, as context
 machinechecked review lock UNIT reading.md          # locks your reading
+machinechecked review read UNIT --with UNIT2        # definitions of one passage: read it once
+machinechecked review lock UNIT reading.md --with UNIT2   # one reading locked for them all
 machinechecked review show UNIT                     # step 2 (refused before lock): the Lean
 machinechecked review show UNIT --definitions       # step 2: only the definitions it uses, compactly
 machinechecked review decide UNIT VERDICT comparison.md [--detail detail.md] [--coverage C ...]
@@ -44,7 +46,12 @@ last `machinechecked view` or `machinechecked build`, one unit per linked claim
 (`link:<claim key>`). Each step refuses to run before the one it follows and is timestamped; the
 reports are in the form the reader exports, and `review promote` checks them the same way. Steps 1
 and 2 show nothing of the outcome the author gives a locked statement (above); step 3 gives the
-author's account of it. For a
+author's account of it. Step 2 lists, under a locked statement, each operation Lean totalises in
+it (a division, an inverse, a Bochner integral, a supremum, a root), with the sub-term where it
+is applied and what Lean gives it outside its domain, so that the comparison can settle whether
+the hypotheses exclude that case; the list is read from the Lean alone. Whether the engine finds
+the hypotheses supply the operation's conditions, and any dismissal of the warning, come at
+step 3. For a
 refuted proposition, step 3 also shows the author's account of the refutation's scope: the
 readings its counterexample is declared to cover and not to cover, and the class lemmas for the
 paper's standing assumptions, each with its theorem's statement. The
@@ -54,7 +61,7 @@ audit.
 
 **Many units at once.** `lock`, `decide` and `submit` take `--manifest FILE` (or `-` for
 standard input) instead of a unit and its texts: a JSON list of entries, each with `unit` and that
-step's fields. `lock` takes `reading`; `decide` takes `verdict`, `comparison`, and optionally
+step's fields. `lock` takes `reading`, and optionally `with` (below); `decide` takes `verdict`, `comparison`, and optionally
 `detail`, `witness`, `coverage`, `basis`, `argument`, `bridge` (`[THEOREM, TARGET]`) and
 `would_decide`; `submit` takes `disagreements`, and optionally `judgement_changed`,
 `revised_verdict` and `revised_detail`. A text is given inline (`"comparison": "..."`) or
@@ -75,12 +82,29 @@ prints one document, `{"schema": "machinechecked/review-manifest@1", "ok", "entr
 "unit", "ok", "message" | "error": {"kind", "message"}}]}`; an entry taken also holds the fields
 of its step's result, below.
 
+**Definitions printed in one passage.** When several definitions are read from exactly the same
+passages (a paragraph defining the time step, the grid times and the increments, say), `review read
+UNIT --with UNIT2 --with UNIT3` shows the passages once and begins a draft for each, and `review
+lock UNIT reading.md --with UNIT2 --with UNIT3` (or a manifest entry with `"with": [UNIT2, UNIT3]`)
+locks one reading for them all, at one time. Both refuse units that are not definitions, or whose
+passages differ in any way or are not complete in the build, naming the unit; the lock checks
+every unit's step (each read, none locked or reported) before it records any, and records what you
+had already seen of each unit. From step 2 on each unit is on its own: `review show` names it and
+the units its reading was locked with, and shows its Lean alone, and it takes its own verdict and
+its own report, pinned to its own definition, which the maintainer promotes or refuses and which a
+change of that definition alone reopens. Each unit's draft names the units locked with it
+(`locked_with`): what step 2 of one shows of another came after both readings were locked, though
+a time to the second cannot tell, so it does not count as seen before the other's reading. Each
+report names them too (`reading.locked_with`, and the report's text says "locked …, with …"), and
+Undo keeps them. The review page still takes one unit at a time.
+
 **Results as data.** `lock`, `decide` and `submit` of one unit take `--json` too, and print one
 document: `{"schema": "machinechecked/review-step@1", "action", "ok": true, "unit", "message",
 "step", ..., "workspace": {"id", "mode"}}`. `step` is the unit's step now (`compare` after a lock,
 `author` after a verdict, `submitted` after the report), and the other fields say what the step
 recorded: `locked_at` and `revealed_by` (what you had already seen of the unit's Lean or author's
-review) for `lock`; `verdict`, `group`, `decided_at`, `correspondence` (the coverage and its basis,
+review) for `lock`, with `locked_with` (each other unit, with its `revealed_by`) for a reading
+locked with others; `verdict`, `group`, `decided_at`, `correspondence` (the coverage and its basis,
 or null) and a structure's separate verdicts (`members`) for `decide`; `verdict`, `group`,
 `submitted_at`, the report's `revealed_by` and its `changed_judgement` (or null) for `submit`.
 `message` is the line the command
@@ -1108,6 +1132,25 @@ the paper. Its verdicts are its own:
 | Holds, with a gap in the argument | The argument the printed proof leaves out |
 | False as printed | The counterexample or the failing case, and what would repair the step |
 | Cannot determine | What would decide it |
+
+**An author's proposed verdict.** The author of a formalisation may propose a verdict on a printed
+step while formalising it, with the step verdicts above and a note: a gap, its repair, a
+counterexample. The step's entry records it as `proposed` (in the inventory, or in the links file
+under the step's label), optionally naming a Lean theorem that proves the step or refutes it,
+which is the author's and not checked by Lean here:
+
+```json
+"proposed": {"verdict": "false as printed", "note": "At k = 0 it reads n <= 0.",
+             "theorem": "Toy.Acceptance.bound_range_counterexample", "by": "human:A-Author"}
+```
+
+The build writes it apart from the step's record (`data/proposals/`), so a review receives it only
+after its verdict: `read` and `show` never hold it, and the review page fetches it at step 3, where
+it is shown beside the author's review (`review author` prints it too). The step's own page shows
+it under its review. A proposal completes no review and changes no status, neither the step's
+review nor its enclosing result's: a reviewer who reaches another conclusion says so in the
+response to the author's review or in a finding. A bundle, which holds every file from the start,
+and a published audit carry no proposal; a review snapshot does.
 
 A report on a step pins the hash of the step's source text, and follows the same protocol as
 any other: reading locked before the Lean is shown, verdict recorded before the author's review.

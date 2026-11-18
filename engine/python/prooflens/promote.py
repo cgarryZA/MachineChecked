@@ -283,6 +283,14 @@ def refutation_refusals(body: dict, u: dict, verdict: str) -> list[str]:
             f"outside the paper's standing assumptions (refute_scope {OUTSIDE!r})"]
 
 
+def refuted_lines(r: dict) -> list[str]:
+    """The text block's line for each theorem the report records as refuting its proposition
+    (`refuted_by`, #685): what its verdict means for the claim."""
+    from .review_queue import refutation_line
+    return [f"Refuted: {x.get('line') or refutation_line(x)}" for x in r.get("refuted_by") or []
+            if isinstance(x, dict) and x.get("theorem")]
+
+
 def changed_text(r: dict) -> str | None:
     """A report's judgement changed after the author's review was shown (`changed_judgement`),
     beside its blind verdict, in words; None when it records none."""
@@ -470,7 +478,9 @@ def report_text(r: dict, cur: dict | None = None) -> str:
         f"Reviewer: {rv['id']} ({rv['kind']}{', ' + rv['model'] if rv.get('model') else ''}, "
         f"self-declared); {r['submitted_at']}; same model family as the author: "
         f"{rv.get('same_family_as_author')}",
-        f"Phase 1 specification (locked {r['reading']['locked_at']}):", r["reading"]["text"],
+        f"Phase 1 specification (locked {r['reading']['locked_at']}"
+        + (f", with {', '.join(r['reading']['locked_with'])}"
+           if r["reading"].get("locked_with") else "") + "):", r["reading"]["text"],
         f"Comparison (verdict recorded {r['comparison']['decided_at']}):",
         r["comparison"]["text"],
         f"Witness: {r['comparison'].get('witness') or '—'}",
@@ -480,6 +490,7 @@ def report_text(r: dict, cur: dict | None = None) -> str:
         *_coverage_lines(r),
         *([f"Judgement changed after the author's review: {changed_text(r)}"]
           if changed_text(r) else []),
+        *refuted_lines(r),
         f"Disagreements with the author's review (shown {r['author_review']['shown_at']}): "
         f"{r['author_review'].get('disagreements') or 'none'}", ""])
 

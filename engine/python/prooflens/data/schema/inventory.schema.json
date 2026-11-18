@@ -68,6 +68,14 @@
           "type": "object", "required": ["lean"],
           "properties": {"lean": {"$ref": "#/$defs/names"}, "note": {"type": "string"},
                          "by": {"type": "string"}}
+        },
+        "proposed": {
+          "description": "A proof step's author's proposed verdict, shown only after a reviewer's own verdict; it completes no review and changes no status. `theorem` is the author's and is not checked by Lean.",
+          "type": "object", "required": ["verdict"], "additionalProperties": false,
+          "properties": {"verdict": {"enum": ["holds as printed", "holds, with a gap in the argument",
+                                              "false as printed", "cannot determine"]},
+                         "note": {"type": "string"}, "theorem": {"type": "string", "minLength": 1},
+                         "by": {"type": "string"}}
         }
       }
     },

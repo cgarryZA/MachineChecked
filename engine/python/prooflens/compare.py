@@ -9,9 +9,10 @@ It reuses the records the reader shows; it runs no Lean and changes no file.
 
 A packet is filtered by stage before it is returned. `read` holds the paper only: the passage,
 with the paper's `\\lean{...}` tags removed, since they name declarations. `compare` adds the
-formal material and its mechanical structure: statements, binders, definitions, Lean's checks.
-`informed` adds prior interpretations: correspondence notes, review reports and markers, symbol
-links, statuses and the assessment's findings, and, when a workspace is named, its auditor's
+formal material and its mechanical structure: statements, binders, definitions, Lean's checks,
+and the operations Lean totalises in a locked statement (`totalisations`). `informed` adds prior
+interpretations: correspondence notes, review reports and markers, symbol links, statuses and
+the assessment's findings with their dismissals, and, when a workspace is named, its auditor's
 requirements of the claim with the passages that govern them and their alignment with Lean. Independent review uses `read` before its
 reading is locked and `compare` before its verdict; any other use is an informed investigation.
 
@@ -221,6 +222,18 @@ class Site:
                    nb.inventory(claims, True)["statements"])
         return refs
 
+    def proposal(self, cid: str) -> dict | None:
+        """The verdict the author proposes for proof step `cid` (`steps.proposal`), kept apart
+        from its record (`data/proposals/<file>`); None when there is none. For the informed
+        stage only: the read and compare stages never read it."""
+        meta = self._by_id.get(cid)
+        p = self.data / "proposals" / meta["file"] if meta else None
+        try:
+            rec = json.loads(p.read_text(encoding="utf-8")) if p and p.is_file() else None
+        except ValueError:
+            return None
+        return rec.get("proposed") if isinstance(rec, dict) else None
+
     def part(self, key: str) -> dict | None:
         """A part stored on its own under its key (`data/expansions/<key>.json`,
         `manifest.split_expansions`): a definition expanded at an application, or a page of a
@@ -278,6 +291,10 @@ def passage(ch: dict, stage: str) -> dict:
         out["step"] = {"unit": st.get("unit"),
                        "parent": {k: par.get(k) for k in ("id", "number") if par.get(k)},
                        "question": "Does the printed step hold, in its context?"}
+        if st.get("parent_candidates"):
+            # Its proof names no statement and follows an aside: either may be the one proved.
+            out["step"]["parent_candidates"] = [{k: c.get(k) for k in ("id", "number")}
+                                                for c in st["parent_candidates"]]
         if ch.get("context_tex"):
             out["context"] = ch["context_tex"]
             if ch.get("context_cut"):
@@ -416,6 +433,33 @@ def _clause(cl: dict, stage: str = "informed", claim: str | None = None,
                                                       "errors") if x in v}
                            for k, v in proofs.items() if isinstance(v, dict)}})
     return out
+
+
+def totalisations(ch: dict, cl: dict) -> list[dict]:
+    """The operations Lean totalises in a locked statement `cl` of the claim record `ch`, as the
+    assessment's totalisation warnings read them from the Lean alone: the operation, the type it
+    is taken in, where it is applied (`at`, and the sub-term there, `subterms`) and what Lean
+    gives it outside its domain (`message`). Every warning is listed, whatever has been decided
+    about it. What carries a judgement is left to the informed stage: a dismissal, whether the
+    engine finds the hypotheses supply the operation's conditions, the warning's state."""
+    k = next((i for i, x in enumerate(ch.get("clauses") or []) if x is cl), None)
+    if k is None:
+        return []
+    out = []
+    for f in ch.get("findings") or []:
+        if f.get("code") != "totalised" or f.get("subject") != f"{ch['id']}#{k}":
+            continue
+        occ = (f.get("occurrences") or [None])[0] or {}
+        out.append({"operation": f.get("trigger"), "message": f.get("message"),
+                    **{key: occ[key] for key in ("type", "at", "subterms")
+                       if occ.get(key) is not None}})
+    return out
+
+
+def _with_totalisations(d: dict, ch: dict, cl: dict) -> dict:
+    """A locked statement's declaration with its totalisations (`totalisations`), if any."""
+    found = totalisations(ch, cl)
+    return {**d, "totalised": found} if found else d
 
 
 def _definition(rec: dict, stage: str, site: Site | None = None) -> dict:
@@ -671,8 +715,8 @@ def claim_packet(site: Site, claim: str, stage: str = "informed", limit: int | N
     if stage != "read":
         decls = _step_decls(ch) if ch.get("step") else \
             [_link(l, "link") for l in ch.get("links") or []]
-        decls += [_clause(cl, stage, ch["id"], ch.get("clauses")) for cl in ch.get("clauses") or []
-                  if cl.get("statement")]
+        decls += [_with_totalisations(_clause(cl, stage, ch["id"], ch.get("clauses")), ch, cl)
+                  for cl in ch.get("clauses") or [] if cl.get("statement")]
         # Results an auditor cited for objects are prior interpretations: informed stage only.
         derived = ((reading or {}).get("derivations") or []) if stage == "informed" else []
         _with_objects(decls, derived)
@@ -693,6 +737,8 @@ def claim_packet(site: Site, claim: str, stage: str = "informed", limit: int | N
                                    "no declaration is linked to this claim")
     if stage == "informed":
         out["interpretations"] = _informed(ch)
+        if ch.get("step"):
+            out["interpretations"]["proposed"] = site.proposal(ch["id"])
         if reading is not None:
             reading = dict(reading)
             out["interpretations"]["compositions"] = reading.pop("compositions", [])
@@ -772,7 +818,8 @@ def unit_packet(site: Site, unit: dict, stage: str) -> dict:
             found = next(((ch, x) for ch in chunks for x in ch.get("clauses") or []
                           if x.get("spec") == unit["name"]), None)
             if found:
-                d = _clause(found[1], stage, found[0]["id"], found[0].get("clauses"))
+                d = _with_totalisations(_clause(found[1], stage, found[0]["id"],
+                                                found[0].get("clauses")), found[0], found[1])
                 decls.append(d)
                 cor = out["unit"].get("correction")
                 if cor and not cor.get("of_clause") and (d.get("correction") or {}).get(
@@ -811,6 +858,10 @@ def unit_packet(site: Site, unit: dict, stage: str) -> dict:
         out["interpretations"] = {"author_review": unit.get("author_review") or [],
                                   "account": unit_account(unit, chunks),
                                   "refutation_scope": unit.get("refutation_scope") or [],
+                                  "refuted_by": unit.get("refuted_by") or [],
+                                  # A proof step's author's proposed verdict (#678).
+                                  **({"proposed": site.proposal(chunks[0]["id"])
+                                      if chunks else None} if unit["kind"] == "step" else {}),
                                   "claims": [_informed(ch) for ch in chunks]}
         sections.append("interpretations")
     out["retrieval"] = _retrieval(stage, sections, page, extra, outcome=unit["kind"] == "spec")
@@ -1267,8 +1318,12 @@ def passage_text(p: dict) -> str:
                  f"-{part['end_line']}):\n{part['text']}")
     if p.get("step"):
         par = p["step"].get("parent") or {}
-        body = (f"A step of the proof of {par.get('number') or par.get('id') or 'its result'}"
-                f" ({par.get('id') or 'no parent recorded'}). {p['step']['question']}\n" + body)
+        maybe = p["step"].get("parent_candidates") or []
+        head = (f"A step of the proof of {par.get('number') or par.get('id') or 'its result'}"
+                f" ({par.get('id') or 'no parent recorded'})" if par or not maybe else
+                "A step of a proof whose statement is not certain: "
+                + " or ".join(c.get("number") or c.get("id") for c in maybe))
+        body = f"{head}. {p['step']['question']}\n" + body
         if p.get("context"):
             body += "\nIts context in the proof:\n" + p["context"]
     if p.get("surroundings"):
@@ -1366,6 +1421,22 @@ def says_lines(d: dict) -> list[str]:
     if d.get("definition_error"):
         return [f"  what it says could not be read from Lean: {d['definition_error']}"]
     return []
+
+
+def totalisation_lines(d: dict) -> list[str]:
+    """The operations Lean totalises in a locked statement (`totalisations`), for the terminal:
+    each with the sub-terms where it is applied and what Lean gives it outside its domain."""
+    if not d.get("totalised"):
+        return []
+    out = [f"Operations Lean totalises in {d.get('name')}, read from the Lean:"]
+    for t in d["totalised"]:
+        where = ", ".join(f"`{s['text']}`" for s in t.get("subterms") or [] if s.get("text"))
+        msg = (t.get("message") or "").removesuffix(f" ({t.get('operation')} occurs in "
+                                                    f"{d.get('name')})")
+        out.append(f"  {t.get('operation')}" + (f" at {where}" if where else "") + f": {msg}")
+    out.append("  Whether the hypotheses exclude these cases is for your comparison; the "
+               "assessment's judgement of them comes after your verdict.")
+    return out
 
 
 def expansion_lines(x: dict) -> list[str]:
@@ -1606,7 +1677,7 @@ def packet_text(pk: dict) -> str:
             head = {"establishes the step": "Lean linked as establishing this step:\n",
                     "formal route used instead": "The different formal route used instead "
                     "(it does not state the step):\n"}.get(d.get("role"), "")
-            out.append(head + "\n".join(statement_lines(d)))
+            out.append(head + "\n".join(statement_lines(d) + totalisation_lines(d)))
         for d in lean.get("candidates") or []:
             out.append("candidate (not confirmed): " + "\n".join(statement_lines(d)))
         for d in lean["definitions"]:
