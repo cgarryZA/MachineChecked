@@ -482,7 +482,9 @@ def report_text(r: dict, cur: dict | None = None) -> str:
         f"{rv.get('same_family_as_author')}"
         + ("; accepted by the maintainer over the same-family rule" if family_accepted(r)
            else ""),
-        f"Phase 1 specification (locked {r['reading']['locked_at']}):", r["reading"]["text"],
+        f"Phase 1 specification (locked {r['reading']['locked_at']}"
+        + (f", with {', '.join(r['reading']['locked_with'])}"
+           if r["reading"].get("locked_with") else "") + "):", r["reading"]["text"],
         f"Comparison (verdict recorded {r['comparison']['decided_at']}):",
         r["comparison"]["text"],
         f"Witness: {r['comparison'].get('witness') or '—'}",

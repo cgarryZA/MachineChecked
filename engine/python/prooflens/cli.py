@@ -2209,6 +2209,9 @@ def _review_text(a, s) -> None:
     """`review read`, `show` and `author`: what that step of the protocol shows of a unit."""
     if a.action == "show" and getattr(a, "definitions", False) and not a.json:
         return print(s.show(a.unit, definitions=True))
+    if a.action == "read" and getattr(a, "with_units", None):
+        out = s.read_together([a.unit, *a.with_units], a.json, getattr(a, "context", False))
+        return _print_json(out) if a.json else print(out)
     out = s.read(a.unit, a.json, context=True) if a.action == "read" and \
         getattr(a, "context", False) else getattr(s, a.action)(a.unit, a.json)
     _print_json(out) if a.json else print(out)
@@ -2226,6 +2229,22 @@ def _lock(s, uid: str, reading: str) -> tuple[str, list[dict]]:
     return (f"reading recorded (not blind: the session is informed); `review show {uid}` "
             "shows the Lean" if s.informed else
             f"reading locked; `review show {uid}` shows the Lean"), seen
+
+
+def _lock_together(s, uids: list[str], reading: str) -> tuple[str, dict[str, list[dict]]]:
+    """Lock one reading for several definitions read from the same passages
+    (`Session.lock_together`): what the command says, and what the reviewer had already seen
+    of each unit, which is also warned of on standard error."""
+    seen = s.lock_together(uids, reading)
+    for uid, got in seen.items():
+        if got and not s.informed:
+            print(f"warning: the reading of {uid} is not blind: you had already seen "
+                  + "; ".join(f"the {x['what']} of {uid} (shown by {x['unit']})" for x in got)
+                  + ". Its report will say so, and promotion refuses it unless the maintainer "
+                  "passes --allow-revealed.", file=sys.stderr)
+    from .review_cli import and_list
+    return (f"reading {'recorded' if s.informed else 'locked'} for {and_list(uids)}; `review show "
+            "UNIT` shows each one's Lean, and each takes its own verdict"), seen
 
 
 def _decide(s, uid: str, verdict, comparison: str, detail: str, witness: str, coverage,
@@ -2294,7 +2313,9 @@ def _review_one(a, s, action: str, f: dict) -> None:
 
 def _review_lock(a, s) -> None:
     _positional(a, "unit", "text")
-    _review_one(a, s, "lock", {"reading": _review_file(a.text)})
+    _review_one(a, s, "lock", {"reading": _review_file(a.text),
+                               **({"with": a.with_units} if getattr(a, "with_units", None)
+                                  else {})})
 
 
 def _review_decide(a, s) -> None:
@@ -2323,7 +2344,7 @@ def _review_submit(a, s) -> None:
 # `unit`: True for a text, which the entry gives inline (`comparison`) or as a file
 # (`comparison_file`, relative to the manifest's directory); False for a word or a value.
 MANIFEST_FIELDS = {
-    "lock": {"reading": True},
+    "lock": {"reading": True, "with": False},
     "decide": {"verdict": False, "comparison": True, "detail": True, "witness": True,
                "coverage": False, "basis": False, "argument": True, "bridge": False,
                "would_decide": True, "members": False},
@@ -2374,6 +2395,11 @@ def _manifest_entry(action: str, e, base: Path) -> tuple[str, dict]:
         if not (isinstance(b, list) and len(b) == 2 and all(isinstance(x, str) for x in b)):
             raise ReviewError('bridge is [THEOREM, TARGET] or {"theorem", "target"}', "invalid")
         out["bridge"] = b
+    w = out.get("with")
+    if w is not None and not (isinstance(w, list) and w and all(isinstance(x, str) and x
+                                                                for x in w)):
+        raise ReviewError("with is a list of the units whose reading is locked with this one",
+                          "invalid")
     return e["unit"], out
 
 
@@ -2382,6 +2408,11 @@ def _manifest_step(action: str, s, uid: str, f: dict) -> tuple[str, dict]:
     method: what it says, and what its JSON result holds besides: the unit's step now (`compare`
     after a lock, `author` after a verdict, `submitted` after the report) and what the step
     recorded, with its time."""
+    if action == "lock" and f.get("with"):
+        said, seen = _lock_together(s, [uid, *f["with"]], f["reading"])
+        d = s.work["drafts"][uid]
+        return said, {"step": d["stage"], "locked_at": d["locked_at"], "revealed_by": seen[uid],
+                      "locked_with": [{"unit": i, "revealed_by": seen[i]} for i in f["with"]]}
     if action == "lock":
         said, seen = _lock(s, uid, f["reading"])
         d = s.work["drafts"][uid]
@@ -2411,7 +2442,8 @@ def _review_manifest(a, session) -> None:
     exits 2."""
     from . import review_cli as rc
     if any(getattr(a, n, None) is not None for n in ("unit", "text", "verdict", "comparison",
-                                                       *DECIDE_OPTIONS, *SUBMIT_OPTIONS)):
+                                                       "with_units", *DECIDE_OPTIONS,
+                                                       *SUBMIT_OPTIONS)):
         raise rc.ReviewError("give --manifest or the step's arguments, not both", "invalid")
     try:
         entries = json.loads(_review_file(a.manifest))
@@ -3081,6 +3113,11 @@ def _add_review(sub) -> None:
                                  "of its source: its section, the paragraphs before and after, "
                                  "its labels' printed numbers, the statements it cites or that "
                                  "cite it (context, not the passage read)")
+        if name in ("read", "lock"):
+            sp.add_argument("--with", dest="with_units", action="append", metavar="UNIT",
+                            help="another definition read from exactly the same passages: "
+                                 "read them once, and lock one reading for all of them "
+                                 "(repeat for each); each still takes its own verdict")
         if name == "show":
             sp.add_argument("--definitions", action="store_true",
                             help="print only the definitions the unit's Lean uses, each once, "
