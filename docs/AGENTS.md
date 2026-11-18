@@ -61,7 +61,10 @@ is qualified as a number of another version whose declared numbering it is check
 `mismatch` meaning that the map pairs it with another statement than the one cited beside it)
 and the project-level `pattern` (counts by status, `places`: the
 declarations and modules holding disagreeing references, `drift`, `examples` (reference ids),
-and whether the paper's numbering is complete). Each suggestion has `reasons`: `signal`
+and whether the paper's numbering is complete; `inventory.statements` counts the paper's
+numbered statements whose number is digits or an appendix letter and digits, `Lemma 2.1` or
+`Lemma B.1`, each kind and number once, so equations, proof steps and statements named by a
+letter alone, `Theorem A`, are not counted). Each suggestion has `reasons`: `signal`
 (`content`, `uses`, `number`, `lexical`, `structure`) and `text`; a `number` reason has
 `basis` "a lead" or "a possibly stale lead", and `references`: the ids of the references in
 `numbering` it rests on.

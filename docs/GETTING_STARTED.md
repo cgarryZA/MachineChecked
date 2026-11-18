@@ -232,7 +232,8 @@ The search box at the top of the reader finds declarations by their statements t
 
 `view`, `build` and `check` read every reference to a numbered statement or section in the
 project's docstrings, declaration names, module docstrings and comments (`Theorem 2.1`,
-`lemma_3_4`, `-- by Lemma 2.2`), and compare it with the paper read here:
+`Lemma B.1` in an appendix, `lemma_3_4`, `-- by Lemma 2.2`), and compare it with the paper read
+here:
 
 - the paper has that statement;
 - the number belongs to another kind of statement (`Lemma 3.3` where the paper's 3.3 is a
