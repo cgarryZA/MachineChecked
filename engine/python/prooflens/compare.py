@@ -785,6 +785,30 @@ def workspace_reading(site: Site, work: Path, wid: str, claim: str,
             "derivations": derivations(c.get("evidence"))}
 
 
+DIGEST_COVERS = {"passage": "the passage, as this build pins it",
+                 "notation": "the passage with the definitions of the notation macros it uses "
+                             "(`notation_macros`), so that a changed definition reopens the "
+                             "reading"}
+
+
+def passage_digests(unit: dict, chunks: list[dict]) -> list[dict]:
+    """For each claim of a review unit, the two digests a reviewer sees, each with what it
+    covers: the passage's pin in this build (`passage`, the passage's `source.sha256`), and the
+    digest a report on the unit pins and its marker records (`recorded`, the unit's
+    `source_sha256`). They differ only when the passage uses notation macros the configuration
+    lists: the recorded digest then covers their definitions too. Both are of this build's
+    text."""
+    rec = unit.get("source_sha256") or {}
+    out = []
+    for ch in chunks:
+        got, pin = rec.get(ch["id"]), ch.get("source_sha256")
+        if got is None:
+            continue
+        out.append({"claim": ch["id"], "passage": pin, "recorded": got, "same": got == pin,
+                    "covers": DIGEST_COVERS["passage" if got == pin else "notation"]})
+    return out
+
+
 def unit_packet(site: Site, unit: dict, stage: str) -> dict:
     """The packet of one review unit at a stage of the protocol: the passages of every claim
     of the unit, and from the compare stage the unit's own Lean (a claim's confirmed links, a
@@ -809,6 +833,9 @@ def unit_packet(site: Site, unit: dict, stage: str) -> dict:
     out["claims"] = [_claim_ref(ch) for ch in chunks]
     out["paper"] = {"passages": [passage(ch, stage) for ch in chunks],
                     "complete": not missing, "missing": missing}
+    digests = passage_digests(unit, chunks)
+    if digests:
+        out["paper"]["digests"] = digests
     if unit["kind"] == "def":
         out["paper"]["note"] = (f"a definition used by {len(unit.get('claims') or [])} claim(s); "
                                 "every one of their passages is included")
