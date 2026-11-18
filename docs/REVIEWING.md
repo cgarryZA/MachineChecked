@@ -56,7 +56,25 @@ the hypotheses supply the operation's conditions, and any dismissal of the warni
 step 3. For a
 refuted proposition, step 3 also shows the author's account of the refutation's scope: the
 readings its counterexample is declared to cover and not to cover, and the class lemmas for the
-paper's standing assumptions, each with its theorem's statement. The
+paper's standing assumptions, each with its theorem's statement.
+
+**An account the author keeps in a readings ledger.** A project whose configuration names a
+readings ledger (`readings_ledger`, [ASSURANCE.md](ASSURANCE.md)) has its account of a
+declaration there already: step 3 shows each row whose `declarations` name one of the unit's
+declarations exactly, with its source (`file#id`), the revision it was read at and the digest
+of the row, and the report records what was shown (`author_review.accounts`: each row's
+`source` and `sha256`). A unit no row names says so; nothing is matched by namespace, title or
+text, and the author enters nothing twice. A row such as
+
+```json
+{"id": "R4", "text": "The bound needs the constant before ε, as the paper's Remark 2 says.",
+ "declarations": ["Example.PaperSpec.thm_bound"], "read_at": "4f2c9e1"}
+```
+
+is shown at step 3 of `spec:Example.PaperSpec.thm_bound`, and never at steps 1 and 2. A review
+snapshot carries no configuration, so a review of one shows no ledger.
+
+The
 work is kept in your workspace in the project's working directory (`review-work/`; see below).
 In zero configuration, export into `machinechecked-reviews/` to publish the reports with the
 audit.
