@@ -4625,6 +4625,15 @@ s.save()`);
       assert.deepEqual(reviewState(who).exposure, before);
     });
 
+    // An answer to the list of workspaces that cannot be read (cut short as a page reloads, or
+    // not this server's) is an error: the overview does not fail on it (#787).
+    await check("an unreadable list of workspaces is an error, not a page error", 1300, async (pg) => {
+      await pg.route("**/api/workspaces", (route) => route.fulfill({ status: 200, contentType: "application/json", body: "{" }));
+      await pg.goto(`http://127.0.0.1:${port}/#/r/${TOY.release}/overview`);
+      await pg.getByRole("region", { name: "Review next" }).locator("li").first().waitFor();
+      await pg.waitForLoadState("networkidle");
+    });
+
     // #495: the review page acts on the reviewer's workspace only once the engine has given it.
     // `holdWork(pg)` holds the engine's answers to the page's reads of the review work (GET
     // /api/review) for a workspace (`""`: none named, the reviewer's first) until released.
