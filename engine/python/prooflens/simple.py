@@ -2169,6 +2169,7 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
                 {"source": "formalization.yaml",
                  "note": " ".join(c.get("declared_route_notes") or [])[:NOTE_CHARS], "by": None}
                 if c.get("declared_route") else None)
+            c["proposed"] = steps.proposal(entry, "confirmed")
             c["step_reports"], changed = counted(reports.get(steps.unit_id(c["id"]), []))
             c["uncounted_reviews"] = [uncounted_view(r) for r in changed]
         for s in c.get("suggestions", []):
@@ -2394,6 +2395,7 @@ def write_view_site(view: dict, site: Path, web_dist: Path | None,
                                  [_link_view(l, root) for l in c.get("route_links", [])],
                                  c.get("correspondence"), c.get("route_note"),
                                  steps.review(c.get("step_reports", []), c["source_sha256"]),
+                                 proposed=c.get("proposed"),
                                  candidates=[_parent_row(by_id.get(x))
                                              for x in c.get("parent_candidates") or []]))
             if c.get("passage"):
