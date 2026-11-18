@@ -102,6 +102,11 @@ the release before (`changed_since`; each has `was`, its status there, or null f
 the text report and the JSON. `reused` is true when nothing the assessment reads changed since
 a build made `release`, and the check reported that release's stored assessment without
 assessing again. The exit status is the whole check's, whichever claims are selected.
+`reading_choices` lists the reading choices the working directory's workspaces record for
+definitions the paper leaves open, each with its `workspace`, its `readings`, `chosen` and
+`reason`, the requirements and findings that cite it (`dependents`), and its `equivalence` with
+Lean's answer now (`state`: `pending` or `discharged`, the declaration's exact `statement`, and
+the `reason` it is pending) ([REVIEWING.md](REVIEWING.md#saved-investigations)).
 
 In a project with a `machinechecked.toml` (the full assessment), the document also has
 `findings` (totals per tier, dismissed warnings left out) and `finding_details`: each finding

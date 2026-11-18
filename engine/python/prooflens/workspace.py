@@ -468,10 +468,24 @@ def _content(kind: str, rec: dict, ws: dict, snap, root, cur: dict | None = None
     if kind == "composition":
         from . import composition
         return composition.content(out, rec, ws, snap, root, cur, repin)
+    if kind in ("requirement", "finding") and rec.get("reading_choices") not in (None, []):
+        # The reading choices it depends on, cited explicitly (`reading_choice.py`).
+        from .reading_choice import ChoiceError, cited
+        try:
+            out["reading_choices"] = cited(rec["reading_choices"], ws["records"].values(),
+                                           lambda q: _claim(q, snap))
+        except ChoiceError as e:
+            raise WorkspaceError(str(e)) from None
     if kind in ("requirement", "fragment", "alignment"):
         out.pop("evidence", None)
         if kind == "requirement":
-            return rq.requirement_content(out, rec, ws, rid)
+            out = rq.requirement_content(out, rec, ws, rid)
+            if out["form"] == "reading choice" and snap is not None:
+                ch = snap.chunk(out["claim"]) or {}
+                if "definition" not in (ch.get("scope"), ch.get("kind")):
+                    raise WorkspaceError(f"a reading choice belongs to a definition's claim; "
+                                         f"{out['claim']} is not one")
+            return out
         if kind == "fragment":
             return rq.fragment_content(out, rec, ws, snap, cur, repin)
         return rq.alignment_content(out, rec, ws, snap, root, cur, repin)
@@ -1223,6 +1237,20 @@ def view(ws: dict, snap=None, claim: str | None = None, root: Path | None = None
     for cid, c in claims.items():
         c["reading"] = rq.reading([r for r in ws["records"].values() if r["claim"] == cid], cur,
                                   snap, cid)
+    # The reading choices and the claims that depend on them (`reading_choice.py`).
+    from . import reading_choice as rc
+    chosen = [{**v, "lines": rc.lines(v, "")}
+              for v in rc.views(ws["records"].values(), root, check_facts)]
+    by_key = {(v["claim"], v["choice"]): v for v in chosen}
+    def cites(rec):
+        return [{**x, "line": rc.cite_line(x, by_key.get((x["claim"], x["choice"])))}
+                for x in rec["reading_choices"]]
+    for cid, c in claims.items():
+        for r in c["reading"]["requirements"] + c["findings"]:
+            if r.get("reading_choices"):
+                r["cites"] = cites(r)
+        c["reading_choices"] = [v for v in chosen if v["claim"] == cid or any(
+            d["claim"] == cid for d in v["dependents"])]
     from .reopen import identity
     return {"schema": "prooflens/workspace-view@1", **summary(ws),
             "selection": ws.get("selection") or {}, "sources": ws.get("sources") or {},
@@ -1230,7 +1258,7 @@ def view(ws: dict, snap=None, claim: str | None = None, root: Path | None = None
             "kept_maps": [identity(m) for m in ws.get("version_maps") or []],
             "current_sources": snap.sources() if snap is not None else None,
             "exposure": ws.get("exposure") or [], "conflicts": ws.get("conflicts") or [],
-            "claims": claims}
+            "reading_choices": chosen, "claims": claims}
 
 
 def exposed(ws: dict, claim_ids: list[str]) -> list[dict]:

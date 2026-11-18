@@ -1095,8 +1095,13 @@ class Session:
             d["author_shown_at"] = now()
             self._save(uid)
         if as_json:
-            return {**self.packet(u, "informed"),
-                    "review": {"step": "author", "shown_at": d["author_shown_at"]}}
+            pk = self.packet(u, "informed")
+            # In the text's order: the reading choices before what the verdict means (#685).
+            interp, choices = pk.get("interpretations") or {}, self.reading_choices(u)
+            at = list(interp).index("refuted_by") if "refuted_by" in interp else len(interp)
+            items = list(interp.items())
+            pk["interpretations"] = dict(items[:at] + [("reading_choices", choices)] + items[at:])
+            return {**pk, "review": {"step": "author", "shown_at": d["author_shown_at"]}}
         revs = u.get("author_review") or []
         out = [f"{r.get('by')} · {r.get('file')}:{r.get('line')}\n"
                + (r.get("text") or "No text was written with this review marker.") for r in revs]
@@ -1108,12 +1113,41 @@ class Session:
                            + (f" by {note['by']}" if note.get("by") else "") + f"\n{text}")
         out = out or ["No review by the author is recorded for this unit."]
         out += self._account(u) + self._refutation_scope(u)
-        # What the verdict just recorded means for the claim (#685).
+        # The auditors' reading choices (#597), before what the verdict means for the claim.
+        out += [choice_text(c) for c in self.reading_choices(u)]
+        # What the verdict just recorded means for the claim (#685), last.
         out += [r.get("line") or rq.refutation_line(r) for r in u.get("refuted_by") or []]
         if u.get("kind") == "step":
             out += [proposal_text(p) for p in [self.site.proposal(c["id"])
                                                for c in u.get("claims") or []] if p]
         return "\n\n".join(out)
+
+    def reading_choices(self, u: dict) -> list[dict]:
+        """The reading choices the working directory's workspaces record that concern `u`'s
+        claims (`reading_choice.py`): one made on a claim of the unit, or one a requirement or
+        finding of a claim of the unit cites, each with its workspace and the counterexamples
+        recorded on the requirements that cite it. Prior interpretations: step 3 shows them, and
+        the read and compare steps never do. Lean is not asked: an equivalence reads as Lean
+        last checked it."""
+        from . import reading_choice as rcm
+        mine = {c["id"] for c in u.get("claims") or []}
+        out = []
+        for _, ws in wsp.list_all(self.work_dir):
+            records = list((ws.get("records") or {}).values())
+            for v in rcm.views(records, self.root):
+                if v["claim"] not in mine and not any(x["claim"] in mine
+                                                      for x in v["dependents"]):
+                    continue
+                on = {(x["claim"], x.get("requirement")) for x in v["dependents"]
+                      if x.get("requirement")}
+                cxs = [{"record": r["id"], "claim": r["claim"], "requirement": r["requirement"],
+                        **({"note": r["note"]} if r.get("note") else {})}
+                       for r in records if r.get("kind") == "counterexample"
+                       and (r.get("claim"), r.get("requirement")) in on]
+                out.append({**v, "workspace": ws.get("id"),
+                            "reviewer": (ws.get("reviewer") or {}).get("id"),
+                            "counterexamples": cxs})
+        return out
 
     def _account(self, u: dict) -> list[str]:
         """The author's account of each clause a locked proposition states, for step 3: the
@@ -1278,6 +1312,18 @@ class Session:
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(body, indent=2, ensure_ascii=False), encoding="utf-8")
         return out
+
+
+def choice_text(c: dict) -> str:
+    """A reading choice at step 3 (`Session.reading_choices`): the auditors' choice, the claims
+    that depend on it, the equivalence it names, and the counterexamples posed for it."""
+    from .reading_choice import lines
+    head = (f"A reading choice recorded in workspace {c.get('workspace')}"
+            + (f" by {c['reviewer']}" if c.get("reviewer") else "")
+            + " (a prior interpretation, shown after your verdict):")
+    cx = [f"  counterexample {x['record']} on {x['claim']} {x['requirement']}"
+          + (f": {x['note']}" if x.get("note") else "") for x in c.get("counterexamples") or []]
+    return "\n".join([head, *lines(c, "  "), *cx])
 
 
 def proposal_text(p: dict) -> str:
