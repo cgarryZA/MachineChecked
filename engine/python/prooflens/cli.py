@@ -953,16 +953,17 @@ def _simple_claim_lines(c: dict) -> list[str]:
                    + (f". {l['status_detail']}" if l.get("status_detail") else ""))
     if not c["links"]:
         out.append("  no declaration is linked to it")
-    from .review_cli import FAMILY, family_of
+    from .review_cli import FAMILY, family_of, verdict_words
     for r in c.get("reviews", []):
         rv = r["reviewer"] if isinstance(r["reviewer"], dict) else {"id": r["reviewer"]}
         fam = family_of(rv)
         out.append(f"  review by {rv.get('id')}"
                    + (f" ({FAMILY[fam]}, self-declared)" if fam else "")
-                   + f": {r['verdict']['value']}" + ("" if r["current"] else " (not current)"))
+                   + f": {verdict_words(r['verdict'])}"
+                   + ("" if r["current"] else " (not current)"))
     for r in c.get("uncounted_reviews", []):
         to = (r["changed_judgement"].get("verdict") or {}).get("value")
-        out.append(f"  review by {r['reviewer'].get('id')}: {r['verdict']['value']}, changed "
+        out.append(f"  review by {r['reviewer'].get('id')}: {verdict_words(r['verdict'])}, changed "
                    f"after the author's account" + (f" to {to}" if to else "") + ": not counted")
     return out
 
@@ -1534,6 +1535,8 @@ def _check_simple_json(a, root: Path, view: dict) -> tuple[dict, list[dict], boo
                          for l in c["links"]],
                "correspondence": c.get("correspondence"),
                "reviews": [{"reviewer": r["reviewer"], "verdict": r["verdict"]["value"],
+                            **({"suspect_false": r["verdict"]["suspect_false"]}
+                               if r["verdict"].get("suspect_false") else {}),
                             "correspondence": r.get("correspondence"),
                             "submitted_at": r["submitted_at"], "current": r["current"],
                             **({"why": r["why"]} if r.get("why") else {})}
@@ -2322,28 +2325,35 @@ def _lock_together(s, uids: list[str], reading: str) -> tuple[str, dict[str, lis
 
 
 def _decide(s, uid: str, verdict, comparison: str, detail: str, witness: str, coverage,
-            basis, argument: str, bridge, would_decide: str, members: dict | None = None) -> str:
+            basis, argument: str, bridge, would_decide: str, members: dict | None = None,
+            suspect_false: str | None = None) -> str:
     """Record a verdict (`Session.decide`): what the command says. `members` is a structure's
-    unit's separate verdicts on constants it covers (`review_cli.member_verdicts`)."""
+    unit's separate verdicts on constants it covers (`review_cli.member_verdicts`);
+    `suspect_false`, why the reviewer suspects a broader statement false
+    (`review_cli.suspicion`)."""
     s.decide(uid, verdict, comparison, detail, witness,
              {"coverage": coverage, "basis": basis, "argument": argument,
               "bridge": dict(zip(("theorem", "target"), bridge)) if bridge else None,
-              "would_decide": would_decide}, members=members)
+              "would_decide": would_decide}, members=members, suspect_false=suspect_false)
+    if suspect_false is not None:
+        return (f"verdict recorded: broader, suspected false, grouped apart from the matches; "
+                f"`review author {uid}` shows the author's review")
     return f"verdict recorded; `review author {uid}` shows the author's review"
 
 
 def _submit(s, uid: str, disagreements: str, changed: dict | None = None) -> tuple[str, dict]:
     """Submit the report (`Session.submit`, with a judgement changed after the author's review,
     `changed`): what the command says, and the report."""
+    from .review_cli import verdict_words
     r = s.submit(uid, disagreements.strip(), changed)
     cj = r.get("changed_judgement")
     if cj:
         to = f" to {cj['verdict']['value']}" if cj.get("verdict") else ""
-        return (f"report recorded: {r['unit']['id']}, {r['verdict']['value']} before the "
+        return (f"report recorded: {r['unit']['id']}, {verdict_words(r['verdict'])} before the "
                 f"author's review, your judgement changed after it{to}: the report keeps both, "
                 "and `review promote` does not promote it; `review export --out FILE` writes "
                 "your reports for the maintainer"), r
-    return (f"report recorded: {r['unit']['id']}, {r['verdict']['value']}; "
+    return (f"report recorded: {r['unit']['id']}, {verdict_words(r['verdict'])}; "
             "`review export --out FILE` writes your reports for the maintainer"), r
 
 
@@ -2400,7 +2410,9 @@ def _review_decide(a, s) -> None:
         "coverage": a.coverage, "basis": a.basis, "argument": _review_file(a.argument),
         "bridge": a.bridge, "would_decide": _review_file(a.would_decide),
         "members": {name: {"verdict": v, "detail": _review_file(f)}
-                    for name, v, f in getattr(a, "member", None) or []} or None})
+                    for name, v, f in getattr(a, "member", None) or []} or None,
+        **({"suspect_false": _review_file(a.suspect_false)}
+           if getattr(a, "suspect_false", None) is not None else {})})
 
 
 def _review_submit(a, s) -> None:
@@ -2421,7 +2433,7 @@ MANIFEST_FIELDS = {
     "lock": {"reading": True, "with": False},
     "decide": {"verdict": False, "comparison": True, "detail": True, "witness": True,
                "coverage": False, "basis": False, "argument": True, "bridge": False,
-               "would_decide": True, "members": False},
+               "would_decide": True, "members": False, "suspect_false": True},
     "submit": {"disagreements": True, "judgement_changed": True, "revised_verdict": False,
                "revised_detail": True},
 }
@@ -2429,7 +2441,7 @@ MANIFEST_REQUIRED = {"lock": ("reading",), "decide": ("verdict", "comparison"),
                      "submit": ("disagreements",)}
 # The options only `review decide` takes (`_decide_options`), as `argparse` names them.
 DECIDE_OPTIONS = ("detail", "witness", "coverage", "basis", "argument", "bridge", "would_decide",
-                  "member")
+                  "member", "suspect_false")
 # And those only `review submit` takes (`_submit_options`).
 SUBMIT_OPTIONS = ("judgement_changed", "revised_verdict", "revised_detail")
 
@@ -2495,9 +2507,13 @@ def _manifest_step(action: str, s, uid: str, f: dict) -> tuple[str, dict]:
         said = _decide(s, uid, f["verdict"], f["comparison"], f.get("detail", ""),
                        f.get("witness", ""), f.get("coverage"), f.get("basis"),
                        f.get("argument", ""), f.get("bridge"), f.get("would_decide", ""),
-                       f.get("members"))
+                       f.get("members"), f.get("suspect_false"))
         d = s.work["drafts"][uid]
-        return said, {"step": d["stage"], "verdict": d["verdict"], "group": d["group"],
+        from .review_cli import report_group
+        # The group the report will record (`report_group`).
+        return said, {"step": d["stage"], "verdict": d["verdict"], "group": report_group(d),
+                      **({"suspect_false": d["suspect_false"]} if d.get("suspect_false")
+                         else {}),
                       "decided_at": d["decided_at"], "correspondence": d["correspondence"],
                       **({"members": d["members"]} if d.get("members") else {})}
     said, r = _submit(s, uid, f["disagreements"],
@@ -2822,11 +2838,12 @@ def cmd_review_promote(a):
                         a.accept_same_family, a.allow_revealed)
     except pr.PromoteError as e:
         sys.exit(f"machinechecked: {e}")
+    from .review_cli import verdict_words
     ok = []
     for r, cur, why in steps:
         u = r.get("unit", {})
         head = f"{u.get('name')} ({u.get('kind')}) by {r.get('reviewer', {}).get('id')}: " \
-               f"{r.get('verdict', {}).get('value')}"
+               f"{verdict_words(r.get('verdict') or {})}"
         if pr.coverage_text(r):
             head += f"; coverage: {pr.coverage_text(r)}"
         if pr.evidence_text(r):
@@ -2845,6 +2862,9 @@ def cmd_review_promote(a):
                 print(f"           accepted over the same-family rule: the reviewer is "
                       f"{FAMILY[family_of(r['reviewer'])]} (self-declared); its record and its "
                       "`Review by` line say so")
+            if (r.get("verdict") or {}).get("suspect_false"):
+                print("           the reviewer suspects the broader statement false: its record "
+                      "and its `Review by` line say so")
             _promote_places(cfg, r, cur)
             for n, v in sorted((cur.get("left_out") or {}).items()):
                 print(f"           no marker for {n}: separate verdict {v['value']}")
@@ -3064,8 +3084,13 @@ def _verdict_help(width: int = 98) -> str:
                             "is shown after the verdict. ") + said
                 if v in rc.CORRECTION_ONLY:
                     said = "Only for a correction or a special case of a printed clause. " + said
+                if v in rc.SUSPECTABLE and kind != "step":
+                    said += (" With --suspect-false FILE, for a statement: you suspect the "
+                             "broader statement false, and FILE says why; the report groups "
+                             "the verdict apart from the matches.")
                 out += textwrap.wrap(said, width, initial_indent=f"    {v:<{col}}",
-                                     subsequent_indent=" " * (col + 4))
+                                     subsequent_indent=" " * (col + 4),
+                                     break_on_hyphens=False)
     out += ["", *textwrap.wrap(
         "COMPARISON says how the Lean compares with the paper; --detail says what the verdict "
         "itself needs. --member takes a statement's verdict other than "
@@ -3112,6 +3137,11 @@ def _decide_options(sp) -> None:
                     help="for a structure's unit: a separate verdict on one of the constructor "
                          "or projections it covers, with a file holding its detail, or -; the "
                          "unit's verdict holds for the rest")
+    sp.add_argument("--suspect-false", metavar="FILE",
+                    help="with a broader verdict on a statement: you suspect the broader "
+                         "statement false. A file holding why (the reason or a counterexample), "
+                         "or -. The report records it and groups the verdict apart from the "
+                         "matches")
 
 
 def _submit_options(sp) -> None:

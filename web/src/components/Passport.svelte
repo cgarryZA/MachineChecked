@@ -22,7 +22,7 @@
   import Investigation from "./Investigation.svelte";
   import ProofFacts from "./ProofFacts.svelte";
   import PublishedWork from "./PublishedWork.svelte";
-  import { VERDICTS } from "../lib/review.js";
+  import { verdictLabel } from "../lib/review.js";
   import { familyOf, familyWords, acceptedFamilyWords } from "../lib/semantic.js";
   import { occurrenceCount } from "../lib/symbolmarks.js";
   import { tick } from "svelte";
@@ -44,7 +44,6 @@
   let showAll = $state(false);
   let menu = $state(false), menuWrap = $state(), menuButton = $state();
   let attempt = $state(0);
-  const VERDICT_LABEL = Object.fromEntries(Object.values(VERDICTS).flat().map((v) => [v.value, v.label]));
   function reviewer(r) {
     const who = r.reviewer.kind === "model" ? "the AI model " + (r.reviewer.model || r.reviewer.id)
       : (r.reviewer.name || r.reviewer.id);
@@ -352,7 +351,7 @@
         {#each claim.uncounted_reviews as r}
           {@const nv = r.changed_judgement?.verdict}
           <div class="small uncounted">
-            <p><strong>{VERDICT_LABEL[r.verdict.value] || r.verdict.value}</strong> before the author's account, by {reviewer(r)}, {(r.decided_at || "").slice(0, 10)}; changed after it{#if nv}{" to "}<strong>{VERDICT_LABEL[nv.value] || nv.value}</strong>{/if}, {(r.changed_judgement?.recorded_at || "").slice(0, 10)}.</p>
+            <p><strong>{verdictLabel(r.verdict)}</strong> before the author's account, by {reviewer(r)}, {(r.decided_at || "").slice(0, 10)}; changed after it{#if nv}{" to "}<strong>{verdictLabel(nv)}</strong>{/if}, {(r.changed_judgement?.recorded_at || "").slice(0, 10)}.</p>
             {#if nv?.detail}<p class="pre">{nv.detail}</p>{/if}
             <p class="pre">{r.changed_judgement?.reason}</p>
           </div>
@@ -519,9 +518,10 @@
         </div>
       {/if}
       {#each claim.reviews || [] as r}
-        <details class="review" data-verdict={r.verdict.value}>
-          <summary class="small"><strong>Review: {VERDICT_LABEL[r.verdict.value] || r.verdict.value}</strong>, by {reviewer(r)}, {(r.submitted_at || "").slice(0, 10)}{r.current === false ? (r.why === "source-changed" ? " · made on other paper text" : r.why === "source-unrecorded" ? " · does not record the paper text it read" : " · recorded for other declarations or statements") : r.current === null ? " · not compared with the current Lean" : ""}</summary>
+        <details class="review" data-verdict={r.verdict.value} data-group={r.verdict.group || null}>
+          <summary class="small"><strong>Review: {verdictLabel(r.verdict)}</strong>, by {reviewer(r)}, {(r.submitted_at || "").slice(0, 10)}{r.current === false ? (r.why === "source-changed" ? " · made on other paper text" : r.why === "source-unrecorded" ? " · does not record the paper text it read" : " · recorded for other declarations or statements") : r.current === null ? " · not compared with the current Lean" : ""}</summary>
           {#if r.verdict.detail}<p class="small pre">{r.verdict.detail}</p>{/if}
+          {#if r.verdict.suspect_false}<p class="small suspect-false"><strong>The reviewer suspects the broader statement false:</strong> <span class="pre">{r.verdict.suspect_false}</span></p>{/if}
           {#if r.correspondence}
             {@const rc = coverageView(r.correspondence)}
             <div class="report-coverage" data-coverage={rc.coverage} data-basis={rc.basis || "unspecified"} data-tone={rc.tone}>

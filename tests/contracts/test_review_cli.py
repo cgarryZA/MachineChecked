@@ -175,11 +175,13 @@ DRAFTS = json.loads((Path(__file__).resolve().parents[1] / "fixtures" / "review"
                      / "issue-drafts.json").read_text(encoding="utf-8"))
 
 
-@pytest.mark.parametrize("case", DRAFTS["cases"], ids=lambda c: c["verdict"])
+@pytest.mark.parametrize("case", DRAFTS["cases"], ids=lambda c: c["verdict"] + (
+    ", suspected false" if c.get("suspect_false") else ""))
 def test_issue_drafts_are_those_the_reader_writes(case):
     """The command line writes the drafts of tests/fixtures/review/issue-drafts.json, which
     web/tests/review.test.mjs checks the reader writes too."""
-    assert issue_draft(DRAFTS["unit"], case["verdict"], case["detail"]) == case["draft"]
+    assert issue_draft(DRAFTS["unit"], case["verdict"], case["detail"], None,
+                       case.get("suspect_false")) == case["draft"]
 
 
 COVER = json.loads((Path(__file__).resolve().parents[1] / "fixtures" / "review"

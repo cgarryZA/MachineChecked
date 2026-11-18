@@ -99,7 +99,11 @@ digests are missing or differ from the current ones. Its Lean pins (`fingerprint
 `fingerprints`, `legacy_hash`) are those of the unit when the verdict was recorded. A report on
 a structure's unit lists the structure and the constructor and projections it covers in
 `unit.lean`, pins each one's fingerprint in `pins.fingerprints`, and records any separate verdict
-on one of them in `verdict.members` (name to `{group, value, detail}`). A report whose
+on one of them in `verdict.members` (name to `{group, value, detail}`). Its `verdict.group` is
+the verdict's group (`matches`, `problem`, `cannot`), except for a broader statement its reviewer
+suspects false: then `verdict.suspect_false` holds why (the reason or a counterexample), and the
+group is `suspect`, apart from the matches; promotion treats the report as any broader one, and
+its `Review by` line says *broader, suspected false*. A report whose
 reviewer changed their judgement after the author's review keeps the blind `verdict` as it was
 recorded and, beside it, `changed_judgement`: `{reason, verdict, recorded_at}`, with `verdict`
 the revised one (`{group, value, detail}`) or null; `review promote` never promotes it, and in
