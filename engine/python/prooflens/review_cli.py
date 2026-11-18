@@ -918,12 +918,15 @@ class Session:
                 "drafts": {i: x for i, x in (work.get("drafts") or {}).items()
                            if not (i in group and x.get("locked_at") == at)}}
 
-    def show(self, uid: str, as_json: bool = False, definitions: bool = False) -> str | dict:
+    def show(self, uid: str, as_json: bool = False, definitions: bool = False,
+             fold: bool = False) -> str | dict:
         """Step 2: the unit's Lean, after the lock in independent review. The draft records the
-        version shown, so that a verdict is recorded against the Lean that was shown. A unit
-        this reviewer has reported is shown as it was reviewed: its Lean was seen already. With
+        version shown, so that a verdict is recorded against the Lean that was shown, and the
+        definitions shown, each at its fingerprint (`shown_definitions`). A unit this reviewer
+        has reported is shown as it was reviewed: its Lean was seen already. With
         `definitions`, only the definitions it uses, as a compact listing
-        (`compare.definitions_text`)."""
+        (`compare.definitions_text`); with `fold` too, each one already shown unchanged with
+        another unit of this workspace in one line (`folded_definitions`)."""
         u = self.unit(uid)
         d = self._started(u) if self.informed else self.draft(u)
         if d is None and not self.informed:
@@ -936,13 +939,14 @@ class Session:
                     return {**self.packet(u, "compare"),
                             "review": {"step": "reported", "mode": self.mode,
                                        "submitted_at": r.get("submitted_at")}}
-                return note + "\n\n" + self._lean_or_definitions(u, definitions)
+                return note + "\n\n" + self._lean_or_definitions(u, definitions, fold)
         if d is None or (d["stage"] == "read" and not self.informed):
             raise ReviewError(f"{uid}: lock your reading first (`review lock`); the Lean is shown "
                               "only after it", "order")
         reveals = self.would_reveal(u)
         shown = {"stage": "compare" if d["stage"] == "read" else d["stage"],
-                 "shown_fingerprint": self._fp(u)}
+                 "shown_fingerprint": self._fp(u),
+                 "shown_definitions": self.definitions_shown(u)}
         if any(d.get(k) != v for k, v in shown.items()) or "shown_at" not in d:
             d.update(shown)
             d.setdefault("shown_at", now())
@@ -952,17 +956,62 @@ class Session:
             return {**self.packet(u, "compare"), "review": {
                 "step": "compare", "mode": self.mode, "reveals": reveals,
                 **({"locked_with": together} if together else {})}}
-        text = self._lean_or_definitions(u, definitions)
+        text = self._lean_or_definitions(u, definitions, fold)
         if together:
             text = (f"Your reading of {uid} was locked with that of {and_list(together)}, from the "
                     f"same passages. This is the Lean of {uid} alone: compare it with your "
                     "reading and give it a verdict of its own.\n\n") + text
         return (reveals_note(reveals, "This shows") + text) if reveals else text
 
-    def _lean_or_definitions(self, u: dict, definitions: bool) -> str:
-        """Step 2's text: the unit's Lean, or only the definitions it uses (`definitions`)."""
-        return cmp.definitions_text(self.packet(u, "compare")) if definitions \
-            else self.lean_text(u)
+    def _lean_or_definitions(self, u: dict, definitions: bool, fold: bool = False) -> str:
+        """Step 2's text: the unit's Lean, or only the definitions it uses (`definitions`),
+        folding with `fold` those already shown unchanged with another unit."""
+        if not definitions:
+            return self.lean_text(u)
+        if not fold:
+            return cmp.definitions_text(self.packet(u, "compare"))
+        folded, changed = self.folded_definitions(u)
+        text = cmp.definitions_text(self.packet(u, "compare"), folded, changed)
+        if folded:
+            text += (f"\n\n{len(folded)} definition(s) folded: each was shown to you unchanged "
+                     f"with another unit. `review show {u['id']} --definitions` lists them in "
+                     "full. Folding is a display only: it records no definition as read, "
+                     "reviewed or accepted.")
+        return text
+
+    # -- definitions shown before (#738) -------------------------------------------------------
+
+    def definitions_shown(self, u: dict) -> dict[str, str | None]:
+        """The project's definitions step 2 of `u` shows (`lean.definitions` of its packet, the
+        constants Lean generates for them apart), by name, each with its fingerprint in this
+        build."""
+        store = self.site.store()
+        return {d["name"]: (store.get(d["name"]) or {}).get("fingerprint")
+                for d in (self.packet(u, "compare").get("lean") or {}).get("definitions") or []
+                if d.get("available") is not False and not d.get("generated_for")}
+
+    def folded_definitions(self, u: dict) -> tuple[dict[str, str], dict[str, str]]:
+        """Of the definitions step 2 of `u` shows, those this workspace records as shown with
+        another unit at the fingerprint they have now (`folded`), and those it records shown
+        only at another fingerprint (`changed`), each with that unit. A definition this
+        workspace records nothing of, or whose fingerprint is unknown, is neither: it is
+        printed in full."""
+        seen: dict[str, list[tuple[str, str | None]]] = {}
+        for uid, d in (self.work.get("drafts") or {}).items():
+            for n, fp in (d.get("shown_definitions") or {}).items():
+                seen.setdefault(n, []).append((uid, fp))
+        for r in self.work.get("reports") or []:
+            for n, fp in (r.get("shown_definitions") or {}).items():
+                seen.setdefault(n, []).append(((r.get("unit") or {}).get("id"), fp))
+        folded, changed = {}, {}
+        for n, now in self.definitions_shown(u).items():
+            others = [(i, fp) for i, fp in seen.get(n, []) if i != u["id"]]
+            same = [i for i, fp in others if now and fp == now]
+            if same:
+                folded[n] = same[0]
+            elif others:
+                changed[n] = others[-1][0]
+        return folded, changed
 
     def decide(self, uid: str, verdict: str, comparison: str, detail: str = "",
                witness: str = "", coverage: dict | None = None, checklist: dict | None = None,
@@ -1192,6 +1241,8 @@ class Session:
             "stage": "author", "reading": rd.get("text") or "", "locked_at": rd.get("locked_at"),
             "revealed_by": rd.get("revealed_by") or [], "source_sha256": pins.get("source_sha256"),
             **({"locked_with": rd["locked_with"]} if rd.get("locked_with") else {}),
+            **({"shown_definitions": r["shown_definitions"]}
+               if r.get("shown_definitions") else {}),
             "comparison": cmp_.get("text") or "", "witness": cmp_.get("witness") or "",
             "checklist": cmp_.get("checklist") or {}, "decided_at": cmp_.get("decided_at"),
             "group": v.get("group"), "verdict": v.get("value"), "detail": v.get("detail") or "",
@@ -1521,6 +1572,9 @@ def report(index: dict, u: dict, d: dict, reviewer: dict, disagreements: str,
         "issue_draft": issue_draft(u, d["verdict"], d.get("detail") or "",
                                    d.get("correspondence")),
         **({"evidence": evidence} if evidence else {}),
+        # The definitions step 2 showed, at their fingerprints: what a later unit's folded
+        # listing reads (`Session.folded_definitions`).
+        **({"shown_definitions": d["shown_definitions"]} if d.get("shown_definitions") else {}),
     }
 
 

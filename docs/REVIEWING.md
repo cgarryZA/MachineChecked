@@ -31,6 +31,7 @@ machinechecked review read UNIT --with UNIT2        # definitions of one passage
 machinechecked review lock UNIT reading.md --with UNIT2   # one reading locked for them all
 machinechecked review show UNIT                     # step 2 (refused before lock): the Lean
 machinechecked review show UNIT --definitions       # step 2: only the definitions it uses, compactly
+machinechecked review show UNIT --definitions --fold  # and one line for each already shown to you
 machinechecked review decide UNIT VERDICT comparison.md [--detail detail.md] [--coverage C ...]
 machinechecked review author UNIT                   # step 3 (refused before decide)
 machinechecked review submit UNIT disagreements.md  # finishes the report
@@ -233,6 +234,16 @@ equation lemmas) are named under it. It is the text of `lean.definitions` in `sh
 list every constant of the project the listed definitions use, transitively, including those
 only in a binder's or a field's type: each one a statement does not use directly says which
 definition uses it, so the meaning of every name in the Lean is in the protocol.
+
+When several units use the same definitions, `show --definitions --fold` gives one line for each
+definition already shown to you unchanged with another unit of your workspace ("shown to you with
+link:thm:a, unchanged since"), and prints in full each one never shown to you, or changed since
+(it says with which unit you saw it before). Each draft and report records the definitions its
+step 2 showed, at their fingerprints (`shown_definitions`), and the fold reads them: a unit's
+own earlier showing folds nothing, and a definition shown on the review page of a static copy,
+which keeps no such record, is printed in full. `show --definitions` without `--fold` lists
+every definition in full. Folding is a display only: it records no definition as read, reviewed
+or accepted, and changes nothing in your workspace.
 
 **Informed investigation.** Outside the three steps, `machinechecked compare CLAIM` gives a
 claim's passage, its linked statements, its definitions and everything recorded about it, and
