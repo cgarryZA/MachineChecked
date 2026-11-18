@@ -333,9 +333,9 @@ def changed_judgement(u: dict, blind: str | None, given) -> tuple[dict | None, l
                        + ", ".join(v for vs in table.values() for v in vs))
         elif verdict in REFUTE_ONLY and not u.get("refute"):
             why.append(f"{verdict!r} applies only to a unit with a refutation")
-        elif verdict in CORRECTION_ONLY and not u.get("correction"):
+        elif verdict in CORRECTION_ONLY and not (u.get("correction") or u.get("introduced_by")):
             why.append(f"{verdict!r} applies only to a correction or a special case of a "
-                       "printed clause")
+                       "printed clause, or to a definition only a correction uses")
         elif verdict == blind:
             why.append(f"{verdict!r} is the verdict recorded before the author's review: a "
                        "changed judgement names another verdict, or only its reason")
@@ -420,7 +420,8 @@ class Session:
 
     def __init__(self, target: Config | Path, reviewer: dict, workspace: str | None = None,
                  mode: str | None = None, data_dir: Path | None = None,
-                 root: Path | None = None, evidence: dict | None = None):
+                 root: Path | None = None, evidence: dict | None = None,
+                 ledger: Path | None = None, ledger_base: Path | None = None):
         work = Path(getattr(target, "out_dir", target))
         self.work_dir = work
         # The Lean project: what Lean read of it before tells whether a workspace's records are
@@ -428,6 +429,10 @@ class Session:
         self.root = Path(root) if root else None
         self.order_record: dict | None = None
         self.evidence = evidence
+        # The project's readings ledger, which step 3 reads (`ledger_accounts`): a full
+        # assessment's configuration names it.
+        self.ledger = ledger or getattr(target, "readings_ledger", None)
+        self.ledger_base = ledger_base or getattr(target, "root", None)
         self.data = Path(data_dir) if data_dir else work / "site" / "data"
         if not (self.data / "review-queue.json").exists():
             raise ReviewError(NO_BUILD, "no-build")
@@ -725,7 +730,8 @@ class Session:
             raise ReviewError(f"{u['id']}: the reading is already locked", "order")
         return d
 
-    def read(self, uid: str, as_json: bool = False, context: bool = False) -> str | dict:
+    def read(self, uid: str, as_json: bool = False, context: bool = False,
+             full: bool = False) -> str | dict:
         """Step 1: the unit's passages; with `context`, each with the paper around it
         (`with_context`)."""
         u = self.unit(uid)
@@ -743,7 +749,7 @@ class Session:
             return {**pk, "review": {"step": "read", "mode": self.mode, "seen_before": seen,
                                      "reveals": reveals}}
         lean = step_lean_text(pk.get("unit") or {})
-        return cmp.packet_text(pk) + (f"\n\n{lean}" if lean else "") + warn
+        return cmp.packet_text(pk, full) + (f"\n\n{lean}" if lean else "") + warn
 
     def with_context(self, pk: dict) -> dict:
         """The read step's packet `pk` with, on each passage, the paper around it
@@ -918,12 +924,15 @@ class Session:
                 "drafts": {i: x for i, x in (work.get("drafts") or {}).items()
                            if not (i in group and x.get("locked_at") == at)}}
 
-    def show(self, uid: str, as_json: bool = False, definitions: bool = False) -> str | dict:
+    def show(self, uid: str, as_json: bool = False, definitions: bool = False,
+             fold: bool = False) -> str | dict:
         """Step 2: the unit's Lean, after the lock in independent review. The draft records the
-        version shown, so that a verdict is recorded against the Lean that was shown. A unit
-        this reviewer has reported is shown as it was reviewed: its Lean was seen already. With
+        version shown, so that a verdict is recorded against the Lean that was shown, and the
+        definitions shown, each at its fingerprint (`shown_definitions`). A unit this reviewer
+        has reported is shown as it was reviewed: its Lean was seen already. With
         `definitions`, only the definitions it uses, as a compact listing
-        (`compare.definitions_text`)."""
+        (`compare.definitions_text`); with `fold` too, each one already shown unchanged with
+        another unit of this workspace in one line (`folded_definitions`)."""
         u = self.unit(uid)
         d = self._started(u) if self.informed else self.draft(u)
         if d is None and not self.informed:
@@ -936,13 +945,14 @@ class Session:
                     return {**self.packet(u, "compare"),
                             "review": {"step": "reported", "mode": self.mode,
                                        "submitted_at": r.get("submitted_at")}}
-                return note + "\n\n" + self._lean_or_definitions(u, definitions)
+                return note + "\n\n" + self._lean_or_definitions(u, definitions, fold)
         if d is None or (d["stage"] == "read" and not self.informed):
             raise ReviewError(f"{uid}: lock your reading first (`review lock`); the Lean is shown "
                               "only after it", "order")
         reveals = self.would_reveal(u)
         shown = {"stage": "compare" if d["stage"] == "read" else d["stage"],
-                 "shown_fingerprint": self._fp(u)}
+                 "shown_fingerprint": self._fp(u),
+                 "shown_definitions": self.definitions_shown(u)}
         if any(d.get(k) != v for k, v in shown.items()) or "shown_at" not in d:
             d.update(shown)
             d.setdefault("shown_at", now())
@@ -952,17 +962,62 @@ class Session:
             return {**self.packet(u, "compare"), "review": {
                 "step": "compare", "mode": self.mode, "reveals": reveals,
                 **({"locked_with": together} if together else {})}}
-        text = self._lean_or_definitions(u, definitions)
+        text = self._lean_or_definitions(u, definitions, fold)
         if together:
             text = (f"Your reading of {uid} was locked with that of {and_list(together)}, from the "
                     f"same passages. This is the Lean of {uid} alone: compare it with your "
                     "reading and give it a verdict of its own.\n\n") + text
         return (reveals_note(reveals, "This shows") + text) if reveals else text
 
-    def _lean_or_definitions(self, u: dict, definitions: bool) -> str:
-        """Step 2's text: the unit's Lean, or only the definitions it uses (`definitions`)."""
-        return cmp.definitions_text(self.packet(u, "compare")) if definitions \
-            else self.lean_text(u)
+    def _lean_or_definitions(self, u: dict, definitions: bool, fold: bool = False) -> str:
+        """Step 2's text: the unit's Lean, or only the definitions it uses (`definitions`),
+        folding with `fold` those already shown unchanged with another unit."""
+        if not definitions:
+            return self.lean_text(u)
+        if not fold:
+            return cmp.definitions_text(self.packet(u, "compare"))
+        folded, changed = self.folded_definitions(u)
+        text = cmp.definitions_text(self.packet(u, "compare"), folded, changed)
+        if folded:
+            text += (f"\n\n{len(folded)} definition(s) folded: each was shown to you unchanged "
+                     f"with another unit. `review show {u['id']} --definitions` lists them in "
+                     "full. Folding is a display only: it records no definition as read, "
+                     "reviewed or accepted.")
+        return text
+
+    # -- definitions shown before (#738) -------------------------------------------------------
+
+    def definitions_shown(self, u: dict) -> dict[str, str | None]:
+        """The project's definitions step 2 of `u` shows (`lean.definitions` of its packet, the
+        constants Lean generates for them apart), by name, each with its fingerprint in this
+        build."""
+        store = self.site.store()
+        return {d["name"]: (store.get(d["name"]) or {}).get("fingerprint")
+                for d in (self.packet(u, "compare").get("lean") or {}).get("definitions") or []
+                if d.get("available") is not False and not d.get("generated_for")}
+
+    def folded_definitions(self, u: dict) -> tuple[dict[str, str], dict[str, str]]:
+        """Of the definitions step 2 of `u` shows, those this workspace records as shown with
+        another unit at the fingerprint they have now (`folded`), and those it records shown
+        only at another fingerprint (`changed`), each with that unit. A definition this
+        workspace records nothing of, or whose fingerprint is unknown, is neither: it is
+        printed in full."""
+        seen: dict[str, list[tuple[str, str | None]]] = {}
+        for uid, d in (self.work.get("drafts") or {}).items():
+            for n, fp in (d.get("shown_definitions") or {}).items():
+                seen.setdefault(n, []).append((uid, fp))
+        for r in self.work.get("reports") or []:
+            for n, fp in (r.get("shown_definitions") or {}).items():
+                seen.setdefault(n, []).append(((r.get("unit") or {}).get("id"), fp))
+        folded, changed = {}, {}
+        for n, now in self.definitions_shown(u).items():
+            others = [(i, fp) for i, fp in seen.get(n, []) if i != u["id"]]
+            same = [i for i, fp in others if now and fp == now]
+            if same:
+                folded[n] = same[0]
+            elif others:
+                changed[n] = others[-1][0]
+        return folded, changed
 
     def decide(self, uid: str, verdict: str, comparison: str, detail: str = "",
                witness: str = "", coverage: dict | None = None, checklist: dict | None = None,
@@ -988,9 +1043,10 @@ class Session:
             # Not "only to a refuted one": that would say, before the verdict, whether it is.
             raise ReviewError(f"{verdict!r} applies only to a locked proposition (a spec unit)",
                               "invalid")
-        if verdict in CORRECTION_ONLY and not u.get("correction"):
+        if verdict in CORRECTION_ONLY and not (u.get("correction") or u.get("introduced_by")):
             raise ReviewError(f"{verdict!r} applies only to a correction or a special case of a "
-                              "printed clause", "invalid")
+                              "printed clause, or to a definition only a correction uses",
+                              "invalid")
         asked = detail_asked(u, verdict)
         if asked and not (detail or "").strip():
             raise ReviewError(f"verdict {verdict!r} needs --detail: {asked[0].lower()}{asked[1:]}",
@@ -1041,12 +1097,25 @@ class Session:
         earlier steps withhold), after the verdict in independent review."""
         u = self.unit(uid)
         d = self._started(u) if self.informed else self.draft(u, "author")
-        if "author_shown_at" not in d:
-            d["author_shown_at"] = now()
+        ledger = self.ledger_accounts(u)
+        # What the report records of the ledger's accounts shown: each row's source and digest.
+        shown = [{k: r[k] for k in ("source", "sha256")} for r in (ledger or {}).get("rows") or []]
+        if "author_shown_at" not in d or (shown and d.get("author_accounts") != shown):
+            d.setdefault("author_shown_at", now())
+            if shown:
+                d["author_accounts"] = shown
             self._save(uid)
         if as_json:
-            return {**self.packet(u, "informed"),
-                    "review": {"step": "author", "shown_at": d["author_shown_at"]}}
+            pk = self.packet(u, "informed")
+            # In the text's order: the reading choices and the ledger's accounts before what the
+            # verdict means (#685).
+            interp, choices = pk.get("interpretations") or {}, self.reading_choices(u)
+            at = list(interp).index("refuted_by") if "refuted_by" in interp else len(interp)
+            items = list(interp.items())
+            extra = [("reading_choices", choices)] + ([("ledger", ledger)] if ledger is not None
+                                                      else [])
+            pk["interpretations"] = dict(items[:at] + extra + items[at:])
+            return {**pk, "review": {"step": "author", "shown_at": d["author_shown_at"]}}
         revs = u.get("author_review") or []
         out = [f"{r.get('by')} · {r.get('file')}:{r.get('line')}\n"
                + (r.get("text") or "No text was written with this review marker.") for r in revs]
@@ -1058,7 +1127,12 @@ class Session:
                            + (f" by {note['by']}" if note.get("by") else "") + f"\n{text}")
         out = out or ["No review by the author is recorded for this unit."]
         out += self._account(u) + self._refutation_scope(u) + self._digest_lines(u)
-        # What the verdict just recorded means for the claim (#685).
+        # The author's account in the readings ledger (#627).
+        if ledger is not None:
+            out.append(ledger_text(ledger))
+        # The auditors' reading choices (#597), before what the verdict means for the claim.
+        out += [choice_text(c) for c in self.reading_choices(u)]
+        # What the verdict just recorded means for the claim (#685), last.
         out += [r.get("line") or rq.refutation_line(r) for r in u.get("refuted_by") or []]
         if u.get("kind") == "step":
             out += [proposal_text(p) for p in [self.site.proposal(c["id"])
@@ -1073,6 +1147,65 @@ class Session:
         return [f"Digests of {d['claim']}: the passage read is pinned at {d['passage']} in this "
                 f"build; the report records {d['recorded']}, {d['covers']}. Both are of this "
                 "build's text." for d in cmp.passage_digests(u, chunks) if not d["same"]]
+
+    def ledger_accounts(self, u: dict) -> dict | None:
+        """The rows of the project's readings ledger (`ledger.py`) that name one of `u`'s
+        declarations exactly (`declarations`), each with its source (`file#id`) and the digest
+        of the row as written (`sha256`), for step 3; `rows` is empty when none does, and
+        `error` says why the ledger could not be read. None when the project keeps no ledger,
+        or the review has no configuration (a snapshot). Nothing is matched by namespace,
+        title or text."""
+        if self.ledger is None:
+            return None
+        from .ledger import load
+        from .util import sha256_text
+        path = Path(self.ledger)
+        try:
+            rel = path.relative_to(self.ledger_base).as_posix() if self.ledger_base else path.name
+        except ValueError:
+            rel = path.name
+        names = set(u.get("lean") or []) | ({u["name"]} if u.get("kind") != "step" else set())
+        rows, why = load(path)
+        out = {"file": rel, "declarations": sorted(names), "rows": []}
+        if why:
+            return {**out, "error": why}
+        for i, r in enumerate(rows):
+            if not set(r.get("declarations") or []) & names:
+                continue
+            out["rows"].append({
+                "id": r.get("id"), "text": r.get("text"),
+                "declarations": list(r.get("declarations") or []),
+                "read_at": r.get("read_at"),
+                "source": f"{rel}#{r.get('id') or i}",
+                "sha256": sha256_text(json.dumps(r, sort_keys=True, ensure_ascii=False))})
+        return out
+
+    def reading_choices(self, u: dict) -> list[dict]:
+        """The reading choices the working directory's workspaces record that concern `u`'s
+        claims (`reading_choice.py`): one made on a claim of the unit, or one a requirement or
+        finding of a claim of the unit cites, each with its workspace and the counterexamples
+        recorded on the requirements that cite it. Prior interpretations: step 3 shows them, and
+        the read and compare steps never do. Lean is not asked: an equivalence reads as Lean
+        last checked it."""
+        from . import reading_choice as rcm
+        mine = {c["id"] for c in u.get("claims") or []}
+        out = []
+        for _, ws in wsp.list_all(self.work_dir):
+            records = list((ws.get("records") or {}).values())
+            for v in rcm.views(records, self.root):
+                if v["claim"] not in mine and not any(x["claim"] in mine
+                                                      for x in v["dependents"]):
+                    continue
+                on = {(x["claim"], x.get("requirement")) for x in v["dependents"]
+                      if x.get("requirement")}
+                cxs = [{"record": r["id"], "claim": r["claim"], "requirement": r["requirement"],
+                        **({"note": r["note"]} if r.get("note") else {})}
+                       for r in records if r.get("kind") == "counterexample"
+                       and (r.get("claim"), r.get("requirement")) in on]
+                out.append({**v, "workspace": ws.get("id"),
+                            "reviewer": (ws.get("reviewer") or {}).get("id"),
+                            "counterexamples": cxs})
+        return out
 
     def _account(self, u: dict) -> list[str]:
         """The author's account of each clause a locked proposition states, for step 3: the
@@ -1201,6 +1334,8 @@ class Session:
             "stage": "author", "reading": rd.get("text") or "", "locked_at": rd.get("locked_at"),
             "revealed_by": rd.get("revealed_by") or [], "source_sha256": pins.get("source_sha256"),
             **({"locked_with": rd["locked_with"]} if rd.get("locked_with") else {}),
+            **({"shown_definitions": r["shown_definitions"]}
+               if r.get("shown_definitions") else {}),
             "comparison": cmp_.get("text") or "", "witness": cmp_.get("witness") or "",
             "checklist": cmp_.get("checklist") or {}, "decided_at": cmp_.get("decided_at"),
             "group": v.get("group"), "verdict": v.get("value"), "detail": v.get("detail") or "",
@@ -1208,6 +1343,7 @@ class Session:
             "correspondence": r.get("correspondence"),
             "lean": {k: pins.get(k) for k in ("fingerprint", "fingerprints", "legacy_hash")},
             "author_shown_at": a.get("shown_at"), "disagreements": a.get("disagreements") or "",
+            **({"author_accounts": a["accounts"]} if a.get("accounts") else {}),
             **({"changed": changed_draft(r["changed_judgement"])}
                if isinstance(r.get("changed_judgement"), dict) else {})}
         self.work["reports"].pop()
@@ -1235,6 +1371,31 @@ class Session:
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(body, indent=2, ensure_ascii=False), encoding="utf-8")
         return out
+
+
+def ledger_text(ledger: dict) -> str:
+    """Step 3's word on the readings ledger (`Session.ledger_accounts`)."""
+    names = ", ".join(ledger["declarations"])
+    if ledger.get("error"):
+        return f"The readings ledger ({ledger['file']}) could not be read: {ledger['error']}."
+    if not ledger["rows"]:
+        return f"No row of the readings ledger ({ledger['file']}) names {names}."
+    return "\n\n".join(
+        f"The author's account in the readings ledger, row {r['id']} ({r['source']}, read at "
+        f"{r.get('read_at') or 'an unrecorded revision'}; digest {r['sha256'][:12]}), on "
+        f"{', '.join(r['declarations'])}:\n{r.get('text') or ''}" for r in ledger["rows"])
+
+
+def choice_text(c: dict) -> str:
+    """A reading choice at step 3 (`Session.reading_choices`): the auditors' choice, the claims
+    that depend on it, the equivalence it names, and the counterexamples posed for it."""
+    from .reading_choice import lines
+    head = (f"A reading choice recorded in workspace {c.get('workspace')}"
+            + (f" by {c['reviewer']}" if c.get("reviewer") else "")
+            + " (a prior interpretation, shown after your verdict):")
+    cx = [f"  counterexample {x['record']} on {x['claim']} {x['requirement']}"
+          + (f": {x['note']}" if x.get("note") else "") for x in c.get("counterexamples") or []]
+    return "\n".join([head, *lines(c, "  "), *cx])
 
 
 def proposal_text(p: dict) -> str:
@@ -1519,7 +1680,10 @@ def report(index: dict, u: dict, d: dict, reviewer: dict, disagreements: str,
                     **({"members": d["members"]} if d.get("members") else {})},
         # Recorded with the verdict; None when the reviewer recorded no coverage.
         "correspondence": d.get("correspondence"),
-        "author_review": {"shown_at": d.get("author_shown_at"), "disagreements": disagreements},
+        "author_review": {"shown_at": d.get("author_shown_at"), "disagreements": disagreements,
+                          # The ledger rows step 3 showed: each one's source and digest.
+                          **({"accounts": d["author_accounts"]}
+                             if d.get("author_accounts") else {})},
         # What the verdict means for the claim, as the build records it: a theorem named as
         # refuting the proposition (#685).
         **({"refuted_by": u["refuted_by"]} if u.get("refuted_by") else {}),
@@ -1530,6 +1694,9 @@ def report(index: dict, u: dict, d: dict, reviewer: dict, disagreements: str,
         "issue_draft": issue_draft(u, d["verdict"], d.get("detail") or "",
                                    d.get("correspondence")),
         **({"evidence": evidence} if evidence else {}),
+        # The definitions step 2 showed, at their fingerprints: what a later unit's folded
+        # listing reads (`Session.folded_definitions`).
+        **({"shown_definitions": d["shown_definitions"]} if d.get("shown_definitions") else {}),
     }
 
 

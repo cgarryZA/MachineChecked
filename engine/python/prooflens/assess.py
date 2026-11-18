@@ -253,6 +253,10 @@ DIVISION_BY_HEAD = {
     ("HDiv.hDiv", "Int"): "division in ℤ rounds and n / 0 = 0",
     ("HDiv.hDiv", "ENNReal"): "division in ℝ≥0∞: x / 0 = ∞ when x ≠ 0, 0 / 0 = 0 and ∞ / ∞ = 0",
     ("Inv.inv", "ENNReal"): "inverse in ℝ≥0∞: 0⁻¹ = ∞ and ∞⁻¹ = 0",
+    # Mathlib's inverse of a square matrix is the nonsingular inverse
+    # (`Matrix.nonsing_inv_apply_not_isUnit`).
+    ("Inv.inv", "Matrix"): "inverse of a square matrix: A⁻¹ = 0 when det A is not a unit; check "
+                           "that the statement uses only invertible matrices",
 }
 
 # Operations with no exceptional case in some types: the Bochner integral of a function into a
@@ -2123,7 +2127,7 @@ class Assessor:
             for a in anchors:
                 if a["id"] not in matched:
                     self.findings.append(_finding(
-                        "violation", "inventory-gap", f"{pid}:{a.get('label') or a['env']}",
+                        "violation", "inventory-gap", f"{pid}:{gap_key(a)}",
                         f"{printed_number(a)} ({a['file']}:{a['line']}) "
                         f"is in the paper but not in the inventory"))
 
@@ -2232,6 +2236,18 @@ def pinless_passages(inventory: dict, tex: dict | None) -> set[str]:
     (`source-pin-missing`). A paper read only from its PDF has no source check."""
     return {c["id"] for c in inventory.get("claims", []) if not c.get("source_sha256")
             and ((tex or {}).get(c.get("paper")) or {}).get("mode") == "latex"}
+
+
+def gap_key(anchor: dict) -> str:
+    """What names a statement of the compiled paper that is not in the inventory, as zero
+    configuration names its claim: its label, else its environment and number
+    (`remark-2.7`), else its environment and place (`remark@toy.tex:98`), so that no two
+    statements share it."""
+    if anchor.get("label"):
+        return anchor["label"]
+    if anchor.get("number"):
+        return f"{anchor['env']}-{anchor['number']}"
+    return f"{anchor['env']}@{anchor['file']}:{anchor['line']}"
 
 
 def line_location(claim: dict) -> int | None:

@@ -15,7 +15,7 @@ from .readable import readable
 from .assess import line_location, match_anchor, unread
 from .probe import proof_key
 from .source_regions import matches as source_matches
-from .util import content_id, norm_ws, sha256_text
+from .util import content_id, norm_ws, sha256_text, strip_comments
 from .status import fields, STATUSES, source_evidence
 
 SCHEMA = "prooflens/manifest@1"
@@ -132,6 +132,23 @@ def symbol_links(display: dict | None, cid: str, tex: str | None, lean: dict,
     return out
 
 
+def part_number(claim: dict, t: dict, inventory: list[dict]) -> str:
+    """The number a claim the inventory gives none, located by its lines inside a numbered
+    environment (`t["enclosing"]`), is named by: the environment's printed number and the
+    claim's place among the inventory's claims in it, in the order of the source ("Remark 3
+    (part 2)"). Empty when it lies in none. Display only."""
+    inside = t.get("enclosing") or {}
+    aid = inside.get(claim["id"])
+    anchor = next((a for a in t.get("anchors") or [] if a.get("id") == aid), None)
+    if anchor is None:
+        return ""
+    from .tex import printed_number
+    regions = t.get("regions") or {}
+    parts = sorted((c for c in inventory if inside.get(c["id"]) == aid),
+                   key=lambda c: ((regions.get(c["id"]) or {}).get("start_line") or 0, c["id"]))
+    return f"{printed_number(anchor)} (part {[c['id'] for c in parts].index(claim['id']) + 1})"
+
+
 def own_part(cid: str, anchor: dict | None, t: dict) -> dict | None:
     """The part of the printed passage that a claim located by its lines states, when the
     passage shown is longer: the claim's own pinned region (`t["regions"]`, its text from
@@ -144,7 +161,7 @@ def own_part(cid: str, anchor: dict | None, t: dict) -> dict | None:
     shown = (anchor or {}).get("statement")
     if not text or not shown or reg.get("error") or not reg.get("file"):
         return None
-    if norm_ws(shown) in norm_ws(text):
+    if norm_ws(shown) in norm_ws(strip_comments(text)):
         return None
     return {"file": reg["file"], "start_line": reg["start_line"], "end_line": reg["end_line"],
             "text": text}
@@ -224,7 +241,7 @@ def build(evidence: dict, release: str, display: dict | None = None
         # own description is kept as `title` and shown only as such.
         heading = (anchor or {}).get("title") if (anchor or {}).get("kind") == "exact" else None
         over = shown.get(c["id"], {})
-        number = over.get("number") or c.get("number", "")
+        number = over.get("number") or c.get("number", "") or part_number(c, t, inv)
         description = over["title_tex"] if "title_tex" in over else c.get("title", "")
         fs = by_subject.get(c["id"], [])
         counts = Counter(f["tier"] for f in fs if not (f.get("dismissed") or f.get("resolved")))
@@ -339,6 +356,15 @@ def build(evidence: dict, release: str, display: dict | None = None
             # with where the context was cut when it was.
             chunks[fname]["statement_tex"] = chunks[fname]["statement_tex"] or \
                 t["step_text"][c["id"]]["text"]
+            whole = t["step_text"][c["id"]].get("whole")
+            if whole and not part:
+                # Its lines cut a display: the whole display is the passage, its own lines marked.
+                reg = (t.get("regions") or {}).get(c["id"]) or {}
+                chunks[fname]["statement_tex"] = whole["text"]
+                chunks[fname]["states"] = {"file": reg.get("file"),
+                                           "start_line": reg.get("start_line"),
+                                           "end_line": reg.get("end_line"),
+                                           "text": t["step_text"][c["id"]]["text"]}
             chunks[fname]["context_tex"] = t["step_text"][c["id"]]["context"]
             cut = steps.context_cut(t["step_text"][c["id"]])
             if cut:
@@ -493,10 +519,43 @@ def expansion_keys(obj) -> set[str]:
 
 
 def decl_records(body: dict, lean: dict) -> dict[str, dict]:
-    """Every declaration once, with its current review."""
+    """Every declaration once, with its current review, and, for a definition only a correction
+    uses, the clauses that introduce it (`introduced_by_correction`)."""
     reviews: dict[str, dict] = {}
     for c in body["assessment"]["claims"]:
         for cl in c["clauses"]:
             for n, r in (cl.get("def_reviews") or {}).items():
                 reviews.setdefault(n, r)
-    return {n: {**d, "review": reviews.get(n)} for n, d in lean.get("decls", {}).items()}
+    intro = introduced_by_correction(body)
+    return {n: {**d, "review": reviews.get(n),
+                **({"introduced_by_correction": intro[n]} if n in intro else {})}
+            for n, d in lean.get("decls", {}).items()}
+
+
+def introduced_by_correction(body: dict) -> dict[str, list[dict]]:
+    """The definitions only a correction uses (#617): each declaration that the proposition of
+    a clause correcting (`corrects`) or restricting (`restricts`) a printed clause uses (its
+    `closure`), and that no other clause's proposition uses or maps as a definition (`defs`),
+    with those clauses, each named by its place (`clause`) with the printed clause's place
+    (`of_clause`) and the `relation`. The formalisation introduced such a definition: a review
+    of it can establish that it is what the correction needs, never that the paper printed
+    it."""
+    from .review_queue import clause_position
+    specs = (body.get("lean") or {}).get("specs") or {}
+    users: dict[str, list[dict]] = {}
+    printed: set[str] = set()
+    for c in (body.get("inventory") or {}).get("claims", []):
+        cls = c.get("clauses") or []
+        for cl in cls:
+            uses = set(((specs.get(cl.get("spec") or "") or {}).get("closure")) or [])
+            rel = next((r for r in ("corrects", "restricts") if cl.get(r)), None)
+            if rel is None:
+                printed |= uses | set(cl.get("defs") or [])
+                continue
+            at = (clause_position(c["id"], cls, cl) or {}).get("clause")
+            of = (clause_position(c["id"], cls, cl[rel]) or {}).get("clause")
+            for n in sorted(uses):
+                e = {"claim": c["id"], "clause": at, "of_clause": of, "relation": rel}
+                if e not in users.setdefault(n, []):
+                    users[n].append(e)
+    return {n: v for n, v in users.items() if n not in printed}

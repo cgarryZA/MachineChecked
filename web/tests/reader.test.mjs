@@ -267,6 +267,16 @@ fs.cpSync(path.join(root, "toy"), path.join(root, "toyfamily"), { recursive: tru
   fs.writeFileSync(f, JSON.stringify(chunk));
 }
 
+// A definition only a correction uses, as the build records it on the declaration (#617).
+fs.cpSync(path.join(root, "toy"), path.join(root, "toyintro"), { recursive: true });
+for (const f of fs.readdirSync(path.join(root, "toyintro", "data", "decls"))) {
+  const file = path.join(root, "toyintro", "data", "decls", f);
+  const rec = JSON.parse(fs.readFileSync(file, "utf8"));
+  if (rec.name !== "Toy.IsEven") continue;
+  rec.introduced_by_correction = [{ claim: "T:prop:pred", clause: 2, of_clause: 1, relation: "corrects" }];
+  fs.writeFileSync(file, JSON.stringify(rec));
+}
+
 // Synthetic display excerpts as the engine writes them (fixtures/make_excerpt.py).
 const excerpts = spawnSync(process.env.PYTHON || "python3", [path.join(here, "fixtures", "make_excerpt.py")], { encoding: "utf8" });
 if (excerpts.status !== 0) throw new Error(excerpts.stderr);
@@ -1826,6 +1836,19 @@ for (const width of [1300, 390]) {
     assert.ok(!(await insp.locator(":scope > :not(details)").allTextContents()).join(" ").includes("a.referee"));
     await extra.locator("summary").click();
     assert.match(await extra.textContent(), /a\.referee/);
+  });
+
+  await check("a definition only a correction uses says the formalisation introduced it", width, async (pg) => {
+    await pg.goto(origin + `/toyintro/#/r/${TOY.release}/read/T/${encodeURIComponent("T:thm:even-add")}`);
+    await pg.waitForSelector(".claim-view h1");
+    await pg.locator(".claim-view .lean .r", { hasText: "IsEven" }).first().click();
+    const insp = pg.locator(".claim-view .decl.inspector");
+    await insp.waitFor();
+    await insp.locator("details.extra summary").click();
+    const note = insp.locator(".introduced");
+    await note.waitFor();
+    assert.equal((await note.textContent()).replace(/\s+/g, " ").trim(),
+      "Introduced by the formalisation: only clause 2 of T:prop:pred, which corrects clause 1, uses it. A review of it can say it is what the correction needs, never that the paper printed it.");
   });
 
   await check("the menu holds the occasional actions", width, async (pg) => {
@@ -4241,6 +4264,35 @@ print(json.dumps(wsp.read(p)))`);
       } finally { await pg2.close(); }
     });
 
+    // A reading choice of the toy's definition of evenness, saved from the terminal, and a
+    // requirement of the theorem on even sums that cites it: the theorem's investigation shows the
+    // choice and the dependence, in the engine's words (#597).
+    await check("a reading choice is shown on the claims that depend on it", 1300, async (pg) => {
+      engine(String.raw`
+import sys
+from pathlib import Path
+from prooflens import workspace as wsp
+from prooflens.targets import Snapshot
+(p, ws), = wsp.list_all(Path(sys.argv[1]))
+s = Snapshot(Path(sys.argv[1]).parent / "toyws" / "data")
+wsp.update(p, [{"op": "put", "record": {"kind": "requirement", "claim": "T:def:even", "local_id": "even", "form": "reading choice", "text": "what even means", "readings": [{"id": "two", "text": "n = 2k for some k"}, {"id": "mod", "text": "n mod 2 = 0"}], "chosen": "two", "reason": "The paper writes n = 2k.", "equivalence": {"theorem": "Toy.even_iff_mod", "readings": ["two", "mod"]}}},
+               {"op": "put", "record": {"kind": "requirement", "claim": "T:thm:even-add", "local_id": "rc", "form": "assumption", "text": "m and n are even", "reading_choices": [{"claim": "T:def:even", "choice": "even"}]}}], s)
+print("null")`);
+      await pg.goto(claimUrl);
+      const inv = pg.locator("section.investigation");
+      await inv.getByRole("button", { name: /^Continue ws-/ }).click();
+      const choice = inv.locator(".choices [data-choice=even]");
+      await choice.waitFor();
+      assert.equal(await choice.getAttribute("data-equivalence"), "pending");
+      const text = (await choice.textContent()).replace(/\s+/g, " ").trim();
+      assert.match(text, /^reading choice even of T:def:even \(what even means\): two, n = 2k for some k\. Reason: The paper writes n = 2k\./);
+      assert.match(text, /not chosen: mod, n mod 2 = 0/);
+      assert.match(text, /equivalence of readings two and mod: pending Toy\.even_iff_mod/);
+      assert.match(text, /depended on by T:thm:even-add, requirement rc/);
+      assert.match(await inv.locator("[data-req=rc] .cite").textContent(),
+        /depends on the reading of T:def:even chosen in even: two, n = 2k for some k; pending Toy\.even_iff_mod/);
+    });
+
     // A requirement of Theorem 2.2 with its source: the sentence that sets the quantifier's
     // domain is suggested from the paper's source, accepted, and a wrong suggestion removed
     // with its reason; a later use and an alignment saved from the terminal are shown apart.
@@ -4623,6 +4675,15 @@ s.save()`);
       await pg.waitForLoadState("networkidle");
       assert.deepEqual(asked, []);
       assert.deepEqual(reviewState(who).exposure, before);
+    });
+
+    // An answer to the list of workspaces that cannot be read (cut short as a page reloads, or
+    // not this server's) is an error: the overview does not fail on it (#787).
+    await check("an unreadable list of workspaces is an error, not a page error", 1300, async (pg) => {
+      await pg.route("**/api/workspaces", (route) => route.fulfill({ status: 200, contentType: "application/json", body: "{" }));
+      await pg.goto(`http://127.0.0.1:${port}/#/r/${TOY.release}/overview`);
+      await pg.getByRole("region", { name: "Review next" }).locator("li").first().waitFor();
+      await pg.waitForLoadState("networkidle");
     });
 
     // #495: the review page acts on the reviewer's workspace only once the engine has given it.

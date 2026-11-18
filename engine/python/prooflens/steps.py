@@ -1024,7 +1024,49 @@ def step_texts(inv: dict, paper: str, root: Path, regions: dict) -> dict[str, di
         where = {"proof_line": proof, "line": start, "end_line": end}
         context, cut = cut_text(context_lines(lines, where), reg["file"], context_start(where))
         out[c["id"]] = {"text": text, "context": context, **({"context_cut": cut} if cut else {})}
+        whole = _whole_environment(reg, lines)
+        if whole:
+            out[c["id"]]["whole"] = whole
     return out
+
+
+def _display_spans(lines: list[str]) -> list[tuple[int, int]]:
+    """The lines each display environment of a source file opens and closes on (1-based),
+    starred or not, outside comments."""
+    pat = re.compile(r"\\(begin|end)\{(" + "|".join(DISPLAY_ENVS) + r")\*?\}")
+    out, stack = [], []
+    for k, line in enumerate(lines, 1):
+        for m in pat.finditer(_uncomment(line)):
+            if m.group(1) == "begin":
+                stack.append((m.group(2), k))
+            elif stack and stack[-1][0] == m.group(2):
+                out.append((stack.pop()[1], k))
+    return out
+
+
+def _whole_environment(reg: dict, lines: list[str]) -> dict | None:
+    """When a step's region begins or ends inside a display (a row of an `align`), the lines
+    that hold it with every display it lies in or cuts, and their text: the passage a reader
+    needs, the step's own lines marked in it (display only). None when its lines hold whole
+    displays only."""
+    a, b = reg.get("start_line"), reg.get("end_line")
+    if not a or not b:
+        return None
+    lo, hi = a, b
+    spans = _display_spans(lines)
+    while more := [(x, y) for x, y in spans
+                   if x <= hi and y >= lo and not (lo <= x and y <= hi)]:
+        lo, hi = min([lo] + [x for x, _ in more]), max([hi] + [y for _, y in more])
+    if (lo, hi) == (a, b):
+        return None
+    # Only when the display holds more than the step's lines: rows, terms, text. Its opening,
+    # closing and labels alone hide nothing.
+    bare = re.compile(r"\\(?:begin|end)\{[^}]*\}|\\label\{[^}]*\}|\\\\|\s")
+    if not any(bare.sub("", _uncomment(lines[k - 1])) for k in range(lo, hi + 1)
+               if not a <= k <= b):
+        return None
+    return {"file": reg["file"], "start_line": lo, "end_line": hi,
+            "text": "\n".join(lines[lo - 1:hi])}
 
 
 def _fields(code: str) -> dict:
