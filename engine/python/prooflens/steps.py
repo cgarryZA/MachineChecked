@@ -115,6 +115,44 @@ def correspondence(entry: dict, source: str) -> dict | None:
             "note": note, "by": entry["by"] if isinstance(entry.get("by"), str) else None}
 
 
+# Where an author's proposed verdict on a step is kept apart from the claim records, so that no
+# client receives it before the reviewer's own verdict (`split_proposals`, #678).
+PROPOSALS = "proposals"
+PROPOSAL_SCHEMA = "machinechecked/step-proposal@1"
+
+
+def proposal(entry: dict, source: str) -> dict | None:
+    """The verdict an author proposes for a printed step (`proposed` of its entry in the
+    inventory or the links file): one of the step verdicts (`VERDICTS`), with a note and,
+    optionally, the Lean theorem the author says it rests on, proving the step or refuting it,
+    which is the author's and not checked by Lean here. None when the entry proposes none, or
+    not one of the step verdicts. It is shown only after the reviewer's own verdict, and it
+    neither completes a review nor changes a status."""
+    p = entry.get("proposed")
+    if not isinstance(p, dict) or p.get("verdict") not in [v for vs in VERDICTS.values()
+                                                          for v in vs]:
+        return None
+    th = p.get("theorem")
+    return {"verdict": p["verdict"], "note": _str(p.get("note")),
+            "theorem": th.strip() if isinstance(th, str) and th.strip() else None,
+            "by": p["by"] if isinstance(p.get("by"), str) else None, "source": source}
+
+
+def split_proposals(chunks: dict[str, dict]) -> tuple[dict[str, dict], dict[str, dict]]:
+    """The claim records `chunks` (by file name) without their steps' proposals, and each
+    proposal as a file of its own (`data/proposals/<file>`, `PROPOSAL_SCHEMA`), which the review
+    page fetches only at its step 3 and the claim page on its own."""
+    out, files = {}, {}
+    for name, ch in chunks.items():
+        st = ch.get("step")
+        if isinstance(st, dict) and st.get("proposed"):
+            files[name] = {"schema": PROPOSAL_SCHEMA, "claim": ch.get("id"),
+                           "unit": "step:" + str(ch.get("id")), "proposed": st["proposed"]}
+            ch = {**ch, "step": {k: v for k, v in st.items() if k != "proposed"}}
+        out[name] = ch
+    return out, files
+
+
 def route_note(entry: dict, source: str) -> dict | None:
     r = entry.get("route")
     if not isinstance(r, dict) or not route_names(entry):
@@ -202,10 +240,11 @@ def parent_ref(parent: dict | None) -> dict | None:
 
 def block(claim: dict, parent: dict | None, links: list[dict], route: list[dict],
           corr: dict | None, rnote: dict | None, reviewed: dict,
-          unit: str | None = None, candidates=()) -> dict:
+          unit: str | None = None, proposed: dict | None = None, candidates=()) -> dict:
     """What a claim record says about a proof step: its kind, its parent (or, when it is not
     certain which statement its proof proves, the `candidates`), the Lean that establishes it,
-    the formal route used instead, and its own review."""
+    the formal route used instead, and its own review; and the verdict its author proposes
+    (`proposal`), which the site writes apart (`split_proposals`)."""
     return {"unit": unit or unit_of(claim), "parent": parent_ref(parent),
             **({"parent_candidates": [parent_ref(c) for c in candidates if c]}
                if candidates else {}),
@@ -216,7 +255,7 @@ def block(claim: dict, parent: dict | None, links: list[dict], route: list[dict]
             "route": {"links": route, "note": (rnote or {}).get("note", ""),
                       "by": (rnote or {}).get("by"), "source": (rnote or {}).get("source")}
             if route else None,
-            "review": reviewed}
+            "review": reviewed, **({"proposed": proposed} if proposed else {})}
 
 
 def attach_parents(index_claims: list[dict], chunks: dict) -> None:
@@ -788,7 +827,8 @@ def full_block(claim: dict, parent: dict | None, lean: dict, reviewed: dict | No
     route = [view(n) for n in route_names(claim)]
     return block(claim, parent, links, route, correspondence(claim, "inventory"),
                  route_note(claim, "inventory"),
-                 reviewed or {"state": "unreviewed", "finding": None, "reports": []}, unit), names
+                 reviewed or {"state": "unreviewed", "finding": None, "reports": []}, unit,
+                 proposal(claim, "inventory")), names
 
 
 def cut_text(text: str, file: str, first_line: int) -> tuple[str, dict | None]:

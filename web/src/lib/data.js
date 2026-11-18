@@ -227,6 +227,15 @@ export function loadClaim(index, id) {
   return getJson(`data/claims/${c.file}`);
 }
 
+// The verdict a proof step's author proposes (`data/proposals/<file>`, `steps.split_proposals`), or
+// null when there is none. Kept apart from the claim record so that the review page holds it only
+// once it asks: at step 3, after the reviewer's own verdict, or on the claim page (#678).
+export function loadProposal(index, id) {
+  const c = index.claims.find((x) => x.id === id);
+  if (!c) return Promise.resolve(null);
+  return getJson(`data/proposals/${c.file}`).then((r) => r?.proposed || null, () => null);
+}
+
 // A declaration record of the shared store, by the key a claim gives for it. Records never change
 // under their key, so one download serves every claim that uses the declaration.
 export function loadDecl(key) {
