@@ -46,6 +46,7 @@ class Anchor:
     statement: str | None = None
     source_sha256: str | None = None
     title: str | None = None        # the optional argument of `\\begin{env}[…]`, as TeX
+    name: str | None = None         # the heading its `\\newtheorem` prints ("S."), when known
 
     @property
     def label(self) -> str | None:
@@ -62,7 +63,8 @@ class Anchor:
                 "begin": list(self.begin) if self.begin else None,
                 "end": list(self.end) if self.end else None,
                 "head": list(self.head) if self.head else None, "title": self.title,
-                "source_sha256": self.source_sha256, "statement": self.statement}
+                "source_sha256": self.source_sha256, "statement": self.statement,
+                **({"name": self.name} if self.name else {})}
 
 
 # LaTeX is a programming language; a paper is compiled with its CPU time and the size of the files
@@ -83,6 +85,40 @@ def theorem_envs(d: Path) -> list[str]:
         txt = p.read_text(encoding="utf-8", errors="replace")
         names.update(re.findall(r"\\newtheorem\*?\{([A-Za-z@]+)\}", txt))
     return sorted(names)
+
+
+# `\\newtheorem{env}{Heading}`, with a shared counter before the heading or a parent counter after.
+NEWTHEOREM = re.compile(r"\\newtheorem\*?\s*\{([A-Za-z@]+)\}\s*(?:\[[^\]]*\]\s*)?"
+                        r"\{((?:[^{}]|\{[^{}]*\})*)\}")
+
+
+def theorem_headings(d: Path) -> dict[str, str]:
+    """The heading each environment declared with `\\newtheorem` prints, by environment name
+    (`\\newtheorem{standing}{S.}`: "S."). A heading with TeX commands in it is left out: what
+    it prints is not read here."""
+    out: dict[str, str] = {}
+    for p in sorted(d.rglob("*.tex")):
+        txt = re.sub(r"(?<!\\)%.*", "", p.read_text(encoding="utf-8", errors="replace"))
+        for m in NEWTHEOREM.finditer(txt):
+            name = re.sub(r"\{([^{}]*)\}", r"\1", m.group(2).replace("~", " "))
+            if name.strip() and re.fullmatch(r"[^\\{}$&#^_%]+", name):
+                out.setdefault(m.group(1), " ".join(name.split()))
+    return out
+
+
+def printed_number(anchor: dict) -> str:
+    """A statement's number as the paper prints it: its heading (`name`, from its
+    `\\newtheorem`) and its counter ("S. 1", "Theorem 2.1"); the environment's name,
+    capitalised, when its heading is not known."""
+    name = anchor.get("name") or anchor["env"].capitalize()
+    return f"{name} {anchor['number']}" if anchor.get("number") else name
+
+
+def env_number(anchor: dict) -> str:
+    """A statement's number in the form an earlier version gave it: its environment's name,
+    capitalised, and its counter ("Standing 1")."""
+    name = anchor["env"].capitalize()
+    return f"{name} {anchor['number']}" if anchor.get("number") else name
 
 
 def source_epoch(snap: Snapshot) -> int:
@@ -237,7 +273,9 @@ def parse_plx(text: str, cwd: Path, snap_dir: Path) -> tuple[list[Anchor], tuple
             setattr(anchors[int(parts[1])], parts[2], pt)
     out = []
     names: dict[str, list[Path]] = {}
+    headings = theorem_headings(snap_dir)
     for a in sorted(anchors.values(), key=lambda a: a.id):
+        a.name = headings.get(a.env)
         if a.id in prev and a.number == prev[a.id] and not (a.labels and a.labels[0][1] ==
                                                             a.number):
             # The head's paragraph began before the environment stepped its counter (a run-in

@@ -26,7 +26,7 @@ from .sources import acquire
 from .layout import library_files, module_file
 from .moddocs import stale_doc_names
 from . import numbering as nb
-from .tex import DEFAULT_ENVS, TexError, anchors_for, theorem_envs
+from .tex import DEFAULT_ENVS, TexError, anchors_for, printed_number, theorem_envs
 from . import formalization as fz
 from . import steps
 from .util import content_id, git_head, prepare_work_dir, read_json, sha256_file, write_json
@@ -122,7 +122,7 @@ def claims_from_anchors(pid: str, anchors: list[dict], snap: Path) -> list[dict]
                 pass
         claims.append({
             "id": f"{pid}:{key}", "key": key, "paper": pid, "kind": env,
-            "number": f"{env.capitalize()} {num}" if num else env.capitalize(), "title": title,
+            "number": printed_number(a), "title": title,
             "label": a.get("label"), "location": a["file"], "line": a.get("line"),
             "source_sha256": a["source_sha256"], "statement": a.get("statement") or "",
             "scope": "definition" if env in DEFINITION_ENVS else "formal",

@@ -105,6 +105,8 @@ The claim inventory lists each printed claim, its pinned source, scope and claus
 
 This is one claim entry inside `claims.json`. The acceptance theorem must have the specification’s **exact closed proposition** as its type.
 
+A claim's `number` is the one the paper prints: the heading its environment's `\newtheorem` declares and its counter (`\newtheorem{standing}{S.}` prints "S. 1", `\newtheorem{thm}{Theorem}` prints "Theorem 1.1"). An entry found by its number matches it as printed; one numbered after its environment's name ("Standing 1"), the form earlier versions used, still matches, with a warning (`inventory-number-form`) giving the printed number.
+
 Every entry of a paper read from its LaTeX source carries a source pin (`source_sha256`). `check` reports an entry without one as a violation (`source-pin-missing`) and counts no review of its passage until it is pinned; the violation gives the fields to add (`fix` in `check --json`), with the digest of the passage as this build's manuscript prints it.
 
 Other clause fields include `refute` (a proof of the printed proposition's negation), `accept_from` (a proof from other propositions, below), `corrects` (which original clause a correction addresses, with its `kind`), and `defs` for a definition claim.

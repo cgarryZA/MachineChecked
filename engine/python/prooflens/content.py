@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from .tex import printed_number
 from .util import read_json, write_json
 
 SCHEMA = "prooflens/content@1"
@@ -38,8 +39,7 @@ def numbering_claims(pid: str, inv_claims: list[dict], anchors: list[dict]) -> l
     for a in anchors:
         env, num = a.get("env") or "", a.get("number")
         out.append({"id": owner.get(id(a)) or f"{pid}:{anchor_key(a)}", "paper": pid,
-                    "kind": env, "number": f"{env.capitalize()} {num}" if num else
-                    env.capitalize(), "title": a.get("title") or "",
+                    "kind": env, "number": printed_number(a), "title": a.get("title") or "",
                     "statement": a.get("statement") or ""})
     return out
 

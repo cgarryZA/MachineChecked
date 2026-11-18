@@ -851,7 +851,8 @@ def printed_numbers(claims: list[dict], anchors: list[dict]) -> dict[str, str]:
         if a and a.get("number") and a.get("env"):
             env = a["env"].rstrip("*")
             n = f"({a['number']})" if env in repin.DISPLAYS else a["number"]
-            out[c["id"]] = f"{env.capitalize()} {n}"
+            # The heading the environment prints, when it is known (`tex.theorem_headings`).
+            out[c["id"]] = f"{a.get('name') or env.capitalize()} {n}"
     return out
 
 
