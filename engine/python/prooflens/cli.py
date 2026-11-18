@@ -2840,7 +2840,8 @@ def _verdict_help(width: int = 98) -> str:
             for v in verdicts:
                 said = rc.detail_asked({"kind": kind}, v) or "Needs no detail."
                 if v in rc.REFUTE_ONLY:
-                    said = "Only for a unit with a refutation. " + said
+                    said = ("Only for a locked statement, whether or not it is refuted: that "
+                            "is shown after the verdict. ") + said
                 if v in rc.CORRECTION_ONLY:
                     said = "Only for a correction or a special case of a printed clause. " + said
                 out += textwrap.wrap(said, width, initial_indent=f"    {v:<{col}}",

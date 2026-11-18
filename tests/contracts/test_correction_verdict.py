@@ -1,7 +1,8 @@
 """A correction of a printed clause can be reviewed and promoted (#639): reviewed against the
 printed passage, its honest verdict is "faithful to the correction", offered only for a
-correction or a special case, and the correction it claims is shown with the Lean. Nothing here
-builds Lean."""
+correction or a special case. That it is a correction, and of which printed clause, by its place,
+is shown with the Lean; the clause's name and the reason given are the author's, shown after the
+verdict (#758). Nothing here builds Lean."""
 
 import json
 
@@ -41,17 +42,22 @@ def test_the_verdict_is_offered_only_for_a_correction(tmp_path):
 
 
 def test_a_correction_is_reviewed_against_the_passage_and_the_correction(tmp_path):
+    place = {"claim": "S:thm:t0", "clause": 1}
     s = compared(work_with(tmp_path, {"relation": "corrects", "of": "as printed",
+                                      "of_clause": place,
                                       "reason": "adds that the coefficients are adapted"}))
     text = s.show(UNIT)
-    assert "This proposition is a correction of the printed clause “as printed”" in text
-    # The reason is the author's: shown with the author's review, not with the Lean.
-    assert "adapted" not in text
-    assert "reason" not in s.show(UNIT, as_json=True)["unit"]["correction"]
+    assert "This proposition is a correction of the printed clause 1 of S:thm:t0." in text
+    # The clause's name and the reason are the author's: shown with the author's review, not
+    # with the Lean.
+    assert "“as printed”" not in text and "adapted" not in text
+    assert s.show(UNIT, as_json=True)["unit"]["correction"] == {"relation": "corrects",
+                                                               "of_clause": place}
     s.decide(UNIT, "faithful to the correction", "The printed claim with the added hypothesis.")
     assert s.work["drafts"][UNIT]["verdict"] == "faithful to the correction"
-    assert s.packet(s.unit(UNIT), "informed")["unit"]["correction"]["reason"] == \
-        "adds that the coefficients are adapted"
+    informed = s.packet(s.unit(UNIT), "informed")["unit"]["correction"]
+    assert (informed["of"], informed["reason"]) == ("as printed",
+                                                    "adds that the coefficients are adapted")
 
 
 def body_with(clause):

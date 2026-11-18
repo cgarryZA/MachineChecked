@@ -172,7 +172,8 @@ def test_decide_s_help_says_what_each_verdict_s_detail_says(capsys):
                  "broader State the instantiation that gives the printed claim.",
                  "faithful to the correction Only for a correction or a special case of a "
                  "printed clause. Needs no detail.",
-                 "refutation not valid Only for a unit with a refutation. Say how",
+                 "refutation not valid Only for a locked statement, whether or not it is "
+                 "refuted: that is shown after the verdict. Say how",
                  "cannot determine Say what would decide it.",
                  "(--coverage partial, changed or related)"):
         assert line in text, line

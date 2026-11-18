@@ -8,7 +8,7 @@
   "narrower": "Say exactly how: which hypothesis is added, which case is lost.",
   "mismatched": "Say what it states instead.",
   "vacuous": "Say why the hypotheses cannot be met, or why the witness does not meet them.",
-  "refutation not valid": "Say how the refuted proposition is stronger than the printed claim.",
+  "refutation not valid": "Say how the proposition is stronger than the printed claim, so that a refutation of it would not refute the printed claim.",
   "cannot determine": "State the open question, and what would decide it."
  },
  "step": {

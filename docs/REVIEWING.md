@@ -12,9 +12,9 @@ Each review has three stages:
 
 **1. Read the paper.** Before the Lean statement is revealed, write an independent interpretation of the setting, hypotheses, quantifiers, conclusion and any ambiguity. The app records a snapshot when you move on.
 
-**2. Compare with Lean.** The page shows the comparison the reader shows: the paper's passage beside the unit's Lean in rows, each row's exact Lean beside it when there is room, the complete exact statement, and its definitions; a definition, a property of an object or another reference opens below its row with the passage and the statement still on the page. Inspect the elaborated Lean proposition, relevant definitions, quantifier order and witnesses. This step is given the paper and the Lean as Lean gives them, and nothing a person recorded about the claim: no symbol link, alignment or pairing of rows, correspondence note, review (of the statement or of its definitions), finding, the route a proof step's author names, or the paper definition a declaration is linked to. They are left out of what the page loads and draws, not hidden on it, and after the verdict the page shows them. A short checklist names what to compare (the setting, each hypothesis, quantifiers and their order, the definitions relied on, the conclusion, constants, and any result or axiom taken as an assumption; for a definition, the object, its parameters and its conventions at edge cases); marking each item *matches*, *differs* or *unsure* is optional and is kept in the report. Record how it compares with the paper. The review protocol has eight precise verdicts, grouped in the interface under *Matches*, *Problem* and *Cannot determine*. With the verdict you may record the coverage and its basis ([below](#coverage-with-the-verdict)).
+**2. Compare with Lean.** The page shows the comparison the reader shows: the paper's passage beside the unit's Lean in rows, each row's exact Lean beside it when there is room, the complete exact statement, and its definitions; a definition, a property of an object or another reference opens below its row with the passage and the statement still on the page. Inspect the elaborated Lean proposition, relevant definitions, quantifier order and whether its hypotheses can be met. This step is given the paper and the Lean as Lean gives them, and nothing a person recorded about the claim: no symbol link, alignment or pairing of rows, correspondence note, review (of the statement or of its definitions), finding, the route a proof step's author names, or the paper definition a declaration is linked to. They are left out of what the page loads and draws, not hidden on it, and after the verdict the page shows them. The outcome the author gives a locked statement is left out the same way: the theorems named to prove, refute or witness it, the author's name for its clause, the kind and reason of a correction, and the state the assessment gives the clause. A clause is named by its place among its claim's clauses (*clause 2 of T:prop:pred*); a correction or special case of a printed clause says so, naming that clause by its place. So *Refutation not valid* and the witness comparison are offered for every locked statement. A short checklist names what to compare (the setting, each hypothesis, quantifiers and their order, the definitions relied on, the conclusion, constants, and any result or axiom taken as an assumption; for a definition, the object, its parameters and its conventions at edge cases); marking each item *matches*, *differs* or *unsure* is optional and is kept in the report. Record how it compares with the paper. The review protocol has eight precise verdicts, grouped in the interface under *Matches*, *Problem* and *Cannot determine*. With the verdict you may record the coverage and its basis ([below](#coverage-with-the-verdict)).
 
-**3. Read the author's review.** Only after recording your verdict does the queue show the existing author review, and the comparison what people recorded about the claim (its symbol links, published alignments, each finding at the rows it explains, and the `Correspondence:` field of a review of the proposition). Record disagreements alongside your initial interpretation.
+**3. Read the author's review.** Only after recording your verdict does the queue show the existing author review, and the comparison what people recorded about the claim (its symbol links, published alignments, each finding at the rows it explains, and the `Correspondence:` field of a review of the proposition). For a locked statement it also shows the author's account of each clause it states: the clause's place and name, its state, the printed clause a correction corrects with the kind and reason given, and the theorems named to prove, refute or witness it (*refutation: Toy.Acceptance.prop_pred*). Record disagreements alongside your initial interpretation.
 
 The report records the steps completed in this reader. The queue offers changed evidence first
 and says why each unit comes where it does; **Order** chooses the paper's order or the informed
@@ -39,7 +39,9 @@ The commands work in both kinds of project. With a `machinechecked.toml` they re
 assessment's queue; in any other Lean project they review the zero-configuration queue of the
 last `machinechecked view` or `machinechecked build`, one unit per linked claim
 (`link:<claim key>`). Each step refuses to run before the one it follows and is timestamped; the
-reports are in the form the reader exports, and `review promote` checks them the same way. For a
+reports are in the form the reader exports, and `review promote` checks them the same way. Steps 1
+and 2 show nothing of the outcome the author gives a locked statement (above); step 3 gives the
+author's account of it. For a
 refuted proposition, step 3 also shows the author's account of the refutation's scope: the
 readings its counterexample is declared to cover and not to cover, and the class lemmas for the
 paper's standing assumptions, each with its theorem's statement. The
@@ -168,9 +170,15 @@ PDF text cut by the extraction is marked INCOMPLETE: read those in the paper. Th
 
 `next`, `status`, `read`, `show` and `author` take `--json`: one document holding only what
 that step shows, in the form of `machinechecked compare` (below). `read` holds the paper;
-`show` adds the Lean (complete statements, binders, the definitions they use, Lean's checks);
-`author` adds what has been recorded about the correspondence: the author's review, notes,
-earlier reports, symbol links and statuses.
+`show` adds the Lean (complete statements, binders, the definitions they use, Lean's checks of
+a linked declaration or of a locked proposition itself). A locked statement there has its
+`position`, `{claim, clause}` with the clause counted from 1 in the inventory's order, and a
+correction or special case its `correction`, `{relation, of_clause}`, the printed clause by
+its place; `retrieval.withheld` lists the `outcome` it leaves out. `author` adds what has been
+recorded about the correspondence (the author's review, notes, earlier reports, symbol links
+and statuses) and the outcome: each locked statement's `clause` and `label` (the author's
+name for it), `accept`, `refute`, `witness` and `proofs`, `corrects` or `restricts` and `kind`,
+and `interpretations.account`, the author's account in the lines step 3 prints.
 
 `show --definitions` prints only the definitions the unit's Lean uses, for reading line by
 line: each once, with its docstring, its signature, and its body, equations or fields (one per
@@ -906,11 +914,11 @@ theorem it is a step of.
 | Faithful | No detail: the comparison shows that all material assumptions and conclusions match |
 | Faithful with representation choices | Why each representation difference is harmless |
 | Broader | The instantiation that recovers the printed claim |
-| Faithful to the correction | No detail: offered only for a correction or a special case of a printed clause, it says the proposition is the printed claim with exactly the correction its clause records (shown with the Lean, beside the passage) |
+| Faithful to the correction | No detail: offered only for a correction or a special case of a printed clause (shown with the Lean, beside the passage, naming the printed clause by its place), it says the proposition is the printed claim with a correction, and otherwise as printed; the correction its author declares is shown after the verdict |
 | Narrower | Extra hypotheses or cases excluded by Lean |
 | Mismatched | What the Lean statement actually establishes |
 | Vacuous | Why hypotheses fail to hold, or a witness is inadequate |
-| Refutation not valid | Why the formal refutation does not refute the printed claim |
+| Refutation not valid | How the proposition is stronger than the printed claim, so that a refutation of it would not refute the printed claim; offered for every locked statement, since whether one is refuted is shown after the verdict |
 | Cannot determine | The open question, and what evidence would settle it |
 
 The comparison says how the Lean compares with the paper, item by item; the detail says what the

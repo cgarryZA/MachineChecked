@@ -589,7 +589,8 @@
 
           {#if draft.stage === "compare"}
             <h3 id="comparison-label">Comparison</h3>
-            {#if current.correction}<p class="small correction-note">This proposition is {current.correction.relation === "restricts" ? "a special case of" : "a correction of"} the printed clause “{current.correction.of}”. Compare it with the passage and that correction: if it is the printed claim with exactly that correction, the verdict is <em>Faithful to the correction</em>.</p>{/if}
+            <!-- The printed clause by its place: its name, and the correction's kind and reason, are the author's, shown after the verdict. -->
+            {#if current.correction}<p class="small correction-note">This proposition is {current.correction.relation === "restricts" ? "a special case of" : "a correction of"} the printed clause {current.correction.of_clause ? `${current.correction.of_clause.clause} of ${current.correction.of_clause.claim}` : "of its claim"}. Compare it with the passage: if it is the printed claim with a correction, and otherwise as printed, the verdict is <em>Faithful to the correction</em>; the correction its author declares is shown after your verdict.</p>{/if}
             <ul class="checklist" aria-label="What to compare">
               {#each CHECKLIST[current.kind === "def" ? "def" : current.kind === "step" ? "step" : "statement"] as it (it.key)}
                 <li>
@@ -605,16 +606,17 @@
             </ul>
             <p class="faint small">A guide: mark each item if it helps, and write what you found below.</p>
             <textarea aria-labelledby="comparison-label" rows="6" bind:value={draft.comparison} oninput={persist} placeholder={current.kind === "step" ? "Does the step follow from what precedes it, for every value in the printed ranges? If Lean is linked, how does it compare with the printed step?" : "Item by item against your reading: each hypothesis, each quantifier and its order, the conclusion, representation choices, constants."}></textarea>
-            {#if current.kind === "spec" && current.witness}
+            <!-- For every locked statement: whether its author gives a witness is shown after the verdict. -->
+            {#if current.kind === "spec"}
               <label for="witness-note">Witness comparison</label>
-              <textarea id="witness-note" rows="3" bind:value={draft.witness} oninput={persist} placeholder="The witness: does it meet the hypotheses at an instance the paper intends, and is that instance non-trivial?"></textarea>
+              <textarea id="witness-note" rows="3" bind:value={draft.witness} oninput={persist} placeholder="Can the hypotheses be met at an instance the paper intends, and is that instance non-trivial? The author's witness, if there is one, is shown after your verdict."></textarea>
             {/if}
             <div class="groups" role="group" aria-label="Overall correspondence">
               {#each groupsOf as g}<button class="choice" class:on={draft.group === g.key} aria-pressed={draft.group === g.key} onclick={() => choose(g.key)}>{g.label}</button>{/each}
             </div>
             {#if draft.group}
               <fieldset class="verdicts"><legend>Verdict</legend>
-                {#each (verdicts[draft.group] || []).filter((v) => (!v.refuteOnly || current.refute) && (!v.correctionOnly || current.correction)) as v}
+                {#each (verdicts[draft.group] || []).filter((v) => (!v.statementOnly || current.kind === "spec") && (!v.correctionOnly || current.correction)) as v}
                   <label><input type="radio" bind:group={draft.verdict} value={v.value} onchange={persist} /> {v.label}</label>
                 {/each}
               </fieldset>
@@ -677,6 +679,10 @@
               {:else}
                 <p class="faint">No review by the author is recorded for this unit.</p>
               {/each}
+              {#each current.account || [] as a}
+                <p class="lbl">The author's account of this proposition, for {a.claim}</p>
+                <pre class="account">{a.lines.join("\n")}</pre>
+              {/each}
               {#each current.refutation_scope || [] as s}
                 <p class="lbl">Scope of the refutation of {s.claim}, as its author records it</p>
                 <pre class="author">{s.lines.join("\n")}</pre>
@@ -717,7 +723,7 @@
   .why { font-size: 13px; margin: 4px 0 8px; }
   h2 { font-size: 15px; font-weight: 600; margin: 14px 0 6px; }
   h3 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin: 18px 0 6px; }
-  .locked, .author, .issue pre { white-space: pre-wrap; font: 14px/1.5 var(--sans); background: var(--surface-2); padding: 8px 10px; border-radius: 6px; margin: 0; }
+  .locked, .author, .account, .issue pre { white-space: pre-wrap; font: 14px/1.5 var(--sans); background: var(--surface-2); padding: 8px 10px; border-radius: 6px; margin: 0; }
   .row { display: flex; gap: 8px; margin-top: 8px; }
   .btn { border: 1px solid var(--accent); background: var(--accent); color: var(--on-accent); border-radius: 6px; padding: 5px 12px; cursor: pointer; font-size: 14px; }
   .btn.ghost { background: none; color: var(--accent); }

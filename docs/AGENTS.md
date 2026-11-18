@@ -217,6 +217,13 @@ prints one JSON document (`machinechecked/compare@1`) for one claim, read from t
   (`type`, `established` for an object the statement produces, `assumed`, or `proved` by a
   result cited for that object). Each printed expression's `math` reads it as mathematical
   notions, each node at its sub-term's identity ([DATA_MODEL.md](DATA_MODEL.md)).
+  A locked statement has its `position`, `{claim, clause}` (its clause counted from 1 in the
+  inventory's order), and a correction or special case of a printed clause its `correction`,
+  `{relation, of_clause}`. At the informed stage it also has the outcome its author gives it:
+  the author's name for the clause (`clause`, `label`), the theorems named to prove, refute or
+  witness it (`accept`, `refute`, `witness`, `proofs`, with their checks in `lean`), and the
+  corrected clause and kind by the author's names (`corrects`, `restricts`, `kind`); the read
+  and compare stages leave these out and list `outcome` in `retrieval.withheld`.
   `lean.candidates` are suggestions
   nobody has confirmed, with their reasons. `lean.definitions` are the definitions the
   statements use, with their type and value and what each says (`defined_by`: its `params`,
@@ -244,7 +251,9 @@ prints one JSON document (`machinechecked/compare@1`) for one claim, read from t
   (`uses`, which runs Lean), and the cursor of the definitions list.
 
 `--stage read` holds the paper only and `--stage compare` adds the Lean without any recorded
-interpretation; the review protocol's `--json` output uses the same stages. Passages and linked
+interpretation or outcome; the review protocol's `--json` output uses the same stages, and
+`review author --json` adds `interpretations.account`, the author's account of each clause a
+locked statement states, as step 3 prints it. Passages and linked
 statements are never shortened; `--limit N` pages the definitions, and `--after ID` (the
 `retrieval.definitions.next` it returns) continues them.
 

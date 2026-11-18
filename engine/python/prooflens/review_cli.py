@@ -65,6 +65,8 @@ VERDICTS = {
     "problem": ["narrower", "mismatched", "vacuous", "refutation not valid"],
     "cannot": ["cannot determine"],
 }
+# Whether a proposition is refuted is shown only after the verdict, so this verdict is offered
+# for every locked proposition: a refutation of it would not refute the printed claim.
 REFUTE_ONLY = {"refutation not valid"}
 # A correction (or special case) of a printed clause states the printed claim with the
 # correction: reviewed against the printed passage, its honest verdict is this one (#639).
@@ -83,7 +85,8 @@ DETAIL = {
     "narrower": "Say exactly how: which hypothesis is added, which case is lost.",
     "mismatched": "Say what it states instead.",
     "vacuous": "Say why the hypotheses cannot be met, or why the witness does not meet them.",
-    "refutation not valid": "Say how the refuted proposition is stronger than the printed claim.",
+    "refutation not valid": "Say how the proposition is stronger than the printed claim, so that "
+                            "a refutation of it would not refute the printed claim.",
     "cannot determine": "State the open question, and what would decide it.",
 }
 STEP_DETAIL = {
@@ -738,8 +741,10 @@ class Session:
         if group is None:
             raise ReviewError(f"verdict {verdict!r} is not one of: "
                               + ", ".join(v for vs in table.values() for v in vs), "invalid")
-        if verdict in REFUTE_ONLY and not u.get("refute"):
-            raise ReviewError(f"{verdict!r} applies only to a unit with a refutation", "invalid")
+        if verdict in REFUTE_ONLY and u.get("kind") != "spec":
+            # Not "only to a refuted one": that would say, before the verdict, whether it is.
+            raise ReviewError(f"{verdict!r} applies only to a locked proposition (a spec unit)",
+                              "invalid")
         if verdict in CORRECTION_ONLY and not u.get("correction"):
             raise ReviewError(f"{verdict!r} applies only to a correction or a special case of a "
                               "printed clause", "invalid")
@@ -789,7 +794,8 @@ class Session:
 
     def author(self, uid: str, as_json: bool = False) -> str | dict:
         """Step 3: the author's review and what else was recorded about the correspondence,
-        after the verdict in independent review."""
+        with the author's account of each clause a locked proposition states (the outcome the
+        earlier steps withhold), after the verdict in independent review."""
         u = self.unit(uid)
         d = self._started(u) if self.informed else self.draft(u, "author")
         if "author_shown_at" not in d:
@@ -807,8 +813,17 @@ class Session:
             if text:
                 out.append(f"Reading of the correspondence of {c['id']}"
                            + (f" by {note['by']}" if note.get("by") else "") + f"\n{text}")
-        out += self._refutation_scope(u)
-        return "\n\n".join(out) or "No review by the author is recorded for this unit."
+        out = out or ["No review by the author is recorded for this unit."]
+        out += self._account(u) + self._refutation_scope(u)
+        return "\n\n".join(out)
+
+    def _account(self, u: dict) -> list[str]:
+        """The author's account of each clause a locked proposition states, for step 3: the
+        clause's place and name, its state, the printed clause a correction corrects, and the
+        theorems that prove, refute or witness it (`compare.unit_account`)."""
+        chunks = [ch for ch in (self.site.chunk(c["id"]) for c in u.get("claims") or []) if ch]
+        return [f"The author's account of this proposition, for {a['claim']}\n"
+                + "\n".join(a["lines"]) for a in cmp.unit_account(u, chunks)]
 
     def _refutation_scope(self, u: dict) -> list[str]:
         """The author's account of the scope of a proposition's refutation, for step 3: the
