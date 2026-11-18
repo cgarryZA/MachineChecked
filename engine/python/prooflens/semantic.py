@@ -62,7 +62,10 @@ RELATIONS = ("full", "partial", "changed", "related", "unresolved")
 COVERAGE_KEYS = RELATIONS + ("not_recorded", "stale", "clauses_only", "not_assessed")
 BASIS_KEYS = ("direct", "reviewed_composition", "checked_bridge", "unspecified")
 CURRENCY_KEYS = ("current", "unchecked", "unpinned", "stale")
-REVIEW_KEYS = ("independent", "author", "informed", "stale", "unchecked", "none")
+# `same_family` and `unknown_family`: a current review that would be independent but for its
+# reviewer, a model declared of the statements' author's family or of unknown family (#613).
+REVIEW_KEYS = ("independent", "same_family", "unknown_family", "author", "informed", "stale",
+               "unchecked", "none")
 STEP_REVIEW_KEYS = ("holds", "gap", "false", "undetermined", "stale", "unreviewed")
 FINDING_KEYS = ("open-question", "quantitative-difference", "input-restriction",
                 "representation", "other-difference", "printed-step")
@@ -163,6 +166,16 @@ def _provenance(r: dict) -> str:
     had been shown to its reviewer before the reading was locked; `informed` otherwise,
     including a report that does not record it."""
     return "independent" if r.get("revealed") == [] else "informed"
+
+
+def _family(reviewer: dict | None) -> str:
+    """The review key of a blind report by `reviewer` (`REVIEW_KEYS`): `independent` for a
+    person or a model declared of a different family from the statements' author;
+    `same_family` and `unknown_family` for a model declared of the author's family or of
+    unknown family (`review_cli.family_of`), which is never read as either known answer."""
+    from .review_cli import family_of
+    fam = family_of(reviewer)
+    return {"yes": "same_family", "unknown": "unknown_family"}.get(fam, "independent")
 
 
 def report_readings(chunk: dict) -> tuple[dict[str, dict], dict[str, dict]]:
@@ -332,8 +345,10 @@ def review_state(chunk: dict, unit: str) -> str:
         latest = list(_latest(chunk["reviews"]).values())
         current = [r for r in latest if r.get("current") is True]
         if current:
-            return "independent" if any(_provenance(r) == "independent" for r in current) \
-                else "informed"
+            blind = [_family(r.get("reviewer")) for r in current
+                     if _provenance(r) == "independent"]
+            return next((k for k in ("independent", "unknown_family", "same_family")
+                         if k in blind), "informed")
         if any(r.get("current") is False for r in latest):
             return "stale"
         return "unchecked" if latest else "none"
@@ -347,7 +362,13 @@ def review_state(chunk: dict, unit: str) -> str:
     if not states:
         return "none"
     if all(s in ("reviewed", "author-reviewed") for s in states):
-        return "author" if "author-reviewed" in states else "independent"
+        if "author-reviewed" in states:
+            return "author"
+        # Every review is needed: the claim's is as independent as the least of them.
+        from .reviews import clause_family
+        accepted = {clause_family(cl) for cl in chunk.get("clauses") or []}
+        return "same_family" if "yes" in accepted else \
+            "unknown_family" if "unknown" in accepted else "independent"
     if stale:
         return "stale"
     return "unchecked" if "unknown" in states else "none"

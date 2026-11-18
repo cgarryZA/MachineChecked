@@ -306,7 +306,10 @@ that reading.
 With `--markers`, the plan also lists the markers whose declaration no claim uses any more: a
 proposition no clause states (a statement retired at a new revision of the paper, or a refuted
 reading after a correction), or a definition no claim names that is in no closure of the last
-build's Lean results. Without a build such a definition's markers are listed as `left`.
+build's Lean results. Without a build such a definition's markers are listed as `left`. A
+marker of a definition no claim names that records a reading of a claim the inventory no longer
+has (a removed claim) is retired whole, whether or not a closure uses the definition: no live
+marker cites a claim that is gone. A marker of it with no such reading keeps its review.
 `--write --markers` retires them whole: each stays in its file, with its review text, as
 `<!-- retired spec-review: ... -->` (or `def-review`), which records no review, and the plan
 names the declaration, hash and reviewer of each.
@@ -316,7 +319,8 @@ parsers reject. `--markers` lists each such marker. Where the Git history of its
 shows the readings it had (the version before the commit that wrote `source=none`, followed
 back through later edits of the line), the plan gives them (`recovered`, with the `commit` that
 records them) and `--write` makes of the marker what it makes of one with those readings: it is
-retired whole with them, or, for a definition no claim names, given them back (`repairs`).
+retired whole with them, or, for a definition no claim names, given them back (`repairs`)
+unless one of them is of a claim the inventory no longer has, which retires it whole.
 Where the history does not show them (no repository, a shallow clone, several candidate
 markers), or one of them reads a passage that uses the declaration again, the marker is listed
 as `left`, with why, for you to retire or review again: a reading is never guessed.
@@ -417,6 +421,14 @@ machinechecked inventory repin --paper P --from-source git:HEAD --to NEW
 The configuration of a folder has no revision to change: `--write` records the new one as
 `papers.P.commit`. A folder is labelled by the revision it is given, so its claims are verified
 against it exactly as an acquired snapshot is.
+
+The other fields of the paper's entry `papers.P` move with its commit when their form names the
+old revision: a value that is the revision, and a URL with the revision as a path segment or a
+query value (a link to its tree, a file or the arXiv page of that revision). The plan's
+`paper_entry` gives the commit's change, each such field with its old and new value (`fields`),
+and the fields that name the old revision as a word of other text (`inspect`): those are left
+as they are, for you to check. A word that only resembles the revision is neither changed nor
+listed.
 
 The command reads both snapshots. It first checks each claim's passage at the original
 revision against its digests; a claim that does not match there stops the plan, and an

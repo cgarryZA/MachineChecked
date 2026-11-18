@@ -232,7 +232,8 @@ The search box at the top of the reader finds declarations by their statements t
 
 `view`, `build` and `check` read every reference to a numbered statement or section in the
 project's docstrings, declaration names, module docstrings and comments (`Theorem 2.1`,
-`lemma_3_4`, `-- by Lemma 2.2`), and compare it with the paper read here:
+`Lemma B.1` in an appendix, `lemma_3_4`, `-- by Lemma 2.2`), and compare it with the paper read
+here:
 
 - the paper has that statement;
 - the number belongs to another kind of statement (`Lemma 3.3` where the paper's 3.3 is a
@@ -411,10 +412,18 @@ states the claim; with nothing linked, the reading has no basis.
 ## Link a proof step
 
 A numbered equation inside a printed proof is a target of its own. In zero configuration,
-every numbered display with one `\label` inside a `proof` environment is listed as **Equation (n)**
-under the result whose proof holds it (the result the proof's optional argument names, else the
-statement just before the proof). Its passport shows the equation, its context in the proof and
-its own review; the enclosing result lists its steps. A context kept only in part is marked
+every numbered display with one `\label` inside a `proof` environment, and every labelled row
+of a display of several rows (`align`, `gather`, …), is listed as **Equation (n)**. A display
+opened by a macro defined as its environment (`\def\beq{\begin{equation}}`) counts too. A numbered
+display of a proof that is not listed (a row sharing its line with another, a label with no
+printed number) is named in the notes, with its line and why. Each is listed
+under the result whose proof holds it (the result the proof's optional argument names, by its
+`\ref` or its printed number, as in `[Proof of Theorem 2.1]`, else the statement just before the
+proof). When that statement is a remark or an example and the result before it has no proof yet,
+either may be the one proved: the step has no parent, and `check --json` (`parent_candidates`),
+its passport and its review packet name both. Name the statement in the proof's optional
+argument to settle it. Its passport shows the equation, its context in the proof and its own
+review; the enclosing result lists its steps. A context kept only in part is marked
 **(cut)**, with the line where it was cut.
 
 A step is linked in two ways, kept apart:

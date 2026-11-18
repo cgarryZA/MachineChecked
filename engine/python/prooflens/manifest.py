@@ -91,7 +91,12 @@ def clause_evidence(cl: dict, anchor: dict | None, mode: str | None, src_ok: boo
                       "detail": f"{sum(r['discharged'] for r in regs)}/{len(regs)} covered"
                       if regs else "none declared"})
     result = {r.pop("dimension"): r for r in rungs}
-    result["review"] = {"state": cl.get("review", "unknown")}
+    # A review resting on a model reviewer the maintainer accepted over the same-family rule says
+    # so (`reviews.clause_family`); the state is the engine's either way.
+    from .reviews import clause_family
+    fam = clause_family(cl)
+    result["review"] = {"state": cl.get("review", "unknown"),
+                        **({"accepted_family": fam} if fam else {})}
     result["replay"] = ch.get("replay") or {"state": "not-run"}
     result["source"] = source_evidence(anchor, mode, src_ok, paper)
     return result

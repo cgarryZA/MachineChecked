@@ -27,6 +27,8 @@ machinechecked review next                          # the next unit to review, a
 machinechecked review read UNIT                     # step 1: the paper's statement only
 machinechecked review read UNIT --context           # and the paper around it, as context
 machinechecked review lock UNIT reading.md          # locks your reading
+machinechecked review read UNIT --with UNIT2        # definitions of one passage: read it once
+machinechecked review lock UNIT reading.md --with UNIT2   # one reading locked for them all
 machinechecked review show UNIT                     # step 2 (refused before lock): the Lean
 machinechecked review show UNIT --definitions       # step 2: only the definitions it uses, compactly
 machinechecked review decide UNIT VERDICT comparison.md [--detail detail.md] [--coverage C ...]
@@ -44,7 +46,12 @@ last `machinechecked view` or `machinechecked build`, one unit per linked claim
 (`link:<claim key>`). Each step refuses to run before the one it follows and is timestamped; the
 reports are in the form the reader exports, and `review promote` checks them the same way. Steps 1
 and 2 show nothing of the outcome the author gives a locked statement (above); step 3 gives the
-author's account of it. For a
+author's account of it. Step 2 lists, under a locked statement, each operation Lean totalises in
+it (a division, an inverse, a Bochner integral, a supremum, a root), with the sub-term where it
+is applied and what Lean gives it outside its domain, so that the comparison can settle whether
+the hypotheses exclude that case; the list is read from the Lean alone. Whether the engine finds
+the hypotheses supply the operation's conditions, and any dismissal of the warning, come at
+step 3. For a
 refuted proposition, step 3 also shows the author's account of the refutation's scope: the
 readings its counterexample is declared to cover and not to cover, and the class lemmas for the
 paper's standing assumptions, each with its theorem's statement. The
@@ -54,7 +61,7 @@ audit.
 
 **Many units at once.** `lock`, `decide` and `submit` take `--manifest FILE` (or `-` for
 standard input) instead of a unit and its texts: a JSON list of entries, each with `unit` and that
-step's fields. `lock` takes `reading`; `decide` takes `verdict`, `comparison`, and optionally
+step's fields. `lock` takes `reading`, and optionally `with` (below); `decide` takes `verdict`, `comparison`, and optionally
 `detail`, `witness`, `coverage`, `basis`, `argument`, `bridge` (`[THEOREM, TARGET]`) and
 `would_decide`; `submit` takes `disagreements`, and optionally `judgement_changed`,
 `revised_verdict` and `revised_detail`. A text is given inline (`"comparison": "..."`) or
@@ -75,12 +82,29 @@ prints one document, `{"schema": "machinechecked/review-manifest@1", "ok", "entr
 "unit", "ok", "message" | "error": {"kind", "message"}}]}`; an entry taken also holds the fields
 of its step's result, below.
 
+**Definitions printed in one passage.** When several definitions are read from exactly the same
+passages (a paragraph defining the time step, the grid times and the increments, say), `review read
+UNIT --with UNIT2 --with UNIT3` shows the passages once and begins a draft for each, and `review
+lock UNIT reading.md --with UNIT2 --with UNIT3` (or a manifest entry with `"with": [UNIT2, UNIT3]`)
+locks one reading for them all, at one time. Both refuse units that are not definitions, or whose
+passages differ in any way or are not complete in the build, naming the unit; the lock checks
+every unit's step (each read, none locked or reported) before it records any, and records what you
+had already seen of each unit. From step 2 on each unit is on its own: `review show` names it and
+the units its reading was locked with, and shows its Lean alone, and it takes its own verdict and
+its own report, pinned to its own definition, which the maintainer promotes or refuses and which a
+change of that definition alone reopens. Each unit's draft names the units locked with it
+(`locked_with`): what step 2 of one shows of another came after both readings were locked, though
+a time to the second cannot tell, so it does not count as seen before the other's reading. Each
+report names them too (`reading.locked_with`, and the report's text says "locked …, with …"), and
+Undo keeps them. The review page still takes one unit at a time.
+
 **Results as data.** `lock`, `decide` and `submit` of one unit take `--json` too, and print one
 document: `{"schema": "machinechecked/review-step@1", "action", "ok": true, "unit", "message",
 "step", ..., "workspace": {"id", "mode"}}`. `step` is the unit's step now (`compare` after a lock,
 `author` after a verdict, `submitted` after the report), and the other fields say what the step
 recorded: `locked_at` and `revealed_by` (what you had already seen of the unit's Lean or author's
-review) for `lock`; `verdict`, `group`, `decided_at`, `correspondence` (the coverage and its basis,
+review) for `lock`, with `locked_with` (each other unit, with its `revealed_by`) for a reading
+locked with others; `verdict`, `group`, `decided_at`, `correspondence` (the coverage and its basis,
 or null) and a structure's separate verdicts (`members`) for `decide`; `verdict`, `group`,
 `submitted_at`, the report's `revealed_by` and its `changed_judgement` (or null) for `submit`.
 `message` is the line the command
@@ -1109,6 +1133,25 @@ the paper. Its verdicts are its own:
 | False as printed | The counterexample or the failing case, and what would repair the step |
 | Cannot determine | What would decide it |
 
+**An author's proposed verdict.** The author of a formalisation may propose a verdict on a printed
+step while formalising it, with the step verdicts above and a note: a gap, its repair, a
+counterexample. The step's entry records it as `proposed` (in the inventory, or in the links file
+under the step's label), optionally naming a Lean theorem that proves the step or refutes it,
+which is the author's and not checked by Lean here:
+
+```json
+"proposed": {"verdict": "false as printed", "note": "At k = 0 it reads n <= 0.",
+             "theorem": "Toy.Acceptance.bound_range_counterexample", "by": "human:A-Author"}
+```
+
+The build writes it apart from the step's record (`data/proposals/`), so a review receives it only
+after its verdict: `read` and `show` never hold it, and the review page fetches it at step 3, where
+it is shown beside the author's review (`review author` prints it too). The step's own page shows
+it under its review. A proposal completes no review and changes no status, neither the step's
+review nor its enclosing result's: a reviewer who reaches another conclusion says so in the
+response to the author's review or in a finding. A bundle, which holds every file from the start,
+and a published audit carry no proposal; a review snapshot does.
+
 A report on a step pins the hash of the step's source text, and follows the same protocol as
 any other: reading locked before the Lean is shown, verdict recorded before the author's review.
 In a full assessment, `review promote` turns an accepted step report into a marker, with the same
@@ -1183,7 +1226,7 @@ machinechecked review promote machinechecked-reviews-....json
 
 A directory of reports may be given instead of the files: it stands for the `*.json` files directly in it, in name order.
 
-Promotion checks that the manuscript, the passages read (their digests, pinned when the reading was locked) and the formal statements still match the review pins, that the review stages were recorded in the required order, and that the verdict is eligible. A *Broader* verdict on a proposition that a clause refutes is not: the printed claim can hold while a more general proposition fails, so promotion refuses it unless the clause declares its refutation outside the paper's standing assumptions (a refutation of the proposition only). An open question stays open: a report whose verdict is *Cannot determine*, or whose coverage is unresolved, records neither a review nor a defect, and promotion refuses it, as it refuses a coverage the protocol does not write. It displays the planned changes, with each report's coverage and each marker's file and place (a first marker's file is the one `[review.promote]` names, or follows the rule in [Record reviews](ASSURANCE.md#record-reviews)), and requires the maintainer's decision. Model-family and author restrictions still apply. A report whose reading was not blind is refused unless the maintainer passes `--allow-revealed`. A report whose reviewer changed their judgement after the author's review is always refused: the plan shows its blind verdict and the later judgement, each with its time and the reason, and no option accepts it. Ask for a fresh independent review, or record the later judgement as an informed review (`--mode informed`), which promotion accepts only with `--allow-revealed`. A report made against a review snapshot is checked by the same rules, against the maintainer's release; the plan says it was reviewed against supplied evidence and names the snapshot ([Reviewing a project you did not build](#reviewing-a-project-you-did-not-build)).
+Promotion checks that the manuscript, the passages read (their digests, pinned when the reading was locked) and the formal statements still match the review pins, that the review stages were recorded in the required order, and that the verdict is eligible. A *Broader* verdict on a proposition that a clause refutes is not: the printed claim can hold while a more general proposition fails, so promotion refuses it unless the clause declares its refutation outside the paper's standing assumptions (a refutation of the proposition only). An open question stays open: a report whose verdict is *Cannot determine*, or whose coverage is unresolved, records neither a review nor a defect, and promotion refuses it, as it refuses a coverage the protocol does not write. It displays the planned changes, with each report's coverage and each marker's file and place (a first marker's file is the one `[review.promote]` names, or follows the rule in [Record reviews](ASSURANCE.md#record-reviews)), and requires the maintainer's decision. Author and model-family restrictions still apply (below). A report whose reading was not blind is refused unless the maintainer passes `--allow-revealed`. A report whose reviewer changed their judgement after the author's review is always refused: the plan shows its blind verdict and the later judgement, each with its time and the reason, and no option accepts it. Ask for a fresh independent review, or record the later judgement as an informed review (`--mode informed`), which promotion accepts only with `--allow-revealed`. A report made against a review snapshot is checked by the same rules, against the maintainer's release; the plan says it was reviewed against supplied evidence and names the snapshot ([Reviewing a project you did not build](#reviewing-a-project-you-did-not-build)).
 
 Promotion records the maintainer’s decision for the reviewed proposition or definition. The marker it writes records the digests of the paper passages read, so a later change to that text reopens the review. A passage the manuscript no longer matches reads as unread until it is pinned again, and promotion refuses a report on it (see [Evidence policy](EVIDENCE_POLICY.md#a-review-is-a-reading-of-a-text), which also says how markers written before the digests were recorded are read, and how to add the digests to them).
 Acceptance also requires the claim’s proofs and all other required checks.
@@ -1196,6 +1239,15 @@ machinechecked review reports --out DIR    # or into DIR
 ```
 
 The text is generated: it can be deleted, and the command writes it again, the same.
+
+**Model reviewers and the same-family rule.** A model reviewer declares its family relative to the statements' author with `--same-family yes|no|unknown` (the review page asks the same), and each report records the declaration (`reviewer.same_family_as_author`); `unknown` is the default. `review next` and `review status` say once which declaration is in force and whether the rule applies (`reviewer.same_family_rule` in `--json`). Promotion refuses the report of a model reviewer declared of the statements' author's family, or of unknown family, unless the maintainer passes `--accept-same-family`. A report accepted so keeps its declaration as given, and says it was accepted over the rule wherever it is shown:
+
+- its record holds `promotion.same_family_accepted: true`, and its text says "accepted by the maintainer over the same-family rule";
+- its line reads ``Review by REVIEWER: VERDICT; a model of unknown family, accepted by the maintainer over the same-family rule (report `reports/STEM.json`).`` (or "a model of the same family as the statements' author"), and the assessment reads the declaration back from it (`accepted_family`, `yes` or `unknown`, on the review record, on `rests_on` and on the clause's review evidence);
+- `check` lists such reviews in a note and in `--json` (`same_family_accepted`), and the reader shows the declaration beside the review and on the clause's review evidence;
+- the semantic summary counts such a claim apart from independent ones: *Current, by a model of the author's family* or *Current, by a model of unknown family*, never as the other known answer. In zero configuration, which promotes nothing, a current blind report by a model so declared is counted the same way, and the reader and `check --claim` show each report's declaration.
+
+The statuses do not change: the rule is promotion's, and a review accepted over it counts as a review, as it did before.
 
 Promotion in version 0.1.25 and earlier also wrote that text as `reports/STEM.md` beside the record, and its line links the `.md` file. Such a project keeps working as it is: the line is read the same either way, and the assessment, `check` and the reader do not read the `.md` files. They can be deleted safely, keeping the `.json` file of each; the record of a link `reports/STEM.md` is `reports/STEM.json`, and `machinechecked review reports --out reviews/reports` (the directory that holds them) writes the text files back where the links name them.
 

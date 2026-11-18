@@ -45,6 +45,12 @@ used instead:
 `reviewed_composition`, `checked_bridge`). A step with no `lean` keeps only an `unresolved`
 coverage, whose open question may be whether any Lean states the step, and no basis.
 `route.lean` lists declarations that reach the parent by another argument. The probe checks both (as `link` records, `lean.links` in the evidence).
+A step's entry may also record the verdict its author proposes, `proposed`: `{verdict, note,
+theorem, by}`, with `verdict` one of the step verdicts and `theorem` a Lean name that is the
+author's and not checked by Lean. The links file takes the same field under the step's label. The
+site writes it to `data/proposals/<claim file>` (`machinechecked/step-proposal@1`: `{claim, unit,
+proposed}`), never into the claim record, so that a review page fetches it only after its
+verdict ([Proof steps](REVIEWING.md#proof-steps)).
 None of these fields is an input to a status: a step's status is its scope decision's, and its
 review is its own (below).
 
@@ -784,7 +790,7 @@ part, recorded on the claim's row (`clause_readings`) and counted apart (`clause
 | `coverage` | per set and unit, each claim once: `full`, `partial`, `changed`, `related`, `unresolved`; `not_recorded` (a review that records no coverage); `stale` (a reading made for another text of the claim or other Lean); `clauses_only`; `not_assessed` |
 | `basis` | per set and unit, the claims counted under one of the five relations, each once: `direct`, `reviewed_composition`, `checked_bridge`, `unspecified` |
 | `currency` | per set and unit, the claims with a reading: `current` (pinned to this build), `unchecked` (this build could not check it), `unpinned` (a links-file reading, which records no version of what it read), `stale` |
-| `review` | per unit, each claim once: for statements and notation `independent`, `author`, `informed`, `stale`, `unchecked`, `none` (no current review of everything it needs); for proof steps the step's review as printed |
+| `review` | per unit, each claim once: for statements and notation `independent`, `same_family` and `unknown_family` (a current review that would be independent but for a model reviewer declared of the statements' author's family or of unknown family: accepted over promotion's same-family rule, or, in zero configuration, counted as it is), `author`, `informed`, `stale`, `unchecked`, `none` (no current review of everything it needs); for proof steps the step's review as printed |
 | `findings` | per unit, how many claims have a recorded finding of each kind: `open-question`, `quantitative-difference`, `input-restriction`, `representation`, `other-difference`, `printed-step`; a claim may have several kinds, so these are never added |
 | `finding_currency` | optional (a summary written before it has none, and a reader that does not know it reads the rest): per unit of the claims they are on, how many submitted findings in force (on the whole statement, a clause or a requirement) are `current` for this build, `due` for review (a part one rests on changed since it was submitted) or `unchecked` (not known to be current); counted in findings, each once |
 | `clause_coverage` | optional, present when a workspace reads a part of a claim: per set and unit, how many claims have a part counted under each of `full`, `partial`, `changed`, `related`, `unresolved` and `stale`; a claim is counted once under each key it has and may be under several, so these are never added |

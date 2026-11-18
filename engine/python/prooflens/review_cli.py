@@ -347,6 +347,47 @@ def changed_judgement(u: dict, blind: str | None, given) -> tuple[dict | None, l
     return out, why
 
 
+# A model reviewer's declaration of its family relative to the statements' author, as a report
+# records it (`same_family_as_author`), in the words the reader uses too (`data/semantic.json`):
+# three answers, kept apart. A value that is none of them reads as unknown, never as either
+# known answer.
+FAMILY = {k: v["label"] for k, v in json.loads(
+    (Path(__file__).parent / "data" / "semantic.json").read_text(encoding="utf-8"))
+    ["family"].items()}
+
+
+def family_of(reviewer: dict | None) -> str | None:
+    """A model reviewer's declared family (`yes`, `no` or `unknown`); None for a person."""
+    rv = reviewer or {}
+    if rv.get("kind") != "model":
+        return None
+    return rv.get("same_family_as_author") if rv.get("same_family_as_author") in FAMILY \
+        else "unknown"
+
+
+def same_family_rule(reviewer: dict | None) -> bool:
+    """Whether promotion's same-family rule applies to a reviewer's reports
+    (`promote.check_report`): a model reviewer not declared of a different family from the
+    statements' author. Such a report is promoted only when the maintainer accepts it
+    explicitly (`--accept-same-family`)."""
+    return family_of(reviewer) in ("yes", "unknown")
+
+
+def family_note(reviewer: dict | None) -> str | None:
+    """What `review next` and `review status` say once of a model reviewer's declaration and of
+    the promotion rule it meets; None for a person."""
+    fam = family_of(reviewer)
+    if fam is None:
+        return None
+    who = f"You review as {reviewer['id']}, {FAMILY[fam]} (self-declared"
+    if fam == "no":
+        return who + "): promotion's same-family rule does not apply to your reports."
+    return (who + "; --same-family yes|no|unknown declares it). `review promote` refuses the "
+            "report of a model reviewer of the statements' author's family, or of unknown "
+            "family, unless the maintainer accepts it explicitly; each report records your "
+            "declaration, and one accepted so says that it was.")
+
+
 def parse_reviewer(who: str, same_family: str = "unknown") -> dict:
     """`human:NAME` or `llm:MODEL`, as the protocol writes reviewer ids."""
     m = re.fullmatch(r"(human|llm):(\S+)", who or "")
@@ -619,7 +660,9 @@ class Session:
         members = {"def:" + m["name"]: m.get("fingerprint") for m in u.get("members") or []}
         for ws in [self.workspace, *mine]:
             own = ws is self.workspace
-            for i, lean, author, pinned in _passes(ws.get("review") or {}, by):
+            work = ws.get("review") or {}
+            for i, lean, author, pinned in _passes(
+                    self._without_locked_with(u, work) if own else work, by):
                 unit = i if own else f"{i} (workspace {ws['id']})"
                 if i in members:
                     if pinned in (None, members[i]):
@@ -665,15 +708,22 @@ class Session:
         had already seen of the unit's Lean or author's review (`revealed_by`). In an informed
         session a unit can be read again at any step."""
         u = self.unit(uid)
-        if self.reported(u):
-            raise ReviewError(f"{uid} is already reported by {self.reviewer['id']}", "reported")
-        d = self.draft(u)
+        d = self._may_begin(u)
         if d is None:
             self.work["drafts"][uid] = d = {"stage": "read", "reading": ""}
             self._save(uid)
-        elif d["stage"] != "read" and not self.informed:
-            raise ReviewError(f"{uid}: the reading is already locked", "order")
         return d, self.revealed_by(u)
+
+    def _may_begin(self, u: dict) -> dict | None:
+        """The draft of `u` that step 1 continues (None: it begins one), refused when `u` is
+        reported or, in independent review, its reading is locked."""
+        if self.reported(u):
+            raise ReviewError(f"{u['id']} is already reported by {self.reviewer['id']}",
+                              "reported")
+        d = self.draft(u)
+        if d is not None and d["stage"] != "read" and not self.informed:
+            raise ReviewError(f"{u['id']}: the reading is already locked", "order")
+        return d
 
     def read(self, uid: str, as_json: bool = False, context: bool = False) -> str | dict:
         """Step 1: the unit's passages; with `context`, each with the paper around it
@@ -729,27 +779,143 @@ class Session:
         verdict; it is not blind, and the report says so. Returns what the reviewer had already
         seen of the unit (`revealed_by`), so that they are told at once."""
         u = self.unit(uid)
+        d = self._lockable(u)
+        _check_reading(reading)
+        return self._record_lock(u, d, reading, now(), self.revealed_by(u))
+
+    def _lockable(self, u: dict) -> dict:
+        """The draft whose reading step 1 locks: in independent review, one at step 1, of a
+        unit not reported; in an informed session, any draft before its verdict."""
+        uid = u["id"]
         if self.informed:
             d = self._started(u)
             if d["stage"] == "author":
                 raise ReviewError(f"{uid}: the verdict is recorded; the reading it was made with "
                                   "is kept", "order")
-        else:
-            r = self.report_of(u) if self.draft(u) is None else None
-            if r is not None:
-                raise ReviewError(f"{uid} is already reported by {self.reviewer['id']} (submitted "
-                                  f"{r.get('submitted_at')}): its reading is the one in that "
-                                  "report, and a new one would not be blind", "reported")
-            d = self.draft(u, "read")
-        if len(reading.strip()) < 20:
-            raise ReviewError("the reading is too short to record (20 characters at least)",
-                              "invalid")
+            return d
+        r = self.report_of(u) if self.draft(u) is None else None
+        if r is not None:
+            raise ReviewError(f"{uid} is already reported by {self.reviewer['id']} (submitted "
+                              f"{r.get('submitted_at')}): its reading is the one in that "
+                              "report, and a new one would not be blind", "reported")
+        return self.draft(u, "read")
+
+    def _record_lock(self, u: dict, d: dict, reading: str, at: str, seen: list[dict],
+                     locked_with: list[str] | None = None) -> list[dict]:
+        """Record the reading on `u`'s draft `d`, locked at `at`, with what the reviewer had
+        already seen of `u` (`seen`, returned) and the units locked with it (`lock_together`)."""
         # The passages read are those of this queue's release: the report pins their digests.
-        seen = self.revealed_by(u)
-        d.update(reading=reading, revealed_by=seen, locked_at=now(),
+        d.update(reading=reading, revealed_by=seen, locked_at=at,
                  source_sha256=u.get("source_sha256"), stage="compare")
-        self._save(uid)
+        if locked_with:
+            d["locked_with"] = list(locked_with)
+        else:
+            d.pop("locked_with", None)
+        self._save(u["id"])
         return seen
+
+    # -- one reading for several definitions of one passage (#616) ---------------------------
+
+    def shared_reading(self, uids: list[str]) -> list[dict]:
+        """The units `uids`, when one reading can be locked for them all: definitions whose
+        reading material is the same, every passage of the same claims, complete and with the
+        same pins. Refused otherwise, naming the unit that differs. The group is these steps'
+        alone: each unit keeps its own draft, verdict and report."""
+        if len(uids) < 2 or len(set(uids)) != len(uids):
+            raise ReviewError("name two or more different units to read together", "invalid")
+        units = [self.unit(i) for i in uids]
+        other = [u["id"] for u in units if u["kind"] != "def"]
+        if other:
+            raise ReviewError(f"{', '.join(other)}: only definitions are read together, from "
+                              "the passages they share; review the others one at a time",
+                              "invalid")
+
+        def material(u: dict) -> tuple[dict, list[str]]:
+            p = self.packet(u, "read")["paper"]
+            return p, sorted(json.dumps(x, sort_keys=True) for x in p["passages"])
+
+        first, same = material(units[0])
+        if not (first["complete"] and first["passages"] and all(
+                x.get("available") and x.get("complete") for x in first["passages"])):
+            raise ReviewError(f"{units[0]['id']}: this build does not hold the whole of its "
+                              "passages, so a reading shared with other units cannot be checked "
+                              "against them: review each definition on its own", "invalid")
+        for u in units[1:]:
+            p, mine = material(u)
+            if mine != same or not p["complete"]:
+                raise ReviewError(f"{u['id']} is not read from exactly the passages of "
+                                  f"{units[0]['id']}: review it on its own", "invalid")
+        return units
+
+    def read_together(self, uids: list[str], as_json: bool = False,
+                      context: bool = False) -> str | dict:
+        """Step 1 for several definitions read from the same passages (`shared_reading`): the
+        passages once, and a draft begun for each unit, with what the reviewer had already seen
+        of each. Every unit's refusals are checked before any draft is begun."""
+        units = self.shared_reading(uids)
+        for u in units:
+            self._may_begin(u)
+        seen = {u["id"]: self.begin(u["id"])[1] for u in units}
+        # Step 2 of one shows the Lean of another only after both readings are locked.
+        reveals = sorted({i for u in units for i in self.would_reveal(u) if i not in uids})
+        pk = self.packet(units[0], "read")
+        pk["request"] = {"units": list(uids), "stage": "read"}
+        pk.pop("unit", None)
+        pk["units"] = [self.packet(u, "read")["unit"] for u in units]
+        if context:
+            self.with_context(pk)
+        if as_json:
+            return {**pk, "review": {"step": "read", "mode": self.mode, "units": list(uids),
+                                     "seen_before": seen, "reveals": reveals}}
+        lock = f"review lock {uids[0]} READING " + " ".join(f"--with {i}" for i in uids[1:])
+        head = (f"The passages below are the whole of the reading material of {and_list(uids)}. "
+                f"Read them once: `{lock}` locks one reading for them all. Each is then shown "
+                "with its own Lean and takes its own verdict.")
+        warn = "".join(
+            f"\n\nNOTE: you have already seen " + " and ".join(
+                f"the {s['what']} of {uid} (in {s['unit']})" for s in got)
+            + f". Your reading of {uid} will not be blind, and its report will say so."
+            for uid, got in seen.items() if got)
+        if reveals:
+            warn += "\n\n" + reveals_note(reveals, "Step 2 of these units (`review show`) will "
+                                                   "show")
+        return head + "\n\n" + cmp.packet_text(pk) + warn
+
+    def lock_together(self, uids: list[str], reading: str) -> dict[str, list[dict]]:
+        """Step 1's record for several definitions read from the same passages: one reading,
+        locked at one time on each unit's draft, after every unit's material (`shared_reading`)
+        and order (`_lockable`) are checked; nothing is recorded when one is refused. Returns
+        what the reviewer had already seen of each unit."""
+        units = self.shared_reading(uids)
+        drafts = [self._lockable(u) for u in units]
+        _check_reading(reading)
+        # What had been seen of each, before any of the readings is locked.
+        seen = [self.revealed_by(u) for u in units]
+        at = now()
+        return {u["id"]: self._record_lock(u, d, reading, at, got,
+                                           [i for i in uids if i != u["id"]])
+                for u, d, got in zip(units, drafts, seen)}
+
+    def locked_with(self, uid: str) -> list[str]:
+        """The other units whose reading was locked with `uid`'s (`lock_together`), as its
+        draft records them."""
+        return sorted((self.work["drafts"].get(uid) or {}).get("locked_with") or [])
+
+    def _without_locked_with(self, u: dict, work: dict) -> dict:
+        """The review work `work` of this workspace without the passes of the units whose
+        reading was locked with `u`'s at the same time (`locked_with`): in independent review
+        each of them was at step 1 when the readings were locked together, so whatever their
+        steps showed came after `u`'s lock, at a time a record to the second cannot tell
+        apart from it."""
+        d = self.work["drafts"].get(u["id"]) or {}
+        group, at = set(d.get("locked_with") or []), d.get("locked_at")
+        if not group or not at or self.informed:
+            return work
+        return {"reports": [r for r in work.get("reports") or []
+                            if not ((r.get("unit") or {}).get("id") in group
+                                    and (r.get("reading") or {}).get("locked_at") == at)],
+                "drafts": {i: x for i, x in (work.get("drafts") or {}).items()
+                           if not (i in group and x.get("locked_at") == at)}}
 
     def show(self, uid: str, as_json: bool = False, definitions: bool = False) -> str | dict:
         """Step 2: the unit's Lean, after the lock in independent review. The draft records the
@@ -780,10 +946,16 @@ class Session:
             d.update(shown)
             d.setdefault("shown_at", now())
             self._save(uid)
+        together = self.locked_with(uid)
         if as_json:
-            return {**self.packet(u, "compare"), "review": {"step": "compare", "mode": self.mode,
-                                                            "reveals": reveals}}
+            return {**self.packet(u, "compare"), "review": {
+                "step": "compare", "mode": self.mode, "reveals": reveals,
+                **({"locked_with": together} if together else {})}}
         text = self._lean_or_definitions(u, definitions)
+        if together:
+            text = (f"Your reading of {uid} was locked with that of {and_list(together)}, from the "
+                    f"same passages. This is the Lean of {uid} alone: compare it with your "
+                    "reading and give it a verdict of its own.\n\n") + text
         return (reveals_note(reveals, "This shows") + text) if reveals else text
 
     def _lean_or_definitions(self, u: dict, definitions: bool) -> str:
@@ -887,6 +1059,9 @@ class Session:
         out += self._account(u) + self._refutation_scope(u)
         # What the verdict just recorded means for the claim (#685).
         out += [r.get("line") or rq.refutation_line(r) for r in u.get("refuted_by") or []]
+        if u.get("kind") == "step":
+            out += [proposal_text(p) for p in [self.site.proposal(c["id"])
+                                               for c in u.get("claims") or []] if p]
         return "\n\n".join(out)
 
     def _account(self, u: dict) -> list[str]:
@@ -1015,6 +1190,7 @@ class Session:
         self.work["drafts"][uid] = {
             "stage": "author", "reading": rd.get("text") or "", "locked_at": rd.get("locked_at"),
             "revealed_by": rd.get("revealed_by") or [], "source_sha256": pins.get("source_sha256"),
+            **({"locked_with": rd["locked_with"]} if rd.get("locked_with") else {}),
             "comparison": cmp_.get("text") or "", "witness": cmp_.get("witness") or "",
             "checklist": cmp_.get("checklist") or {}, "decided_at": cmp_.get("decided_at"),
             "group": v.get("group"), "verdict": v.get("value"), "detail": v.get("detail") or "",
@@ -1049,6 +1225,30 @@ class Session:
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(body, indent=2, ensure_ascii=False), encoding="utf-8")
         return out
+
+
+def proposal_text(p: dict) -> str:
+    """A proof step's author's proposed verdict (`steps.proposal`), for step 3: the verdict, the
+    note and the theorem it names, which is the author's and not checked by Lean here. It
+    completes no review and changes no status (#678)."""
+    return (f"The author's proposed verdict on this step" + (f", by {p['by']}" if p.get("by")
+                                                            else "")
+            + f": {p.get('verdict')}" + (f". {p['note']}" if p.get("note") else "")
+            + (f"\nIt names {p['theorem']} (the author's; Lean does not check it here)."
+               if p.get("theorem") else "")
+            + "\nA proposal completes no review: your verdict is the review, and a different "
+              "conclusion goes in your response to the author or a finding.")
+
+
+def _check_reading(reading: str) -> None:
+    if len(reading.strip()) < 20:
+        raise ReviewError("the reading is too short to record (20 characters at least)",
+                          "invalid")
+
+
+def and_list(items: list[str]) -> str:
+    """`a`, `a and b`, `a, b and c`."""
+    return items[0] if len(items) == 1 else ", ".join(items[:-1]) + " and " + items[-1]
 
 
 def reveals_note(units: list[str], lead: str) -> str:
@@ -1282,7 +1482,9 @@ def report(index: dict, u: dict, d: dict, reviewer: dict, disagreements: str,
                  "source_sha256": d.get("source_sha256")},
         "reviewer": reviewer,
         "reading": {"text": d.get("reading") or "", "locked_at": d.get("locked_at"),
-                    "revealed_by": d.get("revealed_by") or []},
+                    "revealed_by": d.get("revealed_by") or [],
+                    # The units whose reading was locked with this one (`lock_together`).
+                    **({"locked_with": d["locked_with"]} if d.get("locked_with") else {})},
         "comparison": {"text": d["comparison"], "witness": d.get("witness") or "",
                        "checklist": d.get("checklist") or {}, "decided_at": d["decided_at"]},
         "verdict": {"group": d["group"], "value": d["verdict"], "detail": d.get("detail") or "",

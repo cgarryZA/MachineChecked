@@ -18,7 +18,9 @@ it now is, or that the acceptance rules cannot count as an independent review:
 * the reviewer must not have changed their judgement after the author's review was shown
   (`changed_judgement`): such a report is never promoted, whatever the maintainer passes;
 * the reviewer must not be an author of the statements, and a model of the same family as the
-  author (or of unknown family) is refused unless the maintainer accepts it explicitly;
+  author (or of unknown family) is refused unless the maintainer accepts it explicitly; a report
+  so accepted keeps the reviewer's declaration, and its record (`promotion.same_family_accepted`)
+  and its `Review by` line say that it was accepted over the rule;
 * the reading must have been blind: a report whose unit's Lean or author's review the reviewer
   had already seen while reviewing another unit (`reading.revealed_by`) is refused unless the
   maintainer accepts it explicitly. The review page and the command line record this from the
@@ -199,8 +201,8 @@ def check_report(r: dict, body: dict, cfg: Config, accept_same_family: bool,
     rid = rev.get("id", "")
     if not rid or rid in cfg.statement_authors or rev.get("name") in cfg.statement_authors:
         why.append(f"reviewer {rid!r} is an author of the statements, or unnamed")
-    if rev.get("kind") == "model" and rev.get("same_family_as_author") != "no" \
-            and not accept_same_family:
+    from .review_cli import same_family_rule
+    if same_family_rule(rev) and not accept_same_family:
         why.append("a model reviewer of the same family as the author, or of unknown family "
                    "(pass --accept-same-family to accept it)")
     seen = r["reading"].get("revealed_by") or []
@@ -477,8 +479,12 @@ def report_text(r: dict, cur: dict | None = None) -> str:
         *([f"Evidence: {evidence_text(r)}"] if evidence_text(r) else []),
         f"Reviewer: {rv['id']} ({rv['kind']}{', ' + rv['model'] if rv.get('model') else ''}, "
         f"self-declared); {r['submitted_at']}; same model family as the author: "
-        f"{rv.get('same_family_as_author')}",
-        f"Phase 1 specification (locked {r['reading']['locked_at']}):", r["reading"]["text"],
+        f"{rv.get('same_family_as_author')}"
+        + ("; accepted by the maintainer over the same-family rule" if family_accepted(r)
+           else ""),
+        f"Phase 1 specification (locked {r['reading']['locked_at']}"
+        + (f", with {', '.join(r['reading']['locked_with'])}"
+           if r["reading"].get("locked_with") else "") + "):", r["reading"]["text"],
         f"Comparison (verdict recorded {r['comparison']['decided_at']}):",
         r["comparison"]["text"],
         f"Witness: {r['comparison'].get('witness') or '—'}",
@@ -651,9 +657,36 @@ def plan(cfg: Config, reports: list[dict], accept_same_family: bool = False,
         cur = step_claim(body, u) if u.get("kind") == "step" else \
             (lean.get("specs" if u.get("kind") == "spec" else "decls", {}) or {}).get(
                 u.get("name"))
-        out.append((r, with_covers(r, cur, body),
-                    check_report(r, body, cfg, accept_same_family, allow_revealed)))
+        why = check_report(r, body, cfg, accept_same_family, allow_revealed)
+        if not why and accept_same_family:
+            r = accept_family(r)
+        out.append((r, with_covers(r, cur, body), why))
     return out
+
+
+def accept_family(r: dict) -> dict:
+    """Report `r` as promotion archives it when the maintainer accepts it with
+    `--accept-same-family`: for a model reviewer the same-family rule applies to
+    (`review_cli.same_family_rule`), the record says it was accepted over the rule
+    (`promotion.same_family_accepted`), beside the reviewer's declaration, which it keeps as
+    given. Any other report is unchanged."""
+    from .review_cli import same_family_rule
+    if not same_family_rule(r.get("reviewer")):
+        return r
+    return {**r, "promotion": {**(r.get("promotion") or {}), "same_family_accepted": True}}
+
+
+def family_accepted(r: dict) -> bool:
+    """Whether report `r` was accepted over the same-family rule (`accept_family`)."""
+    return bool((r.get("promotion") or {}).get("same_family_accepted"))
+
+
+def accepted_family_note(r: dict) -> str:
+    """What the `Review by` line of a report accepted over the same-family rule says of its
+    reviewer (`reviews.accepted_note`); empty for any other report."""
+    from .review_cli import family_of
+    from .reviews import accepted_note
+    return accepted_note(family_of(r["reviewer"])) if family_accepted(r) else ""
 
 
 def already_promoted(cfg: Config, r: dict, cur: dict) -> bool:
@@ -697,7 +730,8 @@ def apply(cfg: Config, accepted: list[tuple[dict, dict]]) -> list[dict]:
                 pass
             with_ = "" if n == marker_name(r) else f", with {marker_name(r)}"
             insert_after(path, line, [f"Review by {r['reviewer']['id']}: {r['verdict']['value']}"
-                                      f"{with_} (report `{rel.as_posix()}`).", mk])
+                                      f"{with_}{accepted_family_note(r)} "
+                                      f"(report `{rel.as_posix()}`).", mk])
             reviews, _ = load_reviews(cfg.reviews, cfg.ai_reviewers, cfg.root)
             last = history(reviews, r["unit"]["kind"], n)[-1]
             prev = ((cfg.root / last.file).resolve(), last.line)

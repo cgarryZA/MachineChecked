@@ -133,12 +133,14 @@ def claims_from_anchors(pid: str, anchors: list[dict], snap: Path) -> list[dict]
 STEPS_VERSION = "steps-1"
 
 
-def proof_steps(pid: str, anchors: list[dict], snap: Path, numbers: dict[str, str]) -> list[dict]:
+def proof_steps(pid: str, anchors: list[dict], snap: Path, numbers: dict[str, str],
+                notes: list[str] | None = None) -> list[dict]:
     """The numbered equations inside the paper's proofs, as claims of their own
-    (`steps.step_claims`), each under the statement whose proof holds it."""
+    (`steps.step_claims`), each under the statement whose proof holds it; the numbered displays
+    left out are said in `notes`."""
     statements = claims_from_anchors(pid, anchors, snap)
     files = sorted({a["file"] for a in anchors if a.get("file")})
-    return steps.step_claims(pid, statements, snap, files, numbers)
+    return steps.step_claims(pid, statements, snap, files, numbers, notes)
 
 
 def with_passages(claims: list[dict], pid: str, entries: dict, snap: Path, work: Path,
@@ -1983,7 +1985,7 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
             pdf = t["pdf"]
             aux = Path(t["pdf"]).parent / (Path(snap.root).stem + ".aux")
             claims = claims_from_anchors(paper.id, anchors, snap.dir)
-            for c in proof_steps(paper.id, anchors, snap.dir, t["numbers"]):
+            for c in proof_steps(paper.id, anchors, snap.dir, t["numbers"], notes):
                 c["line_anchor"] = t["step_anchors"].get(c["location"])
                 claims.append(c)
             compiled = {**t, "digest": digest}
@@ -2167,6 +2169,7 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
                 {"source": "formalization.yaml",
                  "note": " ".join(c.get("declared_route_notes") or [])[:NOTE_CHARS], "by": None}
                 if c.get("declared_route") else None)
+            c["proposed"] = steps.proposal(entry, "confirmed")
             c["step_reports"], changed = counted(reports.get(steps.unit_id(c["id"]), []))
             c["uncounted_reviews"] = [uncounted_view(r) for r in changed]
         for s in c.get("suggestions", []):
@@ -2352,6 +2355,8 @@ def write_view_site(view: dict, site: Path, web_dist: Path | None,
             "id": c["id"], "paper": c["paper"], "number": c["number"], "title": c["title"],
             "heading": c["title"] or None, "kind": c["kind"], "scope": c["scope"],
             "unit": steps.unit_of(c), "parent": c.get("parent"),
+            **({"parent_candidates": c["parent_candidates"]} if c.get("parent_candidates")
+               else {}),
             **fields(c["status_code"], c.get("status_detail")),
             "anchor": mf.index_anchor(anchor, akind),
             "counts": {}, "file": fname, "linked": len(c["links"]),
@@ -2389,7 +2394,10 @@ def write_view_site(view: dict, site: Path, web_dist: Path | None,
                                  [_link_view(l, root) for l in c["links"]],
                                  [_link_view(l, root) for l in c.get("route_links", [])],
                                  c.get("correspondence"), c.get("route_note"),
-                                 steps.review(c.get("step_reports", []), c["source_sha256"])))
+                                 steps.review(c.get("step_reports", []), c["source_sha256"]),
+                                 proposed=c.get("proposed"),
+                                 candidates=[_parent_row(by_id.get(x))
+                                             for x in c.get("parent_candidates") or []]))
             if c.get("passage"):
                 # A selected passage's pin, and whether its lines still hold its text.
                 chunks[fname]["step"]["passage"] = c["passage"]
