@@ -31,7 +31,7 @@ A formal claim's status, from strongest to weakest:
 | `formal: proved assuming results not yet proved` | every open printed clause has a theorem whose type is exactly its proposition assuming other propositions (`accept_from`), and at least one of those is not proved; the clause becomes proved once each is the proposition of a proved clause |
 | `formal: open; some clauses proved` | some clauses are proved, and a printed clause with nothing proved for it is open |
 | `formal: open` | a proposition is written, a proof is missing |
-| `formal: unspecified` | no proposition is written yet |
+| `formal: unspecified` | no proposition is written yet: no clause names one |
 | `formal: malformed` | the inventory gives corrections but no original clause |
 
 None of the statuses between `refuted as printed` and `formal: open` is a proof of the printed

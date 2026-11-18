@@ -1480,7 +1480,11 @@ class Assessor:
         originals = [c for c in clauses if not c.get("corrects") and not c.get("restricts")]
         if not originals:
             return "formal.malformed"
-        refuted = [c for c in originals if c.get("refute_ok") and c["state"] == "refuted"]
+        # "Open" says a proposition is written: a claim none of whose clauses names one (each
+        # has `spec: null`, or names only definitions) has none, as with no clauses at all.
+        if not any(c.get("spec") for c in clauses):
+            return "formal.unspecified"
+        refuted =[c for c in originals if c.get("refute_ok") and c["state"] == "refuted"]
         rest = [c for c in originals if c not in refuted]
         rest_proved = all(c.get("accept_ok") for c in rest)
         if refuted:
@@ -1552,7 +1556,8 @@ class Assessor:
                             and not c.get("restricts")])
         for c in clauses:
             st = c["state"]
-            if st == "unspecified":
+            # A theorem's clause that names definitions only ("stated") has no proposition either.
+            if st == "unspecified" or (st == "stated" and claim["scope"] == "formal"):
                 add("no Lean proposition has been written", c)
             elif st == "proved-assuming":
                 add("it is proved assuming results not yet proved: "
