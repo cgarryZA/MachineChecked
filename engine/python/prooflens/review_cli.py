@@ -701,7 +701,8 @@ class Session:
         if as_json:
             return {**pk, "review": {"step": "read", "mode": self.mode, "seen_before": seen,
                                      "reveals": reveals}}
-        return cmp.packet_text(pk) + warn
+        lean = step_lean_text(pk.get("unit") or {})
+        return cmp.packet_text(pk) + (f"\n\n{lean}" if lean else "") + warn
 
     def with_context(self, pk: dict) -> dict:
         """The read step's packet `pk` with, on each passage, the paper around it
@@ -1203,6 +1204,23 @@ def _check_reading(reading: str) -> None:
     if len(reading.strip()) < 20:
         raise ReviewError("the reading is too short to record (20 characters at least)",
                           "invalid")
+
+
+def step_lean_text(unit: dict) -> str | None:
+    """What step 1 says of a proof step's Lean (`compare.step_lean`), naming none; None for
+    any other unit."""
+    if unit.get("kind") != "step" or "lean_linked" not in unit:
+        return None
+    if unit["lean_linked"]:
+        return ("Lean is linked as establishing this step: step 2 (`review show`) shows it once "
+                "your reading is locked.")
+    if unit.get("route_linked"):
+        return ("No Lean is linked as establishing this step. A different formal route used "
+                "instead is recorded, which step 2 shows and which does not state the step: "
+                "judge the printed step on the mathematics.")
+    return ("No Lean is linked to this step: judge the printed step on the mathematics alone. "
+            "Step 2 has no Lean to show; once your reading is locked, record the verdict "
+            "(`review decide`) with the argument you checked as the comparison.")
 
 
 def and_list(items: list[str]) -> str:

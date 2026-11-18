@@ -397,6 +397,16 @@ def _step_decls(ch: dict) -> list[dict]:
         [_link(l, "formal route used instead") for l in (st.get("route") or {}).get("links") or []]
 
 
+def step_lean(ch: dict) -> dict[str, bool]:
+    """Whether a proof step has Lean for step 2 to show (#740): declarations linked as
+    establishing it (`lean_linked`), and a different formal route used instead (`route_linked`).
+    Two facts of the build that name no declaration and record no one's reading, so the read
+    stage gives them too."""
+    st = ch.get("step") or {}
+    return {"lean_linked": bool(st.get("links")),
+            "route_linked": bool((st.get("route") or {}).get("links"))}
+
+
 def _clause(cl: dict, stage: str = "informed", claim: str | None = None,
             clauses: list | None = None) -> dict:
     """A locked statement of `claim` (whose clauses are `clauses`), named neutrally by its place
@@ -790,6 +800,8 @@ def unit_packet(site: Site, unit: dict, stage: str) -> dict:
             {"relation": cor.get("relation"), "of_clause": cor.get("of_clause")}
     missing = [c["id"] for c, ch in zip(unit.get("claims") or [], chunks) if ch is None]
     chunks = [ch for ch in chunks if ch is not None]
+    if unit["kind"] == "step" and chunks:
+        out["unit"].update(step_lean(chunks[0]))
     out["claims"] = [_claim_ref(ch) for ch in chunks]
     out["paper"] = {"passages": [passage(ch, stage) for ch in chunks],
                     "complete": not missing, "missing": missing}

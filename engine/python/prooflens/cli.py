@@ -2126,7 +2126,7 @@ def _review_status(a, s) -> None:
                                                  if s.queue.get("order") else {}),
                                **({"informed": s.order_record} if s.order_record else {})},
                      **({"evidence": s.evidence} if s.evidence else {}),
-                     "open": [u["id"] for u in units]})
+                     "open": [u["id"] for u in units], "steps": _status_steps(s, units)})
         return
     print(f"{len(s.work['reports'])} report(s), {len(s.work['drafts'])} in progress, "
           f"{len(units)} unit(s) left to review (release {s.index['release']})")
@@ -2147,6 +2147,27 @@ def _review_status(a, s) -> None:
                       *(s.order_record or {}).items()]:
         if sig.get("state") != "read":
             print(f"  order: {name} {sig['state']}: {sig.get('why')}")
+    steps = _status_steps(s, units)
+    if steps:
+        linked = sum(x["lean_linked"] for x in steps)
+        print(f"  proof steps left to review: {len(steps)}, {linked} with Lean linked as "
+              "establishing them (a step with none is judged on the mathematics alone)")
+        for x in steps:
+            print(f"    {x['unit']}: " + ("Lean linked" if x["lean_linked"] else
+                                          "no Lean linked, a different formal route recorded"
+                                          if x["route_linked"] else "no Lean linked"))
+
+
+def _status_steps(s, units: list[dict]) -> list[dict]:
+    """The proof-step units among `units`, each with whether Lean is linked to it
+    (`compare.step_lean`): booleans that name no declaration (#740)."""
+    from . import compare as cmp
+    out = []
+    for u in units:
+        ch = s.site.chunk((u.get("claims") or [{}])[0].get("id")) if u["kind"] == "step" else None
+        if ch is not None:
+            out.append({"unit": u["id"], **cmp.step_lean(ch)})
+    return out
 
 
 def _review_text(a, s) -> None:

@@ -1133,6 +1133,17 @@ the paper. Its verdicts are its own:
 | False as printed | The counterexample or the failing case, and what would repair the step |
 | Cannot determine | What would decide it |
 
+**A step with no Lean.** Step 1 says whether Lean is linked to the step, naming none:
+`review read` says so in a line, `review read --json` gives `unit.lean_linked` (Lean linked as
+establishing the step) and `unit.route_linked` (a different formal route used instead), and
+`review status` lists each proof step left to review with it (`steps` in `--json`). A step with no
+Lean linked is judged on the mathematics alone: read it in its context and lock the reading, then
+record the verdict with the argument you checked as the comparison ("No Lean is linked. The
+step follows from the bound before it by the triangle inequality, with constant 2."), and the
+gap, the counterexample or the open question in its detail. Step 2 has no Lean to show, so
+`review decide` may follow the lock directly. A step with only a formal route used instead is
+judged the same way: the route does not state the step.
+
 **An author's proposed verdict.** The author of a formalisation may propose a verdict on a printed
 step while formalising it, with the step verdicts above and a note: a gap, its repair, a
 counterexample. The step's entry records it as `proposed` (in the inventory, or in the links file

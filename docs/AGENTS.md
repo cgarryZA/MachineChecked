@@ -548,6 +548,12 @@ belongs to, and the statements that cite it or use a term it defines (`cited_by`
 `why`). It is read from the build's copy of the paper's source and is context, not the pinned
 passage: the reading records only the passages ([REVIEWING.md](REVIEWING.md)).
 
+For a proof step, `review read --json` gives `unit.lean_linked` (Lean is linked as establishing
+the step) and `unit.route_linked` (a different formal route used instead is recorded), which name
+no declaration; `review status --json` gives the same for each proof step left to review
+(`steps`). A step with neither is judged on the mathematics alone: lock the reading, then
+`review decide` with the argument you checked as the comparison.
+
 **Difficult cases.** Where a verdict is easy to get wrong, the review guide works an example
 through ([Difficult cases](REVIEWING.md#difficult-cases)); the review page lists the same at
 step 2, and `review decide --help` names them. They are optional, and add no field: put what
