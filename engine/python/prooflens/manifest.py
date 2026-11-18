@@ -356,6 +356,15 @@ def build(evidence: dict, release: str, display: dict | None = None
             # with where the context was cut when it was.
             chunks[fname]["statement_tex"] = chunks[fname]["statement_tex"] or \
                 t["step_text"][c["id"]]["text"]
+            whole = t["step_text"][c["id"]].get("whole")
+            if whole and not part:
+                # Its lines cut a display: the whole display is the passage, its own lines marked.
+                reg = (t.get("regions") or {}).get(c["id"]) or {}
+                chunks[fname]["statement_tex"] = whole["text"]
+                chunks[fname]["states"] = {"file": reg.get("file"),
+                                           "start_line": reg.get("start_line"),
+                                           "end_line": reg.get("end_line"),
+                                           "text": t["step_text"][c["id"]]["text"]}
             chunks[fname]["context_tex"] = t["step_text"][c["id"]]["context"]
             cut = steps.context_cut(t["step_text"][c["id"]])
             if cut:
