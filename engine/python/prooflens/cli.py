@@ -611,6 +611,8 @@ def _print_workspace(v: dict) -> None:
                 print(f"           question: {f['question']}")
             if f.get("would_decide"):
                 print(f"           would decide it: {f['would_decide']}")
+            for x in f.get("cites") or []:
+                print(f"           {x['line']}")
             b = f.get("bridge_check") or {}
             if f.get("basis") == "checked_bridge" and b.get("state") == "checked":
                 print(f"           bridge {b.get('theorem')} for {b.get('target')}: "
@@ -637,6 +639,12 @@ def _print_workspace(v: dict) -> None:
             print("  requirements:")
             for line in reading_lines(rd):
                 print("  " + line)
+        if c.get("reading_choices"):
+            # The reading choices this claim makes or depends on (`reading_choice.py`).
+            from .reading_choice import lines as choice_lines
+            print("  reading choices:")
+            for ch in c["reading_choices"]:
+                print("\n".join(choice_lines(ch, "    ")))
     rev = v.get("revisions") or {}
     if rev:
         from .reopen import lines as reopened_lines
@@ -909,6 +917,8 @@ def _check_simple(a):
     picked = _picked(a, view["body"]["claims"], _view_release(view))
     if picked is None:
         _print_simple(view["body"], _check_summary(view, root)[0])
+        for line in _reading_choice_lines(_reading_choices(_work_of(root), root)):
+            print(line)
     else:
         by_id = {c["id"]: c for c in view["body"]["claims"]}
         print("\n\n".join("\n".join(_simple_claim_lines(by_id[cid])) for cid in picked))
@@ -1429,6 +1439,7 @@ def _check_full_selected(a, cfg, res, added, reused) -> tuple[dict, list[dict], 
     with)."""
     out, claims, failed = _check_full_json(a, cfg, res, added)
     out["reused"] = reused
+    out["reading_choices"] = _reading_choices(cfg.out_dir, cfg.root)
     out["same_family_accepted"] = _family_accepted(cfg, res["evidence"])
     extra: dict = {}
     picked = _picked(a, res["index"]["claims"], res["release"])
@@ -1555,8 +1566,37 @@ def _check_simple_json(a, root: Path, view: dict) -> tuple[dict, list[dict], boo
                "name": d["name"], "message": stale_doc_message(d)}
               for d in body.get("module_docs", [])]
            + _reference_warnings(num),
-           "numbering": num}
+           "numbering": num,
+           "reading_choices": _reading_choices(_work_of(root), root)}
     return out, claims, any(l["class"] != "proved" for c in claims for l in c["links"])
+
+
+def _work_of(root: Path) -> Path:
+    from .config import work_dir_name
+    return root / work_dir_name(root)
+
+
+def _reading_choices(work: Path, root: Path | None) -> list[dict]:
+    """The reading choices the working directory's workspaces record (`reading_choice.py`),
+    each with its workspace and its equivalence checked by Lean now: `check` is where a pending
+    equivalence is seen to be discharged."""
+    from . import reading_choice as rcm
+    from . import workspace as wsp
+    out = []
+    for _, ws in wsp.list_all(work):
+        for v in rcm.views((ws.get("records") or {}).values(), root, check_now=True):
+            out.append({**v, "workspace": ws.get("id")})
+    return out
+
+
+def _reading_choice_lines(choices: list[dict]) -> list[str]:
+    """`check`'s note on the reading choices and the claims that depend on them."""
+    from .reading_choice import lines
+    out = []
+    for c in choices:
+        out.append(f"note: workspace {c['workspace']} records a reading choice:")
+        out += lines(c, "  ")
+    return out
 
 
 def _forget_indexes(cfg) -> None:
@@ -1688,6 +1728,8 @@ def _print_full_report(cfg, res) -> None:
     rg = _replay_guard(cfg, res["evidence"])
     if rg and rg["message"]:
         print(f"note: independent replay: {rg['message']}")
+    for line in _reading_choice_lines(_reading_choices(cfg.out_dir, cfg.root)):
+        print(line)
 
 
 def _fix_modules(cfg, res, rebuild):
