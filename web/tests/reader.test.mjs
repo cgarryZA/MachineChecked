@@ -242,6 +242,31 @@ for (const c of SHAPE.claims) {
   fs.writeFileSync(f, JSON.stringify(chunk));
 }
 
+// A model reviewer's declared family (#613). In zero configuration, a report by a model of unknown
+// family; in the toy's full assessment, a review the maintainer accepted over the same-family
+// rule, as the assessment reads it back (`accepted_family` on the record and on the clause's
+// review evidence).
+fs.cpSync(path.join(root, "basis"), path.join(root, "basisfamily"), { recursive: true });
+{
+  const c = SHAPE.claims.find((x) => x.id === "P:thm:layout");
+  const f = path.join(root, "basisfamily", "data", "claims", c.file);
+  const chunk = JSON.parse(fs.readFileSync(f, "utf8"));
+  chunk.reviews[0].reviewer = { id: "llm:synthetic-model", kind: "model", model: "synthetic-model", identity: "self-declared",
+                                same_family_as_author: "unknown" };
+  fs.writeFileSync(f, JSON.stringify(chunk));
+}
+fs.cpSync(path.join(root, "toy"), path.join(root, "toyfamily"), { recursive: true });
+{
+  const c = TOY.claims.find((x) => x.id === "T:prop:pred");
+  const f = path.join(root, "toyfamily", "data", "claims", c.file);
+  const chunk = JSON.parse(fs.readFileSync(f, "utf8"));
+  const cl = chunk.clauses.find((x) => x.spec_review?.current?.length);
+  cl.spec_review.current[0] = { ...cl.spec_review.current[0], by: "llm:some-model", accepted_family: "unknown" };
+  cl.spec_review.accepted_family = "unknown";
+  cl.evidence.review = { ...cl.evidence.review, accepted_family: "unknown" };
+  fs.writeFileSync(f, JSON.stringify(chunk));
+}
+
 // Synthetic display excerpts as the engine writes them (fixtures/make_excerpt.py).
 const excerpts = spawnSync(process.env.PYTHON || "python3", [path.join(here, "fixtures", "make_excerpt.py")], { encoding: "utf8" });
 if (excerpts.status !== 0) throw new Error(excerpts.stderr);
@@ -2232,6 +2257,25 @@ await check("in the local reader a symbol is linked by choosing it and clicking 
     assert.match(open.text, /Open question: Is the set finite\?\s*Would decide it: Its Section 1\./);
   });
 
+  await check("a reviewer's declared model family is shown beside the review", width, async (pg) => {
+    await pg.goto(origin + `/basisfamily/#/r/${SHAPE.release}/read/P/${encodeURIComponent("P:thm:layout")}`);
+    const summary = pg.locator("details.review > summary");
+    await summary.waitFor();
+    assert.match((await summary.textContent()).replace(/\s+/g, " "),
+      /by the AI model synthetic-model \(self-declared\), a model of unknown family, \d{4}-/);
+    // A review accepted over the same-family rule says so, beside the review and on its evidence.
+    await pg.goto(origin + `/toyfamily/#/r/${TOY.release}/read/T/${encodeURIComponent("T:prop:pred")}`);
+    await pg.waitForSelector(".claim-view h1");
+    const chip = pg.locator(".claim-view .chipbtn");
+    assert.match((await chip.textContent()).replace(/\s+/g, " "), /by a model of unknown family, accepted over the same-family rule/);
+    await chip.click();
+    const pill = pg.locator(".claim-view .details .review .pill.family");
+    await pill.waitFor();
+    assert.equal((await pill.textContent()).trim(), "a model of unknown family, accepted by the maintainer over the same-family rule");
+    assert.equal(await pill.getAttribute("data-family"), "unknown");
+    assert.equal(await pg.locator(".claim-view .details .review .pill.family").count(), 1, "only the review accepted so");
+  });
+
   await check("a report whose judgement changed is listed in the audit details as not counted", width, async (pg) => {
     await pg.goto(origin + `/basis/#/r/${SHAPE.release}/read/P/${encodeURIComponent("P:thm:witnesses")}`);
     await pg.locator(".claim-view .chipbtn").click();
@@ -3732,6 +3776,20 @@ await check("a proof passage whose lines changed says so, and where its text is 
   assert.equal(await finding.getByRole("button").count(), 0, "a static copy offers no selection");
   await toyClaim(pg, "T:thm:bound");
   assert.match(words(await pg.locator(".claim-view .view .steps li").nth(1).textContent()), /its lines changed since it was selected/);
+});
+
+// #572: a step whose proof names no statement and follows an aside (a remark) has no parent; its
+// page names the statements its proof may prove, each a link, and asserts neither.
+await check("a step whose proof's statement is not certain names the candidates", 1300, async (pg) => {
+  const candidates = [{ id: "T:thm:bound", number: "Theorem 2.5" }, { id: "T:rem:pred", number: "Remark 2.4" }];
+  await pg.route(`**/toy/data/claims/${stepRow.file}`, async (route) => {
+    const c = await (await route.fetch()).json();
+    route.fulfill({ json: { ...c, parent: null, step: { ...c.step, parent: null, parent_candidates: candidates } } });
+  });
+  await toyClaim(pg, "T:eq:bound-range");
+  const kind = pg.locator(".claim-view .view .paper .finding .kind");
+  assert.match(words(await kind.textContent()), /^Equation in a proof whose statement is not certain: Theorem 2\.5 or Remark 2\.4$/);
+  assert.deepEqual(await kind.locator("[data-parent=uncertain] a").allTextContents(), ["Theorem 2.5", "Remark 2.4"]);
 });
 
 // #544: in the local reader, lines of a statement's proof are selected as a passage and sent as

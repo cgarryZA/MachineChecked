@@ -347,6 +347,47 @@ def changed_judgement(u: dict, blind: str | None, given) -> tuple[dict | None, l
     return out, why
 
 
+# A model reviewer's declaration of its family relative to the statements' author, as a report
+# records it (`same_family_as_author`), in the words the reader uses too (`data/semantic.json`):
+# three answers, kept apart. A value that is none of them reads as unknown, never as either
+# known answer.
+FAMILY = {k: v["label"] for k, v in json.loads(
+    (Path(__file__).parent / "data" / "semantic.json").read_text(encoding="utf-8"))
+    ["family"].items()}
+
+
+def family_of(reviewer: dict | None) -> str | None:
+    """A model reviewer's declared family (`yes`, `no` or `unknown`); None for a person."""
+    rv = reviewer or {}
+    if rv.get("kind") != "model":
+        return None
+    return rv.get("same_family_as_author") if rv.get("same_family_as_author") in FAMILY \
+        else "unknown"
+
+
+def same_family_rule(reviewer: dict | None) -> bool:
+    """Whether promotion's same-family rule applies to a reviewer's reports
+    (`promote.check_report`): a model reviewer not declared of a different family from the
+    statements' author. Such a report is promoted only when the maintainer accepts it
+    explicitly (`--accept-same-family`)."""
+    return family_of(reviewer) in ("yes", "unknown")
+
+
+def family_note(reviewer: dict | None) -> str | None:
+    """What `review next` and `review status` say once of a model reviewer's declaration and of
+    the promotion rule it meets; None for a person."""
+    fam = family_of(reviewer)
+    if fam is None:
+        return None
+    who = f"You review as {reviewer['id']}, {FAMILY[fam]} (self-declared"
+    if fam == "no":
+        return who + "): promotion's same-family rule does not apply to your reports."
+    return (who + "; --same-family yes|no|unknown declares it). `review promote` refuses the "
+            "report of a model reviewer of the statements' author's family, or of unknown "
+            "family, unless the maintainer accepts it explicitly; each report records your "
+            "declaration, and one accepted so says that it was.")
+
+
 def parse_reviewer(who: str, same_family: str = "unknown") -> dict:
     """`human:NAME` or `llm:MODEL`, as the protocol writes reviewer ids."""
     m = re.fullmatch(r"(human|llm):(\S+)", who or "")

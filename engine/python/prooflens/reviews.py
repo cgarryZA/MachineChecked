@@ -37,6 +37,14 @@ ANY = re.compile(MARKER.pattern + "|" + RETIRED.pattern)
 HEADING = re.compile(r"^#{1,6} ", re.M)
 # The line `review promote` writes before a reviewer's marker (`promote.apply`).
 PROMOTED = re.compile(r"^[ \t]*Review by \S+: [^\n]*\(report `[^`\n]*`\)\.[ \t]*$\n?", re.M)
+# What that line says of a model reviewer the maintainer accepted over promotion's same-family
+# rule (`accepted_note`): its declaration, of the statements' author's family or of unknown
+# family. These words are read back from review files, so they never change.
+ACCEPTED_WORDS = {"yes": "a model of the same family as the statements' author",
+                  "unknown": "a model of unknown family"}
+ACCEPTED_FAMILY = re.compile("; (" + "|".join(map(re.escape, ACCEPTED_WORDS.values()))
+                             + r"), accepted by the maintainer over the same-family rule "
+                               r"\(report `")
 
 
 @dataclass
@@ -52,11 +60,15 @@ class Review:
     text: str
     source: dict[str, str] | None = None   # claim id -> digest of the passage read, if recorded
     verdict: str | None = None   # a step review's finding: holds, gap, false, undetermined
+    # A model reviewer the maintainer accepted over the same-family rule: its declaration,
+    # `yes` (the statements' author's family) or `unknown`, as its `Review by` line says.
+    accepted_family: str | None = None
 
     def to_json(self) -> dict:
         out = dict(self.__dict__)
-        if out["verdict"] is None:
-            out.pop("verdict")
+        for k in ("verdict", "accepted_family"):
+            if out[k] is None:
+                out.pop(k)
         return out
 
 
@@ -109,9 +121,41 @@ def parse_file(path: Path, ai_patterns: list[str], rel_to: Path) -> list[Review]
             line=txt.count("\n", 0, any_.start()) + 1, text=body,
             source=parse_source(m.group(4), m.group(2) if m.group(1) == "step" else None,
                                 m.group(3)),
-            verdict=attrs.get("verdict") if m.group(1) == "step" else None))
+            verdict=attrs.get("verdict") if m.group(1) == "step" else None,
+            accepted_family=accepted_family(since, by)))
         prev = any_.end()
     return out
+
+
+def accepted_family(since: str, by: str | None) -> str | None:
+    """The declaration of a model reviewer `by` that the maintainer accepted over the
+    same-family rule, as the reviewer's last `Review by` line in `since` (the text before its
+    marker) records it: `yes` or `unknown`; None when it records none."""
+    own = [m.group().strip() for m in PROMOTED.finditer(since)
+           if by and m.group().strip().startswith(f"Review by {by}: ")]
+    hit = ACCEPTED_FAMILY.search(own[-1]) if own else None
+    return None if hit is None else next(k for k, w in ACCEPTED_WORDS.items()
+                                         if w == hit.group(1))
+
+
+def clause_family(clause: dict) -> str | None:
+    """The declared family of a model reviewer the maintainer accepted over the same-family rule
+    among the current reviews a clause's review rests on (its proposition's and its
+    definitions', `accepted_family`): `yes` when any is of the statements' author's family, else
+    `unknown` when any is of unknown family, else None. The clause's review is no more
+    independent than the least independent of them."""
+    fams = {r.get("accepted_family") for r in [clause.get("spec_review") or {},
+                                               *(clause.get("def_reviews") or {}).values()]
+            if isinstance(r, dict)}
+    return "yes" if "yes" in fams else "unknown" if "unknown" in fams else None
+
+
+def accepted_note(family: str) -> str:
+    """What a `Review by` line says of a model reviewer of declared family `family` (`yes` or
+    `unknown`) that the maintainer accepted over the same-family rule, as `accepted_family`
+    reads it back."""
+    return (f"; {ACCEPTED_WORDS[family]}, accepted by the maintainer over the same-family "
+            "rule")
 
 
 def own_promoted_line(since: str, by: str | None) -> str | None:

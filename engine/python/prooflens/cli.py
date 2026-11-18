@@ -943,9 +943,13 @@ def _simple_claim_lines(c: dict) -> list[str]:
                    + (f". {l['status_detail']}" if l.get("status_detail") else ""))
     if not c["links"]:
         out.append("  no declaration is linked to it")
+    from .review_cli import FAMILY, family_of
     for r in c.get("reviews", []):
-        out.append(f"  review by {r['reviewer']}: {r['verdict']['value']}"
-                   + ("" if r["current"] else " (not current)"))
+        rv = r["reviewer"] if isinstance(r["reviewer"], dict) else {"id": r["reviewer"]}
+        fam = family_of(rv)
+        out.append(f"  review by {rv.get('id')}"
+                   + (f" ({FAMILY[fam]}, self-declared)" if fam else "")
+                   + f": {r['verdict']['value']}" + ("" if r["current"] else " (not current)"))
     for r in c.get("uncounted_reviews", []):
         to = (r["changed_judgement"].get("verdict") or {}).get("value")
         out.append(f"  review by {r['reviewer'].get('id')}: {r['verdict']['value']}, changed "
@@ -1050,6 +1054,31 @@ def _finding_details(cfg, eid: str) -> list[dict]:
     order = {"violation": 0, "obligation": 1, "warning": 2}
     return [{k: f[k] for k in FINDING_KEYS if k in f}
             for f in sorted(found, key=lambda f: (order.get(f.get("tier"), 3), f.get("id", "")))]
+
+
+def _family_accepted(cfg, eid: str) -> list[dict]:
+    """The current reviews of the full assessment's evidence by a model reviewer the maintainer
+    accepted over the same-family rule (`reviews.Review.accepted_family`), each once: what was
+    reviewed (`target`, `name`), by whom, and the reviewer's declared family (`yes` or
+    `unknown`)."""
+    from . import evidence as ev
+    out: list[dict] = []
+
+    def add(target, name, by, family):
+        e = {"target": target, "name": name, "by": by, "family": family}
+        if family and e not in out:
+            out.append(e)
+    for c in ev.load(cfg.out_dir, eid)["body"]["assessment"]["claims"]:
+        for cl in c.get("clauses") or []:
+            sr = cl.get("spec_review") or {}
+            add("spec", cl.get("spec"), (sr.get("rests_on") or {}).get("by"),
+                sr.get("accepted_family"))
+            for n, r in (cl.get("def_reviews") or {}).items():
+                add("def", n, ((r or {}).get("rests_on") or {}).get("by"),
+                    (r or {}).get("accepted_family"))
+        rv = (((c.get("step_review") or {}).get("finding") or {}).get("reviewer") or {})
+        add("step", c.get("id"), rv.get("id"), rv.get("accepted_family"))
+    return out
 
 
 def _evidence_decls(cfg, eid: str) -> dict:
@@ -1400,6 +1429,7 @@ def _check_full_selected(a, cfg, res, added, reused) -> tuple[dict, list[dict], 
     with)."""
     out, claims, failed = _check_full_json(a, cfg, res, added)
     out["reused"] = reused
+    out["same_family_accepted"] = _family_accepted(cfg, res["evidence"])
     extra: dict = {}
     picked = _picked(a, res["index"]["claims"], res["release"])
     was = None
@@ -1504,6 +1534,9 @@ def _check_simple_json(a, root: Path, view: dict) -> tuple[dict, list[dict], boo
                                for x in c.get("suggestions", [])],
                "references": [o["id"] for o in c.get("references", [])],
                "unit": c.get("unit", "statement"), "parent": c.get("parent"),
+               # A step whose proof's statement is not certain names the candidates.
+               **({"parent_candidates": c["parent_candidates"]}
+                  if c.get("parent_candidates") else {}),
                **(_step_json(c) if c.get("unit") else {})}
               for c in body["claims"]]
     summary, facts, hints = _check_workspaces(view, root)
@@ -1602,6 +1635,14 @@ def _print_full_report(cfg, res) -> None:
     from .semantic import text
     for line in text(idx.get("semantic")):
         print(line)
+    accepted = _family_accepted(cfg, res["evidence"])
+    if accepted:
+        from .review_cli import FAMILY
+        print(f"note: {len(accepted)} current review(s) by a model reviewer the maintainer "
+              "accepted over the same-family rule: the statuses count each as a review, and "
+              "the summary counts them apart from independent reviews: "
+              + "; ".join(f"{e['name']} by {e['by']} ({FAMILY[e['family']]})"
+                          for e in accepted))
     # Violations and obligations, one per line: they are few, and they block acceptance. A
     # definition's review is one obligation, with the claims that need it.
     details = _finding_details(cfg, res["evidence"])
@@ -2098,19 +2139,33 @@ def _review_here(s) -> dict:
     return {"id": s.workspace["id"] if s.path.exists() else None, "mode": s.mode}
 
 
+def _review_reviewer(s) -> dict:
+    """The session's reviewer as `review next` and `status` give it in JSON: the declaration of
+    a model reviewer's family, and whether promotion's same-family rule applies."""
+    from .review_cli import same_family_rule
+    rv = s.reviewer
+    return {"id": rv["id"], "kind": rv["kind"],
+            "same_family_as_author": rv.get("same_family_as_author"),
+            "same_family_rule": "applies" if same_family_rule(rv) else "does not apply"}
+
+
 def _review_next(a, s) -> None:
+    from .review_cli import family_note
     here = _review_here(s)
     u = next(iter(s.open_units(a.order)), None)
     if a.json:
         _print_json({"schema": "machinechecked/review-next@1",
                      "release": s.index["release"], "mode": s.queue.get("mode"),
-                     "workspace": here, "order": a.order,
+                     "workspace": here, "order": a.order, "reviewer": _review_reviewer(s),
                      "unit": u and {k: u.get(k) for k in ("id", "kind", "reason", "priority")}})
         return
     print(f"{u['id']}  ({u['reason']})" if u else "nothing left to review")
     for sig in ((u or {}).get("priority") or {}).get("signals") or []:
         for q in sig.get("questions") or []:
             print(f"  question: {q}")
+    # Once, apart from the unit line that scripts read.
+    if family_note(s.reviewer):
+        print(f"note: {family_note(s.reviewer)}", file=sys.stderr)
 
 
 def _review_status(a, s) -> None:
@@ -2119,7 +2174,8 @@ def _review_status(a, s) -> None:
     if a.json:
         _print_json({"schema": "machinechecked/review-status@1",
                      "release": s.index["release"], "mode": s.queue.get("mode"),
-                     "workspace": here, "reports": len(s.work["reports"]),
+                     "workspace": here, "reviewer": _review_reviewer(s),
+                     "reports": len(s.work["reports"]),
                      "drafts": {i: d["stage"] for i, d in s.work["drafts"].items()},
                      "progress": s.progress(),
                      "order": {"by": a.order, **({"queue": s.queue["order"]}
@@ -2136,6 +2192,9 @@ def _review_status(a, s) -> None:
     if here["id"]:
         print(f"  workspace {here['id']} ({here['mode']}"
               + ("; your readings here are not blind" if s.informed else "") + ")")
+    from .review_cli import family_note
+    if family_note(s.reviewer):
+        print(f"  {family_note(s.reviewer)}")
     for p in s.progress():
         steps = (("locked", "locked_at"), ("Lean shown", "shown_at"), ("verdict", "decided_at"),
                  ("author's review shown", "author_shown_at"))
@@ -2719,6 +2778,11 @@ def cmd_review_promote(a):
                   "nothing is written for it again")
         else:
             print(f"OK       {head}")
+            if pr.family_accepted(r):
+                from .review_cli import FAMILY, family_of
+                print(f"           accepted over the same-family rule: the reviewer is "
+                      f"{FAMILY[family_of(r['reviewer'])]} (self-declared); its record and its "
+                      "`Review by` line say so")
             _promote_places(cfg, r, cur)
             for n, v in sorted((cur.get("left_out") or {}).items()):
                 print(f"           no marker for {n}: separate verdict {v['value']}")

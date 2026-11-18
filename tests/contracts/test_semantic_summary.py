@@ -192,7 +192,8 @@ def test_each_reviewer_and_workspace_is_a_set_of_its_own(summary):
     # The review of a statement: P:a has a current independent review; P:b only an informed one.
     assert (facts["P:a"]["review"], facts["P:b"]["review"]) == ("independent", "informed")
     assert s["papers"]["P"]["review"]["statements"] == {
-        "independent": 1, "author": 0, "informed": 1, "stale": 0, "unchecked": 0, "none": 6}
+        "independent": 1, "same_family": 0, "unknown_family": 0, "author": 0, "informed": 1,
+        "stale": 0, "unchecked": 0, "none": 6}
     assert s["papers"]["P"]["review"]["proof_steps"] == {
         "holds": 0, "gap": 1, "false": 0, "undetermined": 1, "stale": 0, "unreviewed": 0}
 
