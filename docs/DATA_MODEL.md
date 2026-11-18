@@ -97,7 +97,10 @@ on one of them in `verdict.members` (name to `{group, value, detail}`). A report
 reviewer changed their judgement after the author's review keeps the blind `verdict` as it was
 recorded and, beside it, `changed_judgement`: `{reason, verdict, recorded_at}`, with `verdict`
 the revised one (`{group, value, detail}`) or null; `review promote` never promotes it, and in
-zero configuration it is not counted. Its `mode`
+zero configuration it is not counted. A report on a proposition that a clause of its claim
+refutes records `refuted_by`, as the build gave it when the report was submitted: each
+`{claim, clause, theorem, checked, line}`, the clause by its place and `line` the sentence step 3
+shows; it changes nothing promotion checks. Its `mode`
 is `independent` (the three steps, each locked) or `informed` (made in an informed workspace: no
 step is locked, `reading.text` is empty and `reading.locked_at` null when the reviewer recorded
 no reading, and `reading.revealed_by` lists the workspace's exposure); a report without `mode`

@@ -101,6 +101,32 @@ ROUTES = (("accept", "proof"), ("refute", "refutation"), ("witness", "witness"))
 EXPECTS = {"accept": "proved", "refute": "refuted", "undecided": "undecided"}
 
 
+def refutation_of(claim: str, cl: dict, clauses: list[dict]) -> dict:
+    """A clause's refutation as a review shows it after the verdict: the claim, the clause's place
+    (never its name), the theorem the author names as proving the negation of its proposition,
+    whether Lean checks it (`checked`, with the errors when it does not), and what that means
+    for the proposition, in one line (`line`)."""
+    c = (cl.get("checks") or {}).get("refute")
+    ok = c.get("ok") if isinstance(c, dict) else cl.get("refute_ok")
+    pos = clause_position(claim, clauses, cl)
+    out = {"claim": claim, "clause": (pos or {}).get("clause"), "theorem": cl["refute"],
+           "checked": ok is True,
+           **({"errors": list(c.get("errors") or [])} if isinstance(c, dict) and ok is False
+              else {})}
+    # The sentence the author's step shows, written once for the command line and the page.
+    out["line"] = refutation_line(out)
+    return out
+
+
+def refutation_line(r: dict) -> str:
+    """What a refutation (`refutation_of`) means for the proposition just judged, in one line."""
+    if r.get("checked"):
+        return (f"This proposition is refuted by {r['theorem']}: Lean checks that it proves the "
+                "negation, so no proof of the proposition can follow.")
+    return (f"The author names {r['theorem']} as refuting this proposition, and Lean does not "
+            "check it" + (f" ({', '.join(r['errors'])})" if r.get("errors") else "") + ".")
+
+
 def clause_account(claim: str, cl: dict, clauses: list[dict]) -> list[str]:
     """The author's account of a clause of `claim` (`clauses` are the claim's), for the author's
     step of a review: its place and the author's name for it, the state the assessment gave it,
@@ -314,6 +340,11 @@ def assurance_queue(index: dict, chunks: dict, store: dict, authors: list[str]) 
                 # Authored, like the author's review: shown only after the verdict.
                 u.setdefault("refutation_scope", []).append(
                     {"claim": c["id"], "lines": scope})
+            if cl.get("refute"):
+                # A theorem the author names as proving the proposition's negation: what the
+                # verdict means for the claim, shown only after it (#685).
+                u.setdefault("refuted_by", []).append(refutation_of(c["id"], cl,
+                                                                    ch.get("clauses", [])))
             # The clause's name, its proofs and its state: the outcome the author gives the
             # proposition, shown only after the verdict.
             u.setdefault("account", []).append(

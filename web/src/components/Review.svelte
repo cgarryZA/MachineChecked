@@ -715,6 +715,10 @@
                 <p class="lbl">Scope of the refutation of {s.claim}, as its author records it</p>
                 <pre class="author">{s.lines.join("\n")}</pre>
               {/each}
+              {#each current.refuted_by || [] as r}
+                <!-- What the verdict just recorded means for the claim (#685). -->
+                <p class="refuted-line" data-checked={r.checked}>{r.line}</p>
+              {/each}
             {/if}
             <label for="author-response">Response to the author’s review</label>
             <textarea id="author-response" rows="3" bind:value={draft.disagreements} oninput={persist} placeholder="Where you disagree with the author's review, or where it claims more than the Lean shows (or “none”). Your verdict stays as recorded."></textarea>
@@ -788,6 +792,7 @@
   .checklist { list-style: none; padding: 0; margin: 6px 0; }
   .difficult { margin: 4px 0 8px; }
   .changed-toggle { display: block; margin: 8px 0 4px; }
+  .refuted-line { border-left: 3px solid var(--tier-warning); padding: 2px 0 2px 10px; margin: 8px 0; }
   .changed { border-left: 3px solid var(--tier-warning); padding: 2px 0 2px 10px; margin: 4px 0 8px; }
   .difficult ul { margin: 6px 0; padding-left: 18px; }
   .difficult li { margin: 4px 0; }
