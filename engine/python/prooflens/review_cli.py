@@ -72,6 +72,34 @@ CORRECTION_ONLY = {"faithful to the correction"}
 # A proof step is reviewed as printed: does it hold? (`steps.VERDICTS`)
 from .steps import VERDICTS as STEP_VERDICTS
 
+# What the detail of a verdict says, as the review page asks for it (`needsDetail` in
+# `web/src/lib/review.js`; tests/fixtures/review/verdict-details.json holds both to it). A verdict
+# not listed needs no detail. The comparison says how the Lean compares with the paper; the
+# detail is what the verdict itself needs said.
+DETAIL = {
+    "faithful with representation choices":
+        "List the representation choices, and say why each is harmless.",
+    "broader": "State the instantiation that gives the printed claim.",
+    "narrower": "Say exactly how: which hypothesis is added, which case is lost.",
+    "mismatched": "Say what it states instead.",
+    "vacuous": "Say why the hypotheses cannot be met, or why the witness does not meet them.",
+    "refutation not valid": "Say how the refuted proposition is stronger than the printed claim.",
+    "cannot determine": "State the open question, and what would decide it.",
+}
+STEP_DETAIL = {
+    "holds, with a gap in the argument": "Give the argument the printed proof leaves out.",
+    "false as printed":
+        "Give the counterexample or the failing case, and what would repair the step.",
+    "cannot determine": "Say what would decide it.",
+}
+
+
+def detail_asked(u: dict, verdict) -> str | None:
+    """What the detail of `verdict` says for unit `u` (a proof step's verdicts are its own), or
+    None when that verdict needs no detail."""
+    return (STEP_DETAIL if u.get("kind") == "step" else DETAIL).get(verdict)
+
+
 # The coverage a verdict can be recorded with (the links file's words, `simple.COVERAGE`), as on
 # the review page: a match states every clause or part of the claim; a problem states part of
 # it, states it differently or is a related result; a reviewer who cannot determine it leaves it
@@ -715,8 +743,10 @@ class Session:
         if verdict in CORRECTION_ONLY and not u.get("correction"):
             raise ReviewError(f"{verdict!r} applies only to a correction or a special case of a "
                               "printed clause", "invalid")
-        if verdict not in ("faithful", "holds as printed", *CORRECTION_ONLY)                 and not (detail or "").strip():
-            raise ReviewError(f"verdict {verdict!r} needs --detail", "invalid")
+        asked = detail_asked(u, verdict)
+        if asked and not (detail or "").strip():
+            raise ReviewError(f"verdict {verdict!r} needs --detail: {asked[0].lower()}{asked[1:]}",
+                              "invalid")
         if not (comparison or "").strip():
             raise ReviewError("the comparison is empty", "invalid")
         was = self._fp(shown) if isinstance(shown, dict) else shown or d.get("shown_fingerprint")

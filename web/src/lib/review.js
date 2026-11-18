@@ -360,9 +360,12 @@ export function reviewerId(r) {
   return `human:${slug(r.name)}`;
 }
 
-export function needsDetail(verdict) {
-  return [...Object.values(VERDICTS).flat(), ...Object.values(STEP_VERDICTS).flat()]
-    .find((v) => v.value === verdict)?.detail || null;
+// What the detail of `verdict` says, or null when it needs none, for a unit of kind `kind`: a
+// proof step's verdicts are its own (`review_cli.detail_asked`;
+// tests/fixtures/review/verdict-details.json holds both to it).
+export function needsDetail(verdict, kind = null) {
+  const tables = kind === "step" ? [STEP_VERDICTS, VERDICTS] : [VERDICTS, STEP_VERDICTS];
+  return tables.flatMap((t) => Object.values(t).flat()).find((v) => v.value === verdict)?.detail || null;
 }
 
 // The kind of issue each verdict's draft is: a note explaining an accepted difference, a defect

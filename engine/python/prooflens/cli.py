@@ -2186,23 +2186,46 @@ def _positional(a, *names: str) -> None:
                           "invalid")
 
 
+def _review_file(v: str | None) -> str:
+    """A text a review step is given (`_text_arg`): one that cannot be read refuses the step as
+    `invalid`, as it refuses a manifest's entry."""
+    from .review_cli import ReviewError
+    try:
+        return _text_arg(v)
+    except (OSError, UnicodeDecodeError) as e:
+        raise ReviewError(str(e), "invalid") from None
+
+
+def _review_one(a, s, action: str, f: dict) -> None:
+    """`review lock|decide|submit UNIT ...`: the step, as a manifest entry with the fields `f`
+    takes it (`_manifest_step`), and what it says; with --json, one document holding what that
+    entry's result holds, with the workspace."""
+    said, extra = _manifest_step(action, s, a.unit, f)
+    if not getattr(a, "json", False):
+        return print(said)
+    _print_json({"schema": "machinechecked/review-step@1", "action": action, "ok": True,
+                 "unit": a.unit, "message": said, **extra, "workspace": _review_here(s)})
+
+
 def _review_lock(a, s) -> None:
     _positional(a, "unit", "text")
-    print(_lock(s, a.unit, _text_arg(a.text))[0])
+    _review_one(a, s, "lock", {"reading": _review_file(a.text)})
 
 
 def _review_decide(a, s) -> None:
     _positional(a, "unit", "verdict", "comparison")
-    print(_decide(s, a.unit, a.verdict, _text_arg(a.comparison), _text_arg(a.detail),
-                  _text_arg(a.witness), a.coverage, a.basis, _text_arg(a.argument), a.bridge,
-                  _text_arg(a.would_decide),
-                  {name: {"verdict": v, "detail": _text_arg(f)}
-                   for name, v, f in getattr(a, "member", None) or []} or None))
+    _review_one(a, s, "decide", {
+        "verdict": a.verdict, "comparison": _review_file(a.comparison),
+        "detail": _review_file(a.detail), "witness": _review_file(a.witness),
+        "coverage": a.coverage, "basis": a.basis, "argument": _review_file(a.argument),
+        "bridge": a.bridge, "would_decide": _review_file(a.would_decide),
+        "members": {name: {"verdict": v, "detail": _review_file(f)}
+                    for name, v, f in getattr(a, "member", None) or []} or None})
 
 
 def _review_submit(a, s) -> None:
     _positional(a, "unit", "text")
-    print(_submit(s, a.unit, _text_arg(a.text))[0])
+    _review_one(a, s, "submit", {"disagreements": _review_file(a.text)})
 
 
 # The fields of a manifest entry for each step (`review lock|decide|submit --manifest`), besides
@@ -2217,6 +2240,9 @@ MANIFEST_FIELDS = {
 }
 MANIFEST_REQUIRED = {"lock": ("reading",), "decide": ("verdict", "comparison"),
                      "submit": ("disagreements",)}
+# The options only `review decide` takes (`_decide_options`), as `argparse` names them.
+DECIDE_OPTIONS = ("detail", "witness", "coverage", "basis", "argument", "bridge", "would_decide",
+                  "member")
 
 
 def _manifest_entry(action: str, e, base: Path) -> tuple[str, dict]:
@@ -2258,18 +2284,27 @@ def _manifest_entry(action: str, e, base: Path) -> tuple[str, dict]:
 
 
 def _manifest_step(action: str, s, uid: str, f: dict) -> tuple[str, dict]:
-    """One manifest entry's step, through the same `Session` method as the single command:
-    what it says, and what the result adds to the entry's JSON."""
+    """One step of a manifest's entry or of the single command, through the same `Session`
+    method: what it says, and what its JSON result holds besides: the unit's step now (`compare`
+    after a lock, `author` after a verdict, `submitted` after the report) and what the step
+    recorded, with its time."""
     if action == "lock":
         said, seen = _lock(s, uid, f["reading"])
-        return said, {"revealed_by": seen}
+        d = s.work["drafts"][uid]
+        return said, {"step": d["stage"], "locked_at": d["locked_at"], "revealed_by": seen}
     if action == "decide":
-        return _decide(s, uid, f["verdict"], f["comparison"], f.get("detail", ""),
+        said = _decide(s, uid, f["verdict"], f["comparison"], f.get("detail", ""),
                        f.get("witness", ""), f.get("coverage"), f.get("basis"),
                        f.get("argument", ""), f.get("bridge"), f.get("would_decide", ""),
-                       f.get("members")), {}
+                       f.get("members"))
+        d = s.work["drafts"][uid]
+        return said, {"step": d["stage"], "verdict": d["verdict"], "group": d["group"],
+                      "decided_at": d["decided_at"], "correspondence": d["correspondence"],
+                      **({"members": d["members"]} if d.get("members") else {})}
     said, r = _submit(s, uid, f["disagreements"])
-    return said, {"verdict": r["verdict"]["value"]}
+    return said, {"step": "submitted", "verdict": r["verdict"]["value"],
+                  "group": r["verdict"]["group"], "submitted_at": r["submitted_at"],
+                  "revealed_by": r["reading"]["revealed_by"]}
 
 
 def _review_manifest(a, session) -> None:
@@ -2278,10 +2313,11 @@ def _review_manifest(a, session) -> None:
     refusals. A refused entry is reported and the others are still taken; the command then
     exits 2."""
     from . import review_cli as rc
-    if any(getattr(a, n, None) is not None for n in ("unit", "text", "verdict", "comparison")):
+    if any(getattr(a, n, None) is not None for n in ("unit", "text", "verdict", "comparison",
+                                                       *DECIDE_OPTIONS)):
         raise rc.ReviewError("give --manifest or the step's arguments, not both", "invalid")
     try:
-        entries = json.loads(_text_arg(a.manifest))
+        entries = json.loads(_review_file(a.manifest))
     except json.JSONDecodeError as e:
         raise rc.ReviewError(f"the manifest is not JSON: {e}", "invalid") from None
     if not isinstance(entries, list):
@@ -2744,6 +2780,91 @@ def _add_check(sub) -> None:
     k.set_defaults(func=cmd_check)
 
 
+# `review decide --help` ends with the protocol's verdicts (`_verdict_help`), written only when the
+# help is shown, so that building the parser imports no review module.
+VERDICT_HELP = "\x00verdicts"
+
+
+class _VerdictHelp(argparse.HelpFormatter):
+    def _fill_text(self, text, width, indent):
+        if text == VERDICT_HELP:
+            return _verdict_help(min(width, 98))
+        return super()._fill_text(text, width, indent)
+
+
+_DECIDE_HELP = {
+    "description": "Step 2, after `review show`: record your verdict on the unit and your "
+                   "comparison of its Lean with the paper, with the coverage and its basis if you "
+                   "give them. The author's review is shown only after this (`review author`).",
+    "epilog": VERDICT_HELP, "formatter_class": _VerdictHelp}
+
+
+def _verdict_help(width: int = 98) -> str:
+    """The verdicts `review decide` takes, for a statement or a definition and for a proof step,
+    by group, each with what its detail says (`review_cli.detail_asked`, as the review page asks
+    it) and the coverage its group agrees with (`review_cli.COVERAGE_FOR`), in lines of at most
+    `width` characters."""
+    import textwrap
+    from . import review_cli as rc
+
+    def either(words) -> str:
+        return " or ".join([", ".join(words[:-1]), words[-1]] if len(words) > 1 else words)
+
+    kinds = (("spec", rc.VERDICTS, "a statement or a definition",
+              {"matches": "matches the paper", "problem": "there's a problem",
+               "cannot": "cannot determine"}),
+             ("step", rc.STEP_VERDICTS,
+              "a proof step (a unit step:...), whose review records no coverage",
+              {"holds": "the step holds", "problem": "it fails as printed",
+               "cannot": "cannot determine"}))
+    col = max(len(v) for _, t, _, _ in kinds for vs in t.values() for v in vs) + 2
+    out = ["VERDICT, and what --detail says with it (the review page asks the same):"]
+    for kind, table, what, groups in kinds:
+        out += ["", f"For {what}:"]
+        for g, verdicts in table.items():
+            cov = rc.COVERAGE_FOR.get(g) if kind != "step" else None
+            out.append(f"  {groups[g]}" + (f" (--coverage {either(cov)})" if cov else ""))
+            for v in verdicts:
+                said = rc.detail_asked({"kind": kind}, v) or "Needs no detail."
+                if v in rc.REFUTE_ONLY:
+                    said = "Only for a unit with a refutation. " + said
+                if v in rc.CORRECTION_ONLY:
+                    said = "Only for a correction or a special case of a printed clause. " + said
+                out += textwrap.wrap(said, width, initial_indent=f"    {v:<{col}}",
+                                     subsequent_indent=" " * (col + 4))
+    out += ["", *textwrap.wrap(
+        "COMPARISON says how the Lean compares with the paper; --detail says what the verdict "
+        "itself needs. --member takes a statement's verdict other than "
+        + either(sorted(rc.REFUTE_ONLY | rc.CORRECTION_ONLY))
+        + ", with its detail unless it is faithful. See \"What a verdict means\" in "
+        "docs/REVIEWING.md.", width)]
+    return "\n".join(out)
+
+
+def _decide_options(sp) -> None:
+    """The options of `review decide` (`DECIDE_OPTIONS`): what the verdict needs said, and the
+    coverage, its basis and a structure's separate verdicts, all recorded with it."""
+    sp.add_argument("--detail", help="a file holding what the verdict needs said, or - (every "
+                    "verdict needs one but faithful, faithful to the correction and holds as "
+                    "printed: see below)")
+    sp.add_argument("--witness", help="a file holding your note on the witness")
+    sp.add_argument("--coverage", help="how far the unit's Lean states the claim, agreeing with "
+                    "the verdict: full or partial (a match); partial, changed or related (a "
+                    "problem); unresolved (cannot determine)")
+    sp.add_argument("--basis", help="how that coverage is supported: direct (one Lean "
+                    "statement), reviewed_composition (your argument) or checked_bridge")
+    sp.add_argument("--argument", help="a file holding a reviewed composition's argument")
+    sp.add_argument("--bridge", nargs=2, metavar=("THEOREM", "TARGET"),
+                    help="a checked bridge: one of the unit's theorems, whose type is exactly "
+                         "TARGET")
+    sp.add_argument("--would-decide", help="a file holding what would decide an unresolved "
+                    "coverage")
+    sp.add_argument("--member", nargs=3, action="append", metavar=("NAME", "VERDICT", "DETAIL"),
+                    help="for a structure's unit: a separate verdict on one of the constructor "
+                         "or projections it covers, with a file holding its detail, or -; the "
+                         "unit's verdict holds for the rest")
+
+
 def _add_review(sub) -> None:
     from .review_snapshot import REVIEW_DIR
     rv = _command(sub, "review")
@@ -2779,7 +2900,7 @@ def _add_review(sub) -> None:
                                   "project's output directory)")
     rp.set_defaults(func=cmd_review_reports)
     for name, (_, help_) in REVIEW_STEPS.items():
-        sp = rvs.add_parser(name, help=help_)
+        sp = rvs.add_parser(name, help=help_, **(_DECIDE_HELP if name == "decide" else {}))
         many = name in MANIFEST_FIELDS
         if name not in ("next", "status", "export"):
             sp.add_argument("unit", **({"nargs": "?"} if many else {}),
@@ -2788,7 +2909,8 @@ def _add_review(sub) -> None:
             sp.add_argument("text", nargs="?",
                             help="a file holding your text, or - to read it from standard input")
         if name == "decide":
-            sp.add_argument("verdict", nargs="?")
+            sp.add_argument("verdict", nargs="?",
+                            help="one of the verdicts listed below for the unit's kind")
             sp.add_argument("comparison", nargs="?", help="a file holding your comparison, or -")
         if many:
             sp.add_argument("--manifest", metavar="FILE",
@@ -2797,26 +2919,10 @@ def _add_review(sub) -> None:
                                  "fields, each text inline or as NAME_file (see REVIEWING.md); "
                                  "UNIT and the texts are then not given")
             sp.add_argument("--json", action="store_true",
-                            help="with --manifest: print every entry's result as one JSON "
-                                 "document")
-            sp.add_argument("--detail", help="a file holding what the verdict needs said")
-            sp.add_argument("--witness", help="a file holding your note on the witness")
-            sp.add_argument("--coverage", help="how far the unit's Lean states the claim, agreeing "
-                            "with the verdict: full or partial (a match); partial, changed or "
-                            "related (a problem); unresolved (cannot determine)")
-            sp.add_argument("--basis", help="how that coverage is supported: direct (one Lean "
-                            "statement), reviewed_composition (your argument) or checked_bridge")
-            sp.add_argument("--argument", help="a file holding a reviewed composition's argument")
-            sp.add_argument("--bridge", nargs=2, metavar=("THEOREM", "TARGET"),
-                            help="a checked bridge: one of the unit's theorems, whose type is "
-                                 "exactly TARGET")
-            sp.add_argument("--would-decide", help="a file holding what would decide an "
-                            "unresolved coverage")
-            sp.add_argument("--member", nargs=3, action="append",
-                            metavar=("NAME", "VERDICT", "DETAIL"),
-                            help="for a structure's unit: a separate verdict on one of the "
-                                 "constructor or projections it covers, with a file holding its "
-                                 "detail, or -; the unit's verdict holds for the rest")
+                            help="print the result as one JSON document (with --manifest, every "
+                                 "entry's result); a refusal too")
+        if name == "decide":
+            _decide_options(sp)
         if name == "export":
             sp.add_argument("--out", required=True)
         if name in ("next", "status", "read", "show", "author"):
