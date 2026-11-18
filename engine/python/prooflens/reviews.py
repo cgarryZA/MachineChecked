@@ -92,6 +92,11 @@ def parse_file(path: Path, ai_patterns: list[str], rel_to: Path) -> list[Review]
             body = ANY.sub("", PROMOTED.sub("", txt[start:any_.start()])).strip()
             body = re.sub(r"\A#{1,6} [^\n]*(?:\n|\Z)", "", body).strip()
             block = body
+            own = own_promoted_line(since, attrs.get("by"))
+            if own:
+                # Its `Review by` line is its record, whatever comes before that line: a title,
+                # or an author's section left without a marker, which stays that section's text.
+                body = own
         seen = True
         if not live:
             prev = any_.end()
@@ -107,6 +112,16 @@ def parse_file(path: Path, ai_patterns: list[str], rel_to: Path) -> list[Review]
             verdict=attrs.get("verdict") if m.group(1) == "step" else None))
         prev = any_.end()
     return out
+
+
+def own_promoted_line(since: str, by: str | None) -> str | None:
+    """The `Review by` line `review promote` wrote for a marker of reviewer `by`, when it is the
+    last line of `since` (the text before the marker): the reviewer it names is `by`."""
+    found = list(PROMOTED.finditer(since))
+    if not found or since[found[-1].end():].strip():
+        return None
+    line = found[-1].group().strip()
+    return line if by and line.startswith(f"Review by {by}: ") else None
 
 
 def review_files(entries: list[Path]) -> list[Path]:
