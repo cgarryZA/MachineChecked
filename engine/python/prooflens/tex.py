@@ -21,7 +21,7 @@ from importlib import resources
 from pathlib import Path
 
 from .sources import Snapshot
-from .util import norm_ws, sha256_file, sha256_text
+from .util import norm_ws, sha256_file, sha256_text, strip_comments
 
 SP_PER_BP = 65781.76  # scaled points per PostScript point (PDF user unit)
 DEFAULT_ENVS = ["theorem", "lemma", "proposition", "corollary", "definition", "assumption",
@@ -332,7 +332,9 @@ def parse_plx(text: str, cwd: Path, snap_dir: Path) -> tuple[list[Anchor], tuple
         st = statement_at(f, a.line, a.env)
         a.title = env_title(f, a.line, a.env)
         if st is not None:
-            a.statement = norm_ws(st)
+            # The text shown is read without its comments; the pin is of the source as it is,
+            # so that it stays the digest earlier builds recorded.
+            a.statement = norm_ws(strip_comments(st))
             a.source_sha256 = sha256_text(norm_ws(st))
         try:
             a.file = str(f.resolve().relative_to(snap_dir.resolve()))

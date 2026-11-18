@@ -244,7 +244,9 @@ that identity followed by `.name`: it names the name alone, apart from the binde
 variable's occurrences. A term also lists its sub-terms as `terms`, ranges `{from, to}` of its
 segments (outer before inner; none for a very large term), so that a reader can select a whole
 sub-term; an application printed with notation (`x = y`, `∃ x, p`, `↑n`) has the application's
-identity. Each identity names one sub-term of the printed expression.
+identity. Each identity names one sub-term of the printed expression. A term is printed in full,
+however deep or long; only a proof inside it is printed as `⋯`, since which proof it is changes
+nothing the term says.
 
 Lean prints an application without its instance arguments, which a reader takes to be those
 instance resolution finds where the application stands. In the statement of a specification or a
@@ -1015,13 +1017,20 @@ optional `clause` and `note`, `rev`, `created_at`/`created_by`, `updated_at`/`up
 - **`requirement`**: one thing the claim demands, as the auditor reads it. `local_id` (unique
   under the claim, e.g. `r1.2`), `form` (`statement`, `object`, `assumption`, `conclusion`,
   `condition`, `for every`, `there is`, `and`, `or`, `not`, `implies`, `constant dependence`,
-  `definition`, `other`), `text`, optional `parent` (the requirement it sits inside: its scope),
+  `definition`, `other`, `reading choice`), `text`, optional `parent` (the requirement it sits inside: its scope),
   `binds` (the variables a `for every`, `there is` or `constant dependence` introduces),
   `domain` (the values its variables range over, in words: `ε > 0`), `independent_of`
   (variables a constant or witness may not depend on: it is chosen before them), `depends_on`
   (variables a constant may depend on: it is chosen after them) and `origin`: `printed`,
   or `correction` with `corrects` naming the printed requirement, which stays as printed. A
-  finding or a question may name a requirement in `requirement`.
+  finding or a question may name a requirement in `requirement`. A `reading choice`, on a
+  definition's claim, is the reading the auditor chooses for a definition the paper leaves open
+  (`reading_choice.py`): `readings` (two or more `{id, text}`), `chosen` (one of their ids),
+  `reason`, and optional `equivalence` (`{theorem, readings: [id, id]}`, the Lean declaration
+  stating that two readings agree). A requirement or a finding that depends on a choice cites it
+  in `reading_choices` (`[{claim, choice}]`, the definition's claim and the choice's local id); a
+  finding then rests on it (dependency `reading choice`, a digest of the readings and the one
+  chosen).
 - **`counterexample`**: an auditor's counterexample to one reading of a requirement
   (`estimates.py`). `requirement`, optional `reading` (the corrections it is read with),
   `specialisation` (`assign`: a value, number or expression, for each variable; `zero`,
