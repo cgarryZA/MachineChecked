@@ -226,6 +226,13 @@ prints one JSON document (`machinechecked/compare@1`) for one claim, read from t
   witness it (`accept`, `refute`, `witness`, `proofs`, with their checks in `lean`), and the
   corrected clause and kind by the author's names (`corrects`, `restricts`, `kind`); the read
   and compare stages leave these out and list `outcome` in `retrieval.withheld`.
+  From the compare stage a locked statement also has `totalised`, when Lean totalises an
+  operation in it: one entry per totalisation warning of the assessment, with `operation`,
+  `message` (what Lean gives the operation outside its domain), and, for an application read
+  one by one, its `type`, `at` and `subterms` (the sub-term at each position, with the binder
+  or hypothesis around it). Every warning is listed, dismissed or not; a dismissal, the
+  conditions the engine finds supplied and the warning's state are in the claim's findings,
+  shown at the informed stage.
   `lean.candidates` are suggestions
   nobody has confirmed, with their reasons. `lean.definitions` are the definitions the
   statements use, with their type and value and what each says (`defined_by`: its `params`,

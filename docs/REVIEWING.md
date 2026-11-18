@@ -46,7 +46,12 @@ last `machinechecked view` or `machinechecked build`, one unit per linked claim
 (`link:<claim key>`). Each step refuses to run before the one it follows and is timestamped; the
 reports are in the form the reader exports, and `review promote` checks them the same way. Steps 1
 and 2 show nothing of the outcome the author gives a locked statement (above); step 3 gives the
-author's account of it. For a
+author's account of it. Step 2 lists, under a locked statement, each operation Lean totalises in
+it (a division, an inverse, a Bochner integral, a supremum, a root), with the sub-term where it
+is applied and what Lean gives it outside its domain, so that the comparison can settle whether
+the hypotheses exclude that case; the list is read from the Lean alone. Whether the engine finds
+the hypotheses supply the operation's conditions, and any dismissal of the warning, come at
+step 3. For a
 refuted proposition, step 3 also shows the author's account of the refutation's scope: the
 readings its counterexample is declared to cover and not to cover, and the class lemmas for the
 paper's standing assumptions, each with its theorem's statement. The
