@@ -505,3 +505,52 @@ def test_a_bridge_check_is_reused_until_its_module_changes(cover, monkeypatch):
     asked.clear()
     _, claims = view(cover)
     assert asked == [] and claims["thm:three"]["correspondence"]["bridge"] == checked
+
+
+@needs_lean
+@needs_tex
+def test_a_report_whose_judgement_changed_is_not_counted(cover, tmp_path, monkeypatch, capsys):
+    """#665: a report in `machinechecked-reviews/` whose reviewer changed their judgement after
+    the author's review adds no coverage and no reviewer's reading: the claim reads as it would
+    without the report, its passport lists the report as not counted, with both judgements, and
+    `check --json` lists it apart."""
+    from prooflens import cli, semantic
+    from prooflens.manifest import claim_file
+    write_links(cover, readings())
+    v, before = view(cover)
+    write_view_site(v, cover / ".machinechecked" / "site", None, cover)
+    monkeypatch.chdir(cover)
+    reason = "The author's account shows the sum is meant for natural numbers only."
+    files = {n: tmp_path / f"{n}.md" for n in ("reading", "comparison", "none", "reason")}
+    files["reading"].write_text("The sum of two even natural numbers is even, for any two.")
+    files["comparison"].write_text("The theorem states the sum rule for natural numbers.")
+    files["none"].write_text("none")
+    files["reason"].write_text(reason)
+    two = "link:thm:two"
+    for args in (("read", two), ("lock", two, str(files["reading"])), ("show", two),
+                 ("decide", two, "faithful", str(files["comparison"]), "--coverage", "full",
+                  "--basis", "direct"), ("author", two),
+                 ("submit", two, str(files["none"]), "--judgement-changed",
+                  str(files["reason"]))):
+        cli.main(["review", *args, "--as", "human:Test-Referee"])
+    (cover / "machinechecked-reviews").mkdir()
+    cli.main(["review", "export", "--out", str(cover / "machinechecked-reviews" / "r.json"),
+              "--as", "human:Test-Referee"])
+    capsys.readouterr()
+    after, claims = view(cover)
+    c = claims["thm:two"]
+    assert c["reviews"] == [] and statuses(claims) == statuses(before)
+    (u,) = c["uncounted_reviews"]
+    assert (u["verdict"]["value"], u["changed_judgement"]["reason"],
+            u["changed_judgement"]["verdict"]) == ("faithful", reason, None)
+    # The claim reads as it would without the report: the same coverage and readings.
+    (s_after, f_after), (s_before, f_before) = (semantic.of_view(x["body"]) for x in (after, v))
+    assert s_after["papers"] == s_before["papers"] and s_after["sets"] == s_before["sets"]
+    assert f_after[c["id"]] == f_before[c["id"]]
+    write_view_site(after, tmp_path / "site", None, cover)
+    shown = json.loads((tmp_path / "site/data/claims" / claim_file(c["id"])).read_text())
+    assert shown["reviews"] == [] and shown["uncounted_reviews"] == [u]
+    r = subprocess.run([sys.executable, "-m", "prooflens.cli", "check", "--json"], cwd=cover,
+                       capture_output=True, text=True)
+    (listed,) = [x for x in json.loads(r.stdout)["claims"] if x["id"] == c["id"]]
+    assert listed["reviews"] == [] and listed["reviews_not_counted"] == [u]

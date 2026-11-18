@@ -47,8 +47,10 @@ and its dependencies do not declare (`kind` `module-doc-name`, with `file`, `lin
 `message`; the message says when a short name reaches only a module or a namespace), and
 references to the paper's numbers that disagree with the paper read here
 (`kind` `paper-reference`, with `file`, `line`, `reference`, `status`, `id` and `message`;
-each reference has its own `id`, a second copy of the same text in one place included);
-they do not change the exit code. `numbering` holds every such reference
+each reference has its own `id`, a second copy of the same text in one place included), and a
+PDF in which no numbered statement heading was recognised (`kind` `pdf-no-statements`, with
+`message`; `notes` says the same, and `claims` is empty because nothing was found, not because
+the paper has nothing to check); they do not change the exit code. `numbering` holds every such reference
 (`numbering.references`: `reference`, its exact `text` and `context`, its `source` with
 declaration, module, file, line and `where` it is (`docstring`, `name`, `module docstring` or
 `comment`; a comment's declaration is null when it is on none), its `role` (`statement` or
@@ -532,6 +534,13 @@ machinechecked review export --out machinechecked-reviews/my-reviews.json
 printed`; `review decide --help` lists each verdict with what its detail says, as the review page
 asks it.
 
+`review read UNIT --context --json` gives each passage with the paper around it, as
+`surroundings`: its sections, the paragraphs before and after it, its labels' printed numbers,
+the statements it cites (with their passages), for a proof step the statement whose proof it
+belongs to, and the statements that cite it or use a term it defines (`cited_by`, each with
+`why`). It is read from the build's copy of the paper's source and is context, not the pinned
+passage: the reading records only the passages ([REVIEWING.md](REVIEWING.md)).
+
 **Difficult cases.** Where a verdict is easy to get wrong, the review guide works an example
 through ([Difficult cases](REVIEWING.md#difficult-cases)); the review page lists the same at
 step 2, and `review decide --help` names them. They are optional, and add no field: put what
@@ -566,6 +575,13 @@ the report's `revealed_by` after the report. For many units, the same steps take
 applied entry by entry with the same refusals, and answered with one document listing each
 entry's result, with the same fields (*Many units at once* in [REVIEWING.md](REVIEWING.md)). Each
 unit still needs its own `read` before the lock and `author` before the report.
+
+If the author's account changes your judgement, `submit` records it beside your blind verdict,
+which stays as recorded: `--judgement-changed why.md`, and `--revised-verdict VERDICT` with
+`--revised-detail detail.md` if you would now give another verdict (`judgement_changed`,
+`revised_verdict`, `revised_detail` in a manifest). The result's `changed_judgement` holds it.
+`review promote` never promotes such a report, and a published audit does not count it: for a
+review that counts, take a fresh independent review, or an informed one (`--mode informed`).
 
 Run `compare` on a claim only after its review, or say in the reading that you had: its default
 stage shows the Lean and what others recorded. The steps are saved in your workspace
