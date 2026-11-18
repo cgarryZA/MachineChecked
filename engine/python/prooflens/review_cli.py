@@ -420,7 +420,8 @@ class Session:
 
     def __init__(self, target: Config | Path, reviewer: dict, workspace: str | None = None,
                  mode: str | None = None, data_dir: Path | None = None,
-                 root: Path | None = None, evidence: dict | None = None):
+                 root: Path | None = None, evidence: dict | None = None,
+                 ledger: Path | None = None, ledger_base: Path | None = None):
         work = Path(getattr(target, "out_dir", target))
         self.work_dir = work
         # The Lean project: what Lean read of it before tells whether a workspace's records are
@@ -428,6 +429,10 @@ class Session:
         self.root = Path(root) if root else None
         self.order_record: dict | None = None
         self.evidence = evidence
+        # The project's readings ledger, which step 3 reads (`ledger_accounts`): a full
+        # assessment's configuration names it.
+        self.ledger = ledger or getattr(target, "readings_ledger", None)
+        self.ledger_base = ledger_base or getattr(target, "root", None)
         self.data = Path(data_dir) if data_dir else work / "site" / "data"
         if not (self.data / "review-queue.json").exists():
             raise ReviewError(NO_BUILD, "no-build")
@@ -725,7 +730,8 @@ class Session:
             raise ReviewError(f"{u['id']}: the reading is already locked", "order")
         return d
 
-    def read(self, uid: str, as_json: bool = False, context: bool = False) -> str | dict:
+    def read(self, uid: str, as_json: bool = False, context: bool = False,
+             full: bool = False) -> str | dict:
         """Step 1: the unit's passages; with `context`, each with the paper around it
         (`with_context`)."""
         u = self.unit(uid)
@@ -743,7 +749,7 @@ class Session:
             return {**pk, "review": {"step": "read", "mode": self.mode, "seen_before": seen,
                                      "reveals": reveals}}
         lean = step_lean_text(pk.get("unit") or {})
-        return cmp.packet_text(pk) + (f"\n\n{lean}" if lean else "") + warn
+        return cmp.packet_text(pk, full) + (f"\n\n{lean}" if lean else "") + warn
 
     def with_context(self, pk: dict) -> dict:
         """The read step's packet `pk` with, on each passage, the paper around it
@@ -1091,16 +1097,24 @@ class Session:
         earlier steps withhold), after the verdict in independent review."""
         u = self.unit(uid)
         d = self._started(u) if self.informed else self.draft(u, "author")
-        if "author_shown_at" not in d:
-            d["author_shown_at"] = now()
+        ledger = self.ledger_accounts(u)
+        # What the report records of the ledger's accounts shown: each row's source and digest.
+        shown = [{k: r[k] for k in ("source", "sha256")} for r in (ledger or {}).get("rows") or []]
+        if "author_shown_at" not in d or (shown and d.get("author_accounts") != shown):
+            d.setdefault("author_shown_at", now())
+            if shown:
+                d["author_accounts"] = shown
             self._save(uid)
         if as_json:
             pk = self.packet(u, "informed")
-            # In the text's order: the reading choices before what the verdict means (#685).
+            # In the text's order: the reading choices and the ledger's accounts before what the
+            # verdict means (#685).
             interp, choices = pk.get("interpretations") or {}, self.reading_choices(u)
             at = list(interp).index("refuted_by") if "refuted_by" in interp else len(interp)
             items = list(interp.items())
-            pk["interpretations"] = dict(items[:at] + [("reading_choices", choices)] + items[at:])
+            extra = [("reading_choices", choices)] + ([("ledger", ledger)] if ledger is not None
+                                                      else [])
+            pk["interpretations"] = dict(items[:at] + extra + items[at:])
             return {**pk, "review": {"step": "author", "shown_at": d["author_shown_at"]}}
         revs = u.get("author_review") or []
         out = [f"{r.get('by')} · {r.get('file')}:{r.get('line')}\n"
@@ -1113,6 +1127,9 @@ class Session:
                            + (f" by {note['by']}" if note.get("by") else "") + f"\n{text}")
         out = out or ["No review by the author is recorded for this unit."]
         out += self._account(u) + self._refutation_scope(u)
+        # The author's account in the readings ledger (#627).
+        if ledger is not None:
+            out.append(ledger_text(ledger))
         # The auditors' reading choices (#597), before what the verdict means for the claim.
         out += [choice_text(c) for c in self.reading_choices(u)]
         # What the verdict just recorded means for the claim (#685), last.
@@ -1121,6 +1138,38 @@ class Session:
             out += [proposal_text(p) for p in [self.site.proposal(c["id"])
                                                for c in u.get("claims") or []] if p]
         return "\n\n".join(out)
+
+    def ledger_accounts(self, u: dict) -> dict | None:
+        """The rows of the project's readings ledger (`ledger.py`) that name one of `u`'s
+        declarations exactly (`declarations`), each with its source (`file#id`) and the digest
+        of the row as written (`sha256`), for step 3; `rows` is empty when none does, and
+        `error` says why the ledger could not be read. None when the project keeps no ledger,
+        or the review has no configuration (a snapshot). Nothing is matched by namespace,
+        title or text."""
+        if self.ledger is None:
+            return None
+        from .ledger import load
+        from .util import sha256_text
+        path = Path(self.ledger)
+        try:
+            rel = path.relative_to(self.ledger_base).as_posix() if self.ledger_base else path.name
+        except ValueError:
+            rel = path.name
+        names = set(u.get("lean") or []) | ({u["name"]} if u.get("kind") != "step" else set())
+        rows, why = load(path)
+        out = {"file": rel, "declarations": sorted(names), "rows": []}
+        if why:
+            return {**out, "error": why}
+        for i, r in enumerate(rows):
+            if not set(r.get("declarations") or []) & names:
+                continue
+            out["rows"].append({
+                "id": r.get("id"), "text": r.get("text"),
+                "declarations": list(r.get("declarations") or []),
+                "read_at": r.get("read_at"),
+                "source": f"{rel}#{r.get('id') or i}",
+                "sha256": sha256_text(json.dumps(r, sort_keys=True, ensure_ascii=False))})
+        return out
 
     def reading_choices(self, u: dict) -> list[dict]:
         """The reading choices the working directory's workspaces record that concern `u`'s
@@ -1285,6 +1334,7 @@ class Session:
             "correspondence": r.get("correspondence"),
             "lean": {k: pins.get(k) for k in ("fingerprint", "fingerprints", "legacy_hash")},
             "author_shown_at": a.get("shown_at"), "disagreements": a.get("disagreements") or "",
+            **({"author_accounts": a["accounts"]} if a.get("accounts") else {}),
             **({"changed": changed_draft(r["changed_judgement"])}
                if isinstance(r.get("changed_judgement"), dict) else {})}
         self.work["reports"].pop()
@@ -1312,6 +1362,19 @@ class Session:
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(body, indent=2, ensure_ascii=False), encoding="utf-8")
         return out
+
+
+def ledger_text(ledger: dict) -> str:
+    """Step 3's word on the readings ledger (`Session.ledger_accounts`)."""
+    names = ", ".join(ledger["declarations"])
+    if ledger.get("error"):
+        return f"The readings ledger ({ledger['file']}) could not be read: {ledger['error']}."
+    if not ledger["rows"]:
+        return f"No row of the readings ledger ({ledger['file']}) names {names}."
+    return "\n\n".join(
+        f"The author's account in the readings ledger, row {r['id']} ({r['source']}, read at "
+        f"{r.get('read_at') or 'an unrecorded revision'}; digest {r['sha256'][:12]}), on "
+        f"{', '.join(r['declarations'])}:\n{r.get('text') or ''}" for r in ledger["rows"])
 
 
 def choice_text(c: dict) -> str:
@@ -1608,7 +1671,10 @@ def report(index: dict, u: dict, d: dict, reviewer: dict, disagreements: str,
                     **({"members": d["members"]} if d.get("members") else {})},
         # Recorded with the verdict; None when the reviewer recorded no coverage.
         "correspondence": d.get("correspondence"),
-        "author_review": {"shown_at": d.get("author_shown_at"), "disagreements": disagreements},
+        "author_review": {"shown_at": d.get("author_shown_at"), "disagreements": disagreements,
+                          # The ledger rows step 3 showed: each one's source and digest.
+                          **({"accounts": d["author_accounts"]}
+                             if d.get("author_accounts") else {})},
         # What the verdict means for the claim, as the build records it: a theorem named as
         # refuting the proposition (#685).
         **({"refuted_by": u["refuted_by"]} if u.get("refuted_by") else {}),

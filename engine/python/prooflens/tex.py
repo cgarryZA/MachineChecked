@@ -21,7 +21,7 @@ from importlib import resources
 from pathlib import Path
 
 from .sources import Snapshot
-from .util import norm_ws, sha256_file, sha256_text
+from .util import norm_ws, sha256_file, sha256_text, strip_comments
 
 SP_PER_BP = 65781.76  # scaled points per PostScript point (PDF user unit)
 DEFAULT_ENVS = ["theorem", "lemma", "proposition", "corollary", "definition", "assumption",
@@ -198,6 +198,42 @@ def compile_snapshot(snap: Snapshot, work: Path, envs: list[str] | None = None,
     return {"pdf": pdf, "plx": plx, "fls": cwd / f"{root.stem}.fls", "cwd": cwd}
 
 
+def enclosing(claims: list[dict], pid: str, snap_dir: Path, anchors: list[dict],
+              regions: dict) -> dict[str, int]:
+    """For each claim of paper `pid` located by its lines, the anchor (by `id`) of the innermost
+    numbered statement environment whose source holds the claim's whole region (`regions`), so
+    that a claim cut from a remark can be named by the remark (display only)."""
+    spans, texts = {}, {}
+    for a in anchors:
+        f = a.get("file")
+        if not f or not a.get("number") or not a.get("line"):
+            continue
+        if f not in texts:
+            try:
+                texts[f] = (snap_dir / f).read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                texts[f] = None
+        txt = texts[f]
+        if txt is None:
+            continue
+        offs = sum(len(l) + 1 for l in txt.split("\n")[:a["line"] - 1])
+        m = re.compile(r"\\begin\{" + re.escape(a["env"]) + r"\}").search(txt, offs)
+        if m is None:
+            continue
+        end = matching_end(txt, m.end(), a["env"])
+        spans[a["id"]] = (f, a["line"], txt.count("\n", 0, end) + 1)
+    out = {}
+    for c in claims:
+        r = regions.get(c["id"]) or {}
+        if c.get("paper") != pid or r.get("error") or not r.get("file"):
+            continue
+        inside = [(b, aid) for aid, (f, b, e) in spans.items()
+                  if f == r["file"] and b <= r["start_line"] and r["end_line"] <= e]
+        if inside:
+            out[c["id"]] = max(inside)[1]
+    return out
+
+
 def matching_end(txt: str, start: int, env: str) -> int:
     """Index of the `\\end{env}` closing the environment whose body starts at `start`."""
     pat = re.compile(r"\\(begin|end)\{" + re.escape(env) + r"\}")
@@ -296,7 +332,9 @@ def parse_plx(text: str, cwd: Path, snap_dir: Path) -> tuple[list[Anchor], tuple
         st = statement_at(f, a.line, a.env)
         a.title = env_title(f, a.line, a.env)
         if st is not None:
-            a.statement = norm_ws(st)
+            # The text shown is read without its comments; the pin is of the source as it is,
+            # so that it stays the digest earlier builds recorded.
+            a.statement = norm_ws(strip_comments(st))
             a.source_sha256 = sha256_text(norm_ws(st))
         try:
             a.file = str(f.resolve().relative_to(snap_dir.resolve()))

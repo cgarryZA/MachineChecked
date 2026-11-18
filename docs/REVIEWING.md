@@ -26,6 +26,7 @@ order instead ([Review order](#review-order)).
 machinechecked review next                          # the next unit to review, and why
 machinechecked review read UNIT                     # step 1: the paper's statement only
 machinechecked review read UNIT --context           # and the paper around it, as context
+machinechecked review read UNIT --full              # a definition: its uses in full too
 machinechecked review lock UNIT reading.md          # locks your reading
 machinechecked review read UNIT --with UNIT2        # definitions of one passage: read it once
 machinechecked review lock UNIT reading.md --with UNIT2   # one reading locked for them all
@@ -55,7 +56,25 @@ the hypotheses supply the operation's conditions, and any dismissal of the warni
 step 3. For a
 refuted proposition, step 3 also shows the author's account of the refutation's scope: the
 readings its counterexample is declared to cover and not to cover, and the class lemmas for the
-paper's standing assumptions, each with its theorem's statement. The
+paper's standing assumptions, each with its theorem's statement.
+
+**An account the author keeps in a readings ledger.** A project whose configuration names a
+readings ledger (`readings_ledger`, [ASSURANCE.md](ASSURANCE.md)) has its account of a
+declaration there already: step 3 shows each row whose `declarations` name one of the unit's
+declarations exactly, with its source (`file#id`), the revision it was read at and the digest
+of the row, and the report records what was shown (`author_review.accounts`: each row's
+`source` and `sha256`). A unit no row names says so; nothing is matched by namespace, title or
+text, and the author enters nothing twice. A row such as
+
+```json
+{"id": "R4", "text": "The bound needs the constant before ε, as the paper's Remark 2 says.",
+ "declarations": ["Example.PaperSpec.thm_bound"], "read_at": "4f2c9e1"}
+```
+
+is shown at step 3 of `spec:Example.PaperSpec.thm_bound`, and never at steps 1 and 2. A review
+snapshot carries no configuration, so a review of one shows no ledger.
+
+The
 work is kept in your workspace in the project's working directory (`review-work/`; see below).
 In zero configuration, export into `machinechecked-reviews/` to publish the reports with the
 audit.
@@ -226,6 +245,14 @@ recorded about the correspondence (the author's review, notes, earlier reports, 
 and statuses) and the outcome: each locked statement's `clause` and `label` (the author's
 name for it), `accept`, `refute`, `witness` and `proofs`, `corrects` or `restricts` and `kind`,
 and `interpretations.account`, the author's account in the lines step 3 prints.
+
+A definition unit reads every passage of every claim that names the definition. Each passage
+has a role (`role` in `--json`): `defines` for the definition's own claim, the definition the
+inventory maps to it (a clause listing it in `defs`), and `uses` for a claim that only names it.
+The defining passages come first, in full; the uses follow, each abbreviated to its first 300
+characters in the text of step 1 (`review read UNIT --full` prints them in full, and `--json`
+gives each whole). With no definition claim mapped to it, every passage reads as a use, and step
+1 says so.
 
 `show --definitions` prints only the definitions the unit's Lean uses, for reading line by
 line: each once, with its docstring, its signature, and its body, equations or fields (one per

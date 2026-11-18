@@ -813,6 +813,11 @@ def unit_packet(site: Site, unit: dict, stage: str) -> dict:
     if unit["kind"] == "def":
         out["paper"]["note"] = (f"a definition used by {len(unit.get('claims') or [])} claim(s); "
                                 "every one of their passages is included")
+        # Which passages define the notion and which only use it (#626), the defining first.
+        names = set(unit.get("lean") or [unit.get("name")])
+        for p, ch in zip(out["paper"]["passages"], chunks):
+            p["role"] = passage_role(ch, names)
+        out["paper"]["passages"].sort(key=lambda p: p["role"] != "defines")
     sections = ["paper"]
     page = None
     extra = []
@@ -1313,6 +1318,43 @@ def _proof_facts(root: Path, target: str, log, limit: int | None = None,
 
 # -- text --------------------------------------------------------------------------------------
 
+# A definition unit's passage: one that defines the notion, or one that only uses it (#626).
+PASSAGE_ROLES = ("defines", "uses")
+# How much of a passage that only uses the definition the plain text of step 1 prints.
+USE_CHARS = 300
+
+
+def passage_role(ch: dict, names: set[str]) -> str:
+    """`defines` when the claim is a definition the inventory maps to one of the unit's
+    declarations `names` (a clause lists it in `defs`), `uses` otherwise: a passage that names
+    the notion without being its definition."""
+    mapped = {d for cl in ch.get("clauses") or [] for d in cl.get("defs") or []}
+    return "defines" if ch.get("scope") == "definition" and mapped & names else "uses"
+
+
+def roles_text(passages: list[dict], full: bool = False) -> str:
+    """A definition unit's passages for the terminal: those that define the notion in full,
+    then those that only use it, each abbreviated to its first `USE_CHARS` characters unless
+    `full`."""
+    defines = [p for p in passages if p.get("role") == "defines"]
+    uses = [p for p in passages if p.get("role") != "defines"]
+    out = [f"Passages that define it ({len(defines)}):" if defines else
+           "No passage is recorded as defining it (a definition claim of the inventory mapped to "
+           "it): every passage below only uses it."]
+    out += [passage_text(p) for p in defines]
+    if uses:
+        out.append(f"Passages that use it ({len(uses)})"
+                   + (":" if full else ", each abbreviated: `review read UNIT --full` prints "
+                      "them in full, and `--json` gives each whole:"))
+    for p in uses:
+        if full or not p.get("available") or len(p.get("text") or "") <= USE_CHARS:
+            out.append(passage_text(p))
+        else:
+            cut = {**p, "text": p["text"][:USE_CHARS].rstrip() + " …"}
+            out.append(passage_text(cut) + f"\n  (abbreviated: {len(p['text'])} characters)")
+    return "\n\n".join(out)
+
+
 def passage_text(p: dict) -> str:
     """A passage for the terminal, with its source."""
     src = p.get("source") or {}
@@ -1671,9 +1713,12 @@ def definitions_text(pk: dict, folded: dict[str, str] | None = None,
     return "\n\n".join(out) or "(the Lean shown uses no definition of the project)"
 
 
-def packet_text(pk: dict) -> str:
-    """A packet for the terminal."""
-    out = [passage_text(p) for p in pk["paper"]["passages"]]
+def packet_text(pk: dict, full: bool = False) -> str:
+    """A packet for the terminal. A definition unit's passages come with their roles
+    (`roles_text`): at the read stage, the uses abbreviated unless `full`."""
+    passages = pk["paper"]["passages"]
+    out = [roles_text(passages, full or pk.get("stage") != "read")] \
+        if any(p.get("role") for p in passages) else [passage_text(p) for p in passages]
     rd = (pk.get("interpretations") or {}).get("requirements")
     if rd:
         from .requirements import lines

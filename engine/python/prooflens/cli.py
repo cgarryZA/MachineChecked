@@ -2283,8 +2283,11 @@ def _review_text(a, s) -> None:
     if a.action == "read" and getattr(a, "with_units", None):
         out = s.read_together([a.unit, *a.with_units], a.json, getattr(a, "context", False))
         return _print_json(out) if a.json else print(out)
-    out = s.read(a.unit, a.json, context=True) if a.action == "read" and \
-        getattr(a, "context", False) else getattr(s, a.action)(a.unit, a.json)
+    if a.action == "read":
+        out = s.read(a.unit, a.json, context=getattr(a, "context", False),
+                     full=getattr(a, "full", False))
+        return _print_json(out) if a.json else print(out)
+    out = getattr(s, a.action)(a.unit, a.json)
     _print_json(out) if a.json else print(out)
 
 
@@ -2676,16 +2679,28 @@ def _review_target(a) -> tuple[Path, Path | None, Path | None, dict | None]:
     return rwork, data, None, evidence
 
 
+def _review_ledger(a, evidence) -> tuple[Path | None, Path | None]:
+    """The readings ledger the project's configuration names, and the directory its rows'
+    sources are named from, for step 3 (`Session.ledger_accounts`); none for a review snapshot,
+    which carries no configuration, or in zero configuration."""
+    if evidence is not None or getattr(a, "snapshot", None) or not _assurance_config(a):
+        return None, None
+    cfg = _load_full(a)
+    return cfg.readings_ledger, cfg.root
+
+
 def cmd_review_step(a):
     """One step of the review protocol, in the reviewer's session (`review_cli.Session`). A step
     that could not be taken exits 2; with --json, it also prints the refusal as a document."""
     from . import review_cli as rc
     try:
         work, data, root, evidence = _review_target(a)
+        ledger, ledger_base = _review_ledger(a, evidence)
 
         def session():
             return rc.Session(work, rc.parse_reviewer(a.reviewer, a.same_family), a.workspace,
-                              a.mode, data_dir=data, root=root, evidence=evidence)
+                              a.mode, data_dir=data, root=root, evidence=evidence,
+                              ledger=ledger, ledger_base=ledger_base)
         if getattr(a, "manifest", None):
             return _review_manifest(a, session)
         REVIEW_STEPS[a.action][0](a, session())
@@ -3179,6 +3194,9 @@ def _add_review(sub) -> None:
             sp.add_argument("--json", action="store_true",
                             help="print one JSON document holding only what this step shows")
         if name == "read":
+            sp.add_argument("--full", action="store_true",
+                            help="for a definition, print in full the passages that only use it "
+                                 "(abbreviated by default, after those that define it)")
             sp.add_argument("--context", action="store_true",
                             help="also give the paper around each passage, from the build's copy "
                                  "of its source: its section, the paragraphs before and after, "
