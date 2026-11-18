@@ -9,12 +9,18 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { issueDraft, buildReport, orderedUnits, recordExposure, exposureOf, holdsBack, ORDER_SEEN,
          ORDER_EXPOSURE, reportCorrespondence, draftCoverage, draftFromReport, undoReport,
-         questionsOf, needsDetail, VERDICTS, STEP_VERDICTS } from "../src/lib/review.js";
+         questionsOf, needsDetail, VERDICTS, STEP_VERDICTS, DIFFICULT_CASES,
+         DIFFICULT_CASES_GUIDE } from "../src/lib/review.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 // What the detail of each verdict says, or null when it needs none: the same, verdict for
 // verdict, as the command line requires (tests/fixtures/review/verdict-details.json, which
 // tests/contracts/test_review_step_json.py checks against `review_cli.detail_asked`).
+// The difficult cases the review page lists at step 2 are the engine's short reference
+// (`data/review_examples.json`, which tests/contracts/test_review_examples.py holds to the guides).
+const CASES = JSON.parse(fs.readFileSync(path.resolve(here, "../../engine/python/prooflens/data/review_examples.json"), "utf8"));
+assert.deepEqual(DIFFICULT_CASES, CASES.examples.map(({ id, title, text }) => ({ id, title, text })));
+assert.equal(DIFFICULT_CASES_GUIDE, CASES.url);
 const DETAILS = JSON.parse(fs.readFileSync(path.resolve(here, "../../tests/fixtures/review/verdict-details.json"), "utf8"));
 for (const [kind, table, asked] of [["spec", VERDICTS, DETAILS.statement], ["step", STEP_VERDICTS, DETAILS.step]]) {
   assert.deepEqual(Object.values(table).flat().map((v) => v.value).sort(), Object.keys(asked).sort(), kind);

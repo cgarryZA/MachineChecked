@@ -1,0 +1,22 @@
+{
+  "note": "Examples for cases where a review verdict is easy to get wrong: the short reference the review page shows at step 2, `review decide --help` names and docs/AGENTS.md quotes. Each `section` is the heading of its worked example under \"Difficult cases\" in docs/REVIEWING.md. They add no verdict, field or required answer.",
+  "guide": "docs/REVIEWING.md#difficult-cases",
+  "url": "https://github.com/cgarryZA/MachineChecked/blob/main/docs/REVIEWING.md#difficult-cases",
+  "examples": [
+    {"id": "definition-objects", "section": "A definition: the objects it admits",
+     "title": "A definition: the objects it admits",
+     "text": "Compare the objects the paper's definition admits with those the Lean admits: a dropped condition (measurability, say) admits more, and a condition taken from a later statement (a growth bound a corollary assumes) excludes some. Record the coverage of the definition itself, not of the theorems that use it, and say what is missing when it is partial."},
+    {"id": "totalisation", "section": "A value outside the intended domain",
+     "title": "A value outside the intended domain",
+     "text": "Lean gives a function a value everywhere (x / 0 = 0, say). That is a representation choice only when you can say why the extra value never matters where the paper uses the object; when it can matter, record a mismatch or an open question."},
+    {"id": "empty-bound", "section": "A supremum or infimum of an empty or unbounded set",
+     "title": "A supremum or infimum of an empty or unbounded set",
+     "text": "On ℝ, Lean's supremum of an empty set, or of a set not bounded above, is 0, and ⨆ t ∈ s, f t counts 0 for every t outside s, so a bound can hold for a reason the paper does not intend. Check the value on the actual ordered type."},
+    {"id": "joint-witness", "section": "Hypotheses that must hold together",
+     "title": "Hypotheses that must hold together",
+     "text": "One witness meeting every hypothesis at once shows that they can hold together; an example for each one separately does not. When the scope of a quantifier is ambiguous, a counterexample under one reading is worth recording. The author's account of a witness comes with the author's review, after your verdict."},
+    {"id": "grid-time", "section": "A grid in place of continuous time",
+     "title": "A grid in place of continuous time",
+     "text": "A condition stated at grid times can lose what the paper requires between them: a martingale condition tested only at grid points says nothing of the conditional expectation at an intermediate time. Check whether the paper's object is the continuous one."}
+  ]
+}

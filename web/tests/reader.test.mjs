@@ -3375,6 +3375,13 @@ await check("review opens the selected claim, keeps protocol order and exports a
   await pg.getByRole("button", { name: "Lock my reading and show the Lean" }).click();
   await pg.locator(".review .stmt").waitFor();
   assert.equal(await pg.locator(".review .author").count(), 0);
+  // The difficult cases are offered at step 2, closed until the reviewer opens them (#667, #674).
+  const cases = pg.locator(".review details.difficult");
+  assert.equal(await cases.count(), 1);
+  assert.equal(await cases.getAttribute("open"), null, "closed until opened");
+  await cases.locator("summary").click();
+  assert.match(await cases.textContent(), /A grid in place of continuous time\. A condition stated at grid times/);
+  assert.match(await cases.locator("a").getAttribute("href"), /docs\/REVIEWING\.md#difficult-cases$/);
   await pg.getByRole("textbox", { name: "Comparison", exact: true }).fill("The quantifiers and conclusion agree in this synthetic example.");
   await pg.getByRole("button", { name: "Matches the paper", exact: true }).click();
   await pg.getByRole("radio", { name: "Faithful", exact: true }).check();
@@ -3885,6 +3892,7 @@ await check("a proof step with no Lean link is reviewed as printed and reported 
   await pg.getByRole("radio", { name: "False as printed", exact: true }).check();
   await pg.locator("#verdict-detail").fill("Fails at k = 0, n = 1; holds for k >= 1.");
   assert.equal(await pg.locator(".review .cover").count(), 0, "a step's review records no coverage");
+  assert.equal(await pg.locator(".review details.difficult").count(), 0, "the difficult cases compare Lean with the paper");
   await pg.getByRole("button", { name: "Record verdict and show the author's review" }).click();
   await pg.getByRole("button", { name: "Save report", exact: true }).click();
   await pg.getByRole("button", { name: "Export reports (1 new)", exact: true }).waitFor();
