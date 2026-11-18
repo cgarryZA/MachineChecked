@@ -46,8 +46,12 @@ MachineChecked looks for a root LaTeX document first, otherwise a PDF. If severa
 A paper can be a URL: `machinechecked view https://…/paper.pdf` downloads it once into `.machinechecked/papers/`.
 
 LaTeX environments supply statement boundaries. For PDFs, MachineChecked detects bold numbered
-headings and estimates each statement’s end at the next proof, section or statement. PDF detection
-requires a text layer and recognisable headings. The reader marks these locations as approximate.
+headings and estimates each statement’s end at the next proof, section or statement. A PDF with
+no bold headings, as many journals set them, is read by its paragraphs: a statement kind and its
+number starting a paragraph and followed by the statement ("Theorem 2.1 Suppose …") is a heading.
+PDF detection requires a text layer. When it recognises no heading, `view`, `build` and `check`
+say so in a warning (`check --json`: a note, and a warning of kind `pdf-no-statements`). The
+reader marks these locations as approximate.
 
 ## Use a formalization.yaml
 
@@ -711,7 +715,7 @@ The configured `issues` repository receives reports. **Copy link** is available 
 | On Windows | MachineChecked runs, but LaTeX then runs without the CPU-time and file-size limits it has on Linux and macOS (only a 30-minute timeout). For a paper you did not write, use WSL. |
 | TeX compilation fails | The reader still opens from the paper's PDF if there is one, and names the LaTeX error. A paper that needs XeLaTeX should say so with `% !TEX program = xelatex`, a `latexmkrc`, or by loading `fontspec`/`unicode-math`. |
 | A marker is approximate (dashed) | Numbered environments in LaTeX are placed exactly. Claims recorded by line are placed by SyncTeX, and claims from a PDF by their headings; both are approximate, and a claim whose place is ambiguous is left unplaced instead of guessed. |
-| A PDF statement is missing | It probably has no bold heading the PDF reader recognises (see above); give the LaTeX source if you have it. |
+| A PDF statement is missing | Its heading is probably not one the PDF reader recognises (see above); give the LaTeX source if you have it. |
 | Reader is read-only | A hosted site or standalone HTML cannot save links to your local repository; run `machinechecked view` locally to edit. |
 | A review step is refused | The page or `machinechecked review` says why and what to do: a step before the one it follows, a unit the last build does not have (your draft is kept), Lean the build changed since it was shown to you, or a draft another window or terminal changed meanwhile. Reload the page, or run `machinechecked review status`, and repeat the step. |
 

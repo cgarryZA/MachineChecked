@@ -47,8 +47,10 @@ and its dependencies do not declare (`kind` `module-doc-name`, with `file`, `lin
 `message`; the message says when a short name reaches only a module or a namespace), and
 references to the paper's numbers that disagree with the paper read here
 (`kind` `paper-reference`, with `file`, `line`, `reference`, `status`, `id` and `message`;
-each reference has its own `id`, a second copy of the same text in one place included);
-they do not change the exit code. `numbering` holds every such reference
+each reference has its own `id`, a second copy of the same text in one place included), and a
+PDF in which no numbered statement heading was recognised (`kind` `pdf-no-statements`, with
+`message`; `notes` says the same, and `claims` is empty because nothing was found, not because
+the paper has nothing to check); they do not change the exit code. `numbering` holds every such reference
 (`numbering.references`: `reference`, its exact `text` and `context`, its `source` with
 declaration, module, file, line and `where` it is (`docstring`, `name`, `module docstring` or
 `comment`; a comment's declaration is null when it is on none), its `role` (`statement` or

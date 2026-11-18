@@ -1916,6 +1916,8 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
     cfg = view_config(root, paper_path, out_dir, libs)
     paper = cfg.papers[0]
     notes = []
+    # What the paper's reading warns of (`pdf_notes`), beside the notes.
+    warnings: list[dict] = []
 
     # The paper.
     snap = acquire(cfg, paper, out_dir / "sources" / paper.id)
@@ -1971,9 +1973,7 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
         anchors, size = claims_from_pdf(pdf)
         tex.update(mode="pdf", anchors=anchors, page_size=size)
         claims = claims_from_anchors(paper.id, anchors, snap.dir)
-        if anchors:
-            notes.append("the paper is a PDF: its statements were found by their bold headings, "
-                         "and where each one ends is estimated")
+        notes.extend(pdf_notes(anchors, warnings))
     paper_key = links_key(root, paper_path)
     if compiled is not None:
         claims = with_passages(claims, paper.id,
@@ -2181,13 +2181,33 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
             "author": load_links(root).get("author"),
             "pdf_sha256": sha256_file(pdf) if pdf else None, "tex": tex,
             "claims": claims, "index": index, "decls": decls, "module_docs": module_docs,
-            "numbering": numbering}
+            "numbering": numbering, "paper_warnings": warnings}
     if index_scope_info:
         # What the index leaves out, so that a declaration there is not taken for absent.
         body["index_scope"] = index_scope_info
     from .uses import site_index
     return {"body": body, "pdf": pdf, "cfg": cfg, "lean": facts_used, "retrieval": retrieval,
             "uses": site_index(refs) if refs else None}
+
+
+NO_HEADINGS = ("no numbered statement headings were recognised in this PDF, so it lists no "
+               "claims; the paper's LaTeX source lists its statements")
+
+
+def pdf_notes(anchors: list[dict], warnings: list[dict]) -> list[str]:
+    """The notes on a paper read from its PDF (`pdfclaims.claims_from_pdf`): how its statements
+    were found, and that where each ends is estimated. When none was found, the note says so,
+    and the same words are a warning (`pdf-no-statements`, added to `warnings`): an empty list
+    of claims is not a paper with nothing to check."""
+    if not anchors:
+        warnings.append({"kind": "pdf-no-statements", "message": NO_HEADINGS})
+        return [NO_HEADINGS]
+    if any(a.get("found_by") == "paragraph" for a in anchors):
+        return ["the paper is a PDF with no bold statement headings: its statements were found "
+                "by a statement kind and number starting a paragraph, and where each one ends is "
+                "estimated"]
+    return ["the paper is a PDF: its statements were found by their bold headings, and where "
+            "each one ends is estimated"]
 
 
 def failed_modules(modules: list[str], failed: dict[str, str], root: Path) -> str:

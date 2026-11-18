@@ -337,8 +337,13 @@ def _print_simple(body, summary: dict | None = None):
     from .moddocs import stale_doc_message
     from .semantic import text
     from .simple import view_summary
+    # A warning about the paper is also one of its notes: it is printed once, as a warning.
+    warned = [w["message"] for w in body.get("paper_warnings") or []]
     for n in body.get("notes", []):
-        print(f"note: {n}")
+        if n not in warned:
+            print(f"note: {n}")
+    for w in warned:
+        print(f"warning: {w}")
     for d in body.get("module_docs", []):
         print(f"warning: {stale_doc_message(d)}")
     from . import numbering as nb
@@ -1506,9 +1511,10 @@ def _check_simple_json(a, root: Path, view: dict) -> tuple[dict, list[dict], boo
            "modules": {"built": body["project"]["built"],
                        "not_built": body["project"]["unbuilt"]},
            "notes": body["notes"],
-           "warnings": [{"kind": "module-doc-name", "file": d["file"], "line": d["line"],
-                         "name": d["name"], "message": stale_doc_message(d)}
-                        for d in body.get("module_docs", [])]
+           "warnings": list(body.get("paper_warnings") or [])
+           + [{"kind": "module-doc-name", "file": d["file"], "line": d["line"],
+               "name": d["name"], "message": stale_doc_message(d)}
+              for d in body.get("module_docs", [])]
            + _reference_warnings(num),
            "numbering": num}
     return out, claims, any(l["class"] != "proved" for c in claims for l in c["links"])
