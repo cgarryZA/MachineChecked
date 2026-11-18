@@ -83,6 +83,19 @@ def withBudget (n? : Option Nat) (x : MetaM α) : MetaM α :=
   | some n => withTheReader Core.Context (fun c => { c with maxHeartbeats := n * 1000 }) x
   | none => x
 
+/-- The most sub-terms of one expression Lean prints (`pp.maxSteps`): far more than anyone could
+read, so that no expression is cut short; a request's heartbeat budget bounds the time printing
+takes. -/
+def printSteps : Nat := 1000000000
+
+/-- The options every expression is printed with: no sub-term is replaced by `⋯` for its depth
+(`pp.deepTerms`) or for the size of the whole expression (`pp.maxSteps`), so that a statement a
+reviewer reads is the complete elaborated term. A proof inside an expression is still printed as
+`⋯` (`pp.proofs`): which proof it is changes nothing a statement says, and fingerprints erase
+proofs too. The options are set by name, so that the probe builds on every Lean version. -/
+def printInFull (o : Options) : Options :=
+  (o.setBool `pp.deepTerms true).insert `pp.maxSteps (.ofNat printSteps)
+
 /-! ## Environment helpers -/
 
 def moduleOf (env : Environment) (n : Name) : Name :=
@@ -3933,7 +3946,8 @@ open ProofLensProbe in
   let used : UsedCache ← IO.mkRef {}
   let inside ← scopeTest roots
   let h ← IO.FS.Handle.mk opath .write
-  do
+  -- Every expression is printed complete (`printInFull`).
+  withOptions printInFull do
     emit h (Json.mkObj [("record", "env"), ("lean", Lean.versionString),
       ("githash", Lean.githash)])
     layering h q

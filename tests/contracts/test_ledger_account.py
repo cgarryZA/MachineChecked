@@ -45,7 +45,11 @@ def test_step_3_shows_the_rows_that_name_the_declaration_and_the_report_records_
     assert (f"The author's account in the readings ledger, row R1 (readings.json#R1, read at "
             f"abc123; digest {digest[:12]}), on {SPEC}:\n{ACCOUNT}") in text
     assert "AUTHOR-OTHER" not in text and "AUTHOR-ELSEWHERE" not in text
+    # What the verdict means for the claim stays the step's last word (#685).
+    assert text.rstrip().endswith("so no proof of the proposition can follow.")
     pk = s.author(UNIT, as_json=True)
+    keys = list(pk["interpretations"])
+    assert keys.index("ledger") < keys.index("refuted_by")
     (row,) = pk["interpretations"]["ledger"]["rows"]
     assert (row["source"], row["sha256"], row["text"]) == ("readings.json#R1", digest, ACCOUNT)
     r = s.submit(UNIT, "none")

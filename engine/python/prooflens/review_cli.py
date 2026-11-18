@@ -730,7 +730,8 @@ class Session:
             raise ReviewError(f"{u['id']}: the reading is already locked", "order")
         return d
 
-    def read(self, uid: str, as_json: bool = False, context: bool = False) -> str | dict:
+    def read(self, uid: str, as_json: bool = False, context: bool = False,
+             full: bool = False) -> str | dict:
         """Step 1: the unit's passages; with `context`, each with the paper around it
         (`with_context`)."""
         u = self.unit(uid)
@@ -748,7 +749,7 @@ class Session:
             return {**pk, "review": {"step": "read", "mode": self.mode, "seen_before": seen,
                                      "reveals": reveals}}
         lean = step_lean_text(pk.get("unit") or {})
-        return cmp.packet_text(pk) + (f"\n\n{lean}" if lean else "") + warn
+        return cmp.packet_text(pk, full) + (f"\n\n{lean}" if lean else "") + warn
 
     def with_context(self, pk: dict) -> dict:
         """The read step's packet `pk` with, on each passage, the paper around it
@@ -1105,8 +1106,14 @@ class Session:
             self._save(uid)
         if as_json:
             pk = self.packet(u, "informed")
-            if ledger is not None:
-                pk.setdefault("interpretations", {})["ledger"] = ledger
+            # In the text's order: the reading choices and the ledger's accounts before what the
+            # verdict means (#685).
+            interp, choices = pk.get("interpretations") or {}, self.reading_choices(u)
+            at = list(interp).index("refuted_by") if "refuted_by" in interp else len(interp)
+            items = list(interp.items())
+            extra = [("reading_choices", choices)] + ([("ledger", ledger)] if ledger is not None
+                                                      else [])
+            pk["interpretations"] = dict(items[:at] + extra + items[at:])
             return {**pk, "review": {"step": "author", "shown_at": d["author_shown_at"]}}
         revs = u.get("author_review") or []
         out = [f"{r.get('by')} · {r.get('file')}:{r.get('line')}\n"
@@ -1119,13 +1126,16 @@ class Session:
                            + (f" by {note['by']}" if note.get("by") else "") + f"\n{text}")
         out = out or ["No review by the author is recorded for this unit."]
         out += self._account(u) + self._refutation_scope(u)
-        # What the verdict just recorded means for the claim (#685).
+        # The author's account in the readings ledger (#627).
+        if ledger is not None:
+            out.append(ledger_text(ledger))
+        # The auditors' reading choices (#597), before what the verdict means for the claim.
+        out += [choice_text(c) for c in self.reading_choices(u)]
+        # What the verdict just recorded means for the claim (#685), last.
         out += [r.get("line") or rq.refutation_line(r) for r in u.get("refuted_by") or []]
         if u.get("kind") == "step":
             out += [proposal_text(p) for p in [self.site.proposal(c["id"])
                                                for c in u.get("claims") or []] if p]
-        if ledger is not None:
-            out.append(ledger_text(ledger))
         return "\n\n".join(out)
 
     def ledger_accounts(self, u: dict) -> dict | None:
@@ -1158,6 +1168,33 @@ class Session:
                 "read_at": r.get("read_at"),
                 "source": f"{rel}#{r.get('id') or i}",
                 "sha256": sha256_text(json.dumps(r, sort_keys=True, ensure_ascii=False))})
+        return out
+
+    def reading_choices(self, u: dict) -> list[dict]:
+        """The reading choices the working directory's workspaces record that concern `u`'s
+        claims (`reading_choice.py`): one made on a claim of the unit, or one a requirement or
+        finding of a claim of the unit cites, each with its workspace and the counterexamples
+        recorded on the requirements that cite it. Prior interpretations: step 3 shows them, and
+        the read and compare steps never do. Lean is not asked: an equivalence reads as Lean
+        last checked it."""
+        from . import reading_choice as rcm
+        mine = {c["id"] for c in u.get("claims") or []}
+        out = []
+        for _, ws in wsp.list_all(self.work_dir):
+            records = list((ws.get("records") or {}).values())
+            for v in rcm.views(records, self.root):
+                if v["claim"] not in mine and not any(x["claim"] in mine
+                                                      for x in v["dependents"]):
+                    continue
+                on = {(x["claim"], x.get("requirement")) for x in v["dependents"]
+                      if x.get("requirement")}
+                cxs = [{"record": r["id"], "claim": r["claim"], "requirement": r["requirement"],
+                        **({"note": r["note"]} if r.get("note") else {})}
+                       for r in records if r.get("kind") == "counterexample"
+                       and (r.get("claim"), r.get("requirement")) in on]
+                out.append({**v, "workspace": ws.get("id"),
+                            "reviewer": (ws.get("reviewer") or {}).get("id"),
+                            "counterexamples": cxs})
         return out
 
     def _account(self, u: dict) -> list[str]:
@@ -1337,6 +1374,18 @@ def ledger_text(ledger: dict) -> str:
         f"The author's account in the readings ledger, row {r['id']} ({r['source']}, read at "
         f"{r.get('read_at') or 'an unrecorded revision'}; digest {r['sha256'][:12]}), on "
         f"{', '.join(r['declarations'])}:\n{r.get('text') or ''}" for r in ledger["rows"])
+
+
+def choice_text(c: dict) -> str:
+    """A reading choice at step 3 (`Session.reading_choices`): the auditors' choice, the claims
+    that depend on it, the equivalence it names, and the counterexamples posed for it."""
+    from .reading_choice import lines
+    head = (f"A reading choice recorded in workspace {c.get('workspace')}"
+            + (f" by {c['reviewer']}" if c.get("reviewer") else "")
+            + " (a prior interpretation, shown after your verdict):")
+    cx = [f"  counterexample {x['record']} on {x['claim']} {x['requirement']}"
+          + (f": {x['note']}" if x.get("note") else "") for x in c.get("counterexamples") or []]
+    return "\n".join([head, *lines(c, "  "), *cx])
 
 
 def proposal_text(p: dict) -> str:

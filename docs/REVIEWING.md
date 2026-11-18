@@ -26,6 +26,7 @@ order instead ([Review order](#review-order)).
 machinechecked review next                          # the next unit to review, and why
 machinechecked review read UNIT                     # step 1: the paper's statement only
 machinechecked review read UNIT --context           # and the paper around it, as context
+machinechecked review read UNIT --full              # a definition: its uses in full too
 machinechecked review lock UNIT reading.md          # locks your reading
 machinechecked review read UNIT --with UNIT2        # definitions of one passage: read it once
 machinechecked review lock UNIT reading.md --with UNIT2   # one reading locked for them all
@@ -244,6 +245,14 @@ recorded about the correspondence (the author's review, notes, earlier reports, 
 and statuses) and the outcome: each locked statement's `clause` and `label` (the author's
 name for it), `accept`, `refute`, `witness` and `proofs`, `corrects` or `restricts` and `kind`,
 and `interpretations.account`, the author's account in the lines step 3 prints.
+
+A definition unit reads every passage of every claim that names the definition. Each passage
+has a role (`role` in `--json`): `defines` for the definition's own claim, the definition the
+inventory maps to it (a clause listing it in `defs`), and `uses` for a claim that only names it.
+The defining passages come first, in full; the uses follow, each abbreviated to its first 300
+characters in the text of step 1 (`review read UNIT --full` prints them in full, and `--json`
+gives each whole). With no definition claim mapped to it, every passage reads as a use, and step
+1 says so.
 
 `show --definitions` prints only the definitions the unit's Lean uses, for reading line by
 line: each once, with its docstring, its signature, and its body, equations or fields (one per
@@ -578,6 +587,41 @@ changed it meanwhile, nothing is written and both versions are returned (and kep
 changes nothing. A finding is a draft until `{"op": "submit", "id", "base_rev"}`; a submitted
 finding is never edited, but `{"op": "supersede", "id", "base_rev", "reason", "record"}` records a
 later one with its reason, and both remain.
+
+**A definition's reading.** When the paper leaves a definition open (its "bounded" may mean
+uniformly or eventually bounded), record the reading you choose once, on the definition's claim,
+as a requirement of the form `reading choice`: the readings (each an `id` and its `text`), the one
+`chosen` and the `reason`, and optionally the Lean declaration that states two of the readings
+agree (`equivalence`: `theorem` and the two `readings`), which need not exist yet:
+
+```json
+{"op": "put", "record": {"kind": "requirement", "claim": "Definition 2.1", "local_id": "bounded",
+  "form": "reading choice", "text": "what bounded means",
+  "readings": [{"id": "uniform", "text": "bounded uniformly in time"},
+               {"id": "eventual", "text": "bounded for all large times"}],
+  "chosen": "uniform", "reason": "Lemma 3.2 uses the bound at every time.",
+  "equivalence": {"theorem": "Example.uniform_iff_eventual", "readings": ["uniform", "eventual"]}}}
+```
+
+A claim depends on the choice only where one of its requirements or findings cites it:
+`"reading_choices": [{"claim": "Definition 2.1", "choice": "bounded"}]`. `workspace show`, its
+JSON (`reading_choices`, and `cites` on each citing requirement and finding) and the reader's
+Investigation section show the choice on the definition and on each claim that depends on it,
+with the link. A finding rests on each choice it cites and on those its requirements cite: when the
+choice changes (its readings or the one chosen; its reason alone changes nothing), a submitted
+finding is due for review, and it is never rewritten.
+
+The equivalence is shown with its declaration's exact statement, and reads *pending NAME* until
+the declaration is in the build, a theorem, proved, with only the allowed axioms, then
+*discharged by NAME*. `check` asks Lean (`workspace show` and the reader use what Lean last
+answered), and lists each choice with its equivalence and the claims that depend on it (in
+`--json`, `reading_choices`). A discharged equivalence moves no verdict from one reading to the
+other: what it justifies is what its statement proves.
+
+The choice is a prior interpretation. The read and compare steps of independent review never
+show it; `review author` shows the choices the working directory's workspaces record on the
+unit's claims, or that the unit's claims cite, with the counterexamples recorded on the
+requirements that cite them (`interpretations.reading_choices` in `--json`).
 
 **Main results.** `workspace main NAME...` saves which claims (each standing for its linked Lean)
 and declarations are the paper's main results (in an update file: `{"op": "main-results", "main":

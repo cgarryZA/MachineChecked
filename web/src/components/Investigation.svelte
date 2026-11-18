@@ -349,6 +349,8 @@
           {:else if recordedBasisText(f)}<p class="small faint" data-line="recorded">{recordedBasisText(f)}</p>{/if}
           {#if f.impact}{@const iv = impactView(f, here.evidence)}<p class="small" data-impact={f.impact.outcome}><span class="faint">At</span> {iv.use}<span class="faint"> · {iv.difference}</span></p>{#if iv.why}<p class="small text">{iv.why}</p>{/if}{/if}
           {#if f.note}<p class="small text">{f.note}</p>{/if}
+          <!-- The reading choices it depends on, in the engine's words (#597). -->
+          {#each f.cites || [] as c}<p class="small cite" data-choice={c.choice}>{c.line}</p>{/each}
           {#if f.supersedes}<p class="faint small">Supersedes {f.supersedes}: {f.reason}</p>{/if}
           {#if f.state === "draft"}<button class="act" disabled={busy} onclick={() => submit(f)}>Submit</button>{/if}
         </div>
@@ -358,6 +360,18 @@
           <h3>Compositions</h3>
           <p class="faint small">Arguments that combine several results, recorded with <code>machinechecked workspace update</code>.</p>
           {#each here.compositions as c (c.id)}<Composition {c} evidence={here.evidence} />{/each}
+        </div>
+      {/if}
+      {#if here.reading_choices?.length}
+        <!-- The reading choices this claim makes or depends on, as the engine words them (#597):
+             a prior interpretation, never shown to an independent review before its verdict. -->
+        <div class="choices" aria-label="Reading choices">
+          <h3>Reading choices</h3>
+          {#each here.reading_choices as v (v.record)}
+            <div class="choice" data-choice={v.choice} data-equivalence={v.equivalence?.state}>
+              {#each v.lines || [] as line}<p class="small" class:sub={line.startsWith("  ")}>{line.trim()}</p>{/each}
+            </div>
+          {/each}
         </div>
       {/if}
       {#if reading.requirements.length || reading.alignments.length}
@@ -370,6 +384,8 @@
                 {#if r.independent_of?.length}<span class="faint"> · independent of {r.independent_of.join(", ")}</span>{/if}
                 {#if r.depends_on?.length}<span class="faint"> · may depend on {r.depends_on.join(", ")}</span>{/if}
                 {#if r.origin === "correction"}<span class="faint"> · added by a correction of {r.corrects}; the printed requirement stays</span>{/if}
+                {#if r.form === "reading choice"}<span class="chosen" data-chosen={r.chosen}> · chosen: <strong>{r.chosen}</strong>, {(r.readings || []).find((x) => x.id === r.chosen)?.text}. <span class="faint">Reason:</span> {r.reason}</span>{/if}
+                {#each r.cites || [] as c}<span class="cite" data-choice={c.choice}> · {c.line}</span>{/each}
                 {#if r.currency?.state === "stale"}<span class="stale"> · its source or Lean changed since</span>{/if}</p>
               {#each r.fragments.governing as f (f.id)}
                 <div class="frag" data-role={f.role}>
@@ -527,6 +543,7 @@
 {/if}
 
 <style>
+  .choices .sub { margin-left: 16px; }
   .investigation { margin-top: 24px; padding-top: 12px; border-top: 1px solid var(--border); }
   .investigation h2 { font-size: 15px; margin: 0 0 6px; }
   .item { border-left: 3px solid var(--border); padding: 2px 0 2px 10px; margin: 8px 0; }
