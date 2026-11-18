@@ -7,6 +7,7 @@
            revealedIn, holdsBack, COVERAGE_FOR, COVERAGE_CHOICES, BASIS_CHOICES, reportCorrespondence,
            draftCoverage, coverageWords, undoReport, leanOf, READER_SEEN } from "../lib/review.js";
   import { questionsOf } from "../lib/review.js";
+  import { DIFFICULT_CASES, DIFFICULT_CASES_GUIDE } from "../lib/review.js";
   import { chosenWorkspace } from "../lib/workfile.js";
   import Comparison from "./Comparison.svelte";
   import WorkspaceFile from "./WorkspaceFile.svelte";
@@ -605,6 +606,13 @@
               {/each}
             </ul>
             <p class="faint small">A guide: mark each item if it helps, and write what you found below.</p>
+            {#if current.kind !== "step"}
+              <details class="difficult small">
+                <summary>Difficult cases</summary>
+                <ul>{#each DIFFICULT_CASES as ex (ex.id)}<li><strong>{ex.title}.</strong> {ex.text}</li>{/each}</ul>
+                <p class="faint">Worked examples: <a href={DIFFICULT_CASES_GUIDE} target="_blank" rel="noopener">Difficult cases</a> in the review guide.</p>
+              </details>
+            {/if}
             <textarea aria-labelledby="comparison-label" rows="6" bind:value={draft.comparison} oninput={persist} placeholder={current.kind === "step" ? "Does the step follow from what precedes it, for every value in the printed ranges? If Lean is linked, how does it compare with the printed step?" : "Item by item against your reading: each hypothesis, each quantifier and its order, the conclusion, representation choices, constants."}></textarea>
             <!-- For every locked statement: whether its author gives a witness is shown after the verdict. -->
             {#if current.kind === "spec"}
@@ -740,6 +748,9 @@
   .bad { color: var(--st-malformed); }
   @media (max-width: 640px) { .who { margin-left: 0; } }
   .checklist { list-style: none; padding: 0; margin: 6px 0; }
+  .difficult { margin: 4px 0 8px; }
+  .difficult ul { margin: 6px 0; padding-left: 18px; }
+  .difficult li { margin: 4px 0; }
   .checklist li { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; padding: 4px 0; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
   .ck-marks { display: flex; gap: 4px; flex: none; }
   .mark { font: inherit; font-size: 12px; padding: 1px 8px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface); color: var(--muted); cursor: pointer; }
