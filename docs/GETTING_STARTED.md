@@ -411,7 +411,11 @@ states the claim; with nothing linked, the reading has no basis.
 ## Link a proof step
 
 A numbered equation inside a printed proof is a target of its own. In zero configuration,
-every numbered display with one `\label` inside a `proof` environment is listed as **Equation (n)**
+every numbered display with one `\label` inside a `proof` environment, and every labelled row
+of a display of several rows (`align`, `gather`, …), is listed as **Equation (n)**. A display
+opened by a macro defined as its environment (`\def\beq{\begin{equation}}`) counts too. A numbered
+display of a proof that is not listed (a row sharing its line with another, a label with no
+printed number) is named in the notes, with its line and why. Each is listed
 under the result whose proof holds it (the result the proof's optional argument names, by its
 `\ref` or its printed number, as in `[Proof of Theorem 2.1]`, else the statement just before the
 proof). When that statement is a remark or an example and the result before it has no proof yet,

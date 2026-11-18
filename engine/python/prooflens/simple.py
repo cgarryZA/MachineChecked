@@ -133,12 +133,14 @@ def claims_from_anchors(pid: str, anchors: list[dict], snap: Path) -> list[dict]
 STEPS_VERSION = "steps-1"
 
 
-def proof_steps(pid: str, anchors: list[dict], snap: Path, numbers: dict[str, str]) -> list[dict]:
+def proof_steps(pid: str, anchors: list[dict], snap: Path, numbers: dict[str, str],
+                notes: list[str] | None = None) -> list[dict]:
     """The numbered equations inside the paper's proofs, as claims of their own
-    (`steps.step_claims`), each under the statement whose proof holds it."""
+    (`steps.step_claims`), each under the statement whose proof holds it; the numbered displays
+    left out are said in `notes`."""
     statements = claims_from_anchors(pid, anchors, snap)
     files = sorted({a["file"] for a in anchors if a.get("file")})
-    return steps.step_claims(pid, statements, snap, files, numbers)
+    return steps.step_claims(pid, statements, snap, files, numbers, notes)
 
 
 def with_passages(claims: list[dict], pid: str, entries: dict, snap: Path, work: Path,
@@ -1983,7 +1985,7 @@ def build_view(root: Path, paper_path: Path, out_dir: Path, lake: str = "lake",
             pdf = t["pdf"]
             aux = Path(t["pdf"]).parent / (Path(snap.root).stem + ".aux")
             claims = claims_from_anchors(paper.id, anchors, snap.dir)
-            for c in proof_steps(paper.id, anchors, snap.dir, t["numbers"]):
+            for c in proof_steps(paper.id, anchors, snap.dir, t["numbers"], notes):
                 c["line_anchor"] = t["step_anchors"].get(c["location"])
                 claims.append(c)
             compiled = {**t, "digest": digest}
