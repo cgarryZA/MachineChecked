@@ -532,6 +532,13 @@ machinechecked review export --out machinechecked-reviews/my-reviews.json
 printed`; `review decide --help` lists each verdict with what its detail says, as the review page
 asks it.
 
+`review read UNIT --context --json` gives each passage with the paper around it, as
+`surroundings`: its sections, the paragraphs before and after it, its labels' printed numbers,
+the statements it cites (with their passages), for a proof step the statement whose proof it
+belongs to, and the statements that cite it or use a term it defines (`cited_by`, each with
+`why`). It is read from the build's copy of the paper's source and is context, not the pinned
+passage: the reading records only the passages ([REVIEWING.md](REVIEWING.md)).
+
 **Difficult cases.** Where a verdict is easy to get wrong, the review guide works an example
 through ([Difficult cases](REVIEWING.md#difficult-cases)); the review page lists the same at
 step 2, and `review decide --help` names them. They are optional, and add no field: put what
