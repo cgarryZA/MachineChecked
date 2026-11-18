@@ -61,7 +61,10 @@ is qualified as a number of another version whose declared numbering it is check
 `mismatch` meaning that the map pairs it with another statement than the one cited beside it)
 and the project-level `pattern` (counts by status, `places`: the
 declarations and modules holding disagreeing references, `drift`, `examples` (reference ids),
-and whether the paper's numbering is complete). Each suggestion has `reasons`: `signal`
+and whether the paper's numbering is complete; `inventory.statements` counts the paper's
+numbered statements whose number is digits or an appendix letter and digits, `Lemma 2.1` or
+`Lemma B.1`, each kind and number once, so equations, proof steps and statements named by a
+letter alone, `Theorem A`, are not counted). Each suggestion has `reasons`: `signal`
 (`content`, `uses`, `number`, `lexical`, `structure`) and `text`; a `number` reason has
 `basis` "a lead" or "a possibly stale lead", and `references`: the ids of the references in
 `numbering` it rests on.
@@ -549,6 +552,12 @@ the statements it cites (with their passages), for a proof step the statement wh
 belongs to, and the statements that cite it or use a term it defines (`cited_by`, each with
 `why`). It is read from the build's copy of the paper's source and is context, not the pinned
 passage: the reading records only the passages ([REVIEWING.md](REVIEWING.md)).
+
+For a proof step, `review read --json` gives `unit.lean_linked` (Lean is linked as establishing
+the step) and `unit.route_linked` (a different formal route used instead is recorded), which name
+no declaration; `review status --json` gives the same for each proof step left to review
+(`steps`). A step with neither is judged on the mathematics alone: lock the reading, then
+`review decide` with the argument you checked as the comparison.
 
 **Difficult cases.** Where a verdict is easy to get wrong, the review guide works an example
 through ([Difficult cases](REVIEWING.md#difficult-cases)); the review page lists the same at

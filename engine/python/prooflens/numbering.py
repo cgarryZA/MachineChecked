@@ -79,9 +79,12 @@ WORD = {"theorem": "Theorem", "lemma": "Lemma", "proposition": "Proposition",
         "example": "Example", "assumption": "Assumption", "conjecture": "Conjecture",
         "claim": "Claim", "section": "Section"}
 
+# A statement's or a section's number: digits (`2.1`), or an appendix letter and digits (`B.1`,
+# `C.2.3`). A letter alone (`Theorem A`) names a statement, and is not a number.
+NUMBER = r"(?:\d+(?:\.\d+)*|(?-i:[A-Z])(?:\.\d+)+)"
 REF = re.compile(r"(?<![\w.])(Theorem|Thm|Lemma|Lem|Proposition|Prop|Corollary|Cor|Definition|"
                  r"Defn|Def|Remark|Rem|Example|Assumption|Hypothesis|Conjecture|Claim|"
-                 r"Subsection|Section|Sec|§)(\.?[ \t~]*)(\d+(?:\.\d+)*)(?![\w]|\.\d)", re.I)
+                 r"Subsection|Section|Sec|§)(\.?[ \t~]*)(" + NUMBER + r")(?![\w]|\.\d)", re.I)
 NAME_REF = re.compile(r"(?:^|_)(theorem|thm|lemma|lem|proposition|prop|corollary|cor|"
                       r"definition|defn|def|section|sec)_?(\d+(?:_\d+)*)(?=_|$)")
 # Just after a number, a bracket or `\cite` (and `\citet`, `\citep`, …) cites another work
@@ -176,7 +179,7 @@ def printed(kind: str, number: str) -> str:
 def claim_ref(claim: dict) -> tuple[str, str] | None:
     """A claim's (kind, number), from its printed number (`Theorem 2.1`)."""
     parts = (claim.get("number") or "").rsplit(" ", 1)
-    if len(parts) != 2 or not re.fullmatch(r"\d+(?:\.\d+)*", parts[1]):
+    if len(parts) != 2 or not re.fullmatch(NUMBER, parts[1]):
         return None
     return canonical(claim.get("kind") or parts[0]), parts[1]
 
@@ -187,7 +190,7 @@ def sections_from_aux(aux: Path) -> set[str] | None:
     if not aux.is_file():
         return None
     text = aux.read_text(encoding="utf-8", errors="replace")
-    return set(re.findall(r"\\contentsline\s*\{(?:sub)*section\}\{\\numberline\s*\{([\d.]+)\}",
+    return set(re.findall(r"\\contentsline\s*\{(?:sub)*section\}\{\\numberline\s*\{([\dA-Z.]+)\}",
                           text))
 
 
