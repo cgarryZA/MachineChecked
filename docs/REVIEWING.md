@@ -27,6 +27,8 @@ machinechecked review next                          # the next unit to review, a
 machinechecked review read UNIT                     # step 1: the paper's statement only
 machinechecked review read UNIT --context           # and the paper around it, as context
 machinechecked review lock UNIT reading.md          # locks your reading
+machinechecked review read UNIT --with UNIT2        # definitions of one passage: read it once
+machinechecked review lock UNIT reading.md --with UNIT2   # one reading locked for them all
 machinechecked review show UNIT                     # step 2 (refused before lock): the Lean
 machinechecked review show UNIT --definitions       # step 2: only the definitions it uses, compactly
 machinechecked review decide UNIT VERDICT comparison.md [--detail detail.md] [--coverage C ...]
@@ -59,7 +61,7 @@ audit.
 
 **Many units at once.** `lock`, `decide` and `submit` take `--manifest FILE` (or `-` for
 standard input) instead of a unit and its texts: a JSON list of entries, each with `unit` and that
-step's fields. `lock` takes `reading`; `decide` takes `verdict`, `comparison`, and optionally
+step's fields. `lock` takes `reading`, and optionally `with` (below); `decide` takes `verdict`, `comparison`, and optionally
 `detail`, `witness`, `coverage`, `basis`, `argument`, `bridge` (`[THEOREM, TARGET]`) and
 `would_decide`; `submit` takes `disagreements`, and optionally `judgement_changed`,
 `revised_verdict` and `revised_detail`. A text is given inline (`"comparison": "..."`) or
@@ -80,12 +82,29 @@ prints one document, `{"schema": "machinechecked/review-manifest@1", "ok", "entr
 "unit", "ok", "message" | "error": {"kind", "message"}}]}`; an entry taken also holds the fields
 of its step's result, below.
 
+**Definitions printed in one passage.** When several definitions are read from exactly the same
+passages (a paragraph defining the time step, the grid times and the increments, say), `review read
+UNIT --with UNIT2 --with UNIT3` shows the passages once and begins a draft for each, and `review
+lock UNIT reading.md --with UNIT2 --with UNIT3` (or a manifest entry with `"with": [UNIT2, UNIT3]`)
+locks one reading for them all, at one time. Both refuse units that are not definitions, or whose
+passages differ in any way or are not complete in the build, naming the unit; the lock checks
+every unit's step (each read, none locked or reported) before it records any, and records what you
+had already seen of each unit. From step 2 on each unit is on its own: `review show` names it and
+the units its reading was locked with, and shows its Lean alone, and it takes its own verdict and
+its own report, pinned to its own definition, which the maintainer promotes or refuses and which a
+change of that definition alone reopens. Each unit's draft names the units locked with it
+(`locked_with`): what step 2 of one shows of another came after both readings were locked, though
+a time to the second cannot tell, so it does not count as seen before the other's reading. Each
+report names them too (`reading.locked_with`, and the report's text says "locked …, with …"), and
+Undo keeps them. The review page still takes one unit at a time.
+
 **Results as data.** `lock`, `decide` and `submit` of one unit take `--json` too, and print one
 document: `{"schema": "machinechecked/review-step@1", "action", "ok": true, "unit", "message",
 "step", ..., "workspace": {"id", "mode"}}`. `step` is the unit's step now (`compare` after a lock,
 `author` after a verdict, `submitted` after the report), and the other fields say what the step
 recorded: `locked_at` and `revealed_by` (what you had already seen of the unit's Lean or author's
-review) for `lock`; `verdict`, `group`, `decided_at`, `correspondence` (the coverage and its basis,
+review) for `lock`, with `locked_with` (each other unit, with its `revealed_by`) for a reading
+locked with others; `verdict`, `group`, `decided_at`, `correspondence` (the coverage and its basis,
 or null) and a structure's separate verdicts (`members`) for `decide`; `verdict`, `group`,
 `submitted_at`, the report's `revealed_by` and its `changed_judgement` (or null) for `submit`.
 `message` is the line the command

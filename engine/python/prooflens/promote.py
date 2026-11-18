@@ -478,7 +478,9 @@ def report_text(r: dict, cur: dict | None = None) -> str:
         f"Reviewer: {rv['id']} ({rv['kind']}{', ' + rv['model'] if rv.get('model') else ''}, "
         f"self-declared); {r['submitted_at']}; same model family as the author: "
         f"{rv.get('same_family_as_author')}",
-        f"Phase 1 specification (locked {r['reading']['locked_at']}):", r["reading"]["text"],
+        f"Phase 1 specification (locked {r['reading']['locked_at']}"
+        + (f", with {', '.join(r['reading']['locked_with'])}"
+           if r["reading"].get("locked_with") else "") + "):", r["reading"]["text"],
         f"Comparison (verdict recorded {r['comparison']['decided_at']}):",
         r["comparison"]["text"],
         f"Witness: {r['comparison'].get('witness') or '—'}",
