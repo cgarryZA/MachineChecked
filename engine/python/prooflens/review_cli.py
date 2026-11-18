@@ -1095,7 +1095,11 @@ class Session:
             self._save(uid)
         if as_json:
             pk = self.packet(u, "informed")
-            pk.setdefault("interpretations", {})["reading_choices"] = self.reading_choices(u)
+            # In the text's order: the reading choices before what the verdict means (#685).
+            interp, choices = pk.get("interpretations") or {}, self.reading_choices(u)
+            at = list(interp).index("refuted_by") if "refuted_by" in interp else len(interp)
+            items = list(interp.items())
+            pk["interpretations"] = dict(items[:at] + [("reading_choices", choices)] + items[at:])
             return {**pk, "review": {"step": "author", "shown_at": d["author_shown_at"]}}
         revs = u.get("author_review") or []
         out = [f"{r.get('by')} · {r.get('file')}:{r.get('line')}\n"
@@ -1108,12 +1112,13 @@ class Session:
                            + (f" by {note['by']}" if note.get("by") else "") + f"\n{text}")
         out = out or ["No review by the author is recorded for this unit."]
         out += self._account(u) + self._refutation_scope(u)
-        # What the verdict just recorded means for the claim (#685).
+        # The auditors' reading choices (#597), before what the verdict means for the claim.
+        out += [choice_text(c) for c in self.reading_choices(u)]
+        # What the verdict just recorded means for the claim (#685), last.
         out += [r.get("line") or rq.refutation_line(r) for r in u.get("refuted_by") or []]
         if u.get("kind") == "step":
             out += [proposal_text(p) for p in [self.site.proposal(c["id"])
                                                for c in u.get("claims") or []] if p]
-        out += [choice_text(c) for c in self.reading_choices(u)]
         return "\n\n".join(out)
 
     def reading_choices(self, u: dict) -> list[dict]:
